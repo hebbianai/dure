@@ -23,7 +23,7 @@ Proyectos, conversaciones, terminales y cambios de código, en un solo espacio d
   <img src="./public/readme/workspace-tour.webp" alt="Dure con Claude Code, Codex, Pi y una shell en seis paneles, con proyectos y sesiones en Spaces" width="960" />
 </a>
 
-**[▶ Descubre Dure en 29 segundos](https://www.dureai.dev/#hero-film)** · [Abrir MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
+**[▶ Descubre Dure en 29 segundos](https://www.dureai.dev/#hero-film)** · [Descargar MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
 
 <sub>Grabación de la aplicación nativa con CLI de agentes reales en un proyecto de ejemplo.<br>La lista de issues de GitHub usa datos de demostración. Se grabó una compilación de desarrollo; la versión descargada puede diferir.</sub>
 

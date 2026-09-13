@@ -23,7 +23,7 @@ AI 코딩 에이전트를 위한 **Agent Development Environment (ADE)**.<br>
   <img src="./public/readme/workspace-tour.webp" alt="Claude Code, Codex, Pi와 셸을 여섯 개 패널에 배치하고 Spaces에서 프로젝트와 세션을 함께 보는 Dure" width="960" />
 </a>
 
-**[▶ 29초로 보는 Dure](https://www.dureai.dev/#hero-film)** · [MP4 열기](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
+**[▶ 29초로 보는 Dure](https://www.dureai.dev/#hero-film)** · [MP4 다운로드](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
 
 <sub>샘플 프로젝트에서 실제 코딩 에이전트 CLI를 실행한 네이티브 앱 영상입니다.<br>GitHub 이슈 목록은 데모 데이터입니다. 개발 빌드로 촬영했으므로 다운로드 버전과 화면이 다를 수 있습니다.</sub>
 

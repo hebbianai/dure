@@ -23,7 +23,7 @@ AI コーディングエージェントのための **Agent Development Environm
   <img src="./public/readme/workspace-tour.webp" alt="Claude Code、Codex、Pi とシェルを6つのペインに配置し、Spaces にプロジェクトとセッションを表示した Dure" width="960" />
 </a>
 
-**[▶ 29秒で見る Dure](https://www.dureai.dev/#hero-film)** · [MP4 を開く](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
+**[▶ 29秒で見る Dure](https://www.dureai.dev/#hero-film)** · [MP4 をダウンロード](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
 
 <sub>サンプルプロジェクトで実際のコーディングエージェント CLI を動かしたネイティブアプリの映像です。<br>GitHub の Issue 一覧はデモデータです。開発ビルドで収録しているため、ダウンロード版とは表示が異なる場合があります。</sub>
 

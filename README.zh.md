@@ -23,7 +23,7 @@
   <img src="./public/readme/workspace-tour.webp" alt="Dure 将 Claude Code、Codex、Pi 和 shell 排列在六个窗格中，并在 Spaces 中展示项目与会话" width="960" />
 </a>
 
-**[▶ 29 秒了解 Dure](https://www.dureai.dev/#hero-film)** · [打开 MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
+**[▶ 29 秒了解 Dure](https://www.dureai.dev/#hero-film)** · [下载 MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
 
 <sub>原生应用实录：编程智能体 CLI 在示例项目中真实运行。<br>GitHub 议题列表使用演示数据。视频录制于开发构建，下载版本的界面可能有所不同。</sub>
 

@@ -23,7 +23,7 @@ Projects, conversations, terminals and code changes — together in one macOS wo
   <img src="./public/readme/workspace-tour.webp" alt="Dure with Claude Code, Codex, Pi and a shell arranged in six panes, with projects and sessions in Spaces" width="960" />
 </a>
 
-**[▶ Watch Dure in 29 seconds](https://www.dureai.dev/#hero-film)** · [Open MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
+**[▶ Watch Dure in 29 seconds](https://www.dureai.dev/#hero-film)** · [Download MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
 
 <sub>Native app footage with live coding-agent CLIs in a sample project.<br>The GitHub issue list uses demo data. Recorded on a development build; the downloaded version may differ.</sub>
 

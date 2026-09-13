@@ -23,7 +23,7 @@ Projets, conversations, terminaux et modifications de code, réunis dans un espa
   <img src="./public/readme/workspace-tour.webp" alt="Dure avec Claude Code, Codex, Pi et un shell dans six volets, et les projets et sessions dans Spaces" width="960" />
 </a>
 
-**[▶ Découvrir Dure en 29 secondes](https://www.dureai.dev/#hero-film)** · [Ouvrir le MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
+**[▶ Découvrir Dure en 29 secondes](https://www.dureai.dev/#hero-film)** · [Télécharger le MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
 
 <sub>Capture de l'application native, avec de vrais agents en ligne de commande dans un projet d'exemple.<br>La liste des issues GitHub utilise des données de démonstration. La capture provient d'une version de développement ; la version téléchargée peut différer.</sub>
 
