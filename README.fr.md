@@ -118,6 +118,10 @@ Ce dépôt est la vitrine publique officielle de Dure sur GitHub pour les inform
 
 L'application se télécharge sur le [site web](https://www.dureai.dev/download/mac/) ; ce dépôt ne contient pas une distribution du code source ni un guide de compilation.
 
+## Contribuer
+
+Consultez le [guide de contribution](CONTRIBUTING.md) et le [code de conduite](CODE_OF_CONDUCT.md), ou [signalez un bug ou proposez une fonctionnalité](https://github.com/hebbianai/dure/issues/new/choose). Pour les vulnérabilités, utilisez le canal privé indiqué dans la [politique de sécurité](SECURITY.md). Les documents de contribution et de communauté sont actuellement disponibles en anglais.
+
 ---
 
 <div align="center">

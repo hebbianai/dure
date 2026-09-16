@@ -116,6 +116,10 @@ Dure는 그 일을 한곳에 모읍니다. Claude Code 옆에 Codex와 Pi를 두
 
 앱은 [웹사이트](https://www.dureai.dev/download/mac/)에서 다운로드할 수 있습니다. 이 저장소는 소스 배포본이나 소스 빌드 가이드가 아닙니다.
 
+## 기여하기
+
+[기여 가이드](CONTRIBUTING.md)와 [행동강령](CODE_OF_CONDUCT.md)을 확인하고, [버그를 제보하거나 기능을 제안](https://github.com/hebbianai/dure/issues/new/choose)해 주세요. 보안 취약점은 [보안 정책](SECURITY.md)에 안내된 비공개 경로로 제보해 주세요. 기여·운영 문서는 현재 영어로 제공됩니다.
+
 ---
 
 <div align="center">

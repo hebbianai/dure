@@ -116,6 +116,10 @@ This is Dure's official public GitHub home for product information and media, an
 
 App downloads are available from the [website](https://www.dureai.dev/download/mac/); this repository is not a source distribution or a source-build guide.
 
+## Contributing
+
+Read the [contribution guide](CONTRIBUTING.md), follow our [Code of Conduct](CODE_OF_CONDUCT.md), or [report a bug or propose a feature](https://github.com/hebbianai/dure/issues/new/choose). For vulnerabilities, use the private channel in our [security policy](SECURITY.md).
+
 ---
 
 <div align="center">

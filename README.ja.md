@@ -116,6 +116,10 @@ Dure は、その仕事をひとつの場所にまとめます。Claude Code の
 
 アプリは[ウェブサイト](https://www.dureai.dev/download/mac/)からダウンロードできます。このリポジトリはソース配布物でも、ソースからのビルドガイドでもありません。
 
+## 貢献する
+
+[貢献ガイド](CONTRIBUTING.md)と[行動規範](CODE_OF_CONDUCT.md)をご確認ください。[不具合の報告や機能の提案](https://github.com/hebbianai/dure/issues/new/choose)も歓迎します。脆弱性は[セキュリティポリシー](SECURITY.md)に記載された非公開の窓口へご報告ください。貢献・運営に関する文書は現在英語で提供しています。
+
 ---
 
 <div align="center">

@@ -118,6 +118,10 @@ Este é o repositório público oficial do Dure no GitHub para informações e m
 
 O aplicativo está disponível no [site](https://www.dureai.dev/download/mac/); este repositório não é uma distribuição do código-fonte nem um guia de compilação.
 
+## Contribuir
+
+Consulte o [guia de contribuição](CONTRIBUTING.md) e o [código de conduta](CODE_OF_CONDUCT.md), ou [relate um erro ou proponha uma funcionalidade](https://github.com/hebbianai/dure/issues/new/choose). Para vulnerabilidades, use o canal privado da [política de segurança](SECURITY.md). Os documentos de contribuição e comunidade estão disponíveis por enquanto em inglês.
+
 ---
 
 <div align="center">

@@ -116,6 +116,10 @@ Dure 把这些工作集中到一处。让 Claude Code、Codex 和 Pi 并排运�
 
 应用可从[官网](https://www.dureai.dev/download/mac/)下载；本仓库并非源代码发行版，也不提供从源码构建的指南。
 
+## 参与贡献
+
+请阅读[贡献指南](CONTRIBUTING.md)和[行为准则](CODE_OF_CONDUCT.md)，或[报告问题、提出功能建议](https://github.com/hebbianai/dure/issues/new/choose)。安全漏洞请通过[安全政策](SECURITY.md)中的私密渠道报告。贡献与社区文档目前以英语提供。
+
 ---
 
 <div align="center">
