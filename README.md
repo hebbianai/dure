@@ -110,7 +110,9 @@ Tell me the commands and which files document them.
 
 **Open-source release: TBD.**
 
-This is Dure's official public GitHub home for product information and media. The application source code is not currently public. No open-source release date or license has been announced.
+**License: [MIT](LICENSE) · Copyright (c) 2026 Hebbian AI.**
+
+This is Dure's official public GitHub home for product information and media, and the destination for its planned source release. Dure's first-party source code will be released here under MIT; third-party components retain their own licenses and copyright notices. The application source code is not yet public, and no source release date has been announced.
 
 App downloads are available from the [website](https://www.dureai.dev/download/mac/); this repository is not a source distribution or a source-build guide.
 

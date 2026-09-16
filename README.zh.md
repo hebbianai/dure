@@ -110,7 +110,9 @@ Dure 把这些工作集中到一处。让 Claude Code、Codex 和 Pi 并排运�
 
 **Open-source release: TBD. — 开源发布时间待定。**
 
-这是 Dure 用于展示产品信息和媒体的官方公开 GitHub 仓库。应用源代码目前尚未公开，也尚未公布开源发布日期或许可证。
+**许可证：[MIT](LICENSE) · Copyright (c) 2026 Hebbian AI。**
+
+这是 Dure 用于展示产品信息和媒体的官方公开 GitHub 仓库，也是计划发布源代码的仓库。Dure 自有源代码将在此以 MIT 许可证发布；第三方组件保留各自的许可证和版权声明。应用源代码目前尚未公开，发布日期尚未确定。
 
 应用可从[官网](https://www.dureai.dev/download/mac/)下载；本仓库并非源代码发行版，也不提供从源码构建的指南。
 
