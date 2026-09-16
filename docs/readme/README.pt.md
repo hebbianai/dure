@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://www.dureai.dev/">
-  <img src="./public/readme/dure-logo.png" alt="Dure" width="88" height="88" />
+  <img src="../../public/readme/dure-logo.png" alt="Dure" width="88" height="88" />
 </a>
 
 # Dure
@@ -15,12 +15,12 @@ Projetos, conversas, terminais e alterações de código — juntos em um único
 
 <sub>Apple Silicon · Use suas CLIs de agentes de programação e suas contas de sempre</sub>
 
-[English](README.md) · [한국어](README.ko.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Français](README.fr.md) · **Português**
+[English](../../README.md) · [한국어](README.ko.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Français](README.fr.md) · **Português**
 
 <br>
 
 <a href="https://www.dureai.dev/#hero-film">
-  <img src="./public/readme/workspace-tour.webp" alt="Dure com Claude Code, Codex, Pi e um shell em seis painéis, com projetos e sessões no Spaces" width="960" />
+  <img src="../../public/readme/workspace-tour.webp" alt="Dure com Claude Code, Codex, Pi e um shell em seis painéis, com projetos e sessões no Spaces" width="960" />
 </a>
 
 **[▶ Conheça o Dure em 29 segundos](https://www.dureai.dev/#hero-film)** · [Baixar MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
@@ -50,11 +50,11 @@ Divida painéis, mova abas, alterne entre áreas de trabalho ou abra uma sessão
 <table>
 <tr>
 <td width="50%">
-<a href="https://docs.dureai.dev/en/quickstart"><img src="./public/readme/start-agent.png" alt="Janela New agent aberta com Command-N, com opções de tarefa, projeto, provedor e worktree dedicado" width="460" /></a>
+<a href="https://docs.dureai.dev/en/quickstart"><img src="../../public/readme/start-agent.png" alt="Janela New agent aberta com Command-N, com opções de tarefa, projeto, provedor e worktree dedicado" width="460" /></a>
 <br><sub>Descreva o trabalho. Escolha o agente.</sub>
 </td>
 <td width="50%">
-<a href="https://docs.dureai.dev/en/spaces-and-panes"><img src="./public/readme/pane-arrangement.png" alt="Uma aba de terminal em execução sendo arrastada para a área Split Right do Dure" width="460" /></a>
+<a href="https://docs.dureai.dev/en/spaces-and-panes"><img src="../../public/readme/pane-arrangement.png" alt="Uma aba de terminal em execução sendo arrastada para a área Split Right do Dure" width="460" /></a>
 <br><sub>Mova a visualização. Preserve o contexto.</sub>
 </td>
 </tr>
@@ -112,11 +112,15 @@ Informe os comandos e os arquivos que os documentam.
 
 **Open-source release: TBD. — Publicação como código aberto: a definir.**
 
-**Licença: [MIT](LICENSE) · Copyright (c) 2026 Hebbian AI.**
+**Licença: [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
 Este é o repositório público oficial do Dure no GitHub para informações e mídia do produto e o destino da futura publicação do código-fonte. O código próprio do Dure será publicado aqui sob a licença MIT; os componentes de terceiros manterão suas licenças e avisos de direitos autorais. O código-fonte do aplicativo ainda não é público e a data de publicação não foi anunciada.
 
 O aplicativo está disponível no [site](https://www.dureai.dev/download/mac/); este repositório não é uma distribuição do código-fonte nem um guia de compilação.
+
+## Contribuir
+
+Consulte o [guia de contribuição](../../CONTRIBUTING.md) e o [código de conduta](../../CODE_OF_CONDUCT.md), ou [relate um erro ou proponha uma funcionalidade](https://github.com/hebbianai/dure/issues/new/choose). Para vulnerabilidades, use o canal privado da [política de segurança](../../SECURITY.md). Os documentos de contribuição e comunidade estão disponíveis por enquanto em inglês.
 
 ---
 

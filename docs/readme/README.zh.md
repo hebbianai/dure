@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://www.dureai.dev/">
-  <img src="./public/readme/dure-logo.png" alt="Dure" width="88" height="88" />
+  <img src="../../public/readme/dure-logo.png" alt="Dure" width="88" height="88" />
 </a>
 
 # Dure
@@ -15,12 +15,12 @@
 
 <sub>Apple Silicon · 沿用你的编程智能体 CLI 和账号</sub>
 
-[English](README.md) · [한국어](README.ko.md) · **简体中文** · [日本語](README.ja.md) · [Español](README.es.md) · [Français](README.fr.md) · [Português](README.pt.md)
+[English](../../README.md) · [한국어](README.ko.md) · **简体中文** · [日本語](README.ja.md) · [Español](README.es.md) · [Français](README.fr.md) · [Português](README.pt.md)
 
 <br>
 
 <a href="https://www.dureai.dev/#hero-film">
-  <img src="./public/readme/workspace-tour.webp" alt="Dure 将 Claude Code、Codex、Pi 和 shell 排列在六个窗格中，并在 Spaces 中展示项目与会话" width="960" />
+  <img src="../../public/readme/workspace-tour.webp" alt="Dure 将 Claude Code、Codex、Pi 和 shell 排列在六个窗格中，并在 Spaces 中展示项目与会话" width="960" />
 </a>
 
 **[▶ 29 秒了解 Dure](https://www.dureai.dev/#hero-film)** · [下载 MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
@@ -50,11 +50,11 @@ Dure 把这些工作集中到一处。让 Claude Code、Codex 和 Pi 并排运�
 <table>
 <tr>
 <td width="50%">
-<a href="https://docs.dureai.dev/cn/quickstart"><img src="./public/readme/start-agent.png" alt="通过 Command-N 打开的新建智能体窗口，包含任务、项目、提供商和专用 worktree 选项" width="460" /></a>
+<a href="https://docs.dureai.dev/cn/quickstart"><img src="../../public/readme/start-agent.png" alt="通过 Command-N 打开的新建智能体窗口，包含任务、项目、提供商和专用 worktree 选项" width="460" /></a>
 <br><sub>描述工作，选择智能体。</sub>
 </td>
 <td width="50%">
-<a href="https://docs.dureai.dev/cn/spaces-and-panes"><img src="./public/readme/pane-arrangement.png" alt="将运行中的终端标签拖到 Dure 的 Split Right 区域" width="460" /></a>
+<a href="https://docs.dureai.dev/cn/spaces-and-panes"><img src="../../public/readme/pane-arrangement.png" alt="将运行中的终端标签拖到 Dure 的 Split Right 区域" width="460" /></a>
 <br><sub>调整视图，保留工作上下文。</sub>
 </td>
 </tr>
@@ -110,11 +110,15 @@ Dure 把这些工作集中到一处。让 Claude Code、Codex 和 Pi 并排运�
 
 **Open-source release: TBD. — 开源发布时间待定。**
 
-**许可证：[MIT](LICENSE) · Copyright (c) 2026 Hebbian AI。**
+**许可证：[MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI。**
 
 这是 Dure 用于展示产品信息和媒体的官方公开 GitHub 仓库，也是计划发布源代码的仓库。Dure 自有源代码将在此以 MIT 许可证发布；第三方组件保留各自的许可证和版权声明。应用源代码目前尚未公开，发布日期尚未确定。
 
 应用可从[官网](https://www.dureai.dev/download/mac/)下载；本仓库并非源代码发行版，也不提供从源码构建的指南。
+
+## 参与贡献
+
+请阅读[贡献指南](../../CONTRIBUTING.md)和[行为准则](../../CODE_OF_CONDUCT.md)，或[报告问题、提出功能建议](https://github.com/hebbianai/dure/issues/new/choose)。安全漏洞请通过[安全政策](../../SECURITY.md)中的私密渠道报告。贡献与社区文档目前以英语提供。
 
 ---
 

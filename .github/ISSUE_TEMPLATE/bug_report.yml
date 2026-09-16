@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible problem in Dure or its public documentation.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. For vulnerabilities, use [private reporting](https://github.com/hebbianai/dure/security/advisories/new).
+        Remove credentials, private conversations and personal paths from reports and attachments.
+  - type: input
+    id: version
+    attributes:
+      label: Dure version
+      description: Include the exact app version, or write "documentation" for a docs-only problem.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, hardware architecture, installation method, and relevant provider/CLI version. Use "not applicable" for docs.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Give the smallest sequence that demonstrates the problem, using disposable data where possible.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include sanitized screenshots or logs if they help explain the result.
+    validations:
+      required: true

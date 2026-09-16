@@ -15,7 +15,7 @@ Projects, conversations, terminals and code changes — together in one macOS wo
 
 <sub>Apple Silicon · Bring your own coding-agent CLIs and accounts</sub>
 
-**English** · [한국어](README.ko.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Français](README.fr.md) · [Português](README.pt.md)
+**English** · [한국어](docs/readme/README.ko.md) · [简体中文](docs/readme/README.zh.md) · [日本語](docs/readme/README.ja.md) · [Español](docs/readme/README.es.md) · [Français](docs/readme/README.fr.md) · [Português](docs/readme/README.pt.md)
 
 <br>
 
@@ -115,6 +115,10 @@ Tell me the commands and which files document them.
 This is Dure's official public GitHub home for product information and media, and the destination for its planned source release. Dure's first-party source code will be released here under MIT; third-party components retain their own licenses and copyright notices. The application source code is not yet public, and no source release date has been announced.
 
 App downloads are available from the [website](https://www.dureai.dev/download/mac/); this repository is not a source distribution or a source-build guide.
+
+## Contributing
+
+Read the [contribution guide](CONTRIBUTING.md), follow our [Code of Conduct](CODE_OF_CONDUCT.md), or [report a bug or propose a feature](https://github.com/hebbianai/dure/issues/new/choose). For vulnerabilities, use the private channel in our [security policy](SECURITY.md).
 
 ---
 

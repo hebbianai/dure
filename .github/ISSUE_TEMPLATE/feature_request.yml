@@ -1,0 +1,27 @@
+name: Feature proposal
+description: Describe a problem Dure could solve better.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing proposals first. Focus on the problem and who it affects.
+        Please keep private project and account information out of your examples.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to accomplish, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: How would this improve the workflow? Describe the expected outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include any workaround you currently use.

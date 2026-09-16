@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://www.dureai.dev/">
-  <img src="./public/readme/dure-logo.png" alt="Dure" width="88" height="88" />
+  <img src="../../public/readme/dure-logo.png" alt="Dure" width="88" height="88" />
 </a>
 
 # Dure
@@ -15,12 +15,12 @@ AI 코딩 에이전트를 위한 **Agent Development Environment (ADE)**.<br>
 
 <sub>Apple Silicon · 평소 쓰던 코딩 에이전트 CLI와 계정 그대로</sub>
 
-[English](README.md) · **한국어** · [简体中文](README.zh.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Français](README.fr.md) · [Português](README.pt.md)
+[English](../../README.md) · **한국어** · [简体中文](README.zh.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Français](README.fr.md) · [Português](README.pt.md)
 
 <br>
 
 <a href="https://www.dureai.dev/#hero-film">
-  <img src="./public/readme/workspace-tour.webp" alt="Claude Code, Codex, Pi와 셸을 여섯 개 패널에 배치하고 Spaces에서 프로젝트와 세션을 함께 보는 Dure" width="960" />
+  <img src="../../public/readme/workspace-tour.webp" alt="Claude Code, Codex, Pi와 셸을 여섯 개 패널에 배치하고 Spaces에서 프로젝트와 세션을 함께 보는 Dure" width="960" />
 </a>
 
 **[▶ 29초로 보는 Dure](https://www.dureai.dev/#hero-film)** · [MP4 다운로드](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
@@ -50,11 +50,11 @@ Dure는 그 일을 한곳에 모읍니다. Claude Code 옆에 Codex와 Pi를 두
 <table>
 <tr>
 <td width="50%">
-<a href="https://docs.dureai.dev/ko/quickstart"><img src="./public/readme/start-agent.png" alt="Command-N으로 연 새 에이전트 창의 작업, 프로젝트, 프로바이더, 전용 worktree 옵션" width="460" /></a>
+<a href="https://docs.dureai.dev/ko/quickstart"><img src="../../public/readme/start-agent.png" alt="Command-N으로 연 새 에이전트 창의 작업, 프로젝트, 프로바이더, 전용 worktree 옵션" width="460" /></a>
 <br><sub>할 일을 설명하고, 에이전트를 고르세요.</sub>
 </td>
 <td width="50%">
-<a href="https://docs.dureai.dev/ko/spaces-and-panes"><img src="./public/readme/pane-arrangement.png" alt="실행 중인 터미널 탭을 Dure의 Split Right 위치로 드래그하는 모습" width="460" /></a>
+<a href="https://docs.dureai.dev/ko/spaces-and-panes"><img src="../../public/readme/pane-arrangement.png" alt="실행 중인 터미널 탭을 Dure의 Split Right 위치로 드래그하는 모습" width="460" /></a>
 <br><sub>화면은 옮기고, 작업 맥락은 유지하세요.</sub>
 </td>
 </tr>
@@ -110,11 +110,15 @@ Dure는 그 일을 한곳에 모읍니다. Claude Code 옆에 Codex와 Pi를 두
 
 **Open-source release: TBD. — 오픈소스 공개 일정 미정.**
 
-**라이선스: [MIT](LICENSE) · Copyright (c) 2026 Hebbian AI.**
+**라이선스: [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
 이 저장소는 제품 정보와 미디어를 소개하는 Dure의 공식 공개 GitHub 홈이며, 소스 코드를 공개할 저장소입니다. Dure 자체 소스 코드는 이곳에서 MIT 라이선스로 공개할 예정이며, 외부 구성 요소의 기존 라이선스와 저작권 고지는 유지합니다. 앱 소스 코드는 아직 공개되지 않았고, 소스 공개일은 미정입니다.
 
 앱은 [웹사이트](https://www.dureai.dev/download/mac/)에서 다운로드할 수 있습니다. 이 저장소는 소스 배포본이나 소스 빌드 가이드가 아닙니다.
+
+## 기여하기
+
+[기여 가이드](../../CONTRIBUTING.md)와 [행동강령](../../CODE_OF_CONDUCT.md)을 확인하고, [버그를 제보하거나 기능을 제안](https://github.com/hebbianai/dure/issues/new/choose)해 주세요. 보안 취약점은 [보안 정책](../../SECURITY.md)에 안내된 비공개 경로로 제보해 주세요. 기여·운영 문서는 현재 영어로 제공됩니다.
 
 ---
 
