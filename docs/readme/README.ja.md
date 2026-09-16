@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://www.dureai.dev/">
-  <img src="./public/readme/dure-logo.png" alt="Dure" width="88" height="88" />
+  <img src="../../public/readme/dure-logo.png" alt="Dure" width="88" height="88" />
 </a>
 
 # Dure
@@ -15,12 +15,12 @@ AI コーディングエージェントのための **Agent Development Environm
 
 <sub>Apple Silicon · 使い慣れたコーディングエージェント CLI とアカウントをそのまま</sub>
 
-[English](README.md) · [한국어](README.ko.md) · [简体中文](README.zh.md) · **日本語** · [Español](README.es.md) · [Français](README.fr.md) · [Português](README.pt.md)
+[English](../../README.md) · [한국어](README.ko.md) · [简体中文](README.zh.md) · **日本語** · [Español](README.es.md) · [Français](README.fr.md) · [Português](README.pt.md)
 
 <br>
 
 <a href="https://www.dureai.dev/#hero-film">
-  <img src="./public/readme/workspace-tour.webp" alt="Claude Code、Codex、Pi とシェルを6つのペインに配置し、Spaces にプロジェクトとセッションを表示した Dure" width="960" />
+  <img src="../../public/readme/workspace-tour.webp" alt="Claude Code、Codex、Pi とシェルを6つのペインに配置し、Spaces にプロジェクトとセッションを表示した Dure" width="960" />
 </a>
 
 **[▶ 29秒で見る Dure](https://www.dureai.dev/#hero-film)** · [MP4 をダウンロード](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
@@ -50,11 +50,11 @@ Dure は、その仕事をひとつの場所にまとめます。Claude Code の
 <table>
 <tr>
 <td width="50%">
-<a href="https://docs.dureai.dev/jp/quickstart"><img src="./public/readme/start-agent.png" alt="Command-N で開いた新規エージェント画面。タスク、プロジェクト、プロバイダー、専用 worktree の設定" width="460" /></a>
+<a href="https://docs.dureai.dev/jp/quickstart"><img src="../../public/readme/start-agent.png" alt="Command-N で開いた新規エージェント画面。タスク、プロジェクト、プロバイダー、専用 worktree の設定" width="460" /></a>
 <br><sub>仕事を伝え、エージェントを選ぶ。</sub>
 </td>
 <td width="50%">
-<a href="https://docs.dureai.dev/jp/spaces-and-panes"><img src="./public/readme/pane-arrangement.png" alt="実行中のターミナルタブを Dure の Split Right 領域にドラッグする様子" width="460" /></a>
+<a href="https://docs.dureai.dev/jp/spaces-and-panes"><img src="../../public/readme/pane-arrangement.png" alt="実行中のターミナルタブを Dure の Split Right 領域にドラッグする様子" width="460" /></a>
 <br><sub>表示を動かし、作業の文脈はそのままに。</sub>
 </td>
 </tr>
@@ -110,7 +110,7 @@ Dure は、その仕事をひとつの場所にまとめます。Claude Code の
 
 **Open-source release: TBD. — オープンソース公開時期は未定です。**
 
-**ライセンス：[MIT](LICENSE) · Copyright (c) 2026 Hebbian AI。**
+**ライセンス：[MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI。**
 
 このリポジトリは、製品情報とメディアを紹介する Dure の公式公開 GitHub ホームであり、ソースコードの公開先です。Dure 独自のソースコードはここで MIT ライセンスにより公開する予定です。サードパーティのコンポーネントには、それぞれのライセンスと著作権表示が引き続き適用されます。アプリのソースコードはまだ公開されておらず、公開日は未定です。
 
@@ -118,7 +118,7 @@ Dure は、その仕事をひとつの場所にまとめます。Claude Code の
 
 ## 貢献する
 
-[貢献ガイド](CONTRIBUTING.md)と[行動規範](CODE_OF_CONDUCT.md)をご確認ください。[不具合の報告や機能の提案](https://github.com/hebbianai/dure/issues/new/choose)も歓迎します。脆弱性は[セキュリティポリシー](SECURITY.md)に記載された非公開の窓口へご報告ください。貢献・運営に関する文書は現在英語で提供しています。
+[貢献ガイド](../../CONTRIBUTING.md)と[行動規範](../../CODE_OF_CONDUCT.md)をご確認ください。[不具合の報告や機能の提案](https://github.com/hebbianai/dure/issues/new/choose)も歓迎します。脆弱性は[セキュリティポリシー](../../SECURITY.md)に記載された非公開の窓口へご報告ください。貢献・運営に関する文書は現在英語で提供しています。
 
 ---
 

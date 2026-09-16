@@ -39,11 +39,13 @@ private channel in [SECURITY.md](SECURITY.md).
    link a related issue when one exists.
 6. Address review feedback and wait for the required checks and maintainer review.
 
-English is the canonical documentation language. Keep facts consistent across
-the seven README translations when changing shared product information. If you
-cannot update a translation confidently, call that out in the pull request so a
-maintainer can coordinate it. Translation corrections for one language are also
-welcome. Do not claim availability for unreleased source, platforms or features.
+English is the canonical documentation language. The English [README](README.md)
+lives at the root; the six translations live in [docs/readme/](docs/readme/).
+Keep facts consistent across all seven languages when changing shared product
+information. If you cannot update a translation confidently, call that out in the
+pull request so a maintainer can coordinate it. Translation corrections for one
+language are also welcome. Do not claim availability for unreleased source,
+platforms or features.
 
 ## Checks and review
 
@@ -53,7 +55,7 @@ they do not build or test the application. To run the link check locally with
 [lychee](https://github.com/lycheeverse/lychee), use:
 
 ```sh
-lychee --offline --include-fragments --no-progress '*.md' '.github/**/*.md'
+lychee --offline --include-fragments --no-progress '*.md' 'docs/readme/*.md' '.github/**/*.md'
 ```
 
 The workflow pins its tool versions in

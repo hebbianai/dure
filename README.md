@@ -15,7 +15,7 @@ Projects, conversations, terminals and code changes — together in one macOS wo
 
 <sub>Apple Silicon · Bring your own coding-agent CLIs and accounts</sub>
 
-**English** · [한국어](README.ko.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [Español](README.es.md) · [Français](README.fr.md) · [Português](README.pt.md)
+**English** · [한국어](docs/readme/README.ko.md) · [简体中文](docs/readme/README.zh.md) · [日本語](docs/readme/README.ja.md) · [Español](docs/readme/README.es.md) · [Français](docs/readme/README.fr.md) · [Português](docs/readme/README.pt.md)
 
 <br>
 

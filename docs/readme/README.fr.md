@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://www.dureai.dev/">
-  <img src="./public/readme/dure-logo.png" alt="Dure" width="88" height="88" />
+  <img src="../../public/readme/dure-logo.png" alt="Dure" width="88" height="88" />
 </a>
 
 # Dure
@@ -15,12 +15,12 @@ Projets, conversations, terminaux et modifications de code, réunis dans un espa
 
 <sub>Apple Silicon · Gardez vos outils de programmation en ligne de commande et vos comptes</sub>
 
-[English](README.md) · [한국어](README.ko.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [Español](README.es.md) · **Français** · [Português](README.pt.md)
+[English](../../README.md) · [한국어](README.ko.md) · [简体中文](README.zh.md) · [日本語](README.ja.md) · [Español](README.es.md) · **Français** · [Português](README.pt.md)
 
 <br>
 
 <a href="https://www.dureai.dev/#hero-film">
-  <img src="./public/readme/workspace-tour.webp" alt="Dure avec Claude Code, Codex, Pi et un shell dans six volets, et les projets et sessions dans Spaces" width="960" />
+  <img src="../../public/readme/workspace-tour.webp" alt="Dure avec Claude Code, Codex, Pi et un shell dans six volets, et les projets et sessions dans Spaces" width="960" />
 </a>
 
 **[▶ Découvrir Dure en 29 secondes](https://www.dureai.dev/#hero-film)** · [Télécharger le MP4](https://raw.githubusercontent.com/hebbianai/dure/main/public/readme/workspace-tour.mp4)
@@ -50,11 +50,11 @@ Divisez les volets, déplacez les onglets, changez de bureau ou ouvrez une sessi
 <table>
 <tr>
 <td width="50%">
-<a href="https://docs.dureai.dev/en/quickstart"><img src="./public/readme/start-agent.png" alt="Fenêtre New agent ouverte avec Command-N, proposant la tâche, le projet, le fournisseur et un worktree dédié" width="460" /></a>
+<a href="https://docs.dureai.dev/en/quickstart"><img src="../../public/readme/start-agent.png" alt="Fenêtre New agent ouverte avec Command-N, proposant la tâche, le projet, le fournisseur et un worktree dédié" width="460" /></a>
 <br><sub>Décrivez le travail. Choisissez l'agent.</sub>
 </td>
 <td width="50%">
-<a href="https://docs.dureai.dev/en/spaces-and-panes"><img src="./public/readme/pane-arrangement.png" alt="Déplacement d'un onglet de terminal actif vers la zone Split Right de Dure" width="460" /></a>
+<a href="https://docs.dureai.dev/en/spaces-and-panes"><img src="../../public/readme/pane-arrangement.png" alt="Déplacement d'un onglet de terminal actif vers la zone Split Right de Dure" width="460" /></a>
 <br><sub>Déplacez la vue. Gardez le contexte.</sub>
 </td>
 </tr>
@@ -112,7 +112,7 @@ Indique les commandes et les fichiers qui les documentent.
 
 **Open-source release: TBD. — Publication open source : date à déterminer.**
 
-**Licence : [MIT](LICENSE) · Copyright (c) 2026 Hebbian AI.**
+**Licence : [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
 Ce dépôt est la vitrine publique officielle de Dure sur GitHub pour les informations et médias du produit, ainsi que le dépôt prévu pour la publication du code source. Le code propre à Dure sera publié ici sous licence MIT ; les composants tiers conserveront leurs licences et mentions de copyright. Le code source de l'application n'est pas encore public et aucune date de publication n'a été annoncée.
 
@@ -120,7 +120,7 @@ L'application se télécharge sur le [site web](https://www.dureai.dev/download/
 
 ## Contribuer
 
-Consultez le [guide de contribution](CONTRIBUTING.md) et le [code de conduite](CODE_OF_CONDUCT.md), ou [signalez un bug ou proposez une fonctionnalité](https://github.com/hebbianai/dure/issues/new/choose). Pour les vulnérabilités, utilisez le canal privé indiqué dans la [politique de sécurité](SECURITY.md). Les documents de contribution et de communauté sont actuellement disponibles en anglais.
+Consultez le [guide de contribution](../../CONTRIBUTING.md) et le [code de conduite](../../CODE_OF_CONDUCT.md), ou [signalez un bug ou proposez une fonctionnalité](https://github.com/hebbianai/dure/issues/new/choose). Pour les vulnérabilités, utilisez le canal privé indiqué dans la [politique de sécurité](../../SECURITY.md). Les documents de contribution et de communauté sont actuellement disponibles en anglais.
 
 ---
 
