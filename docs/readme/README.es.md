@@ -11,7 +11,7 @@
 Un **Agent Development Environment (ADE)** para tus agentes de programación con IA.<br>
 Proyectos, conversaciones, terminales y cambios de código, en un solo espacio de trabajo para macOS.
 
-**[Descargar para macOS](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [Sitio web](https://www.dureai.dev/) &nbsp;·&nbsp; [Documentación (inglés)](https://docs.dureai.dev/en/introduction)
+**[Descargar para macOS](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [Sitio web](https://www.dureai.dev/) &nbsp;·&nbsp; [Documentación (inglés)](https://docs.dureai.dev/en/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_)
 
 <sub>Apple Silicon · Usa tus CLI de agentes de programación y tus cuentas habituales</sub>
 
@@ -128,6 +128,6 @@ Consulta la [guía de contribución](../../CONTRIBUTING.md) y el [código de con
 
 **Tú diriges. Tus agentes trabajan juntos.**
 
-[Descargar Dure](https://www.dureai.dev/download/mac/) · [Leer la documentación](https://docs.dureai.dev/en/introduction) · [dureai.dev](https://www.dureai.dev/)
+[Descargar Dure](https://www.dureai.dev/download/mac/) · [Leer la documentación](https://docs.dureai.dev/en/introduction) · [dureai.dev](https://www.dureai.dev/) · [X](https://x.com/hebbianai_)
 
 </div>

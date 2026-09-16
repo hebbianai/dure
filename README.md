@@ -11,7 +11,7 @@
 An **Agent Development Environment (ADE)** for your AI coding agents.<br>
 Projects, conversations, terminals and code changes — together in one macOS workspace.
 
-**[Download for macOS](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [Website](https://www.dureai.dev/) &nbsp;·&nbsp; [Documentation](https://docs.dureai.dev/en/introduction)
+**[Download for macOS](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [Website](https://www.dureai.dev/) &nbsp;·&nbsp; [Documentation](https://docs.dureai.dev/en/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_)
 
 <sub>Apple Silicon · Bring your own coding-agent CLIs and accounts</sub>
 
@@ -126,6 +126,6 @@ Read the [contribution guide](CONTRIBUTING.md), follow our [Code of Conduct](COD
 
 **You lead. Your agents work together.**
 
-[Download Dure](https://www.dureai.dev/download/mac/) · [Read the docs](https://docs.dureai.dev/en/introduction) · [dureai.dev](https://www.dureai.dev/)
+[Download Dure](https://www.dureai.dev/download/mac/) · [Read the docs](https://docs.dureai.dev/en/introduction) · [dureai.dev](https://www.dureai.dev/) · [X](https://x.com/hebbianai_)
 
 </div>

@@ -11,7 +11,7 @@
 AI コーディングエージェントのための **Agent Development Environment（ADE）**。<br>
 プロジェクト、会話、ターミナル、コードの変更を、ひとつの macOS ワークスペースに。
 
-**[macOS 版をダウンロード](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [ウェブサイト](https://www.dureai.dev/) &nbsp;·&nbsp; [ドキュメント](https://docs.dureai.dev/jp/introduction)
+**[macOS 版をダウンロード](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [ウェブサイト](https://www.dureai.dev/) &nbsp;·&nbsp; [ドキュメント](https://docs.dureai.dev/jp/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_)
 
 <sub>Apple Silicon · 使い慣れたコーディングエージェント CLI とアカウントをそのまま</sub>
 
@@ -126,6 +126,6 @@ Dure は、その仕事をひとつの場所にまとめます。Claude Code の
 
 **あなたが導く。エージェントが共に働く。**
 
-[Dure をダウンロード](https://www.dureai.dev/download/mac/) · [ドキュメントを読む](https://docs.dureai.dev/jp/introduction) · [dureai.dev](https://www.dureai.dev/)
+[Dure をダウンロード](https://www.dureai.dev/download/mac/) · [ドキュメントを読む](https://docs.dureai.dev/jp/introduction) · [dureai.dev](https://www.dureai.dev/) · [X](https://x.com/hebbianai_)
 
 </div>
