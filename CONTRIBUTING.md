@@ -61,12 +61,16 @@ lychee --offline --include-fragments --no-progress '*.md' 'docs/readme/*.md' '.g
 The workflow pins its tool versions in
 [public-repository.yml](.github/workflows/public-repository.yml).
 
-`main` accepts changes through pull requests. Merging requires passing checks,
-an up-to-date branch, one approving review, code-owner approval where applicable,
-and resolved review conversations. New changes dismiss stale approvals; the
-latest push needs approval from someone other than its pusher. Administrators
-follow the same rules. Maintainers squash approved pull requests; force pushes
-and deletion of `main` are blocked.
+Contributors submit changes to `main` through pull requests. Merging requires
+passing checks, an up-to-date branch, one approving review, code-owner approval
+where applicable, and resolved review conversations. New changes dismiss stale
+approvals; the latest push needs approval from someone other than its pusher.
+Maintainers squash approved pull requests; the ruleset blocks force pushes and
+deletion of `main`.
+
+The repository administrator `komojini` has an explicit always-on bypass for this
+ruleset, including direct pushes and merges without the required review or checks.
+Other contributors and administrators remain subject to the rules above.
 
 Contributors remain responsible for everything they submit, including work
 prepared with AI tools. Check the diff, verify claims, and describe any testing
