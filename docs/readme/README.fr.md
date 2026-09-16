@@ -11,7 +11,7 @@
 Un **Agent Development Environment (ADE)** pour vos agents de programmation IA.<br>
 Projets, conversations, terminaux et modifications de code, réunis dans un espace de travail macOS.
 
-**[Télécharger pour macOS](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [Site web](https://www.dureai.dev/) &nbsp;·&nbsp; [Documentation (anglais)](https://docs.dureai.dev/en/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_)
+**[Télécharger pour macOS](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [Site web](https://www.dureai.dev/) &nbsp;·&nbsp; [Documentation (anglais)](https://docs.dureai.dev/en/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_) &nbsp;·&nbsp; [Discord](https://discord.gg/aTuRV6DXhb)
 
 <sub>Apple Silicon · Gardez vos outils de programmation en ligne de commande et vos comptes</sub>
 
@@ -128,6 +128,6 @@ Consultez le [guide de contribution](../../CONTRIBUTING.md) et le [code de condu
 
 **Vous donnez le cap. Vos agents travaillent ensemble.**
 
-[Télécharger Dure](https://www.dureai.dev/download/mac/) · [Lire la documentation](https://docs.dureai.dev/en/introduction) · [dureai.dev](https://www.dureai.dev/) · [X](https://x.com/hebbianai_)
+[Télécharger Dure](https://www.dureai.dev/download/mac/) · [Lire la documentation](https://docs.dureai.dev/en/introduction) · [dureai.dev](https://www.dureai.dev/) · [X](https://x.com/hebbianai_) · [Discord](https://discord.gg/aTuRV6DXhb)
 
 </div>

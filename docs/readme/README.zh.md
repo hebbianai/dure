@@ -11,7 +11,7 @@
 面向 AI 编程智能体的 **Agent Development Environment（ADE，智能体开发环境）**。<br>
 将项目、对话、终端和代码变更汇聚到一个 macOS 工作空间。
 
-**[下载 macOS 版](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [官网](https://www.dureai.dev/) &nbsp;·&nbsp; [文档](https://docs.dureai.dev/cn/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_)
+**[下载 macOS 版](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [官网](https://www.dureai.dev/) &nbsp;·&nbsp; [文档](https://docs.dureai.dev/cn/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_) &nbsp;·&nbsp; [Discord](https://discord.gg/aTuRV6DXhb)
 
 <sub>Apple Silicon · 沿用你的编程智能体 CLI 和账号</sub>
 
@@ -126,6 +126,6 @@ Dure 把这些工作集中到一处。让 Claude Code、Codex 和 Pi 并排运�
 
 **你来掌舵。智能体协同工作。**
 
-[下载 Dure](https://www.dureai.dev/download/mac/) · [阅读文档](https://docs.dureai.dev/cn/introduction) · [dureai.dev](https://www.dureai.dev/) · [X](https://x.com/hebbianai_)
+[下载 Dure](https://www.dureai.dev/download/mac/) · [阅读文档](https://docs.dureai.dev/cn/introduction) · [dureai.dev](https://www.dureai.dev/) · [X](https://x.com/hebbianai_) · [Discord](https://discord.gg/aTuRV6DXhb)
 
 </div>
