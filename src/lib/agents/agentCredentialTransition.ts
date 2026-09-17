@@ -1,6 +1,9 @@
 import { switchAgentRuntimeCredential } from "@/lib/agents/agentRuntimeTransitionAction";
 import { supportsStructuredChat } from "@/lib/agents/providers";
-import { DureAgentRuntimeSourceActiveError } from "@/lib/ipc/dureAgentRuntime";
+import {
+	DureAgentRuntimeSourceActiveError,
+	type DureAgentRuntimeTransitionResultV1,
+} from "@/lib/ipc/dureAgentRuntime";
 import {
 	requestManagedCredentialSwitch,
 	scheduleBusyAgentCredentialSwitch,
@@ -9,7 +12,11 @@ import { withManagedCredentialSwitchTransition } from "@/lib/sessions/managed/ma
 import { useStore } from "@/store";
 
 export type AgentCredentialTransitionResult =
-	| { kind: "completed"; conversationId: string | null }
+	| {
+			kind: "completed";
+			conversationId: string | null;
+			runtime?: DureAgentRuntimeTransitionResultV1;
+	  }
 	| { kind: "scheduled"; conversationId: string };
 
 /** Route credential changes to the runtime authority owning the Agent. */
@@ -59,6 +66,7 @@ export function requestAgentCredentialTransition({
 			return {
 				kind: "completed",
 				conversationId: result.providerConversationRef,
+				runtime: result,
 			};
 		}
 		if (agent.runtimeBinding?.runtime !== "hmux_managed_v1") {

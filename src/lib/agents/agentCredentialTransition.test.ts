@@ -77,6 +77,7 @@ describe("requestAgentCredentialTransition", () => {
 		).resolves.toEqual({
 			kind: "completed",
 			conversationId: "conversation-next",
+			runtime: { providerConversationRef: "conversation-next" },
 		});
 		expect(mocks.switchRuntime).toHaveBeenCalledWith(agent.id, "account-2");
 		expect(mocks.switchManaged).not.toHaveBeenCalled();
@@ -96,6 +97,7 @@ describe("requestAgentCredentialTransition", () => {
 		).resolves.toEqual({
 			kind: "completed",
 			conversationId: "conversation-next",
+			runtime: { providerConversationRef: "conversation-next" },
 		});
 		expect(mocks.switchRuntime).toHaveBeenCalledWith(agent.id, "account-2");
 	});
@@ -247,6 +249,7 @@ describe("requestAgentCredentialTransition", () => {
 		).resolves.toEqual({
 			kind: "completed",
 			conversationId: "conversation-next",
+			runtime: { providerConversationRef: "conversation-next" },
 		});
 		expect(mocks.switchRuntime).toHaveBeenCalledWith(agent.id, "account-2");
 		expect(mocks.switchManaged).not.toHaveBeenCalled();

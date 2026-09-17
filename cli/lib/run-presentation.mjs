@@ -257,7 +257,7 @@ function structuredRunPresentationRequestFromPlan(
   projected,
   { target, profile, projectPath },
 ) {
-  if (target?.state !== "requested") {
+  if (target?.state !== "requested" && target?.state !== "background") {
     fail("client_space_target_invalid", "A Space is required to open the pane.");
   }
   const { receipt, plan, request, binding, workspace } = projected;
@@ -281,7 +281,7 @@ function structuredRunPresentationRequestFromPlan(
     workspaceId: plan.workspaceId,
     worktree: workspace,
     permissionMode: request.permissionMode,
-    spaceId: target.spaceId,
+    ...(target.state === "background" ? { presentation: "background" } : { spaceId: target.spaceId }),
     windowLabel: target.windowLabel,
     ...(target.referencePanelId
       ? { referencePanelId: target.referencePanelId }
@@ -387,6 +387,12 @@ export async function presentAgentRunRuntime({
     body,
     fetchImpl,
   });
+  if (target.state === "background") {
+    if (payload?.agent?.agentId !== body.agentId || payload.agent.interactionSessionId !== body.interactionSessionId) {
+      fail("client_response_invalid", "The client did not register the requested conversation.");
+    }
+    return { schemaVersion: 1, apiVersion: API_VERSION, state: "background", client: publicAppControlIdentity(descriptor), agent: payload.agent };
+  }
   return {
     schemaVersion: 1,
     apiVersion: API_VERSION,

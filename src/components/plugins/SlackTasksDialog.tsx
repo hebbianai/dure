@@ -1,7 +1,6 @@
 import { ArrowLeft } from "lucide-react";
 import { useEffect, useState } from "react";
-import { StructuredAgentChatSurface } from "@/components/agents/chat/StructuredAgentChatSurface";
-import { useAgentChatSession } from "@/components/agents/chat/useAgentChatSession";
+import { SharedAgentConversation } from "@/components/agents/chat/SharedAgentConversation";
 import { LoadingRow } from "@/components/common/StatusBlocks";
 import { SlackServerSelect } from "@/components/plugins/SlackServerSelect";
 import { Alert } from "@/components/ui/alert";
@@ -68,7 +67,7 @@ export function SlackTasksDialog({
 		} catch (reason) {
 			setError(
 				reason instanceof Error &&
-					reason.message === "slack_task_server_mismatch"
+					reason.message === "shared_conversation_server_mismatch"
 					? t("plugins.slack.taskServerMismatch")
 					: slackConnectionError(reason),
 			);
@@ -102,7 +101,7 @@ export function SlackTasksDialog({
 							{t("common.back")}
 						</Button>
 						<div className="min-h-0 flex-1">
-							<SharedConversation
+							<SharedAgentConversation
 								key={`${selected.authority.revision}:${selected.agentId}`}
 								target={selected}
 							/>
@@ -154,17 +153,5 @@ export function SlackTasksDialog({
 				)}
 			</DialogContent>
 		</Dialog>
-	);
-}
-
-function SharedConversation({ target }: { target: SlackTaskConversation }) {
-	const session = useAgentChatSession(
-		target.agentId,
-		target.profile,
-		undefined,
-		target.authority,
-	);
-	return (
-		<StructuredAgentChatSurface session={session} attachmentsEnabled={false} />
 	);
 }

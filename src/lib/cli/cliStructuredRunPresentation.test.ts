@@ -35,7 +35,7 @@ describe("handleCliStructuredRunPresentation", () => {
 		const result = await handleCliStructuredRunPresentation(
 			{ ...request(), worktree },
 			"request-custom-checkout",
-			{ claim: async () => true, present },
+			{ claim: async () => true, present, presentBackground: vi.fn() },
 		);
 		expect(result).toEqual({ ok: true });
 		expect(present).toHaveBeenCalledWith(
@@ -61,7 +61,7 @@ describe("handleCliStructuredRunPresentation", () => {
 		const result = await handleCliStructuredRunPresentation(
 			request(),
 			"request-1",
-			{ claim, present },
+			{ claim, present, presentBackground: vi.fn() },
 		);
 
 		expect(claim).toHaveBeenCalledOnce();
@@ -93,7 +93,7 @@ describe("handleCliStructuredRunPresentation", () => {
 			handleCliStructuredRunPresentation(
 				{ ...request(), providerConversationRef },
 				"request-provider-conversation",
-				{ claim: async () => true, present },
+				{ claim: async () => true, present, presentBackground: vi.fn() },
 			),
 		).resolves.toEqual({ ok: true });
 		expect(present).toHaveBeenCalledWith(
@@ -109,7 +109,7 @@ describe("handleCliStructuredRunPresentation", () => {
 			const result = await handleCliStructuredRunPresentation(
 				{ ...request(), providerConversationRef },
 				"request-invalid-provider-conversation",
-				{ claim: async () => true, present },
+				{ claim: async () => true, present, presentBackground: vi.fn() },
 			);
 
 			expect(present).not.toHaveBeenCalled();
@@ -125,7 +125,7 @@ describe("handleCliStructuredRunPresentation", () => {
 		const result = await handleCliStructuredRunPresentation(
 			{ ...request(), interactionSessionId: "" },
 			"request-2",
-			{ claim: async () => true, present },
+			{ claim: async () => true, present, presentBackground: vi.fn() },
 		);
 
 		expect(present).not.toHaveBeenCalled();
@@ -140,7 +140,7 @@ describe("handleCliStructuredRunPresentation", () => {
 		const result = await handleCliStructuredRunPresentation(
 			{ ...request(), permissionMode: "auto_edit" },
 			"request-auto-edit",
-			{ claim: async () => true, present },
+			{ claim: async () => true, present, presentBackground: vi.fn() },
 		);
 
 		expect(result).toEqual({ ok: true });
@@ -159,7 +159,7 @@ describe("handleCliStructuredRunPresentation", () => {
 			const result = await handleCliStructuredRunPresentation(
 				invalid,
 				"request-invalid-identity",
-				{ claim: async () => true, present },
+				{ claim: async () => true, present, presentBackground: vi.fn() },
 			);
 
 			expect(present).not.toHaveBeenCalled();
@@ -182,7 +182,7 @@ describe("handleCliStructuredRunPresentation", () => {
 				projectPath: "/srv/repo",
 			},
 			"request-remote-1",
-			{ claim: async () => true, present },
+			{ claim: async () => true, present, presentBackground: vi.fn() },
 		);
 
 		expect(result).toEqual({ ok: true });
@@ -198,4 +198,27 @@ describe("handleCliStructuredRunPresentation", () => {
 			}),
 		);
 	});
+});
+
+it("projects a background Run without selecting or opening a Space", async () => {
+	const { spaceId: _space, ...background } = request();
+	const present = vi.fn();
+	const presentBackground = vi.fn(
+		async () => ({ id: "agent-1" }) as import("@/types").Agent,
+	);
+	const result = await handleCliStructuredRunPresentation(
+		{ ...background, presentation: "background" },
+		"background-run",
+		{
+			claim: async () => true,
+			present,
+			presentBackground,
+		},
+	);
+	expect(result).toMatchObject({
+		ok: true,
+		agent: { agentId: "agent-1", interactionSessionId: "interaction-1" },
+	});
+	expect(present).not.toHaveBeenCalled();
+	expect(presentBackground).toHaveBeenCalledOnce();
 });

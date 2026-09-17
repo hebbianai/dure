@@ -16,11 +16,11 @@ export function useInterfaceMode(): InterfaceMode {
 }
 
 const NO_FOLDED_TABS: ReadonlySet<string> = new Set();
-const BASIC_FOLDED_TABS: ReadonlySet<string> = new Set(["automations"]);
+const BASIC_FOLDED_TABS: ReadonlySet<string> = new Set(["automations", "tag"]);
 
 /** One resolver feeds rail visibility and effective selection. SSH, Sessions,
  * Source control, and Plugins stay reachable in every mode, including before
- * setup or while the plugin catalog is loading. Automations is Pro-only. */
+ * setup or while the plugin catalog is loading. Automations and Dure Tag are Pro-only. */
 export function useBasicFoldedRailTabs(): ReadonlySet<string> {
 	const mode = useInterfaceMode();
 	return mode === "pro" ? NO_FOLDED_TABS : BASIC_FOLDED_TABS;

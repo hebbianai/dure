@@ -412,6 +412,7 @@ test("Slack uses the real spawn client and keeps the task when its Dure view fai
   assert.equal(agentId, receipt.plan.agentId);
   assert.deepEqual(requests.map((request) => request.operation), ["agent_spawn.preview", "agent_spawn.apply"]);
   assert.match(requests[0].body.worktree.branch, /^slack\//);
+  assert.equal(receipt.plan.launch.interactionProfile, "structured_protocol");
   assert.equal(requests[1].body.prompt, slackInput(message, { initial: true }));
   assert.ok(requests.every((request) => request.requiredCapabilities.includes("plugin.slack")));
   assert.equal(presentations[0].report.receipt.plan.agentId, agentId);
@@ -449,6 +450,7 @@ test("one Slack bot routes two channels to their saved servers across a default 
       assert.ok(Object.values(saved.threads).some((thread) => thread.backend?.scopeId === request.scopeId));
       result = { receipt };
     } else if (request.operation === "agent_spawn.apply") result = { receipt: receipts.get(profile.id) };
+    else if (request.operation === "agent_runtime.projection.inspect") result = { state: "stable", receipt: { agentId: request.body.agentId, authority: { interactionProfile: "structured_protocol" } } };
     else if (request.operation === "agent_conversation.inspect") result = { binding };
     else if (request.operation === "agent_conversation.read") result = { read: { type: "page", page: {
       binding, activeTurn: { turnId: "running" }, rows: [{ item: { itemId: "reply", body: {
@@ -552,3 +554,72 @@ for (const blockedOperation of ["deliver", "read"]) {
     assert.deepEqual(f.calls.inputs.filter(({ thread }) => thread.threadTs === "100.001").map(({ intent }) => intent.input.split("\n").at(-1)), ["First", "Second"]);
   });
 }
+
+test("a thread follows chat-to-terminal selection and does not replay uncertain PTY input after restart", async (t) => {
+  const f = await fixture(t);
+  f.bridge.accept(payload());
+  await f.bridge.tick();
+  let native = false;
+  let completed = "0";
+  const requests = [];
+  const backend = new DureSlackBackend(async () => ({ profile: { id: "local", expected: { backendId: "backend-1" } } }), {
+    requestBackend: async (_profile, request) => {
+      requests.push(request);
+      if (request.operation === "agent_runtime.projection.inspect") return { result: { state: "stable", receipt: {
+        agentId: "agent-1", selectionRevision: 3, authority: { interactionProfile: native ? "native_cli" : "structured_protocol",
+          authority: { binding: { agentId: "agent-1" }, terminalEpoch: "terminal-1" } },
+      } } };
+      if (request.operation === "agent_conversation.read") return { result: { read: { type: "page", page: {
+        binding, activeTurn: null, rows: [], finalCursor: { epoch: "epoch-1", sequence: 0 },
+      } } } };
+      if (request.operation === "agent_runtime.native.read") return { result: { schemaVersion: 1,
+        cursor: { terminalEpoch: "terminal-1", turnCompletedCount: completed, conversationId: "provider-1" },
+        waiting: true, finalResponse: completed === "1" ? "Native answer" : null,
+      } };
+      if (request.operation === "agent_runtime.native.input") {
+        assert.equal(Object.values(f.journal.data.inbox).at(-1).state, "sending");
+        assert.equal(request.body.expectedSelectionRevision, 3);
+        assert.equal(request.body.expectedTerminalEpoch, "terminal-1");
+        throw new Error("Response lost after possible PTY write");
+      }
+      throw new Error(request.operation);
+    },
+  });
+  const thread = Object.values(f.journal.data.threads)[0];
+  thread.backend.scopeId = "scope-1";
+  const bridge = new SlackBridge({ config, botUserId: "U0", journal: f.journal, backend, slack: f.slack });
+  await bridge.tick((error) => { throw error; });
+  native = true;
+  bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "104.001", text: "Continue" }));
+  await bridge.tick();
+  assert.equal(requests.filter(({ operation }) => operation === "agent_conversation.start_turn").length, 0);
+  assert.equal(requests.filter(({ operation }) => operation === "agent_runtime.native.input").length, 1);
+  // A connector dying during the write would retain "sending", not "failed".
+  Object.values(f.journal.data.inbox).at(-1).state = "sending";
+  f.journal.save();
+  f.journal.close();
+  const journal = new SlackJournal(f.file, config);
+  await journal.acquire();
+  try {
+    completed = "1";
+    const resumed = new SlackBridge({ config, botUserId: "U0", journal, backend, slack: f.slack });
+    await resumed.tick((error) => { throw error; });
+    await resumed.tick((error) => { throw error; });
+    assert.equal(requests.filter(({ operation }) => operation === "agent_runtime.native.input").length, 1);
+    assert.equal(f.calls.writes.filter(({ text }) => text === "Native answer").length, 1);
+    assert.equal(journal.data.threads[Object.keys(journal.data.threads)[0]].interactionSessionId, "interaction-1");
+  } finally { journal.close(); }
+});
+
+test("agent Markdown uses Slack's Markdown block for tables, bold text, links and code", async () => {
+  const requests = [];
+  const slack = new SlackApi({ appToken: "fixture-app", botToken: "fixture-bot", fetchApi: async (_url, request) => {
+    requests.push(JSON.parse(request.body));
+    return { ok: true, json: async () => ({ ok: true, ts: "200.1" }) };
+  } });
+  const text = "**SEO review**\n\n| Area | Result |\n| --- | --- |\n| Content | Improve |\n\n[Website](https://www.dureai.dev/) and `lang=cn`, `<div>` and `a & b`.";
+  await slack.write({ channelId: "C1", threadTs: "100.1" }, text, "markdown-1");
+  assert.deepEqual(requests[0].blocks, [{ type: "markdown", text }]);
+  assert.equal(requests[0].thread_ts, "100.1");
+  assert.equal(requests[0].metadata.event_payload.key, "markdown-1");
+});

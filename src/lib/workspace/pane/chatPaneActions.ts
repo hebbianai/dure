@@ -43,6 +43,11 @@ export interface ChatPaneSessionFacts {
 
 export interface ChatPaneHandlers {
 	readonly interrupt: () => Promise<void>;
+	/** The GUI's awaited recovery for one retained failure, never inferred text. */
+	readonly resendLastMessage?: {
+		readonly failureId: string;
+		readonly run: () => Promise<void>;
+	};
 	/** Present only when the usage-limit handoff policy has a target: the
 	 * pane-scoped switch to that account (Settings opt-in already checked). */
 	readonly handoff?: () => Promise<void>;
@@ -86,9 +91,9 @@ export function chatPaneActionEntry(
 	const status = chatPaneStatus(session);
 	const interruptOffered =
 		status === "turn_active" && !session.interrupting && !session.locked;
-	// Account moves restart the provider; only an idle, unlocked pane offers
-	// them — the same gate the toolbar switcher uses.
-	const accountMovesOffered =
+	// Explicit resends and account moves require the same idle, unlocked pane
+	// that the composer and toolbar expose.
+	const idleActionsOffered =
 		status === "idle" && !session.locked && !session.accountMovesLocked;
 	const error =
 		session.error ??
@@ -106,10 +111,13 @@ export function chatPaneActionEntry(
 		context: chatPaneContext(identity),
 		actions: {
 			...(interruptOffered ? { interrupt: handlers.interrupt } : {}),
-			...(accountMovesOffered && handlers.handoff
+			...(idleActionsOffered && handlers.resendLastMessage
+				? { resend_last_message: handlers.resendLastMessage.run }
+				: {}),
+			...(idleActionsOffered && handlers.handoff
 				? { handoff: handlers.handoff }
 				: {}),
-			...(accountMovesOffered
+			...(idleActionsOffered
 				? Object.fromEntries(
 						Object.entries(handlers.switchAccount ?? {}).map(([id, run]) => [
 							`switch_account:${id}`,

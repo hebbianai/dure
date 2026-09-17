@@ -129,7 +129,17 @@ it("surfaces a moved server without reading its conversation or trying the local
 	const { invoke } = shared.client("my-team");
 	shared.replace();
 	await expect(openSlackTask(task, "my-team", invoke)).rejects.toThrow(
-		"slack_task_server_mismatch",
+		"shared_conversation_server_mismatch",
 	);
 	expect(shared.operations).toEqual(["backend.scope:"]);
+});
+
+it("resolves the current session after an account handoff instead of rejecting the historical link", async () => {
+	const shared = server();
+	const { invoke } = shared.client("my-team");
+	const historical = { ...task, interactionSessionId: "historical-session" };
+	const target = await openSlackTask(historical, "my-team", invoke);
+	expect(target.profile.interactionSessionId).toBe(
+		binding.interactionSessionId,
+	);
 });

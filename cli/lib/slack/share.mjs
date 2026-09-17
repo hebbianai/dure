@@ -67,9 +67,14 @@ export class SlackShares {
     if (interrupted) return this.resume(interrupted);
     const thread = { teamId: request.teamId, channelId: request.channelId, agentId: request.agentId, backend, route };
     const page = await this.backend.tail(thread);
-    requireConversation(request, page.binding.interactionSessionId);
-    thread.interactionSessionId = page.binding.interactionSessionId;
-    thread.cursor = page.finalCursor;
+    if (page.native) {
+      requireConversation(request, undefined);
+      thread.nativeCursor = page.native.cursor;
+    } else {
+      requireConversation(request, page.binding.interactionSessionId);
+      thread.interactionSessionId = page.binding.interactionSessionId;
+      thread.cursor = page.finalCursor;
+    }
     thread.goalRevision = page.goal?.revision ?? 0;
     const entry = { key, fingerprint, request, thread, state: "posting" };
     this.journal.data.shares[key] = entry;

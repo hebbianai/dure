@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { chatPaneActionEntry } from "./chatPaneActions";
+import { invokePaneAction, registerPaneActions } from "./paneActionRegistry";
 
 const identity = {
 	paneId: "agent:agent-1",
@@ -18,6 +19,63 @@ const idle = {
 };
 
 describe("chatPaneActionEntry", () => {
+	it("offers and awaits the exact failed-message handler without copying its input", async () => {
+		let finish!: () => void;
+		const run = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+		const entry = chatPaneActionEntry(identity, idle, {
+			interrupt: vi.fn(),
+			resendLastMessage: { failureId: "failed-message-1", run },
+		});
+		expect(entry.actions.resend_last_message).toBe(run);
+		const remove = registerPaneActions({ ...entry, owner: {} });
+		try {
+			let settled = false;
+			const request = invokePaneAction(identity.paneId, "resend_last_message").then((result) => {
+				settled = true;
+				return result;
+			});
+			await Promise.resolve();
+			expect(run).toHaveBeenCalledExactlyOnceWith();
+			expect(settled).toBe(false);
+			finish();
+			expect(await request).toEqual({ ok: true, paneId: identity.paneId, action: "resend_last_message" });
+		} finally { remove(); }
+	});
+
+	it("does not offer resend during a turn, mutation, connection recovery or pane lock", () => {
+		const handlers = { interrupt: vi.fn(), resendLastMessage: { failureId: "failed-1", run: vi.fn() } };
+		for (const patch of [
+			{ activeTurn: { turnId: "active" } },
+			{ accountMovesLocked: true },
+			{ locked: true },
+			{ reconnecting: true },
+			{ phase: "connecting" as const },
+			{ phase: "error" as const },
+			{ phase: "detached" as const },
+		]) {
+			expect(chatPaneActionEntry(identity, { ...idle, ...patch }, handlers).actions)
+				.not.toHaveProperty("resend_last_message");
+		}
+		expect(chatPaneActionEntry(identity, idle, { interrupt: vi.fn() }).actions)
+			.not.toHaveProperty("resend_last_message");
+		expect(handlers.resendLastMessage.run).not.toHaveBeenCalled();
+	});
+
+	it("reports a resend failure without retrying or claiming successful submission", async () => {
+		const run = vi.fn(async () => { throw new Error("agent_chat_turn_already_pending"); });
+		const remove = registerPaneActions({
+			...chatPaneActionEntry(identity, idle, {
+				interrupt: vi.fn(), resendLastMessage: { failureId: "failed-1", run },
+			}), owner: {},
+		});
+		try {
+			expect(await invokePaneAction(identity.paneId, "resend_last_message")).toMatchObject({
+				ok: false, error: { code: "pane_action_failed", message: "agent_chat_turn_already_pending" },
+			});
+			expect(run).toHaveBeenCalledOnce();
+		} finally { remove(); }
+	});
+
 	it("projects an idle ready session with no actions and the copy-details context", () => {
 		const entry = chatPaneActionEntry(identity, idle, { interrupt: vi.fn() });
 		expect(entry).toEqual({

@@ -41,6 +41,9 @@ async function connector(t, { stalledShare = false } = {}) {
   const posts = [];
   const events = [];
   const call = vi.spyOn(DureSlackBackend.prototype, "call").mockImplementation(async (thread, operation, body) => {
+    if (operation === "agent_runtime.projection.inspect") return { state: "stable", receipt: {
+      agentId: thread.agentId, authority: { interactionProfile: "structured_protocol" },
+    } };
     if (operation !== "agent_conversation.read") {
       deliveries.push({ thread, operation, body });
       return { receipt: { state: "accepted" } };

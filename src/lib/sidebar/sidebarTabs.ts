@@ -1,5 +1,6 @@
 const SIDEBAR_TABS = [
   "spaces",
+  "tag",
   "recovery",
   "files",
   "search",

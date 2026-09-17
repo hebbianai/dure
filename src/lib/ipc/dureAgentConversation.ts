@@ -125,7 +125,7 @@ export interface DureAgentConversationClient {
 	startTurn(
 		request: AgentConversationStartTurnV1,
 		routeAuthority: DureBackendRouteAuthorityV1,
-	): Promise<void>;
+	): Promise<"prepared" | "accepted" | "failed" | "uncertain">;
 	/** Delivers one user message into the RUNNING turn; the provider applies
 	 * it at its next tool boundary. Rejects when the provider has no
 	 * mid-turn channel — callers fall back to queueing. */
@@ -578,6 +578,7 @@ export function createDureAgentConversationClient(options?: {
 			) {
 				throw contractError("agent_conversation_receipt_invalid");
 			}
+			return receipt.state as "prepared" | "accepted" | "failed" | "uncertain";
 		},
 
 		async steerTurn(turn, routeAuthority) {

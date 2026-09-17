@@ -3,6 +3,7 @@ import { DesktopBar } from "@/components/workspace/DesktopBar";
 import { LazyNativeSearchDialog } from "@/components/search/LazyNativeSearchDialog";
 import { LazyQuickDispatchOverlay } from "@/components/agents/quickDispatch/LazyQuickDispatchOverlay";
 import { LazyFeedbackDialog } from "@/components/feedback/LazyFeedbackDialog";
+import { AgentUsageLimitHandoffHost } from "@/components/agents/chat/AgentUsageLimitHandoffHost";
 import { AgentRemovalDialogHost } from "@/components/agents/AgentRemovalDialogHost";
 import { SshRegistrationDialog } from "@/components/ssh/SshRegistrationDialog";
 import { Sidebar } from "@/components/sidebar/Sidebar";
@@ -428,6 +429,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      {isMainWindow() && <AgentUsageLimitHandoffHost />}
       <AgentRemovalDialogHost />
       <SshRegistrationDialog />
       <LazyNativeSearchDialog />

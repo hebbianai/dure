@@ -298,14 +298,6 @@ export function SlackConnectionEditor({
 											}
 										/>
 									</FormField>
-									<FormField label={t("plugins.slack.space")}>
-										<Input
-											value={route.space ?? ""}
-											onChange={(event) =>
-												changeRoute(index, { space: event.target.value })
-											}
-										/>
-									</FormField>
 								</div>
 							</details>
 						</div>

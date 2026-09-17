@@ -6,6 +6,9 @@ pub(super) async fn dispatch(
     request: &BackendRequest,
 ) -> Result<serde_json::Value, BackendDispatchError> {
     match request.operation.as_str() {
+        "agent_runtime.native.read" | "agent_runtime.native.input" => {
+            agent_runtime_native_io::dispatch(state, request).await
+        }
         "agent_runtime.idle.inspect" => {
             if request.body != json!({"schemaVersion": 1}) {
                 return Err("runtime_idle_inspect_request_invalid".into());

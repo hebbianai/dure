@@ -18,6 +18,9 @@ import { SIDEBAR_RAIL_WIDTH } from "@/lib/sidebar/windowSidebarState";
 import { useEffectiveSidebarTab } from "@/components/workspace/useInterfaceMode";
 import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 
+const LazyDureTagPane = lazy(() =>
+  import("@/components/tag/DureTagPane").then((module) => ({ default: module.DureTagPane })),
+);
 const LazySessionsPane = lazy(() =>
   import("@/components/sessions/SessionsPane").then((module) => ({
     default: module.SessionsPane,
@@ -211,6 +214,7 @@ export function Sidebar({ fullscreen = false }: { fullscreen?: boolean } = {}) {
       />
       <Suspense fallback={<SidebarSurfaceFallback />}>
         {sidebarOpen && sidebarTab === "spaces" && <SpacesPane />}
+        {sidebarOpen && sidebarTab === "tag" && <LazyDureTagPane />}
         {/* tab id "recovery"는 영속 상태라 유지한다 — 패널만 “세션”으로 승격
             (복구 가능 + 외부 세션 + 최근 세션, 2026-08-01). */}
         {sidebarOpen && sidebarTab === "recovery" && <LazySessionsPane />}

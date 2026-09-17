@@ -105,7 +105,7 @@ export interface ChatTurnFailureRecovery {
 	readonly handedOff?: {
 		readonly fromName?: string;
 		readonly toName: string;
-		readonly resend?: () => void;
+		readonly resend?: () => void | Promise<void>;
 	};
 }
 
@@ -368,7 +368,11 @@ export function ChatComposer({
 									type="button"
 									size="xs"
 									variant="outline"
-									onClick={handedOff.resend}
+									onClick={() => {
+										// The session owns the visible error and any uncertain
+										// request; this button never creates a retry itself.
+										void Promise.resolve(handedOff.resend?.()).catch(() => {});
+									}}
 								>
 									{t("agents.chat.recovery.resend")}
 								</Button>

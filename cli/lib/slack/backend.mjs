@@ -1,5 +1,6 @@
 import { collectAgentRun, defaultAgentRunName } from "../agent-run.mjs";
 import { performBackendProfileRequest } from "../backend-transport.mjs";
+import { nativeSlackPage, nativeSlackTarget } from "./native.mjs";
 import { slackInput } from "./event.mjs";
 
 export class DureSlackBackend {
@@ -83,7 +84,15 @@ export class DureSlackBackend {
     return report.receipt.plan.agentId;
   }
 
+  async native(thread) {
+    const snapshot = await this.call(thread, "agent_runtime.projection.inspect", { schemaVersion: 1, agentId: thread.agentId });
+    return nativeSlackTarget(snapshot, thread.agentId);
+  }
+
   async tail(thread) {
+    const native = await this.native(thread);
+    if (native) return nativeSlackPage(await this.call(thread, "agent_runtime.native.read", native), native);
+
     const { binding } = await this.call(thread, "agent_conversation.inspect", { schemaVersion: 1, agentId: thread.agentId });
     if (!binding) throw new Error("The Slack task does not have a conversation binding yet.");
     const { read } = await this.call(thread, "agent_conversation.read", {
@@ -94,6 +103,12 @@ export class DureSlackBackend {
   }
 
   async read(thread) {
+    const native = await this.native(thread);
+    if (native) {
+      const snapshot = await this.call(thread, "agent_runtime.native.read", { ...native, after: thread.nativeCursor ?? null });
+      return nativeSlackPage(snapshot, native, thread.nativeCursor);
+    }
+
     let interactionSessionId = thread.interactionSessionId;
     let cursor = thread.cursor;
     if (!interactionSessionId) {
@@ -111,6 +126,13 @@ export class DureSlackBackend {
 
   async deliver(thread, intent, operation) {
     const { receipt } = await this.call(thread, operation, intent);
+    if (operation === "agent_runtime.native.input") {
+      if (receipt?.terminalEpoch !== intent.expectedTerminalEpoch ||
+          receipt.state !== "written_to_pty") {
+        throw Object.assign(new Error("Dure could not confirm terminal input delivery."), { code: "slack_task_input_failed" });
+      }
+      return;
+    }
     const expected = operation === "agent_conversation.answer_pending" ? "succeeded" : "accepted";
     if (receipt?.state !== expected) {
       throw Object.assign(new Error(`Dure has not confirmed message delivery (${receipt?.state ?? "unavailable"}).`), { code: "slack_task_input_failed" });

@@ -3661,15 +3661,9 @@ async function main() {
     try {
       await runSlackCommand(cmd === "help" ? ["--help"] : rest, {
         resolveBackend: backendProfileQueryContext,
-        presentRun: async ({ message, ...run }) => {
-          const { presentAgentRunRuntime, resolveRunPresentationTarget } = await import("./lib/run-presentation.mjs");
-          const { loadSessionClientProjection } = await import("./lib/session-query.mjs");
-          const target = resolveRunPresentationTarget({
-            spaceSelector: message.route.space,
-            environment: process.env,
-            registry: loadSessionClientProjection({ registryPath: REG, clientId: sessionQueryClientId() }),
-          });
-          return presentAgentRunRuntime({ ...run, target, descriptor: loadServer() });
+        presentRun: async ({ message: _message, ...run }) => {
+          const { presentAgentRunRuntime } = await import("./lib/run-presentation.mjs");
+          return presentAgentRunRuntime({ ...run, target: { state: "background", windowLabel: "main" }, descriptor: loadServer() });
         },
       });
     } catch {

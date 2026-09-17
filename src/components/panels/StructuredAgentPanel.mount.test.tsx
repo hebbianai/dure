@@ -12,6 +12,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentPanelDockProps } from "@/components/panels/agentPanelContract";
 import { StructuredAgentPanel as StructuredAgentPanelImpl } from "@/components/panels/StructuredAgentPanel";
+import * as usageResume from "@/lib/agents/chat/resumeUsageLimitTurn";
 import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredentialTransition";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import { dispatchCliPaneActionRequest } from "@/lib/cli/cliPaneActions";
@@ -701,6 +702,7 @@ describe("StructuredAgentPanel usage-limit handoff", () => {
 
 	beforeEach(() => {
 		mocks.autoSwitch = true;
+		mocks.chatSend.mockReset().mockResolvedValue(undefined);
 		mocks.accounts = [
 			{ id: "acc-a", provider: "codex", name: "personal", dir: "/accounts/codex-personal" },
 			{ id: "acc-b", provider: "codex", name: "work", dir: "/accounts/codex-work" },
@@ -735,8 +737,8 @@ describe("StructuredAgentPanel usage-limit handoff", () => {
 
 	afterEach(cleanup);
 
-	function renderPinned(switchCredential: ReturnType<typeof switchCredentialMock>, id = "agent-handoff") {
-		return render(
+	function pinnedPanel(switchCredential: ReturnType<typeof switchCredentialMock>, id = "agent-handoff") {
+		return (
 			<StructuredAgentPanel
 				agent={{ ...pinnedAgent, id }}
 				profile={profile}
@@ -745,9 +747,96 @@ describe("StructuredAgentPanel usage-limit handoff", () => {
 				onRuntimeInvalidated={vi.fn()}
 				switchCredential={switchCredential}
 				switchToNativeTerminal={vi.fn()}
-			/>,
+			/>
 		);
 	}
+
+	function renderPinned(switchCredential: ReturnType<typeof switchCredentialMock>, id = "agent-handoff") {
+		return render(pinnedPanel(switchCredential, id));
+	}
+
+	function resendFromSurface() {
+		return (mocks.chatProps?.recovery as
+			| { handedOff?: { resend?: () => Promise<void> } }
+			| undefined)?.handedOff?.resend;
+	}
+
+	it.each(["accepted", "uncertain"] as const)("does not offer GUI or CLI resend during or after automatic %s delivery", async (outcome) => {
+		const id = `automatic-resume-${outcome}`;
+		let finish!: (state: usageResume.UsageLimitResumeResult) => void;
+		const resume = vi.spyOn(usageResume, "resumeUsageLimitTurn").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+		try {
+			const transition = switchCredentialMock();
+			const view = renderPinned(transition, id);
+			await waitFor(() => expect(resume).toHaveBeenCalledOnce());
+			expect(paneActionSnapshot(`agent:${id}`)?.actions).not.toContain("resend_last_message");
+			expect(resendFromSurface()).toBeUndefined();
+			await act(async () => finish(outcome));
+			view.rerender(pinnedPanel(transition, id));
+			expect(paneActionSnapshot(`agent:${id}`)?.actions).not.toContain("resend_last_message");
+			expect(resendFromSurface()).toBeUndefined();
+			expect(mocks.chatSend).not.toHaveBeenCalled();
+		} finally {
+			resume.mockRestore();
+		}
+	});
+
+	it.each(["gui", "cli"])("awaits the retained failed message through the shared resend handler (%s)", async (surface) => {
+		const id = `resend-awaited-${surface}`;
+		renderPinned(switchCredentialMock(), id);
+		await waitFor(() => expect(paneActionSnapshot(`agent:${id}`)?.actions).toContain("resend_last_message"));
+		let finish!: () => void;
+		mocks.chatSend.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+		let settled = false;
+		const request = surface === "gui"
+			? resendFromSurface()?.()
+			: invokePaneAction(`agent:${id}`, "resend_last_message");
+		expect(request).toBeInstanceOf(Promise);
+		const observed = request?.then(() => { settled = true; });
+		expect(mocks.chatSend).toHaveBeenCalledExactlyOnceWith("finish the report");
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		finish();
+		await observed;
+		expect(settled).toBe(true);
+	});
+
+	it.each(["gui", "cli"])("propagates a refused resend without a fresh submission (%s)", async (surface) => {
+		const id = `resend-refused-${surface}`;
+		renderPinned(switchCredentialMock(), id);
+		await waitFor(() => expect(paneActionSnapshot(`agent:${id}`)?.actions).toContain("resend_last_message"));
+		mocks.chatSend.mockRejectedValue(new Error("agent_chat_turn_already_pending"));
+		if (surface === "gui") {
+			await expect(resendFromSurface()?.()).rejects.toThrow("agent_chat_turn_already_pending");
+		} else {
+			await expect(invokePaneAction(`agent:${id}`, "resend_last_message")).resolves.toMatchObject({
+				ok: false, error: { code: "pane_action_failed", message: "agent_chat_turn_already_pending" },
+			});
+		}
+		expect(mocks.chatSend).toHaveBeenCalledExactlyOnceWith("finish the report");
+	});
+
+	it.each([
+		["sending", { sending: true }],
+		["uncertain submission", { retryTurnAvailable: true }],
+		["reconnecting", { reconnecting: true }],
+		["not ready", { phase: "connecting" }],
+		["active turn", { activeTurn: { turnId: "next-turn" } }],
+		["missing retained input", { page: { rows: failedTurnPage.rows.filter((row) => row.item.body.type !== "message") } }],
+		["newer user input", { page: { rows: [...failedTurnPage.rows, failedTurnPage.rows[1]] } }],
+	])("removes GUI and CLI resend together when %s", async (label, patch) => {
+		const id = `resend-eligibility-${label}`;
+		const switchCredential = switchCredentialMock();
+		const view = renderPinned(switchCredential, id);
+		await waitFor(() => expect(paneActionSnapshot(`agent:${id}`)?.actions).toContain("resend_last_message"));
+		expect(resendFromSurface()).toEqual(expect.any(Function));
+		const snapshots = mocks.chatHook.mock.results;
+		mocks.chatHook.mockReturnValue({ ...snapshots[snapshots.length - 1]?.value, ...patch });
+		view.rerender(pinnedPanel(switchCredential, id));
+		expect(paneActionSnapshot(`agent:${id}`)?.actions).not.toContain("resend_last_message");
+		expect(resendFromSurface()).toBeUndefined();
+		expect(mocks.chatSend).not.toHaveBeenCalled();
+	});
 
 	it("hands the pane off once to the account with the lowest fresh usage", async () => {
 		const switchCredential = switchCredentialMock();
@@ -775,6 +864,7 @@ describe("StructuredAgentPanel usage-limit handoff", () => {
 			expect(paneActionSnapshot("agent:agent-handoff")?.error).toBeUndefined(),
 		);
 		expect(paneActionSnapshot("agent:agent-handoff")?.actions).toEqual([
+			"resend_last_message",
 			"switch_account:acc-b",
 			"switch_account:default",
 			"switch_runtime:terminal",
@@ -841,7 +931,7 @@ describe("StructuredAgentPanel usage-limit handoff", () => {
 		expect(switchCredential).toHaveBeenCalledWith("agent-optout", "acc-b");
 	});
 
-	it("never guesses from stale usage: no handoff, typed refusal, manual switch still offered", async () => {
+	it("continues through the registered alternative when usage readings are missing", async () => {
 		mocks.usageRecent.mockResolvedValue({
 			claude: {},
 			codex: {},
@@ -852,16 +942,12 @@ describe("StructuredAgentPanel usage-limit handoff", () => {
 		const switchCredential = switchCredentialMock();
 		renderPinned(switchCredential, "agent-stale");
 		await waitFor(() =>
-			expect(paneActionSnapshot("agent:agent-stale")?.error).toBe(
-				"turn_failed:usage_limit; handoff_refused:usage_unknown",
-			),
+			expect(switchCredential).toHaveBeenCalledExactlyOnceWith("agent-stale", "acc-b"),
 		);
-		expect(switchCredential).not.toHaveBeenCalled();
-		expect(paneActionSnapshot("agent:agent-stale")?.actions).toEqual([
-			"switch_account:acc-b",
-			"switch_account:default",
-			"switch_runtime:terminal",
-		]);
+		await waitFor(() =>
+			expect(paneActionSnapshot("agent:agent-stale")?.error).toBeUndefined(),
+		);
+		expect(paneActionSnapshot("agent:agent-stale")?.actions).toContain("resend_last_message");
 	});
 });
 

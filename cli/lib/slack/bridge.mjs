@@ -37,7 +37,7 @@ export class SlackBridge {
 
   async conversation(thread) {
     const page = await this.backend.read(thread);
-    if (!thread.interactionSessionId) {
+    if (!page.native && !thread.interactionSessionId) {
       thread.interactionSessionId = page.binding.interactionSessionId;
       thread.cursor ??= { epoch: page.binding.timelineEpoch, sequence: 0 };
       this.journal.save();
@@ -60,14 +60,25 @@ export class SlackBridge {
     }
     if (!entry.intent) {
       const page = await this.conversation(thread);
-      entry.operation = page.activeTurn ? "agent_conversation.steer_turn" : "agent_conversation.start_turn";
-      entry.intent = {
-        schemaVersion: 1, interactionSessionId: page.binding.interactionSessionId,
-        runtime: page.binding.runtime, turnId: page.activeTurn?.turnId ?? `slack-${message.key}`,
-        clientMessageId: `slack-${message.key}`, input: slackInput(message), requestedAtMs: message.receivedAtMs,
-      };
+      if (page.native) {
+        entry.operation = "agent_runtime.native.input";
+        entry.intent = { ...page.native.target, text: slackInput(message) };
+      } else {
+        entry.operation = page.activeTurn ? "agent_conversation.steer_turn" : "agent_conversation.start_turn";
+        entry.intent = {
+          schemaVersion: 1, interactionSessionId: page.binding.interactionSessionId,
+          runtime: page.binding.runtime, turnId: page.activeTurn?.turnId ?? `slack-${message.key}`,
+          clientMessageId: `slack-${message.key}`, input: slackInput(message), requestedAtMs: message.receivedAtMs,
+        };
+      }
       // A retry replays the exact intent even if the runtime or active turn
       // changed in the meantime. The conversation authority decides its fate.
+      this.journal.save();
+    }
+    if (entry.operation === "agent_runtime.native.input") {
+      // PTY writes have no replay contract. Persist uncertainty before writing;
+      // reconnect may report this delivery but must never send it again.
+      entry.state = "sending";
       this.journal.save();
     }
     await this.backend.deliver(thread, entry.intent, entry.operation);
@@ -169,7 +180,7 @@ export class SlackBridge {
     // Failed input is already a durable result. Project it with the same
     // outbound journal so reconnect cannot retry the request or its notice.
     for (const { state, message } of entries) {
-      if (state !== "failed" || message.pendingKey) continue;
+      if (!["failed", "sending"].includes(state) || message.pendingKey) continue;
       try {
         await this.send(thread, slackKey(message.key, "delivery_failed"),
           "Dure could not confirm this request was applied. It has not been retried automatically.");
@@ -178,10 +189,12 @@ export class SlackBridge {
     if (!thread.agentId) return;
     try {
       const page = await this.conversation(thread);
-      await this.pending.sync(thread, page);
+      if (!page.native) await this.pending.sync(thread, page);
       for (const row of page.rows) await this.publish(thread, row.item);
       await this.publishGoal(thread, page.goal);
-      thread.cursor = page.finalCursor;
+      if (page.native) {
+        if (page.native.publishable) thread.nativeCursor = page.native.cursor;
+      } else thread.cursor = page.finalCursor;
       this.journal.save();
     } catch (error) { onError(error); }
   }

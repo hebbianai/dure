@@ -3,7 +3,7 @@
   "id": "dure.slack",
   "publisher": "dure",
   "version": "0.1.0",
-  "display_name": "Slack",
+  "display_name": "Dure Tag",
   "description": "plugins.slack.description",
   "host_api": {
     "min_inclusive": 1,

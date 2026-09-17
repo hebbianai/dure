@@ -73,7 +73,7 @@ function client(initial: AgentTimelineReadV1 = read()) {
 				close,
 			};
 		}),
-		startTurn: vi.fn(async () => {}),
+		startTurn: vi.fn(async () => "accepted" as const),
 		steerTurn: vi.fn(async () => {}),
 		answerPending: vi.fn(async () => {}),
 		interruptTurn: vi.fn(async () => {}),
@@ -1011,7 +1011,7 @@ describe("AgentChatSessionController", () => {
 		const fixture = client();
 		vi.mocked(fixture.transport.startTurn)
 			.mockRejectedValueOnce(new Error("response lost"))
-			.mockResolvedValueOnce();
+			.mockResolvedValueOnce("accepted");
 		let nextId = 0;
 		const controller = new AgentChatSessionController({
 			agentId: "agent-1",
@@ -1060,7 +1060,7 @@ describe("AgentChatSessionController", () => {
 			async (_request, routeAuthority) => {
 				if (routeAuthority.backend.id === "backend-b") {
 					routeBEffects += 1;
-					return;
+					return "accepted";
 				}
 				routeAEffects += 1;
 				throw authorityChanged();

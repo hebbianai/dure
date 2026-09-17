@@ -1,5 +1,6 @@
 import { usePaneActions } from "@/components/workspace/usePaneActions";
 import {
+	type ChatPaneHandlers,
 	type ChatPaneIdentity,
 	type ChatPaneSessionFacts,
 	chatPaneActionEntry,
@@ -11,11 +12,7 @@ import {
  * refresh only after commit and remain bound to the same runtime and turn. */
 export function useChatPaneActions(
 	identity: ChatPaneIdentity,
-	session: ChatPaneSessionFacts & {
-		readonly interrupt: () => Promise<void>;
-		readonly handoff?: () => Promise<void>;
-		readonly switchAccount?: Readonly<Record<string, () => Promise<void>>>;
-	},
+	session: ChatPaneSessionFacts & ChatPaneHandlers,
 	runtimeOwnerKey: string,
 ): void {
 	usePaneActions(
@@ -23,6 +20,7 @@ export function useChatPaneActions(
 			runtimeOwnerKey,
 			identity.conversationId,
 			session.activeTurn?.turnId,
+			session.resendLastMessage?.failureId,
 		]),
 		chatPaneActionEntry(identity, session, session),
 	);
