@@ -76,7 +76,7 @@ function fixture() {
 		async (_command: string, args: Record<string, unknown>) => {
 			expect(args.route).toEqual({ kind: "exact", authority: route });
 			const body = args.body as Record<string, unknown>;
-			let result;
+			let result: Record<string, unknown>;
 			if (args.operation === "agent_conversation.read")
 				result = { read: { type: "page", page } };
 			else if (args.operation === "agent_conversation.start_turn") {
