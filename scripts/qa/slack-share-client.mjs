@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { processIdentity } from "../lib/process-identity.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { waitForQaLogReceipt } from "./lib/qa-log-receipt.mjs";
@@ -11,7 +14,36 @@ assert.equal(home, path.join(root, "home"));
 assert.ok(path.basename(root).startsWith("dure-slack-share."));
 assert.equal(fs.realpathSync(process.env.HMUX_DISCOVERY_ROOT), path.join(root, "hmux-discovery"));
 console.log(JSON.stringify({ root, proof, realSlack: live }));
-const receipt = await waitForQaLogReceipt("slack-share", proof, { timeoutMs: live ? 1_800_000 : 360_000 });
+const completion = waitForQaLogReceipt("slack-share", proof, { timeoutMs: live ? 1_800_000 : 360_000 });
+if (!live) {
+  const ready = await Promise.race([
+    waitForQaLogReceipt("slack-tag-reconnect", proof, { timeoutMs: 360_000 }),
+    completion.then((receipt) => { throw new Error(`Sharing ended before backend recovery: ${JSON.stringify(receipt)}`); }),
+  ]);
+  const descriptorPath = path.join(home, ".dure/backend/control-plane.json");
+  const before = JSON.parse(fs.readFileSync(descriptorPath, "utf8"));
+  assert.equal(before.generation, ready.generation);
+  assert.ok(before.controlPlaneIdentity.executablePath.startsWith(home + "/"), "restart owns the isolated installed executable");
+  const identity = processIdentity(before.processId);
+  assert.ok(identity, "restart records the exact backend process");
+  fs.writeFileSync(path.join(root, "evidence", "tag-backend-before.json"), JSON.stringify({ ...before, identity }));
+  // An ordinary stop/reconcile preserves the backend generation. Activate a
+  // second disposable installation through the same replacement owner as deploy.
+  const bundle = path.dirname(path.dirname(before.controlPlaneIdentity.executablePath));
+  const replacement = path.join(home, "replacement-cli", path.basename(bundle));
+  const previousMask = process.umask(0);
+  try {
+    fs.cpSync(bundle, replacement, {
+      recursive: true, verbatimSymlinks: true, mode: fs.constants.COPYFILE_FICLONE,
+    });
+  } finally { process.umask(previousMask); }
+  await promisify(execFile)(process.execPath, [path.join(replacement, "bin/dure.mjs"), "backend", "activate", "--backend", "local", "--json"], { timeout: 60_000 });
+  const after = JSON.parse(fs.readFileSync(descriptorPath, "utf8"));
+  assert.notEqual(after.generation, before.generation);
+  assert.equal(after.backendId, before.backendId);
+  fs.writeFileSync(path.join(root, "evidence", "tag-backend-after.json"), JSON.stringify(after));
+}
+const receipt = await completion;
 fs.writeFileSync(path.join(root, "evidence", "slack-share.json"), JSON.stringify(receipt, null, 2));
 assert.equal(receipt.result, "passed", JSON.stringify(receipt));
 for (const key of ["realWebview", "realBackend", "realProvider", "visible", "privateHistoryPreserved", "reloadPreserved", "providerStopped"]) assert.equal(receipt[key], true, key);
@@ -31,6 +63,7 @@ if (live) {
 } else {
   assert.equal(receipt.sharedTaskComposer, true);
   assert.equal(receipt.tagSidebarConversation, true);
+  assert.equal(receipt.tagGenerationRecovered, true);
   assert.equal(receipt.nativeThreadReply, true);
   const source = fs.readFileSync(path.join(home, "slack-share-posts.jsonl"), "utf8");
   assert.ok(!source.includes(`QA_PRIVATE_${proof}`));

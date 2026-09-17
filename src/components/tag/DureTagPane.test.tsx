@@ -1,21 +1,32 @@
 // @vitest-environment jsdom
 import {
+	act,
 	cleanup,
 	fireEvent,
 	render,
 	screen,
 	waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import { DureTagPane } from "./DureTagPane";
 
-const mocks = vi.hoisted(() => ({ open: vi.fn() }));
+const mocks = vi.hoisted(() => ({ open: vi.fn(), invoke: vi.fn() }));
 vi.mock("@/lib/agents/chat/sharedAgentConversation", () => ({
 	openSharedAgentConversation: mocks.open,
 }));
 vi.mock("@/components/agents/chat/SharedAgentConversation", () => ({
-	SharedAgentConversation: ({ target }: { target: { agentId: string } }) => (
-		<div data-testid="tag-conversation">{target.agentId}</div>
+	SharedAgentConversation: ({
+		target,
+	}: {
+		target: { agentId: string; authority: DureBackendRouteAuthorityV1 };
+	}) => (
+		<div
+			data-testid="tag-conversation"
+			data-generation={target.authority.backend.generation}
+		>
+			{target.agentId}
+		</div>
 	),
 }));
 vi.mock("@/components/plugins/useSlackTeamConnection", () => ({
@@ -36,34 +47,85 @@ vi.mock("@/lib/i18n", () => ({ t: (key: string) => key }));
 vi.mock("@/store", () => ({
 	useStore: (selector: (s: unknown) => unknown) => selector({ projects: [] }),
 }));
-vi.mock("@/lib/ipc/slackConnector", () => ({
-	createSlackConnectorClient: () => ({
-		list: async () => ({
-			connections: [{ config: { teamId: "team" } }],
-			authority: {},
-		}),
-		tasks: async () =>
-			["first", "second"].map((id) => ({
-				agentId: id,
-				title: id,
-				teamId: "team",
-				channelId: "channel",
-				threadTs: id === "first" ? "100.1" : "100.2",
-				backend: { backendId: "backend", scopeId: "scope" },
-			})),
-	}),
-}));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+const route = (generation: string): DureBackendRouteAuthorityV1 => ({
+	schemaVersion: 1,
+	profileId: "local",
+	revision: `sha256:${(generation === "one" ? "a" : "b").repeat(64)}`,
+	backend: { id: "backend", generation },
+	target: { source: "local", hostId: "local" },
+});
+let authority = route("one");
+let failTasks = false;
+let taskTitle = "first";
+beforeEach(() => {
+	authority = route("one");
+	failTasks = false;
+	taskTitle = "first";
+	mocks.open.mockImplementation(async (task) => ({
+		agentId: task.agentId,
+		authority,
+		profile: { backendProfileId: "local" },
+	}));
+	mocks.invoke.mockImplementation(async (_command, args) => {
+		if (
+			args.route.kind === "exact" &&
+			args.route.authority.backend.generation !== authority.backend.generation
+		)
+			throw { code: "backend_transport_authority_changed" };
+		const body = args.body;
+		if (body.kind === "tasks" && failTasks) {
+			failTasks = false;
+			authority = route("two");
+			throw { code: "backend_transport_authority_changed" };
+		}
+		return {
+			schemaVersion: 1,
+			backendId: authority.backend.id,
+			backendGeneration: authority.backend.generation,
+			routeAuthority: authority,
+			result: {
+				schemaVersion: 1,
+				...(body.kind === "list"
+					? {
+							connections: [
+								{
+									config: { schemaVersion: 1, teamId: "T1", channels: [] },
+									enabled: true,
+									credentialsConfigured: true,
+									connection: "connected",
+									generation: "connector",
+									failure: null,
+								},
+							],
+						}
+					: {
+							tasks: ["first", "second"].map((id) => ({
+								agentId: id,
+								title: id === "first" ? taskTitle : id,
+								teamId: "T1",
+								channelId: "C1",
+								projectId: "project",
+								interactionSessionId: `interaction-${id}`,
+								threadTs: id === "first" ? "100.1" : "100.2",
+								backend: {
+									profileId: "local",
+									backendId: "backend",
+									scopeId: "scope",
+								},
+							})),
+						}),
+			},
+		};
+	});
+});
 afterEach(() => {
 	cleanup();
 	vi.clearAllMocks();
+	vi.useRealTimers();
 });
 
 it("opens and changes the conversation inside Tag without adding a Space pane", async () => {
-	mocks.open.mockImplementation(async (task) => ({
-		agentId: task.agentId,
-		authority: { revision: 1 },
-		profile: { backendProfileId: "local" },
-	}));
 	render(<DureTagPane />);
 	fireEvent.click(await screen.findByText("first"));
 	await waitFor(() => expect(mocks.open).toHaveBeenCalledTimes(1));
@@ -76,4 +138,80 @@ it("opens and changes the conversation inside Tag without adding a Space pane", 
 		"second",
 	);
 	expect(screen.getAllByTestId("tag-conversation")).toHaveLength(1);
+});
+
+async function tick() {
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(5000);
+	});
+}
+
+it("follows a replacement backend on the next complete list observation", async () => {
+	vi.useFakeTimers();
+	await act(async () => {
+		render(<DureTagPane />);
+	});
+	expect(screen.getByText("first")).toBeTruthy();
+	authority = route("two");
+	taskTitle = "updated after deployment";
+	await tick();
+	expect(screen.getByText(taskTitle)).toBeTruthy();
+	expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("keeps observing after replacement interrupts the connection and task snapshot", async () => {
+	vi.useFakeTimers();
+	failTasks = true;
+	await act(async () => {
+		render(<DureTagPane />);
+	});
+	expect(screen.getByRole("alert")).toBeTruthy();
+	await tick();
+	expect(screen.getByText("first")).toBeTruthy();
+	expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("resolves the same selected task again after replacement without reopening it on ordinary polls", async () => {
+	vi.useFakeTimers();
+	await act(async () => {
+		render(<DureTagPane />);
+	});
+	await act(async () => {
+		fireEvent.click(screen.getByText("first"));
+	});
+	expect(screen.getByTestId("tag-conversation").dataset.generation).toBe("one");
+	await tick();
+	expect(mocks.open).toHaveBeenCalledTimes(1);
+	authority = route("two");
+	await tick();
+	expect(screen.getByTestId("tag-conversation").dataset.generation).toBe("two");
+	expect(mocks.open).toHaveBeenCalledTimes(2);
+	expect(mocks.open.mock.calls[1]).toEqual(mocks.open.mock.calls[0]);
+	expect(screen.getAllByTestId("tag-conversation")).toHaveLength(1);
+});
+
+it("ignores a late conversation response after selecting a different task", async () => {
+	let finishFirst: ((value: unknown) => void) | undefined;
+	mocks.open.mockImplementationOnce(
+		() =>
+			new Promise((resolve) => {
+				finishFirst = resolve;
+			}),
+	);
+	render(<DureTagPane />);
+	fireEvent.click(await screen.findByText("first"));
+	await waitFor(() => expect(mocks.open).toHaveBeenCalledOnce());
+	fireEvent.click(screen.getByRole("button", { name: "common.back" }));
+	fireEvent.click(await screen.findByText("second"));
+	expect((await screen.findByTestId("tag-conversation")).textContent).toBe(
+		"second",
+	);
+	await act(async () => {
+		finishFirst?.({
+			agentId: "first",
+			authority,
+			profile: { backendProfileId: "local" },
+		});
+	});
+	expect(screen.getByTestId("tag-conversation").textContent).toBe("second");
 });

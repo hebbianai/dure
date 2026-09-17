@@ -45,7 +45,6 @@ import {
   ClaudeStructuredRuntimeBundleError,
   claudeStructuredRuntimeArguments,
   resolveBundledClaudeStructuredRuntime,
-  sameClaudeStructuredRuntimePayload,
 } from "./claude-structured-runtime.mjs";
 import {
   CONTROL_PLANE_BUILD_ID,
@@ -817,28 +816,6 @@ function claudeRuntimeForControlPlane({
   });
 }
 
-function sameClaudeRuntimePayload({
-  controlPlaneIdentity,
-  currentControlPlaneIdentity,
-  currentRuntime,
-  root,
-}) {
-  try {
-    return sameClaudeStructuredRuntimePayload(
-      claudeRuntimeForControlPlane({
-        controlPlaneIdentity,
-        currentControlPlaneIdentity,
-        currentRuntime,
-        root,
-      }),
-      currentRuntime,
-    );
-  } catch (error) {
-    if (error instanceof ClaudeStructuredRuntimeBundleError) return false;
-    throw error;
-  }
-}
-
 function currentService(
   descriptor,
   observation,
@@ -1414,20 +1391,17 @@ async function ensureService(options) {
     if (reuseCompatible && observation) {
       return joinCompatibleService(existingDescriptor, root, options.environment);
     }
+    // Activation selects the complete immutable installation. Its sibling CLI
+    // launches connectors, so an identical binary in another bundle is not the
+    // requested owner. Ordinary compatible connections returned above.
     if (
       observation &&
-      currentService(
+      currentServiceAuthority(
         existingDescriptor,
         observation,
         controlPlaneIdentity,
         hmuxIdentity,
-      ) &&
-      sameClaudeRuntimePayload({
-        controlPlaneIdentity: existingDescriptor.controlPlaneIdentity,
-        currentControlPlaneIdentity: controlPlaneIdentity,
-        currentRuntime: claudeRuntime,
-        root,
-      })
+      )
     ) {
       return existingDescriptor;
     }
