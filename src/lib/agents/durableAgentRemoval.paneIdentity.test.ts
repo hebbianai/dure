@@ -99,6 +99,7 @@ function state(layouts: PersistedAppState["layouts"]): PersistedAppState {
 			{ id: "b", name: "Other" },
 		],
 		agents: [former, current],
+		chatSubmissions: {},
 		layouts,
 		pinnedPanes: Object.fromEntries(
 			Object.entries(layouts).flatMap(([spaceId, snapshot]) =>
