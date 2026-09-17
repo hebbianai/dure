@@ -1,4 +1,13 @@
 export const plugins: Record<string, string> = {
+	"plugins.slack.teamServer": "团队服务器",
+	"plugins.slack.teamServerHint": "选择团队正在使用的服务器，共享其 Slack 连接和任务。",
+	"plugins.slack.thisComputer": "此电脑",
+	"plugins.slack.teamTasks": "团队任务",
+	"plugins.slack.teamTasksHint": "在此处或 Slack 中继续同一项工作。任务使用项目的服务器和账户执行。",
+	"plugins.slack.taskExecutionServer": "执行服务器",
+	"plugins.slack.taskServerMismatch": "请选择运行此任务的服务器。当前连接指向其他服务器。",
+	"plugins.slack.noTeamTasks": "在已连接的 Slack 频道中提及 @Dure，或分享 Dure 任务即可开始。",
+
 	"plugins.slack.shareServerHint": "使用 Slack 连接服务器上注册的服务器配置。留空则使用频道的默认服务器。",
 	"plugins.slack.share": "分享到 Slack",
 	"plugins.slack.shareHint": "分享此对话中的新消息。之前的消息仍保持私密。",

@@ -9,6 +9,7 @@ import { createAgentChatSessionRegistry } from "@/lib/agents/chat/agentChatSessi
 import type { AgentStructuredInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { observedConversationActivity } from "@/lib/agents/chat/observedRuntimeFacts";
 import { createDureAgentConversationClient } from "@/lib/ipc/dureAgentConversation";
+import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import { useStore } from "@/store";
 
 const clients = new Map<
@@ -26,11 +27,21 @@ function clientForProfile(backendProfileId: string) {
 }
 
 const registry = createAgentChatSessionRegistry({
-	create: ({ agentId, backendProfileId, interactionSessionId }) => {
+	create: ({
+		agentId,
+		backendProfileId,
+		interactionSessionId,
+		routeAuthority,
+	}) => {
 		const controller = new AgentChatSessionController({
 			agentId,
 			interactionSessionId,
-			client: clientForProfile(backendProfileId),
+			client: routeAuthority
+				? createDureAgentConversationClient({
+						profileId: backendProfileId,
+						routeAuthority,
+					})
+				: clientForProfile(backendProfileId),
 		});
 		// One observer per shared controller, including CLI-originated turns.
 		// It projects presentation into the existing session activity store.
@@ -56,6 +67,7 @@ const registry = createAgentChatSessionRegistry({
 });
 
 export function acquireAgentChatSession(input: {
+	routeAuthority?: DureBackendRouteAuthorityV1;
 	agentId: string;
 	backendProfileId: string;
 	interactionSessionId: string;

@@ -1,4 +1,13 @@
 export const plugins: Record<string, string> = {
+	"plugins.slack.teamServer": "Serveur de l’équipe",
+	"plugins.slack.teamServerHint": "Choisissez le serveur déjà utilisé par votre équipe. Sa connexion Slack et ses tâches sont partagées.",
+	"plugins.slack.thisComputer": "Cet ordinateur",
+	"plugins.slack.teamTasks": "Tâches de l’équipe",
+	"plugins.slack.teamTasksHint": "Continuez le même travail ici ou dans Slack. Il utilise le serveur et le compte du projet.",
+	"plugins.slack.taskExecutionServer": "Serveur d’exécution",
+	"plugins.slack.taskServerMismatch": "Sélectionnez le serveur qui exécute cette tâche. Cette connexion pointe vers un autre serveur.",
+	"plugins.slack.noTeamTasks": "Mentionnez @Dure dans un canal Slack connecté ou partagez une tâche Dure pour commencer.",
+
 	"plugins.slack.shareServerHint": "Utilisez un profil de serveur enregistré sur le serveur de connexion Slack. Laissez vide pour utiliser celui du canal.",
 	"plugins.slack.share": "Partager dans Slack",
 	"plugins.slack.shareHint": "Partagez les nouveaux messages de cette conversation. Les précédents restent privés.",

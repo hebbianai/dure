@@ -1,5 +1,6 @@
 pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
     match operation {
+        "backend.scope" => Some("backend.scope.v1"),
         "workspace_environment.invoke" => Some("workspace_environment.v1"),
         "agent_goal.get" | "agent_goal.put" => Some("agent_goal.v1"),
         "browser.resource" => Some("browser.resource.v1"),

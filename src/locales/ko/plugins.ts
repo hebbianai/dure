@@ -1,4 +1,13 @@
 export const plugins: Record<string, string> = {
+	"plugins.slack.teamServer": "팀 서버",
+	"plugins.slack.teamServerHint": "팀에서 사용하는 서버를 선택하세요. Slack 연결과 작업을 함께 사용합니다.",
+	"plugins.slack.thisComputer": "이 컴퓨터",
+	"plugins.slack.teamTasks": "팀 작업",
+	"plugins.slack.teamTasksHint": "여기서나 Slack에서 같은 일을 이어가세요. 프로젝트의 서버와 계정으로 실행합니다.",
+	"plugins.slack.taskExecutionServer": "실행 서버",
+	"plugins.slack.taskServerMismatch": "이 작업이 실행되는 서버를 선택하세요. 현재 연결은 다른 서버를 가리킵니다.",
+	"plugins.slack.noTeamTasks": "연결된 Slack 채널에서 @Dure를 멘션하거나 Dure 작업을 공유해 시작하세요.",
+
 	"plugins.slack.shareServerHint": "Slack 연결 서버에 등록된 서버 프로필을 입력하세요. 비워두면 채널의 기본 서버를 사용합니다.",
 	"plugins.slack.share": "Slack에 공유",
 	"plugins.slack.shareHint": "이 대화의 새 메시지를 공유합니다. 이전 메시지는 비공개로 유지됩니다.",

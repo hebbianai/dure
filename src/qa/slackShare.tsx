@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { AgentSlackShare } from "@/components/agents/chat/AgentSlackShare";
+import { SlackTeamConnections } from "@/components/plugins/SlackTeamConnections";
 import type { AgentChatDraftIdentity } from "@/lib/agents/chat/agentChatDraftTypes";
 import type { AgentInteractionBindingV1 } from "@/lib/agents/chat/agentConversationContract";
 import { setLang, t } from "@/lib/i18n";
@@ -38,6 +39,7 @@ interface Post {
 /** Actual native UI, installed connector and Codex. The runner chooses a
  * recording Slack fixture or an explicitly configured real workspace. */
 export function SlackShareQaRoot() {
+	const [teamView, setTeamView] = useState(false);
 	const [identity, setIdentity] = useState<AgentChatDraftIdentity>();
 	useEffect(() => {
 		if (!proof) return;
@@ -313,22 +315,55 @@ export function SlackShareQaRoot() {
 				return;
 			}
 			const marker = `QA_PUBLIC_${proof}`;
-			const { binding, routeAuthority } = await conversation.inspect(
+			const { binding } = await conversation.inspect(
 				checkpoint.identity.agentId,
 			);
 			requireFact(binding, "Shared conversation binding disappeared");
-			await conversation.startTurn(
-				{
-					schemaVersion: 1,
-					interactionSessionId: binding.interactionSessionId,
-					runtime: binding.runtime,
-					turnId: `public-${proof}`,
-					clientMessageId: `public-${proof}`,
-					input: `Reply exactly ${marker}. Do not use tools.`,
-					requestedAtMs: Date.now(),
-				},
-				routeAuthority,
+
+			// A fresh settings view discovers the task from the shared backend,
+			// then its production composer directs the existing conversation.
+			flushSync(() => setTeamView(true));
+			const taskButton = await wait("shared task entry", () =>
+				[...document.querySelectorAll<HTMLButtonElement>("button")].find(
+					(button) =>
+						button.textContent?.trim() === t("plugins.slack.teamTasks"),
+				),
 			);
+			taskButton.click();
+			(
+				await wait("shared project task", () =>
+					[
+						...document.querySelectorAll<HTMLButtonElement>(
+							'[role="dialog"] button',
+						),
+					].find((button) =>
+						button.textContent?.includes(checkpoint.identity.agentId),
+					),
+				)
+			).click();
+			const composer = await wait("shared conversation composer", () =>
+				document.querySelector<HTMLTextAreaElement>(
+					`textarea[aria-label="${t("agents.chat.composerLabel")}"]`,
+				),
+			);
+			requireFact(!composer.disabled, "Shared composer is disabled");
+			const setter = Object.getOwnPropertyDescriptor(
+				HTMLTextAreaElement.prototype,
+				"value",
+			)?.set;
+			requireFact(setter, "Native textarea setter is unavailable");
+			flushSync(() => {
+				setter.call(composer, `Reply exactly ${marker}. Do not use tools.`);
+				composer.dispatchEvent(new Event("input", { bubbles: true }));
+			});
+			(
+				await wait("shared composer submit", () => {
+					const submit = composer
+						.closest("form")
+						?.querySelector<HTMLButtonElement>('button[type="submit"]');
+					return submit && !submit.disabled ? submit : undefined;
+				})
+			).click();
 			const page = await completed(binding, marker);
 			const reply = page.rows.find(
 				({ item }) =>
@@ -380,6 +415,7 @@ export function SlackShareQaRoot() {
 				threadTs: parents[0].ts,
 				assistantReply,
 				outboundCalls: posts.length,
+				sharedTaskComposer: true,
 			});
 		};
 		void run().catch((error) => {
@@ -392,7 +428,11 @@ export function SlackShareQaRoot() {
 	}, []);
 	return (
 		<main className="p-4">
-			{identity && <AgentSlackShare identity={identity} />}
+			{teamView ? (
+				<SlackTeamConnections />
+			) : (
+				identity && <AgentSlackShare identity={identity} />
+			)}
 		</main>
 	);
 }

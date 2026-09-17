@@ -365,22 +365,20 @@ describe("Dure agent conversation client", () => {
 			routeAuthority: route,
 			result: { schemaVersion: 1, ...result },
 		});
-		const invokeCommand = vi.fn(
-			async (command: string) => {
-				if (command === "dure_backend_request") {
-					inspectCount += 1;
-					return response(inspectCount === 1 ? routeA : routeB, {
-						binding: read().page.binding,
-					});
-				}
-				if (command === "dure_backend_subscribe") {
-					await subscriptionBlocked;
-					return response(routeA, { read: read() });
-				}
-				if (command === "dure_backend_unsubscribe") return true;
-				throw new Error(command);
-			},
-		);
+		const invokeCommand = vi.fn(async (command: string) => {
+			if (command === "dure_backend_request") {
+				inspectCount += 1;
+				return response(inspectCount === 1 ? routeA : routeB, {
+					binding: read().page.binding,
+				});
+			}
+			if (command === "dure_backend_subscribe") {
+				await subscriptionBlocked;
+				return response(routeA, { read: read() });
+			}
+			if (command === "dure_backend_unsubscribe") return true;
+			throw new Error(command);
+		});
 		const client = createDureAgentConversationClient({
 			invokeCommand,
 			channelFactory: () => ({ onmessage: () => {} }),
@@ -453,17 +451,15 @@ describe("Dure agent conversation client", () => {
 			limit: 128,
 		};
 
-		await expect(client.read(request)).resolves.toMatchObject(
-			{
-				read: {
-					type: "page",
-					page: {
-						rows: [{ cursor: { sequence: 3 } }, { cursor: { sequence: 4 } }],
-						finalCursor: { sequence: 3 },
-					},
+		await expect(client.read(request)).resolves.toMatchObject({
+			read: {
+				type: "page",
+				page: {
+					rows: [{ cursor: { sequence: 3 } }, { cursor: { sequence: 4 } }],
+					finalCursor: { sequence: 3 },
 				},
 			},
-		);
+		});
 	});
 
 	it("rejects an event from another backend generation", async () => {
@@ -752,4 +748,52 @@ it("writes a goal to the exact observed server and checks the returned revision"
 	await expect(client.putGoal(request, routeAuthority())).rejects.toMatchObject(
 		{ code: "agent_conversation_response_invalid" },
 	);
+});
+
+it("keeps a shared conversation's reads and subscription on its proven route", async () => {
+	const pinned = routeAuthority();
+	let moved = false;
+	const invokeCommand = vi.fn(
+		async (command: string, args: Record<string, unknown>) => {
+			expect(args.route).toEqual({ kind: "exact", authority: pinned });
+			if (moved)
+				throw {
+					code: "backend_transport_authority_changed",
+					message: "changed",
+				};
+			if (command === "dure_backend_subscribe")
+				return envelope({ read: read() });
+			return envelope(
+				args.operation === "agent_conversation.inspect"
+					? { binding: read().page.binding }
+					: { read: read() },
+			);
+		},
+	);
+	const client = createDureAgentConversationClient({
+		routeAuthority: pinned,
+		invokeCommand,
+		channelFactory: () => ({ onmessage: () => {} }),
+		subscriptionId: () => "shared-subscription",
+	});
+	await client.inspect("agent-1");
+	const request = {
+		schemaVersion: 1 as const,
+		interactionSessionId: "interaction-1",
+		direction: "tail" as const,
+		cursor: null,
+		limit: 100,
+	};
+	await client.read(request);
+	await client.subscribe(request, () => {});
+	moved = true;
+	await expect(client.inspect("agent-1")).rejects.toMatchObject({
+		failure: { kind: "authority_changed" },
+	});
+	await expect(client.read(request)).rejects.toMatchObject({
+		failure: { kind: "authority_changed" },
+	});
+	await expect(client.subscribe(request, () => {})).rejects.toMatchObject({
+		failure: { kind: "authority_changed" },
+	});
 });

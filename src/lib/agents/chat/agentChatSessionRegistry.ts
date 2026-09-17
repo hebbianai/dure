@@ -1,3 +1,5 @@
+import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
+
 export interface AgentChatSessionLifecycle {
 	start(): void;
 	stop(): void;
@@ -24,6 +26,7 @@ export function createAgentChatSessionRegistry<
 		agentId: string;
 		backendProfileId: string;
 		interactionSessionId: string;
+		routeAuthority?: DureBackendRouteAuthorityV1;
 	}): T;
 	releaseGraceMs?: number;
 	setTimer?: (callback: () => void, delayMs: number) => TimerHandle;
@@ -39,10 +42,12 @@ export function createAgentChatSessionRegistry<
 			agentId: string;
 			backendProfileId: string;
 			interactionSessionId: string;
+			routeAuthority?: DureBackendRouteAuthorityV1;
 		}): AgentChatSessionLease<T> {
 			const key = JSON.stringify([
 				input.backendProfileId,
 				input.interactionSessionId,
+				input.routeAuthority,
 			]);
 			let entry = entries.get(key);
 			if (entry && entry.agentId !== input.agentId) {

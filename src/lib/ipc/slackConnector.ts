@@ -12,6 +12,7 @@ import {
 	type SlackShareIntent,
 	slackConnectionContractError,
 } from "@/lib/plugins/slackConnection";
+import { parseSlackTask } from "@/lib/plugins/slackTask";
 
 export interface SlackConnectionSnapshot {
 	authority: DureBackendRouteAuthorityV1;
@@ -48,6 +49,15 @@ export function createSlackConnectorClient(
 		};
 	}
 	return {
+		tasks: async (teamId: string, authority: DureBackendRouteAuthorityV1) => {
+			const { result } = await request(
+				"slack.connector",
+				{ schemaVersion: 1, kind: "tasks", teamId },
+				{ kind: "exact", authority },
+			);
+			if (!Array.isArray(result.tasks)) slackConnectionContractError();
+			return result.tasks.map((task) => parseSlackTask(task, teamId));
+		},
 		share: async (
 			intent: SlackShareIntent,
 			authority: DureBackendRouteAuthorityV1,
