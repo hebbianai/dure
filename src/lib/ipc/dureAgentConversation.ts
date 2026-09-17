@@ -2,14 +2,23 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import {
 	type AgentGoalPutRequestV1,
 	type AgentGoalRecordV1,
+	type AgentInputObservationV1,
+	type AgentInputReadRequestV1,
 	type AgentInteractionBindingV1,
 	type AgentProviderRuntimeFenceV1,
+	type AgentQueuedInputPageV1,
+	type AgentQueuedTurnRecordV1,
+	type AgentQueueReadRequestV1,
+	type AgentStartTurnIntentV1,
 	type AgentTimelineCursorV1,
 	type AgentTimelineReadRequestV1,
 	type AgentTimelineReadV1,
 	parseAgentGoalRecordV1,
 	parseAgentInteractionBindingV1,
+	parseAgentQueuedInputPageV1,
+	parseAgentQueuedTurnRecordV1,
 	parseAgentRuntimeFenceV1,
+	parseAgentStartTurnIntentV1,
 	parseAgentTimelineCursorV1,
 	parseAgentTimelineReadV1,
 } from "@/lib/agents/chat/agentConversationContract";
@@ -39,14 +48,12 @@ const MAX_QUEUED_EVENTS = 64;
 
 type AgentConversationReadRequestV1 = AgentTimelineReadRequestV1;
 
-export interface AgentConversationStartTurnV1 {
+export type AgentConversationStartTurnV1 = AgentStartTurnIntentV1;
+
+export interface AgentConversationCancelQueuedTurnV1 {
 	schemaVersion: 1;
 	interactionSessionId: string;
-	runtime: AgentProviderRuntimeFenceV1;
-	turnId: string;
 	clientMessageId: string;
-	input: string;
-	requestedAtMs: number;
 }
 
 export interface AgentConversationAnswerPendingV1 {
@@ -100,6 +107,23 @@ export interface AgentConversationSubscriptionV1 {
 }
 
 export interface DureAgentConversationClient {
+	inspectInput(
+		request: AgentInputReadRequestV1,
+		routeAuthority: DureBackendRouteAuthorityV1,
+	): Promise<AgentInputObservationV1 | null>;
+
+	readQueue(
+		request: AgentQueueReadRequestV1,
+		routeAuthority: DureBackendRouteAuthorityV1,
+	): Promise<AgentQueuedInputPageV1>;
+	enqueueTurn(
+		request: AgentConversationStartTurnV1,
+		routeAuthority: DureBackendRouteAuthorityV1,
+	): Promise<AgentQueuedTurnRecordV1>;
+	cancelQueuedTurn(
+		request: AgentConversationCancelQueuedTurnV1,
+		routeAuthority: DureBackendRouteAuthorityV1,
+	): Promise<AgentQueuedTurnRecordV1>;
 	putGoal(
 		request: AgentGoalPutRequestV1,
 		routeAuthority: DureBackendRouteAuthorityV1,
@@ -383,6 +407,108 @@ export function createDureAgentConversationClient(options?: {
 		});
 
 	return {
+		async inspectInput(request, routeAuthority) {
+			const response = await requestEffect(
+				"agent_conversation.inspect_input",
+				{ ...request },
+				routeAuthority,
+			);
+			if (response.result.input === null) return null;
+			const observation = record(response.result.input);
+			if (!observation || !hasOnlyKeys(observation, ["kind", "receipt"]))
+				throw contractError();
+			const receipt = record(observation.receipt);
+			const intent = parseAgentStartTurnIntentV1(receipt?.intent);
+			if (
+				!intent ||
+				intent.interactionSessionId !== request.interactionSessionId ||
+				intent.clientMessageId !== request.clientMessageId
+			)
+				throw contractError();
+			if (observation.kind === "queued") {
+				const queued = parseAgentQueuedTurnRecordV1(receipt);
+				if (!queued) throw contractError();
+				return { kind: "queued", intent, state: queued.state };
+			}
+			if (
+				observation.kind !== "turn" ||
+				!receipt ||
+				!hasOnlyKeys(receipt, [
+					"intent",
+					"state",
+					"providerReceipt",
+					"timelineCursor",
+					"newlyPrepared",
+					"updatedAtMs",
+				]) ||
+				receipt.newlyPrepared !== false ||
+				!nonNegativeInteger(receipt.updatedAtMs) ||
+				!parseAgentTimelineCursorV1(receipt.timelineCursor) ||
+				!["prepared", "accepted", "failed", "uncertain"].includes(
+					String(receipt.state),
+				)
+			)
+				throw contractError();
+			return {
+				kind: "turn",
+				intent,
+				state: receipt.state as
+					| "prepared"
+					| "accepted"
+					| "failed"
+					| "uncertain",
+			};
+		},
+		async readQueue(request, routeAuthority) {
+			const response = await requestEffect(
+				"agent_conversation.read_queue",
+				{ ...request },
+				routeAuthority,
+			);
+			const page = parseAgentQueuedInputPageV1(
+				response.result.page,
+				request.interactionSessionId,
+				request.afterSequence,
+			);
+			if (!page) throw contractError();
+			return page;
+		},
+		async enqueueTurn(turn, routeAuthority) {
+			const response = await requestEffect(
+				"agent_conversation.enqueue_turn",
+				{ ...turn },
+				routeAuthority,
+			);
+			const receipt = parseAgentQueuedTurnRecordV1(response.result.receipt);
+			if (
+				!receipt ||
+				receipt.intent.interactionSessionId !== turn.interactionSessionId ||
+				receipt.intent.clientMessageId !== turn.clientMessageId ||
+				!sameRuntime(receipt.intent.runtime, turn.runtime) ||
+				receipt.intent.turnId !== turn.turnId ||
+				receipt.intent.input !== turn.input ||
+				receipt.intent.requestedAtMs !== turn.requestedAtMs
+			) {
+				throw contractError("agent_conversation_receipt_invalid");
+			}
+			return receipt;
+		},
+		async cancelQueuedTurn(request, routeAuthority) {
+			const response = await requestEffect(
+				"agent_conversation.cancel_queued_turn",
+				{ ...request },
+				routeAuthority,
+			);
+			const receipt = parseAgentQueuedTurnRecordV1(response.result.receipt);
+			if (
+				receipt?.state !== "canceled" ||
+				receipt.intent.interactionSessionId !== request.interactionSessionId ||
+				receipt.intent.clientMessageId !== request.clientMessageId
+			) {
+				throw contractError("agent_conversation_receipt_invalid");
+			}
+			return receipt;
+		},
 		async putGoal(request, routeAuthority) {
 			const response = await requestEffect(
 				"agent_goal.put",

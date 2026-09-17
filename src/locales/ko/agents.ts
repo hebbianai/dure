@@ -45,6 +45,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.permissionLabel": "권한",
 	"agents.chat.permissionAutoEdit": "편집 자동 승인",
 	"agents.chat.permissionSkip": "승인 우회",
+	"agents.chat.queuedMore": "더 보기",
 	"agents.chat.queuedEdit": "입력창으로 되돌리기",
 	"agents.chat.error.conflict": "작업 중에 세션이 바뀌었습니다. 다시 시도하세요.",
 	"agents.chat.error.deadline": "백엔드가 제시간에 응답하지 않았습니다. 다시 시도하세요.",

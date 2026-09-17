@@ -6,7 +6,7 @@ import { performBackendProfileRequest } from "./backend-transport.mjs";
 
 const AGENT_CONVERSATION_INSPECT = "agent_conversation.inspect";
 const AGENT_CONVERSATION_READ = "agent_conversation.read";
-const AGENT_CONVERSATION_READ_CAPABILITY = "agent_conversation.read.v4";
+const AGENT_CONVERSATION_READ_CAPABILITY = "agent_conversation.read.v5";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DOMAIN_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 

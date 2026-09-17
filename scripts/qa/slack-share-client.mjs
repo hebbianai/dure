@@ -5,6 +5,8 @@ import { processIdentity } from "../lib/process-identity.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { waitForQaLogReceipt } from "./lib/qa-log-receipt.mjs";
+import { performBackendProfileRequest } from "../../cli/lib/backend-transport.mjs";
+import { loadBackendProfiles } from "../../cli/lib/backend-profiles.mjs";
 
 const proof = process.env.DURE_QA_SLACK_CONNECTIONS_PROOF;
 const live = process.env.DURE_QA_SLACK_LIVE === "1";
@@ -27,6 +29,27 @@ if (!live) {
   const identity = processIdentity(before.processId);
   assert.ok(identity, "restart records the exact backend process");
   fs.writeFileSync(path.join(root, "evidence", "tag-backend-before.json"), JSON.stringify({ ...before, identity }));
+  const catalogPath = path.join(home, ".dure/backend-profiles.json");
+  const request = async (operation, body) => {
+    const profile = loadBackendProfiles({ configPath: catalogPath }).profiles.find((entry) => entry.id === "local");
+    const response = await performBackendProfileRequest(profile, {
+      operation, requiredCapabilities: [operation === "agent_conversation.read" ? "agent_conversation.read.v5" : operation], body,
+    }, { maxResponseBytes: 2 * 1024 * 1024 });
+    return response.result;
+  };
+  const read = await request("agent_conversation.read", {
+    schemaVersion: 1, interactionSessionId: ready.interactionSessionId, direction: "tail", cursor: null, limit: 100,
+  });
+  assert.equal(read.read.page.queuedInputs.inputs[0].clientMessageId, ready.queuedMessageId);
+  assert.ok(read.read.page.activeTurn, "the actual provider tool still owns the active turn");
+  const cliInput = {
+    schemaVersion: 1, interactionSessionId: ready.interactionSessionId,
+    runtime: read.read.page.binding.runtime, turnId: `cli-turn-${proof}`, clientMessageId: `cli-input-${proof}`,
+    input: ready.secondClientInput, requestedAtMs: Date.now(),
+  };
+  const admitted = await request("agent_conversation.enqueue_turn", cliInput);
+  assert.equal(admitted.receipt.state, "queued");
+  fs.writeFileSync(path.join(root, "evidence", "queue-before-replacement.json"), JSON.stringify({ read, admitted }));
   // An ordinary stop/reconcile preserves the backend generation. Activate a
   // second disposable installation through the same replacement owner as deploy.
   const bundle = path.dirname(path.dirname(before.controlPlaneIdentity.executablePath));
@@ -42,6 +65,17 @@ if (!live) {
   assert.notEqual(after.generation, before.generation);
   assert.equal(after.backendId, before.backendId);
   fs.writeFileSync(path.join(root, "evidence", "tag-backend-after.json"), JSON.stringify(after));
+  const pending = await request("agent_conversation.read_queue", {
+    schemaVersion: 1, interactionSessionId: ready.interactionSessionId, afterSequence: 0,
+  });
+  assert.deepEqual(pending.page.inputs.map((input) => input.clientMessageId), [ready.queuedMessageId, cliInput.clientMessageId]);
+  assert.deepEqual(await request("agent_conversation.enqueue_turn", cliInput), admitted, "replaying admission across replacement preserves its receipt");
+  fs.writeFileSync(path.join(root, "evidence", "queue-after-replacement.json"), JSON.stringify(pending));
+  await Promise.race([
+    waitForQaLogReceipt("slack-queue-recovered", proof, { timeoutMs: 120_000 }),
+    completion.then((receipt) => { throw new Error(`Sharing ended before queue recovery: ${JSON.stringify(receipt)}`); }),
+  ]);
+  fs.writeFileSync(path.join(home, "project/queue-release"), "release", { flag: "wx", mode: 0o600 });
 }
 const receipt = await completion;
 fs.writeFileSync(path.join(root, "evidence", "slack-share.json"), JSON.stringify(receipt, null, 2));
@@ -61,6 +95,14 @@ if (live) {
   fs.copyFileSync(path.join(home, "slack-live-observation.json"), path.join(root, "evidence", "slack-live-observation.json"));
   fs.copyFileSync(path.join(home, "project", "result.txt"), path.join(root, "evidence", "result.txt"));
 } else {
+  assert.equal(receipt.noViewQueueAfterReload, true);
+  assert.equal(receipt.queuedAcrossBackendReplacement, true);
+  assert.equal(receipt.independentQueueClients, true);
+  const log = fs.readFileSync(path.join(root, "qa.log"), "utf8");
+  const queueCompleted = log.indexOf("queue-completed-without-view-after-reload");
+  assert.ok(queueCompleted >= 0, "the new WebView observed queued completion");
+  const orphanedCallbacks = log.slice(queueCompleted).split("\n").filter((line) => line.includes("Couldn't find callback id"));
+  assert.equal(orphanedCallbacks.length, 0, "the retired WebView must stop receiving conversation updates");
   assert.equal(receipt.sharedTaskComposer, true);
   assert.equal(receipt.tagSidebarConversation, true);
   assert.equal(receipt.tagGenerationRecovered, true);

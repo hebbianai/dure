@@ -1,8 +1,5 @@
 //! Goal intent and event-driven continuation over the common conversation API.
 
-use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
-
 use dure_app::{
     AgentClientMessageIdV1, AgentGoalPutRequestV1, AgentGoalRecordV1, AgentGoalStatusV1,
     AgentGoalStore, AgentGoalTurnRequestV1, AgentIdV1, AgentStartTurnIntentV1,
@@ -12,8 +9,6 @@ use dure_app::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tokio::sync::broadcast;
-use tokio::task::{Id, JoinSet};
 
 use crate::{BackendDispatchError, ServiceState, now_ms, pro_features};
 
@@ -168,87 +163,4 @@ pub(crate) async fn advance(
         return Err("agent_goal_start_unconfirmed");
     }
     Ok(())
-}
-
-async fn enqueue_active(
-    state: &ServiceState,
-    pending: &mut BTreeSet<AgentIdV1>,
-) -> Result<(), &'static str> {
-    pending.extend(
-        state
-            .store
-            .active_agent_goals()
-            .await
-            .map_err(|_| "agent_goal_store_failed")?
-            .into_iter()
-            .map(|goal| goal.agent_id),
-    );
-    Ok(())
-}
-
-async fn run_inner(state: Arc<ServiceState>) -> Result<(), &'static str> {
-    state.wait_for_mutation_authority().await;
-    let mut notifications = state.agent_conversations.notifications();
-    let mut pending = BTreeSet::new();
-    let mut running: HashMap<Id, (AgentIdV1, u64)> = HashMap::new();
-    let mut jobs = JoinSet::new();
-    enqueue_active(&state, &mut pending).await?;
-    loop {
-        let ready: Vec<_> = pending
-            .iter()
-            .filter(|agent_id| !running.values().any(|(running, _)| running == *agent_id))
-            .cloned()
-            .collect();
-        for agent_id in ready {
-            pending.remove(&agent_id);
-            let Some(goal) = state
-                .store
-                .agent_goal(&agent_id)
-                .await
-                .map_err(|_| "agent_goal_store_failed")?
-            else {
-                continue;
-            };
-            if goal.status != AgentGoalStatusV1::Active {
-                continue;
-            }
-            let worker = Arc::clone(&state);
-            let revision = goal.revision;
-            let task = jobs.spawn(async move { advance(&worker, &goal).await });
-            running.insert(task.id(), (agent_id, revision));
-        }
-        tokio::select! {
-            _ = state.goal_wakeup.notified() => enqueue_active(&state, &mut pending).await?,
-            notification = notifications.recv() => match notification {
-                Ok(notification) => {
-                    if notification.kinds.iter().all(|kind| matches!(kind, crate::agent_conversation::AgentConversationNotificationKindV1::LiveText | crate::agent_conversation::AgentConversationNotificationKindV1::Goal)) { continue; }
-                    if let Some(binding) = state.store.agent_interaction(&notification.interaction_session_id).await.map_err(|_| "agent_goal_store_failed")? {
-                        pending.insert(binding.agent_id);
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => enqueue_active(&state, &mut pending).await?,
-                Err(broadcast::error::RecvError::Closed) => return Ok(()),
-            },
-            completed = jobs.join_next_with_id(), if !jobs.is_empty() => {
-                let Some(completed) = completed else { continue; };
-                let (id, outcome) = match completed {
-                    Ok((id, result)) => (id, result),
-                    Err(error) => (error.id(), Err("agent_goal_worker_failed")),
-                };
-                if let Some((agent_id, revision)) = running.remove(&id)
-                    && let Err(code) = outcome {
-                    if state.store.fail_agent_goal(&agent_id, revision, code, now_ms().map_err(|_| "agent_goal_clock_unavailable")?).await
-                        .map_err(|_| "agent_goal_store_failed")?.is_some() {
-                        state.agent_conversations.publish_goal_change(&agent_id).await.map_err(|error| error.code())?;
-                    }
-                }
-            }
-        }
-    }
-}
-
-pub(crate) async fn run(state: Arc<ServiceState>) {
-    if let Err(code) = run_inner(state).await {
-        eprintln!("Dure goal runtime stopped: {code}");
-    }
 }

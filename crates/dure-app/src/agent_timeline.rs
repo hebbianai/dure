@@ -312,6 +312,9 @@ pub enum AgentTimelineItemBodyV1 {
         objective: String,
         goal_revision: u64,
     },
+    QueuedInput {
+        state: crate::AgentQueuedTurnStateV1,
+    },
     PendingAnswer {
         idempotency_key: String,
         request: Box<AgentPendingRequestV1>,
@@ -358,6 +361,7 @@ impl AgentTimelineItemBodyV1 {
                 }
             }
             Self::Message { markdown, .. } => bounded_text("message.markdown", markdown)?,
+            Self::QueuedInput { .. } => {}
             Self::GoalContinuation { objective, goal_revision } => {
                 bounded_text("goalContinuation.objective", objective)?;
                 if *goal_revision == 0 {
@@ -1010,6 +1014,7 @@ pub struct AgentTimelinePageV1 {
     pub pending_requests: Vec<AgentPendingRequestV1>,
     pub active_turn: Option<AgentTimelineActiveTurnV1>,
     pub goal: Option<crate::AgentGoalRecordV1>,
+    pub queued_inputs: crate::AgentQueuedInputPageV1,
     pub final_cursor: AgentTimelineCursorV1,
     pub has_more: bool,
 }

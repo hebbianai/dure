@@ -148,16 +148,17 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 			submissions += 1;
 			throw new Error("Native draft QA must not submit");
 		},
-		queueMessage: () => {
+		queueMessage: async () => {
 			submissions += 1;
 		},
 		steerOrQueue: async () => {
 			submissions += 1;
 			return "queued";
 		},
-		dequeueMessage: () => undefined,
+		dequeueMessage: async () => "",
+		loadMoreQueued: async () => {},
 		retryTurn: async () => {},
-		editRetryableTurn: () => undefined,
+		editRetryableTurn: async () => undefined,
 		answerPending: async () => {},
 		interrupt: async () => {},
 		dismissActionError() {},

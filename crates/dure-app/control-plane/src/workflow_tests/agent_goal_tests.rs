@@ -44,13 +44,9 @@ impl AgentProviderCommands for GoalCommands {
             if self.held_agent.as_deref() == Some(binding.agent_id.as_str()) {
                 self.hold.notified().await;
             }
-            if count >= 2 {
-                let goal = self
-                    .store
-                    .agent_goal(&binding.agent_id)
-                    .await
-                    .unwrap()
-                    .unwrap();
+            if count >= 2
+                && let Some(goal) = self.store.agent_goal(&binding.agent_id).await.unwrap()
+            {
                 self.store
                     .put_agent_goal(
                         &AgentGoalPutRequestV1 {
@@ -240,9 +236,191 @@ async fn wait_for_status(state: &ServiceState, id: &str, status: AgentGoalStatus
 }
 
 #[tokio::test]
+async fn unsupported_steering_reaches_the_client_without_private_provider_details() {
+    use dure_app::AgentQueuedTurnStore;
+    let (_root, state, commands) = goal_fixture(None, false).await;
+    let binding = state
+        .store
+        .agent_interaction_for_agent(&AgentIdV1::new("goal-a").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let active = AgentStartTurnIntentV1 {
+        schema_version: 1,
+        interaction_session_id: binding.interaction_session_id.clone(),
+        runtime: binding.runtime.clone(),
+        turn_id: dure_app::AgentTurnIdV1::new("active-turn").unwrap(),
+        client_message_id: dure_app::AgentClientMessageIdV1::new("active-input").unwrap(),
+        input: "Original work".into(),
+        requested_at_ms: now_ms().unwrap(),
+    };
+    state.store.record_agent_turn_intent(&active).await.unwrap();
+    let steer = AgentStartTurnIntentV1 {
+        client_message_id: dure_app::AgentClientMessageIdV1::new("steering-input").unwrap(),
+        input: "Next direction".into(),
+        ..active.clone()
+    };
+    for _ in 0..2 {
+        let response = request_over_test_connection(
+            Arc::clone(&state),
+            "agent_conversation.steer_turn",
+            "agent_conversation.steer_turn",
+            serde_json::to_value(&steer).unwrap(),
+        )
+        .await;
+        assert_eq!(
+            response["error"]["code"], "agent_conversation_steer_unsupported",
+            "{response}"
+        );
+        assert_eq!(response["error"]["details"]["disposition"], "terminal");
+        assert!(!response.to_string().contains("this provider cannot accept"));
+    }
+    assert!(commands.calls.lock().unwrap().is_empty());
+    let observation = state
+        .store
+        .inspect_agent_input(&steer.interaction_session_id, &steer.client_message_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(observation, dure_app::AgentInputReceiptV1::Turn { receipt }
+        if receipt.state == dure_app::AgentTurnEffectStateV1::Failed && !receipt.newly_prepared)
+    );
+    let queued = AgentStartTurnIntentV1 {
+        client_message_id: dure_app::AgentClientMessageIdV1::new("queued-direction").unwrap(),
+        turn_id: dure_app::AgentTurnIdV1::new("next-turn").unwrap(),
+        ..steer
+    };
+    let admission = request_over_test_connection(
+        Arc::clone(&state),
+        "agent_conversation.enqueue_turn",
+        "agent_conversation.enqueue_turn",
+        serde_json::to_value(&queued).unwrap(),
+    )
+    .await;
+    assert_eq!(admission["result"]["receipt"]["state"], "queued");
+    assert!(commands.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn queued_input_runs_without_a_view_and_recovers_from_a_missed_notification() {
+    use dure_app::AgentQueuedTurnStore;
+    let (_root, state, commands) = goal_fixture(None, false).await;
+    let binding = state
+        .store
+        .agent_interaction_for_agent(&AgentIdV1::new("goal-a").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let intent = |index| AgentStartTurnIntentV1 {
+        schema_version: 1,
+        interaction_session_id: binding.interaction_session_id.clone(),
+        runtime: binding.runtime.clone(),
+        turn_id: dure_app::AgentTurnIdV1::new(format!("queued-{index}")).unwrap(),
+        client_message_id: dure_app::AgentClientMessageIdV1::new(format!("queued-input-{index}"))
+            .unwrap(),
+        input: format!("Human queued instruction {index}"),
+        requested_at_ms: now_ms().unwrap(),
+    };
+    let first = intent(1);
+    let second = intent(2);
+    // Admission predates the execution loop. No view or subscriber owns it.
+    for input in [&first, &second] {
+        let response = request_over_test_connection(
+            Arc::clone(&state),
+            "agent_conversation.enqueue_turn",
+            "agent_conversation.enqueue_turn",
+            serde_json::to_value(input).unwrap(),
+        )
+        .await;
+        assert_eq!(response["kind"], BACKEND_RESPONSE_KIND, "{response}");
+        assert_eq!(response["result"]["receipt"]["state"], "queued");
+    }
+    let read_queue = request_over_test_connection(Arc::clone(&state), "agent_conversation.read_queue", "agent_conversation.read_queue",
+        json!({"schemaVersion": 1, "interactionSessionId": binding.interaction_session_id, "afterSequence": 0})).await;
+    assert_eq!(read_queue["kind"], BACKEND_RESPONSE_KIND, "{read_queue}");
+    assert_eq!(
+        read_queue["result"]["page"]["inputs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let inspect_input = request_over_test_connection(Arc::clone(&state), "agent_conversation.inspect_input", "agent_conversation.inspect_input",
+        json!({"schemaVersion": 1, "interactionSessionId": binding.interaction_session_id, "clientMessageId": first.client_message_id})).await;
+    assert_eq!(
+        inspect_input["kind"], BACKEND_RESPONSE_KIND,
+        "{inspect_input}"
+    );
+    assert_eq!(inspect_input["result"]["input"]["kind"], "queued");
+    assert_eq!(
+        inspect_input["result"]["input"]["receipt"]["intent"],
+        serde_json::to_value(&first).unwrap()
+    );
+    assert!(commands.calls.lock().unwrap().is_empty());
+    let runtime = tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(
+        &state,
+    )));
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if commands
+                .calls
+                .lock()
+                .unwrap()
+                .get("goal-a")
+                .is_some_and(|calls| calls.len() == 2)
+            {
+                break;
+            }
+            commands.observed.notified().await;
+        }
+    })
+    .await
+    .unwrap();
+    wait_for_idle(&state, "goal-a").await;
+    runtime.abort();
+    let _ = runtime.await;
+    assert_eq!(
+        commands.calls.lock().unwrap()["goal-a"],
+        vec![first.input.clone(), second.input.clone()]
+    );
+    assert!(
+        state
+            .store
+            .agent_goal(&binding.agent_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        state
+            .store
+            .read_queued_agent_turns(&binding.interaction_session_id, 0)
+            .await
+            .unwrap()
+            .inputs
+            .is_empty()
+    );
+    let replay = request_over_test_connection(
+        Arc::clone(&state),
+        "agent_conversation.enqueue_turn",
+        "agent_conversation.enqueue_turn",
+        serde_json::to_value(&first).unwrap(),
+    )
+    .await;
+    assert_eq!(replay["kind"], BACKEND_RESPONSE_KIND, "{replay}");
+    assert_eq!(
+        replay["result"]["receipt"]["state"], "dispatched",
+        "{replay}"
+    );
+    assert_eq!(commands.calls.lock().unwrap()["goal-a"].len(), 2);
+}
+#[tokio::test]
 async fn explicit_goal_continues_after_a_successful_segment_without_another_human_request() {
     let (_root, state, commands) = goal_fixture(None, false).await;
-    let runtime = tokio::spawn(crate::agent_goal::run(Arc::clone(&state)));
+    let runtime = tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(
+        &state,
+    )));
     put(&state, "goal-a", 0, "active").await;
     wait_for_status(&state, "goal-a", AgentGoalStatusV1::Complete).await;
     wait_for_idle(&state, "goal-a").await;
@@ -336,7 +514,9 @@ async fn goal_conflicts_are_terminal_without_replacing_current_state_or_accepted
 #[tokio::test]
 async fn one_slow_goal_does_not_block_another_and_pause_stops_its_next_segment() {
     let (_root, state, commands) = goal_fixture(Some("goal-a"), false).await;
-    let runtime = tokio::spawn(crate::agent_goal::run(Arc::clone(&state)));
+    let runtime = tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(
+        &state,
+    )));
     put(&state, "goal-a", 0, "active").await;
     tokio::time::timeout(Duration::from_secs(3), commands.observed.notified())
         .await
@@ -377,11 +557,15 @@ async fn one_slow_goal_does_not_block_another_and_pause_stops_its_next_segment()
 async fn an_actual_provider_command_failure_stays_failed_across_runtime_restart() {
     let (_root, state, commands) = goal_fixture(None, true).await;
     put(&state, "goal-a", 0, "active").await;
-    let runtime = tokio::spawn(crate::agent_goal::run(Arc::clone(&state)));
+    let runtime = tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(
+        &state,
+    )));
     wait_for_status(&state, "goal-a", AgentGoalStatusV1::Failed).await;
     runtime.abort();
     let _ = runtime.await;
-    let runtime = tokio::spawn(crate::agent_goal::run(Arc::clone(&state)));
+    let runtime = tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(
+        &state,
+    )));
     put(&state, "goal-b", 0, "active").await;
     wait_for_status(&state, "goal-b", AgentGoalStatusV1::Failed).await;
     runtime.abort();
@@ -397,14 +581,14 @@ async fn an_actual_provider_command_failure_stays_failed_across_runtime_restart(
 }
 
 #[tokio::test]
-async fn goal_observation_survives_backend_handoff_and_closed_readers_negotiate_v4() {
+async fn goal_observation_survives_backend_handoff_and_closed_readers_negotiate_v5() {
     let (_root, state, _) = goal_fixture(None, false).await;
     put(&state, "goal-a", 0, "paused").await;
     let body = json!({"schemaVersion": 1, "interactionSessionId": "conversation-goal-a", "direction": "tail", "cursor": null, "limit": 1});
     let old = request_over_test_connection(
         Arc::clone(&state),
         "agent_conversation.read",
-        "agent_conversation.read.v3",
+        "agent_conversation.read.v4",
         body.clone(),
     )
     .await;
@@ -412,7 +596,7 @@ async fn goal_observation_survives_backend_handoff_and_closed_readers_negotiate_
     let current = request_over_test_connection(
         Arc::clone(&state),
         "agent_conversation.read",
-        "agent_conversation.read.v4",
+        "agent_conversation.read.v5",
         body,
     )
     .await;
@@ -467,7 +651,9 @@ async fn startup_readiness_does_not_fail_or_admit_a_goal_before_its_runtime_is_r
         .agent_conversation_runtimes
         .register(binding, commands.clone())
         .unwrap();
-    let runtime = tokio::spawn(crate::agent_goal::run(Arc::clone(&state)));
+    let runtime = tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(
+        &state,
+    )));
     state.goal_wakeup.notify_one();
     wait_for_status(&state, "goal-a", AgentGoalStatusV1::Complete).await;
     wait_for_idle(&state, "goal-a").await;
@@ -501,7 +687,7 @@ async fn goal_changes_invalidate_the_existing_conversation_without_a_new_timelin
         notification.interaction_session_id,
         initial.binding.interaction_session_id
     );
-    let response = request_over_test_connection(Arc::clone(&state), "agent_conversation.read", "agent_conversation.read.v4", json!({"direction": "after", "cursor": initial.final_cursor, "schemaVersion": 1, "interactionSessionId": "conversation-goal-a", "limit": 1})).await;
+    let response = request_over_test_connection(Arc::clone(&state), "agent_conversation.read", "agent_conversation.read.v5", json!({"direction": "after", "cursor": initial.final_cursor, "schemaVersion": 1, "interactionSessionId": "conversation-goal-a", "limit": 1})).await;
     assert_eq!(response["result"]["read"]["page"]["goal"], goal);
     assert_eq!(response["result"]["read"]["page"]["rows"], json!([]));
     let updated = put(&state, "goal-a", 1, "complete").await;

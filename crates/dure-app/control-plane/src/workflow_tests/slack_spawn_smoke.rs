@@ -123,7 +123,7 @@ async fn run(ongoing_goal: bool) {
     let state = Arc::new(state);
     let server = goal_provider_smoke::serve(Arc::clone(&state), &endpoint);
     let goal_runtime =
-        ongoing_goal.then(|| tokio::spawn(crate::agent_goal::run(Arc::clone(&state))));
+        ongoing_goal.then(|| tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(&state))));
     let outcome = tokio::time::timeout(
         Duration::from_secs(if ongoing_goal { 600 } else { 360 }),
         tokio::process::Command::new(node)

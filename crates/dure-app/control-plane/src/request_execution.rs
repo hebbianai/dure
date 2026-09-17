@@ -52,6 +52,8 @@ pub(super) fn policy_for(
         | agent_conversation_api::RECOVER_OPERATION
         | agent_conversation_api::START_TURN_OPERATION
         | agent_conversation_api::STEER_TURN_OPERATION
+        | agent_conversation_api::ENQUEUE_TURN_OPERATION
+        | agent_conversation_api::CANCEL_QUEUED_TURN_OPERATION
         | agent_conversation_api::ANSWER_PENDING_OPERATION
         | "claude_conversation.open"
         | "claude_conversation.launch"
@@ -113,6 +115,8 @@ mod tests {
             agent_conversation_api::RECOVER_OPERATION,
             agent_conversation_api::START_TURN_OPERATION,
             agent_conversation_api::STEER_TURN_OPERATION,
+            agent_conversation_api::ENQUEUE_TURN_OPERATION,
+            agent_conversation_api::CANCEL_QUEUED_TURN_OPERATION,
             agent_conversation_api::ANSWER_PENDING_OPERATION,
             agent_conversation_api::INTERRUPT_TURN_OPERATION,
         ] {
@@ -173,6 +177,8 @@ mod tests {
             agent_conversation_api::RECOVER_OPERATION,
             agent_conversation_api::START_TURN_OPERATION,
             agent_conversation_api::STEER_TURN_OPERATION,
+            agent_conversation_api::ENQUEUE_TURN_OPERATION,
+            agent_conversation_api::CANCEL_QUEUED_TURN_OPERATION,
             agent_conversation_api::ANSWER_PENDING_OPERATION,
             "claude_conversation.open",
             "claude_conversation.launch",

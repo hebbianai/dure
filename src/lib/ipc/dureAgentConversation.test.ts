@@ -32,6 +32,11 @@ function read() {
 			pendingRequests: [],
 			activeTurn: null,
 			goal: null,
+			queuedInputs: {
+				interactionSessionId: "interaction-1",
+				inputs: [],
+				nextAfter: null,
+			},
 			finalCursor: { epoch: "timeline-1", sequence: 0 },
 			hasMore: false,
 		},
@@ -56,6 +61,160 @@ function routeAuthority() {
 }
 
 describe("Dure agent conversation client", () => {
+	it("inspects the original input using a read operation and never grants execution", async () => {
+		const intent = {
+			schemaVersion: 1 as const,
+			interactionSessionId: "interaction-1",
+			runtime: read().page.binding.runtime,
+			turnId: "turn-1",
+			clientMessageId: "input-1",
+			input: "retained",
+			requestedAtMs: 10,
+		};
+		const receipt = {
+			intent,
+			state: "accepted",
+			newlyPrepared: false,
+			providerReceipt: null,
+			timelineCursor: { epoch: "timeline-1", sequence: 1 },
+			updatedAtMs: 11,
+		};
+		const invokeCommand = vi
+			.fn()
+			.mockResolvedValueOnce(envelope({ input: null }))
+			.mockResolvedValueOnce(envelope({ input: { kind: "turn", receipt } }))
+			.mockResolvedValueOnce(
+				envelope({
+					input: { kind: "turn", receipt: { ...receipt, newlyPrepared: true } },
+				}),
+			);
+		const client = createDureAgentConversationClient({ invokeCommand });
+		const request = {
+			schemaVersion: 1 as const,
+			interactionSessionId: intent.interactionSessionId,
+			clientMessageId: intent.clientMessageId,
+		};
+		expect(await client.inspectInput(request, routeAuthority())).toBeNull();
+		expect(await client.inspectInput(request, routeAuthority())).toEqual({
+			kind: "turn",
+			intent,
+			state: "accepted",
+		});
+		await expect(
+			client.inspectInput(request, routeAuthority()),
+		).rejects.toThrow();
+		expect(invokeCommand).toHaveBeenNthCalledWith(
+			1,
+			"dure_backend_request",
+			expect.objectContaining({
+				operation: "agent_conversation.inspect_input",
+				body: request,
+				route: { kind: "exact", authority: routeAuthority() },
+			}),
+		);
+	});
+
+	it("retains dispatched queue receipts and cancels another input by immutable identity", async () => {
+		const turn = {
+			schemaVersion: 1 as const,
+			interactionSessionId: "interaction-1",
+			runtime: read().page.binding.runtime,
+			turnId: "turn-queued",
+			clientMessageId: "queued-input",
+			input: "continue after this turn",
+			requestedAtMs: 10,
+		};
+		const queued = {
+			intent: turn,
+			state: "dispatched",
+			timelineCursor: { epoch: "timeline-1", sequence: 7 },
+		};
+		const canceled = {
+			...queued,
+			intent: {
+				...turn,
+				clientMessageId: "queued-other",
+				turnId: "turn-other",
+			},
+			state: "canceled",
+		};
+		const invokeCommand = vi
+			.fn()
+			.mockResolvedValueOnce(envelope({ receipt: queued }))
+			.mockResolvedValueOnce(envelope({ receipt: canceled }));
+		const client = createDureAgentConversationClient({ invokeCommand });
+		expect(await client.enqueueTurn(turn, routeAuthority())).toEqual(queued);
+		const cancel = {
+			schemaVersion: 1 as const,
+			interactionSessionId: turn.interactionSessionId,
+			clientMessageId: canceled.intent.clientMessageId,
+		};
+		expect(
+			(await client.cancelQueuedTurn(cancel, routeAuthority())).intent.input,
+		).toBe(turn.input);
+		expect(invokeCommand).toHaveBeenNthCalledWith(
+			1,
+			"dure_backend_request",
+			expect.objectContaining({
+				operation: "agent_conversation.enqueue_turn",
+				body: turn,
+				route: { kind: "exact", authority: routeAuthority() },
+			}),
+		);
+		expect(invokeCommand).toHaveBeenNthCalledWith(
+			2,
+			"dure_backend_request",
+			expect.objectContaining({
+				operation: "agent_conversation.cancel_queued_turn",
+				body: cancel,
+				route: { kind: "exact", authority: routeAuthority() },
+			}),
+		);
+	});
+
+	it("rejects a foreign queue receipt and does not report an already-dispatched input as canceled", async () => {
+		const turn = {
+			schemaVersion: 1 as const,
+			interactionSessionId: "interaction-1",
+			runtime: read().page.binding.runtime,
+			turnId: "turn-queued",
+			clientMessageId: "queued-input",
+			input: "continue after this turn",
+			requestedAtMs: 10,
+		};
+		const queued = {
+			intent: turn,
+			state: "dispatched",
+			timelineCursor: { epoch: "timeline-1", sequence: 7 },
+		};
+		const invokeCommand = vi
+			.fn()
+			.mockResolvedValueOnce(
+				envelope({
+					receipt: {
+						...queued,
+						intent: { ...turn, interactionSessionId: "other-conversation" },
+					},
+				}),
+			)
+			.mockResolvedValueOnce(envelope({ receipt: queued }));
+		const client = createDureAgentConversationClient({ invokeCommand });
+		await expect(
+			client.enqueueTurn(turn, routeAuthority()),
+		).rejects.toMatchObject({ code: "agent_conversation_receipt_invalid" });
+		await expect(
+			client.cancelQueuedTurn(
+				{
+					schemaVersion: 1,
+					interactionSessionId: turn.interactionSessionId,
+					clientMessageId: turn.clientMessageId,
+				},
+				routeAuthority(),
+			),
+		).rejects.toMatchObject({ code: "agent_conversation_receipt_invalid" });
+		expect(invokeCommand).toHaveBeenCalledTimes(2);
+	});
+
 	it.each(["prepared", "uncertain"])(
 		"does not report a %s steering receipt as delivered",
 		async (state) => {

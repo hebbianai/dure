@@ -74,6 +74,7 @@ export type AgentTimelineItemBodyV1 =
 	  }
 	| { type: "message"; role: "user" | "assistant"; markdown: string }
 	| { type: "goal_continuation"; objective: string; goalRevision: number }
+	| { type: "queued_input"; state: AgentQueuedTurnStateV1 }
 	| {
 			type: "pending_answer";
 			idempotencyKey: string;
@@ -219,6 +220,115 @@ export function parseAgentGoalRecordV1(
 	};
 }
 
+export type AgentQueuedTurnStateV1 = "queued" | "dispatched" | "canceled";
+
+export interface AgentStartTurnIntentV1 {
+	schemaVersion: 1;
+	interactionSessionId: string;
+	runtime: AgentProviderRuntimeFenceV1;
+	turnId: string;
+	clientMessageId: string;
+	input: string;
+	requestedAtMs: number;
+}
+
+export interface AgentQueuedTurnRecordV1 {
+	intent: AgentStartTurnIntentV1;
+	state: AgentQueuedTurnStateV1;
+	timelineCursor: AgentTimelineCursorV1;
+}
+
+export interface AgentInputReadRequestV1 {
+	schemaVersion: 1;
+	interactionSessionId: string;
+	clientMessageId: string;
+}
+
+export type AgentInputObservationV1 =
+	| {
+			kind: "queued";
+			intent: AgentStartTurnIntentV1;
+			state: "queued" | "dispatched" | "canceled";
+	  }
+	| {
+			kind: "turn";
+			intent: AgentStartTurnIntentV1;
+			state: "prepared" | "accepted" | "failed" | "uncertain";
+	  };
+
+export function sameAgentStartTurnIntent(
+	a: AgentStartTurnIntentV1,
+	b: AgentStartTurnIntentV1,
+): boolean {
+	return (
+		a.schemaVersion === b.schemaVersion &&
+		a.interactionSessionId === b.interactionSessionId &&
+		a.runtime.runtimeGeneration === b.runtime.runtimeGeneration &&
+		a.runtime.providerEpoch === b.runtime.providerEpoch &&
+		a.clientMessageId === b.clientMessageId &&
+		a.turnId === b.turnId &&
+		a.input === b.input &&
+		a.requestedAtMs === b.requestedAtMs
+	);
+}
+
+export function parseAgentStartTurnIntentV1(
+	value: unknown,
+): AgentStartTurnIntentV1 | undefined {
+	const intent = record(value);
+	const runtime = parseAgentRuntimeFenceV1(intent?.runtime);
+	if (
+		!intent ||
+		!hasOnlyKeys(intent, [
+			"schemaVersion",
+			"interactionSessionId",
+			"runtime",
+			"turnId",
+			"clientMessageId",
+			"input",
+			"requestedAtMs",
+		]) ||
+		intent.schemaVersion !== 1 ||
+		!domainId(intent.interactionSessionId) ||
+		!domainId(intent.turnId) ||
+		!domainId(intent.clientMessageId) ||
+		!boundedText(intent.input, MAX_TEXT_BYTES, false) ||
+		!nonNegativeInteger(intent.requestedAtMs) ||
+		!runtime
+	)
+		return undefined;
+	return {
+		schemaVersion: 1,
+		interactionSessionId: intent.interactionSessionId,
+		runtime,
+		turnId: intent.turnId,
+		clientMessageId: intent.clientMessageId,
+		input: intent.input,
+		requestedAtMs: intent.requestedAtMs,
+	};
+}
+
+export function parseAgentQueuedTurnRecordV1(
+	value: unknown,
+): AgentQueuedTurnRecordV1 | undefined {
+	const candidate = record(value);
+	const intent = parseAgentStartTurnIntentV1(candidate?.intent);
+	const timelineCursor = parseAgentTimelineCursorV1(candidate?.timelineCursor);
+	if (
+		!candidate ||
+		!hasOnlyKeys(candidate, ["intent", "state", "timelineCursor"]) ||
+		!["queued", "dispatched", "canceled"].includes(String(candidate.state)) ||
+		!intent ||
+		!timelineCursor
+	)
+		return undefined;
+	return {
+		intent,
+		state: candidate.state as AgentQueuedTurnStateV1,
+		timelineCursor,
+	};
+}
+
 export interface AgentTimelinePageV1 {
 	binding: AgentInteractionBindingV1;
 	rows: AgentTimelineRowV1[];
@@ -226,8 +336,76 @@ export interface AgentTimelinePageV1 {
 	pendingRequests: AgentPendingRequestV1[];
 	activeTurn: AgentTimelineActiveTurnV1 | null;
 	goal: AgentGoalRecordV1 | null;
+	queuedInputs?: AgentQueuedInputPageV1;
 	finalCursor: AgentTimelineCursorV1;
 	hasMore: boolean;
+}
+
+export interface AgentQueuedInputV1 {
+	clientMessageId: string;
+	sequence: number;
+	preview: string;
+}
+
+export interface AgentQueuedInputPageV1 {
+	interactionSessionId: string;
+	inputs: AgentQueuedInputV1[];
+	nextAfter: number | null;
+}
+
+export interface AgentQueueReadRequestV1 {
+	schemaVersion: 1;
+	interactionSessionId: string;
+	afterSequence: number;
+}
+
+export function parseAgentQueuedInputPageV1(
+	value: unknown,
+	interactionSessionId: string,
+	afterSequence = 0,
+): AgentQueuedInputPageV1 | undefined {
+	const page = record(value);
+	if (
+		!page ||
+		!hasOnlyKeys(page, ["interactionSessionId", "inputs", "nextAfter"]) ||
+		page.interactionSessionId !== interactionSessionId ||
+		!Array.isArray(page.inputs) ||
+		page.inputs.length > 64
+	)
+		return undefined;
+	const inputs: AgentQueuedInputV1[] = [];
+	const seen = new Set<string>();
+	let previous = afterSequence;
+	for (const value of page.inputs) {
+		const input = record(value);
+		if (
+			!input ||
+			!hasOnlyKeys(input, ["clientMessageId", "sequence", "preview"]) ||
+			!domainId(input.clientMessageId) ||
+			seen.has(input.clientMessageId) ||
+			!nonNegativeInteger(input.sequence) ||
+			input.sequence <= previous ||
+			!boundedText(input.preview, 2048, false)
+		)
+			return undefined;
+		inputs.push({
+			clientMessageId: input.clientMessageId,
+			sequence: input.sequence,
+			preview: input.preview,
+		});
+		seen.add(input.clientMessageId);
+		previous = input.sequence;
+	}
+	if (
+		page.nextAfter !== null &&
+		(inputs.length !== 64 || page.nextAfter !== previous)
+	)
+		return undefined;
+	return {
+		interactionSessionId,
+		inputs,
+		nextAfter: page.nextAfter === null ? null : previous,
+	};
 }
 
 export type AgentTimelineReadV1 =
@@ -428,6 +606,14 @@ function parseTimelineBody(
 						type: "goal_continuation",
 						objective: candidate.objective,
 						goalRevision: candidate.goal_revision,
+					}
+				: undefined;
+		case "queued_input":
+			return hasOnlyKeys(candidate, ["type", "state"]) &&
+				["queued", "dispatched", "canceled"].includes(String(candidate.state))
+				? {
+						type: "queued_input",
+						state: candidate.state as AgentQueuedTurnStateV1,
 					}
 				: undefined;
 		case "reasoning":
@@ -708,6 +894,7 @@ export function parseAgentTimelineReadV1(
 			"pendingRequests",
 			"activeTurn",
 			"goal",
+			"queuedInputs",
 			"finalCursor",
 			"hasMore",
 		]) ||
@@ -729,10 +916,15 @@ export function parseAgentTimelineReadV1(
 	const rows = page.rows.map(parseRow);
 	const liveText = page.liveText.map(parseLiveText);
 	const pendingRequests = page.pendingRequests.map(parsePending);
+	const queuedInputs = parseAgentQueuedInputPageV1(
+		page.queuedInputs,
+		binding.interactionSessionId,
+	);
 	if (
 		rows.some((row) => !row) ||
 		liveText.some((head) => !head) ||
-		pendingRequests.some((request) => !request)
+		pendingRequests.some((request) => !request) ||
+		!queuedInputs
 	) {
 		return undefined;
 	}
@@ -804,6 +996,7 @@ export function parseAgentTimelineReadV1(
 			pendingRequests: pendingRequests as AgentPendingRequestV1[],
 			activeTurn,
 			goal,
+			queuedInputs,
 			finalCursor,
 			hasMore: page.hasMore,
 		},

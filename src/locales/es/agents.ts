@@ -45,6 +45,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.permissionLabel": "Permisos",
 	"agents.chat.permissionAutoEdit": "Ediciones automáticas",
 	"agents.chat.permissionSkip": "Eludir aprobaciones",
+	"agents.chat.queuedMore": "Cargar más",
 	"agents.chat.queuedEdit": "Devolver a la entrada",
 	"agents.chat.error.conflict": "La sesión cambió durante esta acción. Inténtalo de nuevo.",
 	"agents.chat.error.deadline": "El backend no respondió a tiempo. Inténtalo de nuevo.",

@@ -1,3 +1,4 @@
+import { type AgentChatSubmission, normalizeAgentChatSubmissions } from "@/lib/agents/chat/agentChatSubmission";
 import { isDureBackendProfileIdV1 } from "@/lib/ipc/dureProtocolIdentity";
 // 영속 슬라이스와 그 정규화 — store에서 추출(god-file 다이어트).
 //
@@ -55,6 +56,7 @@ import {
 // interface가 아니라 type 별칭이다 — interface에는 암묵적 인덱스 시그니처가
 // 없어서 zustand persist의 Record<string, unknown> 제약을 만족하지 못한다.
 export type PersistedAppState = {
+  chatSubmissions?: Record<string, AgentChatSubmission>;
   spaces: Space[];
   spaceVisits: Record<string, number>;
   pinnedPanes: Record<string, boolean>;
@@ -86,6 +88,7 @@ export function persistedSlice(
   },
 ): PersistedAppState {
   return {
+    ...(state.chatSubmissions ? { chatSubmissions: state.chatSubmissions } : {}),
     spaces: state.spaces,
     spaceVisits: state.spaceVisits,
     pinnedPanes: state.pinnedPanes,
@@ -257,6 +260,7 @@ function normalizeCanonicalPersistedState(
     ? providerBooleanRecord(raw.skipPermissions)
     : undefined;
   return {
+    ...(owns(raw, "chatSubmissions") ? { chatSubmissions: normalizeAgentChatSubmissions(raw.chatSubmissions) } : {}),
     spaces,
     layouts: normalizePersistedPaneLayouts(recordValue(raw.layouts)),
     spaceVisits: numberRecord(

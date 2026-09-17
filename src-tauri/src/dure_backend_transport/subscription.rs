@@ -120,13 +120,26 @@ pub(super) fn cancel_window_subscriptions(
 pub(crate) fn configure_window_lifecycle(
     builder: tauri::Builder<tauri::Wry>,
 ) -> tauri::Builder<tauri::Wry> {
-    builder.on_window_event(|window, event| {
-        if matches!(event, tauri::WindowEvent::Destroyed) {
-            window
-                .state::<DureBackendTransportState>()
-                .cancel_window_subscriptions(window.label());
-        }
-    })
+    // Plugin page-load hooks compose with the Hmux observer's existing hook.
+    builder
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("dure-backend-subscriptions")
+                .on_page_load(|webview, payload| {
+                    if payload.event() == tauri::webview::PageLoadEvent::Started {
+                        webview
+                            .state::<DureBackendTransportState>()
+                            .cancel_window_subscriptions(webview.label());
+                    }
+                })
+                .build(),
+        )
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                window
+                    .state::<DureBackendTransportState>()
+                    .cancel_window_subscriptions(window.label());
+            }
+        })
 }
 
 fn subscription_event(
@@ -699,7 +712,7 @@ mod tests {
                         maximum: ProtocolVersion { major: 1, minor: 0 },
                     },
                     capabilities: vec![
-                        "agent_conversation.subscribe.v4".into(),
+                        "agent_conversation.subscribe.v5".into(),
                         "backend.connection.persistent".into(),
                     ],
                 },
@@ -720,7 +733,7 @@ mod tests {
                 "generation": generation,
                 "protocol": { "major": 1, "minor": 0 },
                 "capabilities": [
-                    "agent_conversation.subscribe.v4",
+                    "agent_conversation.subscribe.v5",
                     "backend.connection.persistent"
                 ],
                 "observedAtMs": super::super::now_ms().unwrap()
@@ -750,7 +763,7 @@ mod tests {
                 "generation": generation,
                 "protocol": { "major": 1, "minor": 0 },
                 "capabilities": [
-                    "agent_conversation.subscribe.v4",
+                    "agent_conversation.subscribe.v5",
                     "backend.connection.persistent"
                 ],
                 "observedAtMs": super::super::now_ms().unwrap()
@@ -786,7 +799,7 @@ mod tests {
                         "maximum": { "major": 1, "minor": 0 }
                     },
                     "capabilities": [
-                        "agent_conversation.subscribe.v4",
+                        "agent_conversation.subscribe.v5",
                         "backend.connection.persistent"
                     ]
                 },
@@ -964,7 +977,7 @@ mod tests {
                         "maximum": { "major": 1, "minor": 0 }
                     },
                     "capabilities": [
-                        "agent_conversation.subscribe.v4",
+                        "agent_conversation.subscribe.v5",
                         "backend.connection.persistent"
                     ]
                 },
@@ -1375,7 +1388,7 @@ printf '%s\n' "$$" > '{}'
 while IFS= read -r line; do
   request_id=$(printf '%s\n' "$line" | sed -E 's/.*"requestId":"([^"]+)".*/\1/')
   observed_at_ms=$(($(date +%s) * 1000))
-  printf '{{"schemaVersion":1,"apiVersion":"dure.backend-transport/v1","kind":"dure.backend.response","requestId":"%s","backend":{{"id":"remote-backend","generation":"remote-v1","protocol":{{"major":1,"minor":0}},"capabilities":["agent_conversation.subscribe.v4","backend.connection.persistent"],"observedAtMs":%s}},"result":{{"schemaVersion":1}}}}\n' "$request_id" "$observed_at_ms"
+  printf '{{"schemaVersion":1,"apiVersion":"dure.backend-transport/v1","kind":"dure.backend.response","requestId":"%s","backend":{{"id":"remote-backend","generation":"remote-v1","protocol":{{"major":1,"minor":0}},"capabilities":["agent_conversation.subscribe.v5","backend.connection.persistent"],"observedAtMs":%s}},"result":{{"schemaVersion":1}}}}\n' "$request_id" "$observed_at_ms"
 done
 "#,
                 material_log.display(),
@@ -1414,7 +1427,7 @@ done
                                 "maximum": { "major": 1, "minor": 0 }
                             },
                             "capabilities": [
-                                "agent_conversation.subscribe.v4",
+                                "agent_conversation.subscribe.v5",
                                 "backend.connection.persistent"
                             ]
                         }

@@ -7,6 +7,7 @@
 mod agent_bootstrap;
 mod agent_dispatch_stop;
 mod agent_goal;
+mod agent_queue;
 mod agent_integration;
 mod agent_plugin_cli;
 mod agent_plugin_cli_invocation;
@@ -58,6 +59,7 @@ pub use agent_bootstrap::{
 };
 pub use agent_dispatch_stop::*;
 pub use agent_goal::*;
+pub use agent_queue::*;
 pub use agent_integration::{
     AgentEnvironmentTargetV2, AgentIntegrationEffectOwnershipV2, AgentIntegrationEffectReceiptV2,
     AgentIntegrationInstallActionV2, AgentIntegrationInstallPlanV2,

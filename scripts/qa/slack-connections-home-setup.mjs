@@ -32,7 +32,23 @@ if (sharing) {
   mkdirSync(project, { mode: 0o700 });
   writeFileSync(join(project, "AGENTS.md"), live
     ? "This is a disposable Slack integration test repository. Work only on the requested files in this directory. Do not inspect credentials, change configuration, contact external services, or delegate work. Preserve counts.txt.\n"
-    : "This is an isolated native Slack sharing test. Only answer the requested marker. Do not inspect credentials, use tools or contact external services.\n", { flag: "wx", mode: 0o600 });
+    : "This is an isolated native Slack sharing test. Only perform the requested task. You may run python3 queue-barrier.py when explicitly requested, and wait for it to finish. Do not run other tools, inspect credentials, or contact external services.\n", { flag: "wx", mode: 0o600 });
+  if (!live) {
+    writeFileSync(join(project, "queue-barrier.py"), `from pathlib import Path
+import time
+
+project = Path(__file__).resolve().parent
+assert project.name == "project" and project.parent.name == "home"
+assert project.parent.parent.name.startswith("dure-slack-share.")
+(project / "queue-active").write_text("waiting")
+deadline = time.monotonic() + 180
+while not (project / "queue-release").exists():
+    if time.monotonic() > deadline:
+        raise RuntimeError("The isolated queue test did not release its tool")
+    time.sleep(0.1)
+print("QA_ACTIVE_DONE")
+`, { flag: "wx", mode: 0o600 });
+  }
   if (live) {
     const credentials = JSON.parse(readFileSync(process.env.DURE_QA_SLACK_LIVE_CREDENTIALS, "utf8"));
     writeFileSync(join(home, "slack-live.json"), JSON.stringify({

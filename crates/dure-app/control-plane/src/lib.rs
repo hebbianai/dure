@@ -4089,6 +4089,7 @@ fn agent_conversation_api_error(
     let disposition = match error {
         AgentConversationApiErrorV1::RequestInvalid
         | AgentConversationApiErrorV1::NotFound
+        | AgentConversationApiErrorV1::SteerUnsupported
         | AgentConversationApiErrorV1::ProviderFailed => BackendFailureDispositionV1::Terminal,
         AgentConversationApiErrorV1::Conflict => BackendFailureDispositionV1::StaleGeneration,
         AgentConversationApiErrorV1::RuntimeUnavailable

@@ -24,6 +24,8 @@ use super::schema::{downgrade_workflow_launch_fixture_to_v31, writable_connect_o
 
 #[path = "agent_goal_tests.rs"]
 mod goals;
+#[path = "agent_queue_tests.rs"]
+mod queue;
 
 #[tokio::test]
 async fn canceled_effect_completion_rolls_back_before_reusing_its_connection() {

@@ -114,6 +114,10 @@ it("does not interrupt the next controller turn during a claimed projection upda
 		async () => {},
 	);
 	const client: DureAgentConversationClient = {
+		inspectInput: vi.fn(async () => null),
+		readQueue: vi.fn(),
+		enqueueTurn: vi.fn(),
+		cancelQueuedTurn: vi.fn(),
 		putGoal: async () => {
 			throw new Error("unused fixture goal write");
 		},

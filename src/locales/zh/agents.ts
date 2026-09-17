@@ -46,6 +46,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.permissionLabel": "权限",
 	"agents.chat.permissionAutoEdit": "自动批准编辑",
 	"agents.chat.permissionSkip": "绕过审批",
+	"agents.chat.queuedMore": "加载更多",
 	"agents.chat.queuedEdit": "移回输入框",
 	"agents.chat.error.conflict": "操作期间会话发生了变化。请重试。",
 	"agents.chat.error.deadline": "后端未及时响应。请重试。",

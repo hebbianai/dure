@@ -795,6 +795,7 @@ type IndependentPersistedAppState = Omit<
 >;
 
 const policies = {
+	chatSubmissions: recordPolicy<PersistedAppState["chatSubmissions"]>(),
 	spaces: idEntityPolicy<PersistedAppState["spaces"][number]>(),
 	spaceVisits: recordPolicy<PersistedAppState["spaceVisits"]>(),
 	shortcutOverrides: recordPolicy<PersistedAppState["shortcutOverrides"]>(),

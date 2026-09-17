@@ -229,6 +229,7 @@ async fn prepare_on(
         return Ok(None);
     }
     if !binding.history_complete
+        || crate::agent_queue::has_pending_on(connection, &binding.interaction_session_id).await?
         || active_turn_for_session(connection, &binding)
             .await?
             .is_some()
