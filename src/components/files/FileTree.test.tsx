@@ -154,6 +154,13 @@ describe("FileTree", () => {
     expect(directory).not.toBeNull();
     fireEvent.click(directory as HTMLButtonElement);
     await screen.findByText("main.ts");
+    let completeRefresh!: (entries: (typeof tree)[string]) => void;
+    const refreshed = new Promise<(typeof tree)[string]>((resolve) => {
+      completeRefresh = resolve;
+    });
+    vi.mocked(listDir).mockImplementation(async (path: string) =>
+      path === "/repo/src" ? refreshed : tree[path] ?? [],
+    );
     const dataTransfer = {
       files: [new File([new Uint8Array([7])], "nested.txt")],
       types: ["Files"],
@@ -171,7 +178,15 @@ describe("FileTree", () => {
     await waitFor(() =>
       expect(vi.mocked(listDir).mock.calls.filter(([path]) => path === "/repo/src")).toHaveLength(2),
     );
-    expect(screen.getByText("main.ts")).toBeTruthy();
+    // Request admission does not mean the refreshed children have rendered.
+    await act(async () => {
+      completeRefresh([
+        ...tree["/repo/src"],
+        { name: "nested.txt", path: "/repo/src/nested.txt", isDir: false, isRepo: false },
+      ]);
+    });
+    expect(await screen.findByText("main.ts")).toBeTruthy();
+    expect(await screen.findByText("nested.txt")).toBeTruthy();
   });
 
   it("uploads Finder files to an SSH tree without requiring a live terminal session", async () => {
