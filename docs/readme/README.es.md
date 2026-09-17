@@ -9,7 +9,7 @@
 ### Tú diriges.<br>Tus agentes trabajan juntos.
 
 Un **Agent Development Environment (ADE)** para tus agentes de programación con IA.<br>
-Proyectos, conversaciones, terminales y cambios de código, en un solo espacio de trabajo para macOS.
+Proyectos, conversaciones, terminales y cambios de código, en un solo espacio de trabajo.
 
 **[Descargar para macOS](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [Sitio web](https://www.dureai.dev/) &nbsp;·&nbsp; [Documentación (inglés)](https://docs.dureai.dev/en/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_) &nbsp;·&nbsp; [Discord](https://discord.gg/aTuRV6DXhb)
 
@@ -111,6 +111,8 @@ Indica los comandos y los archivos que los documentan.
 **Licencia: [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
 El código propio de Dure está disponible en este repositorio bajo MIT. Los componentes de terceros conservan sus licencias y avisos de copyright.
+
+Este repositorio incluye código de escritorio para **macOS, Windows y Linux**, y código móvil para **iOS y Android**. Consulta el [desarrollo y la verificación por plataforma](../../CONTRIBUTING.md#platforms) para conocer los comandos de compilación y la cobertura actual. La aplicación de escritorio descargable actualmente está dirigida a macOS con Apple Silicon.
 
 Consulta la [guía de contribución](../../CONTRIBUTING.md#source-and-development) para compilar desde el código fuente. La app se descarga desde el [sitio web](https://www.dureai.dev/download/mac/).
 

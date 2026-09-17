@@ -6,6 +6,18 @@ body:
       value: |
         Search existing proposals first. Focus on the problem and who it affects.
         Please keep private project and account information out of your examples.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Relevant platforms
+      multiple: true
+      options:
+        - Shared across platforms
+        - macOS
+        - Windows
+        - Linux
+        - iOS
+        - Android
   - type: textarea
     id: problem
     attributes:

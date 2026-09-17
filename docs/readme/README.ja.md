@@ -9,7 +9,7 @@
 ### あなたが導く。<br>エージェントが共に働く。
 
 AI コーディングエージェントのための **Agent Development Environment（ADE）**。<br>
-プロジェクト、会話、ターミナル、コードの変更を、ひとつの macOS ワークスペースに。
+プロジェクト、会話、ターミナル、コードの変更を、ひとつのワークスペースに。
 
 **[macOS 版をダウンロード](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [ウェブサイト](https://www.dureai.dev/) &nbsp;·&nbsp; [ドキュメント](https://docs.dureai.dev/jp/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_) &nbsp;·&nbsp; [Discord](https://discord.gg/aTuRV6DXhb)
 
@@ -109,6 +109,8 @@ Dure は、その仕事をひとつの場所にまとめます。Claude Code の
 **ライセンス：[MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI。**
 
 Dure 独自のソースコードは、このリポジトリで MIT ライセンスにより公開されています。サードパーティのコンポーネントには、それぞれのライセンスと著作権表示が引き続き適用されます。
+
+このリポジトリには **macOS・Windows・Linux** 向けデスクトップと、**iOS・Android** 向けモバイルのソースが含まれます。ビルド手順と現在の検証範囲は[プラットフォーム別の開発案内](../../CONTRIBUTING.md#platforms)をご覧ください。現在ダウンロードできるデスクトップアプリは Apple Silicon macOS 向けです。
 
 ソースからのビルド手順は[貢献ガイド](../../CONTRIBUTING.md#source-and-development)をご覧ください。アプリは[ウェブサイト](https://www.dureai.dev/download/mac/)からダウンロードできます。
 

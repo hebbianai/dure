@@ -10,14 +10,28 @@ body:
     id: version
     attributes:
       label: Dure version
-      description: Include the exact app version, or write "documentation" for a docs-only problem.
+      description: Include the app version and source commit for source builds, or write "documentation" for a docs-only problem.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - iOS
+        - Android
+        - Shared code or documentation
     validations:
       required: true
   - type: input
     id: environment
     attributes:
       label: Environment
-      description: macOS version, hardware architecture, installation method, and relevant provider/CLI version. Use "not applicable" for docs.
+      description: OS version or Linux distribution, CPU architecture, device or simulator, installation/build method, and relevant provider/CLI version. Use "not applicable" for docs.
     validations:
       required: true
   - type: textarea

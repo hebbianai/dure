@@ -9,13 +9,29 @@ documentation improvements and translations. Please follow our
 Dure's first-party source is available under [MIT](LICENSE). Third-party
 components keep their existing licenses and copyright notices.
 
-The native workflow below targets **Apple Silicon macOS**. Install Git, Xcode
-Command Line Tools, the Node version in [.node-version](.node-version), and
-[rustup](https://rustup.rs/). Use an official Node macOS binary for app packaging;
-the bundled Node executable must depend only on macOS system libraries.
+Install Git, the Node version in [.node-version](.node-version), and
+[rustup](https://rustup.rs/).
 [package.json](package.json) pins pnpm, and
 [rust-toolchain.toml](rust-toolchain.toml) pins Rust and its required targets.
 
+## Platforms
+
+The desktop source in [src/](src/) and [src-tauri/](src-tauri/) covers macOS,
+Windows and Linux. The [mobile/](mobile/) project contains the iOS and Android
+client. Shared runtime and protocol changes can affect several platforms.
+
+| Platform | Development entrypoints | Current verification and distribution |
+| --- | --- | --- |
+| macOS, Apple Silicon | `pnpm app:dev`, `pnpm build:app` | Anonymous source app build and isolated background native smoke verified. Official desktop download available. |
+| Windows, x86_64 MSVC | `pnpm app:windows:doctor`, `pnpm app:windows:verify`, `pnpm app:windows:build` | Desktop source and NSIS packaging configuration included. Native desktop acceptance and a public installer remain separate from shared-code CI. |
+| Linux, x86_64 | `pnpm app:linux:doctor`, `pnpm app:linux:verify`, `pnpm app:linux:build` | Desktop source and Debian/AppImage packaging configuration included. Linux script/frontend CI does not establish desktop runtime acceptance. |
+| iOS | `pnpm --dir mobile ios:dev` | Mobile source and Xcode project included. Web tests and shared protocol checks run in CI; device builds, signing and distribution require their own verification. |
+| Android | `pnpm --dir mobile android:dev` | Mobile source and Gradle project included. Web tests and shared protocol checks run in CI; emulator/device builds and distribution require their own verification. |
+
+### macOS desktop
+
+Install Xcode Command Line Tools. Use an official Node macOS binary for app
+packaging; the bundled executable must depend only on macOS system libraries.
 Clone your fork, then run these commands from its root:
 
 ```sh
@@ -50,6 +66,48 @@ instead of bypassing admission. The build budgets are defined in
 
 For frontend-only work, `pnpm build:frontend` builds the web UI. It does not
 produce the native desktop app.
+
+### Windows and Linux desktop
+
+Install the [Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/)
+for your host. Windows requires the MSVC C++ tools and WebView2; Dure's bootstrap
+also expects Git Bash and the x86_64 MSVC Rust host. Linux requires the GTK,
+WebKitGTK and other packages checked by
+[linux-desktop-doctor.sh](scripts/qa/linux-desktop-doctor.sh).
+
+Run `corepack enable` and `pnpm install --frozen-lockfile`, then the matching
+`app:windows:doctor` or `app:linux:doctor` command before its verify/build commands.
+These entrypoints target native hosts. The pinned Ghostty proof builder currently
+requires a macOS ARM64 build host; a cold Windows/Linux desktop build needs the
+matching prepared proof. Windows packaging also consumes prepared Linux remote
+checkout helpers. Preserve the artifact receipts and digest checks when supplying
+these inputs. The source entrypoints do not yet constitute a verified standalone
+Windows/Linux bootstrap; report missing prerequisites with the target and commit.
+
+### iOS and Android
+
+The mobile project has its own [package manifest](mobile/package.json) and
+[lockfile](mobile/pnpm-lock.yaml). Install root dependencies first, then run:
+
+```sh
+pnpm --dir mobile install --frozen-lockfile
+pnpm verify:push:mobile-web
+```
+
+This checks mobile lint, tests and its web build. For native development, follow
+[Tauri's mobile prerequisites](https://v2.tauri.app/start/prerequisites/#configure-for-mobile-targets):
+iOS needs macOS with full Xcode; Android needs its SDK/NDK and Java toolchain.
+Use your own signing/provisioning configuration. `pnpm --dir mobile ios:dev`
+selects a connected physical iPhone; `pnpm --dir mobile tauri ios dev` is the
+Tauri device/simulator entrypoint. `pnpm --dir mobile android:dev` is the Android
+entrypoint. Native projects already exist under `mobile/src-tauri/gen/`; review
+generated-project changes before committing them.
+
+For mobile Rust changes, use `pnpm verify:push:mobile-rust` on a suitably
+provisioned host and run the relevant device/simulator smoke. Include the device,
+OS/SDK versions, source commit and observed behavior in the pull request. An
+iOS or Android release requires device acceptance and platform distribution
+credentials; neither is supplied by the public CI jobs.
 
 ## Issues and proposals
 
@@ -108,6 +166,8 @@ The public workflow runs the same source checks available locally:
 ```sh
 pnpm verify:frontend
 pnpm test:scripts
+pnpm verify:push:mobile-web
+pnpm hub-protocol:verify
 ```
 
 `verify:frontend` checks the dependency installation, types, lint, dependency
@@ -132,9 +192,13 @@ lychee --offline --include-fragments --no-progress '*.md' 'docs/readme/*.md' '.g
 
 The workflow pins its action versions in
 [public-repository.yml](.github/workflows/public-repository.yml). The required
-`Public repository checks` result succeeds only when documentation, frontend and
-script checks all succeed. Full native builds, signing and releases are separate
-maintainer verification steps.
+`Public repository checks` result requires documentation, frontend, script,
+mobile web and every shared-protocol matrix check to succeed. Mobile web checks
+run on Linux, and the shared desktop/mobile protocol is formatted, tested and
+linted on Linux, Windows and macOS. These jobs use hosted runners with read-only
+repository permissions;
+they do not use publisher credentials or maintainer machines. Platform-native
+desktop/mobile packaging and device acceptance remain separate checks.
 
 Contributors submit changes to `main` through pull requests. Merging requires
 passing checks, an up-to-date branch, one approving review, code-owner approval

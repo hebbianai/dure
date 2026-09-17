@@ -9,7 +9,7 @@
 ### 你来掌舵。<br>智能体协同工作。
 
 面向 AI 编程智能体的 **Agent Development Environment（ADE，智能体开发环境）**。<br>
-将项目、对话、终端和代码变更汇聚到一个 macOS 工作空间。
+将项目、对话、终端和代码变更汇聚到一个工作空间。
 
 **[下载 macOS 版](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [官网](https://www.dureai.dev/) &nbsp;·&nbsp; [文档](https://docs.dureai.dev/cn/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_) &nbsp;·&nbsp; [Discord](https://discord.gg/aTuRV6DXhb)
 
@@ -109,6 +109,8 @@ Dure 把这些工作集中到一处。让 Claude Code、Codex 和 Pi 并排运�
 **许可证：[MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI。**
 
 Dure 自有源代码在本仓库中以 MIT 许可证提供。第三方组件保留各自的许可证和版权声明。
+
+本仓库包含 **macOS、Windows 和 Linux** 桌面端，以及 **iOS 和 Android** 移动端的源代码。构建入口和当前验证范围请参阅[各平台开发说明](../../CONTRIBUTING.md#platforms)。目前可下载的桌面应用面向 Apple Silicon macOS。
 
 从源码构建请参阅[贡献指南](../../CONTRIBUTING.md#source-and-development)。应用可从[官网](https://www.dureai.dev/download/mac/)下载。
 

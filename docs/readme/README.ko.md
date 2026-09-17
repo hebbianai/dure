@@ -9,7 +9,7 @@
 ### 방향은 당신이.<br>에이전트들은 함께.
 
 AI 코딩 에이전트를 위한 **Agent Development Environment (ADE)**.<br>
-프로젝트, 대화, 터미널, 코드 변경을 하나의 macOS 작업 공간에 모았습니다.
+프로젝트, 대화, 터미널, 코드 변경을 하나의 작업 공간에 모았습니다.
 
 **[macOS용 다운로드](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [웹사이트](https://www.dureai.dev/) &nbsp;·&nbsp; [문서](https://docs.dureai.dev/ko/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_) &nbsp;·&nbsp; [Discord](https://discord.gg/aTuRV6DXhb)
 
@@ -109,6 +109,8 @@ Dure는 그 일을 한곳에 모읍니다. Claude Code 옆에 Codex와 Pi를 두
 **라이선스: [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
 Dure의 자체 소스 코드는 이 저장소에서 MIT 라이선스로 제공됩니다. 외부 구성 요소의 기존 라이선스와 저작권 고지는 유지합니다.
+
+이 저장소에는 **macOS·Windows·Linux** 데스크톱과 **iOS·Android** 모바일 소스가 함께 들어 있습니다. 빌드 명령과 현재 검증 범위는 [플랫폼별 개발 안내](../../CONTRIBUTING.md#platforms)를 참고하세요. 현재 다운로드할 수 있는 데스크톱 앱은 Apple Silicon macOS용입니다.
 
 소스 빌드는 [기여 가이드](../../CONTRIBUTING.md#source-and-development)를 참고하세요. 앱은 [웹사이트](https://www.dureai.dev/download/mac/)에서 다운로드할 수 있습니다.
 

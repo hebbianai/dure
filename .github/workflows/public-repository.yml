@@ -100,9 +100,49 @@ jobs:
           pnpm test:scripts
           SCRIPT
 
+  mobile-web:
+    name: Mobile web checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Install root dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify mobile web source
+        run: pnpm verify:push:mobile-web
+
+  shared-protocol:
+    name: Shared protocol (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - name: Check shared protocol formatting
+        run: cargo fmt --manifest-path crates/dure-hub-protocol/Cargo.toml --all --check
+      - name: Test desktop and mobile wire format
+        run: cargo test --locked --manifest-path crates/dure-hub-protocol/Cargo.toml --all-targets
+      - name: Lint shared protocol
+        run: cargo clippy --locked --manifest-path crates/dure-hub-protocol/Cargo.toml --all-targets -- -D warnings
+
   public-repository:
     name: Public repository checks
-    needs: [documentation, frontend, scripts]
+    needs: [documentation, frontend, scripts, mobile-web, shared-protocol]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -112,9 +152,13 @@ jobs:
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           SCRIPTS_RESULT: ${{ needs.scripts.result }}
+          MOBILE_WEB_RESULT: ${{ needs.mobile-web.result }}
+          SHARED_PROTOCOL_RESULT: ${{ needs.shared-protocol.result }}
         run: |
           if [[ "$DOCUMENTATION_RESULT" != success ||
                 "$FRONTEND_RESULT" != success ||
-                "$SCRIPTS_RESULT" != success ]]; then
+                "$SCRIPTS_RESULT" != success ||
+                "$MOBILE_WEB_RESULT" != success ||
+                "$SHARED_PROTOCOL_RESULT" != success ]]; then
             exit 1
           fi
