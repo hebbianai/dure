@@ -81,11 +81,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes zsh
           sudo useradd --create-home --shell /bin/bash dure-source-checks
-          sudo chown -R dure-source-checks:dure-source-checks "$GITHUB_WORKSPACE"
+          sudo cp -a "$GITHUB_WORKSPACE" /home/dure-source-checks/source
+          sudo chown -R dure-source-checks:dure-source-checks /home/dure-source-checks/source
           sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
       - name: Verify scripts
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail <<'SCRIPT'
+          cd "$HOME/source"
           export CARGO_HOME="$HOME/.cargo"
           export RUSTUP_HOME="$HOME/.rustup"
           "$HOME/rustup-init" -y --no-modify-path --default-toolchain none
