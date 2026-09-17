@@ -82,11 +82,14 @@ jobs:
           sudo apt-get install --yes zsh
           sudo useradd --create-home --shell /bin/bash dure-source-checks
           sudo chown -R dure-source-checks:dure-source-checks "$GITHUB_WORKSPACE"
+          sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
       - name: Verify scripts
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail <<'SCRIPT'
           export CARGO_HOME="$HOME/.cargo"
           export RUSTUP_HOME="$HOME/.rustup"
+          "$HOME/rustup-init" -y --no-modify-path --default-toolchain none
+          export PATH="$CARGO_HOME/bin:$PATH"
           # Fixtures use disposable homes but share this prepared, pinned compiler.
           RUSTUP_TOOLCHAIN="$(rustup show active-toolchain | awk '{print $1}')"
           export RUSTUP_TOOLCHAIN
