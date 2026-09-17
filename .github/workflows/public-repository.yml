@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  public-repository:
-    name: Public repository checks
+  documentation:
+    name: Documentation checks
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -41,3 +41,60 @@ jobs:
           fail: true
           token: ""
           output: ${{ runner.temp }}/lychee-report.md
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify frontend
+        run: pnpm verify:frontend
+
+  scripts:
+    name: Script checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify scripts
+        run: pnpm test:scripts
+
+  public-repository:
+    name: Public repository checks
+    needs: [documentation, frontend, scripts]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every check to succeed
+        env:
+          DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          SCRIPTS_RESULT: ${{ needs.scripts.result }}
+        run: |
+          if [[ "$DOCUMENTATION_RESULT" != success ||
+                "$FRONTEND_RESULT" != success ||
+                "$SCRIPTS_RESULT" != success ]]; then
+            exit 1
+          fi

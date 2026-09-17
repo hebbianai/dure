@@ -108,13 +108,11 @@ Informe os comandos e os arquivos que os documentam.
 
 ## Disponibilidade do código-fonte
 
-**Open-source release: TBD. — Publicação como código aberto: a definir.**
-
 **Licença: [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
-Este é o repositório público oficial do Dure no GitHub para informações e mídia do produto e o destino da futura publicação do código-fonte. O código próprio do Dure será publicado aqui sob a licença MIT; os componentes de terceiros manterão suas licenças e avisos de direitos autorais. O código-fonte do aplicativo ainda não é público e a data de publicação não foi anunciada.
+O código próprio do Dure está disponível neste repositório sob a licença MIT. Os componentes de terceiros mantêm suas licenças e avisos de direitos autorais.
 
-O aplicativo está disponível no [site](https://www.dureai.dev/download/mac/); este repositório não é uma distribuição do código-fonte nem um guia de compilação.
+Consulte o [guia de contribuição](../../CONTRIBUTING.md#source-and-development) para compilar a partir do código-fonte. O aplicativo está disponível no [site](https://www.dureai.dev/download/mac/).
 
 ## Contribuir
 

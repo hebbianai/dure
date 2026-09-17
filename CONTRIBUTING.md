@@ -4,15 +4,52 @@ Dure is maintained by Hebbian AI. We welcome clear bug reports, focused proposal
 documentation improvements and translations. Please follow our
 [Code of Conduct](CODE_OF_CONDUCT.md).
 
-## What you can contribute today
+## Source and development
 
-This repository currently contains Dure's public README files, product media and
-community files. Application source publication under [MIT](LICENSE) is in
-preparation; the application cannot yet be built from this repository.
+Dure's first-party source is available under [MIT](LICENSE). Third-party
+components keep their existing licenses and copyright notices.
 
-You can report problems with the distributed app, suggest improvements, and open
-pull requests for the files available here. Source build instructions and the
-matching build/test checks will accompany the application source release.
+The native workflow below targets **Apple Silicon macOS**. Install Git, Xcode
+Command Line Tools, the Node version in [.node-version](.node-version), and
+[rustup](https://rustup.rs/). Use an official Node macOS binary for app packaging;
+the bundled Node executable must depend only on macOS system libraries.
+[package.json](package.json) pins pnpm, and
+[rust-toolchain.toml](rust-toolchain.toml) pins Rust and its required targets.
+
+Clone your fork, then run these commands from its root:
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm app:dev
+```
+
+Keep the development command running in its own terminal. Each checkout gets a
+development app channel. Development channels share ordinary Dure application
+data; use disposable data and discovery roots for automated runtime QA.
+
+To package a local app, commit your changes on your topic branch and run:
+
+```sh
+pnpm build:app
+```
+
+Packaging requires a clean tracked source tree. The command builds the frontend,
+Hmux, remote helpers, CLI and native app. It writes
+`src-tauri/target/release/bundle/macos/Dure.app` without publisher signing,
+notarization or updater artifacts. It does not install or launch the app.
+Use [official downloads](https://www.dureai.dev/download/mac/) for the distributed
+build. Rebuilding from source does not require signing keys or GitHub credentials;
+the pinned native inputs are downloaded from a public release and verified.
+
+The build checks free disk space and concurrent reservations before it starts.
+The current local full-build requirement is 110 GiB free, plus other active build
+reservations. Follow the actual refusal message and inspect `pnpm disk:status`
+instead of bypassing admission. The build budgets are defined in
+[disk-space.mjs](scripts/lib/disk-space.mjs).
+
+For frontend-only work, `pnpm build:frontend` builds the web UI. It does not
+produce the native desktop app.
 
 ## Issues and proposals
 
@@ -32,8 +69,8 @@ private channel in [SECURITY.md](SECURITY.md).
 2. Create a topic branch from the current `main`, for example
    `git switch -c docs/clarify-installation`.
 3. Make one focused change. Preserve existing copyright and third-party notices.
-4. Preview changed Markdown, images and links. Run `git diff --check` and describe
-   the checks you actually performed.
+4. Run the relevant checks below, preview changed documentation and run
+   `git diff --check`. Describe the checks you actually performed and their limits.
 5. Push your branch to your fork and open a pull request against
    `hebbianai/dure:main`. Explain the problem, the change, and how you checked it;
    link a related issue when one exists.
@@ -66,17 +103,38 @@ release changes in an ordinary contribution only when a maintainer requests them
 
 ## Checks and review
 
-The `Public repository checks` job validates whitespace in the proposed diff and
-local documentation links. These checks cover the current public repository;
-they do not build or test the application. To run the link check locally with
+The public workflow runs the same source checks available locally:
+
+```sh
+pnpm verify:frontend
+pnpm test:scripts
+```
+
+`verify:frontend` checks the dependency installation, types, lint, dependency
+graph and unused code, runs frontend tests and builds the web UI. `test:scripts`
+runs the script and CLI fixture suites with the repository's existing project
+boundaries. Neither command proves a native app or live provider workflow works.
+For Rust, terminal or process-lifecycle changes, also include the relevant crate
+checks and native smoke evidence. Runtime QA must use disposable HOME, DURE_HOME
+and a unique HMUX_DISCOVERY_ROOT through the existing QA runners. A separate
+app channel alone does not isolate runtime data.
+
+Behavior changes need tests that exercise the actual behavior. For a visible UI
+change, include before/after images or a short video and describe the interaction
+checks. Cosmetic text or styling changes do not need a new regression test.
+
+CI also checks whitespace and local documentation links. To run the link check with
 [lychee](https://github.com/lycheeverse/lychee), use:
 
 ```sh
 lychee --offline --include-fragments --no-progress '*.md' 'docs/readme/*.md' '.github/**/*.md'
 ```
 
-The workflow pins its tool versions in
-[public-repository.yml](.github/workflows/public-repository.yml).
+The workflow pins its action versions in
+[public-repository.yml](.github/workflows/public-repository.yml). The required
+`Public repository checks` result succeeds only when documentation, frontend and
+script checks all succeed. Full native builds, signing and releases are separate
+maintainer verification steps.
 
 Contributors submit changes to `main` through pull requests. Merging requires
 passing checks, an up-to-date branch, one approving review, code-owner approval

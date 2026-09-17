@@ -106,13 +106,11 @@ Tell me the commands and which files document them.
 
 ## Source availability
 
-**Open-source release: TBD.**
-
 **License: [MIT](LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
-This is Dure's official public GitHub home for product information and media, and the destination for its planned source release. Dure's first-party source code will be released here under MIT; third-party components retain their own licenses and copyright notices. The application source code is not yet public, and no source release date has been announced.
+Dure's first-party source is available in this repository under MIT. Third-party components retain their own licenses and copyright notices.
 
-App downloads are available from the [website](https://www.dureai.dev/download/mac/); this repository is not a source distribution or a source-build guide.
+Build from source using the [contribution guide](CONTRIBUTING.md#source-and-development). App downloads are available from the [website](https://www.dureai.dev/download/mac/).
 
 ## Contributing
 
