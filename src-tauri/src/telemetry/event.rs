@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// fails when the two lists drift. A provider outside this list is not an
 /// event, not an "other" bucket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum Provider {
     Claude,
     Codex,
@@ -26,15 +26,20 @@ pub(crate) enum Provider {
     Auggie,
     Grok,
     Hermes,
+    QwenCode,
     Cline,
     Continue,
     Charm,
     Codebuff,
     Kilocode,
     Kiro,
+    RovoDev,
+    MistralVibe,
     Antigravity,
     Openclaude,
     Pi,
+    OhMyPi,
+    CommandCode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

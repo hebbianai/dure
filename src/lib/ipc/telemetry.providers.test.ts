@@ -15,9 +15,12 @@ describe("telemetry provider enum", () => {
 		);
 		const block = source.match(/pub\(crate\) enum Provider \{([\s\S]*?)\}/);
 		expect(block).not.toBeNull();
+		// serde's kebab-case: QwenCode -> qwen-code.
 		const variants = [
 			...(block?.[1] ?? "").matchAll(/^\s*([A-Z][A-Za-z0-9]*),/gm),
-		].map((match) => match[1].toLowerCase());
+		].map((match) =>
+			match[1].replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase(),
+		);
 		expect(variants).toEqual([...PROVIDER_IDS]);
 	});
 });
