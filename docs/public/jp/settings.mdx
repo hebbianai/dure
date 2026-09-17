@@ -1,0 +1,44 @@
+---
+title: "Dure を設定する"
+description: "Basic インターフェースで文字、言語、アカウント、通知、更新の設定を探します。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+サイドバーの歯車で **Settings** を開きます。公開ベータ版は Basic を使い、日常の設定に Pro は必要ありません。
+
+## 必要な設定を探す
+
+| 設定 | 場所 |
+| --- | --- |
+| インストール済みバージョンと更新確認 | General |
+| 既定のプロバイダーと権限 | General |
+| 表示言語とエディターの自動保存 | General |
+| プロバイダーのアカウントプロファイル | AI provider accounts |
+| CLI の検出とプロバイダー準備 | Provider |
+| Dure CLI と統合の準備 | Agent tooling |
+| テーマ、配色、ターミナルのフォントと行高 | Appearance |
+| 上部バーの Claude/Codex 使用量表示 | Appearance |
+| エージェント通知と音 | Notifications |
+| 活動とローカルのプロバイダーログからのトークン使用量 | Stats and usage |
+| 診断とデータ収集に関する案内 | Privacy and telemetry |
+
+## ターミナルを読みやすくする
+
+上部バーの **A−** と **A+** で文字サイズを変更します。**Appearance → Terminal font** でフォントとサイズ、**Line height** を調整できます。プレビューで間隔を見てから作業に戻りましょう。
+
+<Frame caption="外観設定の行の高さ 1.35 とターミナルフォントのプレビュー。">
+  <ProductFigure scene="settings" locale="jp" label="外観設定の行の高さ 1.35 とターミナルフォントのプレビュー。" />
+</Frame>
+
+これらは Basic でも使えます。同じページでライト、ダーク、システムに従う表示と、それぞれのワークスペース配色も選べます。
+
+## 言語と通知
+
+**General** で英語、韓国語、中国語、日本語、スペイン語、フランス語、ポルトガル語からアプリ言語を選びます。**Notifications** で通知するイベントと音を選び、フォーカス中の扱いも設定できます。
+
+## 更新とプロバイダー選択
+
+**General → Check for updates** で Mac アプリの更新を確認します。案内を読み、ダウンロードとインストールを選んでください。確認だけでインストールや再起動はしません。手動交換が必要な旧ベータ版は[インストールと更新](/jp/install)に従います。
+
+プロバイダー CLI の更新とログインはアプリ更新とは別です。[エージェントとアカウント](/jp/providers)で選択し、タスクに合う権限を設定してください。画面配置は権限の境界ではありません。

@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "host": {
+    "api": {
+      "min_inclusive": 1,
+      "max_inclusive": 2
+    },
+    "provided_capabilities": [],
+    "required_extension_capabilities": [],
+    "granted_permissions": []
+  },
+  "cases": [
+    {
+      "name": "current-open-provider",
+      "api_generation": "current",
+      "descriptor": {
+        "schema_version": 1,
+        "id": "fixture.current-provider",
+        "display_name": "Current open provider",
+        "api": {
+          "min_inclusive": 2,
+          "max_inclusive": 2
+        },
+        "capabilities": {},
+        "permissions": [],
+        "extension": {
+          "kind": "agent_provider",
+          "contract": {
+            "provider_ids": [
+              "fixture.experimental-provider"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "status": "supported",
+        "negotiated_api_version": 2,
+        "probe_calls": 1,
+        "state_mutations": 1
+      }
+    },
+    {
+      "name": "previous-open-runtime",
+      "api_generation": "previous",
+      "descriptor": {
+        "schema_version": 1,
+        "id": "fixture.previous-runtime",
+        "display_name": "Previous open runtime",
+        "api": {
+          "min_inclusive": 1,
+          "max_inclusive": 1
+        },
+        "capabilities": {},
+        "permissions": [],
+        "extension": {
+          "kind": "runtime_adapter",
+          "contract": {
+            "runtime_kinds": [
+              "fixture.memory-v2"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "status": "supported",
+        "negotiated_api_version": 1,
+        "probe_calls": 1,
+        "state_mutations": 1
+      }
+    },
+    {
+      "name": "future-major-open-tool",
+      "api_generation": "future_major",
+      "descriptor": {
+        "schema_version": 1,
+        "id": "fixture.future-tool",
+        "display_name": "Future open tool",
+        "api": {
+          "min_inclusive": 3,
+          "max_inclusive": 3
+        },
+        "capabilities": {},
+        "permissions": [],
+        "extension": {
+          "kind": "workspace_tool_provider",
+          "contract": {
+            "tool_kinds": [
+              "semantic-indexer-v4"
+            ],
+            "languages": [
+              "future-language"
+            ]
+          }
+        }
+      },
+      "expected": {
+        "status": "incompatible_api_version",
+        "probe_calls": 0,
+        "state_mutations": 0
+      }
+    }
+  ]
+}

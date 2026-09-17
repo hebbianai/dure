@@ -1,0 +1,17 @@
+export const hmux: Record<string, string> = {
+	"hmux.conversion.batchConfirm.deferredNote": " 現在変換できない {n} 個のセッションはそのままにします。",
+	"hmux.conversion.replacementStartFailed": "Hmux replacement を開始できませんでした",
+	"hmux.remote.openFailed": "{host} でリモートセッションを開けませんでした: {detail}",
+	"hmux.conversion.batchConfirm.message": "{n} 個のセッションを管理セッションに変換します。各 provider を順番に終了し、同じ会話を新しい terminal epoch で再開します。Pane の位置と会話 ID は維持されます。{deferred} 続行しますか？",
+	"hmux.conversion.eligibility.providerUnsupported": "{provider} セッションの管理セッションへの変換はまだサポートされていません。",
+	"hmux.conversion.confirm.message": "{target} に切り替えると、現在の provider を終了し、同じ会話を新しい terminal epoch で再開します。Pane の位置と会話 ID は維持されますが、実行中のコマンドは中断されます。続行しますか？",
+	"hmux.conversion.eligibility.projectAmbiguous": "同じ作業フォルダを持つプロジェクトが複数あるため、変換できません。",
+	"hmux.conversion.target.managed": "管理セッション",
+	"hmux.conversion.target.standalone": "独立セッション",
+	"hmux.conversion.eligibility.notReady": "セッションの状態が準備できると、管理セッションに変換できます。",
+	"hmux.conversion.preflightFailed": "セッション変換の事前検証に失敗しました",
+	"hmux.conversion.eligibility.agentWorking": "エージェントが作業を終えると、管理セッションに変換できます。",
+	"hmux.conversion.eligibility.attentionRequired": "要求された入力を処理した後、管理セッションに変換できます。",
+	"hmux.conversion.eligibility.thisProvider": "この provider",
+	"hmux.conversion.eligibility.projectNotFound": "この作業フォルダをプロジェクトに登録すると、管理セッションに変換できます。",
+};

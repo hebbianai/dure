@@ -1,0 +1,38 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for every Dure window — main plus every '새 창' clone (label prefix 'win-', see SECONDARY_WINDOW_LABEL_PREFIX). allow-destroy is required by @tauri-apps/api onCloseRequested (it calls destroy() when not prevented) — removing it makes any window with a close listener unclosable.",
+  "windows": [
+    "main",
+    "win-*",
+    "desktop-*"
+  ],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "$HOME/**" }]
+    },
+    "dialog:default",
+    "updater:default",
+    "process:allow-restart",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-text",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-minimize",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-theme",
+    "core:webview:allow-create-webview-window",
+    "core:webview:allow-set-webview-focus",
+    "window-focus-qa:default",
+    "notification:default"
+  ]
+}

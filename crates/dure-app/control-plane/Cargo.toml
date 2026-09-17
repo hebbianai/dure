@@ -1,0 +1,50 @@
+[package]
+name = "dure-control-plane"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "Standalone local Dure control plane"
+
+[features]
+# The development app installs optimized backend binaries. Public bundles do
+# not select this feature; compiler optimization is not the Pro build policy.
+browser-development = []
+
+[dependencies]
+aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
+agent-orchestration = { path = "../../../orchestration" }
+base64 = "0.22"
+chrono = { version = "0.4.42", default-features = false, features = ["std"] }
+chrono-tz = "0.10.4"
+dure-app = { path = ".." }
+dure-git-checkout = { path = "../git-checkout" }
+dure-provider-adapter = { path = "../provider-adapter" }
+dure-provider-profile = { path = "../provider-profile" }
+dure-session-runtime = { path = "../session-runtime" }
+dure-app-sqlite = { path = "../sqlite" }
+getrandom = "0.3"
+futures-util = "0.3"
+hebbian-bounded-process = { path = "../../hebbian-bounded-process" }
+hmux-client = { path = "../../../hmux/crates/hmux-client", features = ["terminal-state-stream"] }
+hmux-host = { path = "../../../hmux/crates/hmux-host" }
+hmux-runtime-contract = { path = "../../../hmux/crates/hmux-runtime-contract" }
+hmux-session-protocol = { path = "../../../hmux/crates/hmux-session-protocol" }
+image = "=0.25.10"
+libc = "0.2"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "query", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+similar = "=2.7.0"
+tempfile = "3"
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+mach2 = "0.6"

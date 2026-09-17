@@ -1,0 +1,15 @@
+{
+  "name": "dure-bundled",
+  "owner": {
+    "name": "Dure"
+  },
+  "description": "Dure-bundled agent integrations.",
+  "plugins": [
+    {
+      "name": "dure-beads",
+      "source": "./plugins/dure-beads",
+      "description": "Use Beads for durable project task tracking.",
+      "version": "0.2.1"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+version: v2
+modules:
+  - path: schema
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - WIRE

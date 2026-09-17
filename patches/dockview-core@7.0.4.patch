@@ -1,0 +1,3563 @@
+diff --git a/dist/cjs/api/component.api.d.ts b/dist/cjs/api/component.api.d.ts
+index 187e760ca3212342e1bf6c265cfd483f9a047d58..4bf384902d222cfd65c6554fd3e049ac7c723e9f 100644
+--- a/dist/cjs/api/component.api.d.ts
++++ b/dist/cjs/api/component.api.d.ts
+@@ -524,6 +524,7 @@ export declare class DockviewApi implements CommonApi<SerializedDockview> {
+      * Add a panel and return the created object.
+      */
+     addPanel<T extends object = Parameters>(options: AddPanelOptions<T>): IDockviewPanel;
++    replacePanel<T extends object = Parameters>(expected: IDockviewPanel['api'], options: Omit<AddPanelOptions<T>, 'id' | 'position' | 'floating' | 'inactive' | 'initialWidth' | 'initialHeight'>): IDockviewPanel | undefined;
+     /**
+      * Remove a panel given the panel object.
+      */
+diff --git a/dist/cjs/api/component.api.js b/dist/cjs/api/component.api.js
+index c811fa718a9eca18152b3f9d4e4004033f7fd972..0d5561d4d07c44f19394cc6b39a328ce7f065613 100644
+--- a/dist/cjs/api/component.api.js
++++ b/dist/cjs/api/component.api.js
+@@ -1040,6 +1040,13 @@ var DockviewApi = /** @class */ (function () {
+             return _this.component.addPanel(options);
+         });
+     };
++    /** Replace the exact current content, retaining its pane identity and placement. */
++    DockviewApi.prototype.replacePanel = function (expected, options) {
++        var _this = this;
++        return this.component.withOrigin('api', function () {
++            return _this.component.replacePanel(expected, options);
++        });
++    };
+     /**
+      * Remove a panel given the panel object.
+      */
+diff --git a/dist/cjs/dnd/backend.js b/dist/cjs/dnd/backend.js
+index 760a84801ba6df44d7dbef9ce3bab2b8ed36398f..661204be3a20facec5e92d2140d5f62bd4a6f4a4 100644
+--- a/dist/cjs/dnd/backend.js
++++ b/dist/cjs/dnd/backend.js
+@@ -57,7 +57,28 @@ var Html5DragSource = /** @class */ (function (_super) {
+             };
+             _this.el.classList.add('dv-dragged');
+             setTimeout(function () { return _this.el.classList.remove('dv-dragged'); }, 0);
+-            _this._dataDisposable.value = _this.opts.getData(event);
++            _this._dataDisposable.dispose();
++            var data = _this.opts.getData(event);
++            var ownerWindow = _this.el.ownerDocument.defaultView;
++            var retirementTimer;
++            var retire = function () { return _this._dataDisposable.dispose(); };
++            var dragEnd = (0, events_1.addDisposableListener)(_this.el, 'dragend', function (event) {
++                var _a, _b;
++                _this._pointerEventsDisposable.dispose();
++                // Retire after target and ancestor drop consumers. Keep the task
++                // boundary when propagation is stopped or the source is detached.
++                retirementTimer = setTimeout(retire, 0);
++                if (ownerWindow) ownerWindow.addEventListener('dragend', retire);
++                (_b = (_a = _this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
++            });
++            _this._dataDisposable.value = {
++                dispose: function () {
++                    clearTimeout(retirementTimer);
++                    dragEnd.dispose();
++                    if (ownerWindow) ownerWindow.removeEventListener('dragend', retire);
++                    data.dispose();
++                },
++            };
+             var ghost = (_e = (_d = _this.opts).createGhost) === null || _e === void 0 ? void 0 : _e.call(_d, event);
+             if (ghost && event.dataTransfer) {
+                 (0, ghost_1.addGhostImage)(event.dataTransfer, ghost.element, {
+@@ -81,13 +102,6 @@ var Html5DragSource = /** @class */ (function (_super) {
+                 }
+             }
+             (_j = (_h = _this.opts).onDragStart) === null || _j === void 0 ? void 0 : _j.call(_h, event);
+-        }), (0, events_1.addDisposableListener)(_this.el, 'dragend', function (event) {
+-            var _a, _b;
+-            _this._pointerEventsDisposable.dispose();
+-            // Defer disposal so drop handlers can still read the
+-            // transfer payload before it clears.
+-            setTimeout(function () { return _this._dataDisposable.dispose(); }, 0);
+-            (_b = (_a = _this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
+         }));
+         return _this;
+     }
+diff --git a/dist/cjs/dnd/dnd.js b/dist/cjs/dnd/dnd.js
+index 63cfeb2b1fd7ebde26b99d98b850bacb3cd928e8..7bf865d88b6187b56da5a13618126b24a1af98d1 100644
+--- a/dist/cjs/dnd/dnd.js
++++ b/dist/cjs/dnd/dnd.js
+@@ -55,6 +55,9 @@ var DragAndDropObserver = /** @class */ (function (_super) {
+         var _this = this;
+         this.addDisposables((0, events_1.addDisposableListener)(this.element, 'dragenter', function (e) {
+             _this.onDragEnter(e);
++            // WebKit may emit only dragenter when crossing content children.
++            // Resolve the target now, without waiting for another pointer event.
++            _this.onDragOver(e);
+         }, true));
+         this.addDisposables((0, events_1.addDisposableListener)(this.element, 'dragover', function (e) {
+             _this.onDragOver(e);
+diff --git a/dist/cjs/dnd/dropOverlay.d.ts b/dist/cjs/dnd/dropOverlay.d.ts
+index 788cc4dc248dae3f0dd7f9b7ef0a1da6efd60924..e47651a830670cd480c70ed5c86e9d13ef5f607d 100644
+--- a/dist/cjs/dnd/dropOverlay.d.ts
++++ b/dist/cjs/dnd/dropOverlay.d.ts
+@@ -4,7 +4,7 @@ export interface OverlayElements {
+     selection: HTMLElement;
+ }
+ export declare function createOverlayElements(): OverlayElements;
+-export declare function renderInPlaceOverlay(overlay: HTMLElement, quadrant: Position, width: number, height: number, overlayModel?: DroptargetOverlayModel): void;
++export declare function renderInPlaceOverlay(overlay: HTMLElement, quadrant: Position, width: number, height: number, overlayModel?: DroptargetOverlayModel): HTMLElement;
+ /** `boundsChanged: false` lets callers skip redundant work on tight drag loops. */
+ export declare function renderAnchoredOverlay(args: {
+     outlineElement: HTMLElement;
+@@ -17,4 +17,5 @@ export declare function renderAnchoredOverlay(args: {
+ }): {
+     boundsChanged: boolean;
+     targetChanged: boolean;
++    overlay: HTMLElement;
+ };
+diff --git a/dist/cjs/dnd/dropOverlay.js b/dist/cjs/dnd/dropOverlay.js
+index b28e5cf68e5884ddc4698d26c3adf54fa66db304..ddaad2b7440ed743e24ac770c18bf374f539d4cc 100644
+--- a/dist/cjs/dnd/dropOverlay.js
++++ b/dist/cjs/dnd/dropOverlay.js
+@@ -109,6 +109,7 @@ function renderInPlaceOverlay(overlay, quadrant, width, height, overlayModel) {
+     (0, dom_1.toggleClass)(overlay, 'dv-drop-target-top', shape.isTop);
+     (0, dom_1.toggleClass)(overlay, 'dv-drop-target-bottom', shape.isBottom);
+     (0, dom_1.toggleClass)(overlay, 'dv-drop-target-center', quadrant === 'center');
++    return overlay;
+ }
+ function checkAnchoredBoundsChanged(overlay, bounds) {
+     var topPx = "".concat(Math.round(bounds.top), "px");
+@@ -176,7 +177,7 @@ function renderAnchoredOverlay(args) {
+         box.height = 4;
+     }
+     if (!checkAnchoredBoundsChanged(overlay, box)) {
+-        return { boundsChanged: false, targetChanged: ta.changed };
++        return { boundsChanged: false, targetChanged: ta.changed, overlay: overlay };
+     }
+     applyAnchoredBounds(overlay, box);
+     overlay.className = "dv-drop-target-anchor".concat(args.className ? " ".concat(args.className) : '');
+@@ -193,5 +194,5 @@ function renderAnchoredOverlay(args) {
+             (0, dom_1.toggleClass)(overlay, 'dv-drop-target-anchor-container-changed', false);
+         }, 10);
+     }
+-    return { boundsChanged: true, targetChanged: ta.changed };
++    return { boundsChanged: true, targetChanged: ta.changed, overlay: overlay };
+ }
+diff --git a/dist/cjs/dnd/droptarget.d.ts b/dist/cjs/dnd/droptarget.d.ts
+index 34ac38e2f2d7d572feab402652a56608a68b95b9..d1e2d2583ce3b3f7e5d3e5183c95866b587d3814 100644
+--- a/dist/cjs/dnd/droptarget.d.ts
++++ b/dist/cjs/dnd/droptarget.d.ts
+@@ -9,12 +9,17 @@ export interface DroptargetEvent {
+ }
+ export declare class WillShowOverlayEvent extends DockviewEvent implements DroptargetEvent {
+     private readonly options;
++    private readonly _onDidRenderOverlay;
++    /** Subscribe during onWillShowOverlay; the owner fires once after rendering. */
++    readonly onDidRenderOverlay: Event<HTMLElement>;
+     get nativeEvent(): DragEvent | PointerEvent;
+     get position(): Position;
+     constructor(options: {
+         nativeEvent: DragEvent | PointerEvent;
+         position: Position;
+     });
++    /** @internal Complete this event once, after the accepted owner renders. */
++    completeRender(overlay: HTMLElement | undefined): void;
+ }
+ export declare function directionToPosition(direction: Direction): Position;
+ export declare function positionToDirection(position: Position): Direction;
+diff --git a/dist/cjs/dnd/droptarget.js b/dist/cjs/dnd/droptarget.js
+index 6dfadc59ff5d15638af259e9144f1280dbe5371c..3043f556b04d25de346c82fa97e9a44cae8aa0f7 100644
+--- a/dist/cjs/dnd/droptarget.js
++++ b/dist/cjs/dnd/droptarget.js
+@@ -29,6 +29,8 @@ var WillShowOverlayEvent = /** @class */ (function (_super) {
+     function WillShowOverlayEvent(options) {
+         var _this = _super.call(this) || this;
+         _this.options = options;
++        _this._onDidRenderOverlay = new events_1.Emitter();
++        _this.onDidRenderOverlay = _this._onDidRenderOverlay.event;
+         return _this;
+     }
+     Object.defineProperty(WillShowOverlayEvent.prototype, "nativeEvent", {
+@@ -45,6 +47,17 @@ var WillShowOverlayEvent = /** @class */ (function (_super) {
+         enumerable: false,
+         configurable: true
+     });
++    /** @internal Complete this event once, after the accepted owner renders. */
++    WillShowOverlayEvent.prototype.completeRender = function (overlay) {
++        try {
++            if (overlay && !this.defaultPrevented) {
++                this._onDidRenderOverlay.fire(overlay);
++            }
++        }
++        finally {
++            this._onDidRenderOverlay.dispose();
++        }
++    };
+     return WillShowOverlayEvent;
+ }(events_1.DockviewEvent));
+ exports.WillShowOverlayEvent = WillShowOverlayEvent;
+@@ -113,6 +126,12 @@ var Droptarget = /** @class */ (function (_super) {
+                     _this.removeDropTarget();
+                     return;
+                 }
++                // Root capture may already have accepted and written this overlay.
++                // Retire this target before reading geometry invalidated by it.
++                if (_this.isAlreadyUsed(e)) {
++                    _this.removeDropTarget();
++                    return;
++                }
+                 var target = (_e = (_d = (_c = _this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : _this.element;
+                 var width = target.offsetWidth;
+                 var height = target.offsetHeight;
+@@ -123,12 +142,7 @@ var Droptarget = /** @class */ (function (_super) {
+                 var x = ((_f = e.clientX) !== null && _f !== void 0 ? _f : 0) - rect.left;
+                 var y = ((_g = e.clientY) !== null && _g !== void 0 ? _g : 0) - rect.top;
+                 var quadrant = _this.calculateQuadrant(_this._acceptedTargetZonesSet, x, y, width, height);
+-                /**
+-                 * If the event has already been used by another DropTarget instance
+-                 * then don't show a second drop target, only one target should be
+-                 * active at any one time
+-                 */
+-                if (_this.isAlreadyUsed(e) || quadrant === null) {
++                if (quadrant === null) {
+                     // no drop target should be displayed
+                     _this.removeDropTarget();
+                     return;
+@@ -150,6 +164,7 @@ var Droptarget = /** @class */ (function (_super) {
+                  */
+                 _this._onWillShowOverlay.fire(willShowOverlayEvent);
+                 if (willShowOverlayEvent.defaultPrevented) {
++                    willShowOverlayEvent.completeRender(undefined);
+                     _this.removeDropTarget();
+                     return;
+                 }
+@@ -165,8 +180,9 @@ var Droptarget = /** @class */ (function (_super) {
+                     target.classList.add('dv-drop-target');
+                     target.append(_this.targetElement);
+                 }
+-                _this.toggleClasses(quadrant, width, height);
++                var overlay = _this.toggleClasses(quadrant, width, height);
+                 _this._state = quadrant;
++                willShowOverlayEvent.completeRender(overlay);
+             },
+             onDragLeave: function () {
+                 var _a, _b;
+@@ -208,6 +224,12 @@ var Droptarget = /** @class */ (function (_super) {
+             },
+         });
+         _this.addDisposables(_this._onDrop, _this._onWillShowOverlay, _this.dnd);
++        // dragend bubbles from the source, not the hovered target. Retire only
++        // the preview after local drop consumers; never synthesize another drop.
++        var ownerWindow = element.ownerDocument.defaultView;
++        if (ownerWindow) {
++            _this.addDisposables((0, events_1.addDisposableListener)(ownerWindow, 'dragend', function () { return _this.clearOverlay(); }));
++        }
+         return _this;
+     }
+     Object.defineProperty(Droptarget.prototype, "disabled", {
+@@ -255,7 +277,7 @@ var Droptarget = /** @class */ (function (_super) {
+         var target = (_b = (_a = this.options).getOverrideTarget) === null || _b === void 0 ? void 0 : _b.call(_a);
+         if (target) {
+             var outlineEl = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+-            (0, dropOverlay_1.renderAnchoredOverlay)({
++            return (0, dropOverlay_1.renderAnchoredOverlay)({
+                 outlineElement: outlineEl,
+                 targetModel: target,
+                 quadrant: quadrant,
+@@ -263,13 +285,12 @@ var Droptarget = /** @class */ (function (_super) {
+                 height: height,
+                 overlayModel: this.options.overlayModel,
+                 className: this.options.className,
+-            });
+-            return;
++            }).overlay;
+         }
+         if (!this.overlayElement) {
+             return;
+         }
+-        (0, dropOverlay_1.renderInPlaceOverlay)(this.overlayElement, quadrant, width, height, this.options.overlayModel);
++        return (0, dropOverlay_1.renderInPlaceOverlay)(this.overlayElement, quadrant, width, height, this.options.overlayModel);
+     };
+     Droptarget.prototype.calculateQuadrant = function (overlayType, x, y, width, height) {
+         var _a, _b;
+@@ -282,8 +303,9 @@ var Droptarget = /** @class */ (function (_super) {
+     };
+     Droptarget.prototype.removeDropTarget = function () {
+         var _a;
++        // Anchored targets own acceptance state without a local overlay element.
++        this._state = undefined;
+         if (this.targetElement) {
+-            this._state = undefined;
+             (_a = this.targetElement.parentElement) === null || _a === void 0 ? void 0 : _a.classList.remove('dv-drop-target');
+             this.targetElement.remove();
+             this.targetElement = undefined;
+@@ -325,38 +347,44 @@ exports.Droptarget = Droptarget;
+ function calculateQuadrantAsPercentage(overlayType, x, y, width, height, threshold) {
+     var xp = (100 * x) / width;
+     var yp = (100 * y) / height;
++    // Keep percentage activation, but compare physical distances at corners.
++    var position = overlayType.has('center') ? 'center' : null;
++    var distance = Infinity;
+     if (overlayType.has('left') && xp < threshold) {
+-        return 'left';
+-    }
+-    if (overlayType.has('right') && xp > 100 - threshold) {
+-        return 'right';
++        position = 'left';
++        distance = x;
+     }
+-    if (overlayType.has('top') && yp < threshold) {
+-        return 'top';
++    if (overlayType.has('right') && xp > 100 - threshold && width - x < distance) {
++        position = 'right';
++        distance = width - x;
+     }
+-    if (overlayType.has('bottom') && yp > 100 - threshold) {
+-        return 'bottom';
++    if (overlayType.has('top') && yp < threshold && y < distance) {
++        position = 'top';
++        distance = y;
+     }
+-    if (!overlayType.has('center')) {
+-        return null;
++    if (overlayType.has('bottom') && yp > 100 - threshold && height - y < distance) {
++        position = 'bottom';
+     }
+-    return 'center';
++    return position;
+ }
+ function calculateQuadrantAsPixels(overlayType, x, y, width, height, threshold) {
+-    if (overlayType.has('left') && x < threshold) {
+-        return 'left';
+-    }
+-    if (overlayType.has('right') && x > width - threshold) {
+-        return 'right';
++    // Choose the nearest eligible edge; equal distances keep the existing order.
++    var position = overlayType.has('center') ? 'center' : null;
++    var distance = threshold;
++    if (overlayType.has('left') && x < distance) {
++        position = 'left';
++        distance = x;
+     }
+-    if (overlayType.has('top') && y < threshold) {
+-        return 'top';
++    if (overlayType.has('right') && width - x < distance) {
++        position = 'right';
++        distance = width - x;
+     }
+-    if (overlayType.has('bottom') && y > height - threshold) {
+-        return 'bottom';
++    if (overlayType.has('top') && y < distance) {
++        position = 'top';
++        distance = y;
+     }
+-    if (!overlayType.has('center')) {
+-        return null;
++    if (overlayType.has('bottom') && height - y < distance) {
++        position = 'bottom';
+     }
+-    return 'center';
++    return position;
+ }
+diff --git a/dist/cjs/dnd/pointer/pointerDropTarget.js b/dist/cjs/dnd/pointer/pointerDropTarget.js
+index 4469060e908158ba16a9414db5dbf447f6ebb84b..6ea544a3cddfb19d68933092ca8cde07a9aa1b81 100644
+--- a/dist/cjs/dnd/pointer/pointerDropTarget.js
++++ b/dist/cjs/dnd/pointer/pointerDropTarget.js
+@@ -118,11 +118,12 @@ var PointerDropTarget = /** @class */ (function (_super) {
+         });
+         this._onWillShowOverlay.fire(willShow);
+         if (willShow.defaultPrevented) {
++            willShow.completeRender(undefined);
+             this._removeOverlay();
+             return;
+         }
+         if (overrideTarget) {
+-            (0, dropOverlay_1.renderAnchoredOverlay)({
++            var rendered = (0, dropOverlay_1.renderAnchoredOverlay)({
+                 outlineElement: outlineEl,
+                 targetModel: overrideTarget,
+                 quadrant: quadrant,
+@@ -132,6 +133,7 @@ var PointerDropTarget = /** @class */ (function (_super) {
+                 className: this.options.className,
+             });
+             this._state = quadrant;
++            willShow.completeRender(rendered.overlay);
+             return;
+         }
+         if (!this._targetElement) {
+@@ -146,6 +148,7 @@ var PointerDropTarget = /** @class */ (function (_super) {
+             (0, dropOverlay_1.renderInPlaceOverlay)(this._overlayElement, quadrant, width, height, this.options.overlayModel);
+         }
+         this._state = quadrant;
++        willShow.completeRender(this._overlayElement);
+     };
+     PointerDropTarget.prototype._onDragLeave = function () {
+         var _a, _b;
+diff --git a/dist/cjs/dockview/components/titlebar/tabGroups.js b/dist/cjs/dockview/components/titlebar/tabGroups.js
+index edbdabae45264c67e577ae7be46d0e1a78bb51d6..23c4988875e02a7adbc4dbfb39693dc177562c13 100644
+--- a/dist/cjs/dockview/components/titlebar/tabGroups.js
++++ b/dist/cjs/dockview/components/titlebar/tabGroups.js
+@@ -256,6 +256,18 @@ var TabGroupManager = /** @class */ (function () {
+         // match the cloned tabs and apply correct color/background.
+         var wrapper = document.createElement('div');
+         wrapper.className = 'dv-groupview dv-active-group';
++        // Carry the dockview theme class: the wrapper is appended to
++        // document.body (see below), where scoped --dv-* variables from a
++        // .dockview-theme-* ancestor would no longer resolve.
++        var themeHost = this._ctx.accessor.element.closest('[class*="dockview-theme-"]');
++        if (themeHost) {
++            var themeClass = Array.prototype.find.call(themeHost.classList, function (name) {
++                return name.indexOf('dockview-theme-') === 0;
++            });
++            if (themeClass) {
++                wrapper.classList.add(themeClass);
++            }
++        }
+         wrapper.style.position = 'fixed';
+         wrapper.style.top = '-10000px';
+         wrapper.style.left = '0px';
+@@ -268,8 +280,11 @@ var TabGroupManager = /** @class */ (function () {
+         actionsWrapper.style.width = 'auto';
+         wrapper.appendChild(actionsWrapper);
+         actionsWrapper.appendChild(clone);
+-        // Append inside the dockview root so CSS variables are inherited
+-        this._ctx.accessor.element.appendChild(wrapper);
++        // Append to body like pointerGhost does: an ancestor with CSS
++        // containment (or transform) would become this fixed wrapper's
++        // containing block and paint-clip it at -10000px, so the drag image
++        // would capture blank. Theme variables travel via the class above.
++        this._ctx.accessor.element.ownerDocument.body.appendChild(wrapper);
+         // Compute cursor offset relative to the wrapper element.
+         // The cloned chip is the first .dv-tab-group-chip in the clone.
+         var clonedChip = clone.querySelector('.dv-tab-group-chip');
+diff --git a/dist/cjs/dockview/dockviewComponent.d.ts b/dist/cjs/dockview/dockviewComponent.d.ts
+index dace8e9162b81965e3d69686f780ffbdaa090ae2..f9ae9b720a69e3064018bb823cff475566ec8c15 100644
+--- a/dist/cjs/dockview/dockviewComponent.d.ts
++++ b/dist/cjs/dockview/dockviewComponent.d.ts
+@@ -158,7 +158,7 @@ export interface DockviewMaximizedGroupChangeEvent {
+     isMaximized: boolean;
+ }
+ /** The coarse kind of a structural layout mutation (see `onWillMutateLayout`). */
+-export type DockviewLayoutMutationKind = 'add' | 'remove' | 'move' | 'float' | 'popout' | 'maximize' | 'tab-group' | 'load' | 'clear';
++export type DockviewLayoutMutationKind = 'add' | 'replace' | 'remove' | 'move' | 'float' | 'popout' | 'maximize' | 'tab-group' | 'load' | 'clear';
+ /**
+  * Who caused an operation: `'user'` for changes driven by direct interaction
+  * (drag-and-drop, tab UI, keyboard docking) and `'api'` for those entered
+@@ -247,6 +247,7 @@ export interface IDockviewComponent extends IBaseGrid<DockviewGroupPanel> {
+     doSetGroupActive: (group: DockviewGroupPanel, skipFocus?: boolean) => void;
+     removeGroup: (group: DockviewGroupPanel) => void;
+     addPanel<T extends object = Parameters>(options: AddPanelOptions<T>): IDockviewPanel;
++    replacePanel<T extends object = Parameters>(expected: IDockviewPanel['api'], options: Omit<AddPanelOptions<T>, 'id' | 'position' | 'floating' | 'inactive' | 'initialWidth' | 'initialHeight'>): IDockviewPanel | undefined;
+     removePanel(panel: IDockviewPanel): void;
+     getGroupPanel: (id: string) => IDockviewPanel | undefined;
+     createWatermarkComponent(): IWatermarkRenderer;
+@@ -512,6 +513,7 @@ export declare class DockviewComponent extends BaseGrid<DockviewGroupPanel> impl
+     private _doClear;
+     closeAllGroups(): void;
+     addPanel<T extends object = Parameters>(options: AddPanelOptions<T>): DockviewPanel;
++    replacePanel<T extends object = Parameters>(expected: IDockviewPanel['api'], options: Omit<AddPanelOptions<T>, 'id' | 'position' | 'floating' | 'inactive' | 'initialWidth' | 'initialHeight'>): IDockviewPanel | undefined;
+     private _doAddPanel;
+     removePanel(panel: IDockviewPanel, options?: {
+         removeEmptyGroup?: boolean;
+diff --git a/dist/cjs/dockview/dockviewComponent.js b/dist/cjs/dockview/dockviewComponent.js
+index 14c511a117a3438947c6660d67e3243ff837fab0..80fb02a3c2cb36095b22b852e19403887a820894 100644
+--- a/dist/cjs/dockview/dockviewComponent.js
++++ b/dist/cjs/dockview/dockviewComponent.js
+@@ -1901,7 +1901,10 @@ var DockviewComponent = /** @class */ (function (_super) {
+             try {
+                 for (var _m = __values(this.panels), _o = _m.next(); !_o.done; _o = _m.next()) {
+                     var panel = _o.value;
+-                    if (newPanels.includes(panel.api.id)) {
++                    var next = data.panels[panel.api.id];
++                    if (newPanels.includes(panel.api.id) &&
++                        next.contentComponent === panel.api.component &&
++                        (next.tabComponent == null ? this.options.defaultTabComponent : next.tabComponent) === panel.api.tabComponent) {
+                         existingPanels.set(panel.api.id, panel);
+                     }
+                 }
+@@ -2414,6 +2417,18 @@ var DockviewComponent = /** @class */ (function (_super) {
+             }
+         });
+     };
++    DockviewComponent.prototype.replacePanel = function (expected, options) {
++        var _this = this;
++        var previous = this.getGroupPanel(expected.id);
++        if (!previous || previous.api !== expected) return undefined;
++        return this.mutation('replace', function () {
++            var panel = _this.createPanel(Object.assign({}, options, { id: previous.id }), previous.group);
++            previous.group.model.replacePanel(previous, panel);
++            previous.dispose();
++            _this._bufferOnDidLayoutChange.fire();
++            return panel;
++        });
++    };
+     DockviewComponent.prototype.addPanel = function (options) {
+         var _this = this;
+         return this.mutation('add', function () { return _this._doAddPanel(options); });
+@@ -3724,11 +3739,16 @@ var DockviewComponent = /** @class */ (function (_super) {
+             maximumWidth: options.maximumWidth,
+             maximumHeight: options.maximumHeight,
+         });
+-        panel.init({
+-            title: (_b = options.title) !== null && _b !== void 0 ? _b : options.id,
+-            params: (_c = options === null || options === void 0 ? void 0 : options.params) !== null && _c !== void 0 ? _c : {},
+-        });
+-        return panel;
++        try {
++            panel.init({
++                title: (_b = options.title) !== null && _b !== void 0 ? _b : options.id,
++                params: (_c = options === null || options === void 0 ? void 0 : options.params) !== null && _c !== void 0 ? _c : {},
++            });
++            return panel;
++        } catch (error) {
++            panel.dispose();
++            throw error;
++        }
+     };
+     DockviewComponent.prototype.createGroupAtLocation = function (location, size, options, gridview) {
+         if (gridview === void 0) { gridview = this.gridview; }
+diff --git a/dist/cjs/dockview/dockviewGroupPanelModel.d.ts b/dist/cjs/dockview/dockviewGroupPanelModel.d.ts
+index 4948bf31fcf549be81367923dc497189f4987715..914433dbc1cc2f7690f62567e8d322789d5b340a 100644
+--- a/dist/cjs/dockview/dockviewGroupPanelModel.d.ts
++++ b/dist/cjs/dockview/dockviewGroupPanelModel.d.ts
+@@ -326,6 +326,7 @@ export declare class DockviewGroupPanelModel extends CompositeDisposable impleme
+     init(_params: PanelInitParameters): void;
+     update(_params: PanelUpdateEvent): void;
+     focus(): void;
++    replacePanel(previous: IDockviewPanel, panel: IDockviewPanel): void;
+     openPanel(panel: IDockviewPanel, options?: {
+         index?: number;
+         skipSetActive?: boolean;
+diff --git a/dist/cjs/dockview/dockviewGroupPanelModel.js b/dist/cjs/dockview/dockviewGroupPanelModel.js
+index b0f52b28648f3fa0b8e36944d19f3d71db875538..d3d4a78bbfdc8fc568055a04bfc699a7a597305c 100644
+--- a/dist/cjs/dockview/dockviewGroupPanelModel.js
++++ b/dist/cjs/dockview/dockviewGroupPanelModel.js
+@@ -1098,6 +1098,30 @@ var DockviewGroupPanelModel = /** @class */ (function (_super) {
+         var _a;
+         (_a = this._activePanel) === null || _a === void 0 ? void 0 : _a.focus();
+     };
++    DockviewGroupPanelModel.prototype.replacePanel = function (previous, panel) {
++        var _this = this;
++        var index = this._panels.indexOf(previous);
++        var active = this._activePanel === previous;
++        if (active) this.contentContainer.closePanel();
++        this.renderContainer.detatch(previous);
++        this.tabsContainer.delete(previous.id);
++        this._panelDisposables.get(previous.id).dispose();
++        this._panels[index] = panel;
++        this.mostRecentlyUsed = this.mostRecentlyUsed.map(function (value) { return value === previous ? panel : value; });
++        this._panelDisposables.set(panel.id, new lifecycle_1.CompositeDisposable(
++            panel.api.onDidTitleChange(function (event) { return _this._onDidPanelTitleChange.fire(event); }),
++            panel.api.onDidParametersChange(function (event) { return _this._onDidPanelParametersChange.fire(event); })
++        ));
++        this.tabsContainer.openPanel(panel, index);
++        this.tabsContainer.updateTabGroups();
++        if (active) {
++            this.doSetActivePanel(panel);
++        } else if (panel.api.renderer === 'always') {
++            this.renderContainer.attach({ panel: panel, referenceContainer: this.contentContainer });
++        }
++        panel.updateParentGroup(this.groupPanel);
++        this.updateContainer();
++    };
+     DockviewGroupPanelModel.prototype.openPanel = function (panel, options) {
+         /**
+          * set the panel group
+diff --git a/dist/cjs/dockview/dockviewPanel.js b/dist/cjs/dockview/dockviewPanel.js
+index d32ee00a80036b121c4897023895e7127d483054..ed0c30cf1642a264999cdd44974a08238bf53d21 100644
+--- a/dist/cjs/dockview/dockviewPanel.js
++++ b/dist/cjs/dockview/dockviewPanel.js
+@@ -210,11 +210,11 @@ var DockviewPanel = /** @class */ (function (_super) {
+         this._minimumHeight = state.minimumHeight;
+         this._maximumWidth = state.maximumWidth;
+         this._minimumWidth = state.minimumWidth;
++        // Deserialization supplies a complete snapshot, not a parameter patch.
++        this._params = {};
+         this.update({ params: (_a = state.params) !== null && _a !== void 0 ? _a : {} });
+         this.setTitle((_b = state.title) !== null && _b !== void 0 ? _b : this.id);
+         this.setRenderer((_c = state.renderer) !== null && _c !== void 0 ? _c : this.accessor.renderer);
+-        // state.contentComponent;
+-        // state.tabComponent;
+     };
+     DockviewPanel.prototype.updateParentGroup = function (group, options) {
+         this._group = group;
+diff --git a/dist/cjs/dockview/events.d.ts b/dist/cjs/dockview/events.d.ts
+index 6f978e37915eceedff9b84b7f9084237a15b6b78..431f97993028741769990d5e71ad587635eef32d 100644
+--- a/dist/cjs/dockview/events.d.ts
++++ b/dist/cjs/dockview/events.d.ts
+@@ -3,7 +3,7 @@ import { PanelTransfer } from '../dnd/dataTransfer';
+ import { DockviewApi } from '../api/component.api';
+ import { IDockviewPanel } from './dockviewPanel';
+ import { DockviewGroupPanel } from './dockviewGroupPanel';
+-import { IDockviewEvent } from '../events';
++import { Event, IDockviewEvent } from '../events';
+ import { ITabGroup } from './tabGroup';
+ export type DockviewGroupDropLocation = 'tab' | 'header_space' | 'content' | 'edge';
+ export interface DockviewWillShowOverlayLocationEventOptions {
+@@ -29,6 +29,8 @@ export declare class DockviewWillShowOverlayLocationEvent implements IDockviewEv
+     get nativeEvent(): DragEvent | PointerEvent;
+     get position(): Position;
+     get defaultPrevented(): boolean;
++    /** Fires once after acceptance and rendering, never for a vetoed target. */
++    get onDidRenderOverlay(): Event<HTMLElement>;
+     get panel(): IDockviewPanel | undefined;
+     get api(): DockviewApi;
+     get group(): DockviewGroupPanel | undefined;
+diff --git a/dist/cjs/dockview/events.js b/dist/cjs/dockview/events.js
+index 33a0639e996b987d97cff5245168a1eb2c3f1875..00c1b185d958978bb83731ca010b7c34b656374f 100644
+--- a/dist/cjs/dockview/events.js
++++ b/dist/cjs/dockview/events.js
+@@ -35,6 +35,13 @@ var DockviewWillShowOverlayLocationEvent = /** @class */ (function () {
+         enumerable: false,
+         configurable: true
+     });
++    Object.defineProperty(DockviewWillShowOverlayLocationEvent.prototype, "onDidRenderOverlay", {
++        get: function () {
++            return this.event.onDidRenderOverlay;
++        },
++        enumerable: false,
++        configurable: true
++    });
+     Object.defineProperty(DockviewWillShowOverlayLocationEvent.prototype, "panel", {
+         get: function () {
+             return this.options.panel;
+diff --git a/dist/cjs/gridview/branchNode.js b/dist/cjs/gridview/branchNode.js
+index f8d8222f15134ec23c1c7adbe5dbfe013eb845e5..9de5a82b8d36cd115a6ae7c42ba3f612f6d16672 100644
+--- a/dist/cjs/gridview/branchNode.js
++++ b/dist/cjs/gridview/branchNode.js
+@@ -72,10 +72,10 @@ var BranchNode = /** @class */ (function (_super) {
+                     return {
+                         view: childDescriptor.node,
+                         size: childDescriptor.node.size,
+-                        visible: childDescriptor.node instanceof leafNode_1.LeafNode &&
+-                            childDescriptor.visible !== undefined
+-                            ? childDescriptor.visible
+-                            : true,
++                        // Branch visibility belongs to its descendants, including legacy snapshots.
++                        visible: childDescriptor.node instanceof BranchNode
++                            ? childDescriptor.node.children.some((_, index) => childDescriptor.node.isChildVisible(index))
++                            : childDescriptor.visible !== false,
+                     };
+                 }),
+                 size: _this.orthogonalSize,
+diff --git a/dist/cjs/gridview/gridview.d.ts b/dist/cjs/gridview/gridview.d.ts
+index b41cad74947ac22166a2c08362e8304a0e476206..95f716f2ae4e8e26d117bc2079d584773016adc6 100644
+--- a/dist/cjs/gridview/gridview.d.ts
++++ b/dist/cjs/gridview/gridview.d.ts
+@@ -44,6 +44,7 @@ export interface GridLeafNode<T extends IGridView> {
+     };
+ }
+ export interface GridBranchNode<T extends IGridView> {
++    readonly cachedVisibleSize: number | undefined;
+     readonly children: GridNode<T>[];
+     readonly box: {
+         width: number;
+@@ -65,6 +66,7 @@ export interface ISerializedLeafNode<T = any> {
+     visible?: boolean;
+ }
+ export interface ISerializedBranchNode {
++    visible?: boolean;
+     type: 'branch';
+     data: ISerializedNode[];
+     size: number;
+diff --git a/dist/cjs/gridview/gridview.js b/dist/cjs/gridview/gridview.js
+index 8f6983204dd3ba03f5074396842af12a1981c8e3..ba3bc96a8aeb028c73e8ced03cf66e065c5bf77f 100644
+--- a/dist/cjs/gridview/gridview.js
++++ b/dist/cjs/gridview/gridview.js
+@@ -171,7 +171,8 @@ var serializeBranchNode = function (node, orientation) {
+         data: node.children.map(function (c) {
+             return serializeBranchNode(c, (0, exports.orthogonal)(orientation));
+         }),
+-        size: size,
++        size: typeof node.cachedVisibleSize === 'number' ? node.cachedVisibleSize : size,
++        ...(typeof node.cachedVisibleSize === 'number' ? { visible: false } : {}),
+     };
+ };
+ var Gridview = /** @class */ (function () {
+@@ -578,7 +579,7 @@ var Gridview = /** @class */ (function () {
+             var nodeCachedVisibleSize = node.getChildCachedVisibleSize(i);
+             children.push(this._getViews(child, (0, exports.orthogonal)(orientation), nodeCachedVisibleSize));
+         }
+-        return { box: box, children: children };
++        return { box: box, children: children, cachedVisibleSize: cachedVisibleSize };
+     };
+     Gridview.prototype.progmaticSelect = function (location, reverse) {
+         if (reverse === void 0) { reverse = false; }
+@@ -721,7 +722,9 @@ var Gridview = /** @class */ (function () {
+             // and add those siblings to the grandparent
+             for (var i = 0; i < sibling.children.length; i++) {
+                 var child = sibling.children[i];
+-                grandParent.addChild(child, child.size, parentIndex + i);
++                // Promoting a branch must carry hidden children's cached footprint.
++                const cachedSize = sibling.getChildCachedVisibleSize(i);
++                grandParent.addChild(child, cachedSize === undefined ? child.size : splitview_1.Sizing.Invisible(cachedSize), parentIndex + i);
+             }
+             /**
+              * clean down the branch node since we need to dipose of it and
+diff --git a/dist/cjs/overlay/overlayRenderContainer.js b/dist/cjs/overlay/overlayRenderContainer.js
+index 170b50729cd14b10635ff5c1d7dc25307e10de43..aa0a979a6a575cea8f18085f878b0eaea9fadeaf 100644
+--- a/dist/cjs/overlay/overlayRenderContainer.js
++++ b/dist/cjs/overlay/overlayRenderContainer.js
+@@ -145,7 +145,8 @@ var OverlayRenderContainer = /** @class */ (function (_super) {
+                 element: element,
+             };
+         }
+-        var focusContainer = this.map[panel.api.id].element;
++        var entry = this.map[panel.api.id];
++        var focusContainer = entry.element;
+         // Capture the content element now so the destroy disposable below
+         // does not re-query the renderer's `element` getter during teardown.
+         // Some framework adapters (e.g. dockview-angular) tear down their
+@@ -160,13 +161,13 @@ var OverlayRenderContainer = /** @class */ (function (_super) {
+         }
+         var resize = function () {
+             var panelId = panel.api.id;
+-            if (_this.pendingUpdates.has(panelId)) {
+-                return; // Update already scheduled
++            if (_this.pendingUpdates.has(resize)) {
++                return; // This attachment already has a scheduled update.
+             }
+-            _this.pendingUpdates.add(panelId);
++            _this.pendingUpdates.add(resize);
+             requestAnimationFrame(function () {
+-                _this.pendingUpdates.delete(panelId);
+-                if (_this.isDisposed || !_this.map[panelId]) {
++                _this.pendingUpdates.delete(resize);
++                if (_this.isDisposed || _this.map[panelId] !== entry || entry.resize !== resize) {
+                     return;
+                 }
+                 var box = _this.positionCache.getPosition(referenceContainer.element);
+diff --git a/dist/cjs/splitview/splitview.js b/dist/cjs/splitview/splitview.js
+index c7e5edef9b7c8ed1b011ae5d3b9b11a2ccc47fc6..0753e3ce505d157ec14c427f25fb248397a34575 100644
+--- a/dist/cjs/splitview/splitview.js
++++ b/dist/cjs/splitview/splitview.js
+@@ -582,10 +582,43 @@ var Splitview = /** @class */ (function () {
+                 doc.addEventListener('contextmenu', end);
+             };
+             sash_1.addEventListener('pointerdown', onPointerStart_1);
++            // Double-click on a sash splits the two views touching it evenly and
++            // commits exactly like the end of a pointer drag.
++            var onDoubleClick_1 = function () {
++                var sashIndex = (0, array_1.firstIndex)(_this.sashes, function (s) { return s.container === sash_1; });
++                // Hidden views have zero size and pass any delta through, so the pair
++                // is the nearest visible view on each side, as for a drag of this sash.
++                var beforeIndex = sashIndex;
++                while (beforeIndex >= 0 && !_this.viewItems[beforeIndex].visible) {
++                    beforeIndex--;
++                }
++                var afterIndex = sashIndex + 1;
++                while (afterIndex < _this.viewItems.length && !_this.viewItems[afterIndex].visible) {
++                    afterIndex++;
++                }
++                var before = _this.viewItems[beforeIndex];
++                var after = _this.viewItems[afterIndex];
++                if (!before || !after) {
++                    return;
++                }
++                // resize() only clamps against the whole row, so bound the delta to what
++                // this pair can absorb; no other sibling may move.
++                var delta = (0, math_1.clamp)(Math.trunc((after.size - before.size) / 2), Math.max(before.minimumSize - before.size, after.size - after.viewMaximumSize), Math.min(before.viewMaximumSize - before.size, after.size - after.minimumSize));
++                if (delta === 0) {
++                    return;
++                }
++                _this.resize(sashIndex, delta, _this.viewItems.map(function (x) { return x.size; }));
++                _this.distributeEmptySpace();
++                _this.layoutViews();
++                _this.saveProportions();
++                _this._onDidSashEnd.fire(undefined);
++            };
++            sash_1.addEventListener('dblclick', onDoubleClick_1);
+             var sashItem = {
+                 container: sash_1,
+                 disposable: function () {
+                     sash_1.removeEventListener('pointerdown', onPointerStart_1);
++                    sash_1.removeEventListener('dblclick', onDoubleClick_1);
+                     sash_1.remove();
+                 },
+             };
+diff --git a/dist/dockview-core.js b/dist/dockview-core.js
+index c0b50765f63c8c85fd0586add11d7e4fe0bbac52..61e53e35edb6c06aae00a81eb352a2f6153f90ed 100644
+--- a/dist/dockview-core.js
++++ b/dist/dockview-core.js
+@@ -1346,10 +1346,43 @@
+                   doc.addEventListener('contextmenu', end);
+               };
+               sash.addEventListener('pointerdown', onPointerStart);
++              // Double-click on a sash splits the two views touching it evenly and
++              // commits exactly like the end of a pointer drag.
++              const onDoubleClick = () => {
++                  const sashIndex = firstIndex(this.sashes, (s) => s.container === sash);
++                  // Hidden views have zero size and pass any delta through, so the pair
++                  // is the nearest visible view on each side, as for a drag of this sash.
++                  let beforeIndex = sashIndex;
++                  while (beforeIndex >= 0 && !this.viewItems[beforeIndex].visible) {
++                      beforeIndex--;
++                  }
++                  let afterIndex = sashIndex + 1;
++                  while (afterIndex < this.viewItems.length && !this.viewItems[afterIndex].visible) {
++                      afterIndex++;
++                  }
++                  const before = this.viewItems[beforeIndex];
++                  const after = this.viewItems[afterIndex];
++                  if (!before || !after) {
++                      return;
++                  }
++                  // resize() only clamps against the whole row, so bound the delta to what
++                  // this pair can absorb; no other sibling may move.
++                  const delta = clamp(Math.trunc((after.size - before.size) / 2), Math.max(before.minimumSize - before.size, after.size - after.viewMaximumSize), Math.min(before.viewMaximumSize - before.size, after.size - after.minimumSize));
++                  if (delta === 0) {
++                      return;
++                  }
++                  this.resize(sashIndex, delta, this.viewItems.map((x) => x.size));
++                  this.distributeEmptySpace();
++                  this.layoutViews();
++                  this.saveProportions();
++                  this._onDidSashEnd.fire(undefined);
++              };
++              sash.addEventListener('dblclick', onDoubleClick);
+               const sashItem = {
+                   container: sash,
+                   disposable: () => {
+                       sash.removeEventListener('pointerdown', onPointerStart);
++                      sash.removeEventListener('dblclick', onDoubleClick);
+                       sash.remove();
+                   },
+               };
+@@ -2051,10 +2084,10 @@
+                       return {
+                           view: childDescriptor.node,
+                           size: childDescriptor.node.size,
+-                          visible: childDescriptor.node instanceof LeafNode &&
+-                              childDescriptor.visible !== undefined
+-                              ? childDescriptor.visible
+-                              : true,
++                          // Branch visibility belongs to its descendants, including legacy snapshots.
++                          visible: childDescriptor.node instanceof BranchNode
++                              ? childDescriptor.node.children.some((_, index) => childDescriptor.node.isChildVisible(index))
++                              : childDescriptor.visible !== false,
+                       };
+                   }),
+                   size: this.orthogonalSize,
+@@ -2323,7 +2356,8 @@
+       return {
+           type: 'branch',
+           data: node.children.map((c) => serializeBranchNode(c, orthogonal(orientation))),
+-          size,
++          size: typeof node.cachedVisibleSize === 'number' ? node.cachedVisibleSize : size,
++          ...(typeof node.cachedVisibleSize === 'number' ? { visible: false } : {}),
+       };
+   };
+   class Gridview {
+@@ -2661,7 +2695,7 @@
+               const nodeCachedVisibleSize = node.getChildCachedVisibleSize(i);
+               children.push(this._getViews(child, orthogonal(orientation), nodeCachedVisibleSize));
+           }
+-          return { box, children };
++          return { box, children, cachedVisibleSize };
+       }
+       progmaticSelect(location, reverse = false) {
+           const [path, node] = this.getNode(location);
+@@ -2819,7 +2853,9 @@
+               // and add those siblings to the grandparent
+               for (let i = 0; i < sibling.children.length; i++) {
+                   const child = sibling.children[i];
+-                  grandParent.addChild(child, child.size, parentIndex + i);
++                  // Promoting a branch must carry hidden children's cached footprint.
++                  const cachedSize = sibling.getChildCachedVisibleSize(i);
++                  grandParent.addChild(child, cachedSize === undefined ? child.size : exports.Sizing.Invisible(cachedSize), parentIndex + i);
+               }
+               /**
+                * clean down the branch node since we need to dipose of it and
+@@ -4217,6 +4253,7 @@
+       toggleClass(overlay, 'dv-drop-target-top', shape.isTop);
+       toggleClass(overlay, 'dv-drop-target-bottom', shape.isBottom);
+       toggleClass(overlay, 'dv-drop-target-center', quadrant === 'center');
++      return overlay;
+   }
+   function checkAnchoredBoundsChanged(overlay, bounds) {
+       const topPx = `${Math.round(bounds.top)}px`;
+@@ -4284,7 +4321,7 @@
+           box.height = 4;
+       }
+       if (!checkAnchoredBoundsChanged(overlay, box)) {
+-          return { boundsChanged: false, targetChanged: ta.changed };
++          return { boundsChanged: false, targetChanged: ta.changed, overlay };
+       }
+       applyAnchoredBounds(overlay, box);
+       overlay.className = `dv-drop-target-anchor${args.className ? ` ${args.className}` : ''}`;
+@@ -4301,7 +4338,7 @@
+               toggleClass(overlay, 'dv-drop-target-anchor-container-changed', false);
+           }, 10);
+       }
+-      return { boundsChanged: true, targetChanged: ta.changed };
++      return { boundsChanged: true, targetChanged: ta.changed, overlay };
+   }
+
+   class WillShowOverlayEvent extends DockviewEvent {
+@@ -4314,6 +4351,19 @@
+       constructor(options) {
+           super();
+           this.options = options;
++          this._onDidRenderOverlay = new Emitter();
++          this.onDidRenderOverlay = this._onDidRenderOverlay.event;
++      }
++      /** @internal Complete this event once, after the accepted owner renders. */
++      completeRender(overlay) {
++          try {
++              if (overlay && !this.defaultPrevented) {
++                  this._onDidRenderOverlay.fire(overlay);
++              }
++          }
++          finally {
++              this._onDidRenderOverlay.dispose();
++          }
+       }
+   }
+   function directionToPosition(direction) {
+@@ -4389,6 +4439,12 @@
+                       this.removeDropTarget();
+                       return;
+                   }
++                  // Root capture may already have accepted and written this overlay.
++                  // Retire this target before reading geometry invalidated by it.
++                  if (this.isAlreadyUsed(e)) {
++                      this.removeDropTarget();
++                      return;
++                  }
+                   const target = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+                   const width = target.offsetWidth;
+                   const height = target.offsetHeight;
+@@ -4399,12 +4455,7 @@
+                   const x = ((_f = e.clientX) !== null && _f !== void 0 ? _f : 0) - rect.left;
+                   const y = ((_g = e.clientY) !== null && _g !== void 0 ? _g : 0) - rect.top;
+                   const quadrant = this.calculateQuadrant(this._acceptedTargetZonesSet, x, y, width, height);
+-                  /**
+-                   * If the event has already been used by another DropTarget instance
+-                   * then don't show a second drop target, only one target should be
+-                   * active at any one time
+-                   */
+-                  if (this.isAlreadyUsed(e) || quadrant === null) {
++                  if (quadrant === null) {
+                       // no drop target should be displayed
+                       this.removeDropTarget();
+                       return;
+@@ -4426,6 +4477,7 @@
+                    */
+                   this._onWillShowOverlay.fire(willShowOverlayEvent);
+                   if (willShowOverlayEvent.defaultPrevented) {
++                      willShowOverlayEvent.completeRender(undefined);
+                       this.removeDropTarget();
+                       return;
+                   }
+@@ -4439,8 +4491,9 @@
+                       target.classList.add('dv-drop-target');
+                       target.append(this.targetElement);
+                   }
+-                  this.toggleClasses(quadrant, width, height);
++                  const overlay = this.toggleClasses(quadrant, width, height);
+                   this._state = quadrant;
++                  willShowOverlayEvent.completeRender(overlay);
+               },
+               onDragLeave: () => {
+                   var _a, _b;
+@@ -4482,6 +4535,12 @@
+               },
+           });
+           this.addDisposables(this._onDrop, this._onWillShowOverlay, this.dnd);
++          // dragend bubbles from the source, not the hovered target. Retire only
++          // the preview after local drop consumers; never synthesize another drop.
++          const ownerWindow = element.ownerDocument.defaultView;
++          if (ownerWindow) {
++              this.addDisposables(addDisposableListener(ownerWindow, 'dragend', () => this.clearOverlay()));
++          }
+       }
+       setTargetZones(acceptedTargetZones) {
+           this._acceptedTargetZonesSet = new Set(acceptedTargetZones);
+@@ -4511,7 +4570,7 @@
+           const target = (_b = (_a = this.options).getOverrideTarget) === null || _b === void 0 ? void 0 : _b.call(_a);
+           if (target) {
+               const outlineEl = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+-              renderAnchoredOverlay({
++              return renderAnchoredOverlay({
+                   outlineElement: outlineEl,
+                   targetModel: target,
+                   quadrant,
+@@ -4519,13 +4578,12 @@
+                   height,
+                   overlayModel: this.options.overlayModel,
+                   className: this.options.className,
+-              });
+-              return;
++              }).overlay;
+           }
+           if (!this.overlayElement) {
+               return;
+           }
+-          renderInPlaceOverlay(this.overlayElement, quadrant, width, height, this.options.overlayModel);
++          return renderInPlaceOverlay(this.overlayElement, quadrant, width, height, this.options.overlayModel);
+       }
+       calculateQuadrant(overlayType, x, y, width, height) {
+           var _a, _b;
+@@ -4538,8 +4596,9 @@
+       }
+       removeDropTarget() {
+           var _a;
++          // Anchored targets own acceptance state without a local overlay element.
++          this._state = undefined;
+           if (this.targetElement) {
+-              this._state = undefined;
+               (_a = this.targetElement.parentElement) === null || _a === void 0 ? void 0 : _a.classList.remove('dv-drop-target');
+               this.targetElement.remove();
+               this.targetElement = undefined;
+@@ -4577,42 +4636,48 @@
+   }
+   Droptarget.USED_EVENT_ID = '__dockview_droptarget_event_is_used__';
+   function calculateQuadrantAsPercentage(overlayType, x, y, width, height, threshold) {
+-      const xp = (100 * x) / width;
+-      const yp = (100 * y) / height;
++      var xp = (100 * x) / width;
++      var yp = (100 * y) / height;
++      // Keep percentage activation, but compare physical distances at corners.
++      var position = overlayType.has('center') ? 'center' : null;
++      var distance = Infinity;
+       if (overlayType.has('left') && xp < threshold) {
+-          return 'left';
+-      }
+-      if (overlayType.has('right') && xp > 100 - threshold) {
+-          return 'right';
++          position = 'left';
++          distance = x;
+       }
+-      if (overlayType.has('top') && yp < threshold) {
+-          return 'top';
++      if (overlayType.has('right') && xp > 100 - threshold && width - x < distance) {
++          position = 'right';
++          distance = width - x;
+       }
+-      if (overlayType.has('bottom') && yp > 100 - threshold) {
+-          return 'bottom';
++      if (overlayType.has('top') && yp < threshold && y < distance) {
++          position = 'top';
++          distance = y;
+       }
+-      if (!overlayType.has('center')) {
+-          return null;
++      if (overlayType.has('bottom') && yp > 100 - threshold && height - y < distance) {
++          position = 'bottom';
+       }
+-      return 'center';
++      return position;
+   }
+   function calculateQuadrantAsPixels(overlayType, x, y, width, height, threshold) {
+-      if (overlayType.has('left') && x < threshold) {
+-          return 'left';
+-      }
+-      if (overlayType.has('right') && x > width - threshold) {
+-          return 'right';
++      // Choose the nearest eligible edge; equal distances keep the existing order.
++      var position = overlayType.has('center') ? 'center' : null;
++      var distance = threshold;
++      if (overlayType.has('left') && x < distance) {
++          position = 'left';
++          distance = x;
+       }
+-      if (overlayType.has('top') && y < threshold) {
+-          return 'top';
++      if (overlayType.has('right') && width - x < distance) {
++          position = 'right';
++          distance = width - x;
+       }
+-      if (overlayType.has('bottom') && y > height - threshold) {
+-          return 'bottom';
++      if (overlayType.has('top') && y < distance) {
++          position = 'top';
++          distance = y;
+       }
+-      if (!overlayType.has('center')) {
+-          return null;
++      if (overlayType.has('bottom') && height - y < distance) {
++          position = 'bottom';
+       }
+-      return 'center';
++      return position;
+   }
+
+   function addGhostImage(dataTransfer, ghostElement, options) {
+@@ -4907,11 +4972,12 @@
+           });
+           this._onWillShowOverlay.fire(willShow);
+           if (willShow.defaultPrevented) {
++              willShow.completeRender(undefined);
+               this._removeOverlay();
+               return;
+           }
+           if (overrideTarget) {
+-              renderAnchoredOverlay({
++              const rendered = renderAnchoredOverlay({
+                   outlineElement: outlineEl,
+                   targetModel: overrideTarget,
+                   quadrant,
+@@ -4921,6 +4987,7 @@
+                   className: this.options.className,
+               });
+               this._state = quadrant;
++              willShow.completeRender(rendered.overlay);
+               return;
+           }
+           if (!this._targetElement) {
+@@ -4935,6 +5002,7 @@
+               renderInPlaceOverlay(this._overlayElement, quadrant, width, height, this.options.overlayModel);
+           }
+           this._state = quadrant;
++          willShow.completeRender(this._overlayElement);
+       }
+       _onDragLeave() {
+           var _a, _b;
+@@ -5227,7 +5295,28 @@
+               };
+               this.el.classList.add('dv-dragged');
+               setTimeout(() => this.el.classList.remove('dv-dragged'), 0);
+-              this._dataDisposable.value = this.opts.getData(event);
++              this._dataDisposable.dispose();
++              const data = this.opts.getData(event);
++              const ownerWindow = this.el.ownerDocument.defaultView;
++              let retirementTimer;
++              const retire = () => this._dataDisposable.dispose();
++              const dragEnd = addDisposableListener(this.el, 'dragend', (event) => {
++                  var _a, _b;
++                  this._pointerEventsDisposable.dispose();
++                  // Retire after target and ancestor drop consumers. Keep the task
++                  // boundary when propagation is stopped or the source is detached.
++                  retirementTimer = setTimeout(retire, 0);
++                  if (ownerWindow) ownerWindow.addEventListener('dragend', retire);
++                  (_b = (_a = this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
++              });
++              this._dataDisposable.value = {
++                  dispose: () => {
++                      clearTimeout(retirementTimer);
++                      dragEnd.dispose();
++                      if (ownerWindow) ownerWindow.removeEventListener('dragend', retire);
++                      data.dispose();
++                  },
++              };
+               const ghost = (_e = (_d = this.opts).createGhost) === null || _e === void 0 ? void 0 : _e.call(_d, event);
+               if (ghost && event.dataTransfer) {
+                   addGhostImage(event.dataTransfer, ghost.element, {
+@@ -5251,13 +5340,6 @@
+                   }
+               }
+               (_j = (_h = this.opts).onDragStart) === null || _j === void 0 ? void 0 : _j.call(_h, event);
+-          }), addDisposableListener(this.el, 'dragend', (event) => {
+-              var _a, _b;
+-              this._pointerEventsDisposable.dispose();
+-              // Defer disposal so drop handlers can still read the
+-              // transfer payload before it clears.
+-              setTimeout(() => this._dataDisposable.dispose(), 0);
+-              (_b = (_a = this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
+           }));
+       }
+       setDisabled(value) {
+@@ -6466,6 +6548,10 @@
+       get defaultPrevented() {
+           return this.event.defaultPrevented;
+       }
++      /** Fires once after acceptance and rendering, never for a vetoed target. */
++      get onDidRenderOverlay() {
++          return this.event.onDidRenderOverlay;
++      }
+       get panel() {
+           return this.options.panel;
+       }
+@@ -7561,6 +7647,18 @@
+           // match the cloned tabs and apply correct color/background.
+           const wrapper = document.createElement('div');
+           wrapper.className = 'dv-groupview dv-active-group';
++          // Carry the dockview theme class: the wrapper is appended to
++          // document.body (see below), where scoped --dv-* variables from a
++          // .dockview-theme-* ancestor would no longer resolve.
++          const themeHost = this._ctx.accessor.element.closest('[class*="dockview-theme-"]');
++          if (themeHost) {
++              const themeClass = Array.prototype.find.call(themeHost.classList, function (name) {
++                  return name.indexOf('dockview-theme-') === 0;
++              });
++              if (themeClass) {
++                  wrapper.classList.add(themeClass);
++              }
++          }
+           wrapper.style.position = 'fixed';
+           wrapper.style.top = '-10000px';
+           wrapper.style.left = '0px';
+@@ -7573,8 +7671,17 @@
+           actionsWrapper.style.width = 'auto';
+           wrapper.appendChild(actionsWrapper);
+           actionsWrapper.appendChild(clone);
+-          // Append inside the dockview root so CSS variables are inherited
+-          this._ctx.accessor.element.appendChild(wrapper);
++          // Append to body like pointerGhost does: an ancestor with CSS
++
++          // containment (or transform) would become this fixed wrapper's
++
++          // containing block and paint-clip it at -10000px, so the drag
++
++          // image would capture blank. Theme variables travel via the
++
++          // class copied above.
++
++          this._ctx.accessor.element.ownerDocument.body.appendChild(wrapper);
+           // Compute cursor offset relative to the wrapper element.
+           // The cloned chip is the first .dv-tab-group-chip in the clone.
+           const clonedChip = clone.querySelector('.dv-tab-group-chip');
+diff --git a/dist/dockview-core.noStyle.js b/dist/dockview-core.noStyle.js
+index f6b91c7baf5a0f8281d75daba6dfbf2c483cc277..15bb78b9abd863e72dac23d04b76417f216f3ae1 100644
+--- a/dist/dockview-core.noStyle.js
++++ b/dist/dockview-core.noStyle.js
+@@ -1316,10 +1316,43 @@
+                     doc.addEventListener('contextmenu', end);
+                 };
+                 sash.addEventListener('pointerdown', onPointerStart);
++                // Double-click on a sash splits the two views touching it evenly and
++                // commits exactly like the end of a pointer drag.
++                const onDoubleClick = () => {
++                    const sashIndex = firstIndex(this.sashes, (s) => s.container === sash);
++                    // Hidden views have zero size and pass any delta through, so the pair
++                    // is the nearest visible view on each side, as for a drag of this sash.
++                    let beforeIndex = sashIndex;
++                    while (beforeIndex >= 0 && !this.viewItems[beforeIndex].visible) {
++                        beforeIndex--;
++                    }
++                    let afterIndex = sashIndex + 1;
++                    while (afterIndex < this.viewItems.length && !this.viewItems[afterIndex].visible) {
++                        afterIndex++;
++                    }
++                    const before = this.viewItems[beforeIndex];
++                    const after = this.viewItems[afterIndex];
++                    if (!before || !after) {
++                        return;
++                    }
++                    // resize() only clamps against the whole row, so bound the delta to what
++                    // this pair can absorb; no other sibling may move.
++                    const delta = clamp(Math.trunc((after.size - before.size) / 2), Math.max(before.minimumSize - before.size, after.size - after.viewMaximumSize), Math.min(before.viewMaximumSize - before.size, after.size - after.minimumSize));
++                    if (delta === 0) {
++                        return;
++                    }
++                    this.resize(sashIndex, delta, this.viewItems.map((x) => x.size));
++                    this.distributeEmptySpace();
++                    this.layoutViews();
++                    this.saveProportions();
++                    this._onDidSashEnd.fire(undefined);
++                };
++                sash.addEventListener('dblclick', onDoubleClick);
+                 const sashItem = {
+                     container: sash,
+                     disposable: () => {
+                         sash.removeEventListener('pointerdown', onPointerStart);
++                        sash.removeEventListener('dblclick', onDoubleClick);
+                         sash.remove();
+                     },
+                 };
+@@ -2021,10 +2054,10 @@
+                         return {
+                             view: childDescriptor.node,
+                             size: childDescriptor.node.size,
+-                            visible: childDescriptor.node instanceof LeafNode &&
+-                                childDescriptor.visible !== undefined
+-                                ? childDescriptor.visible
+-                                : true,
++                            // Branch visibility belongs to its descendants, including legacy snapshots.
++                            visible: childDescriptor.node instanceof BranchNode
++                                ? childDescriptor.node.children.some((_, index) => childDescriptor.node.isChildVisible(index))
++                                : childDescriptor.visible !== false,
+                         };
+                     }),
+                     size: this.orthogonalSize,
+@@ -2293,7 +2326,8 @@
+         return {
+             type: 'branch',
+             data: node.children.map((c) => serializeBranchNode(c, orthogonal(orientation))),
+-            size,
++            size: typeof node.cachedVisibleSize === 'number' ? node.cachedVisibleSize : size,
++            ...(typeof node.cachedVisibleSize === 'number' ? { visible: false } : {}),
+         };
+     };
+     class Gridview {
+@@ -2631,7 +2665,7 @@
+                 const nodeCachedVisibleSize = node.getChildCachedVisibleSize(i);
+                 children.push(this._getViews(child, orthogonal(orientation), nodeCachedVisibleSize));
+             }
+-            return { box, children };
++            return { box, children, cachedVisibleSize };
+         }
+         progmaticSelect(location, reverse = false) {
+             const [path, node] = this.getNode(location);
+@@ -2789,7 +2823,9 @@
+                 // and add those siblings to the grandparent
+                 for (let i = 0; i < sibling.children.length; i++) {
+                     const child = sibling.children[i];
+-                    grandParent.addChild(child, child.size, parentIndex + i);
++                    // Promoting a branch must carry hidden children's cached footprint.
++                    const cachedSize = sibling.getChildCachedVisibleSize(i);
++                    grandParent.addChild(child, cachedSize === undefined ? child.size : exports.Sizing.Invisible(cachedSize), parentIndex + i);
+                 }
+                 /**
+                  * clean down the branch node since we need to dipose of it and
+@@ -4187,6 +4223,7 @@
+         toggleClass(overlay, 'dv-drop-target-top', shape.isTop);
+         toggleClass(overlay, 'dv-drop-target-bottom', shape.isBottom);
+         toggleClass(overlay, 'dv-drop-target-center', quadrant === 'center');
++        return overlay;
+     }
+     function checkAnchoredBoundsChanged(overlay, bounds) {
+         const topPx = `${Math.round(bounds.top)}px`;
+@@ -4254,7 +4291,7 @@
+             box.height = 4;
+         }
+         if (!checkAnchoredBoundsChanged(overlay, box)) {
+-            return { boundsChanged: false, targetChanged: ta.changed };
++            return { boundsChanged: false, targetChanged: ta.changed, overlay };
+         }
+         applyAnchoredBounds(overlay, box);
+         overlay.className = `dv-drop-target-anchor${args.className ? ` ${args.className}` : ''}`;
+@@ -4271,7 +4308,7 @@
+                 toggleClass(overlay, 'dv-drop-target-anchor-container-changed', false);
+             }, 10);
+         }
+-        return { boundsChanged: true, targetChanged: ta.changed };
++        return { boundsChanged: true, targetChanged: ta.changed, overlay };
+     }
+
+     class WillShowOverlayEvent extends DockviewEvent {
+@@ -4284,6 +4321,19 @@
+         constructor(options) {
+             super();
+             this.options = options;
++            this._onDidRenderOverlay = new Emitter();
++            this.onDidRenderOverlay = this._onDidRenderOverlay.event;
++        }
++        /** @internal Complete this event once, after the accepted owner renders. */
++        completeRender(overlay) {
++            try {
++                if (overlay && !this.defaultPrevented) {
++                    this._onDidRenderOverlay.fire(overlay);
++                }
++            }
++            finally {
++                this._onDidRenderOverlay.dispose();
++            }
+         }
+     }
+     function directionToPosition(direction) {
+@@ -4359,6 +4409,12 @@
+                         this.removeDropTarget();
+                         return;
+                     }
++                    // Root capture may already have accepted and written this overlay.
++                    // Retire this target before reading geometry invalidated by it.
++                    if (this.isAlreadyUsed(e)) {
++                        this.removeDropTarget();
++                        return;
++                    }
+                     const target = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+                     const width = target.offsetWidth;
+                     const height = target.offsetHeight;
+@@ -4369,12 +4425,7 @@
+                     const x = ((_f = e.clientX) !== null && _f !== void 0 ? _f : 0) - rect.left;
+                     const y = ((_g = e.clientY) !== null && _g !== void 0 ? _g : 0) - rect.top;
+                     const quadrant = this.calculateQuadrant(this._acceptedTargetZonesSet, x, y, width, height);
+-                    /**
+-                     * If the event has already been used by another DropTarget instance
+-                     * then don't show a second drop target, only one target should be
+-                     * active at any one time
+-                     */
+-                    if (this.isAlreadyUsed(e) || quadrant === null) {
++                    if (quadrant === null) {
+                         // no drop target should be displayed
+                         this.removeDropTarget();
+                         return;
+@@ -4396,6 +4447,7 @@
+                      */
+                     this._onWillShowOverlay.fire(willShowOverlayEvent);
+                     if (willShowOverlayEvent.defaultPrevented) {
++                        willShowOverlayEvent.completeRender(undefined);
+                         this.removeDropTarget();
+                         return;
+                     }
+@@ -4409,8 +4461,9 @@
+                         target.classList.add('dv-drop-target');
+                         target.append(this.targetElement);
+                     }
+-                    this.toggleClasses(quadrant, width, height);
++                    const overlay = this.toggleClasses(quadrant, width, height);
+                     this._state = quadrant;
++                    willShowOverlayEvent.completeRender(overlay);
+                 },
+                 onDragLeave: () => {
+                     var _a, _b;
+@@ -4452,6 +4505,12 @@
+                 },
+             });
+             this.addDisposables(this._onDrop, this._onWillShowOverlay, this.dnd);
++            // dragend bubbles from the source, not the hovered target. Retire only
++            // the preview after local drop consumers; never synthesize another drop.
++            const ownerWindow = element.ownerDocument.defaultView;
++            if (ownerWindow) {
++                this.addDisposables(addDisposableListener(ownerWindow, 'dragend', () => this.clearOverlay()));
++            }
+         }
+         setTargetZones(acceptedTargetZones) {
+             this._acceptedTargetZonesSet = new Set(acceptedTargetZones);
+@@ -4481,7 +4540,7 @@
+             const target = (_b = (_a = this.options).getOverrideTarget) === null || _b === void 0 ? void 0 : _b.call(_a);
+             if (target) {
+                 const outlineEl = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+-                renderAnchoredOverlay({
++                return renderAnchoredOverlay({
+                     outlineElement: outlineEl,
+                     targetModel: target,
+                     quadrant,
+@@ -4489,13 +4548,12 @@
+                     height,
+                     overlayModel: this.options.overlayModel,
+                     className: this.options.className,
+-                });
+-                return;
++                }).overlay;
+             }
+             if (!this.overlayElement) {
+                 return;
+             }
+-            renderInPlaceOverlay(this.overlayElement, quadrant, width, height, this.options.overlayModel);
++            return renderInPlaceOverlay(this.overlayElement, quadrant, width, height, this.options.overlayModel);
+         }
+         calculateQuadrant(overlayType, x, y, width, height) {
+             var _a, _b;
+@@ -4508,8 +4566,9 @@
+         }
+         removeDropTarget() {
+             var _a;
++            // Anchored targets own acceptance state without a local overlay element.
++            this._state = undefined;
+             if (this.targetElement) {
+-                this._state = undefined;
+                 (_a = this.targetElement.parentElement) === null || _a === void 0 ? void 0 : _a.classList.remove('dv-drop-target');
+                 this.targetElement.remove();
+                 this.targetElement = undefined;
+@@ -4547,42 +4606,48 @@
+     }
+     Droptarget.USED_EVENT_ID = '__dockview_droptarget_event_is_used__';
+     function calculateQuadrantAsPercentage(overlayType, x, y, width, height, threshold) {
+-        const xp = (100 * x) / width;
+-        const yp = (100 * y) / height;
++        var xp = (100 * x) / width;
++        var yp = (100 * y) / height;
++        // Keep percentage activation, but compare physical distances at corners.
++        var position = overlayType.has('center') ? 'center' : null;
++        var distance = Infinity;
+         if (overlayType.has('left') && xp < threshold) {
+-            return 'left';
+-        }
+-        if (overlayType.has('right') && xp > 100 - threshold) {
+-            return 'right';
++            position = 'left';
++            distance = x;
+         }
+-        if (overlayType.has('top') && yp < threshold) {
+-            return 'top';
++        if (overlayType.has('right') && xp > 100 - threshold && width - x < distance) {
++            position = 'right';
++            distance = width - x;
+         }
+-        if (overlayType.has('bottom') && yp > 100 - threshold) {
+-            return 'bottom';
++        if (overlayType.has('top') && yp < threshold && y < distance) {
++            position = 'top';
++            distance = y;
+         }
+-        if (!overlayType.has('center')) {
+-            return null;
++        if (overlayType.has('bottom') && yp > 100 - threshold && height - y < distance) {
++            position = 'bottom';
+         }
+-        return 'center';
++        return position;
+     }
+     function calculateQuadrantAsPixels(overlayType, x, y, width, height, threshold) {
+-        if (overlayType.has('left') && x < threshold) {
+-            return 'left';
+-        }
+-        if (overlayType.has('right') && x > width - threshold) {
+-            return 'right';
++        // Choose the nearest eligible edge; equal distances keep the existing order.
++        var position = overlayType.has('center') ? 'center' : null;
++        var distance = threshold;
++        if (overlayType.has('left') && x < distance) {
++            position = 'left';
++            distance = x;
+         }
+-        if (overlayType.has('top') && y < threshold) {
+-            return 'top';
++        if (overlayType.has('right') && width - x < distance) {
++            position = 'right';
++            distance = width - x;
+         }
+-        if (overlayType.has('bottom') && y > height - threshold) {
+-            return 'bottom';
++        if (overlayType.has('top') && y < distance) {
++            position = 'top';
++            distance = y;
+         }
+-        if (!overlayType.has('center')) {
+-            return null;
++        if (overlayType.has('bottom') && height - y < distance) {
++            position = 'bottom';
+         }
+-        return 'center';
++        return position;
+     }
+
+     function addGhostImage(dataTransfer, ghostElement, options) {
+@@ -4877,11 +4942,12 @@
+             });
+             this._onWillShowOverlay.fire(willShow);
+             if (willShow.defaultPrevented) {
++                willShow.completeRender(undefined);
+                 this._removeOverlay();
+                 return;
+             }
+             if (overrideTarget) {
+-                renderAnchoredOverlay({
++                const rendered = renderAnchoredOverlay({
+                     outlineElement: outlineEl,
+                     targetModel: overrideTarget,
+                     quadrant,
+@@ -4891,6 +4957,7 @@
+                     className: this.options.className,
+                 });
+                 this._state = quadrant;
++                willShow.completeRender(rendered.overlay);
+                 return;
+             }
+             if (!this._targetElement) {
+@@ -4905,6 +4972,7 @@
+                 renderInPlaceOverlay(this._overlayElement, quadrant, width, height, this.options.overlayModel);
+             }
+             this._state = quadrant;
++            willShow.completeRender(this._overlayElement);
+         }
+         _onDragLeave() {
+             var _a, _b;
+@@ -5197,7 +5265,28 @@
+                 };
+                 this.el.classList.add('dv-dragged');
+                 setTimeout(() => this.el.classList.remove('dv-dragged'), 0);
+-                this._dataDisposable.value = this.opts.getData(event);
++                this._dataDisposable.dispose();
++                const data = this.opts.getData(event);
++                const ownerWindow = this.el.ownerDocument.defaultView;
++                let retirementTimer;
++                const retire = () => this._dataDisposable.dispose();
++                const dragEnd = addDisposableListener(this.el, 'dragend', (event) => {
++                    var _a, _b;
++                    this._pointerEventsDisposable.dispose();
++                    // Retire after target and ancestor drop consumers. Keep the task
++                    // boundary when propagation is stopped or the source is detached.
++                    retirementTimer = setTimeout(retire, 0);
++                    if (ownerWindow) ownerWindow.addEventListener('dragend', retire);
++                    (_b = (_a = this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
++                });
++                this._dataDisposable.value = {
++                    dispose: () => {
++                        clearTimeout(retirementTimer);
++                        dragEnd.dispose();
++                        if (ownerWindow) ownerWindow.removeEventListener('dragend', retire);
++                        data.dispose();
++                    },
++                };
+                 const ghost = (_e = (_d = this.opts).createGhost) === null || _e === void 0 ? void 0 : _e.call(_d, event);
+                 if (ghost && event.dataTransfer) {
+                     addGhostImage(event.dataTransfer, ghost.element, {
+@@ -5221,13 +5310,6 @@
+                     }
+                 }
+                 (_j = (_h = this.opts).onDragStart) === null || _j === void 0 ? void 0 : _j.call(_h, event);
+-            }), addDisposableListener(this.el, 'dragend', (event) => {
+-                var _a, _b;
+-                this._pointerEventsDisposable.dispose();
+-                // Defer disposal so drop handlers can still read the
+-                // transfer payload before it clears.
+-                setTimeout(() => this._dataDisposable.dispose(), 0);
+-                (_b = (_a = this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
+             }));
+         }
+         setDisabled(value) {
+@@ -6436,6 +6518,10 @@
+         get defaultPrevented() {
+             return this.event.defaultPrevented;
+         }
++        /** Fires once after acceptance and rendering, never for a vetoed target. */
++        get onDidRenderOverlay() {
++            return this.event.onDidRenderOverlay;
++        }
+         get panel() {
+             return this.options.panel;
+         }
+@@ -7531,6 +7617,18 @@
+             // match the cloned tabs and apply correct color/background.
+             const wrapper = document.createElement('div');
+             wrapper.className = 'dv-groupview dv-active-group';
++            // Carry the dockview theme class: the wrapper is appended to
++            // document.body (see below), where scoped --dv-* variables from a
++            // .dockview-theme-* ancestor would no longer resolve.
++            const themeHost = this._ctx.accessor.element.closest('[class*="dockview-theme-"]');
++            if (themeHost) {
++                const themeClass = Array.prototype.find.call(themeHost.classList, function (name) {
++                    return name.indexOf('dockview-theme-') === 0;
++                });
++                if (themeClass) {
++                    wrapper.classList.add(themeClass);
++                }
++            }
+             wrapper.style.position = 'fixed';
+             wrapper.style.top = '-10000px';
+             wrapper.style.left = '0px';
+@@ -7543,8 +7641,17 @@
+             actionsWrapper.style.width = 'auto';
+             wrapper.appendChild(actionsWrapper);
+             actionsWrapper.appendChild(clone);
+-            // Append inside the dockview root so CSS variables are inherited
+-            this._ctx.accessor.element.appendChild(wrapper);
++            // Append to body like pointerGhost does: an ancestor with CSS
++
++            // containment (or transform) would become this fixed wrapper's
++
++            // containing block and paint-clip it at -10000px, so the drag
++
++            // image would capture blank. Theme variables travel via the
++
++            // class copied above.
++
++            this._ctx.accessor.element.ownerDocument.body.appendChild(wrapper);
+             // Compute cursor offset relative to the wrapper element.
+             // The cloned chip is the first .dv-tab-group-chip in the clone.
+             const clonedChip = clone.querySelector('.dv-tab-group-chip');
+diff --git a/dist/esm/api/component.api.d.ts b/dist/esm/api/component.api.d.ts
+index 187e760ca3212342e1bf6c265cfd483f9a047d58..4bf384902d222cfd65c6554fd3e049ac7c723e9f 100644
+--- a/dist/esm/api/component.api.d.ts
++++ b/dist/esm/api/component.api.d.ts
+@@ -524,6 +524,7 @@ export declare class DockviewApi implements CommonApi<SerializedDockview> {
+      * Add a panel and return the created object.
+      */
+     addPanel<T extends object = Parameters>(options: AddPanelOptions<T>): IDockviewPanel;
++    replacePanel<T extends object = Parameters>(expected: IDockviewPanel['api'], options: Omit<AddPanelOptions<T>, 'id' | 'position' | 'floating' | 'inactive' | 'initialWidth' | 'initialHeight'>): IDockviewPanel | undefined;
+     /**
+      * Remove a panel given the panel object.
+      */
+diff --git a/dist/esm/api/component.api.js b/dist/esm/api/component.api.js
+index 80be33b69d0fe4d712589236d76e3048dad68cf9..d81cfad368e5bec1545ec2c4705937264162b325 100644
+--- a/dist/esm/api/component.api.js
++++ b/dist/esm/api/component.api.js
+@@ -718,6 +718,10 @@ export class DockviewApi {
+     addPanel(options) {
+         return this.component.withOrigin('api', () => this.component.addPanel(options));
+     }
++    /** Replace the exact current content, retaining its pane identity and placement. */
++    replacePanel(expected, options) {
++        return this.component.withOrigin('api', () => this.component.replacePanel(expected, options));
++    }
+     /**
+      * Remove a panel given the panel object.
+      */
+diff --git a/dist/esm/dnd/backend.js b/dist/esm/dnd/backend.js
+index c40a4b8d26dcee26948b507a5700c653388c1220..9d7c8216c85b248a557890801b12150848273f14 100644
+--- a/dist/esm/dnd/backend.js
++++ b/dist/esm/dnd/backend.js
+@@ -38,7 +38,28 @@ class Html5DragSource extends CompositeDisposable {
+             };
+             this.el.classList.add('dv-dragged');
+             setTimeout(() => this.el.classList.remove('dv-dragged'), 0);
+-            this._dataDisposable.value = this.opts.getData(event);
++            this._dataDisposable.dispose();
++            const data = this.opts.getData(event);
++            const ownerWindow = this.el.ownerDocument.defaultView;
++            let retirementTimer;
++            const retire = () => this._dataDisposable.dispose();
++            const dragEnd = addDisposableListener(this.el, 'dragend', (event) => {
++                var _a, _b;
++                this._pointerEventsDisposable.dispose();
++                // Retire after target and ancestor drop consumers. Keep the task
++                // boundary when propagation is stopped or the source is detached.
++                retirementTimer = setTimeout(retire, 0);
++                if (ownerWindow) ownerWindow.addEventListener('dragend', retire);
++                (_b = (_a = this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
++            });
++            this._dataDisposable.value = {
++                dispose: () => {
++                    clearTimeout(retirementTimer);
++                    dragEnd.dispose();
++                    if (ownerWindow) ownerWindow.removeEventListener('dragend', retire);
++                    data.dispose();
++                },
++            };
+             const ghost = (_e = (_d = this.opts).createGhost) === null || _e === void 0 ? void 0 : _e.call(_d, event);
+             if (ghost && event.dataTransfer) {
+                 addGhostImage(event.dataTransfer, ghost.element, {
+@@ -62,13 +83,6 @@ class Html5DragSource extends CompositeDisposable {
+                 }
+             }
+             (_j = (_h = this.opts).onDragStart) === null || _j === void 0 ? void 0 : _j.call(_h, event);
+-        }), addDisposableListener(this.el, 'dragend', (event) => {
+-            var _a, _b;
+-            this._pointerEventsDisposable.dispose();
+-            // Defer disposal so drop handlers can still read the
+-            // transfer payload before it clears.
+-            setTimeout(() => this._dataDisposable.dispose(), 0);
+-            (_b = (_a = this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
+         }));
+     }
+     setDisabled(value) {
+diff --git a/dist/esm/dnd/dnd.js b/dist/esm/dnd/dnd.js
+index 39e6a127dab997545f5082f5e3207db653a39cbc..e12ab5141b5ea1228733d6822af35eec021794dd 100644
+--- a/dist/esm/dnd/dnd.js
++++ b/dist/esm/dnd/dnd.js
+@@ -34,6 +34,9 @@ export class DragAndDropObserver extends CompositeDisposable {
+     registerListeners() {
+         this.addDisposables(addDisposableListener(this.element, 'dragenter', (e) => {
+             this.onDragEnter(e);
++            // WebKit may emit only dragenter when crossing content children.
++            // Resolve the target now, without waiting for another pointer event.
++            this.onDragOver(e);
+         }, true));
+         this.addDisposables(addDisposableListener(this.element, 'dragover', (e) => {
+             this.onDragOver(e);
+diff --git a/dist/esm/dnd/dropOverlay.d.ts b/dist/esm/dnd/dropOverlay.d.ts
+index 788cc4dc248dae3f0dd7f9b7ef0a1da6efd60924..e47651a830670cd480c70ed5c86e9d13ef5f607d 100644
+--- a/dist/esm/dnd/dropOverlay.d.ts
++++ b/dist/esm/dnd/dropOverlay.d.ts
+@@ -4,7 +4,7 @@ export interface OverlayElements {
+     selection: HTMLElement;
+ }
+ export declare function createOverlayElements(): OverlayElements;
+-export declare function renderInPlaceOverlay(overlay: HTMLElement, quadrant: Position, width: number, height: number, overlayModel?: DroptargetOverlayModel): void;
++export declare function renderInPlaceOverlay(overlay: HTMLElement, quadrant: Position, width: number, height: number, overlayModel?: DroptargetOverlayModel): HTMLElement;
+ /** `boundsChanged: false` lets callers skip redundant work on tight drag loops. */
+ export declare function renderAnchoredOverlay(args: {
+     outlineElement: HTMLElement;
+@@ -17,4 +17,5 @@ export declare function renderAnchoredOverlay(args: {
+ }): {
+     boundsChanged: boolean;
+     targetChanged: boolean;
++    overlay: HTMLElement;
+ };
+diff --git a/dist/esm/dnd/dropOverlay.js b/dist/esm/dnd/dropOverlay.js
+index 330fa0d991d66b990486f8540679491e0ce3e3e9..5055414a3bc6a3b391ce1cfe5a875e3a5a25ee7f 100644
+--- a/dist/esm/dnd/dropOverlay.js
++++ b/dist/esm/dnd/dropOverlay.js
+@@ -104,6 +104,7 @@ export function renderInPlaceOverlay(overlay, quadrant, width, height, overlayMo
+     toggleClass(overlay, 'dv-drop-target-top', shape.isTop);
+     toggleClass(overlay, 'dv-drop-target-bottom', shape.isBottom);
+     toggleClass(overlay, 'dv-drop-target-center', quadrant === 'center');
++    return overlay;
+ }
+ function checkAnchoredBoundsChanged(overlay, bounds) {
+     const topPx = `${Math.round(bounds.top)}px`;
+@@ -171,7 +172,7 @@ export function renderAnchoredOverlay(args) {
+         box.height = 4;
+     }
+     if (!checkAnchoredBoundsChanged(overlay, box)) {
+-        return { boundsChanged: false, targetChanged: ta.changed };
++        return { boundsChanged: false, targetChanged: ta.changed, overlay };
+     }
+     applyAnchoredBounds(overlay, box);
+     overlay.className = `dv-drop-target-anchor${args.className ? ` ${args.className}` : ''}`;
+@@ -188,5 +189,5 @@ export function renderAnchoredOverlay(args) {
+             toggleClass(overlay, 'dv-drop-target-anchor-container-changed', false);
+         }, 10);
+     }
+-    return { boundsChanged: true, targetChanged: ta.changed };
++    return { boundsChanged: true, targetChanged: ta.changed, overlay };
+ }
+diff --git a/dist/esm/dnd/droptarget.d.ts b/dist/esm/dnd/droptarget.d.ts
+index 34ac38e2f2d7d572feab402652a56608a68b95b9..d1e2d2583ce3b3f7e5d3e5183c95866b587d3814 100644
+--- a/dist/esm/dnd/droptarget.d.ts
++++ b/dist/esm/dnd/droptarget.d.ts
+@@ -9,12 +9,17 @@ export interface DroptargetEvent {
+ }
+ export declare class WillShowOverlayEvent extends DockviewEvent implements DroptargetEvent {
+     private readonly options;
++    private readonly _onDidRenderOverlay;
++    /** Subscribe during onWillShowOverlay; the owner fires once after rendering. */
++    readonly onDidRenderOverlay: Event<HTMLElement>;
+     get nativeEvent(): DragEvent | PointerEvent;
+     get position(): Position;
+     constructor(options: {
+         nativeEvent: DragEvent | PointerEvent;
+         position: Position;
+     });
++    /** @internal Complete this event once, after the accepted owner renders. */
++    completeRender(overlay: HTMLElement | undefined): void;
+ }
+ export declare function directionToPosition(direction: Direction): Position;
+ export declare function positionToDirection(position: Position): Direction;
+diff --git a/dist/esm/dnd/droptarget.js b/dist/esm/dnd/droptarget.js
+index 545c4a761271ee7d70dde6e680947f95097e20c1..c6b644d2d52323074de3b47950746cbc4c7bc461 100644
+--- a/dist/esm/dnd/droptarget.js
++++ b/dist/esm/dnd/droptarget.js
+@@ -1,4 +1,4 @@
+-import { DockviewEvent, Emitter } from '../events';
++import { addDisposableListener, DockviewEvent, Emitter } from '../events';
+ import { CompositeDisposable } from '../lifecycle';
+ import { DragAndDropObserver } from './dnd';
+ import { createOverlayElements, renderAnchoredOverlay, renderInPlaceOverlay, } from './dropOverlay';
+@@ -12,6 +12,19 @@ export class WillShowOverlayEvent extends DockviewEvent {
+     constructor(options) {
+         super();
+         this.options = options;
++        this._onDidRenderOverlay = new Emitter();
++        this.onDidRenderOverlay = this._onDidRenderOverlay.event;
++    }
++    /** @internal Complete this event once, after the accepted owner renders. */
++    completeRender(overlay) {
++        try {
++            if (overlay && !this.defaultPrevented) {
++                this._onDidRenderOverlay.fire(overlay);
++            }
++        }
++        finally {
++            this._onDidRenderOverlay.dispose();
++        }
+     }
+ }
+ export function directionToPosition(direction) {
+@@ -87,6 +100,12 @@ export class Droptarget extends CompositeDisposable {
+                     this.removeDropTarget();
+                     return;
+                 }
++                // Root capture may already have accepted and written this overlay.
++                // Retire this target before reading geometry invalidated by it.
++                if (this.isAlreadyUsed(e)) {
++                    this.removeDropTarget();
++                    return;
++                }
+                 const target = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+                 const width = target.offsetWidth;
+                 const height = target.offsetHeight;
+@@ -97,12 +116,7 @@ export class Droptarget extends CompositeDisposable {
+                 const x = ((_f = e.clientX) !== null && _f !== void 0 ? _f : 0) - rect.left;
+                 const y = ((_g = e.clientY) !== null && _g !== void 0 ? _g : 0) - rect.top;
+                 const quadrant = this.calculateQuadrant(this._acceptedTargetZonesSet, x, y, width, height);
+-                /**
+-                 * If the event has already been used by another DropTarget instance
+-                 * then don't show a second drop target, only one target should be
+-                 * active at any one time
+-                 */
+-                if (this.isAlreadyUsed(e) || quadrant === null) {
++                if (quadrant === null) {
+                     // no drop target should be displayed
+                     this.removeDropTarget();
+                     return;
+@@ -124,6 +138,7 @@ export class Droptarget extends CompositeDisposable {
+                  */
+                 this._onWillShowOverlay.fire(willShowOverlayEvent);
+                 if (willShowOverlayEvent.defaultPrevented) {
++                    willShowOverlayEvent.completeRender(undefined);
+                     this.removeDropTarget();
+                     return;
+                 }
+@@ -139,8 +154,9 @@ export class Droptarget extends CompositeDisposable {
+                     target.classList.add('dv-drop-target');
+                     target.append(this.targetElement);
+                 }
+-                this.toggleClasses(quadrant, width, height);
++                const overlay = this.toggleClasses(quadrant, width, height);
+                 this._state = quadrant;
++                willShowOverlayEvent.completeRender(overlay);
+             },
+             onDragLeave: () => {
+                 var _a, _b;
+@@ -182,6 +198,12 @@ export class Droptarget extends CompositeDisposable {
+             },
+         });
+         this.addDisposables(this._onDrop, this._onWillShowOverlay, this.dnd);
++        // dragend bubbles from the source, not the hovered target. Retire only
++        // the preview after local drop consumers; never synthesize another drop.
++        const ownerWindow = element.ownerDocument.defaultView;
++        if (ownerWindow) {
++            this.addDisposables(addDisposableListener(ownerWindow, 'dragend', () => this.clearOverlay()));
++        }
+     }
+     setTargetZones(acceptedTargetZones) {
+         this._acceptedTargetZonesSet = new Set(acceptedTargetZones);
+@@ -211,7 +233,7 @@ export class Droptarget extends CompositeDisposable {
+         const target = (_b = (_a = this.options).getOverrideTarget) === null || _b === void 0 ? void 0 : _b.call(_a);
+         if (target) {
+             const outlineEl = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+-            renderAnchoredOverlay({
++            return renderAnchoredOverlay({
+                 outlineElement: outlineEl,
+                 targetModel: target,
+                 quadrant,
+@@ -219,13 +241,12 @@ export class Droptarget extends CompositeDisposable {
+                 height,
+                 overlayModel: this.options.overlayModel,
+                 className: this.options.className,
+-            });
+-            return;
++            }).overlay;
+         }
+         if (!this.overlayElement) {
+             return;
+         }
+-        renderInPlaceOverlay(this.overlayElement, quadrant, width, height, this.options.overlayModel);
++        return renderInPlaceOverlay(this.overlayElement, quadrant, width, height, this.options.overlayModel);
+     }
+     calculateQuadrant(overlayType, x, y, width, height) {
+         var _a, _b;
+@@ -238,8 +259,9 @@ export class Droptarget extends CompositeDisposable {
+     }
+     removeDropTarget() {
+         var _a;
++        // Anchored targets own acceptance state without a local overlay element.
++        this._state = undefined;
+         if (this.targetElement) {
+-            this._state = undefined;
+             (_a = this.targetElement.parentElement) === null || _a === void 0 ? void 0 : _a.classList.remove('dv-drop-target');
+             this.targetElement.remove();
+             this.targetElement = undefined;
+@@ -277,40 +299,46 @@ export class Droptarget extends CompositeDisposable {
+ }
+ Droptarget.USED_EVENT_ID = '__dockview_droptarget_event_is_used__';
+ export function calculateQuadrantAsPercentage(overlayType, x, y, width, height, threshold) {
+-    const xp = (100 * x) / width;
+-    const yp = (100 * y) / height;
++    var xp = (100 * x) / width;
++    var yp = (100 * y) / height;
++    // Keep percentage activation, but compare physical distances at corners.
++    var position = overlayType.has('center') ? 'center' : null;
++    var distance = Infinity;
+     if (overlayType.has('left') && xp < threshold) {
+-        return 'left';
+-    }
+-    if (overlayType.has('right') && xp > 100 - threshold) {
+-        return 'right';
++        position = 'left';
++        distance = x;
+     }
+-    if (overlayType.has('top') && yp < threshold) {
+-        return 'top';
++    if (overlayType.has('right') && xp > 100 - threshold && width - x < distance) {
++        position = 'right';
++        distance = width - x;
+     }
+-    if (overlayType.has('bottom') && yp > 100 - threshold) {
+-        return 'bottom';
++    if (overlayType.has('top') && yp < threshold && y < distance) {
++        position = 'top';
++        distance = y;
+     }
+-    if (!overlayType.has('center')) {
+-        return null;
++    if (overlayType.has('bottom') && yp > 100 - threshold && height - y < distance) {
++        position = 'bottom';
+     }
+-    return 'center';
++    return position;
+ }
+ export function calculateQuadrantAsPixels(overlayType, x, y, width, height, threshold) {
+-    if (overlayType.has('left') && x < threshold) {
+-        return 'left';
+-    }
+-    if (overlayType.has('right') && x > width - threshold) {
+-        return 'right';
++    // Choose the nearest eligible edge; equal distances keep the existing order.
++    var position = overlayType.has('center') ? 'center' : null;
++    var distance = threshold;
++    if (overlayType.has('left') && x < distance) {
++        position = 'left';
++        distance = x;
+     }
+-    if (overlayType.has('top') && y < threshold) {
+-        return 'top';
++    if (overlayType.has('right') && width - x < distance) {
++        position = 'right';
++        distance = width - x;
+     }
+-    if (overlayType.has('bottom') && y > height - threshold) {
+-        return 'bottom';
++    if (overlayType.has('top') && y < distance) {
++        position = 'top';
++        distance = y;
+     }
+-    if (!overlayType.has('center')) {
+-        return null;
++    if (overlayType.has('bottom') && height - y < distance) {
++        position = 'bottom';
+     }
+-    return 'center';
++    return position;
+ }
+diff --git a/dist/esm/dnd/pointer/pointerDropTarget.js b/dist/esm/dnd/pointer/pointerDropTarget.js
+index a36275bb561076042b2fdac9b5b8799cdddbf353..eb4992b9636f3c52190d7439c218dc43ab8112b6 100644
+--- a/dist/esm/dnd/pointer/pointerDropTarget.js
++++ b/dist/esm/dnd/pointer/pointerDropTarget.js
+@@ -90,11 +90,12 @@ export class PointerDropTarget extends CompositeDisposable {
+         });
+         this._onWillShowOverlay.fire(willShow);
+         if (willShow.defaultPrevented) {
++            willShow.completeRender(undefined);
+             this._removeOverlay();
+             return;
+         }
+         if (overrideTarget) {
+-            renderAnchoredOverlay({
++            const rendered = renderAnchoredOverlay({
+                 outlineElement: outlineEl,
+                 targetModel: overrideTarget,
+                 quadrant,
+@@ -104,6 +105,7 @@ export class PointerDropTarget extends CompositeDisposable {
+                 className: this.options.className,
+             });
+             this._state = quadrant;
++            willShow.completeRender(rendered.overlay);
+             return;
+         }
+         if (!this._targetElement) {
+@@ -118,6 +120,7 @@ export class PointerDropTarget extends CompositeDisposable {
+             renderInPlaceOverlay(this._overlayElement, quadrant, width, height, this.options.overlayModel);
+         }
+         this._state = quadrant;
++        willShow.completeRender(this._overlayElement);
+     }
+     _onDragLeave() {
+         var _a, _b;
+diff --git a/dist/esm/dockview/components/titlebar/tabGroups.js b/dist/esm/dockview/components/titlebar/tabGroups.js
+index 406e2dc37e98d102da7a8da4ed235d64dac440fc..592bbcb3386045b3967c739283408d766aeef9ff 100644
+--- a/dist/esm/dockview/components/titlebar/tabGroups.js
++++ b/dist/esm/dockview/components/titlebar/tabGroups.js
+@@ -140,6 +140,18 @@ export class TabGroupManager {
+         // match the cloned tabs and apply correct color/background.
+         const wrapper = document.createElement('div');
+         wrapper.className = 'dv-groupview dv-active-group';
++        // Carry the dockview theme class: the wrapper is appended to
++        // document.body (see below), where scoped --dv-* variables from a
++        // .dockview-theme-* ancestor would no longer resolve.
++        const themeHost = this._ctx.accessor.element.closest('[class*="dockview-theme-"]');
++        if (themeHost) {
++            const themeClass = Array.prototype.find.call(themeHost.classList, function (name) {
++                return name.indexOf('dockview-theme-') === 0;
++            });
++            if (themeClass) {
++                wrapper.classList.add(themeClass);
++            }
++        }
+         wrapper.style.position = 'fixed';
+         wrapper.style.top = '-10000px';
+         wrapper.style.left = '0px';
+@@ -152,8 +164,17 @@ export class TabGroupManager {
+         actionsWrapper.style.width = 'auto';
+         wrapper.appendChild(actionsWrapper);
+         actionsWrapper.appendChild(clone);
+-        // Append inside the dockview root so CSS variables are inherited
+-        this._ctx.accessor.element.appendChild(wrapper);
++        // Append to body like pointerGhost does: an ancestor with CSS
++
++        // containment (or transform) would become this fixed wrapper's
++
++        // containing block and paint-clip it at -10000px, so the drag
++
++        // image would capture blank. Theme variables travel via the
++
++        // class copied above.
++
++        this._ctx.accessor.element.ownerDocument.body.appendChild(wrapper);
+         // Compute cursor offset relative to the wrapper element.
+         // The cloned chip is the first .dv-tab-group-chip in the clone.
+         const clonedChip = clone.querySelector('.dv-tab-group-chip');
+diff --git a/dist/esm/dockview/dockviewComponent.d.ts b/dist/esm/dockview/dockviewComponent.d.ts
+index dace8e9162b81965e3d69686f780ffbdaa090ae2..f9ae9b720a69e3064018bb823cff475566ec8c15 100644
+--- a/dist/esm/dockview/dockviewComponent.d.ts
++++ b/dist/esm/dockview/dockviewComponent.d.ts
+@@ -158,7 +158,7 @@ export interface DockviewMaximizedGroupChangeEvent {
+     isMaximized: boolean;
+ }
+ /** The coarse kind of a structural layout mutation (see `onWillMutateLayout`). */
+-export type DockviewLayoutMutationKind = 'add' | 'remove' | 'move' | 'float' | 'popout' | 'maximize' | 'tab-group' | 'load' | 'clear';
++export type DockviewLayoutMutationKind = 'add' | 'replace' | 'remove' | 'move' | 'float' | 'popout' | 'maximize' | 'tab-group' | 'load' | 'clear';
+ /**
+  * Who caused an operation: `'user'` for changes driven by direct interaction
+  * (drag-and-drop, tab UI, keyboard docking) and `'api'` for those entered
+@@ -247,6 +247,7 @@ export interface IDockviewComponent extends IBaseGrid<DockviewGroupPanel> {
+     doSetGroupActive: (group: DockviewGroupPanel, skipFocus?: boolean) => void;
+     removeGroup: (group: DockviewGroupPanel) => void;
+     addPanel<T extends object = Parameters>(options: AddPanelOptions<T>): IDockviewPanel;
++    replacePanel<T extends object = Parameters>(expected: IDockviewPanel['api'], options: Omit<AddPanelOptions<T>, 'id' | 'position' | 'floating' | 'inactive' | 'initialWidth' | 'initialHeight'>): IDockviewPanel | undefined;
+     removePanel(panel: IDockviewPanel): void;
+     getGroupPanel: (id: string) => IDockviewPanel | undefined;
+     createWatermarkComponent(): IWatermarkRenderer;
+@@ -512,6 +513,7 @@ export declare class DockviewComponent extends BaseGrid<DockviewGroupPanel> impl
+     private _doClear;
+     closeAllGroups(): void;
+     addPanel<T extends object = Parameters>(options: AddPanelOptions<T>): DockviewPanel;
++    replacePanel<T extends object = Parameters>(expected: IDockviewPanel['api'], options: Omit<AddPanelOptions<T>, 'id' | 'position' | 'floating' | 'inactive' | 'initialWidth' | 'initialHeight'>): IDockviewPanel | undefined;
+     private _doAddPanel;
+     removePanel(panel: IDockviewPanel, options?: {
+         removeEmptyGroup?: boolean;
+diff --git a/dist/esm/dockview/dockviewComponent.js b/dist/esm/dockview/dockviewComponent.js
+index f9637a40aa5873dde08220bc5f7b2c3dde54975e..83901a92cc324b998ea505e22a9065c324ee6d44 100644
+--- a/dist/esm/dockview/dockviewComponent.js
++++ b/dist/esm/dockview/dockviewComponent.js
+@@ -1580,7 +1580,10 @@ export class DockviewComponent extends BaseGrid {
+             this._groups.delete(tempGroup.api.id);
+             const newPanels = Object.keys(data.panels);
+             for (const panel of this.panels) {
+-                if (newPanels.includes(panel.api.id)) {
++                const next = data.panels[panel.api.id];
++                if (newPanels.includes(panel.api.id) &&
++                    next.contentComponent === panel.api.component &&
++                    (next.tabComponent == null ? this.options.defaultTabComponent : next.tabComponent) === panel.api.tabComponent) {
+                     existingPanels.set(panel.api.id, panel);
+                 }
+             }
+@@ -1930,6 +1933,17 @@ export class DockviewComponent extends BaseGrid {
+             }
+         });
+     }
++    replacePanel(expected, options) {
++        const previous = this.getGroupPanel(expected.id);
++        if (!previous || previous.api !== expected) return undefined;
++        return this.mutation('replace', () => {
++            const panel = this.createPanel({ ...options, id: previous.id }, previous.group);
++            previous.group.model.replacePanel(previous, panel);
++            previous.dispose();
++            this._bufferOnDidLayoutChange.fire();
++            return panel;
++        });
++    }
+     addPanel(options) {
+         return this.mutation('add', () => this._doAddPanel(options));
+     }
+@@ -3080,11 +3094,16 @@ export class DockviewComponent extends BaseGrid {
+             maximumWidth: options.maximumWidth,
+             maximumHeight: options.maximumHeight,
+         });
+-        panel.init({
+-            title: (_b = options.title) !== null && _b !== void 0 ? _b : options.id,
+-            params: (_c = options === null || options === void 0 ? void 0 : options.params) !== null && _c !== void 0 ? _c : {},
+-        });
+-        return panel;
++        try {
++            panel.init({
++                title: (_b = options.title) !== null && _b !== void 0 ? _b : options.id,
++                params: (_c = options === null || options === void 0 ? void 0 : options.params) !== null && _c !== void 0 ? _c : {},
++            });
++            return panel;
++        } catch (error) {
++            panel.dispose();
++            throw error;
++        }
+     }
+     createGroupAtLocation(location, size, options, gridview = this.gridview) {
+         const group = this.createGroup(options);
+diff --git a/dist/esm/dockview/dockviewGroupPanelModel.d.ts b/dist/esm/dockview/dockviewGroupPanelModel.d.ts
+index 4948bf31fcf549be81367923dc497189f4987715..914433dbc1cc2f7690f62567e8d322789d5b340a 100644
+--- a/dist/esm/dockview/dockviewGroupPanelModel.d.ts
++++ b/dist/esm/dockview/dockviewGroupPanelModel.d.ts
+@@ -326,6 +326,7 @@ export declare class DockviewGroupPanelModel extends CompositeDisposable impleme
+     init(_params: PanelInitParameters): void;
+     update(_params: PanelUpdateEvent): void;
+     focus(): void;
++    replacePanel(previous: IDockviewPanel, panel: IDockviewPanel): void;
+     openPanel(panel: IDockviewPanel, options?: {
+         index?: number;
+         skipSetActive?: boolean;
+diff --git a/dist/esm/dockview/dockviewGroupPanelModel.js b/dist/esm/dockview/dockviewGroupPanelModel.js
+index 21a25bd9157fc9f49229cbd26efab9307d8e8ca9..90ce828f617ccf77c9c3bf9083f64c7acf27b7b5 100644
+--- a/dist/esm/dockview/dockviewGroupPanelModel.js
++++ b/dist/esm/dockview/dockviewGroupPanelModel.js
+@@ -830,6 +830,29 @@ export class DockviewGroupPanelModel extends CompositeDisposable {
+         var _a;
+         (_a = this._activePanel) === null || _a === void 0 ? void 0 : _a.focus();
+     }
++    replacePanel(previous, panel) {
++        const index = this._panels.indexOf(previous);
++        const active = this._activePanel === previous;
++        if (active) this.contentContainer.closePanel();
++        this.renderContainer.detatch(previous);
++        this.tabsContainer.delete(previous.id);
++        this._panelDisposables.get(previous.id).dispose();
++        this._panels[index] = panel;
++        this.mostRecentlyUsed = this.mostRecentlyUsed.map(value => value === previous ? panel : value);
++        this._panelDisposables.set(panel.id, new CompositeDisposable(
++            panel.api.onDidTitleChange(event => this._onDidPanelTitleChange.fire(event)),
++            panel.api.onDidParametersChange(event => this._onDidPanelParametersChange.fire(event))
++        ));
++        this.tabsContainer.openPanel(panel, index);
++        this.tabsContainer.updateTabGroups();
++        if (active) {
++            this.doSetActivePanel(panel);
++        } else if (panel.api.renderer === 'always') {
++            this.renderContainer.attach({ panel, referenceContainer: this.contentContainer });
++        }
++        panel.updateParentGroup(this.groupPanel);
++        this.updateContainer();
++    }
+     openPanel(panel, options = {}) {
+         /**
+          * set the panel group
+diff --git a/dist/esm/dockview/dockviewPanel.js b/dist/esm/dockview/dockviewPanel.js
+index 72eaa718a80d8cab526d5ea5f6d45c67aaf8a11f..1a7a3ffbe650bea306cfd5153ee725c5d34373cf 100644
+--- a/dist/esm/dockview/dockviewPanel.js
++++ b/dist/esm/dockview/dockviewPanel.js
+@@ -125,11 +125,11 @@ export class DockviewPanel extends CompositeDisposable {
+         this._minimumHeight = state.minimumHeight;
+         this._maximumWidth = state.maximumWidth;
+         this._minimumWidth = state.minimumWidth;
++        // Deserialization supplies a complete snapshot, not a parameter patch.
++        this._params = {};
+         this.update({ params: (_a = state.params) !== null && _a !== void 0 ? _a : {} });
+         this.setTitle((_b = state.title) !== null && _b !== void 0 ? _b : this.id);
+         this.setRenderer((_c = state.renderer) !== null && _c !== void 0 ? _c : this.accessor.renderer);
+-        // state.contentComponent;
+-        // state.tabComponent;
+     }
+     updateParentGroup(group, options) {
+         this._group = group;
+diff --git a/dist/esm/dockview/events.d.ts b/dist/esm/dockview/events.d.ts
+index 6f978e37915eceedff9b84b7f9084237a15b6b78..431f97993028741769990d5e71ad587635eef32d 100644
+--- a/dist/esm/dockview/events.d.ts
++++ b/dist/esm/dockview/events.d.ts
+@@ -3,7 +3,7 @@ import { PanelTransfer } from '../dnd/dataTransfer';
+ import { DockviewApi } from '../api/component.api';
+ import { IDockviewPanel } from './dockviewPanel';
+ import { DockviewGroupPanel } from './dockviewGroupPanel';
+-import { IDockviewEvent } from '../events';
++import { Event, IDockviewEvent } from '../events';
+ import { ITabGroup } from './tabGroup';
+ export type DockviewGroupDropLocation = 'tab' | 'header_space' | 'content' | 'edge';
+ export interface DockviewWillShowOverlayLocationEventOptions {
+@@ -29,6 +29,8 @@ export declare class DockviewWillShowOverlayLocationEvent implements IDockviewEv
+     get nativeEvent(): DragEvent | PointerEvent;
+     get position(): Position;
+     get defaultPrevented(): boolean;
++    /** Fires once after acceptance and rendering, never for a vetoed target. */
++    get onDidRenderOverlay(): Event<HTMLElement>;
+     get panel(): IDockviewPanel | undefined;
+     get api(): DockviewApi;
+     get group(): DockviewGroupPanel | undefined;
+diff --git a/dist/esm/dockview/events.js b/dist/esm/dockview/events.js
+index 8f13ab4875472bbc4c45b571c7459d9f5458aacf..b6b5843d01268c1c3b575fa1baf94e43e1785f66 100644
+--- a/dist/esm/dockview/events.js
++++ b/dist/esm/dockview/events.js
+@@ -12,6 +12,10 @@ export class DockviewWillShowOverlayLocationEvent {
+     get defaultPrevented() {
+         return this.event.defaultPrevented;
+     }
++    /** Fires once after acceptance and rendering, never for a vetoed target. */
++    get onDidRenderOverlay() {
++        return this.event.onDidRenderOverlay;
++    }
+     get panel() {
+         return this.options.panel;
+     }
+diff --git a/dist/esm/gridview/branchNode.js b/dist/esm/gridview/branchNode.js
+index 96789e7a16555ff4900e8b2a128636522f404b60..dcb193667ec46a01d42604398a03b7d7aa829ff9 100644
+--- a/dist/esm/gridview/branchNode.js
++++ b/dist/esm/gridview/branchNode.js
+@@ -112,10 +112,10 @@ export class BranchNode extends CompositeDisposable {
+                     return {
+                         view: childDescriptor.node,
+                         size: childDescriptor.node.size,
+-                        visible: childDescriptor.node instanceof LeafNode &&
+-                            childDescriptor.visible !== undefined
+-                            ? childDescriptor.visible
+-                            : true,
++                        // Branch visibility belongs to its descendants, including legacy snapshots.
++                        visible: childDescriptor.node instanceof BranchNode
++                            ? childDescriptor.node.children.some((_, index) => childDescriptor.node.isChildVisible(index))
++                            : childDescriptor.visible !== false,
+                     };
+                 }),
+                 size: this.orthogonalSize,
+diff --git a/dist/esm/gridview/gridview.d.ts b/dist/esm/gridview/gridview.d.ts
+index b41cad74947ac22166a2c08362e8304a0e476206..95f716f2ae4e8e26d117bc2079d584773016adc6 100644
+--- a/dist/esm/gridview/gridview.d.ts
++++ b/dist/esm/gridview/gridview.d.ts
+@@ -44,6 +44,7 @@ export interface GridLeafNode<T extends IGridView> {
+     };
+ }
+ export interface GridBranchNode<T extends IGridView> {
++    readonly cachedVisibleSize: number | undefined;
+     readonly children: GridNode<T>[];
+     readonly box: {
+         width: number;
+@@ -65,6 +66,7 @@ export interface ISerializedLeafNode<T = any> {
+     visible?: boolean;
+ }
+ export interface ISerializedBranchNode {
++    visible?: boolean;
+     type: 'branch';
+     data: ISerializedNode[];
+     size: number;
+diff --git a/dist/esm/gridview/gridview.js b/dist/esm/gridview/gridview.js
+index 727330258cb96d04a6e4867b66d4d5fdc4e357e5..72eeed79d307956dbf25f7f922e9cfad0308a2c0 100644
+--- a/dist/esm/gridview/gridview.js
++++ b/dist/esm/gridview/gridview.js
+@@ -132,7 +132,8 @@ const serializeBranchNode = (node, orientation) => {
+     return {
+         type: 'branch',
+         data: node.children.map((c) => serializeBranchNode(c, orthogonal(orientation))),
+-        size,
++        size: typeof node.cachedVisibleSize === 'number' ? node.cachedVisibleSize : size,
++        ...(typeof node.cachedVisibleSize === 'number' ? { visible: false } : {}),
+     };
+ };
+ export class Gridview {
+@@ -472,7 +473,7 @@ export class Gridview {
+             const nodeCachedVisibleSize = node.getChildCachedVisibleSize(i);
+             children.push(this._getViews(child, orthogonal(orientation), nodeCachedVisibleSize));
+         }
+-        return { box, children };
++        return { box, children, cachedVisibleSize };
+     }
+     progmaticSelect(location, reverse = false) {
+         const [path, node] = this.getNode(location);
+@@ -630,7 +631,9 @@ export class Gridview {
+             // and add those siblings to the grandparent
+             for (let i = 0; i < sibling.children.length; i++) {
+                 const child = sibling.children[i];
+-                grandParent.addChild(child, child.size, parentIndex + i);
++                // Promoting a branch must carry hidden children's cached footprint.
++                const cachedSize = sibling.getChildCachedVisibleSize(i);
++                grandParent.addChild(child, cachedSize === undefined ? child.size : Sizing.Invisible(cachedSize), parentIndex + i);
+             }
+             /**
+              * clean down the branch node since we need to dipose of it and
+diff --git a/dist/esm/overlay/overlayRenderContainer.js b/dist/esm/overlay/overlayRenderContainer.js
+index 8d9abee517d81fbd21ff8da429e0aae6b241293c..27419b9a2adebd57cb9bc99149f7e5deeebc7f0c 100644
+--- a/dist/esm/overlay/overlayRenderContainer.js
++++ b/dist/esm/overlay/overlayRenderContainer.js
+@@ -89,7 +89,8 @@ export class OverlayRenderContainer extends CompositeDisposable {
+                 element,
+             };
+         }
+-        const focusContainer = this.map[panel.api.id].element;
++        const entry = this.map[panel.api.id];
++        const focusContainer = entry.element;
+         // Capture the content element now so the destroy disposable below
+         // does not re-query the renderer's `element` getter during teardown.
+         // Some framework adapters (e.g. dockview-angular) tear down their
+@@ -104,13 +105,13 @@ export class OverlayRenderContainer extends CompositeDisposable {
+         }
+         const resize = () => {
+             const panelId = panel.api.id;
+-            if (this.pendingUpdates.has(panelId)) {
+-                return; // Update already scheduled
++            if (this.pendingUpdates.has(resize)) {
++                return; // This attachment already has a scheduled update.
+             }
+-            this.pendingUpdates.add(panelId);
++            this.pendingUpdates.add(resize);
+             requestAnimationFrame(() => {
+-                this.pendingUpdates.delete(panelId);
+-                if (this.isDisposed || !this.map[panelId]) {
++                this.pendingUpdates.delete(resize);
++                if (this.isDisposed || this.map[panelId] !== entry || entry.resize !== resize) {
+                     return;
+                 }
+                 const box = this.positionCache.getPosition(referenceContainer.element);
+diff --git a/dist/esm/splitview/splitview.js b/dist/esm/splitview/splitview.js
+index b1941f52ef4b8fc7229bb752810eaf5d1121cdd6..559809f1fbfbc7065c9cbda3ad435b867fd5b56d 100644
+--- a/dist/esm/splitview/splitview.js
++++ b/dist/esm/splitview/splitview.js
+@@ -437,10 +437,43 @@ export class Splitview {
+                 doc.addEventListener('contextmenu', end);
+             };
+             sash.addEventListener('pointerdown', onPointerStart);
++            // Double-click on a sash splits the two views touching it evenly and
++            // commits exactly like the end of a pointer drag.
++            const onDoubleClick = () => {
++                const sashIndex = firstIndex(this.sashes, (s) => s.container === sash);
++                // Hidden views have zero size and pass any delta through, so the pair
++                // is the nearest visible view on each side, as for a drag of this sash.
++                let beforeIndex = sashIndex;
++                while (beforeIndex >= 0 && !this.viewItems[beforeIndex].visible) {
++                    beforeIndex--;
++                }
++                let afterIndex = sashIndex + 1;
++                while (afterIndex < this.viewItems.length && !this.viewItems[afterIndex].visible) {
++                    afterIndex++;
++                }
++                const before = this.viewItems[beforeIndex];
++                const after = this.viewItems[afterIndex];
++                if (!before || !after) {
++                    return;
++                }
++                // resize() only clamps against the whole row, so bound the delta to what
++                // this pair can absorb; no other sibling may move.
++                const delta = clamp(Math.trunc((after.size - before.size) / 2), Math.max(before.minimumSize - before.size, after.size - after.viewMaximumSize), Math.min(before.viewMaximumSize - before.size, after.size - after.minimumSize));
++                if (delta === 0) {
++                    return;
++                }
++                this.resize(sashIndex, delta, this.viewItems.map((x) => x.size));
++                this.distributeEmptySpace();
++                this.layoutViews();
++                this.saveProportions();
++                this._onDidSashEnd.fire(undefined);
++            };
++            sash.addEventListener('dblclick', onDoubleClick);
+             const sashItem = {
+                 container: sash,
+                 disposable: () => {
+                     sash.removeEventListener('pointerdown', onPointerStart);
++                    sash.removeEventListener('dblclick', onDoubleClick);
+                     sash.remove();
+                 },
+             };
+diff --git a/dist/package/main.cjs.js b/dist/package/main.cjs.js
+index 470f38ac75f5a205c643b2323dd84bcc4e872636..e4d17a79f0cde3b6b920dc1d4ee7274ed6009441 100644
+--- a/dist/package/main.cjs.js
++++ b/dist/package/main.cjs.js
+@@ -1314,10 +1314,43 @@ class Splitview {
+                 doc.addEventListener('contextmenu', end);
+             };
+             sash.addEventListener('pointerdown', onPointerStart);
++            // Double-click on a sash splits the two views touching it evenly and
++            // commits exactly like the end of a pointer drag.
++            const onDoubleClick = () => {
++                const sashIndex = firstIndex(this.sashes, (s) => s.container === sash);
++                // Hidden views have zero size and pass any delta through, so the pair
++                // is the nearest visible view on each side, as for a drag of this sash.
++                let beforeIndex = sashIndex;
++                while (beforeIndex >= 0 && !this.viewItems[beforeIndex].visible) {
++                    beforeIndex--;
++                }
++                let afterIndex = sashIndex + 1;
++                while (afterIndex < this.viewItems.length && !this.viewItems[afterIndex].visible) {
++                    afterIndex++;
++                }
++                const before = this.viewItems[beforeIndex];
++                const after = this.viewItems[afterIndex];
++                if (!before || !after) {
++                    return;
++                }
++                // resize() only clamps against the whole row, so bound the delta to what
++                // this pair can absorb; no other sibling may move.
++                const delta = clamp(Math.trunc((after.size - before.size) / 2), Math.max(before.minimumSize - before.size, after.size - after.viewMaximumSize), Math.min(before.viewMaximumSize - before.size, after.size - after.minimumSize));
++                if (delta === 0) {
++                    return;
++                }
++                this.resize(sashIndex, delta, this.viewItems.map((x) => x.size));
++                this.distributeEmptySpace();
++                this.layoutViews();
++                this.saveProportions();
++                this._onDidSashEnd.fire(undefined);
++            };
++            sash.addEventListener('dblclick', onDoubleClick);
+             const sashItem = {
+                 container: sash,
+                 disposable: () => {
+                     sash.removeEventListener('pointerdown', onPointerStart);
++                    sash.removeEventListener('dblclick', onDoubleClick);
+                     sash.remove();
+                 },
+             };
+@@ -2019,10 +2052,10 @@ class BranchNode extends CompositeDisposable {
+                     return {
+                         view: childDescriptor.node,
+                         size: childDescriptor.node.size,
+-                        visible: childDescriptor.node instanceof LeafNode &&
+-                            childDescriptor.visible !== undefined
+-                            ? childDescriptor.visible
+-                            : true,
++                        // Branch visibility belongs to its descendants, including legacy snapshots.
++                        visible: childDescriptor.node instanceof BranchNode
++                            ? childDescriptor.node.children.some((_, index) => childDescriptor.node.isChildVisible(index))
++                            : childDescriptor.visible !== false,
+                     };
+                 }),
+                 size: this.orthogonalSize,
+@@ -2291,7 +2324,8 @@ const serializeBranchNode = (node, orientation) => {
+     return {
+         type: 'branch',
+         data: node.children.map((c) => serializeBranchNode(c, orthogonal(orientation))),
+-        size,
++        size: typeof node.cachedVisibleSize === 'number' ? node.cachedVisibleSize : size,
++        ...(typeof node.cachedVisibleSize === 'number' ? { visible: false } : {}),
+     };
+ };
+ class Gridview {
+@@ -2629,7 +2663,7 @@ class Gridview {
+             const nodeCachedVisibleSize = node.getChildCachedVisibleSize(i);
+             children.push(this._getViews(child, orthogonal(orientation), nodeCachedVisibleSize));
+         }
+-        return { box, children };
++        return { box, children, cachedVisibleSize };
+     }
+     progmaticSelect(location, reverse = false) {
+         const [path, node] = this.getNode(location);
+@@ -2787,7 +2821,9 @@ class Gridview {
+             // and add those siblings to the grandparent
+             for (let i = 0; i < sibling.children.length; i++) {
+                 const child = sibling.children[i];
+-                grandParent.addChild(child, child.size, parentIndex + i);
++                // Promoting a branch must carry hidden children's cached footprint.
++                const cachedSize = sibling.getChildCachedVisibleSize(i);
++                grandParent.addChild(child, cachedSize === undefined ? child.size : exports.Sizing.Invisible(cachedSize), parentIndex + i);
+             }
+             /**
+              * clean down the branch node since we need to dipose of it and
+@@ -3863,6 +3899,10 @@ class DockviewApi {
+     addPanel(options) {
+         return this.component.withOrigin('api', () => this.component.addPanel(options));
+     }
++    /** Replace the exact current content, retaining its pane identity and placement. */
++    replacePanel(expected, options) {
++        return this.component.withOrigin('api', () => this.component.replacePanel(expected, options));
++    }
+     /**
+      * Remove a panel given the panel object.
+      */
+@@ -4065,6 +4105,9 @@ class DragAndDropObserver extends CompositeDisposable {
+     registerListeners() {
+         this.addDisposables(addDisposableListener(this.element, 'dragenter', (e) => {
+             this.onDragEnter(e);
++            // WebKit may emit only dragenter when crossing content children.
++            // Resolve the target now, without waiting for another pointer event.
++            this.onDragOver(e);
+         }, true));
+         this.addDisposables(addDisposableListener(this.element, 'dragover', (e) => {
+             this.onDragOver(e);
+@@ -4185,6 +4228,7 @@ function renderInPlaceOverlay(overlay, quadrant, width, height, overlayModel) {
+     toggleClass(overlay, 'dv-drop-target-top', shape.isTop);
+     toggleClass(overlay, 'dv-drop-target-bottom', shape.isBottom);
+     toggleClass(overlay, 'dv-drop-target-center', quadrant === 'center');
++    return overlay;
+ }
+ function checkAnchoredBoundsChanged(overlay, bounds) {
+     const topPx = `${Math.round(bounds.top)}px`;
+@@ -4252,7 +4296,7 @@ function renderAnchoredOverlay(args) {
+         box.height = 4;
+     }
+     if (!checkAnchoredBoundsChanged(overlay, box)) {
+-        return { boundsChanged: false, targetChanged: ta.changed };
++        return { boundsChanged: false, targetChanged: ta.changed, overlay };
+     }
+     applyAnchoredBounds(overlay, box);
+     overlay.className = `dv-drop-target-anchor${args.className ? ` ${args.className}` : ''}`;
+@@ -4269,7 +4313,7 @@ function renderAnchoredOverlay(args) {
+             toggleClass(overlay, 'dv-drop-target-anchor-container-changed', false);
+         }, 10);
+     }
+-    return { boundsChanged: true, targetChanged: ta.changed };
++    return { boundsChanged: true, targetChanged: ta.changed, overlay };
+ }
+
+ class WillShowOverlayEvent extends DockviewEvent {
+@@ -4282,6 +4326,19 @@ class WillShowOverlayEvent extends DockviewEvent {
+     constructor(options) {
+         super();
+         this.options = options;
++        this._onDidRenderOverlay = new Emitter();
++        this.onDidRenderOverlay = this._onDidRenderOverlay.event;
++    }
++    /** @internal Complete this event once, after the accepted owner renders. */
++    completeRender(overlay) {
++        try {
++            if (overlay && !this.defaultPrevented) {
++                this._onDidRenderOverlay.fire(overlay);
++            }
++        }
++        finally {
++            this._onDidRenderOverlay.dispose();
++        }
+     }
+ }
+ function directionToPosition(direction) {
+@@ -4357,6 +4414,12 @@ class Droptarget extends CompositeDisposable {
+                     this.removeDropTarget();
+                     return;
+                 }
++                // Root capture may already have accepted and written this overlay.
++                // Retire this target before reading geometry invalidated by it.
++                if (this.isAlreadyUsed(e)) {
++                    this.removeDropTarget();
++                    return;
++                }
+                 const target = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+                 const width = target.offsetWidth;
+                 const height = target.offsetHeight;
+@@ -4367,12 +4430,7 @@ class Droptarget extends CompositeDisposable {
+                 const x = ((_f = e.clientX) !== null && _f !== void 0 ? _f : 0) - rect.left;
+                 const y = ((_g = e.clientY) !== null && _g !== void 0 ? _g : 0) - rect.top;
+                 const quadrant = this.calculateQuadrant(this._acceptedTargetZonesSet, x, y, width, height);
+-                /**
+-                 * If the event has already been used by another DropTarget instance
+-                 * then don't show a second drop target, only one target should be
+-                 * active at any one time
+-                 */
+-                if (this.isAlreadyUsed(e) || quadrant === null) {
++                if (quadrant === null) {
+                     // no drop target should be displayed
+                     this.removeDropTarget();
+                     return;
+@@ -4394,6 +4452,7 @@ class Droptarget extends CompositeDisposable {
+                  */
+                 this._onWillShowOverlay.fire(willShowOverlayEvent);
+                 if (willShowOverlayEvent.defaultPrevented) {
++                    willShowOverlayEvent.completeRender(undefined);
+                     this.removeDropTarget();
+                     return;
+                 }
+@@ -4407,8 +4466,9 @@ class Droptarget extends CompositeDisposable {
+                     target.classList.add('dv-drop-target');
+                     target.append(this.targetElement);
+                 }
+-                this.toggleClasses(quadrant, width, height);
++                const overlay = this.toggleClasses(quadrant, width, height);
+                 this._state = quadrant;
++                willShowOverlayEvent.completeRender(overlay);
+             },
+             onDragLeave: () => {
+                 var _a, _b;
+@@ -4450,6 +4510,12 @@ class Droptarget extends CompositeDisposable {
+             },
+         });
+         this.addDisposables(this._onDrop, this._onWillShowOverlay, this.dnd);
++        // dragend bubbles from the source, not the hovered target. Retire only
++        // the preview after local drop consumers; never synthesize another drop.
++        const ownerWindow = element.ownerDocument.defaultView;
++        if (ownerWindow) {
++            this.addDisposables(addDisposableListener(ownerWindow, 'dragend', () => this.clearOverlay()));
++        }
+     }
+     setTargetZones(acceptedTargetZones) {
+         this._acceptedTargetZonesSet = new Set(acceptedTargetZones);
+@@ -4479,7 +4545,7 @@ class Droptarget extends CompositeDisposable {
+         const target = (_b = (_a = this.options).getOverrideTarget) === null || _b === void 0 ? void 0 : _b.call(_a);
+         if (target) {
+             const outlineEl = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+-            renderAnchoredOverlay({
++            return renderAnchoredOverlay({
+                 outlineElement: outlineEl,
+                 targetModel: target,
+                 quadrant,
+@@ -4487,13 +4553,12 @@ class Droptarget extends CompositeDisposable {
+                 height,
+                 overlayModel: this.options.overlayModel,
+                 className: this.options.className,
+-            });
+-            return;
++            }).overlay;
+         }
+         if (!this.overlayElement) {
+             return;
+         }
+-        renderInPlaceOverlay(this.overlayElement, quadrant, width, height, this.options.overlayModel);
++        return renderInPlaceOverlay(this.overlayElement, quadrant, width, height, this.options.overlayModel);
+     }
+     calculateQuadrant(overlayType, x, y, width, height) {
+         var _a, _b;
+@@ -4506,8 +4571,9 @@ class Droptarget extends CompositeDisposable {
+     }
+     removeDropTarget() {
+         var _a;
++        // Anchored targets own acceptance state without a local overlay element.
++        this._state = undefined;
+         if (this.targetElement) {
+-            this._state = undefined;
+             (_a = this.targetElement.parentElement) === null || _a === void 0 ? void 0 : _a.classList.remove('dv-drop-target');
+             this.targetElement.remove();
+             this.targetElement = undefined;
+@@ -4545,42 +4611,48 @@ class Droptarget extends CompositeDisposable {
+ }
+ Droptarget.USED_EVENT_ID = '__dockview_droptarget_event_is_used__';
+ function calculateQuadrantAsPercentage(overlayType, x, y, width, height, threshold) {
+-    const xp = (100 * x) / width;
+-    const yp = (100 * y) / height;
++    var xp = (100 * x) / width;
++    var yp = (100 * y) / height;
++    // Keep percentage activation, but compare physical distances at corners.
++    var position = overlayType.has('center') ? 'center' : null;
++    var distance = Infinity;
+     if (overlayType.has('left') && xp < threshold) {
+-        return 'left';
++        position = 'left';
++        distance = x;
+     }
+-    if (overlayType.has('right') && xp > 100 - threshold) {
+-        return 'right';
++    if (overlayType.has('right') && xp > 100 - threshold && width - x < distance) {
++        position = 'right';
++        distance = width - x;
+     }
+-    if (overlayType.has('top') && yp < threshold) {
+-        return 'top';
++    if (overlayType.has('top') && yp < threshold && y < distance) {
++        position = 'top';
++        distance = y;
+     }
+-    if (overlayType.has('bottom') && yp > 100 - threshold) {
+-        return 'bottom';
++    if (overlayType.has('bottom') && yp > 100 - threshold && height - y < distance) {
++        position = 'bottom';
+     }
+-    if (!overlayType.has('center')) {
+-        return null;
+-    }
+-    return 'center';
++    return position;
+ }
+ function calculateQuadrantAsPixels(overlayType, x, y, width, height, threshold) {
+-    if (overlayType.has('left') && x < threshold) {
+-        return 'left';
+-    }
+-    if (overlayType.has('right') && x > width - threshold) {
+-        return 'right';
++    // Choose the nearest eligible edge; equal distances keep the existing order.
++    var position = overlayType.has('center') ? 'center' : null;
++    var distance = threshold;
++    if (overlayType.has('left') && x < distance) {
++        position = 'left';
++        distance = x;
+     }
+-    if (overlayType.has('top') && y < threshold) {
+-        return 'top';
++    if (overlayType.has('right') && width - x < distance) {
++        position = 'right';
++        distance = width - x;
+     }
+-    if (overlayType.has('bottom') && y > height - threshold) {
+-        return 'bottom';
++    if (overlayType.has('top') && y < distance) {
++        position = 'top';
++        distance = y;
+     }
+-    if (!overlayType.has('center')) {
+-        return null;
++    if (overlayType.has('bottom') && height - y < distance) {
++        position = 'bottom';
+     }
+-    return 'center';
++    return position;
+ }
+
+ function addGhostImage(dataTransfer, ghostElement, options) {
+@@ -4875,11 +4947,12 @@ class PointerDropTarget extends CompositeDisposable {
+         });
+         this._onWillShowOverlay.fire(willShow);
+         if (willShow.defaultPrevented) {
++            willShow.completeRender(undefined);
+             this._removeOverlay();
+             return;
+         }
+         if (overrideTarget) {
+-            renderAnchoredOverlay({
++            const rendered = renderAnchoredOverlay({
+                 outlineElement: outlineEl,
+                 targetModel: overrideTarget,
+                 quadrant,
+@@ -4889,6 +4962,7 @@ class PointerDropTarget extends CompositeDisposable {
+                 className: this.options.className,
+             });
+             this._state = quadrant;
++            willShow.completeRender(rendered.overlay);
+             return;
+         }
+         if (!this._targetElement) {
+@@ -4903,6 +4977,7 @@ class PointerDropTarget extends CompositeDisposable {
+             renderInPlaceOverlay(this._overlayElement, quadrant, width, height, this.options.overlayModel);
+         }
+         this._state = quadrant;
++        willShow.completeRender(this._overlayElement);
+     }
+     _onDragLeave() {
+         var _a, _b;
+@@ -5195,7 +5270,28 @@ class Html5DragSource extends CompositeDisposable {
+             };
+             this.el.classList.add('dv-dragged');
+             setTimeout(() => this.el.classList.remove('dv-dragged'), 0);
+-            this._dataDisposable.value = this.opts.getData(event);
++            this._dataDisposable.dispose();
++            const data = this.opts.getData(event);
++            const ownerWindow = this.el.ownerDocument.defaultView;
++            let retirementTimer;
++            const retire = () => this._dataDisposable.dispose();
++            const dragEnd = addDisposableListener(this.el, 'dragend', (event) => {
++                var _a, _b;
++                this._pointerEventsDisposable.dispose();
++                // Retire after target and ancestor drop consumers. Keep the task
++                // boundary when propagation is stopped or the source is detached.
++                retirementTimer = setTimeout(retire, 0);
++                if (ownerWindow) ownerWindow.addEventListener('dragend', retire);
++                (_b = (_a = this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
++            });
++            this._dataDisposable.value = {
++                dispose: () => {
++                    clearTimeout(retirementTimer);
++                    dragEnd.dispose();
++                    if (ownerWindow) ownerWindow.removeEventListener('dragend', retire);
++                    data.dispose();
++                },
++            };
+             const ghost = (_e = (_d = this.opts).createGhost) === null || _e === void 0 ? void 0 : _e.call(_d, event);
+             if (ghost && event.dataTransfer) {
+                 addGhostImage(event.dataTransfer, ghost.element, {
+@@ -5219,13 +5315,6 @@ class Html5DragSource extends CompositeDisposable {
+                 }
+             }
+             (_j = (_h = this.opts).onDragStart) === null || _j === void 0 ? void 0 : _j.call(_h, event);
+-        }), addDisposableListener(this.el, 'dragend', (event) => {
+-            var _a, _b;
+-            this._pointerEventsDisposable.dispose();
+-            // Defer disposal so drop handlers can still read the
+-            // transfer payload before it clears.
+-            setTimeout(() => this._dataDisposable.dispose(), 0);
+-            (_b = (_a = this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
+         }));
+     }
+     setDisabled(value) {
+@@ -6434,6 +6523,10 @@ class DockviewWillShowOverlayLocationEvent {
+     get defaultPrevented() {
+         return this.event.defaultPrevented;
+     }
++    /** Fires once after acceptance and rendering, never for a vetoed target. */
++    get onDidRenderOverlay() {
++        return this.event.onDidRenderOverlay;
++    }
+     get panel() {
+         return this.options.panel;
+     }
+@@ -7529,6 +7622,18 @@ class TabGroupManager {
+         // match the cloned tabs and apply correct color/background.
+         const wrapper = document.createElement('div');
+         wrapper.className = 'dv-groupview dv-active-group';
++        // Carry the dockview theme class: the wrapper is appended to
++        // document.body (see below), where scoped --dv-* variables from a
++        // .dockview-theme-* ancestor would no longer resolve.
++        const themeHost = this._ctx.accessor.element.closest('[class*="dockview-theme-"]');
++        if (themeHost) {
++            const themeClass = Array.prototype.find.call(themeHost.classList, function (name) {
++                return name.indexOf('dockview-theme-') === 0;
++            });
++            if (themeClass) {
++                wrapper.classList.add(themeClass);
++            }
++        }
+         wrapper.style.position = 'fixed';
+         wrapper.style.top = '-10000px';
+         wrapper.style.left = '0px';
+@@ -7541,8 +7646,17 @@ class TabGroupManager {
+         actionsWrapper.style.width = 'auto';
+         wrapper.appendChild(actionsWrapper);
+         actionsWrapper.appendChild(clone);
+-        // Append inside the dockview root so CSS variables are inherited
+-        this._ctx.accessor.element.appendChild(wrapper);
++        // Append to body like pointerGhost does: an ancestor with CSS
++
++        // containment (or transform) would become this fixed wrapper's
++
++        // containing block and paint-clip it at -10000px, so the drag
++
++        // image would capture blank. Theme variables travel via the
++
++        // class copied above.
++
++        this._ctx.accessor.element.ownerDocument.body.appendChild(wrapper);
+         // Compute cursor offset relative to the wrapper element.
+         // The cloned chip is the first .dv-tab-group-chip in the clone.
+         const clonedChip = clone.querySelector('.dv-tab-group-chip');
+@@ -11095,6 +11209,29 @@ class DockviewGroupPanelModel extends CompositeDisposable {
+         var _a;
+         (_a = this._activePanel) === null || _a === void 0 ? void 0 : _a.focus();
+     }
++    replacePanel(previous, panel) {
++        const index = this._panels.indexOf(previous);
++        const active = this._activePanel === previous;
++        if (active) this.contentContainer.closePanel();
++        this.renderContainer.detatch(previous);
++        this.tabsContainer.delete(previous.id);
++        this._panelDisposables.get(previous.id).dispose();
++        this._panels[index] = panel;
++        this.mostRecentlyUsed = this.mostRecentlyUsed.map(value => value === previous ? panel : value);
++        this._panelDisposables.set(panel.id, new CompositeDisposable(
++            panel.api.onDidTitleChange(event => this._onDidPanelTitleChange.fire(event)),
++            panel.api.onDidParametersChange(event => this._onDidPanelParametersChange.fire(event))
++        ));
++        this.tabsContainer.openPanel(panel, index);
++        this.tabsContainer.updateTabGroups();
++        if (active) {
++            this.doSetActivePanel(panel);
++        } else if (panel.api.renderer === 'always') {
++            this.renderContainer.attach({ panel, referenceContainer: this.contentContainer });
++        }
++        panel.updateParentGroup(this.groupPanel);
++        this.updateContainer();
++    }
+     openPanel(panel, options = {}) {
+         /**
+          * set the panel group
+@@ -12322,11 +12459,11 @@ class DockviewPanel extends CompositeDisposable {
+         this._minimumHeight = state.minimumHeight;
+         this._maximumWidth = state.maximumWidth;
+         this._minimumWidth = state.minimumWidth;
++        // Deserialization supplies a complete snapshot, not a parameter patch.
++        this._params = {};
+         this.update({ params: (_a = state.params) !== null && _a !== void 0 ? _a : {} });
+         this.setTitle((_b = state.title) !== null && _b !== void 0 ? _b : this.id);
+         this.setRenderer((_c = state.renderer) !== null && _c !== void 0 ? _c : this.accessor.renderer);
+-        // state.contentComponent;
+-        // state.tabComponent;
+     }
+     updateParentGroup(group, options) {
+         this._group = group;
+@@ -14229,7 +14366,8 @@ class OverlayRenderContainer extends CompositeDisposable {
+                 element,
+             };
+         }
+-        const focusContainer = this.map[panel.api.id].element;
++        const entry = this.map[panel.api.id];
++        const focusContainer = entry.element;
+         // Capture the content element now so the destroy disposable below
+         // does not re-query the renderer's `element` getter during teardown.
+         // Some framework adapters (e.g. dockview-angular) tear down their
+@@ -14244,13 +14382,13 @@ class OverlayRenderContainer extends CompositeDisposable {
+         }
+         const resize = () => {
+             const panelId = panel.api.id;
+-            if (this.pendingUpdates.has(panelId)) {
+-                return; // Update already scheduled
++            if (this.pendingUpdates.has(resize)) {
++                return; // This attachment already has a scheduled update.
+             }
+-            this.pendingUpdates.add(panelId);
++            this.pendingUpdates.add(resize);
+             requestAnimationFrame(() => {
+-                this.pendingUpdates.delete(panelId);
+-                if (this.isDisposed || !this.map[panelId]) {
++                this.pendingUpdates.delete(resize);
++                if (this.isDisposed || this.map[panelId] !== entry || entry.resize !== resize) {
+                     return;
+                 }
+                 const box = this.positionCache.getPosition(referenceContainer.element);
+@@ -17019,7 +17157,10 @@ class DockviewComponent extends BaseGrid {
+             this._groups.delete(tempGroup.api.id);
+             const newPanels = Object.keys(data.panels);
+             for (const panel of this.panels) {
+-                if (newPanels.includes(panel.api.id)) {
++                const next = data.panels[panel.api.id];
++                if (newPanels.includes(panel.api.id) &&
++                    next.contentComponent === panel.api.component &&
++                    (next.tabComponent == null ? this.options.defaultTabComponent : next.tabComponent) === panel.api.tabComponent) {
+                     existingPanels.set(panel.api.id, panel);
+                 }
+             }
+@@ -17369,6 +17510,17 @@ class DockviewComponent extends BaseGrid {
+             }
+         });
+     }
++    replacePanel(expected, options) {
++        const previous = this.getGroupPanel(expected.id);
++        if (!previous || previous.api !== expected) return undefined;
++        return this.mutation('replace', () => {
++            const panel = this.createPanel({ ...options, id: previous.id }, previous.group);
++            previous.group.model.replacePanel(previous, panel);
++            previous.dispose();
++            this._bufferOnDidLayoutChange.fire();
++            return panel;
++        });
++    }
+     addPanel(options) {
+         return this.mutation('add', () => this._doAddPanel(options));
+     }
+@@ -18519,11 +18671,16 @@ class DockviewComponent extends BaseGrid {
+             maximumWidth: options.maximumWidth,
+             maximumHeight: options.maximumHeight,
+         });
+-        panel.init({
+-            title: (_b = options.title) !== null && _b !== void 0 ? _b : options.id,
+-            params: (_c = options === null || options === void 0 ? void 0 : options.params) !== null && _c !== void 0 ? _c : {},
+-        });
+-        return panel;
++        try {
++            panel.init({
++                title: (_b = options.title) !== null && _b !== void 0 ? _b : options.id,
++                params: (_c = options === null || options === void 0 ? void 0 : options.params) !== null && _c !== void 0 ? _c : {},
++            });
++            return panel;
++        } catch (error) {
++            panel.dispose();
++            throw error;
++        }
+     }
+     createGroupAtLocation(location, size, options, gridview = this.gridview) {
+         const group = this.createGroup(options);
+diff --git a/dist/package/main.esm.mjs b/dist/package/main.esm.mjs
+index 052a960dfcd1638870406482794fa242901031ff..e24cc893ff22d57f001ee66d79328f026fbdefc6 100644
+--- a/dist/package/main.esm.mjs
++++ b/dist/package/main.esm.mjs
+@@ -1310,10 +1310,43 @@ class Splitview {
+                 doc.addEventListener('contextmenu', end);
+             };
+             sash.addEventListener('pointerdown', onPointerStart);
++            // Double-click on a sash splits the two views touching it evenly and
++            // commits exactly like the end of a pointer drag.
++            const onDoubleClick = () => {
++                const sashIndex = firstIndex(this.sashes, (s) => s.container === sash);
++                // Hidden views have zero size and pass any delta through, so the pair
++                // is the nearest visible view on each side, as for a drag of this sash.
++                let beforeIndex = sashIndex;
++                while (beforeIndex >= 0 && !this.viewItems[beforeIndex].visible) {
++                    beforeIndex--;
++                }
++                let afterIndex = sashIndex + 1;
++                while (afterIndex < this.viewItems.length && !this.viewItems[afterIndex].visible) {
++                    afterIndex++;
++                }
++                const before = this.viewItems[beforeIndex];
++                const after = this.viewItems[afterIndex];
++                if (!before || !after) {
++                    return;
++                }
++                // resize() only clamps against the whole row, so bound the delta to what
++                // this pair can absorb; no other sibling may move.
++                const delta = clamp(Math.trunc((after.size - before.size) / 2), Math.max(before.minimumSize - before.size, after.size - after.viewMaximumSize), Math.min(before.viewMaximumSize - before.size, after.size - after.minimumSize));
++                if (delta === 0) {
++                    return;
++                }
++                this.resize(sashIndex, delta, this.viewItems.map((x) => x.size));
++                this.distributeEmptySpace();
++                this.layoutViews();
++                this.saveProportions();
++                this._onDidSashEnd.fire(undefined);
++            };
++            sash.addEventListener('dblclick', onDoubleClick);
+             const sashItem = {
+                 container: sash,
+                 disposable: () => {
+                     sash.removeEventListener('pointerdown', onPointerStart);
++                    sash.removeEventListener('dblclick', onDoubleClick);
+                     sash.remove();
+                 },
+             };
+@@ -2015,10 +2048,10 @@ class BranchNode extends CompositeDisposable {
+                     return {
+                         view: childDescriptor.node,
+                         size: childDescriptor.node.size,
+-                        visible: childDescriptor.node instanceof LeafNode &&
+-                            childDescriptor.visible !== undefined
+-                            ? childDescriptor.visible
+-                            : true,
++                        // Branch visibility belongs to its descendants, including legacy snapshots.
++                        visible: childDescriptor.node instanceof BranchNode
++                            ? childDescriptor.node.children.some((_, index) => childDescriptor.node.isChildVisible(index))
++                            : childDescriptor.visible !== false,
+                     };
+                 }),
+                 size: this.orthogonalSize,
+@@ -2287,7 +2320,8 @@ const serializeBranchNode = (node, orientation) => {
+     return {
+         type: 'branch',
+         data: node.children.map((c) => serializeBranchNode(c, orthogonal(orientation))),
+-        size,
++        size: typeof node.cachedVisibleSize === 'number' ? node.cachedVisibleSize : size,
++        ...(typeof node.cachedVisibleSize === 'number' ? { visible: false } : {}),
+     };
+ };
+ class Gridview {
+@@ -2625,7 +2659,7 @@ class Gridview {
+             const nodeCachedVisibleSize = node.getChildCachedVisibleSize(i);
+             children.push(this._getViews(child, orthogonal(orientation), nodeCachedVisibleSize));
+         }
+-        return { box, children };
++        return { box, children, cachedVisibleSize };
+     }
+     progmaticSelect(location, reverse = false) {
+         const [path, node] = this.getNode(location);
+@@ -2783,7 +2817,9 @@ class Gridview {
+             // and add those siblings to the grandparent
+             for (let i = 0; i < sibling.children.length; i++) {
+                 const child = sibling.children[i];
+-                grandParent.addChild(child, child.size, parentIndex + i);
++                // Promoting a branch must carry hidden children's cached footprint.
++                const cachedSize = sibling.getChildCachedVisibleSize(i);
++                grandParent.addChild(child, cachedSize === undefined ? child.size : Sizing.Invisible(cachedSize), parentIndex + i);
+             }
+             /**
+              * clean down the branch node since we need to dipose of it and
+@@ -3859,6 +3895,10 @@ class DockviewApi {
+     addPanel(options) {
+         return this.component.withOrigin('api', () => this.component.addPanel(options));
+     }
++    /** Replace the exact current content, retaining its pane identity and placement. */
++    replacePanel(expected, options) {
++        return this.component.withOrigin('api', () => this.component.replacePanel(expected, options));
++    }
+     /**
+      * Remove a panel given the panel object.
+      */
+@@ -4061,6 +4101,9 @@ class DragAndDropObserver extends CompositeDisposable {
+     registerListeners() {
+         this.addDisposables(addDisposableListener(this.element, 'dragenter', (e) => {
+             this.onDragEnter(e);
++            // WebKit may emit only dragenter when crossing content children.
++            // Resolve the target now, without waiting for another pointer event.
++            this.onDragOver(e);
+         }, true));
+         this.addDisposables(addDisposableListener(this.element, 'dragover', (e) => {
+             this.onDragOver(e);
+@@ -4181,6 +4224,7 @@ function renderInPlaceOverlay(overlay, quadrant, width, height, overlayModel) {
+     toggleClass(overlay, 'dv-drop-target-top', shape.isTop);
+     toggleClass(overlay, 'dv-drop-target-bottom', shape.isBottom);
+     toggleClass(overlay, 'dv-drop-target-center', quadrant === 'center');
++    return overlay;
+ }
+ function checkAnchoredBoundsChanged(overlay, bounds) {
+     const topPx = `${Math.round(bounds.top)}px`;
+@@ -4248,7 +4292,7 @@ function renderAnchoredOverlay(args) {
+         box.height = 4;
+     }
+     if (!checkAnchoredBoundsChanged(overlay, box)) {
+-        return { boundsChanged: false, targetChanged: ta.changed };
++        return { boundsChanged: false, targetChanged: ta.changed, overlay };
+     }
+     applyAnchoredBounds(overlay, box);
+     overlay.className = `dv-drop-target-anchor${args.className ? ` ${args.className}` : ''}`;
+@@ -4265,7 +4309,7 @@ function renderAnchoredOverlay(args) {
+             toggleClass(overlay, 'dv-drop-target-anchor-container-changed', false);
+         }, 10);
+     }
+-    return { boundsChanged: true, targetChanged: ta.changed };
++    return { boundsChanged: true, targetChanged: ta.changed, overlay };
+ }
+
+ class WillShowOverlayEvent extends DockviewEvent {
+@@ -4278,6 +4322,19 @@ class WillShowOverlayEvent extends DockviewEvent {
+     constructor(options) {
+         super();
+         this.options = options;
++        this._onDidRenderOverlay = new Emitter();
++        this.onDidRenderOverlay = this._onDidRenderOverlay.event;
++    }
++    /** @internal Complete this event once, after the accepted owner renders. */
++    completeRender(overlay) {
++        try {
++            if (overlay && !this.defaultPrevented) {
++                this._onDidRenderOverlay.fire(overlay);
++            }
++        }
++        finally {
++            this._onDidRenderOverlay.dispose();
++        }
+     }
+ }
+ function directionToPosition(direction) {
+@@ -4353,6 +4410,12 @@ class Droptarget extends CompositeDisposable {
+                     this.removeDropTarget();
+                     return;
+                 }
++                // Root capture may already have accepted and written this overlay.
++                // Retire this target before reading geometry invalidated by it.
++                if (this.isAlreadyUsed(e)) {
++                    this.removeDropTarget();
++                    return;
++                }
+                 const target = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+                 const width = target.offsetWidth;
+                 const height = target.offsetHeight;
+@@ -4363,12 +4426,7 @@ class Droptarget extends CompositeDisposable {
+                 const x = ((_f = e.clientX) !== null && _f !== void 0 ? _f : 0) - rect.left;
+                 const y = ((_g = e.clientY) !== null && _g !== void 0 ? _g : 0) - rect.top;
+                 const quadrant = this.calculateQuadrant(this._acceptedTargetZonesSet, x, y, width, height);
+-                /**
+-                 * If the event has already been used by another DropTarget instance
+-                 * then don't show a second drop target, only one target should be
+-                 * active at any one time
+-                 */
+-                if (this.isAlreadyUsed(e) || quadrant === null) {
++                if (quadrant === null) {
+                     // no drop target should be displayed
+                     this.removeDropTarget();
+                     return;
+@@ -4390,6 +4448,7 @@ class Droptarget extends CompositeDisposable {
+                  */
+                 this._onWillShowOverlay.fire(willShowOverlayEvent);
+                 if (willShowOverlayEvent.defaultPrevented) {
++                    willShowOverlayEvent.completeRender(undefined);
+                     this.removeDropTarget();
+                     return;
+                 }
+@@ -4403,8 +4462,9 @@ class Droptarget extends CompositeDisposable {
+                     target.classList.add('dv-drop-target');
+                     target.append(this.targetElement);
+                 }
+-                this.toggleClasses(quadrant, width, height);
++                const overlay = this.toggleClasses(quadrant, width, height);
+                 this._state = quadrant;
++                willShowOverlayEvent.completeRender(overlay);
+             },
+             onDragLeave: () => {
+                 var _a, _b;
+@@ -4446,6 +4506,12 @@ class Droptarget extends CompositeDisposable {
+             },
+         });
+         this.addDisposables(this._onDrop, this._onWillShowOverlay, this.dnd);
++        // dragend bubbles from the source, not the hovered target. Retire only
++        // the preview after local drop consumers; never synthesize another drop.
++        const ownerWindow = element.ownerDocument.defaultView;
++        if (ownerWindow) {
++            this.addDisposables(addDisposableListener(ownerWindow, 'dragend', () => this.clearOverlay()));
++        }
+     }
+     setTargetZones(acceptedTargetZones) {
+         this._acceptedTargetZonesSet = new Set(acceptedTargetZones);
+@@ -4475,7 +4541,7 @@ class Droptarget extends CompositeDisposable {
+         const target = (_b = (_a = this.options).getOverrideTarget) === null || _b === void 0 ? void 0 : _b.call(_a);
+         if (target) {
+             const outlineEl = (_e = (_d = (_c = this.options).getOverlayOutline) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : this.element;
+-            renderAnchoredOverlay({
++            return renderAnchoredOverlay({
+                 outlineElement: outlineEl,
+                 targetModel: target,
+                 quadrant,
+@@ -4483,13 +4549,12 @@ class Droptarget extends CompositeDisposable {
+                 height,
+                 overlayModel: this.options.overlayModel,
+                 className: this.options.className,
+-            });
+-            return;
++            }).overlay;
+         }
+         if (!this.overlayElement) {
+             return;
+         }
+-        renderInPlaceOverlay(this.overlayElement, quadrant, width, height, this.options.overlayModel);
++        return renderInPlaceOverlay(this.overlayElement, quadrant, width, height, this.options.overlayModel);
+     }
+     calculateQuadrant(overlayType, x, y, width, height) {
+         var _a, _b;
+@@ -4502,8 +4567,9 @@ class Droptarget extends CompositeDisposable {
+     }
+     removeDropTarget() {
+         var _a;
++        // Anchored targets own acceptance state without a local overlay element.
++        this._state = undefined;
+         if (this.targetElement) {
+-            this._state = undefined;
+             (_a = this.targetElement.parentElement) === null || _a === void 0 ? void 0 : _a.classList.remove('dv-drop-target');
+             this.targetElement.remove();
+             this.targetElement = undefined;
+@@ -4541,42 +4607,48 @@ class Droptarget extends CompositeDisposable {
+ }
+ Droptarget.USED_EVENT_ID = '__dockview_droptarget_event_is_used__';
+ function calculateQuadrantAsPercentage(overlayType, x, y, width, height, threshold) {
+-    const xp = (100 * x) / width;
+-    const yp = (100 * y) / height;
++    var xp = (100 * x) / width;
++    var yp = (100 * y) / height;
++    // Keep percentage activation, but compare physical distances at corners.
++    var position = overlayType.has('center') ? 'center' : null;
++    var distance = Infinity;
+     if (overlayType.has('left') && xp < threshold) {
+-        return 'left';
++        position = 'left';
++        distance = x;
+     }
+-    if (overlayType.has('right') && xp > 100 - threshold) {
+-        return 'right';
++    if (overlayType.has('right') && xp > 100 - threshold && width - x < distance) {
++        position = 'right';
++        distance = width - x;
+     }
+-    if (overlayType.has('top') && yp < threshold) {
+-        return 'top';
++    if (overlayType.has('top') && yp < threshold && y < distance) {
++        position = 'top';
++        distance = y;
+     }
+-    if (overlayType.has('bottom') && yp > 100 - threshold) {
+-        return 'bottom';
++    if (overlayType.has('bottom') && yp > 100 - threshold && height - y < distance) {
++        position = 'bottom';
+     }
+-    if (!overlayType.has('center')) {
+-        return null;
+-    }
+-    return 'center';
++    return position;
+ }
+ function calculateQuadrantAsPixels(overlayType, x, y, width, height, threshold) {
+-    if (overlayType.has('left') && x < threshold) {
+-        return 'left';
+-    }
+-    if (overlayType.has('right') && x > width - threshold) {
+-        return 'right';
++    // Choose the nearest eligible edge; equal distances keep the existing order.
++    var position = overlayType.has('center') ? 'center' : null;
++    var distance = threshold;
++    if (overlayType.has('left') && x < distance) {
++        position = 'left';
++        distance = x;
+     }
+-    if (overlayType.has('top') && y < threshold) {
+-        return 'top';
++    if (overlayType.has('right') && width - x < distance) {
++        position = 'right';
++        distance = width - x;
+     }
+-    if (overlayType.has('bottom') && y > height - threshold) {
+-        return 'bottom';
++    if (overlayType.has('top') && y < distance) {
++        position = 'top';
++        distance = y;
+     }
+-    if (!overlayType.has('center')) {
+-        return null;
++    if (overlayType.has('bottom') && height - y < distance) {
++        position = 'bottom';
+     }
+-    return 'center';
++    return position;
+ }
+
+ function addGhostImage(dataTransfer, ghostElement, options) {
+@@ -4871,11 +4943,12 @@ class PointerDropTarget extends CompositeDisposable {
+         });
+         this._onWillShowOverlay.fire(willShow);
+         if (willShow.defaultPrevented) {
++            willShow.completeRender(undefined);
+             this._removeOverlay();
+             return;
+         }
+         if (overrideTarget) {
+-            renderAnchoredOverlay({
++            const rendered = renderAnchoredOverlay({
+                 outlineElement: outlineEl,
+                 targetModel: overrideTarget,
+                 quadrant,
+@@ -4885,6 +4958,7 @@ class PointerDropTarget extends CompositeDisposable {
+                 className: this.options.className,
+             });
+             this._state = quadrant;
++            willShow.completeRender(rendered.overlay);
+             return;
+         }
+         if (!this._targetElement) {
+@@ -4899,6 +4973,7 @@ class PointerDropTarget extends CompositeDisposable {
+             renderInPlaceOverlay(this._overlayElement, quadrant, width, height, this.options.overlayModel);
+         }
+         this._state = quadrant;
++        willShow.completeRender(this._overlayElement);
+     }
+     _onDragLeave() {
+         var _a, _b;
+@@ -5191,7 +5266,28 @@ class Html5DragSource extends CompositeDisposable {
+             };
+             this.el.classList.add('dv-dragged');
+             setTimeout(() => this.el.classList.remove('dv-dragged'), 0);
+-            this._dataDisposable.value = this.opts.getData(event);
++            this._dataDisposable.dispose();
++            const data = this.opts.getData(event);
++            const ownerWindow = this.el.ownerDocument.defaultView;
++            let retirementTimer;
++            const retire = () => this._dataDisposable.dispose();
++            const dragEnd = addDisposableListener(this.el, 'dragend', (event) => {
++                var _a, _b;
++                this._pointerEventsDisposable.dispose();
++                // Retire after target and ancestor drop consumers. Keep the task
++                // boundary when propagation is stopped or the source is detached.
++                retirementTimer = setTimeout(retire, 0);
++                if (ownerWindow) ownerWindow.addEventListener('dragend', retire);
++                (_b = (_a = this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
++            });
++            this._dataDisposable.value = {
++                dispose: () => {
++                    clearTimeout(retirementTimer);
++                    dragEnd.dispose();
++                    if (ownerWindow) ownerWindow.removeEventListener('dragend', retire);
++                    data.dispose();
++                },
++            };
+             const ghost = (_e = (_d = this.opts).createGhost) === null || _e === void 0 ? void 0 : _e.call(_d, event);
+             if (ghost && event.dataTransfer) {
+                 addGhostImage(event.dataTransfer, ghost.element, {
+@@ -5215,13 +5311,6 @@ class Html5DragSource extends CompositeDisposable {
+                 }
+             }
+             (_j = (_h = this.opts).onDragStart) === null || _j === void 0 ? void 0 : _j.call(_h, event);
+-        }), addDisposableListener(this.el, 'dragend', (event) => {
+-            var _a, _b;
+-            this._pointerEventsDisposable.dispose();
+-            // Defer disposal so drop handlers can still read the
+-            // transfer payload before it clears.
+-            setTimeout(() => this._dataDisposable.dispose(), 0);
+-            (_b = (_a = this.opts).onDragEnd) === null || _b === void 0 ? void 0 : _b.call(_a, event);
+         }));
+     }
+     setDisabled(value) {
+@@ -6430,6 +6519,10 @@ class DockviewWillShowOverlayLocationEvent {
+     get defaultPrevented() {
+         return this.event.defaultPrevented;
+     }
++    /** Fires once after acceptance and rendering, never for a vetoed target. */
++    get onDidRenderOverlay() {
++        return this.event.onDidRenderOverlay;
++    }
+     get panel() {
+         return this.options.panel;
+     }
+@@ -7525,6 +7618,18 @@ class TabGroupManager {
+         // match the cloned tabs and apply correct color/background.
+         const wrapper = document.createElement('div');
+         wrapper.className = 'dv-groupview dv-active-group';
++        // Carry the dockview theme class: the wrapper is appended to
++        // document.body (see below), where scoped --dv-* variables from a
++        // .dockview-theme-* ancestor would no longer resolve.
++        const themeHost = this._ctx.accessor.element.closest('[class*="dockview-theme-"]');
++        if (themeHost) {
++            const themeClass = Array.prototype.find.call(themeHost.classList, function (name) {
++                return name.indexOf('dockview-theme-') === 0;
++            });
++            if (themeClass) {
++                wrapper.classList.add(themeClass);
++            }
++        }
+         wrapper.style.position = 'fixed';
+         wrapper.style.top = '-10000px';
+         wrapper.style.left = '0px';
+@@ -7537,8 +7642,17 @@ class TabGroupManager {
+         actionsWrapper.style.width = 'auto';
+         wrapper.appendChild(actionsWrapper);
+         actionsWrapper.appendChild(clone);
+-        // Append inside the dockview root so CSS variables are inherited
+-        this._ctx.accessor.element.appendChild(wrapper);
++        // Append to body like pointerGhost does: an ancestor with CSS
++
++        // containment (or transform) would become this fixed wrapper's
++
++        // containing block and paint-clip it at -10000px, so the drag
++
++        // image would capture blank. Theme variables travel via the
++
++        // class copied above.
++
++        this._ctx.accessor.element.ownerDocument.body.appendChild(wrapper);
+         // Compute cursor offset relative to the wrapper element.
+         // The cloned chip is the first .dv-tab-group-chip in the clone.
+         const clonedChip = clone.querySelector('.dv-tab-group-chip');
+@@ -11091,6 +11205,29 @@ class DockviewGroupPanelModel extends CompositeDisposable {
+         var _a;
+         (_a = this._activePanel) === null || _a === void 0 ? void 0 : _a.focus();
+     }
++    replacePanel(previous, panel) {
++        const index = this._panels.indexOf(previous);
++        const active = this._activePanel === previous;
++        if (active) this.contentContainer.closePanel();
++        this.renderContainer.detatch(previous);
++        this.tabsContainer.delete(previous.id);
++        this._panelDisposables.get(previous.id).dispose();
++        this._panels[index] = panel;
++        this.mostRecentlyUsed = this.mostRecentlyUsed.map(value => value === previous ? panel : value);
++        this._panelDisposables.set(panel.id, new CompositeDisposable(
++            panel.api.onDidTitleChange(event => this._onDidPanelTitleChange.fire(event)),
++            panel.api.onDidParametersChange(event => this._onDidPanelParametersChange.fire(event))
++        ));
++        this.tabsContainer.openPanel(panel, index);
++        this.tabsContainer.updateTabGroups();
++        if (active) {
++            this.doSetActivePanel(panel);
++        } else if (panel.api.renderer === 'always') {
++            this.renderContainer.attach({ panel, referenceContainer: this.contentContainer });
++        }
++        panel.updateParentGroup(this.groupPanel);
++        this.updateContainer();
++    }
+     openPanel(panel, options = {}) {
+         /**
+          * set the panel group
+@@ -12318,11 +12455,11 @@ class DockviewPanel extends CompositeDisposable {
+         this._minimumHeight = state.minimumHeight;
+         this._maximumWidth = state.maximumWidth;
+         this._minimumWidth = state.minimumWidth;
++        // Deserialization supplies a complete snapshot, not a parameter patch.
++        this._params = {};
+         this.update({ params: (_a = state.params) !== null && _a !== void 0 ? _a : {} });
+         this.setTitle((_b = state.title) !== null && _b !== void 0 ? _b : this.id);
+         this.setRenderer((_c = state.renderer) !== null && _c !== void 0 ? _c : this.accessor.renderer);
+-        // state.contentComponent;
+-        // state.tabComponent;
+     }
+     updateParentGroup(group, options) {
+         this._group = group;
+@@ -14225,7 +14362,8 @@ class OverlayRenderContainer extends CompositeDisposable {
+                 element,
+             };
+         }
+-        const focusContainer = this.map[panel.api.id].element;
++        const entry = this.map[panel.api.id];
++        const focusContainer = entry.element;
+         // Capture the content element now so the destroy disposable below
+         // does not re-query the renderer's `element` getter during teardown.
+         // Some framework adapters (e.g. dockview-angular) tear down their
+@@ -14240,13 +14378,13 @@ class OverlayRenderContainer extends CompositeDisposable {
+         }
+         const resize = () => {
+             const panelId = panel.api.id;
+-            if (this.pendingUpdates.has(panelId)) {
+-                return; // Update already scheduled
++            if (this.pendingUpdates.has(resize)) {
++                return; // This attachment already has a scheduled update.
+             }
+-            this.pendingUpdates.add(panelId);
++            this.pendingUpdates.add(resize);
+             requestAnimationFrame(() => {
+-                this.pendingUpdates.delete(panelId);
+-                if (this.isDisposed || !this.map[panelId]) {
++                this.pendingUpdates.delete(resize);
++                if (this.isDisposed || this.map[panelId] !== entry || entry.resize !== resize) {
+                     return;
+                 }
+                 const box = this.positionCache.getPosition(referenceContainer.element);
+@@ -17015,7 +17153,10 @@ class DockviewComponent extends BaseGrid {
+             this._groups.delete(tempGroup.api.id);
+             const newPanels = Object.keys(data.panels);
+             for (const panel of this.panels) {
+-                if (newPanels.includes(panel.api.id)) {
++                const next = data.panels[panel.api.id];
++                if (newPanels.includes(panel.api.id) &&
++                    next.contentComponent === panel.api.component &&
++                    (next.tabComponent == null ? this.options.defaultTabComponent : next.tabComponent) === panel.api.tabComponent) {
+                     existingPanels.set(panel.api.id, panel);
+                 }
+             }
+@@ -17365,6 +17506,17 @@ class DockviewComponent extends BaseGrid {
+             }
+         });
+     }
++    replacePanel(expected, options) {
++        const previous = this.getGroupPanel(expected.id);
++        if (!previous || previous.api !== expected) return undefined;
++        return this.mutation('replace', () => {
++            const panel = this.createPanel({ ...options, id: previous.id }, previous.group);
++            previous.group.model.replacePanel(previous, panel);
++            previous.dispose();
++            this._bufferOnDidLayoutChange.fire();
++            return panel;
++        });
++    }
+     addPanel(options) {
+         return this.mutation('add', () => this._doAddPanel(options));
+     }
+@@ -18515,11 +18667,16 @@ class DockviewComponent extends BaseGrid {
+             maximumWidth: options.maximumWidth,
+             maximumHeight: options.maximumHeight,
+         });
+-        panel.init({
+-            title: (_b = options.title) !== null && _b !== void 0 ? _b : options.id,
+-            params: (_c = options === null || options === void 0 ? void 0 : options.params) !== null && _c !== void 0 ? _c : {},
+-        });
+-        return panel;
++        try {
++            panel.init({
++                title: (_b = options.title) !== null && _b !== void 0 ? _b : options.id,
++                params: (_c = options === null || options === void 0 ? void 0 : options.params) !== null && _c !== void 0 ? _c : {},
++            });
++            return panel;
++        } catch (error) {
++            panel.dispose();
++            throw error;
++        }
+     }
+     createGroupAtLocation(location, size, options, gridview = this.gridview) {
+         const group = this.createGroup(options);

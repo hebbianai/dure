@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "dure-orchestration",
+  "transport": "stdio",
+  "runtime": "installed-node",
+  "args": ["orchestration-mcp-server.mjs"],
+  "apiVersion": "dure.orchestration/v1",
+  "clientModule": "orchestration-client.mjs",
+  "serviceTransport": {
+    "kind": "authenticated_endpoint",
+    "endpointEnv": "DURE_ORCHESTRATION_ENDPOINT",
+    "authorizationEnv": "DURE_ORCHESTRATION_AUTHORIZATION"
+  }
+}

@@ -1,0 +1,42 @@
+---
+title: "Terminals, files and attachments"
+description: "Run shell commands, inspect code, and give an agent text, images or files."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+New agents open in terminal panes. Each uses its provider's native CLI, so you can keep using that tool's commands and shortcuts alongside Dure's workspace controls.
+
+## Run checks in a shell
+
+Open an ordinary terminal pane beside the agent. Confirm its working folder, then run the project's commands yourself. For a Node.js project, that might be:
+
+```sh
+pwd
+ls
+npm test
+```
+
+Use the commands your repository actually defines; `npm test` is an example, not a Dure requirement.
+
+<Frame caption="An ordinary terminal showing test results and changed files.">
+  <ProductFigure scene="terminal" locale="en" label="An ordinary terminal showing test results and changed files." />
+</Frame>
+
+## Open and edit files
+
+Use the project file explorer to open a file in the built-in editor. Keep it beside the agent or a [Diff review](/en/review-and-feedback). Check **Settings → General** for auto-save preferences, and coordinate edits when you and an agent touch the same file.
+
+## Paste images or drop files
+
+Paste an image into an agent terminal or drop files from Finder. Dure prepares file paths for the terminal; in an SSH pane it uploads the files first and inserts their remote paths. The provider decides whether and how it can use those attachments.
+
+Wait for preparation to finish before submitting the prompt. If a transfer fails, resolve the error before sending the request. An attached path does not grant the provider extra filesystem permissions.
+
+You can also paste or drop screenshots into the **⌘N** task entry before starting the agent.
+
+## Terminal or chat view
+
+For a provider/runtime combination that supports it, the pane's Terminal/Chat control can switch the interaction view. New agents still start in terminals. Check [provider capabilities](/en/providers) instead of assuming every CLI offers the same views or resume behavior.
+
+For text size and line height, see [appearance settings](/en/settings). For remote file preparation, see [SSH projects](/en/remote-and-ssh).

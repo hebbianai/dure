@@ -1,0 +1,44 @@
+[package]
+name = "dure-relay"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "Zero-knowledge byte router that introduces a phone to its Dure hub"
+
+[lib]
+name = "dure_relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dure-relay"
+path = "src/main.rs"
+
+[dependencies]
+dure-hub-protocol = { path = "../dure-hub-protocol" }
+serde = "1"
+serde_json = "1"
+# `webpki` 가 이 타입들을 재수출하지 않으므로 직접 받는다. rustls 와 같은
+# 버전이어야 `CertificateDer` 가 같은 타입이다.
+rustls-pki-types = "1"
+# 등록 증명 검증. 인증서에서 공개키를 꺼내 서명을 본다 — rustls 가 쓰는 것과
+# 같은 구현이라, 허브가 세우는 TLS 와 이 검증이 다른 파서를 보지 않는다.
+rustls-webpki = { version = "0.103", default-features = false, features = [
+  "alloc",
+  "ring",
+  "std",
+] }
+# 난수(challenge nonce, connection id). OS 의 생성기이고 사용자 공간에 씨앗
+# 상태를 두지 않는다.
+ring = "0.17"
+
+[dev-dependencies]
+# 통합 시험이 진짜 허브(자체 서명 인증서 + rustls 서버)와 진짜 폰(지문 고정
+# 클라이언트)을 세워 이 릴레이를 통과시킨다. 데스크탑 허브와 같은 버전이다.
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
+] }

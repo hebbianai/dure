@@ -1,0 +1,66 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+/crates/*/target/
+/.dure-reclaim/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+qa.log
+qa.autorun
+.codegraph
+/artifacts/qa/
+/output/playwright/
+
+# Local Cargo configuration injected by development environments. The pattern
+# matches the directory's *entries* rather than the directory: excluding
+# `/.cargo/` itself stops git descending into it, and then no negation below
+# can bring anything back.
+/.cargo/*
+# The cross-compilation linker rules are checked in. Without them the Linux
+# musl targets fall back to the platform `cc`, which on macOS is Apple ld and
+# rejects every GNU linker option — the artifact job would fail at link.
+!/.cargo/config.toml
+# 스테이징된 사이드카. `pnpm hmux:runtime:stage:dev`가 만들고, 커밋하지 않는다.
+# 접두사를 둘 다 적는 이유: `hmux-*`로 뭉뚱그리면 나중에 이 디렉터리에
+# 들어올 수 있는 손으로 관리하는 파일(README 같은)까지 삼킨다.
+src-tauri/binaries/hmux-runtime-*
+src-tauri/binaries/hmux-*-*
+src-tauri/resources/hmux-remote/*/
+src-tauri/resources/remote-git-checkout-helper/*/
+src-tauri/resources/dure-cli/
+src-tauri/resources/mobile-runtime/
+src-tauri/resources/.dure-cli-stage-*/
+
+# Beads (bd) — AI-native issue tracker, per-developer local state (Dolt DB).
+# Kept local; not shared via git. See docs/research (UC/beads note).
+.beads/
+
+# Design coverage — generated snapshot artifacts (docs/architecture/design-coverage.md §7)
+design/.generated/
+
+# Deterministic terminal protocol regeneration staging (not product source).
+/src/contracts/generated/terminalStateCheck/
+
+# Playwright MCP session artifacts (screenshots/snapshots land in cwd)
+/.playwright-mcp/
+/.playwright-cli/
+/ring-repro*.png

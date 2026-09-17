@@ -1,0 +1,47 @@
+---
+title: "开始第一个任务"
+description: "用 Command-N 分派任务，检查结果，再添加需要的面板。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+先选择熟悉的项目。向一个智能体说明任务，阅读结果，再决定下一步。请先[安装 Dure](/cn/install) 并登录编码智能体 CLI。
+
+## 1. 打开项目
+
+在 Dure 中添加本地项目文件夹。Git 仓库可以使用 worktree 和变更审查。开始任务前选择项目，确保智能体在正确的目录工作。
+
+如果已有对话，初始化时的导入预览可以选择对话，并在确认前调整建议的 Space 和面板布局。也可以跳过导入，直接开始新任务。
+
+<Frame caption="选择现有对话，检查建议的窗格布局后再导入。">
+  <ProductFigure scene="onboarding" locale="cn" label="选择现有对话，检查建议的窗格布局后再导入。" />
+</Frame>
+
+## 2. 按 ⌘N 描述任务
+
+按 **⌘N** 打开 **New agent**。选择项目和提供商，输入请求，例如：
+
+```text
+找到这个项目的测试运行方法，并执行相关命令。
+不要修改文件。报告结果以及无法执行的检查。
+```
+
+需要独立修改文件时，启用 **Isolate in a dedicated worktree**。启动前检查账户以及高级模型和权限选项。独立 worktree 分开文件，不限制智能体的权限。
+
+<Frame caption="选择项目和提供商，输入任务，然后在独立 worktree 中启动智能体。">
+  <ProductFigure scene="new-agent" locale="cn" label="选择项目和提供商，输入任务，然后在独立 worktree 中启动智能体。" />
+</Frame>
+
+## 3. 启动并检查结果
+
+按 **Enter** 或点击 **Start agent**。Dure 会打开运行提供商原生 CLI 的终端面板。完成需要的登录或审批，阅读结果并检查提到的文件。
+
+如果任务修改了文件，打开 [Diff 审查](/cn/review-and-feedback)，检查实际变更与测试结果。在同一对话中给出纠正意见或下一项任务。
+
+## 4. 按需添加另一个智能体
+
+在刚创建的面板的终端内右键，选择 **Split Down** 或 **Split Right**，再在新面板中选择下一个智能体。
+
+并行修改请使用[独立 worktree](/cn/first-parallel-workflow)。也可以在 [GitHub 侧栏](/cn/github-workflows)的 issue 或 pull request 上点击 **Start**。
+
+接着用 [Space 和面板](/cn/spaces-and-panes)整理工作，或在返回已有对话时参考[会话与恢复](/cn/session-model)。

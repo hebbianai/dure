@@ -1,0 +1,1 @@
+{"protocol_version":{"major":1,"minor":0},"frame_id":"1","body":{"kind":"error","payload":{"code":"unsupported_protocol_version","message":"this gateway serves gateway_request_version 1..=4, not 5","retry":"never","required_capability":null,"supported_versions":{"minimum":{"major":1,"minor":0},"maximum":{"major":1,"minor":0}},"in_reply_to_request_id":null}}}

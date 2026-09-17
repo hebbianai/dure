@@ -1,0 +1,465 @@
+Gemini CLI ACP execution, failure and exact resume correction candidate
+Upstream: https://github.com/google-gemini/gemini-cli
+Base: v0.60.0 / 733edcb597ce690ac2e2fe3b3b3690b60a4c8f27
+SPDX-License-Identifier: Apache-2.0
+Original source copyright: Google LLC; original file license headers retained.
+Prepared: 2026-09-17; Dure evidence and handoff: hebbianai/dure-internal#931 and #951.
+
+QA-only source patch. Not applied to installed providers or bundled with the app.
+Apply with git apply in a clean checkout of the exact upstream base above.
+Build core and bundle with upstream scripts, then run Dure test:gemini-acp with
+DURE_QA_GEMINI_BIN pointing to that disposable bundle/gemini.js.
+
+diff --git a/packages/cli/src/acp/acpSession.test.ts b/packages/cli/src/acp/acpSession.test.ts
+index cf8a011..ad5a9c5 100644
+--- a/packages/cli/src/acp/acpSession.test.ts
++++ b/packages/cli/src/acp/acpSession.test.ts
+@@ -459,6 +459,172 @@ describe('Session', () => {
+     expect(confirmationDetails.onConfirm).toHaveBeenCalled();
+   });
+
++  it.each(['allow', 'reject', 'cancel'])(
++    'reports execution only after permission resolves (%s)',
++    async (decision) => {
++      const approved = decision === 'allow';
++      let resolvePermission: (
++        value: acp.RequestPermissionResponse,
++      ) => void = () => {};
++      const permission = new Promise<acp.RequestPermissionResponse>(
++        (resolve) => {
++          resolvePermission = resolve;
++        },
++      );
++      let resolveExecution: (value: { llmContent: string }) => void = () => {};
++      const execution = new Promise<{ llmContent: string }>((resolve) => {
++        resolveExecution = resolve;
++      });
++      const execute = vi.fn(() =>
++        decision === 'cancel'
++          ? Promise.resolve({ llmContent: 'Unexpected execution' })
++          : execution,
++      );
++      mockTool.build.mockReturnValue({
++        getDescription: () => 'Held tool',
++        toolLocations: () => [],
++        shouldConfirmExecute: vi.fn().mockResolvedValue({
++          type: 'info',
++          onConfirm: vi.fn(),
++        }),
++        execute,
++      });
++      mockConnection.requestPermission.mockReturnValue(permission);
++      mockSendMessageStream
++        .mockReturnValueOnce(
++          createMockStream([
++            {
++              type: GeminiEventType.ToolCallRequest,
++              value: {
++                callId: 'held-call',
++                name: 'test_tool',
++                args: {},
++                isClientInitiated: false,
++                prompt_id: 'prompt-1',
++              },
++            },
++          ]),
++        )
++        .mockReturnValueOnce(createMockStream([]));
++      const prompt = session.prompt({
++        sessionId: 'session-1',
++        prompt: [{ type: 'text', text: 'Run tool' }],
++      });
++      await vi.waitFor(() =>
++        expect(mockConnection.requestPermission).toHaveBeenCalled(),
++      );
++      expect(execute).not.toHaveBeenCalled();
++      expect(mockConnection.sessionUpdate).not.toHaveBeenCalledWith(
++        expect.objectContaining({
++          update: expect.objectContaining({ status: 'in_progress' }),
++        }),
++      );
++      if (decision === 'cancel') await session.cancelPendingPrompt();
++      resolvePermission({
++        outcome: {
++          outcome: 'selected',
++          optionId: decision === 'reject' ? 'cancel' : 'proceed_once',
++        },
++      });
++      if (approved) {
++        await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
++        resolveExecution({ llmContent: 'Done' });
++      }
++      const result = await prompt;
++      expect(result.stopReason).toBe(
++        decision === 'cancel' ? 'cancelled' : 'end_turn',
++      );
++      const progress = mockConnection.sessionUpdate.mock.calls.filter(
++        ([params]) =>
++          'status' in params.update && params.update.status === 'in_progress',
++      );
++      expect(progress).toHaveLength(approved ? 1 : 0);
++      if (approved) {
++        expect(progress[0][0]).toMatchObject({
++          sessionId: 'session-1',
++          update: {
++            sessionUpdate: 'tool_call_update',
++            toolCallId: 'held-call',
++            status: 'in_progress',
++          },
++        });
++        const progressIndex = mockConnection.sessionUpdate.mock.calls.findIndex(
++          ([params]) => params === progress[0][0],
++        );
++        expect(
++          mockConnection.sessionUpdate.mock.invocationCallOrder[progressIndex],
++        ).toBeLessThan(execute.mock.invocationCallOrder[0]);
++      } else expect(execute).not.toHaveBeenCalled();
++      if (decision === 'reject') {
++        expect(mockConnection.sessionUpdate).toHaveBeenCalledWith(
++          expect.objectContaining({
++            update: expect.objectContaining({
++              toolCallId: 'held-call',
++              status: 'failed',
++            }),
++          }),
++        );
++      }
++    },
++  );
++
++  it('preserves structured shell failure and model output', async () => {
++    mockTool.build.mockReturnValue({
++      getDescription: () => 'Failed shell',
++      toolLocations: () => [],
++      shouldConfirmExecute: vi.fn().mockResolvedValue(false),
++      execute: vi.fn().mockResolvedValue({
++        llmContent: 'Output: diagnostic\nExit Code: 7',
++        returnDisplay: 'diagnostic',
++        data: { exitCode: 7, isError: true },
++      }),
++    });
++    mockSendMessageStream
++      .mockReturnValueOnce(
++        createMockStream([
++          {
++            type: GeminiEventType.ToolCallRequest,
++            value: {
++              callId: 'shell-call',
++              name: 'run_shell_command',
++              args: {},
++              isClientInitiated: false,
++              prompt_id: 'prompt-1',
++            },
++          },
++        ]),
++      )
++      .mockReturnValueOnce(createMockStream([]));
++    await session.prompt({
++      sessionId: 'session-1',
++      prompt: [{ type: 'text', text: 'Run shell' }],
++    });
++    expect(mockConnection.sessionUpdate).toHaveBeenCalledWith(
++      expect.objectContaining({
++        update: expect.objectContaining({
++          toolCallId: 'shell-call',
++          status: 'failed',
++          rawOutput: { exitCode: 7, isError: true },
++          content: [
++            { type: 'content', content: { type: 'text', text: 'diagnostic' } },
++          ],
++        }),
++      }),
++    );
++    expect(JSON.stringify(mockSendMessageStream.mock.calls[1][0])).toContain(
++      'Exit Code: 7',
++    );
++    expect(mockChat.recordCompletedToolCalls).toHaveBeenCalledWith(
++      expect.anything(),
++      [
++        expect.objectContaining({
++          status: 'error',
++          response: expect.objectContaining({ error: expect.any(Error) }),
++        }),
++      ],
++    );
++  });
++
+   it('should handle @path resolution', async () => {
+     (path.resolve as unknown as Mock).mockReturnValue('/tmp/file.txt');
+     (fs.stat as unknown as Mock).mockResolvedValue({
+diff --git a/packages/cli/src/acp/acpSession.ts b/packages/cli/src/acp/acpSession.ts
+index 875716e..d6bcc67 100644
+--- a/packages/cli/src/acp/acpSession.ts
++++ b/packages/cli/src/acp/acpSession.ts
+@@ -6,6 +6,7 @@
+
+ import {
+   type ApprovalMode,
++  SHELL_TOOL_NAME,
+   type ConversationRecord,
+   CoreToolCallStatus,
+   coreEvents,
+@@ -792,9 +793,7 @@ export class Session {
+
+         switch (outcome) {
+           case ToolConfirmationOutcome.Cancel:
+-            return errorResponse(
+-              new Error(`Tool "${fc.name}" was canceled by the user.`),
+-            );
++            throw new Error(`Tool "${fc.name}" was canceled by the user.`);
+           case ToolConfirmationOutcome.ProceedOnce:
+           case ToolConfirmationOutcome.ProceedAlways:
+           case ToolConfirmationOutcome.ProceedAlwaysAndSave:
+@@ -807,6 +806,12 @@ export class Session {
+             throw new Error(`Unexpected: ${resultOutcome}`);
+           }
+         }
++        abortSignal.throwIfAborted();
++        await this.sendUpdate({
++          sessionUpdate: 'tool_call_update',
++          toolCallId: callId,
++          status: 'in_progress',
++        });
+       } else {
+         const content: acp.ToolCallContent[] = [];
+
+@@ -832,13 +837,22 @@ export class Session {
+         abortSignal,
+       });
+       const content = toToolCallContent(toolResult);
++      const exitCode = toolResult.data?.['exitCode'];
++      const shellError =
++        fc.name === SHELL_TOOL_NAME &&
++        typeof exitCode === 'number' &&
++        exitCode !== 0 &&
++        toolResult.data?.['isError'] === true
++          ? new Error(`Command exited with code: ${exitCode}`)
++          : undefined;
+
+       const updateContent: acp.ToolCallContent[] = content ? [content] : [];
+
+       await this.sendUpdate({
+         sessionUpdate: 'tool_call_update',
+         toolCallId: callId,
+-        status: 'completed',
++        status: shellError ? 'failed' : 'completed',
++        rawOutput: toolResult.data,
+         title: displayTitle,
+         content: updateContent,
+         locations: invocation.toolLocations(),
+@@ -853,17 +867,20 @@ export class Session {
+           fc.name ?? '',
+           args,
+           durationMs,
+-          true,
++          !shellError,
+           promptId,
+           typeof tool !== 'undefined' && tool instanceof DiscoveredMCPTool
+             ? 'mcp'
+             : 'native',
++          shellError?.message,
+         ),
+       );
+
+       this.chat.recordCompletedToolCalls(this.context.config.getActiveModel(), [
+         {
+-          status: CoreToolCallStatus.Success,
++          status: shellError
++            ? CoreToolCallStatus.Error
++            : CoreToolCallStatus.Success,
+           request: {
+             callId,
+             name: fc.name,
+@@ -883,7 +900,7 @@ export class Session {
+               this.context.config,
+             ),
+             resultDisplay: toolResult.returnDisplay,
+-            error: undefined,
++            error: shellError,
+             errorType: undefined,
+           },
+         },
+diff --git a/packages/cli/src/acp/acpSessionManager.test.ts b/packages/cli/src/acp/acpSessionManager.test.ts
+index adeb07e..6999f64 100644
+--- a/packages/cli/src/acp/acpSessionManager.test.ts
++++ b/packages/cli/src/acp/acpSessionManager.test.ts
+@@ -63,7 +63,7 @@ describe('AcpSessionManager', () => {
+       getActiveModel: vi.fn().mockReturnValue('gemini-pro'),
+       getModel: vi.fn().mockReturnValue('gemini-pro'),
+       getGeminiClient: vi.fn().mockReturnValue({
+-        startChat: vi.fn().mockResolvedValue({}),
++        getChat: vi.fn().mockReturnValue({}),
+       }),
+       getMessageBus: vi.fn().mockReturnValue({
+         publish: vi.fn(),
+diff --git a/packages/cli/src/acp/acpSessionManager.ts b/packages/cli/src/acp/acpSessionManager.ts
+index cfa7037..e6ee437 100644
+--- a/packages/cli/src/acp/acpSessionManager.ts
++++ b/packages/cli/src/acp/acpSessionManager.ts
+@@ -10,7 +10,6 @@ import {
+   MCPServerConfig,
+   debugLogger,
+   startupProfiler,
+-  convertSessionToClientHistory,
+   createPolicyUpdater,
+ } from '@google/gemini-cli-core';
+ import * as acp from '@agentclientprotocol/sdk';
+@@ -126,7 +125,7 @@ export class AcpSessionManager {
+
+     const geminiClient = config.getGeminiClient();
+
+-    const chat = await geminiClient.startChat();
++    const chat = geminiClient.getChat();
+
+     const session = new Session(
+       sessionId,
+@@ -165,26 +164,31 @@ export class AcpSessionManager {
+     { sessionId, cwd, mcpServers }: acp.LoadSessionRequest,
+     authDetails: AuthDetails,
+   ): Promise<acp.LoadSessionResponse> {
+-    const config = await this.initializeSessionConfig(
++    const config = await this.createAuthenticatedSessionConfig(
+       sessionId,
+       cwd,
+       mcpServers,
+       authDetails,
+     );
+
++    // Resolve the durable conversation before initialization can write chat history.
++    await config.storage.initialize();
+     const sessionSelector = new SessionSelector(config.storage);
+
+     const { sessionData, sessionPath } =
+       await sessionSelector.resolveSession(sessionId);
+
+-    const clientHistory = convertSessionToClientHistory(sessionData.messages);
++    if (sessionData.sessionId !== sessionId) {
++      throw acp.RequestError.invalidParams('Expected an exact session ID');
++    }
+
+-    const geminiClient = config.getGeminiClient();
+-    await geminiClient.initialize();
+-    await geminiClient.resumeChat(clientHistory, {
++    await config.initialize({
+       conversation: sessionData,
+       filePath: sessionPath,
+     });
++    startupProfiler.flush(config);
++    startAutoMemoryIfEnabled(config);
++    const geminiClient = config.getGeminiClient();
+
+     const session = new Session(
+       sessionId,
+@@ -201,9 +205,8 @@ export class AcpSessionManager {
+
+     this.sessions.set(sessionId, session);
+
+-    // Stream history back to client
+-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+-    session.streamHistory(sessionData.messages);
++    // Replay must finish before the client starts another turn.
++    await session.streamHistory(sessionData.messages);
+
+     setTimeout(() => {
+       // eslint-disable-next-line @typescript-eslint/no-floating-promises
+@@ -228,7 +231,7 @@ export class AcpSessionManager {
+     return response;
+   }
+
+-  private async initializeSessionConfig(
++  private async createAuthenticatedSessionConfig(
+     sessionId: string,
+     cwd: string,
+     mcpServers: acp.McpServer[],
+@@ -274,12 +277,6 @@ export class AcpSessionManager {
+       config.setFileSystemService(acpFileSystemService);
+     }
+
+-    // 4. Now that we are authenticated, it is safe to initialize the config
+-    // which starts the MCP servers and other heavy resources.
+-    await config.initialize();
+-    startupProfiler.flush(config);
+-    startAutoMemoryIfEnabled(config);
+-
+     return config;
+   }
+
+diff --git a/packages/core/src/config/config.ts b/packages/core/src/config/config.ts
+index ec20f68..9faa918 100644
+--- a/packages/core/src/config/config.ts
++++ b/packages/core/src/config/config.ts
+@@ -10,7 +10,10 @@ import { SandboxPolicyManager } from '../policy/sandboxPolicyManager.js';
+ import { inspect } from 'node:util';
+ import process from 'node:process';
+ import { z } from 'zod';
+-import type { ConversationRecord } from '../services/chatRecordingService.js';
++import type {
++  ConversationRecord,
++  ResumedSessionData,
++} from '../services/chatRecordingService.js';
+ import type {
+   AgentHistoryProviderConfig,
+   ContextManagementConfig,
+@@ -1438,17 +1441,19 @@ export class Config implements McpContext, AgentLoopContext {
+    * Dedups initialization requests using a shared promise that is only resolved
+    * once.
+    */
+-  async initialize(): Promise<void> {
++  async initialize(resumedSessionData?: ResumedSessionData): Promise<void> {
+     if (this.initPromise) {
+       return this.initPromise;
+     }
+
+-    this.initPromise = this._initialize();
++    this.initPromise = this._initialize(resumedSessionData);
+
+     return this.initPromise;
+   }
+
+-  private async _initialize(): Promise<void> {
++  private async _initialize(
++    resumedSessionData?: ResumedSessionData,
++  ): Promise<void> {
+     await this.storage.initialize();
+     ragLogger.initialize(this.storage.getProjectTempLogsDir());
+
+@@ -1560,7 +1565,7 @@ export class Config implements McpContext, AgentLoopContext {
+     this.memoryContextManager = new MemoryContextManager(this);
+     await this.memoryContextManager.refresh();
+
+-    await this._geminiClient.initialize();
++    await this._geminiClient.initialize(resumedSessionData);
+     this.initialized = true;
+   }
+
+diff --git a/packages/core/src/core/client.ts b/packages/core/src/core/client.ts
+index 6dc4b60..118ab88 100644
+--- a/packages/core/src/core/client.ts
++++ b/packages/core/src/core/client.ts
+@@ -75,6 +75,7 @@ import {
+   type ApprovalModeChangedPayload,
+ } from '../utils/events.js';
+ import { initializeContextManager } from '../context/initializer.js';
++import { convertSessionToClientHistory } from '../utils/sessionUtils.js';
+
+ const MAX_TURNS = 100;
+
+@@ -260,8 +261,15 @@ export class GeminiClient {
+     }
+   }
+
+-  async initialize() {
+-    this.chat = await this.startChat();
++  async initialize(resumedSessionData?: ResumedSessionData) {
++    this.chat = await this.startChat(
++      resumedSessionData
++        ? convertSessionToClientHistory(
++            resumedSessionData.conversation.messages,
++          )
++        : undefined,
++      resumedSessionData,
++    );
+     this.updateTelemetryTokenCount();
+   }
+
+End of Gemini ACP correction candidate.

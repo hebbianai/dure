@@ -1,0 +1,10 @@
+# This directory is the complete public publishing boundary. Files outside it
+# are excluded by the Mintlify monorepo source path configured in the dashboard.
+README.md
+drafts/
+internal/
+*.draft.mdx
+# Product figures use HTML. Keep historical captures out of the published site.
+images/*
+!images/gradients
+videos/*

@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "subcommand": "internal-standalone-create-operation",
+  "capability": "standalone_create_operation_v1",
+  "reconcileCapability": "standalone_create_operation_reconcile_v1",
+  "retireCapability": "standalone_create_operation_retire_completed_target_v1",
+  "acknowledgeCapability": "standalone_create_operation_retirement_acknowledge_v1",
+  "frameLimitBytes": 262144,
+  "journalPayloadLimitBytes": 32768,
+  "modes": [
+    "create",
+    "reconcile_completed_target",
+    "retire_completed_target",
+    "acknowledge_retired_target"
+  ],
+  "requestExample": {
+    "schemaVersion": 1,
+    "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sessionName": "dure-dev-example",
+    "command": ["corepack", "pnpm", "app:dev"],
+    "initialRows": 24,
+    "initialColumns": 80
+  },
+  "reconcileRequestExample": {
+    "schemaVersion": 1,
+    "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sessionName": "dure-dev-example",
+    "command": ["corepack", "pnpm", "app:dev"],
+    "initialRows": 24,
+    "initialColumns": 80,
+    "mode": "reconcile_completed_target"
+  },
+  "retireRequestExample": {
+    "schemaVersion": 1,
+    "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sessionName": "dure-dev-example",
+    "command": ["corepack", "pnpm", "app:dev"],
+    "initialRows": 24,
+    "initialColumns": 80,
+    "mode": "retire_completed_target"
+  },
+  "acknowledgeRequestExample": {
+    "schemaVersion": 1,
+    "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sessionName": "dure-dev-example",
+    "command": ["corepack", "pnpm", "app:dev"],
+    "initialRows": 24,
+    "initialColumns": 80,
+    "mode": "acknowledge_retired_target"
+  },
+  "responseExamples": {
+    "created": {
+      "outcome": "created",
+      "schemaVersion": 1,
+      "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sessionName": "dure-dev-example",
+      "sessionId": "standalone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "workspaceId": "workspace_example"
+    },
+    "pending": {
+      "outcome": "pending",
+      "schemaVersion": 1,
+      "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "errorCode": "hmux_standalone_recovery_target_unavailable"
+    },
+    "refused": {
+      "outcome": "refused",
+      "schemaVersion": 1,
+      "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "errorCode": "hmux_standalone_recovery_name_conflict"
+    },
+    "retired": {
+      "outcome": "retired",
+      "schemaVersion": 1,
+      "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sessionName": "dure-dev-example",
+      "sessionId": "standalone_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "workspaceId": "workspace_example"
+    },
+    "acknowledged": {
+      "outcome": "acknowledged",
+      "schemaVersion": 1,
+      "operationId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+}

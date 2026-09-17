@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "environments": [
+    {
+      "id": "lima",
+      "name": "Local Lima VM",
+      "create": ".dure/lima.sh",
+      "destroy": ".dure/lima.sh",
+      "suspend": ".dure/lima.sh",
+      "resume": ".dure/lima.sh"
+    }
+  ]
+}

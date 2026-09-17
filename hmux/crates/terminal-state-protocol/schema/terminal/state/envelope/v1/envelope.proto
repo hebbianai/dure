@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package terminal.state.envelope.v1;
+
+import "terminal/state/events/v1/events.proto";
+import "terminal/state/history/v1/history.proto";
+import "terminal/state/input/v1/input.proto";
+import "terminal/state/model/v1/model.proto";
+import "terminal/state/projection/v1/projection.proto";
+
+// Capability-selected direct binary record, never nested in legacy JSON.
+message TerminalStateRecord {
+  uint32 schema_minor = 1;
+  string terminal_epoch = 2;
+  uint64 through_output_seq = 3;
+  uint64 state_revision = 4;
+  oneof body {
+    terminal.state.model.v1.StateSnapshot snapshot = 10;
+    terminal.state.model.v1.StateMutation mutation = 11;
+    terminal.state.history.v1.HistoryPage history_page = 12;
+    terminal.state.events.v1.TerminalEvent event = 13;
+    // Upstream-only writer ingress. Downstream replicas reject this body;
+    // connection capability and terminal-epoch validation are Host-owned.
+    terminal.state.input.v1.InputIntent input_intent = 14;
+    SnapshotPart snapshot_part = 15;
+    // Upstream-only bounded history paging request. Downstream replicas reject
+    // it; the Host responds to only the requesting subscriber.
+    terminal.state.history.v1.HistoryRequest history_request = 16;
+    // Downstream-only complete replacement for one attached surface.
+    terminal.state.projection.v1.ViewportFrame viewport_frame = 17;
+    // Upstream-only presentation intent, scoped to its connection projection.
+    terminal.state.projection.v1.ViewportIntent viewport_intent = 18;
+    // Downstream-only final result for one semantic input envelope.
+    terminal.state.input.v1.InputReceipt input_receipt = 19;
+    // Downstream-only final result for one semantic resize envelope.
+    terminal.state.input.v1.ResizeReceipt resize_receipt = 20;
+    // Downstream-only ordered chunk of one complete viewport replacement.
+    terminal.state.projection.v1.ViewportFramePart viewport_frame_part = 21;
+    // Downstream-only final route and lifecycle outcome for one wheel intent.
+    terminal.state.projection.v1.WheelReceipt wheel_receipt = 22;
+  }
+}
+
+// Ordered, revision-fenced chunks are installed only after complete assembly.
+message SnapshotPart {
+  reserved 5;
+  bytes batch_id = 1;
+  uint32 part_index = 2;
+  uint32 part_count = 3;
+  uint32 total_snapshot_bytes = 4;
+  bytes snapshot_chunk = 6;
+}

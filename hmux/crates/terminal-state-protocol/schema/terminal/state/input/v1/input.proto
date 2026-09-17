@@ -1,0 +1,190 @@
+syntax = "proto3";
+
+package terminal.state.input.v1;
+
+message InputIntent {
+  reserved 1, 2, 3;
+  oneof intent {
+    TextInputIntent text = 10;
+    KeyInputIntent key = 11;
+    PasteInputIntent paste = 12;
+    PointerInputIntent pointer = 13;
+    FocusInputIntent focus = 14;
+    ResizeInputIntent resize = 15;
+    AgentPromptInputIntent agent_prompt = 16;
+  }
+}
+message TextInputIntent { bytes utf8 = 1; }
+// One agent prompt is written as a single body-plus-submit PTY transaction.
+// Host admission, rather than client timing, decides whether the exact
+// provider conversation can accept it without replacing user input.
+message AgentPromptInputIntent {
+  bytes utf8 = 1;
+  // Bounded time for a fresh target to await its selected Host-owned startup
+  // authority before a final not-written refusal. Existing-conversation
+  // targets require zero.
+  uint32 admission_wait_ms = 2;
+  oneof target {
+    FreshAgentPromptTarget fresh_agent = 3;
+    ExistingConversationPromptTarget existing_conversation = 4;
+    ProcessObservedFreshAgentPromptTarget process_observed_fresh_agent = 5;
+  }
+}
+message FreshAgentPromptTarget {}
+// Explicit fresh-session bootstrap for a provider that does not publish its
+// conversation identity until after receiving the first prompt. The Host binds
+// this operation to its immutable launch provider and process observation.
+message ProcessObservedFreshAgentPromptTarget {}
+message ExistingConversationPromptTarget {
+  string expected_provider_id = 1;
+  string expected_conversation_id = 2;
+}
+message KeyInputIntent {
+  string key = 1;
+  string code = 2;
+  // Bit 0 shift, 1 alt, 2 control, 3 meta, 4 caps lock, 5 num lock.
+  uint32 modifiers = 3;
+  bool repeat = 4;
+}
+// Bracketed-paste encoding is selected by the Host terminal actor from its
+// canonical mode; a client supplies only text.
+message PasteInputIntent { bytes utf8 = 1; reserved 2; }
+message PointerInputIntent {
+  PointerKind kind = 1;
+  uint32 column = 2;
+  uint32 row = 3;
+  // Browser PointerEvent.button: 0 left, 1 middle, 2 right, 3 back, 4 forward.
+  // MOVE and WHEEL ignore this field.
+  uint32 button = 4;
+  // Bit 0 shift, 1 alt, 2 control, 3 meta.
+  uint32 modifiers = 5;
+  sint32 wheel_delta_x = 6;
+  sint32 wheel_delta_y = 7;
+  // Physical-pixel presentation facts from the originating surface. The Host
+  // chooses the terminal mouse protocol from canonical modes; these values
+  // only let it encode SGR-pixels and verify the supplied cell coordinate.
+  uint32 pixel_x = 8;
+  uint32 pixel_y = 9;
+  uint32 surface_width = 10;
+  uint32 surface_height = 11;
+  uint32 cell_width = 12;
+  uint32 cell_height = 13;
+  uint32 padding_top = 14;
+  uint32 padding_bottom = 15;
+  uint32 padding_right = 16;
+  uint32 padding_left = 17;
+  // Browser MouseEvent.buttons layout: bit 0 left, 1 right, 2 middle,
+  // 3 back, 4 forward. It is presentation input, not an ownership lease.
+  uint32 pressed_buttons = 18;
+}
+enum PointerKind {
+  POINTER_KIND_UNSPECIFIED = 0;
+  POINTER_KIND_DOWN = 1;
+  POINTER_KIND_UP = 2;
+  POINTER_KIND_MOVE = 3;
+  POINTER_KIND_WHEEL = 4;
+}
+message FocusInputIntent { bool focused = 1; }
+message ResizeInputIntent {
+  uint32 columns = 1;
+  uint32 rows = 2;
+  // Connection-local monotonic record identity orders surface proposals.
+  // Terminal output and render revisions never invalidate a resize.
+  uint64 geometry_generation = 3;
+}
+
+// Final downstream result for one semantic input record. The outer terminal
+// epoch is the session fence; correlation uses the upstream envelope id.
+message InputReceipt {
+  uint64 in_reply_to_record_id = 1;
+  oneof outcome {
+    InputWrittenToPty written_to_pty = 10;
+    InputRefused refused = 11;
+    InputFailed failed = 12;
+  }
+}
+
+message InputWrittenToPty {
+  // Host output high-water captured after this successful PTY write while the
+  // serialized writer still excludes output ingestion. Zero is a valid value;
+  // absence identifies an older Host that predates this field.
+  optional uint64 input_baseline_output_sequence = 1;
+  // Present only for an admitted agent prompt. This is the exact
+  // provider-event runtime revision observed before the compound PTY write.
+  optional uint64 agent_runtime_revision = 2;
+}
+
+message InputRefused {
+  InputRefusalReason reason = 1;
+  // Bounded snake_case failure-class token behind a catch-all reason. The
+  // reason enum is closed, so a Host failure it cannot name collapses to
+  // INPUT_REFUSAL_REASON_RESOURCE_LIMIT; this carries the exact underlying
+  // class (never prose) so the real cause reaches the client. Absent when the
+  // reason already names the cause or the Host predates this field.
+  optional string detail = 2;
+}
+
+enum InputRefusalReason {
+  INPUT_REFUSAL_REASON_UNSPECIFIED = 0;
+  INPUT_REFUSAL_REASON_STALE_TERMINAL_EPOCH = 1;
+  INPUT_REFUSAL_REASON_AUTHORIZATION_DENIED = 2;
+  INPUT_REFUSAL_REASON_INPUT_TOO_LARGE = 3;
+  INPUT_REFUSAL_REASON_RESOURCE_LIMIT = 4;
+  INPUT_REFUSAL_REASON_HOST_EXITING = 5;
+  INPUT_REFUSAL_REASON_AGENT_RUNTIME_CHANGED = 6;
+}
+
+message InputFailed {
+  InputFailureReason reason = 1;
+  // Same bounded failure-class token as InputRefused.detail, carried only
+  // with INPUT_FAILURE_REASON_RESOURCE_LIMIT.
+  optional string detail = 2;
+}
+
+enum InputFailureReason {
+  INPUT_FAILURE_REASON_UNSPECIFIED = 0;
+  INPUT_FAILURE_REASON_PTY_WRITE_FAILED = 1;
+  INPUT_FAILURE_REASON_RESOURCE_LIMIT = 2;
+  INPUT_FAILURE_REASON_HOST_EXITING = 3;
+}
+
+// Final downstream result for one semantic resize record. Applied dimensions
+// are the Host's canonical result and carry no controller ownership detail.
+message ResizeReceipt {
+  uint64 in_reply_to_record_id = 1;
+  oneof outcome {
+    ResizeAppliedToTerminal applied_to_terminal = 10;
+    ResizeRefused refused = 11;
+    ResizeFailed failed = 12;
+  }
+}
+
+message ResizeAppliedToTerminal {
+  uint32 columns = 1;
+  uint32 rows = 2;
+}
+
+message ResizeRefused {
+  ResizeRefusalReason reason = 1;
+}
+
+enum ResizeRefusalReason {
+  RESIZE_REFUSAL_REASON_UNSPECIFIED = 0;
+  RESIZE_REFUSAL_REASON_STALE_TERMINAL_EPOCH = 1;
+  RESIZE_REFUSAL_REASON_STALE_GEOMETRY_GENERATION = 2;
+  RESIZE_REFUSAL_REASON_AUTHORIZATION_DENIED = 3;
+  RESIZE_REFUSAL_REASON_INVALID_TERMINAL_DIMENSIONS = 4;
+  RESIZE_REFUSAL_REASON_RESOURCE_LIMIT = 5;
+  RESIZE_REFUSAL_REASON_HOST_EXITING = 6;
+}
+
+message ResizeFailed {
+  ResizeFailureReason reason = 1;
+}
+
+enum ResizeFailureReason {
+  RESIZE_FAILURE_REASON_UNSPECIFIED = 0;
+  RESIZE_FAILURE_REASON_PLATFORM_RESIZE_FAILED = 1;
+  RESIZE_FAILURE_REASON_RESOURCE_LIMIT = 2;
+  RESIZE_FAILURE_REASON_HOST_EXITING = 3;
+}

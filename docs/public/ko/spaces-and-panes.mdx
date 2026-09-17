@@ -1,0 +1,49 @@
+---
+title: "Space, pane과 창"
+description: "에이전트와 터미널을 정리하면서 실행 위치와 대화는 유지합니다."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+**Space**는 Dure 안에서 이름을 붙여 사용하는 pane 배치입니다. 상단 바에서 Main, Review처럼 작업 단계를 나누고, 사이드바에서 필요한 프로젝트와 에이전트를 찾으세요.
+
+| 항목 | 정리하는 대상 |
+| --- | --- |
+| 프로젝트 | 로컬 또는 SSH 작업 폴더 |
+| 에이전트/세션 | 실행 중인 도구와 대화 |
+| Pane | 에이전트, 셸, 파일, 리뷰를 보여 주는 화면 |
+| Space | Dure 상단 바에서 선택하는 pane 배치 |
+
+Dure Space와 macOS 데스크톱은 별개입니다. pane을 이동해도 에이전트 계정, 작업 폴더, 대화는 바뀌지 않습니다.
+
+## Space 만들고 전환하기
+
+상단 바의 <strong>+</strong>로 Space를 추가하세요. 탭을 선택하거나 **⌘1–⌘9**로 해당 Space로 전환합니다. 작업을 다시 찾기 쉬운 이름을 붙이세요.
+
+<Frame caption="Codex 두 개, Claude Code 두 개, Pi와 터미널로 구성한 6개 예시 페인.">
+  <ProductFigure scene="workspace" locale="ko" label="Codex 두 개, Claude Code 두 개, Pi와 터미널로 구성한 6개 예시 페인." />
+</Frame>
+
+## pane 분할과 균등 정렬
+
+터미널 안에서 우클릭하고 **Split Right** 또는 **Split Down**을 선택해 새 pane을 엽니다. 그곳에서 에이전트나 터미널을 선택하세요. 크기를 고르게 맞추려면 상단 바의 **Balance panes in current Space**를 사용합니다.
+
+분할은 배치에 화면을 추가합니다. 새 작업의 파일을 분리하려면 [전용 worktree](/ko/first-parallel-workflow)를 별도로 선택하세요.
+
+## 기존 pane 이동하기
+
+탭을 대상 pane 위로 드래그하세요. **Split Right** 또는 **Split Down** 표시가 나타날 때까지 기다린 다음 강조된 영역에 놓습니다. Space 사이로 pane을 옮기거나 세션을 더 큰 창 또는 별도 창에서 열 수도 있습니다.
+
+<Frame caption="드래그한 페인을 Split Right 대상 위에 잠시 둔 다음 놓습니다.">
+  <ProductFigure scene="arrangement" locale="ko" label="드래그한 페인을 Split Right 대상 위에 잠시 둔 다음 놓습니다." />
+</Frame>
+
+## 리뷰용 Space 두기
+
+예를 들어 Main에는 작업 pane 여섯 개를, Review에는 셸·Claude Code·Codex를 둘 수 있습니다. Review로 전환해 검증하고 다시 Main으로 돌아오세요.
+
+<Frame caption="Review Space에 셸 하나와 에이전트 페인 두 개를 함께 배치한 예시.">
+  <ProductFigure scene="desktops" locale="ko" label="Review Space에 셸 하나와 에이전트 페인 두 개를 함께 배치한 예시." />
+</Frame>
+
+터미널 글자, 테마, 알림은 [설정](/ko/settings)에서 조절하세요. 중단 뒤 돌아왔다면 중복 작업을 시작하기 전에 [세션 상태](/ko/session-model)를 확인하세요.

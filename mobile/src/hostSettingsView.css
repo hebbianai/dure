@@ -1,0 +1,371 @@
+.host-settings {
+  overflow: hidden;
+  background: var(--glass-pane);
+}
+
+.host-settings__title {
+  min-width: 0;
+  flex: 1;
+}
+
+.host-settings__body {
+  min-height: 0;
+  flex: 1;
+  padding: var(--settings-gutter);
+}
+
+.host-settings__body--list {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.host-settings__list {
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--settings-card-radius);
+  background: var(--glass-tray-surface);
+  list-style: none;
+}
+
+.host-settings__item {
+  position: relative;
+}
+
+.host-settings__list-row {
+  display: flex;
+  width: 100%;
+  height: var(--settings-detail-row-height);
+  align-items: center;
+  gap: var(--settings-inline-gap);
+  padding: 0 var(--settings-gutter);
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.host-settings__row-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.host-settings__row-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--settings-control-gap);
+}
+
+.host-settings__row-name {
+  overflow: hidden;
+  font: var(--settings-row-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-settings__offline {
+  display: inline-flex;
+  height: var(--settings-label-height);
+  flex: none;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: var(--settings-pill-radius);
+  background: var(--glass-chrome);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 14px;
+}
+
+.host-settings__endpoint {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font: var(--settings-endpoint-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-settings__chevron {
+  color: var(--muted-foreground);
+}
+
+.host-settings__add {
+  display: flex;
+  width: 100%;
+  height: var(--settings-control-height);
+  align-items: center;
+  justify-content: center;
+  gap: var(--settings-control-gap);
+	margin-top: 0;
+  padding: 0 var(--settings-gutter);
+  border: 0;
+  border-radius: var(--settings-input-radius);
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font: var(--settings-row-font);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.host-settings__list + .host-settings__add {
+	margin-top: 12px;
+}
+
+.host-settings__save {
+  display: grid;
+  width: var(--settings-control-height);
+  height: var(--settings-control-height);
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font: var(--settings-row-font);
+}
+
+.host-settings__save:disabled {
+  color: var(--muted-foreground);
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+}
+
+.host-settings__body--detail {
+  display: flex;
+  overflow-y: auto;
+  flex-direction: column;
+  padding-bottom: max(var(--settings-safe-bottom), calc(6px + env(safe-area-inset-bottom)));
+  -webkit-overflow-scrolling: touch;
+}
+
+.host-settings__status {
+  display: flex;
+  height: var(--settings-status-height);
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--settings-gutter);
+  border-radius: var(--settings-card-radius);
+  background: var(--glass-tray-surface);
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font: var(--settings-detail-font);
+}
+
+.host-settings__status--retrying,
+.host-settings__status--unpinned {
+  color: var(--destructive);
+}
+
+.host-settings__retry {
+	display: grid;
+  width: var(--settings-control-height);
+  height: var(--settings-control-height);
+	flex: none;
+	place-items: center;
+	margin-right: -6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--settings-control-gap);
+  background: none;
+  color: var(--foreground);
+}
+
+.host-settings__form {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  padding-top: var(--settings-field-gap);
+}
+
+.host-settings__endpoint-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--settings-port-width);
+  gap: var(--settings-inline-gap);
+}
+
+.host-settings__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--settings-control-gap);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+}
+
+.host-settings__form > .host-settings__endpoint-fields + .host-settings__field,
+.host-settings__form > .host-settings__field + .host-settings__field {
+  margin-top: var(--settings-field-gap);
+}
+
+.host-settings__field-label {
+  height: var(--settings-label-height);
+  padding: 0 2px;
+  font: var(--settings-detail-font);
+}
+
+.host-settings__input {
+  width: 100%;
+  height: var(--settings-control-height);
+  padding: 0 var(--settings-inline-gap);
+  border: 1px solid var(--glass-hairline-glass);
+  border-radius: var(--settings-input-radius);
+  outline: 0;
+  background: var(--glass-pane);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font: var(--settings-input-font);
+	appearance: none;
+}
+
+.host-settings__input:focus-visible {
+  box-shadow: 0 0 0 1px var(--foreground);
+}
+
+/* 이 화면에서 유일하게 "지금 무언가를 하는" 버튼이라, 제거와 같은 폭·높이를
+   쓰되 색은 파괴적이지 않은 기본 잉크로 둔다 — 시작은 되돌릴 수 있고 제거는
+   아니다. */
+.host-settings__start {
+  display: flex;
+  width: 100%;
+  height: var(--settings-control-height);
+  flex: none;
+  align-items: center;
+  align-self: center;
+  justify-content: center;
+  gap: var(--settings-control-gap);
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: var(--settings-input-radius);
+  background: var(--glass-tray-surface);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font: var(--settings-row-font);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.host-settings__start:active {
+  background: var(--glass-chrome);
+}
+
+.host-settings__start:disabled {
+  opacity: 0.6;
+}
+
+/* Same outline as 시작, but a row: the label sits left and the chevron right,
+   because this one opens a screen rather than doing something. */
+.host-settings__keys {
+  display: flex;
+  width: 100%;
+  height: var(--settings-control-height);
+  flex: none;
+  align-items: center;
+  align-self: center;
+  justify-content: space-between;
+  gap: var(--settings-control-gap);
+  margin-top: var(--settings-control-gap);
+  padding: 0 var(--settings-inline-gap);
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: var(--settings-input-radius);
+  background: var(--glass-tray-surface);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font: var(--settings-row-font);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.host-settings__keys-label {
+  min-width: 0;
+  flex: 1;
+}
+
+.host-settings__keys:active {
+  background: var(--glass-chrome);
+}
+
+/* A computer row is text beside its own 잊기: nothing opens behind it. */
+.host-settings__item--computer {
+  display: flex;
+  min-height: var(--settings-detail-row-height);
+  align-items: center;
+  gap: var(--settings-inline-gap);
+  padding: 0 var(--settings-inline-gap) 0 var(--settings-gutter);
+}
+
+/* `.host-settings__remove` sized as an inline trailing control. */
+.host-settings__forget {
+  display: flex;
+  height: var(--settings-control-height);
+  flex: none;
+  align-items: center;
+  gap: var(--settings-control-gap);
+  padding: 0 var(--settings-inline-gap);
+  border: 0;
+  border-radius: var(--settings-input-radius);
+  background: none;
+  color: var(--destructive);
+  font-family: var(--font-ui);
+  font: var(--settings-row-font);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.host-settings__empty {
+  margin: 0;
+  padding: var(--settings-gutter) 0;
+  color: var(--muted-foreground);
+  font: var(--settings-detail-font);
+  text-align: center;
+}
+
+.host-settings__hint {
+  margin: var(--settings-control-gap) 0 0;
+  padding: 0 2px;
+  color: var(--muted-foreground);
+  font: var(--settings-detail-font);
+}
+
+.host-settings__remove {
+  display: flex;
+  width: 100%;
+  height: var(--settings-control-height);
+  flex: none;
+  align-items: center;
+  align-self: center;
+  justify-content: center;
+  gap: var(--settings-control-gap);
+  margin-top: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--settings-input-radius);
+  background: none;
+  color: var(--destructive);
+  font-family: var(--font-ui);
+  font: var(--settings-row-font);
+}
+
+.host-settings__list-row:active,
+.host-settings__add:active,
+.host-settings__retry:active,
+.host-settings__forget:active,
+.host-settings__remove:active {
+  background: var(--glass-chrome);
+}
+
+.host-settings__list-row:focus-visible,
+.host-settings__add:focus-visible,
+.host-settings__save:focus-visible,
+.host-settings__retry:focus-visible,
+.host-settings__keys:focus-visible,
+.host-settings__forget:focus-visible,
+.host-settings__remove:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: -2px;
+}

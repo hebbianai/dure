@@ -1,0 +1,71 @@
+[package]
+name = "hmux-host"
+description = "Provider-neutral session host protocol, discovery, and terminal replay foundations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["local-runtime"]
+# The half of this crate that only exists on the machine the session runs on:
+# the session state machine and the terminal replay engine behind it. A client
+# attaching over a relay renders frames it receives and hosts no PTY, so it
+# needs neither — nor `alacritty_terminal`, which nothing else here uses.
+#
+# Default-on so every current consumer compiles unchanged. The negative build
+# is therefore never exercised day to day. The full exact-SHA release authority,
+# `pnpm verify:release`, runs `pnpm hmux:mobile` against a real mobile target
+# rather than leaving this path to review alone.
+#
+# That gate is `cargo clippy -- -D warnings`, not `cargo check`: a leak back
+# into the mobile build (a dropped `#[cfg(feature = "local-runtime")]`)
+# surfaces as *dead-code warnings*, because the leaked module still compiles,
+# it is just unreachable. A bare `cargo check` prints them and exits 0, so it
+# cannot fail on the one regression this split exists to prevent. Verified
+# 2026-07-29 by re-leaking `mod runtime_broker;`: check → exit 0, clippy →
+# exit 101.
+local-runtime = ["dep:alacritty_terminal"]
+# The Ghostty terminal core against an externally built exact-pin libghostty-vt
+# receipt. Despite the name this is the shipping core: hmux-runtime's
+# `terminal-state-stream` feature enables it, and the staged product binary
+# carries no alacritty symbols. The default `local-runtime` (alacritty) build is
+# what `cargo test -p hmux-host` exercises without the feature — a fix that
+# lands only there does not reach the app (2026-09-02).
+ghostty-core-proof = [
+    "local-runtime",
+    "dep:prost",
+    "dep:terminal-core-ghostty-proof",
+    "dep:terminal-state-protocol",
+    "terminal-core-ghostty-proof/external-proof",
+]
+
+[dependencies]
+alacritty_terminal = { workspace = true, optional = true }
+fs2.workspace = true
+hmux-local-platform = { path = "../hmux-local-platform" }
+hmux-session-protocol = { path = "../hmux-session-protocol" }
+libc.workspace = true
+prost = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+terminal-core-ghostty-proof = { path = "../terminal-core-ghostty-proof", optional = true, default-features = false }
+terminal-state-protocol = { path = "../terminal-state-protocol", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+vt100.workspace = true

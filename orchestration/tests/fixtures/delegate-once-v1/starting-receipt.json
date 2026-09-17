@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "delegate-once-1",
+  "runId": "run.d0094abf88333ccf4f020d4c3fb993fd9aa2f789cf689443889f3d1924768c20",
+  "taskId": "task.d0094abf88333ccf4f020d4c3fb993fd9aa2f789cf689443889f3d1924768c20",
+  "dispatchId": "dispatch.d0094abf88333ccf4f020d4c3fb993fd9aa2f789cf689443889f3d1924768c20",
+  "generation": 1,
+  "status": "starting",
+  "launchIdempotencyKey": "workflow:d0094abf88333ccf4f020d4c3fb993fd9aa2f789cf689443889f3d1924768c20",
+  "createdAtMs": 1000,
+  "updatedAtMs": 1000
+}

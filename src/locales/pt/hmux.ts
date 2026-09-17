@@ -1,0 +1,17 @@
+export const hmux: Record<string, string> = {
+	"hmux.conversion.batchConfirm.deferredNote": " {n} sessões que não podem ser convertidas agora permanecerão inalteradas.",
+	"hmux.conversion.replacementStartFailed": "Não foi possível iniciar o replacement do Hmux",
+	"hmux.remote.openFailed": "Não foi possível abrir uma sessão remota em {host}: {detail}",
+	"hmux.conversion.batchConfirm.message": "Converter {n} sessões para gerenciada. Cada provider será interrompido em sequência e retomará a mesma conversa em um novo terminal epoch. As posições dos painéis (pane) e os IDs de conversa serão preservados.{deferred} Continuar?",
+	"hmux.conversion.eligibility.providerUnsupported": "A conversão para gerenciada ainda não é compatível com sessões do {provider}.",
+	"hmux.conversion.confirm.message": "Converter para {target} interrompe o provider atual e retoma a mesma conversa em um novo terminal epoch. A posição do painel (pane) e o ID da conversa são preservados, mas qualquer comando em execução é interrompido. Continuar?",
+	"hmux.conversion.eligibility.projectAmbiguous": "Vários projetos possuem esta mesma pasta de trabalho, então não é possível converter.",
+	"hmux.conversion.target.managed": "sessão gerenciada",
+	"hmux.conversion.target.standalone": "sessão independente",
+	"hmux.conversion.eligibility.notReady": "Você pode converter para gerenciada assim que a sessão estiver pronta.",
+	"hmux.conversion.preflightFailed": "Falha na verificação prévia da conversão de sessão",
+	"hmux.conversion.eligibility.agentWorking": "Você pode converter para gerenciada depois que o agente terminar o trabalho atual.",
+	"hmux.conversion.eligibility.attentionRequired": "Responda à entrada solicitada antes de converter para gerenciada.",
+	"hmux.conversion.eligibility.thisProvider": "este provider",
+	"hmux.conversion.eligibility.projectNotFound": "Registre esta pasta de trabalho como projeto antes de converter para gerenciada.",
+};

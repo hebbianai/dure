@@ -1,0 +1,45 @@
+---
+title: "Troubleshooting"
+description: "Find the next check for missing tools, GitHub access, updates and interrupted work."
+---
+
+Start with the specific failure and the selected project, host and provider. Keep the error message; it is more useful than repeatedly starting the same task.
+
+## An agent is missing or will not start
+
+Try its CLI in your regular terminal. Check **Settings → Provider** for detection and setup information. If you changed the shell's `PATH`, reopen Dure so it can read the updated environment. For SSH work, repeat the check on the remote machine.
+
+If sign-in is required, complete the provider's login and confirm the account has access to the tool or model. Dure does not supply provider credentials.
+
+## GitHub shows no repository or an access error
+
+Select a local Git project with a GitHub remote, and check the desktop GitHub CLI:
+
+```sh
+gh auth status
+git remote -v
+```
+
+Confirm that the signed-in account can read that repository, then refresh the GitHub sidebar. An organization or Projects permission error needs the appropriate GitHub access. See [GitHub workflows](/en/github-workflows).
+
+## A setting or plugin is missing
+
+Use the [settings guide](/en/settings) for the Basic interface's current locations. Open **Plugin** in the sidebar to inspect compatibility and available settings, then refresh its catalog. A rejected or conflicting package is not an active integration; see [plugins](/en/plugins).
+
+## A task appears disconnected or ended
+
+Inspect [session state](/en/session-model) and actual files before launching another copy. Reconnect to living work; use the offered recovery action after the process ends. Record what completed so the agent does not repeat an external action.
+
+## An attachment did not arrive
+
+Wait for preparation/upload to finish before sending. Check the pane's host, file path and transfer error, then retry the failed attachment. Provider image support varies; see [terminal attachments](/en/terminal-and-files).
+
+## An update or macOS launch fails
+
+Check the installed version in **Settings → General**. Retry **Check for updates** if the check failed, or use the official DMG from [Install Dure](/en/install). Checking alone does not install anything.
+
+For a macOS warning, confirm the official download and follow [Apple's guidance](https://support.apple.com/en-us/102445). Do not disable security protections or force open a file reported as malware.
+
+## Collect a useful report
+
+Include the app version, provider and CLI version, local/SSH context, exact action and error. **Settings → Privacy and telemetry** explains diagnostic reports you can review and choose to save. Remove credentials, private paths and unrelated conversations before sharing a report.

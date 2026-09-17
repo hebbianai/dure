@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "biometric",
+  "description": "Face ID / fingerprint, for one purpose: confirming it is the device owner before an approval. Restricted to Android and iOS because the plugin exists nowhere else — the platforms filter is what lets the desktop shell skip it. Status and authenticate only, named rather than `biometric:default`.",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": ["biometric:allow-status", "biometric:allow-authenticate"]
+}

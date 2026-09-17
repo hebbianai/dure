@@ -1,0 +1,17 @@
+export const hmux: Record<string, string> = {
+	"hmux.conversion.batchConfirm.deferredNote": " Les {n} sessions qui ne peuvent pas être converties pour le moment resteront inchangées.",
+	"hmux.conversion.replacementStartFailed": "Impossible de démarrer le Hmux replacement",
+	"hmux.remote.openFailed": "Impossible d’ouvrir une session distante sur {host} : {detail}",
+	"hmux.conversion.batchConfirm.message": "Convertit {n} sessions en session gérée. Chaque provider sera arrêté dans l'ordre et la même conversation sera reprise dans un nouvel epoch de terminal. La position du pane et l'ID de conversation sont conservés.{deferred} Continuer ?",
+	"hmux.conversion.eligibility.providerUnsupported": "La conversion en session gérée n'est pas encore prise en charge pour les sessions {provider}.",
+	"hmux.conversion.confirm.message": "Passer à {target} arrête le provider actuel et reprend la même conversation dans un nouvel epoch de terminal. La position du pane et l'ID de conversation sont conservés, mais toute commande en cours est interrompue. Continuer ?",
+	"hmux.conversion.eligibility.projectAmbiguous": "La conversion est impossible car plusieurs projets possèdent ce même dossier de travail.",
+	"hmux.conversion.target.managed": "session gérée",
+	"hmux.conversion.target.standalone": "session autonome",
+	"hmux.conversion.eligibility.notReady": "Vous pourrez convertir en session gérée une fois la session prête.",
+	"hmux.conversion.preflightFailed": "La vérification préalable à la conversion de session a échoué",
+	"hmux.conversion.eligibility.agentWorking": "Vous pourrez convertir en session gérée une fois que l'agent aura terminé son travail en cours.",
+	"hmux.conversion.eligibility.attentionRequired": "Traitez l'entrée demandée avant de convertir en session gérée.",
+	"hmux.conversion.eligibility.thisProvider": "ce provider",
+	"hmux.conversion.eligibility.projectNotFound": "Enregistrez ce dossier de travail comme projet avant de convertir en session gérée.",
+};

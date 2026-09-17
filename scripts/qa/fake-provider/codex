@@ -1,0 +1,38 @@
+#!/bin/bash
+# Fake Codex TUI for isolated terminal performance and provider rendering QA.
+# It keeps the observable brand/prompt/working surfaces used by Dure while
+# never reading real credentials or provider state.
+set -u
+
+script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
+. "$script_dir/dure-qa-fake-provider-common.sh"
+
+case "${1:-}" in
+  --version | -v)
+    printf 'codex-cli 0.0.0-dure-qa\n'
+    exit 0
+    ;;
+esac
+
+dure_qa_capture_provider_start codex
+
+# Codex uses the normal screen buffer. Keeping this fixture out of the
+# alternate screen is essential: normal-buffer scrollback is the workload that
+# exposes foreground catch-up and resize regressions in the real provider.
+printf '\x1b[2J\x1b[H'
+printf 'OpenAI Codex\n\n'
+
+show_waiting() {
+  printf 'gpt-5.6-sol xhigh\n'
+  printf '> '
+}
+
+dure_qa_tui_input_begin
+show_waiting
+while dure_qa_read_tui_line; do
+  line=$DURE_QA_TUI_LINE
+  printf '\n> %s\n• Working (1s • esc to interrupt)\n' "$line"
+  sleep 0.05
+  printf 'Done. Response for: %s\n' "$line"
+  show_waiting
+done

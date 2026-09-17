@@ -1,0 +1,48 @@
+{
+  "schema": "dure-storyboard-perceptual-baseline/v2",
+  "storyboardId": "product-tour",
+  "targetId": "appearance",
+  "locale": "en",
+  "storyboardSha256": "85e97e258fd28d69dd1c27831370901dfe3bbc1c89292c044475214334a93f97",
+  "reviewRecipeSha256": "f2cdcbe549cc86750efa56fe4a7e0e0723dff6b4f3a7c9cc6b30ecd14782f6b0",
+  "sourceArtifacts": [
+    {
+      "sourceId": "appearance",
+      "bytes": 23200850,
+      "sha256": "321c23073922fdc031df6c3788b503d52ec37e471c13c88a818dceaed6447018"
+    }
+  ],
+  "sourceBuilds": [
+    {
+      "sourceId": "appearance",
+      "buildId": "0.2.19+0ac22e62d5c6",
+      "sourceRevision": "0ac22e62d5c6"
+    }
+  ],
+  "frames": [
+    {
+      "frame": 0,
+      "perceptualHash": "b810501000000101"
+    },
+    {
+      "frame": 132,
+      "perceptualHash": "f061111101011100"
+    },
+    {
+      "frame": 264,
+      "perceptualHash": "3001818181898180"
+    },
+    {
+      "frame": 395,
+      "perceptualHash": "7225010101112180"
+    },
+    {
+      "frame": 527,
+      "perceptualHash": "7020802800000101"
+    },
+    {
+      "frame": 626,
+      "perceptualHash": "7000800000100101"
+    }
+  ]
+}

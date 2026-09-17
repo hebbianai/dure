@@ -1,0 +1,47 @@
+---
+title: "Work on remote projects"
+description: "Connect an SSH host, open its project, and keep remote work beside local agents."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+Use an SSH project when the code or tools live on another machine. Its panes can sit beside local work, while the displayed host and folder tell you where commands execute.
+
+## Connect and open a project
+
+1. Open **Remote Explorer** and choose **Add SSH host**.
+2. Enter the host details and choose SSH agent, key file, password, or no explicit credential when your SSH setup handles authentication.
+3. Connect, browse the remote folders and add the project.
+4. Start a shell or agent there. The provider CLI and its login must be available on that machine.
+
+<Frame caption="A remote Kimi Code pane showing its SSH connection and working folder.">
+  <ProductFigure scene="ssh" locale="en" label="A remote Kimi Code pane showing its SSH connection and working folder." />
+</Frame>
+
+SSH access and provider authentication are separate. Check the remote working folder before running commands or starting independent worktrees.
+
+## Send files to the remote agent
+
+Paste an image or drop files onto its terminal. Dure uploads them and inserts remote paths after preparation succeeds. Wait before submitting the request; see [terminal attachments](/en/terminal-and-files).
+
+## Reconnect and review
+
+Reconnect to an existing managed remote session when its host is still running. A remote reboot or ended process requires [recovery](/en/session-model), not a claim of uninterrupted execution. Check state before starting duplicate work.
+
+Use Git on the remote host to inspect and combine changes. The built-in Diff review currently targets local worktrees.
+
+## Read GitHub issues with your desktop login
+
+Agents started in a GitHub SSH project by Dure can use `gh issue list` and `gh issue view NUMBER --comments`. Dure runs those reads with the desktop's `gh` login and returns the result over SSH. The remote machine needs Python 3; it does not need a GitHub login or a local copy of the repository on your desktop.
+
+```sh
+gh issue list --limit 20 --json number,title
+gh issue view 123 --comments
+gh issue view 123 --json title,body,comments
+```
+
+The connection is scoped to the project's `origin` on `github.com`. `--repo` may name that same repository. Use `--state`, `--label`, `--assignee` and `--author` for filters. `--search` accepts plain text without advanced qualifiers or boolean operators. Lists are limited to 100 results, and large responses must be narrowed with `--json`. Authentication commands, writes, other repositories, `--web`, templates and `--jq` are unavailable through this connection. Sign in with `gh auth login` on your desktop if a query reports an authentication error.
+
+Keep the desktop app connected. After a disconnect or desktop restart, refresh the agent in Dure to restore the connection. Existing agents need a refresh to receive the new command environment. GitHub Enterprise and agents started directly outside Dure are not covered by this integration.
+
+For local issue and pull-request workflows, use the [GitHub sidebar guide](/en/github-workflows).

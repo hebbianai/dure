@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "settings": [
+    {
+      "kind": "integer",
+      "key": "watch_interval_seconds",
+      "title": "변경 확인 주기",
+      "description": "활성 workspace에서 Beads 변경을 다시 확인하는 간격입니다.",
+      "scope": "workspace",
+      "default": 30,
+      "minimum": 5,
+      "maximum": 300
+    },
+    {
+      "kind": "choice",
+      "key": "default_view",
+      "title": "기본 이슈 보기",
+      "description": "Beads 패널을 열었을 때 처음 표시할 이슈 목록입니다.",
+      "scope": "workspace",
+      "default": "ready",
+      "options": [
+        {
+          "value": "ready",
+          "label": "진행 가능한 작업"
+        },
+        {
+          "value": "list",
+          "label": "모든 열린 작업"
+        }
+      ]
+    },
+    {
+      "kind": "boolean",
+      "key": "show_agent_claims",
+      "title": "Pane별 claim 표시",
+      "description": "Beads 사이드 패널과 각 agent pane에 현재 Workspace의 claim 상태를 표시합니다.",
+      "scope": "workspace",
+      "default": true
+    },
+    {
+      "kind": "boolean",
+      "key": "notifications",
+      "title": "Beads 알림",
+      "description": "사람의 결정이 필요하거나 blocker가 바뀌면 Dure 알림을 표시합니다.",
+      "scope": "user",
+      "default": true
+    },
+    {
+      "kind": "choice",
+      "key": "codex_install_scope",
+      "title": "Codex 플러그인 설치 범위",
+      "description": "Dure가 Codex용 Beads 플러그인을 맞출 기본 범위입니다.",
+      "scope": "user",
+      "default": "managed",
+      "options": [
+        {
+          "value": "managed",
+          "label": "Dure 관리형 프로필"
+        }
+      ]
+    },
+    {
+      "kind": "choice",
+      "key": "claude_install_scope",
+      "title": "Claude 플러그인 설치 범위",
+      "description": "Dure가 Claude Code용 Beads 플러그인을 맞출 기본 범위입니다.",
+      "scope": "user",
+      "default": "user",
+      "options": [
+        {
+          "value": "user",
+          "label": "사용자"
+        }
+      ]
+    }
+  ]
+}

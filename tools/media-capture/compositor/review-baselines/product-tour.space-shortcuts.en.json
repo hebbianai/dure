@@ -1,0 +1,48 @@
+{
+  "schema": "dure-storyboard-perceptual-baseline/v2",
+  "storyboardId": "product-tour",
+  "targetId": "space-shortcuts",
+  "locale": "en",
+  "storyboardSha256": "85e97e258fd28d69dd1c27831370901dfe3bbc1c89292c044475214334a93f97",
+  "reviewRecipeSha256": "d4fbcbffc5c64016a4592052054a809909dd33f2b0dd500720fc7c12cf3fa74f",
+  "sourceArtifacts": [
+    {
+      "sourceId": "space-shortcuts",
+      "bytes": 31247667,
+      "sha256": "74a18a38d337030b5f45dbabff88afc2a6fed97e39986f05fd777ea77c734600"
+    }
+  ],
+  "sourceBuilds": [
+    {
+      "sourceId": "space-shortcuts",
+      "buildId": "0.2.19+0ac22e62d5c6",
+      "sourceRevision": "0ac22e62d5c6"
+    }
+  ],
+  "frames": [
+    {
+      "frame": 0,
+      "perceptualHash": "b80d106004000909"
+    },
+    {
+      "frame": 216,
+      "perceptualHash": "f110106004020101"
+    },
+    {
+      "frame": 432,
+      "perceptualHash": "b810102040020101"
+    },
+    {
+      "frame": 647,
+      "perceptualHash": "b814102000024101"
+    },
+    {
+      "frame": 863,
+      "perceptualHash": "b810142000024101"
+    },
+    {
+      "frame": 1025,
+      "perceptualHash": "f810106004120101"
+    }
+  ]
+}

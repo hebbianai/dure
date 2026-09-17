@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "pairing-camera",
+  "description": "The camera, for one purpose: reading a pairing QR code. Restricted to Android and iOS because the plugin exists nowhere else, and narrower than the plugin's own default set — nothing here vibrates the device or drives the barcode formats this app does not read.",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": [
+    "barcode-scanner:allow-check-permissions",
+    "barcode-scanner:allow-request-permissions",
+    "barcode-scanner:allow-scan",
+    "barcode-scanner:allow-cancel",
+    "barcode-scanner:allow-open-app-settings"
+  ]
+}

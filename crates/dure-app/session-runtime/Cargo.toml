@@ -1,0 +1,28 @@
+[package]
+name = "dure-session-runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "Product checkout lifetime composition for selected-host sessions"
+
+[dependencies]
+dure-app = { path = ".." }
+dure-app-sqlite = { path = "../sqlite" }
+dure-git-checkout = { path = "../git-checkout" }
+getrandom = "0.3"
+hmux-client = { path = "../../../hmux/crates/hmux-client" }
+hmux-host = { path = "../../../hmux/crates/hmux-host", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "sync"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+
+[[bin]]
+name = "dure-git-checkout-helper"
+path = "src/bin/dure_git_checkout_helper.rs"

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "name": "agent-browser",
+  "version": "0.36.0",
+  "sourceCommit": "eb05921bad874cd2a1b4fa5d1149f1ed26576cae",
+  "platforms": {
+    "darwin-arm64": {
+      "url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.36.0/agent-browser-darwin-arm64",
+      "size": 12363200,
+      "sha256": "b2106ab39db0838e7b1772f7f26f760518de56d09053150c56f9dddf15af997d"
+    }
+  }
+}

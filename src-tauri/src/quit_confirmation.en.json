@@ -1,0 +1,6 @@
+{
+  "app.quit.title": "Quit Dure?",
+  "app.quit.message": "All Dure windows will close. Managed sessions will keep running.",
+  "app.quit.confirm": "Quit",
+  "app.quit.cancel": "Cancel"
+}

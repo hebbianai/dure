@@ -1,0 +1,269 @@
+{
+  "schemaVersion": 1,
+  "refPrefix": "refs/dure/checkout-use/v1/",
+  "bounds": {
+    "pathBytes": 8192,
+    "activeClaims": 128,
+    "retainedClaims": 128,
+    "recordBytes": 262144,
+    "maxRevision": "9007199254740991",
+    "casAttempts": 16,
+    "oidWidths": [40, 64]
+  },
+  "creationLocator": {
+    "requiresAbsolute": true,
+    "requiresNormalLeaf": true,
+    "rejectsTrailingSeparator": true
+  },
+  "phases": ["creating", "active", "removing", "removed"],
+  "actions": [
+    "reserve_creation",
+    "abort_creation",
+    "start_creation",
+    "activate_creation",
+    "claim",
+    "release",
+    "acquire_removal_permit",
+    "abort_removal",
+    "retire_absent_checkout",
+    "physical_remove"
+  ],
+  "outcomes": [
+    "creation_reserved",
+    "creation_aborted",
+    "creation_started",
+    "creation_activated",
+    "claim_acquired",
+    "claim_released",
+    "removal_permitted",
+    "removal_aborted",
+    "removed", "absent_checkout_retired"
+  ],
+  "receiptFields": [
+    "schemaVersion",
+    "operationId",
+    "requestDigest",
+    "revision",
+    "phase",
+    "outcome"
+  ],
+  "errors": [
+    "checkout_use_request_invalid",
+    "checkout_use_state_invalid",
+    "checkout_use_revision_exhausted",
+    "checkout_use_git_failed",
+    "checkout_use_record_too_large",
+    "checkout_use_capacity_exceeded",
+    "checkout_use_operation_conflict",
+    "checkout_use_phase_conflict",
+    "checkout_use_instance_conflict",
+    "checkout_use_claim_missing",
+    "checkout_use_in_use",
+    "checkout_use_creation_reconcile_required",
+    "checkout_use_removal_reconcile_required",
+    "checkout_use_cas_exhausted"
+  ],
+  "instanceErrorNormalization": {
+    "request": "checkout_use_request_invalid",
+    "identity": "checkout_use_instance_conflict",
+    "git": "checkout_use_git_failed",
+    "markedRemovalAmbiguous": "checkout_use_removal_reconcile_required"
+  },
+  "domains": {
+    "path": "dure-checkout-use-path-v1",
+    "instance": "dure-checkout-use-instance-v1",
+    "request": "dure-checkout-use-request-v1",
+    "reservation": "dure-checkout-use-reservation-v1",
+    "permit": "dure-checkout-use-permit-v1"
+  },
+  "recordRows": [
+    "dure-checkout-use-v1",
+    "revision",
+    "phase",
+    "path",
+    "instance",
+    "reservation",
+    "creation-start",
+    "activation",
+    "permit",
+    "physical",
+    "last-abort",
+    "terminal",
+    "claims",
+    "claim..."
+  ],
+  "releasedClaimCompaction": [
+    {
+      "id": "abort_removal",
+      "afterReleasedClaims": 0,
+      "permitRetained": true,
+      "lastAbortRetained": true,
+      "retainsReleasedReservationClaim": true,
+      "nextOutcome": "claim_acquired"
+    },
+    {
+      "id": "physical_failure_rollback",
+      "afterReleasedClaims": 0,
+      "permitRetained": true,
+      "lastAbortRetained": true,
+      "retainsReleasedReservationClaim": true
+    }
+  ],
+  "stateBlobCases": [
+    {
+      "id": "creatingCanonical",
+      "phase": "creating",
+      "accept": true,
+      "record": "dure-checkout-use-v1\nrevision 1\nphase creating\npath 0000000000000000000000000000000000000000\ninstance -\nreservation 950a78d5613b032c87bbc62bcf8a81a2c6133784 reserve-case 2222222222222222222222222222222222222222 1\ncreation-start - - - -\nactivation - - -\npermit - - - -\nphysical - - -\nlast-abort - - - -\nterminal none - - -\nclaims 1\nclaim active owner-case reserve-case 2222222222222222222222222222222222222222 1 - - -\n"
+    },
+    {
+      "id": "creatingForbiddenLastAbort",
+      "phase": "creating",
+      "accept": false,
+      "record": "dure-checkout-use-v1\nrevision 1\nphase creating\npath 0000000000000000000000000000000000000000\ninstance -\nreservation 950a78d5613b032c87bbc62bcf8a81a2c6133784 reserve-case 2222222222222222222222222222222222222222 1\ncreation-start - - - -\nactivation - - -\npermit - - - -\nphysical - - -\nlast-abort 6666666666666666666666666666666666666666 abort-case 6666666666666666666666666666666666666666 1\nterminal none - - -\nclaims 1\nclaim active owner-case reserve-case 2222222222222222222222222222222222222222 1 - - -\n"
+    },
+    {
+      "id": "activeCanonical",
+      "phase": "active",
+      "accept": true,
+      "record": "dure-checkout-use-v1\nrevision 1\nphase active\npath 0000000000000000000000000000000000000000\ninstance 1111111111111111111111111111111111111111\nreservation - - - -\ncreation-start - - - -\nactivation - - -\npermit - - - -\nphysical - - -\nlast-abort - - - -\nterminal none - - -\nclaims 1\nclaim active owner-active claim-active 5555555555555555555555555555555555555555 1 - - -\n"
+    },
+    {
+      "id": "activeMissingInstance",
+      "phase": "active",
+      "accept": false,
+      "record": "dure-checkout-use-v1\nrevision 1\nphase active\npath 0000000000000000000000000000000000000000\ninstance -\nreservation - - - -\ncreation-start - - - -\nactivation - - -\npermit - - - -\nphysical - - -\nlast-abort - - - -\nterminal none - - -\nclaims 1\nclaim active owner-active claim-active 5555555555555555555555555555555555555555 1 - - -\n"
+    },
+    {
+      "id": "removingCanonical",
+      "phase": "removing",
+      "accept": true,
+      "record": "dure-checkout-use-v1\nrevision 1\nphase removing\npath 0000000000000000000000000000000000000000\ninstance 1111111111111111111111111111111111111111\nreservation - - - -\ncreation-start - - - -\nactivation - - -\npermit e9b62c66a20e5f14f9406cada145a96dd1cbeaf5 permit-case 3333333333333333333333333333333333333333 1\nphysical - - -\nlast-abort - - - -\nterminal none - - -\nclaims 0\n"
+    },
+    {
+      "id": "removingMissingPermit",
+      "phase": "removing",
+      "accept": false,
+      "record": "dure-checkout-use-v1\nrevision 1\nphase removing\npath 0000000000000000000000000000000000000000\ninstance 1111111111111111111111111111111111111111\nreservation - - - -\ncreation-start - - - -\nactivation - - -\npermit - - - -\nphysical - - -\nlast-abort - - - -\nterminal none - - -\nclaims 0\n"
+    },
+    {
+      "id": "removedCanonical",
+      "phase": "removed",
+      "accept": true,
+      "record": "dure-checkout-use-v1\nrevision 2\nphase removed\npath 0000000000000000000000000000000000000000\ninstance 1111111111111111111111111111111111111111\nreservation - - - -\ncreation-start - - - -\nactivation - - -\npermit e9b62c66a20e5f14f9406cada145a96dd1cbeaf5 permit-case 3333333333333333333333333333333333333333 1\nphysical physical-case 4444444444444444444444444444444444444444 2\nlast-abort - - - -\nterminal removed physical-case 4444444444444444444444444444444444444444 2\nclaims 0\n"
+    },
+    {
+      "id": "removedMissingTerminal",
+      "phase": "removed",
+      "accept": false,
+      "record": "dure-checkout-use-v1\nrevision 2\nphase removed\npath 0000000000000000000000000000000000000000\ninstance 1111111111111111111111111111111111111111\nreservation - - - -\ncreation-start - - - -\nactivation - - -\npermit e9b62c66a20e5f14f9406cada145a96dd1cbeaf5 permit-case 3333333333333333333333333333333333333333 1\nphysical physical-case 4444444444444444444444444444444444444444 2\nlast-abort - - - -\nterminal none - - -\nclaims 0\n"
+    },
+    {
+      "id": "removedCreationLineageCanonical",
+      "phase": "removed",
+      "accept": true,
+      "record": "dure-checkout-use-v1\nrevision 7\nphase removed\npath 0000000000000000000000000000000000000000\ninstance 1111111111111111111111111111111111111111\nreservation db956e243370a43ac2983fb69bd582408e7298d8 reserve-lineage aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1\ncreation-start db956e243370a43ac2983fb69bd582408e7298d8 start-lineage bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 2\nactivation activate-lineage cccccccccccccccccccccccccccccccccccccccc 3\npermit 21b1ac64e61baa557914654058633539a1e84ab8 permit-lineage dddddddddddddddddddddddddddddddddddddddd 6\nphysical physical-lineage eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee 7\nlast-abort - - - -\nterminal removed physical-lineage eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee 7\nclaims 2\nclaim active owner-active-lineage claim-active-lineage 9999999999999999999999999999999999999999 5 - - -\nclaim released owner-lineage reserve-lineage aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 release-lineage ffffffffffffffffffffffffffffffffffffffff 4\n"
+    },
+    {
+      "id": "removedCreationLineageExtraReleased",
+      "phase": "removed",
+      "accept": false,
+      "record": "dure-checkout-use-v1\nrevision 7\nphase removed\npath 0000000000000000000000000000000000000000\ninstance 1111111111111111111111111111111111111111\nreservation db956e243370a43ac2983fb69bd582408e7298d8 reserve-lineage aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1\ncreation-start db956e243370a43ac2983fb69bd582408e7298d8 start-lineage bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 2\nactivation activate-lineage cccccccccccccccccccccccccccccccccccccccc 3\npermit 21b1ac64e61baa557914654058633539a1e84ab8 permit-lineage dddddddddddddddddddddddddddddddddddddddd 6\nphysical physical-lineage eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee 7\nlast-abort - - - -\nterminal removed physical-lineage eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee 7\nclaims 3\nclaim active owner-active-lineage claim-active-lineage 9999999999999999999999999999999999999999 5 - - -\nclaim released owner-extra released-extra 8888888888888888888888888888888888888888 5 release-extra 7777777777777777777777777777777777777777 6\nclaim released owner-lineage reserve-lineage aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 1 release-lineage ffffffffffffffffffffffffffffffffffffffff 4\n"
+    }
+  ],
+  "sha1Vectors": [
+    {
+      "id": "path-newline",
+      "domain": "path",
+      "fields": ["/tmp/dure\ncheckout"],
+      "oid": "442ea96395eed0a18019eccf88aa5e1d1f718cd5"
+    },
+    {
+      "id": "instance",
+      "domain": "instance",
+      "fields": ["1", "/tmp/dure-checkout", "/tmp/repo/.git", "/tmp/repo/.git/worktrees/dure-checkout", "dwt1_00000000000000000000000000000000"],
+      "oid": "22bfc4d46d6c019cb5154d3d698facc919efed7d"
+    },
+    {
+      "id": "request-reserve",
+      "domain": "request",
+      "fields": ["reserve", "1111111111111111111111111111111111111111", "owner-a", "reserve-op"],
+      "oid": "12d6c0078d4ab03530db58677bd01ab2599c6d8b"
+    },
+    {
+      "id": "request-abort-creation",
+      "domain": "request",
+      "fields": ["abort_creation", "1111111111111111111111111111111111111111", "3333333333333333333333333333333333333333", "abort-op"],
+      "oid": "ff53d1693b50209a1c4d82276894c8733c729fa2"
+    },
+    {
+      "id": "request-start-creation",
+      "domain": "request",
+      "fields": ["start_creation", "1111111111111111111111111111111111111111", "3333333333333333333333333333333333333333", "start-op"],
+      "oid": "61dfb65d1dd686886fafe8ab1c3cfce1ef1980b5"
+    },
+    {
+      "id": "request-activate",
+      "domain": "request",
+      "fields": ["activate", "1111111111111111111111111111111111111111", "3333333333333333333333333333333333333333", "2222222222222222222222222222222222222222", "activate-op"],
+      "oid": "da443d45436220ea51ac4644fc0d33411b474500"
+    },
+    {
+      "id": "request-claim",
+      "domain": "request",
+      "fields": ["claim", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222", "owner-a", "claim-op"],
+      "oid": "09fb2c4c5f03ba8c8eb6db9f2c836e41cd96df8d"
+    },
+    {
+      "id": "request-release",
+      "domain": "request",
+      "fields": ["release", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222", "claim-op", "release-op"],
+      "oid": "b0f78e065df24ceebe64a3f957fcd388bfe6bd80"
+    },
+    {
+      "id": "request-permit",
+      "domain": "request",
+      "fields": ["permit", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222", "2", "claim-a", "claim-b", "permit-op"],
+      "oid": "e0190e1b7f69c317bfb4de1a39b3732f9cf3c4e0"
+    },
+    {
+      "id": "request-abort-removal",
+      "domain": "request",
+      "fields": ["abort_removal", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222", "4444444444444444444444444444444444444444", "abort-remove-op"],
+      "oid": "4044e6b51cc01d081d3557a696d5d606e011c750"
+    },
+    {
+      "id": "request-physical-remove",
+      "domain": "request",
+      "fields": ["physical_remove", "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222", "4444444444444444444444444444444444444444", "physical-op"],
+      "oid": "744dd4f312c28f4904a1c787f34f12cce432195a"
+    },
+    {
+      "id": "reservation-token",
+      "domain": "reservation",
+      "fields": ["1111111111111111111111111111111111111111", "reserve-op", "5555555555555555555555555555555555555555", "7"],
+      "oid": "4be73b9fa9e900f2fa91a561073b351e936ef7cf"
+    },
+    {
+      "id": "permit-token",
+      "domain": "permit",
+      "fields": ["1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222", "permit-op", "5555555555555555555555555555555555555555", "7"],
+      "oid": "ea80644aabd7627c5aa69a9e81263ac7a1fadc45"
+    }
+  ],
+  "sha256Oids": {
+    "path-newline": "0c152ad26f85c0ee0ae338411dae932e8371261d0acecc5f729be88e67f66778",
+    "instance": "51e0e51dcba98bbff5a4e0846d44f854be1274328cac64cf981d7684e24afe08",
+    "request-reserve": "0198aaf0e66144e59dccdb883ae8706665dc15ac8cad149e4f4c0c75024592de",
+    "request-abort-creation": "1d76cccbcd8db41ca54260b2355a21984675bf9c13050540ff179d3250e266f8",
+    "request-start-creation": "5a0679bc974fc76fab17aebe2df8e0ac67273b0cdb9b76284ce62db5dfb05536",
+    "request-activate": "3608134191b94bd13d21c9ea737095cd06f704faf152c93e174b990e5843bc3e",
+    "request-claim": "cd697350e1e95954486ca145221a4469cbffdf6b51ee612032a5ccbd47ce86c7",
+    "request-release": "c9f94599d3c1696106b3500730f3d3f37df81402661a36638d004b9d01668a95",
+    "request-permit": "e6fcd14d1985dbbd772a16db0e7b0562cfc7bd0be3dcec11615236fe483e971e",
+    "request-abort-removal": "82168f649d44940ae9dcda24650c201db421e4391ff775b3ac48bdbfd84206e4",
+    "request-physical-remove": "4c791550797202e0029fb08f965a5e2885f060fb8f8facf1506588f24a6ef0a0",
+    "reservation-token": "b78de87eb16a18e2c6bca1fef8a8bb30439c1c54719ab72db966d4a3aed4daec",
+    "permit-token": "b1183dff791207afed25047a9995e014ad1a1d1bdbe11a25795fb94dc00a7723"
+  }
+}

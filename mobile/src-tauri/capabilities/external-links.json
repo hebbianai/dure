@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "external-links",
+  "description": "The system browser, for every http(s) link the app hands out: the help site, the feedback form and hyperlinks a terminal prints. Scoped to http and https rather than `opener:default`, which would also open mailto:/tel:, arbitrary paths and reveal-in-dir — none of which this app does.",
+  "windows": ["main"],
+  "permissions": [
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+    }
+  ]
+}

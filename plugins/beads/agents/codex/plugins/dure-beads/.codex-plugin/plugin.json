@@ -1,0 +1,31 @@
+{
+  "name": "dure-beads",
+  "version": "0.2.1",
+  "description": "Use the repository's Beads workflow for durable task tracking.",
+  "author": {
+    "name": "Dure"
+  },
+  "homepage": "https://github.com/hebbianai/dure",
+  "repository": "https://github.com/hebbianai/dure",
+  "license": "MIT",
+  "keywords": [
+    "beads",
+    "issues",
+    "task-tracking"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Dure Beads",
+    "shortDescription": "Use Beads for durable project task tracking",
+    "longDescription": "Follow the repository's Beads workflow for issue dependencies, blockers, and multi-session handoff.",
+    "developerName": "Dure",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Show the ready Beads work in this repository."
+    ]
+  }
+}

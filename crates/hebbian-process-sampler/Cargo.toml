@@ -1,0 +1,16 @@
+[package]
+name = "hebbian-process-sampler"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "Host-local shared process sampler for Hebbian terminal runtimes"
+
+[dependencies]
+fs2 = "0.4"
+hebbian-bounded-process = { path = "../hebbian-bounded-process" }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

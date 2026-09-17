@@ -1,0 +1,52 @@
+{
+  "schema": "dure-storyboard-perceptual-baseline/v2",
+  "storyboardId": "workspace-lifecycle-proof",
+  "targetId": "flagship",
+  "locale": "en",
+  "storyboardSha256": "9a5b830782800b5e036c7be6486548792d0172a14e4c5b9a32de0b84aaa4d88b",
+  "reviewRecipeSha256": "d59a50e1b3c60a7fd30f25cc6df2217f78daf36e4c9b894e40643a1b234c769a",
+  "sourceArtifacts": [
+    {
+      "sourceId": "view-handoff",
+      "bytes": 5235018,
+      "sha256": "408b45b569dccbf82800fe7ceae45b1e20e47ca106a508283bf593b2435b0e13"
+    }
+  ],
+  "sourceBuilds": [
+    {
+      "sourceId": "view-handoff",
+      "buildId": "0.1.4+ee22d9fd883b",
+      "sourceRevision": "ee22d9fd883bac0924caddf314dc7415d2c4f07d"
+    }
+  ],
+  "frames": [
+    {
+      "frame": 0,
+      "perceptualHash": "0040000000008030"
+    },
+    {
+      "frame": 103,
+      "perceptualHash": "8890001800088088"
+    },
+    {
+      "frame": 207,
+      "perceptualHash": "8090000808108080"
+    },
+    {
+      "frame": 310,
+      "perceptualHash": "0000000404088080"
+    },
+    {
+      "frame": 413,
+      "perceptualHash": "2882001408008080"
+    },
+    {
+      "frame": 505,
+      "perceptualHash": "280200040c108080"
+    },
+    {
+      "frame": 563,
+      "perceptualHash": "0802000c02008080"
+    }
+  ]
+}

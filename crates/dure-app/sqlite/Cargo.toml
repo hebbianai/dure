@@ -1,0 +1,22 @@
+[package]
+name = "dure-app-sqlite"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "SQLite adapter for Dure durable application state"
+
+[dependencies]
+agent-orchestration = { path = "../../../orchestration" }
+dure-app = { path = ".." }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+# SQLx 0.9 requires Rust 1.94. The lockfile also keeps url/idna_adapter on
+# Rust-1.85-compatible releases; verify dependency changes against this MSRV.
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }

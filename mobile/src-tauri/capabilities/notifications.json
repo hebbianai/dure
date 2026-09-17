@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "notifications",
+  "description": "Local notifications while the app is in the background: an approval is waiting, or an agent turn ended. Nothing here is push — no server, no device token, no entitlement. Named rather than `notification:default`: only the permission check/request and notify itself — no channels, listeners, action types, cancel/get/remove.",
+  "windows": ["main"],
+  "permissions": [
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify"
+  ]
+}

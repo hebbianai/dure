@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package terminal.state.history.v1;
+
+import "terminal/state/common/v1/common.proto";
+
+// Snapshots fence history availability without embedding history rows. Rows
+// are transported only by bounded HistoryPage or history mutation records.
+message HistoryAnchor {
+  bytes before_cursor = 1;
+  bytes after_cursor = 2;
+  bool has_more_before = 3;
+  bool has_more_after = 4;
+}
+
+enum HistoryDirection {
+  HISTORY_DIRECTION_UNSPECIFIED = 0;
+  HISTORY_DIRECTION_BEFORE = 1;
+  HISTORY_DIRECTION_AFTER = 2;
+}
+
+message HistoryPage {
+  HistoryDirection direction = 1;
+  bytes request_cursor = 2;
+  repeated terminal.state.common.v1.TerminalRow rows = 3;
+  bytes before_cursor = 4;
+  bytes after_cursor = 5;
+  bool has_more_before = 6;
+  bool has_more_after = 7;
+  terminal.state.common.v1.TableAppend tables = 8;
+  reserved 9;
+}

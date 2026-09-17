@@ -1,0 +1,237 @@
+/* Adding an SSH host. Figma 3177:82034 / 3177:82150. */
+
+.ssh-add {
+  background: var(--glass-pane);
+}
+
+/* 16px under the title (3177:82036), and above it the shared 12 with the status
+   bar's inset riding on top so the screen's own ground reaches the top of the
+   display. 12 on the left puts the 44px slot's glyph at 24. */
+.ssh-add__bar {
+  padding: calc(12px + env(safe-area-inset-top)) 16px 16px 12px;
+}
+
+.ssh-add__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  /* The failure card sits at the bottom of the form's space, not under the
+     last field: 3177:82157 justifies the two apart. */
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px;
+}
+
+.ssh-add__form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.ssh-add__address {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.ssh-add__field {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 88px, which is what four digits and a caret need and no more. */
+.ssh-add__field--port {
+  flex: none;
+  width: 88px;
+}
+
+.ssh-add__label {
+  padding-left: 4px;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+.ssh-add__input {
+  height: 44px;
+  min-width: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--glass-hairline-glass);
+  border-radius: 10px;
+  background: var(--glass-pane);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.ssh-add__input::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* The key row is a plain outline, not a card: it is a fact about this phone,
+   not something to press (3177:82062). */
+.ssh-add__key {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 56px;
+  padding: 0 16px;
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: 10px;
+}
+
+.ssh-add__key-icon {
+  flex: none;
+  background-color: var(--foreground);
+}
+
+.ssh-add__key-meta {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ssh-add__key-name {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.ssh-add__key-origin {
+  color: var(--muted-foreground);
+}
+
+.ssh-add__key-type {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* Three ways in, one row. A segmented row rather than a list of rows: they are
+   the same decision, and a list would read as three things to do. */
+.ssh-add__choices {
+  display: flex;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--glass-tray-surface);
+}
+
+.ssh-add__choice {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+.ssh-add__choice--on {
+  background: var(--glass-tint-selected);
+  color: var(--foreground);
+}
+
+/* The chosen file, or the invitation to choose one. It is a field-shaped
+   control because that is what it stands in for. */
+.ssh-add__pick {
+  width: 100%;
+  min-height: 44px;
+  padding: 4px 12px;
+  border: 1px solid var(--glass-hairline-glass);
+  border-radius: 10px;
+  background: var(--glass-pane);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 18px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ssh-add__note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.ssh-add__failure {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--glass-tray-surface);
+  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+.ssh-add__failure-icon {
+  flex: none;
+  margin-top: 1px;
+  background-color: var(--destructive);
+}
+
+.ssh-add__failure-lines {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ssh-add__failure-title {
+  margin: 0;
+  color: var(--destructive);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.ssh-add__failure-detail {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* Above the home indicator, with the hairline the frame draws over the form. */
+.ssh-add__footer {
+  flex: none;
+  padding: 12px 16px calc(8px + env(safe-area-inset-bottom));
+}
+
+.ssh-add__save {
+  width: 100%;
+  height: 44px;
+  padding: 8px 24px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+/* Half opacity, which is the frame's own disabled state (3177:82073) — the
+   button stays where it is and says it is not ready, rather than vanishing. */
+.ssh-add__save:disabled {
+  opacity: 0.5;
+}

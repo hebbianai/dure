@@ -1,0 +1,62 @@
+[package]
+name = "hmux-runtime"
+description = "Provider-neutral standalone Hmux session runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Product-shaped dark path: one Host-owned Ghostty actor emits the neutral
+# structured terminal protocol directly. Keeping this explicit until the
+# renderer cutover prevents a half-upgraded runtime from advertising frames
+# that current clients cannot consume.
+terminal-state-stream = [
+    "hmux-client/terminal-state-stream",
+    "hmux-host/ghostty-core-proof",
+    "dep:terminal-state-protocol",
+]
+
+[[bin]]
+name = "hmux-runtime"
+path = "src/main.rs"
+
+[dependencies]
+fs2.workspace = true
+hmux-client = { path = "../hmux-client" }
+hmux-host = { path = "../hmux-host" }
+hmux-local-platform = { path = "../hmux-local-platform" }
+hmux-runtime-contract = { path = "../hmux-runtime-contract" }
+portable-pty.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+terminal-state-protocol = { path = "../terminal-state-protocol", optional = true }
+uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+hebbian-process-sampler = { path = "../../../crates/hebbian-process-sampler" }
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+rand.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+hmux-ssh-transport = { path = "../hmux-ssh-transport" }
+russh.workspace = true

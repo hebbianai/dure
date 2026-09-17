@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package terminal.state.history.v1;
+
+import "terminal/state/common/v1/common.proto";
+
+// Snapshots fence history availability without embedding history rows. Rows
+// are transported only by bounded HistoryPage or history mutation records.
+message HistoryAnchor {
+  bytes before_cursor = 1;
+  bytes after_cursor = 2;
+  bool has_more_before = 3;
+  bool has_more_after = 4;
+}
+
+enum HistoryDirection {
+  HISTORY_DIRECTION_UNSPECIFIED = 0;
+  HISTORY_DIRECTION_BEFORE = 1;
+  HISTORY_DIRECTION_AFTER = 2;
+}
+
+// Upstream-only request for one bounded page adjacent to the client's current
+// projection. The cursor is opaque engine-owned state; clients never derive a
+// row offset or retry a stale cursor with guessed coordinates.
+message HistoryRequest {
+  HistoryDirection direction = 1;
+  bytes cursor = 2;
+  uint32 maximum_rows = 3;
+}
+
+message HistoryPage {
+  HistoryDirection direction = 1;
+  bytes request_cursor = 2;
+  repeated terminal.state.common.v1.TerminalRow rows = 3;
+  bytes before_cursor = 4;
+  bytes after_cursor = 5;
+  bool has_more_before = 6;
+  bool has_more_after = 7;
+  // Deprecated before product cutover: a subscriber-local history page must
+  // not participate in a Host-global append sequence.
+  terminal.state.common.v1.TableAppend table_append = 8;
+  reserved 9;
+  // Page-local dictionary. The client remaps it into its private replica.
+  terminal.state.common.v1.TerminalTables tables = 10;
+}

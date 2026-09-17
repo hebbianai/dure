@@ -1,0 +1,167 @@
+syntax = "proto3";
+
+package terminal.state.projection.v1;
+
+import "terminal/state/common/v1/common.proto";
+import "terminal/state/input/v1/input.proto";
+
+// One complete, bounded replacement for an attached surface. A receiver may
+// skip any earlier projection revision and install this frame directly.
+message ViewportFrame {
+  uint64 projection_revision = 1;
+  uint64 damage_base_projection_revision = 2;
+  uint32 canonical_columns = 3;
+  uint32 viewport_rows = 4;
+  terminal.state.common.v1.BufferId active_buffer = 5;
+  repeated terminal.state.common.v1.TerminalRow rows = 6;
+  terminal.state.common.v1.TerminalTables tables = 7;
+  terminal.state.common.v1.CursorState cursor = 8;
+  terminal.state.common.v1.InputModes input_modes = 9;
+  // Terminal-origin overrides only. Absence means the receiving surface
+  // resolves semantic DEFAULT and unmodified palette indices from its own
+  // theme; present OSC 4/10/11/12 overrides win without baking a Host theme
+  // into canonical terminal state.
+  TerminalColorOverrides color_overrides = 10;
+  terminal.state.common.v1.UnicodeWidthProfile unicode_width = 11;
+  uint64 through_event_id = 12;
+  string title = 13;
+  string working_directory_uri = 14;
+  bool follow_tail = 15;
+  bool has_more_before = 16;
+  bool has_more_after = 17;
+  // Optional repaint optimization against damage_base_projection_revision.
+  // Every row is still present, so a missing base always falls back to the
+  // complete frame rather than requesting recovery.
+  repeated uint32 changed_row_indices = 18;
+  // Highest connection-local intent incorporated into this complete frame.
+  // This acknowledges no-op and clamped intents as well as visible changes.
+  uint64 applied_intent_seq = 19;
+  ViewportAnchorStatus anchor_status = 20;
+  // Exact count of physical rows after the frame when it is known without
+  // scanning retained history. Tail is always zero; absence means unknown.
+  optional uint64 rows_from_tail = 21;
+  // Content-free timing for the earliest accepted PTY input at one output
+  // high-water and the first Host output observed after it. A receiver
+  // correlates this only when the record ID and output-sequence baseline match
+  // the input fence it dispatched; it has no rendering semantics.
+  InputOutputTiming input_output_timing = 22;
+}
+
+message InputOutputTiming {
+  uint64 input_baseline_output_sequence = 1;
+  uint64 first_output_sequence = 2;
+  // Successful PTY write to the first subsequent PTY read.
+  uint64 input_to_output_micros = 3;
+  // First subsequent PTY read to this attachment's projection start.
+  uint64 output_to_projection_start_micros = 4;
+  // Connection-local semantic input record correlated by this attachment.
+  uint64 input_record_id = 5;
+}
+
+// Ordered chunks of one encoded ViewportFrame. All envelope and projection
+// fences must remain identical until the complete frame is assembled.
+message ViewportFramePart {
+  bytes batch_id = 1;
+  uint32 part_index = 2;
+  uint32 part_count = 3;
+  uint32 total_frame_bytes = 4;
+  bytes frame_chunk = 5;
+  uint64 projection_revision = 6;
+  uint64 applied_intent_seq = 7;
+}
+
+enum ViewportAnchorStatus {
+  VIEWPORT_ANCHOR_STATUS_UNSPECIFIED = 0;
+  VIEWPORT_ANCHOR_STATUS_FOLLOW_TAIL = 1;
+  VIEWPORT_ANCHOR_STATUS_ANCHORED = 2;
+  VIEWPORT_ANCHOR_STATUS_CLAMPED_START = 3;
+  VIEWPORT_ANCHOR_STATUS_CLAMPED_TAIL = 4;
+  VIEWPORT_ANCHOR_STATUS_PRUNED_TO_TAIL = 5;
+}
+
+message TerminalColorOverrides {
+  repeated IndexedColorOverride indexed = 1;
+  optional uint32 default_foreground_rgb = 2;
+  optional uint32 default_background_rgb = 3;
+  optional uint32 cursor_rgb = 4;
+}
+
+message IndexedColorOverride {
+  uint32 index = 1;
+  uint32 rgb = 2;
+}
+
+// Connection-local presentation input. It never changes PTY geometry.
+message ViewportIntent {
+  uint64 observed_projection_revision = 1;
+  // Strictly monotonic within one attached connection. The Host may fold
+  // consecutive deltas and acknowledges the highest applied value in a frame.
+  uint64 intent_seq = 2;
+  oneof intent {
+    ScrollRows scroll_rows = 10;
+    FollowTail follow_tail = 11;
+    SetViewportRows set_viewport_rows = 12;
+    // One surface interaction. The Host-owned terminal actor selects its
+    // available PTY or connection-local viewport sink from current modes.
+    terminal.state.input.v1.PointerInputIntent wheel = 13;
+    // Opaque embedder defaults used only by the terminal core when a program
+    // queries OSC 10/11. This does not create terminal-origin color overrides.
+    TerminalDefaultColors terminal_default_colors = 14;
+  }
+}
+
+message TerminalDefaultColors {
+  uint32 foreground_rgb = 1;
+  uint32 background_rgb = 2;
+}
+
+message ScrollRows {
+  // Positive values move toward older rows; negative values move toward tail.
+  sint32 rows = 1;
+}
+
+message FollowTail {}
+
+message SetViewportRows {
+  uint32 rows = 1;
+}
+
+// Final lifecycle outcome for one wheel interaction. A complete frame remains
+// the paint authority and carries the same applied intent high-water.
+message WheelReceipt {
+  uint64 in_reply_to_record_id = 1;
+  oneof outcome {
+    WheelWrittenToPty written_to_pty = 10;
+    WheelAppliedToViewport applied_to_viewport = 11;
+    WheelRefused refused = 12;
+    WheelFailed failed = 13;
+  }
+}
+
+message WheelWrittenToPty {
+  uint64 applied_intent_seq = 1;
+}
+
+message WheelAppliedToViewport {
+  uint64 applied_intent_seq = 1;
+}
+
+message WheelRefused {
+  WheelRefusalReason reason = 1;
+}
+
+enum WheelRefusalReason {
+  WHEEL_REFUSAL_REASON_UNSPECIFIED = 0;
+  WHEEL_REFUSAL_REASON_AUTHORIZATION_DENIED = 1;
+  WHEEL_REFUSAL_REASON_HOST_EXITING = 2;
+}
+
+message WheelFailed {
+  WheelFailureReason reason = 1;
+}
+
+enum WheelFailureReason {
+  WHEEL_FAILURE_REASON_UNSPECIFIED = 0;
+  WHEEL_FAILURE_REASON_PTY_WRITE_FAILED = 1;
+  WHEEL_FAILURE_REASON_VIEWPORT_FAILED = 2;
+}

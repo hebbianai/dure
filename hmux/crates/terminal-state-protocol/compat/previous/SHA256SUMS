@@ -1,0 +1,7 @@
+45d5ee6d6a0545af3c8efb38ffcb87b6792f8bec9be5e94de3784f69905c9300  schema/terminal/state/common/v1/common.proto
+0ef88b7782387c8d882670d195a4628171d3f9f6a3ede6204094f78db3c06e61  schema/terminal/state/envelope/v1/envelope.proto
+9cbda89a445c514f9650a9262d41229c737897a36ae8709615b44b2d5e5ea442  schema/terminal/state/events/v1/events.proto
+17b751e89e84893fee1cad6d94e9891dd1633921b495a9561c01d7a7c46a1e79  schema/terminal/state/history/v1/history.proto
+28cd444922cd38fc4f0f9917a873d66944bd585ebde6e4c1183a1e2603d4c922  schema/terminal/state/input/v1/input.proto
+caea5b6e4935111be1b705c7a41f62e666325da10e7bdc100a185edc64913bf6  schema/terminal/state/model/v1/model.proto
+9d7773cc632731d4661c1aec53bf45c62dffd6201598b25f3a98cc6412342ade  terminal-state-v1.bin

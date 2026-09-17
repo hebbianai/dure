@@ -1,0 +1,18 @@
+[package]
+name = "dure-hub-protocol"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "The wire format the phone and the Dure hub both speak"
+
+# Deliberately dependency-light. Both a desktop Tauri app and an iOS/Android
+# build link this, so anything added here is added to a phone binary too.
+[dependencies]
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 인증서 지문. 폰과 노트북이 같은 값을 계산해야 하므로 계산도 여기 산다.
+sha2 = "0.10"
+rustls = { version = "0.23", default-features = false, features = ["std"] }

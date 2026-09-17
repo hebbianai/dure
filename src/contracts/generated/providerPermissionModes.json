@@ -1,0 +1,87 @@
+{
+  "amp": [
+    "default"
+  ],
+  "antigravity": [
+    "default"
+  ],
+  "auggie": [
+    "default"
+  ],
+  "claude": [
+    "default",
+    "auto_edit",
+    "skip_permissions"
+  ],
+  "cline": [
+    "default"
+  ],
+  "codebuff": [
+    "default"
+  ],
+  "codex": [
+    "default",
+    "auto_edit",
+    "skip_permissions"
+  ],
+  "command-code": [
+    "default"
+  ],
+  "continue": [
+    "default"
+  ],
+  "copilot": [
+    "default",
+    "skip_permissions"
+  ],
+  "cursor": [
+    "default",
+    "skip_permissions"
+  ],
+  "droid": [
+    "default"
+  ],
+  "gemini": [
+    "default",
+    "auto_edit",
+    "skip_permissions"
+  ],
+  "goose": [
+    "default"
+  ],
+  "grok": [
+    "default",
+    "skip_permissions"
+  ],
+  "hermes": [
+    "default"
+  ],
+  "kilocode": [
+    "default"
+  ],
+  "kimi": [
+    "default",
+    "skip_permissions"
+  ],
+  "mistral-vibe": [
+    "default"
+  ],
+  "oh-my-pi": [
+    "default"
+  ],
+  "openclaude": [
+    "default"
+  ],
+  "opencode": [
+    "default",
+    "skip_permissions"
+  ],
+  "pi": [
+    "default"
+  ],
+  "qwen-code": [
+    "default",
+    "auto_edit",
+    "skip_permissions"
+  ]
+}

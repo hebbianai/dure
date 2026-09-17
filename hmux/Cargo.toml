@@ -1,0 +1,73 @@
+[workspace]
+members = [
+    "crates/hmux-cli",
+    "crates/hmux-client",
+    "crates/hmux-host",
+    "crates/hmux-local-platform",
+    "crates/hmux-release-candidate",
+    "crates/hmux-release-trust",
+    "crates/hmux-runtime",
+    "crates/hmux-runtime-contract",
+    "crates/hmux-session-protocol",
+    "crates/hmux-ssh-transport",
+    "crates/terminal-core-ghostty-proof",
+    "crates/terminal-state-protocol",
+    "xtask/terminal-state-protocol-codegen",
+]
+resolver = "2"
+
+[profile.dev.package.terminal-core-ghostty-proof]
+opt-level = 2
+
+[workspace.package]
+version = "0.2.26"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+alacritty_terminal = { version = "0.26", default-features = false }
+argon2 = "0.5"
+async-trait = "0.1"
+auditable-serde = "=0.9.0"
+base64 = "0.22"
+chacha20poly1305 = "0.11"
+clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.29"
+dirs = "6.0"
+ed25519-dalek = { version = "3", features = ["rand_core"] }
+flate2 = "1"
+fs2 = "0.4"
+futures-util = "0.3"
+getrandom = "0.4"
+hex = "0.4"
+idna = "=1.0.3"
+idna_adapter = "=1.2.0"
+libc = "0.2"
+portable-pty = "0.9"
+prost = "=0.14.4"
+rand = "0.10"
+semver = "1"
+# `ring` rather than the default `aws-lc-rs`: russh refuses to build without one
+# of the two, and aws-lc-rs needs cmake plus bindgen, which no mobile toolchain
+# is guaranteed to have. `rsa` keeps servers whose only host key is RSA
+# reachable. Verified against aarch64-apple-ios and aarch64-linux-android.
+russh = { version = "0.62", default-features = false, features = [
+    "flate2",
+    "ring",
+    "rsa",
+] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+socket2 = "0.6"
+tar = "0.4"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "net", "rt", "sync", "time"] }
+tough = { version = "=0.24.0", default-features = false }
+url = "=2.5.4"
+uuid = { version = "1.23", features = ["v4"] }
+vt100 = "0.16"
+windows-sys = "0.61.2"

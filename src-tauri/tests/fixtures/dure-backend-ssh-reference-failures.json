@@ -1,0 +1,246 @@
+{
+  "catalogCases": [
+    {
+      "name": "unknown catalog field",
+      "catalog": {
+        "schemaVersion": 1,
+        "kind": "dure.backend_ssh_references",
+        "references": [
+          {
+            "reference": "known-hosts-profile:remote-a",
+            "kind": "known_hosts_file",
+            "path": "__KNOWN_HOSTS_A__"
+          },
+          {
+            "reference": "credential-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__IDENTITY_A__"
+          }
+        ],
+        "extra": true
+      }
+    },
+    {
+      "name": "unknown entry field",
+      "catalog": {
+        "schemaVersion": 1,
+        "kind": "dure.backend_ssh_references",
+        "references": [
+          {
+            "reference": "known-hosts-profile:remote-a",
+            "kind": "known_hosts_file",
+            "path": "__KNOWN_HOSTS_A__",
+            "extra": true
+          },
+          {
+            "reference": "credential-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__IDENTITY_A__"
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate reference",
+      "catalog": {
+        "schemaVersion": 1,
+        "kind": "dure.backend_ssh_references",
+        "references": [
+          {
+            "reference": "known-hosts-profile:remote-a",
+            "kind": "known_hosts_file",
+            "path": "__KNOWN_HOSTS_A__"
+          },
+          {
+            "reference": "credential-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__IDENTITY_A__"
+          },
+          {
+            "reference": "known-hosts-profile:remote-a",
+            "kind": "known_hosts_file",
+            "path": "__KNOWN_HOSTS_A__"
+          }
+        ]
+      }
+    },
+    {
+      "name": "missing selected reference",
+      "catalog": {
+        "schemaVersion": 1,
+        "kind": "dure.backend_ssh_references",
+        "references": [
+          {
+            "reference": "credential-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__IDENTITY_A__"
+          }
+        ]
+      }
+    },
+    {
+      "name": "reference kind mismatch",
+      "catalog": {
+        "schemaVersion": 1,
+        "kind": "dure.backend_ssh_references",
+        "references": [
+          {
+            "reference": "known-hosts-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__KNOWN_HOSTS_A__"
+          },
+          {
+            "reference": "credential-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__IDENTITY_A__"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unsupported schema version",
+      "catalog": {
+        "schemaVersion": 2,
+        "kind": "dure.backend_ssh_references",
+        "references": [
+          {
+            "reference": "known-hosts-profile:remote-a",
+            "kind": "known_hosts_file",
+            "path": "__KNOWN_HOSTS_A__"
+          },
+          {
+            "reference": "credential-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__IDENTITY_A__"
+          }
+        ]
+      }
+    },
+    {
+      "name": "wrong catalog kind",
+      "catalog": {
+        "schemaVersion": 1,
+        "kind": "another.catalog",
+        "references": [
+          {
+            "reference": "known-hosts-profile:remote-a",
+            "kind": "known_hosts_file",
+            "path": "__KNOWN_HOSTS_A__"
+          },
+          {
+            "reference": "credential-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__IDENTITY_A__"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invalid reference identity",
+      "catalog": {
+        "schemaVersion": 1,
+        "kind": "dure.backend_ssh_references",
+        "references": [
+          {
+            "reference": "known-hosts-profile:remote/A",
+            "kind": "known_hosts_file",
+            "path": "__KNOWN_HOSTS_A__"
+          },
+          {
+            "reference": "credential-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__IDENTITY_A__"
+          }
+        ]
+      }
+    },
+    {
+      "name": "relative material path",
+      "catalog": {
+        "schemaVersion": 1,
+        "kind": "dure.backend_ssh_references",
+        "references": [
+          {
+            "reference": "known-hosts-profile:remote-a",
+            "kind": "known_hosts_file",
+            "path": "relative/known-hosts"
+          },
+          {
+            "reference": "credential-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__IDENTITY_A__"
+          }
+        ]
+      }
+    },
+    {
+      "name": "control character in path",
+      "catalog": {
+        "schemaVersion": 1,
+        "kind": "dure.backend_ssh_references",
+        "references": [
+          {
+            "reference": "known-hosts-profile:remote-a",
+            "kind": "known_hosts_file",
+            "path": "/tmp/known\nhosts"
+          },
+          {
+            "reference": "credential-profile:remote-a",
+            "kind": "identity_file",
+            "path": "__IDENTITY_A__"
+          }
+        ]
+      }
+    }
+  ],
+  "fileCases": [
+    {
+      "target": "catalog",
+      "fault": "mode"
+    },
+    {
+      "target": "catalog",
+      "fault": "symlink"
+    },
+    {
+      "target": "catalog",
+      "fault": "oversize"
+    },
+    {
+      "target": "catalog",
+      "fault": "empty"
+    },
+    {
+      "target": "knownHosts",
+      "fault": "mode"
+    },
+    {
+      "target": "knownHosts",
+      "fault": "symlink"
+    },
+    {
+      "target": "knownHosts",
+      "fault": "oversize"
+    },
+    {
+      "target": "knownHosts",
+      "fault": "empty"
+    },
+    {
+      "target": "identity",
+      "fault": "mode"
+    },
+    {
+      "target": "identity",
+      "fault": "symlink"
+    },
+    {
+      "target": "identity",
+      "fault": "oversize"
+    },
+    {
+      "target": "identity",
+      "fault": "empty"
+    }
+  ]
+}

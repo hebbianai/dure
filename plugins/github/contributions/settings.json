@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "settings": [
+    {
+      "kind": "integer",
+      "key": "watch_interval_seconds",
+      "title": "Refresh interval",
+      "description": "How often the active workspace's GitHub issues are read again, in seconds.",
+      "scope": "workspace",
+      "default": 30,
+      "minimum": 5,
+      "maximum": 300
+    },
+    {
+      "kind": "choice",
+      "key": "default_view",
+      "title": "Default issue list",
+      "description": "The list shown first when the GitHub panel opens.",
+      "scope": "workspace",
+      "default": "list",
+      "options": [
+        {
+          "value": "list",
+          "label": "Open issues"
+        },
+        {
+          "value": "ready",
+          "label": "Assigned to me"
+        }
+      ]
+    }
+  ]
+}

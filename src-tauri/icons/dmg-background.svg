@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="420" viewBox="0 0 680 420">
+  <rect width="680" height="420" fill="#242424"/>
+  <rect x="150" y="270" width="60" height="30" rx="5" fill="#D4D4D4"/>
+  <rect x="443" y="270" width="114" height="30" rx="5" fill="#D4D4D4"/>
+  <text x="340" y="76" text-anchor="middle" fill="#F2F2F2"
+    font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="22" font-weight="500">Drag Dure to Applications.</text>
+  <path d="M312 200h56m-12-12 12 12-12 12" fill="none" stroke="#C8C8C8"
+    stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

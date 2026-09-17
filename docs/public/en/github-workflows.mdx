@@ -1,0 +1,44 @@
+---
+title: "Start work from GitHub"
+description: "Browse repository work, start an agent from an issue or pull request, and return to its context."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+The **GitHub** sidebar brings issues, pull requests and GitHub Projects into the workspace. Use it to choose work without copying an issue into a new conversation by hand.
+
+## Connect a repository
+
+1. Install the GitHub CLI (`gh`) on the Mac and sign in with access to the repository.
+2. Add its local Git folder as a Dure project. Confirm that its remote identifies the intended GitHub repository.
+3. Open **GitHub** in the sidebar and choose the repository.
+4. Select **Issues**, **Pull requests** or **Projects**, then use search, filters and refresh as needed.
+
+```sh
+gh auth status
+git remote -v
+```
+
+The sidebar uses your desktop GitHub access. Provider login is separate, and organization or GitHub Projects access may require additional GitHub permissions.
+
+## Start an agent from an issue
+
+Click **Start** on the work item. Dure opens **New agent** with the issue or pull-request context filled in. Review the task, project, provider and worktree choices, then press **Enter** or **Start agent**.
+
+<Frame caption="The Start action on an example GitHub issue opens the agent task flow.">
+  <ProductFigure scene="github" locale="en" label="The Start action on an example GitHub issue opens the agent task flow." />
+</Frame>
+
+Starting the agent does not itself merge a pull request or close an issue.
+
+## Return to the work
+
+If a matching agent already exists, **Open** returns to it. Read the item detail for discussion and current status, and use its external link when you want the full GitHub page. Check the repository and action before changing GitHub state.
+
+Review the agent's changes and verification using [Diff](/en/review-and-feedback). Keep the issue's outcome aligned with the work you actually accepted.
+
+## Configure the integration
+
+Open **Plugin → GitHub → Plugin settings** for settings such as refresh interval and the default issue list in the selected workspace. See [plugins](/en/plugins) for compatibility and settings scope.
+
+For a remote agent reading issues through the desktop login, use the separate [SSH GitHub read connection](/en/remote-and-ssh). Its supported commands and access boundaries differ from the local sidebar.

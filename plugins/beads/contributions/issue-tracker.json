@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "provider": "beads",
+  "operations": [
+    "human",
+    "list",
+    "ready",
+    "show",
+    "watch"
+  ],
+  "agent_binding": {
+    "kind": "scm_branch_metadata",
+    "metadata_key": "dure_worktree_branch"
+  },
+  "mutation_delivery": {
+    "kind": "terminal_command",
+    "requires_package_script": "beads",
+    "close": [
+      "pnpm",
+      "beads",
+      "--",
+      "mutate",
+      "update",
+      "{issue_id}",
+      "--status",
+      "closed"
+    ],
+    "delete": [
+      "pnpm",
+      "beads",
+      "--",
+      "mutate",
+      "delete",
+      "{issue_id}",
+      "--force"
+    ]
+  }
+}

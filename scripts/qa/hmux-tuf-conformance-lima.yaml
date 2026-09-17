@@ -1,0 +1,21 @@
+# Pinned native GNU/Linux environment for the full upstream TUF suite.
+minimumLimaVersion: 1.2.1
+vmType: vz
+os: Linux
+arch: aarch64
+images:
+  - location: https://cloud-images.ubuntu.com/releases/noble/release-20260725/ubuntu-24.04-server-cloudimg-arm64.img
+    arch: aarch64
+    digest: sha256:2eaec7286c49fdea713dddabcf5012cafa7097a658e916acb48f4bc5fdc8e419
+cpus: 4
+memory: 4GiB
+disk: 20GiB
+mounts: []
+mountType: virtiofs
+containerd:
+  system: false
+  user: false
+rosetta:
+  enabled: false
+  binfmt: false
+upgradePackages: false

@@ -1,0 +1,13 @@
+# Include only the runtime files this image consumes.
+**
+!mobile
+!mobile/push-service
+!mobile/push-service/Dockerfile
+!mobile/push-service/Dockerfile.dockerignore
+!mobile/push-service/apns.mjs
+!mobile/push-service/main.mjs
+!mobile/push-service/service.mjs
+!mobile/src
+!mobile/src/locales
+!mobile/src/locales/en.ts
+!mobile/src/locales/ko.ts

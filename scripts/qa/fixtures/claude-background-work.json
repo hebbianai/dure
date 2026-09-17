@@ -1,0 +1,20 @@
+[
+  {"name":"complete registry is empty","input":{"hook_event_name":"Stop","background_tasks":[],"session_crons":[]},"activity":"waiting","attention":"none","completed":true},
+  {"name":"child still running","input":{"hook_event_name":"Stop","background_tasks":[{"id":"child-1","type":"subagent","status":"running"}],"session_crons":[]},"activity":"working","attention":"none","completed":false},
+  {"name":"background shell still running","input":{"hook_event_name":"Stop","background_tasks":[{"type":"shell","status":"running"}],"session_crons":[]},"activity":"working","attention":"none","completed":false},
+  {"name":"pending MCP work","input":{"hook_event_name":"Stop","background_tasks":[{"type":"MCP task","status":"pending"}],"session_crons":[]},"activity":"working","attention":"none","completed":false},
+  {"name":"future task type remains protected","input":{"hook_event_name":"Stop","background_tasks":[{"type":"future-task","status":"unknown"}],"session_crons":[]},"activity":"working","attention":"none","completed":false},
+  {"name":"nonempty registry is never reinterpreted","input":{"hook_event_name":"Stop","background_tasks":[{"status":"completed"}],"session_crons":[]},"activity":"working","attention":"none","completed":false},
+  {"name":"scheduled wakeup retained","input":{"hook_event_name":"Stop","background_tasks":[],"session_crons":[{"id":"cron-1","recurring":false}]},"activity":"working","attention":"none","completed":false},
+  {"name":"registry unavailable","input":{"hook_event_name":"Stop"},"activity":"working","attention":"none","completed":false},
+  {"name":"task registry missing","input":{"hook_event_name":"Stop","session_crons":[]},"activity":"working","attention":"none","completed":false},
+  {"name":"schedule registry missing","input":{"hook_event_name":"Stop","background_tasks":[]},"activity":"working","attention":"none","completed":false},
+  {"name":"null registry is not empty","input":{"hook_event_name":"Stop","background_tasks":null,"session_crons":[]},"activity":"working","attention":"none","completed":false},
+  {"name":"object registry is not empty","input":{"hook_event_name":"Stop","background_tasks":{},"session_crons":[]},"activity":"working","attention":"none","completed":false},
+  {"name":"string registry is not empty","input":{"hook_event_name":"Stop","background_tasks":"[]","session_crons":[]},"activity":"working","attention":"none","completed":false},
+  {"name":"malformed schedule is not empty","input":{"hook_event_name":"Stop","background_tasks":[],"session_crons":false},"activity":"working","attention":"none","completed":false},
+  {"name":"idle notification cannot settle child work","input":{"hook_event_name":"Notification","notification_type":"idle_prompt"},"activity":null},
+  {"name":"informational notification cannot settle work","input":{"hook_event_name":"Notification","notification_type":"auth_success"},"activity":null},
+  {"name":"notification with no kind is not completion","input":{"hook_event_name":"Notification"},"activity":null},
+  {"name":"permission prompt stays protected","input":{"hook_event_name":"Notification","notification_type":"permission_prompt"},"activity":"waiting","attention":"approval_required","completed":false}
+]

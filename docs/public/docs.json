@@ -1,0 +1,313 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Dure",
+  "description": "Dure is an agent development environment (ADE) for AI coding agents. Run AI coding agents in parallel, organize local and SSH projects, and review code changes with your existing tools and accounts.",
+  "colors": {
+    "primary": "#18181B",
+    "light": "#FAFAFA",
+    "dark": "#18181B"
+  },
+  "logo": {
+    "light": "/logo/dure-light.svg",
+    "dark": "/logo/dure-dark.svg",
+    "href": "https://www.dureai.dev/"
+  },
+  "favicon": "/logo/favicon.svg",
+  "appearance": {
+    "default": "light",
+    "strict": false
+  },
+  "background": {
+    "color": {
+      "light": "#FFFFFF",
+      "dark": "#0E0E11"
+    }
+  },
+  "fonts": {
+    "body": {
+      "family": "Inter",
+      "source": "/fonts/inter-latin-wght-normal.woff2",
+      "format": "woff2"
+    },
+    "heading": {
+      "family": "Geist",
+      "weight": 500,
+      "source": "/fonts/geist-latin-wght-normal.woff2",
+      "format": "woff2"
+    }
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "navigation": {
+    "languages": [
+      {
+        "language": "en",
+        "groups": [
+          {
+            "group": "Start here",
+            "pages": [
+              "en/introduction",
+              "en/install",
+              "en/quickstart"
+            ]
+          },
+          {
+            "group": "Work on tasks",
+            "pages": [
+              "en/first-parallel-workflow",
+              "en/github-workflows",
+              "en/review-and-feedback"
+            ]
+          },
+          {
+            "group": "Workspace",
+            "pages": [
+              "en/spaces-and-panes",
+              "en/terminal-and-files",
+              "en/settings"
+            ]
+          },
+          {
+            "group": "Coding agents",
+            "pages": [
+              "en/providers",
+              "en/session-model"
+            ]
+          },
+          {
+            "group": "Connections",
+            "pages": [
+              "en/remote-and-ssh",
+              "en/vm-environments",
+              "en/plugins"
+            ]
+          },
+          {
+            "group": "Automation",
+            "pages": [
+              "en/cli-and-automation",
+              "en/orchestration"
+            ]
+          },
+          {
+            "group": "Help",
+            "pages": [
+              "en/current-limits",
+              "en/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "language": "cn",
+        "groups": [
+          {
+            "group": "开始使用",
+            "pages": [
+              "cn/introduction",
+              "cn/install",
+              "cn/quickstart"
+            ]
+          },
+          {
+            "group": "处理任务",
+            "pages": [
+              "cn/first-parallel-workflow",
+              "cn/github-workflows",
+              "cn/review-and-feedback"
+            ]
+          },
+          {
+            "group": "工作区",
+            "pages": [
+              "cn/spaces-and-panes",
+              "cn/terminal-and-files",
+              "cn/settings"
+            ]
+          },
+          {
+            "group": "编码智能体",
+            "pages": [
+              "cn/providers",
+              "cn/session-model"
+            ]
+          },
+          {
+            "group": "连接与集成",
+            "pages": [
+              "cn/remote-and-ssh",
+              "cn/vm-environments",
+              "cn/plugins"
+            ]
+          },
+          {
+            "group": "自动化",
+            "pages": [
+              "cn/cli-and-automation",
+              "cn/orchestration"
+            ]
+          },
+          {
+            "group": "帮助",
+            "pages": [
+              "cn/current-limits",
+              "cn/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "language": "ko",
+        "groups": [
+          {
+            "group": "시작하기",
+            "pages": [
+              "ko/introduction",
+              "ko/install",
+              "ko/quickstart"
+            ]
+          },
+          {
+            "group": "작업 진행",
+            "pages": [
+              "ko/first-parallel-workflow",
+              "ko/github-workflows",
+              "ko/review-and-feedback"
+            ]
+          },
+          {
+            "group": "작업 공간",
+            "pages": [
+              "ko/spaces-and-panes",
+              "ko/terminal-and-files",
+              "ko/settings"
+            ]
+          },
+          {
+            "group": "코딩 에이전트",
+            "pages": [
+              "ko/providers",
+              "ko/session-model"
+            ]
+          },
+          {
+            "group": "연결과 통합",
+            "pages": [
+              "ko/remote-and-ssh",
+              "ko/vm-environments",
+              "ko/plugins"
+            ]
+          },
+          {
+            "group": "자동화",
+            "pages": [
+              "ko/cli-and-automation",
+              "ko/orchestration"
+            ]
+          },
+          {
+            "group": "도움말",
+            "pages": [
+              "ko/current-limits",
+              "ko/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "language": "jp",
+        "groups": [
+          {
+            "group": "はじめに",
+            "pages": [
+              "jp/introduction",
+              "jp/install",
+              "jp/quickstart"
+            ]
+          },
+          {
+            "group": "タスクを進める",
+            "pages": [
+              "jp/first-parallel-workflow",
+              "jp/github-workflows",
+              "jp/review-and-feedback"
+            ]
+          },
+          {
+            "group": "ワークスペース",
+            "pages": [
+              "jp/spaces-and-panes",
+              "jp/terminal-and-files",
+              "jp/settings"
+            ]
+          },
+          {
+            "group": "コーディングエージェント",
+            "pages": [
+              "jp/providers",
+              "jp/session-model"
+            ]
+          },
+          {
+            "group": "接続と連携",
+            "pages": [
+              "jp/remote-and-ssh",
+              "jp/vm-environments",
+              "jp/plugins"
+            ]
+          },
+          {
+            "group": "自動化",
+            "pages": [
+              "jp/cli-and-automation",
+              "jp/orchestration"
+            ]
+          },
+          {
+            "group": "ヘルプ",
+            "pages": [
+              "jp/current-limits",
+              "jp/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Releases",
+        "href": "https://github.com/hebbianai/hebbian-releases/releases"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Download for macOS",
+      "href": "https://www.dureai.dev/download/mac/"
+    }
+  },
+  "footer": {
+    "links": [
+      {
+        "header": "Dure",
+        "items": [
+          {
+            "label": "Download for macOS",
+            "href": "https://www.dureai.dev/download/mac/"
+          },
+          {
+            "label": "All releases",
+            "href": "https://github.com/hebbianai/hebbian-releases/releases"
+          }
+        ]
+      }
+    ]
+  },
+  "styling": {
+    "eyebrows": "breadcrumbs",
+    "codeblocks": "system"
+  }
+}

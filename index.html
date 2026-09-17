@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tauri + React + Typescript</title>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <!-- Runs ahead of the app bundle: theme class + logo dot field until the
+         workspace paints (src/lib/workspace/boot/bootSplash.ts). -->
+    <script type="module" src="/src/bootSplash.ts"></script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

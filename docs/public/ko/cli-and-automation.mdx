@@ -1,0 +1,46 @@
+---
+title: "CLI로 작업 실행과 예약"
+description: "설치된 Dure CLI로 작업을 시작하고 세션을 확인하며 반복 실행을 예약합니다."
+---
+
+앱이 설치한 Dure CLI를 사용하세요. **Settings → Agent tooling**에서 도구 설정을 확인할 수 있고, `dure --help`는 설치된 버전의 명령을 설명합니다.
+
+## 프로젝트 폴더에서 시작
+
+```sh
+dure run --provider codex --worktree docs-review "코드와 README를 대조해 검토해줘. 파일은 수정하지 마."
+```
+
+전용 worktree로 작업 파일을 분리합니다. 실행 호스트에 설치되고 로그인된 제공자를 선택하세요. `--project`나 `--path`를 생략하면 백엔드가 현재 작업 폴더를 해석합니다.
+
+Dure의 pane으로 식별된 터미널 안에서 **--space**를 생략하면 현재 Space에 새 pane이 생깁니다. 해당 맥락이 없는 일반 터미널이나 CI에서는 화면 없이 실행됩니다. 목적지를 지정하려면 연결된 Space의 정확한 이름이나 ID를 `--space`로 전달하세요.
+
+## 추가 입력 전에 작업 확인
+
+```sh
+dure ls
+dure run --help
+dure schedule --help
+```
+
+`dure read`는 세션 화면을, `dure transcript`는 사용 가능한 대화 기록을 읽습니다. 목록이 반환한 세션과 작업 공간 식별자로 관리 세션을 선택하세요. 실행 시작이나 입력 전달에 성공했다는 응답이 작업 완료를 뜻하지는 않습니다.
+
+## 반복 작업 예약
+
+프로젝트 폴더에서 실행합니다.
+
+```sh
+dure schedule create --id daily-review --provider codex --cron "0 9 * * 1-5" --timezone Asia/Seoul "최근 변경을 검토하고 위험 요소를 알려줘. 파일은 수정하지 마."
+dure schedule show daily-review
+dure schedule runs daily-review
+```
+
+생성하면 지정한 시간대의 평일 오전 9시에 실행되도록 활성화됩니다. 예약만 저장하고 실행은 켜지 않으려면 `--disabled`를 추가하세요. 예약 실행은 독립된 Git worktree를 사용합니다. 반환된 실행 키로 `dure schedule inspect`를 호출하면 저장된 보고서를 읽을 수 있습니다.
+
+실행 서비스와 컴퓨터를 사용할 수 있어야 합니다. 앱 화면을 닫는 것과 서비스를 중지하는 것은 다릅니다. 절전 중이거나 꺼진 컴퓨터에서는 작업이 정상적으로 실행될 수 없습니다.
+
+## 원격 백엔드 선택
+
+SSH 실행에는 설정된 백엔드 ID를 **--backend**로 전달하세요. 해당 백엔드가 프로젝트 경로를 해석하며 제공자도 그곳에 준비되어 있어야 합니다. 명시적인 권한 옵션은 `dure run --help`로 확인하고 작업에 맞게 선택하세요.
+
+구조화된 메시지와 결정은 [에이전트 조율](/ko/orchestration)을 참고하세요.

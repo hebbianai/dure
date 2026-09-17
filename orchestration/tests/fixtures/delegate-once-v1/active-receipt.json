@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "delegate-once-1",
+  "runId": "run.d0094abf88333ccf4f020d4c3fb993fd9aa2f789cf689443889f3d1924768c20",
+  "taskId": "task.d0094abf88333ccf4f020d4c3fb993fd9aa2f789cf689443889f3d1924768c20",
+  "dispatchId": "dispatch.d0094abf88333ccf4f020d4c3fb993fd9aa2f789cf689443889f3d1924768c20",
+  "generation": 1,
+  "status": "active",
+  "launchIdempotencyKey": "workflow:d0094abf88333ccf4f020d4c3fb993fd9aa2f789cf689443889f3d1924768c20",
+  "session": {
+    "sessionId": "worker-session",
+    "workspaceId": "workspace-1",
+    "providerId": "codex",
+    "runnerPrincipal": "runner-1",
+    "runnerInstance": "instance-1",
+    "channelEpoch": "channel-1",
+    "hostInstanceId": "host-1",
+    "terminalEpoch": "terminal-1"
+  },
+  "promptDelivery": {
+    "idempotencyKey": "prompt:workflow:d0094abf88333ccf4f020d4c3fb993fd9aa2f789cf689443889f3d1924768c20",
+    "state": "written_to_pty",
+    "evidence": {
+      "providerReadyRevision": "7",
+      "providerReadyOutputSeq": "40",
+      "bodyRequestId": "body-request-1",
+      "submitRequestId": "submit-request-1",
+      "controllerGeneration": "3",
+      "activity": {
+        "state": "observed",
+        "observedOutputSeq": "42"
+      }
+    }
+  },
+  "createdAtMs": 1000,
+  "updatedAtMs": 1600
+}

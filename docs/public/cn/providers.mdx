@@ -1,0 +1,59 @@
+---
+title: "编码智能体和账户"
+description: "选择已安装的提供商，检查能力并管理账户与使用量。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+Dure 使用你安装的编码智能体 CLI 和提供商账户。模型、认证与计费由提供商负责；Dure 将工作上下文和视图放在一起。
+
+## 准备并选择提供商
+
+在 **Settings → Provider** 查看检测结果和设置说明。先使用在普通终端能够运行的 CLI。启动器包含 Claude Code、Codex、Pi、Kimi Code、Gemini CLI、OpenCode 等注册工具。
+
+在 **⌘N → New agent** 选择提供商。新智能体会打开原生终端面板。命令已注册不代表所有模型、账户功能和对话操作都可用。
+
+## 了解可用能力
+
+| 能力 | 需要确认 |
+| --- | --- |
+| 终端 | CLI 已安装，并能在选定目录和主机启动 |
+| 聊天视图 | 此提供商和运行时的面板提供 Terminal/Chat |
+| 已有对话 | Dure 能发现提供商保存的对话记录 |
+| 恢复或分叉 | 所选对话与提供商支持该操作 |
+| 账户配置 | 此提供商具有账户选择器 |
+| 使用量 | 提供商已返回近期数据 |
+
+Claude Code、Codex、OpenCode 和 Pi 有结构化聊天集成，是否可用还取决于安装的工具和运行时。其他工具可使用原生终端界面。
+
+<Tabs>
+  <Tab title="Codex">
+    <Frame caption="Dure 窗格中的 Codex 对话示例。">
+      <ProductFigure scene="codex" locale="cn" label="Dure 窗格中的 Codex 对话示例。" />
+    </Frame>
+  </Tab>
+  <Tab title="Claude Code">
+    <Frame caption="Dure 窗格中的 Claude Code 对话示例。">
+      <ProductFigure scene="claude" locale="cn" label="Dure 窗格中的 Claude Code 对话示例。" />
+    </Frame>
+  </Tab>
+  <Tab title="Pi">
+    <Frame caption="Dure 窗格中的 Pi 对话示例。">
+      <ProductFigure scene="pi" locale="cn" label="Dure 窗格中的 Pi 对话示例。" />
+    </Frame>
+  </Tab>
+</Tabs>
+
+## 选择账户
+
+打开 **Settings → AI provider accounts** 添加受支持的账户配置。启动智能体时或通过其账户控件选择所需账户。不支持此集成的提供商使用通常配置的登录。
+
+切换账户可能重启提供商进程并恢复对话。请查看切换提示和登录要求；移动面板不会切换账户。远程项目还需要在[远程主机](/cn/remote-and-ssh)上配置提供商。
+
+## 查看使用量和限额
+
+Claude 和 Codex 使用量控件显示提供商返回的限额和重置时间。可在 **Settings → Appearance** 启用顶部栏指示器，在 **Stats and usage** 查看活动。缺失或过时的数据无法证明还有可用额度。
+
+**Settings → General → Auto-switch when usage limit is reached** 适用于受支持的本地聊天面板，在收到限额错误后触发，并需要另一个有近期可用容量记录的账户。它不保证所有终端或 SSH 会话都能无缝切换。登录失败需要处理。
+
+默认提供商和权限选项在 **Settings → General**。按实际任务选择权限；[worktree 不是沙箱](/cn/current-limits)。

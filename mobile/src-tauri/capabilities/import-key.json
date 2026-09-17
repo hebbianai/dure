@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "import-key",
+  "description": "The system file picker, for one purpose: choosing an SSH private key this app did not write. Only `open` — nothing here saves a file, asks a question, or shows a message, and the picker itself is what grants the one file the person chose.",
+  "windows": ["main"],
+  "permissions": ["dialog:allow-open"]
+}

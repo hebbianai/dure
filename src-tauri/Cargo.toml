@@ -1,0 +1,143 @@
+[package]
+name = "dure"
+license = "MIT"
+version = "0.2.26"
+description = "Multi-agent AI workspace IDE"
+authors = ["kattpish"]
+edition = "2021"
+
+[lib]
+name = "agent_ide_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+provider-conformance-test-support = [
+  "hebbian-bounded-process/provider-conformance-test-support",
+]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# macos-private-api는 여기(플랫폼 무관 [dependencies])에 있어야 한다.
+# tauri-build의 allowlist 검사는 raw Cargo 명령에서도 이 common declaration을
+# 읽고 target별 섹션은 보지 않는다. 따라서 이 feature를
+# `[target.'cfg(target_os = "macos")'.dependencies]`로만 옮기면 빌드가
+# "features does not match the allowlist"로 패닉한다(2026-07-30 main 파괴).
+# Linux에서도 무해하다: 이 feature는 wry/fullscreen·wry/transparent로만 매핑되고
+# 둘 다 크로스플랫폼이다(tauri 2.11.5 Cargo.toml:108).
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+# codex 오버레이 config.toml의 notify 합성 — 문자열 수술 대신 파싱해 사용자
+# 설정을 비파괴로 보존한다(오버레이 사본은 앱 소유라 재직렬화가 무해하다).
+toml = "0.9"
+portable-pty = "0.9"
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+base64 = "0.22"
+tiny_http = "0.12"
+getrandom = "0.3"
+tauri-plugin-clipboard-manager = "2.3.2"
+tauri-plugin-notification = "2.3.3"
+sha2 = "0.10"
+hmac = "0.12"
+fs2 = "0.4"
+# 상태 표시줄 자원 위젯의 CPU·메모리·볼륨 표본. 기본 기능은 프로세스·네트워크
+# 수집까지 켜므로 필요한 컴포넌트만 남긴다 — 프로세스 census는 이미
+# hebbian-process-sampler가 담당한다.
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] }
+# QR 매트릭스만 만든다. `default-features = false`가 `image`/`svg`를 떼어내므로
+# 전이 의존성이 없고, 그리는 것은 웹뷰가 한다 — hmux-cli가 터미널에 반각
+# 블록으로 그리는 것과 같은 인코더를 쓰되 출력만 다르다.
+qrcode = { version = "0.14", default-features = false }
+# 허브 리스너의 신원. `ring` 백엔드는 이미 트리에 있다(russh 경유)라 새로 들어오는
+# 것은 인증서를 만드는 코드뿐이다. `aws-lc-rs` 는 cmake+bindgen 을 요구해서 고르지
+# 않는다 — hmux 워크스페이스가 russh 에서 같은 이유로 ring 을 고른다.
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+subtle = "2"
+hebbian-bounded-process = { path = "../crates/hebbian-bounded-process" }
+dure-app = { path = "../crates/dure-app" }
+dure-app-sqlite = { path = "../crates/dure-app/sqlite" }
+dure-git-checkout = { path = "../crates/dure-app/git-checkout" }
+dure-provider-adapter = { path = "../crates/dure-app/provider-adapter" }
+dure-provider-profile = { path = "../crates/dure-app/provider-profile" }
+dure-session-runtime = { path = "../crates/dure-app/session-runtime" }
+# 폰과 이 앱이 주고받는 문서의 모양. 폰 쪽(`mobile/src-tauri`)도 같은 크레이트를
+# 링크한다 — 두 벌로 두면 필드 순서 하나가 갈려도 책상에서 폰을 들고서야 드러난다.
+dure-hub-protocol = { path = "../crates/dure-hub-protocol" }
+# 릴레이 등록 증명의 서명. 이미 트리에 있는 백엔드(rustls/rcgen 이 쓰는 것과
+# 같은 `ring`)이므로 새 암호 구현이 들어오지 않는다.
+ring = "0.17"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls-no-provider"] }
+dirs = "6"
+keyring = "4.1.5"
+libc = "0.2"
+tokio = { version = "1", features = ["io-util", "net", "process", "sync", "time"] }
+tempfile = "3"
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tauri-plugin-updater = "2.10.1"
+tauri-plugin-process = "2.3.1"
+memchr = "2.8.2"
+
+[target.'cfg(unix)'.dependencies]
+hebbian-process-sampler = { path = "../crates/hebbian-process-sampler" }
+hmux-client = { path = "../hmux/crates/hmux-client", default-features = false, features = ["local-runtime", "terminal-state-stream"] }
+hmux-ssh-transport = { path = "../hmux/crates/hmux-ssh-transport" }
+
+[target.'cfg(windows)'.dependencies]
+hmux-client = { path = "../hmux/crates/hmux-client", default-features = false, features = ["local-runtime", "terminal-state-stream"] }
+windows = { version = "0.61.3", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+mac-notification-sys = "0.6.15"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+  "NSAnimationContext",
+  "NSSharingService",
+  # 셸 유리(NSVisualEffectView)의 외형을 앱 테마에 직접 맞추는 데 필요하다
+  # (shell_corner.rs) — 창 NSAppearance가 그 뷰까지 전파되지 않는 경우가 있다.
+  "NSAppearance",
+  "NSView",
+  # 신호등 버튼을 chrome 줄 중앙으로 내리는 데 필요하다 (traffic_lights.rs) —
+  # 타이틀바 accessory로 타이틀바 높이를 키워 버튼이 따라 내려오게 한다.
+  "NSWindow",
+  "NSResponder",
+  "NSPasteboard",
+  "NSPasteboardItem",
+  "NSImageRep",
+  "NSBitmapImageRep",
+] }
+objc2-foundation = { version = "0.3", features = [
+  "NSArray",
+  "NSBundle",
+  "NSString",
+  "NSURL",
+  "NSGeometry",
+  "NSData",
+  "NSDictionary",
+] }
+objc2-user-notifications = "0.3.2"
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+hmux-host = { path = "../hmux/crates/hmux-host", default-features = false }
+# 릴레이 다이얼러의 관통 시험이 **진짜 릴레이**를 띄운다. 흉내낸 릴레이로
+# 시험하면 우리가 우리 가정을 통과시키는 것뿐이고, 등록 증명이나 페어링 순서가
+# 어긋나도 드러나지 않는다. dev-dependency 라 앱에는 실리지 않는다.
+dure-relay = { path = "../crates/dure-relay" }
+
+[target.'cfg(windows)'.dev-dependencies]
+terminal-state-protocol = { path = "../hmux/crates/terminal-state-protocol" }
+
+[profile.dev.package.terminal-state-protocol]
+opt-level = 2
+
+[patch.crates-io]
+tauri-runtime = { path = "vendor/tauri-runtime" }

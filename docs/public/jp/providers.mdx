@@ -1,0 +1,59 @@
+---
+title: "コーディングエージェントとアカウント"
+description: "インストール済みのプロバイダーを選び、機能、アカウント、使用量を確認します。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+Dure はインストール済みのコーディングエージェント CLI とプロバイダーアカウントを使います。モデル、認証、課金はプロバイダーが提供し、Dure は作業の文脈と画面をまとめます。
+
+## プロバイダーを準備して選ぶ
+
+**Settings → Provider** で検出結果と設定案内を確認します。通常のターミナルで動く CLI から始めてください。Claude Code、Codex、Pi、Kimi Code、Gemini CLI、OpenCode などの登録ツールを選択できます。
+
+**⌘N → New agent** でプロバイダーを選びます。新規エージェントはネイティブのターミナルペインで開きます。コマンドの登録は、すべてのモデル、アカウント機能、会話操作への対応を意味しません。
+
+## 利用できる機能を確認する
+
+| 機能 | 確認すること |
+| --- | --- |
+| ターミナル | CLI がインストールされ、選択したフォルダーとホストで起動できる |
+| チャット表示 | そのプロバイダーとランタイムで Terminal/Chat が表示される |
+| 既存の会話 | プロバイダーが保存した会話記録を Dure が検出できる |
+| 再開や分岐 | 選択した会話とプロバイダーが操作に対応している |
+| アカウントプロファイル | そのプロバイダーにアカウント選択機能がある |
+| 使用量 | プロバイダーが新しい情報を返している |
+
+Claude Code、Codex、OpenCode、Pi には構造化チャットの統合があり、利用可否はインストールされたツールとランタイムにも依存します。ほかのツールはネイティブのターミナル表示で利用できます。
+
+<Tabs>
+  <Tab title="Codex">
+    <Frame caption="Dure ペインに表示した Codex の会話例。">
+      <ProductFigure scene="codex" locale="jp" label="Dure ペインに表示した Codex の会話例。" />
+    </Frame>
+  </Tab>
+  <Tab title="Claude Code">
+    <Frame caption="Dure ペインに表示した Claude Code の会話例。">
+      <ProductFigure scene="claude" locale="jp" label="Dure ペインに表示した Claude Code の会話例。" />
+    </Frame>
+  </Tab>
+  <Tab title="Pi">
+    <Frame caption="Dure ペインに表示した Pi の会話例。">
+      <ProductFigure scene="pi" locale="jp" label="Dure ペインに表示した Pi の会話例。" />
+    </Frame>
+  </Tab>
+</Tabs>
+
+## アカウントを選ぶ
+
+**Settings → AI provider accounts** で対応するアカウントプロファイルを追加します。開始時かアカウントコントロールから使用するアカウントを選んでください。統合に対応していないプロバイダーは通常のログイン設定を使います。
+
+アカウント切り替えでは、プロバイダープロセスの再起動と会話の再開が行われる場合があります。切り替え案内とログイン要求を確認してください。ペインの移動ではアカウントは変わりません。リモートプロジェクトでは[リモートホスト](/jp/remote-and-ssh)にも設定が必要です。
+
+## 使用量と上限を確認する
+
+Claude と Codex の使用量コントロールは、プロバイダーが返した上限とリセット時刻を表示します。**Settings → Appearance** で上部バーの表示を有効にし、**Stats and usage** で活動を確認できます。情報がない、または古い場合は、余裕があるとは判断できません。
+
+**Settings → General → Auto-switch when usage limit is reached** は、対応するローカルチャットペインで上限エラーが報告された後に適用されます。最近の観測で余裕が確認できる別アカウントが必要です。すべてのターミナルや SSH セッションで途切れなく切り替わる保証ではありません。ログインの失敗は対応が必要です。
+
+既定のプロバイダーと権限は **Settings → General** で選べます。実際のタスクに合わせて設定してください。[worktree はサンドボックスではありません](/jp/current-limits)。

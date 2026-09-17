@@ -1,0 +1,82 @@
+# Deploys the feedback intake to Fly.
+#
+# Deploy from **the repository root**. The Dockerfile only copies its own
+# crate directory (no `crates/dure-hub-protocol` dependency, unlike the
+# relay), but the build context still has to be the repo root because the
+# `COPY` path inside the Dockerfile is written relative to it:
+#
+#   fly deploy -c crates/dure-feedback-intake/fly.toml .
+#
+# Operations doc: docs/operations/feedback-intake.md
+
+app = "dure-feedback"
+
+# Tokyo, matching the relay's choice for the same reason: it is close to
+# where this team actually is. Latency barely matters here (a human is
+# reading a form response, not typing into a live terminal), so this could
+# just as well be a different region if that ever needs to change.
+primary_region = "nrt"
+
+[build]
+  # Relative to **this file**, not the build context (the repo root).
+  dockerfile = "Dockerfile"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+
+  # **This service may sleep — the opposite choice from the relay, and
+  # deliberately so.**
+  #
+  # The relay pins `min_machines_running = 1` because it carries live
+  # terminal control connections: if it sleeps, every registered laptop's
+  # connection drops mid-session and a phone sees "computer offline" while
+  # the laptop is right there, running. There is no equivalent cost here.
+  # A feedback submission is a single POST that a human has already sent
+  # and moved on from; the worst a sleeping machine costs is one extra
+  # second or two of cold start on the first request after idle, invisible
+  # to whoever submitted it. So this service is allowed to suspend when
+  # idle and does not need a machine held open on standby.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  # Still exactly one machine, for the relay's same reason but a different
+  # mechanism: the rate limiter's per-device/per-IP counters
+  # (`src/limits.rs`) live only in that one process's memory. A second
+  # replica does not double capacity — it gives every client a coin flip
+  # between two limiters that have never heard of each other's hits, so
+  # the hourly caps stop meaning what they say. Going beyond one machine
+  # needs a shared counter store first; nothing in this design provides one.
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  # `GET /health` exists in `src/http.rs` but was wired to nothing, so a
+  # machine that had booted into a broken state still took traffic. This is
+  # the one consumer of that route.
+  #
+  # It does not fight the suspend policy above: Fly runs checks from flyd
+  # against started machines only — a suspended machine is not checked, and
+  # checks do not pass through the proxy, so they are not the requests that
+  # auto-start or hold a machine open. `grace_period` covers cold start.
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "get"
+    path = "/health"
+    protocol = "http"
+
+# Smallest size available. This process buffers small JSON bodies and makes
+# a handful of outbound HTTPS calls per submission — CPU and memory
+# consumption round to nothing, and traffic volume is bounded by the same
+# per-device/per-IP hourly caps that require the single machine above.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

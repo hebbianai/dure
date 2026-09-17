@@ -1,0 +1,48 @@
+{
+  "schema": "dure-storyboard-perceptual-baseline/v2",
+  "storyboardId": "product-tour",
+  "targetId": "github-issue",
+  "locale": "en",
+  "storyboardSha256": "85e97e258fd28d69dd1c27831370901dfe3bbc1c89292c044475214334a93f97",
+  "reviewRecipeSha256": "54db1c22b0907f4764df9d46f4aff90946d42f1e7440ac3fcc0ca4a881fee6f3",
+  "sourceArtifacts": [
+    {
+      "sourceId": "github-issue",
+      "bytes": 30807893,
+      "sha256": "cfacd0f338af4b8a1a232fdf5e6ab7db28c50c0cdb1a94e6888e27c63743b4de"
+    }
+  ],
+  "sourceBuilds": [
+    {
+      "sourceId": "github-issue",
+      "buildId": "0.2.19+0ac22e62d5c6",
+      "sourceRevision": "0ac22e62d5c6"
+    }
+  ],
+  "frames": [
+    {
+      "frame": 0,
+      "perceptualHash": "b808502000000101"
+    },
+    {
+      "frame": 228,
+      "perceptualHash": "b150102000020101"
+    },
+    {
+      "frame": 456,
+      "perceptualHash": "b050102000020101"
+    },
+    {
+      "frame": 683,
+      "perceptualHash": "b850102000120101"
+    },
+    {
+      "frame": 911,
+      "perceptualHash": "b850102000220101"
+    },
+    {
+      "frame": 1082,
+      "perceptualHash": "b851102000010102"
+    }
+  ]
+}

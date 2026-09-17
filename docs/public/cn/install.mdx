@@ -1,0 +1,34 @@
+---
+title: "安装和更新 Dure"
+description: "下载当前 Mac 测试版，准备智能体并保持应用更新。"
+---
+
+Dure 公开测试版支持 **Apple silicon Mac**。请准备已安装的编码智能体 CLI 和对应提供商账户。Dure 不包含模型订阅。
+
+## 安装 Mac 应用
+
+1. [下载最新版 macOS 版 Dure](https://www.dureai.dev/download/mac/)。
+2. 打开 DMG，将 Dure 拖入“应用程序”。
+3. 从“应用程序”打开 Dure。
+
+此链接始终提供最新的 Mac 公开测试版。所下载版本的支持功能、签名与公证信息以及已知限制，请参阅[发行说明](https://github.com/hebbianai/hebbian-releases/releases)。
+
+## 准备一个编码智能体
+
+安装并登录你要使用的智能体。先在普通终端确认其命令可以启动，例如 `claude`、`codex` 或 `pi`。Dure 的 **Settings → Provider** 显示检测到的工具和可用设置操作。
+
+提供商订阅、模型权限和使用费用与 Dure 分开。账户配置及终端/聊天支持见[编码智能体](/cn/providers)。
+
+## 更新已有安装
+
+打开 **Settings → General** 查看已安装版本，然后选择 **Check for updates**。有新测试版时，阅读提示并选择下载、安装操作。仅检查更新不会安装或重启应用。
+
+不支持此更新流程的旧测试版需要手动替换一次：下载当前 DMG，退出旧应用，替换“应用程序”中的 Dure，再重新打开。更新前检查未完成的工作和[会话状态](/cn/session-model)。恢复与原进程持续运行是不同的情况。
+
+<Accordion title="macOS 显示安全警告或应用已损坏">
+  确认文件来自上面的官方下载链接。如果提示应用损坏，请重新下载并核对发行信息。按具体警告遵循 [Apple 指南](https://support.apple.com/en-us/102445)。不要关闭 macOS 安全保护，也不要强行打开被报告为恶意软件的文件。
+</Accordion>
+
+## 开始工作
+
+[打开项目并启动第一个智能体](/cn/quickstart)。如果缺少工具或登录失败，请查看[故障排查](/cn/troubleshooting)。

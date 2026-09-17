@@ -1,0 +1,25 @@
+[package]
+name = "hmux-release-candidate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+auditable-serde.workspace = true
+clap.workspace = true
+flate2.workspace = true
+hex.workspace = true
+hmux-release-trust = { path = "../hmux-release-trust" }
+libc.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tar.workspace = true
+tempfile.workspace = true

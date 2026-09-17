@@ -1,0 +1,35 @@
+---
+title: "什么是 Dure？"
+description: "Dure 是面向 Claude Code、Codex 等 AI 编码智能体的智能体开发环境（ADE，Agent Development Environment），支持 Git worktree 并行任务、SSH 项目和代码审查。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+[Dure](https://www.dureai.dev/) 是智能体开发环境（ADE，Agent Development Environment），为你与 AI 编码智能体提供共同工作的工作区。在不同项目和 SSH 主机上运行智能体，将对话与文件放在一起，并决定保留或调整哪些内容。
+
+你确定目标和成功标准，智能体使用原有工具执行，Dure 连接会话、工作上下文和审查界面。
+
+Dure 是工作区，不是编码模型或服务商订阅。它使用 Claude Code、Codex 等原生编码智能体 CLI 和你已有的账户；服务商订阅和使用费用独立于 Dure。各智能体的具体功能请参阅[支持的代理](/cn/providers)。
+
+<Frame caption="六个示例窗格：两个 Codex、两个 Claude Code、Pi 和一个终端。">
+  <ProductFigure scene="workspace" locale="cn" label="六个示例窗格：两个 Codex、两个 Claude Code、Pi 和一个终端。" />
+</Frame>
+
+## 选择下一步
+
+<CardGroup cols={2}>
+  <Card title="开始第一个任务" icon="terminal" href="/cn/quickstart">打开项目，按 ⌘N，向智能体说明任务。</Card>
+  <Card title="并行工作" icon="git-branch" href="/cn/first-parallel-workflow">用独立 worktree 分开修改任务，并检查合并后的结果。</Card>
+  <Card title="从 GitHub 开始" icon="github" href="/cn/github-workflows">选择 issue 或 pull request，打开已填入上下文的任务。</Card>
+  <Card title="整理工作区" icon="layout-dashboard" href="/cn/spaces-and-panes">拆分终端面板、均衡布局并切换 Space。</Card>
+  <Card title="审查并指导" icon="file-diff" href="/cn/review-and-feedback">阅读本地 diff，将具体反馈发送给智能体。</Card>
+  <Card title="返回已有工作" icon="history" href="/cn/session-model">重新连接仍在运行的会话，或检查已结束会话的恢复选项。</Card>
+</CardGroup>
+
+## 围绕任务组织工作
+
+在智能体旁边用 shell 执行检查，在编辑器中打开文件，同时关注目标与证据。[提供商账户](/cn/providers)、[SSH 项目](/cn/remote-and-ssh)和[插件](/cn/plugins)连接你已有的工具。[设置](/cn/settings)用于调整文字、语言和通知。
+
+重复任务可使用 [CLI 执行与调度](/cn/cli-and-automation)。分派的任务需要结构化消息或明确决策时，可使用[智能体协调](/cn/orchestration)。
+
+从[当前 Mac 测试版](/cn/install)开始，并在依赖无人值守执行之前阅读[实际使用边界](/cn/current-limits)。

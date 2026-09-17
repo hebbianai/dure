@@ -1,0 +1,20 @@
+{
+  "name": "dure-cli",
+  "license": "MIT",
+  "version": "0.2.26",
+  "description": "Command-line control for Dure agents",
+  "type": "module",
+  "bin": {
+    "dure": "./dure.mjs",
+    "hebbian-ade": "./dure.mjs",
+    "hebbian-ide": "./dure.mjs"
+  },
+  "files": [
+    "dure.mjs",
+    "lib",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

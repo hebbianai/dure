@@ -1,0 +1,89 @@
+# Manual curation of the design-coverage inventory.
+# Keys are axis-namespaced ("surface:...", "token:..."); unknown keys are gate errors.
+# Sorted, one entry per line, to minimize multi-agent merge conflicts.
+schemaVersion: 1
+surface:
+  exclude:
+    "surface:workspace/LazyMockupPanelLoader": "Suspense 로더 shim — 시각 정체는 panels/MockupPanel 스펙이 커버, 폴백 문구는 공용 PanelLoader"
+    "surface:workspace/LazyTokenInspectorPanelLoader": "Suspense 로더 shim — 시각 정체는 panels/TokenInspectorPanel 스펙이 커버, 폴백 문구는 공용 PanelLoader"
+  merge:
+    # The transcript row renderers ship from one file split off AgentChatSurface
+    # for file size only; they never render outside the Chat body, so the
+    # AgentChatSurface spec judges them.
+    "surface:agents/AgentChatSurface":
+      members:
+        - "surface:agents/ChatComposer"
+        - "surface:agents/ChatMarkdown"
+        - "surface:agents/ChatToolBurst"
+        - "surface:agents/TranscriptContents"
+    # 첫 실행 화면의 구성 부품 — 화면 밖에서 단독으로 쓰이지 않아 스펙이
+    # 화면 단위로 판정한다. OnboardingHero만은 폴더 시작 화면과 공유하고,
+    # 그 화면에서의 모습은 OnboardingFolderStart 스펙의 Ideal이 기술한다.
+    "surface:onboarding/OnboardingImportPreview":
+      members:
+        - "surface:onboarding/OnboardingImportCheckbox"
+        - "surface:onboarding/OnboardingHero"
+        - "surface:onboarding/OnboardingImportLayoutPreview"
+        - "surface:onboarding/OnboardingImportSpaceGroup"
+        - "surface:onboarding/OnboardingImportToolbar"
+    # The agent-CLI installer row (b317983a9) is exported from and rendered
+    # only inside OnboardingFolderStart; that surface's spec already describes
+    # the install command rows and owns their states.
+    "surface:onboarding/OnboardingFolderStart":
+      members:
+        - "surface:onboarding/ProviderInstallCommandRow"
+    # The one-click CLI update row renders only inside ProvidersPage's
+    # per-provider CLI section and has no route or story of its own; the
+    # ProvidersPage spec's CLI-update-row section judges its states too.
+    "surface:settings/ProvidersPage":
+      members:
+        - "surface:settings/ProviderCliUpdateRow"
+        # The macOS-quarantine Approve notice is the update row's sibling: it
+        # renders only under the same per-provider CLI section, when preflight
+        # was SIGKILLed; the ProvidersPage spec's quarantine section judges it.
+        - "surface:settings/ProviderCliQuarantineNotice"
+    # 평탄화된 설정 페이지의 뼈대 한 쌍 — 한 파일에서 함께 나가고 섹션 없이
+    # 행만 쓰는 호출부가 없어, 치수·정렬 판단을 한 스펙이 함께 소유한다.
+    "surface:settings/SettingsSection":
+      members:
+        - "surface:settings/SettingRow"
+    # One pane surface chooses between these renderers by binding capability.
+    # Users cannot select them independently; TerminalView is the sole boundary.
+    "surface:terminal/TerminalView":
+      members:
+        - "surface:terminal/LegacyTerminalView"
+        - "surface:terminal/StructuredTerminalView"
+    # Tooltip assembly parts ship from one file and have no standalone visual
+    # identity outside a composed Tooltip; the ui/Tooltip spec judges them.
+    "surface:ui/Tooltip":
+      members:
+        - "surface:ui/TooltipContent"
+        - "surface:ui/TooltipProvider"
+        - "surface:ui/TooltipTrigger"
+    # The attention rollup glyph (dot + count) ships from the space heading's
+    # file and renders only inside the space and repository head rows; the
+    # SpacesGroupHeader spec's rollup bullet judges it.
+    "surface:spaces/SpacesGroupHeader":
+      members:
+        - "surface:spaces/SpacesAttentionRollup"
+    # The open-row list is the rows part split off SpacesRepositoryGroup so
+    # the project-first section can share it; it never renders outside a
+    # repository group and has no visual identity beyond its rows.
+    "surface:spaces/SpacesRepositoryGroup":
+      members:
+        - "surface:spaces/SpacesOpenRowList"
+    # The radio group is Radix state plumbing (value + onValueChange) with no
+    # visual of its own; the radio item spec describes the whole idiom.
+    "surface:ui/DropdownMenuRadioItem":
+      members:
+        - "surface:ui/DropdownMenuRadioGroup"
+    # This icon-selection fragment belongs to PaneChrome and has no standalone state.
+    "surface:workspace/PaneChrome":
+      members:
+        - "surface:workspace/PaneChromeIcon"
+  renamedFrom:
+    # 2026-08-15 ui 승격 — settings/Segmented.tsx가 ui/segmented.tsx로 이동,
+    # 옛 경로는 star 재수출 셔틀만 남아 surface id를 만들지 않는다.
+    "surface:settings/Segmented": "surface:ui/Segmented"
+token:
+  exclude: {}

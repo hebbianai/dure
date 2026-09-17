@@ -1,0 +1,17 @@
+export const hmux: Record<string, string> = {
+	"hmux.conversion.batchConfirm.deferredNote": " 当前无法转换的 {n} 个会话将保持不变。",
+	"hmux.conversion.replacementStartFailed": "未能启动 Hmux replacement",
+	"hmux.remote.openFailed": "无法在 {host} 上打开远程会话：{detail}",
+	"hmux.conversion.batchConfirm.message": "将 {n} 个会话转换为托管会话。每个 provider 将依次停止，并在新的 terminal epoch 中恢复同一对话。窗格位置和对话 ID 将被保留。{deferred} 是否继续？",
+	"hmux.conversion.eligibility.providerUnsupported": "目前尚不支持将 {provider} 会话转换为托管会话。",
+	"hmux.conversion.confirm.message": "转换为 {target} 会停止当前 provider，并在新的 terminal epoch 中恢复同一对话。窗格位置和对话 ID 将被保留，但正在运行的命令会被中断。是否继续？",
+	"hmux.conversion.eligibility.projectAmbiguous": "多个项目拥有同一工作目录，因此无法转换。",
+	"hmux.conversion.target.managed": "托管会话",
+	"hmux.conversion.target.standalone": "独立会话",
+	"hmux.conversion.eligibility.notReady": "会话状态就绪后即可转换为托管会话。",
+	"hmux.conversion.preflightFailed": "会话转换的预检验证失败",
+	"hmux.conversion.eligibility.agentWorking": "代理完成当前任务后即可转换为托管会话。",
+	"hmux.conversion.eligibility.attentionRequired": "处理完请求的输入后即可转换为托管会话。",
+	"hmux.conversion.eligibility.thisProvider": "此 provider",
+	"hmux.conversion.eligibility.projectNotFound": "需要先将此工作目录注册为项目，才能转换为托管会话。",
+};

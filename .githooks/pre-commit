@@ -1,0 +1,4 @@
+#!/bin/sh
+# Local hooks are intentionally non-blocking. Ordinary main pushes are
+# transport-only; CI owns guardrails and release owns full product verification.
+exit 0

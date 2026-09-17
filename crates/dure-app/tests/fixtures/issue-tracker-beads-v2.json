@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "provider": "beads",
+  "authority": "provider",
+  "common_operations": [
+    "list",
+    "show",
+    "watch"
+  ],
+  "provider_capabilities": [
+    "beads.issue.dependencies",
+    "beads.issue.human",
+    "beads.issue.ready"
+  ]
+}

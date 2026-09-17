@@ -1,0 +1,67 @@
+import type { EnglishTranslationDictionary } from "@/lib/settings/englishTranslationRegistry";
+
+/** Compatibility copy without a current static t() call site. New copy belongs in a feature fragment. */
+export const legacyEnglishTranslations = {
+	"활성 pane 닫기": "Close active pane",
+	"데스크탑 전환": "Switch desktop",
+	"선택 복사": "Copy selection",
+	"총 토큰": "Total Tokens",
+	"데이터 있음": "Has Data",
+	"데이터 없음": "No Data",
+	working: "working",
+	blocked: "blocked",
+	spawning: "spawning",
+	idle: "idle",
+	새로: "new",
+	메뉴: "menu",
+	그룹: "grouped",
+	정렬: "Sort",
+	브랜치: "Branches",
+	그래프: "Graph",
+	"Beads 패키지에는 Codex와 Claude Code 연동 플러그인이 함께 포함되어 있습니다.":
+		"The Beads package includes integration plugins for Codex and Claude Code.",
+	"모든 열린 작업": "All open work",
+	"Beads 알림": "Beads notifications",
+	"브라우저 창 열기": "Open a browser window",
+	"사용량 상세 보기": "View usage details",
+	"SSH 터미널": "SSH Terminals",
+	"SSH 호스트": "SSH Hosts",
+	끊김: "Disconnected",
+	대화: "Conversations",
+	"최근 작업": "Recent work",
+	"로컬 터미널": "Local Terminal",
+	"새 로컬 터미널": "New local terminal",
+	"연결된 관리 에이전트를 찾지 못했습니다":
+		"No linked managed agent was found.",
+	"외부 세션": "External sessions",
+	필터: "Filter",
+	"에이전트 계정": "Agent accounts",
+	"에이전트 시작": "Start Agent",
+	오류: "Error",
+	"탭 닫기": "Close tab",
+	프로젝트: "Projects",
+	"프로젝트 제거": "Remove project",
+	"프로젝트 추가": "Add project",
+	"분할 패널": "Split panes",
+	"비활성 창 불투명도": "Inactive pane opacity",
+	"이미 정리됨": "Already cleaned up",
+	"진행 중인 복구의 원본": "Source of an in-flight recovery",
+	"세션이 그새 교체됨": "Session was replaced in the meantime",
+	고정폭: "Monospaced",
+	"변경 확인 주기": "Change polling interval",
+	"활성 workspace에서 Beads 변경을 다시 확인하는 간격입니다.":
+		"How often to check active workspaces for Beads changes.",
+	"기본 이슈 보기": "Default issue view",
+	"Beads 패널을 열었을 때 처음 표시할 이슈 목록입니다.":
+		"The issue list shown when the Beads panel opens.",
+	"진행 가능한 작업": "Ready work",
+	"사람의 결정이 필요하거나 blocker가 바뀌면 Dure 알림을 표시합니다.":
+		"Show a Dure notification when a human decision is needed or blockers change.",
+	"Codex 플러그인 설치 범위": "Codex plugin installation scope",
+	"Dure가 Codex용 Beads 플러그인을 맞출 기본 범위입니다.":
+		"The default scope where Dure reconciles the Beads plugin for Codex.",
+	"Dure 관리형 프로필": "Dure-managed profiles",
+	"Claude 플러그인 설치 범위": "Claude plugin installation scope",
+	"Dure가 Claude Code용 Beads 플러그인을 맞출 기본 범위입니다.":
+		"The default scope where Dure reconciles the Beads plugin for Claude Code.",
+} satisfies EnglishTranslationDictionary;

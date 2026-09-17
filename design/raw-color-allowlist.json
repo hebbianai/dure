@@ -1,0 +1,7 @@
+{
+	"schemaVersion": 1,
+	"files": {
+		"src/components/settings/QrImage.tsx": 2,
+		"src/components/usage/ProviderUsageDetail.tsx": 1
+	}
+}

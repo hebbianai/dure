@@ -1,0 +1,154 @@
+---
+title: "VM environments"
+description: "Give a worktree its own compute environment with Pro."
+---
+
+Pro can prepare a separate VM or container for a worktree using a recipe in your
+repository. Dure runs the recipe locally, registers its SSH endpoint, and uses
+the normal remote project and agent workflow inside that environment.
+
+This requires a Pro-enabled Dure build and Pro interface mode. Public Basic
+builds do not admit creation or resume. Suspending and destroying an existing
+environment remain available in Basic.
+
+## Use an environment
+
+1. Select a local Git project in **Add agent** and choose **Use a VM · Pro**.
+2. Choose a recipe, name the environment, and select **Prepare environment**.
+   Review the scripts first: they run with your local credentials and can create
+   resources billed by your provider.
+3. When it is running, choose **Continue in this environment**. Confirm the SSH
+   host key, then choose the branch and create the remote worktree as usual.
+4. Manage **Suspend**, **Resume**, and **Destroy** in **Settings → VM environments**.
+
+Provisioning continues when the dialog closes. Opening a running environment
+from settings lets you recover from a failed SSH registration or agent launch.
+Deleting an agent or closing its pane does **not** destroy its environment.
+Use **Destroy** explicitly after saving or pushing work you need to keep.
+Suspending disconnects sessions; destroying can remove all guest files.
+Dure does not migrate live processes or copy provider login credentials into a VM.
+
+## Try a local VM with Lima
+
+Install [Lima](https://lima-vm.io/docs/installation/) 1.2 or later, Git, and Python 3.
+Download the [Lima recipe](/examples/lima/lima.sh) into your project at
+`.dure/lima.sh` and its [manifest](/examples/lima/dure.environments.json) at
+`dure.environments.json` in the project root.
+
+The example uses an Ubuntu 24.04 VM with 2 CPUs, 2 GiB memory, and a 12 GiB disk.
+It copies the currently committed `HEAD` into `/home/dure/project`; uncommitted
+changes, ignored files, and credentials are not included. It mounts no host
+directories. Install your agent CLI and sign in inside the VM before starting
+agent work.
+
+Lima supplies the [SSH endpoint and key](https://lima-vm.io/docs/usage/ssh/).
+The recipe pins a loopback port so restarting retains the same connection.
+On supported Macs, Lima uses [Apple virtualization](https://lima-vm.io/docs/config/vmtype/vz/).
+Private provisioning logs are written beside `LIMA_HOME` in a sibling directory
+named `<LIMA_HOME directory name>-dure-logs`. Default: `~/.lima-dure-logs`.
+
+## Recipe contract
+
+Create `dure.environments.json` at your project root:
+
+~~~json
+{
+  "schemaVersion": 1,
+  "environments": [{
+    "id": "my-vm",
+    "name": "My VM provider",
+    "create": ".dure/create.sh",
+    "destroy": ".dure/destroy.sh",
+    "suspend": ".dure/suspend.sh",
+    "resume": ".dure/resume.sh"
+  }]
+}
+~~~
+
+`create` and `destroy` are required. `suspend` and `resume` must both be present
+or both omitted. Paths must resolve to files inside the project. Each script
+must be UTF-8 and at most 64 KiB; a manifest can contain up to 32 recipes.
+The JSON-encoded captured scripts for one recipe must fit within 256 KiB.
+
+Scripts execute through Bash in a private, persistent working directory for
+that environment. Use `DURE_PROJECT_PATH` to read the source repository.
+Dure captures the selected script contents and their digest before creation.
+Changing a script after selecting it requires reloading the recipe. Later
+lifecycle operations use the captured script, including after the project has
+been deleted. Make cleanup self-contained; helper files in the source project
+are not snapshotted.
+
+Each invocation receives these environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `DURE_ENVIRONMENT_ID` | Stable, preallocated instance ID, available before provisioning |
+| `DURE_ENVIRONMENT_NAME` | User-selected display name |
+| `DURE_ENVIRONMENT_ACTION` | `create`, `suspend`, `resume`, or `destroy` |
+| `DURE_ENVIRONMENT_SCHEMA_VERSION` | `1` |
+| `DURE_PROJECT_PATH` | Original local project path |
+
+Stdin contains one JSON object with `schemaVersion`, `action`, `instanceId`,
+`name`, `projectPath`, and `recipeResult` (the last successful result or `null`).
+Ambient Dure, Hmux, and Git routing variables are excluded. Other inherited
+environment variables are available to your provider CLI.
+Run provisioning to completion in the foreground. The bounded child inherits
+an operation lock; a daemon that keeps that descriptor open prevents subsequent
+lifecycle operations until it releases it.
+
+Successful `create` and `resume` must print exactly one JSON result to stdout:
+
+~~~json
+{
+  "schemaVersion": 1,
+  "resourceId": "provider-resource-id",
+  "connection": {
+    "host": "127.0.0.1",
+    "port": 2222,
+    "user": "developer",
+    "keyPath": "/absolute/local/path/to/private/key",
+    "projectRoot": "/absolute/guest/repository/path"
+  },
+  "userData": {}
+}
+~~~
+
+`keyPath` is optional; omitting it uses normal SSH agent/config resolution.
+The guest project root must already exist. `userData` is an optional object
+retained privately for later commands; it is not returned to clients.
+Resume must return the same resource ID and connection fields. Use a stable
+address/port or DNS name for cloud VMs.
+
+Successful `suspend` and `destroy` exit with status zero. All commands have a
+30-minute limit and bounded 64 KiB output. Keep detailed logs in private files.
+Dure exposes error codes without provider output.
+
+## Recovery and ownership
+
+The record is persisted **before** provisioning. A failed or malformed create
+runs the captured destroy script automatically. Your provider must label/name
+resources using `DURE_ENVIRONMENT_ID`, and `destroy` must be idempotent even
+when `recipeResult` is `null` or the resource is already absent.
+
+A backend interruption leaves a retained failed record. Refresh settings, then
+destroy it to reconcile provider resources; Dure does not replay creation.
+Cleanup failures remain visible for retry. Repeated requests with the same
+creation key do not create another environment. Up to 512 records are retained
+per local backend; destroyed records preserve retry identity.
+
+## CLI
+
+~~~sh
+dure environment recipes --project /absolute/repo
+dure environment create --project /absolute/repo --recipe my-vm \
+  --digest sha256:DIGEST_FROM_RECIPES --name task-42 --request-id task-42-vm
+dure environment list
+dure environment suspend --id ENVIRONMENT_ID --revision CURRENT_REVISION
+dure environment resume --id ENVIRONMENT_ID --revision CURRENT_REVISION
+dure environment destroy --id ENVIRONMENT_ID --revision CURRENT_REVISION
+~~~
+
+Commands target the local backend and return JSON. Creation acknowledges a
+pending record; use `list` to observe completion. Preserve the returned
+`requestId` when retrying after a lost acknowledgement. Read the latest revision
+before a lifecycle change.

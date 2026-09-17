@@ -1,0 +1,25 @@
+# Pinned Linux execution environment for shipped Hmux musl archives.
+#
+# This is intentionally not based on template://ubuntu-lts: that alias and its
+# fallback image move without a repository diff. A disappeared dated image
+# makes CI fail closed until a reviewer updates both URL and digest.
+minimumLimaVersion: 1.2.1
+vmType: vz
+os: Linux
+arch: aarch64
+images:
+  - location: https://cloud-images.ubuntu.com/releases/noble/release-20260725/ubuntu-24.04-server-cloudimg-arm64.img
+    arch: aarch64
+    digest: sha256:2eaec7286c49fdea713dddabcf5012cafa7097a658e916acb48f4bc5fdc8e419
+cpus: 4
+memory: 4GiB
+disk: 20GiB
+mounts: []
+mountType: virtiofs
+containerd:
+  system: false
+  user: false
+rosetta:
+  enabled: true
+  binfmt: true
+upgradePackages: false

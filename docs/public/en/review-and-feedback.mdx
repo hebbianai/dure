@@ -1,0 +1,37 @@
+---
+title: "Review changes and give feedback"
+description: "Read local diffs, send specific comments, and verify the result before combining work."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+Review the changed code and its evidence before accepting an agent's result. Dure's Diff view keeps that review close to the conversation.
+
+## Open the correct worktree
+
+Open **Diff** for the local agent or worktree. The comparison uses the branch's fork point and includes uncommitted changes and new files. Select a changed file and read its diff. Opening the review does not stage or commit anything.
+
+<Frame caption="Compare the original and modified search function side by side.">
+  <ProductFigure scene="diff-review" locale="en" label="Compare the original and modified search function side by side." />
+</Frame>
+
+## Send actionable feedback
+
+1. Add a comment to a file or diff line.
+2. Describe what should change and why, with the expected behavior where useful.
+3. Send the pending comments to the linked agent.
+4. Check the send result, then review the next revision.
+
+A review without a linked agent can still be read. Sending requires a known recipient; an error does not mean the feedback arrived.
+
+<Frame caption="An unsent comment asks for a mixed-case search test and preserved empty-query behavior.">
+  <ProductFigure scene="review-comment" locale="en" label="An unsent comment asks for a mixed-case search test and preserved empty-query behavior." />
+</Frame>
+
+## Verify and combine
+
+Ask which checks ran, inspect their results and try the affected behavior. Review the updated diff before committing or combining branches with your normal Git workflow. Separate worktrees can still conflict; check the combined result too.
+
+Keep a Diff or source-control window beside your agents or on another monitor. The built-in Diff review is for local worktrees. For [SSH projects](/en/remote-and-ssh), inspect changes using Git on the remote host.
+
+For work that started from an issue or pull request, return to [GitHub](/en/github-workflows) to review its current status.

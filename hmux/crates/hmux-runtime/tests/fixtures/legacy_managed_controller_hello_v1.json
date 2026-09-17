@@ -1,0 +1,41 @@
+{
+  "protocol_version": {
+    "major": 1,
+    "minor": 0
+  },
+  "frame_id": "1",
+  "body": {
+    "kind": "hello",
+    "payload": {
+      "supported_versions": {
+        "minimum": {
+          "major": 1,
+          "minor": 0
+        },
+        "maximum": {
+          "major": 1,
+          "minor": 0
+        }
+      },
+      "requested_capabilities": [
+        "live_output",
+        "screen_snapshot",
+        "terminal_input",
+        "terminal_resize"
+      ],
+      "expected_fence": {
+        "workspace_id": "fixture-workspace",
+        "session_id": "fixture-session",
+        "runner_principal": "fixture-runner",
+        "runner_instance": "fixture-runner-instance",
+        "channel_epoch": "1",
+        "host_instance_id": "fixture-host",
+        "terminal_epoch": "fixture-terminal"
+      },
+      "requested_mode": "controller",
+      "reconnect_cursor": null,
+      "capability_token": "fixture-capability-token",
+      "authorization_proof_reference": "fixture-authorization-proof"
+    }
+  }
+}

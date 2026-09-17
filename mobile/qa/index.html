@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>Dure phone — design QA</title>
+<style>
+  body { margin:0; background:#111; font-family: system-ui; }
+  .rail { display:flex; gap:24px; padding:24px; align-items:flex-start; }
+  figure { margin:0; }
+  figcaption { color:#aaa; font-size:12px; padding:6px 2px; }
+  /* transform makes this the containing block for the FAB and the sheet, which
+     are position:fixed in the app and would otherwise escape the frame.
+     `--app-viewport-height` is what `app.ts` publishes from `visualViewport`;
+     without it every screen sized to it falls back to `100dvh` and is as tall
+     as this browser window, which is exactly the thing a phone frame is here to
+     disprove. */
+  .frame { width:402px; height:874px; overflow:hidden; transform:translate(0); background:#242424; --app-viewport-height:874px; }
+</style>
+</head><body><div class="rail" id="rail"></div><script type="module" src="./qa.ts"></script></body></html>

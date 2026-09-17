@@ -1,0 +1,127 @@
+/* The long-press menu over a session row. Figma `dure-UI` 3356:85387 (a
+   reachable session) and 3356:85535 (an unreachable one). */
+
+.row-menu {
+  position: fixed;
+  inset: 0;
+  /* Over the sheets (20), under the confirmations (30 and 40). 세션 종료 opens
+     one of those from in here, and a warning that landed behind the menu it was
+     asked from is a warning nobody reads. */
+  z-index: 25;
+  /* The two insets the module cannot reach: `env()` is a CSS function, so the
+     numbers only exist here, and `placeRowMenu` reads them back off this node.
+     Declared on the scrim rather than on `:root` because they are needed
+     wherever this host is, and the host is always full-screen. */
+  --row-menu-safe-top: env(safe-area-inset-top, 0px);
+  --row-menu-safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* The sheets' own scrim. Two surfaces that dim the screen for the same reason
+     must dim it by the same amount, or the second one read looks broken. */
+  background: rgb(0 0 0 / 55%);
+}
+
+/* The held row, drawn again at the place it already occupied. Inline `top` /
+   `left` / `width` come from the anchor the caller measured — this is a copy,
+   so nothing here may depend on where the list put the original. */
+.row-menu__row {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: var(--glass-tray-surface);
+  /* A picture of a row, not the row: a press on it must fall through to the
+     scrim and cancel, never open the session under the finger. */
+  pointer-events: none;
+}
+
+.row-menu__row-title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font: 500 14px/20px var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-menu__row-subtitle {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font: 400 12px/16px var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 262 wide on 4 of padding, radius 12 — the frame's own numbers. The width is
+   fixed rather than the row's: the card lines up with the project group the
+   held row lives in, and a row that ran long would drag the actions with it. */
+.row-menu__card {
+  position: absolute;
+  box-sizing: border-box;
+  width: 262px;
+  padding: 4px;
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: 12px;
+  background: var(--glass-tray-surface);
+  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+}
+
+.row-menu__item {
+  display: flex;
+  width: 100%;
+  height: 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--foreground);
+  font: 400 14px/20px var(--font-ui);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The group under the hairline is drawn 48 tall (3356:85398). It holds the
+   actions that end something, and the extra 4px is the room a thumb needs to
+   not arrive at one of them by momentum. */
+.row-menu__item--below {
+  height: 48px;
+}
+
+/* One colour for the row, and the glyph is a mask painted in `currentColor`
+   (`dom.ts`), so the word and the icon cannot disagree about how dangerous the
+   action is. */
+.row-menu__item--destructive {
+  color: var(--destructive);
+}
+
+.row-menu__label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-menu__item:active {
+  background: var(--glass-chip);
+}
+
+.row-menu__item:focus-visible {
+  outline: 2px solid var(--foreground);
+  /* Inset: at 4px of card padding an outline drawn outside the item would be
+     clipped by the card's own radius. */
+  outline-offset: -2px;
+}
+
+/* Inside the card's padding, so the hairline starts and stops where the labels
+   above and below it do. */
+.row-menu__divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--glass-hairline-soft);
+}

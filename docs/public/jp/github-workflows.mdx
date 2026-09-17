@@ -1,0 +1,44 @@
+---
+title: "GitHub から作業を始める"
+description: "issue や pull request を探してエージェントを開始し、その文脈に戻ります。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+**GitHub** サイドバーで issue、pull request、GitHub Projects を確認できます。issue を新しい会話に手作業でコピーせず、作業を選んで開始しましょう。
+
+## リポジトリを接続する
+
+1. Mac に GitHub CLI の `gh` をインストールし、リポジトリにアクセスできるアカウントでログインします。
+2. 対応するローカル Git フォルダーを Dure に追加し、remote が意図した GitHub リポジトリを指すか確認します。
+3. サイドバーの **GitHub** を開いてリポジトリを選びます。
+4. **Issues**、**Pull requests**、**Projects** を選び、検索、フィルター、更新を使います。
+
+```sh
+gh auth status
+git remote -v
+```
+
+サイドバーはデスクトップの GitHub アクセスを使います。プロバイダーログインとは別で、組織や GitHub Projects には追加権限が必要な場合があります。
+
+## issue からエージェントを開始する
+
+項目の **Start** をクリックします。issue や pull request の文脈が入力された **New agent** が開きます。タスク、プロジェクト、プロバイダー、worktree の選択を確認し、**Enter** または **Start agent** で開始します。
+
+<Frame caption="GitHub Issue の例で Start を選ぶと、エージェントのタスク開始フローに進みます。">
+  <ProductFigure scene="github" locale="jp" label="GitHub Issue の例で Start を選ぶと、エージェントのタスク開始フローに進みます。" />
+</Frame>
+
+エージェントを開始するだけでは、pull request のマージや issue のクローズは行われません。
+
+## 作業に戻る
+
+一致するエージェントがあれば **Open** で戻れます。項目の詳細で議論と現在の状態を読み、GitHub 全体の画面が必要なら外部リンクを使います。GitHub の状態を変える前に、リポジトリと操作を確認してください。
+
+[Diff](/jp/review-and-feedback) で変更と検証をレビューし、実際に受け入れた作業に合わせて issue の結果を管理しましょう。
+
+## 統合を設定する
+
+**Plugin → GitHub → Plugin settings** で、選択したワークスペースの更新間隔や既定の issue 一覧を設定します。互換性と設定範囲は[プラグイン](/jp/plugins)を参照してください。
+
+リモートエージェントがデスクトップのログインで issue を読む場合は、別の [SSH GitHub 読み取り接続](/jp/remote-and-ssh)を使います。対応コマンドとアクセス範囲はローカルサイドバーと異なります。
