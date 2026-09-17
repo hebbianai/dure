@@ -5,6 +5,7 @@
 // 전환 중 stale할 수 있어 삭제 권한으로 쓰지 않는다.
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { track } from "@/lib/ipc/telemetry";
 import { createReferenceAwareLocalStorage } from "@/lib/persistence/persistStorage";
 
 /** 원래 자리 복원 힌트.
@@ -140,5 +141,6 @@ export function markPaneHidden(
 }
 
 export function clearPaneHiddenAfterRestore(agentId: string): void {
+	track("pane_restored");
 	useHiddenPanes.getState().clearHidden(agentId);
 }

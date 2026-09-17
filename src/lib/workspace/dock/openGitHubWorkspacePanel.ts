@@ -1,6 +1,7 @@
 /** The GitHub work ledger pane — one per Space, rescoped in place when it is
  * already open. One issue as a pane is openGitHubIssuePanel. */
 
+import { track } from "@/lib/ipc/telemetry";
 import { withDesktopDockview } from "@/lib/workspace/dock";
 import { dockPanelParameters } from "@/lib/workspace/dock/dockPanelParameters";
 import { openOrFocusPanel } from "@/lib/workspace/dock/openOrFocusPanel";
@@ -19,6 +20,7 @@ export function openGitHubWorkspacePanel(
 		const existing = api.panels.find(
 			(panel) => panel.api.component === "github",
 		);
+		if (!existing) track("github_panel_opened");
 		openOrFocusPanel({
 			api,
 			panelId: existing?.id ?? createPaneId(),

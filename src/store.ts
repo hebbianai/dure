@@ -4,6 +4,7 @@ import {
   type AgentChatDraftStoreSlice,
 } from "@/lib/agents/chat/agentChatDraftStoreSlice";
 import { persist } from "zustand/middleware";
+import { track } from "@/lib/ipc/telemetry";
 import { reorderDesktopItems } from "@/lib/workspace/desktop/desktopOrder";
 import { recordDesktopVisit } from "@/lib/workspace/desktop/desktopTabOrder";
 import { dropPinnedPanesForDesktop, togglePinnedPane } from "@/lib/workspace/pane/panePin";
@@ -206,6 +207,7 @@ export const useStore = create<AppState>()(
               }
             : {}),
         }));
+        if (!opts?.kind) track("space_created");
         return space.id;
       },
 

@@ -1,43 +1,147 @@
 // @vitest-environment jsdom
-// 이 페이지에서 가장 중요한 계약: 아무것도 제어하지 않는 컨트롤을 두지 않는다.
-// 시안(2525:74656)은 텔레메트리 스위치를 그리지만 이 저장소에는 그 설정이
-// 없어서, 스위치를 두면 끄고 나서 "이제 안 보낸다"고 믿게 되는 거짓 보증이 된다.
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
-
+// The one control on this page is wired to the native consent record (#961):
+// what the switch shows is what the app does. Every other row states a fact
+// in a pill and offers nothing to press.
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrivacyPage } from "@/components/settings/PrivacyPage";
+import { t } from "@/lib/i18n";
+import { telemetrySetChoice, telemetryState } from "@/lib/ipc/telemetry";
+import { openExternalUrl } from "@/lib/platform/externalOpen";
+import { useStore } from "@/store";
 
-afterEach(cleanup);
+vi.mock("@/lib/ipc/telemetry", () => ({
+	telemetryState: vi.fn(),
+	telemetrySetChoice: vi.fn(),
+}));
+vi.mock("@/lib/platform/externalOpen", () => ({
+	openExternalUrl: vi.fn(async () => undefined),
+}));
+
+const stateMock = vi.mocked(telemetryState);
+const setChoiceMock = vi.mocked(telemetrySetChoice);
+
+beforeEach(() => {
+	stateMock.mockReset();
+	setChoiceMock.mockReset();
+});
+
+afterEach(() => {
+	cleanup();
+	useStore.setState({ language: "system" });
+});
 
 describe("PrivacyPage", () => {
-	it("배선되지 않은 스위치나 버튼을 두지 않는다", () => {
-		const { container } = render(<PrivacyPage />);
-		expect(container.querySelector('[role="switch"]')).toBeNull();
-		expect(container.querySelector("button")).toBeNull();
-		expect(container.querySelector("input")).toBeNull();
-	});
-
-	it("컨트롤 자리에 지금 상태를 말하는 알약을 둔다", () => {
+	it("offers the switch off while the install is pending, and records Accept", async () => {
+		stateMock.mockResolvedValue({ effective: "pending", choice: null });
+		setChoiceMock.mockResolvedValue({
+			effective: "enabled",
+			choice: "accepted",
+		});
 		render(<PrivacyPage />);
-		expect(screen.getByText("수집 안 함")).toBeTruthy();
-		// 이 대화상자는 이제 보내기도 한다 — "직접 저장"은 더 이상 이 행이
-		// 말하는 것을 설명하지 못한다.
-		expect(screen.getByText("직접 고를 때만")).toBeTruthy();
-		expect(screen.getByText("이 기기에만")).toBeTruthy();
-		expect(screen.getByText("보낼 때만")).toBeTruthy();
+
+		const control = await screen.findByRole("switch", {
+			name: t("settings.privacy.usageData.title"),
+		});
+		expect(control.getAttribute("aria-checked")).toBe("false");
+		fireEvent.click(control);
+		expect(setChoiceMock).toHaveBeenCalledWith("accepted");
+		await vi.waitFor(() =>
+			expect(control.getAttribute("aria-checked")).toBe("true"),
+		);
+		expect(
+			screen.getByRole("button", {
+				name: t("settings.privacy.usageData.whatIsSent"),
+			}),
+		).toBeTruthy();
 	});
 
-	it("네 항목을 hairline으로 나눈다", () => {
-		const { container } = render(<PrivacyPage />);
-		expect(container.querySelectorAll("section").length).toBe(4);
-		expect(container.querySelectorAll("section.border-t").length).toBe(3);
+	it("opens the public page in the reader's language", async () => {
+		stateMock.mockResolvedValue({ effective: "pending", choice: null });
+		useStore.setState({ language: "ko" });
+		render(<PrivacyPage />);
+		fireEvent.click(
+			await screen.findByRole("button", {
+				name: t("settings.privacy.usageData.whatIsSent"),
+			}),
+		);
+		expect(openExternalUrl).toHaveBeenCalledWith(
+			"https://docs.dureai.dev/ko/privacy-and-telemetry",
+		);
 	});
 
-	// 스위치가 없는 이유를 본문이 직접 말해야 한다 — 컨트롤의 부재가 곧 답이다.
-	it("스위치가 없는 이유를 설명한다", () => {
+	it("records Decline from the switch", async () => {
+		stateMock.mockResolvedValue({ effective: "enabled", choice: "accepted" });
+		setChoiceMock.mockResolvedValue({
+			effective: "disabled",
+			reason: "declined",
+			choice: "declined",
+		});
+		render(<PrivacyPage />);
+		const control = await screen.findByRole("switch");
+		expect(control.getAttribute("aria-checked")).toBe("true");
+		fireEvent.click(control);
+		expect(setChoiceMock).toHaveBeenCalledWith("declined");
+		await vi.waitFor(() =>
+			expect(control.getAttribute("aria-checked")).toBe("false"),
+		);
+	});
+
+	it("shows the environment's decision as an immovable switch with its reason", async () => {
+		stateMock.mockResolvedValue({
+			effective: "disabled",
+			reason: "do_not_track",
+			choice: "accepted",
+		});
+		render(<PrivacyPage />);
+		const control = await screen.findByRole("switch");
+		expect(control.getAttribute("aria-checked")).toBe("false");
+		expect(control.hasAttribute("disabled")).toBe(true);
+		expect(
+			screen.getByText(t("settings.privacy.usageData.reason.doNotTrack")),
+		).toBeTruthy();
+	});
+
+	it("shows a pill and no switch in a build without telemetry", async () => {
+		stateMock.mockResolvedValue({
+			effective: "disabled",
+			reason: "no_key",
+			choice: null,
+		});
 		render(<PrivacyPage />);
 		expect(
-			screen.getByText(/끌 스위치가 없는 것은 켜져 있는 것이 없기 때문입니다/),
+			await screen.findByText(t("settings.privacy.usageData.notInBuild")),
+		).toBeTruthy();
+		expect(screen.queryByRole("switch")).toBeNull();
+		expect(screen.queryByRole("button")).toBeNull();
+	});
+
+	it("renders the row but no control outside a Tauri webview", async () => {
+		stateMock.mockRejectedValue(new Error("not a tauri webview"));
+		const { container } = render(<PrivacyPage />);
+		await vi.waitFor(() => expect(stateMock).toHaveBeenCalledTimes(1));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(
+			screen.getByText(t("settings.privacy.usageData.title")),
+		).toBeTruthy();
+		expect(container.querySelector('[role="switch"]')).toBeNull();
+		expect(container.querySelector("button")).toBeNull();
+	});
+
+	it("keeps the four rows and their three hairlines, with pills elsewhere", async () => {
+		stateMock.mockResolvedValue({ effective: "pending", choice: null });
+		const { container } = render(<PrivacyPage />);
+		await screen.findByRole("switch");
+		expect(container.querySelectorAll("section").length).toBe(4);
+		expect(container.querySelectorAll("section.border-t").length).toBe(3);
+		expect(
+			screen.getByText(t("settings.privacy.diagnostics.onlyOnYourAction")),
+		).toBeTruthy();
+		expect(
+			screen.getByText(t("settings.privacy.credentials.deviceOnly")),
+		).toBeTruthy();
+		expect(
+			screen.getByText(t("settings.privacy.feedback.onlyWhenSent")),
 		).toBeTruthy();
 	});
 });

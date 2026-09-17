@@ -1,5 +1,6 @@
 import type { DockviewApi } from "dockview-react";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
+import { track } from "@/lib/ipc/telemetry";
 import { findAgentPanel } from "@/lib/workspace/dock/dockPanelParameters";
 import { commitExplicitDockviewMutation } from "@/lib/workspace/dock/explicitDockviewCommit";
 import { rightRailPosition } from "@/lib/workspace/dock/gridPanePlacement";
@@ -82,13 +83,13 @@ export function presentAgentPanelOnDockview({
 			),
 	});
 	if (opened && hidden) clearPaneHiddenAfterRestore(agent.id);
-	return (
-		opened && {
-			panel: opened,
-			paneOwnership:
-				existing || hidden || position?.replacement
-					? "pre_existing"
-					: "created_by_request",
-		}
-	);
+	if (!opened) return false;
+	const paneOwnership =
+		existing || hidden || position?.replacement
+			? "pre_existing"
+			: "created_by_request";
+	if (paneOwnership === "created_by_request") {
+		track("agent_pane_opened", { provider: agent.provider });
+	}
+	return { panel: opened, paneOwnership };
 }

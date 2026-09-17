@@ -1,5 +1,6 @@
 // Preserve grid slots and record anchors for removed floating/stacked views.
 import type { FileTarget } from "@/lib/files/fileTarget";
+import { track } from "@/lib/ipc/telemetry";
 import { removePanelsWithoutSessionTeardown } from "@/lib/workspace/pane/paneCloseCoordinator";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { markFilePaneHidden } from "@/lib/workspace/pane/hiddenFilePanesStore";
@@ -33,4 +34,5 @@ export function hidePaneWithRecord(target: HidePaneTarget): void {
 			...(anchor ? { anchor } : {}),
 		});
 	}
+	track("pane_hidden");
 }

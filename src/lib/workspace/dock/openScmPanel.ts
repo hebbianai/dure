@@ -2,6 +2,7 @@
  * one Diff Review per Agent worktree or standalone session. Each reuses the
  * pane already showing that target instead of opening a second one. */
 
+import { track } from "@/lib/ipc/telemetry";
 import { gitProjectIdFromPane } from "@/lib/scm/gitPaneTarget";
 import { newDiffReviewId } from "@/lib/scm/review/diffReviewTarget";
 import {
@@ -24,6 +25,7 @@ export function openGitPanel(
 	const existing = api.panels.find(
 		(panel) => gitProjectIdFromPane(dockPanelReference(panel)) === projectId,
 	);
+	if (!existing) track("git_panel_opened");
 	openOrFocusPanel({
 		api,
 		panelId: existing?.id ?? createPaneId(),

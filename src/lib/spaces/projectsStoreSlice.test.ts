@@ -3,6 +3,7 @@ import type { Project, SshHostConfig } from "@/types";
 
 const remoteProjectDirectoryMock = vi.hoisted(() => vi.fn());
 
+vi.mock("@/lib/ipc/telemetry", () => ({ track: vi.fn() }));
 vi.mock("@/lib/ipc", () => ({
 	hostToOpts: vi.fn(() => ({ target: "host" })),
 	parseWorktreeScan: vi.fn(),
@@ -12,6 +13,7 @@ vi.mock("@/lib/ipc", () => ({
 	remoteProjectDirectory: remoteProjectDirectoryMock,
 }));
 
+import { track } from "@/lib/ipc/telemetry";
 import { planProjectRegistration } from "./projectAdd";
 import { createProjectsStoreSlice } from "./projectsStoreSlice";
 
@@ -84,6 +86,31 @@ describe("projectsStoreSlice", () => {
 		expect(project.path).toBe("C:/Users/dev/HebbianIDE");
 		expect(project.isRepo).toBe(true);
 		expect(host.state.projects).toEqual([project]);
+	});
+
+	it("offers project_added once per project the store did not know", async () => {
+		const host = harness();
+		host.state.sshHosts = [
+			{
+				id: "host-one",
+				name: "one",
+				host: "one.example.com",
+				port: 22,
+				user: "dev",
+				auth: "auto",
+			},
+		];
+		remoteProjectDirectoryMock.mockResolvedValue({
+			path: "/srv/repo",
+			isRepo: true,
+			origin: null,
+		});
+		await host.state.addRemoteProject("host-one", "/srv/repo");
+		await host.state.addRemoteProject("host-one", "/srv/repo");
+		expect(host.state.projects).toHaveLength(1);
+		expect(vi.mocked(track).mock.calls).toEqual([
+			["project_added", { kind: "ssh" }],
+		]);
 	});
 
 	it("toggleProjectPin은 켜고 끄기를 반복한다", () => {
