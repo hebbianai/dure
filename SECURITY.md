@@ -19,9 +19,10 @@ your report. Do not test against another person's accounts or systems.
 
 ## Scope and updates
 
-Reports may concern the distributed Dure application or the files published in
-this repository. Application source publication is still in preparation; report
-app vulnerabilities here even while that work is underway.
+Reports may concern Dure's macOS, Windows and Linux desktop source, iOS and
+Android mobile source, shared components, or distributed applications. Include
+the source commit for source builds and the device or simulator for mobile
+reports.
 
 Include the exact affected version. Maintainers assess the report, coordinate
 fixes and agree on disclosure through the private report. There is currently no

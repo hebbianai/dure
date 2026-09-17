@@ -196,8 +196,8 @@ The workflow pins its action versions in
 mobile web and every shared-protocol matrix check to succeed. Mobile web checks
 run on Linux, and the shared desktop/mobile protocol is formatted, tested and
 linted on Linux, Windows and macOS. These jobs use hosted runners with read-only
-repository permissions;
-they do not use publisher credentials or maintainer machines. Platform-native
+repository permissions; they do not use publisher credentials or maintainer
+machines. Platform-native
 desktop/mobile packaging and device acceptance remain separate checks.
 
 Contributors submit changes to `main` through pull requests. Merging requires
