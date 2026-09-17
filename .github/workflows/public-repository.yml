@@ -75,18 +75,25 @@ jobs:
           package-manager-cache: false
       - name: Enable the pinned package manager
         run: corepack enable
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Prepare script test prerequisites
-        # Install the declared compiler before tests exercise bounded probes.
-        # Login-shell fixtures also require zsh on the Ubuntu runner.
+      - name: Prepare isolated script test user
+        # A dedicated UID keeps host system services outside the test census.
         run: |
           sudo apt-get update
           sudo apt-get install --yes zsh
-          rustup show active-toolchain
+          sudo useradd --create-home --shell /bin/bash dure-source-checks
+          sudo chown -R dure-source-checks:dure-source-checks "$GITHUB_WORKSPACE"
+      - name: Verify scripts
+        run: |
+          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail <<'SCRIPT'
+          export CARGO_HOME="$HOME/.cargo"
+          export RUSTUP_HOME="$HOME/.rustup"
+          # Fixtures use disposable homes but share this prepared, pinned compiler.
+          RUSTUP_TOOLCHAIN="$(rustup show active-toolchain | awk '{print $1}')"
+          export RUSTUP_TOOLCHAIN
           rustc -vV
-      - name: Run script tests
-        run: pnpm test:scripts
+          pnpm install --frozen-lockfile
+          pnpm test:scripts
+          SCRIPT
 
   public-repository:
     name: Public repository checks
