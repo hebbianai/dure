@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   adoptBuildStorageReservation,
   buildStorageReservationRoot,
@@ -11,6 +11,22 @@ import {
   reserveBuildStorage,
   storageVolumeId,
 } from "./build-storage-reservation.mjs";
+
+const readBoundary = vi.hoisted(() => ({ metadata: undefined, content: undefined }));
+vi.mock("node:fs", async (original) => {
+  const filesystem = await original();
+  return {
+    ...filesystem,
+    lstatSync(pathname, ...options) {
+      readBoundary.metadata?.(pathname);
+      return filesystem.lstatSync(pathname, ...options);
+    },
+    readFileSync(pathname, ...options) {
+      readBoundary.content?.(pathname);
+      return filesystem.readFileSync(pathname, ...options);
+    },
+  };
+});
 
 const roots = [];
 
@@ -64,12 +80,81 @@ function reserve({
 }
 
 afterEach(() => {
+  readBoundary.metadata = undefined;
+  readBoundary.content = undefined;
   for (const root of roots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
 });
 
 describe("build storage reservation", () => {
+  it.each(["EACCES", "EIO"])(
+    "keeps an unreadable lease as invalid after %s",
+    (code) => {
+      const cwd = temporaryRoot();
+      const reservationRoot = join(temporaryRoot(), "reservations");
+      const identities = new Map([[41, "fixture:41"]]);
+      const held = reserve({
+        cwd,
+        reservationRoot,
+        pid: 41,
+        ownerIdentity: "fixture:41",
+        identities,
+      });
+      expect(held.ok).toBe(true);
+      readBoundary.content = (pathname) => {
+        if (pathname !== held.reservation.pathname) return;
+        readBoundary.content = undefined;
+        throw Object.assign(new Error(`${code} fixture read failure`), { code });
+      };
+      const observed = inspectBuildStorageReservations({
+        cwd,
+        reservationRoot,
+        observeProcesses: completeProcessObservation(identities),
+      });
+      expect(observed.invalid).toEqual([
+        {
+          pathname: held.reservation.pathname,
+          reason: `${code} fixture read failure`,
+        },
+      ]);
+      expect(held.reservation.release()).toBe(true);
+    },
+  );
+
+  it.each(["metadata", "content"])(
+    "observes a lease withdrawn before its %s read as absent",
+    (boundary) => {
+      const cwd = temporaryRoot();
+      const reservationRoot = join(temporaryRoot(), "reservations");
+      const identities = new Map([[41, "fixture:41"]]);
+      const held = reserve({
+        cwd,
+        reservationRoot,
+        pid: 41,
+        ownerIdentity: "fixture:41",
+        identities,
+      });
+      expect(held.ok).toBe(true);
+      let withdrawn = false;
+      readBoundary[boundary] = (pathname) => {
+        if (pathname !== held.reservation.pathname) return;
+        readBoundary[boundary] = undefined;
+        withdrawn = held.reservation.release();
+      };
+
+      const observed = inspectBuildStorageReservations({
+        cwd,
+        reservationRoot,
+        observeProcesses: completeProcessObservation(identities),
+      });
+      expect(withdrawn).toBe(true);
+      expect(observed.invalid).toEqual([]);
+      expect(observed.active).toEqual([]);
+      expect(observed.reservedBytes).toBe(0);
+    },
+  );
+
   it("uses one OS-account ledger independent of product runtime roots", () => {
     expect(buildStorageReservationRoot("/host/account")).toBe(
       join("/host/account", ".dure", "build-storage-reservations-v1"),

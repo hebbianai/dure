@@ -74,7 +74,7 @@ function assertOwnerOnlyDirectory(pathname) {
 }
 
 function reservationFile(pathname) {
-  const stat = safeLstat(pathname);
+  const stat = lstatSync(pathname);
   if (
     !stat?.isFile() ||
     stat.isSymbolicLink() ||
@@ -224,6 +224,8 @@ function observeReservationSet({
       }
       records.push({ pathname, record });
     } catch (error) {
+      // A peer can withdraw after enumeration, before either read completes.
+      if (error?.code === "ENOENT") continue;
       stat ??= safeLstat(pathname);
       const oldEnough =
         stat && nowMs - stat.mtimeMs >= MALFORMED_PUBLICATION_GRACE_MS;
