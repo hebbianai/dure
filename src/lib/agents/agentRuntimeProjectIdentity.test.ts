@@ -193,6 +193,7 @@ describe("runtime actions with separate IDE and backend project identities", () 
 			await expect(switchAccount()).resolves.toEqual({
 				kind: "completed",
 				conversationId: "conversation-1",
+				runtime: { ...target, providerId: provider },
 			});
 			expect(mocks.transition).toHaveBeenCalledExactlyOnceWith(
 				expect.objectContaining({
@@ -247,6 +248,7 @@ describe("runtime actions with separate IDE and backend project identities", () 
 			await expect(switchAccount()).resolves.toEqual({
 				kind: "completed",
 				conversationId: "conversation-1",
+				runtime: target,
 			});
 			expect(mocks.transition).toHaveBeenCalledExactlyOnceWith(
 				expect.objectContaining({
