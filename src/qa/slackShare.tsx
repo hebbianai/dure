@@ -1,5 +1,3 @@
-import { getDockview } from "@/lib/workspace/dock/dockRegistry";
-import { SlackTagQa } from "./slackTag";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
@@ -15,11 +13,13 @@ import { createDureAgentRuntimeClient } from "@/lib/ipc/dureAgentRuntime";
 import { createDureBackendRequester } from "@/lib/ipc/dureBackend";
 import { createSlackConnectorClient } from "@/lib/ipc/slackConnector";
 import { qaLog } from "@/lib/qa/qaLog";
+import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { durableAppStorage, useStore } from "@/store";
 import {
 	exerciseLiveSlackShare,
 	type LiveSlackConfiguration,
 } from "./slackShareLive";
+import { SlackTagQa } from "./slackTag";
 
 const proof = new URLSearchParams(location.search).get("qaSlackShare");
 const live = new URLSearchParams(location.search).get("slackLive") === "1";
@@ -77,7 +77,7 @@ export function SlackShareQaRoot() {
 			}));
 			await durableAppStorage.flush();
 			const slack = createSlackConnectorClient();
-			const initial = await slack.list();
+			let initial = await slack.list();
 			const conversation = createDureAgentConversationClient({
 				profileId: initial.authority.profileId,
 			});
@@ -451,6 +451,62 @@ export function SlackShareQaRoot() {
 					getDockview(useStore.getState().activeSpaceId)?.panels.length === 0,
 				"Selecting a Tag task duplicated or opened a Space pane",
 			);
+			const draft = `QA_UNSENT_${proof}`;
+			const tagComposer = document.querySelector<HTMLTextAreaElement>(
+				"[data-tag-conversation] textarea",
+			);
+			requireFact(tagComposer, "Tag composer disappeared");
+			const setDraft = Object.getOwnPropertyDescriptor(
+				HTMLTextAreaElement.prototype,
+				"value",
+			)?.set;
+			requireFact(setDraft, "Native textarea setter is unavailable");
+			flushSync(() => {
+				setDraft.call(tagComposer, draft);
+				tagComposer.dispatchEvent(new Event("input", { bubbles: true }));
+			});
+			qaLog("slack-tag-reconnect", {
+				proof,
+				generation: initial.authority.backend.generation,
+			});
+			initial = await wait("replacement backend", async () => {
+				try {
+					const next = await slack.list();
+					return next.authority.backend.generation !==
+						initial.authority.backend.generation
+						? next
+						: undefined;
+				} catch {
+					return undefined;
+				}
+			});
+			await wait(
+				"Tag draft and conversation recovered without reopening",
+				() => {
+					const composer = document.querySelector<HTMLTextAreaElement>(
+						"[data-tag-conversation] textarea",
+					);
+					return (
+						composer &&
+						composer !== tagComposer &&
+						composer.value === draft &&
+						!composer.disabled &&
+						document
+							.querySelector("[data-tag-conversation]")
+							?.textContent?.includes(marker)
+					);
+				},
+			);
+			requireFact(
+				getDockview(useStore.getState().activeSpaceId)?.panels.length === 0,
+				"Backend recovery created a Space pane",
+			);
+			const unsent = (await readFile(`${home}/slack-share-posts.jsonl`))
+				.content;
+			requireFact(
+				!unsent.includes(draft),
+				"Backend recovery sent the draft to Slack",
+			);
 			qaLog("slack-share-progress", {
 				proof,
 				phase: "tag-sidebar-opened-existing-conversation",
@@ -542,6 +598,7 @@ export function SlackShareQaRoot() {
 				nativeThreadReply: true,
 				nativeAssistantReply,
 				tagSidebarConversation: true,
+				tagGenerationRecovered: true,
 				binding: page.binding,
 				threadTs: parents[0].ts,
 				assistantReply,

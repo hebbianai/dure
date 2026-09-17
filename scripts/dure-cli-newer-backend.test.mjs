@@ -41,6 +41,7 @@ async function fixture({
   onRequest,
   sameBuild = false,
   differentClientExecutable = false,
+  identicalClientExecutable = false,
 } = {}) {
   const root = realpathSync(mkdtempSync("/tmp/dure-bc-"));
   cleanups.push(() => rmSync(root, { recursive: true, force: true }));
@@ -166,7 +167,8 @@ process.exit(receipts[process.argv[2]] ? 0 : 9);
     environment.DURE_CONTROL_PLANE_BIN = join(root, "client-control-plane");
     writeFileSync(
       environment.DURE_CONTROL_PLANE_BIN,
-      `${readFileSync(controlPlane, "utf8")}\n// Another verified bundle's payload.\n`,
+      readFileSync(controlPlane, "utf8") +
+        (identicalClientExecutable ? "" : "\n// Another verified bundle's payload.\n"),
       { mode: 0o700 },
     );
   }
@@ -351,10 +353,11 @@ describe("compatible same-build backend reuse", () => {
     10_000,
   );
 
-  it("still stages an explicitly requested verified payload activation", async () => {
+  it.each([false, true])("stages the requested immutable bundle even when its binary matches (identical binary: %s)", async (identicalClientExecutable) => {
     const state = await fixture({
       sameBuild: true,
       differentClientExecutable: true,
+      identicalClientExecutable,
       capabilities: CONTROL_PLANE_CAPABILITIES,
     });
     const before = readFileSync(state.descriptorPath);
@@ -376,6 +379,19 @@ describe("compatible same-build backend reuse", () => {
     expect(intent.target.controlPlaneIdentity.executablePath).toBe(state.environment.DURE_CONTROL_PLANE_BIN);
     expect(readFileSync(state.descriptorPath)).toEqual(before);
   }, 10_000);
+
+  it("reuses an explicit activation of the same exact installation", async () => {
+    const state = await fixture({ sameBuild: true, capabilities: CONTROL_PLANE_CAPABILITIES });
+    const before = readFileSync(state.descriptorPath);
+    const result = await state.runCli("activate");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "ready", authority: { generation: state.descriptor.generation },
+    });
+    expect(readFileSync(state.descriptorPath)).toEqual(before);
+    const commands = readFileSync(state.log, "utf8").trim().split("\n").map(JSON.parse);
+    expect(commands.filter((args) => args[0] === "serve")).toEqual([]);
+    expect(existsSync(join(state.root, "backend", "replacement-intents"))).toBe(false);
+  });
 
   it("does not accept a shared socket just because the build is compatible", async () => {
     const state = await fixture({ sameBuild: true, differentClientExecutable: true });
