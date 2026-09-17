@@ -77,7 +77,15 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Verify scripts
+      - name: Prepare script test prerequisites
+        # Install the declared compiler before tests exercise bounded probes.
+        # Login-shell fixtures also require zsh on the Ubuntu runner.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes zsh
+          rustup show active-toolchain
+          rustc -vV
+      - name: Run script tests
         run: pnpm test:scripts
 
   public-repository:
