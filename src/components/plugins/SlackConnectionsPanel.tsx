@@ -2,11 +2,13 @@ import { Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { LoadingRow } from "@/components/common/StatusBlocks";
 import { SlackConnectionEditor } from "@/components/plugins/SlackConnectionEditor";
+import { SlackTasksDialog } from "@/components/plugins/SlackTasksDialog";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { RefreshButton } from "@/components/ui/refresh-button";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import { t } from "@/lib/i18n";
+import type { DureBackendProfileSummary } from "@/lib/ipc/dureBackendProfiles";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import {
 	createSlackConnectorClient,
@@ -26,8 +28,10 @@ type EditorTarget = {
 
 export function SlackConnectionsPanel({
 	client,
+	profiles,
 }: {
 	client?: SlackConnectorClient;
+	profiles?: DureBackendProfileSummary[];
 }) {
 	const [api] = useState(() => client ?? createSlackConnectorClient());
 	const [snapshot, setSnapshot] = useState<SlackConnectionSnapshot>();
@@ -36,6 +40,10 @@ export function SlackConnectionsPanel({
 	const [loading, setLoading] = useState(true);
 	const [busy, setBusy] = useState(false);
 	const [refresh, setRefresh] = useState(0);
+	const [tasksTarget, setTasksTarget] = useState<{
+		teamId: string;
+		authority: DureBackendRouteAuthorityV1;
+	}>();
 	const [editor, setEditor] = useState<EditorTarget>();
 	const active = useRef(false);
 	const busyRef = useRef(false);
@@ -182,6 +190,18 @@ export function SlackConnectionsPanel({
 								)}
 							</div>
 						</div>
+						<Button
+							size="sm"
+							variant="ghost"
+							onClick={() =>
+								setTasksTarget({
+									teamId: connection.config.teamId,
+									authority: snapshot.authority,
+								})
+							}
+						>
+							{t("plugins.slack.teamTasks")}
+						</Button>
 						{connection.connection === "failed" && (
 							<Alert icon={false} className="text-xs">
 								{slackFailureMessage(connection.failure)}
@@ -201,6 +221,23 @@ export function SlackConnectionsPanel({
 					{t("plugins.slack.addWorkspace")}
 				</Button>
 			</div>
+			{tasksTarget && (
+				<SlackTasksDialog
+					client={api}
+					authority={tasksTarget.authority}
+					teamId={tasksTarget.teamId}
+					profiles={
+						profiles ?? [
+							{
+								id: tasksTarget.authority.profileId,
+								default: true,
+								kind: tasksTarget.authority.target.source,
+							},
+						]
+					}
+					onClose={() => setTasksTarget(undefined)}
+				/>
+			)}
 			{editor && (
 				<SlackConnectionEditor
 					key={`${editor.authority.profileId}:${editor.authority.backend.generation}:${editor.connection?.config.teamId ?? "new"}`}

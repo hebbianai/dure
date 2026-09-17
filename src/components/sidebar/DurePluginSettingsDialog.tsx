@@ -5,7 +5,7 @@ import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { DureLoader } from "@/components/ui/dure-loader";
 import { LoadingRow} from "@/components/common/StatusBlocks";
 import { PluginPermissionControls } from "@/components/plugins/PluginPermissionControls";
-import { SlackConnectionsPanel } from "@/components/plugins/SlackConnectionsPanel";
+import { SlackTeamConnections } from "@/components/plugins/SlackTeamConnections";
 import {
   invalidatePluginSettingsSnapshot,
   publishPluginSettingsSnapshot,
@@ -447,7 +447,7 @@ export function DurePluginSettingsDialog({
         </DialogHeader>
 
         <div className="min-h-0 overflow-y-auto rounded-[11px] border border-glass-hairline">
-          {open && entry.manifest.id === "dure.slack" && <SlackConnectionsPanel />}
+          {open && entry.manifest.id === "dure.slack" && <SlackTeamConnections />}
           {error && (
             <Alert
               icon={false}

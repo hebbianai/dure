@@ -1,4 +1,13 @@
 export const plugins: Record<string, string> = {
+	"plugins.slack.teamServer": "チームサーバー",
+	"plugins.slack.teamServerHint": "チームが使用しているサーバーを選択してください。Slack接続とタスクを共有します。",
+	"plugins.slack.thisComputer": "このコンピューター",
+	"plugins.slack.teamTasks": "チームのタスク",
+	"plugins.slack.teamTasksHint": "ここでもSlackでも同じ作業を続けられます。プロジェクトのサーバーとアカウントで実行します。",
+	"plugins.slack.taskExecutionServer": "実行サーバー",
+	"plugins.slack.taskServerMismatch": "このタスクを実行するサーバーを選択してください。この接続は別のサーバーを指しています。",
+	"plugins.slack.noTeamTasks": "接続済みのSlackチャンネルで@Dureにメンションするか、Dureのタスクを共有して開始してください。",
+
 	"plugins.slack.shareServerHint": "Slack接続サーバーに登録されたサーバープロファイルを指定します。空欄の場合はチャンネルの既定値を使用します。",
 	"plugins.slack.share": "Slackで共有",
 	"plugins.slack.shareHint": "この会話の新しいメッセージを共有します。過去のメッセージは非公開のままです。",

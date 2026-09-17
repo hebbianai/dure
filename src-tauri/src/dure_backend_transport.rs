@@ -674,11 +674,7 @@ fn read_owner_file(path: &Path) -> Result<Vec<u8>, DureBackendTransportError> {
     Ok(source)
 }
 
-fn selected_profile(
-    root: &Path,
-    config: &RuntimeConfig,
-    explicit_selector: Option<&str>,
-) -> Result<SelectedProfile, DureBackendTransportError> {
+fn read_catalog(root: &Path) -> Result<BackendCatalog, DureBackendTransportError> {
     let source = read_owner_file(&root.join("backend-profiles.json"))?;
     let catalog: BackendCatalog = serde_json::from_slice(&source).map_err(|_| {
         DureBackendTransportError::new(
@@ -716,6 +712,22 @@ fn selected_profile(
             "the backend profile catalog has multiple defaults",
         ));
     }
+    Ok(catalog)
+}
+
+fn selected_profile(
+    root: &Path,
+    config: &RuntimeConfig,
+    explicit_selector: Option<&str>,
+) -> Result<SelectedProfile, DureBackendTransportError> {
+    let catalog = read_catalog(root)?;
+    let ids = catalog.profiles.iter().map(|profile| profile.id.clone()).collect();
+    let defaults: Vec<_> = catalog
+        .profiles
+        .iter()
+        .filter(|profile| profile.default)
+        .map(|profile| profile.id.clone())
+        .collect();
     let selector = explicit_selector
         .map(str::to_owned)
         .or_else(|| config.profile_selector_override.clone())
@@ -1654,6 +1666,23 @@ impl DureBackendTransportState {
             None => false,
         }
     }
+}
+
+/// Saved connection names only; credentials and socket paths stay native.
+#[tauri::command]
+pub fn dure_backend_profiles() -> Result<Value, DureBackendTransportError> {
+    let (root, _) = crate::app_home::app_root_resolution().map_err(|_| {
+        DureBackendTransportError::new(
+            "backend_transport_profile_unavailable",
+            "the Dure application root is unavailable",
+        )
+    })?;
+    let catalog = read_catalog(&root)?;
+    Ok(json!({ "schemaVersion": 1, "profiles": catalog.profiles.iter().map(|profile| {
+        json!({ "id": profile.id, "default": profile.default, "kind": match &profile.transport {
+            ProfileTransport::Local { .. } => "local", ProfileTransport::Ssh { .. } => "ssh"
+        } })
+    }).collect::<Vec<_>>() }))
 }
 
 #[tauri::command]

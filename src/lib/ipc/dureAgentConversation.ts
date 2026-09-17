@@ -2,12 +2,12 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import {
 	type AgentGoalPutRequestV1,
 	type AgentGoalRecordV1,
-	parseAgentGoalRecordV1,
 	type AgentInteractionBindingV1,
 	type AgentProviderRuntimeFenceV1,
 	type AgentTimelineCursorV1,
 	type AgentTimelineReadRequestV1,
 	type AgentTimelineReadV1,
+	parseAgentGoalRecordV1,
 	parseAgentInteractionBindingV1,
 	parseAgentRuntimeFenceV1,
 	parseAgentTimelineCursorV1,
@@ -113,9 +113,7 @@ export interface DureAgentConversationClient {
 		expectedBinding: AgentInteractionBindingV1,
 		routeAuthority: DureBackendRouteAuthorityV1,
 	): Promise<AgentInteractionBindingV1>;
-	read(
-		request: AgentConversationReadRequestV1,
-	): Promise<{
+	read(request: AgentConversationReadRequestV1): Promise<{
 		backend: DureBackendIdentity;
 		routeAuthority: DureBackendRouteAuthorityV1;
 		read: AgentTimelineReadV1;
@@ -347,6 +345,7 @@ function defaultChannelFactory(): ConversationChannel {
 
 export function createDureAgentConversationClient(options?: {
 	profileId?: string;
+	routeAuthority?: DureBackendRouteAuthorityV1;
 	invokeCommand?: DureBackendInvoke;
 	channelFactory?: ConversationChannelFactory;
 	authority?: DureBackendAuthorityFence;
@@ -411,7 +410,9 @@ export function createDureAgentConversationClient(options?: {
 					schemaVersion: 1,
 					agentId,
 				},
-				{ kind: "complete_selected_snapshot" },
+				options?.routeAuthority
+					? { kind: "exact", authority: options.routeAuthority }
+					: { kind: "complete_selected_snapshot" },
 			);
 			const binding =
 				response.result.binding === null
@@ -440,8 +441,7 @@ export function createDureAgentConversationClient(options?: {
 			if (
 				!recovered ||
 				recovered.agentId !== expectedBinding.agentId ||
-				recovered.interactionSessionId !==
-					expectedBinding.interactionSessionId
+				recovered.interactionSessionId !== expectedBinding.interactionSessionId
 			) {
 				throw contractError("agent_conversation_recover_receipt_invalid");
 			}
@@ -452,7 +452,9 @@ export function createDureAgentConversationClient(options?: {
 			const response = await backendRequest(
 				"agent_conversation.read",
 				readRequest as unknown as Record<string, unknown>,
-				{ kind: "complete_selected_snapshot" },
+				options?.routeAuthority
+					? { kind: "exact", authority: options.routeAuthority }
+					: { kind: "complete_selected_snapshot" },
 			);
 			const read = parseAgentTimelineReadV1(response.result.read, readRequest);
 			if (
@@ -492,7 +494,9 @@ export function createDureAgentConversationClient(options?: {
 			let raw: unknown;
 			try {
 				raw = await invokeCommand("dure_backend_subscribe", {
-					route: selectedDureBackendRoute(profileId),
+					route: options?.routeAuthority
+						? { kind: "exact", authority: options.routeAuthority }
+						: selectedDureBackendRoute(profileId),
 					subscriptionId,
 					body: readRequest,
 					channel,

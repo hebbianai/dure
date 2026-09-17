@@ -29,6 +29,7 @@ if (live) {
   fs.copyFileSync(path.join(home, "slack-live-observation.json"), path.join(root, "evidence", "slack-live-observation.json"));
   fs.copyFileSync(path.join(home, "project", "result.txt"), path.join(root, "evidence", "result.txt"));
 } else {
+  assert.equal(receipt.sharedTaskComposer, true);
   const source = fs.readFileSync(path.join(home, "slack-share-posts.jsonl"), "utf8");
   assert.ok(!source.includes(`QA_PRIVATE_${proof}`));
   const posts = source.trim().split("\n").map((line) => JSON.parse(line));

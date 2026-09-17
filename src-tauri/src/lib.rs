@@ -2290,6 +2290,7 @@ pub fn run() {
             app_caps,
             webview_storage::webview_storage_options,
             dure_checkpoint_backend::dure_checkpoint_observe,
+            dure_backend_transport::dure_backend_profiles,
             dure_backend_transport::dure_backend_request,
             dure_backend_transport::dure_backend_route_assert,
             dure_backend_transport::subscription::dure_backend_subscribe,

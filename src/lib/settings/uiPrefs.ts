@@ -19,6 +19,8 @@ export interface UiPrefs {
   /** Stored interface-mode preference. The effective build-constrained mode
    *  is resolved only by lib/workspace/pane/interfaceMode.ts. */
   interfaceMode?: "basic" | "pro";
+  /** Client selection only; connection credentials and tasks remain on the server. */
+  slackTeamProfileId?: string;
   /** Pro terminal presentation; native input and runtime remain available. */
   agentFinalResponseOnly: boolean;
   /** 툴바 우클릭 "숨기기"가 쌓는 컨트롤별 오버라이드 — 모드 베이스라인 위에
@@ -153,6 +155,7 @@ export const UI_PREFS_KEYS = [
   "automationLayouts",
   "quickCommands",
   "interfaceMode",
+  "slackTeamProfileId",
   "agentFinalResponseOnly",
   "hiddenToolbarControls",
   "theme",

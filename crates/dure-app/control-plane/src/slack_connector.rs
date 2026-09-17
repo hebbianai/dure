@@ -22,6 +22,7 @@ use crate::{
 pub(crate) const OPERATION: &str = "slack.connector";
 
 mod share;
+mod tasks;
 
 #[cfg(test)]
 mod tests;
@@ -64,6 +65,10 @@ struct Settings {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Action {
     List,
+    Tasks {
+        #[serde(rename = "teamId")]
+        team_id: String,
+    },
     Share {
         #[serde(flatten)]
         request: share::Request,
@@ -236,6 +241,9 @@ impl SlackConnectorService {
         if request.schema_version != 1 {
             return Err(error("slack_connection_request_invalid"));
         }
+        if let Action::Tasks { ref team_id } = request.action {
+            return tasks::list(&self.root, team_id);
+        }
         if let Action::Share { request } = request.action {
             return share::send(&self.root, request).await;
         }
@@ -245,7 +253,7 @@ impl SlackConnectorService {
         }
         let _command = self.commands.lock().await;
         match request.action {
-            Action::List | Action::Share { .. } => {}
+            Action::List | Action::Share { .. } | Action::Tasks { .. } => {}
             Action::Connect {
                 config,
                 app_token,

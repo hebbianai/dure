@@ -1,3 +1,4 @@
+import { isDureBackendProfileIdV1 } from "@/lib/ipc/dureProtocolIdentity";
 // 영속 슬라이스와 그 정규화 — store에서 추출(god-file 다이어트).
 //
 // localStorage 내용은 신뢰하지 않는 입력으로 다룬다: 손으로 고쳤을 수도,
@@ -237,6 +238,7 @@ function normalizeCanonicalPersistedState(
     : [];
   const uiPrefs = { ...recordValue(raw.uiPrefs) };
   delete uiPrefs.surfaceOpacity;
+  if (!isDureBackendProfileIdV1(uiPrefs.slackTeamProfileId)) delete uiPrefs.slackTeamProfileId;
   uiPrefs.terminalLineHeight = normalizeTerminalLineHeight(uiPrefs.terminalLineHeight);
   uiPrefs.spacesViewOptions = normalizeSpacesViewOptions(
     uiPrefs.spacesViewOptions,

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { StructuredAgentRuntimeProjectionGenerationV1 } from "@/lib/agents/agentRuntimeProjectionRecovery";
-import type { AgentChatSessionController } from "@/lib/agents/chat/agentChatSessionController";
-import type { AgentGoalUpdateV1 } from "@/lib/agents/chat/agentConversationContract";
 import type { AgentChatDraftIdentity } from "@/lib/agents/chat/agentChatDraftStoreSlice";
+import type { AgentChatSessionController } from "@/lib/agents/chat/agentChatSessionController";
+import { acquireAgentChatSession } from "@/lib/agents/chat/agentChatSessionRuntime";
+import type { AgentGoalUpdateV1 } from "@/lib/agents/chat/agentConversationContract";
 import type { AgentStructuredInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { publishConversationTitle } from "@/lib/agents/chat/conversationPresentationState";
 import { observedConversationTitle } from "@/lib/agents/chat/observedRuntimeFacts";
-import { acquireAgentChatSession } from "@/lib/agents/chat/agentChatSessionRuntime";
+import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 
 const DETACHED = {
 	phase: "detached",
@@ -25,14 +26,19 @@ export function useAgentChatSession(
 	onRuntimeInvalidated?: (
 		generation: StructuredAgentRuntimeProjectionGenerationV1,
 	) => boolean | Promise<boolean>,
+	routeAuthority?: DureBackendRouteAuthorityV1,
 ) {
 	const [owned, setOwned] = useState<
-		AgentChatDraftIdentity & { controller: AgentChatSessionController }
+		AgentChatDraftIdentity & {
+			controller: AgentChatSessionController;
+			routeAuthority?: DureBackendRouteAuthorityV1;
+		}
 	>();
 	const controller =
 		owned?.agentId === agentId &&
 		owned.backendProfileId === profile.backendProfileId &&
-		owned.interactionSessionId === profile.interactionSessionId
+		owned.interactionSessionId === profile.interactionSessionId &&
+		owned.routeAuthority === routeAuthority
 			? owned.controller
 			: undefined;
 	useEffect(() => {
@@ -41,11 +47,11 @@ export function useAgentChatSession(
 			backendProfileId: profile.backendProfileId,
 			interactionSessionId: profile.interactionSessionId,
 		};
-		const lease = acquireAgentChatSession(identity);
+		const lease = acquireAgentChatSession({ ...identity, routeAuthority });
 		const unsubscribeRuntimeInvalidation = onRuntimeInvalidated
 			? lease.controller.subscribeRuntimeInvalidation(onRuntimeInvalidated)
 			: undefined;
-		setOwned({ ...identity, controller: lease.controller });
+		setOwned({ ...identity, controller: lease.controller, routeAuthority });
 		return () => {
 			setOwned(undefined);
 			unsubscribeRuntimeInvalidation?.();
@@ -56,6 +62,7 @@ export function useAgentChatSession(
 		onRuntimeInvalidated,
 		profile.backendProfileId,
 		profile.interactionSessionId,
+		routeAuthority,
 	]);
 
 	const subscribe = useCallback(
