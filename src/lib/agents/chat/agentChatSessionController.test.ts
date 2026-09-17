@@ -1129,58 +1129,128 @@ describe("AgentChatSessionController", () => {
 		expect(calls[1]?.[1]).toEqual(routeB);
 	});
 
-	it("unfences a turn proven dead by a provider-failed interrupt so the queue drains", async () => {
-		// Red on the fenced tree: a backend replacement orphaned the provider,
-		// the open turn never ends, and send/queue/permission actions were all
-		// gated on it — a full composer deadlock (2026-09-01).
-		const initial = read();
-		if (initial.type !== "page") throw new Error("expected page fixture");
-		initial.page.rows = [
-			{
-				cursor: { epoch: "timeline-1", sequence: 1 },
-				item: {
-					itemId: "turn-start",
-					turnId: "turn-1",
-					clientMessageId: "message-1",
-					providerMessageId: null,
-					body: { type: "lifecycle", state: "turn_started", detail: null },
-					createdAtMs: 1,
+	it.each(["interrupt", "steer"] as const)(
+		"keeps the running turn and queued input after a failed %s command until canonical termination",
+		async (action) => {
+			const initial = read();
+			if (initial.type !== "page") throw new Error("expected page fixture");
+			initial.page.rows = [
+				{
+					cursor: { epoch: "timeline-1", sequence: 1 },
+					item: {
+						itemId: "turn-start",
+						turnId: "turn-1",
+						clientMessageId: "message-1",
+						providerMessageId: null,
+						body: { type: "lifecycle", state: "turn_started", detail: null },
+						createdAtMs: 1,
+					},
 				},
-			},
-		];
-		initial.page.activeTurn = {
-			turnId: "turn-1",
-			clientMessageId: "message-1",
-		};
-		initial.page.finalCursor.sequence = 1;
-		const fixture = client(initial);
-		vi.mocked(fixture.transport.interruptTurn).mockRejectedValue(
-			terminalProviderFailure(),
-		);
-		const controller = new AgentChatSessionController({
-			agentId: "agent-1",
-			interactionSessionId: "interaction-1",
-			client: fixture.transport,
-		});
-		controller.start();
-		await settle();
-		expect(controller.getSnapshot().activeTurn).toBeTruthy();
+			];
+			initial.page.activeTurn = {
+				turnId: "turn-1",
+				clientMessageId: "message-1",
+			};
+			initial.page.finalCursor.sequence = 1;
+			const fixture = client(initial);
+			vi.mocked(fixture.transport.interruptTurn).mockRejectedValue(
+				terminalProviderFailure(),
+			);
+			vi.mocked(fixture.transport.steerTurn).mockRejectedValue(
+				terminalProviderFailure(),
+			);
+			let observed = initial;
+			vi.mocked(fixture.transport.read).mockImplementation(async (request) => ({
+				backend: { id: "backend", generation: "one" },
+				routeAuthority: ROUTE_AUTHORITY,
+				read: {
+					type: "page",
+					page: {
+						...observed.page,
+						rows: observed.page.rows.filter(
+							(row) => row.cursor.sequence > (request.cursor?.sequence ?? 0),
+						),
+					},
+				},
+			}));
+			const controller = new AgentChatSessionController({
+				agentId: "agent-1",
+				interactionSessionId: "interaction-1",
+				client: fixture.transport,
+			});
+			controller.start();
+			await settle();
+			expect(controller.getSnapshot().activeTurn).toBeTruthy();
 
-		controller.queueMessage("pull 먼저");
-		await settle();
-		expect(fixture.transport.startTurn).not.toHaveBeenCalled();
+			controller.queueMessage("pull 먼저");
+			await settle();
+			expect(fixture.transport.startTurn).not.toHaveBeenCalled();
 
-		await expect(controller.interrupt()).rejects.toMatchObject({
-			code: "agent_conversation_provider_failed",
-		});
-		await settle();
+			await expect(
+				action === "interrupt"
+					? controller.interrupt()
+					: controller.steerOrQueue("change direction"),
+			).rejects.toMatchObject({
+				code: "agent_conversation_provider_failed",
+			});
+			await settle();
 
-		// The dead turn no longer fences the composer: the queued message
-		// drained into a fresh startTurn (which relaunches the provider).
-		expect(controller.getSnapshot().activeTurn).toBeUndefined();
-		expect(fixture.transport.startTurn).toHaveBeenCalledTimes(1);
-		expect(controller.getSnapshot().queuedMessages).toEqual([]);
-	});
+			expect(controller.getSnapshot().activeTurn).toEqual(
+				initial.page.activeTurn,
+			);
+			expect(controller.getSnapshot().queuedMessages).toEqual(["pull 먼저"]);
+			expect(fixture.transport.startTurn).not.toHaveBeenCalled();
+			fixture.invalidation()?.({
+				kind: "changed",
+				interactionSessionId: "interaction-1",
+				timelineCursor: initial.page.finalCursor,
+				kinds: ["timeline"],
+			});
+			await vi.waitFor(() =>
+				expect(fixture.transport.read).toHaveBeenCalledTimes(1),
+			);
+			expect(controller.getSnapshot().activeTurn).toEqual(
+				initial.page.activeTurn,
+			);
+			expect(fixture.transport.startTurn).not.toHaveBeenCalled();
+
+			const ended = read();
+			if (ended.type !== "page") throw new Error("expected page fixture");
+			ended.page.rows = [
+				{
+					cursor: { epoch: "timeline-1", sequence: 2 },
+					item: {
+						...initial.page.rows[0].item,
+						itemId: "turn-failed",
+						body: {
+							type: "lifecycle",
+							state: "turn_failed",
+							detail: "runtime_exited",
+						},
+						createdAtMs: 2,
+					},
+				},
+			];
+			ended.page.finalCursor.sequence = 2;
+			observed = ended;
+			fixture.invalidation()?.({
+				kind: "changed",
+				interactionSessionId: "interaction-1",
+				timelineCursor: ended.page.finalCursor,
+				kinds: ["timeline"],
+			});
+			await vi.waitFor(() =>
+				expect(fixture.transport.startTurn).toHaveBeenCalledTimes(1),
+			);
+			expect(controller.getSnapshot().activeTurn).toBeUndefined();
+			expect(fixture.transport.startTurn).toHaveBeenCalledTimes(1);
+			expect(controller.getSnapshot().queuedMessages).toEqual([]);
+			expect(
+				vi.mocked(fixture.transport.startTurn).mock.calls[0]?.[0].input,
+			).toBe("pull 먼저");
+			controller.stop();
+		},
+	);
 
 	it("recovers the exact runtime after an active-turn command reports it unavailable", async () => {
 		const initial = read("codex");
@@ -2185,36 +2255,25 @@ describe("AgentChatSessionController", () => {
 		]);
 	});
 
-	it("queues after a failed steer without losing the message", async () => {
-		const fixture = client();
+	it("does not resend a delivered steer after its response is lost", async () => {
 		const openTurn = read();
 		if (openTurn.type !== "page") throw new Error("expected page");
-		openTurn.page.rows = [
-			{
-				cursor: { epoch: "timeline-1", sequence: 1 },
-				item: {
-					itemId: "turn-start",
-					turnId: "turn-1",
-					clientMessageId: "message-1",
-					providerMessageId: null,
-					body: { type: "lifecycle", state: "turn_started", detail: null },
-					createdAtMs: 1,
-				},
-			},
-		];
 		openTurn.page.activeTurn = {
 			turnId: "turn-1",
 			clientMessageId: "message-1",
 		};
-		openTurn.page.finalCursor = { epoch: "timeline-1", sequence: 1 };
-		vi.mocked(fixture.transport.subscribe).mockImplementationOnce(
-			async (_request, _onInvalidation) => ({
-				subscriptionId: "subscription-1",
-				backend: { id: "backend", generation: "one" },
-				routeAuthority: ROUTE_AUTHORITY,
-				initial: openTurn,
-				close: fixture.close,
-			}),
+		const fixture = client(openTurn);
+		const delivered: string[] = [];
+		const lostResponse = new DureBackendRequestError(
+			"backend_unreachable",
+			"Response lost after delivery",
+			{ kind: "transport" },
+		);
+		vi.mocked(fixture.transport.steerTurn).mockImplementationOnce(
+			async (request) => {
+				delivered.push(request.input);
+				throw lostResponse;
+			},
 		);
 		const controller = new AgentChatSessionController({
 			agentId: "agent-1",
@@ -2223,17 +2282,72 @@ describe("AgentChatSessionController", () => {
 		});
 		controller.start();
 		await settle();
+		try {
+			const outcome = await controller
+				.steerOrQueue("apply once")
+				.catch((error) => error);
+			fixture.invalidation()?.({
+				kind: "changed",
+				interactionSessionId: "interaction-1",
+				timelineCursor: { epoch: "timeline-1", sequence: 0 },
+				kinds: ["timeline"],
+			});
+			await settle();
+			expect(delivered).toEqual(["apply once"]);
+			expect(fixture.transport.startTurn).not.toHaveBeenCalled();
+			expect(controller.getSnapshot().queuedMessages).toEqual([]);
+			expect(outcome).toBe(lostResponse);
 
-		vi.mocked(fixture.transport.steerTurn).mockRejectedValueOnce(
-			new Error("backend_unreachable"),
-		);
-		expect(await controller.steerOrQueue("keep me")).toBe("queued");
-		expect(controller.getSnapshot().queuedMessages).toEqual(["keep me"]);
-
-		// A transient failure must not disable steering for the session.
-		expect(await controller.steerOrQueue("try again")).toBe("steered");
-		expect(fixture.transport.steerTurn).toHaveBeenCalledTimes(2);
+			// Failure of one request does not disable steering for the session.
+			openTurn.page.activeTurn = {
+				turnId: "turn-2",
+				clientMessageId: "message-2",
+			};
+			controller.retryConnection();
+			await settle();
+			expect(await controller.steerOrQueue("new direction")).toBe("steered");
+			expect(fixture.transport.steerTurn).toHaveBeenCalledTimes(2);
+		} finally {
+			controller.stop();
+		}
 	});
+
+	it.each(["prepared", "uncertain", "failed"] as const)(
+		"retains the same send intent after a %s receipt",
+		async (state) => {
+			const fixture = client();
+			vi.mocked(fixture.transport.startTurn).mockResolvedValueOnce(state);
+			const controller = new AgentChatSessionController({
+				agentId: "agent-1",
+				interactionSessionId: "interaction-1",
+				client: fixture.transport,
+			});
+			controller.start();
+			await settle();
+			try {
+				await expect(
+					controller.send("preserve this request"),
+				).rejects.toBeInstanceOf(Error);
+				expect(controller.getSnapshot().retryTurnAvailable).toBe(true);
+				expect(fixture.transport.startTurn).toHaveBeenCalledTimes(1);
+				if (state === "failed") {
+					vi.mocked(fixture.transport.startTurn).mockResolvedValueOnce(
+						"failed",
+					);
+					await expect(controller.retryTurn()).rejects.toBeInstanceOf(Error);
+					expect(controller.editRetryableTurn()).toBe("preserve this request");
+				} else {
+					await controller.retryTurn();
+				}
+				const attempts = vi.mocked(fixture.transport.startTurn).mock.calls;
+				expect(attempts).toHaveLength(2);
+				expect(attempts[1]).toEqual(attempts[0]);
+				expect(controller.getSnapshot().retryTurnAvailable).toBe(false);
+			} finally {
+				controller.stop();
+			}
+		},
+	);
 
 	it("queues without a steer attempt when no turn is running", async () => {
 		const fixture = client();
@@ -2296,14 +2410,12 @@ describe("goal observation and writes", () => {
 		});
 		await settle();
 		expect(controller.getSnapshot().page?.goal).toEqual(goal);
-		const put = vi
-			.fn()
-			.mockRejectedValue(
-				new DureBackendRequestError("agent_goal_conflict", "conflict", {
-					kind: "operation",
-					disposition: "terminal",
-				}),
-			);
+		const put = vi.fn().mockRejectedValue(
+			new DureBackendRequestError("agent_goal_conflict", "conflict", {
+				kind: "operation",
+				disposition: "terminal",
+			}),
+		);
 		fixture.transport.putGoal = put;
 		expect(
 			await controller.putGoal({

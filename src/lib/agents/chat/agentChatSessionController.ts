@@ -25,6 +25,7 @@ import type {
 	AgentTimelinePageV1,
 	AgentTimelineReadV1,
 } from "@/lib/agents/chat/agentConversationContract";
+import { t } from "@/lib/i18n";
 import type {
 	AgentConversationAnswerPendingV1,
 	AgentConversationInterruptTurnV1,
@@ -33,7 +34,6 @@ import type {
 	AgentConversationSubscriptionV1,
 	DureAgentConversationClient,
 } from "@/lib/ipc/dureAgentConversation";
-import { t } from "@/lib/i18n";
 import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 
@@ -76,14 +76,6 @@ export class AgentChatSessionController {
 		new AgentChatRuntimeInvalidationRelay();
 	private queued: AgentChatInput[] = [];
 	private steerUnsupported = false;
-	/** Turn proven dead by a provider_failed action: its provider process is
-	 * gone, so no terminal row will ever arrive from it. The projection stops
-	 * treating it as active, which unfences send/queue/permission actions —
-	 * otherwise a zombie turn deadlocks the whole composer (2026-09-01: a
-	 * backend replacement orphaned a codex stream and every escape hatch was
-	 * gated on the turn ending). The next send relaunches the provider and the
-	 * backend converges the dead turn server-side. */
-	private deadTurnId: string | undefined;
 	private snapshot: AgentChatSessionSnapshot = {
 		phase: "detached",
 		reconnecting: false,
@@ -323,10 +315,8 @@ export class AgentChatSessionController {
 		await this.submitRetryableTurn();
 	}
 
-	/** Tries to deliver the message into the RUNNING turn at the provider's
-	 * next tool boundary; any failure parks it in the queue instead, so the
-	 * message is never lost. A provider without a mid-turn channel is
-	 * remembered and skipped straight to the queue afterwards. */
+	/** Queue only an explicit unsupported-channel refusal. Other errors may
+	 * follow delivery; surface them instead of creating a second request. */
 	async steerOrQueue(input: string): Promise<"steered" | "queued"> {
 		const parsedInput = parseAgentChatInput(input);
 		const activeTurn = this.snapshot.activeTurn;
@@ -345,14 +335,11 @@ export class AgentChatSessionController {
 		} catch (error) {
 			if (agentChatErrorMessage(error).includes("steer_unsupported")) {
 				this.steerUnsupported = true;
-			}
-			if (providerFailedAgentChatError(error)) {
-				this.deadTurnId = activeTurn.turnId;
-				this.update({ activeTurn: undefined });
+				this.queueParsedMessage(parsedInput);
+				return "queued";
 			}
 			this.reconnectAfterActionFailure(error);
-			this.queueParsedMessage(parsedInput);
-			return "queued";
+			throw error;
 		}
 	}
 
@@ -487,14 +474,7 @@ export class AgentChatSessionController {
 			this.update({
 				interrupting: false,
 				actionError: agentChatErrorMessage(error),
-				...(providerFailedAgentChatError(error)
-					? { activeTurn: undefined }
-					: {}),
 			});
-			if (providerFailedAgentChatError(error)) {
-				this.deadTurnId = activeTurn.turnId;
-				this.maybeDrainQueue();
-			}
 			this.reconnectAfterActionFailure(error);
 			throw error;
 		}
@@ -531,7 +511,18 @@ export class AgentChatSessionController {
 			actionError: undefined,
 		});
 		try {
-			await this.client.startTurn(turn.request, turn.routeAuthority);
+			const state = await this.client.startTurn(
+				turn.request,
+				turn.routeAuthority,
+			);
+			if (state !== "accepted") {
+				throw new DureBackendRequestError(
+					"agent_conversation_turn_unconfirmed",
+					t("ipc.agentConversation.deliveryUnconfirmed"),
+					{ kind: "operation", disposition: "terminal" },
+					{ state },
+				);
+			}
 			this.retryableTurn = undefined;
 			this.update({ sending: false, retryTurnAvailable: false });
 			void this.refresh();
@@ -702,13 +693,7 @@ export class AgentChatSessionController {
 				this.retryableAnswers.delete(requestId);
 			}
 		}
-		const projectedTurn = activeAgentChatTurn(page);
-		// A different (or absent) projected turn means the dead one converged
-		// server-side; the fence is only for the exact proven-dead turn id.
-		if (this.deadTurnId && projectedTurn?.turnId !== this.deadTurnId) {
-			this.deadTurnId = undefined;
-		}
-		const activeTurn = this.deadTurnId ? undefined : projectedTurn;
+		const activeTurn = activeAgentChatTurn(page);
 		if (
 			this.retryableInterrupt &&
 			activeTurn?.turnId !== this.retryableInterrupt.request.turnId
@@ -888,16 +873,4 @@ export class AgentChatSessionController {
 		if (this.reconnectTimer) this.clearTimer?.(this.reconnectTimer);
 		this.reconnectTimer = undefined;
 	}
-}
-
-/** True when an action failed because the provider process is proven gone —
- * the one failure that makes an open turn permanently unfinishable. */
-function providerFailedAgentChatError(error: unknown): boolean {
-	return (
-		(typeof error === "object" &&
-			error !== null &&
-			(error as { code?: unknown }).code ===
-				"agent_conversation_provider_failed") ||
-		agentChatErrorMessage(error).includes("agent_conversation_provider_failed")
-	);
 }

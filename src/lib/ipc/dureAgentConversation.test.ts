@@ -56,6 +56,31 @@ function routeAuthority() {
 }
 
 describe("Dure agent conversation client", () => {
+	it.each(["prepared", "uncertain"])(
+		"does not report a %s steering receipt as delivered",
+		async (state) => {
+			const turn = {
+				schemaVersion: 1 as const,
+				interactionSessionId: "interaction-1",
+				runtime: read().page.binding.runtime,
+				turnId: "turn-1",
+				clientMessageId: "message-steer",
+				input: "change direction",
+				requestedAtMs: 10,
+			};
+			const invokeCommand = vi.fn(async () =>
+				envelope({ receipt: { intent: turn, state } }),
+			);
+			const client = createDureAgentConversationClient({ invokeCommand });
+			await expect(
+				client.steerTurn(turn, routeAuthority()),
+			).rejects.toMatchObject({
+				code: "agent_conversation_steer_unconfirmed",
+			});
+			expect(invokeCommand).toHaveBeenCalledTimes(1);
+		},
+	);
+
 	it("does not dispatch a turn to selected backend B after inspecting A", async () => {
 		const routeA = testDureBackendRouteAuthority("backend-a", "generation-a");
 		const routeB = testDureBackendRouteAuthority("backend-b", "generation-b");

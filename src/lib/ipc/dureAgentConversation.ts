@@ -126,9 +126,8 @@ export interface DureAgentConversationClient {
 		request: AgentConversationStartTurnV1,
 		routeAuthority: DureBackendRouteAuthorityV1,
 	): Promise<"prepared" | "accepted" | "failed" | "uncertain">;
-	/** Delivers one user message into the RUNNING turn; the provider applies
-	 * it at its next tool boundary. Rejects when the provider has no
-	 * mid-turn channel — callers fall back to queueing. */
+	/** Resolves only after confirmed delivery into the running turn.
+	 * A rejected request may already have reached the provider. */
 	steerTurn(
 		request: AgentConversationStartTurnV1,
 		routeAuthority: DureBackendRouteAuthorityV1,
@@ -600,6 +599,14 @@ export function createDureAgentConversationClient(options?: {
 			}
 			if (receipt.state === "failed") {
 				throw contractError("agent_conversation_steer_failed");
+			}
+			if (receipt.state !== "accepted") {
+				throw new DureBackendRequestError(
+					"agent_conversation_steer_unconfirmed",
+					t("ipc.agentConversation.deliveryUnconfirmed"),
+					{ kind: "operation", disposition: "terminal" },
+					{ state: receipt.state },
+				);
 			}
 		},
 

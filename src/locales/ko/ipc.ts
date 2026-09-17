@@ -21,6 +21,7 @@ export const ipc: Record<string, string> = {
 		"브라우저 요청이 완료되지 않았습니다. 다시 시도하기 전에 상태를 확인하세요.",
 	"ipc.agentConversation.invalidResponse": "에이전트 대화 응답이 올바르지 않습니다.",
 	"ipc.agentConversation.requestFailed": "에이전트 대화 요청에 실패했습니다.",
+	"ipc.agentConversation.deliveryUnconfirmed": "메시지 전달 여부를 확인하지 못했습니다. 다시 보내기 전에 대화를 확인하세요.",
 	"ipc.dureBackend.generationChanged": "Dure 백엔드 세대가 변경되었습니다. 같은 요청으로 다시 시도하세요.",
 	"ipc.dureCoordinator.bindingMismatch": "코디네이터 바인딩 응답이 현재 pane과 일치하지 않습니다.",
 	"ipc.dureDelegation.invalidResponse": "Dure 백엔드가 올바르지 않은 위임 응답을 반환했습니다.",

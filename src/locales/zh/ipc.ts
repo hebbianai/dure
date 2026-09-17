@@ -19,6 +19,7 @@ export const ipc: Record<string, string> = {
 	"ipc.browser.requestFailed": "浏览器请求未完成。请先检查状态，再重试。",
 	"ipc.agentConversation.invalidResponse": "代理对话响应无效。",
 	"ipc.agentConversation.requestFailed": "代理对话请求失败。",
+	"ipc.agentConversation.deliveryUnconfirmed": "无法确认消息是否已送达。再次发送前请查看对话。",
 	"ipc.dureBackend.generationChanged": "Dure 后端世代已变化。请使用同一请求重试。",
 	"ipc.dureCoordinator.bindingMismatch": "协调者绑定响应与当前窗格不一致。",
 	"ipc.dureDelegation.invalidResponse": "Dure 后端返回了无效的委派响应。",

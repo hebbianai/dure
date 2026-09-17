@@ -21,6 +21,7 @@ export const ipcEnglishTranslations: Record<string, string> = {
 		"The browser request did not finish. Check its status before trying again.",
 	"ipc.agentConversation.invalidResponse": "The agent conversation response is invalid.",
 	"ipc.agentConversation.requestFailed": "The agent conversation request failed.",
+	"ipc.agentConversation.deliveryUnconfirmed": "Message delivery could not be confirmed. Check the conversation before sending again.",
 	"ipc.dureBackend.generationChanged": "The Dure backend generation has changed. Retry with the same request.",
 	"ipc.dureCoordinator.bindingMismatch": "The coordinator binding response does not match the current pane.",
 	"ipc.dureDelegation.invalidResponse": "The Dure backend returned an invalid delegation response.",

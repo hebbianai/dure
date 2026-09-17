@@ -21,6 +21,7 @@ export const ipc: Record<string, string> = {
 		"ブラウザーのリクエストが完了しませんでした。再試行する前に状態を確認してください。",
 	"ipc.agentConversation.invalidResponse": "エージェント会話の応答が正しくありません。",
 	"ipc.agentConversation.requestFailed": "エージェント会話のリクエストに失敗しました。",
+	"ipc.agentConversation.deliveryUnconfirmed": "メッセージの送信を確認できませんでした。再送信する前に会話を確認してください。",
 	"ipc.dureBackend.generationChanged": "Dureバックエンドの世代が変更されました。同じリクエストで再試行してください。",
 	"ipc.dureCoordinator.bindingMismatch": "コーディネーターバインディングの応答が現在のペインと一致しません。",
 	"ipc.dureDelegation.invalidResponse": "Dureバックエンドが無効な委任応答を返しました。",
