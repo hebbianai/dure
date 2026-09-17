@@ -24,7 +24,6 @@ use sqlx::{Row, SqliteConnection, SqlitePool};
 
 use crate::agent_runtime_close::{ensure_open_on, ensure_runtime_binding_write_on};
 use crate::error::{corrupt_identifier, corrupt_row, map_sqlx, serialization, storage};
-use crate::schema::{begin_immediate, finish_transaction};
 
 pub(crate) async fn create(
     pool: &SqlitePool,
@@ -38,12 +37,15 @@ pub(crate) async fn create(
         });
     }
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("create_agent_interaction", error))?;
-    begin_immediate(&mut connection, "create_agent_interaction").await?;
-    let result = create_on(&mut connection, binding).await;
-    finish_transaction(&mut connection, "create_agent_interaction", result).await
+    let result = create_on(&mut connection, binding).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("create_agent_interaction", error))?;
+    Ok(result)
 }
 
 async fn create_on(
@@ -119,15 +121,15 @@ pub(crate) async fn binding(
     interaction_session_id: &AgentInteractionSessionIdV1,
 ) -> Result<Option<AgentInteractionBindingV1>, DomainStoreErrorV1> {
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN DEFERRED")
         .await
         .map_err(|error| map_sqlx("read_agent_interaction", error))?;
-    sqlx::query("BEGIN DEFERRED")
-        .execute(&mut *connection)
+    let result = binding_on(&mut connection, interaction_session_id).await?;
+    connection
+        .commit()
         .await
         .map_err(|error| map_sqlx("read_agent_interaction", error))?;
-    let result = binding_on(&mut connection, interaction_session_id).await;
-    finish_transaction(&mut connection, "read_agent_interaction", result).await
+    Ok(result)
 }
 
 pub(crate) async fn binding_for_agent(
@@ -238,12 +240,15 @@ pub(crate) async fn replace_runtime(
 ) -> Result<AgentInteractionBindingV1, DomainStoreErrorV1> {
     replacement.validate()?;
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("replace_agent_interaction_runtime", error))?;
-    begin_immediate(&mut connection, "replace_agent_interaction_runtime").await?;
-    let result = replace_runtime_on(&mut connection, replacement).await;
-    finish_transaction(&mut connection, "replace_agent_interaction_runtime", result).await
+    let result = replace_runtime_on(&mut connection, replacement).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("replace_agent_interaction_runtime", error))?;
+    Ok(result)
 }
 
 async fn replace_runtime_on(
@@ -416,19 +421,19 @@ pub(crate) async fn provider_cursor(
 ) -> Result<AgentProviderCursorV1, DomainStoreErrorV1> {
     runtime.validate()?;
     let mut connection = pool
-        .acquire()
-        .await
-        .map_err(|error| map_sqlx("read_agent_provider_cursor", error))?;
-    sqlx::query("BEGIN DEFERRED")
-        .execute(&mut *connection)
+        .begin_with("BEGIN DEFERRED")
         .await
         .map_err(|error| map_sqlx("read_agent_provider_cursor", error))?;
     let result = async {
         validate_current_runtime(&mut connection, interaction_session_id, runtime).await?;
         provider_cursor_on(&mut connection, interaction_session_id, runtime).await
     }
-    .await;
-    finish_transaction(&mut connection, "read_agent_provider_cursor", result).await
+    .await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("read_agent_provider_cursor", error))?;
+    Ok(result)
 }
 
 async fn insert_provider_stream(
@@ -659,12 +664,15 @@ pub(crate) async fn apply_provider_event(
 ) -> Result<AgentTimelineCommitReceiptV1, DomainStoreErrorV1> {
     event.validate()?;
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("apply_agent_provider_event", error))?;
-    begin_immediate(&mut connection, "apply_agent_provider_event").await?;
-    let result = apply_provider_event_on(&mut connection, event).await;
-    finish_transaction(&mut connection, "apply_agent_provider_event", result).await
+    let result = apply_provider_event_on(&mut connection, event).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("apply_agent_provider_event", error))?;
+    Ok(result)
 }
 
 async fn apply_provider_event_on(
@@ -923,12 +931,15 @@ pub(crate) async fn record_provider_gap(
 ) -> Result<AgentTimelineCommitReceiptV1, DomainStoreErrorV1> {
     gap.validate()?;
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("record_agent_provider_gap", error))?;
-    begin_immediate(&mut connection, "record_agent_provider_gap").await?;
-    let result = record_provider_gap_on(&mut connection, gap).await;
-    finish_transaction(&mut connection, "record_agent_provider_gap", result).await
+    let result = record_provider_gap_on(&mut connection, gap).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("record_agent_provider_gap", error))?;
+    Ok(result)
 }
 
 pub(crate) async fn reconcile_history(
@@ -937,12 +948,15 @@ pub(crate) async fn reconcile_history(
 ) -> Result<AgentHistorySnapshotReceiptV1, DomainStoreErrorV1> {
     snapshot.validate()?;
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("reconcile_agent_history", error))?;
-    begin_immediate(&mut connection, "reconcile_agent_history").await?;
-    let result = reconcile_history_on(&mut connection, snapshot).await;
-    finish_transaction(&mut connection, "reconcile_agent_history", result).await
+    let result = reconcile_history_on(&mut connection, snapshot).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("reconcile_agent_history", error))?;
+    Ok(result)
 }
 
 pub(crate) async fn history_hydration_authority(
@@ -950,15 +964,15 @@ pub(crate) async fn history_hydration_authority(
     interaction_session_id: &AgentInteractionSessionIdV1,
 ) -> Result<AgentHistoryHydrationAuthorityV1, DomainStoreErrorV1> {
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN DEFERRED")
         .await
         .map_err(|error| map_sqlx("agent_history_hydration_authority", error))?;
-    sqlx::query("BEGIN DEFERRED")
-        .execute(&mut *connection)
+    let result = history_hydration_authority_on(&mut connection, interaction_session_id).await?;
+    connection
+        .commit()
         .await
         .map_err(|error| map_sqlx("agent_history_hydration_authority", error))?;
-    let result = history_hydration_authority_on(&mut connection, interaction_session_id).await;
-    finish_transaction(&mut connection, "agent_history_hydration_authority", result).await
+    Ok(result)
 }
 
 pub(crate) async fn history_hydration_authority_on(
@@ -1707,12 +1721,15 @@ pub(crate) async fn reconcile_pending_snapshot(
 ) -> Result<AgentTimelineCommitReceiptV1, DomainStoreErrorV1> {
     snapshot.validate()?;
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("reconcile_agent_pending_snapshot", error))?;
-    begin_immediate(&mut connection, "reconcile_agent_pending_snapshot").await?;
-    let result = reconcile_pending_snapshot_on(&mut connection, snapshot).await;
-    finish_transaction(&mut connection, "reconcile_agent_pending_snapshot", result).await
+    let result = reconcile_pending_snapshot_on(&mut connection, snapshot).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("reconcile_agent_pending_snapshot", error))?;
+    Ok(result)
 }
 
 async fn reconcile_pending_snapshot_on(
@@ -1947,12 +1964,15 @@ pub(crate) async fn record_turn_intent(
 ) -> Result<AgentTurnEffectReceiptV1, DomainStoreErrorV1> {
     intent.validate()?;
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("record_agent_turn_intent", error))?;
-    begin_immediate(&mut connection, "record_agent_turn_intent").await?;
-    let result = record_turn_intent_on(&mut connection, intent).await;
-    finish_transaction(&mut connection, "record_agent_turn_intent", result).await
+    let result = record_turn_intent_on(&mut connection, intent).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("record_agent_turn_intent", error))?;
+    Ok(result)
 }
 
 pub(crate) async fn record_steer_intent(
@@ -1961,12 +1981,15 @@ pub(crate) async fn record_steer_intent(
 ) -> Result<AgentTurnEffectReceiptV1, DomainStoreErrorV1> {
     intent.validate()?;
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("record_agent_steer_intent", error))?;
-    begin_immediate(&mut connection, "record_agent_steer_intent").await?;
-    let result = record_steer_intent_on(&mut connection, intent).await;
-    finish_transaction(&mut connection, "record_agent_steer_intent", result).await
+    let result = record_steer_intent_on(&mut connection, intent).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("record_agent_steer_intent", error))?;
+    Ok(result)
 }
 
 /// A steer joins the RUNNING turn: one durable user row under the active
@@ -2001,6 +2024,16 @@ async fn record_steer_intent_on(
     let binding =
         validate_current_runtime(connection, &intent.interaction_session_id, &intent.runtime)
             .await?;
+    if active_turn_for_session(connection, &binding)
+        .await?
+        .is_none_or(|active| active.turn_id != intent.turn_id)
+    {
+        return Err(DomainStoreErrorV1::IdentityConflict {
+            entity: "agent_turn",
+            id: intent.turn_id.to_string(),
+            reason: "the steering target is no longer the active turn".into(),
+        });
+    }
     let user = AgentTimelineItemDraftV1 {
         item_id: stable_item_id(
             "user-message",
@@ -2102,6 +2135,15 @@ async fn record_turn_intent_with_body_on(
     let binding =
         validate_current_runtime(connection, &intent.interaction_session_id, &intent.runtime)
             .await?;
+    // Admission and the start row share the write transaction. An earlier
+    // client snapshot cannot replace work another client already admitted.
+    if active_turn_for_session(connection, &binding).await?.is_some() {
+        return Err(DomainStoreErrorV1::IdentityConflict {
+            entity: "agent_turn",
+            id: intent.turn_id.to_string(),
+            reason: "another turn is already active in this conversation".into(),
+        });
+    }
     let started = AgentTimelineItemDraftV1 {
         item_id: stable_item_id(
             "turn-start",
@@ -2172,12 +2214,15 @@ pub(crate) async fn complete_turn_effect(
 ) -> Result<AgentTurnEffectReceiptV1, DomainStoreErrorV1> {
     completion.validate()?;
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("complete_agent_turn_effect", error))?;
-    begin_immediate(&mut connection, "complete_agent_turn_effect").await?;
-    let result = complete_turn_effect_on(&mut connection, completion).await;
-    finish_transaction(&mut connection, "complete_agent_turn_effect", result).await
+    let result = complete_turn_effect_on(&mut connection, completion).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("complete_agent_turn_effect", error))?;
+    Ok(result)
 }
 
 async fn complete_turn_effect_on(
@@ -2301,12 +2346,15 @@ pub(crate) async fn prepare_pending_answer(
 ) -> Result<AgentPendingAnswerReceiptV1, DomainStoreErrorV1> {
     intent.validate()?;
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("prepare_agent_pending_answer", error))?;
-    begin_immediate(&mut connection, "prepare_agent_pending_answer").await?;
-    let result = prepare_pending_answer_on(&mut connection, intent).await;
-    finish_transaction(&mut connection, "prepare_agent_pending_answer", result).await
+    let result = prepare_pending_answer_on(&mut connection, intent).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("prepare_agent_pending_answer", error))?;
+    Ok(result)
 }
 
 async fn prepare_pending_answer_on(
@@ -2384,12 +2432,15 @@ pub(crate) async fn complete_pending_answer(
 ) -> Result<AgentPendingAnswerReceiptV1, DomainStoreErrorV1> {
     completion.validate()?;
     let mut connection = pool
-        .acquire()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| map_sqlx("complete_agent_pending_answer", error))?;
-    begin_immediate(&mut connection, "complete_agent_pending_answer").await?;
-    let result = complete_pending_answer_on(&mut connection, completion).await;
-    finish_transaction(&mut connection, "complete_agent_pending_answer", result).await
+    let result = complete_pending_answer_on(&mut connection, completion).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("complete_agent_pending_answer", error))?;
+    Ok(result)
 }
 
 async fn complete_pending_answer_on(

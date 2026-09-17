@@ -687,6 +687,52 @@ async fn exact_session_context_batch_is_ordered_isolated_and_matches_scalar_prec
     let corrupted_authority = corrupted_event.get::<String, _>("authority_key");
     let corrupted_cursor = corrupted_event.get::<i64, _>("cursor");
     let original_event = corrupted_event.get::<String, _>("event_json");
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut plan_connection)
+        .await
+        .unwrap();
+    sqlx::query(
+        "DELETE FROM workflow_interaction_events WHERE authority_key = ?1 AND cursor = ?2",
+    )
+    .bind(&corrupted_authority)
+    .bind(corrupted_cursor)
+    .execute(&mut plan_connection)
+    .await
+    .unwrap();
+    assert_eq!(
+        store
+            .orchestration_target_for_exact_session(&exact_session)
+            .await
+            .unwrap(),
+        first_context.target,
+        "a missing event cannot discard its pending delivery in favor of a successor",
+    );
+    let missing_batch = store
+        .orchestration_dispatch_contexts_for_exact_sessions(std::slice::from_ref(&exact_session))
+        .await
+        .unwrap();
+    assert_eq!(missing_batch[0].resolution, first_batch[2].resolution);
+    assert!(
+        store
+            .interaction_service()
+            .read_events(coordinator_event_read(&first_context, EventCursor::BEGINNING))
+            .await
+            .is_err(),
+        "context lookup must not fabricate the missing payload or acknowledge its delivery",
+    );
+    sqlx::query(
+        "INSERT INTO workflow_interaction_events (authority_key, cursor, event_json) VALUES (?1, ?2, ?3)",
+    )
+    .bind(&corrupted_authority)
+    .bind(corrupted_cursor)
+    .bind(&original_event)
+    .execute(&mut plan_connection)
+    .await
+    .unwrap();
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut plan_connection)
+        .await
+        .unwrap();
     sqlx::query(
         "UPDATE workflow_interaction_events SET event_json = '{' WHERE authority_key = ?1 AND cursor = ?2",
     )
@@ -815,6 +861,7 @@ async fn exact_session_context_batch_scopes_event_faults_to_their_dispatch() {
     let first = record_prompt_written(&store, &first_bound).await;
     let first_context = bind_orchestration_context(&store, &first, "fault-first", 1_800).await;
     complete_orchestration_context(&store, &first_context, "fault-first", 1_900).await;
+    observe_coordinator_events(&store, &first_context).await;
 
     let mut second_request = request();
     second_request.idempotency_key = "delegate-once-event-fault-second".into();
@@ -856,6 +903,7 @@ async fn exact_session_context_batch_scopes_event_faults_to_their_dispatch() {
         )
         .await
         .unwrap();
+    assert!(first_scalar.successor_required);
 
     let mut fault = SqliteConnection::connect_with(&writable_connect_options(&path))
         .await
@@ -906,11 +954,23 @@ async fn exact_session_context_batch_scopes_event_faults_to_their_dispatch() {
         OrchestrationDispatchContextResolutionV1::Found(context)
             if context.as_ref() == &first_scalar
     ));
-    assert!(matches!(
-        &missing[1].resolution,
-        OrchestrationDispatchContextResolutionV1::Found(context)
-            if context.as_ref() == &second_scalar && !context.successor_required
-    ));
+    assert!(!second_scalar.successor_required);
+    assert_eq!(
+        missing[1].resolution,
+        OrchestrationDispatchContextResolutionV1::Found(Box::new(second_scalar.clone())),
+    );
+    assert_eq!(
+        store
+            .orchestration_dispatch_context_for_exact_session(
+                &second.task_id,
+                &second.dispatch_id,
+                second.generation,
+                &second_session,
+            )
+            .await
+            .unwrap(),
+        second_scalar,
+    );
 
     for (authority_key, cursor) in &event_rows {
         sqlx::query(
@@ -961,7 +1021,10 @@ async fn exact_session_context_batch_scopes_event_faults_to_their_dispatch() {
         ));
     }
     let double_corrupt = store
-        .orchestration_dispatch_contexts_for_exact_sessions(&[first_session, second_session])
+        .orchestration_dispatch_contexts_for_exact_sessions(&[
+            first_session.clone(),
+            second_session.clone(),
+        ])
         .await
         .unwrap();
     assert!(matches!(
@@ -978,6 +1041,21 @@ async fn exact_session_context_batch_scopes_event_faults_to_their_dispatch() {
             ..
         })
     ));
+    for (authority_key, cursor) in &event_rows {
+        sqlx::query(
+            "DELETE FROM workflow_interaction_events WHERE authority_key = ?1 AND cursor = ?2",
+        )
+        .bind(authority_key)
+        .bind(cursor)
+        .execute(&mut fault)
+        .await
+        .unwrap();
+    }
+    let missing_with_corrupt_delivery = store
+        .orchestration_dispatch_contexts_for_exact_sessions(&[first_session, second_session])
+        .await
+        .unwrap();
+    assert_eq!(missing_with_corrupt_delivery, double_corrupt);
 }
 
 #[tokio::test]
