@@ -5,6 +5,7 @@ import { TelemetryNotice } from "@/components/common/TelemetryNotice";
 import { t } from "@/lib/i18n";
 import { telemetrySetChoice, telemetryState } from "@/lib/ipc/telemetry";
 import { openSettingsPage } from "@/lib/settings/settingsBus";
+import { DEFAULT_UI_PREFS, useStore } from "@/store";
 
 vi.mock("@/lib/ipc/telemetry", () => ({
 	telemetryState: vi.fn(),
@@ -19,9 +20,16 @@ beforeEach(() => {
 	stateMock.mockReset();
 	setChoiceMock.mockReset();
 	vi.mocked(openSettingsPage).mockClear();
+	// Past the first-run guide, which otherwise has the corner.
+	useStore.setState({
+		uiPrefs: { ...DEFAULT_UI_PREFS, onboardingDismissed: true },
+	});
 });
 
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	useStore.setState({ uiPrefs: { ...DEFAULT_UI_PREFS } });
+});
 
 describe("TelemetryNotice", () => {
 	it("asks only while the install is pending, and goes away once answered", async () => {
@@ -96,6 +104,20 @@ describe("TelemetryNotice", () => {
 			expect(container.innerHTML).toBe("");
 			unmount();
 		}
+	});
+
+	it("waits until the first-run guide is closed or a project exists", async () => {
+		stateMock.mockResolvedValue({ effective: "pending", choice: null });
+		useStore.setState({ uiPrefs: { ...DEFAULT_UI_PREFS } });
+		const { container } = render(<TelemetryNotice />);
+		await vi.waitFor(() => expect(stateMock).toHaveBeenCalledTimes(1));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(container.innerHTML).toBe("");
+		useStore.setState({
+			uiPrefs: { ...DEFAULT_UI_PREFS, onboardingDismissed: true },
+		});
+		expect(await screen.findByRole("status")).toBeTruthy();
+		expect(stateMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("stays mounted but draws nothing while hidden, without asking again", async () => {

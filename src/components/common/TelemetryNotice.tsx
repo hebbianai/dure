@@ -1,4 +1,5 @@
 import { useTelemetryState } from "@/components/common/useTelemetryState";
+import { useOnboardingPending } from "@/components/panels/useOnboardingPanelState";
 import { FLOATING_CARD } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n";
@@ -9,10 +10,12 @@ import { openSettingsPage } from "@/lib/settings/settingsBus";
  * answers and a link to the full list, no dismiss: an unanswered notice is
  * the same as "not yet", so there is nothing a close control would add.
  * `hidden` keeps the card mounted (one state load per window) while a modal
- * or an update card has the corner. */
+ * or an update card has the corner; the first-run guide has the same
+ * precedence, so a new install meets one thing at a time. */
 export function TelemetryNotice({ hidden = false }: { hidden?: boolean }) {
 	const { state, busy, choose } = useTelemetryState();
-	if (hidden || state?.effective !== "pending") return null;
+	const onboarding = useOnboardingPending();
+	if (hidden || onboarding || state?.effective !== "pending") return null;
 	return (
 		<div className="fixed right-5 bottom-5 z-[100] w-[min(24rem,calc(100vw-2.5rem))]">
 			<section

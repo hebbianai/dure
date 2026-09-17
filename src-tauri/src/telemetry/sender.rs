@@ -407,7 +407,7 @@ pub(crate) mod tests {
         sender.enqueue(TelemetryEvent::PaneHidden, "0123456789abcdef0123456789abcdef");
         sender.enqueue(
             TelemetryEvent::MessageSent {
-                provider: super::super::event::Identifier::parse("codex").unwrap(),
+                provider: super::super::event::Provider::Codex,
             },
             "0123456789abcdef0123456789abcdef",
         );

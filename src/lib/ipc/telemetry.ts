@@ -3,6 +3,7 @@
 // is the whole frontend surface: the native side owns consent, the install
 // id, the event type and the transport, so nothing here caches a decision.
 import { invoke } from "@tauri-apps/api/core";
+import type { Provider } from "@/lib/agents/providerSpec";
 
 /** Mirrors src-tauri/src/telemetry/consent.rs's `Choice`. */
 export type TelemetryChoice = "accepted" | "declined";
@@ -25,14 +26,15 @@ export interface TelemetryState {
 }
 
 /** Mirrors `TelemetryEvent` in src-tauri/src/telemetry/event.rs. Every
- *  value is an enumeration or a short lowercase identifier; the native type
- *  rejects anything else, and the lifecycle events (`app_opened`,
- *  `telemetry_accepted`, `telemetry_opted_out`) are native-only. */
+ *  value is a closed enumeration (`provider` is the catalogue's id; a string
+ *  from a binding is checked natively); the native type rejects anything
+ *  else, and the lifecycle events (`app_opened`, `telemetry_accepted`,
+ *  `telemetry_opted_out`) are native-only. */
 interface TelemetryEvents {
 	space_created: undefined;
 	project_added: { kind: "local" | "ssh" };
-	agent_pane_opened: { provider: string };
-	message_sent: { provider: string };
+	agent_pane_opened: { provider: Provider };
+	message_sent: { provider: Provider | string };
 	pane_split: { direction: "right" | "below" };
 	pane_hidden: undefined;
 	pane_restored: undefined;

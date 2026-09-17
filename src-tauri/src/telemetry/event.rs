@@ -1,39 +1,40 @@
 //! The event type is the allowlist. An event reaches the wire only as one of
-//! these variants, and every property is an enumeration or a bounded
-//! lowercase identifier, so a path, a prompt, a URL or a repository name has
-//! no field to travel in. The webview offers the same tagged shape
+//! these variants, and every property is a closed enumeration, so a path, a
+//! prompt, a URL or a repository name has no field to travel in. The webview offers the same tagged shape
 //! (`{"event": "message_sent", "properties": {"provider": "codex"}}`); serde
 //! rejects unknown events, unknown keys and values outside the enumerations.
 
 use serde::{Deserialize, Serialize};
 
-/// `[a-z0-9_.-]{1,32}`: room for `codex`, `claude-code`, `gemini_cli`, and
-/// nothing with a slash, a space or a person's text.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct Identifier(String);
-
-const MAX_IDENTIFIER_LEN: usize = 32;
-
-impl Identifier {
-    pub(crate) fn parse(text: &str) -> Result<Self, String> {
-        let valid = !text.is_empty()
-            && text.len() <= MAX_IDENTIFIER_LEN
-            && text.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_.-".contains(&byte)
-            });
-        if valid {
-            Ok(Self(text.to_string()))
-        } else {
-            Err("telemetry identifier must match [a-z0-9_.-]{1,32}".to_string())
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Identifier {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        Self::parse(&text).map_err(serde::de::Error::custom)
-    }
+/// The coding agents Dure can drive. Mirrors `PROVIDERS` in
+/// cli/lib/contracts/provider-catalog.mjs; src/lib/ipc/telemetry.providers.test.ts
+/// fails when the two lists drift. A provider outside this list is not an
+/// event, not an "other" bucket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Provider {
+    Claude,
+    Codex,
+    Kimi,
+    Gemini,
+    Cursor,
+    Copilot,
+    Opencode,
+    Amp,
+    Goose,
+    Droid,
+    Auggie,
+    Grok,
+    Hermes,
+    Cline,
+    Continue,
+    Charm,
+    Codebuff,
+    Kilocode,
+    Kiro,
+    Antigravity,
+    Openclaude,
+    Pi,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,8 +65,8 @@ pub(crate) enum TelemetryEvent {
     TelemetryOptedOut,
     SpaceCreated,
     ProjectAdded { kind: ProjectKind },
-    AgentPaneOpened { provider: Identifier },
-    MessageSent { provider: Identifier },
+    AgentPaneOpened { provider: Provider },
+    MessageSent { provider: Provider },
     PaneSplit { direction: SplitDirection },
     PaneHidden,
     PaneRestored,
@@ -102,9 +103,9 @@ mod tests {
             Ok(TelemetryEvent::PaneHidden)
         );
         assert_eq!(
-            parse(json!({"event": "message_sent", "properties": {"provider": "claude-code"}})),
+            parse(json!({"event": "message_sent", "properties": {"provider": "claude"}})),
             Ok(TelemetryEvent::MessageSent {
-                provider: Identifier("claude-code".into())
+                provider: Provider::Claude
             })
         );
         assert_eq!(
@@ -127,14 +128,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_values_that_could_carry_text() {
+    fn rejects_values_that_could_carry_text_or_name_an_unknown_provider() {
         for bad in [
             "/Users/someone/repo",
             "hello world",
             "Codex",
             "https://example.test",
             "",
-            &"a".repeat(33),
+            "claude-code",
+            "other",
         ] {
             assert!(
                 parse(json!({"event": "message_sent", "properties": {"provider": bad}})).is_err(),
@@ -146,7 +148,7 @@ mod tests {
     #[test]
     fn serialises_to_the_wire_names() {
         let value = serde_json::to_value(TelemetryEvent::AgentPaneOpened {
-            provider: Identifier("codex".into()),
+            provider: Provider::Codex,
         })
         .unwrap();
         assert_eq!(
