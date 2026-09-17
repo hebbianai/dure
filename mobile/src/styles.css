@@ -1,0 +1,4898 @@
+@import "../../src/components/ui/dure-loader.css";
+
+/* Tokens copied from the desktop app's `src/index.css` dark theme, by value.
+ *
+ * Copied rather than imported: the two apps are separate Vite builds with no
+ * shared package, and reaching across that boundary for a stylesheet would make
+ * the phone build depend on the desktop's tree. The trade is that a desktop
+ * palette change has to be brought over by hand, so the origin of each value is
+ * named here — a colour with no provenance is one nobody dares to change.
+ *
+ * `oklch()` is kept rather than converted to hex. Safari on iOS 15.4+ and the
+ * Android WebView both support it, and converting would silently change the
+ * colours: these greys are all chroma 0, so an eyeballed hex equivalent drifts
+ * in lightness in a way that shows up beside the desktop on the same desk.
+ */
+:root {
+  color-scheme: dark;
+
+  /* --- desktop `.dark`, verbatim --- */
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --radius: 0.625rem;
+  --surface-sunken: #171717;
+
+  /* Motion (#851): entrances only, transform and opacity only; exits are
+     cuts. Orca's drawers enter in 180ms and Paseo's panels in 220, its menus
+     in 150 and toasts in 140 (sources read 2026-09-15), so: fast for what pops
+     in place, base for what rises. Reduced motion collapses both here, at the
+     token, and every animation that reads them follows. */
+  --motion-fast: 150ms;
+  --motion-base: 220ms;
+  /* Sheets take longer: they travel the whole panel height (2026-09-15 승연:
+     "시트 300ms"). */
+  --motion-slow: 300ms;
+  --ease-decelerate: cubic-bezier(0, 0, 0, 1);
+
+  /* Agent run state. Distinct from the VCS axis on the desktop for the same
+     reason it is distinct here: "blocked" and "deleted file" are not one idea. */
+  --status-run: #22c55e;
+  --status-warn: #f59e0b;
+  --status-blocked: #ef4444;
+  --status-done: #3b82f6;
+
+  --agent-claude-icon: #e08769;
+  --agent-claude-fill: #e0876924;
+  --agent-codex-icon: #a5b4fc;
+  --agent-codex-fill: #a5b4fc24;
+  --agent-kimi-icon: #38bdf8;
+  --agent-kimi-fill: #38bdf824;
+  --link: #60a5fa;
+
+  /* --- phone-only, and only where a desktop token has no counterpart --- */
+
+  /* A phone is held at arm's length in a room whose light nobody controls, so
+     rows need a hairline the desktop's 10%-white border does not give at this
+     size. Derived from the same near-white rather than a new grey. */
+  --row-line: oklch(1 0 0 / 7%);
+  /* Tap targets. 44px is the platform floor on both iOS and Android; rows that
+     look right at 36px are rows a thumb misses. */
+  --tap-min: 44px;
+
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+  /* Menlo first: it is what the desktop terminal uses, and a session's output is
+     the one place the two apps must agree glyph for glyph. */
+  --font-mono: Menlo, "SF Mono", ui-monospace, "Roboto Mono", monospace;
+}
+
+/* Names the previous palette used, kept as aliases so this change is a
+   re-theme rather than a rewrite of every rule below it. Each maps to the
+   desktop token that carries the same meaning.
+ *
+ * `--muted` is deliberately NOT aliased. The old palette used it as a text
+ * colour and the desktop uses it as a surface, so an alias would have compiled
+ * cleanly and rendered secondary text in the colour of a background — legible
+ * in no theme, and only visible to someone running the app. The twelve rules
+ * that meant "secondary text" were changed to `--muted-foreground` instead.
+ */
+:root {
+  --bg: var(--background);
+  --surface: var(--card);
+  --line: var(--border);
+  --text: var(--foreground);
+  --accent: var(--link);
+  --warn: var(--status-warn);
+  --error: var(--destructive);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+  font-size: 15px;
+}
+
+/* The rubber band is not a feature here. Every screen is exactly as tall as the
+   viewport, so an overscroll only ever shows the page's own background — and on
+   a screen whose header is meant to sit under the status bar it reads as the
+   whole app sliding. */
+html,
+body {
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+/* # Why the top and bottom insets are not applied here
+ *
+ * They used to be, and it cost two things. Padding the root pushes every screen
+ * *below* the status bar, so the glass header stopped short of the top and the
+ * status bar sat on a bare background — the mockups draw the header behind it.
+ * And a padded root plus a child asking for `100vh` is taller than the screen,
+ * which is why every page drifted up and down by exactly the inset.
+ *
+ * So the root claims the whole viewport, and each screen spends the inset where
+ * its own design wants it: headers add it to their top padding (their
+ * background then reaches the top of the display), and whatever sits last adds
+ * it to the bottom, clear of the home indicator.
+ *
+ * `dvh`, not `vh`: iOS reports `vh` against the *largest* viewport, so a
+ * `100vh` box is taller than what is visible whenever a browser chrome is
+ * showing. */
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  /* Left and right stay: they are zero in portrait and protect the content in
+     landscape, and neither can make the page taller. */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+
+.view {
+  flex: 1;
+}
+
+.screen {
+  padding: 16px;
+}
+
+.screen__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.screen__header h1 {
+  flex: 1;
+  font-size: 20px;
+  margin: 0;
+}
+
+.button {
+  min-height: 44px; /* 손가락 타깃 최소 크기 */
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+}
+
+.button--primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.button--quiet {
+  color: var(--muted-foreground);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.list__item {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px;
+}
+
+.list__open {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 44px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  font-size: 15px;
+}
+
+.list__endpoint {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.empty {
+  padding: 32px 8px;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+
+.empty__hint {
+  font-size: 13px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.form__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form__label {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.form__input {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px; /* iOS가 16px 미만 입력에서 자동 확대한다 */
+}
+
+.form__error {
+  color: var(--error);
+  font-size: 13px;
+}
+
+.form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.banner {
+  padding: 10px 14px;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  border-radius: 10px;
+  margin: 8px 16px;
+}
+
+.banner--error {
+  background: rgba(224, 108, 117, 0.12);
+  color: var(--error);
+}
+
+.banner--warn {
+  background: rgba(217, 164, 65, 0.12);
+  color: var(--warn);
+}
+
+/* 배너 안에서 행동을 여는 버튼. 배너는 한 줄로 읽히는 자리라 버튼을 오른쪽
+   끝으로 밀고, 터치 목표는 손가락 크기(44px)를 지킨다. */
+.banner__action {
+  float: right;
+  margin: -4px -4px -4px 8px;
+  padding: 4px 10px;
+  min-height: 32px;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid currentColor;
+  border-radius: 8px;
+}
+
+.blockers {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.blockers h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.blockers ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted-foreground);
+}
+
+.section-title {
+  font-size: 15px;
+  margin: 20px 0 0;
+}
+
+.endpoint {
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px;
+}
+
+.terminal {
+  height: max(260px, calc(100dvh - 100px));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  padding: 6px;
+  background: #0b0d10;
+}
+
+/* 서버 줄의 세 번째 줄: 이 서버로 지금 무엇을 할 수 있는지. */
+.list__note {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.list__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form__hint {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+/* 개인키는 여러 줄이라 한 줄 입력 칸에 넣으면 붙여넣기가 잘린 것처럼 보인다. */
+.form__input--key {
+  min-height: 96px;
+  padding: 8px 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+/* 전송 계층이 무엇을 증명했는지. 화면에서 지워지면 안 되는 문장이다. */
+.attestation {
+  margin: 4px 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* 세션 화면 크기를 서버가 정하므로 가로로 넘칠 수 있다. 페이지가 아니라
+   터미널 안에서 스크롤되게 한다. */
+.terminal {
+  overflow: auto;
+  position: relative;
+}
+
+.structured-terminal__grid {
+  min-width: 100%;
+  /* A drawer or a keyboard raises this floor rather than shrinking the
+     terminal. The grid keeps the rows the session was given and gains that much
+     empty room under itself, so the transcript scrolls up clear of whatever
+     arrived and back down when it leaves — no resize, so the agent's screen is
+     never repainted for something opened for a moment. `transcriptLift.ts`
+     carries why, and `terminalBox.ts` adds the same two back when it measures
+     what to tell the session. */
+  min-height: calc(
+    100% + var(--session-drawer-height, 0px) + var(--session-keyboard-height, 0px)
+  );
+  position: relative;
+}
+
+/* # Why this is fixed rather than absolute
+ *
+ * It used to sit at `top: 6px` inside the transcript, which is a scroll
+ * container. iOS keeps the focused caret visible, and the only way to reveal a
+ * box at the top of a scrolled container is to scroll that container back to
+ * the top — so every keystroke dragged the transcript up and away from what was
+ * being typed.
+ *
+ * `fixed` takes it out of every scroll container. It is still transparent,
+ * still focusable, and now there is nothing for iOS to scroll to find it.
+ *
+ * # Why it grows once the keys are up
+ *
+ * It used to be one real pixel. It is a trackpad pad now (`spaceTrackpad.ts`),
+ * and WebKit clamps the floating cursor to the field's box — a one-pixel box
+ * is one the caret can never leave. With the keys up it is a strip in the
+ * header, in view: a caret iOS cannot see is one it slides the
+ * page to reveal, on every move. The placement is shared with `.tray__input`,
+ * the look with `.tray__box`. */
+.structured-terminal__input {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 1px;
+}
+
+.structured-terminal__notice {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  background: rgb(11 13 16 / 92%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.structured-terminal-dom {
+  cursor: text;
+  font-kerning: none;
+  font-variant-ligatures: none;
+  /* Empty space retains terminal gestures; text runs enable native selection. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  white-space: pre;
+}
+
+.structured-terminal-dom .terminal-viewport-row {
+  width: 100%;
+  height: var(--terminal-row-height);
+  min-height: var(--terminal-row-height);
+  line-height: var(--terminal-row-height);
+  white-space: pre;
+}
+
+.structured-terminal-dom [data-terminal-run] {
+  display: inline-block;
+  height: 100%;
+  color: inherit;
+  vertical-align: top;
+  white-space: pre;
+  text-decoration-skip-ink: none;
+}
+
+.structured-terminal-dom [data-terminal-run]:not([data-terminal-blank]) {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.structured-terminal-dom a[data-terminal-hyperlink] {
+  cursor: pointer;
+}
+
+.structured-terminal-dom .terminal-viewport-cursor {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  user-select: none;
+}
+
+@keyframes terminal-viewport-blink {
+  50% {
+    visibility: hidden;
+  }
+}
+
+.structured-terminal-dom .terminal-viewport-blink {
+  animation: terminal-viewport-blink 1s step-end infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .structured-terminal-dom .terminal-viewport-blink {
+    animation: none;
+  }
+}
+
+.list__open:disabled {
+  opacity: 0.55;
+}
+
+/* 대답하지 못한 서버. 목록 아래에 붙지만 회색으로 묻히면 안 된다 — 이 블록이
+   없으면 짧아진 목록이 "세션이 죽었다"로 읽힌다. */
+.failures {
+  margin-top: 20px;
+}
+
+.failures__title {
+  margin: 0 0 8px;
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.failures__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.failures__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.failures__server {
+  font-size: 14px;
+}
+
+.failures__message {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.failures__detail {
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+/* 보류된 세 권한. 허용된 권한 바로 아래에 붙어 대비를 이룬다. */
+.attestation--withheld {
+  color: var(--warn);
+}
+
+.pair__result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pair__summary {
+  margin: 0;
+  font-size: 14px;
+}
+
+.census__refresh {
+  flex: 0 0 auto;
+}
+
+/* ─── 홈·목록·터미널의 공통 표면 ────────────────────────────────────────
+ *
+ * 데스크탑과 같은 카드/행 언어를 쓴다: 배경 위에 --card 표면, 그 위에 행,
+ * 행 사이는 머리카락 선. 카드마다 그림자를 주지 않는 이유는 데스크탑이 그렇게
+ * 하기 때문이고, 폰 화면에서 그림자 여러 겹은 대비만 흐린다.
+ */
+
+.app-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px 4px;
+}
+
+.app-bar__title {
+  flex: 1;
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* 아이콘 버튼. 보이는 크기는 작아도 누르는 면적은 --tap-min을 지킨다. */
+.icon-button {
+  display: grid;
+  place-items: center;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--muted-foreground);
+  font-size: 18px;
+}
+
+.icon-button:active {
+  background: var(--muted);
+}
+
+.section {
+  margin: 18px 0 0;
+}
+
+.section__label {
+  margin: 0 0 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* 카드 안에 행이 여러 개 들어가는 묶음. 행 사이만 선을 긋고 바깥 테두리는
+   카드가 갖는다 — 행마다 테두리를 주면 선이 두 겹으로 보인다. */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.card__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 0;
+  border-top: 1px solid var(--row-line);
+  background: none;
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  text-align: left;
+}
+
+.card__row:first-child {
+  border-top: 0;
+}
+
+.card__row:active {
+  background: var(--muted);
+}
+
+.card__row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.card__row-title {
+  display: block;
+  font-weight: 600;
+  /* 브랜치 이름은 길고 화면은 좁다. 줄바꿈보다 잘림이 낫다 — 두 줄로 늘어난
+     행은 목록의 리듬을 깨고, 어차피 뒷부분이 아니라 앞부분이 구별점이다. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card__row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card__row-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.card__row-chevron {
+  color: var(--muted-foreground);
+  font-size: 18px;
+}
+
+/* 상태 점. 색은 데스크탑의 --status-* 그대로이고, 모르는 상태는 회색이다 —
+   초록으로 떨어지면 화면이 "실행 중"이라고 주장하게 된다. */
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+
+.dot--run {
+  background: var(--status-run);
+}
+
+.dot--warn {
+  background: var(--status-warn);
+}
+
+.dot--blocked {
+  background: var(--status-blocked);
+}
+
+.dot--done {
+  background: var(--status-done);
+}
+
+.dot--unknown {
+  /* 채우지 않고 테두리만. 회색 채운 점은 "종료됨"으로 읽히는데, 이건
+     "모른다"다. 두 상태가 같은 그림이면 안 된다. */
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--muted-foreground);
+}
+
+/* 제공자 뱃지. 알려진 에이전트만 색을 갖고, 나머지는 회색으로 남는다. */
+.agent-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.agent-badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+
+.agent-badge--claude .agent-badge__dot {
+  background: var(--agent-claude-icon);
+}
+
+.agent-badge--codex .agent-badge__dot {
+  background: var(--agent-codex-icon);
+}
+
+.agent-badge--kimi .agent-badge__dot {
+  background: var(--agent-kimi-icon);
+}
+
+/* 목록 위 필터 칩. 가로 스크롤로 두는 이유: 칩이 줄바꿈되면 목록이 아래로
+   밀려 첫 행이 접히는데, 사용자가 보러 온 것은 칩이 아니라 첫 행이다. */
+.chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0 10px;
+  scrollbar-width: none;
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex: none;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.chip[aria-pressed="true"] {
+  border-color: transparent;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 600;
+}
+
+/* 묶음 제목. 개수를 오른쪽이 아니라 제목 옆에 두는 이유는 데스크탑과 같다 —
+   눈이 제목에서 개수로 가는 거리가 짧을수록 목록을 훑기 쉽다. */
+.group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 8px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.group-heading__count {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+
+/* 두 칸짜리 빠른 작업. */
+.quick-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.quick-tile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.quick-tile:active {
+  background: var(--muted);
+}
+
+/* 첫 실행 화면. 버튼이 화면 가운데 하나뿐인 상태를 의도한다. */
+.hero {
+  padding: 56px 24px 24px;
+  text-align: center;
+}
+
+/* 앱 로고.
+ *
+ * 어두운 배경 위의 밝은 정사각형이라 모서리를 깎는다. 원본 PNG 는 iOS 홈
+ * 화면이 알아서 마스크하는 것을 전제로 사각으로 그려져 있어서, 그대로 두면
+ * 이 화면에서만 각진 흰 타일로 보인다. 22.37% 는 애플의 squircle 이 실제로
+ * 쓰는 비율이다.
+ *
+ * 그림자를 얹지 않는다. 로고 자체가 이미 자기 그림자를 그려 넣은 이미지다. */
+.app-logo {
+  border-radius: 22.37%;
+}
+
+/* 로고 + 앱 이름. 스캔 화면 상단. */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.brand__name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.hero .app-logo {
+  margin-bottom: 20px;
+}
+
+.hero__title {
+  margin: 0 0 10px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.hero__body {
+  margin: 0 auto 28px;
+  max-width: 30ch;
+  color: var(--muted-foreground);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.hero__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* 번호가 붙은 안내. 페어링 화면과 첫 실행 화면이 같은 모양을 쓴다. */
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.steps__item {
+  display: flex;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--row-line);
+  text-align: left;
+}
+
+.steps__item:first-child {
+  border-top: 0;
+}
+
+.steps__index {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.steps__title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.steps__body {
+  margin-top: 2px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 아래에서 올라오는 시트. 붙여넣기 입력이 여기 들어간다. */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: rgb(0 0 0 / 55%);
+}
+
+.sheet__panel {
+  border-radius: 18px 18px 0 0;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+}
+
+.sheet__grip {
+  width: 44px;
+  height: 4px;
+  margin: 0 auto 14px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.sheet__title {
+  margin: 0 0 4px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+/* The line under a sheet's title — what will happen, in one sentence. */
+.sheet__note {
+  margin: 0 0 10px;
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* ── The tray sheet: 추가 (3096:86354) and 보기 옵션 ─────────────────────────
+ *
+ * The same scrim and the same panel as the source-control sheets — it is drawn
+ * over the list it is about, for the same reason they are. What differs is
+ * surface, radius and rhythm, so it takes a modifier rather than moving the
+ * numbers the branch, commit and reviewer sheets are built on. Two sheets
+ * over the Home list share it (2026-09-15 승연: the two read as different
+ * formats), so the modifier is named for the surface, not for 추가.
+ */
+.sheet--tray {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.sheet--tray .sheet__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 16px calc(32px + env(safe-area-inset-bottom));
+  border-top: 0;
+  border-radius: 20px 20px 0 0;
+  background: var(--glass-tray-surface);
+}
+
+.sheet--tray .sheet__grip {
+  width: 36px;
+  height: 5px;
+  margin: 0 auto;
+  background: var(--glass-chip);
+}
+
+.sheet--tray .sheet__title {
+  margin: 0 4px;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.add-sheet__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* No divider between the rows, despite the Figma layer being named `hairline`:
+   the render has none, and one drawn here would be two rows pretending to be a
+   list of many. */
+.add-sheet__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  /* The press highlight reaches 8px past the content on both sides: from the
+     panel's edge it reads 8 / highlight / 8 / mark, instead of the mark
+     standing on the highlight's edge. The content itself does not move — the
+     mark keeps the panel's 16px inset. */
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  min-height: 64px;
+  padding: 12px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.add-sheet__row:active {
+  background: var(--glass-chrome);
+}
+
+.add-sheet__lead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.add-sheet__mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--glass-chip);
+  color: var(--foreground);
+}
+
+.add-sheet__text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.add-sheet__name {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Wraps rather than ellipsises. The note is the row's whole reason for being
+   longer than its title — 새 에이전트 alone does not say where the agent would
+   appear — and half of that sentence answers nothing. The Korean fits one line
+   at 402px; longer translations take two, and the row's 64px absorbs it. */
+.add-sheet__note {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.add-sheet__chevron {
+  flex: none;
+  color: var(--muted-foreground);
+}
+
+/* The staging column. A real checkbox so the keyboard and the screen reader
+   keep working for the control that decides what goes into a commit. */
+.scm__check {
+  flex: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid var(--muted-foreground);
+  background: none;
+  position: relative;
+}
+
+.scm__check:checked,
+.scm__check:indeterminate {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.scm__check:checked::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 5px;
+  height: 10px;
+  border: solid var(--primary-foreground);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Indeterminate is a bar, not a tick: pressing this one selects the rest,
+   and a tick would promise the opposite. */
+.scm__check:indeterminate::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 7px;
+  width: 10px;
+  height: 2px;
+  background: var(--primary-foreground);
+}
+
+.scm__check:disabled {
+  opacity: 0.4;
+}
+
+/* The first row of the list: the same column and height as a file row, so
+   its checkbox stands over the files' checkboxes and the space to the first
+   file is the rows' own. */
+.scm__select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 10px 4px;
+}
+
+.scm__select-label {
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* The path and its counts, as their own tap target beside the checkbox. */
+.scm__file-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button.scm__file-open:active {
+  opacity: 0.6;
+}
+
+/* 접히는 참고 서술. 터미널 아래에 둬서, 펼쳐도 보던 출력이 밀려나지 않는다. */
+.capability-detail {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 0 12px;
+}
+
+.capability-detail > summary {
+  min-height: var(--tap-min);
+  display: flex;
+  align-items: center;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  cursor: default;
+}
+
+.capability-detail[open] > summary {
+  border-bottom: 1px solid var(--row-line);
+}
+
+.capability-detail .attestation {
+  margin: 10px 0;
+}
+
+/* v2 페어링 코드 입력.
+ *
+ * 등폭 글꼴과 넓은 자간: 여섯 글자를 화면에서 읽어 옮겨 적는 것이 이 칸의
+ * 유일한 용도이고, 비례 글꼴에서는 O와 0의 폭이 달라 오히려 헷갈린다. */
+.form__input--code {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  letter-spacing: 0.22em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+/* ── First run and the three pairing screens ────────────────────────────────
+ *
+ * Figma `dure-UI` 2863:76314 / 2863:76554 / 2865:76794 / 2865:77049.
+ * `pairingScreens.ts` builds them; only the mockup's values live here.
+ *
+ * Same palette rule as the rest of this file — colours come from the desktop
+ * `src/index.css` dark theme by name. The tokens the mockups use
+ * (`base/foreground`, `base/muted-foreground`, `base/primary`,
+ * `base/primary-foreground`) are the *same values* as `--foreground`,
+ * `--muted-foreground`, `--primary` and `--primary-foreground` here
+ * (neutral 50 / 400 / 200 / 900), so the mockup's hexes are not restated.
+ */
+:root {
+  /* The glass layer, taken by value from the desktop `src/index.css` .dark
+     block. These are the two the mockups use for input and card surfaces. */
+  --glass-pane: #242424;
+  --glass-chrome: #ffffff0f; /* white 6% */
+  /* A glass-only edge, distinct from structural --border, for the inputs
+     and card in these mockups. */
+  --glass-hairline-glass: #4e4e4e;
+  /* Mockup token `glass/scan-scrim` — the dark laid over the camera. */
+  --scan-scrim: rgba(0, 0, 0, 0.55);
+  /* The warning box of 2863:76571. A step calmer than --status-warn
+     (#f59e0b) above, so the text still reads with the whole box tinted. */
+  --warn-surface: rgba(224, 168, 59, 0.14);
+  --warn-ink: #e0a83b;
+}
+
+/* One exported SVG painted in the current text colour. Why not an `<img>`:
+   see `glyph()` in pairingScreens.ts. */
+.glyph {
+  display: block;
+  flex: none;
+  width: var(--glyph-size);
+  height: var(--glyph-size);
+  background-color: currentColor;
+  -webkit-mask: var(--glyph) center / contain no-repeat;
+  mask: var(--glyph) center / contain no-repeat;
+}
+
+/* The wordmark. 63×16, so it cannot use `.glyph`, which is square by
+   construction — it takes the same mask technique and its own box. */
+.dure-wordmark {
+  display: block;
+  flex: none;
+  width: 63px;
+  height: 16px;
+  background-color: var(--foreground);
+  -webkit-mask: var(--glyph) center / contain no-repeat;
+  mask: var(--glyph) center / contain no-repeat;
+}
+
+/* A 20px glyph in a 32px tap target: it looks 20 and is pressed at 32. */
+.icon-tap {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--foreground);
+}
+
+.icon-tap:active {
+  background: var(--glass-chrome);
+}
+
+/* All four screens fill the height, and the bottom buttons sit on the bottom. */
+.pair-screen {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--glass-pane);
+}
+
+/* The status bar is part of the header, not a strip above it: the inset is
+   added to this padding so the bar's own background reaches the top. */
+.pair-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: calc(12px + env(safe-area-inset-top)) 12px 0 12px;
+}
+
+/* Every bar that carries a back arrow measures from the same two numbers: 12
+   under the status bar, and a 44px slot — `--tap-min`, and what `.home__slot`
+   already is — so the 20px glyph inside it starts at 12 + 12 = 24, where the
+   wordmark starts on Home. The bars these sit in are different heights for
+   their own reasons, so the row, not the padding, is what lines them up.
+
+   `.scan`'s X is not in a bar: it is positioned against the screen, and keeps
+   its own 32. */
+.pair-bar .icon-tap,
+.launch__bar .icon-tap,
+.folder-browser__bar .icon-tap,
+.session__header .icon-tap {
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+  /* The title follows the glyph by 8, not the slot by 4: the slot's own
+     12px of air past the glyph plus the gap read as a gulf between the arrow
+     and the word (2026-09-15 승연). The hit area is unchanged; the slot
+     simply overlaps the gap by 8. */
+  margin-right: -8px;
+}
+
+.pair-bar__title {
+  margin: 0;
+  font-size: 18px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* With no back arrow (the first-run screen) the mockup starts the title at
+   16px instead. */
+.pair-bar__title:first-child {
+  margin-left: 8px;
+}
+
+.pair-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 24px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.pair-button--solid {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); /* mockup shadow/xs */
+}
+
+/* Used by `ghostButton` since it was written, and never defined: the first-run
+   "paste a code instead" and the confirm screen's cancel were falling back to
+   the base rule alone. */
+.pair-button--ghost {
+  background: none;
+  color: var(--muted-foreground);
+}
+
+.pair-button--ghost:active {
+  color: var(--foreground);
+}
+
+/* The desktop's outline button in the dark theme: `border-input`,
+   `bg-input/30`, and — the part this used to miss — foreground ink. Muted
+   ink on a dim fill read as disabled next to the solid button beside it
+   (2026-09-15 승연: "비활성화처럼 보이는데"). */
+.pair-button--outline {
+  background: color-mix(in srgb, var(--input) 30%, transparent);
+  border: 1px solid var(--input);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  color: var(--foreground);
+}
+
+.pair-button--outline:active {
+  background: color-mix(in srgb, var(--input) 50%, transparent);
+}
+
+.pair-button--block {
+  width: 100%;
+}
+
+.pair-button:disabled {
+  opacity: 0.6;
+}
+
+/* ── 1. First run (2863:76314) ───────────────────────────────────────────── */
+
+/* The same wordmark bar as `.home__header`, so it takes the same numbers —
+   12 above, 44 of row, 8 below. Left to drift on its own it would put the
+   wordmark 4px lower than the screen a person sees next. */
+.first-run__bar {
+  height: calc(64px + env(safe-area-inset-top));
+  padding: calc(12px + env(safe-area-inset-top)) 16px 8px 24px;
+}
+
+.first-run__center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 44px;
+  text-align: center;
+}
+
+.first-run__title {
+  margin: 0;
+  font-size: 18px;
+  line-height: 28px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.first-run__body {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 18px;
+  /* Korean has to break between words, not inside them, for the two lines to
+     land where the mockup puts them. */
+  word-break: keep-all;
+}
+
+.first-run__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+/* Only the first-run buttons are 40px / 8px; every other screen is 44 / 10. */
+.first-run__actions .pair-button {
+  min-height: 40px;
+  border-radius: 8px;
+}
+
+.first-run__guide {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: none;
+  padding: 0 24px calc(36px + env(safe-area-inset-bottom));
+}
+
+.first-run__guide-title {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.pair-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pair-steps__item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+/* The numerals are monospaced. Proportional digits give 1 and 2 different
+   widths and the body text beside them wobbles. */
+.pair-steps__index {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 20px;
+  color: var(--muted-foreground);
+}
+
+.pair-steps__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pair-steps__title {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.pair-steps__note {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+
+/* ── 2. Pair from a pasted code (2863:76554) ─────────────────────────────── */
+
+.paste__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 16px calc(36px + env(safe-area-inset-bottom));
+}
+
+.paste__form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.pair-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pair-field__label {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.pair-field__hint {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.pair-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 4px 12px;
+  border: 1px solid var(--glass-hairline-glass);
+  border-radius: 10px;
+  background: var(--glass-chrome);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  /* The mockup says 13px, but iOS zooms the page when focus lands on an input
+     under 16px. The other input rules in this file are 16px for the same
+     reason, and finishing pairing on a zoomed screen is worse than 3px. */
+  font-size: 16px;
+  line-height: 20px;
+}
+
+.pair-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.pair-input--payload {
+  height: 120px;
+  min-height: 120px;
+  padding: 8px 12px;
+  resize: none;
+}
+
+/* That the private key is stored in the clear. The whole box is tinted
+   because this sentence sits at the last point where pairing can be
+   reconsidered. */
+.pair-warning {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--warn-surface);
+  color: var(--warn-ink);
+  font-size: 13px;
+  line-height: 18px;
+  word-break: keep-all;
+}
+
+/* ── 3. Scan (2865:76794) ────────────────────────────────────────────────── */
+
+/* The layer over the camera. It paints no background: while this screen is up
+   the webview is transparent and the camera shows through it. */
+.scan {
+  position: relative;
+  background: none;
+}
+
+/* While scanning, every surface the app paints is pulled away. One left
+   standing hides the camera behind it and the screen becomes a black sheet
+   with a reticle on it. */
+html[data-scan="on"],
+html[data-scan="on"] body,
+html[data-scan="on"] #root,
+html[data-scan="on"] .view {
+  background: transparent;
+}
+
+.scan__scrim {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  /* The mockup is a 252px window in a 402px frame. Both axes take the same
+     value so the window stays square on any width. */
+  --scan-window: min(252px, 62.7vw);
+  /* The scrim is the window's own shadow (below), spread far past the screen;
+     nothing of it may leak outside this layer. */
+  overflow: hidden;
+}
+
+/* The hole, centred on the screen. The scrim around it is the window's shadow,
+   one box spread past every edge, rather than four bands: a hole made of bands
+   has square corners, and the brackets drawn inside it do not. The viewfinder's
+   corners turn at radius 12 inside a 3px stroke, so the hole turns at 14, both
+   scaled by the same window. */
+.scan__window {
+  display: grid;
+  place-items: center;
+  width: var(--scan-window);
+  height: var(--scan-window);
+  border-radius: calc(var(--scan-window) * 14 / 252);
+  box-shadow: 0 0 0 100vmax var(--scan-scrim);
+}
+
+.scan__frame {
+  /* Sized by the window, not by `glyph()`: the helper writes its 252 as an
+     inline `--glyph-size`, which outranks any class, and on a 360px-wide
+     phone the window is 226 — so the brackets overran the hole they frame. */
+  width: var(--scan-window);
+  height: var(--scan-window);
+  color: var(--foreground);
+}
+
+/* A screen that could not open the camera has no reason to leave a hole —
+   there is no camera to come through it. */
+.scan--blind .scan__scrim {
+  background: var(--background);
+}
+
+.scan--blind .scan__window {
+  box-shadow: none;
+}
+
+/* Every other bar in this stack adds the top inset; without it the X lands
+   under the status bar on a notched phone. */
+.scan .icon-tap {
+  position: absolute;
+  top: calc(24px + env(safe-area-inset-top));
+  right: 8px;
+  z-index: 1;
+}
+
+.scan__footer {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 0 44px calc(44px + env(safe-area-inset-bottom));
+}
+
+.scan__hint {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 18px;
+  text-align: center;
+  word-break: keep-all;
+}
+
+.scan__notice {
+  margin: 0;
+}
+
+/* ── 4. Confirm before connecting (2865:77049) ───────────────────────────── */
+
+.confirm__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 24px;
+  padding: 0 16px;
+}
+
+.confirm__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.confirm__title {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.confirm__lede {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+
+.confirm__card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--glass-hairline-glass);
+  border-radius: 10px;
+  background: var(--glass-chrome);
+}
+
+.confirm__device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.confirm__device-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.confirm__sessions {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.confirm__facts {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* The fingerprint is read character by character against another screen.
+   Proportional type makes the eye slip, and an abbreviated value would make
+   the compared thing a part of the value. */
+.confirm__fact {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--muted-foreground);
+  word-break: break-all;
+}
+
+.confirm__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+  padding: 0 16px calc(40px + env(safe-area-inset-bottom));
+}
+
+/* ── Home: the session list ─────────────────────────────────────────────────
+ *
+ * Figma `dure-UI` 2849:80663 / 2851:74530. `censusView.ts` builds it.
+ */
+:root {
+  /* Opaque mobile shell approximation. Unlike the desktop's native material,
+     this surface has no window behind it. Do not substitute the desktop CSS
+     tint: it would darken our pane instead of recreating native composition. */
+  --glass-shell: #323232;
+  /* Mockup `glass/chip` — the selected tab. */
+  --glass-chip: rgba(255, 255, 255, 0.1);
+  /* Mockup `glass/base` (3096:86213 / 86220) — the disc behind a top-bar glyph,
+     and the empty screen's mark. Named for the slot rather than for the Figma
+     token: `--glass-base` already means the desktop's #0d0d0d tint in the
+     comment above, and two different values under one name is how a stylesheet
+     starts lying. Over `--glass-pane` it composites to #3e3e40, which is what
+     the mockup renders; the alpha is kept so the pair stays one decision. */
+  --glass-slot: rgba(66, 66, 68, 0.88);
+  /* Mockup `glass/tip` / `glass/tip-fg` (3096:86268) — the one light surface on
+     the screen, and its ink. Not `--primary` (#e5e5e5): the mockup's zinc-200
+     carries a faint blue that the neutral ramp does not. */
+  --glass-tip: #e4e4e7;
+  --glass-tip-fg: #18181b;
+  /* The desktop's menu material (`src/index.css` dark: `--glass-menu`
+     #272727 with the consumer's 75% alpha, `--glass-menu-hairline` white 10%,
+     `--glass-shadow-menu`), written as values because this stylesheet does
+     not share the desktop's. The view menu's cards wear it. */
+  --glass-menu: rgba(39, 39, 39, 0.75);
+  --glass-menu-hairline: rgba(255, 255, 255, 0.1);
+  --glass-menu-blur: blur(15px);
+  --glass-shadow-menu:
+    0 10px 28px 0 rgba(9, 9, 11, 0.22),
+    0 2px 6px 0 rgba(9, 9, 11, 0.1);
+  /* Mockup `glass/tray` (3120:80874) — a filled control on a card. Same value
+     as `--glass-keycap` and a different Figma token; kept apart so one can move
+     without dragging the other with it. */
+  --glass-tray: #3f3f3f;
+  /* Temporary overlay glass can reveal the transcript beneath it. This is
+     separate from the opaque shell approximation above. */
+  --glass-overlay-glass: rgba(40, 40, 44, 0.68);
+  --glass-overlay-blur: blur(20px);
+}
+
+.home {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--glass-pane);
+}
+
+/* 3096:86211 — the bar paints nothing of its own. The header used to be a
+   lighter panel with a rounded bottom; the redesign runs one flat `glass/pane`
+   from the status bar to the home indicator, and the settings button is the
+   only chrome on it. */
+.home__header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* 24px on the left is where 3356:85137 starts the wordmark; the right stays
+     16px, which is the settings slot's own inset.
+
+     12px above, not 16: this bar and `.launch__bar` are the same header in two
+     screens, and they are set from one number so the wordmark and a screen
+     title start at the same height. The status bar's inset rides on top, so
+     the 12 is the air *under* the status bar rather than under the display's
+     edge. */
+  padding: calc(12px + env(safe-area-inset-top)) 16px 8px 24px;
+}
+
+/* The top-bar button is 44px, exactly --tap-min. */
+.home__slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  /* 3356:85147 draws a bare gear on the pane — the 44px slot has no fill of its
+     own, and the pill this used to paint read as a button that was pressed. */
+  background: none;
+  color: var(--foreground);
+}
+
+.home__slot:active {
+  color: var(--muted-foreground);
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 12px 16px 8px;
+  overflow-x: auto;
+  overflow-y: clip;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* 16px after the last tab, as there are 16 before the first: the strip's gap
+   plus this 8. A pseudo flex item rather than trailing padding, which scroll
+   overflow does not count the same way everywhere (2026-09-15 승연: a location
+   label ran off the edge with nothing after it). */
+.tabs::after {
+  content: "";
+  flex: none;
+  width: 8px;
+}
+
+.tab {
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9999px;
+  background: none;
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  /* A location label ("mac-studio · /Users/seung/Dev/Payments") is a sentence;
+     capped so the next tab's head still shows, which is what says the strip
+     scrolls. */
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab--on {
+  background: var(--glass-chip);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.home__controls { display: flex; align-items: center; gap: 4px; }
+
+.home__body {
+  min-height: 0;
+  overflow-y: auto;
+  /* The bounded refresh strip owns pull travel; native rubber-banding adds
+     a second displacement once the list is tall enough to scroll. */
+  overscroll-behavior-y: none;
+  overflow-anchor: none;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* 3096:86222 puts 4px between the tab strip and the first group, on top of
+     the strip's own 8px bottom padding. */
+  margin-top: 4px;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+}
+
+/* ── Nothing to list (3096:86335) ───────────────────────────────────────────
+ *
+ * The mark, the sentence, and what to do about it, centred in whatever is left
+ * under the bar. The 64px bottom pad is the mockup's own bias: the stack sits
+ * 32px above true centre, above the FAB rather than behind it.
+ */
+.home__empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 24px 64px;
+  text-align: center;
+}
+
+/* The Dure mark, not the six-dot loader. This screen has already answered —
+   `loader()` means "attaching", and spinning here would say the phone is still
+   fetching a list it has finished fetching. */
+.home__empty-mark {
+  color: var(--glass-slot);
+}
+
+.home__empty-title {
+  margin: 6px 0 0;
+  color: var(--foreground);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.home__empty-body {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* ── Pull to refresh ────────────────────────────────────────────────────────
+ *
+ * The redesign takes away the freshness line, which was also the only refresh
+ * button. The gesture puts it back without adding anything to the screen:
+ * nothing is drawn until a finger asks for it.
+ */
+.home__pull {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  height: 0;
+  color: var(--muted-foreground);
+}
+
+/* Open while the census it started is running, so the gesture's result is
+   visible without the finger holding it there. */
+.home__pull--busy {
+  height: 40px;
+}
+
+/* The gesture's keyboard and screen-reader equivalent.
+ *
+ * Off-screen rather than `display: none`: the mockup draws no refresh control
+ * and this honours that, but a control removed from the accessibility tree is
+ * not a control. It comes back into view on focus, so tabbing to it shows what
+ * is about to happen instead of firing something invisible. */
+.home__refresh {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.home__refresh:focus-visible {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--glass-chip);
+}
+
+.home__pull-mark {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.4;
+}
+
+/* Far enough that letting go would ask again. */
+.home__pull--armed {
+  color: var(--foreground);
+}
+
+.home__pull--armed .home__pull-mark {
+  opacity: 1;
+}
+
+.project {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 3356:85152 insets the group 12px. The row's own 8px left pad then puts the
+     branch mark at 20px — the inset moved, the mark did not. */
+  padding: 0 12px;
+}
+
+/* 12px on the right rather than 10px: the mockup lands the state text's right
+   edge 12px inside the header, and the header is the only thing that can say
+   so — the text is pushed there by `margin-left: auto`. */
+.project__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 6px 12px 6px 10px;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+/* The name recedes; the badge does not. The blanket opacity used to dim both,
+   and a badge at 70% reads as a disabled control rather than a label. */
+.project__name {
+  overflow: hidden;
+  opacity: 0.7;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project__badge {
+  flex: none;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+/* The row carries no card of its own — the mockup's list is flat, and a border
+   per row at this density reads as a table. */
+.list__item.session-row {
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+}
+
+/* 3356:85152 stacks the rows 2px apart. Scoped to the project list rather than
+   changed on `.list`, which four other screens share. */
+.project .list {
+  gap: 2px;
+}
+
+.session-row__open {
+  display: flex;
+  /* `.list__open` above stacks its children; this row puts the mark beside the
+     text, so it has to say so rather than inherit that column. */
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--tap-min);
+  /* 3356:85162's two-line row: 12 top, 10 bottom, 8 left, 12 right. The
+     asymmetric bottom is the mock's, and it is what makes the branch line sit
+     closer to its own title than to the next row's. */
+  padding: 12px 12px 10px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  /* Without these an iOS press-and-hold raises the selection callout and the
+     long-press gesture never arrives. Invisible in jsdom and in desktop Safari,
+     which is why it is written down rather than discovered again. */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  color: inherit;
+  font-family: var(--font-ui);
+  text-align: left;
+}
+
+.session-row__open:active {
+  background: var(--glass-chrome);
+}
+
+/* A row that cannot be opened still has to be read: the note under it is the
+   reason, and dimming it to unreadable hides the answer. */
+.session-row__open:disabled {
+  opacity: 1;
+}
+
+/* 3356:85175's one-line row is 12px all round and centres its content — there
+   is no second line for the mark to align to. Figma draws it 40px; this app's
+   own 44px tap floor wins, and the 4px is the only place the two disagree. */
+.session-row--single .session-row__open {
+  align-items: center;
+  padding: 12px 12px 12px 8px;
+}
+
+.session-row__lead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 16, as 3356:85212 draws the mark — the row was rebuilt at 18 in a 20px
+     slot and grew with it; back to the frame's size (2026-09-15 승연). */
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+}
+/* The mark is monochrome; the state is a dot at its corner, the desktop's
+   own anatomy (AgentActivityGlyph), rather than the whole mark painted in the
+   status colour (2026-09-15 승연: "흑백 아이콘으로"). */
+.session-row__lead {
+  position: relative;
+}
+.session-row__lead--warn::after,
+.session-row__lead--blocked::after,
+.session-row__lead--done::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--glass-pane);
+}
+.session-row__lead--warn::after { background: var(--status-warn); }
+.session-row__lead--blocked::after { background: var(--status-blocked); }
+.session-row__lead--done::after { background: var(--status-done); }
+.session-row__lead--unknown { opacity: 0.6; }
+
+.session-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.session-row__title {
+  overflow: hidden;
+  color: var(--foreground);
+  /* 14, 3356:85216's label (Geist Medium). The frame sets it leading-none;
+     the line is 16 here, a pixel of air above and below the glyphs, which
+     the frame's two-line row (12 + 14 + 4 + 15 + 10 = 55) grows to 57 by.
+     The row had been 66 on a 16/22 title and 12/18 note (2026-09-15 승연:
+     "시안의 크기감으로 돌려봐", then "조정하는게 나으면 조정"). */
+  font-size: 14px;
+  line-height: 16px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  /* 3356:85168's info line is a 15px box around 11px text. Without the box the
+     two-line row measures 51 against the mock's 55, and the four rows of a
+     group drift a row's worth out of step down the screen. */
+  min-height: 15px;
+}
+
+.session-row__provider { flex: none; width: 16px; height: 16px; object-fit: contain; }
+img.session-row__provider { filter: grayscale(1); border-radius: 3px; }
+
+.session-row__mono {
+  min-width: 0;
+  overflow: hidden;
+  /* The desktop's info line is foreground at 70% (559:31535), not muted:
+     the words stand ahead of the 16px mark beside them. */
+  color: color-mix(in srgb, var(--foreground) 70%, transparent);
+  font-family: var(--font-mono);
+  /* 11 in a 15px line, 3356:85222's info text. */
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home__list { flex: none; gap: 2px; padding: 0 12px; }
+.session-row__field { display: flex; align-items: center; gap: 4px; min-width: 0; flex-shrink: 0; max-width: 100%; }
+.session-row__field:last-child { flex-shrink: 1; }
+/* The detail is one element wearing both classes, and text-overflow needs a
+   block to draw its ellipsis in — a flex container clips the text flat
+   (2026-09-15 승연: "folderBrow" cut without a mark). */
+.session-row__field.session-row__mono { display: block; }
+.session-row__field + .session-row__field::before { content: "·"; margin: 0 3px; color: var(--muted-foreground); }
+.session-row__meta { overflow: hidden; color: var(--muted-foreground); }
+.session-row__stats { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; color: var(--muted-foreground); font: 12px/16px var(--font-mono); }
+.session-row__git { display: flex; gap: 5px; }
+.session-row__committed { color: var(--status-run); }
+.session-row__dirty { color: var(--status-warn); }
+.session-row__updated { font-size: 11px; line-height: 15px; margin-top: auto; white-space: nowrap; }
+/* ── 보기 옵션: the Home list's view menu, on the tray sheet ─────────────────
+ *
+ * The same sheet as 추가 — surface, grip, title and rhythm come from
+ * `.sheet--tray` above. A row per axis with its value on the right, and a row
+ * opens the design system's menu card under itself (2026-09-15 승연, the
+ * dropdown proposal): no second screen, no chips of our own. */
+.home-menu .sheet__panel {
+  position: relative;
+  width: 100%;
+  max-height: min(80dvh, 650px);
+  overflow-y: auto;
+}
+
+.home-menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* The Home session row's frame (3356:85162), not the 추가 sheet's: the press
+   box stands 12px in from the panel and the text 8px inside it, on the
+   title's 20px line; the chevron ends 12px inside the box, at 24, where the
+   Home row's time ends. Pressed, the row lights the same box as the list it
+   is about (2026-09-15 승연: "하단 선택메뉴들도 보기옵션에 라인 맞게", then
+   "홈에 맞춘 안대로"). One line, so 48 rather than Home's 55. */
+.home-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: calc(100% + 8px);
+  margin: 0 -4px;
+  min-height: 48px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--foreground);
+  font: 500 15px/20px var(--font-ui);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.home-menu__row:active,
+.home-menu__row:focus-visible {
+  background: var(--glass-chrome);
+}
+
+/* The row whose card is open stays lit under the scrim, so the card reads as
+   belonging to it; its chevron turns to say the card can be folded back. */
+.home-menu__row--open {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.home-menu__label {
+  flex: none;
+}
+
+.home-menu__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.home-menu__chevron {
+  flex: none;
+  color: var(--muted-foreground);
+  transition: transform var(--motion-fast) var(--ease-decelerate);
+}
+
+.home-menu__row--open .home-menu__chevron {
+  transform: rotate(180deg);
+}
+
+/* A glass hairline rather than the structural border — this line lives inside
+   the tray, like the tray's own edges — from the text's 20 to the chevrons'
+   24, 12px under the row before it (the list's 4 and its own 8). One parts
+   the filters from the axes above them, one the reset from the filters. */
+.home-menu__hairline {
+  margin: 8px 8px 0 4px;
+  border-top: 1px solid var(--glass-hairline-soft);
+}
+
+/* The filters' own heading, 12px under its hairline. */
+.home-menu__filters {
+  padding: 8px 4px 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* The reset is a row of the list (`.home-menu__row`), the last, under its own
+   hairline; it only dims while there is nothing to reset. */
+.home-menu__reset:disabled {
+  opacity: 0.35;
+}
+
+/* The scrim over the rows while a card is open: the sheets' own dimming, a
+   step lighter because the sheet is already over one. A press on it folds the
+   card. Absolute inside the panel, so it scrolls with the rows. */
+.home-menu__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+/* The design system's menu (`menuSurface.ts` MENU_SURFACE_CLASS): glass/menu
+   #272727 at 75% with a 15px blur, the menu hairline (white 10%), radius-lg
+   10, 4px padding, shadow-menu. Placed by `homeViewMenu.ts` under its row, at
+   the rows' right edge — the chevrons' 24. */
+.home-menu__card {
+  position: absolute;
+  right: 24px;
+  z-index: 2;
+  box-sizing: border-box;
+  width: 262px;
+  max-width: calc(100% - 44px);
+  /* A card taller than the room on either side of its row is capped by
+     `placeMenuCard` and scrolls inside, as the desktop's long menus do. */
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--glass-menu-hairline);
+  border-radius: 10px;
+  background: var(--glass-menu);
+  box-shadow: var(--glass-shadow-menu);
+  -webkit-backdrop-filter: var(--glass-menu-blur);
+  backdrop-filter: var(--glass-menu-blur);
+}
+
+.home-menu__card-label {
+  padding: 6px 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* The DS item — 13px/16 text, rounded-sm, the indicator at the right in a
+   12px box, 8px in — on a 44px row for the thumb instead of the desktop's 24px
+   hover pill. On is a heavier weight, as the desktop's checked item is. */
+.home-menu__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 44px;
+  margin: 2px 0;
+  padding: 0 32px 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--foreground);
+  font: 400 13px/16px var(--font-ui);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.home-menu__item:active,
+.home-menu__item:focus-visible {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.home-menu__item--on {
+  font-weight: 500;
+}
+
+.home-menu__item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-menu__indicator {
+  position: absolute;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  color: var(--foreground);
+}
+
+.home-menu__radio-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.session-row .list__note {
+  margin-top: 2px;
+}
+
+/* A session that cannot be attached (2026-09-15 승연, 안 3). It stands under
+   the list's "연결할 수 없음" heading, so the row itself only dims: muted title,
+   the mark at 45% with a hollow dot at its corner — the desktop's own signal
+   for a session that has exited — and its lifecycle word on the metadata
+   line. No sentence. */
+.session-row--unattachable .session-row__title,
+.card__row--unattachable .card__row-title {
+  color: var(--muted-foreground);
+}
+
+.session-row--unattachable .session-row__lead {
+  position: relative;
+}
+
+.session-row--unattachable .session-row__provider {
+  opacity: 0.45;
+}
+
+.session-row--unattachable .session-row__lead::after {
+  content: "";
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted-foreground);
+  background: var(--glass-pane);
+  box-shadow: none;
+}
+
+/* The heading is a list item so the list stays a list; the heading itself
+   is the group heading every other list uses. */
+.list__heading {
+  list-style: none;
+}
+
+/* Under Home's 12px gutter the rows keep an 8px press margin, so their marks
+   stand at 20. The heading stands on that column too, not on the gutter
+   (2026-09-15 승연: "텍스트만 앞으로 튀어나와").
+
+   Vertically it belongs to the rows under it, so the air is split 2:1 — 24
+   over the label, 4 under it, on the list's own 2px row gap. Text to text
+   that is 36 to the row above (a row step is 24: 10 + 2 + 12) and 18 to the
+   first row it names. `.group-heading`'s 16/8 put the label 28 over and 22
+   under — nearly centred between the groups, and it read as a loose line
+   rather than the head of one (2026-09-15 승연: "한 덩어리처럼 잘 안 보이는데").
+   A heading that opens the list stands where a first row's title would, 12
+   in from the list's edge. */
+.home__list .list__heading {
+  padding: 24px 8px 4px;
+}
+
+.home__list .list__heading:first-child {
+  padding-top: 12px;
+}
+
+.home__list .group-heading {
+  margin: 0;
+}
+
+/* ── One session, and the tray that drives it ───────────────────────────────
+ *
+ * Figma `dure-UI` 2829:75893 / 2863:75522. `sessionScreen.ts` builds it.
+ */
+:root {
+  /* Mockup `glass/kb-tray` — the tray's own surface, lighter than the pane so
+     the terminal above it reads as the thing being looked at. */
+  --glass-tray-surface: #2e2e2e;
+  /* Mockup `glass/hairline` — the tray's edges, softer than hairline-glass. */
+  --glass-hairline-soft: rgba(255, 255, 255, 0.09);
+  /* Mockup `glass/tint-selected` — the open drawer's toggle. */
+  --glass-tint-selected: rgba(255, 255, 255, 0.11);
+  /* Mockup `glass/tray` — a key cap. */
+  --glass-keycap: #3f3f3f;
+  /* `glass/tray` — the tray tile, and the desktop's own answer to "make this
+     glass". It is an ALPHA there, not a flat fill (src/index.css:474, white
+     15%), and the reason is written beside it: an opaque value cannot follow
+     the brightness of what it sits on. Over our pane (#242424 = 36) it settles
+     at 0.15 x 255 + 0.85 x 36 = 68.85 = #454545 — brighter than the #3f3f40 the
+     mockup fills it with, and it moves if anything ever passes behind.
+     The mockup's flat #3f3f40 is the same tile rendered opaque; the desktop
+     token is the material.
+
+     10% rather than the desktop's 15% — the owner asked for it darker
+     (2026-08-31). It lands at 0.10 x 255 + 0.90 x 36 = 58 rather than 69, and
+     because the darkening comes from *less white* rather than more black, the
+     same step also lets more of the transcript through. */
+  --glass-tray-pill: rgba(255, 255, 255, 0.1);
+  /* `glass/edge` — the lit rim. On a dark app a surface reads as glass because
+     its edge catches light, not because you can see through it: "어두운 앱 위에서
+     유리는 '뒤가 비쳐서'가 아니라 '모서리가 빛을 받아서' 유리로 읽힌다"
+     (src/index.css:557-563). Without this the pill is a grey slab whatever its
+     fill, which is exactly what it looked like. */
+  --glass-edge: rgba(255, 255, 255, 0.14);
+  /* Mockup `glass/bubble` — a card lifted off the pane behind it. */
+  --glass-bubble: #2c2c2c;
+  /* Every glass surface in the mockups sits on `glass/blur 13px`. */
+  --glass-blur: blur(13px);
+  /* What the transcript reserves for the tray, republished from the tray itself
+     by `transcriptLift.ts`. This default is the pill on its own — 48 of pill
+     plus the tray's 8 and the home indicator — which is what holds before the
+     first layout and on every screen that has no tray. */
+  --session-tray-height: calc(56px + env(safe-area-inset-bottom));
+}
+
+/* Sized to what is actually visible, not to the window: the OS keyboard covers
+   the bottom without changing `100vh`, and a tray under the keyboard is the one
+   row somebody needs while typing. `app.ts` publishes the variable from
+   `visualViewport`; the fallback is for a browser that has none. */
+/* Nothing on this screen scrolls except the terminal. With the OS keyboard up
+   the document is taller than what can be seen, and iOS answers that by letting
+   the page drag under a finger — the transcript slides away mid-sentence. So
+   the document is pinned to the height that is actually visible. */
+/* The canvas under this screen is the pane, not the app floor.
+ *
+ * `.session` is fixed to the visual viewport, and it does not always reach the
+ * keys: a phone screenshot with the keyboard up measured a 17-device-pixel band
+ * (5.7px at 3x) between the tray and the keyboard painting #0a0a0a — which is
+ * `--background` exactly, so it is the document's own canvas showing through.
+ * The reported height is rounded and it transitions over 220ms while the
+ * keyboard slides in, and neither is worth chasing: `--bg` is far darker than
+ * `--glass-pane`, and that colour step is the whole of what reads as a seam.
+ * Painting the document the ground the session paints makes whatever is left
+ * over invisible however tall it turns out to be. */
+html[data-screen="session"],
+html[data-screen="session"] body {
+  height: var(--app-viewport-height, 100dvh);
+  overflow: hidden;
+  background: var(--glass-pane);
+}
+
+html[data-screen="session"] #root {
+  min-height: 0;
+  height: 100%;
+}
+
+/* Pinned to the visible viewport, not to the document.
+ *
+ * In flow the screen starts at layout y=0, which is not where the visible area
+ * starts once iOS slides the visual viewport up for the keyboard: the tray then
+ * stops that far short of the keys. Fixed to the reported offset, the tray sits
+ * on the keyboard whatever iOS does with the two viewports. */
+.session {
+  position: fixed;
+  top: var(--app-viewport-top, 0px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  height: var(--app-viewport-height, 100dvh);
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  background: var(--glass-pane);
+  /* # Why this does not animate its way to the keyboard
+   *
+   * It used to. The keyboard slides in over about a quarter second and
+   * `visualViewport` only reports the height it lands on, so a 220ms transition
+   * kept the pane from jumping to its new size ahead of the keys.
+   *
+   * That transition made the box a *moving* number, and the size the session is
+   * given is read from that box the moment the keyboard is noticed — which is
+   * before a single frame of the transition has run. The reading was then the
+   * old full height plus what the keys cover, which is twenty rows of terminal
+   * that do not exist: the agent redrew into them, the prompt went with the
+   * bottom of that phantom, and it landed under the keyboard (2026-09-03).
+   *
+   * The pane snaps instead, and what shows for the quarter second the keys are
+   * still arriving is `--glass-pane` — the document under this screen paints
+   * the same ground (`html[data-screen="session"]`), so the strip that used to
+   * be worth animating past now reads as nothing at all. */
+}
+
+/* The transcript and the arrow pad share a layer, so the pad can float over it
+   without taking room from the tray. */
+.session__stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* The tray's seat, one floor up: the same 48px circle on the same right
+   inset (12) in the same glass with the same ink, 12px above the tray. It
+   measured 44 at right 16 in muted ink — 2px off the seat's centre, a size
+   smaller, and a shade greyer — and read as a stray control rather than one
+   of the tray's (2026-09-15 승연, 안 1). */
+.terminal__scroll-to-bottom {
+  position: absolute;
+  right: 12px;
+  bottom: calc(var(--session-tray-height, 0px) + var(--session-drawer-height, 0px) + 12px);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--foreground);
+  background: var(--glass-tray-pill);
+  box-shadow: inset 0 1px 0 0 var(--glass-edge);
+}
+
+/* Fades rather than blinks: Paseo's jump button is a 200ms fade, and the
+   `hidden` this replaced cut both ways. Visibility waits for the fade out and
+   leads the fade in, so the button never takes a press while unseen. */
+.terminal__scroll-to-bottom {
+  transition:
+    opacity var(--motion-base) var(--ease-decelerate),
+    visibility 0s linear 0s;
+}
+.terminal__scroll-to-bottom--away {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-base) var(--ease-decelerate),
+    visibility 0s linear var(--motion-base);
+}
+
+html[data-screen="session"] .session > .session__header {
+  position: relative;
+  z-index: 2;
+  /* The invisible keyboard pad uses this noninteractive title area. */
+  pointer-events: none;
+}
+
+.session__header {
+  display: flex;
+  /* Top, not centre: the heading is two lines (24 + 4 + 18 = 46) and the
+     back slot is 44, so centring the two against each other puts the arrow
+     at I+35. Pinned to the top the slot sits at I+12, its centre at I+34 —
+     the line every other back arrow stands on — and the heading centres
+     itself on that same slot (`.session__heading`). */
+  align-items: flex-start;
+  /* 4, as `.pair-bar`: the 44px slot ends at 56, so the title starts at 60
+     here as on Settings. */
+  gap: 4px;
+  flex: none;
+  /* 12 under the status bar and 12 on the left, the same two numbers as
+     every other bar with a back arrow; 16 on the right is the inset the icon
+     slot keeps on Home and the launch bar. */
+  padding: calc(12px + env(safe-area-inset-top)) 16px 12px 12px;
+  /* `#ffffff17` is the desktop's own sidebar line, and an alpha line follows
+     whatever it lands on: over the old #3e3e40 header it composited to #4f4f4f,
+     which is what the hardcoded --glass-hairline-glass (#4e4e4e) was. Over the
+     new ground it settles at #444444 on its own. */
+  border-bottom: 1px solid var(--glass-hairline-soft);
+  background: var(--glass-shell);
+}
+
+.session__heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* At least the 44 of the back slot, centred in it: a one-line heading sits
+     on the line of the arrow, and the two-line one overruns it by a pixel
+     each way. */
+  justify-content: center;
+  min-height: 44px;
+  gap: 4px;
+}
+
+.session__title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session__details {
+  /* Source control writes this line as a `<p>`; without this the paragraph's
+     default 1em above and below sat inside the header and pushed its title
+     row down to I+54 — the "separate structure" it never was. */
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 2px;
+  min-width: 0;
+}
+
+/* The header's trail: segments with a chevron between them. */
+.session__detail {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The transcript takes what the tray leaves. It scrolls; the tray does not
+   move, because a control that slides away under a thumb is a control you
+   press by accident. */
+/* The session's transcript is a flush pane (Figma 2820:73917): no border, no
+   radius, 16px of breathing room, and the pane colour rather than the generic
+   surface's near-black.
+
+   `height` is reset because `.terminal` carries `max(260px, 100dvh - 100px)`
+   for the standalone screens. `flex-basis: 0` already beats it in this column,
+   but leaving a dvh height on a box inside a keyboard-sized viewport is a trap
+   for the next person: it is the one length here that does not shrink. */
+.session__terminal {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  /* The bottom inset is the tray as it stands — pill and gap and whatever the
+     home indicator costs today, but never its drawer — plus this pane's 16. It
+     follows the tray rather than being a constant because the tray's own inset
+     is not one: with the keys up it stops clearing an indicator the keyboard
+     already covers. A drawer and the keyboard lift the grid's floor instead of
+     changing what the session was sized to. At rest the newest line sits just
+     above the pill; scrolled, earlier lines pass *behind* it, which is the
+     whole point of the glass — a floating surface with nothing moving under it
+     is a slab.
+     `padding` is deliberately where this lives: the TerminalSurface renderer
+     measures its grid from the content box, so the rows it reports already
+     exclude it. */
+  padding: 16px 16px calc(var(--session-tray-height) + 16px);
+  border: 0;
+  border-radius: 0;
+  background: var(--glass-pane);
+}
+
+/* Figma 3021:81309, pill 3099:80642 — a row of arrows in the transcript's
+   top-right corner. Placed there rather than centred because a thumb reaches
+   it without covering the output being read.
+
+   In the tree on every session, shown while a space-bar drag runs — it is
+   what says which way the drag is going — or when pinned from the key drawer.
+   Not whenever the keys are up: the owner wants the transcript's corner back
+   while typing (2026-09-04). */
+.dpad {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  /* Keep arrow controls above the tray and scrolling transcript. */
+  z-index: 2;
+  display: none;
+  align-items: center;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 9999px;
+  /* The shortcut pill's glass, by the owner's instruction: same fill, same lit
+     rim, same blur — one material for everything that floats over the pane. */
+  background: var(--glass-tray-pill);
+  box-shadow:
+    inset 0 1px 0 0 var(--glass-edge),
+    0 10px 28px -8px rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: var(--glass-overlay-blur);
+  backdrop-filter: var(--glass-overlay-blur);
+}
+
+.dpad--pinned,
+.dpad--dragging {
+  display: flex;
+}
+
+.dpad__key {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  transition: opacity 120ms ease-out;
+}
+
+.dpad__key:active {
+  color: var(--muted-foreground);
+}
+
+/* While a drag runs, the arrow it is pressing is the only one at full
+   strength — the frame draws the others at half. */
+.dpad--dragging .dpad__key {
+  opacity: 0.5;
+}
+
+.dpad--dragging .dpad__key--active {
+  opacity: 1;
+}
+
+/* Lucide's four arrows are one glyph turned. */
+.dpad__glyph--left {
+  transform: rotate(180deg);
+}
+
+.dpad__glyph--up {
+  transform: rotate(-90deg);
+}
+
+.dpad__glyph--down {
+  transform: rotate(90deg);
+}
+
+/* The fast face — a double chevron, 3319:85086 — is the exported *left* one
+   turned; it stands in for the arrow only on the key a fast drag is pressing.
+   Both faces share the cell, so swapping them moves nothing. */
+.dpad__key {
+  position: relative;
+}
+
+.dpad__glyph--fast {
+  position: absolute;
+  display: none;
+}
+
+.dpad--fast .dpad__key--active .dpad__glyph--arrow {
+  visibility: hidden;
+}
+
+.dpad--fast .dpad__key--active .dpad__glyph--fast {
+  display: block;
+}
+
+.dpad__glyph--fast-right {
+  transform: rotate(180deg);
+}
+
+.dpad__glyph--fast-up {
+  transform: rotate(90deg);
+}
+
+.dpad__glyph--fast-down {
+  transform: rotate(-90deg);
+}
+
+/* Positioned so it paints above the transcript.
+   `.session__stage` has to be positioned for the arrow pad to float inside it,
+   and a positioned box paints over a static sibling no matter what the DOM
+   order says — which put the terminal on top of the tray's own keys. */
+/* The tray floats on the pane rather than being a panel welded to the bottom:
+   3017:81505 and 3017:81555 draw a rounded pill with the transcript showing
+   through around it. The #2e2e2e / hairline / 12px-radius treatment that used to
+   be here belongs to the *OS keyboard's* chrome in 3017:81400, not to us. */
+.tray {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  /* The strip under the pill is one seat, and whoever sits in it sits 12px
+     below the pill — the keyboard already did, and 3021:81184 / 3211:82211
+     give the drawer the same 12px (`keyboard-area`, gap 12). */
+  gap: 12px;
+  /* What the pill stands on when the seat is empty. Named because the drawer
+     has to cancel exactly this much to reach the bottom of the screen. */
+  --tray-floor: calc(8px + env(safe-area-inset-bottom));
+  padding-bottom: var(--tray-floor);
+}
+
+/* The pill and the send circle, 12px apart. */
+.tray__row {
+  display: flex;
+  align-items: center;
+  /* 8 between the pill and the seat, not the frames' 12 to the send circle:
+     the seat is there in both states, so the gap is part of the pill's
+     silhouette rather than air that appears with the circle. */
+  gap: 8px;
+  /* The 12px side inset belongs to the pill, not to the tray: in both frames
+     the pill's stack is px-12 and the drawer below it is w-full. */
+  padding: 0 12px;
+}
+
+.tray__pill {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  /* 8 before the first chip, not 4: the chip's highlight then stands 8px off
+     the pill's rim, as everything pressed stands 8px off its container. */
+  padding: 2px 2px 2px 8px;
+  border-radius: 999px;
+  background: var(--glass-tray-pill);
+  /* The rim is what makes it glass; the blur is what makes it glass over
+     something. Both, so it is right whether or not content passes behind. */
+  box-shadow: inset 0 1px 0 0 var(--glass-edge);
+  -webkit-backdrop-filter: var(--glass-overlay-blur);
+  backdrop-filter: var(--glass-overlay-blur);
+}
+
+.tray__keys {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* The mockup clips this row and fades the last cap to say the row is cut
+   (I2863:75564;24418:3505). It scrolls here rather than clipping — a key you
+   cannot reach is not a key — and the fade is what makes that discoverable:
+   a hard cut at the divider reads as a rendering bug, not as "swipe". Only
+   while there is more to the right, though (`sessionScreen.ts` sets the
+   class from the scroll position): a fade over the last chip, once the strip
+   is at its end, says "more" where there is none (2026-09-15 승연). */
+.tray__keys--cut {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+}
+
+/* 8px after the last chip, as there are 8 before the first: the gap's 4 plus
+   this 4. A pseudo flex item rather than padding, which trailing scroll
+   overflow does not count the same way everywhere. */
+.tray__keys::after {
+  content: "";
+  flex: none;
+  width: 4px;
+}
+
+.tray__keys::-webkit-scrollbar {
+  display: none;
+}
+
+.tray__key {
+  flex: none;
+  min-height: 32px;
+  padding: 8px 12px;
+  border: 0;
+  /* A capsule, not an 8px box: the press highlight sits inside a 48px capsule,
+     and a box's corners against that curve read as clipped (2026-09-15 승연). */
+  border-radius: 999px;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.tray__key:active {
+  background: var(--glass-chrome);
+}
+
+/* An armed modifier has to be visible — it changes what the next press does,
+   and a person who forgot it is one tap from something destructive. */
+.tray__key--armed {
+  background: var(--glass-tint-selected);
+  box-shadow: inset 0 0 0 1px var(--glass-hairline-glass);
+}
+
+.tray__divider {
+  flex: none;
+  width: 1px;
+  align-self: stretch;
+  margin: 0 8px 0 0;
+  background: var(--glass-hairline-soft);
+}
+
+.tray__toggles {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+/* 40 wide, not 44: with the keyboard toggle out in the seat, two 40px slots
+   give the key strip the 189px it had before anything was typed, and keep it
+   there once something is (2026-09-15 승연, B안). The pill's 48 stands in for
+   the height, so the hit area is 40×48 — the 44×44 area, a different shape. */
+.tray__toggle {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+}
+
+.tray__toggle--on {
+  color: var(--foreground);
+}
+
+/* The open drawer's button keeps its own cap, so it is obvious which one the
+   panel below belongs to. */
+.tray__toggle--on .glyph {
+  background-color: var(--foreground);
+}
+
+.tray__toggle--on::before {
+  content: "";
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  background: var(--glass-tint-selected);
+}
+
+.tray__toggle {
+  position: relative;
+}
+
+.tray__toggle .glyph {
+  position: relative;
+}
+
+/* The field iOS needs and the design does not draw.
+ *
+ * Clipping it to zero height was wrong twice over: iOS will not route
+ * keystrokes into a box with no size, and it will not raise a keyboard for one
+ * either. This is the pattern the structured terminal already proves on this
+ * device (.structured-terminal__input) — transparent, laid out and focusable.
+ * Removing it outright is not an option: blurring a focused field takes the
+ * keyboard down with it. */
+.tray__input,
+.structured-terminal__input {
+  z-index: 1;
+  pointer-events: none;
+}
+
+html[data-screen="session"] .session > .session__header button,
+.tray__box:focus,
+.structured-terminal__input:focus {
+  pointer-events: auto;
+}
+
+.tray__input {
+  /* Fixed for the same reason as `.structured-terminal__input`: out of every
+     scroll container, so revealing the caret can never move the transcript. */
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 1px;
+  overflow: hidden;
+}
+
+/* Keep the focused pad in the header, clear of both the transcript's selection
+   surface and the keyboard's autoscroll region. Header buttons remain above it.
+   Only the focused input participates in native floating-cursor hit testing. */
+html[data-keyboard="on"] .tray__input,
+html[data-keyboard="on"] .structured-terminal__input {
+  bottom: auto;
+  top: calc(var(--app-viewport-top, 0px) + env(safe-area-inset-top));
+  height: calc(var(--session-stage-top) - var(--app-viewport-top, 0px) - env(safe-area-inset-top));
+}
+
+/* While a drag is under way the box is the whole visible screen, so the
+   cursor's point can roam and a finger coming back is felt at once
+   (`spaceTrackpad.ts`, "The box grows"). The finger is on the keys for all of
+   it, so nothing under the box is being tapped. */
+html[data-space-drag="on"] .tray__input,
+html[data-space-drag="on"] .structured-terminal__input {
+  z-index: 3;
+  top: var(--app-viewport-top, 0px);
+  height: var(--app-viewport-height, 100vh);
+}
+
+/* Keyboard up: the tray sits 12px above the keys (3017:81400's container gap)
+   rather than clearing a home indicator the keyboard is already covering. iOS
+   keeps reporting that inset regardless, so it would read as a strip of pane
+   floating between the pill and the keyboard. */
+html[data-keyboard="on"] .tray {
+  /* Through the floor rather than the padding, so a drawer still on its way
+     out cancels the right amount. */
+  --tray-floor: 12px;
+}
+
+/* The transcript needs no rule of its own here, but it does follow this one:
+   the 30px the tray gives up is 30px it reserves less, and the same 30px comes
+   off the keyboard's lift so the session is sized to the same terminal either
+   way (`transcriptLift.ts`). Without that pairing the newest line sat 30px
+   further from the pill with the keys up than with a drawer open. */
+
+/* Lit while the keyboard is up. Read from the attribute rather than the model:
+   the flag lives on the document (`app.ts` publishes it from the visual
+   viewport), and putting it in the session model would re-render the whole
+   screen on every keyboard transition — which destroys the focused field. */
+html[data-keyboard="on"] .tray__toggle--keyboard::before {
+  content: "";
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  background: var(--glass-tint-selected);
+}
+
+/* One pill holding the field, the mic and the send button — Figma 2820:73958,
+   which puts all three inside the border. */
+
+.tray__box {
+  width: 100%;
+  height: 100%;
+}
+
+.tray__box,
+.structured-terminal__input {
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  /* The mockup sets 13px. iOS zooms the whole page when a focused input is
+     under 16px, which moves every other element on the screen, so this one
+     value is held back. */
+  font-size: 16px;
+  /* The pad's cells: one full-width character (16px) per 28px line. A row is
+     taller than a column on purpose — a line of history is worth more finger
+     than a character of cursor, and this is the whole of the vertical speed
+     (`spaceTrackpad.ts`, Speed). Nothing wraps: a wrapped row would be two. */
+  line-height: 28px;
+  white-space: pre;
+  overflow: auto;
+  resize: none;
+  /* The caret is UIKit's, drawn over the page whatever the field's opacity. */
+  caret-color: transparent;
+}
+
+/* The mockup's mic, in its muted stroke colour. */
+
+/* 48x48, outside the pill, and absent until there is something to send —
+   3022:81487: "뭔가 입력되어있거나 보낼게 있으면 send 버튼 등장". `display: none`
+   rather than hidden-but-present, so the pill's `flex: 1` reclaims the width. */
+/* The seat beside the pill: one 48px circle that is the keyboard toggle until
+   there is something to send, and the send circle then. Two elements in one
+   slot rather than one restyled element, so each keeps its own handler and
+   name; `tray__row--sending` decides which stands. */
+.tray__seat {
+  position: relative;
+  flex: none;
+  /* The pill's own 48, so the circle is as tall as the capsule beside it —
+     at 44 it read as a smaller thing (2026-09-15 승연). */
+  width: 48px;
+  height: 48px;
+}
+
+/* At rest the seat is the pill's own glass, so the row reads as one silhouette
+   with a small circle at its end rather than a pill and a stray button. */
+.tray__seat .tray__toggle--keyboard {
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  background: var(--glass-tray-pill);
+  box-shadow: inset 0 1px 0 0 var(--glass-edge);
+  -webkit-backdrop-filter: var(--glass-overlay-blur);
+  backdrop-filter: var(--glass-overlay-blur);
+}
+
+.tray__send {
+  display: none;
+  position: absolute;
+  inset: 0;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.tray__row--sending .tray__send {
+  display: grid;
+}
+
+.tray__row--sending .tray__seat .tray__toggle--keyboard {
+  display: none;
+}
+
+/* The drawer. Capped so it never grows past half the screen — the transcript
+   is what the person came for. */
+/* # Why the drawer floats instead of stacking
+ *
+ * It used to sit in the tray's flow, under the pill, which put it at the very
+ * bottom of the screen with nothing behind it. An alpha fill there reveals the
+ * pane and nothing else — "glass" that is only a darker flat grey, which is
+ * what it looked like.
+ *
+ * The pill is the bottom-most thing in 3017:81505, so a drawer's only room is
+ * above it — and above it is the transcript. That is what makes the material
+ * mean something: the charter's Tier A glass (`glass/overlay-glass`, #28282C at
+ * 68% + blur 20) over live text, the same relationship the desktop sidebar has
+ * with the desktop behind it.
+ *
+ * It also stops the transcript jumping: opening a drawer no longer shortens the
+ * stage, so the line somebody was reading stays where it was. */
+/* A sheet under the tray, not a card floating over it.
+ *
+ * 3021:80643 and 3021:81184 both draw the drawer as the keyboard's own slot —
+ * full width, flush to the bottom edge, rounded only at the top, opaque. It
+ * used to float above the tray inset by 12px, which read as a popover over the
+ * transcript; the frames put it where the system keyboard would be, so it reads
+ * as the thing the keyboard button swapped in. */
+.tray__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* The drawer takes the keyboard's seat, so it is the keyboard's shape: edge
+     to edge, down to the bottom of the screen, and exactly as tall as the
+     keyboard whichever drawer it is, so the pill does not move when you switch
+     between them (2026-09-15 승연: "키보드 높이로 맞춰줘"). `keyboardHeight.ts`
+     publishes what the keys covered the last time they were up — on Android
+     that includes the navigation bar they stand on, which the bottom padding
+     then keeps clear. Before they ever were, a guess at a phone keyboard over
+     the home indicator. The cap is for landscape, where a remembered portrait
+     keyboard is taller than the viewport allows. */
+  height: var(--keyboard-height, calc(300px + env(safe-area-inset-bottom, 0px)));
+  max-height: calc(var(--app-viewport-height, 100dvh) * 0.6);
+  margin-bottom: calc(-1 * var(--tray-floor));
+  /* 11 beside the hairline, so what the drawer holds stands 12 from the screen
+     edge like Home's rows do. */
+  padding: 12px 11px calc(12px + env(safe-area-inset-bottom, 0px));
+  overflow: hidden;
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: 20px 20px 0 0;
+  background: var(--glass-tray-surface);
+}
+
+/* What scrolls inside a drawer. The drawer is the keyboard's height, so what
+   is taller than a keyboard — eight rows of caps, a long history — scrolls in
+   here, above the padding that clears the home indicator or navigation bar.
+   Its edges fade while there is more on that side (`.scroll-fade--*`). */
+.tray__panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.tray__panel-label {
+  padding: 4px 8px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  text-align: left;
+}
+
+.history-item:active {
+  background: var(--glass-chrome);
+}
+
+.history-item__mark {
+  color: var(--muted-foreground);
+}
+
+.history-item__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tray__panel--sessions {
+  overflow: hidden;
+  gap: 4px;
+}
+.session-switcher__tabs {
+  padding: 0;
+  flex: none;
+}
+/* Home's rows, Home's rhythm: 2px apart (`.home__list`), not the 8 `.list`
+   gives its other screens. */
+.session-switcher__list {
+  gap: 2px;
+}
+/* The switcher's current session: lit like the selected tab chip (`glass/chip`),
+   rather than named in the stats column (2026-09-15 승연: "선택된거만 백그라운드에
+   컬러"). The row is disabled — it is the one already open — and keeps full ink. */
+.session-row--current .session-row__open {
+  background: var(--glass-chip);
+}
+
+/* Eight caps a row (Figma 2823:75265, 2888:78193). Four made each cap twice the
+   width it is drawn at and pushed half the table below the fold. */
+/* Two columns of four, not eight of one.
+ *
+ * The frame groups the caps 4 + 4 with a wider gutter down the middle, so a
+ * thumb reading across lands on a boundary rather than a uniform run. Same
+ * eight tracks, one gutter told apart from the other seven. */
+/* Eight caps a row, one gap everywhere. 3211:82262 draws it as two groups of
+   four, but every gap in it — inside a group and between them — is 8px, which
+   is eight even columns. */
+.keys-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 8px;
+  /* Word keys take two cells (below); dense placement lets the one-cell keys
+     that follow fill what a two-cell key leaves at a row's end, so the grid
+     stays solid. The vocabulary's order gives way by at most one cap. */
+  grid-auto-flow: row dense;
+}
+
+/* A keyboard's own answer to a long label: the key is wider, not the type
+   smaller. ⇧Tab · Ctrl · Home · PgUp · PgDn (`TerminalKey.wide`) take two
+   cells — 77px on a 360px phone, where one cell is 35 and the word is 37
+   (2026-09-15 승연, B안). */
+.keys-grid__key--wide {
+  grid-column: span 2;
+}
+
+.keys-grid__key {
+  min-height: 38px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--glass-keycap);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.keys-grid__key:active {
+  /* Mockup names `glass/chip` for a pressed cap, not the selected tint. */
+  background: var(--glass-chip);
+}
+
+/* An armed modifier, lit the way the strip's own chip is. */
+.keys-grid__key--armed {
+  background: var(--glass-tint-selected);
+}
+
+/* The header's two right-hand icons (Figma 2895:33257). 32px taps, 8px apart,
+   the way the mockup spaces them. */
+.session__icons {
+  display: flex;
+  align-items: center;
+  /* The 44px slots already leave 24 between two 20px glyphs. */
+  gap: 0;
+  flex: none;
+}
+
+/* What the attach granted. Two columns so the labels line up and the values
+   stay readable when one of them is a whole sentence. */
+.connection-row {
+  display: flex;
+  gap: 10px;
+  padding: 6px 8px;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.connection-row__label {
+  flex: none;
+  width: 88px;
+  color: var(--muted-foreground);
+}
+
+.connection-row__value {
+  flex: 1;
+  min-width: 0;
+  color: var(--foreground);
+  word-break: break-word;
+}
+
+/* The bar under an open drawer (Figma 2829:75893 "Footer Section"): which
+   drawer is showing, and the way to put the OS keyboard away. */
+.tray__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 12px;
+  border-top: 1px solid var(--glass-hairline-soft);
+}
+
+.tray__segments {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--glass-chip);
+}
+
+.tray__segment {
+  min-width: 52px;
+  height: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 500;
+}
+
+.tray__segment--on {
+  border: 1px solid var(--input);
+  background: var(--glass-keycap);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.1),
+    0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.tray__keyboard {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+}
+
+/* The keys drawer's top row: the tray group spelled out, and the way to change
+   it. Figma 2823:75265. The tray row above clips a wide group; this one wraps. */
+.scm__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 12px;
+  overflow-y: auto;
+}
+
+.scm__card {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  background: var(--glass-bubble);
+}
+
+.scm__branch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.scm__branch-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+/* "2 ahead, 0 behind" — right-aligned against the branch name, per 3042:80841.
+   Only drawn when both counts arrived, so the column is empty or true. */
+.scm__branch-track {
+  flex: none;
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* "main에서 분기" 와 "14 changed" — 이름 아래, 아이콘을 지나 정렬. 서로 다른
+   사실이라 붙지 않게 벌려 둔다. */
+.scm__branch-facts {
+  display: flex;
+  gap: 16px;
+  margin: -6px 0 0;
+  padding: 0 14px 12px 38px;
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* 브랜치 자리에 이유가 들어간 경우. 이름이 아니라 설명이라 톤을 낮춘다. */
+.scm__branch-name--missing {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+
+/* # Why a list here must not both shrink and clip
+ *
+ * `.scm__body` is the scroller and a column flex container, so a child that
+ * does not say otherwise is `flex-shrink: 1` — a list taller than the screen is
+ * squeezed to fit rather than overflowing. On its own that is survivable: the
+ * rows still spill out of the shrunken box and the scroller can reach them.
+ *
+ * `overflow: hidden` is what made it fatal. The list carried it for the card's
+ * rounded corners, so the squeezed box clipped its own rows and the scroller
+ * saw exactly its own height of content. Measured in the design harness with
+ * fourteen changed files, the body reported 649 of 649 and `scrollTop` stayed 0
+ * however hard it was pushed; the last two files were not merely out of reach,
+ * they were not drawn. Dropping the clip alone put it at 778 of 649.
+ *
+ * So: `flex: none` so the rows keep their real height, and no clip on the list
+ * that is the whole body. The commit-detail list below keeps its card and its
+ * clip, and that is safe for the same reason — `flex: none` means its box is
+ * always its content, so the clip never has anything to cut.
+ */
+.scm__list,
+.scm__files {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Rows sit straight on the pane — 3042:80841 and 3046:84875 draw no card and no
+   separators around them. A card here would box the one thing on the screen
+   that is already as long as the screen. */
+.scm__list {
+  padding: 8px 0 0;
+}
+
+/* The commit-detail file list keeps the card: 3051:81535 has a message above it
+   and a footer below, so the list is a block among blocks rather than the whole
+   body. */
+.scm__files {
+  border-radius: 12px;
+  background: var(--glass-bubble);
+  overflow: hidden;
+}
+
+/* 40px with a control column: a checkbox where the file can be committed, and
+   the status letter where it cannot. */
+.scm__file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 10px 4px;
+  min-height: 40px;
+}
+
+/* Only inside the card. On the pane the mockup's rows have nothing between
+   them — the row height is the rhythm. */
+.scm__files .scm__file {
+  padding: 10px 14px;
+  border-radius: 0;
+}
+
+.scm__files .scm__file + .scm__file {
+  box-shadow: inset 0 1px 0 0 var(--glass-hairline-soft);
+}
+
+.scm__file-chevron {
+  flex: none;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+}
+
+.scm__file-status {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+}
+
+/* Added and deleted read as their git colours; the rest stay neutral so the
+   colour means the status and nothing else. */
+.scm__file--a .scm__file-status {
+  color: var(--status-run);
+}
+
+.scm__file--d .scm__file-status {
+  color: var(--status-blocked);
+}
+
+/* Monospace, per 3042:80841 and 3051:81535. A path is read by its shape — the
+   slashes and the extension — and a proportional font moves those around. */
+.scm__file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* A rename's source, dimmed: the destination is the file you are looking for,
+   the source is the answer to "from where". */
+.scm__file-from,
+.scm__file-arrow {
+  color: var(--muted-foreground);
+}
+
+.scm__file-counts {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.scm__file-added {
+  color: var(--status-run);
+}
+
+.scm__file-deleted {
+  color: var(--status-blocked);
+}
+
+.scm__pending {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 14px;
+  border-radius: 12px;
+  background: var(--glass-bubble);
+}
+
+.scm__pending .dure-loader {
+  align-self: flex-start;
+}
+
+.scm__pending-title {
+  margin: 0;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.scm__pending-note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* One file's patch. Figma 3048:81027.
+ *
+ * The body is a monospace grid: a fixed gutter for the line number and a
+ * scrolling text column. The row scrolls rather than wrapping — a wrapped diff
+ * line loses the alignment that makes a diff readable, and on a phone almost
+ * every code line would wrap. */
+.diff {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+  border-radius: 12px;
+  background: var(--glass-bubble);
+  overflow-x: auto;
+  /* The gutter must not scroll away from its own line, so the rows share one
+     scrolling box rather than each scrolling on its own. */
+  -webkit-overflow-scrolling: touch;
+}
+
+.diff__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 0 14px;
+  min-height: 20px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+  /* Wide enough for the longest row, so a row's background colour reaches the
+     end of the scrolled area instead of stopping at the viewport edge. */
+  min-width: max-content;
+}
+
+.diff__gutter {
+  flex: none;
+  width: 22px;
+  text-align: right;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  user-select: none;
+}
+
+.diff__text {
+  flex: 1;
+  white-space: pre;
+  color: var(--foreground);
+}
+
+/* The sign column keeps every body character on the same x, and carries the
+   added/removed distinction for anyone who cannot use the colour. */
+.diff__sign {
+  display: inline-block;
+  width: 1ch;
+  color: var(--muted-foreground);
+}
+
+.diff__row--added {
+  background: color-mix(in srgb, var(--status-run) 14%, transparent);
+}
+
+.diff__row--added .diff__sign,
+.diff__row--added .diff__body {
+  color: var(--status-run);
+}
+
+.diff__row--removed {
+  background: color-mix(in srgb, var(--status-blocked) 14%, transparent);
+}
+
+.diff__row--removed .diff__sign,
+.diff__row--removed .diff__body {
+  color: var(--status-blocked);
+}
+
+/* The `@@` header and git's own notes are not lines of the file, and they read
+   as chrome rather than content. */
+.diff__row--hunk .diff__text,
+.diff__row--note .diff__text {
+  color: var(--muted-foreground);
+  opacity: 0.8;
+}
+
+.diff__row--hunk {
+  margin-top: 4px;
+}
+
+.diff__truncated {
+  margin: 6px 0 0;
+  padding: 0 14px;
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* The header centres the file name on the screen, not in what the back button
+   leaves over: the empty icon slot on the right is held at the back slot's 44
+   and the right inset at the left's 12, so the heading's centre is the bar's
+   (2026-09-15 승연, 20px off before). */
+.session__header--center {
+  padding-right: 12px;
+}
+
+.session__header--center .session__icons {
+  min-width: 44px;
+}
+
+.session__header--center .session__heading {
+  align-items: center;
+  text-align: center;
+}
+
+.diff__counts {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+
+.diff__added {
+  color: var(--status-run);
+}
+
+.diff__deleted {
+  color: var(--status-blocked);
+}
+
+/* The pull-request tab and its create form. Figma 3050:81530, 3051:81154,
+   3049:81587. */
+
+/* One wide control docked at the foot of the screen, over the safe area. Both
+   pull-request states offer exactly one, and which it is is the state. */
+.prform__footer {
+  flex: none;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--glass-hairline-soft);
+  background: var(--glass-shell);
+}.prform {
+  gap: 18px;
+}
+
+.prform__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prform__label {
+  color: var(--muted-foreground);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.prform__textarea {
+  min-height: 96px;
+  padding: 10px 12px;
+  line-height: 22px;
+  resize: none;
+}.prform__error {
+  margin: 0;
+  color: var(--status-blocked);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* The diff's own two controls sit side by side, unlike the single wide button
+   the other screens dock. Figma 3048:81027. */
+/* Docked over the foot of the diff rather than boxed under it: the two buttons
+   stand on a fade from nothing to the pane, so the last lines scroll out under
+   them instead of stopping at a grey band (2026-09-15 승연). `.scm--docked`
+   keeps the same height clear below the body's content. */
+.diff__footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 8px;
+  padding: 40px 16px calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(to bottom, transparent, var(--glass-pane) 40px);
+}
+
+.diff__footer .pair-button {
+  flex: 1;
+}
+
+/* 40 of fade, 44 of button and 12 under it, plus the inset: what the footer
+   covers, held clear below the body so nothing ends under the buttons. */
+.scm--docked .scm__body {
+  padding-bottom: calc(16px + 96px + env(safe-area-inset-bottom));
+}
+
+/* 목록 위에 떠 있는 "더하기". Figma 3096:86268.
+ *
+ * 탭 줄 끝의 "+" 는 컴퓨터를 연결하는 자리로 남긴다. 이 버튼은 그 컴퓨터 위에서
+ * 무언가를 시작하는 자리다 — 같은 글자가 두 가지를 뜻하지 않도록, 이쪽은 시트를
+ * 열어 무엇을 추가할지 묻는다. 안전 영역 위로 띄우는 이유는 홈 인디케이터 위에
+ * 앉으면 아이폰에서 눌리지 않기 때문이다.
+ *
+ * 글자가 없어졌으므로 `aria-label` 이 이 버튼의 유일한 이름이다. */
+.fab {
+  position: fixed;
+  right: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  z-index: 15;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  /* 3096:86269's light tip, as glass: the same zinc-200 and dark ink, but
+     translucent and blurred over whatever scrolls under it, with the mock's
+     lift — ring, glow, two dark layers, inner highlight — kept (2026-09-15
+     승연: "이전처럼 foreground 컬러의 글라스 버튼"). The dark tray glass was
+     tried first and read as a dimmed control. */
+  background: color-mix(in srgb, var(--glass-tip) 86%, transparent);
+  color: var(--glass-tip-fg);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 0 14px 0 rgba(255, 255, 255, 0.12),
+    0 2px 6px 0 rgba(0, 0, 0, 0.3),
+    0 16px 36px -8px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.35);
+  -webkit-backdrop-filter: var(--glass-overlay-blur);
+  backdrop-filter: var(--glass-overlay-blur);
+}
+
+.fab:active {
+  transform: translateY(1px);
+  background: color-mix(in srgb, var(--glass-tip) 96%, transparent);
+}
+
+/* "새 에이전트". Figma 3172:81560 — 한 장짜리 화면이다. */
+.launch {
+  display: flex;
+  min-height: var(--app-viewport-height, 100dvh);
+  flex-direction: column;
+  background: var(--glass-pane);
+}
+
+/* Set from `.home__header`'s numbers: 12 above the row, and the status bar's
+   inset on top of it. Without that inset this bar was the only one in the app
+   measured from the display's edge instead of from under the status bar — it
+   sat 54px down no matter what the phone reported, which put the title against
+   the status bar on a Galaxy and under the notch on the iPhones that have one.
+
+   12 on the left, not 16: the back button is a 44px slot around a 20px glyph,
+   so 12 + 12 puts the glyph at 24 — where the wordmark starts on Home. */
+.launch__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: calc(12px + env(safe-area-inset-top)) 16px 16px 12px;
+}
+
+.launch__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 28px;
+}
+
+.launch__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px;
+}
+
+.launch-field {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.launch-field__label {
+  padding-left: 4px;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+/* 시안의 `field-row` — 눌러서 목록을 펼치는 줄. */
+.launch-field__row {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--glass-tray-surface);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  text-align: left;
+}
+
+.launch-field__row:disabled {
+  opacity: 0.55;
+}
+
+.launch-field__folder {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.launch-field__value {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+/* 경로는 고정폭이다 — 같은 이름의 폴더 둘을 사람이 가르는 곳이라, 글자가
+   자리마다 흔들리면 그 비교가 어려워진다. */
+.launch-field__meta {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-field__chevron {
+  color: var(--muted-foreground);
+}
+
+/* The mockup's floating glass menu. */
+.launch-menu {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: 12px;
+  background: var(--glass-keycap);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+}
+
+.launch-menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px;
+}
+
+.launch-menu__item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  text-align: left;
+}
+
+.launch-menu__item--off {
+  opacity: 0.5;
+}
+
+.launch-menu__name {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-menu__meta {
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.7;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-menu__hairline {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--glass-hairline-soft);
+}
+
+.launch-menu__add {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 8px;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.launch-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.launch-chip {
+  display: inline-flex;
+  height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 0 12px;
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: 10px;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+}
+
+/* 고른 칩은 채운다. 시안의 `glass/tip` — 테두리만 바꾸면 밝은 곳에서 어느 것을
+   골랐는지 팔 길이에서 안 보인다. */
+.launch-chip--on {
+  border-color: transparent;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.launch-chip--off {
+  opacity: 0.45;
+}
+
+.launch-chip__label {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.launch-chip__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+}
+
+.launch-chip__dot--codex {
+  background: var(--agent-codex-icon);
+}
+
+.launch-chip__dot--kimi {
+  background: var(--agent-kimi-icon);
+}
+
+.launch-worktree {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.launch-worktree__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.launch-worktree__text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.launch-worktree__title {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.launch-worktree__hint {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.launch-switch {
+  display: flex;
+  width: 44px;
+  height: 26px;
+  flex: none;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.launch-switch--on {
+  justify-content: flex-end;
+  background: var(--primary);
+}
+
+.launch-switch__knob {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--foreground);
+}
+
+.launch-switch--on .launch-switch__knob {
+  background: var(--primary-foreground);
+}
+
+.launch-branch {
+  width: 100%;
+  height: 44px;
+  box-sizing: border-box;
+  padding: 4px 12px;
+  border: 1px solid var(--glass-hairline-glass);
+  border-radius: 10px;
+  background: var(--glass-pane);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.launch__why {
+  margin: 8px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.launch__empty {
+  margin: 18px 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.launch__footer {
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+}
+
+.launch__start {
+  display: flex;
+  width: 100%;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 12px;
+  background: var(--primary);
+  box-shadow: 0 1px 1px rgb(0 0 0 / 5%);
+  color: var(--primary-foreground);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.launch__start:disabled {
+  opacity: 0.45;
+}
+
+.launch-outcome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.launch-outcome--no {
+  border-color: var(--destructive);
+}
+
+.launch-outcome__text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.launch-outcome__hint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+/* Other-folder flow. Figma 3369:35182, 3372:85638, 3372:85748. */
+.folder-browser {
+  display: flex;
+  min-height: var(--app-viewport-height, 100dvh);
+  flex-direction: column;
+  background: var(--glass-pane);
+}
+
+/* `.launch__bar`'s numbers, because this is the screen 새 에이전트 opens into:
+   12 above the row with the status bar's inset on top, and 12 on the left so
+   the 20px glyph inside the 44px slot starts at 24, where Home's wordmark
+   does. This bar carried the same missing inset as that one. */
+.folder-browser__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: calc(12px + env(safe-area-inset-top)) 16px 16px 12px;
+}
+
+.folder-browser__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 28px;
+}
+
+.folder-browser__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px;
+}
+
+.folder-browser__field,
+.folder-browser__folders {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.folder-browser__label {
+  padding-left: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.folder-browser__host {
+  display: flex;
+  height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--glass-tray-surface);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.folder-browser__host-menu {
+  position: absolute;
+  z-index: 2;
+  top: 70px;
+  right: 0;
+  left: 0;
+  padding: 8px;
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: 12px;
+  background: var(--glass-keycap);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+}
+
+.folder-browser__host-option {
+  display: flex;
+  width: 100%;
+  height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+.folder-browser__heading {
+  display: flex;
+  height: 24px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.folder-browser__add {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+}
+
+.folder-tree {
+  display: flex;
+  flex-direction: column;
+  padding-top: 8px;
+}
+
+.folder-tree__row {
+  display: grid;
+  min-width: 0;
+  height: 40px;
+  grid-template-columns: 16px 16px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 calc(4px + var(--folder-indent));
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  text-align: left;
+}
+
+.folder-tree__row[aria-pressed="true"] {
+  background: var(--glass-tray-surface);
+}
+
+.folder-tree__chevron,
+.folder-tree__folder {
+  color: var(--muted-foreground);
+}
+
+.folder-tree__name {
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-tree__check {
+  justify-self: end;
+}
+
+.folder-browser__status {
+  margin: 24px 4px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.folder-browser__footer {
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+}
+
+.folder-browser__choose {
+  width: 100%;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.folder-browser__choose:disabled {
+  opacity: 0.45;
+}
+
+.folder-create__scrim {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 56%);
+}
+
+.folder-create {
+  display: flex;
+  width: min(100%, 328px);
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: 20px;
+  background: var(--glass-keycap);
+  box-shadow: 0 20px 56px rgb(0 0 0 / 28%);
+}
+
+.folder-create__title {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 28px;
+}
+
+.folder-create__input {
+  width: 100%;
+  height: 44px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border: 1px solid var(--glass-hairline-glass);
+  border-radius: 10px;
+  background: var(--glass-pane);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+.folder-create__preview,
+.folder-create__error {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.folder-create__error {
+  color: var(--destructive);
+}
+
+.folder-create__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.folder-create__button {
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--glass-tray-surface);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.folder-create__button--primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.folder-create__button:disabled {
+  opacity: 0.45;
+}
+.settings,
+.settings-choice {
+  /* 12 + 44 + 12: the shared header row with its 12 above and below.
+     The bar centres its content, so this height is what puts the row on
+     the same line as Home's. */
+  --settings-header-height: 68px;
+  --settings-gutter: 16px;
+  --settings-section-gap: 24px;
+  --settings-label-gap: 4px;
+  --settings-card-radius: 12px;
+  --settings-row-height: 48px;
+  --settings-detail-row-height: 60px;
+  --settings-status-height: 52px;
+  --settings-control-height: 44px;
+  --settings-control-gap: 8px;
+  --settings-field-gap: 24px;
+  --settings-inline-gap: 12px;
+  --settings-input-radius: 10px;
+  --settings-pill-radius: 4px;
+  --settings-port-width: 88px;
+  --settings-safe-bottom: 40px;
+  --settings-label-height: 18px;
+  --settings-version-height: 14px;
+  --settings-label-font: 400 13px/18px var(--font-ui);
+  --settings-row-font: 500 14px/20px var(--font-ui);
+  --settings-detail-font: 400 13px/18px var(--font-ui);
+  --settings-input-font: 400 13px/18px var(--font-ui);
+  --settings-endpoint-font: 400 13px/18px var(--font-mono);
+  --settings-type-font: 400 14px/16px var(--font-ui);
+  --settings-version-font: 400 11px/14px var(--font-mono);
+  --settings-switch-height: 26px;
+  --settings-switch-thumb-size: 20px;
+  background: var(--glass-pane);
+}
+
+/* The title stays while the list moves under it.
+ *
+ * The page is what scrolls here — `#root` is a column with no scroller of its
+ * own — so the bar sticks to the viewport rather than to a container. Its own
+ * background is what makes that legible: without one the pane behind it is
+ * transparent to the cards, and rows would slide through the title. */
+.settings__bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: calc(var(--settings-header-height) + env(safe-area-inset-top));
+  /* 12 on the left rather than the gutter: the 44px slot carries the rest of
+     the way to 24. The body keeps the gutter. */
+  padding: env(safe-area-inset-top) var(--settings-gutter) 0 12px;
+  background: var(--glass-pane);
+}
+
+/* What scrolls under the bar dissolves into it rather than stopping at its
+   edge: a 16px fade — the gutter's own height, so at rest it covers only the
+   air above the first card (2026-09-15 승연: "스크롤하면 위에 뚝 잘리는"). */
+.settings__bar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 16px;
+  background: linear-gradient(to bottom, var(--glass-pane), transparent);
+  pointer-events: none;
+}
+
+.settings__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--settings-section-gap);
+  padding: var(--settings-gutter) var(--settings-gutter)
+    calc(var(--settings-gutter) + var(--settings-section-gap) + env(safe-area-inset-bottom));
+}
+
+.settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--settings-label-gap);
+}
+
+.settings__section--help {
+  margin-top: calc(var(--settings-label-gap) / 2);
+}
+
+.settings__label {
+  height: var(--settings-label-height);
+  margin: 0;
+  padding-left: var(--settings-label-gap);
+  color: var(--muted-foreground);
+  font: var(--settings-label-font);
+}
+
+.settings__card {
+  overflow: hidden;
+  border-radius: var(--settings-card-radius);
+  background: var(--glass-tray-surface);
+}
+
+.settings__row {
+  display: grid;
+  grid-template-columns: var(--settings-gutter) minmax(0, 1fr) auto auto;
+  column-gap: var(--settings-card-radius);
+  align-items: center;
+  width: 100%;
+  height: var(--settings-row-height);
+  padding: 0 var(--settings-gutter);
+  border: 0;
+  /* No line between rows: the desktop's settings rows stand apart with air
+     alone, and the card already says which rows belong together
+     (2026-09-15 승연: "이전으로 돌리되 가운데 보더만 제거"). */
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.settings__row:not(:disabled):active {
+  background: var(--glass-chrome);
+}
+
+.settings__row:disabled {
+  opacity: 1;
+  color: var(--foreground);
+  -webkit-text-fill-color: currentColor;
+}
+
+.settings__row--destructive,
+.settings__row--destructive:disabled {
+  color: var(--destructive);
+}
+
+.settings__row--destructive .settings__icon {
+  color: currentColor;
+}
+
+.settings__icon,
+.settings__type-icon,
+.settings__chevron {
+  color: var(--muted-foreground);
+}
+
+.settings__type-icon {
+  display: grid;
+  width: var(--settings-gutter);
+  height: var(--settings-gutter);
+  place-items: center;
+  font: var(--settings-type-font);
+}
+
+.settings__row-title {
+  min-width: 0;
+  overflow: hidden;
+  font: var(--settings-row-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings__row-detail {
+  grid-column: 3;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font: var(--settings-label-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings__chevron {
+  grid-column: 4;
+}
+
+/*
+ * Off is the base: a muted track with the thumb at the left. On mirrors
+ * `.launch-switch--on` — the primary track, the thumb at the right in the
+ * primary's foreground (GLASS.md: on-트랙 base/primary). Unavailable is off,
+ * faded: the same shape, so the eye reads one control in three states.
+ */
+.settings__switch {
+  position: relative;
+  grid-column: 3 / 5;
+  justify-self: end;
+  width: var(--tap-min);
+  height: var(--settings-switch-height);
+  border-radius: 999px;
+  background: var(--muted);
+  transition: background 120ms ease;
+}
+
+.settings__switch-thumb {
+  position: absolute;
+  top: calc((var(--settings-switch-height) - var(--settings-switch-thumb-size)) / 2);
+  left: calc((var(--settings-switch-height) - var(--settings-switch-thumb-size)) / 2);
+  width: var(--settings-switch-thumb-size);
+  height: var(--settings-switch-thumb-size);
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
+}
+
+.settings__switch--on {
+  background: var(--primary);
+}
+
+.settings__switch--on .settings__switch-thumb {
+  transform: translateX(calc(var(--tap-min) - var(--settings-switch-height)));
+  background: var(--primary-foreground);
+}
+
+.settings__switch--unavailable {
+  opacity: 0.5;
+}
+
+.settings__version {
+  height: var(--settings-version-height);
+  margin: calc(var(--settings-section-gap) + var(--settings-label-gap)) 0 0;
+  color: var(--muted-foreground);
+  font: var(--settings-version-font);
+  text-align: center;
+}
+
+/* ---------------------------------------------------------- scroll fades
+ * A list that scrolls under a header, or on past its foot, fades at that
+ * edge instead of being cut (2026-09-15 승연). `fadeWhileScrollable` puts
+ * `--start` on while the start is scrolled out of view and `--end` while
+ * the end is; at rest neither is on, so the first and last rows stand whole.
+ * The settings screen keeps its own static fade under its sticky bar. */
+.scroll-fade--start {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 24px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 24px);
+}
+.scroll-fade--end {
+  -webkit-mask-image: linear-gradient(to top, transparent 0, #000 32px);
+  mask-image: linear-gradient(to top, transparent 0, #000 32px);
+}
+.scroll-fade--start.scroll-fade--end {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 32px), transparent 100%);
+}
+
+/* ---------------------------------------------------------------- motion
+ * Entrances (#851). `enterMotion.ts` puts `motion-enter` on an overlay on the
+ * render where it first appears and `motion-screen` on the view when the
+ * screen kind changes, and takes each off at `animationend`; a rebuild of
+ * something already up gets neither, so nothing replays. Nothing animates
+ * out: a cut on the way out is what Paseo does, and what a tree that is
+ * replaced whole can honestly offer. */
+@keyframes motion-fade {
+  from { opacity: 0; }
+}
+@keyframes motion-rise {
+  from { opacity: 0; transform: translateY(40px); }
+}
+@keyframes motion-slide-up {
+  from { transform: translateY(100%); }
+}
+@keyframes motion-pop {
+  from { opacity: 0; transform: scale(0.97); }
+}
+
+/* A new screen fades in; the one before is already gone. */
+.view.motion-screen {
+  animation: motion-fade var(--motion-fast) var(--ease-decelerate);
+}
+
+/* A sheet: the scrim fades while the panel slides up from below the screen. */
+.sheet.motion-enter {
+  animation: motion-fade var(--motion-slow) var(--ease-decelerate);
+}
+.sheet.motion-enter .sheet__panel {
+  animation: motion-slide-up var(--motion-slow) var(--ease-decelerate);
+}
+
+/* The tray's drawer is part of the layout — the pill has already moved up to
+   make room — so it rises the last 40px into place rather than sliding the
+   whole way, which would leave the pill floating over nothing meanwhile
+   (24px first; 40 on the phone, 2026-09-15 승연: "트레이 40px"). */
+.tray__panel.motion-enter {
+  animation: motion-rise var(--motion-base) var(--ease-decelerate);
+}
+
+/* Menus and dialogs pop in place: the scrim fades, the card scales up from
+   97% — Paseo's own numbers. */
+.row-menu.motion-enter,
+.confirm-dialog.motion-enter {
+  animation: motion-fade var(--motion-fast) var(--ease-decelerate);
+}
+.row-menu.motion-enter .row-menu__card,
+.confirm-dialog.motion-enter .confirm-dialog__panel {
+  animation: motion-pop var(--motion-fast) var(--ease-decelerate);
+}
+
+/* The view menu's card pops under its row; the scrim after it in the DOM
+   fades in with it. */
+.home-menu__card.motion-enter {
+  animation: motion-pop var(--motion-fast) var(--ease-decelerate);
+}
+.home-menu__card.motion-enter ~ .home-menu__scrim {
+  animation: motion-fade var(--motion-fast) var(--ease-decelerate);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 1ms;
+    --motion-base: 1ms;
+    --motion-slow: 1ms;
+  }
+}

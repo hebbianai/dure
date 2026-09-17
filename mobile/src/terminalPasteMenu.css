@@ -1,0 +1,26 @@
+.terminal-paste-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--glass-tray-surface);
+  color: var(--foreground);
+  box-shadow: 0 4px 20px #0005;
+  white-space: nowrap;
+  max-width: calc(100vw - 24px);
+}
+
+.terminal-paste-menu__action {
+  min-width: 104px;
+  min-height: 44px;
+  padding: 8px 20px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.terminal-paste-menu__action:active { background: #8883; }

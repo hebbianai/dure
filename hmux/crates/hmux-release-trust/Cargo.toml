@@ -1,0 +1,34 @@
+[package]
+name = "hmux-release-trust"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+conformance = ["tough/http"]
+
+[dependencies]
+async-trait.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+# Keep tough's URL dependency graph on the workspace Rust 1.85 baseline.
+idna.workspace = true
+idna_adapter.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "macros", "rt-multi-thread"] }
+tough.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[[example]]
+name = "tuf_conformance_client"
+required-features = ["conformance"]

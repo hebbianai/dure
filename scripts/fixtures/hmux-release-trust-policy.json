@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "tuf": {
+    "specificationVersion": "1.0.35",
+    "specificationCommit": "743c8a026b6edeaa5e64d247c68a31dc9786b5b2",
+    "wireFormat": "tuf-json",
+    "consistentSnapshot": true,
+    "clientImplementation": {
+      "status": "focused_and_full_linux_conformance_ci_enabled",
+      "crate": "tough",
+      "exactVersion": "0.24.0",
+      "sourceCommit": "98d8eb8b2ce63515d9b4981c938ef6453c5b5771",
+      "cargoPackageSha256": "35b378d98765c2ae9cdc3e9963ea7e670da8cdd9ee39611b8d722083c7f1ac11",
+      "license": "MIT OR Apache-2.0",
+      "minimumRustVersion": "1.85"
+    },
+    "conformanceSuite": {
+      "repository": "theupdateframework/tuf-conformance",
+      "commit": "51ee32b3a7cee80d4f998b164357d7c78fe7c541",
+      "license": "MIT",
+      "focusedNoXfailTests": 10,
+      "fullSuiteStatus": "enabled_pinned_native_linux_faketime",
+      "fullSuiteTests": 112,
+      "strictExpectedFailures": 29,
+      "strictXfailFile": "scripts/qa/hmux-tuf-conformance.xfails",
+      "pythonVersion": "3.12",
+      "pythonPlatforms": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu"
+      ],
+      "hashLockedRequirements": "scripts/qa/hmux-tuf-conformance-requirements.txt"
+    },
+    "repositoryTooling": {
+      "repository": "theupdateframework/tuf-on-ci",
+      "commit": "bf1d724f73b0a6d03823fa5895e4906b2f2283f5",
+      "license": "MIT",
+      "delegateCommand": "tuf-on-ci-delegate",
+      "signCommand": "tuf-on-ci-sign"
+    },
+    "referenceFixtureGenerator": {
+      "package": "tuf",
+      "exactVersion": "7.0.0",
+      "sourceCommit": "353bdb767db56fd4667c9bcf56b710d50fdc2ac0",
+      "wheelSha256": "572bdbdc9ff4a82278a0d4773e6100863b9b33023f27575e84ca65b486dd0d79",
+      "license": "Apache-2.0 OR MIT",
+      "signingLibrary": {
+        "package": "securesystemslib",
+        "exactVersion": "1.3.1",
+        "sourceCommit": "6f774190b90f0aa9d5d7e077680adbaa29c5cd6c",
+        "wheelSha256": "2e5414bbdde33155a91805b295cbedc4ae3f12b48dccc63e1089093537f43c81",
+        "license": "MIT"
+      },
+      "privateKeysPersisted": false
+    }
+  },
+  "channels": [
+    {
+      "name": "stable",
+      "metadataBaseUrl": "https://updates.dureai.dev/hmux/stable/metadata/",
+      "targetsBaseUrl": "https://updates.dureai.dev/hmux/stable/targets/",
+      "bootstrapRoot": "src-tauri/resources/hmux-tuf/stable/1.root.json",
+      "bootstrapRootSha256": null,
+      "feedStatus": "disabled_pending_origin_ownership_and_bootstrap_root",
+      "applicationPosture": "production"
+    },
+    {
+      "name": "canary",
+      "metadataBaseUrl": "https://updates.dureai.dev/hmux/canary/metadata/",
+      "targetsBaseUrl": "https://updates.dureai.dev/hmux/canary/targets/",
+      "bootstrapRoot": "src-tauri/resources/hmux-tuf/canary/1.root.json",
+      "bootstrapRootSha256": null,
+      "feedStatus": "disabled_pending_origin_ownership_and_bootstrap_root",
+      "applicationPosture": "development_only"
+    }
+  ],
+  "roles": {
+    "root": {
+      "keyType": "ed25519",
+      "keyCount": 3,
+      "threshold": 2,
+      "custody": "offline_hardware_or_airgapped",
+      "expiresAfterSeconds": 31536000
+    },
+    "targets": {
+      "keyType": "ed25519",
+      "keyCount": 3,
+      "threshold": 2,
+      "custody": "offline_hardware_or_airgapped",
+      "expiresAfterSeconds": 7776000,
+      "renewBeforeSeconds": 2592000
+    },
+    "snapshot": {
+      "keyType": "ed25519",
+      "keyCount": 1,
+      "threshold": 1,
+      "custody": "isolated_release_environment",
+      "expiresAfterSeconds": 604800,
+      "refreshBeforeSeconds": 259200
+    },
+    "timestamp": {
+      "keyType": "ed25519",
+      "keyCount": 1,
+      "threshold": 1,
+      "custody": "isolated_release_environment",
+      "expiresAfterSeconds": 86400,
+      "refreshBeforeSeconds": 43200
+    }
+  },
+  "bounds": {
+    "maximumRootRotationsPerRefresh": 32,
+    "maximumTrustedRootsPerProof": 33,
+    "maximumProofBytes": 134217728,
+    "maximumRootBytes": 524288,
+    "maximumTimestampBytes": 65536,
+    "maximumSnapshotBytes": 524288,
+    "maximumTargetsBytes": 2097152,
+    "maximumTargetBytes": 268435456,
+    "maximumTargetsPerMetadata": 64
+  },
+  "supportedClientPlatforms": [
+    {
+      "product": "hebbian-ide",
+      "targetTriple": "aarch64-apple-darwin"
+    }
+  ],
+  "artifactTargets": [
+    {
+      "product": "hmux",
+      "targetTriple": "x86_64-unknown-linux-musl",
+      "archiveFormat": "tar.gz"
+    },
+    {
+      "product": "hmux",
+      "targetTriple": "aarch64-unknown-linux-musl",
+      "archiveFormat": "tar.gz"
+    }
+  ],
+  "targetCustomMetadata": {
+    "schemaVersion": 1,
+    "requiredFields": [
+      "schemaVersion",
+      "product",
+      "channel",
+      "buildId",
+      "sourceCommit",
+      "targetTriple",
+      "archiveFormat",
+      "packageVersion",
+      "protocolMinimum",
+      "protocolMaximum",
+      "installedTreeSha256"
+    ],
+    "digestAlgorithms": [
+      "sha256"
+    ],
+    "logicalTargetPathPattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\\.tar\\.gz$",
+    "buildIdPattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$",
+    "buildIdMaximumBytes": 128,
+    "buildIdRequiresDestinationSuffix": true,
+    "sourceCommitPattern": "^[0-9a-f]{40}$",
+    "packageVersionPattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$",
+    "protocolVersionPattern": "^[0-9]+\\.[0-9]+$",
+    "installedTreeSha256Pattern": "^[0-9a-f]{64}$",
+    "destinationTripleIsExplicitInput": true
+  },
+  "publication": {
+    "order": [
+      "sequential_versioned_roots",
+      "hash_prefixed_target",
+      "versioned_targets",
+      "versioned_snapshot",
+      "timestamp"
+    ],
+    "targetSigningRequiresOfflineThreshold": true,
+    "metadataRenewal": {
+      "timestampEverySeconds": 43200,
+      "snapshotEverySeconds": 259200,
+      "targetsRenewBeforeSeconds": 2592000,
+      "renewalMayChangeTargetSet": false,
+      "alertBeforeTimestampExpirySeconds": 21600,
+      "alertBeforeSnapshotExpirySeconds": 172800,
+      "alertBeforeTargetsExpirySeconds": 3888000
+    },
+    "candidateWorkflowMayReadPrivateKeys": false,
+    "privateKeyMaterialAllowedInRepository": false,
+    "replacePublishedTarget": false
+  },
+  "rotation": {
+    "rootVersionsAreSequential": true,
+    "newRootRequiresOldThreshold": true,
+    "newRootRequiresNewThreshold": true,
+    "retainEveryRootVersion": true
+  },
+  "trustedState": {
+    "persistHighestSeenVersions": [
+      "root",
+      "timestamp",
+      "snapshot",
+      "targets"
+    ],
+    "persistLastTrustedTime": true,
+    "fixRefreshStartTime": true,
+    "clockRollbackRefusesRefresh": true,
+    "channelStateIsolated": true,
+    "localRollbackMayLowerTrustedVersions": false,
+    "failedRefreshKeepsCurrentRunnable": true
+  },
+  "activationPrerequisites": [
+    "feed_origin_ownership_verified",
+    "threshold_valid_bootstrap_root_embedded",
+    "offline_bootstrap_root_cryptographically_validated",
+    "production_bootstrap_keys_distinct_from_fixtures",
+    "application_verifier_wired_at_fetch_and_install_boundaries",
+    "runtime_signed_fetch_enabled",
+    "runtime_signed_install_enabled",
+    "chosen_client_fixture_refresh_passed",
+    "upstream_conformance_passed",
+    "activation_sensitive_changes_trigger_release_gate",
+    "tuf_publisher_ready",
+    "metadata_renewal_alerting_enabled"
+  ],
+  "activation": {
+    "feedActivation": "disabled",
+    "bootstrapState": "absent",
+    "originOwnershipEvidence": null,
+    "renewalAlertingWorkflow": null,
+    "tufPublisherEvidence": null
+  }
+}

@@ -1,0 +1,32 @@
+/** 터미널 경계의 한국어 카탈로그 — semantic ID가 키다. 원문은 en/terminal.ts
+ *  의 같은 ID 항목이 정본이고, 이 파일은 ko 표시만 소유한다. */
+export const terminal: Record<string, string> = {
+	"terminal.reconnect.rehostPending": "세션 복구가 완료되지 않았습니다. 컴퓨터에서 복구를 마친 뒤 다시 연결하세요.",
+	"terminal.reconnect.updateRequired": "호스트가 변경된 세션에 다시 연결하려면 해당 컴퓨터의 Dure를 업데이트하세요.",
+	"terminal.chrome.scrollToBottom": "맨 아래로",
+	"terminal.failure.connection": "터미널에 연결하지 못했습니다.",
+	"terminal.failure.create": "터미널을 열지 못했습니다: {detail}",
+	"terminal.failure.unavailable": "터미널 백엔드를 사용할 수 없습니다.",
+	"terminal.recovery.title": "세션 연결이 끊겼어요",
+	"terminal.recovery.body": "세션 프로세스는 사라졌지만 대화는 안전하게 남아 있어요. 이어서 재개하면 그 자리에서 계속됩니다.",
+	"terminal.recovery.resume": "세션 이어서 재개",
+	"terminal.recovery.resuming": "세션을 다시 여는 중…",
+	"terminal.recovery.resumeFailed": "이번엔 안 됐어요 — 다시 시도해도 안전해요.",
+	"terminal.recovery.worktreeMissingTitle": "워크트리가 삭제됐어요",
+	"terminal.recovery.worktreeMissingBody": "대화는 안전하지만 {branch} 브랜치의 저장된 워크트리가 없습니다. 다시 만들거나 저장소 루트에서 바로 재개할 수 있어요.",
+	"terminal.recovery.recreateWorktree": "워크트리 다시 만들고 재개",
+	"terminal.recovery.recreatingWorktree": "워크트리를 다시 만드는 중…",
+	"terminal.recovery.resumeWithoutWorktree": "워크트리 없이 재개",
+	"terminal.recovery.worktreeRecreateFailed": "워크트리를 다시 만들지 못했어요. 다른 항목은 변경하지 않았습니다.",
+	"terminal.recovery.copyDetails": "오류 상세 복사",
+	"terminal.recovery.viewDetails": "오류 상세 보기",
+	"terminal.retiredPane.title": "이 pane은 은퇴한 legacy 터미널의 것입니다",
+	"terminal.retiredPane.body":
+		"legacy PTY 런타임이 hmux 세션으로 대체되어 이 세션에는 더 이상 연결할 수 없습니다. pane을 닫고 새 터미널을 여세요.",
+	"terminal.commandPane.openFailed": "명령 pane을 열지 못했습니다: {detail}",
+	"terminal.chrome.kill": "종료",
+	"terminal.largeView.bringToFront": "큰 창 앞으로 가져오기",
+	"terminal.largeView.openNotice": "큰 창에서 열려 있습니다",
+	"terminal.bell.rang": "터미널 벨이 울렸습니다",
+	"terminal.input.ariaLabel": "터미널 입력",
+};

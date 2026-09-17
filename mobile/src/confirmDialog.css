@@ -1,0 +1,91 @@
+/* The confirmation dialog. Figma `dure-UI` 3202:81879.
+ *
+ * The numbers are the frame's own — card 296 wide, radius 16, padding 20, 8
+ * between the copy and between the buttons, buttons 40 tall on radius 12. They
+ * are written here rather than taken from `--settings-dialog-*`: those names
+ * were referenced by the device-reset dialog and never declared anywhere, so
+ * every one of them was resolving to nothing — no scrim, no card width, no
+ * padding. A token that does not exist is worse than a literal that does. */
+.confirm-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  /* `effect/overlay-2` — the ground the card sits on, and what says the screen
+     behind it is not taking presses. */
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.confirm-dialog__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(296px, 100%);
+  padding: 20px;
+  border-radius: 16px;
+  background: var(--glass-bubble);
+}
+
+.confirm-dialog__title {
+  margin: 0;
+  color: var(--foreground);
+  font: 500 16px/24px var(--font-ui);
+}
+
+.confirm-dialog__description {
+  margin: 0;
+  color: var(--muted-foreground);
+  font: 400 13px/18px var(--font-ui);
+}
+
+/* 10px above the row, per the frame's spacer — the buttons are a decision, and
+   the gap is what stops a thumb reaching them by accident. */
+.confirm-dialog__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.confirm-dialog__button {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 24px;
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: 12px;
+  background: var(--glass-tray);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+  color: var(--foreground);
+  font: 500 14px/20px var(--font-ui);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The confirming button is the desktop's `destructive` button variant, not the
+   frame's light tile with red ink: a destructive tint (20%, 30% while pressed)
+   under destructive ink, so it reads as the same control on the phone and on
+   the desktop (2026-09-15 승연: "웹에 destructive 버튼 들어간거처럼"). */
+.confirm-dialog__button--confirm {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--destructive) 20%, transparent);
+  color: var(--destructive);
+}
+
+.confirm-dialog__button:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+.confirm-dialog__button:disabled {
+  opacity: 0.6;
+}
+
+.confirm-dialog__button:not(:disabled):active {
+  filter: brightness(0.92);
+}
+
+.confirm-dialog__button--confirm:not(:disabled):active {
+  background: color-mix(in srgb, var(--destructive) 30%, transparent);
+  filter: none;
+}

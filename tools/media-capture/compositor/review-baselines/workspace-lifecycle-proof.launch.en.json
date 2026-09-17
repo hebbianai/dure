@@ -1,0 +1,72 @@
+{
+  "schema": "dure-storyboard-perceptual-baseline/v2",
+  "storyboardId": "workspace-lifecycle-proof",
+  "targetId": "launch",
+  "locale": "en",
+  "storyboardSha256": "9a5b830782800b5e036c7be6486548792d0172a14e4c5b9a32de0b84aaa4d88b",
+  "reviewRecipeSha256": "a7b3fff8162388ef7e4c81d657008a23abc2c7a44edcf7f49d08969044c486da",
+  "sourceArtifacts": [
+    {
+      "sourceId": "view-handoff",
+      "bytes": 5235018,
+      "sha256": "408b45b569dccbf82800fe7ceae45b1e20e47ca106a508283bf593b2435b0e13"
+    },
+    {
+      "sourceId": "client-reconnect",
+      "bytes": 766639,
+      "sha256": "e6712140b1e0a0670d1ee6fc45a84ec494c850c8be78bbb8c1efee33bf37fb46"
+    },
+    {
+      "sourceId": "reboot-stale-recovery",
+      "bytes": 661241,
+      "sha256": "7f0ba2f42c9536655607868bf0488fac13100922c21f251d8a9da909aaa13db2"
+    }
+  ],
+  "sourceBuilds": [
+    {
+      "sourceId": "view-handoff",
+      "buildId": "0.1.4+ee22d9fd883b",
+      "sourceRevision": "ee22d9fd883bac0924caddf314dc7415d2c4f07d"
+    },
+    {
+      "sourceId": "client-reconnect",
+      "buildId": "0.1.4+ee22d9fd883b",
+      "sourceRevision": "ee22d9fd883b"
+    },
+    {
+      "sourceId": "reboot-stale-recovery",
+      "buildId": "0.1.4+ee22d9fd883b",
+      "sourceRevision": "ee22d9fd883b"
+    }
+  ],
+  "frames": [
+    {
+      "frame": 0,
+      "perceptualHash": "0040000000008030"
+    },
+    {
+      "frame": 273,
+      "perceptualHash": "0080000408080080"
+    },
+    {
+      "frame": 547,
+      "perceptualHash": "8004200000001100"
+    },
+    {
+      "frame": 820,
+      "perceptualHash": "0080000020000080"
+    },
+    {
+      "frame": 1094,
+      "perceptualHash": "0000000000000000"
+    },
+    {
+      "frame": 1337,
+      "perceptualHash": "0082000408008080"
+    },
+    {
+      "frame": 1489,
+      "perceptualHash": "0802000402008080"
+    }
+  ]
+}

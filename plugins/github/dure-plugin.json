@@ -1,0 +1,76 @@
+{
+  "schema_version": 2,
+  "id": "dure.github",
+  "publisher": "dure",
+  "version": "0.1.0",
+  "display_name": "GitHub",
+  "description": "Issues, pull requests, and projects for the workspace's GitHub repositories, read through the user's gh CLI.",
+  "host_api": {
+    "min_inclusive": 1,
+    "max_inclusive": 2
+  },
+  "activation": [
+    {
+      "kind": "workspace_contains",
+      "pattern": ".git"
+    }
+  ],
+  "contributions": [
+    {
+      "id": "dure.github.issue-tracker",
+      "family": "dure.issue-tracker",
+      "family_api": {
+        "min_inclusive": 1,
+        "max_inclusive": 1
+      },
+      "required": true,
+      "placement": "workspace",
+      "resource": "./contributions/issue-tracker.json"
+    },
+    {
+      "id": "dure.github.settings",
+      "family": "dure.settings",
+      "family_api": {
+        "min_inclusive": 1,
+        "max_inclusive": 1
+      },
+      "required": true,
+      "placement": "ui",
+      "resource": "./contributions/settings.json"
+    },
+    {
+      "id": "dure.github.views",
+      "family": "dure.views",
+      "family_api": {
+        "min_inclusive": 1,
+        "max_inclusive": 1
+      },
+      "required": true,
+      "placement": "ui",
+      "resource": "./contributions/views.json"
+    }
+  ],
+  "agent_integrations": [],
+  "permissions": [
+    {
+      "kind": "dure.issue-tracker.read",
+      "parameters": {
+        "operations": [
+          "activate",
+          "list",
+          "ready",
+          "show",
+          "watch"
+        ]
+      }
+    },
+    {
+      "kind": "dure.ui.contribute",
+      "parameters": {
+        "surfaces": [
+          "primary_sidebar"
+        ]
+      }
+    }
+  ]
+}

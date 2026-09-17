@@ -1,0 +1,37 @@
+[package]
+name = "dure-app"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "Tauri-independent application and extension contracts for Dure"
+
+[workspace]
+members = [
+    "control-plane",
+    "git-checkout",
+    "protocol",
+    "provider-adapter",
+    "provider-profile",
+    "session-runtime",
+    "sqlite",
+]
+resolver = "2"
+
+# Executable identity hashes must finish within normal backend startup budgets.
+# Keep SHA-256 optimized in dev/test while retaining the usual debug checks.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[dependencies]
+dure-app-protocol = { path = "protocol" }
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ts-rs = { version = "11", features = ["serde-compat"] }
+
+[[bin]]
+name = "export-extension-contracts"
+path = "src/bin/export_extension_contracts.rs"

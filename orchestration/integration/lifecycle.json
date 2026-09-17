@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "events": ["identity", "checkpoint", "session_start", "wakeup"],
+  "module": "orchestration-lifecycle.mjs",
+  "terminalInput": false
+}

@@ -1,0 +1,63 @@
+{
+	"$schema": "https://unpkg.com/knip@6/schema.json",
+	"workspaces": {
+		".": {
+			"entry": [
+				"src/designModeInjectEntry.ts",
+				"src/qa.ts",
+				"src/qa/**/*.{ts,tsx}",
+				"scripts/**/*.mjs",
+				"tools/media-capture/**/*.mjs",
+				"cli/**/*.mjs"
+			],
+			"project": [
+				"src/**/*.{ts,tsx,css}",
+				"scripts/**/*.mjs"
+			],
+			"paths": {
+				"/src/*": [
+					"src/*"
+				],
+				"/tools/*": [
+					"tools/*"
+				]
+			},
+			"ignore": [
+				"src/contracts/generated/**",
+				"src/lib/agents/providerManifest.ts",
+				"src/lib/agents/providerSpec.ts"
+			],
+			"ignoreDependencies": [
+				"@bufbuild/protoc-gen-es"
+			],
+			"ignoreBinaries": [
+				"osascript",
+				"screencapture",
+				"rustc",
+				"rustup",
+				"cc",
+				"realpath",
+				"ffmpeg",
+				"ffprobe",
+				"where.exe",
+				"openssl",
+				"plutil",
+				"mkfifo"
+			]
+		},
+		"tools/media-capture/compositor/remotion": {
+			"ignoreDependencies": [
+				"react-dom"
+			]
+		}
+	},
+	"rules": {
+		"files": "error",
+		"dependencies": "error",
+		"unlisted": "error",
+		"unresolved": "error",
+		"exports": "error",
+		"types": "error",
+		"duplicates": "error"
+	}
+}

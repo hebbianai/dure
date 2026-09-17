@@ -1,0 +1,7 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
+  "extends": ["../biome.json"],
+  "files": {
+    "includes": ["src/**/*.ts", "qa/**/*.ts", "vite.config.ts"]
+  }
+}

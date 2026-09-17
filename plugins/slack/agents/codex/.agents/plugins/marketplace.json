@@ -1,0 +1,20 @@
+{
+  "name": "dure-slack",
+  "interface": {
+    "displayName": "Dure Slack"
+  },
+  "plugins": [
+    {
+      "name": "dure-slack",
+      "source": {
+        "source": "local",
+        "path": "./plugins/dure-slack"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

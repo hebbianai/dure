@@ -1,0 +1,44 @@
+---
+title: "自定义 Dure"
+description: "在 Basic 界面中找到字体、语言、账户、通知和更新设置。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+点击侧栏齿轮打开 **Settings**。公开测试版使用 Basic 界面，日常设置无需 Pro。
+
+## 找到需要的设置
+
+| 设置 | 位置 |
+| --- | --- |
+| 已安装版本与更新检查 | General |
+| 默认提供商与提供商权限默认值 | General |
+| 显示语言与编辑器自动保存 | General |
+| 提供商账户配置 | AI provider accounts |
+| CLI 检测与提供商准备 | Provider |
+| Dure CLI 与集成准备 | Agent tooling |
+| 主题、配色、终端字体和行高 | Appearance |
+| 顶部栏 Claude/Codex 使用量指示器 | Appearance |
+| 智能体提醒与声音 | Notifications |
+| 活动与本地提供商日志中的 token 使用量 | Stats and usage |
+| 诊断和数据收集说明 | Privacy and telemetry |
+
+## 调整终端文字
+
+用顶部栏的 **A−** 和 **A+** 调整终端字号。在 **Appearance → Terminal font** 选择字体、字号并设置 **Line height**。先在预览中判断间距，再返回工作。
+
+<Frame caption="外观设置中的行高 1.35 和终端字体预览。">
+  <ProductFigure scene="settings" locale="cn" label="外观设置中的行高 1.35 和终端字体预览。" />
+</Frame>
+
+这些控件在 Basic 中可用。同一页面也能选择浅色、深色或跟随系统，以及对应的工作区配色。
+
+## 语言和通知
+
+在 **General** 选择应用语言：英语、韩语、中文、日语、西班牙语、法语或葡萄牙语。在 **Notifications** 选择需要提醒的事件和声音，包括专注于工作时如何处理通知。
+
+## 更新与提供商选项
+
+用 **General → Check for updates** 检查 Mac 应用更新。阅读并选择下载、安装操作；仅检查不会安装或重启。需要手动替换的旧测试版请遵循[安装和更新 Dure](/cn/install)。
+
+提供商 CLI 更新和登录与应用更新分开。通过[编码智能体和账户](/cn/providers)选择提供商与账户，并按任务选择权限。布局不是权限边界。

@@ -1,0 +1,44 @@
+---
+title: "从 GitHub 开始工作"
+description: "浏览仓库任务，从 issue 或 pull request 启动智能体，再返回相关上下文。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+**GitHub** 侧栏将 issue、pull request 和 GitHub Projects 带入工作区。选择任务时，无需手动把 issue 复制到新对话。
+
+## 连接仓库
+
+1. 在 Mac 安装 GitHub CLI（`gh`），登录有权访问仓库的账户。
+2. 将对应本地 Git 文件夹添加为 Dure 项目，确认 remote 指向目标 GitHub 仓库。
+3. 打开侧栏的 **GitHub** 并选择仓库。
+4. 选择 **Issues**、**Pull requests** 或 **Projects**，按需使用搜索、过滤和刷新。
+
+```sh
+gh auth status
+git remote -v
+```
+
+侧栏使用桌面的 GitHub 访问权限。提供商登录与此无关，组织或 GitHub Projects 访问可能需要额外权限。
+
+## 从 issue 启动智能体
+
+点击条目上的 **Start**。Dure 会打开 **New agent**，填入 issue 或 pull request 上下文。检查任务、项目、提供商和 worktree 选项，再按 **Enter** 或 **Start agent**。
+
+<Frame caption="示例 GitHub Issue 的 Start 操作进入智能体任务启动流程。">
+  <ProductFigure scene="github" locale="cn" label="示例 GitHub Issue 的 Start 操作进入智能体任务启动流程。" />
+</Frame>
+
+启动智能体本身不会合并 pull request 或关闭 issue。
+
+## 返回工作
+
+若已有匹配的智能体，**Open** 会返回其面板。在条目详情中阅读讨论和当前状态，需要完整 GitHub 页面时使用外部链接。修改 GitHub 状态前确认仓库和操作。
+
+用 [Diff](/cn/review-and-feedback) 审查智能体的变更和验证结果，让 issue 的结果与实际接受的工作保持一致。
+
+## 配置集成
+
+打开 **Plugin → GitHub → Plugin settings**，设置选定工作区的刷新间隔、默认 issue 列表等。兼容性和设置范围见[插件](/cn/plugins)。
+
+远程智能体通过桌面登录读取 issue 时，使用单独的 [SSH GitHub 读取连接](/cn/remote-and-ssh)。其支持的命令和访问边界与本地侧栏不同。

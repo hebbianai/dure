@@ -1,0 +1,14 @@
+{
+  "name": "dure-slack",
+  "owner": {
+    "name": "Dure"
+  },
+  "plugins": [
+    {
+      "name": "dure-slack",
+      "source": "./plugins/dure-slack",
+      "version": "0.1.0",
+      "description": "Continue shared work across Dure Pro and Slack."
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { waitForQaLogReceipt } from "./lib/qa-log-receipt.mjs";
+
+const proof = process.env.DURE_QA_SLACK_CONNECTIONS_PROOF;
+const root = fs.realpathSync(process.env.DURE_QA_STATE_ROOT);
+assert.ok(proof, "Run through slack-connections-smoke.sh");
+assert.equal(fs.realpathSync(process.env.HOME), path.join(root, "home"));
+assert.equal(fs.realpathSync(process.env.HMUX_DISCOVERY_ROOT), path.join(root, "hmux-discovery"));
+assert.ok(path.basename(root).startsWith("dure-slack-connections."));
+const receipt = await waitForQaLogReceipt("slack-connections", proof);
+fs.writeFileSync(path.join(root, "evidence", "slack-connections.json"), JSON.stringify(receipt, null, 2));
+assert.equal(receipt.result, "passed", JSON.stringify(receipt));
+for (const key of ["realWebview", "realBackend", "reloadPreserved", "credentialsReused", "disconnected", "visible"]) assert.equal(receipt[key], true, key);
+for (const key of ["realSlack", "realProvider", "focused"]) assert.equal(receipt[key], false, key);
+assert.equal(receipt.channels, 0);
+assert.equal(typeof receipt.generation, "string");
+assert.equal(typeof receipt.reconnectedGeneration, "string");
+assert.notEqual(receipt.generation, receipt.reconnectedGeneration);
+console.log(JSON.stringify(receipt));

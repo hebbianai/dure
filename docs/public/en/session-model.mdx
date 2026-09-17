@@ -1,0 +1,33 @@
+---
+title: "Return to work and recover sessions"
+description: "Distinguish a saved view, a running session and a process that needs recovery."
+---
+
+A pane is a view of work. A managed session has a separate host that owns its terminal and provider process. Keeping these separate lets you return to running work without creating a new conversation just to reopen a view.
+
+## Return to an existing agent
+
+Find the agent in the sidebar and open its pane. You can change Spaces or use another view while keeping the session's working folder and conversation.
+
+While the session host and its machine remain running, managed work can continue when the app disconnects. Reopening Dure attaches to the current screen and later output. This is not a guarantee that every provider, host or computer can recover from every interruption.
+
+## Choose the action for the state you see
+
+| Situation | Next step |
+| --- | --- |
+| The view closed and the session is alive | Reopen the existing agent; do not start a duplicate task |
+| The app lost its connection | Inspect session state and try reconnecting to the existing work |
+| The provider or host ended | Review the recovery actions available for that session |
+| The computer rebooted | The original process ended; supported recovery creates a new process |
+
+Closing a pane, stopping an agent and deleting its working files are different actions. Read the action and any confirmation before ending work you want to retain.
+
+## Use Session Recovery
+
+Open **Session Recovery** to inspect disconnected or ended sessions and the proposed recovery. Confirm when requested. Provider resume support and the saved session determine what can be restored.
+
+After recovery, check the conversation, working folder, changed files and any external effects before repeating a command. Recovery cannot undo an already completed deployment or guarantee every provider conversation can resume.
+
+## Keep files and conversation continuity distinct
+
+A Git worktree stores task files and branch state; it is not the running process. Commit useful changes through your normal workflow. [Review changes](/en/review-and-feedback) after an interruption, and check [remote connection state](/en/remote-and-ssh) for SSH work.

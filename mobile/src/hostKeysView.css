@@ -1,0 +1,134 @@
+/* 설정 › 호스트 › SSH 키. Shares the host-settings shell; only its own parts here. */
+
+.host-keys__body {
+  gap: var(--settings-field-gap);
+}
+
+.host-keys__host {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font: var(--settings-detail-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-keys__section {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--settings-control-gap);
+}
+
+.host-keys__label {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--foreground);
+  font: var(--settings-row-font);
+}
+
+/* Verbatim and selectable. The line is compared character by character with
+   a file on another machine, so it is monospaced, never shortened, and wraps
+   anywhere rather than scrolling off the edge of a phone. */
+.host-keys__public-key {
+  margin: 0;
+  padding: var(--settings-inline-gap);
+  border: 1px solid var(--glass-hairline-glass);
+  border-radius: var(--settings-input-radius);
+  background: var(--glass-pane);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.host-keys__pending {
+  margin: 0;
+  padding: var(--settings-inline-gap);
+  color: var(--muted-foreground);
+  font: var(--settings-detail-font);
+}
+
+.host-keys__hint,
+.host-keys__stored {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--muted-foreground);
+  font: var(--settings-detail-font);
+}
+
+.host-keys__warning {
+  margin: 0;
+}
+
+.host-keys__copy,
+.host-keys__pick,
+.host-keys__save {
+  display: flex;
+  height: var(--settings-control-height);
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--settings-inline-gap);
+  border: 1px solid var(--glass-hairline-soft);
+  border-radius: var(--settings-input-radius);
+  background: var(--glass-tray-surface);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  font: var(--settings-row-font);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.host-keys__copy {
+  width: 100%;
+}
+
+.host-keys__copy:active,
+.host-keys__pick:active,
+.host-keys__save:active {
+  background: var(--glass-chrome);
+}
+
+.host-keys__copy:disabled,
+.host-keys__save:disabled {
+  color: var(--muted-foreground);
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+}
+
+.host-keys__textarea {
+  width: 100%;
+  min-height: 96px;
+  padding: var(--settings-inline-gap);
+  border: 1px solid var(--glass-hairline-glass);
+  border-radius: var(--settings-input-radius);
+  outline: 0;
+  background: var(--glass-pane);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  resize: vertical;
+  appearance: none;
+}
+
+.host-keys__textarea:focus-visible {
+  box-shadow: 0 0 0 1px var(--foreground);
+}
+
+.host-keys__controls {
+  display: flex;
+  gap: var(--settings-inline-gap);
+}
+
+.host-keys__copy:focus-visible,
+.host-keys__pick:focus-visible,
+.host-keys__save:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: -2px;
+}

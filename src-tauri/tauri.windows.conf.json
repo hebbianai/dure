@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeDevCommand": "pnpm dev:windows",
+    "beforeBuildCommand": "pnpm build:windows"
+  },
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "createUpdaterArtifacts": false,
+    "externalBin": [
+      "binaries/hmux-runtime",
+      "binaries/hmux"
+    ],
+    "resources": {
+      "resources/remote-git-checkout-helper/": "resources/remote-git-checkout-helper/"
+    },
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

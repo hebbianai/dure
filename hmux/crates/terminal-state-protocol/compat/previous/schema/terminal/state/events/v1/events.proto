@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package terminal.state.events.v1;
+
+message TerminalEvent {
+  uint64 event_id = 1;
+  reserved 15;
+  oneof event {
+    BellEvent bell = 10;
+    ClipboardWriteRequestEvent clipboard_write_request = 13;
+    NotificationEvent notification = 14;
+    ExecutionMarkerEvent execution_marker = 16;
+  }
+}
+
+message BellEvent {}
+message ClipboardWriteRequestEvent { ClipboardFormat format = 1; bytes content = 2; }
+enum ClipboardFormat {
+  CLIPBOARD_FORMAT_UNSPECIFIED = 0;
+  CLIPBOARD_FORMAT_UTF8_TEXT = 1;
+}
+message NotificationEvent { string title = 1; string body = 2; }
+message ExecutionMarkerEvent { string marker_id = 1; MarkerKind kind = 2; string label = 3; }
+enum MarkerKind {
+  MARKER_KIND_UNSPECIFIED = 0;
+  MARKER_KIND_PROMPT = 1;
+  MARKER_KIND_COMMAND = 2;
+  MARKER_KIND_OUTPUT = 3;
+  MARKER_KIND_FINISHED = 4;
+}

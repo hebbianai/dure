@@ -1,0 +1,9 @@
+{
+  "name": "dure-beads",
+  "version": "0.2.1",
+  "description": "Use the repository's Beads workflow for durable task tracking.",
+  "author": {
+    "name": "Dure"
+  },
+  "skills": "./skills/"
+}

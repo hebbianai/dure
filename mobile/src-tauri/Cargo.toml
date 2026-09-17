@@ -1,0 +1,142 @@
+[package]
+name = "dure-mobile"
+version = "0.1.4"
+description = "Dure mobile attach client"
+authors = ["kattpish"]
+edition = "2021"
+license = "MIT"
+publish = false
+
+# staticlib/cdylib are what the iOS and Android harnesses link against; the
+# rlib is what `cargo test` uses. All three are required for a Tauri mobile
+# target, not a copy-paste from the desktop crate.
+[lib]
+name = "dure_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Pairing payloads carry binary key material through text-only QR and JSON
+# boundaries. TerminalSurface records remain binary and never use this codec.
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+# The system file picker, for one purpose: reading an SSH private key the
+# person already has. A file this app never wrote is a file it must not go
+# looking for, so the picker is the OS's own — it hands back one path the
+# person chose and grants nothing else.
+tauri-plugin-dialog = "2"
+# The system browser, for http(s) links: the help site, the feedback form and
+# hyperlinks a terminal prints. The `external-links` capability scopes it to
+# http/https only; `opener:default` would also open mailto:/tel: and reveal
+# paths in a file manager, none of which this app does.
+# Unconditional: the crate exists on every target, so the desktop shell that
+# `cargo test` exercises compiles the same registration.
+tauri-plugin-opener = "2"
+# Clipboard writes for the device public key and selected terminal text.
+# Exists on every target, so no target table.
+tauri-plugin-clipboard-manager = "2"
+# Impact feedback on a gesture. The crate carries a `#[cfg(desktop)]` no-op
+# module, so it is declared unconditionally: the macOS `cargo test` shell
+# compiles and a capability naming `haptics:*` still resolves there.
+tauri-plugin-haptics = "2"
+# OS permission prompts on every target. iOS receives remote APNs alerts;
+# targets without APNs retain local attachment notifications.
+tauri-plugin-notification = "2"
+
+# 허브 경로. 폰이 앱의 TLS 리스너에 직접 붙는 길이고, SSH 경로와 공존한다
+# (`src-tauri/src/hub/mod.rs`).
+#
+# 와이어 포맷은 노트북과 **같은 크레이트**를 링크한다. 두 벌로 두면 필드 순서
+# 하나가 갈려도 책상에서 폰을 들고서야 드러난다 — `offline_pairing.rs` 머리말이
+# 적어 둔 2026-07-29 사고가 정확히 그것이었다.
+dure-hub-protocol = { path = "../../crates/dure-hub-protocol" }
+# `ring` 백엔드는 이미 트리에 있다(russh 경유)라 새로 들어오는 암호 구현이
+# 없다. 데스크탑 허브가 같은 이유로 같은 백엔드를 고른다 — 두 쪽이 다른 백엔드를
+# 쓰면 핸드셰이크 실패가 기기에서만 드러난다.
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
+] }
+
+# The whole reason this app is Tauri and not Swift/Kotlin: one implementation
+# of the versioned protocol. `default-features = false` keeps the local-runtime
+# world — broker subprocess spawning, filesystem discovery, pid signalling and
+# the terminal replay engine — out of a phone build.
+#
+# This is no longer a no-op: the `local-runtime` split landed on main (3085f57),
+# so the flag now decides which modules exist at all. `tests/lean_build.rs`
+# asserts it against the *resolved* feature set rather than against this line,
+# because one transitive dependency taking hmux-client with its defaults would
+# turn the whole world back on while this declaration still read as though it
+# had not.
+# `offline-pairing`: 네트워크 왕복 없는 QR(v2)을 여는 봉인/해제 구현. 노트북이
+# 봉인하는 것과 **같은 코드**여야 한다 — KDF나 필드 순서가 한 끗 달라도 책상에서
+# 폰을 들고서야 드러난다.
+hmux-client = { path = "../../hmux/crates/hmux-client", default-features = false, features = [
+  "offline-pairing",
+  "terminal-state-stream",
+] }
+# The protocol constants live here, and hmux-client re-exports only one of the
+# three capability names this client must withhold. Depending on the crate that
+# defines them is what makes `WITHHELD_OVER_RELAY` impossible to drift from the
+# wire names; a literal string list would silently rot on a rename.
+hmux-host = { path = "../../hmux/crates/hmux-host", default-features = false }
+# The transport: Hmux frames over an SSH exec channel via russh. The only
+# carrier that reaches a session on a box this device does not share a kernel
+# with. It takes hmux-client and hmux-host `default-features = false` as well,
+# so adding it does not quietly re-enable the local-runtime world.
+hmux-ssh-transport = { path = "../../hmux/crates/hmux-ssh-transport" }
+
+# The device's own SSH keypair is generated here, so this crate needs the key
+# encoder directly rather than through the transport. Same version and same
+# feature set as `hmux/Cargo.toml` declares, so Cargo unifies to one russh
+# build: a second, differently-featured copy of the crate that owns the SSH
+# handshake is the kind of skew that only shows up as a handshake failure on a
+# device.
+russh = { version = "0.62", default-features = false, features = [
+    "flate2",
+    "ring",
+    "rsa",
+] }
+# The CSPRNG the keypair comes out of. `SysRng` is the operating system's
+# generator with no userspace state to seed, fork or snapshot wrong — on a
+# phone, a userspace PRNG seeded once at launch is the classic way two devices
+# restored from the same image end up with the same key.
+rand = "0.10"
+rand_core = "0.10"
+# `PrivateKey::to_openssh` hands back a `Zeroizing<String>` and this crate
+# carries that type through rather than copying into a plain `String`. Naming
+# the type is the whole cost of not leaving a private key in a freed heap page.
+zeroize = "1"
+
+# Mobile-only, and the crate is literally `#![cfg(mobile)]` — on macOS it
+# compiles to nothing, so it is declared per-target rather than unconditionally.
+# `cfg(mobile)` is a Tauri cfg that Cargo cannot use in a target table, hence
+# the explicit OS list; the two are the same set.
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-barcode-scanner = "2"
+# Face ID / fingerprint before an approval. Same shape as the scanner: the
+# crate is `#![cfg(mobile)]`, so on macOS there is no `init()` to register.
+tauri-plugin-biometric = "2"
+
+# UIKit clipboard reads are explicit user actions on the main thread.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSData", "NSString", "NSError", "NSBundle"] }
+objc2-ui-kit = { version = "0.3", default-features = false, features = ["UIPasteboard", "UIImage", "UIApplication"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["net", "rt", "time"] }
+# `tests/hub_handshake.rs` 가 진짜 TLS 허브를 세운다. 검증자를 단위로만 시험하면
+# "rustls 가 그 검증자를 실제로 부르는가" 와 "설정이 실제로 서는가" 가 시험되지
+# 않는다 — 그 둘은 기기에서만 드러나는 부류다. 데스크탑 허브와 같은 버전·같은
+# 백엔드라, 픽스처가 만드는 인증서가 진짜와 같은 모양이다.
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+# `tests/pairing_exchange.rs` owns a one-handshake SSH endpoint so host-key
+# observation never reads or depends on the developer's sshd.

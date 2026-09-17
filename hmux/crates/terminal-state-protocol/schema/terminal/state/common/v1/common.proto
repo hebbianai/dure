@@ -1,0 +1,169 @@
+syntax = "proto3";
+
+package terminal.state.common.v1;
+
+enum BufferId {
+  BUFFER_ID_UNSPECIFIED = 0;
+  BUFFER_ID_NORMAL = 1;
+  BUFFER_ID_ALTERNATE = 2;
+}
+
+message BufferState {
+  repeated TerminalRow rows = 1;
+  CursorState cursor = 2;
+  uint32 scroll_top = 3;
+  uint32 scroll_bottom = 4;
+}
+
+message CursorState {
+  uint32 row = 1;
+  uint32 column = 2;
+  uint32 style_index = 3;
+  bool visible = 4;
+  CursorShape shape = 5;
+  bool blinking = 6;
+  bool wrap_pending = 7;
+}
+
+enum CursorShape {
+  CURSOR_SHAPE_UNSPECIFIED = 0;
+  CURSOR_SHAPE_BLOCK = 1;
+  CURSOR_SHAPE_UNDERLINE = 2;
+  CURSOR_SHAPE_BAR = 3;
+}
+
+message TerminalRow {
+  // Physical row identity changes when the engine reflows a logical line.
+  uint64 row_id = 1;
+  // Required when a page begins in the middle of a soft-wrapped logical line.
+  bool continues_from_previous = 2;
+  repeated TerminalCell cells = 3;
+  RowTermination termination = 4;
+  // Stable logical identity and cell offset preserve scroll anchors over
+  // engine-authored reflow without treating a physical row as a line.
+  uint64 logical_line_id = 5;
+  uint32 logical_cell_offset = 6;
+  // Exact number of logical display cells represented by this physical row.
+  // Current peers use it to prove adjacent soft-wrapped segments have neither
+  // gaps nor overlap; renderers never recalculate it.
+  uint32 logical_cell_span = 7;
+}
+
+enum RowTermination {
+  ROW_TERMINATION_UNSPECIFIED = 0;
+  ROW_TERMINATION_NONE = 1;
+  ROW_TERMINATION_SOFT_WRAP = 2;
+  ROW_TERMINATION_HARD_BREAK = 3;
+}
+
+message TerminalCell {
+  uint32 grapheme_index = 1;
+  uint32 style_index = 2;
+}
+
+message TerminalTables {
+  repeated Grapheme graphemes = 1;
+  repeated CellStyle styles = 2;
+  repeated Hyperlink hyperlinks = 3;
+}
+
+message Grapheme {
+  string text = 1;
+  uint32 display_width = 2;
+}
+
+message CellStyle {
+  TerminalColor foreground = 1;
+  TerminalColor background = 2;
+  TerminalColor underline_color = 3;
+  // Bit 0 bold, 1 faint, 2 italic, 3 blink, 4 inverse, 5 invisible,
+  // 6 strikethrough, 7 overline, and 8 protected.
+  uint64 flags = 4;
+  UnderlineKind underline = 5;
+  uint32 hyperlink_index = 6;
+}
+
+message TerminalColor {
+  ColorKind kind = 1;
+  uint32 value = 2;
+}
+
+enum ColorKind {
+  COLOR_KIND_UNSPECIFIED = 0;
+  COLOR_KIND_DEFAULT = 1;
+  COLOR_KIND_PALETTE = 2;
+  COLOR_KIND_RGB = 3;
+}
+
+enum UnderlineKind {
+  UNDERLINE_KIND_UNSPECIFIED = 0;
+  UNDERLINE_KIND_NONE = 1;
+  UNDERLINE_KIND_SINGLE = 2;
+  UNDERLINE_KIND_DOUBLE = 3;
+  UNDERLINE_KIND_CURLY = 4;
+  UNDERLINE_KIND_DOTTED = 5;
+  UNDERLINE_KIND_DASHED = 6;
+}
+
+message Hyperlink {
+  string uri = 1;
+  string params = 2;
+}
+
+message TerminalPalette {
+  repeated uint32 indexed_rgb = 1;
+  uint32 default_foreground_rgb = 2;
+  uint32 default_background_rgb = 3;
+  uint32 cursor_rgb = 4;
+  uint32 selection_background_rgb = 5;
+}
+
+message InputModes {
+  bool application_cursor_keys = 1;
+  bool application_keypad = 2;
+  bool bracketed_paste = 3;
+  bool focus_reporting = 4;
+  MouseTrackingMode mouse_tracking = 5;
+  MouseEncoding mouse_encoding = 6;
+  bool insert = 7;
+  bool origin = 8;
+  bool auto_wrap = 9;
+  bool newline = 10;
+  bool reverse_wraparound = 11;
+  bool synchronized_output = 12;
+}
+
+enum MouseTrackingMode {
+  MOUSE_TRACKING_MODE_UNSPECIFIED = 0;
+  MOUSE_TRACKING_MODE_NONE = 1;
+  MOUSE_TRACKING_MODE_X10 = 2;
+  MOUSE_TRACKING_MODE_BUTTON = 3;
+  MOUSE_TRACKING_MODE_ANY = 4;
+}
+
+enum MouseEncoding {
+  MOUSE_ENCODING_UNSPECIFIED = 0;
+  MOUSE_ENCODING_DEFAULT = 1;
+  MOUSE_ENCODING_UTF8 = 2;
+  MOUSE_ENCODING_SGR = 3;
+  MOUSE_ENCODING_URXVT = 4;
+  MOUSE_ENCODING_PIXEL_SGR = 5;
+}
+
+message UnicodeWidthProfile {
+  // Cell display_width is authoritative for existing glyphs. This profile
+  // fences the engine's width decisions for future state and cross-peer
+  // conformance; a renderer must never recalculate transmitted cell widths.
+  string unicode_version = 1;
+  uint32 ambiguous_width = 2;
+  uint32 emoji_width = 3;
+}
+
+message TableAppend {
+  uint32 grapheme_base = 1;
+  repeated Grapheme graphemes = 2;
+  uint32 style_base = 3;
+  repeated CellStyle styles = 4;
+  uint32 hyperlink_base = 5;
+  repeated Hyperlink hyperlinks = 6;
+}

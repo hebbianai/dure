@@ -1,0 +1,17 @@
+export const hmuxEnglishTranslations: Record<string, string> = {
+	"hmux.conversion.batchConfirm.deferredNote": " {n} sessions that cannot be converted now will remain unchanged.",
+	"hmux.conversion.replacementStartFailed": "Could not start the Hmux replacement",
+	"hmux.remote.openFailed": "Could not open a remote session on {host}: {detail}",
+	"hmux.conversion.batchConfirm.message": "Convert {n} sessions to managed. Each provider will stop in sequence and resume the same conversation in a new terminal epoch. Pane positions and conversation IDs will be preserved.{deferred} Continue?",
+	"hmux.conversion.eligibility.providerUnsupported": "Managed conversion is not supported for {provider} sessions yet.",
+	"hmux.conversion.confirm.message": "Converting to {target} stops the current provider and resumes the same conversation in a new terminal epoch. The pane position and conversation ID are preserved, but any running command is interrupted. Continue?",
+	"hmux.conversion.eligibility.projectAmbiguous": "Multiple projects own this working directory, so it cannot be converted.",
+	"hmux.conversion.target.managed": "managed session",
+	"hmux.conversion.target.standalone": "standalone session",
+	"hmux.conversion.eligibility.notReady": "You can convert to managed once the session is ready.",
+	"hmux.conversion.preflightFailed": "Session conversion preflight failed",
+	"hmux.conversion.eligibility.agentWorking": "You can convert to managed after the agent finishes its current work.",
+	"hmux.conversion.eligibility.attentionRequired": "Handle the requested input before converting to managed.",
+	"hmux.conversion.eligibility.thisProvider": "this provider",
+	"hmux.conversion.eligibility.projectNotFound": "Register this working directory as a project before converting to managed.",
+};

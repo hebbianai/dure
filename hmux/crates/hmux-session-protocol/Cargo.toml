@@ -1,0 +1,13 @@
+[package]
+name = "hmux-session-protocol"
+description = "Shared session identity, discovery values and bounded wire contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true

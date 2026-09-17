@@ -1,0 +1,61 @@
+# 릴레이 하나를 Fly 에 올린다.
+#
+# **저장소 루트에서** 배포한다. Dockerfile 이 `crates/dure-hub-protocol` 을
+# 복사하므로 빌드 문맥이 루트여야 한다:
+#
+#   fly deploy -c crates/dure-relay/fly.toml .
+#
+# 운영 문서: docs/operations/relay-deployment.md
+
+app = "dure-relay"
+
+# 도쿄. 릴레이는 터미널의 **모든 키 입력**이 지나는 곳이라 지연이 곧 사용감이다.
+# 한국에서 왕복 30~40ms 수준이고, 싱가포르나 미국으로 두면 타이핑에서 체감된다.
+primary_region = "nrt"
+
+[build]
+  # **이 파일 기준의 상대 경로다** — 빌드 문맥(저장소 루트) 기준이 아니다.
+  # 루트 기준으로 쓰면 fly 가 `crates/dure-relay/crates/dure-relay/Dockerfile`
+  # 을 찾는다.
+  dockerfile = "Dockerfile"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8787
+
+  # **끄지 않으면 릴레이가 잔다.**
+  #
+  # Fly 는 유휴 머신을 기본으로 재운다. 이 릴레이가 자면 등록된 노트북의 control
+  # 연결이 전부 끊기고, 폰은 밖에서 "컴퓨터가 꺼져 있습니다" 를 본다 — 노트북은
+  # 멀쩡히 켜져 있는데. 게다가 그 증상은 집에서 재현되지 않는다(집에서는 직결로
+  # 붙으므로 릴레이를 안 탄다).
+  #
+  # 이 세 줄이 이 파일에서 가장 중요하다.
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  # **머신은 정확히 한 대여야 한다.** 성능이 아니라 정확성 문제다.
+  #
+  # 등록은 그 프로세스의 메모리에만 있다. 노트북은 한 대에 등록되고, 폰은
+  # 배정받는 대로 간다 — 다른 쪽에 걸리면 그 머신은 `server_id` 를 모르니
+  # "그런 기계 없음" 을 돌려준다. 두 대면 대략 절반이 그렇게 실패한다.
+  #
+  # `fly deploy` 는 기본으로 두 번째 머신을 만든다(HA). 첫 배포 때 실제로
+  # 그렇게 됐고 `fly scale count 1` 로 되돌렸다. 배포 뒤에는 항상
+  # `fly status` 로 머신 수를 확인할 것.
+  #
+  # 여러 대로 가려면 `server_id` 기준 sticky 라우팅이나 인스턴스 간 조회가
+  # 필요하고, 그건 지금 설계에 없다.
+
+  # 핸들러를 두지 않는다. 이 프로토콜은 HTTP 도 WebSocket 도 아니고, 길이 접두
+  # 프레임을 생 TCP 로 흘린다. `handlers = ["tls"]` 를 넣으면 Fly 가 TLS 를
+  # 종단하는데, 우리 클라이언트는 평문으로 붙으므로 아무도 못 붙게 된다.
+  [[services.ports]]
+    port = 8787
+
+# 가장 작은 것으로 충분하다. 바이트를 옮기는 일이 전부라 CPU 도 메모리도 거의
+# 쓰지 않는다 — 비용은 사실상 대역폭 하나로 결정된다.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

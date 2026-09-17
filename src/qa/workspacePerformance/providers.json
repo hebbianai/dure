@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "providers": [
+    { "id": "claude", "resizeBuffer": "alternate" },
+    { "id": "codex", "resizeBuffer": "normal" }
+  ]
+}

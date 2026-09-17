@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "containers": [
+    {
+      "id": "dure.github.issues",
+      "location": "primary_sidebar",
+      "title": {
+        "default": "GitHub"
+      },
+      "icon": "github"
+    }
+  ],
+  "views": [
+    {
+      "id": "dure.github.issues.list",
+      "container_id": "dure.github.issues",
+      "title": {
+        "default": "Issues",
+        "translations": {
+          "ko": "이슈",
+          "ja": "Issue",
+          "zh": "议题",
+          "es": "Issues",
+          "fr": "Issues",
+          "pt": "Issues"
+        }
+      },
+      "kind": "issue_tracker",
+      "provider_contribution_id": "dure.github.issue-tracker",
+      "default_query": "list",
+      "default_query_setting_key": "default_view",
+      "watch_interval_setting_key": "watch_interval_seconds",
+      "query_titles": {
+        "ready": {
+          "default": "Assigned to me",
+          "translations": {
+            "ko": "나에게 할당됨",
+            "ja": "自分に割り当て",
+            "zh": "分配给我",
+            "es": "Asignadas a mí",
+            "fr": "Assignées à moi",
+            "pt": "Atribuídas a mim"
+          }
+        },
+        "list": {
+          "default": "Open issues",
+          "translations": {
+            "ko": "열린 이슈",
+            "ja": "オープンな Issue",
+            "zh": "未关闭的议题",
+            "es": "Issues abiertas",
+            "fr": "Issues ouvertes",
+            "pt": "Issues abertas"
+          }
+        }
+      }
+    }
+  ]
+}

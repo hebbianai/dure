@@ -1,0 +1,44 @@
+---
+title: "Coordinate agents with messages and decisions"
+description: "Connect CLI and MCP clients to durable task messages, human decisions and completion reports."
+---
+
+Use Dure's coordination integration when an agent needs to report progress, ask for a decision or return a result for dispatched work. The human goal and scope remain the starting point.
+
+## Define the agreement
+
+State the goal, allowed changes, verification and the point at which the agent should ask for input. A second agent can investigate or review in parallel when its work has an independent scope.
+
+## Connect the integration
+
+Inspect the Dure CLI's integration state first:
+
+```sh
+dure integration status
+dure integration --help
+```
+
+To install the supported Codex and Claude discovery entries into your global provider configuration:
+
+```sh
+dure integration install --global --approve-global-config
+dure integration status
+```
+
+Installation changes provider configuration. Review the reported changes and use the status command to confirm what is installed. This integration is separate from choosing a coding-agent provider or configuring an app [plugin](/en/plugins).
+
+## Use the right interaction
+
+| Interaction | Purpose |
+| --- | --- |
+| Message | Progress, context, a question or a result that does not itself require a decision response |
+| Decision | An explicit answer for the dispatched task, using text or offered choices |
+| Completion report | The task outcome, verification and remaining limitations |
+
+The CLI and MCP integration expose these interactions and their events. Clients resume from acknowledged event positions when reconnecting, so earlier events need not all be treated as new.
+
+## Review the handoff
+
+Check the changed files and reported evidence. Answer the requested decision or steer the next task. A completion report does not approve unrelated actions or replace [review](/en/review-and-feedback).
+
+See [CLI runs and schedules](/en/cli-and-automation) for launching the work and [parallel tasks](/en/first-parallel-workflow) for separating edits.

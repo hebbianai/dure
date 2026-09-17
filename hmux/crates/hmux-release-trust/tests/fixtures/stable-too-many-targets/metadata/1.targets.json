@@ -1,0 +1,1255 @@
+{
+ "signatures": [
+  {
+   "keyid": "f4c03be89f77be51036c7774bf14166d8d0474f758e803c39f74478d96afb650",
+   "sig": "b0017af70ded26a93336d1a030ea39b3e324c6c753e61d6c698feb40bde7038c608072b865dd2b1f6190e0b974d636d0d1413ed88be13fcc21cff9e82781bc03"
+  },
+  {
+   "keyid": "074e2dbe6fe4c3cf3030ffd858a89ed78b3a6a71090c67face4c34f265e72491",
+   "sig": "9a65f36f69743b66ba08af042b3b8cbe649b8ba55a418b2f8cb97e7c958c219a934acf61afe077c2b7167509cc25d9a3d5c1f6887b250c06b0029af0241d570d"
+  }
+ ],
+ "signed": {
+  "_type": "targets",
+  "expires": "2037-01-01T00:00:00Z",
+  "spec_version": "1.0.31",
+  "targets": {
+   "0.1.4+fixture.aarch64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "0.1.4+fixture.aarch64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "28c2d6ac36d721bc5abfec4f04a730a29667c096b35d4a1b4e1017d47dcfe990",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "d20e1c09380bf8d098e34279ef56d55e8e4ea5a8",
+     "targetTriple": "aarch64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "ec590064f6efa4306eaf78ef7d258dd75a603c19a026316d7fe9aef920d00d7d"
+    },
+    "length": 147
+   },
+   "0.1.4+fixture.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "0.1.4+fixture.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "f800ade3553540da91f1b8f93709846c38a58a89b694f2dce8645524b2dc9d01",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "d20e1c09380bf8d098e34279ef56d55e8e4ea5a8",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "8719ce8ff121d98b50782d28e43abc58bbd8d2e297604faa8c1a1cf76921dd3f"
+    },
+    "length": 147
+   },
+   "extra-00.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-00.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "101c635f8725f5276853083f36800a6e33542f5361f5c4a2918cc870b3a18c06",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "e25f239793c75f4a41fe7f42d73089c9d9e150cc",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "101c635f8725f5276853083f36800a6e33542f5361f5c4a2918cc870b3a18c06"
+    },
+    "length": 15
+   },
+   "extra-01.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-01.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "dfa4177f19bc1a9916a729eacc9645720d6fde58e5e03c2ad02ae24eb8f0b6b8",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "59dea7fbf64fc461137c07b004c24687ab8a697f",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "dfa4177f19bc1a9916a729eacc9645720d6fde58e5e03c2ad02ae24eb8f0b6b8"
+    },
+    "length": 15
+   },
+   "extra-02.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-02.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "4926ec3ef67b83fab0a11dc4ffef8b4c0ce8a94ac34fd659770edd86bdd100e8",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "e24b3ede74ae6970ab70b6adf8d86ce3fe7b6aae",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "4926ec3ef67b83fab0a11dc4ffef8b4c0ce8a94ac34fd659770edd86bdd100e8"
+    },
+    "length": 15
+   },
+   "extra-03.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-03.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "d1b866861ea5ee4a5b21b11c6b703d75051d33365f37cefb6f36ef11dd668129",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "9e5c22bf4ec94f2132714046048387589ffc88c3",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "d1b866861ea5ee4a5b21b11c6b703d75051d33365f37cefb6f36ef11dd668129"
+    },
+    "length": 15
+   },
+   "extra-04.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-04.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "1e868ae6e75c0491c6b7c891b3192588e47439df49015543814c343a47ad9c6e",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "d197e5001c32694db9a00a3268557a2db86cef50",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "1e868ae6e75c0491c6b7c891b3192588e47439df49015543814c343a47ad9c6e"
+    },
+    "length": 15
+   },
+   "extra-05.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-05.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "69588f1fd5076fd02879286ccd6b246ed96caae51a1b32358f8f4a5b962b3b46",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "98ca4d9e81a4b99e9440788615e31dc227409997",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "69588f1fd5076fd02879286ccd6b246ed96caae51a1b32358f8f4a5b962b3b46"
+    },
+    "length": 15
+   },
+   "extra-06.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-06.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "757301d1d14080b9febbc8317d504e26ebba8c6b87a4da44093fa623682fa272",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "84b558baa67eaf047093e13fb66f462f46bb1956",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "757301d1d14080b9febbc8317d504e26ebba8c6b87a4da44093fa623682fa272"
+    },
+    "length": 15
+   },
+   "extra-07.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-07.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "b36aeab69f23ae255642d646a6853a128c05f9b2a5d2e1e614a5fc9d3bb20e5c",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "65757f79ace9be1a49c3b4a179e4ffe23cbf6cc4",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "b36aeab69f23ae255642d646a6853a128c05f9b2a5d2e1e614a5fc9d3bb20e5c"
+    },
+    "length": 15
+   },
+   "extra-08.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-08.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "a55596d3dc88896788429b147e4ae40866353868473d32029fd81d070569e5a6",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "5aa03f25286b806de66d19258b47fa0be836a6a7",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "a55596d3dc88896788429b147e4ae40866353868473d32029fd81d070569e5a6"
+    },
+    "length": 15
+   },
+   "extra-09.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-09.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "0cd34b4f9df41fa815287a4c88847f089689f86e8608b4eb7b56e8e06a419917",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "e3901d10e7e0d58fbea6dc94e5c3ec79a106fbd6",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "0cd34b4f9df41fa815287a4c88847f089689f86e8608b4eb7b56e8e06a419917"
+    },
+    "length": 15
+   },
+   "extra-10.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-10.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "c157f7373165144df2291edaf012dda0f0d7e521748455dcbfc494bc112cc582",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "8ed85a53433a68a2a7d01473c6fa3455a04ab7bb",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "c157f7373165144df2291edaf012dda0f0d7e521748455dcbfc494bc112cc582"
+    },
+    "length": 16
+   },
+   "extra-11.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-11.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "bce44b63a3565d3f60db2e90689d3f8d45bb08b8ad0d086893d7c8e6d5d6a996",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "31be5413ca498a12a1b4f0bfe73bc2ae053599bf",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "bce44b63a3565d3f60db2e90689d3f8d45bb08b8ad0d086893d7c8e6d5d6a996"
+    },
+    "length": 16
+   },
+   "extra-12.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-12.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "70ee70cf3e79485f4bc3f79ab6b6db793ce018c705c5c3b8e0a844980c810ac2",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "97ff49cb156aba58a33d7b5325a83977fef23d4e",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "70ee70cf3e79485f4bc3f79ab6b6db793ce018c705c5c3b8e0a844980c810ac2"
+    },
+    "length": 16
+   },
+   "extra-13.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-13.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "4d18e88408b2ce23687b310bd7c1292fc7a3ac8bc8058fb095cc66fff36c55eb",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "1fdd414d33e944080e5c7a66e9d740ac02f01245",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "4d18e88408b2ce23687b310bd7c1292fc7a3ac8bc8058fb095cc66fff36c55eb"
+    },
+    "length": 16
+   },
+   "extra-14.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-14.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "1c7e723ec5c0822ec08e5cc92515184c3c687c03696241772997735187330ba2",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "c86d07b6694436de932f7ee4420d5003a4367d08",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "1c7e723ec5c0822ec08e5cc92515184c3c687c03696241772997735187330ba2"
+    },
+    "length": 16
+   },
+   "extra-15.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-15.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "f57256a2aa96c8fb3dae36ae60985704756864d437f2fdab7d7e9c094d96fc89",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "e259f16e6bc910a641ae08a0ef5a1c7e17873bdc",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "f57256a2aa96c8fb3dae36ae60985704756864d437f2fdab7d7e9c094d96fc89"
+    },
+    "length": 16
+   },
+   "extra-16.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-16.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "cca5b30222dbdbeea215752a39c0e944bf7e8f26dd04f9cd100b3285eb4baf3f",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "e741d208e02ff09d63fb81b800ff567a2040c6f5",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "cca5b30222dbdbeea215752a39c0e944bf7e8f26dd04f9cd100b3285eb4baf3f"
+    },
+    "length": 16
+   },
+   "extra-17.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-17.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "2ae51a20bfc111f406edd5a6b3f40eb1b366bcd7a5888a98fdd75452ca99feef",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "55c085467e169c615b26f2103152d1fb179b2f31",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "2ae51a20bfc111f406edd5a6b3f40eb1b366bcd7a5888a98fdd75452ca99feef"
+    },
+    "length": 16
+   },
+   "extra-18.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-18.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "28c641a655c7b2a82186e94b9c867cb7601ceebc0eff66d5d4b89243cfe889ab",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "761813ace2756fa5264cd0ed0245b56abcab40f9",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "28c641a655c7b2a82186e94b9c867cb7601ceebc0eff66d5d4b89243cfe889ab"
+    },
+    "length": 16
+   },
+   "extra-19.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-19.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "05375f3a63e20d26dbb1e30d109666f422346a91d9446594104a9bcdcd8a4493",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "8c0e8e8b5c7b397ea8e85218486e56aaa50a6c21",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "05375f3a63e20d26dbb1e30d109666f422346a91d9446594104a9bcdcd8a4493"
+    },
+    "length": 16
+   },
+   "extra-20.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-20.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "65f62261f3daf6cc35539e6b23c828f2a3d58ab635970ccba9905e251accb62c",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "6a3f454fad9de719cc6317a6cbc27e326aded1ec",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "65f62261f3daf6cc35539e6b23c828f2a3d58ab635970ccba9905e251accb62c"
+    },
+    "length": 16
+   },
+   "extra-21.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-21.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "88f2e251b76dc12d3a9fe91b6a0e578a207ab69ee404bbef84ec076212eb0f00",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "14271e0e40902fee8474bf18e5990b1829181cdd",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "88f2e251b76dc12d3a9fe91b6a0e578a207ab69ee404bbef84ec076212eb0f00"
+    },
+    "length": 16
+   },
+   "extra-22.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-22.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "77aa62c717b9151d4212fe51bcc62447e32d390da2481333407216fe3c8ab190",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "bcccce03a455409d6ce09524cbe8db7e132684c1",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "77aa62c717b9151d4212fe51bcc62447e32d390da2481333407216fe3c8ab190"
+    },
+    "length": 16
+   },
+   "extra-23.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-23.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "97e1f156b1b089c43bba172eb797c304f0b497f646928cebdb8d4bdd8e23e436",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "6d7bed5b628caec52aabb700166d7c6772ded1f7",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "97e1f156b1b089c43bba172eb797c304f0b497f646928cebdb8d4bdd8e23e436"
+    },
+    "length": 16
+   },
+   "extra-24.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-24.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "80d51965b64290cca94b3c721a16a3d601374a0507c0c170ab0fdbebff333abc",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "2baca9d14a0b16016476917afea9c7455844b701",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "80d51965b64290cca94b3c721a16a3d601374a0507c0c170ab0fdbebff333abc"
+    },
+    "length": 16
+   },
+   "extra-25.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-25.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "5a4a259e1c2cc870551cf27b22aa983ffdb0262a312f35a661926ac5794105ab",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "e49f199088b2d428112ca5f60bded3b4a4a5b9ec",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "5a4a259e1c2cc870551cf27b22aa983ffdb0262a312f35a661926ac5794105ab"
+    },
+    "length": 16
+   },
+   "extra-26.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-26.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "5e3db849b9c1fc5723cc40f879960d55e3f1d64ee34c85d16dbed165687422b7",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "4d7e26f6726d7e06f2e975a88b2e0ae2111995e2",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "5e3db849b9c1fc5723cc40f879960d55e3f1d64ee34c85d16dbed165687422b7"
+    },
+    "length": 16
+   },
+   "extra-27.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-27.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "64a68ebbadbcd3dd8a2865eac21f5ee127282e0c5c66bbd752ea1a39c76b6eee",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "0f605418288539b471331eef3e30e58130c536a4",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "64a68ebbadbcd3dd8a2865eac21f5ee127282e0c5c66bbd752ea1a39c76b6eee"
+    },
+    "length": 16
+   },
+   "extra-28.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-28.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "f41554a1c513c4987300cc1c12883d630d774cd4d04ffaf49d4114b9a4728922",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "5d4e1a9257223ea59e618f5613813dbf5da2d488",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "f41554a1c513c4987300cc1c12883d630d774cd4d04ffaf49d4114b9a4728922"
+    },
+    "length": 16
+   },
+   "extra-29.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-29.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "f4887dc8d702a4ab3346125555af5a1df46ece2dd45281c2cdc74b1ada634ff0",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "046c60defe88f10fd1924160812fd52ee7b72126",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "f4887dc8d702a4ab3346125555af5a1df46ece2dd45281c2cdc74b1ada634ff0"
+    },
+    "length": 16
+   },
+   "extra-30.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-30.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "0d4b5014e1023920942ac42f2c901e843b5475dc50651bf5ed217ced6037ebc1",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "3504229969cebb6d15a73189bb98967fd4913ab0",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "0d4b5014e1023920942ac42f2c901e843b5475dc50651bf5ed217ced6037ebc1"
+    },
+    "length": 16
+   },
+   "extra-31.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-31.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "47854e515cd332b46e4db408acbfc4811958639d2200b934a6f59be3177696dd",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "0fc385898a3979466280b804da7939c360fbd66c",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "47854e515cd332b46e4db408acbfc4811958639d2200b934a6f59be3177696dd"
+    },
+    "length": 16
+   },
+   "extra-32.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-32.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "1e2ed73cfe06076fe77ecc83aa3abeba3d5df5c262e1ab4f527b6edb21270163",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "3f5145750378bb4aae66c3daaa7cf1cc84543c30",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "1e2ed73cfe06076fe77ecc83aa3abeba3d5df5c262e1ab4f527b6edb21270163"
+    },
+    "length": 16
+   },
+   "extra-33.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-33.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "52bf2d6d39f1c4fa1100a9159cc9089862651a1ce155ca3a8bb5374ee8196286",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "1cd2f4ad4592f7008ecdb08b597304b1f237bea2",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "52bf2d6d39f1c4fa1100a9159cc9089862651a1ce155ca3a8bb5374ee8196286"
+    },
+    "length": 16
+   },
+   "extra-34.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-34.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "b31291cabed74a5a08e25ca1347d165c1b1293259a51a2300d6dab229fcdadb5",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "500e28d38321c098e89df9dd27a9179362897c7e",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "b31291cabed74a5a08e25ca1347d165c1b1293259a51a2300d6dab229fcdadb5"
+    },
+    "length": 16
+   },
+   "extra-35.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-35.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "6d1e092fe8278bf3f0ec57e47237dcefe088ef228f131f53a095090a1209ab0f",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "79cc7cf0d5672e3371fad7ec2b4535a88165077d",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "6d1e092fe8278bf3f0ec57e47237dcefe088ef228f131f53a095090a1209ab0f"
+    },
+    "length": 16
+   },
+   "extra-36.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-36.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "5f76180057c06a338499f359dd8956ab7a5866784fd7b1689ff1e93a7a0b1ed7",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "ef808f3899f980fb6a800797b62866ff6004b1da",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "5f76180057c06a338499f359dd8956ab7a5866784fd7b1689ff1e93a7a0b1ed7"
+    },
+    "length": 16
+   },
+   "extra-37.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-37.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "d7bc8e47271858063777e9991390a070721514bff0c33566af85e329d6e24d99",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "604dc166577ef0fedf15eb5dadd5b20cd1e85fc0",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "d7bc8e47271858063777e9991390a070721514bff0c33566af85e329d6e24d99"
+    },
+    "length": 16
+   },
+   "extra-38.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-38.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "e5fe15367e1a5f79bd05d8b12b7906460f37da55d18446fc9eae14059e28a00d",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "651a8183cb050b9f989b8357434d40d506ff0d00",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "e5fe15367e1a5f79bd05d8b12b7906460f37da55d18446fc9eae14059e28a00d"
+    },
+    "length": 16
+   },
+   "extra-39.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-39.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "9a69e79e7208f3e7175698828d22844ad7af74fc97889a38e7d0dcca19f5bea6",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "badcf5783ac4ec1f966e994dabbabe7eaefbd809",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "9a69e79e7208f3e7175698828d22844ad7af74fc97889a38e7d0dcca19f5bea6"
+    },
+    "length": 16
+   },
+   "extra-40.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-40.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "fde446a53941afef31f9403ad63f6ed3768753a845fb230f46cf01b3dd74d1e3",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "5e7a10e80d6c6e7cbe8a6501abdf5874b0a3770f",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "fde446a53941afef31f9403ad63f6ed3768753a845fb230f46cf01b3dd74d1e3"
+    },
+    "length": 16
+   },
+   "extra-41.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-41.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "d9533b25a03cd135841b5fa715058697b4a2e55bc1927132a61f211a9cfb82c9",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "01c095f50a4ce2e99f4c5335a9f26d3ed369deba",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "d9533b25a03cd135841b5fa715058697b4a2e55bc1927132a61f211a9cfb82c9"
+    },
+    "length": 16
+   },
+   "extra-42.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-42.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "9da4954321d450c79f6e571a292ba8615bb92fefabfdbc8ff0d61044deeb87f6",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "2f1e687b4deff5248f846fdd94b8d2d7d80d7e63",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "9da4954321d450c79f6e571a292ba8615bb92fefabfdbc8ff0d61044deeb87f6"
+    },
+    "length": 16
+   },
+   "extra-43.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-43.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "cb6cab0341fa8b3ac247f85f1abe691c647fb68a8b7a8d9f820560267e9df6db",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "1c18a0b9d675b2dfaee23bf0bd46c3b21d07509c",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "cb6cab0341fa8b3ac247f85f1abe691c647fb68a8b7a8d9f820560267e9df6db"
+    },
+    "length": 16
+   },
+   "extra-44.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-44.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "e00a2c608d9bc0ad6f1e22a2fb35afcc5959d9996184f593499c37addb9fabd4",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "ab36e9df395268ef9a04546b6f776e1180ce1bce",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "e00a2c608d9bc0ad6f1e22a2fb35afcc5959d9996184f593499c37addb9fabd4"
+    },
+    "length": 16
+   },
+   "extra-45.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-45.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "a26d4e0fa0ab618ba5f43a7b37012268124626196d55041fd17b54b30152e782",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "e072afa633f6ed6e5a352018f7dd1d9caa35e6ee",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "a26d4e0fa0ab618ba5f43a7b37012268124626196d55041fd17b54b30152e782"
+    },
+    "length": 16
+   },
+   "extra-46.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-46.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "07c6c748ee045fb77af4d9da63278598c9fda66f0723895e01b56020e2337c44",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "55eac2d396029e47eded6cf4e60f5d982af395c1",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "07c6c748ee045fb77af4d9da63278598c9fda66f0723895e01b56020e2337c44"
+    },
+    "length": 16
+   },
+   "extra-47.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-47.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "ddbf62168adb80e3b23ebd19182e7ffe38fbae3392e711767edfe30573684492",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "ad156dd0025f3e3d75552079945059068ab4e09f",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "ddbf62168adb80e3b23ebd19182e7ffe38fbae3392e711767edfe30573684492"
+    },
+    "length": 16
+   },
+   "extra-48.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-48.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "bff7d59810455dfd65928572286dcc7813c4ef1757a01aee435f54cb6ef2ed84",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "bb53b9b13b7ebcab1ddfd71c49ab39fd4e59ec5f",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "bff7d59810455dfd65928572286dcc7813c4ef1757a01aee435f54cb6ef2ed84"
+    },
+    "length": 16
+   },
+   "extra-49.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-49.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "9274228b5cdbd6c40088c6a87c2175b71e70f6f13697ce11ce294e4d560ed4ed",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "32f50e6c27d1c5fe826a30e32b69a16f0ebd08db",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "9274228b5cdbd6c40088c6a87c2175b71e70f6f13697ce11ce294e4d560ed4ed"
+    },
+    "length": 16
+   },
+   "extra-50.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-50.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "17893d5c680c366bff28d651aa881fd928a9510920b2388d94a5547b06f09449",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "2ee7b1e198393be56fb11c80af7880044629b15a",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "17893d5c680c366bff28d651aa881fd928a9510920b2388d94a5547b06f09449"
+    },
+    "length": 16
+   },
+   "extra-51.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-51.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "63d1e2263c3f61c0bc966f8853c78d7f52b70023e5dc614c6f55d42cdedc808c",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "2522ef1595abf0f74453eb74eccf5eeb20680ae6",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "63d1e2263c3f61c0bc966f8853c78d7f52b70023e5dc614c6f55d42cdedc808c"
+    },
+    "length": 16
+   },
+   "extra-52.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-52.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "d51eac0b176a89fe14010666c51fed4d37911a709b15c3d1b01a4a211cdbcc56",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "00ce37cd51c674cdba3cdbb6a098888439d8fe36",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "d51eac0b176a89fe14010666c51fed4d37911a709b15c3d1b01a4a211cdbcc56"
+    },
+    "length": 16
+   },
+   "extra-53.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-53.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "0aee81b400e5a526524a4d068e2fca5188b111b9b6463969b40936ec417cb6c1",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "782c9d14a4c58f662bf8d507d464e5ef17be8395",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "0aee81b400e5a526524a4d068e2fca5188b111b9b6463969b40936ec417cb6c1"
+    },
+    "length": 16
+   },
+   "extra-54.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-54.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "93fa02c5e258b86d1b2eefe6ef924694221a61638d1cc8140a72a5a06862f34a",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "df43329c79188d3a0c7e6fcaa7a417d9a317166b",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "93fa02c5e258b86d1b2eefe6ef924694221a61638d1cc8140a72a5a06862f34a"
+    },
+    "length": 16
+   },
+   "extra-55.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-55.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "344cbf9a5f91a0e74b1f82e1acde940c45bb0cd34368fa2a15280bc488cba0f4",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "c7a41fcfc2f59c69cc82f0af53c4bca9c093abc4",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "344cbf9a5f91a0e74b1f82e1acde940c45bb0cd34368fa2a15280bc488cba0f4"
+    },
+    "length": 16
+   },
+   "extra-56.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-56.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "9df8a84c1672ec9f3b7f1591fa19d8d05a631964690dd27e1a24d697f5a155c4",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "e87d4a65b5f8ba48260cc29d1ed0f092bdd094a5",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "9df8a84c1672ec9f3b7f1591fa19d8d05a631964690dd27e1a24d697f5a155c4"
+    },
+    "length": 16
+   },
+   "extra-57.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-57.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "ef564cbd881b871ea4b628e1cf84f8dbedff60970b88e7740aedce723554dd96",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "5a22d260ebd5f4c7fc376ce378ec1f3f40ed14ff",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "ef564cbd881b871ea4b628e1cf84f8dbedff60970b88e7740aedce723554dd96"
+    },
+    "length": 16
+   },
+   "extra-58.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-58.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "be02662f7f0561b012d3481d8b993ce2bf6957a46e833a2783445d9b7a2fdbad",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "53d477688e9561a4bf241f36054095e4b29af8a2",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "be02662f7f0561b012d3481d8b993ce2bf6957a46e833a2783445d9b7a2fdbad"
+    },
+    "length": 16
+   },
+   "extra-59.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-59.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "0464158aa094ce98beaffcbdc4a934f84f193ebad2ff38a3ee894c3698ea8446",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "31f7659aa08a6cffc2e878716dc26c5c158188ac",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "0464158aa094ce98beaffcbdc4a934f84f193ebad2ff38a3ee894c3698ea8446"
+    },
+    "length": 16
+   },
+   "extra-60.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-60.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "2b1cd09f388e11e7061a84bb2636fdb1eecfcaadd3b76b5afd72c15b557d6505",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "88c44cf7057db814020222fb8e26ad999ff07413",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "2b1cd09f388e11e7061a84bb2636fdb1eecfcaadd3b76b5afd72c15b557d6505"
+    },
+    "length": 16
+   },
+   "extra-61.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-61.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "93c532e2e99b489d7262ef626c0c81351cbf8483d081b8f222bc4074e29f06eb",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "cf18b748e88e317da907bd53b1e5d0be8b45ee2a",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "93c532e2e99b489d7262ef626c0c81351cbf8483d081b8f222bc4074e29f06eb"
+    },
+    "length": 16
+   },
+   "extra-62.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "extra-62.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "ad5e70344e3b4136c4e792df622f4e7adf54c567641388b987ab49429434606c",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "67a03e9a45b6072c1cd7cffceb69df90894f1838",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "ad5e70344e3b4136c4e792df622f4e7adf54c567641388b987ab49429434606c"
+    },
+    "length": 16
+   }
+  },
+  "version": 1
+ }
+}

@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/shadcn-ui-design-system-e4f35b86-ece8-4515-b19c-f2960d60feb5/tokens/fonts.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap">
+<style>
+  body { margin: 0; }
+  a { color: #737373; } a:hover { color: #0a0a0a; }
+
+  /* ── 타입 스케일 (figma text/xs = 13/18, dure-type --text-2xs = 11/16) ──
+     raw px 폰트 크기 금지. 아래 토큰만 사용한다. */
+  [data-mode] {
+    --rail-w: 52px; --sb-w: 248px; --tb-span: 2; --sheet-row: 1 / span 2;
+    --font-sans: Geist, system-ui, sans-serif;
+    --font-mono: 'Geist Mono', ui-monospace, monospace;
+    --text-2xs: 11px; --lh-2xs: 16px;
+    --text-xs: 13px;  --lh-xs: 18px;
+    --lh-mono: 1.55;  /* 13 × 1.55 = 20.15 — Figma "line height/20_15" */
+  }
+  [data-mode][data-collapsed="1"] { --sb-w: 0px; --tb-span: 3; --sheet-row: 2; }
+
+  [data-mode="light"] {
+    --desk: #fafafb;
+    /* 셸/사이드바 유리 — 캔버스용 불투명 합성값. #e7e7e7 = material 출력 233×90% + 틴트 #d5d5d5×10%.
+       실제 유리는 macOS NSVisualEffectView(material: menu)가 만들고 CSS는 틴트 한 겹만 얹는다.
+       캔버스에는 창 뒤 뷰가 없으므로 backdrop-filter 재현 금지. (구현 계약: 틴트 #D5D5D5 10%, 창 radius 12 — 개발자 확인 대기) */
+    --base: #e7e7e7;
+    --edge: #d8d8de; /* 설정 대화상자 전용 — 셸 테두리 사용 금지 */
+    /* --hair = glass/hairline — 알파 정본(실물·피그마 모두 알파, 2026-08-18 결정). 합성 불투명 #eeeeee는 참고값.
+       알파 금지 규칙은 면(fill·틴트) 대상 — 1px 선은 해당 없음. */
+    --hair: #09090b12; --hair-glass: #e5e5e5;
+    --hair-rail: #09090b12; /* 유리 위 알파 헤어라인 — 레일 우측·사이드바 구분선 전용(밑색 적응) */
+    --chrome: rgba(10,10,10,.035); --tint-sel: rgba(9,9,11,.055);
+    --sheet: #e5e5e5; --pane: #ffffff;
+
+    /* glass/header — pane 헤더 밴드. Figma 실측 (2352:39410). 불투명, 알파 금지. */
+    --header: #f1f1f4;
+    /* base/ring — pane 포커스 외곽 스트로크. Figma 실측 (2712:74059), 1px 무채색. */
+    --ring: #a3a3a3;
+
+    --term: transparent; --fg: #0a0a0a; --muted: #737373; --subtle: #6b6b73;
+    --term-fg: #26262b; --chip: rgba(255,255,255,.9);
+    --add-bg: #e6f6ec; --del-bg: #fdecec; --add-fg: #166534; --del-fg: #b91c1c;
+    --key: #7c3aed; --warn: #b45309; --bubble: #f2f2f4;
+    --acc: #b8500f; --acc-soft: rgba(184,80,15,.10); --danger: #b91c1c;
+    --dot-run: #16a34a; --dot-wait: #d97706; --dot-none: transparent;
+    /* 셸 림 — 네 변 inset 1px. 흐림·그림자·외곽선은 macOS가 그린다(캔버스 재현 금지). */
+    --shell-rim: inset 0 0 0 1px #ffffff33;
+    /* --sheet-shadow 폐기(2026-08-18) — 워크스페이스에 시트 왼쪽 그림자·세로 헤어라인 없음(실물 실측).
+       시트 개념은 '카드 배경'으로 이동. 카드 외곽선(inset 1px)은 라이트에서 sheet 색이라 선으로 안 읽힌다.
+       사이드바-카드 사이 2px(워크스페이스 열 pl)는 여백이 아니라 심 — pane 사이 2px(시트 노출)과
+       같은 문법, 재질만 셸 유리. 접힘 시 4px(개발자 확인 2026-08-18, v8은 열림 상태만 그린다). 세로 구분선 없음. */
+    --card-outline: var(--sheet);
+    --card-shadow: 0 8px 18px -12px rgba(9,9,11,.14), 0 1px 2px 0 rgba(9,9,11,.08);
+    --track: rgba(9,9,11,.1);
+    --tray: #ffffff; --tray-shadow: 0 1px 2px rgba(9,9,11,.07), inset 0 0 0 1px rgba(9,9,11,.07);
+  }
+  [data-mode="dark"] {
+    --desk: #000000;
+    /* 다크 셸 유리 — 캔버스 불투명 합성값. #323232 = material 출력 87×50% + 틴트 #0d0d0d×50% (어두운 바탕 기준).
+       밝은 바탕에서는 ~#5d5d5d까지 올라간다 — 유리라 바탕을 따라 움직인다(버그 아님). material: hudWindow. */
+    --base: #323232;
+    --edge: rgba(255,255,255,.14); /* 설정 대화상자 전용 — 셸 테두리 사용 금지 */
+    /* --hair 알파 정본 — 합성 불투명 #383838은 참고값. */
+    --hair: #ffffff17; --hair-glass: #4e4e4e;
+    --hair-rail: #ffffff17;
+    --chrome: rgba(255,255,255,.06); --tint-sel: rgba(255,255,255,.11);
+    --sheet: #2e2e2e; --pane: #242424;
+
+    /* glass/header 다크 = #2E2E2E — Glass 컬렉션 Dark 모드 실측(변수 정의 직독).
+       glass/sheet 다크와 동일값 — 시트 재질 단일화(확정).
+       분리력은 색차가 아니라 pane(#242424)과의 32px 면적 대비에서 나온다. 톤을 벌리지 말 것. */
+    --header: #2e2e2e;
+
+    /* base/ring 다크 = #737373 — 3. Mode 컬렉션 Dark 실측(→ tailwind neutral/500).
+       라이트 #A3A3A3은 neutral/400 — 두 모드가 같은 램프에서 한 칸씩 이동한다. */
+    --ring: #737373;
+
+    --term: transparent; --fg: #fafafa; --muted: #a1a1aa; --subtle: #9c9ca6;
+    --term-fg: #d4d4d8; --chip: rgba(255,255,255,.10);
+    --add-bg: rgba(78,163,107,.15); --del-bg: rgba(220,80,70,.15); --add-fg: #86d9a5; --del-fg: #f0a09a;
+    --key: #c4a3f5; --warn: #e0a83b; --bubble: #2c2c30;
+    --acc: #e0955a; --acc-soft: rgba(224,149,90,.14); --danger: #f0a09a;
+    --dot-run: #22c55e; --dot-wait: #f59e0b; --dot-none: transparent;
+    --shell-rim: inset 0 0 0 1px #ffffff2e;
+    --card-outline: rgba(255,255,255,.09);
+    --card-shadow: 0 8px 18px -12px oklch(0 0 0 / 55%), 0 1px 2px 0 oklch(0 0 0 / 40%); /* 코드(.pane-card-surface)와 동일 표기 */
+    --track: rgba(255,255,255,.14);
+    --tray: #3f3f3f; --tray-shadow: 0 1px 2px rgba(0,0,0,.3), inset 0 0 0 1px rgba(255,255,255,.07);
+  }
+</style>
+</helmet>
+<div data-mode="{{ mode }}" ref="{{ rootRef }}" style="position: relative; width: 1440px; height: 900px; box-sizing: border-box; overflow: hidden; padding: 20px; background: var(--desk); font-family: var(--font-sans); -webkit-font-smoothing: antialiased;">
+  <div ref="{{ deskRef }}" style="position: absolute; inset: 0; background-size: cover; background-position: center;"></div>
+
+  <div style="position: relative; height: 100%; display: grid; grid-template-columns: var(--rail-w) var(--sb-w) minmax(0, 1fr); grid-template-rows: 40px minmax(0, 1fr); border-radius: 12px; overflow: hidden; box-sizing: border-box; box-shadow: var(--shell-rim); background: var(--base);">
+
+    <div style="position: relative; z-index: 1; grid-column: 1 / span var(--tb-span); grid-row: 1; display: flex; align-items: center; gap: 12px; padding: 0 16px;">
+        <div style="display: flex; gap: 8px;">
+          <span style="width: 12px; height: 12px; border-radius: 99px; background: #ff5f57;"></span>
+          <span style="width: 12px; height: 12px; border-radius: 99px; background: #febc2e;"></span>
+          <span style="width: 12px; height: 12px; border-radius: 99px; background: #28c840;"></span>
+        </div>
+        <span style="font-size: var(--text-xs); line-height: var(--lh-xs); font-weight: 600; color: var(--fg); letter-spacing: -.01em;">HebbianIDE</span>
+        <span style="margin-left: auto; color: var(--muted); display: inline-flex;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2.5"></rect><path d="M9 4v16"></path></svg>
+        </span>
+    </div>
+
+    <div style="grid-column: 3; grid-row: var(--sheet-row); position: relative; min-width: 0; display: flex; flex-direction: column; padding: 0 8px 8px 2px;">
+
+      <div style="display: flex; align-items: center; gap: 4px; padding: 0 16px; height: 40px; flex: none;">
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 6px; font-size: var(--text-xs); line-height: var(--lh-xs); font-weight: 500; color: var(--fg);">데스크탑</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 6px; font-size: var(--text-xs); line-height: var(--lh-xs); font-weight: 400; color: var(--muted);">1 메인</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 6px; font-size: var(--text-xs); line-height: var(--lh-xs); font-weight: 400; color: var(--muted);">2 리뷰</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 6px; font-size: var(--text-xs); line-height: var(--lh-xs); font-weight: 400; color: var(--muted);">3 터미널</span>
+        <span style="width: 24px; height: 24px; display: grid; place-items: center; color: var(--muted);">{{ plusIcon }}</span>
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 16px; font-family: var(--font-mono); font-size: var(--text-2xs); line-height: var(--lh-2xs); color: var(--muted);">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-weight: 600; color: var(--fg);">CL</span>
+            <span style="width: 56px; height: 4px; border-radius: 99px; background: var(--track); overflow: hidden;"><span style="display: block; width: 62%; height: 100%; border-radius: 99px; background: var(--fg); opacity: .65;"></span></span>
+            <span>62%</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-weight: 600; color: var(--fg);">CX</span>
+            <span style="width: 56px; height: 4px; border-radius: 99px; background: var(--track); overflow: hidden;"><span style="display: block; width: 41%; height: 100%; border-radius: 99px; background: var(--fg); opacity: .65;"></span></span>
+            <span>41%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- pane 그리드: 3열 × 2행, 심 2px(gap-0.5), padding 0 — 패널이 시트를 꽉 채운다 -->
+      <div style="flex: 1; min-height: 0; box-sizing: border-box; padding: 1px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 2px; background: var(--sheet); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--card-outline), var(--card-shadow);">
+
+          <!-- ── col1 / row1 — 좌상단 코너 pane: 시트 radius 12를 바깥 코너(tl)에 상속 ── -->
+          <div style="grid-column: 1; grid-row: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 2px; overflow: hidden; background: var(--pane);">
+            {{ head1 }}
+            <div style="flex: 1; min-height: 0; overflow: hidden; background: var(--term); display: flex; flex-direction: column;">
+              <div style="flex: 1; min-height: 0; overflow: hidden; padding: 12px; display: flex; flex-direction: column; gap: 12px; font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--lh-mono); color: var(--term-fg);">
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <div style="color: var(--subtle);">└ Added <span style="color: var(--add-fg); font-weight: 600;">2</span> lines, removed <span style="color: var(--del-fg); font-weight: 600;">2</span> lines</div>
+                  <div style="border-radius: 7px; overflow: hidden;">
+                    <div style="background: var(--del-bg); padding: 4px 0;">
+                      <div style="display: grid; grid-template-columns: 28px 12px minmax(0, 1fr); column-gap: 8px; padding: 0 8px;">
+                        <span style="color: var(--del-fg); text-align: right; opacity: .75;">100</span><span style="color: var(--del-fg);">−</span><span style="color: var(--del-fg); overflow-wrap: anywhere;">"group/label flex w-full items-center px-3 pt-3 hover:bg-muted/60",</span>
+                        <span style="color: var(--del-fg); text-align: right; opacity: .75;">101</span><span style="color: var(--del-fg);">−</span><span style="color: var(--del-fg); overflow-wrap: anywhere;">desktop.id === activeDesktopId &amp;&amp; "bg-muted/40",</span>
+                      </div>
+                    </div>
+                    <div style="background: var(--add-bg); padding: 4px 0;">
+                      <div style="display: grid; grid-template-columns: 28px 12px minmax(0, 1fr); column-gap: 8px; padding: 0 8px;">
+                        <span style="color: var(--add-fg); text-align: right; opacity: .75;">100</span><span style="color: var(--add-fg);">+</span><span style="color: var(--add-fg); overflow-wrap: anywhere;">// 호버·활성 모두 글자색만 움직인다. 배경 칠은 없다.</span>
+                        <span style="color: var(--add-fg); text-align: right; opacity: .75;">101</span><span style="color: var(--add-fg);">+</span><span style="color: var(--add-fg); overflow-wrap: anywhere;">"group/label flex w-full items-center px-3 pt-3",</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <div>Running <span style="font-weight: 600;">1</span> shell command · <span style="color: var(--subtle);">8s…</span></div>
+                  <div style="display: flex; gap: 8px; color: var(--muted); overflow-wrap: anywhere;"><span style="color: var(--subtle);">└ $</span><span>pnpm typecheck 2&gt;&amp;1 | grep "error TS"</span></div>
+                </div>
+                <div style="color: var(--muted);">· Running… <span style="color: var(--subtle);">(2m 19s · ↓ 21.9k tokens)</span></div>
+                <div style="padding: 8px 12px; border-radius: 9px; background: var(--bubble); color: var(--muted); overflow-wrap: anywhere;"><span style="color: var(--subtle);">&gt;</span> 호버하면 텍스트 컬러 바뀌는 건 반영됐는데 여전히 백그라운드에도 컬러가 들어가는 것 같아</div>
+              </div>
+              <!-- composer — 비포커스: 캐럿이 속 빈 사각형 -->
+              <div style="border-top: 1px solid var(--hair); padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--lh-mono);">
+                <div style="display: flex; align-items: center; gap: 8px; color: var(--subtle);"><span>&gt;</span><span style="display: inline-block; width: 6px; height: 13px; box-sizing: border-box; border: 1px solid var(--term-fg); background: transparent; vertical-align: -2px;"></span><span>Press up to edit queued messages</span></div>
+                <div style="display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--text-2xs); line-height: var(--lh-2xs);">
+                  <span style="color: var(--subtle);">⚠ Transcript saving is off</span>
+                  <span style="color: var(--subtle);">▶▶ auto mode on · esc to interrupt</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── col1 / row2 — 좌하단 코너 pane: 바깥 코너(bl)에 12 상속 ── -->
+          <div style="grid-column: 1; grid-row: 2; min-width: 0; display: flex; flex-direction: column; border-radius: 2px; overflow: hidden; background: var(--pane);">
+            {{ head2 }}
+            <div style="flex: 1; min-height: 0; overflow: hidden; padding: 12px; background: var(--term); font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--lh-mono); color: var(--term-fg); display: flex; flex-direction: column; gap: 4px;">
+              <div style="color: var(--subtle);">└ Read <span style="color: var(--fg);">tokens/semantic.css</span> (42 lines)</div>
+              <div>Waiting for your review of <span style="color: var(--key);">glass/base</span></div>
+              <div style="color: var(--subtle);">· Idle 4m · 12.1k tokens</div>
+            </div>
+          </div>
+
+          <!-- ── col2 / row1 — ★ 포커스 pane ★
+               1차: 1px 외부 스트로크(outline, border 아님 — 레이아웃 불변)
+               2차: composer 캐럿 속 참
+               3차: 세션명 weight 600 + foreground
+               비포커스 디밍 없음. 헤더 밴드는 포커스와 무관한 구조 요소. -->
+          <div style="grid-column: 2; grid-row: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 2px; overflow: hidden; background: var(--pane); outline: 1px solid var(--ring); outline-offset: 0;">
+            {{ head3 }}
+            <div style="flex: 1; min-height: 0; overflow: hidden; background: var(--term); display: flex; flex-direction: column;">
+              <div style="flex: 1; min-height: 0; overflow: hidden; padding: 12px; display: flex; flex-direction: column; gap: 12px; font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--lh-mono); color: var(--term-fg);">
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <div style="color: var(--subtle);">└ Edited <span style="color: var(--fg);">app/desktop/rail.tsx</span></div>
+                  <div style="border-radius: 7px; overflow: hidden;">
+                    <div style="background: var(--add-bg); padding: 4px 0;">
+                      <div style="display: grid; grid-template-columns: 28px 12px minmax(0, 1fr); column-gap: 8px; padding: 0 8px;">
+                        <span style="color: var(--add-fg); text-align: right; opacity: .75;">18</span><span style="color: var(--add-fg);">+</span><span style="color: var(--add-fg); overflow-wrap: anywhere;">const tint = active ? "glass/tint-selected" : undefined;</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <div>Running <span style="font-weight: 600;">2</span> shell commands</div>
+                  <div style="display: flex; gap: 8px; color: var(--muted); overflow-wrap: anywhere;"><span style="color: var(--subtle);">└ $</span><span>git diff --stat &amp;&amp; pnpm lint --fix</span></div>
+                  <div style="color: var(--subtle); padding-left: 16px;">3 files changed, 14 insertions(+), 9 deletions(-)</div>
+                </div>
+                <div style="padding: 8px 12px; border-radius: 9px; background: var(--bubble); color: var(--muted); overflow-wrap: anywhere;"><span style="color: var(--subtle);">&gt;</span> 레일 활성 표시는 틴트 말고 아이콘 색만 바꿔줘</div>
+              </div>
+              <!-- composer — 포커스: 캐럿이 속 참 -->
+              <div style="border-top: 1px solid var(--hair); padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--lh-mono);">
+                <div style="display: flex; align-items: center; gap: 8px; color: var(--subtle);"><span>&gt;</span><span style="display: inline-block; width: 6px; height: 13px; background: var(--term-fg); vertical-align: -2px;"></span><span>Type a message</span></div>
+                <div style="display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--text-2xs); line-height: var(--lh-2xs);">
+                  <span style="color: var(--subtle);">▶▶ auto mode on · esc to interrupt</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── col2 / row2 ── -->
+          <div style="grid-column: 2; grid-row: 2; min-width: 0; display: flex; flex-direction: column; border-radius: 2px; overflow: hidden; background: var(--pane);">
+            {{ head4 }}
+            <div style="flex: 1; min-height: 0; overflow: hidden; padding: 12px; background: var(--term); font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--lh-mono); color: var(--term-fg); display: flex; flex-direction: column; gap: 4px;">
+              <div style="color: var(--subtle);">└ Read <span style="color: var(--fg);">dure-ds/fig-tokens.css</span> (907 vars)</div>
+              <div>Syncing <span style="color: var(--key);">glass/header</span> · <span style="color: var(--key);">base/ring</span></div>
+              <div style="color: var(--subtle);">· Running… (48s · ↓ 6.2k tokens)</div>
+            </div>
+          </div>
+
+          <!-- ── col3 / row1 ── -->
+          <div style="grid-column: 3; grid-row: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 2px; overflow: hidden; background: var(--pane);">
+            {{ head5 }}
+            <div style="flex: 1; min-height: 0; overflow: hidden; padding: 12px; background: var(--term); font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--lh-mono); color: var(--term-fg); display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; flex-direction: column; gap: 4px;">
+                <div style="color: var(--subtle);">└ Edited <span style="color: var(--fg);">tokens/dark.css</span></div>
+                <div style="display: flex; gap: 8px; color: var(--muted); overflow-wrap: anywhere;"><span style="color: var(--subtle);">└ $</span><span>pnpm contrast-audit --mode dark</span></div>
+              </div>
+              <div style="padding: 8px 12px; border-radius: 9px; background: var(--bubble); color: var(--muted); overflow-wrap: anywhere;"><span style="color: var(--subtle);">&gt;</span> 다크 밴드는 pane보다 살짝 밝게, 시트랑은 구별되게</div>
+              <div style="color: var(--muted);">· 확인 대기 <span style="color: var(--subtle);">(1m 02s)</span></div>
+            </div>
+          </div>
+
+          <!-- ── col3 / row2 — 연결 끊김. 비포커스 디밍(opacity) 없음 ── -->
+          <div style="grid-column: 3; grid-row: 2; min-width: 0; display: flex; flex-direction: column; border-radius: 2px; overflow: hidden; background: var(--pane);">
+            {{ head6 }}
+            <div style="flex: 1; min-height: 0; overflow: hidden; padding: 12px; background: var(--term); font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--lh-mono); color: var(--term-fg); display: flex; flex-direction: column; gap: 12px;">
+              <div style="color: var(--subtle);">└ Edited <span style="color: var(--fg);">app/desktop/pane-header.tsx</span></div>
+              <div style="display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; color: var(--danger);">
+                <span>⚠ 연결이 끊겼습니다 · 입력 정지</span>
+                <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; font-size: var(--text-2xs); line-height: var(--lh-2xs); border-radius: 7px; border: 1px solid var(--hair); color: var(--fg);">재시도</span>
+                <span style="font-size: var(--text-2xs); line-height: var(--lh-2xs); color: var(--subtle);">자세히</span>
+              </div>
+            </div>
+          </div>
+
+      </div>
+    </div>
+
+    <!-- 레일 52 — 사이드바 총 300(레일 52 + 리스트 248) 안에 포함 -->
+    <div style="grid-column: 1; grid-row: 1 / span 2; border-right: 1px solid var(--hair-rail); padding: 48px 0 8px; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+        <sc-for list="{{ rail }}" as="item" hint-placeholder-count="7">
+          <div style="position: relative; box-sizing: border-box; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; transition: background 160ms ease, color 160ms ease; color: {{ item.color }}; background: {{ item.bg }}; box-shadow: {{ item.shadow }};">
+            <span style="position: absolute; left: -9px; top: 8px; width: 2px; height: 18px; border-radius: 99px; background: {{ item.bar }};"></span>
+            {{ item.icon }}
+          </div>
+        </sc-for>
+      </div>
+
+    <!-- 사이드바 리스트 248 -->
+    <div style="grid-column: 2; grid-row: 2; display: flex; flex-direction: column; min-width: 0; overflow: hidden;">
+        <div style="display: flex; align-items: center; gap: 8px; height: 24px; flex: none; padding: 0 8px 0 16px;">
+          <span style="font-size: var(--text-xs); line-height: var(--lh-xs); font-weight: 600; color: var(--fg); opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">스페이스</span>
+          <span style="margin-left: auto; display: flex; gap: 4px; color: var(--muted);">{{ sidebarIcons }}</span>
+        </div>
+        <div style="flex: none; padding: 8px 12px;">
+          <div style="display: flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px; border-radius: 8px; background: var(--chrome); color: var(--subtle);">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4.3-4.3"></path></svg>
+            <span style="font-size: var(--text-xs); line-height: var(--lh-xs); color: var(--muted);">세션 검색</span>
+          </div>
+        </div>
+        <div style="flex: 1; min-height: 0; overflow: hidden; padding: 0 0 8px; display: flex; flex-direction: column;">
+          <sc-for list="{{ groups }}" as="group" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; padding-top: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 8px; border-radius: 6px;">
+                <sc-if value="{{ group.count }}" hint-placeholder-val="{{ true }}">
+                  <span style="min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 6px; background: var(--tint-sel); font-size: var(--text-2xs); line-height: var(--lh-2xs); font-weight: 600; color: var(--muted); display: grid; place-items: center;">{{ group.count }}</span>
+                </sc-if>
+                <span style="font-size: var(--text-xs); line-height: var(--lh-xs); font-weight: 500; color: var(--fg);">{{ group.label }}</span>
+                <span style="margin-left: auto; display: flex; gap: 8px; color: var(--muted);">{{ group.icons }}</span>
+              </div>
+              <div style="padding: 0 12px;">
+                <sc-for list="{{ group.rows }}" as="row" hint-placeholder-count="3">
+                  <div style="height: 44px; box-sizing: border-box; padding: 0 8px; border-radius: 8px; background: {{ row.bg }}; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0;">
+                    <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                      <span style="width: 5px; height: 5px; flex: none; border-radius: 99px; background: {{ row.dot }};"></span>
+                      <span style="flex: none; display: inline-flex; color: var(--muted);">{{ row.glyph }}</span>
+                      <span style="font-size: var(--text-xs); line-height: var(--lh-xs); font-weight: 500; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ row.title }}</span>
+                    </div>
+                    <div style="padding-left: 24px; font-family: var(--font-mono); font-size: var(--text-2xs); line-height: var(--lh-2xs); color: var(--subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ row.meta }}</div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;mode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Glass&quot;},&quot;sidebarCollapsed&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Glass&quot;},&quot;railActive&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;tray&quot;,&quot;bar&quot;,&quot;ring&quot;,&quot;weight&quot;],&quot;default&quot;:&quot;tray&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Glass&quot;},&quot;deskTone&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;wash&quot;,&quot;white&quot;],&quot;default&quot;:&quot;wash&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Glass&quot;},&quot;railTint&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;none&quot;,&quot;tint&quot;],&quot;default&quot;:&quot;tint&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Glass&quot;},&quot;desktopBg&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;plain&quot;,&quot;photo&quot;,&quot;black&quot;],&quot;default&quot;:&quot;plain&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Glass&quot;}}">
+const ICONS = {
+  bot: 'M12 3v2 M7 7h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z M9.5 12.5h.01 M14.5 12.5h.01',
+  folder: 'M4 6.5A1.5 1.5 0 0 1 5.5 5h3l2 2.5h5A1.5 1.5 0 0 1 17 9v8a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 4 17Z',
+  search: 'M18.5 18.5 15 15 M15 10.5a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Z',
+  git: 'M7 5v9 M7 18.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z M17 9.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z M17 9.5c0 4-4 3-6 5',
+  blocks: 'M5 5h6v6H5Z M13 5h6v6h-6Z M5 13h6v6H5Z M13 13h6v6h-6Z',
+  terminal: 'M7 9l3 3-3 3 M13 15h4',
+  plug: 'M9 4v5 M15 4v5 M6 9h12v3a6 6 0 0 1-6 6 6 6 0 0 1-6-6Z M12 18v3',
+  plus: 'M12 5v14 M5 12h14',
+  chevron: 'M6 9l6 6 6-6',
+  folderPlus: 'M4 6.5A1.5 1.5 0 0 1 5.5 5h3l2 2.5h5A1.5 1.5 0 0 1 17 9v8a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 4 17Z M10 13h4 M12 11v4',
+  ellipsisH: 'M5 12h.01 M12 12h.01 M19 12h.01',
+  refresh: 'M20 11a8 8 0 1 0-2.3 5.7 M20 6v5h-5'
+};
+
+/* pane 헤더 액션 — Figma PaneTab 실측 (2352:39410 / 2352:39380)
+   row1: SquareSplitHorizontal · SquareSplitVertical · PinOff · EllipsisVertical · X
+   row2: FileDiff · GitBranch · History
+   전부 22×22 히트 / 글리프 14 / gap 4 / radius 6 */
+const PANE_ACTIONS_1 = [
+  'M4 5h16v14H4Z M12 5v14',
+  'M4 5h16v14H4Z M4 12h16',
+  'M4 4l16 16 M12 17v4 M9.5 9.5 7 13h7 M15 4.5 16.5 9l1.5 2',
+  'M12 6h.01 M12 12h.01 M12 18h.01',
+  'M6 6l12 12 M18 6 6 18'
+];
+const PANE_ACTIONS_2 = [
+  'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z M14 3v5h5 M12 11v6 M9 14h6',
+  'M7 5v9 M7 18.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z M17 9.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z M17 9.5c0 4-4 3-6 5',
+  'M3.5 12a8.5 8.5 0 1 0 2.8-6.3L3.5 8 M3.5 4v4h4 M12 8v4.5l3 1.8'
+];
+
+class Component extends DCLogic {
+  get mode() { return this.props.mode === 'dark' ? 'dark' : 'light'; }
+
+  icon(d, size, sw) {
+    const paths = d.split(' M').map((p, i) => (i === 0 ? p : 'M' + p));
+    return React.createElement('svg', {
+      width: size || 17, height: size || 17, viewBox: '0 0 24 24', fill: 'none',
+      stroke: 'currentColor', strokeWidth: sw || 1.7, strokeLinecap: 'round', strokeLinejoin: 'round'
+    }, paths.map((p, i) => React.createElement('path', { key: i, d: p })));
+  }
+
+  /* 22×22 히트 · 글리프 14 · radius 6 — Figma 실측 */
+  action(d, i) {
+    return React.createElement('span', {
+      key: i,
+      style: { width: 22, height: 22, borderRadius: 6, display: 'grid', placeItems: 'center', flex: 'none' }
+    }, this.icon(d, 14));
+  }
+
+  /* pane 헤더 = 2행 64px.
+     row1  h32 · bg glass/header · pl16 pr8 · 아이콘12 + 이름 + 상태점5 + 액션5
+     row2  h32 · bg glass/pane  · px8    · 좌측 의도된 여백 + 액션3 우측
+     헤더 밴드는 구조 요소 — 포커스·활성과 무관하게 모든 pane에 항상 존재. */
+  paneHead(p) {
+    const h = React.createElement;
+    const row1 = h('div', {
+      style: { display: 'flex', alignItems: 'center', gap: 8, height: 32, flex: 'none',
+               boxSizing: 'border-box', padding: '0 8px 0 16px', background: 'var(--header)' }
+    },
+      h('span', { key: 'i', style: { display: 'inline-flex', flex: 'none', color: 'var(--muted)' } }, this.icon(ICONS.bot, 12)),
+      h('span', { key: 'n', style: { fontSize: 'var(--text-xs)', lineHeight: 'var(--lh-xs)',
+          fontWeight: p.focus ? 600 : 500, color: p.focus ? 'var(--fg)' : 'var(--muted)',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, p.name),
+      h('span', { key: 'd', style: { width: 5, height: 5, flex: 'none', borderRadius: 99, background: p.dot } }),
+      p.note ? h('span', { key: 't', style: { fontSize: 'var(--text-2xs)', lineHeight: 'var(--lh-2xs)',
+          color: p.noteColor || 'var(--muted)', whiteSpace: 'nowrap' } }, p.note) : null,
+      h('span', { key: 'a', style: { marginLeft: 'auto', display: 'flex', gap: 4, flex: 'none', color: 'var(--muted)' } },
+        PANE_ACTIONS_1.map((d, i) => this.action(d, i)))
+    );
+    /* row2 좌측은 의도된 여백 — worktree는 사이드바 세션 행에만 (A안, pane 헤더 표시 전면 폐기) */
+    const row2 = h('div', {
+      style: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, height: 32, flex: 'none',
+               boxSizing: 'border-box', padding: '0 8px', background: 'var(--pane)' }
+    },
+      h('span', { key: 'a', style: { display: 'flex', gap: 4, flex: 'none', color: 'var(--muted)' } },
+        PANE_ACTIONS_2.map((d, i) => this.action(d, i)))
+    );
+    return h(React.Fragment, null, row1, row2);
+  }
+
+  componentDidMount() { this.applyRail(); this.applyDesk(); this.applyTone(); this.applyCollapse(); }
+  componentDidUpdate() { this.applyRail(); this.applyDesk(); this.applyTone(); this.applyCollapse(); }
+
+  railItems() {
+    const style = this.props.railActive || 'tray';
+    return ['bot', 'folder', 'search', 'git', 'blocks', 'terminal', 'plug'].map((k, i) => {
+      const on = i === 0;
+      const v = { icon: this.icon(ICONS[k], 17, on && style === 'weight' ? 2.3 : 1.7),
+        color: on ? 'var(--fg)' : 'var(--muted)', bar: 'transparent', bg: 'transparent', shadow: 'none' };
+      if (!on) return v;
+      if (style === 'bar') v.bar = 'var(--fg)';
+      if (style === 'tray') { v.bg = 'var(--tray)'; v.shadow = 'var(--tray-shadow)'; }
+      if (style === 'ring') v.shadow = 'inset 0 0 0 1px var(--edge)';
+      return v;
+    });
+  }
+
+  applyCollapse() {
+    const el = this.rootRef && this.rootRef.current;
+    if (!el) return;
+    if (this.props.sidebarCollapsed) el.setAttribute('data-collapsed', '1');
+    else el.removeAttribute('data-collapsed');
+  }
+
+  applyTone() {
+    const el = this.rootRef && this.rootRef.current;
+    if (!el || this.mode !== 'light') { if (el) { el.style.removeProperty('--desk'); } return; }
+    el.style.setProperty('--desk', this.props.deskTone === 'white' ? '#ffffff' : '#fafafb');
+  }
+
+  applyRail() {
+    const el = this.rootRef && this.rootRef.current;
+    if (!el) return;
+    /* 사이드바/레일 배경 금지 — 셸 유리를 그대로 드러낸다(네이티브 구현 계약). railTint prop은 무효. */
+    el.style.removeProperty('--rail-tint');
+  }
+  applyDesk() {
+    const el = this.deskRef && this.deskRef.current;
+    if (!el) return;
+    const bg = this.props.desktopBg || 'plain';
+    if (bg === 'photo') {
+      el.style.background = 'radial-gradient(120% 90% at 12% 8%, #2b5cff 0%, transparent 55%), radial-gradient(110% 85% at 88% 18%, #b32dd6 0%, transparent 55%), radial-gradient(120% 100% at 70% 95%, #ff6a3d 0%, transparent 60%), linear-gradient(160deg, #14161c, #05070c)';
+      el.style.opacity = '1';
+    } else if (bg === 'black') {
+      el.style.background = '#000000';
+      el.style.opacity = '1';
+    } else {
+      el.style.opacity = '0';
+    }
+  }
+
+  renderVals() {
+    const slot = (d, i) => React.createElement('span', {
+      key: i, style: { width: 24, height: 24, display: 'grid', placeItems: 'center', flex: 'none' }
+    }, this.icon(d, 14));
+    const row = (title, meta, dot, sel) => ({
+      title: title, meta: meta, dot: dot,
+      glyph: this.icon(ICONS.bot, 12),
+      bg: sel ? 'var(--tint-sel)' : 'transparent'
+    });
+    const groupIcons = () => React.createElement(React.Fragment, null,
+      [ICONS.chevron, ICONS.folderPlus, ICONS.plus].map((d, i) =>
+        React.createElement('span', { key: i, style: { display: 'inline-flex' } }, this.icon(d, 12))));
+
+    return {
+      mode: this.mode,
+      rootRef: this.rootRef = this.rootRef || React.createRef(),
+      deskRef: this.deskRef = this.deskRef || React.createRef(),
+      rail: this.railItems(),
+      plusIcon: this.icon(ICONS.plus, 14),
+      sidebarIcons: React.createElement(React.Fragment, null,
+        [ICONS.ellipsisH, ICONS.refresh, ICONS.plus].map((d, i) => slot(d, i))),
+
+      head1: this.paneHead({ name: 'claude-1', dot: 'var(--dot-run)' }),
+      head2: this.paneHead({ name: 'claude-2', dot: 'var(--dot-wait)', note: '확인 대기', noteColor: 'var(--acc)' }),
+      head3: this.paneHead({ name: 'claude-3', dot: 'var(--dot-run)', focus: true }),
+      head4: this.paneHead({ name: 'claude-4', dot: 'var(--dot-run)' }),
+      head5: this.paneHead({ name: 'claude-5', dot: 'var(--dot-wait)', note: '확인 대기', noteColor: 'var(--acc)' }),
+      head6: this.paneHead({ name: 'claude-6', dot: 'var(--dot-none)' }),
+
+      groups: [
+        { label: 'Main', count: null, icons: groupIcons(), rows: [
+          row('결제 API 리트라이 로직 수정', 'worktree/card-tokens', 'var(--dot-run)', true),
+          row('글라스 토큰 라이트 대비 조정', 'worktree/glass-tokens', 'var(--dot-wait)', false),
+          row('레일 활성 표시 정리', 'main', 'var(--dot-none)', false)
+        ] },
+        { label: 'Review', count: null, icons: groupIcons(), rows: [
+          row('세션 패널 헤더 위계 정리', 'Design system · worktree/panel-header', 'var(--dot-run)', false),
+          row('다크 모드 콘텐츠 층 불투명 전환', 'Design system · worktree/dark-opaque', 'var(--dot-run)', false),
+          row('시트 이음새 그림자 교체', 'Design system · worktree/seam-shadow', 'var(--dot-none)', false)
+        ] },
+        { label: 'Desktop name', count: 3, icons: groupIcons(), rows: [
+          row('Figma 변수 컬렉션 동기화', 'Tokens · worktree/figma-sync', 'var(--dot-run)', false),
+          row('대비 검수 스크립트 추가', 'Tokens · worktree/contrast-audit', 'var(--dot-none)', false),
+          row('불투명 폴백 변형 정리', 'Tokens · worktree/opaque-fallback', 'var(--dot-none)', false)
+        ] }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

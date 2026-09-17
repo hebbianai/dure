@@ -1,0 +1,209 @@
+{
+  "upstreamRepo": "mbadolato/iTerm2-Color-Schemes",
+  "upstreamCommit": "171945cb5f1f0ec6a2c6e7338e3a86c1107b4eb0",
+  "license": "MIT",
+  "converterVersion": 1,
+  "generatedBy": "scripts/themes/convert-schemes.mjs",
+  "schemes": [
+    {
+      "id": "ayu-mirage",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Ayu Mirage.json"
+    },
+    {
+      "id": "catppuccin-macchiato",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Catppuccin Macchiato.json"
+    },
+    {
+      "id": "catppuccin-mocha",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Catppuccin Mocha.json"
+    },
+    {
+      "id": "cobalt2",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Cobalt2.json"
+    },
+    {
+      "id": "dracula",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Dracula.json"
+    },
+    {
+      "id": "everforest-dark",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Everforest Dark Med.json"
+    },
+    {
+      "id": "flexoki-dark",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Flexoki Dark.json"
+    },
+    {
+      "id": "github-dark",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/GitHub Dark Default.json"
+    },
+    {
+      "id": "gruvbox-dark",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Gruvbox Dark.json"
+    },
+    {
+      "id": "horizon",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Horizon.json"
+    },
+    {
+      "id": "iceberg-dark",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Iceberg Dark.json"
+    },
+    {
+      "id": "kanagawa-wave",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Kanagawa Wave.json"
+    },
+    {
+      "id": "monokai",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Monokai Remastered.json"
+    },
+    {
+      "id": "night-owl",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Night Owl.json"
+    },
+    {
+      "id": "nord",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Nord.json"
+    },
+    {
+      "id": "oceanic-next",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Oceanic Next.json"
+    },
+    {
+      "id": "one-dark",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Atom One Dark.json"
+    },
+    {
+      "id": "one-half-dark",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/One Half Dark.json"
+    },
+    {
+      "id": "rose-pine",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Rose Pine.json"
+    },
+    {
+      "id": "solarized-dark",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/iTerm2 Solarized Dark.json"
+    },
+    {
+      "id": "synthwave-84",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Synthwave Everything.json"
+    },
+    {
+      "id": "tokyo-night",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/TokyoNight.json"
+    },
+    {
+      "id": "tokyo-night-storm",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/TokyoNight Storm.json"
+    },
+    {
+      "id": "tomorrow-night",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Tomorrow Night.json"
+    },
+    {
+      "id": "vscode-dark-modern",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Dark Modern.json"
+    },
+    {
+      "id": "vscode-dark-plus",
+      "appearance": "dark",
+      "sourceFile": "windowsterminal/Dark+.json"
+    },
+    {
+      "id": "alabaster",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/Alabaster.json"
+    },
+    {
+      "id": "ayu-light",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/Ayu Light.json"
+    },
+    {
+      "id": "catppuccin-latte",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/Catppuccin Latte.json"
+    },
+    {
+      "id": "everforest-light",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/Everforest Light Med.json"
+    },
+    {
+      "id": "flexoki-light",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/Flexoki Light.json"
+    },
+    {
+      "id": "github-light",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/GitHub Light Default.json"
+    },
+    {
+      "id": "gruvbox-light",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/Gruvbox Light.json"
+    },
+    {
+      "id": "iceberg-light",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/Iceberg Light.json"
+    },
+    {
+      "id": "one-half-light",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/One Half Light.json"
+    },
+    {
+      "id": "one-light",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/Atom One Light.json"
+    },
+    {
+      "id": "rose-pine-dawn",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/Rose Pine Dawn.json"
+    },
+    {
+      "id": "solarized-light",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/iTerm2 Solarized Light.json"
+    },
+    {
+      "id": "tokyo-night-day",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/TokyoNight Day.json"
+    },
+    {
+      "id": "tomorrow",
+      "appearance": "light",
+      "sourceFile": "windowsterminal/Tomorrow.json"
+    }
+  ]
+}

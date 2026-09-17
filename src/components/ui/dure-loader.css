@@ -1,0 +1,91 @@
+/* Dure loader — the confirmed 12px handoff, variant D (2026-09-03): six
+   dots on a circle. Each stretches sideways in turn (7% stagger, 10% ramp)
+   until the ring is full, holds, then from 50% each relaxes in the same
+   order (7% stagger, 10% ramp). The box never rotates; the dots take the
+   text colour. Geometry (--dl-size/--dl-r/--dl-d) is written per element
+   by the shared dureLoader geometry helper; only the stretch factor and the
+   cycle live here. Reduced motion stops the dots and steps them back
+   (SOUL §5.3).
+   The box rules sit in the components layer so a caller's utilities
+   (`absolute right-2`, `shrink-0`) still win over `position: relative`. */
+@layer components {
+.dure-loader {
+    --dl-kx: 1.45;
+    --dl-dur: 2s;
+    position: relative;
+    display: inline-block;
+    flex: none;
+    width: var(--dl-size);
+    height: var(--dl-size);
+    color: currentColor;
+}
+.dure-loader > i {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: var(--dl-d);
+    height: var(--dl-d);
+    margin: calc(var(--dl-d) / -2) 0 0 calc(var(--dl-d) / -2);
+}
+.dure-loader > i:nth-child(1) { transform: rotate(0deg) translateY(calc(-1 * var(--dl-r))); }
+.dure-loader > i:nth-child(2) { transform: rotate(60deg) translateY(calc(-1 * var(--dl-r))); }
+.dure-loader > i:nth-child(3) { transform: rotate(120deg) translateY(calc(-1 * var(--dl-r))); }
+.dure-loader > i:nth-child(4) { transform: rotate(180deg) translateY(calc(-1 * var(--dl-r))); }
+.dure-loader > i:nth-child(5) { transform: rotate(240deg) translateY(calc(-1 * var(--dl-r))); }
+.dure-loader > i:nth-child(6) { transform: rotate(300deg) translateY(calc(-1 * var(--dl-r))); }
+.dure-loader > i > span {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: currentColor;
+    animation-duration: var(--dl-dur);
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+}
+.dure-loader > i:nth-child(1) > span { animation-name: dure-loader-fill-0; }
+.dure-loader > i:nth-child(2) > span { animation-name: dure-loader-fill-1; }
+.dure-loader > i:nth-child(3) > span { animation-name: dure-loader-fill-2; }
+.dure-loader > i:nth-child(4) > span { animation-name: dure-loader-fill-3; }
+.dure-loader > i:nth-child(5) > span { animation-name: dure-loader-fill-4; }
+.dure-loader > i:nth-child(6) > span { animation-name: dure-loader-fill-5; }
+}
+@keyframes dure-loader-fill-0 {
+    0% { transform: scale(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    10% { transform: scaleX(var(--dl-kx)) scaleY(1); }
+    50% { transform: scaleX(var(--dl-kx)) scaleY(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    60%, 100% { transform: scale(1); }
+}
+@keyframes dure-loader-fill-1 {
+    0%, 7% { transform: scale(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    17% { transform: scaleX(var(--dl-kx)) scaleY(1); }
+    57% { transform: scaleX(var(--dl-kx)) scaleY(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    67%, 100% { transform: scale(1); }
+}
+@keyframes dure-loader-fill-2 {
+    0%, 14% { transform: scale(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    24% { transform: scaleX(var(--dl-kx)) scaleY(1); }
+    64% { transform: scaleX(var(--dl-kx)) scaleY(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    74%, 100% { transform: scale(1); }
+}
+@keyframes dure-loader-fill-3 {
+    0%, 21% { transform: scale(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    31% { transform: scaleX(var(--dl-kx)) scaleY(1); }
+    71% { transform: scaleX(var(--dl-kx)) scaleY(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    81%, 100% { transform: scale(1); }
+}
+@keyframes dure-loader-fill-4 {
+    0%, 28% { transform: scale(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    38% { transform: scaleX(var(--dl-kx)) scaleY(1); }
+    78% { transform: scaleX(var(--dl-kx)) scaleY(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    88%, 100% { transform: scale(1); }
+}
+@keyframes dure-loader-fill-5 {
+    0%, 35% { transform: scale(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    45% { transform: scaleX(var(--dl-kx)) scaleY(1); }
+    85% { transform: scaleX(var(--dl-kx)) scaleY(1); animation-timing-function: cubic-bezier(0.45, 0, 0.15, 1); }
+    95%, 100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dure-loader > i > span { animation: none; opacity: 0.55; }
+}

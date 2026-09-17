@@ -1,0 +1,17 @@
+export const hmux: Record<string, string> = {
+	"hmux.conversion.batchConfirm.deferredNote": " Las {n} sesiones que no se pueden convertir ahora quedarán sin cambios.",
+	"hmux.conversion.replacementStartFailed": "No se pudo iniciar el reemplazo de Hmux",
+	"hmux.remote.openFailed": "No se pudo abrir una sesión remota en {host}: {detail}",
+	"hmux.conversion.batchConfirm.message": "Se convertirán {n} sesiones a gestionadas. Cada provider se detendrá en orden y la misma conversación se reanudará en un nuevo terminal epoch. La posición del panel y el ID de conversación se conservarán.{deferred} ¿Continuar?",
+	"hmux.conversion.eligibility.providerUnsupported": "La conversión a gestionada aún no es compatible con sesiones de {provider}.",
+	"hmux.conversion.confirm.message": "Cambiar a {target} detendrá el provider actual y reanudará la misma conversación en un nuevo terminal epoch. La posición del panel y el ID de conversación se conservan, pero cualquier comando en ejecución se interrumpirá. ¿Continuar?",
+	"hmux.conversion.eligibility.projectAmbiguous": "Varios proyectos son dueños de esta carpeta de trabajo, por lo que no se puede convertir.",
+	"hmux.conversion.target.managed": "sesión gestionada",
+	"hmux.conversion.target.standalone": "sesión independiente",
+	"hmux.conversion.eligibility.notReady": "Podrá convertir a gestionada cuando la sesión esté lista.",
+	"hmux.conversion.preflightFailed": "Falló la verificación previa de la conversión de sesión",
+	"hmux.conversion.eligibility.agentWorking": "Podrá convertir a gestionada cuando el agente termine su tarea actual.",
+	"hmux.conversion.eligibility.attentionRequired": "Atienda la entrada solicitada antes de convertir a gestionada.",
+	"hmux.conversion.eligibility.thisProvider": "este provider",
+	"hmux.conversion.eligibility.projectNotFound": "Registre esta carpeta de trabajo como proyecto antes de convertir a gestionada.",
+};

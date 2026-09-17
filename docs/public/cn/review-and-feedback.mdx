@@ -1,0 +1,37 @@
+---
+title: "审查变更并提供反馈"
+description: "阅读本地 diff，发送具体意见，并在合并之前验证结果。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+接受智能体结果前，检查修改的代码及其验证证据。Dure 的 Diff 视图让审查紧邻对话进行。
+
+## 打开正确的 worktree
+
+为本地智能体或 worktree 打开 **Diff**。比较以分支的分叉点为基准，包含未提交的修改和新文件。选择变更文件并阅读 diff。打开审查不会自动暂存或提交。
+
+<Frame caption="并排比较搜索函数的原始版本和修改版本。">
+  <ProductFigure scene="diff-review" locale="cn" label="并排比较搜索函数的原始版本和修改版本。" />
+</Frame>
+
+## 发送可执行的反馈
+
+1. 在文件或 diff 行上添加评论。
+2. 说明应该改什么、为什么，必要时写出预期行为。
+3. 将待发送评论发给关联智能体。
+4. 检查发送结果，再审查下一轮修改。
+
+没有关联智能体也能阅读审查。发送需要已知接收者；报错不代表反馈已送达。
+
+<Frame caption="尚未发送的评论示例：补充大小写混合查询测试，并保留空查询行为。">
+  <ProductFigure scene="review-comment" locale="cn" label="尚未发送的评论示例：补充大小写混合查询测试，并保留空查询行为。" />
+</Frame>
+
+## 验证并合并
+
+询问执行了哪些检查，查看结果并尝试受影响的行为。提交或按正常 Git 流程合并分支前，再读一遍更新后的 diff。独立 worktree 仍可能冲突，因此也要验证合并后的结果。
+
+可以将 Diff 或源代码管理窗口放在智能体旁边或另一台显示器上。内置 Diff 审查面向本地 worktree。[SSH 项目](/cn/remote-and-ssh)请在远程主机上使用 Git 检查变更。
+
+从 issue 或 pull request 开始的任务，请回到 [GitHub](/cn/github-workflows) 查看当前状态。

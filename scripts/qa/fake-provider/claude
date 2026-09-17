@@ -1,0 +1,134 @@
+#!/bin/bash
+# Fake Claude Code — spawn saga E2E용 밀폐 provider (test-harness-blueprint §1).
+# 실제 Claude의 관찰 가능 표면만 흉내낸다: alt-screen 부트, waiting 프롬프트 박스
+# ("? for shortcuts" → agentScreen.ts waiting 판정), 입력 에코, working 스피너
+# ("esc to interrupt"), /activity 훅 POST(HEBBIAN_SESSION + ~/.hebbian/server.json).
+# 시나리오는 첫 프롬프트의 첫 단어로 스크립팅:
+#   ok(기본) | slow-boot <ms> | never-ready | no-activity | hang | crash-after-ready | exit <code>
+# 디버그 하네스 전용 — 제품 코드가 아니며 release 빌드에서는 주입되지 않는다.
+set -u
+
+script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P)
+. "$script_dir/dure-qa-fake-provider-common.sh"
+
+case "${1:-}" in
+  --version | -v)
+    printf 'claude-code 0.0.0-dure-qa\n'
+    exit 0
+    ;;
+esac
+
+dure_qa_capture_provider_start claude
+
+managed_settings=
+previous=
+for argument in "$@"; do
+  if [ "$previous" = "--settings" ]; then
+    managed_settings=$argument
+    break
+  fi
+  previous=$argument
+done
+
+# Exercise the same managed settings hook that real Claude invokes. This gives
+# the Host provider-owned conversation/runtime facts before initial-prompt
+# admission instead of relying on terminal text inference.
+run_managed_hook() { # $1 = event, $2 = prompt (optional)
+  [ -n "$managed_settings" ] || return 0
+  python3 - "$managed_settings" "$1" "${2:-}" <<'PYEOF' 2>/dev/null || true
+import json, os, subprocess, sys
+
+settings_path, event, prompt = sys.argv[1:4]
+try:
+    settings = json.load(open(settings_path, encoding="utf-8"))
+    handler = settings["hooks"][event][0]["hooks"][0]
+    payload = {
+        "hook_event_name": event,
+        "session_id": os.environ["HMUX_SESSION_ID"],
+    }
+    if event == "UserPromptSubmit":
+        payload["prompt"] = prompt
+    if event == "Stop":
+        payload["prompt_id"] = "qa-turn-complete"
+    subprocess.run(
+        [handler["command"], *handler.get("args", [])],
+        input=json.dumps(payload).encode("utf-8"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=5,
+        check=False,
+        env=os.environ,
+    )
+except Exception:
+    pass
+PYEOF
+}
+
+post_activity() { # $1 = text
+  [ -n "${HEBBIAN_SESSION:-}" ] || return 0
+  python3 - "$1" <<'PYEOF' 2>/dev/null || true
+import json, sys, urllib.request, os
+try:
+    srv = json.load(open(os.path.expanduser("~/.hebbian/server.json")))
+    body = json.dumps({"sessionId": os.environ.get("HEBBIAN_SESSION", ""),
+                       "text": sys.argv[1], "provider": "claude"}).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{srv['port']}/activity", data=body,
+        headers={"Authorization": f"Bearer {srv['token']}",
+                 "Content-Type": "application/json"})
+    urllib.request.urlopen(req, timeout=2).read()
+except Exception:
+    pass
+PYEOF
+}
+
+show_waiting() {
+  printf '\n\xe2\x95\xad\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x95\xae\n'
+  printf '\xe2\x94\x82 > \xe2\x94\x82\n'
+  printf '\xe2\x95\xb0\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x95\xaf\n'
+  printf '  ? for shortcuts\n> '
+}
+
+# --- 부트 ---
+printf '\x1b[?1049h\x1b[2J\x1b[H'
+printf '\xe2\x9c\xbb Welcome to Claude Code!\n\n'   # ✻ + "claude code" 배너 → provider 감지 마커
+
+scenario="${HEBBIAN_QA_SCENARIO:-}"; scenario_arg="${HEBBIAN_QA_SCENARIO_ARG:-}"
+case "$scenario" in
+  slow-boot) sleep "$(awk "BEGIN{print ${scenario_arg:-1000}/1000}")" ;;
+  never-ready) sleep 3600; exit 0 ;;
+esac
+dure_qa_tui_input_begin
+run_managed_hook SessionStart
+show_waiting
+first=1
+while dure_qa_read_tui_line; do
+  line=$DURE_QA_TUI_LINE
+  run_managed_hook UserPromptSubmit "$line"
+  if [ "$first" = 1 ]; then
+    first=0
+    scenario=$(printf '%s' "$line" | awk '{print $1}')
+    scenario_arg=$(printf '%s' "$line" | awk '{print $2}')
+    case "$scenario" in
+      exit) exit "${scenario_arg:-1}" ;;
+    esac
+  fi
+  # 입력 에코 + working 표시
+  printf '\n> %s\n\xe2\x9c\xbb Thinking\xe2\x80\xa6 (esc to interrupt)\n' "$line"
+  sleep 0.6
+  case "$scenario" in
+    hang) sleep 3600; exit 0 ;;
+    no-activity) : ;;
+    *) post_activity "$line" ;;
+  esac
+  printf 'Done. Response for: %s\n' "$line"
+  run_managed_hook Stop
+  case "$scenario" in
+    crash-after-ready) show_waiting; sleep 0.3; exit 1 ;;
+  esac
+  show_waiting
+done
+
+# stdin EOF(세션 종료)
+printf '\x1b[?1049l'
+exit 0

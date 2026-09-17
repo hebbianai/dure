@@ -1,0 +1,36 @@
+# Deploy from the repository root after configuring the approved provider key
+# and Hub allowlist. This service is independent of the terminal relay.
+app = "dure-push"
+primary_region = "nrt"
+kill_signal = "SIGTERM"
+kill_timeout = "15s"
+
+[build]
+  dockerfile = "Dockerfile"
+  ignorefile = "Dockerfile.dockerignore"
+
+[env]
+  PORT = "8080"
+  DURE_APNS_KEY_FILE = "/app/apns-key.p8"
+
+[[files]]
+  guest_path = "/app/apns-key.p8"
+  secret_name = "DURE_APNS_KEY_BASE64"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "30s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

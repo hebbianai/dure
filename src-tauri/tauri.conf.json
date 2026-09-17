@@ -1,0 +1,61 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Dure",
+  "version": "0.2.26",
+  "identifier": "io.hebbian.ade",
+  "build": {
+    "beforeDevCommand": "node scripts/guard-dev-channel.mjs && pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "node scripts/stage-mobile-runtime.mjs && pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Dure",
+        "width": 1480,
+        "height": 940,
+        "minWidth": 900,
+        "minHeight": 600,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "macOSPrivateApi": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEyMUM5RjhGRDg0NDRDODkKUldTSlRFVFlqNThjRWdUS2lKMm5UaUUrOERvVUp0aE9Fc0JZVE9xY0hibDA3ajg2ekgyNjZBbDUK",
+      "endpoints": [
+        "https://github.com/hebbianai/hebbian-releases/releases/latest/download/latest.json"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/hmux-runtime",
+      "binaries/hmux"
+    ],
+    "resources": {
+      "resources/mobile-simulator/": "resources/mobile-simulator/",
+      "resources/hmux-remote/": "resources/hmux-remote/",
+      "resources/remote-git-checkout-helper/": "resources/remote-git-checkout-helper/",
+      "../scripts/install-hmux.sh": "resources/install-hmux.sh",
+      "../plugins/beads/": "plugins/beads/"
+    },
+    "macOS": {
+      "frameworks": ["resources/mobile-runtime/serve-sim-native.dylib"]
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

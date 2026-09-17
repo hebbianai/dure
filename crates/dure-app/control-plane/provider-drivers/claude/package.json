@@ -1,0 +1,21 @@
+{
+	"name": "@dure/claude-sdk-host",
+	"license": "MIT",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": "24.15.0"
+	},
+	"packageManager": "pnpm@10.34.5",
+	"scripts": {
+		"test:host": "node --test sdk-runtime.test.mjs claude-runtime-artifact.test.mjs claude-runtime-provision.test.mjs agent-sdk-history.test.mjs agent-sdk-query.test.mjs shared-sdk-host.test.mjs shared-sdk-host-server.test.mjs shared-sdk-host-relay.test.mjs",
+		"test:gate": "node --test sdk-runtime.test.mjs claude-runtime-artifact.test.mjs claude-runtime-provision.test.mjs agent-sdk-history.test.mjs agent-sdk-query.test.mjs shared-sdk-host.test.mjs shared-sdk-host-server.test.mjs relay-spawned-process.test.mjs",
+		"test:relay": "node --test relay-spawned-process.test.mjs"
+	},
+	"dependencies": {
+		"@anthropic-ai/claude-agent-sdk": "0.3.234",
+		"@anthropic-ai/sdk": "0.117.1",
+		"@modelcontextprotocol/sdk": "1.30.0",
+		"zod": "4.4.3"
+	}
+}

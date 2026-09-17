@@ -1,0 +1,44 @@
+---
+title: "GitHub에서 작업 시작하기"
+description: "저장소의 이슈와 pull request에서 에이전트를 시작하고 작업 맥락으로 돌아옵니다."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+**GitHub** 사이드바에서 이슈, pull request, GitHub Projects를 볼 수 있습니다. 이슈를 새 대화에 직접 복사하지 않고 작업을 선택해 시작하세요.
+
+## 저장소 연결
+
+1. Mac에 GitHub CLI인 `gh`를 설치하고 저장소에 접근할 수 있는 계정으로 로그인합니다.
+2. 해당 로컬 Git 폴더를 Dure 프로젝트로 추가합니다. remote가 의도한 GitHub 저장소인지 확인합니다.
+3. 사이드바의 **GitHub**를 열고 저장소를 선택합니다.
+4. **Issues**, **Pull requests**, **Projects** 중 하나를 선택하고 검색·필터·새로 고침을 사용합니다.
+
+```sh
+gh auth status
+git remote -v
+```
+
+사이드바는 데스크톱의 GitHub 접근 권한을 사용합니다. 제공자 로그인과는 별개이며, 조직이나 GitHub Projects 접근에는 추가 권한이 필요할 수 있습니다.
+
+## 이슈에서 에이전트 시작
+
+작업 항목의 **Start**를 클릭하세요. 이슈나 pull request의 맥락이 채워진 **New agent**가 열립니다. 작업, 프로젝트, 제공자, worktree 선택을 검토하고 **Enter** 또는 **Start agent**로 시작합니다.
+
+<Frame caption="GitHub 이슈 예시의 Start 버튼에서 에이전트 작업 시작 흐름으로 이어집니다.">
+  <ProductFigure scene="github" locale="ko" label="GitHub 이슈 예시의 Start 버튼에서 에이전트 작업 시작 흐름으로 이어집니다." />
+</Frame>
+
+에이전트를 시작하는 것만으로 pull request가 병합되거나 이슈가 닫히지는 않습니다.
+
+## 작업으로 돌아가기
+
+연결된 에이전트가 이미 있다면 **Open**으로 돌아갑니다. 항목 상세에서 논의와 현재 상태를 읽고, 전체 GitHub 페이지가 필요하면 외부 링크를 사용하세요. GitHub 상태를 변경하기 전에는 저장소와 동작을 확인하세요.
+
+[Diff](/ko/review-and-feedback)에서 에이전트의 변경과 검증 결과를 검토하세요. 실제로 받아들인 작업 결과에 맞게 이슈 상태를 관리합니다.
+
+## 통합 설정
+
+**Plugin → GitHub → Plugin settings**에서 선택한 작업 공간의 새로 고침 간격과 기본 이슈 목록 등을 설정합니다. 호환성과 설정 범위는 [플러그인](/ko/plugins)을 참고하세요.
+
+원격 에이전트가 데스크톱 로그인으로 이슈를 읽으려면 별도의 [SSH GitHub 읽기 연결](/ko/remote-and-ssh)을 사용합니다. 로컬 사이드바와 지원 명령·접근 범위가 다릅니다.

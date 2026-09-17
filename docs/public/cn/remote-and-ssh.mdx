@@ -1,0 +1,47 @@
+---
+title: "处理远程项目"
+description: "连接 SSH 主机、打开项目，并将远程工作放在本地智能体旁边。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+代码或工具位于另一台机器时，可以使用 SSH 项目。远程面板能与本地工作并排放置，显示的主机和目录说明命令在哪里执行。
+
+## 连接并打开项目
+
+1. 打开 **Remote Explorer**，选择 **Add SSH host**。
+2. 输入主机信息，选择 SSH agent、密钥文件、密码，或在已有 SSH 设置处理认证时不指定凭据。
+3. 连接后浏览远程目录并添加项目。
+4. 在那里启动 shell 或智能体。该机器必须有提供商 CLI 和登录配置。
+
+<Frame caption="远程 Kimi Code 窗格显示 SSH 连接状态和工作目录。">
+  <ProductFigure scene="ssh" locale="cn" label="远程 Kimi Code 窗格显示 SSH 连接状态和工作目录。" />
+</Frame>
+
+SSH 访问与提供商认证是分开的。执行命令或创建独立 worktree 前，确认远程工作目录。
+
+## 向远程智能体发送文件
+
+在终端粘贴图片或拖入文件。Dure 完成上传后插入远程路径。等准备完成再提交请求，详见[终端附件](/cn/terminal-and-files)。
+
+## 重新连接与审查
+
+远程主机仍在运行时，重新连接已有的受管理会话。远程重启或进程结束后需要[恢复](/cn/session-model)，不能视为不中断的运行。启动重复工作前先检查状态。
+
+在远程主机用 Git 检查和合并变更。内置 Diff 审查目前面向本地 worktree。
+
+## 通过桌面登录读取 GitHub issue
+
+由 Dure 在 GitHub SSH 项目中启动的智能体可使用 `gh issue list` 和 `gh issue view NUMBER --comments`。Dure 用桌面的 `gh` 登录执行读取，再通过 SSH 返回结果。远程机器需要 Python 3，不需要 GitHub 登录，也不要求桌面上有该仓库的本地副本。
+
+```sh
+gh issue list --limit 20 --json number,title
+gh issue view 123 --comments
+gh issue view 123 --json title,body,comments
+```
+
+连接范围限定为项目在 `github.com` 上的 `origin`。`--repo` 只能指定同一仓库。可用 `--state`、`--label`、`--assignee` 和 `--author` 过滤。`--search` 只接受不含高级限定符或布尔运算符的普通文本。列表最多 100 条，大响应需要用 `--json` 缩小范围。此连接不支持认证命令、写操作、其他仓库、`--web`、模板和 `--jq`。查询出现认证错误时，请在桌面执行 `gh auth login`。
+
+保持桌面应用连接。断开或桌面重启后，在 Dure 中刷新智能体以恢复连接。已有智能体也需要刷新才能获得新的命令环境。此集成不涵盖 GitHub Enterprise 或直接在 Dure 之外启动的智能体。
+
+本地 issue 和 pull request 工作请参阅 [GitHub 侧栏指南](/cn/github-workflows)。

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "containers": [
+    {
+      "id": "dure.beads.issues",
+      "location": "primary_sidebar",
+      "title": {
+        "default": "Beads"
+      },
+      "icon": "list_todo"
+    }
+  ],
+  "views": [
+    {
+      "id": "dure.beads.issues.list",
+      "container_id": "dure.beads.issues",
+      "title": {
+        "default": "이슈",
+        "translations": {
+          "en": "Issues"
+        }
+      },
+      "kind": "issue_tracker",
+      "provider_contribution_id": "dure.beads.issue-tracker",
+      "default_query": "ready",
+      "default_query_setting_key": "default_view",
+      "watch_interval_setting_key": "watch_interval_seconds",
+      "agent_claims": {
+        "title": {
+          "default": "Pane별 claim",
+          "translations": {
+            "en": "Claims by pane"
+          }
+        },
+        "setting_key": "show_agent_claims",
+        "surfaces": [
+          "primary_sidebar",
+          "agent_pane_claim_status"
+        ],
+        "statuses": [
+          "in_progress"
+        ]
+      }
+    }
+  ]
+}

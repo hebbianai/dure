@@ -1,0 +1,93 @@
+.settings-choice {
+  background: var(--glass-pane);
+}
+
+.settings-choice__bar {
+  min-height: calc(var(--settings-header-height) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) var(--settings-gutter) 0 12px;
+}
+
+.settings-choice__body {
+  flex: 1;
+  padding: var(--settings-gutter) var(--settings-gutter)
+    calc(var(--settings-gutter) + env(safe-area-inset-bottom));
+}
+
+/* No line between rows, as on 설정 itself: the desktop's rows stand apart
+   with air alone, and the card says which belong together (2026-09-15 승연). */
+.settings-choice__card {
+  overflow: hidden;
+  border-radius: var(--settings-card-radius);
+  background: var(--glass-tray-surface);
+}
+
+.settings-choice__row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--settings-label-height);
+  gap: var(--settings-inline-gap);
+  align-items: center;
+  width: 100%;
+  height: var(--settings-row-height);
+  padding: 0 var(--settings-gutter);
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.settings-choice__row--detailed {
+  height: var(--settings-detail-row-height);
+}
+
+.settings-choice__row:active {
+  background: var(--glass-chrome);
+}
+
+.settings-choice__row:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: -2px;
+}
+
+.settings-choice__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.settings-choice__label {
+  overflow: hidden;
+  font: var(--settings-row-font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-choice__row[aria-checked="false"] .settings-choice__label {
+  font-weight: 400;
+}
+
+.settings-choice__detail,
+.settings-choice__note {
+  color: var(--muted-foreground);
+  font: var(--settings-detail-font);
+}
+
+.settings-choice__detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-choice__check {
+  color: var(--muted-foreground);
+}
+
+.settings-choice__row[aria-checked="false"] .settings-choice__check {
+  visibility: hidden;
+}
+
+.settings-choice__note {
+  margin: var(--settings-control-gap) 2px 0;
+}

@@ -1,0 +1,35 @@
+---
+title: "Dure とは？"
+description: "Dure は Claude Code や Codex などの AI コーディングエージェント向け開発環境（ADE、Agent Development Environment）です。Git worktree による並列作業、SSH プロジェクト、コードレビューをまとめます。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+[Dure](https://www.dureai.dev/) は、人と AI コーディングエージェントが共同作業するエージェント開発環境（ADE、Agent Development Environment）です。複数のプロジェクトや SSH ホストでエージェントを動かし、会話とファイルを近くに置いて、何を残し何を変えるかを決めます。
+
+人が目標と成功条件を定め、エージェントは使い慣れたツールで実行します。Dure がセッション、作業の文脈、レビュー画面をつなぎます。
+
+Dure はワークスペースであり、コーディングモデルや provider のサブスクリプションではありません。Claude Code や Codex などのネイティブ CLI と既存のアカウントを使い、provider の契約や利用料金は Dure と別になります。エージェントごとの機能は[対応エージェント](/jp/providers)を確認してください。
+
+<Frame caption="Codex 2つ、Claude Code 2つ、Pi とターミナルを並べた6つのペインの例。">
+  <ProductFigure scene="workspace" locale="jp" label="Codex 2つ、Claude Code 2つ、Pi とターミナルを並べた6つのペインの例。" />
+</Frame>
+
+## 次のステップを選ぶ
+
+<CardGroup cols={2}>
+  <Card title="最初のタスクを始める" icon="terminal" href="/jp/quickstart">プロジェクトを開き、⌘N でエージェントに依頼します。</Card>
+  <Card title="並行して作業する" icon="git-branch" href="/jp/first-parallel-workflow">編集タスクごとに worktree を分け、統合した結果を確認します。</Card>
+  <Card title="GitHub から始める" icon="github" href="/jp/github-workflows">issue や pull request を選び、文脈が入力されたタスクを開きます。</Card>
+  <Card title="画面を整理する" icon="layout-dashboard" href="/jp/spaces-and-panes">ターミナルペインを分割し、均等に配置して Space を切り替えます。</Card>
+  <Card title="レビューして方向を示す" icon="file-diff" href="/jp/review-and-feedback">ローカル diff を読み、具体的なフィードバックを送ります。</Card>
+  <Card title="既存の作業に戻る" icon="history" href="/jp/session-model">稼働中のセッションに再接続し、終了した場合は復旧方法を確認します。</Card>
+</CardGroup>
+
+## タスクに合わせた進め方を作る
+
+エージェントの隣でシェルによる検証を実行し、エディターでファイルを開いて、目標と根拠を確認しましょう。[プロバイダーアカウント](/jp/providers)、[SSH プロジェクト](/jp/remote-and-ssh)、[プラグイン](/jp/plugins)で既存のツールをつなげます。[設定](/jp/settings)では文字、言語、通知を調整できます。
+
+繰り返す作業には [CLI 実行とスケジュール](/jp/cli-and-automation)を使います。割り当てたタスクに構造化されたメッセージや明示的な判断が必要なら、[エージェントの連携](/jp/orchestration)を利用できます。
+
+[現在の Mac ベータ版](/jp/install)から始め、無人実行に頼る前に[利用上の制限](/jp/current-limits)を確認してください。

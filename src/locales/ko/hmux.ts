@@ -1,0 +1,17 @@
+export const hmux: Record<string, string> = {
+	"hmux.conversion.batchConfirm.deferredNote": " 현재 전환할 수 없는 {n}개 세션은 그대로 둡니다.",
+	"hmux.conversion.replacementStartFailed": "Hmux replacement를 시작하지 못했습니다",
+	"hmux.remote.openFailed": "{host}에 원격 세션을 열지 못했습니다: {detail}",
+	"hmux.conversion.batchConfirm.message": "{n}개 세션을 관리 세션으로 전환합니다. 각 provider를 순서대로 종료하고 동일한 대화를 새 terminal epoch에서 재개합니다. Pane 위치와 대화 ID는 유지됩니다.{deferred} 계속할까요?",
+	"hmux.conversion.eligibility.providerUnsupported": "{provider} 세션의 관리 전환은 아직 지원되지 않습니다.",
+	"hmux.conversion.confirm.message": "{target}(으)로 전환하면 현재 provider를 종료하고 동일한 대화를 새 terminal epoch에서 재개합니다. Pane 위치와 대화 ID는 유지되지만 실행 중인 명령은 중단됩니다. 계속할까요?",
+	"hmux.conversion.eligibility.projectAmbiguous": "같은 작업 폴더를 소유한 프로젝트가 여러 개라 전환할 수 없습니다.",
+	"hmux.conversion.target.managed": "관리 세션",
+	"hmux.conversion.target.standalone": "독립 세션",
+	"hmux.conversion.eligibility.notReady": "세션 상태가 준비되면 관리 세션으로 전환할 수 있습니다.",
+	"hmux.conversion.preflightFailed": "세션 전환 사전 검증에 실패했습니다",
+	"hmux.conversion.eligibility.agentWorking": "에이전트가 작업을 마치면 관리 세션으로 전환할 수 있습니다.",
+	"hmux.conversion.eligibility.attentionRequired": "요청된 입력을 처리한 뒤 관리 세션으로 전환할 수 있습니다.",
+	"hmux.conversion.eligibility.thisProvider": "이 provider",
+	"hmux.conversion.eligibility.projectNotFound": "이 작업 폴더를 프로젝트에 등록해야 관리 세션으로 전환할 수 있습니다.",
+};

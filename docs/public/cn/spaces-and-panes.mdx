@@ -1,0 +1,49 @@
+---
+title: "Space、面板和窗口"
+description: "整理智能体与终端，同时保持执行位置和对话不变。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+**Space** 是 Dure 内有名称的面板布局。用顶部栏区分 Main、Review 等工作阶段，在侧栏找到需要的项目和智能体。
+
+| 项目 | 组织的内容 |
+| --- | --- |
+| 项目 | 本地或 SSH 工作目录 |
+| 智能体/会话 | 正在运行的工具与对话 |
+| 面板 | 智能体、shell、文件或审查的视图 |
+| Space | 从 Dure 顶部栏选择的面板布局 |
+
+Dure Space 与 macOS 桌面是分开的。移动面板不会改变智能体账户、工作目录或对话。
+
+## 创建和切换 Space
+
+用顶部栏的 **+** 添加 Space。选择标签，或用 **⌘1–⌘9** 切换到对应 Space。取一个方便返回工作的名称。
+
+<Frame caption="六个示例窗格：两个 Codex、两个 Claude Code、Pi 和一个终端。">
+  <ProductFigure scene="workspace" locale="cn" label="六个示例窗格：两个 Codex、两个 Claude Code、Pi 和一个终端。" />
+</Frame>
+
+## 拆分和均衡面板
+
+在终端内右键，选择 **Split Right** 或 **Split Down** 打开新面板，再选择智能体或终端。需要均匀分配大小时，使用顶部栏的 **Balance panes in current Space**。
+
+拆分是在布局中添加视图。新任务需要独立文件时，请另行选择[专用 worktree](/cn/first-parallel-workflow)。
+
+## 移动已有面板
+
+把标签拖到目标面板上方，停留至 **Split Right** 或 **Split Down** 出现，再在高亮区域松开。也可以在 Space 之间移动面板，或在更大、独立的窗口中打开会话。
+
+<Frame caption="将拖动的窗格停留在 Split Right 目标上，然后放下。">
+  <ProductFigure scene="arrangement" locale="cn" label="将拖动的窗格停留在 Split Right 目标上，然后放下。" />
+</Frame>
+
+## 保留一个审查 Space
+
+例如，在 Main 中放六个工作面板，在 Review 中放 shell、Claude Code 和 Codex。切换到 Review 执行检查，再返回 Main。
+
+<Frame caption="Review Space 将一个 Shell 和两个智能体窗格放在一起。">
+  <ProductFigure scene="desktops" locale="cn" label="Review Space 将一个 Shell 和两个智能体窗格放在一起。" />
+</Frame>
+
+终端文字、主题和通知在[设置](/cn/settings)中调整。中断后返回时，先检查[会话状态](/cn/session-model)，避免启动重复任务。

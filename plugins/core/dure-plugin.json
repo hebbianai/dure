@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "id": "dure.core",
+  "publisher": "dure",
+  "version": "0.1.0",
+  "display_name": "Dure Core",
+  "description": "Dure가 직접 렌더링하고 실행하는 기본 workflow contribution입니다.",
+  "host_api": {
+    "min_inclusive": 1,
+    "max_inclusive": 2
+  },
+  "activation": [
+    {
+      "kind": "explicit"
+    }
+  ],
+  "contributions": [
+    {
+      "id": "dure.core.delegate-once",
+      "family": "dure.workflows",
+      "family_api": {
+        "min_inclusive": 1,
+        "max_inclusive": 1
+      },
+      "required": true,
+      "placement": "ui",
+      "resource": "./contributions/workflows.json"
+    }
+  ]
+}

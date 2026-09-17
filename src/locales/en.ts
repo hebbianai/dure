@@ -1,0 +1,69 @@
+import { automationsEnglishTranslations } from "./en/automations";
+import { composeEnglishTranslations } from "@/lib/settings/englishTranslationRegistry";
+import { agentsSessionsEnglishTranslations } from "./en/agentsSessions";
+import { agentsEnglishTranslations } from "./en/agents";
+import { sessionsEnglishTranslations } from "./en/sessions";
+import { pluginsEnglishTranslations } from "./en/plugins";
+import { panelsEnglishTranslations } from "./en/panels";
+import { usageEnglishTranslations } from "./en/usage";
+import { spacesEnglishTranslations } from "./en/spaces";
+import { sidebarEnglishTranslations } from "./en/sidebar";
+import { sshEnglishTranslations } from "./en/ssh";
+import { designEnglishTranslations } from "./en/design";
+import { workflowsEnglishTranslations } from "./en/workflows";
+import { searchEnglishTranslations } from "./en/search";
+import { appEnglishTranslations } from "./en/app";
+import { ipcEnglishTranslations } from "./en/ipc";
+import { hmuxEnglishTranslations } from "./en/hmux";
+import { themeEnglishTranslations } from "./en/theme";
+import { filesEnglishTranslations } from "./en/files";
+import { githubEnglishTranslations } from "./en/github";
+import { platformEnglishTranslations } from "./en/platform";
+import { updatesEnglishTranslations } from "./en/updates";
+import { persistenceEnglishTranslations } from "./en/persistence";
+import { cliEnglishTranslations } from "./en/cli";
+import { feedbackEnglishTranslations } from "./en/feedback";
+import { commonEnglishTranslations } from "./en/common";
+import { interactionsEnglishTranslations } from "./en/interactions";
+import { legacyEnglishTranslations } from "./en/legacy";
+import { onboardingEnglishTranslations } from "./en/onboarding";
+import { settingsEnglishTranslations } from "./en/settings";
+import { sourceControlEnglishTranslations } from "./en/sourceControl";
+import { terminalEnglishTranslations } from "./en/terminal";
+import { workspaceEnglishTranslations } from "./en/workspace";
+
+/** 한국어 원문 → 영어. 기능별 사전은 src/locales/en/에서 소유한다. */
+export const en = composeEnglishTranslations([
+	{ name: "automations", translations: automationsEnglishTranslations },
+	{ name: "common", translations: commonEnglishTranslations },
+	{ name: "interactions", translations: interactionsEnglishTranslations },
+	{ name: "workspace", translations: workspaceEnglishTranslations },
+	{ name: "agentsSessions", translations: agentsSessionsEnglishTranslations },
+	{ name: "terminal", translations: terminalEnglishTranslations },
+	{ name: "settings", translations: settingsEnglishTranslations },
+	{ name: "sourceControl", translations: sourceControlEnglishTranslations },
+	{ name: "onboarding", translations: onboardingEnglishTranslations },
+	{ name: "legacy", translations: legacyEnglishTranslations },
+	{ name: "agents", translations: agentsEnglishTranslations },
+	{ name: "sessions", translations: sessionsEnglishTranslations },
+	{ name: "plugins", translations: pluginsEnglishTranslations },
+	{ name: "panels", translations: panelsEnglishTranslations },
+	{ name: "usage", translations: usageEnglishTranslations },
+	{ name: "spaces", translations: spacesEnglishTranslations },
+	{ name: "sidebar", translations: sidebarEnglishTranslations },
+	{ name: "ssh", translations: sshEnglishTranslations },
+	{ name: "design", translations: designEnglishTranslations },
+	{ name: "workflows", translations: workflowsEnglishTranslations },
+	{ name: "search", translations: searchEnglishTranslations },
+	{ name: "app", translations: appEnglishTranslations },
+	{ name: "ipc", translations: ipcEnglishTranslations },
+	{ name: "hmux", translations: hmuxEnglishTranslations },
+	{ name: "theme", translations: themeEnglishTranslations },
+	{ name: "files", translations: filesEnglishTranslations },
+	{ name: "github", translations: githubEnglishTranslations },
+	{ name: "platform", translations: platformEnglishTranslations },
+	{ name: "updates", translations: updatesEnglishTranslations },
+	{ name: "persistence", translations: persistenceEnglishTranslations },
+	{ name: "cli", translations: cliEnglishTranslations },
+	{ name: "feedback", translations: feedbackEnglishTranslations },
+]);

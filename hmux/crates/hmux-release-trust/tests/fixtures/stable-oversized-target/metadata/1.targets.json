@@ -1,0 +1,58 @@
+{
+ "signatures": [
+  {
+   "keyid": "f4c03be89f77be51036c7774bf14166d8d0474f758e803c39f74478d96afb650",
+   "sig": "d825abf19506a67fdc531e8e0fc33c3e71c27e170c903d90eddf540933db35922b59376a89b559696d1273757f288f4a5351d8eca7c1ecd891e1700cce073d0a"
+  },
+  {
+   "keyid": "074e2dbe6fe4c3cf3030ffd858a89ed78b3a6a71090c67face4c34f265e72491",
+   "sig": "f925fa4c6020da7a46086ea3b47a7f31328d6c968044adfde0705efb33ff0191addb6f784d2858617e475501e8a9e91bb2f1d2fa57545c64610e2a3f5e582f01"
+  }
+ ],
+ "signed": {
+  "_type": "targets",
+  "expires": "2037-01-01T00:00:00Z",
+  "spec_version": "1.0.31",
+  "targets": {
+   "0.1.4+fixture.aarch64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "0.1.4+fixture.aarch64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "28c2d6ac36d721bc5abfec4f04a730a29667c096b35d4a1b4e1017d47dcfe990",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "d20e1c09380bf8d098e34279ef56d55e8e4ea5a8",
+     "targetTriple": "aarch64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "ec590064f6efa4306eaf78ef7d258dd75a603c19a026316d7fe9aef920d00d7d"
+    },
+    "length": 147
+   },
+   "0.1.4+fixture.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "0.1.4+fixture.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "f800ade3553540da91f1b8f93709846c38a58a89b694f2dce8645524b2dc9d01",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "d20e1c09380bf8d098e34279ef56d55e8e4ea5a8",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "8719ce8ff121d98b50782d28e43abc58bbd8d2e297604faa8c1a1cf76921dd3f"
+    },
+    "length": 268435457
+   }
+  },
+  "version": 1
+ }
+}

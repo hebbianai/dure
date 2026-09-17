@@ -1,0 +1,40 @@
+{
+  "name": "dure-mobile",
+  "license": "MIT",
+  "private": true,
+  "version": "0.1.4",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint src qa vite.config.ts",
+    "qa:design": "vite --config qa/vite.config.ts",
+    "test": "vitest run && pnpm test:push-service",
+    "test:push-service": "node --test push-service/service.test.mjs",
+    "tauri": "tauri",
+    "ios:init": "tauri ios init",
+    "ios:dev": "node ../scripts/ios-device-dev.mjs",
+    "android:init": "tauri android init",
+    "android:dev": "tauri android dev"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.13.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-barcode-scanner": "^2.4.5",
+    "@tauri-apps/plugin-biometric": "^2.3.3",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.3",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-haptics": "^2.3.3",
+    "@tauri-apps/plugin-notification": "^2.4.0",
+    "@tauri-apps/plugin-opener": "^2.5.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.5",
+    "@tauri-apps/cli": "^2",
+    "jsdom": "^30.0.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "vitest": "^4.1.10"
+  }
+}

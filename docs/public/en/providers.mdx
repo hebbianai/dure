@@ -1,0 +1,59 @@
+---
+title: "Coding agents and accounts"
+description: "Choose an installed provider, inspect its capabilities, and manage accounts and usage."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+Dure uses your installed coding-agent CLIs and provider accounts. The provider supplies the models, authentication and billing; Dure keeps the working context and views together.
+
+## Prepare and select a provider
+
+Open **Settings → Provider** to inspect detection and setup information. Start with a CLI that works in your regular terminal. The launcher includes Claude Code, Codex, Pi, Kimi Code, Gemini CLI, OpenCode and other registered tools.
+
+Choose the provider in **⌘N → New agent**. New agents open as native terminal panes. A registered command is not a promise that every model, account feature or conversation operation is available.
+
+## Understand the available capabilities
+
+| Capability | What to check |
+| --- | --- |
+| Terminal | The CLI is installed and can start in the selected folder/host |
+| Chat view | The pane offers Terminal/Chat for that installed provider/runtime |
+| Existing conversations | Dure can discover the provider's saved conversation records |
+| Resume or fork | The selected conversation and provider support the requested action |
+| Account profile | An account selector is available for that provider |
+| Usage | The provider has returned a recent reading |
+
+Claude Code, Codex, OpenCode and Pi have structured-chat integrations; availability also depends on the installed tool and runtime. Other tools can remain in their native terminal interface.
+
+<Tabs>
+  <Tab title="Codex">
+    <Frame caption="An example Codex conversation in a Dure pane.">
+      <ProductFigure scene="codex" locale="en" label="An example Codex conversation in a Dure pane." />
+    </Frame>
+  </Tab>
+  <Tab title="Claude Code">
+    <Frame caption="An example Claude Code conversation in a Dure pane.">
+      <ProductFigure scene="claude" locale="en" label="An example Claude Code conversation in a Dure pane." />
+    </Frame>
+  </Tab>
+  <Tab title="Pi">
+    <Frame caption="An example Pi conversation in a Dure pane.">
+      <ProductFigure scene="pi" locale="en" label="An example Pi conversation in a Dure pane." />
+    </Frame>
+  </Tab>
+</Tabs>
+
+## Choose an account
+
+Open **Settings → AI provider accounts** to add supported account profiles. Select the intended account when starting an agent or from its account control. Providers without this integration use their normal configured login.
+
+Account switching may restart the provider process and resume its conversation. Review the pending switch and any sign-in requirement; moving a pane does not switch its account. Remote projects also need provider setup on the [remote host](/en/remote-and-ssh).
+
+## Read usage and limits
+
+Claude and Codex usage controls show available provider-reported limits and reset times. Enable their top-bar indicators in **Settings → Appearance** and inspect broader activity in **Stats and usage**. An absent or stale reading does not establish spare capacity.
+
+**Settings → General → Auto-switch when usage limit is reached** applies to supported local chat panes after a reported limit failure and requires another account with fresh observed capacity. It does not promise seamless switching for every terminal or SSH session. Sign-in failures need attention.
+
+Default provider and permission choices are under **Settings → General**. Choose permissions for the actual task; [worktrees do not create a sandbox](/en/current-limits).

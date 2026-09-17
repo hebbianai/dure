@@ -1,0 +1,27 @@
+/* The app owns the UI pixels. These rules only frame and crop the capture. */
+.dure-figure { width: 100%; margin: 0; }
+.dure-figure-viewport { position: relative; width: 100%; overflow: hidden; border-radius: 12px; background: #081526; isolation: isolate; }
+.dure-figure-stage { position: absolute; inset: 0; transform-origin: top left; }
+.dure-figure-wallpaper { position: absolute; inset: -3%; display: block; width: 106%; height: 106%; max-width: none; object-fit: cover; }
+.dure-figure[data-scene="github"] .dure-figure-wallpaper { transform: scaleX(-1); }
+.dure-figure-window { position: absolute; overflow: hidden; border-radius: 22px; background: transparent; box-shadow: 0 54px 90px -20px #0009, 0 14px 30px #0005; }
+/* Blur the shared wallpaper underneath the captured UI, without blurring text. */
+.dure-figure-window::before { content: ""; position: absolute; inset: 0; backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+.dark .dure-figure-window { box-shadow: 0 54px 90px -20px #000c, 0 14px 30px #0008; }
+.dure-figure[data-layout="crop"] .dure-figure-window { border-radius: 28px 28px 0 0; }
+.dure-figure[data-layout="spotlight"] { background: rgb(var(--background-light)); }
+.dark .dure-figure[data-layout="spotlight"] { background: rgb(var(--background-dark)); }
+.dure-figure[data-layout="spotlight"] .dure-figure-viewport { background: transparent; }
+.dure-figure[data-layout="spotlight"] .dure-figure-wallpaper { opacity: 0.16; mask-image: radial-gradient(ellipse at 44% 40%, #000 0%, transparent 66%); }
+.dure-figure[data-layout="spotlight"] .dure-figure-window {
+  border-radius: 24px 0 0 0;
+  box-shadow: 0 0 0 1px #00000018;
+  mask-image: linear-gradient(to right, #000 68%, transparent 100%), linear-gradient(to bottom, #000 68%, transparent 100%);
+  mask-composite: intersect;
+}
+.dark .dure-figure[data-layout="spotlight"] .dure-figure-window { box-shadow: 0 0 0 1px #ffffff28; }
+/* Match the embedded document's color scheme so Chromium keeps its canvas transparent. */
+.dure-figure-viewport iframe { position: absolute; top: 0; left: 0; display: block; width: 1344px; max-width: none; height: 822px; margin: 0; border: 0; pointer-events: none; transform-origin: top left; color-scheme: light; }
+.dark .dure-figure-viewport iframe { color-scheme: dark; }
+.dure-figure-error { position: absolute; inset: 0; display: grid; place-items: center; color: white; }
+.dure-figure-example { padding: 8px 0 0; color: var(--gray-500); font-size: 11px; line-height: 1.4; text-align: right; }

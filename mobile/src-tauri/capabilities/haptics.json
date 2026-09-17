@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "haptics",
+  "description": "Impact feedback on a gesture. No platform filter because the crate exists on every target (desktop is a no-op). Only impact — nothing here vibrates the device or plays notification or selection feedback.",
+  "windows": ["main"],
+  "permissions": ["haptics:allow-impact-feedback"]
+}

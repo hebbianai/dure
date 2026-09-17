@@ -1,0 +1,58 @@
+{
+ "signatures": [
+  {
+   "keyid": "f4c03be89f77be51036c7774bf14166d8d0474f758e803c39f74478d96afb650",
+   "sig": "d1cf3366789911f4dff57f968bff8d0793ccd0191e54b65cec85d4a47e04c85e6d305717ee26cc5463fc94060d97f3fb67d3170e35c1603323601357948ef40c"
+  },
+  {
+   "keyid": "074e2dbe6fe4c3cf3030ffd858a89ed78b3a6a71090c67face4c34f265e72491",
+   "sig": "1fc513eec387c56b054a17a184d50efcd51dfa0255b058a9bcb3a974681f482956c0ab116dd88e3a076528df1195d45e3b2def6ae1b0f2f47fd8b691fd54e400"
+  }
+ ],
+ "signed": {
+  "_type": "targets",
+  "expires": "2037-01-01T00:00:00Z",
+  "spec_version": "1.0.31",
+  "targets": {
+   "0.1.4+fixture.aarch64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "0.1.4+fixture.aarch64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "28c2d6ac36d721bc5abfec4f04a730a29667c096b35d4a1b4e1017d47dcfe990",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "2.0",
+     "protocolMinimum": "2.0",
+     "schemaVersion": 1,
+     "sourceCommit": "d20e1c09380bf8d098e34279ef56d55e8e4ea5a8",
+     "targetTriple": "aarch64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "ec590064f6efa4306eaf78ef7d258dd75a603c19a026316d7fe9aef920d00d7d"
+    },
+    "length": 147
+   },
+   "0.1.4+fixture.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "0.1.4+fixture.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "f800ade3553540da91f1b8f93709846c38a58a89b694f2dce8645524b2dc9d01",
+     "packageVersion": "0.1.4",
+     "product": "hmux",
+     "protocolMaximum": "2.0",
+     "protocolMinimum": "2.0",
+     "schemaVersion": 1,
+     "sourceCommit": "d20e1c09380bf8d098e34279ef56d55e8e4ea5a8",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "8719ce8ff121d98b50782d28e43abc58bbd8d2e297604faa8c1a1cf76921dd3f"
+    },
+    "length": 147
+   }
+  },
+  "version": 1
+ }
+}

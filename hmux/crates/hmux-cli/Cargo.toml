@@ -1,0 +1,45 @@
+[package]
+name = "hmux-cli"
+description = "Reference command-line client for Hmux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "hmux"
+path = "src/main.rs"
+
+[dependencies]
+argon2.workspace = true
+base64.workspace = true
+chacha20poly1305.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+dirs.workspace = true
+ed25519-dalek.workspace = true
+fs2.workspace = true
+getrandom.workspace = true
+hmux-client = { path = "../hmux-client", features = ["offline-pairing", "terminal-state-stream"] }
+hmux-host = { path = "../hmux-host" }
+hmux-runtime-contract = { path = "../hmux-runtime-contract" }
+hmux-ssh-transport = { path = "../hmux-ssh-transport" }
+libc.workspace = true
+# Terminal QR rendering only. `default-features = false` drops `image`/`svg`,
+# which is what keeps this a zero-transitive-dependency encoder — the pairing
+# QR is drawn with ANSI half blocks and never becomes a raster.
+qrcode = { version = "0.14", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+sha2.workspace = true
+terminal-state-protocol = { path = "../terminal-state-protocol" }
+tempfile.workspace = true
+uuid.workspace = true
+vt100.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+russh.workspace = true
+tokio.workspace = true

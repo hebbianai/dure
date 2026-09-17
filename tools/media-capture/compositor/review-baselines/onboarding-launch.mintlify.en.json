@@ -1,0 +1,44 @@
+{
+  "schema": "dure-storyboard-perceptual-baseline/v2",
+  "storyboardId": "onboarding-launch",
+  "targetId": "mintlify",
+  "locale": "en",
+  "storyboardSha256": "f9fe1634036a9011064a8c5129ca98bcd3806b32ca6fa74feba5e326f0b50818",
+  "reviewRecipeSha256": "5c9048ccac7c73bf7549164b809bcbbd57ab8f25d3f1b0000198dc4862175b59",
+  "sourceArtifacts": [
+    {
+      "sourceId": "onboarding",
+      "bytes": 1296273,
+      "sha256": "d08ee8965a6ba6bdda41d6f43b51de3f55ca8b20f56303aa393110c8cd6ed797"
+    }
+  ],
+  "sourceBuilds": [
+    {
+      "sourceId": "onboarding",
+      "buildId": "0.1.4+b83c4136b08f",
+      "sourceRevision": "b83c4136b08f"
+    }
+  ],
+  "frames": [
+    {
+      "frame": 0,
+      "perceptualHash": "4050404040405060"
+    },
+    {
+      "frame": 66,
+      "perceptualHash": "40504060404050c0"
+    },
+    {
+      "frame": 127,
+      "perceptualHash": "60584040404070c0"
+    },
+    {
+      "frame": 198,
+      "perceptualHash": "52d2e64a424342c2"
+    },
+    {
+      "frame": 248,
+      "perceptualHash": "42d2ea4a424342c2"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+[package]
+name = "hebbian-bounded-process"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "Deadline-bound process-group and Job execution for Hebbian probes"
+
+[features]
+default = []
+provider-conformance-test-support = []
+
+[dependencies]
+tempfile = "3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_JobObjects",
+  "Win32_System_Pipes",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+] }
+
+[[bin]]
+name = "bounded-process-fixture"
+path = "src/bin/bounded_process_fixture.rs"
+
+[[bin]]
+name = "dure-process-job"
+path = "src/bin/process_job.rs"

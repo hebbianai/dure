@@ -1,0 +1,53 @@
+# Repo-wide Cargo configuration.
+#
+# Discovery is CWD-based, not manifest-based: every build in this repo is
+# invoked from the repository root (`cargo build --manifest-path hmux/...`),
+# and Cargo also walks up from `hmux/` or `src-tauri/`, so one file at the
+# root covers all three workspaces. A `hmux/.cargo/config.toml` would be
+# silently ignored by the root-invoked builds, which is why this lives here.
+
+# Static Linux artifacts. musl is chosen over glibc so one binary per arch
+# runs on any distribution: a glibc build made here would carry a symbol
+# version floor and refuse to start on an older server.
+#
+# `rustc` defaults these targets to the platform `cc`. On the macOS CI runner
+# that is Apple clang driving Apple `ld`, which rejects every GNU option rustc
+# emits ("ld: unknown options: --as-needed -Bstatic --gc-sections ..."), so
+# the compile succeeds and only the link fails. `rust-lld` ships inside the
+# toolchain and the musl targets already bundle their own crt objects and
+# libc.a, so pointing at it makes the cross-link work with nothing installed
+# on the runner — no musl-cross, no zig, no sysroot to keep in sync. This is
+# checked in rather than left to the operator's shell because a missing
+# linker here does not degrade, it hard-fails the artifact job.
+#
+# These sections are keyed by target, not by host, so a Linux host building
+# the same targets also gets `rust-lld` instead of its own `cc`. That is
+# deliberate — a host-conditional linker rule would work on the CI Mac and
+# differ silently everywhere else — but only the macOS cross-link is exercised
+# by CI today.
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+rustflags = ["-C", "linker-flavor=ld.lld"]
+
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+rustflags = ["-C", "linker-flavor=ld.lld"]
+
+# The reviewed Windows Ghostty archive is cross-produced as GNU COFF because
+# Zig's MSVC target needs a separately licensed Windows SDK header closure.
+# Microsoft's linker rejects Zig's shared unwind COMDAT shape, while the
+# toolchain-owned LLVM linker consumes the normalized archive and emits the
+# native MSVC-target PE boundary. Pin the linker here so tests, sidecars, and
+# the Tauri bundle cannot silently diverge by invocation path.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"
+rustflags = ["-C", "linker-flavor=lld-link"]
+
+# NDK r27 and earlier need explicit ELF alignment for 16 KB Android devices.
+# A cfg entry composes with the per-triple flags supplied by Tauri's Android CLI.
+# https://developer.android.com/guide/practices/page-sizes
+[target.'cfg(target_os = "android")']
+rustflags = [
+  "-C", "link-arg=-Wl,-z,max-page-size=16384",
+  "-C", "link-arg=-Wl,-z,common-page-size=16384",
+]

@@ -1,0 +1,255 @@
+/* 설정 → 키 스트립. Figma `dure-UI` 3272:85021, states at 3272:85019. */
+
+/* Fixed rather than in flow: opened from the session's keys drawer the screen
+   is drawn *over* a still-attached terminal, and a page that scrolled the
+   transcript along with the strip would be two screens at once. Opaque, so the
+   session behind it is kept alive without being seen. */
+.key-strip {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  overflow-y: auto;
+  background: var(--glass-pane);
+}
+
+.key-strip__bar {
+  min-height: calc(68px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 16px 0 12px;
+}
+
+.key-strip__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px 16px calc(40px + env(safe-area-inset-bottom));
+}
+
+.key-strip__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.key-strip__label {
+  padding-left: 4px;
+  color: var(--muted-foreground);
+  font: 500 13px/18px var(--font-ui);
+}
+
+/* The preview is the session's own shortcut pill, by the owner's instruction:
+   same glass, same rim, same blur, same fade at the edge (`.tray__pill` and
+   `.tray__keys`). A preview that is a drawing of the thing is worth less than
+   the thing on another screen. */
+.key-strip__preview {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 2px 4px;
+  border-radius: 999px;
+  background: var(--glass-tray-pill);
+  box-shadow: inset 0 1px 0 0 var(--glass-edge);
+  -webkit-backdrop-filter: var(--glass-overlay-blur);
+  backdrop-filter: var(--glass-overlay-blur);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The chip row inside the pill, `.tray__keys` over again: it scrolls, and it
+   is the row that fades, not the pill — a mask on the pill faded its own rim
+   and glass at the end together with the last chip (2026-09-15 승연: "탭
+   자체에 흐림이 들어가는게 아니라 텍스트에만"). No count limit (3272:85019):
+   the row scrolls, and the fade is what makes that discoverable — a hard cut
+   reads as a rendering bug, not "swipe". Only while there is more to the
+   right, though (`fadeWhileScrollable`): a fade over the last chip, once the
+   row is at its end or never overflowed, says "more" where there is none. */
+.key-strip__keys {
+  flex: 1;
+  /* The chips' offset parent, so a slot is measured against the row. */
+  position: relative;
+  /* As tall as the pill, not as its 28px chips: the chips answer a sideways
+     drag with a reorder (`touch-action: pan-y`), so the row is scrolled by a
+     swipe on the pill around them — the 10px over and under the chips that
+     the pill used to scroll by itself. A row only as tall as the chips left
+     no such place, and the strip could not be pushed at all (2026-09-15 승연:
+     "옆으로 미는것도 안되게 바뀐거같고"). */
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.key-strip__keys--cut {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+}
+
+.key-strip__keys::-webkit-scrollbar {
+  display: none;
+}
+
+.key-strip__empty {
+  padding: 0 10px;
+  color: var(--muted-foreground);
+  font: 400 13px/18px var(--font-ui);
+}
+
+/* `pan-y` on the chip, and nothing on the row: a sideways drag that starts on
+   a chip is the reorder gesture and must not be eaten by the scroller, while a
+   sideways swipe on the row itself still scrolls it natively and a vertical one
+   still scrolls the page. A `pan-y` on the row would have taken the scroll away
+   from the row it was meant to make reachable.
+
+   A chip is a control being dragged, not a word being read: holding one has to
+   pick it up, and iOS answering that hold with a text selection and a
+   copy/paste callout takes the gesture away mid-drag. */
+.key-strip__chip {
+  flex: none;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  transition: background-color 150ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Held. The tile is the whole of the signal — no border, no shadow, no lift —
+   and the rest of the row dims so the one being moved is obvious. It rides
+   under the finger on a transform (`dragToReorder`), over the chips sliding
+   past beneath it. */
+.key-strip__chip--dragging {
+  position: relative;
+  z-index: 1;
+  background: var(--glass-tray);
+  font-weight: 500;
+  opacity: 1;
+}
+
+.key-strip__keys--dragging .key-strip__chip {
+  opacity: 0.55;
+}
+
+/* Added just now: 3272:85019's pop-in. Overshoot and settle, no bounce back. */
+.key-strip__chip--new {
+  animation: key-strip-pop 320ms cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+
+@keyframes key-strip-pop {
+  from {
+    transform: scale(0.7);
+  }
+  60% {
+    transform: scale(1.08);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .key-strip__chip--new {
+    animation: none;
+  }
+}
+
+.key-strip__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.key-strip__card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--glass-tray-surface);
+}
+
+.key-strip__card-label {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--muted-foreground);
+  font: 500 11px/18px var(--font-ui);
+}
+
+/* auto-fill rather than a fixed six: 기호 needs five rows and 수정자 needs one,
+   and a column count per card is a number that goes stale the first time a key
+   is added. */
+.key-strip__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+  gap: 6px;
+}
+
+/* Same reason as the chips: a cap is pressed, not read. */
+.key-strip__cell {
+  height: 44px;
+  padding: 0 4px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  border: 0;
+  border-radius: 8px;
+  background: var(--glass-keycap);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  transition: background-color 150ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Already in the strip: the cap keeps its tile and takes a ring, the tray's
+   own mark for a key that is armed (`.tray__key--armed`, `.tray__segment--on`).
+   It used to give the tile up and go quiet, which read as a cap that could
+   not be pressed rather than one already chosen (2026-09-15 승연: "이 상태가
+   디폴트인데 선택됐을때 보더가 생긴다던지"). Pressing it is still how you take
+   it back out. */
+.key-strip__cell--picked {
+  /* The muted ink rather than `--input`'s 15% white: a ring the tile's grey
+     nearly swallowed (2026-09-15 승연: "보더컬러 좀더 눈에띄는게"). */
+  box-shadow: inset 0 0 0 1px var(--muted-foreground);
+}
+
+/* Colour only. No scale, no bounce (3272:85019). */
+.key-strip__cell:active {
+  background: var(--glass-chip);
+}
+
+.key-strip__note {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--muted-foreground);
+  font: 400 13px/18px var(--font-ui);
+}
+
+.key-strip__reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 8px 24px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--foreground);
+  font: 600 14px/20px var(--font-ui);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.key-strip__reset:active {
+  background: var(--glass-chrome);
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "default",
+  "description": "Baseline webview permissions. Deliberately minimal: this shell talks to the host process only through its own commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

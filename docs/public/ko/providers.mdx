@@ -1,0 +1,59 @@
+---
+title: "코딩 에이전트와 계정"
+description: "설치된 제공자를 선택하고 지원 기능, 계정과 사용량을 확인합니다."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+Dure는 설치된 코딩 에이전트 CLI와 제공자 계정을 사용합니다. 모델, 인증, 결제는 제공자가 담당하고 Dure는 작업 맥락과 화면을 함께 정리합니다.
+
+## 제공자 준비와 선택
+
+**Settings → Provider**에서 감지 결과와 설정 안내를 확인하세요. 일반 터미널에서 실행되는 CLI부터 사용합니다. Claude Code, Codex, Pi, Kimi Code, Gemini CLI, OpenCode 등 등록된 도구를 선택할 수 있습니다.
+
+**⌘N → New agent**에서 제공자를 고르세요. 새 에이전트는 네이티브 터미널 pane으로 열립니다. 명령이 등록되어 있어도 모든 모델, 계정 기능, 대화 작업을 지원한다는 뜻은 아닙니다.
+
+## 지원 기능 확인
+
+| 기능 | 확인할 내용 |
+| --- | --- |
+| 터미널 | 선택한 폴더와 호스트에서 CLI가 설치되어 실행되는지 |
+| 채팅 보기 | 해당 제공자와 런타임에서 Terminal/Chat 전환이 제공되는지 |
+| 기존 대화 | 제공자가 저장한 대화 기록을 Dure가 찾을 수 있는지 |
+| 재개 또는 분기 | 선택한 대화와 제공자가 해당 동작을 지원하는지 |
+| 계정 프로필 | 해당 제공자에 계정 선택 기능이 있는지 |
+| 사용량 | 제공자가 최근 사용량을 반환했는지 |
+
+Claude Code, Codex, OpenCode, Pi에는 구조화된 채팅 통합이 있으며 설치된 도구와 런타임에 따라 사용 가능 여부가 달라집니다. 다른 도구는 네이티브 터미널 화면에서 사용할 수 있습니다.
+
+<Tabs>
+  <Tab title="Codex">
+    <Frame caption="Dure 페인에 표시한 Codex 대화 예시.">
+      <ProductFigure scene="codex" locale="ko" label="Dure 페인에 표시한 Codex 대화 예시." />
+    </Frame>
+  </Tab>
+  <Tab title="Claude Code">
+    <Frame caption="Dure 페인에 표시한 Claude Code 대화 예시.">
+      <ProductFigure scene="claude" locale="ko" label="Dure 페인에 표시한 Claude Code 대화 예시." />
+    </Frame>
+  </Tab>
+  <Tab title="Pi">
+    <Frame caption="Dure 페인에 표시한 Pi 대화 예시.">
+      <ProductFigure scene="pi" locale="ko" label="Dure 페인에 표시한 Pi 대화 예시." />
+    </Frame>
+  </Tab>
+</Tabs>
+
+## 계정 선택
+
+**Settings → AI provider accounts**에서 지원되는 계정 프로필을 추가하세요. 에이전트를 시작할 때나 계정 컨트롤에서 사용할 계정을 선택합니다. 이 통합이 없는 제공자는 평소 설정한 로그인을 사용합니다.
+
+계정 전환은 제공자 프로세스를 재시작하고 대화를 재개할 수 있습니다. 전환 안내와 로그인 요구를 확인하세요. pane을 옮겨도 계정은 바뀌지 않습니다. 원격 프로젝트는 [원격 호스트](/ko/remote-and-ssh)에도 제공자 설정이 필요합니다.
+
+## 사용량과 한도 확인
+
+Claude와 Codex 사용량 컨트롤은 제공자가 반환한 한도와 초기화 시각을 보여 줍니다. **Settings → Appearance**에서 상단 표시를 켜고 **Stats and usage**에서 활동을 확인하세요. 값이 없거나 오래되었다면 남은 용량을 판단할 수 없습니다.
+
+**Settings → General → Auto-switch when usage limit is reached**는 지원되는 로컬 채팅 pane에서 한도 오류가 보고된 뒤 적용됩니다. 최근 관측값으로 사용 여유가 확인된 다른 계정이 필요합니다. 모든 터미널이나 SSH 세션에서 끊김 없이 전환되는 것은 아니며, 로그인 실패는 직접 처리해야 합니다.
+
+기본 제공자와 권한 선택은 **Settings → General**에 있습니다. 실제 작업에 맞게 권한을 선택하세요. [worktree는 샌드박스가 아닙니다](/ko/current-limits).

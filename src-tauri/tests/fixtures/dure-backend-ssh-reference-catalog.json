@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "kind": "dure.backend_ssh_references",
+  "references": [
+    {
+      "reference": "known-hosts-profile:remote-a",
+      "kind": "known_hosts_file",
+      "path": "__KNOWN_HOSTS_A__"
+    },
+    {
+      "reference": "credential-profile:remote-a",
+      "kind": "identity_file",
+      "path": "__IDENTITY_A__"
+    },
+    {
+      "reference": "known-hosts-profile:remote-b",
+      "kind": "known_hosts_file",
+      "path": "__KNOWN_HOSTS_B__"
+    },
+    {
+      "reference": "credential-profile:remote-b",
+      "kind": "identity_file",
+      "path": "__IDENTITY_B__"
+    }
+  ]
+}

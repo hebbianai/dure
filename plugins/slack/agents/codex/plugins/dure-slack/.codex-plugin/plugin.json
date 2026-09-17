@@ -1,0 +1,9 @@
+{
+  "name": "dure-slack",
+  "version": "0.1.0",
+  "description": "Continue shared work across Dure Pro and Slack.",
+  "author": {
+    "name": "Dure"
+  },
+  "skills": "./skills/"
+}

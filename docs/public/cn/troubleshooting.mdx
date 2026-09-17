@@ -1,0 +1,45 @@
+---
+title: "故障排查"
+description: "针对工具缺失、GitHub 访问、更新和工作中断找到下一步检查。"
+---
+
+从具体故障和所选项目、主机、提供商开始。保留错误信息，比反复启动同一任务更有帮助。
+
+## 智能体缺失或无法启动
+
+在普通终端尝试其 CLI，在 **Settings → Provider** 检查检测结果和设置说明。修改 shell 的 `PATH` 后，重新打开 Dure 以读取新环境。SSH 工作应在远程机器重复检查。
+
+需要登录时完成提供商认证，并确认账户能使用该工具或模型。Dure 不提供提供商凭据。
+
+## GitHub 没有仓库或显示访问错误
+
+选择带 GitHub remote 的本地 Git 项目，并检查桌面 GitHub CLI：
+
+```sh
+gh auth status
+git remote -v
+```
+
+确认登录账户能读取仓库，再刷新 GitHub 侧栏。组织或 Projects 权限错误需要相应 GitHub 授权。详见 [GitHub 工作流程](/cn/github-workflows)。
+
+## 找不到设置或插件
+
+Basic 界面的当前位置见[设置指南](/cn/settings)。打开侧栏 **Plugin** 检查兼容性和可用设置，再刷新目录。被拒绝或冲突的包不是活动集成；见[插件](/cn/plugins)。
+
+## 任务似乎断开或结束
+
+启动另一份任务前，检查[会话状态](/cn/session-model)和实际文件。仍在运行时重新连接，进程结束后使用提供的恢复操作。记录已经完成的内容，避免重复外部操作。
+
+## 附件未送达
+
+等准备或上传完成后再发送。检查面板主机、文件路径和传输错误，再重试失败的附件。图片支持因提供商而异，见[终端附件](/cn/terminal-and-files)。
+
+## 更新或 macOS 启动失败
+
+在 **Settings → General** 检查安装版本。检查失败时重试 **Check for updates**，或使用[安装 Dure](/cn/install)中的官方 DMG。仅检查不会安装。
+
+遇到 macOS 警告时，确认官方来源并遵循 [Apple 指南](https://support.apple.com/en-us/102445)。不要关闭安全保护，也不要强行打开被报告为恶意软件的文件。
+
+## 收集有用的报告
+
+提供应用版本、提供商和 CLI 版本、本地/SSH 环境、准确操作与错误。**Settings → Privacy and telemetry** 说明了可以检查并自行选择保存的诊断报告。分享之前移除凭据、私有路径和无关对话。

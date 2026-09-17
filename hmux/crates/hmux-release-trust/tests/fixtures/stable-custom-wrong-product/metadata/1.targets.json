@@ -1,0 +1,58 @@
+{
+ "signatures": [
+  {
+   "keyid": "f4c03be89f77be51036c7774bf14166d8d0474f758e803c39f74478d96afb650",
+   "sig": "04fa8ac7aee370b7d5edd71db43700e0e17f3b481e1f717d33f7ea63331df81f535b1cf0d92d31009a84ec5af7a5da5e5d0264fceb04cb4c8b3713c807afe70f"
+  },
+  {
+   "keyid": "074e2dbe6fe4c3cf3030ffd858a89ed78b3a6a71090c67face4c34f265e72491",
+   "sig": "4d1110191ff65c02ce7d1a6158746426451ab0d7b0b1493102d2d113a065e4eb5be3c30c6db154fdf90ffd8a388c5bef439b61a22bb7909c3ab2856be854cd04"
+  }
+ ],
+ "signed": {
+  "_type": "targets",
+  "expires": "2037-01-01T00:00:00Z",
+  "spec_version": "1.0.31",
+  "targets": {
+   "0.1.4+fixture.aarch64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "0.1.4+fixture.aarch64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "28c2d6ac36d721bc5abfec4f04a730a29667c096b35d4a1b4e1017d47dcfe990",
+     "packageVersion": "0.1.4",
+     "product": "other",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "d20e1c09380bf8d098e34279ef56d55e8e4ea5a8",
+     "targetTriple": "aarch64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "ec590064f6efa4306eaf78ef7d258dd75a603c19a026316d7fe9aef920d00d7d"
+    },
+    "length": 147
+   },
+   "0.1.4+fixture.x86_64-unknown-linux-musl.release.tar.gz": {
+    "custom": {
+     "archiveFormat": "tar.gz",
+     "buildId": "0.1.4+fixture.x86_64-unknown-linux-musl.release",
+     "channel": "stable",
+     "installedTreeSha256": "f800ade3553540da91f1b8f93709846c38a58a89b694f2dce8645524b2dc9d01",
+     "packageVersion": "0.1.4",
+     "product": "other",
+     "protocolMaximum": "1.0",
+     "protocolMinimum": "1.0",
+     "schemaVersion": 1,
+     "sourceCommit": "d20e1c09380bf8d098e34279ef56d55e8e4ea5a8",
+     "targetTriple": "x86_64-unknown-linux-musl"
+    },
+    "hashes": {
+     "sha256": "8719ce8ff121d98b50782d28e43abc58bbd8d2e297604faa8c1a1cf76921dd3f"
+    },
+    "length": 147
+   }
+  },
+  "version": 1
+ }
+}

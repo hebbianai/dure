@@ -1,0 +1,64 @@
+[package]
+name = "hmux-client"
+description = "Client-facing discovery and session projections for Hmux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["local-runtime"]
+# Everything that only means something on the machine the session runs on:
+# spawning an `hmux-runtime` broker subprocess, resolving a discovery root from
+# the OS state directory, signalling pids read out of a manifest, and dialing an
+# OS-local endpoint. From a phone a socket or named-pipe address and a
+# same-kernel pid name nothing, so these are absent rather than
+# present-and-wrong.
+#
+# `hmux-host` is taken with `default-features = false` so this flag — not the
+# dependency edge — decides whether the host's runtime half comes along.
+local-runtime = ["dep:dirs", "dep:socket2", "dep:hebbian-process-sampler", "dep:hebbian-bounded-process", "hmux-host/local-runtime"]
+
+# Sealing and opening the offline pairing QR. Behind a flag because it pulls a
+# KDF and an AEAD that only two callers need — the laptop that prints the QR
+# and the phone that scans it — and every other consumer of this crate would
+# otherwise carry them for nothing.
+offline-pairing = ["dep:argon2", "dep:base64", "dep:chacha20poly1305"]
+
+# Direct binary terminal-state records negotiated by product observers. The
+# legacy JSON attach remains available to old CLI peers, but one connection
+# selects exactly one presentation stream.
+terminal-state-stream = ["dep:terminal-state-protocol"]
+
+[dependencies]
+argon2 = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+chacha20poly1305 = { workspace = true, optional = true }
+dirs = { workspace = true, optional = true }
+fs2.workspace = true
+hmux-host = { path = "../hmux-host", default-features = false }
+hmux-local-platform = { path = "../hmux-local-platform" }
+hmux-session-protocol = { path = "../hmux-session-protocol" }
+hmux-runtime-contract = { path = "../hmux-runtime-contract" }
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+socket2 = { workspace = true, optional = true }
+terminal-state-protocol = { path = "../terminal-state-protocol", optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+hebbian-process-sampler = { path = "../../../crates/hebbian-process-sampler", optional = true }
+hebbian-bounded-process = { path = "../../../crates/hebbian-bounded-process", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }

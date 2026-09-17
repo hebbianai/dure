@@ -1,0 +1,46 @@
+---
+title: "Run and schedule work from the CLI"
+description: "Use the installed Dure CLI to launch tasks, inspect sessions and schedule recurring work."
+---
+
+Use the Dure CLI installed by the app. **Settings → Agent tooling** shows the tooling setup; `dure --help` describes the commands available in your installed version.
+
+## Start work from a project folder
+
+```sh
+dure run --provider codex --worktree docs-review "Review the README against the code. Do not change files."
+```
+
+The dedicated worktree keeps this task's files separate. Choose a provider installed and signed in on the execution host. Without `--project` or `--path`, the backend resolves the current working directory.
+
+Inside an identified Dure terminal pane, omitting **--space** places the new pane in the current Space. From an ordinary terminal or CI environment without that pane context, the run is headless. Use `--space` with a connected Space's exact name or ID when you want an explicit destination.
+
+## Inspect work before sending more input
+
+```sh
+dure ls
+dure run --help
+dure schedule --help
+```
+
+`dure read` reads a session's screen; `dure transcript` reads its available conversation transcript. Use the session/workspace identifiers returned by the listing when selecting a managed session. A successful launch or input-delivery receipt is not proof the task completed.
+
+## Schedule recurring tasks
+
+From the project folder:
+
+```sh
+dure schedule create --id daily-review --provider codex --cron "0 9 * * 1-5" --timezone Asia/Seoul "Review recent changes and report risks. Do not modify files."
+dure schedule show daily-review
+dure schedule runs daily-review
+```
+
+Creation enables future weekday runs at 09:00 in the named timezone. Add `--disabled` if you want to save the schedule without enabling recurring execution. Scheduled runs use isolated Git worktrees. Use `dure schedule inspect` with a returned run key to read the retained report.
+
+The execution service and machine must be available. Closing the app's view is different from stopping that service; a sleeping or powered-off machine cannot run tasks normally.
+
+## Select a remote backend
+
+Use **--backend** with a configured backend ID for SSH execution. The selected backend resolves the project path and needs its own provider setup. Check `dure run --help` for explicit permission overrides; keep them appropriate to the task.
+
+For structured messages and decisions, continue with [agent coordination](/en/orchestration).

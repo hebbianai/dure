@@ -1,0 +1,35 @@
+---
+title: "Dure란?"
+description: "Dure는 Claude Code, Codex 등 AI 코딩 에이전트를 위한 개발 환경(ADE, Agent Development Environment)입니다. Git worktree 병렬 작업, SSH 프로젝트, 코드 리뷰를 한곳에서 진행하세요."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+[Dure](https://www.dureai.dev/)는 사람과 AI 코딩 에이전트가 함께 일하는 에이전트 개발 환경(ADE, Agent Development Environment)입니다. 여러 프로젝트와 SSH 호스트에서 에이전트를 실행하고, 대화와 파일을 가까이 두고, 무엇을 유지하거나 바꿀지 결정하세요.
+
+사람은 목표와 성공 기준을 정합니다. 에이전트는 익숙한 도구로 실행합니다. Dure는 세션과 작업 맥락, 리뷰 화면을 연결합니다.
+
+Dure는 코딩 모델이나 provider 구독 상품이 아니라 작업 공간입니다. Claude Code와 Codex 같은 코딩 에이전트 CLI를 기존 계정으로 사용하며, provider 구독과 사용 요금은 Dure와 별도입니다. 에이전트별 기능은 [지원 에이전트](/ko/providers)에서 확인하세요.
+
+<Frame caption="Codex 두 개, Claude Code 두 개, Pi와 터미널로 구성한 6개 예시 페인.">
+  <ProductFigure scene="workspace" locale="ko" label="Codex 두 개, Claude Code 두 개, Pi와 터미널로 구성한 6개 예시 페인." />
+</Frame>
+
+## 다음 단계 선택하기
+
+<CardGroup cols={2}>
+  <Card title="첫 작업 시작" icon="terminal" href="/ko/quickstart">프로젝트를 열고 ⌘N을 눌러 에이전트에게 할 일을 전달합니다.</Card>
+  <Card title="병렬 작업" icon="git-branch" href="/ko/first-parallel-workflow">수정 작업마다 worktree를 나누고 합친 결과를 검토합니다.</Card>
+  <Card title="GitHub에서 시작" icon="github" href="/ko/github-workflows">이슈나 pull request를 선택해 맥락이 채워진 작업을 엽니다.</Card>
+  <Card title="작업 화면 정리" icon="layout-dashboard" href="/ko/spaces-and-panes">터미널 pane을 분할하고 균등하게 정렬하거나 Space를 전환합니다.</Card>
+  <Card title="리뷰와 피드백" icon="file-diff" href="/ko/review-and-feedback">로컬 diff를 읽고 에이전트에게 구체적인 피드백을 보냅니다.</Card>
+  <Card title="기존 작업으로 복귀" icon="history" href="/ko/session-model">실행 중인 세션에 다시 연결하거나 종료된 세션의 복구를 확인합니다.</Card>
+</CardGroup>
+
+## 작업에 맞는 흐름 만들기
+
+에이전트 옆에서 셸로 검증 명령을 실행하고 편집기로 파일을 열어 목표와 결과를 함께 확인하세요. [제공자 계정](/ko/providers), [SSH 프로젝트](/ko/remote-and-ssh), [플러그인](/ko/plugins)으로 기존 도구를 연결할 수 있습니다. [설정](/ko/settings)에서 글자, 언어, 알림을 조절합니다.
+
+반복 작업에는 [CLI 실행과 예약](/ko/cli-and-automation)을 사용하세요. 맡긴 작업에 메시지나 명시적인 결정이 필요하면 [에이전트 조율](/ko/orchestration)을 사용할 수 있습니다.
+
+[현재 Mac 베타](/ko/install)로 시작하고, 무인 실행에 의존하기 전에 [사용 범위와 한계](/ko/current-limits)를 확인하세요.

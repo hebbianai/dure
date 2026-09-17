@@ -1,0 +1,46 @@
+---
+title: "通过 CLI 执行和调度任务"
+description: "使用已安装的 Dure CLI 启动任务、查看会话并安排重复工作。"
+---
+
+使用应用安装的 Dure CLI。**Settings → Agent tooling** 显示工具设置，`dure --help` 说明当前安装版本可用的命令。
+
+## 从项目目录开始
+
+```sh
+dure run --provider codex --worktree docs-review "对照代码审查 README。不要修改文件。"
+```
+
+专用 worktree 将此任务的文件分开。选择在执行主机已安装并登录的提供商。不指定 `--project` 或 `--path` 时，后端解析当前工作目录。
+
+在能被识别为 Dure 面板的终端内，省略 **--space** 会把新面板放到当前 Space。从没有该面板上下文的普通终端或 CI 启动时，任务无界面运行。需要明确目的地时，用 `--space` 指定已连接 Space 的准确名称或 ID。
+
+## 追加输入前检查工作
+
+```sh
+dure ls
+dure run --help
+dure schedule --help
+```
+
+`dure read` 读取会话屏幕，`dure transcript` 读取可用的对话记录。用列表返回的会话和工作区标识选择受管理会话。启动成功或输入送达的回执不代表任务已完成。
+
+## 调度重复任务
+
+在项目目录执行：
+
+```sh
+dure schedule create --id daily-review --provider codex --cron "0 9 * * 1-5" --timezone Asia/Seoul "审查近期变更并报告风险。不要修改文件。"
+dure schedule show daily-review
+dure schedule runs daily-review
+```
+
+创建后会启用指定时区工作日 09:00 的后续运行。只想保存而不启用重复执行时，添加 `--disabled`。调度运行使用独立 Git worktree。用返回的运行键调用 `dure schedule inspect` 可读取保留的报告。
+
+执行服务和机器必须可用。关闭应用视图与停止该服务不同；睡眠或关机的机器无法正常执行任务。
+
+## 选择远程后端
+
+SSH 执行使用 **--backend** 指定已配置的后端 ID。选定后端解析项目路径，并需要自己的提供商配置。显式权限覆盖选项见 `dure run --help`，请按任务选择。
+
+结构化消息与决策见[智能体协调](/cn/orchestration)。

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "copy-public-key",
+  "description": "Allow copying the device public key and user-selected terminal text.",
+  "windows": ["main"],
+  "permissions": ["clipboard-manager:allow-write-text"]
+}

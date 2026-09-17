@@ -1,0 +1,128 @@
+/* The floating notice — `toast.ts` says why it is the desktop's toast Alert.
+ *
+ * Material: the design system's menu (`--glass-menu*`, the same tokens the
+ * view menu's cards wear), radius 8, 12×10 padding, 8px between glyph and
+ * copy: `Alert surface="toast"` in alert.tsx, sized for a thumb. The copy is
+ * 13/18 where the desktop's is 11/15 — a phone reads it at arm's length —
+ * and a second line, when there is one, is on the meta tier.
+ *
+ * Fixed at the bottom. `--toast-floor` is how far above the safe area it
+ * stands and `--toast-right` its right inset; the two rules at the end set
+ * them per screen. z-index 50 clears everything that can be up when a row is
+ * pressed: the FAB at 15, the sheets at 20, the confirmations at 30 and 40. */
+.toast {
+  position: fixed;
+  left: 16px;
+  right: var(--toast-right, 16px);
+  bottom: calc(var(--toast-floor, 24px) + env(safe-area-inset-bottom));
+  z-index: 50;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--glass-menu-hairline);
+  border-radius: 8px;
+  background: var(--glass-menu);
+  box-shadow: var(--glass-shadow-menu);
+  -webkit-backdrop-filter: var(--glass-menu-blur);
+  backdrop-filter: var(--glass-menu-blur);
+  color: var(--foreground);
+  font-family: var(--font-ui);
+  text-align: left;
+  /* iOS would flash its default grey across the whole card, which reads as
+     the glass breaking rather than as a press being taken. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The tone is the copy's colour and the glyph's, not a fill (shadcn). */
+.toast--destructive {
+  color: var(--destructive);
+}
+
+.toast:active {
+  filter: brightness(0.92);
+}
+
+.toast:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+/* 12px glyph on the 18px first line: 3px down centres it. */
+.toast__glyph {
+  flex: none;
+  margin-top: 3px;
+  background-color: currentColor;
+}
+
+.toast__lines {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toast__title {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.toast__detail {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+}
+
+/* The desktop's neutral IconButton: 24px, its own rounding, muted until
+   pressed. Negative margins keep a one-line card 38px tall rather than
+   letting the control set the row (alert.tsx, owner 2026-09-13). */
+.toast__close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: -3px -4px -3px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-foreground);
+}
+
+.toast__close:active {
+  background: var(--glass-chip);
+  color: var(--foreground);
+}
+
+/* Rises 8px in from below, the desktop's own entrance (160ms fade +
+   slide-in-from-bottom-2). Gated by the entrance ledger, so a render that
+   rebuilds the same notice does not replay it. */
+.toast.motion-enter {
+  animation: motion-lift var(--motion-fast) var(--ease-decelerate);
+}
+
+@keyframes motion-lift {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* Where it stands. On a session, 12px above the tray and whatever drawer is
+   in it (`transcriptLift.ts` publishes both). On Home, left of the FAB: the
+   FAB's 56 and its 24 inset, plus 16 of air. */
+html[data-screen="session"] .toast {
+  --toast-floor: calc(
+    var(--session-tray-height, 56px) + var(--session-drawer-height, 0px) + 12px
+  );
+}
+
+.view:has(.fab) .toast {
+  --toast-right: 96px;
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "id": "dure.slack",
+  "publisher": "dure",
+  "version": "0.1.0",
+  "display_name": "Slack",
+  "description": "plugins.slack.description",
+  "host_api": {
+    "min_inclusive": 1,
+    "max_inclusive": 2
+  },
+  "activation": [
+    {
+      "kind": "explicit"
+    }
+  ],
+  "contributions": [],
+  "agent_integrations": [
+    {
+      "id": "dure.slack.codex",
+      "adapter": "codex",
+      "required": false,
+      "resource": "./agents/codex",
+      "selector": {
+        "plugin": "dure-slack",
+        "marketplace": "dure-slack"
+      }
+    },
+    {
+      "id": "dure.slack.claude",
+      "adapter": "claude",
+      "required": false,
+      "resource": "./agents/claude",
+      "selector": {
+        "plugin": "dure-slack",
+        "marketplace": "dure-slack"
+      }
+    }
+  ],
+  "permissions": []
+}

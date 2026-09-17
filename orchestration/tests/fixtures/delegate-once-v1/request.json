@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "contributionId": "dure.core.delegate-once",
+  "coordinator": {
+    "agentId": "agent-1",
+    "sessionId": "session-1",
+    "bindingGeneration": 2
+  },
+  "task": {
+    "summary": "Review the bounded change",
+    "instructions": "Inspect only the requested files and report findings."
+  },
+  "providerId": "codex",
+  "runtimeKindId": "runtime.hmux",
+  "targetReference": "backend-profile:local",
+  "idempotencyKey": "delegate-once-1",
+  "createdAtMs": 1000
+}

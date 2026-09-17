@@ -1,0 +1,97 @@
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/geist-mono-latin-wght-normal.woff2") format("woff2");
+}
+
+/* Brand colors come from docs.json; reading surfaces follow the v15 website. */
+:root {
+  --dure-surface: #f7f7f8;
+  --dure-border: rgb(0 0 0 / 8%);
+  --dure-action: rgb(var(--primary-dark));
+  --dure-action-text: rgb(var(--primary-light));
+  --dure-body-font: "Inter", system-ui, sans-serif;
+  --dure-heading-font: "Geist", system-ui, sans-serif;
+}
+
+html[data-current-path^="/ko/"] {
+  --dure-body-font: "Inter", "Pretendard Variable", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --dure-heading-font: "Geist", "Pretendard Variable", "Apple SD Gothic Neo", system-ui, sans-serif;
+}
+
+.dark {
+  --dure-surface: #17171b;
+  --dure-border: rgb(255 255 255 / 8%);
+  --dure-action: rgb(var(--primary-light));
+  --dure-action-text: rgb(var(--background-dark));
+}
+
+body {
+  font-family: var(--dure-body-font);
+  -webkit-font-smoothing: antialiased;
+}
+
+#page-title,
+#content :is(h1, h2, h3, h4) {
+  font-family: var(--dure-heading-font);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+#content :is(p, li) {
+  line-height: 1.7;
+}
+
+#content :is(p, h1, h2, h3, h4) {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+#content :is(pre, code, kbd) {
+  font-family: "Geist Mono", ui-monospace, monospace;
+}
+
+#content .card {
+  background: var(--dure-surface);
+  border-color: var(--dure-border);
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+/* Keep Mintlify's semantic callout colors and opaque code surfaces. */
+#content .callout {
+  border-radius: 12px;
+}
+
+#topbar-cta-button a,
+#sidebar li[id$="/releases/tag/v0.2.1"] > a {
+  min-height: 44px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: var(--dure-action);
+  color: var(--dure-action-text);
+  font-family: var(--dure-heading-font);
+  align-items: center;
+}
+
+#sidebar li[id$="/releases/tag/v0.2.1"] {
+  margin: 6px 16px;
+}
+
+#topbar-cta-button a > span {
+  background: var(--dure-action);
+  border-radius: inherit;
+}
+
+#topbar-cta-button a :is(span, svg),
+#sidebar li[id$="/releases/tag/v0.2.1"] > a :is(span, svg) {
+  color: inherit;
+}
+
+:is(a, button, input, summary):focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 4px;
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kind": "workflow.delegate_once",
+  "title": {
+    "default": "Delegate task",
+    "translations": {
+      "ko": "작업 위임",
+      "es": "Delegar tarea",
+      "fr": "Déléguer la tâche",
+      "ja": "タスクを委任",
+      "pt": "Delegar tarefa",
+      "zh": "委派任务"
+    }
+  },
+  "description": {
+    "default": "Create one worker in the current workspace and open it as a regular agent pane.",
+    "translations": {
+      "ko": "현재 작업공간에 worker 하나를 만들고 일반 에이전트 pane으로 엽니다.",
+      "es": "Crea un worker en el espacio de trabajo actual y lo abre como un pane de agente normal.",
+      "fr": "Crée un worker dans l’espace de travail actuel et l’ouvre comme un pane d’agent normal.",
+      "ja": "現在のワークスペースに worker を1つ作成し、通常のエージェント pane として開きます。",
+      "pt": "Cria um worker no espaço de trabalho atual e o abre como um pane de agente normal.",
+      "zh": "在当前工作区创建一个 worker，并作为普通代理 pane 打开。"
+    }
+  }
+}

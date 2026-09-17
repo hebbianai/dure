@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package terminal.state.input.v1;
+
+message InputIntent {
+  reserved 1;
+  uint64 observed_state_revision = 2;
+  oneof intent {
+    TextInputIntent text = 10;
+    KeyInputIntent key = 11;
+    PasteInputIntent paste = 12;
+    PointerInputIntent pointer = 13;
+    FocusInputIntent focus = 14;
+    ResizeInputIntent resize = 15;
+  }
+}
+message TextInputIntent { bytes utf8 = 1; }
+message KeyInputIntent {
+  string key = 1;
+  string code = 2;
+  // Bit 0 shift, 1 alt, 2 control, 3 meta, 4 caps lock, 5 num lock.
+  uint32 modifiers = 3;
+  bool repeat = 4;
+}
+// Bracketed-paste encoding is selected by the Host terminal actor from its
+// canonical mode; a client supplies only text.
+message PasteInputIntent { bytes utf8 = 1; reserved 2; }
+message PointerInputIntent {
+  PointerKind kind = 1;
+  uint32 column = 2;
+  uint32 row = 3;
+  uint32 button = 4;
+  // Bit 0 shift, 1 alt, 2 control, 3 meta.
+  uint32 modifiers = 5;
+  sint32 wheel_delta_x = 6;
+  sint32 wheel_delta_y = 7;
+}
+enum PointerKind {
+  POINTER_KIND_UNSPECIFIED = 0;
+  POINTER_KIND_DOWN = 1;
+  POINTER_KIND_UP = 2;
+  POINTER_KIND_MOVE = 3;
+  POINTER_KIND_WHEEL = 4;
+}
+message FocusInputIntent { bool focused = 1; }
+message ResizeInputIntent { uint32 columns = 1; uint32 rows = 2; uint64 geometry_generation = 3; }

@@ -1,0 +1,49 @@
+---
+title: "Space、ペインとウィンドウ"
+description: "実行場所を変えずにエージェントとターミナルを整理します。"
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+**Space** は Dure 内で名前を付けたペイン配置です。上部バーで Main、Review などの段階を分け、サイドバーから必要なプロジェクトとエージェントを探せます。
+
+| 項目 | 整理する対象 |
+| --- | --- |
+| プロジェクト | ローカルまたは SSH の作業フォルダー |
+| エージェント/セッション | 実行中のツールと会話 |
+| ペイン | エージェント、シェル、ファイル、レビューの表示 |
+| Space | Dure の上部バーから選ぶペイン配置 |
+
+Dure の Space と macOS のデスクトップは別です。ペインを移動しても、エージェントのアカウント、作業ディレクトリ、会話は変わりません。
+
+## Space を作成して切り替える
+
+上部バーの **+** で Space を追加します。タブを選ぶか **⌘1–⌘9** で対応する Space に切り替えてください。作業に戻りやすい名前を付けましょう。
+
+<Frame caption="Codex 2つ、Claude Code 2つ、Pi とターミナルを並べた6つのペインの例。">
+  <ProductFigure scene="workspace" locale="jp" label="Codex 2つ、Claude Code 2つ、Pi とターミナルを並べた6つのペインの例。" />
+</Frame>
+
+## ペインの分割と均等配置
+
+ターミナル内を右クリックして **Split Right** または **Split Down** を選び、新しいペインを開きます。そこでエージェントかターミナルを選択します。サイズを均等にしたいときは、上部バーの **Balance panes in current Space** を使います。
+
+分割は配置に表示を追加する操作です。新しいタスクのファイルを分ける場合は、[専用 worktree](/jp/first-parallel-workflow)を別に選んでください。
+
+## 既存のペインを移動する
+
+タブを移動先のペインにドラッグし、**Split Right** または **Split Down** が表示されるまで待ってから、強調された領域にドロップします。Space 間でペインを移動したり、セッションを大きなウィンドウや独立したウィンドウで開いたりすることもできます。
+
+<Frame caption="ドラッグしたペインを Split Right のターゲット上で少し止めてから離します。">
+  <ProductFigure scene="arrangement" locale="jp" label="ドラッグしたペインを Split Right のターゲット上で少し止めてから離します。" />
+</Frame>
+
+## レビュー用の Space を用意する
+
+例えば Main に六つの作業ペイン、Review にシェル、Claude Code、Codex を配置できます。Review で検証してから Main に戻りましょう。
+
+<Frame caption="Review Space にシェルと2つのエージェントペインをまとめた例。">
+  <ProductFigure scene="desktops" locale="jp" label="Review Space にシェルと2つのエージェントペインをまとめた例。" />
+</Frame>
+
+文字、テーマ、通知は[設定](/jp/settings)で調整します。中断後は重複したタスクを開始する前に[セッション状態](/jp/session-model)を確認してください。

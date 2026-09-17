@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "provider": "github",
+  "authority": "provider",
+  "common_operations": [
+    "list",
+    "search",
+    "show"
+  ],
+  "provider_capabilities": [
+    "github.issue.dependencies",
+    "github.issue.labels",
+    "github.issue.milestones"
+  ]
+}

@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package terminal.state.model.v1;
+
+import "terminal/state/common/v1/common.proto";
+import "terminal/state/history/v1/history.proto";
+
+message StateSnapshot {
+  uint32 columns = 1;
+  uint32 rows = 2;
+  terminal.state.common.v1.BufferId active_buffer = 3;
+  terminal.state.common.v1.BufferState normal_buffer = 4;
+  terminal.state.common.v1.BufferState alternate_buffer = 5;
+  terminal.state.history.v1.HistoryAnchor history = 6;
+  terminal.state.common.v1.TerminalTables tables = 7;
+  bool history_truncated = 8;
+  terminal.state.common.v1.TerminalPalette palette = 9;
+  string title = 10;
+  terminal.state.common.v1.InputModes input_modes = 11;
+  terminal.state.common.v1.UnicodeWidthProfile unicode_width = 12;
+  uint64 through_event_id = 13;
+  string working_directory_uri = 14;
+  TerminalMediaSupport media_support = 15;
+}
+
+enum TerminalMediaSupport {
+  TERMINAL_MEDIA_SUPPORT_UNSPECIFIED = 0;
+  // Version 1 intentionally has no image/media payload or raw escape fallback.
+  TERMINAL_MEDIA_SUPPORT_UNSUPPORTED = 1;
+}
+
+message StateMutation {
+  uint64 base_state_revision = 1;
+  terminal.state.common.v1.TableAppend tables = 2;
+  repeated StateOperation operations = 3;
+}
+
+message StateOperation {
+  reserved 1, 6, 9;
+  oneof operation {
+    ReplaceRowOperation replace_row = 2;
+    ScrollOperation scroll = 3;
+    SetActiveBufferOperation set_active_buffer = 4;
+    SetCursorOperation set_cursor = 5;
+    AppendHistoryOperation append_history = 7;
+    TrimHistoryOperation trim_history = 8;
+    SetInputModesOperation set_input_modes = 10;
+    SetPaletteOperation set_palette = 11;
+    SetTitleOperation set_title = 12;
+    SetWorkingDirectoryOperation set_working_directory = 13;
+    ReplaceBuffersOperation replace_buffers = 14;
+    InvalidateHistoryProjectionOperation invalidate_history_projection = 15;
+  }
+}
+
+// Geometry changes are never client-side blanking or reflow. The terminal
+// engine supplies complete normal and alternate buffers atomically. If this
+// exact replacement exceeds one record, the Host emits a multipart snapshot
+// at the new revision instead.
+message ReplaceBuffersOperation {
+  uint32 columns = 1;
+  uint32 rows = 2;
+  terminal.state.common.v1.BufferState normal_buffer = 3;
+  terminal.state.common.v1.BufferState alternate_buffer = 4;
+  // Geometry replacement invalidates the old physical history projection and
+  // installs the engine-authored paging fence in the same mutation.
+  terminal.state.history.v1.HistoryAnchor history = 5;
+}
+message ReplaceRowOperation {
+  terminal.state.common.v1.BufferId buffer = 1;
+  uint32 row_index = 2;
+  terminal.state.common.v1.TerminalRow row = 3;
+}
+message ScrollOperation {
+  terminal.state.common.v1.BufferId buffer = 1;
+  uint32 top = 2;
+  uint32 bottom = 3;
+  sint32 lines = 4;
+  repeated terminal.state.common.v1.TerminalRow exposed_rows = 5;
+}
+message SetActiveBufferOperation {
+  terminal.state.common.v1.BufferId buffer = 1;
+  reserved 2;
+}
+message SetCursorOperation {
+  terminal.state.common.v1.BufferId buffer = 1;
+  terminal.state.common.v1.CursorState cursor = 2;
+}
+message AppendHistoryOperation {
+  repeated terminal.state.common.v1.TerminalRow rows = 1;
+  bytes after_cursor = 2;
+  bool has_more_after = 3;
+}
+message TrimHistoryOperation {
+  uint32 rows_from_start = 1;
+  bytes before_cursor = 2;
+  bool has_more_before = 3;
+}
+// Ambiguous history invalidation clears only the client projection. Canonical
+// history remains solely engine-owned and is fetched again as bounded pages.
+message InvalidateHistoryProjectionOperation {
+  terminal.state.history.v1.HistoryAnchor history = 1;
+}
+message SetInputModesOperation { terminal.state.common.v1.InputModes input_modes = 1; }
+message SetPaletteOperation { terminal.state.common.v1.TerminalPalette palette = 1; }
+message SetTitleOperation { string title = 1; }
+message SetWorkingDirectoryOperation { string uri = 1; }

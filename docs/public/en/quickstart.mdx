@@ -1,0 +1,47 @@
+---
+title: "Start your first task"
+description: "Use Command-N to give an agent a task, then inspect its work and add another pane."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+Start in a project you know. You will give one agent a clear task, read its result and choose what to do next. [Install Dure](/en/install) and sign in to your coding-agent CLI first.
+
+## 1. Open a project
+
+Add the local project folder in Dure. A Git repository lets you use worktrees and review changes. Choose the project before starting the task so the agent works in the intended folder.
+
+If you have existing conversations, the setup/import preview lets you select them and adjust the proposed Spaces and pane layout before confirming. You can skip import and start a new task.
+
+<Frame caption="Select existing conversations and review the proposed pane layout before importing.">
+  <ProductFigure scene="onboarding" locale="en" label="Select existing conversations and review the proposed pane layout before importing." />
+</Frame>
+
+## 2. Describe the task with ⌘N
+
+Press **⌘N** to open **New agent**. Choose the project and provider, then enter a request such as:
+
+```text
+Find how this project runs its tests and run the relevant command.
+Do not change files. Report the result and any checks you could not run.
+```
+
+For a task that will edit independently, enable **Isolate in a dedicated worktree**. Check the account and any advanced model or permission choices before starting. A separate worktree separates files; it does not restrict the agent's permissions.
+
+<Frame caption="Choose a project and provider, enter a task, then start an agent with a dedicated worktree.">
+  <ProductFigure scene="new-agent" locale="en" label="Choose a project and provider, enter a task, then start an agent with a dedicated worktree." />
+</Frame>
+
+## 3. Start and check the result
+
+Press **Enter** or click **Start agent**. Dure opens a terminal pane using the provider's native CLI. Complete any provider sign-in or approval prompt, then read the reported result and inspect the referenced files.
+
+For an editing task, open [Diff review](/en/review-and-feedback) and check the actual changes and test results. Give a correction or the next task in the same conversation.
+
+## 4. Add another agent when you need it
+
+Right-click inside the terminal of the pane you just created. Choose **Split Down** or **Split Right**, then select the next agent in the new pane.
+
+Use [independent worktrees](/en/first-parallel-workflow) for parallel editing. You can also start from an issue or pull request using **Start** in the [GitHub sidebar](/en/github-workflows).
+
+Continue with [Spaces and panes](/en/spaces-and-panes) to arrange the work, or [sessions and recovery](/en/session-model) when returning to an existing conversation.

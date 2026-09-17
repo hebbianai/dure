@@ -1,0 +1,185 @@
+export const automationsEnglishTranslations: Record<string, string> = {
+	"automations.model": "Model",
+	"automations.effort": "Reasoning effort",
+	"automations.providerDefault": "Provider default",
+	"automations.title": "Automations",
+	"automations.new": "New automation",
+	"automations.intro": "Turn recurring work into a repeatable flow.",
+	"automations.runtime": "Runtime: {name}",
+	"automations.empty": "No automations yet",
+	"automations.active": "Scheduled",
+	"automations.paused": "Paused",
+	"automations.limited": "Showing up to 128 items.",
+	"automations.flow": "Flow",
+	"automations.trigger": "Trigger",
+	"automations.agent": "Agent",
+	"automations.result": "Result",
+	"automations.retainedReport": "Saved report",
+	"automations.flowScope":
+		"One scheduled agent, with a saved report for each run. Select a step to configure it.",
+	"automations.expression": "Schedule",
+	"automations.cronHelp":
+		"Five-field cron: minute, hour, day, month, weekday. Example: 0 9 * * 1-5.",
+	"automations.timezone": "Time zone",
+	"automations.activation": "Scheduled runs",
+	"automations.runtimeHelp":
+		"The selected runtime must be running when a schedule is due. Pausing stops future triggers; it does not stop a run already started.",
+	"automations.project": "Project",
+	"automations.noProjects":
+		"Register a project in this runtime to create an automation.",
+	"automations.chooseProject": "Choose a project",
+	"automations.provider": "Agent provider",
+	"automations.prompt": "Instructions",
+	"automations.permissions": "Permissions",
+	"automations.defaultPermissions": "Provider defaults",
+	"automations.requireApprovals": "Require approvals",
+	"automations.skipPermissions": "Skip permission prompts",
+	"automations.worktreeHelp":
+		"Each run uses a separate Git worktree. The agent uses its configured credentials.",
+	"automations.resultHelp":
+		"Reports are saved with their original run. Open Runs to read them. A started agent is still awaiting a report; receiving a report does not certify that the work succeeded.",
+	"automations.runs": "Runs",
+	"automations.recentRuns": "Recent runs",
+	"automations.noRuns": "No runs yet",
+	"automations.manual": "Manual",
+	"automations.scheduled": "Scheduled",
+	"automations.runRevision": "Configuration revision {revision}",
+	"automations.noReport": "No report has been received for this run yet.",
+	"automations.workspace": "Workspace",
+	"automations.saveFirst": "Save the configuration before running.",
+	"automations.name": "Name",
+	"automations.pause": "Pause schedule",
+	"automations.testRun": "Run",
+	"automations.reportReceived": "Report received",
+	"automations.awaitingDecision": "Awaiting decision",
+	"automations.startFailed": "Failed to start",
+	"automations.queued": "Queued",
+	"automations.awaitingReport": "Started · awaiting report",
+	"automations.invalidResponse":
+		"The runtime returned an invalid automation response.",
+	"automations.requestFailed": "Could not reach the automation runtime.",
+	"automations.conflict":
+		"This automation changed elsewhere. Close the editor and refresh the list to load the latest version.",
+	"automations.retryHelp":
+		"The outcome is unconfirmed. Retry sends the same request without creating a duplicate.",
+	"automations.closeUncertain":
+		"Close with an unconfirmed request? It may still complete.",
+	"automations.discardQuestion": "Discard unsaved changes?",
+	"automations.graph.projectLookupFailed":
+		"Project discovery is unavailable. Enter a directory for Command steps.",
+	"automations.graph.editor": "Editor",
+	"automations.graph.draft": "Draft",
+	"automations.graph.pause": "Pause automation",
+	"automations.graph.active": "Active",
+	"automations.graph.saveDraft": "Save draft",
+	"automations.graph.activate": "Activate version",
+	"automations.graph.draftVersion": "Draft · active version {version}",
+	"automations.graph.version": "Version {version}",
+	"automations.graph.stepCount": "Steps: {count}",
+	"automations.graph.manual": "Manual",
+	"automations.graph.schedule": "Schedule",
+	"automations.graph.canvas": "Workflow canvas",
+	"automations.graph.addStep": "Add step",
+	"automations.graph.addStepHelp":
+		"Select a step, then add another to connect them. Map outputs in Step settings.",
+	"automations.graph.emptyCanvas":
+		"Add a Command or Agent, or start with Daily review.",
+	"automations.graph.selectStep": "Select a step to see its settings.",
+	"automations.graph.selectToConfigure": "Select to configure",
+	"automations.graph.needsSetup": "Needs setup",
+	"automations.graph.stepSettings": "Step settings",
+	"automations.graph.stepName": "Step name",
+	"automations.graph.advanced": "Advanced settings",
+	"automations.graph.runAfter": "Run after",
+	"automations.graph.addConnection": "Add a dependency",
+	"automations.graph.mappedConnection":
+		"This connection supplies a mapped input. Change its input source to remove it.",
+	"automations.graph.removeConnection": "Remove connection",
+	"automations.graph.deleteStep": "Remove step",
+	"automations.graph.deleteConfirm": "Remove this step?",
+	"automations.graph.closeEditor": "Close editor",
+	"automations.graph.inputSource": "Source for {field}",
+	"automations.graph.literal": "Enter a value",
+	"automations.graph.missingSource": "Missing output reference",
+	"automations.graph.schemaOnly":
+		"Output field only. Real values appear after a run.",
+	"automations.graph.directoryHelp":
+		"Choose a project, or enter an absolute directory on this runtime.",
+	"automations.graph.scriptHelp":
+		"Runs with /bin/sh. Mapped data is passed through standard input.",
+	"automations.graph.chooseProvider": "Choose a provider",
+	"automations.graph.zoomIn": "Zoom in",
+	"automations.graph.zoomOut": "Zoom out",
+	"automations.graph.fitView": "Fit workflow",
+	"automations.graph.keyboardHelp":
+		"Enter selects a step. Arrow keys move it. Use Step settings to change connections.",
+	"automations.graph.connectionHelp":
+		"Connections show execution dependencies. Edit them in Step settings.",
+	"automations.graph.nodeMoved": "Step moved to {x}, {y}.",
+	"automations.graph.connectionPoint": "Connection point",
+	"automations.graph.stepResult": "Step result",
+	"automations.graph.inputs": "Inputs",
+	"automations.graph.outputs": "Outputs",
+	"automations.graph.noRuns": "No runs yet",
+	"automations.graph.notStarted": "This step has not started.",
+	"automations.graph.waitingOutput": "Waiting for this step’s output.",
+	"automations.graph.fromStep": "From {name} · {field}",
+	"automations.graph.failedHelp":
+		"Step failed: {code}. Later steps did not run.",
+	"automations.graph.uncertainHelp":
+		"Outcome unknown: {code}. Check for effects before starting another run.",
+	"automations.graph.activeHelp":
+		"Manual runs use the saved draft. Scheduled runs use the active version.",
+	"automations.graph.draftHelp":
+		"Save a draft to run it once. Activate a version to enable its schedule.",
+	"automations.graph.dailyReview": "Daily review",
+	"automations.graph.collectChanges": "Collect recent changes",
+	"automations.graph.reviewChanges": "Review changes",
+	"automations.graph.reviewPrompt":
+		"Review the supplied changes from the last 24 hours. Inspect relevant code and report concrete risks, evidence, and suggested checks. Do not merge or deploy changes.",
+	"automations.graph.actions.agent": "Agent",
+	"automations.graph.actions.command": "Command",
+	"automations.graph.states.pending": "Not started",
+	"automations.graph.states.started": "Running",
+	"automations.graph.states.running": "Running",
+	"automations.graph.states.completed": "Completed",
+	"automations.graph.states.failed": "Failed",
+	"automations.graph.states.uncertain": "Outcome unknown",
+	"automations.graph.fields.script": "Shell command",
+	"automations.graph.fields.directory": "Working directory",
+	"automations.graph.fields.projectId": "Project",
+	"automations.graph.fields.providerId": "Agent provider",
+	"automations.graph.fields.prompt": "Instructions",
+	"automations.graph.fields.input": "Input context",
+	"automations.graph.fields.stdin": "Standard input",
+	"automations.graph.fields.stdout": "Standard output",
+	"automations.graph.fields.stderr": "Error output",
+	"automations.graph.fields.exitCode": "Exit code",
+	"automations.graph.fields.resultMarkdown": "Agent report",
+	"automations.graph.fields.timeoutSeconds": "Timeout in seconds",
+	"automations.graph.fields.executionProfile": "Execution profile (JSON)",
+	"automations.graph.fields.permissionMode": "Permissions",
+	"automations.graph.issues.missingInput": "Choose or enter this input.",
+	"automations.graph.issues.missingOutput":
+		"The source output is missing or optional. Choose another field.",
+	"automations.graph.issues.typeMismatch":
+		"This output has an incompatible type.",
+	"automations.graph.issues.literalRequired":
+		"Enter a fixed value for this setting.",
+	"automations.graph.issues.cycle":
+		"These connections form a cycle. Remove a dependency to continue.",
+	"automations.graph.issues.unsupportedAction":
+		"This action version is unavailable on this runtime.",
+	"automations.graph.issues.locationRequired":
+		"Choose one project or one existing absolute directory.",
+	"automations.graph.issues.timeoutInvalid":
+		"Use 1–300 seconds for Command, or 1–86400 for Agent.",
+	"automations.graph.issues.projectUnavailable":
+		"This project is not registered on the selected runtime.",
+	"automations.graph.issues.requiredValue":
+		"Enter nonempty text within the action’s limit.",
+	"automations.graph.issues.empty": "Add a step to start building.",
+	"automations.graph.issues.revisionConflict":
+		"The workflow changed elsewhere. Reopen it to load the latest version.",
+	"automations.graph.issues.invalid": "Check this setting ({code}).",
+};

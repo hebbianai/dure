@@ -1,0 +1,34 @@
+---
+title: "Install and update Dure"
+description: "Download the current Mac beta, prepare your agent, and keep Dure up to date."
+---
+
+Dure's public beta is available for **macOS on Apple silicon**. Bring an installed coding-agent CLI and its provider account; Dure does not include a model subscription.
+
+## Install the Mac app
+
+1. [Download the latest Dure for macOS](https://www.dureai.dev/download/mac/).
+2. Open the DMG and drag **Dure** into **Applications**.
+3. Open **Dure** from **Applications**.
+
+This link stays up to date with the latest public Mac beta. See the [release notes](https://github.com/hebbianai/hebbian-releases/releases) for your downloaded version's supported features, signing and notarization details, and known limitations.
+
+## Prepare one coding agent
+
+Install and sign in to the agent you want to use. Check that its command starts in your regular terminal, for example `claude`, `codex` or `pi`. In Dure, **Settings → Provider** shows detected tools and available setup actions.
+
+Provider subscriptions, model access and usage charges remain separate from Dure. For account profiles and terminal/chat support, see [coding agents](/en/providers).
+
+## Update an existing installation
+
+Open **Settings → General** to see the installed version and choose **Check for updates**. When a newer beta is available, review the notice and choose its download and installation actions. Checking alone does not install an update or restart the app.
+
+Older betas without this update flow need one manual replacement: download the current DMG, quit the old app and replace Dure in Applications. Then reopen it. Review unfinished work and [session state](/en/session-model) before an update; recovery is different from continuing the same running process.
+
+<Accordion title="macOS reports a security or damaged-app warning">
+  Confirm that the file came from the official download link above. If the warning reports a damaged app, download a fresh copy and compare the release information. Follow [Apple's guidance](https://support.apple.com/en-us/102445) for the specific warning. Do not disable macOS security protections or force open a file reported as malware.
+</Accordion>
+
+## Start working
+
+[Open a project and start your first agent](/en/quickstart). If a tool is missing or sign-in fails, use [troubleshooting](/en/troubleshooting).

@@ -1,0 +1,44 @@
+---
+title: "Customize Dure"
+description: "Find font, language, account, notification and update settings in the Basic interface."
+---
+
+import { ProductFigure } from "/snippets/app-capture.jsx";
+
+Open the gear in the sidebar for **Settings**. The public beta uses the Basic interface; its everyday setup controls remain available without Pro.
+
+## Find the setting you need
+
+| Setting | Location |
+| --- | --- |
+| Installed app version and update check | General |
+| Default provider and provider permission defaults | General |
+| Display language and editor auto-save | General |
+| Provider account profiles | AI provider accounts |
+| CLI detection and provider setup | Provider |
+| Dure CLI and integration setup | Agent tooling |
+| Theme, color schemes, terminal font and line height | Appearance |
+| Claude/Codex top-bar usage indicators | Appearance |
+| Agent alerts and sound | Notifications |
+| Activity and token usage from local provider logs | Stats and usage |
+| Diagnostic and data-collection information | Privacy and telemetry |
+
+## Make terminal text comfortable
+
+Use **A−** and **A+** in the top bar for terminal font size. Under **Appearance → Terminal font**, choose the font, adjust its size and set **Line height**. The preview helps you judge the spacing before returning to work.
+
+<Frame caption="Appearance settings with line height set to 1.35 and the terminal font preview.">
+  <ProductFigure scene="settings" locale="en" label="Appearance settings with line height set to 1.35 and the terminal font preview." />
+</Frame>
+
+These controls are available in Basic. Choose light, dark or system appearance and the corresponding workspace color scheme in the same page.
+
+## Language and notifications
+
+Choose the app language in **General**: English, Korean, Chinese, Japanese, Spanish, French or Portuguese. In **Notifications**, select the events and sounds that should get your attention, including how focused work is handled.
+
+## Updates and provider choices
+
+Use **General → Check for updates** to check the Mac app. Review and choose the offered download/installation actions; a check alone does not install or restart anything. Follow [Install and update Dure](/en/install) for older betas that require manual replacement.
+
+Provider CLI updates and sign-in are separate from app updates. Use [coding agents and accounts](/en/providers) to select the provider/account, and choose permissions for the task rather than treating a workspace layout as a permission boundary.

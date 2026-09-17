@@ -1,0 +1,25 @@
+[package]
+name = "terminal-state-protocol-codegen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+fixtures = ["dep:terminal-state-protocol"]
+
+[dependencies]
+prost-build = "=0.14.4"
+protoc-bin-vendored = "=3.2.0"
+terminal-state-protocol = { path = "../../crates/terminal-state-protocol", optional = true }
+
+[[bin]]
+name = "generate-terminal-state-protocol"
+path = "src/bin/generate_terminal_state_protocol.rs"
+
+[[bin]]
+name = "generate-terminal-state-fixtures"
+path = "src/bin/generate_terminal_state_fixtures.rs"
+required-features = ["fixtures"]
