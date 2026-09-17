@@ -1,13 +1,14 @@
 import { expect, it, vi } from "vitest";
 import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredentialTransition";
-import type {
-	AgentInteractionBindingV1,
-	AgentTimelineRowV1,
-} from "./agentConversationContract";
-import { latestTurnFailure } from "./turnFailureReason";
-import { resumeUsageLimitTurn } from "./resumeUsageLimitTurn";
 import { createDureAgentConversationClient } from "@/lib/ipc/dureAgentConversation";
 import { testDureBackendRouteAuthority } from "@/test/dureBackendRouteFixtures";
+import type {
+	AgentInteractionBindingV1,
+	AgentTimelinePageV1,
+	AgentTimelineRowV1,
+} from "./agentConversationContract";
+import { resumeUsageLimitTurn } from "./resumeUsageLimitTurn";
+import { latestTurnFailure } from "./turnFailureReason";
 
 function fixture() {
 	const route = testDureBackendRouteAuthority(
@@ -61,13 +62,18 @@ function fixture() {
 		},
 	];
 	const failure = { ...latestTurnFailure(rows)!, itemId: "original-failure" };
-	const page = {
+	const page: AgentTimelinePageV1 = {
 		binding,
 		rows,
 		liveText: [],
 		pendingRequests: [],
 		activeTurn: null,
 		goal: null,
+		queuedInputs: {
+			interactionSessionId: binding.interactionSessionId,
+			inputs: [],
+			nextAfter: null,
+		},
 		finalCursor: { epoch: "timeline-next", sequence: 2 },
 		hasMore: false,
 	};
