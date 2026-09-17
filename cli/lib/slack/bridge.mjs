@@ -137,41 +137,52 @@ export class SlackBridge {
     }
   }
 
-  async tick(onError = () => {}) {
-    // Preserve input order within a thread without letting one unavailable
-    // provider prevent every other teammate's task from progressing.
-    const blocked = new Set();
+  polls() {
+    const inbox = new Map();
     for (const entry of Object.values(this.journal.data.inbox)) {
-      if (entry.state !== "queued" || blocked.has(entry.message.threadKey)) continue;
+      const key = entry.message.threadKey;
+      if (!inbox.has(key)) inbox.set(key, []);
+      inbox.get(key).push(entry);
+    }
+    return Object.entries(this.journal.data.threads).map(([key, thread]) =>
+      [`thread:${key}`, (onError) => this.advance(thread, inbox.get(key) ?? [], onError)]);
+  }
+
+  async tick(onError = () => {}) {
+    await Promise.all(this.polls().map(([, poll]) => poll(onError)));
+  }
+
+  async advance(thread, entries, onError) {
+    // Only this thread waits for its previous input. Other threads have their
+    // own poll, while the connector bounds and owns all in-flight work.
+    for (const entry of entries) {
+      if (entry.state !== "queued") continue;
       try { await this.receive(entry); }
       catch (error) {
         entry.state = "failed";
         entry.errorCode = error.code ?? "slack_delivery_failed";
-        blocked.add(entry.message.threadKey);
         this.journal.save();
         onError(error, entry.message.key);
+        break;
       }
     }
     // Failed input is already a durable result. Project it with the same
     // outbound journal so reconnect cannot retry the request or its notice.
-    for (const { state, message } of Object.values(this.journal.data.inbox)) {
+    for (const { state, message } of entries) {
       if (state !== "failed" || message.pendingKey) continue;
-      const thread = this.journal.data.threads[message.threadKey];
       try {
         await this.send(thread, slackKey(message.key, "delivery_failed"),
           "Dure could not confirm this request was applied. It has not been retried automatically.");
       } catch (error) { onError(error, message.key); }
     }
-    for (const thread of Object.values(this.journal.data.threads)) {
-      if (!thread.agentId) continue;
-      try {
-        const page = await this.conversation(thread);
-        await this.pending.sync(thread, page);
-        for (const row of page.rows) await this.publish(thread, row.item);
-        await this.publishGoal(thread, page.goal);
-        thread.cursor = page.finalCursor;
-        this.journal.save();
-      } catch (error) { onError(error); }
-    }
+    if (!thread.agentId) return;
+    try {
+      const page = await this.conversation(thread);
+      await this.pending.sync(thread, page);
+      for (const row of page.rows) await this.publish(thread, row.item);
+      await this.publishGoal(thread, page.goal);
+      thread.cursor = page.finalCursor;
+      this.journal.save();
+    } catch (error) { onError(error); }
   }
 }
