@@ -1,6 +1,9 @@
 import { parseAgentExecutionProfileV1 } from "@/lib/agents/chat/agentConversationContract";
 import { PROVIDER_IDS } from "@/lib/agents/providers";
-import { presentStructuredRun } from "@/lib/agents/structuredRunPresentation";
+import {
+	presentStructuredRun,
+	presentStructuredRunInBackground,
+} from "@/lib/agents/structuredRunPresentation";
 import {
 	type BackendPresentationTarget,
 	parseBackendPresentationTarget,
@@ -19,6 +22,7 @@ import type { Provider } from "@/types";
 
 const CLI_REQUEST_KEYS = new Set([
 	"schemaVersion",
+	"presentation",
 	"interactionProfile",
 	"backendProfileId",
 	"source",
@@ -50,10 +54,11 @@ interface CliStructuredRunPresentationRequest {
 	target: {
 		executionTarget: BackendPresentationTarget;
 		projectPath?: string;
-		spaceId: string;
 		windowLabel: string;
-		referencePanelId?: string;
-	};
+	} & (
+		| { presentation: "background" }
+		| { presentation?: undefined; spaceId: string; referencePanelId?: string }
+	);
 }
 
 function fail(code: string, message: string): never {
@@ -94,6 +99,7 @@ function parseCliStructuredRunPresentationRequest(
 		!isRecord(value) ||
 		!hasOnlyAllowedKeys(value, CLI_REQUEST_KEYS) ||
 		value.schemaVersion !== 1 ||
+		(value.presentation !== undefined && value.presentation !== "background") ||
 		value.interactionProfile !== "structured_protocol" ||
 		(value.permissionMode !== "default" &&
 			value.permissionMode !== "auto_edit" &&
@@ -169,12 +175,19 @@ function parseCliStructuredRunPresentationRequest(
 		target: {
 			executionTarget,
 			...(selectedProjectPath ? { projectPath: selectedProjectPath } : {}),
-			spaceId: token(value.spaceId, "spaceId"),
 			windowLabel,
-			...(value.referencePanelId === undefined
-				? {}
+			...(value.presentation === "background"
+				? { presentation: "background" as const }
 				: {
-						referencePanelId: token(value.referencePanelId, "referencePanelId"),
+						spaceId: token(value.spaceId, "spaceId"),
+						...(value.referencePanelId === undefined
+							? {}
+							: {
+									referencePanelId: token(
+										value.referencePanelId,
+										"referencePanelId",
+									),
+								}),
 					}),
 		},
 	};
@@ -184,13 +197,18 @@ interface CliStructuredRunPresentationDependencies {
 	claim(reqId: string): Promise<boolean>;
 	present(
 		run: CliStructuredRunPresentationRequest["run"],
-		target: CliStructuredRunPresentationRequest["target"],
+		target: Extract<
+			CliStructuredRunPresentationRequest["target"],
+			{ spaceId: string }
+		>,
 	): Promise<unknown>;
+	presentBackground: typeof presentStructuredRunInBackground;
 }
 
 const defaultDependencies: CliStructuredRunPresentationDependencies = {
 	claim: claimCliRequest,
 	present: presentStructuredRun,
+	presentBackground: presentStructuredRunInBackground,
 };
 
 function errorPayload(error: unknown) {
@@ -206,7 +224,7 @@ function errorPayload(error: unknown) {
 	};
 }
 
-/** Projects one already-created structured Run into the selected client pane.
+/** Projects one already-created structured Run into the client, with an optional pane.
  * Runtime and timeline ownership stay in the backend; this handler only owns
  * the IDE presentation transaction. */
 export async function handleCliStructuredRunPresentation(
@@ -223,6 +241,19 @@ export async function handleCliStructuredRunPresentation(
 	try {
 		const request = parseCliStructuredRunPresentationRequest(params);
 		if (!(await claim())) return null;
+		if (request.target.presentation === "background") {
+			const agent = await dependencies.presentBackground(
+				request.run,
+				request.target,
+			);
+			return {
+				ok: true,
+				agent: {
+					agentId: agent.id,
+					interactionSessionId: request.run.interactionSessionId,
+				},
+			};
+		}
 		return await dependencies.present(request.run, request.target);
 	} catch (error) {
 		if (!(await claim())) return null;

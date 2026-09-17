@@ -1,5 +1,7 @@
 pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
     match operation {
+        "agent_runtime.native.read" => Some("agent_runtime.native.read"),
+        "agent_runtime.native.input" => Some("agent_runtime.native.input"),
         "backend.scope" => Some("backend.scope.v1"),
         "workspace_environment.invoke" => Some("workspace_environment.v1"),
         "agent_goal.get" | "agent_goal.put" => Some("agent_goal.v1"),

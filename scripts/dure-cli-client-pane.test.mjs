@@ -13,6 +13,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { requestAppControl } from "../cli/lib/app-control-client.mjs";
 import { parseClientPresentationCommand } from "../cli/lib/client-presentation-command.mjs";
 import { handleMcpRequest } from "../cli/lib/orchestration-mcp-server.mjs";
+import { dispatchCliPaneActionRequest } from "../src/lib/cli/cliPaneActions";
+import { chatPaneActionEntry } from "../src/lib/workspace/pane/chatPaneActions";
+import { registerPaneActions } from "../src/lib/workspace/pane/paneActionRegistry";
 
 const cliPath = fileURLToPath(new URL("../cli/dure.mjs", import.meta.url));
 const temporaryRoots = [];
@@ -71,14 +74,14 @@ async function fixtureClient(handler, capabilities = ["pane_actions.arguments_re
     incoming.on("data", (chunk) => {
       body += chunk;
     });
-    incoming.on("end", () => {
+    incoming.on("end", async () => {
       requests.push({
         method: incoming.method,
         url: incoming.url,
         authorization: incoming.headers.authorization,
         body: body ? JSON.parse(body) : null,
       });
-      const result = handler?.(requests.at(-1)) ?? {
+      const result = (await handler?.(requests.at(-1))) ?? {
         status: 200,
         body: { ok: true },
       };
@@ -125,6 +128,48 @@ function terminalSpaces(fixture, names = ["First", "Selected"]) {
     truncation: { spaces: false, panes: false, omittedSpaceCount: 0, omittedPaneCount: 0 },
   } }));
 }
+
+describe("Dure Chat failed-message action", () => {
+  it.each(["sent", "refused", "unavailable"])("runs the real CLI through the shared action handler (%s)", async (outcome) => {
+    let calls = 0;
+    const paneId = "pane-retained-message";
+    const remove = registerPaneActions({
+      ...chatPaneActionEntry(
+        { paneId, agentId: "agent-resend", interactionSessionId: "chat-resend" },
+        { phase: "ready", reconnecting: false, activeTurn: undefined, interrupting: false, locked: false, error: undefined },
+        { interrupt: async () => {}, ...(outcome === "unavailable" ? {} : { resendLastMessage: {
+          failureId: "failure-retained",
+          run: async () => {
+            calls++;
+            if (outcome === "refused") throw new Error("agent_chat_turn_already_pending");
+          },
+        } }) },
+      ), owner: {},
+    });
+    try {
+      const fixture = await fixtureClient(async ({ body }) => {
+        let response;
+        await dispatchCliPaneActionRequest({ reqId: "resend-process", action: "pane.act", params: body }, {
+          claim: async () => true, complete: async (_id, result) => { response = result; },
+          isFallbackWindow: () => false, delay: async () => {},
+        });
+        return { status: 200, body: response };
+      });
+      const result = await runCli(["client", "pane", "act", paneId, "resend_last_message", "--idempotency-key", "resend-exact-1", "--json"], fixture.environment);
+      expect(fixture.requests).toEqual([expect.objectContaining({ url: "/pane/act", body: {
+        targetPanelId: paneId, actionId: "resend_last_message", idempotencyKey: "resend-exact-1",
+      } })]);
+      expect(calls).toBe(outcome === "unavailable" ? 0 : 1);
+      if (outcome === "sent") {
+        expect(result.code, result.stderr).toBe(0);
+        expect(JSON.parse(result.stdout).pane).toMatchObject({ paneId, invoked: "resend_last_message" });
+      } else {
+        expect(result.code).toBe(2);
+        expect(JSON.parse(result.stderr).error.code).toBe(outcome === "refused" ? "pane_action_failed" : "pane_action_unavailable");
+      }
+    } finally { remove(); }
+  });
+});
 
 describe("Dure unopened-agent visibility CLI", () => {
   it("rejects a mismatched or non-durable receipt and never retries a refused change", async () => {

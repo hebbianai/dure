@@ -5,6 +5,7 @@
 //! Reviewed state is projected from the canonical provider home while auth
 //! remains private to each profile. See the credential-only switching design.
 
+pub mod transcript;
 mod claude_shared_state;
 #[cfg(test)]
 mod codex_config_tests;

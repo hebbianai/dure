@@ -27,9 +27,19 @@ if (process.argv[2] === "slack" && process.argv[3] === "serve") {
   globalThis.WebSocket = class extends EventTarget {
     constructor() {
       super();
+      const inbox = path.join(home, "slack-share-inbound.json");
+      this.inbox = inbox;
+      let delivered;
+      fs.watchFile(inbox, { interval: 100 }, () => {
+        if (!fs.existsSync(inbox)) return;
+        const data = fs.readFileSync(inbox, "utf8");
+        if (data === delivered) return;
+        delivered = data;
+        this.dispatchEvent(new MessageEvent("message", { data }));
+      });
       queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: '{"type":"hello"}' })));
     }
-    send() { throw new Error("Native sharing fixture does not inject inbound Slack events"); }
-    close() { this.dispatchEvent(new Event("close")); }
+    send(value) { assert.ok(JSON.parse(value).envelope_id); }
+    close() { fs.unwatchFile(this.inbox); this.dispatchEvent(new Event("close")); }
   };
 }

@@ -23,6 +23,25 @@ afterEach(() => {
 	acquire.mockReset();
 });
 
+it("does not resend a newer failed message when the failure changes during CLI claim", async () => {
+	const run = vi.fn(async () => {});
+	const paneId = "pane-resend-claim";
+	const hook = renderHook(({ failureId }) => useChatPaneActions(
+		{ paneId, agentId: "agent-resend", interactionSessionId: "interaction-resend", conversationId: "same-conversation" },
+		{ phase: "ready", reconnecting: false, activeTurn: undefined, interrupting: false,
+			locked: false, error: undefined, interrupt: vi.fn(), resendLastMessage: { failureId, run } },
+		"same-runtime",
+	), { initialProps: { failureId: "failure-first" } });
+	const complete = vi.fn<CliPaneActionDependencies["complete"]>(async () => {});
+	await dispatchCliPaneActionRequest(
+		{ reqId: "resend-claim", action: "pane.act", params: { targetPanelId: paneId, actionId: "resend_last_message" } },
+		{ claim: async () => { hook.rerender({ failureId: "failure-newer" }); return true; },
+			complete, isFallbackWindow: () => false, delay: async () => {} },
+	);
+	expect(run).not.toHaveBeenCalled();
+	expect(complete.mock.calls[0][1]).toMatchObject({ ok: false, error: { code: "pane_changed" } });
+});
+
 it("does not interrupt the next controller turn during a claimed projection update", async () => {
 	const backend = { id: "backend-turn-claim", generation: "one" };
 	const routeAuthority = testDureBackendRouteAuthority(
@@ -123,7 +142,7 @@ it("does not interrupt the next controller turn during a claimed projection upda
 				close: async () => {},
 			};
 		},
-		startTurn: async () => {},
+		startTurn: async () => "accepted",
 		steerTurn: async () => {},
 		answerPending: async () => {},
 		interruptTurn: interrupt,

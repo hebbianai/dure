@@ -870,6 +870,20 @@ describe("ChatComposer handoff outcome", () => {
 			),
 		).toBeNull();
 	});
+
+	it("settles a rejected resend without submitting another request", async () => {
+		const value = session("codex");
+		value.page = { ...value.page!, rows: handedOffRows() };
+		const resend = vi.fn().mockRejectedValue(new Error("agent_chat_turn_already_pending"));
+		render(<ChatComposer session={value} disabled={false} recovery={{
+			manageAccounts: vi.fn(), handedOff: { toName: "work", resend },
+		}} />);
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: t("agents.chat.recovery.resend") }));
+		});
+		expect(resend).toHaveBeenCalledOnce();
+		expect(value.send).not.toHaveBeenCalled();
+	});
 });
 
 beforeEach(() => useStore.setState({ chatDrafts: {} }));

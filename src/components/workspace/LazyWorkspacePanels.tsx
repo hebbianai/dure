@@ -157,3 +157,16 @@ export function LazyMobileSimulatorPanelLoader(props: IDockviewPanelProps) {
 		</PanelLoader>
 	);
 }
+
+const SharedConversationPanel = lazy(() =>
+	import("@/components/agents/chat/SharedConversationPanel").then((module) => ({
+		default: module.SharedConversationPanel,
+	})),
+);
+export function LazySharedConversationPanelLoader(props: IDockviewPanelProps) {
+	return (
+		<PanelLoader>
+			<SharedConversationPanel {...props} />
+		</PanelLoader>
+	);
+}

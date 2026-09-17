@@ -1,4 +1,5 @@
 import {
+	AtSign,
 	Download,
 	Folder,
 	GitBranch,
@@ -69,6 +70,7 @@ import { useStore } from "@/store";
 // would freeze the boot language.
 const RAIL_TABS = [
 	{ id: "spaces", icon: LayoutGrid, label: () => t("common.space") },
+	{ id: "tag", icon: AtSign, label: () => t("tag.title") },
 	// id는 영속 키라 "recovery" 유지 — 라벨만 "세션" 패널로 승격(2026-08-01)
 	{ id: "recovery", icon: History, label: () => t("common.session") },
 	{ id: "files", icon: Folder, label: () => t("common.file") },

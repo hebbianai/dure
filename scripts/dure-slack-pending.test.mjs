@@ -37,6 +37,7 @@ async function fixture(t, request = pending) {
       assert.equal(profile.expected.backendId, "backend-1");
       assert.equal(operation.scopeId, "scope-team");
       assert.ok(operation.requiredCapabilities.includes("plugin.slack"));
+      if (operation.operation === "agent_runtime.projection.inspect") return { result: { state: "stable", receipt: { agentId: operation.body.agentId, authority: { interactionProfile: "structured_protocol" } } } };
       calls.backend.push(operation);
       if (operation.operation === "agent_conversation.read") return { result: { read: { type: "page", page: {
         binding, pendingRequests: state.pending, activeTurn: { turnId: "turn-1" }, rows: state.rows,

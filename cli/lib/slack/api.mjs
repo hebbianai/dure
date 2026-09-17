@@ -50,7 +50,11 @@ export class SlackApi {
         if (wait > 0) await delay(wait, undefined, { signal: this.signal });
       }
       const escaped = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-      const common = { channel: thread.channelId, text: escaped, parse: "none", ...(blocks ? { blocks } : {}),
+      const common = { channel: thread.channelId, text: escaped, parse: "none",
+        // Markdown blocks own Markdown parsing, including tables and code.
+        // Escape only Slack control tokens here; HTML-escaping code would
+        // display the entities literally inside the Markdown code spans.
+        blocks: blocks ?? [{ type: "markdown", text: text.replace(/<([@#!][^>\n]*)>/g, "&lt;$1&gt;") }],
         metadata: { event_type: "dure_delivery", event_payload: { key: deliveryKey } } };
       try {
         return await this.call(ts ? "chat.update" : "chat.postMessage", ts ? { ...common, ts } : {

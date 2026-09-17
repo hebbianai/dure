@@ -27,6 +27,7 @@ async function fixture(t) {
     requestBackend: async (_profile, operation) => {
       if (operation.operation === "backend.scope") return { result: { schemaVersion: 1, scopeId: "scope-team" } };
       calls.backend.push(operation);
+      if (operation.operation === "agent_runtime.projection.inspect") return { result: { state: "stable", receipt: { agentId: operation.body.agentId, authority: { interactionProfile: "structured_protocol" } } } };
       if (operation.operation === "agent_conversation.inspect") return { result: { binding } };
       if (operation.operation === "agent_conversation.read") {
         assert.equal(operation.body.interactionSessionId, binding.interactionSessionId);
@@ -129,6 +130,7 @@ test("equal agent IDs on two dure-local servers remain separate Slack conversati
   const backend = new DureSlackBackend(async ({ backend: id }) => ({ profile: { id, expected: { backendId: "dure-local" } } }), {
     requestBackend: async (profile, operation) => {
       if (operation.operation === "backend.scope") return { result: { schemaVersion: 1, scopeId: `scope-${profile.id}` } };
+      if (operation.operation === "agent_runtime.projection.inspect") return { result: { state: "stable", receipt: { agentId: operation.body.agentId, authority: { interactionProfile: "structured_protocol" } } } };
       const scoped = { ...binding, interactionSessionId: `conversation-${profile.id}` };
       if (operation.operation === "agent_conversation.inspect") return { result: { binding: scoped } };
       assert.equal(operation.operation, "agent_conversation.read");
@@ -186,7 +188,7 @@ test("an interrupted share reconciles the posted root before restoring its exact
     assert.equal(thread.cursor.sequence, 5);
     assert.equal(f.calls.find.length, 1);
     assert.equal(f.calls.find[0].thread.threadTs, undefined);
-    assert.equal(f.calls.backend.length, 2, "reconnect does not select another conversation or cursor");
+    assert.equal(f.calls.backend.length, 3, "reconnect does not select another conversation or cursor");
     assert.equal(Object.values(journal.data.shares)[0].state, "succeeded");
   } finally { journal.close(); }
 });
@@ -197,7 +199,7 @@ test("an unconfirmed or failed share stays failed until a new explicit request",
   f.slack.write = async () => { interrupted = fs.readFileSync(f.file, "utf8"); throw new Error("Network failed"); };
   await assert.rejects(f.sharing.share(request));
   await assert.rejects(f.sharing.share(request));
-  assert.equal(f.calls.backend.length, 2);
+  assert.equal(f.calls.backend.length, 3);
   f.journal.close();
   fs.writeFileSync(f.file, interrupted);
   const journal = new SlackJournal(f.file, config);

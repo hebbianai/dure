@@ -83,17 +83,23 @@ describe("decideUsageLimitHandoff", () => {
 		});
 	});
 
-	it("treats stale, missing, and null readings as unknown rather than guessing", () => {
+	it("tries configured accounts with unknown usage, preferring fresh available readings", () => {
 		expect(
 			decide({
 				observations: [seen("acc-b", 5, 40 * 60), seen("acc-c", null)],
 			}),
-		).toMatchObject({ kind: "refused", code: "usage_unknown", retryable: true });
-		expect(decide({ observations: [] })).toMatchObject({ code: "usage_unknown" });
+		).toMatchObject({ kind: "handoff", targetCredentialId: "acc-b", usedPercent: null });
+		expect(decide({ observations: [] })).toMatchObject({ kind: "handoff", targetCredentialId: "acc-b", usedPercent: null });
 		// A stale low reading loses to a fresh higher one.
 		expect(
 			decide({ observations: [seen("acc-b", 5, 40 * 60), seen("acc-c", 80)] }),
 		).toMatchObject({ kind: "handoff", targetCredentialId: "acc-c" });
+	});
+
+	it("tries an unobserved account after excluding a provider-reported limit", () => {
+		expect(decide({ observations: [
+			observationAfterReportedLimit(seen("acc-b", 10), NOW - 10),
+		] })).toMatchObject({ kind: "handoff", targetCredentialId: "acc-c", usedPercent: null });
 	});
 
 	it("refuses when every fresh account is exhausted and names the earliest reset", () => {

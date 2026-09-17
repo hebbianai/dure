@@ -9,6 +9,8 @@ mod agent_operation_lock;
 #[cfg(unix)]
 mod agent_runtime_api;
 #[cfg(unix)]
+mod agent_runtime_native_io;
+#[cfg(unix)]
 mod agent_runtime_checkout;
 #[cfg(unix)]
 mod agent_runtime_close_apply;
@@ -3797,6 +3799,8 @@ async fn dispatch_authorized(
         | "agent_runtime.repair_intent.inspect.v1"
         | "agent_runtime.inspect"
         | "agent_runtime.projection.inspect"
+        | "agent_runtime.native.read"
+        | "agent_runtime.native.input"
         | "agent_runtime.native_rehost.reconcile"
         | "agent_runtime.native_resume.publish"
         | "agent_runtime.stop"

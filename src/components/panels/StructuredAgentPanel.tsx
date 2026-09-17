@@ -40,11 +40,15 @@ import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredenti
 import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
 import { agentProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
-import { agentRuntimePaneActionOwnerKey, runAgentRuntimePaneAction } from "@/lib/agents/agentRuntimePaneAction";
+import {
+	agentRuntimePaneActionOwnerKey,
+	runAgentRuntimePaneAction,
+} from "@/lib/agents/agentRuntimePaneAction";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
 import type { StructuredAgentRuntimeProjectionGenerationV1 } from "@/lib/agents/agentRuntimeProjectionRecovery";
 import type { AgentStructuredInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { latestTurnFailure } from "@/lib/agents/chat/turnFailureReason";
+import { resumeUsageLimitTurn } from "@/lib/agents/chat/resumeUsageLimitTurn";
 import {
 	providerLoginCmd,
 	supportsAccounts,
@@ -258,7 +262,9 @@ export function StructuredAgentPanel({
 	);
 	// The one pane-scoped account switch: the toolbar switcher, the recovery
 	// banner, the usage-limit handoff, and the pane actions all run this.
-	const performAccountSwitch = (accountId: string | null): Promise<void> => {
+	const performAccountSwitch = (
+		accountId: string | null,
+	): Promise<AgentCredentialTransitionResult> => {
 		const targetAccount = accountId
 			? accountPool.find((account) => account.id === accountId)
 			: undefined;
@@ -269,7 +275,6 @@ export function StructuredAgentPanel({
 		setRemoteRecoveryAccount(undefined);
 		setAccountBusy(true);
 		return switchCredential(agent.id, accountId)
-			.then(() => undefined)
 			.catch((error: unknown) => {
 				setRemoteRecoveryAccount(targetAccount);
 				setAccountFailure(
@@ -295,12 +300,31 @@ export function StructuredAgentPanel({
 		pool: accountPool,
 		failure: turnFailure,
 		performAccountSwitch,
+		resumeAfterHandoff: resumeUsageLimitTurn,
 	});
 	const handoffDecision =
 		handoffView.kind === "decided" ? handoffView.decision : undefined;
-	// An episode already acted on is over for this pane: no banner, no
-	// action, no `turn_failed` in pane state.
-	const openTurnFailure = handoffView.kind === "handled" ? undefined : turnFailure;
+	// A handled episode no longer offers another account handoff. Resending
+	// its retained input is a separate, explicit action shared by GUI and CLI.
+	const openTurnFailure =
+		handoffView.kind === "handled" ? undefined : turnFailure;
+	const retainedInput = turnFailure?.userInput;
+	const resendLastMessage =
+		handoffView.kind === "handled" &&
+		handoffView.outcome &&
+		handoffView.outcome.resume !== "accepted" &&
+		handoffView.outcome.resume !== "uncertain" &&
+		turnFailure &&
+		retainedInput !== undefined &&
+		session.phase === "ready" &&
+		!session.reconnecting &&
+		!accountMovesLocked &&
+		!session.retryTurnAvailable
+			? {
+					failureId: turnFailure.itemId,
+					run: () => session.send(retainedInput),
+				}
+			: undefined;
 	useChatPaneActions(
 		{
 			paneId,
@@ -321,15 +345,27 @@ export function StructuredAgentPanel({
 			handoffRefusal:
 				handoffDecision?.kind === "refused" ? handoffDecision.code : undefined,
 			interrupt: session.interrupt,
+			resendLastMessage,
 			handoff: handoffDecision?.kind === "handoff" ? requestHandoff : undefined,
 			switchAccount: {
 				...Object.fromEntries(
 					accountPool
 						.filter((account) => account.id !== currentAccount?.id)
-						.map((account) => [account.id, () => performAccountSwitch(account.id)]),
+						.map((account) => [
+							account.id,
+							async () => {
+								await performAccountSwitch(account.id);
+							},
+						]),
 				),
 				// The provider's default login is a target too, but has no id.
-				...(currentAccount ? { default: () => performAccountSwitch(null) } : {}),
+				...(currentAccount
+					? {
+							default: async () => {
+								await performAccountSwitch(null);
+							},
+						}
+					: {}),
 			},
 		},
 		runtimeOwnerKey,
@@ -469,16 +505,8 @@ export function StructuredAgentPanel({
 										? {
 												handedOff: {
 													...handoffView.outcome,
-													...(turnFailure?.userInput !== undefined &&
-													"send" in session
-														? {
-																resend: () => {
-																	const input = turnFailure.userInput;
-																	if (input !== undefined) {
-																		void session.send(input).catch(() => {});
-																	}
-																},
-															}
+													...(resendLastMessage
+														? { resend: resendLastMessage.run }
 														: {}),
 												},
 											}

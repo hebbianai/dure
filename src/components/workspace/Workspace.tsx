@@ -44,6 +44,7 @@ import { TerminalPanel } from "@/components/panels/TerminalPanel";
 import { SshPanel } from "@/components/panels/SshPanel";
 import {
   LazyBrowserPanelLoader,
+  LazySharedConversationPanelLoader,
   LazyMobileSimulatorPanelLoader,
   LazyDiffPanelLoader,
   LazyFileViewerPanelLoader,
@@ -183,6 +184,7 @@ const components = {
   git: activateOnPointerDown(LazyGitPanelLoader),
   github: activateOnPointerDown(LazyGitHubWorkspacePanelLoader),
   githubissue: activateOnPointerDown(LazyGitHubIssuePanelLoader),
+  sharedconversation: activateOnPointerDown(LazySharedConversationPanelLoader),
   diff: activateOnPointerDown(LazyDiffPanelLoader),
   mockup: activateOnPointerDown(LazyMockupPanelLoader),
   tokeninspector: activateOnPointerDown(LazyTokenInspectorPanelLoader),

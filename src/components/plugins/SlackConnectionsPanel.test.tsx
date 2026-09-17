@@ -170,9 +170,6 @@ it("connects before channel selection, keeps the connection after closing the pa
 	fireEvent.change(screen.getByLabelText("Shared goal (optional)"), {
 		target: { value: "Keep the release moving" },
 	});
-	fireEvent.change(screen.getByLabelText("Dure Space (optional)"), {
-		target: { value: "Team" },
-	});
 	fireEvent.click(screen.getByRole("button", { name: "Save and connect" }));
 	await waitFor(() => expect(f.actions("connect")).toHaveLength(2));
 	expect(f.actions("connect")[1][1].body).toEqual({
@@ -188,7 +185,6 @@ it("connects before channel selection, keeps the connection after closing the pa
 					providerId: "claude",
 					backend: "worker-two",
 					objective: "Keep the release moving",
-					space: "Team",
 				},
 			],
 		},

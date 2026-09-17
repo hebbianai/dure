@@ -4,7 +4,7 @@
  * writes, Codex readings by credential id from the app-server poller — and
  * this is the one place that mapping lives. A reading that is absent, has
  * no capture time, or is not fresh comes back with observedAtSec null, so
- * the policy treats it as unknown instead of guessing. */
+ * the policy can distinguish observed headroom from an unobserved account. */
 
 import type { AccountUsageObservation } from "@/lib/agents/usageLimitHandoffPolicy";
 import type { UsageRecentReport } from "@/lib/ipc";
@@ -68,14 +68,20 @@ const READINGS: Partial<
 
 export function accountUsageObservations(
 	provider: Provider,
-	report: UsageRecentReport,
+	report: UsageRecentReport | undefined,
 	pool: readonly AccountProfile[],
 	nowSec: number,
 ): AccountUsageObservation[] {
 	const read = READINGS[provider];
-	if (!read) return [];
 	return pool.map((account) => ({
 		credentialId: account.id,
-		...read(report, account, nowSec),
+		...(read && report
+			? read(report, account, nowSec)
+			: {
+					usedPercent: null,
+					usedPercentWeekly: null,
+					resetsAtSec: null,
+					observedAtSec: null,
+				}),
 	}));
 }

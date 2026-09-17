@@ -1,12 +1,7 @@
-/** Which account a pane hands off to when its current account hit a usage
- * limit. Pure: the caller supplies the pane's same-provider pool and
- * per-account observed usage; this module never guesses. An account is a
- * target only when its usage was observed recently and every window is
- * below the limit — a stale, unknown, or exhausted account is refused with
- * a typed reason, because a wrong handoff stops a live provider process for
- * nothing. Target selection is one authority: the composer banner, the
- * `handoff` pane action, and the automatic trigger all ask here; whether the
- * move happens by itself is the caller's opt-in, not this module's. */
+/** Shared account selection for automatic and explicit usage-limit handoffs.
+ * Prefer fresh available readings, then try unobserved configured accounts.
+ * Missing telemetry is not a provider failure; actual reported limits exclude
+ * the account while that observation remains fresh. */
 
 import { USAGE_OBSERVATION_FRESH_FOR_SECONDS } from "@/lib/usage/codexUsageSnapshots";
 
@@ -31,18 +26,15 @@ export interface UsageLimitHandoffInput {
 	readonly freshWithinSec?: number;
 }
 
-type UsageLimitHandoffRefusalCode =
-	| "no_other_account"
-	| "usage_unknown"
-	| "no_available_account";
+type UsageLimitHandoffRefusalCode = "no_other_account" | "no_available_account";
 
 export type UsageLimitHandoffDecision =
 	| {
 			readonly kind: "handoff";
 			readonly targetCredentialId: string;
 			readonly targetName: string;
-			/** The fuller of the target's windows. */
-			readonly usedPercent: number;
+			/** The fuller observed window, or null when no fresh reading exists. */
+			readonly usedPercent: number | null;
 	  }
 	| {
 			readonly kind: "refused";
@@ -64,9 +56,10 @@ function refused(
 
 /** The account's headroom is bounded by its fullest window. */
 function fullestWindow(observation: AccountUsageObservation): number | null {
-	const windows = [observation.usedPercent, observation.usedPercentWeekly].filter(
-		(value): value is number => value !== null,
-	);
+	const windows = [
+		observation.usedPercent,
+		observation.usedPercentWeekly,
+	].filter((value): value is number => value !== null);
 	return windows.length === 0 ? null : Math.max(...windows);
 }
 
@@ -77,7 +70,10 @@ export function observationAfterReportedLimit(
 	observation: AccountUsageObservation,
 	reportedAtSec: number,
 ): AccountUsageObservation {
-	if (observation.observedAtSec !== null && observation.observedAtSec > reportedAtSec) {
+	if (
+		observation.observedAtSec !== null &&
+		observation.observedAtSec > reportedAtSec
+	) {
 		return observation;
 	}
 	return {
@@ -103,32 +99,26 @@ export function decideUsageLimitHandoff(
 		);
 	}
 	const byId = new Map(
-		input.observations.map((observation) => [observation.credentialId, observation]),
+		input.observations.map((observation) => [
+			observation.credentialId,
+			observation,
+		]),
 	);
-	const fresh = others.flatMap((account) => {
+	const candidates = others.map((account) => {
 		const observation = byId.get(account.id);
-		const usedPercent = observation ? fullestWindow(observation) : null;
-		if (
-			!observation ||
-			observation.observedAtSec === null ||
-			usedPercent === null ||
-			input.nowSec - observation.observedAtSec > freshWithinSec
-		) {
-			return [];
-		}
-		return [{ account, observation, usedPercent }];
+		const fresh =
+			observation?.observedAtSec != null &&
+			input.nowSec - observation.observedAtSec <= freshWithinSec;
+		const usedPercent = fresh ? fullestWindow(observation) : null;
+		return { account, observation, usedPercent };
 	});
-	if (fresh.length === 0) {
-		return refused(
-			"usage_unknown",
-			true,
-			"no fresh usage reading for the other accounts yet; retry after the next usage poll or switch manually",
-		);
-	}
-	const available = fresh.filter((candidate) => candidate.usedPercent < 100);
+	const available = candidates.filter(
+		(candidate) =>
+			candidate.usedPercent === null || candidate.usedPercent < 100,
+	);
 	if (available.length === 0) {
-		const nextReset = fresh
-			.map((candidate) => candidate.observation.resetsAtSec)
+		const nextReset = candidates
+			.map((candidate) => candidate.observation?.resetsAtSec ?? null)
 			.filter((value): value is number => value !== null)
 			.sort((left, right) => left - right)[0];
 		return refused(
@@ -139,10 +129,11 @@ export function decideUsageLimitHandoff(
 				: `every other account is at its limit; the earliest window resets at ${new Date(nextReset * 1000).toISOString()}`,
 		);
 	}
-	// Lowest observed usage wins; pool order breaks ties so the choice is
-	// deterministic for the same readings.
+	// Fresh available readings rank first; unknown usage and ties use pool order.
 	const target = available.reduce((best, candidate) =>
-		candidate.usedPercent < best.usedPercent ? candidate : best,
+		(candidate.usedPercent ?? Infinity) < (best.usedPercent ?? Infinity)
+			? candidate
+			: best,
 	);
 	return {
 		kind: "handoff",

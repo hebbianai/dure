@@ -30,12 +30,18 @@ if (live) {
   fs.copyFileSync(path.join(home, "project", "result.txt"), path.join(root, "evidence", "result.txt"));
 } else {
   assert.equal(receipt.sharedTaskComposer, true);
+  assert.equal(receipt.tagSidebarConversation, true);
+  assert.equal(receipt.nativeThreadReply, true);
   const source = fs.readFileSync(path.join(home, "slack-share-posts.jsonl"), "utf8");
   assert.ok(!source.includes(`QA_PRIVATE_${proof}`));
   const posts = source.trim().split("\n").map((line) => JSON.parse(line));
   assert.equal(posts.filter((post) => post.method === "chat.postMessage" && !post.body.thread_ts).length, 1);
   assert.ok(receipt.assistantReply.includes(`QA_PUBLIC_${proof}`));
   assert.ok(posts.some((post) => post.body.text.trim() === receipt.assistantReply));
+  assert.equal(typeof receipt.nativeAssistantReply, "string");
+  assert.ok(receipt.nativeAssistantReply.includes(`QA_NATIVE_${proof}`));
+  assert.ok(posts.some((post) => post.body.thread_ts === receipt.threadTs &&
+    post.body.text.trim() === receipt.nativeAssistantReply.trim()));
   fs.copyFileSync(path.join(home, "slack-share-posts.jsonl"), path.join(root, "evidence", "slack-share-posts.jsonl"));
 }
 assert.equal(receipt.binding.agentId, receipt.agentId);

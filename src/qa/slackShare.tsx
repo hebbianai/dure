@@ -1,3 +1,5 @@
+import { getDockview } from "@/lib/workspace/dock/dockRegistry";
+import { SlackTagQa } from "./slackTag";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
@@ -6,7 +8,7 @@ import { SlackTeamConnections } from "@/components/plugins/SlackTeamConnections"
 import type { AgentChatDraftIdentity } from "@/lib/agents/chat/agentChatDraftTypes";
 import type { AgentInteractionBindingV1 } from "@/lib/agents/chat/agentConversationContract";
 import { setLang, t } from "@/lib/i18n";
-import { homeDir, readFile } from "@/lib/ipc";
+import { homeDir, readFile, writeFile } from "@/lib/ipc";
 import { createDureAgentConversationClient } from "@/lib/ipc/dureAgentConversation";
 import { createDureAgentRunTransport } from "@/lib/ipc/dureAgentRun";
 import { createDureAgentRuntimeClient } from "@/lib/ipc/dureAgentRuntime";
@@ -40,6 +42,7 @@ interface Post {
  * recording Slack fixture or an explicitly configured real workspace. */
 export function SlackShareQaRoot() {
 	const [teamView, setTeamView] = useState(false);
+	const [tagView, setTagView] = useState(false);
 	const [identity, setIdentity] = useState<AgentChatDraftIdentity>();
 	useEffect(() => {
 		if (!proof) return;
@@ -410,7 +413,135 @@ export function SlackShareQaRoot() {
 					),
 				"The public reply escaped its shared thread",
 			);
+			flushSync(() => setTagView(true));
+			const tagTask = await wait("Dure Tag sidebar task", () =>
+				document.querySelector<HTMLButtonElement>(
+					`[data-tag-agent-id="${checkpoint.identity.agentId}"]`,
+				),
+			);
+			tagTask.click();
+			await wait(
+				"Dure Tag sidebar conversation",
+				() =>
+					document.querySelector("[data-qa-tag] textarea") &&
+					document
+						.querySelector("[data-qa-tag]")
+						?.textContent?.includes(marker),
+			);
+			requireFact(
+				getDockview(useStore.getState().activeSpaceId)?.panels.length === 0,
+				"Opening a Tag conversation added a pane to the ordinary Space",
+			);
+			const back = document.querySelector<HTMLButtonElement>(
+				`[data-tag-conversation] button[aria-label="${t("common.back")}"]`,
+			);
+			requireFact(back, "Tag conversation has no return to its task list");
+			back.click();
+			const reopenedTask = await wait("Dure Tag task list", () =>
+				document.querySelector<HTMLButtonElement>(
+					`[data-tag-agent-id="${checkpoint.identity.agentId}"]`,
+				),
+			);
+			reopenedTask.click();
+			await wait("Dure Tag reopened conversation", () =>
+				document.querySelector("[data-tag-conversation] textarea"),
+			);
+			requireFact(
+				document.querySelectorAll("[data-qa-tag] textarea").length === 1 &&
+					getDockview(useStore.getState().activeSpaceId)?.panels.length === 0,
+				"Selecting a Tag task duplicated or opened a Space pane",
+			);
+			qaLog("slack-share-progress", {
+				proof,
+				phase: "tag-sidebar-opened-existing-conversation",
+			});
+			flushSync(() => setTagView(false));
+			const native = await createDureAgentRuntimeClient({
+				profileId: initial.authority.profileId,
+			}).transition({
+				agentId: checkpoint.identity.agentId,
+				targetInteractionProfile: "native_cli",
+				routeAuthority: initial.authority,
+			});
+			requireFact(
+				native.interactionProfile === "native_cli",
+				"Expected terminal runtime",
+			);
+			const nativeRequest = createDureBackendRequester({
+				invalidResponseCode: "qa_invalid",
+				invalidResponseMessage: "Invalid native response",
+				backendChangedCode: "qa_changed",
+				backendChangedMessage: "QA backend changed",
+				requestFailedCode: "qa_failed",
+				requestFailedMessage: "QA request failed",
+			});
+			const nativeRead = () =>
+				nativeRequest(
+					"agent_runtime.native.read",
+					{
+						schemaVersion: 1,
+						agentId: checkpoint.identity.agentId,
+						expectedSelectionRevision: native.selectionRevision,
+						expectedTerminalEpoch: native.stopFence.terminalEpoch,
+					},
+					{ kind: "exact", authority: native.routeAuthority },
+				);
+			await wait("native provider waiting for input", async () => {
+				const { result } = await nativeRead();
+				return result.waiting === true;
+			});
+			const nativeMarker = `QA_NATIVE_${proof}`;
+			await writeFile(
+				`${home}/slack-share-inbound.json`,
+				JSON.stringify({
+					type: "events_api",
+					envelope_id: `native-${proof}`,
+					payload: {
+						type: "event_callback",
+						team_id: "T1",
+						event: {
+							type: "message",
+							user: "U2",
+							channel: "C1",
+							thread_ts: parents[0].ts,
+							ts: "201.000001",
+							text: `Reply exactly ${nativeMarker}. Do not use tools.`,
+						},
+					},
+				}),
+			);
+			const nativeAssistantReply = await wait(
+				"native provider final response",
+				async () => {
+					const { result } = await nativeRead();
+					return result.waiting === true &&
+						typeof result.finalResponse === "string" &&
+						result.finalResponse.includes(nativeMarker)
+						? result.finalResponse
+						: undefined;
+				},
+			);
+			await wait("terminal reply in the same Slack thread", async () => {
+				const source = (await readFile(`${home}/slack-share-posts.jsonl`))
+					.content;
+				requireFact(
+					!source.includes(`QA_PRIVATE_${proof}`),
+					"Native bridge leaked private history",
+				);
+				return source
+					.split("\n")
+					.filter(Boolean)
+					.map((line) => JSON.parse(line) as Post)
+					.some(
+						(post) =>
+							post.body.thread_ts === parents[0].ts &&
+							post.body.text.trim() === nativeAssistantReply.trim(),
+					);
+			});
 			await finish({
+				nativeThreadReply: true,
+				nativeAssistantReply,
+				tagSidebarConversation: true,
 				binding: page.binding,
 				threadTs: parents[0].ts,
 				assistantReply,
@@ -428,7 +559,9 @@ export function SlackShareQaRoot() {
 	}, []);
 	return (
 		<main className="p-4">
-			{teamView ? (
+			{tagView ? (
+				<SlackTagQa />
+			) : teamView ? (
 				<SlackTeamConnections />
 			) : (
 				identity && <AgentSlackShare identity={identity} />

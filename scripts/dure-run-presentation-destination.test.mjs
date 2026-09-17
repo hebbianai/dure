@@ -155,3 +155,25 @@ describe.each([
     );
   });
 });
+
+it("registers a background structured Run without requesting a pane or Space", async () => {
+  const receipt = succeededStructuredReceipt();
+  const fetchImpl = vi.fn(async (_url, request) => {
+    const body = JSON.parse(request.body);
+    expect(body.presentation).toBe("background");
+    expect(body.spaceId).toBeUndefined();
+    return new Response(JSON.stringify({
+      ok: true,
+      agent: { agentId: body.agentId, interactionSessionId: body.interactionSessionId },
+    }));
+  });
+  await expect(presentAgentRunRuntime({
+    report: { kind: "dure.agent_spawn.apply", receipt },
+    target: { state: "background", windowLabel: "main" },
+    profile: { id: "local", transport: { kind: "local" } },
+    projectPath: "/repo",
+    descriptor: { port: 42, token: "fixture", channel: "stable", generation: "fixture", buildId: "fixture" },
+    fetchImpl,
+  })).resolves.toMatchObject({ state: "background", agent: { agentId: receipt.plan.agentId } });
+  expect(fetchImpl).toHaveBeenCalledOnce();
+});

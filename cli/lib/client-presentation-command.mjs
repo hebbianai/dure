@@ -53,6 +53,8 @@ Client presentation uses the connected app, independently of DURE_BACKEND_PROFIL
 Local creation reports native attachment; SSH creation reports durable pane mount.
 An uncertain response is not permission to create again; inspect the app first.
 Use pane state/act for the mounted pane's actions (including terminal.input).
+When Chat offers resend_last_message, pane act invokes the same retained-message recovery as its button.
+Inspect pane state first; reuse the same --idempotency-key after an uncertain action response.
 Workspace open uses the last successful target when --target is omitted.
 Without a connected app, the result is client_unavailable.`;
 
