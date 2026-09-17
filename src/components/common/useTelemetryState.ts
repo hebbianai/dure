@@ -42,7 +42,8 @@ export function useTelemetryState(): {
 		listeners.add(listener);
 		telemetryState()
 			.then((next) => {
-				if (live) setState(next);
+				// A stand-in bridge may answer with nothing; that is "unknown".
+				if (live && next) setState(next);
 			})
 			.catch(() => undefined);
 		return () => {

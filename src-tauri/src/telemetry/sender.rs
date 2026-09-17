@@ -56,6 +56,33 @@ pub(crate) struct Common {
     pub(crate) release_channel: ReleaseChannel,
     pub(crate) os: String,
     pub(crate) arch: String,
+    /// One random id per launch (`$session_id`), so PostHog can measure how
+    /// long the app stays open and what happens within one launch. It is not
+    /// stored and does not survive a restart.
+    pub(crate) session_id: String,
+}
+
+/// A UUID version 7: 48 bits of Unix milliseconds, then OS randomness. PostHog
+/// derives session start and ordering from the timestamp half.
+pub(crate) fn uuid_v7(now: SystemTime) -> Result<String, std::io::Error> {
+    let millis = now
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0);
+    let mut bytes = [0u8; 16];
+    bytes[..6].copy_from_slice(&millis.to_be_bytes()[2..]);
+    getrandom::fill(&mut bytes[6..]).map_err(std::io::Error::other)?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    ))
 }
 
 /// Consent, re-resolved on the worker thread before every request.
@@ -193,6 +220,7 @@ impl Worker {
         properties.insert("$lib_version".into(), json!(self.common.app_version));
         properties.insert("$process_person_profile".into(), json!(false));
         properties.insert("$geoip_disable".into(), json!(true));
+        properties.insert("$session_id".into(), json!(self.common.session_id));
         properties.insert("app_version".into(), json!(self.common.app_version));
         properties.insert("release_channel".into(), json!(self.common.release_channel));
         properties.insert("os".into(), json!(self.common.os));
@@ -364,6 +392,7 @@ pub(crate) mod tests {
             release_channel: ReleaseChannel::Stable,
             os: "macOS 15.5".into(),
             arch: "aarch64".into(),
+            session_id: "0192a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a2b".into(),
         }
     }
 
@@ -404,11 +433,12 @@ pub(crate) mod tests {
             assert_eq!(properties["release_channel"], "stable");
             assert_eq!(properties["os"], "macOS 15.5");
             assert_eq!(properties["arch"], "aarch64");
+            assert_eq!(properties["$session_id"], "0192a1b2-c3d4-7e5f-8a6b-7c8d9e0f1a2b");
             assert!(!properties.contains_key("$set"));
             assert!(!properties.contains_key("$set_once"));
         }
         assert_eq!(batch[1]["properties"]["provider"], "codex");
-        assert_eq!(batch[0]["properties"].as_object().unwrap().len(), 8);
+        assert_eq!(batch[0]["properties"].as_object().unwrap().len(), 9);
     }
 
     #[test]
@@ -509,6 +539,20 @@ pub(crate) mod tests {
             rfc3339_utc(UNIX_EPOCH + Duration::from_secs(1_789_603_200)),
             "2026-09-17T00:00:00Z"
         );
+    }
+
+    #[test]
+    fn mints_time_ordered_version_7_uuids() {
+        let earlier = uuid_v7(UNIX_EPOCH + Duration::from_millis(1_789_603_200_000)).unwrap();
+        let later = uuid_v7(UNIX_EPOCH + Duration::from_millis(1_789_603_200_001)).unwrap();
+        for id in [&earlier, &later] {
+            assert_eq!(id.len(), 36, "{id}");
+            assert_eq!(id.as_bytes()[14], b'7', "{id}");
+            assert!(matches!(id.as_bytes()[19], b'8' | b'9' | b'a' | b'b'), "{id}");
+        }
+        assert!(earlier < later);
+        assert_eq!(&earlier[..8], &later[..8]);
+        assert_ne!(uuid_v7(SystemTime::now()).unwrap(), uuid_v7(SystemTime::now()).unwrap());
     }
 
     #[test]

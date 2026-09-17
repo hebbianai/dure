@@ -7,7 +7,7 @@ Dure sends nothing until you say so. On first launch the main window asks whethe
 
 ## What is sent when you opt in
 
-Events go to [PostHog](https://posthog.com) in its US cloud region. Each event carries a random install id (never an account, email or device name), the app version, the release channel, the operating system name and version, and the CPU architecture. PostHog is told not to build a person profile and not to look up your location, and the PostHog project is configured to discard the IP address of the request.
+Events go to [PostHog](https://posthog.com) in its US cloud region. Each event carries a random install id (never an account, email or device name), a random per-launch session id that is not stored, the app version, the release channel, the operating system name and version, and the CPU architecture. PostHog is told not to build a person profile and not to look up your location, and the PostHog project is configured to discard the IP address of the request.
 
 | Event | Extra property |
 | --- | --- |

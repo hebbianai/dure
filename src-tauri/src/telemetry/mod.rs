@@ -62,6 +62,13 @@ impl TelemetryRuntime {
     /// counts as "no choice".
     pub(crate) fn for_this_process() -> Self {
         let environment = crate::feedback_capture::feedback_environment();
+        let session_id = match sender::uuid_v7(SystemTime::now()) {
+            Ok(session_id) => session_id,
+            Err(error) => {
+                eprintln!("[telemetry] no OS randomness, telemetry stays off: {error}");
+                return Self::inert(environment);
+            }
+        };
         let common = Common {
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             release_channel: ReleaseChannel::from_name(
@@ -69,6 +76,7 @@ impl TelemetryRuntime {
             ),
             os: environment.os,
             arch: environment.arch,
+            session_id,
         };
         match crate::app_channel::current() {
             Ok(channel) => Self::start(
@@ -89,6 +97,23 @@ impl TelemetryRuntime {
                 )
             }
         }
+    }
+
+    /// A runtime that can never send: no store, no key, no sender.
+    fn inert(environment: crate::feedback_capture::FeedbackEnvironment) -> Self {
+        Self::start(
+            None,
+            None,
+            sender::ENDPOINT,
+            Common {
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
+                release_channel: ReleaseChannel::Other,
+                os: environment.os,
+                arch: environment.arch,
+                session_id: String::new(),
+            },
+            Arc::new(EnvSnapshot::from_process),
+        )
     }
 
     pub(crate) fn start(

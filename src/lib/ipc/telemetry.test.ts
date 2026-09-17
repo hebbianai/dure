@@ -23,6 +23,19 @@ describe("track", () => {
 		});
 	});
 
+	it("never throws when the bridge returns nothing or throws itself", async () => {
+		invokeMock.mockReturnValueOnce(undefined as never);
+		expect(() => track("pane_split", { direction: "right" })).not.toThrow();
+		invokeMock.mockImplementationOnce(() => {
+			throw new Error("no bridge");
+		});
+		expect(() => track("pane_hidden")).not.toThrow();
+		invokeMock.mockImplementationOnce(() => {
+			throw new Error("no bridge");
+		});
+		await expect(telemetryState()).rejects.toThrow("no bridge");
+	});
+
 	it("never rejects, whatever the native side answers", async () => {
 		invokeMock.mockRejectedValueOnce(new Error("not a tauri webview"));
 		expect(() => track("pane_restored")).not.toThrow();

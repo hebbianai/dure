@@ -47,14 +47,27 @@ export type TelemetryEventName = keyof TelemetryEvents;
 type EventArguments<E extends TelemetryEventName> =
 	TelemetryEvents[E] extends undefined ? [] : [TelemetryEvents[E]];
 
+/** `invoke` as a promise even when the bridge is absent or replaced by a
+ *  stand-in that returns nothing or throws: telemetry must never take a
+ *  caller down with it. */
+function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+	try {
+		return Promise.resolve(
+			args ? invoke<T>(command, args) : invoke<T>(command),
+		);
+	} catch (error) {
+		return Promise.reject(error);
+	}
+}
+
 export function telemetryState(): Promise<TelemetryState> {
-	return invoke<TelemetryState>("telemetry_state");
+	return call<TelemetryState>("telemetry_state");
 }
 
 export function telemetrySetChoice(
 	choice: TelemetryChoice,
 ): Promise<TelemetryState> {
-	return invoke<TelemetryState>("telemetry_set_choice", { choice });
+	return call<TelemetryState>("telemetry_set_choice", { choice });
 }
 
 /** Offer one event. Fire-and-forget: the native consent check and event
@@ -68,7 +81,5 @@ export function track<E extends TelemetryEventName>(
 		properties[0] === undefined
 			? { event }
 			: { event, properties: properties[0] };
-	void invoke<void>("telemetry_track", { event: payload }).catch(
-		() => undefined,
-	);
+	void call<void>("telemetry_track", { event: payload }).catch(() => undefined);
 }
