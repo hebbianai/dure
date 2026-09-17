@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 import { SlackApi } from "./slack/api.mjs";
 import { DureSlackBackend } from "./slack/backend.mjs";
 import { SlackBridge } from "./slack/bridge.mjs";
@@ -10,6 +9,7 @@ import { SlackJournal } from "./slack/journal.mjs";
 import { runSlackSocket } from "./slack/socket.mjs";
 import { requestSlackShare, requestSlackStatus, serveSlackControl } from "./slack/control.mjs";
 import { SlackShares } from "./slack/share.mjs";
+import { SlackPoller } from "./slack/poll.mjs";
 
 export const SLACK_HELP = `Dure Pro · Slack connector (development preview)
 
@@ -156,22 +156,17 @@ export async function runSlackCommand(args, { resolveBackend, presentRun, enviro
       status: () => ({ ...journalSummary(journal.data), connection: signal.aborted ? "stopping" : connection }),
     });
     signal.throwIfAborted();
-    const drain = async () => {
-      while (!signal.aborted) {
-        let retryAfterMs = 1500;
-        await sharing.reconcile(onError);
-        await bridge.tick((error, messageId) => { retryAfterMs = Math.max(retryAfterMs, error.retryAfterMs ?? 3000); onError(error, messageId); });
-        await delay(retryAfterMs, undefined, { signal });
-      }
-    };
+    const poller = new SlackPoller({ signal, onError,
+      polls: () => [...bridge.polls(), ...sharing.polls()],
+    });
     const work = [runSlackSocket({ slack, bridge, signal,
       onConnecting: () => observeConnection("connecting"),
       onConnected: () => observeConnection("connected"),
       onDisconnected: () => observeConnection("disconnected"),
       onError, WebSocketImpl,
-    }), drain()];
+    }), poller.run()];
     try { await Promise.all(work); }
-    finally { controller.abort(); await Promise.allSettled(work); }
+    finally { controller.abort(); await Promise.allSettled(work); await poller.settle(); }
   } catch (error) {
     if (error?.name !== "AbortError") { failure = error; throw error; }
   } finally {

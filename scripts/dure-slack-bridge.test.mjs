@@ -524,3 +524,31 @@ test("a legacy link never invents its original server scope from a repointed pro
   await assert.rejects(backend.deliver({ backend: { profileId: "team", backendId: "dure-local" } }, { input: "Continue" }, "agent_conversation.start_turn"), { code: "slack_backend_scope_missing" });
   assert.deepEqual(calls, []);
 });
+
+for (const blockedOperation of ["deliver", "read"]) {
+  test(`a deferred ${blockedOperation} preserves thread order without blocking another task`, async (t) => {
+    const f = await fixture(t);
+    for (const ts of ["100.001", "101.001"]) f.bridge.accept(payload({ ts }));
+    await f.bridge.tick();
+    const held = Promise.withResolvers();
+    const entered = Promise.withResolvers();
+    const original = f.backend[blockedOperation];
+    f.backend[blockedOperation] = async (thread, ...args) => {
+      if (thread.threadTs === "100.001") { entered.resolve(); await held.promise; }
+      return original(thread, ...args);
+    };
+    f.setPage({ rows: [{ item: { itemId: "completion", body: { type: "message", role: "assistant", markdown: "Work complete" } } }] });
+    for (const [ts, thread_ts, text] of [["102.001", "100.001", "First"], ["103.001", "100.001", "Second"], ["104.001", "101.001", "Independent"]]) {
+      f.bridge.accept(payload({ type: "message", ts, thread_ts, text }));
+    }
+    const ticking = f.bridge.tick();
+    try {
+      await entered.promise;
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(f.calls.inputs.length, 1, "the healthy thread receives input while the other is pending");
+      assert.match(f.calls.inputs[0].intent.input, /Independent/);
+      assert.deepEqual(f.calls.writes.map(({ thread }) => thread.threadTs), ["101.001"]);
+    } finally { held.resolve(); await ticking; }
+    assert.deepEqual(f.calls.inputs.filter(({ thread }) => thread.threadTs === "100.001").map(({ intent }) => intent.input.split("\n").at(-1)), ["First", "Second"]);
+  });
+}

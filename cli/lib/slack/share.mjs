@@ -111,11 +111,16 @@ export class SlackShares {
     } catch (error) { return this.failed(entry, error); }
   }
 
+  polls() {
+    return Object.values(this.journal.data.shares)
+      .filter((entry) => entry.state === "posting")
+      .map((entry) => [`share:${entry.key}`, async (onError) => {
+        try { await this.share(entry.request); }
+        catch (error) { onError(error, entry.key); }
+      }]);
+  }
+
   async reconcile(onError) {
-    for (const entry of Object.values(this.journal.data.shares)) {
-      if (entry.state !== "posting") continue;
-      try { await this.share(entry.request); }
-      catch (error) { onError(error, entry.key); }
-    }
+    await Promise.all(this.polls().map(([, poll]) => poll(onError)));
   }
 }
