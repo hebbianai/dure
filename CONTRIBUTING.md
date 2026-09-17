@@ -40,9 +40,10 @@ pnpm install --frozen-lockfile
 pnpm app:dev
 ```
 
-Keep the development command running in its own terminal. Each checkout gets a
-development app channel. Development channels share ordinary Dure application
-data; use disposable data and discovery roots for automated runtime QA.
+The development launcher starts an independent supervisor and prints its log
+path. Each checkout gets a development app channel. Development channels share
+ordinary Dure application data; use disposable data and discovery roots for
+automated runtime QA.
 
 To package a local app, commit your changes on your topic branch and run:
 
