@@ -793,6 +793,7 @@ async fn close_rejects_a_stale_structured_binding() {
 
 #[tokio::test]
 async fn admitted_close_fences_interaction_reopen_replacement_and_commands() {
+    use dure_app::AgentQueuedTurnStore;
     let temp_dir = TempDir::new().unwrap();
     let store = initialized_store(&temp_dir.path().join("domain.sqlite")).await;
     let prepared_before_close = AgentStartTurnIntentV1 {
@@ -808,6 +809,15 @@ async fn admitted_close_fences_interaction_reopen_replacement_and_commands() {
         .record_agent_turn_intent(&prepared_before_close)
         .await
         .unwrap();
+    let queued_before_close = AgentStartTurnIntentV1 {
+        turn_id: AgentTurnIdV1::new("queued-before-close").unwrap(),
+        client_message_id: AgentClientMessageIdV1::new("queued-before-close").unwrap(),
+        ..prepared_before_close.clone()
+    };
+    let queued = store
+        .enqueue_agent_turn(&queued_before_close)
+        .await
+        .unwrap();
     store
         .admit_agent_runtime_close(&close_intent())
         .await
@@ -818,6 +828,26 @@ async fn admitted_close_fences_interaction_reopen_replacement_and_commands() {
             .record_agent_turn_intent(&prepared_before_close)
             .await
             .is_ok()
+    );
+
+    assert_eq!(
+        store
+            .enqueue_agent_turn(&queued_before_close)
+            .await
+            .unwrap(),
+        queued
+    );
+    let after_close = AgentStartTurnIntentV1 {
+        turn_id: AgentTurnIdV1::new("queued-after-close").unwrap(),
+        client_message_id: AgentClientMessageIdV1::new("queued-after-close").unwrap(),
+        ..queued_before_close
+    };
+    assert!(
+        matches!(
+            store.enqueue_agent_turn(&after_close).await,
+            Err(DomainStoreErrorV1::IdentityConflict { .. })
+        ),
+        "new queued work must respect the existing close admission"
     );
 
     assert!(matches!(

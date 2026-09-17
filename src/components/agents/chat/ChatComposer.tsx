@@ -267,7 +267,7 @@ export function ChatComposer({
 			}
 			setAttachmentError(null);
 			// While a turn runs, steer at the next provider boundary. Providers
-			// without a steering channel fall back to the controller-owned queue.
+			// without a steering channel fall back to the conversation service queue.
 			if (activeSession.sending || activeSession.activeTurn) {
 				setDraft("");
 				clearAttachments();
@@ -463,12 +463,16 @@ export function ChatComposer({
 									variant="outline"
 									onClick={() => {
 										if (!mayEditDraft()) return;
-										const restored = session.editRetryableTurn();
-										if (restored !== undefined) {
-											setDraft((current) =>
-												current ? `${restored}\n${current}` : restored,
-											);
-										}
+										void session
+											.editRetryableTurn()
+											.then((restored) => {
+												if (restored !== undefined) {
+													setDraft((current) =>
+														current ? `${restored}\n${current}` : restored,
+													);
+												}
+											})
+											.catch(() => {});
 									}}
 								>
 									{t("agents.chat.editUncertainSend")}
@@ -486,28 +490,30 @@ export function ChatComposer({
 				<div className="flex flex-col gap-0.5 rounded-xl border border-glass-hairline bg-glass-chrome px-2 py-1.5 shadow-card backdrop-blur-xl transition-shadow duration-150 focus-within:shadow-menu @2xl/chat:rounded-2xl @2xl/chat:px-2.5">
 					{session.queuedMessages.length > 0 && (
 						<div className="flex flex-col gap-1 border-b border-glass-hairline px-1 pt-0.5 pb-1.5">
-							{session.queuedMessages.map((text, index) => (
+							{session.queuedMessages.map((input) => (
 								<div
-									key={`${index}:${text.slice(0, 24)}`}
+									key={input.clientMessageId}
 									className="group/queued flex items-baseline gap-1.5 text-[0.92em]"
 								>
 									<span
 										data-selectable
 										className="min-w-0 flex-1 truncate text-muted-foreground"
 									>
-										{text}
+										{input.preview}
 									</span>
 									<IconButton
 										title={t("agents.chat.queuedEdit")}
 										className="size-5 opacity-0 group-hover/queued:opacity-100 focus-visible:opacity-100"
 										onClick={() => {
 											if (!mayEditDraft()) return;
-											const removed = session.dequeueMessage(index);
-											if (removed !== undefined) {
-												setDraft((current) =>
-													current ? `${current}\n${removed}` : removed,
-												);
-											}
+											void session
+												.dequeueMessage(input.clientMessageId)
+												.then((removed) => {
+													setDraft((current) =>
+														current ? `${current}\n${removed}` : removed,
+													);
+												})
+												.catch(() => {});
 										}}
 									>
 										<CornerUpLeft aria-hidden="true" />
@@ -515,12 +521,27 @@ export function ChatComposer({
 									<IconButton
 										title={t("agents.chat.queuedRemove")}
 										className="size-5 opacity-0 group-hover/queued:opacity-100 focus-visible:opacity-100"
-										onClick={() => session.dequeueMessage(index)}
+										onClick={() =>
+											void session
+												.dequeueMessage(input.clientMessageId)
+												.catch(() => {})
+										}
 									>
 										<X aria-hidden="true" />
 									</IconButton>
 								</div>
 							))}
+							{session.queuedMoreAfter != null && (
+								<Button
+									type="button"
+									size="xs"
+									variant="ghost"
+									disabled={session.loadingQueued}
+									onClick={() => void session.loadMoreQueued().catch(() => {})}
+								>
+									{t("agents.chat.queuedMore")}
+								</Button>
+							)}
 							{/* The action is an icon control (owner call 2026-08-31 —
 							    a sentence-long button dominated the row); its fast
 							    tooltip carries the full "interrupt and send now"

@@ -338,6 +338,21 @@ describe("ChatComposer attachments", () => {
 describe("ChatComposer queueing", () => {
 	afterEach(() => cleanup());
 
+    it("loads more queued inputs without submitting the current draft", async () => {
+        const value = session("claude");
+        value.queuedMessages = [{clientMessageId: "queue-1", sequence: 1, preview: "first"}];
+        value.queuedMoreAfter = 64;
+        value.loadMoreQueued = vi.fn(async () => {});
+        render(<ChatComposer session={value} disabled={false} />);
+        const composer = screen.getByRole("textbox");
+        fireEvent.change(composer, {target: {value: "unsent draft"}});
+        await act(async () => { fireEvent.click(screen.getByRole("button", {name: t("agents.chat.queuedMore")})); });
+        expect(value.loadMoreQueued).toHaveBeenCalledOnce();
+        expect(value.send).not.toHaveBeenCalled();
+        expect(value.steerOrQueue).not.toHaveBeenCalled();
+        expect((composer as HTMLTextAreaElement).value).toBe("unsent draft");
+    });
+
 	it("restores a failed steer to the composer without queueing another send", async () => {
 		const value = session("codex");
 		const page = value.page;
@@ -350,6 +365,10 @@ describe("ChatComposer queueing", () => {
 		);
 		const initial = { type: "page" as const, page };
 		const client: DureAgentConversationClient = {
+			inspectInput: vi.fn(async () => null),
+			readQueue: vi.fn(),
+			enqueueTurn: vi.fn(),
+			cancelQueuedTurn: vi.fn(),
 			inspect: async () => ({ backend, routeAuthority, binding: page.binding }),
 			recover: async (binding) => binding,
 			read: async () => ({ backend, routeAuthority, read: initial }),
@@ -399,7 +418,13 @@ describe("ChatComposer queueing", () => {
 	it("steers Enter into an active turn and renders the queue", () => {
 		const value = session("claude");
 		value.activeTurn = { turnId: "turn-1", clientMessageId: "message-1" };
-		value.queuedMessages = ["ㅇㅇ 회수하고 있어?"];
+		value.queuedMessages = [
+			{
+				clientMessageId: "queue-1",
+				sequence: 1,
+				preview: "ㅇㅇ 회수하고 있어?",
+			},
+		];
 		render(<ChatComposer session={value} disabled={false} />);
 		expect(screen.getByText("ㅇㅇ 회수하고 있어?")).toBeTruthy();
 		expect(screen.getByText(t("agents.chat.queuedHint"))).toBeTruthy();
@@ -415,7 +440,9 @@ describe("ChatComposer queueing", () => {
 	it("offers interrupt-and-send while a turn is active", () => {
 		const value = session("claude");
 		value.activeTurn = { turnId: "turn-1", clientMessageId: "message-1" };
-		value.queuedMessages = ["보내줘"];
+		value.queuedMessages = [
+			{ clientMessageId: "queue-1", sequence: 1, preview: "보내줘" },
+		];
 		render(<ChatComposer session={value} disabled={false} />);
 		fireEvent.click(
 			screen.getByRole("button", {
@@ -427,7 +454,9 @@ describe("ChatComposer queueing", () => {
 
 	it("hides interrupt-and-send once the turn has settled", () => {
 		const value = session("claude");
-		value.queuedMessages = ["보내줘"];
+		value.queuedMessages = [
+			{ clientMessageId: "queue-1", sequence: 1, preview: "보내줘" },
+		];
 		render(<ChatComposer session={value} disabled={false} />);
 		expect(
 			screen.queryByRole("button", {
@@ -436,16 +465,20 @@ describe("ChatComposer queueing", () => {
 		).toBeNull();
 	});
 
-	it("pulls a queued message back into the draft", () => {
+	it("pulls a queued message back into the draft", async () => {
 		const value = session("claude");
 		value.activeTurn = { turnId: "turn-1", clientMessageId: "message-1" };
-		value.queuedMessages = ["park me"];
-		value.dequeueMessage = vi.fn(() => "park me");
+		value.queuedMessages = [
+			{ clientMessageId: "queue-1", sequence: 1, preview: "park me" },
+		];
+		value.dequeueMessage = vi.fn(async () => "park me");
 		render(<ChatComposer session={value} disabled={false} />);
-		fireEvent.click(
-			screen.getByRole("button", { name: t("agents.chat.queuedEdit") }),
-		);
-		expect(value.dequeueMessage).toHaveBeenCalledWith(0);
+		await act(async () => {
+			fireEvent.click(
+				screen.getByRole("button", { name: t("agents.chat.queuedEdit") }),
+			);
+		});
+		expect(value.dequeueMessage).toHaveBeenCalledWith("queue-1");
 		expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
 			"park me",
 		);
@@ -482,11 +515,11 @@ describe("ChatComposer uncertain send recovery", () => {
 		).toBeNull();
 	});
 
-	it("restores the uncertain input before a draft without losing either", () => {
+	it("restores the uncertain input before a draft without losing either", async () => {
 		const value = session("claude");
 		value.actionError = "backend route changed";
 		value.retryTurnAvailable = true;
-		value.editRetryableTurn = vi.fn(() => "original input");
+		value.editRetryableTurn = vi.fn(async () => "original input");
 		render(<ChatComposer session={value} disabled={false} />);
 		const composer = screen.getByRole("textbox");
 		fireEvent.change(composer, { target: { value: "new draft" } });
@@ -500,6 +533,7 @@ describe("ChatComposer uncertain send recovery", () => {
 				name: t("agents.chat.editUncertainSend"),
 			}),
 		);
+		await act(async () => {});
 		expect(value.editRetryableTurn).toHaveBeenCalledOnce();
 		expect((composer as HTMLTextAreaElement).value).toBe(
 			"original input\nnew draft",

@@ -604,16 +604,12 @@ export function convergeAgentChatHistory(
 		throw new Error("agent_chat_history_sequence_invalid");
 	}
 	return {
+		...current,
 		binding:
 			older.binding.bindingRevision > current.binding.bindingRevision
 				? older.binding
 				: current.binding,
 		rows,
-		liveText: current.liveText,
-		pendingRequests: current.pendingRequests,
-		activeTurn: current.activeTurn,
-		goal: current.goal,
-		finalCursor: current.finalCursor,
 		hasMore: older.hasMore,
 	};
 }
@@ -662,13 +658,8 @@ export function convergeAgentChatDelta(
 			? combinedRows.slice(-maximumRows)
 			: combinedRows;
 	return {
-		binding: delta.binding,
+		...delta,
 		rows,
-		liveText: delta.liveText,
-		pendingRequests: delta.pendingRequests,
-		activeTurn: delta.activeTurn,
-		goal: delta.goal,
-		finalCursor: delta.finalCursor,
 		hasMore:
 			current.hasMore ||
 			(maximumRows !== undefined && combinedRows.length > maximumRows),

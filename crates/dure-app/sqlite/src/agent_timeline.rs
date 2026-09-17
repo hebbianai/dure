@@ -458,7 +458,7 @@ async fn insert_provider_stream(
     Ok(())
 }
 
-async fn binding_on(
+pub(crate) async fn binding_on(
     connection: &mut SqliteConnection,
     interaction_session_id: &AgentInteractionSessionIdV1,
 ) -> Result<Option<AgentInteractionBindingV1>, DomainStoreErrorV1> {
@@ -479,7 +479,7 @@ async fn binding_on(
     row.map(binding_from_row).transpose()
 }
 
-async fn required_binding(
+pub(crate) async fn required_binding(
     connection: &mut SqliteConnection,
     interaction_session_id: &AgentInteractionSessionIdV1,
 ) -> Result<AgentInteractionBindingV1, DomainStoreErrorV1> {
@@ -554,7 +554,7 @@ fn binding_from_row(
     Ok(record)
 }
 
-async fn validate_current_runtime(
+pub(crate) async fn validate_current_runtime(
     connection: &mut SqliteConnection,
     interaction_session_id: &AgentInteractionSessionIdV1,
     runtime: &AgentProviderRuntimeFenceV1,
@@ -1312,7 +1312,7 @@ async fn record_provider_gap_on(
     Ok(receipt)
 }
 
-async fn append_item_on(
+pub(crate) async fn append_item_on(
     connection: &mut SqliteConnection,
     binding: &AgentInteractionBindingV1,
     item: &AgentTimelineItemDraftV1,
@@ -2021,6 +2021,7 @@ async fn record_steer_intent_on(
     }
     let binding = required_binding(connection, &intent.interaction_session_id).await?;
     ensure_open_on(connection, &binding.agent_id).await?;
+    crate::agent_queue::ensure_not_queued_on(connection, intent).await?;
     let binding =
         validate_current_runtime(connection, &intent.interaction_session_id, &intent.runtime)
             .await?;
@@ -2083,7 +2084,7 @@ async fn record_steer_intent_on(
     })
 }
 
-async fn record_turn_intent_on(
+pub(crate) async fn record_turn_intent_on(
     connection: &mut SqliteConnection,
     intent: &AgentStartTurnIntentV1,
 ) -> Result<AgentTurnEffectReceiptV1, DomainStoreErrorV1> {
@@ -2132,6 +2133,7 @@ async fn record_turn_intent_with_body_on(
     }
     let binding = required_binding(connection, &intent.interaction_session_id).await?;
     ensure_open_on(connection, &binding.agent_id).await?;
+    crate::agent_queue::ensure_not_queued_on(connection, intent).await?;
     let binding =
         validate_current_runtime(connection, &intent.interaction_session_id, &intent.runtime)
             .await?;
@@ -2654,6 +2656,8 @@ async fn read_on(
     .await?;
     let active_turn = active_turn_for_session(connection, &binding).await?;
     let goal = crate::agent_goals::read_on(connection, &binding.agent_id).await?;
+    let queued_inputs =
+        crate::agent_queue::pending_on(connection, &binding.interaction_session_id, 0).await?;
     Ok(AgentTimelineReadV1::Page {
         page: AgentTimelinePageV1 {
             binding,
@@ -2662,6 +2666,7 @@ async fn read_on(
             pending_requests,
             active_turn,
             goal,
+            queued_inputs,
             final_cursor,
             has_more,
         },
@@ -3055,7 +3060,7 @@ fn live_text_from_row(
     Ok(record)
 }
 
-async fn turn_effect_on(
+pub(crate) async fn turn_effect_on(
     connection: &mut SqliteConnection,
     interaction_session_id: &AgentInteractionSessionIdV1,
     client_message_id: &AgentClientMessageIdV1,

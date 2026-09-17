@@ -29,11 +29,15 @@ use crate::{
 
 pub const CREATE_OPERATION: &str = "agent_conversation.create";
 pub const INSPECT_OPERATION: &str = "agent_conversation.inspect";
+pub const INSPECT_INPUT_OPERATION: &str = "agent_conversation.inspect_input";
+pub const READ_QUEUE_OPERATION: &str = "agent_conversation.read_queue";
 pub const READ_OPERATION: &str = "agent_conversation.read";
 pub const RECOVER_OPERATION: &str = "agent_conversation.recover";
 pub const SUBSCRIBE_OPERATION: &str = "agent_conversation.subscribe";
 pub const START_TURN_OPERATION: &str = "agent_conversation.start_turn";
 pub const STEER_TURN_OPERATION: &str = "agent_conversation.steer_turn";
+pub const ENQUEUE_TURN_OPERATION: &str = "agent_conversation.enqueue_turn";
+pub const CANCEL_QUEUED_TURN_OPERATION: &str = "agent_conversation.cancel_queued_turn";
 pub const ANSWER_PENDING_OPERATION: &str = "agent_conversation.answer_pending";
 pub const INTERRUPT_TURN_OPERATION: &str = "agent_conversation.interrupt_turn";
 
@@ -43,6 +47,7 @@ pub enum AgentConversationApiErrorV1 {
     NotFound,
     Conflict,
     RuntimeUnavailable,
+    SteerUnsupported,
     ProviderFailed,
     StoreFailed,
 }
@@ -54,6 +59,7 @@ impl AgentConversationApiErrorV1 {
             Self::NotFound => "agent_conversation_not_found",
             Self::Conflict => "agent_conversation_conflict",
             Self::RuntimeUnavailable => "agent_conversation_runtime_unavailable",
+            Self::SteerUnsupported => "agent_conversation_steer_unsupported",
             Self::ProviderFailed => "agent_conversation_provider_failed",
             Self::StoreFailed => "agent_conversation_store_failed",
         }
@@ -73,6 +79,9 @@ impl From<AgentConversationErrorV1> for AgentConversationApiErrorV1 {
             ) => Self::Conflict,
             AgentConversationErrorV1::Store(_) | AgentConversationErrorV1::Clock => {
                 Self::StoreFailed
+            }
+            AgentConversationErrorV1::Provider(error) if error.code == "steer_unsupported" => {
+                Self::SteerUnsupported
             }
             AgentConversationErrorV1::Provider(_) => Self::ProviderFailed,
         }
@@ -246,13 +255,20 @@ where
         &self,
         operation: &str,
         body: &Value,
-    ) -> Option<Result<Value, AgentConversationApiErrorV1>> {
+    ) -> Option<Result<Value, AgentConversationApiErrorV1>>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
         match operation {
             CREATE_OPERATION => Some(self.create(body).await),
             INSPECT_OPERATION => Some(self.inspect(body).await),
             READ_OPERATION => Some(self.read(body).await),
+            READ_QUEUE_OPERATION => Some(self.read_queue(body).await),
+            INSPECT_INPUT_OPERATION => Some(self.inspect_input(body).await),
             START_TURN_OPERATION => Some(self.start_turn(body).await),
             STEER_TURN_OPERATION => Some(self.steer_turn(body).await),
+            ENQUEUE_TURN_OPERATION => Some(self.enqueue_turn(body).await),
+            CANCEL_QUEUED_TURN_OPERATION => Some(self.cancel_queued_turn(body).await),
             ANSWER_PENDING_OPERATION => Some(self.answer_pending(body).await),
             INTERRUPT_TURN_OPERATION => Some(self.interrupt_turn(body).await),
             _ => None,
@@ -359,6 +375,65 @@ where
         Ok(json!({ "schemaVersion": 1, "receipt": receipt }))
     }
 
+    async fn enqueue_turn(&self, body: &Value) -> Result<Value, AgentConversationApiErrorV1>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        let intent: AgentStartTurnIntentV1 = serde_json::from_value(body.clone())
+            .map_err(|_| AgentConversationApiErrorV1::RequestInvalid)?;
+        let receipt = self.service.enqueue_turn(&intent).await?;
+        Ok(json!({ "schemaVersion": 1, "receipt": receipt }))
+    }
+
+    async fn inspect_input(&self, body: &Value) -> Result<Value, AgentConversationApiErrorV1>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        let request: dure_app::AgentInputReadRequestV1 = serde_json::from_value(body.clone())
+            .map_err(|_| AgentConversationApiErrorV1::RequestInvalid)?;
+        if request.schema_version != 1 {
+            return Err(AgentConversationApiErrorV1::RequestInvalid);
+        }
+        Ok(json!({ "schemaVersion": 1, "input": self.service.inspect_input(&request).await? }))
+    }
+
+    async fn read_queue(&self, body: &Value) -> Result<Value, AgentConversationApiErrorV1>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        let request: dure_app::AgentQueueReadRequestV1 = serde_json::from_value(body.clone())
+            .map_err(|_| AgentConversationApiErrorV1::RequestInvalid)?;
+        if request.schema_version != 1 {
+            return Err(AgentConversationApiErrorV1::RequestInvalid);
+        }
+        let page = self.service.read_queue(&request).await?;
+        Ok(json!({"schemaVersion": 1, "page": page}))
+    }
+
+    async fn cancel_queued_turn(&self, body: &Value) -> Result<Value, AgentConversationApiErrorV1>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        let request: dure_app::AgentCancelQueuedTurnV1 = serde_json::from_value(body.clone())
+            .map_err(|_| AgentConversationApiErrorV1::RequestInvalid)?;
+        let receipt = self.service.cancel_queued_turn(&request).await?;
+        Ok(json!({ "schemaVersion": 1, "receipt": receipt }))
+    }
+
+    pub(crate) async fn start_queued_turn(
+        &self,
+        binding: &AgentInteractionBindingV1,
+    ) -> Result<Option<AgentTurnEffectReceiptV1>, AgentConversationApiErrorV1>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        let commands = self.commands(&binding.interaction_session_id).await?;
+        self.service
+            .start_queued_turn(commands.as_ref(), binding)
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) async fn start_turn_intent(
         &self,
         intent: &AgentStartTurnIntentV1,
@@ -381,6 +456,16 @@ where
             .map_err(|_| AgentConversationApiErrorV1::RequestInvalid)?;
         let commands = self.commands(&intent.interaction_session_id).await?;
         let receipt = self.service.steer_turn(commands.as_ref(), &intent).await?;
+        if receipt.state == dure_app::AgentTurnEffectStateV1::Failed
+            && receipt
+                .provider_receipt
+                .as_ref()
+                .and_then(|value| value.get("errorCode"))
+                .and_then(Value::as_str)
+                == Some("steer_unsupported")
+        {
+            return Err(AgentConversationApiErrorV1::SteerUnsupported);
+        }
         Ok(json!({ "schemaVersion": 1, "receipt": receipt }))
     }
 

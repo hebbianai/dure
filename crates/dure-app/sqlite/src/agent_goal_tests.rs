@@ -1,6 +1,24 @@
 use super::*;
 use dure_app::{AgentGoalPutRequestV1, AgentGoalStatusV1, AgentGoalStore, AgentGoalTurnRequestV1};
 
+#[tokio::test]
+async fn accepted_human_queue_precedes_an_automatic_goal_turn() {
+    use dure_app::AgentQueuedTurnStore;
+    let root = TempDir::new().unwrap();
+    let store = provision(&root.path().join("store.sqlite")).await;
+    store.put_agent_goal(&goal_request(), 101).await.unwrap();
+    store.enqueue_agent_turn(&start_turn()).await.unwrap();
+    let next = continuation(&store, 1, "automatic").await;
+    assert!(
+        store
+            .prepare_agent_goal_turn(&next)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(tail(&store).await.active_turn.is_none());
+    assert_eq!(tail(&store).await.queued_inputs.inputs.len(), 1);
+}
 fn goal_request() -> AgentGoalPutRequestV1 {
     AgentGoalPutRequestV1 {
         schema_version: 1,

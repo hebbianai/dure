@@ -33,6 +33,7 @@ use sqlx::SqlitePool;
 mod agent_bootstrap;
 mod agent_dispatch_stop;
 mod agent_goals;
+mod agent_queue;
 mod agent_runtime_checkout;
 mod agent_runtime_close;
 mod agent_runtime_dispatch;

@@ -2086,6 +2086,8 @@ const CURRENT_SCHEMA_STATEMENTS: &[&str] = &[
     crate::agent_goals::CREATE_GOALS,
     crate::agent_goals::ACTIVE_GOALS,
     crate::agent_goals::CREATE_MUTATIONS,
+    crate::agent_queue::CREATE_QUEUE,
+    crate::agent_queue::QUEUED_ORDER,
     CREATE_SESSION_BINDINGS,
     crate::session_checkout::CREATE_BINDINGS,
     crate::agent_runtime_checkout::roots::CREATE_ROOTS,
@@ -2993,6 +2995,12 @@ async fn initialize_or_migrate(pool: &SqlitePool, path: &Path) -> Result<(), Dom
                     crate::agent_goals::ACTIVE_GOALS,
                     crate::agent_goals::CREATE_MUTATIONS,
                 ], "migrate_v47_to_v48").await?;
+            }
+            48 => {
+                migrate_schema(pool, path, metadata.migration, 48, 49, &[
+                    crate::agent_queue::CREATE_QUEUE,
+                    crate::agent_queue::QUEUED_ORDER,
+                ], "migrate_v48_to_v49").await?;
             }
             version => {
                 return Err(DomainStoreErrorV1::Compatibility {

@@ -1,7 +1,8 @@
-import type { AgentChatActiveTurnV1 } from "@/lib/agents/chat/agentChatProjection";
 import type { AgentChatDraftIdentity } from "@/lib/agents/chat/agentChatDraftStoreSlice";
+import type { AgentChatActiveTurnV1 } from "@/lib/agents/chat/agentChatProjection";
 import type {
 	AgentGoalUpdateV1,
+	AgentQueuedInputV1,
 	AgentTimelinePageV1,
 } from "@/lib/agents/chat/agentConversationContract";
 
@@ -22,9 +23,10 @@ export interface AgentChatSessionSnapshot {
 	interrupting: boolean;
 	loadingOlder: boolean;
 	olderHistoryError?: string;
-	/** Messages typed while a turn was running; they auto-send (joined into
-	 * one turn) once the active turn finishes. */
-	queuedMessages: readonly string[];
+	/** Accepted input awaiting execution in the conversation service. */
+	queuedMessages: readonly AgentQueuedInputV1[];
+	queuedMoreAfter?: number | null;
+	loadingQueued?: boolean;
 }
 
 interface AgentChatSessionActions {
@@ -32,11 +34,12 @@ interface AgentChatSessionActions {
 	retryConnection(): void;
 	loadOlder(): Promise<void>;
 	send(input: string): Promise<void>;
-	queueMessage(input: string): void;
+	queueMessage(input: string): Promise<void>;
 	steerOrQueue(input: string): Promise<"steered" | "queued">;
-	dequeueMessage(index: number): string | undefined;
+	dequeueMessage(clientMessageId: string): Promise<string>;
+	loadMoreQueued(): Promise<void>;
 	retryTurn(): Promise<void>;
-	editRetryableTurn(): string | undefined;
+	editRetryableTurn(): Promise<string | undefined>;
 	answerPending(requestId: string, answer: unknown): Promise<void>;
 	interrupt(): Promise<void>;
 	dismissActionError(): void;

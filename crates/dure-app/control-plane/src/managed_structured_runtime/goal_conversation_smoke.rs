@@ -231,7 +231,7 @@ async fn run_goal_phase(previous: Option<GoalPhase>) -> GoalPhase {
     let server = goal_provider_smoke::serve(Arc::clone(&state), &endpoint);
     // Stop the first backend at the completed-segment boundary. The replacement
     // starts the production goal loop, which must discover the durable goal.
-    let goal_runtime = restarted.then(|| tokio::spawn(crate::agent_goal::run(Arc::clone(&state))));
+    let goal_runtime = restarted.then(|| tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(&state))));
     if !restarted {
         goal_provider_smoke::start(&state, &binding).await;
     }

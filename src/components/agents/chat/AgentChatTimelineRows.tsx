@@ -300,6 +300,8 @@ function TimelineRow({
 					</p>
 				</ChatDisclosure>
 			);
+		case "queued_input":
+			return null;
 		case "pending_answer": {
 			const answer = presentPendingAnswer(body.request.request, body.answer);
 			return (

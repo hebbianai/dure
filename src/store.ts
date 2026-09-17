@@ -95,6 +95,7 @@ export interface AppState
     AppPrefsStoreSlice,
     ProjectsStoreSlice,
     AgentRegistryStoreSlice {
+  chatSubmissions?: PersistedAppState["chatSubmissions"];
   /** 고정된 pane (panePinKey → true) — 닫기 전 확인 (lib/panePin) */
   pinnedPanes: Record<string, boolean>;
   togglePanePin: (paneId: string) => void;
@@ -143,6 +144,7 @@ export const useStore = create<AppState>()(
       activeDesktopId: DEFAULT_SPACE.id,
       desktopVisits: INITIAL_SPACE_VISITS,
       pinnedPanes: {},
+      chatSubmissions: {},
       layouts: {},
       focusCtx: null,
       fileTreeSelected: {},

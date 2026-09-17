@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import { AgentSlackShare } from "@/components/agents/chat/AgentSlackShare";
 import { SlackTeamConnections } from "@/components/plugins/SlackTeamConnections";
 import type { AgentChatDraftIdentity } from "@/lib/agents/chat/agentChatDraftTypes";
+import { acquireAgentChatSession } from "@/lib/agents/chat/agentChatSessionRuntime";
 import type { AgentInteractionBindingV1 } from "@/lib/agents/chat/agentConversationContract";
 import { setLang, t } from "@/lib/i18n";
 import { homeDir, readFile, writeFile } from "@/lib/ipc";
@@ -12,6 +13,7 @@ import { createDureAgentRunTransport } from "@/lib/ipc/dureAgentRun";
 import { createDureAgentRuntimeClient } from "@/lib/ipc/dureAgentRuntime";
 import { createDureBackendRequester } from "@/lib/ipc/dureBackend";
 import { createSlackConnectorClient } from "@/lib/ipc/slackConnector";
+import { asRecord } from "@/lib/payloadGuards";
 import { qaLog } from "@/lib/qa/qaLog";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { durableAppStorage, useStore } from "@/store";
@@ -219,6 +221,29 @@ export function SlackShareQaRoot() {
 					"Reload changed the shared conversation",
 				);
 			}
+			const queuedMarker = `QA_QUEUED_${proof}`;
+			const queuedInput = `Reply exactly ${queuedMarker}. Do not use tools.`;
+			if (saved && !live) {
+				// This new WebView has not acquired any chat-session lease.
+				const queuedPage = await completed(checkpoint.binding, queuedMarker);
+				requireFact(
+					queuedPage.rows.filter(
+						({ item }) =>
+							item.body.type === "message" &&
+							item.body.role === "user" &&
+							item.body.markdown === queuedInput,
+					).length === 1,
+					"Reload duplicated or lost accepted queued input",
+				);
+				requireFact(
+					queuedPage.queuedInputs?.inputs.length === 0,
+					"Completed input remained queued",
+				);
+				qaLog("slack-share-progress", {
+					proof,
+					phase: "queue-completed-without-view-after-reload",
+				});
+			}
 			flushSync(() => setIdentity(checkpoint.identity));
 			const opener = await wait("share control", () =>
 				document.querySelector<HTMLButtonElement>(
@@ -263,6 +288,31 @@ export function SlackShareQaRoot() {
 				phase: saved ? "reshared-after-reload" : "shared",
 			});
 			if (!saved) {
+				if (!live) {
+					const lease = acquireAgentChatSession(checkpoint.identity);
+					try {
+						await wait(
+							"queue controller ready",
+							() => lease.controller.getSnapshot().phase === "ready",
+						);
+						await lease.controller.queueMessage(
+							"Write the integers from 1 through 400 in order, separated by spaces, with no omissions or other text. Do not use tools.",
+						);
+						await lease.controller.queueMessage(queuedInput);
+						requireFact(
+							lease.controller
+								.getSnapshot()
+								.queuedMessages.some((input) => input.preview === queuedInput),
+							"No pending queue remained before the native reload; reproduction is incomplete",
+						);
+					} finally {
+						lease.release();
+					}
+					qaLog("slack-share-progress", {
+						proof,
+						phase: "queue-admitted-before-reload",
+					});
+				}
 				sessionStorage.setItem(checkpointKey, JSON.stringify(checkpoint));
 				location.reload();
 				return;
@@ -286,6 +336,7 @@ export function SlackShareQaRoot() {
 					focused: false,
 					privateHistoryPreserved: true,
 					reloadPreserved: true,
+					noViewQueueAfterReload: !live,
 					providerStopped: true,
 					duplicateThreads: 0,
 					generation: checkpoint.generation,
@@ -451,6 +502,72 @@ export function SlackShareQaRoot() {
 					getDockview(useStore.getState().activeSpaceId)?.panels.length === 0,
 				"Selecting a Tag task duplicated or opened a Space pane",
 			);
+			const restartInput = `Reply exactly QA_RESTART_WEBVIEW_${proof}. Do not use tools.`;
+			const secondClientInput = `Reply exactly QA_RESTART_CLI_${proof}. Do not use tools.`;
+			const restartLease = acquireAgentChatSession(checkpoint.identity);
+			let queuedMessageId: string;
+			try {
+				await wait(
+					"restart queue controller ready",
+					() => restartLease.controller.getSnapshot().phase === "ready",
+				);
+				await restartLease.controller.send(
+					"Run python3 queue-barrier.py and wait for it to finish. Then reply exactly QA_ACTIVE_DONE. Do not run other tools or change files.",
+				);
+				await wait("real provider tool is waiting", async () => {
+					const observed = await conversation.read({
+						schemaVersion: 1,
+						interactionSessionId: checkpoint.binding.interactionSessionId,
+						direction: "tail",
+						cursor: null,
+						limit: 1,
+					});
+					requireFact(
+						observed.read.type === "page",
+						"The barrier turn has no conversation",
+					);
+					for (const pending of observed.read.page.pendingRequests) {
+						const command = asRecord(asRecord(pending.request.payload)?.input);
+						requireFact(
+							pending.request.kind === "permission" &&
+								command?.command === "/bin/zsh -lc 'python3 queue-barrier.py'",
+							"The fixture only authorizes its requested barrier command",
+						);
+						await conversation.answerPending(
+							{
+								schemaVersion: 1,
+								interactionSessionId: pending.interactionSessionId,
+								runtime: pending.runtime,
+								requestId: pending.request.requestId,
+								clientMessageId: pending.request.clientMessageId,
+								idempotencyKey: `barrier-${proof}-${pending.request.requestId}`,
+								answer: { decision: "allow" },
+								requestedAtMs: pending.request.createdAtMs,
+							},
+							observed.routeAuthority,
+						);
+					}
+					try {
+						return (
+							(await readFile(`${home}/project/queue-active`)).content ===
+							"waiting"
+						);
+					} catch {
+						return false;
+					}
+				});
+				await restartLease.controller.queueMessage(restartInput);
+				const queued = restartLease.controller
+					.getSnapshot()
+					.queuedMessages.find((input) => input.preview === restartInput);
+				requireFact(
+					queued,
+					"No accepted input was pending before backend replacement",
+				);
+				queuedMessageId = queued.clientMessageId;
+			} finally {
+				restartLease.release();
+			}
 			const draft = `QA_UNSENT_${proof}`;
 			const tagComposer = document.querySelector<HTMLTextAreaElement>(
 				"[data-tag-conversation] textarea",
@@ -468,6 +585,9 @@ export function SlackShareQaRoot() {
 			qaLog("slack-tag-reconnect", {
 				proof,
 				generation: initial.authority.backend.generation,
+				interactionSessionId: checkpoint.binding.interactionSessionId,
+				queuedMessageId,
+				secondClientInput,
 			});
 			initial = await wait("replacement backend", async () => {
 				try {
@@ -506,6 +626,46 @@ export function SlackShareQaRoot() {
 			requireFact(
 				!unsent.includes(draft),
 				"Backend recovery sent the draft to Slack",
+			);
+			const recovered = await conversation.read({
+				schemaVersion: 1,
+				interactionSessionId: checkpoint.binding.interactionSessionId,
+				direction: "tail",
+				cursor: null,
+				limit: 100,
+			});
+			requireFact(
+				recovered.read.type === "page",
+				"Recovered queue has no conversation",
+			);
+			requireFact(
+				recovered.read.page.queuedInputs?.inputs[0]?.clientMessageId ===
+					queuedMessageId &&
+					recovered.read.page.queuedInputs.inputs[1]?.preview ===
+						secondClientInput,
+				"Backend replacement changed pending input identity or client order",
+			);
+			qaLog("slack-queue-recovered", { proof, queuedMessageId });
+			const executed = await completed(
+				recovered.read.page.binding,
+				`QA_RESTART_CLI_${proof}`,
+			);
+			const delivered = executed.rows
+				.filter(
+					({ item }) =>
+						item.body.type === "message" &&
+						item.body.role === "user" &&
+						(item.body.markdown === restartInput ||
+							item.body.markdown === secondClientInput),
+				)
+				.map(({ item }) =>
+					item.body.type === "message" ? item.body.markdown : "",
+				);
+			requireFact(
+				JSON.stringify(delivered) ===
+					JSON.stringify([restartInput, secondClientInput]) &&
+					executed.queuedInputs?.inputs.length === 0,
+				"Two clients' pending inputs did not execute once in admission order",
 			);
 			qaLog("slack-share-progress", {
 				proof,
@@ -604,6 +764,8 @@ export function SlackShareQaRoot() {
 				assistantReply,
 				outboundCalls: posts.length,
 				sharedTaskComposer: true,
+				queuedAcrossBackendReplacement: true,
+				independentQueueClients: true,
 			});
 		};
 		void run().catch((error) => {

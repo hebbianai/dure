@@ -194,7 +194,7 @@ async fn exercise(run_goal: bool) {
     );
     let descriptors = LocalSessionCatalog::new(&discovery_root).list().unwrap();
     assert_eq!(descriptors.len(), 1);
-    let goal_runtime = run_goal.then(|| tokio::spawn(crate::agent_goal::run(Arc::clone(&state))));
+    let goal_runtime = run_goal.then(|| tokio::spawn(crate::agent_conversation::continuation::run(Arc::clone(&state))));
     let outcome = AssertUnwindSafe(tokio::time::timeout(Duration::from_secs(360), async {
         if run_goal {
             goal_provider_smoke::start(&state, &binding).await;

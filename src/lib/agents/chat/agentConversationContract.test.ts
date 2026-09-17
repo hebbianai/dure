@@ -57,6 +57,11 @@ function read() {
 			pendingRequests: [],
 			activeTurn: null,
 			goal: null,
+			queuedInputs: {
+				interactionSessionId: "interaction-1",
+				inputs: [],
+				nextAfter: null,
+			},
 			finalCursor: { epoch: "timeline-1", sequence: 1 },
 			hasMore: false,
 		},
@@ -77,6 +82,53 @@ function request(direction: "after" | "before" | "tail" = "tail") {
 }
 
 describe("agent conversation contract", () => {
+	it("does not treat a missing queue projection as an empty accepted queue", () => {
+		const payload = read();
+		const { queuedInputs: _queue, ...page } = payload.page;
+		expect(
+			parseAgentTimelineReadV1({ ...payload, page }, request()),
+		).toBeUndefined();
+	});
+
+	it("keeps queued input across runtime changes while preserving conversation scope", () => {
+		const value = read();
+		const queued = {
+			interactionSessionId: "interaction-1",
+			inputs: [
+				{
+					clientMessageId: "queued-message",
+					sequence: 1,
+					preview: "Keep this instruction",
+				},
+			],
+			nextAfter: null,
+		};
+		const payload = {
+			...value,
+			page: {
+				...value.page,
+				queuedInputs: queued,
+				rows: [
+					{
+						...value.page.rows[0],
+						item: {
+							...value.page.rows[0].item,
+							body: { type: "queued_input", state: "queued" },
+						},
+					},
+				],
+			},
+		};
+		const parsed = parseAgentTimelineReadV1(payload, request());
+		expect(parsed?.type === "page" && parsed.page.queuedInputs).toEqual(queued);
+		expect(parsed?.type === "page" && parsed.page.rows[0].item.body).toEqual({
+			type: "queued_input",
+			state: "queued",
+		});
+		queued.interactionSessionId = "another-conversation";
+		expect(parseAgentTimelineReadV1(payload, request())).toBeUndefined();
+	});
+
 	it("keeps automatic goal continuation distinct from a human message", () => {
 		const value = read();
 		const parsed = parseAgentTimelineReadV1(
@@ -277,7 +329,6 @@ describe("agent conversation contract", () => {
 		).toBeUndefined();
 	});
 });
-
 
 it("projects the goal of this agent and rejects another agent's goal", () => {
 	const initial = read();

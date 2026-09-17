@@ -72,12 +72,13 @@ export function chatComposerSessionFixture(
 		loadOlder: vi.fn(async () => {}),
 		send: vi.fn(async () => {}),
 		retryTurn: vi.fn(async () => {}),
-		editRetryableTurn: vi.fn(() => undefined),
+		editRetryableTurn: vi.fn(async () => undefined),
 		answerPending: vi.fn(async () => {}),
 		interrupt: vi.fn(async () => {}),
 		dismissActionError: vi.fn(),
+		loadMoreQueued: vi.fn(async () => {}),
 		queueMessage: vi.fn(),
 		steerOrQueue: vi.fn(async () => "queued" as const),
-		dequeueMessage: vi.fn(() => undefined),
+		dequeueMessage: vi.fn(async () => ""),
 	};
 }

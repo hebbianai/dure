@@ -104,6 +104,7 @@ function session(): AgentChatSessionView {
 		retryConnection: vi.fn(),
 		loadOlder: vi.fn(async () => {}),
 		send: vi.fn(async () => {}),
+		loadMoreQueued: vi.fn(async () => {}),
 		queueMessage: vi.fn(),
 		steerOrQueue: vi.fn(async () => "queued" as const),
 		dequeueMessage: vi.fn(),

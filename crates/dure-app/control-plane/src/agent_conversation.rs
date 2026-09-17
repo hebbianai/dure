@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
+pub(crate) mod continuation;
+
 const SUBSCRIPTION_CAPACITY: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -373,6 +375,88 @@ where
         let prepared = self.store.record_agent_turn_intent(intent).await?;
         self.execute_prepared_start(provider, intent, prepared)
             .await
+    }
+
+    pub(crate) async fn enqueue_turn(
+        &self,
+        intent: &AgentStartTurnIntentV1,
+    ) -> Result<dure_app::AgentQueuedTurnRecordV1, AgentConversationErrorV1>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        let receipt = self.store.enqueue_agent_turn(intent).await?;
+        self.publish_after_commit(
+            intent.interaction_session_id.clone(),
+            receipt.timeline_cursor.clone(),
+            vec![AgentConversationNotificationKindV1::Timeline],
+        );
+        Ok(receipt)
+    }
+
+    pub(crate) async fn inspect_input(
+        &self,
+        request: &dure_app::AgentInputReadRequestV1,
+    ) -> Result<Option<dure_app::AgentInputReceiptV1>, AgentConversationErrorV1>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        Ok(self
+            .store
+            .inspect_agent_input(&request.interaction_session_id, &request.client_message_id)
+            .await?)
+    }
+
+    pub(crate) async fn read_queue(
+        &self,
+        request: &dure_app::AgentQueueReadRequestV1,
+    ) -> Result<dure_app::AgentQueuedInputPageV1, AgentConversationErrorV1>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        Ok(self
+            .store
+            .read_queued_agent_turns(&request.interaction_session_id, request.after_sequence)
+            .await?)
+    }
+
+    pub(crate) async fn cancel_queued_turn(
+        &self,
+        request: &dure_app::AgentCancelQueuedTurnV1,
+    ) -> Result<dure_app::AgentQueuedTurnRecordV1, AgentConversationErrorV1>
+    where
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        let receipt = self
+            .store
+            .cancel_queued_agent_turn(request, now_ms()?)
+            .await?;
+        self.publish_after_commit(
+            request.interaction_session_id.clone(),
+            receipt.timeline_cursor.clone(),
+            vec![AgentConversationNotificationKindV1::Timeline],
+        );
+        Ok(receipt)
+    }
+
+    pub(crate) async fn start_queued_turn<P>(
+        &self,
+        provider: &P,
+        binding: &AgentInteractionBindingV1,
+    ) -> Result<Option<AgentTurnEffectReceiptV1>, AgentConversationErrorV1>
+    where
+        P: AgentProviderCommands + ?Sized,
+        S: dure_app::AgentQueuedTurnStore,
+    {
+        let Some(prepared) = self
+            .store
+            .prepare_queued_agent_turn(&binding.interaction_session_id, &binding.runtime, now_ms()?)
+            .await?
+        else {
+            return Ok(None);
+        };
+        self.execute_prepared_start(provider, &prepared.intent.clone(), prepared)
+            .await
+            .map(Some)
     }
 
     pub(crate) async fn start_goal_turn<P>(
