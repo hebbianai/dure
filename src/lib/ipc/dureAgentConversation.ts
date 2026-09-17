@@ -50,7 +50,7 @@ type AgentConversationReadRequestV1 = AgentTimelineReadRequestV1;
 
 export type AgentConversationStartTurnV1 = AgentStartTurnIntentV1;
 
-export interface AgentConversationCancelQueuedTurnV1 {
+interface AgentConversationCancelQueuedTurnV1 {
 	schemaVersion: 1;
 	interactionSessionId: string;
 	clientMessageId: string;

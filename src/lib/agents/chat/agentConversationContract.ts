@@ -220,7 +220,7 @@ export function parseAgentGoalRecordV1(
 	};
 }
 
-export type AgentQueuedTurnStateV1 = "queued" | "dispatched" | "canceled";
+type AgentQueuedTurnStateV1 = "queued" | "dispatched" | "canceled";
 
 export interface AgentStartTurnIntentV1 {
 	schemaVersion: 1;
