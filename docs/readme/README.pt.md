@@ -35,8 +35,6 @@ O difícil não é iniciar mais um agente. É saber qual tarefa precisa de você
 
 O Dure reúne esse trabalho em um só lugar. Coloque Claude Code ao lado de Codex e Pi. Acompanhe sessões em diferentes projetos e máquinas SSH. Leia as diferenças, envie feedback e defina o rumo da próxima tarefa.
 
-O nome vem de **두레**, uma tradição coreana de trabalho coletivo nas comunidades agrícolas. Mãos diferentes, trabalho compartilhado. Você define a direção.
-
 ## Da primeira tarefa à revisão final
 
 ### 01 — Comece com um objetivo

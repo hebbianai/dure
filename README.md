@@ -35,8 +35,6 @@ The hard part isn't starting another agent. It's knowing which task needs you, w
 
 Dure brings that work into one place. Keep Claude Code beside Codex and Pi. Follow sessions across projects and SSH hosts. Read the diff, send feedback, and give the next task a clear direction.
 
-The name comes from **두레**, a Korean tradition of working together in a farming community. Different hands, shared work. You set the direction.
-
 ## From the first task to the final review
 
 ### 01 — Start with a goal

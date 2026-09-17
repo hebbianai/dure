@@ -35,8 +35,6 @@ Le plus difficile n'est pas de lancer un agent de plus. C'est de savoir quelle t
 
 Dure rassemble ce travail au même endroit. Placez Claude Code à côté de Codex et de Pi. Suivez les sessions de plusieurs projets et machines SSH. Lisez les différences, envoyez vos retours et donnez une direction claire à la tâche suivante.
 
-Le nom vient de **두레**, une tradition coréenne d'entraide au sein des communautés agricoles. Des mains différentes, un travail partagé. C'est vous qui donnez le cap.
-
 ## De la première tâche à la revue finale
 
 ### 01 — Commencez par un objectif
