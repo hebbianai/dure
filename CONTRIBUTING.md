@@ -47,6 +47,23 @@ pull request so a maintainer can coordinate it. Translation corrections for one
 language are also welcome. Do not claim availability for unreleased source,
 platforms or features.
 
+## Branches and releases
+
+Dure follows [GitHub flow](https://docs.github.com/en/get-started/using-github/github-flow):
+create a short-lived topic branch from `main`, submit a pull request against
+`main`, and address review feedback before merging. Use a descriptive branch name
+such as `docs/build-guide`, `fix/terminal-resize` or `feat/session-search` for the
+files available in the repository. These prefixes are naming suggestions.
+
+Keep each pull request focused on one change. Open a draft pull request when you
+want feedback before the work is ready. Multiple commits during review are fine;
+maintainers squash the approved change when merging. After merging, start the
+next change from the updated `main`. Merged branches in this repository are
+deleted automatically; remove the completed topic branch from your fork too.
+
+Maintainers manage version bumps, release branches, tags and publication. Include
+release changes in an ordinary contribution only when a maintainer requests them.
+
 ## Checks and review
 
 The `Public repository checks` job validates whitespace in the proposed diff and
@@ -66,7 +83,8 @@ passing checks, an up-to-date branch, one approving review, code-owner approval
 where applicable, and resolved review conversations. New changes dismiss stale
 approvals; the latest push needs approval from someone other than its pusher.
 Maintainers squash approved pull requests; the ruleset blocks force pushes and
-deletion of `main`.
+deletion of `main`. See the [active repository rules](https://github.com/hebbianai/dure/rules)
+for the enforced settings.
 
 The repository administrator `komojini` has an explicit always-on bypass for this
 ruleset, including direct pushes and merges without the required review or checks.
