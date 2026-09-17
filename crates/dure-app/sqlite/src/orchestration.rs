@@ -1014,11 +1014,14 @@ pub(crate) async fn dispatch_context_for_exact_session(
                  AND NOT EXISTS (
                     SELECT 1
                     FROM workflow_interaction_deliveries AS delivery
-                    JOIN workflow_interaction_events AS event
+                    -- A missing payload does not consume its queued delivery.
+                    -- Keep the context pending; event reads report the storage fault.
+                    LEFT JOIN workflow_interaction_events AS event
                       ON event.authority_key = delivery.authority_key
                      AND event.cursor = delivery.event_cursor
                     WHERE delivery.authority_key = authority.authority_key
-                      AND json_extract(event.event_json, '$.target.dispatchId') = authority.dispatch_id
+                      AND (event.cursor IS NULL
+                           OR json_extract(event.event_json, '$.target.dispatchId') = authority.dispatch_id)
                       AND json_extract(delivery.delivery_json, '$.receipt.state') = 'queued'
                       AND ((json_extract(delivery.delivery_json, '$.receipt.participant') =
                           json_extract(authority.coordinator_grant_json, '$.participant')
@@ -1028,7 +1031,8 @@ pub(crate) async fn dispatch_context_for_exact_session(
                           json_extract(authority.worker_endpoint_json, '$.participant')
                       AND json_extract(delivery.delivery_json, '$.delivery_capability') =
                           json_extract(authority.worker_endpoint_json, '$.deliveryCapability')
-                      AND json_extract(event.event_json, '$.kind.kind') = 'interaction_opened'))
+                      AND (event.cursor IS NULL
+                           OR json_extract(event.event_json, '$.kind.kind') = 'interaction_opened')))
                  )
                 THEN 1
                 ELSE 0
@@ -1199,7 +1203,7 @@ pub(crate) async fn dispatch_contexts_for_exact_sessions(
                             WHEN json_valid(delivery.delivery_json) = 1
                              AND json_valid(candidate.coordinator_grant_json) = 1
                              AND json_valid(candidate.worker_endpoint_json) = 1
-                             AND json_valid(event.event_json) = 1
+                             AND (event.cursor IS NULL OR json_valid(event.event_json) = 1)
                             THEN CASE
                                 WHEN json_extract(delivery.delivery_json, '$.receipt.state') = 'queued'
                                  AND ((json_extract(delivery.delivery_json, '$.receipt.participant') =
@@ -1210,9 +1214,10 @@ pub(crate) async fn dispatch_contexts_for_exact_sessions(
                                      json_extract(candidate.worker_endpoint_json, '$.participant')
                                  AND json_extract(delivery.delivery_json, '$.delivery_capability') =
                                      json_extract(candidate.worker_endpoint_json, '$.deliveryCapability')
-                                 AND json_extract(event.event_json, '$.kind.kind') = 'interaction_opened'))
-                                 AND candidate.dispatch_id =
-                                     json_extract(event.event_json, '$.target.dispatchId')
+                                 AND (event.cursor IS NULL
+                                      OR json_extract(event.event_json, '$.kind.kind') = 'interaction_opened')))
+                                 AND (event.cursor IS NULL OR candidate.dispatch_id =
+                                     json_extract(event.event_json, '$.target.dispatchId'))
                                 THEN delivery.event_cursor
                                 ELSE NULL
                             END
@@ -1228,10 +1233,11 @@ pub(crate) async fn dispatch_contexts_for_exact_sessions(
                             WHEN json_valid(delivery.delivery_json) = 1
                              AND json_valid(candidate.coordinator_grant_json) = 1
                              AND json_valid(candidate.worker_endpoint_json) = 1
-                             AND json_valid(event.event_json) = 1
+                             AND (event.cursor IS NULL OR json_valid(event.event_json) = 1)
                             THEN CASE
                                 WHEN json_extract(delivery.delivery_json, '$.receipt.state') = 'queued'
-                                 AND candidate.dispatch_id = json_extract(event.event_json, '$.target.dispatchId')
+                                 AND (event.cursor IS NULL
+                                      OR candidate.dispatch_id = json_extract(event.event_json, '$.target.dispatchId'))
                                  AND ((json_extract(delivery.delivery_json, '$.receipt.participant') =
                                      json_extract(candidate.coordinator_grant_json, '$.participant')
                                  AND json_extract(delivery.delivery_json, '$.delivery_capability') =
@@ -1240,7 +1246,8 @@ pub(crate) async fn dispatch_contexts_for_exact_sessions(
                                      json_extract(candidate.worker_endpoint_json, '$.participant')
                                  AND json_extract(delivery.delivery_json, '$.delivery_capability') =
                                      json_extract(candidate.worker_endpoint_json, '$.deliveryCapability')
-                                 AND json_extract(event.event_json, '$.kind.kind') = 'interaction_opened'))
+                                 AND (event.cursor IS NULL
+                                      OR json_extract(event.event_json, '$.kind.kind') = 'interaction_opened')))
                                 THEN 1
                                 ELSE 0
                             END
@@ -1255,8 +1262,7 @@ pub(crate) async fn dispatch_contexts_for_exact_sessions(
                          AND delivery.receipt_id IS NOT NULL
                          AND (
                             (
-                                event.event_json IS NOT NULL
-                                AND json_valid(event.event_json) != 1
+                                (event.cursor IS NULL OR json_valid(event.event_json) != 1)
                                 AND json_valid(delivery.delivery_json) != 1
                             )
                             OR
@@ -1759,12 +1765,13 @@ async fn drainable_completed_dispatch_matches(
             launch.effective_launch_idempotency_key,
             MIN(delivery.event_cursor) AS first_cursor
         FROM workflow_interaction_deliveries AS delivery
-        JOIN workflow_interaction_events AS event
+        LEFT JOIN workflow_interaction_events AS event
           ON event.authority_key = delivery.authority_key
          AND event.cursor = delivery.event_cursor
         JOIN workflow_interaction_authorities AS authority
           ON authority.authority_key = delivery.authority_key
-         AND authority.dispatch_id = json_extract(event.event_json, '$.target.dispatchId')
+         AND (event.cursor IS NULL
+              OR authority.dispatch_id = json_extract(event.event_json, '$.target.dispatchId'))
         JOIN workflow_dispatches AS dispatch ON dispatch.dispatch_id = authority.dispatch_id
         JOIN workflow_dispatch_launches AS launch ON launch.dispatch_id = dispatch.dispatch_id
         JOIN workflow_tasks AS task ON task.task_id = dispatch.task_id
@@ -1779,7 +1786,8 @@ async fn drainable_completed_dispatch_matches(
               json_extract(authority.coordinator_grant_json, '$.deliveryCapability'))
           OR (json_extract(delivery.delivery_json, '$.receipt.participant') =
               json_extract(authority.worker_endpoint_json, '$.participant')
-          AND json_extract(event.event_json, '$.kind.kind') = 'interaction_opened'
+          AND (event.cursor IS NULL
+               OR json_extract(event.event_json, '$.kind.kind') = 'interaction_opened')
           AND json_extract(delivery.delivery_json, '$.delivery_capability') =
               json_extract(authority.worker_endpoint_json, '$.deliveryCapability')))
           AND launch.session_id = ?1

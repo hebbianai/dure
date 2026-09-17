@@ -199,6 +199,33 @@ async fn fake_provider_conformance_commits_before_effect_and_never_replays_a_pro
 }
 
 #[tokio::test]
+async fn competing_start_never_reaches_provider_or_changes_the_running_turn() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = fixture(&temp_dir.path().join("domain.sqlite")).await;
+    let provider = FakeProvider {
+        calls: AtomicUsize::new(0),
+        store: Arc::clone(&store),
+        start_error: None,
+    };
+    let service = AgentConversationService::new(Arc::clone(&store));
+    service.start_turn(&provider, &intent()).await.unwrap();
+    let mut competing = intent();
+    competing.turn_id = AgentTurnIdV1::new("turn-teammate").unwrap();
+    competing.client_message_id = AgentClientMessageIdV1::new("message-teammate").unwrap();
+    let failure = service.start_turn(&provider, &competing).await;
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        failure,
+        Err(AgentConversationErrorV1::Store(
+            DomainStoreErrorV1::IdentityConflict { .. }
+        ))
+    ));
+    let page = timeline(&service).await;
+    assert_eq!(page.rows.len(), 2);
+    assert_eq!(page.active_turn.unwrap().turn_id, intent().turn_id);
+}
+
+#[tokio::test]
 async fn confirmed_answer_notifies_the_committed_timeline_and_pending_snapshot() {
     let temp_dir = TempDir::new().unwrap();
     let store = fixture(&temp_dir.path().join("domain.sqlite")).await;

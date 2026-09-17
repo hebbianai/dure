@@ -25,6 +25,66 @@ use super::schema::{downgrade_workflow_launch_fixture_to_v31, writable_connect_o
 #[path = "agent_goal_tests.rs"]
 mod goals;
 
+#[tokio::test]
+async fn canceled_effect_completion_rolls_back_before_reusing_its_connection() {
+    let root = TempDir::new().unwrap();
+    let path = root.path().join("cancel-completion.sqlite");
+    let mut store = provision(&path).await;
+    let intent = start_turn();
+    store.record_agent_turn_intent(&intent).await.unwrap();
+    store.pool.close().await;
+    store.pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(writable_connect_options(&path))
+        .await
+        .unwrap();
+
+    // Pause SQLite at the actual receipt update, before its transaction commits.
+    let (observed, observation) = tokio::sync::oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let mut observed = Some(observed);
+    let mut connection = store.pool.acquire().await.unwrap();
+    connection
+        .lock_handle()
+        .await
+        .unwrap()
+        .set_update_hook(move |update| {
+            if update.table == "agent_turn_effects" {
+                if let Some(observed) = observed.take() {
+                    let _ = observed.send(());
+                    let _ = released.recv();
+                }
+            }
+        });
+    drop(connection);
+    let worker = store.clone();
+    let completion = dure_app::AgentCompleteTurnEffectV1 {
+        schema_version: 1,
+        interaction_session_id: intent.interaction_session_id.clone(),
+        runtime: intent.runtime.clone(),
+        client_message_id: intent.client_message_id.clone(),
+        state: AgentTurnEffectStateV1::Accepted,
+        provider_receipt: Some(json!({"accepted": true})),
+        updated_at_ms: 200,
+    };
+    let task = tokio::spawn(async move { worker.complete_agent_turn_effect(&completion).await });
+    tokio::time::timeout(std::time::Duration::from_secs(3), observation)
+        .await
+        .unwrap()
+        .unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    release.send(()).unwrap();
+    let mut connection = store.pool.acquire().await.unwrap();
+    connection.lock_handle().await.unwrap().remove_update_hook();
+    drop(connection);
+
+    // A canceled acknowledgment remains uncertain and cannot poison the next write.
+    let replay = store.record_agent_turn_intent(&intent).await.unwrap();
+    assert_eq!(replay.state, AgentTurnEffectStateV1::Uncertain);
+    assert!(!replay.newly_prepared);
+}
+
 fn runtime(generation: u32) -> AgentProviderRuntimeFenceV1 {
     AgentProviderRuntimeFenceV1 {
         runtime_generation: format!("runtime-{generation}"),
@@ -1814,6 +1874,102 @@ async fn schema_22_migrates_additively_to_the_timeline_authority() {
 }
 
 #[tokio::test]
+async fn concurrent_clients_cannot_replace_the_active_turn() {
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("domain.sqlite");
+    let first_client = provision(&path).await;
+    let second_client = SqliteDomainStore::open(&path).await.unwrap();
+    let first = start_turn();
+    let mut second = first.clone();
+    second.turn_id = AgentTurnIdV1::new("turn-2").unwrap();
+    second.client_message_id = AgentClientMessageIdV1::new("client-message-2").unwrap();
+    second.input = "Another teammate's request".into();
+    let (left, right) = tokio::join!(
+        first_client.record_agent_turn_intent(&first),
+        second_client.record_agent_turn_intent(&second),
+    );
+    assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+    let (winner, loser, failure) = if left.is_ok() {
+        (&first, &second, right.unwrap_err())
+    } else {
+        (&second, &first, left.unwrap_err())
+    };
+    assert!(matches!(
+        failure,
+        DomainStoreErrorV1::IdentityConflict { .. }
+    ));
+    let page = tail(&first_client).await;
+    assert_eq!(page.rows.len(), 2);
+    assert_eq!(page.active_turn.as_ref().unwrap().turn_id, winner.turn_id);
+    assert_eq!(
+        first_client
+            .record_agent_turn_intent(winner)
+            .await
+            .unwrap()
+            .state,
+        AgentTurnEffectStateV1::Uncertain,
+    );
+    first_client
+        .apply_agent_provider_event(&provider_event(
+            1,
+            vec![AgentTimelineMutationV1::Append {
+                item: AgentTimelineItemDraftV1 {
+                    item_id: AgentTimelineItemIdV1::new("winner-completed").unwrap(),
+                    turn_id: Some(winner.turn_id.clone()),
+                    client_message_id: Some(winner.client_message_id.clone()),
+                    provider_message_id: None,
+                    body: AgentTimelineItemBodyV1::Lifecycle {
+                        state: AgentTimelineLifecycleStateV1::TurnCompleted,
+                        detail: None,
+                    },
+                    created_at_ms: 120,
+                },
+            }],
+        ))
+        .await
+        .unwrap();
+    assert!(
+        second_client
+            .record_agent_turn_intent(loser)
+            .await
+            .unwrap()
+            .newly_prepared
+    );
+    assert_eq!(
+        tail(&first_client).await.active_turn.unwrap().turn_id,
+        loser.turn_id
+    );
+}
+
+#[tokio::test]
+async fn idle_conversation_cannot_record_a_steer() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = provision(&temp_dir.path().join("domain.sqlite")).await;
+    assert!(matches!(
+        store.record_agent_steer_intent(&start_turn()).await,
+        Err(DomainStoreErrorV1::IdentityConflict { .. }),
+    ));
+    assert!(tail(&store).await.rows.is_empty());
+}
+
+#[tokio::test]
+async fn steer_cannot_record_input_for_another_active_turn() {
+    let temp_dir = TempDir::new().unwrap();
+    let store = provision(&temp_dir.path().join("domain.sqlite")).await;
+    store.record_agent_turn_intent(&start_turn()).await.unwrap();
+    let mut stale = start_turn();
+    stale.turn_id = AgentTurnIdV1::new("stale-turn").unwrap();
+    stale.client_message_id = AgentClientMessageIdV1::new("stale-steer").unwrap();
+    assert!(matches!(
+        store.record_agent_steer_intent(&stale).await,
+        Err(DomainStoreErrorV1::IdentityConflict { .. }),
+    ));
+    let page = tail(&store).await;
+    assert_eq!(page.rows.len(), 2);
+    assert_eq!(page.active_turn.unwrap().turn_id, start_turn().turn_id);
+}
+
+#[tokio::test]
 async fn steer_intent_appends_one_user_row_under_the_running_turn() {
     let temp_dir = TempDir::new().unwrap();
     let store = provision(&temp_dir.path().join("domain.sqlite")).await;
@@ -1868,6 +2024,30 @@ async fn steer_intent_appends_one_user_row_under_the_running_turn() {
         store.record_agent_steer_intent(&conflicting).await,
         Err(DomainStoreErrorV1::IdempotencyConflict { .. })
     ));
+
+    store
+        .apply_agent_provider_event(&provider_event(
+            1,
+            vec![session_lifecycle(
+                "provider-exited",
+                AgentTimelineLifecycleStateV1::SessionExited,
+                200,
+            )],
+        ))
+        .await
+        .unwrap();
+    let settled = tail(&store).await;
+    assert!(settled.active_turn.is_none());
+    let receipt = store.record_agent_steer_intent(&replay).await.unwrap();
+    assert!(!receipt.newly_prepared);
+    assert_eq!(receipt.intent, steer);
+    let mut late = steer.clone();
+    late.client_message_id = AgentClientMessageIdV1::new("late-steer").unwrap();
+    assert!(matches!(
+        store.record_agent_steer_intent(&late).await,
+        Err(DomainStoreErrorV1::IdentityConflict { .. }),
+    ));
+    assert_eq!(tail(&store).await.rows, settled.rows);
 }
 
 #[tokio::test]
