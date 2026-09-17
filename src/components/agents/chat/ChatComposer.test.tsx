@@ -8,15 +8,18 @@ import {
 	screen,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { openSelect } from "@/test/select";
 import { ChatComposer } from "@/components/agents/chat/ChatComposer";
-import { chatComposerSessionFixture as session } from "@/test/chatComposerSessionFixture";
+import { AgentChatSessionController } from "@/lib/agents/chat/agentChatSessionController";
 import { chatInputLatency } from "@/lib/agents/chat/chatInputLatency";
 import { t } from "@/lib/i18n";
+import type { DureAgentConversationClient } from "@/lib/ipc/dureAgentConversation";
 import type { DureAgentRuntimeLaunchSelectionV1 } from "@/lib/ipc/dureAgentRuntime";
 import { getForegroundInteractionBudget } from "@/lib/scheduling/foregroundInteractionBudget";
 import { getWorkspacePerformanceSnapshot } from "@/lib/workspace/performance/workspacePerformance";
 import { useStore } from "@/store";
+import { chatComposerSessionFixture as session } from "@/test/chatComposerSessionFixture";
+import { testDureBackendRouteAuthority } from "@/test/dureBackendRouteFixtures";
+import { openSelect } from "@/test/select";
 
 const mocks = vi.hoisted(() => ({
 	launch: {
@@ -334,6 +337,64 @@ describe("ChatComposer attachments", () => {
 
 describe("ChatComposer queueing", () => {
 	afterEach(() => cleanup());
+
+	it("restores a failed steer to the composer without queueing another send", async () => {
+		const value = session("codex");
+		const page = value.page;
+		if (!page) throw new Error("expected page fixture");
+		page.activeTurn = { turnId: "turn-1", clientMessageId: "message-1" };
+		const backend = { id: "backend", generation: "one" };
+		const routeAuthority = testDureBackendRouteAuthority(
+			backend.id,
+			backend.generation,
+		);
+		const initial = { type: "page" as const, page };
+		const client: DureAgentConversationClient = {
+			inspect: async () => ({ backend, routeAuthority, binding: page.binding }),
+			recover: async (binding) => binding,
+			read: async () => ({ backend, routeAuthority, read: initial }),
+			subscribe: async () => ({
+				backend,
+				routeAuthority,
+				initial,
+				subscriptionId: "test",
+				close: async () => {},
+			}),
+			startTurn: vi.fn(async () => "accepted" as const),
+			steerTurn: vi.fn(async () => {
+				throw new Error("Delivery response lost");
+			}),
+			answerPending: async () => {},
+			interruptTurn: async () => {},
+			putGoal: async () => {
+				throw new Error("unused");
+			},
+		};
+		const controller = new AgentChatSessionController({
+			agentId: page.binding.agentId,
+			interactionSessionId: page.binding.interactionSessionId,
+			client,
+		});
+		controller.start();
+		await act(async () => {});
+		try {
+			value.activeTurn = page.activeTurn;
+			value.steerOrQueue = (input) => controller.steerOrQueue(input);
+			render(<ChatComposer session={value} disabled={false} />);
+			const composer = screen.getByRole("textbox") as HTMLTextAreaElement;
+			fireEvent.change(composer, { target: { value: "change direction" } });
+			await act(async () => {
+				fireEvent.keyDown(composer, { key: "Enter" });
+			});
+			expect(composer.value).toBe("change direction");
+			expect(screen.getByText("Delivery response lost")).toBeTruthy();
+			expect(controller.getSnapshot().queuedMessages).toEqual([]);
+			expect(client.steerTurn).toHaveBeenCalledTimes(1);
+			expect(client.startTurn).not.toHaveBeenCalled();
+		} finally {
+			controller.stop();
+		}
+	});
 
 	it("steers Enter into an active turn and renders the queue", () => {
 		const value = session("claude");

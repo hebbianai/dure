@@ -21,6 +21,7 @@ export const ipc: Record<string, string> = {
 		"La requête du navigateur n’a pas abouti. Vérifiez son état avant de réessayer.",
 	"ipc.agentConversation.invalidResponse": "La réponse de conversation de l’agent est invalide.",
 	"ipc.agentConversation.requestFailed": "La requête de conversation de l’agent a échoué.",
+	"ipc.agentConversation.deliveryUnconfirmed": "La transmission du message n’a pas pu être confirmée. Vérifiez la conversation avant de le renvoyer.",
 	"ipc.dureBackend.generationChanged": "La génération du backend Dure a changé. Réessayez avec la même requête.",
 	"ipc.dureCoordinator.bindingMismatch": "La réponse de liaison du coordinateur ne correspond pas au volet actuel.",
 	"ipc.dureDelegation.invalidResponse": "Le backend Dure a renvoyé une réponse de délégation invalide.",
