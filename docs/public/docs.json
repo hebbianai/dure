@@ -40,6 +40,12 @@
   "icons": {
     "library": "lucide"
   },
+  "integrations": {
+    "posthog": {
+      "apiKey": "phc_kdSgvpaDWKM9nMtGzhmYM2BDwvHPdFLbda6BXdDCbwQs",
+      "apiHost": "https://us.i.posthog.com"
+    }
+  },
   "navigation": {
     "languages": [
       {

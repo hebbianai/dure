@@ -36,6 +36,10 @@ File paths, repository, branch and worktree names, URLs, commit messages, prompt
 
 A build without a telemetry key, such as a local development build, shows no question and no switch, and sends nothing.
 
+## The documentation site
+
+`docs.dureai.dev` sends page views to the same PostHog project so we can see which pages help. That is Mintlify's standard analytics integration; the project discards the request's IP address, and nothing on the docs site is tied to the app's install id.
+
 ## Other data lanes
 
 The [diagnostic report](/en/troubleshooting#collect-a-useful-report) and in-app feedback are separate: each is sent only when you press Send, and neither carries the usage-data install id.
