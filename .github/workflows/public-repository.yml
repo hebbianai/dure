@@ -26,5 +26,5 @@ jobs:
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail <<'SCRIPT'
           cd "$HOME/source"
           pnpm install --frozen-lockfile
-          pnpm exec vitest run --project scripts-deadline scripts/qa/lib/bounded-owned-process-group.test.mjs
+          pnpm exec vitest run --project scripts-deadline scripts/qa/lib/bounded-owned-process-group.test.mjs scripts/qa/lib/owned-process-group.test.mjs
           SCRIPT
