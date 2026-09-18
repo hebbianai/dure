@@ -3470,6 +3470,8 @@ Usage:
   dure workspace import apply --plan-token TOKEN --yes
                                       Create desktops and panes from the reviewed plan
   dure version [--json]            Print CLI package and build identity
+  dure jev evaluate <request.json|-> [--json]
+                                      Evaluate typed questions with TypeSafe Jev
   dure backend status [--json] [--timeout-ms N] [--probe-budget-ms N]
                                       Read backend/Hmux status independently of the app
   dure backend health [--json] [--timeout-ms N] [--probe-budget-ms N]
@@ -3654,6 +3656,11 @@ async function cmdProfiles(opts) {
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
+  if (cmd === "jev" || (cmd === "help" && rest[0] === "jev")) {
+    const { runJevCommand } = await import("./lib/jev-command.mjs");
+    process.exitCode = await runJevCommand(cmd === "help" ? ["--help"] : rest);
+    return;
+  }
   if (cmd === "environment" || (cmd === "help" && rest[0] === "environment")) {
     const { runEnvironmentCommand } = await import("./lib/environment-command.mjs");
     try {
