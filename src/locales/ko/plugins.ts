@@ -1,4 +1,10 @@
 export const plugins: Record<string, string> = {
+	"plugins.slack.filePermissionsTitle": "파일 권한이 필요합니다",
+	"plugins.slack.filePermissionsMissing": "{team}에서 이미지와 파일을 사용하려면 {scopes} 권한이 필요합니다.",
+	"plugins.slack.updatePermissions": "권한 설정",
+	"plugins.slack.filePermissionsHelp": "Slack 앱의 OAuth & Permissions에서 부족한 Bot Token Scopes를 추가하고 워크스페이스에 앱을 다시 설치하세요. 봇 토큰이 바뀌면 여기서 편집을 눌러 갱신하세요. Dure가 권한을 자동으로 확인합니다.",
+	"plugins.slack.openAppSettings": "Slack 앱 설정 열기",
+	"tag.mentionRequired": "Slack 스레드에서 작업을 시작하거나 이어가려면 @Dure를 태그하세요.",
 	"plugins.slack.launchDefaults": "실행 기본값",
 	"plugins.slack.defaultsHint": "이 채널에서 새로 시작하는 작업에 적용합니다. 기존 대화는 현재 설정을 유지합니다.",
 	"plugins.slack.inheritDefault": "기본값",

@@ -91,7 +91,7 @@ test("Dure-origin sharing starts at the current cursor and Slack replies steer t
   assert.equal(f.calls.posts[0].thread.threadTs, undefined, "share creates a root message");
   assert.equal(f.calls.posts[0].thread.cursor.sequence, 5);
   assert.equal(f.bridge.accept({ type: "event_callback", team_id: "T1", event: {
-    type: "message", channel: "C1", user: "U2", thread_ts: result.threadTs, ts: "201.001", text: "Change the approach",
+    type: "message", channel: "C1", user: "U2", thread_ts: result.threadTs, ts: "201.001", text: "<@U0> Change the approach",
   } }), true);
   await f.bridge.tick((error) => { throw error; });
   const input = f.calls.backend.find((call) => call.operation === "agent_conversation.steer_turn");
@@ -267,7 +267,7 @@ test("root-message reconciliation paginates channel history and only accepts thi
     assert.equal(options.method, "GET");
     const parsed = new URL(url);
     calls.push({ url: parsed.origin + parsed.pathname, body: Object.fromEntries(parsed.searchParams) });
-    return { ok: true, json: async () => ({ ok: true, messages: [{
+    return { ok: true, headers: new Headers(), json: async () => ({ ok: true, messages: [{
       user: calls.length === 1 ? "UOTHER" : "U0", ts: calls.length === 1 ? "100.001" : "200.001",
       metadata: { event_type: "dure_delivery", event_payload: { key: "share-key" } },
     }], response_metadata: { next_cursor: calls.length === 1 ? "page-2" : "" } }) };
@@ -307,7 +307,7 @@ test("concurrent shares and task updates retain Slack's per-channel send spacing
   const sent = [];
   const slack = new SlackApi({ botToken: "test-only", fetchApi: async (_url, options) => {
     sent.push({ at: Date.now(), channel: JSON.parse(options.body).channel });
-    return { ok: true, json: async () => ({ ok: true, ts: "200.001" }) };
+    return { ok: true, headers: new Headers(), json: async () => ({ ok: true, ts: "200.001" }) };
   } });
   await Promise.all([
     slack.write({ channelId: "C1" }, "First share", "one"),

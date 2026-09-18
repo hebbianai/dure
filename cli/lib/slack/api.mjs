@@ -3,11 +3,12 @@ import { setTimeout as delay } from "node:timers/promises";
 const QUERY_METHODS = new Set(["conversations.history", "conversations.replies", "files.info", "files.getUploadURLExternal"]);
 
 export class SlackApi {
-  constructor({ botToken, appToken, signal, fetchApi = fetch }) {
+  constructor({ botToken, appToken, signal, fetchApi = fetch, onFilePermissions }) {
     this.botToken = botToken;
     this.appToken = appToken;
     this.signal = signal;
     this.fetch = fetchApi;
+    this.onFilePermissions = onFilePermissions;
     this.nextPost = new Map();
     this.cooldowns = new Map();
   }
@@ -40,6 +41,11 @@ export class SlackApi {
     if (!result.ok) {
       const code = /^[a-z_]+$/.test(result.error ?? "") ? result.error : "request_failed";
       throw Object.assign(new Error(`Slack API: ${code}`), { code: `slack_${code}` });
+    }
+    const scopes = response.headers.get("x-oauth-scopes");
+    if (method !== "apps.connections.open" && scopes !== null) {
+      const granted = new Set(scopes.split(",").map((scope) => scope.trim()));
+      this.onFilePermissions?.({ read: granted.has("files:read"), write: granted.has("files:write") });
     }
     return result;
   }

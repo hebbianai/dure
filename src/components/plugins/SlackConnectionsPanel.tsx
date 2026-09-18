@@ -2,6 +2,7 @@ import { Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { LoadingRow } from "@/components/common/StatusBlocks";
 import { SlackConnectionEditor } from "@/components/plugins/SlackConnectionEditor";
+import { SlackFilePermissionsNotice } from "@/components/plugins/SlackFilePermissionsNotice";
 import { SlackTasksDialog } from "@/components/plugins/SlackTasksDialog";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -201,6 +202,7 @@ export function SlackConnectionsPanel({
 								)}
 							</div>
 						</div>
+						<SlackFilePermissionsNotice connection={connection} />
 						<div className="space-y-1 text-xs">
 							<p className="text-muted-foreground">
 								{t("plugins.slack.channels")}

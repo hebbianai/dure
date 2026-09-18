@@ -207,7 +207,7 @@ test("question actions retain their original target across connector restart", a
 
 test("ordinary thread replies remain steering while a question is pending", async (t) => {
   const f = await fixture(t);
-  f.bridge.accept({ type: "event_callback", team_id: "T1", event: { type: "message", channel: "C1", user: "U3", ts: "301.001", thread_ts: "100.001", text: "Also keep the existing API" } });
+  f.bridge.accept({ type: "event_callback", team_id: "T1", event: { type: "message", channel: "C1", user: "U3", ts: "301.001", thread_ts: "100.001", text: "<@U0> Also keep the existing API" } });
   await f.bridge.tick((error) => { throw error; });
   assert.equal(f.calls.backend.filter((call) => call.operation === "agent_conversation.steer_turn").length, 1);
   assert.equal(f.calls.backend.filter((call) => call.operation === "agent_conversation.answer_pending").length, 0);

@@ -2,6 +2,32 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 import { SlackApi } from "../cli/lib/slack/api.mjs";
 
+test("file permission observations come only from successful bot-token scope headers", async () => {
+  const observed = [];
+  let scopes = "chat:write, files:read";
+  let ok = true;
+  const api = new SlackApi({ botToken: "fixture-bot", appToken: "fixture-app",
+    onFilePermissions: (permissions) => observed.push(permissions),
+    fetchApi: async () => Response.json({ ok, error: "invalid_auth" }, {
+      headers: scopes === null ? {} : { "x-oauth-scopes": scopes },
+    }),
+  });
+  await api.call("auth.test");
+  assert.deepEqual(observed, [{ read: true, write: false }]);
+  scopes = "connections:write";
+  await api.call("apps.connections.open");
+  scopes = null;
+  await api.call("auth.test");
+  assert.equal(observed.length, 1, "missing headers and app tokens do not overwrite a bot observation");
+  scopes = "files:read,files:write";
+  ok = false;
+  await assert.rejects(api.call("auth.test"));
+  assert.equal(observed.length, 1);
+  ok = true;
+  await api.call("auth.test");
+  assert.deepEqual(observed.at(-1), { read: true, write: true });
+});
+
 test("Slack history reads send their parameters in the GET query", async () => {
   const api = new SlackApi({ botToken: "fixture-only", fetchApi: async (url, options) => {
     const request = new URL(url);

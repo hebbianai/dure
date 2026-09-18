@@ -30,7 +30,7 @@ export function validateSlackConfig(value) {
 /** Normalize only human messages from explicitly connected channels. Slack
  * sends a mention through both app_mention and message subscriptions; the
  * message timestamp, not the envelope/event id, is the delivery identity. */
-export function incomingSlackMessage(payload, config, botUserId, threads) {
+export function incomingSlackMessage(payload, config, botUserId) {
   const event = payload?.event;
   if (payload?.type !== "event_callback" || payload.team_id !== config.teamId ||
       !["app_mention", "message"].includes(event?.type) || (event.subtype && event.subtype !== "file_share") ||
@@ -42,7 +42,9 @@ export function incomingSlackMessage(payload, config, botUserId, threads) {
   if (!/^\d+\.\d+$/.test(threadTs)) return null;
   const threadKey = slackKey(config.teamId, event.channel, threadTs);
   const mentioned = event.text.includes(`<@${botUserId}>`);
-  if (!threads[threadKey] && !mentioned && event.channel_type !== "im") return null;
+  // A linked thread still belongs to its human participants. Only an explicit
+  // mention addresses the agent; bot DMs are already explicitly addressed.
+  if (!mentioned && event.channel_type !== "im") return null;
   const text = event.text.split(`<@${botUserId}>`).join("").trim();
   const files = (Array.isArray(event.files) ? event.files : [])
     .filter((file) => /^F[A-Z0-9]+$/.test(file?.id ?? ""))

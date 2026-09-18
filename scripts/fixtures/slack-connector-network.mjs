@@ -3,7 +3,7 @@
 if (process.argv[2] === "slack" && process.argv[3] === "serve") {
   globalThis.fetch = async (url) => {
     if (url === "https://slack.com/api/auth.test") {
-      return Response.json({ ok: true, team_id: "T1", bot_id: "B1", user_id: "U0" });
+      return Response.json({ ok: true, team_id: "T1", bot_id: "B1", user_id: "U0" }, { headers: { "x-oauth-scopes": "chat:write,files:read" } });
     }
     if (url === "https://slack.com/api/apps.connections.open") {
       return Response.json({ ok: true, url: "wss://wss.slack.com/fixture" });

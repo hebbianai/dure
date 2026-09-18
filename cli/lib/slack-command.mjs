@@ -31,7 +31,8 @@ Configuration:
   ]}
 
 Connect an invited channel or a bot DM to a registered Dure project. Mention
-@Dure to start; everyone in that thread can continue without another mention.
+@Dure to start or continue, including inside a task thread. Untagged thread
+messages stay between teammates. Bot DMs do not require a mention.
 An optional objective on a channel supplies shared context. Each new thread
 uses its own worktree. Dure and Slack share the same agent conversation.
 Start the connector in a Dure terminal to open tasks in that Space, or set
@@ -44,7 +45,7 @@ Use share to connect an existing Dure task to a new Slack thread while the
 connector is running. Only subsequent conversation updates are shared.
 Specify the task's backend when it differs from the channel's default.
 Provider questions appear in the task thread. Any teammate can use their
-answer controls; ordinary replies continue to send directions to the agent.
+answer controls; mention @Dure to send further directions to the agent.
 
 The connector stays active while this command runs. Ctrl-C disconnects Slack;
 existing work and conversations remain in Dure. A service can pass
@@ -145,7 +146,13 @@ export async function runSlackCommand(args, { resolveBackend, presentRun, enviro
       defaultBackend: command.backend, signal, presentRun,
       onPresentationError: (_error, agentId) => report("slack.dure_view_failed", { agentId }),
     });
-    const slack = new SlackApi({ appToken, botToken, signal, fetchApi });
+    let filePermissions = null;
+    const observePermissions = (permissions) => {
+      if (signal.aborted || JSON.stringify(permissions) === JSON.stringify(filePermissions)) return;
+      filePermissions = permissions;
+      report("slack.file_permissions", { permissions });
+    };
+    const slack = new SlackApi({ appToken, botToken, signal, fetchApi, onFilePermissions: observePermissions });
     const auth = await slack.call("auth.test");
     signal.throwIfAborted();
     if (auth.team_id !== config.teamId || !auth.bot_id || !auth.user_id) throw new Error("The Slack bot token does not match the configured workspace.");
@@ -158,11 +165,18 @@ export async function runSlackCommand(args, { resolveBackend, presentRun, enviro
     const sharing = new SlackShares({ config, journal, backend, slack });
     control = await serveSlackControl({ file: controlFile, teamId: config.teamId,
       share: (request) => sharing.share(request),
-      status: () => ({ ...journalSummary(journal.data), connection: signal.aborted ? "stopping" : connection }),
+      status: () => ({ ...journalSummary(journal.data), connection: signal.aborted ? "stopping" : connection, filePermissions }),
     });
     signal.throwIfAborted();
+    let nextPermissionCheck = Date.now() + 60_000;
+    const pollPermissions = async (failed) => {
+      if (Date.now() < nextPermissionCheck) return;
+      nextPermissionCheck = Date.now() + 60_000;
+      try { await slack.call("auth.test"); }
+      catch (error) { observePermissions(null); failed(error); }
+    };
     const poller = new SlackPoller({ signal, onError,
-      polls: () => [...bridge.polls(), ...sharing.polls()],
+      polls: () => [...bridge.polls(), ...sharing.polls(), ["file-permissions", pollPermissions]],
     });
     const work = [runSlackSocket({ slack, bridge, signal,
       onConnecting: () => observeConnection("connecting"),

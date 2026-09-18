@@ -46,6 +46,8 @@ export interface SlackConnection {
 	connection: SlackConnectionState;
 	generation: string | null;
 	failure: string | null;
+	/** Absent on older servers; null until the connector observes Slack's token scopes. */
+	filePermissions?: { read: boolean; write: boolean } | null;
 }
 
 export interface SlackConnectIntent {
@@ -107,6 +109,7 @@ export function slackConnectionContractError(): never {
 export function parseSlackConnection(value: unknown): SlackConnection {
 	const record = asRecord(value);
 	const config = asRecord(record?.config);
+	const permissions = asRecord(record?.filePermissions);
 	if (
 		!record ||
 		!config ||
@@ -125,6 +128,13 @@ export function parseSlackConnection(value: unknown): SlackConnection {
 		].includes(String(record.connection)) ||
 		(record.generation !== null && typeof record.generation !== "string") ||
 		(record.failure !== null && typeof record.failure !== "string")
+	)
+		slackConnectionContractError();
+	if (
+		record.filePermissions != null &&
+		(!permissions ||
+			typeof permissions.read !== "boolean" ||
+			typeof permissions.write !== "boolean")
 	)
 		slackConnectionContractError();
 	const channels = config.channels.map((value) => {
@@ -180,7 +190,21 @@ export function parseSlackConnection(value: unknown): SlackConnection {
 		connection: record.connection as SlackConnectionState,
 		generation: record.generation as string | null,
 		failure: record.failure as string | null,
+		filePermissions: permissions
+			? {
+					read: permissions.read as boolean,
+					write: permissions.write as boolean,
+				}
+			: null,
 	};
+}
+
+export function missingSlackFileScopes(connection: SlackConnection): string[] {
+	if (!connection.enabled || !connection.filePermissions) return [];
+	return [
+		...(!connection.filePermissions.read ? ["files:read"] : []),
+		...(!connection.filePermissions.write ? ["files:write"] : []),
+	];
 }
 
 /** Accept copied Slack links at the form boundary. Other input reaches the

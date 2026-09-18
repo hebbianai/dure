@@ -102,6 +102,8 @@ if [ "$DURE_SLACK_APP_TOKEN" = report-failure ] && [ ! -f reported ]; then
   exit 2
 fi
 printf '%s' "$DURE_SLACK_BOT_TOKEN" > received-token.fixture
+printf '%s\n' '{"event":"slack.file_permissions","permissions":{"read":true,"write":false,"token":"private-observation"}}'
+printf '%s\n' '{"event":"slack.file_permissions","permissions":{"read":"invalid","write":true}}'
 printf '%s\n' '{"event":"slack.connected"}'
 cat > /dev/null
 cp settings.json retired-settings.fixture
@@ -206,6 +208,11 @@ async fn native_connection_owns_one_child_and_keeps_credentials_private() {
         connected["generation"]
     );
     assert_eq!(connected["credentialsConfigured"], true);
+    assert_eq!(
+        connected["filePermissions"],
+        json!({"read": true, "write": false})
+    );
+    assert!(!connected.to_string().contains("private-observation"));
     assert!(!connected.to_string().contains("fixture-app"));
     assert!(!connected.to_string().contains("fixture-bot"));
     let directory = service.root.join("T1");
