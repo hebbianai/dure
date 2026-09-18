@@ -20,10 +20,10 @@ use hmux_client::transport::AttachedTransport;
 use std::collections::HashMap;
 use std::io;
 use std::rc::Rc;
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 /// How long a connection with no channels on it stays open for the next
@@ -77,6 +77,29 @@ impl SshExecDialer {
     /// hold that task's lifetime rather than the thread's, so dropping them
     /// ends the channel and leaves the connection for whoever else is on it.
     pub fn open_halves(config: SshExecConfig) -> Result<SshTransportHalves, SshTransportError> {
+        let deadline = Instant::now()
+            .checked_add(config.connect_timeout)
+            .ok_or_else(|| {
+                SshTransportError::Runtime(io::Error::other("the SSH connect timeout overflowed"))
+            })?;
+        Self::open_halves_before(config, deadline)
+    }
+
+    /// Bounds pool admission, authentication and channel opening by the same
+    /// caller deadline. A shorter connect timeout still applies to this open.
+    pub fn open_halves_before(
+        config: SshExecConfig,
+        deadline: Instant,
+    ) -> Result<SshTransportHalves, SshTransportError> {
+        let now = Instant::now();
+        let budget = config
+            .connect_timeout
+            .min(deadline.saturating_duration_since(now));
+        let deadline = OpenDeadline {
+            at: now + budget,
+            budget,
+        };
+        deadline.remaining("opening the SSH transport")?;
         let shared = Arc::new(SessionShared::new(config.write_admission_timeout));
         let slot = registry().slot(&ConnectionKey::of(&config));
 
@@ -85,14 +108,14 @@ impl SshExecDialer {
         // connection, once. A fresh connection's failure is the answer.
         let mut fresh = false;
         for _ in 0..2 {
-            let connection = match slot.connection(&config)? {
+            let connection = match slot.connection(&config, deadline)? {
                 Connected::Existing(connection) => connection,
                 Connected::Fresh(connection) => {
                     fresh = true;
                     connection
                 }
             };
-            match connection.open_channel(config.clone(), Arc::clone(&shared)) {
+            match connection.open_channel(config.clone(), Arc::clone(&shared), deadline) {
                 Ok(finished) => {
                     let session = SessionLifetime::owned_by(shared, PumpOwner::Task(finished));
                     return Ok(SshTransportHalves {
@@ -113,6 +136,28 @@ impl SshExecDialer {
         Err(SshTransportError::Runtime(io::Error::other(
             "the shared SSH connection went away twice while opening a channel",
         )))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct OpenDeadline {
+    at: Instant,
+    budget: Duration,
+}
+
+impl OpenDeadline {
+    fn expired(self, phase: &'static str) -> SshTransportError {
+        SshTransportError::Timeout {
+            phase,
+            after: self.budget,
+        }
+    }
+
+    fn remaining(self, phase: &'static str) -> Result<Duration, SshTransportError> {
+        self.at
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| self.expired(phase))
     }
 }
 
@@ -140,18 +185,18 @@ impl ConnectionKey {
     }
 }
 
-/// One slot per target. The slot's lock is held while a connection is being
-/// made, so concurrent requests for the same box wait for one handshake and
-/// share its outcome — the connection, or the failure — rather than each
-/// running their own; the registry's lock is held only to find the slot.
+/// One handshake per target. Waiters share its result while keeping their own
+/// deadlines; no slot lock is held across network I/O.
 #[derive(Default)]
 struct ConnectionSlot {
     state: Mutex<SlotState>,
+    changed: Condvar,
 }
 
 #[derive(Default)]
 struct SlotState {
     connection: Option<Arc<SharedConnection>>,
+    connecting: bool,
     /// Counts handshakes attempted here, so a caller that queued behind one
     /// can tell that the failure it finds is the one it waited for.
     attempts: u64,
@@ -164,9 +209,22 @@ enum Connected {
 }
 
 impl ConnectionSlot {
-    fn connection(&self, config: &SshExecConfig) -> Result<Connected, SshTransportError> {
-        let attempts_seen = self.lock().attempts;
+    fn connection(
+        &self,
+        config: &SshExecConfig,
+        deadline: OpenDeadline,
+    ) -> Result<Connected, SshTransportError> {
         let mut state = self.lock();
+        let waited_for = state.connecting.then_some(state.attempts);
+        while state.connecting {
+            let remaining = deadline.remaining("waiting for the shared SSH connection")?;
+            state = self
+                .changed
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .0;
+        }
+        deadline.remaining("opening the SSH connection")?;
         if let Some(connection) = state
             .connection
             .as_ref()
@@ -175,7 +233,7 @@ impl ConnectionSlot {
             return Ok(Connected::Existing(Arc::clone(connection)));
         }
         if let Some((attempt, detail)) = &state.last_failure {
-            if *attempt > attempts_seen {
+            if waited_for.is_some_and(|waiting| *attempt >= waiting) {
                 // The handshake this caller queued behind just failed; the
                 // box is not going to answer differently a moment later.
                 return Err(SshTransportError::Connect {
@@ -186,7 +244,13 @@ impl ConnectionSlot {
         }
         state.attempts += 1;
         let attempt = state.attempts;
-        match SharedConnection::connect(config) {
+        state.connecting = true;
+        drop(state);
+        let result = SharedConnection::connect(config, deadline);
+        let mut state = self.lock();
+        state.connecting = false;
+        self.changed.notify_all();
+        match result {
             Ok(connection) => {
                 let connection = Arc::new(connection);
                 state.connection = Some(Arc::clone(&connection));
@@ -250,6 +314,7 @@ struct ChannelRequest {
     config: SshExecConfig,
     shared: Arc<SessionShared>,
     report: SyncSender<Result<Receiver<()>, OpenFailure>>,
+    deadline: OpenDeadline,
 }
 
 /// One authenticated SSH connection and the thread that drives it.
@@ -261,20 +326,22 @@ impl SharedConnection {
     /// Connects and authenticates on a new thread, returning once that is
     /// known to have succeeded. The thread then serves channel requests until
     /// the connection dies or sits idle past the grace period.
-    fn connect(config: &SshExecConfig) -> Result<Self, SshTransportError> {
+    fn connect(config: &SshExecConfig, deadline: OpenDeadline) -> Result<Self, SshTransportError> {
+        let remaining = deadline.remaining("the SSH handshake")?;
         let (requests, inbox) = unbounded_channel();
         let (report, outcome) = sync_channel(1);
         let config = config.clone();
         thread::Builder::new()
             .name("hmux-ssh-transport".to_string())
-            .spawn(move || run_connection(config, inbox, &report))
+            .spawn(move || run_connection(config, inbox, &report, deadline))
             .map_err(SshTransportError::Runtime)?;
-        match outcome.recv() {
+        match outcome.recv_timeout(remaining) {
             Ok(Ok(())) => Ok(Self { requests }),
             Ok(Err(error)) => Err(error),
-            Err(_) => Err(SshTransportError::Runtime(io::Error::other(
-                "the Hmux SSH transport thread stopped before reporting",
-            ))),
+            Err(RecvTimeoutError::Timeout) => Err(deadline.expired("the SSH handshake")),
+            Err(RecvTimeoutError::Disconnected) => Err(SshTransportError::Runtime(
+                io::Error::other("the Hmux SSH transport thread stopped before reporting"),
+            )),
         }
     }
 
@@ -288,7 +355,11 @@ impl SharedConnection {
         &self,
         config: SshExecConfig,
         shared: Arc<SessionShared>,
+        deadline: OpenDeadline,
     ) -> Result<Receiver<()>, OpenFailure> {
+        let remaining = deadline
+            .remaining("opening the SSH exec channel")
+            .map_err(OpenFailure::Refused)?;
         let (report, outcome) = sync_channel(1);
         let gone = |detail: &str| {
             OpenFailure::ConnectionGone(SshTransportError::Runtime(io::Error::other(
@@ -300,11 +371,19 @@ impl SharedConnection {
                 config,
                 shared,
                 report,
+                deadline,
             })
             .map_err(|_| gone("the shared SSH connection has already closed"))?;
         outcome
-            .recv()
-            .map_err(|_| gone("the shared SSH connection closed before opening the channel"))?
+            .recv_timeout(remaining)
+            .map_err(|error| match error {
+                RecvTimeoutError::Timeout => {
+                    OpenFailure::Refused(deadline.expired("opening the SSH exec channel"))
+                }
+                RecvTimeoutError::Disconnected => {
+                    gone("the shared SSH connection closed before opening the channel")
+                }
+            })?
     }
 }
 
@@ -312,6 +391,7 @@ fn run_connection(
     config: SshExecConfig,
     inbox: UnboundedReceiver<ChannelRequest>,
     report: &SyncSender<Result<(), SshTransportError>>,
+    deadline: OpenDeadline,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -325,21 +405,19 @@ fn run_connection(
     };
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async move {
-        let budget = config.connect_timeout;
-        let session = match tokio::time::timeout(budget, connect_authenticated(&config)).await {
-            Err(_) => {
-                let _ = report.send(Err(SshTransportError::Timeout {
-                    phase: "the SSH handshake",
-                    after: budget,
-                }));
-                return;
-            }
-            Ok(Err(error)) => {
-                let _ = report.send(Err(error));
-                return;
-            }
-            Ok(Ok(session)) => session,
-        };
+        let session =
+            match tokio::time::timeout_at(deadline.at.into(), connect_authenticated(&config)).await
+            {
+                Err(_) => {
+                    let _ = report.send(Err(deadline.expired("the SSH handshake")));
+                    return;
+                }
+                Ok(Err(error)) => {
+                    let _ = report.send(Err(error));
+                    return;
+                }
+                Ok(Ok(session)) => session,
+            };
         if report.send(Ok(())).is_err() {
             return;
         }
@@ -438,8 +516,11 @@ async fn serve_channel(
     request: ChannelRequest,
     events: UnboundedSender<ChannelEvent>,
 ) {
-    let budget = request.config.connect_timeout;
-    let opened = tokio::time::timeout(budget, open_exec(&session, &request.config)).await;
+    let opened = tokio::time::timeout_at(
+        request.deadline.at.into(),
+        open_exec(&session, &request.config),
+    )
+    .await;
     let channel = match opened {
         Ok(Ok(channel)) => channel,
         Ok(Err(OpenExecError::Exec(error))) if !session.is_closed() => {
@@ -454,15 +535,12 @@ async fn serve_channel(
             return;
         }
         Err(_) => {
-            // A connection that cannot open a channel within the connect
-            // budget is not one to keep handing out.
-            let _ = request.report.send(Err(OpenFailure::ConnectionGone(
-                SshTransportError::Timeout {
-                    phase: "opening the SSH exec channel",
-                    after: budget,
-                },
+            // A caller's remaining budget can be shorter than a healthy
+            // channel open. Expiry cancels only this request, not other panes
+            // already using the authenticated connection.
+            let _ = request.report.send(Err(OpenFailure::Refused(
+                request.deadline.expired("opening the SSH exec channel"),
             )));
-            let _ = events.send(ChannelEvent::ConnectionGone);
             let _ = events.send(ChannelEvent::Ended(id));
             return;
         }

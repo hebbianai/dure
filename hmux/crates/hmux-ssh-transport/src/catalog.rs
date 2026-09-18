@@ -391,16 +391,15 @@ struct SessionInputDocument {
 
 /// Lists every session visible through one pinned SSH gateway.
 ///
-/// The timeout bounds the complete response, not each record independently.
-/// This prevents a compromised gateway from keeping a caller alive forever by
-/// sending one valid record just before every per-record deadline.
+/// The timeout includes connection admission, authentication, channel opening
+/// and the complete response. Records cannot extend the caller's deadline.
 pub fn list_sessions_over_ssh(
     ssh: SshExecConfig,
     timeout: Duration,
 ) -> Result<Vec<RemoteCatalogSession>, CatalogError> {
     list_sessions_over_ssh_version(
         ssh,
-        timeout,
+        catalog_deadline(timeout)?,
         GATEWAY_REQUEST_VERSION_RETIREMENT_POLICY,
         GATEWAY_CATALOG_VERSION_RETIREMENT_POLICY,
     )
@@ -413,21 +412,28 @@ pub fn list_sessions_with_facts_over_ssh(
     ssh: SshExecConfig,
     timeout: Duration,
 ) -> Result<Vec<RemoteCatalogSession>, CatalogError> {
+    let deadline = catalog_deadline(timeout)?;
     let session_facts_ssh = ssh_config_for_retry(&ssh);
     match list_sessions_over_ssh_version(
         ssh,
-        timeout,
+        deadline,
         GATEWAY_REQUEST_VERSION_GATEWAY_BUILD,
         GATEWAY_CATALOG_VERSION_GATEWAY_BUILD,
     ) {
         Err(error) if error.is_unsupported_protocol_version() => list_sessions_over_ssh_version(
             session_facts_ssh,
-            timeout,
+            deadline,
             GATEWAY_REQUEST_VERSION_SESSION_FACTS,
             GATEWAY_CATALOG_VERSION_SESSION_FACTS,
         ),
         result => result,
     }
+}
+
+fn catalog_deadline(timeout: Duration) -> Result<Instant, CatalogError> {
+    Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| CatalogError::Request("the catalog timeout overflowed".into()))
 }
 
 /// Duplicates connection material only for one typed catalog-version retry.
@@ -458,16 +464,14 @@ fn ssh_config_for_retry(ssh: &SshExecConfig) -> SshExecConfig {
 
 fn list_sessions_over_ssh_version(
     ssh: SshExecConfig,
-    timeout: Duration,
+    deadline: Instant,
     gateway_request_version: u16,
     gateway_catalog_version: u16,
 ) -> Result<Vec<RemoteCatalogSession>, CatalogError> {
-    let mut transport = SshExecDialer::open_halves(ssh).map_err(CatalogError::Ssh)?;
+    let mut transport =
+        SshExecDialer::open_halves_before(ssh, deadline).map_err(CatalogError::Ssh)?;
     let request =
         encode_request_with_listing_version(GatewayRequest::ListSessions, gateway_request_version)?;
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or_else(|| CatalogError::Request("the catalog timeout overflowed".into()))?;
     transport
         .writer
         .write_frame_before(&request, Some(deadline))
