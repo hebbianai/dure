@@ -4,7 +4,7 @@ export const plugins: Record<string, string> = {
 	"plugins.slack.updatePermissions": "设置权限",
 	"plugins.slack.filePermissionsHelp": "在Slack应用的OAuth & Permissions设置中添加缺少的Bot Token Scopes，然后将应用重新安装到此工作区。如果机器人令牌有变，请在此处点击编辑更新。Dure会自动检查权限。",
 	"plugins.slack.openAppSettings": "打开Slack应用设置",
-	"tag.mentionRequired": "在Slack话题中开始或继续工作时，请提及@Dure。",
+	"tag.mentionRequired": "提及 @Dure 以开始或继续工作。已关联 Slack 话题中的其他消息会在下次提及时作为上下文传递。",
 	"plugins.slack.launchDefaults": "执行默认值",
 	"plugins.slack.defaultsHint": "应用于此频道中新建的任务。现有对话保留原有设置。",
 	"plugins.slack.inheritDefault": "默认值",

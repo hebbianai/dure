@@ -134,8 +134,11 @@ for (const [label, outcome] of [
 for (const boundary of ["before queue journal", "after queue journal", "after queue admission"]) {
   test(`a crash ${boundary} resumes the saved intent without duplicating queue admission`, async (t) => {
     const f = await fixture(t);
+    const background = message("U3", "100.002");
+    background.event.text = "The team chose the compact version";
+    f.bridge.accept(background);
     f.bridge.accept(message());
-    const entry = Object.values(f.journal.data.inbox)[0];
+    const entry = Object.values(f.journal.data.inbox).find(({ state }) => state === "queued");
     const save = f.journal.save.bind(f.journal);
     let crashed = false;
     f.journal.save = () => {
@@ -150,16 +153,22 @@ for (const boundary of ["before queue journal", "after queue journal", "after qu
     await assert.rejects(f.bridge.receive(entry), /simulated process crash/);
     assert.equal(crashed, true);
     const queueTarget = structuredClone(entry.intent);
-    const persisted = Object.values(JSON.parse(fs.readFileSync(f.file, "utf8")).inbox)[0];
+    assert.match(queueTarget.input, /The team chose the compact version/);
+    const persisted = JSON.parse(fs.readFileSync(f.file, "utf8")).inbox[entry.message.key];
     assert.equal(persisted.state, "queued");
     assert.equal(persisted.operation, boundary === "before queue journal" ?
       "agent_conversation.steer_turn" : "agent_conversation.enqueue_turn");
     if (boundary === "after queue admission") f.state.queue = "dispatched";
     const restarted = await f.restart();
+    const later = message("U3", "102.001");
+    later.event.text = "A later discussion must wait";
+    restarted.accept(later);
     await restarted.tick((error) => { throw error; });
-    const reloaded = Object.values(f.journal.data.inbox)[0];
+    const reloaded = f.journal.data.inbox[entry.message.key];
     assert.deepEqual(reloaded.intent, queueTarget);
     assert.equal(reloaded.state, "delivered");
+    assert.equal(Object.values(f.journal.data.inbox).find(({ message }) => message.messageTs === "100.002").state, "delivered");
+    assert.equal(Object.values(f.journal.data.inbox).find(({ message }) => message.messageTs === "102.001").state, "context");
     assert.equal(f.admissions.size, 1);
     assert.equal(f.calls.filter((call) => call.operation === "agent_conversation.steer_turn").length,
       boundary === "before queue journal" ? 2 : 1);

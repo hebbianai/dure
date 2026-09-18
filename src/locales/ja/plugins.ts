@@ -4,7 +4,7 @@ export const plugins: Record<string, string> = {
 	"plugins.slack.updatePermissions": "権限を設定",
 	"plugins.slack.filePermissionsHelp": "SlackアプリのOAuth & Permissionsで不足しているBot Token Scopesを追加し、ワークスペースにアプリを再インストールしてください。ボットトークンが変わった場合は、ここで編集して更新してください。Dureが権限を自動確認します。",
 	"plugins.slack.openAppSettings": "Slackアプリ設定を開く",
-	"tag.mentionRequired": "Slackスレッドで作業を始める、または続けるには@Dureをメンションしてください。",
+	"tag.mentionRequired": "作業を始める、または続けるには@Dureをメンションしてください。接続済みのSlackスレッド内の他のメッセージは、次のメンション時に文脈として渡されます。",
 	"plugins.slack.launchDefaults": "実行の既定値",
 	"plugins.slack.defaultsHint": "このチャンネルで新しく開始するタスクに適用します。既存の会話の設定は維持されます。",
 	"plugins.slack.inheritDefault": "既定値",

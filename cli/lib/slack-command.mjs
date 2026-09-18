@@ -32,7 +32,8 @@ Configuration:
 
 Connect an invited channel or a bot DM to a registered Dure project. Mention
 @Dure to start or continue, including inside a task thread. Untagged thread
-messages stay between teammates. Bot DMs do not require a mention.
+messages in linked tasks are saved as context for the next mention without
+starting or steering work. Bot DMs do not require a mention.
 An optional objective on a channel supplies shared context. Each new thread
 uses its own worktree. Dure and Slack share the same agent conversation.
 Start the connector in a Dure terminal to open tasks in that Space, or set

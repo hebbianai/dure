@@ -68,7 +68,7 @@ export class SlackJournal {
     };
     this.data = {
       ...previous,
-      inbox: { ...previous.inbox, [message.key]: { message, state: "queued", ...(intent ? { operation, intent } : {}) } },
+      inbox: { ...previous.inbox, [message.key]: { message, state: message.contextOnly ? "context" : "queued", ...(intent ? { operation, intent } : {}) } },
       threads: { ...previous.threads, [message.threadKey]: thread },
     };
     try { this.save(); }

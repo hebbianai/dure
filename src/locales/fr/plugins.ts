@@ -4,7 +4,7 @@ export const plugins: Record<string, string> = {
 	"plugins.slack.updatePermissions": "Modifier les autorisations",
 	"plugins.slack.filePermissionsHelp": "Dans OAuth & Permissions de l’application Slack, ajoutez les Bot Token Scopes manquants, puis réinstallez l’application dans cet espace de travail. Si le jeton du bot change, mettez-le à jour ici avec Modifier. Dure vérifie automatiquement les autorisations.",
 	"plugins.slack.openAppSettings": "Ouvrir les paramètres de l’application Slack",
-	"tag.mentionRequired": "Mentionnez @Dure pour démarrer ou poursuivre le travail dans un fil Slack.",
+	"tag.mentionRequired": "Mentionnez @Dure pour démarrer ou poursuivre le travail. Les autres messages du fil Slack lié serviront de contexte lors de votre prochaine mention.",
 	"plugins.slack.launchDefaults": "Paramètres d’exécution",
 	"plugins.slack.defaultsHint": "S’applique aux nouvelles tâches de ce canal. Les conversations existantes conservent leurs paramètres.",
 	"plugins.slack.inheritDefault": "Par défaut",
