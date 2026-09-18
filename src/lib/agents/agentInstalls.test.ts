@@ -129,10 +129,16 @@ describe("provider rollout", () => {
 		expect(availableProviders()).toEqual(["claude", "codex", "kimi"]);
 	});
 
-	it("uses effective Basic in a production build even with a saved Pro preference", () => {
-		vi.stubEnv("PROD", true);
+	it("uses effective Basic under the Basic-only policy even with a saved Beta preference", () => {
+		vi.stubEnv("VITE_DURE_INTERFACE_MODE_POLICY", "basic-only");
 		useStore.setState({ installedAgents: ["gemini"] });
 		expect(availableProviders()).toEqual(["claude", "codex", "kimi"]);
+	});
+
+	it("offers installed Beta providers in a production build", () => {
+		vi.stubEnv("PROD", true);
+		useStore.setState({ installedAgents: ["gemini"] });
+		expect(availableProviders()).toContain("gemini");
 	});
 
 	it("updates launch menus and quick-start buttons when the mode changes without changing installed facts", () => {

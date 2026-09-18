@@ -20,7 +20,7 @@ const BASIC_FOLDED_TABS: ReadonlySet<string> = new Set(["automations"]);
 
 /** One resolver feeds rail visibility and effective selection. SSH, Sessions,
  * Source control, and Plugins stay reachable in every mode, including before
- * setup or while the plugin catalog is loading. Dure Tag stays reachable in Basic; Automations is Pro-only. */
+ * setup or while the plugin catalog is loading. Dure Tag stays reachable in Basic; Automations needs Beta. */
 export function useBasicFoldedRailTabs(): ReadonlySet<string> {
 	const mode = useInterfaceMode();
 	return mode === "pro" ? NO_FOLDED_TABS : BASIC_FOLDED_TABS;

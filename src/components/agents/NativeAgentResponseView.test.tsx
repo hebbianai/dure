@@ -193,8 +193,8 @@ describe("Pro final response presentation", () => {
 		expect(screen.getByRole("textbox")).toBeTruthy();
 		expect(useStore.getState().uiPrefs.agentFinalResponseOnly).toBe(true);
 	});
-	it("obeys Basic-only build policy even with a saved Pro preference", () => {
-		vi.stubEnv("PROD", true);
+	it("obeys Basic-only build policy even with a saved Beta preference", () => {
+		vi.stubEnv("VITE_DURE_INTERFACE_MODE_POLICY", "basic-only");
 		render(
 			<>
 				<TerminalPage />

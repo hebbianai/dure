@@ -271,9 +271,8 @@ jobs:
           targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
       - name: Install pinned dependencies
         run: corepack pnpm install --frozen-lockfile
-      - name: Build signed and notarized Basic beta
+      - name: Build signed and notarized beta
         env:
-          VITE_DURE_INTERFACE_MODE_POLICY: basic-only
           TAURI_BUNDLER_DMG_IGNORE_CI: "true"
           DURE_TELEMETRY_KEY: ${{ vars.DURE_TELEMETRY_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

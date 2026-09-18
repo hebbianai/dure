@@ -161,6 +161,26 @@ describe("DurePluginsPane", () => {
       act(() => useStore.setState({ uiPrefs: original }));
     }
   });
+  it("keeps the Slack plugin available in production Beta", async () => {
+    const original = useStore.getState().uiPrefs;
+    const slack: DurePluginCatalogOutcomeV2 = {
+      ...available,
+      identity: { source_id: "dure.bundled", candidate_id: "dure.slack.bundled" },
+      entry: { ...entry, manifest: { ...entry.manifest, id: "dure.slack", display_name: "Slack" }, settings_contribution: null },
+    };
+    mocks.list.mockResolvedValue(snapshot([available, slack]));
+    vi.stubEnv("PROD", true);
+    try {
+      useStore.setState({ uiPrefs: { ...original, interfaceMode: "pro" } });
+      render(<DurePluginsPane />);
+      await screen.findAllByText("Beads");
+      expect(screen.getByText("Slack")).toBeTruthy();
+    } finally {
+      vi.unstubAllEnvs();
+      act(() => useStore.setState({ uiPrefs: original }));
+    }
+  });
+
   it("shows Beads as a bundled Dure plugin with Codex and Claude integrations", async () => {
     mocks.list.mockResolvedValue(snapshot());
     mocks.get.mockResolvedValue(userSettings);

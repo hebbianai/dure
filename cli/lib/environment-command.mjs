@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { backendTransportErrorReport, performBackendProfileRequest } from "./backend-transport.mjs";
 
-export const ENVIRONMENT_HELP = `dure environment — provision worktree compute from a repository recipe (Pro)
+export const ENVIRONMENT_HELP = `dure environment — provision worktree compute from a repository recipe (Beta)
 
   dure environment list
   dure environment recipes --project PATH
   dure environment create --project PATH --recipe ID --digest SHA256 --name NAME [--request-id KEY]
   dure environment suspend|resume|destroy --id ID --revision N [--request-id KEY]
 
-Recipes run on the local backend. Create and resume require Pro.
+Recipes run on the local backend.
 Create returns a durable pending record; use list to observe completion.
 Destroy deletes provider resources, including files and running sessions.
 Keep the same request ID when retrying an uncertain create.`;

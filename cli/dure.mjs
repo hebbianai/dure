@@ -3364,7 +3364,7 @@ Usage:
   dure schedule <list|show|delete|runs> ...
                                       Inspect schedules, delete with a revision check, or read run history
   dure environment <recipes|create|list|suspend|resume|destroy> ...
-                                      Manage per-worktree VM environments (Pro)
+                                      Manage per-worktree VM environments (Beta)
   dure wait <name> [--timeout S] [--json]   Observe the next Host-reported response end
   dure wait --operation-id ID [--json]    Wait for a run request, not its response
   dure wait --task ID --dispatch ID --generation N [--json]   Wait for delegated task completion
@@ -3694,7 +3694,7 @@ async function main() {
         },
       });
     } catch {
-      process.stderr.write("Slack connector could not start or continue. Check the local configuration, Pro backend and Slack app connection.\n");
+      process.stderr.write("Slack connector could not start or continue. Check the local configuration, backend and Slack app connection.\n");
       process.exitCode = 2;
     }
     return;
