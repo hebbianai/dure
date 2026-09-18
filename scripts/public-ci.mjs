@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Public CI has a documentation-only fast path. Any code scope retains all
-// existing public suites; this adapter does not invent a second path classifier.
+// Maintainer main pushes are exempt. Other events use the existing scope
+// classifier, retaining all public suites for any code change.
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
@@ -20,12 +20,24 @@ const CODE_RESULTS = [
 
 export function planPublicCi({
   eventName,
+  ref,
+  actorPermission,
   base,
   head,
   cwd = process.cwd(),
   environment = process.env,
 }) {
-  const full = (reason) => ({ runCodeChecks: true, reason });
+  const full = (reason) => ({ runChecks: true, runCodeChecks: true, reason });
+  if (
+    eventName === "push" && ref === "refs/heads/main" && (
+      ["maintain", "admin"].includes(actorPermission?.role_name) ||
+      actorPermission?.permission === "admin" ||
+      actorPermission?.user?.permissions?.maintain === true ||
+      actorPermission?.user?.permissions?.admin === true
+    )
+  ) {
+    return { runChecks: false, runCodeChecks: false, reason: "maintainer-main-push" };
+  }
   if (eventName !== "push" && eventName !== "pull_request") {
     return full("manual-or-unsupported-event");
   }
@@ -55,6 +67,7 @@ export function planPublicCi({
     const paths = parseNullDelimitedGitPaths(git(gitDiffNameOnlyArgs(base, head)));
     const scopes = classifyChangedPaths(paths);
     return {
+      runChecks: true,
       runCodeChecks: scopes.length > 0,
       reason: scopes.length > 0 ? "code-or-shared-inputs" : "documentation-only",
       changedPathCount: paths.length,
@@ -62,6 +75,33 @@ export function planPublicCi({
     };
   } catch {
     return full("comparison-unavailable");
+  }
+}
+
+export async function lookupActorPermission({
+  eventName, ref, actor, repository, token,
+  apiUrl = "https://api.github.com", fetchImpl = fetch,
+}) {
+  if (eventName !== "push" || ref !== "refs/heads/main" || !actor || !repository || !token) return null;
+  try {
+    const response = await fetchImpl(
+      `${apiUrl}/repos/${repository}/collaborators/${encodeURIComponent(actor)}/permission`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2026-03-10",
+        },
+        signal: AbortSignal.timeout(10_000),
+        redirect: "error",
+      },
+    );
+    if (!response.ok) return null;
+    const permission = await response.json();
+    return permission?.user?.login?.toLowerCase() === actor.toLowerCase() ? permission : null;
+  } catch {
+    // An unavailable permission lookup retains the normal public checks.
+    return null;
   }
 }
 
@@ -82,17 +122,27 @@ export function requirePublicCiSuccess(environment) {
   }
 }
 
-function main() {
+async function main() {
   const [command, ...extra] = process.argv.slice(2);
   if (extra.length > 0) throw new Error("Unexpected public CI arguments");
   if (command === "plan") {
+    const actorPermission = await lookupActorPermission({
+      eventName: process.env.CI_EVENT_NAME,
+      ref: process.env.CI_REF,
+      actor: process.env.CI_ACTOR,
+      repository: process.env.GITHUB_REPOSITORY,
+      token: process.env.GITHUB_TOKEN,
+      apiUrl: process.env.GITHUB_API_URL,
+    });
     const plan = planPublicCi({
       eventName: process.env.CI_EVENT_NAME,
+      ref: process.env.CI_REF,
+      actorPermission,
       base: process.env.CI_BASE_SHA,
       head: process.env.CI_HEAD_SHA,
     });
     if (!process.env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
-    appendFileSync(process.env.GITHUB_OUTPUT, `run_code_checks=${plan.runCodeChecks}\n`);
+    appendFileSync(process.env.GITHUB_OUTPUT, `run_checks=${plan.runChecks}\nrun_code_checks=${plan.runCodeChecks}\n`);
     console.log(JSON.stringify(plan));
   } else if (command === "check") {
     requirePublicCiSuccess(process.env);
@@ -103,10 +153,8 @@ function main() {
 }
 
 if (import.meta.main) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
-  }
+  });
 }

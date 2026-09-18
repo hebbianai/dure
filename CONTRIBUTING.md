@@ -314,7 +314,8 @@ code suites are skipped. Code, dependency and CI changes, uncertain comparisons,
 and manual dispatches run the complete public checks. The existing
 [scope classifier](scripts/lib/push-gate-scope.mjs) owns path classification.
 
-The required `Public repository checks` result always runs. It requires successful
+Except for the maintainer push exemption below, the required
+`Public repository checks` result always runs. It requires successful
 classification and documentation checks, plus every selected frontend, script,
 mobile web and shared-protocol check. A failed classification or an unexpectedly
 skipped, failed or cancelled required job cannot pass this result. Mobile web checks
@@ -333,9 +334,18 @@ requests when merging; the ruleset blocks force pushes and deletion of `main`.
 See the [active repository rules](https://github.com/hebbianai/dure/rules) for the
 enforced settings.
 
-The repository administrator `komojini` has an explicit always-on bypass for this
-ruleset, including direct pushes and merges without the required checks.
-Other contributors and administrators remain subject to the rules above.
+Repository roles `maintain` and `admin` can push directly to `main` and merge
+without waiting for the required CI result. This exception covers the pull-request
+and status-check requirements; force-push, deletion and linear-history rules
+remain in the separate branch-protection ruleset. The existing administrator
+`komojini` retains the previously configured full ruleset bypass.
+
+For `push` events to `main`, the planning job looks up the push actor's current
+repository permissions. It skips the remaining public CI jobs for `maintain` and
+`admin`, including pushes produced by merging a pull request. Permission lookup
+failures retain the normal checks. Pull-request checks and manual workflow
+dispatches still run for everyone. Contributors with lower access remain subject
+to the required checks and pull-request workflow above.
 
 Contributors remain responsible for everything they submit, including work
 prepared with AI tools. Check the diff, verify claims, and describe any testing

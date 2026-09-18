@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
+      run_checks: ${{ steps.plan.outputs.run_checks }}
       run_code_checks: ${{ steps.plan.outputs.run_code_checks }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,12 +35,17 @@ jobs:
         id: plan
         env:
           CI_EVENT_NAME: ${{ github.event_name }}
+          CI_REF: ${{ github.ref }}
+          CI_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD_SHA: ${{ github.sha }}
         run: node scripts/public-ci.mjs plan
 
   documentation:
     name: Documentation checks
+    needs: plan
+    if: ${{ needs.plan.outputs.run_checks == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -174,7 +180,7 @@ jobs:
   public-repository:
     name: Public repository checks
     needs: [plan, documentation, frontend, scripts, mobile-web, shared-protocol]
-    if: ${{ always() }}
+    if: ${{ always() && needs.plan.outputs.run_checks != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

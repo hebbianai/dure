@@ -3,10 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { runInNewContext } from "node:vm";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
-import { planPublicCi } from "./public-ci.mjs";
+import { lookupActorPermission, planPublicCi } from "./public-ci.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = parse(
@@ -85,6 +86,93 @@ function runRequiredCheck(environment) {
     },
   );
 }
+
+describe("public CI maintainer push exemption", () => {
+  const push = { eventName: "push", ref: "refs/heads/main" };
+  const lookup = { ...push, actor: "kattpish", repository: "hebbianai/dure", token: "fixture-token" };
+
+  it.each([
+    { permission: "write", role_name: "maintain" },
+    { permission: "admin", role_name: "admin" },
+    { permission: "write", role_name: "custom-role", user: { permissions: { maintain: true } } },
+  ])("skips checks for a main push with permission %j", (actorPermission) => {
+    expect(planPublicCi({ ...push, actorPermission })).toMatchObject({
+      runChecks: false, runCodeChecks: false, reason: "maintainer-main-push",
+    });
+  });
+
+  it.each([
+    { permission: "write", role_name: "write", user: { permissions: { push: true, maintain: false } } },
+    { permission: "read", role_name: "triage" },
+    { permission: "read", role_name: "read" },
+    { permission: "none" },
+    { user: { permissions: { maintain: "true" } } },
+    null,
+  ])("retains checks for lower or unknown permission %j", (actorPermission) => {
+    expect(planPublicCi({ ...push, actorPermission }).runChecks).toBe(true);
+  });
+
+  it.each([
+    ["pull_request", "refs/pull/49/merge"],
+    ["workflow_dispatch", "refs/heads/main"],
+    ["push", "refs/heads/topic"],
+  ])("retains checks and avoids permission lookup for %s on %s", async (eventName, ref) => {
+    const fetchImpl = vi.fn();
+    expect(await lookupActorPermission({ ...lookup, eventName, ref, fetchImpl })).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(planPublicCi({ eventName, ref, actorPermission: { role_name: "admin" } }).runChecks).toBe(true);
+  });
+
+  it("uses the authenticated repository permission for the push actor", async () => {
+    const permission = { role_name: "maintain", user: { login: "kattpish" } };
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => permission });
+    expect(await lookupActorPermission({ ...lookup, fetchImpl })).toEqual(permission);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.github.com/repos/hebbianai/dure/collaborators/kattpish/permission",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer fixture-token" }),
+        redirect: "error", signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it.each([
+    { ok: false },
+    { ok: true, json: async () => ({ role_name: "admin", user: { login: "someone-else" } }) },
+    { ok: true, json: async () => { throw new Error("invalid JSON"); } },
+  ])("retains checks when permission cannot be established", async (response) => {
+    const actorPermission = await lookupActorPermission({ ...lookup, fetchImpl: vi.fn().mockResolvedValue(response) });
+    expect(actorPermission).toBeNull();
+    expect(planPublicCi({ ...push, actorPermission }).runChecks).toBe(true);
+  });
+
+  it("retains checks when the permission request fails or credentials are missing", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("network unavailable"));
+    expect(await lookupActorPermission({ ...lookup, fetchImpl })).toBeNull();
+    fetchImpl.mockClear();
+    expect(await lookupActorPermission({ ...lookup, token: undefined, fetchImpl })).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  const admitted = (name, outputs) => runInNewContext(
+    workflow.jobs[name].if.replace(/^\$\{\{\s*|\s*\}\}$/g, ""),
+    { needs: { plan: { outputs } }, always: () => true },
+  );
+
+  it("skips every check job after the explicit maintainer plan", () => {
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      if (name === "plan") continue;
+      expect([job.needs].flat()).toContain("plan");
+      expect(admitted(name, { run_checks: "false", run_code_checks: "false" }), name).toBe(false);
+    }
+  });
+
+  it("still runs the required result when the plan fails or its output is missing", () => {
+    expect(workflow.jobs["public-repository"].if).toContain("always()");
+    expect(admitted("public-repository", {})).toBe(true);
+    expect(admitted("public-repository", { run_checks: "true" })).toBe(true);
+  });
+});
 
 describe("public CI required result", () => {
   it("accepts a successful documentation-only plan with intentionally skipped code jobs", () => {
@@ -289,7 +377,7 @@ describe("public CI change planning", () => {
       { cwd: fixture.cwd, env: environment, encoding: "utf8" },
     );
     expect(JSON.parse(stdout).runCodeChecks).toBe(false);
-    expect(readFileSync(output, "utf8")).toBe("run_code_checks=false\n");
+    expect(readFileSync(output, "utf8")).toBe("run_checks=true\nrun_code_checks=false\n");
     execFileSync(process.execPath, [join(fixture.cwd, "scripts/public-ci.mjs"), "check"], {
       cwd: fixture.cwd,
       env: { ...environment, ...results(false) },
