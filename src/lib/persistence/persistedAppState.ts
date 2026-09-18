@@ -75,7 +75,6 @@ export type PersistedAppState = {
   accounts: AccountProfile[];
   activeAccounts: Partial<Record<Provider, string>>;
   customThemes: ThemeDefinition[];
-  autoSwitchAccounts: boolean;
   /** Legacy migration input only. Backend projections are never persisted. */
   skipPermissions?: Partial<Record<Provider, boolean>>;
   language: LangSetting;
@@ -107,7 +106,6 @@ export function persistedSlice(
     accounts: state.accounts,
     activeAccounts: state.activeAccounts,
     customThemes: state.customThemes,
-    autoSwitchAccounts: state.autoSwitchAccounts,
     ...(state.legacySkipPermissions
       ? { skipPermissions: state.legacySkipPermissions }
       : {}),
@@ -304,8 +302,6 @@ function normalizeCanonicalPersistedState(
     accounts,
     activeAccounts,
     customThemes,
-    autoSwitchAccounts:
-      typeof raw.autoSwitchAccounts === "boolean" ? raw.autoSwitchAccounts : true,
     skipPermissions: legacySkipPermissions ?? {},
     ...(legacySkipPermissions ? { legacySkipPermissions } : {}),
     language,

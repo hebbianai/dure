@@ -187,6 +187,20 @@ async fn reject_cross_namespace_launch_reference(
     Ok(())
 }
 
+pub(crate) async fn profiles(
+    pool: &SqlitePool,
+    provider_id: &ProviderIdV1,
+) -> Result<Vec<ProviderCredentialProfileV1>, DomainStoreErrorV1> {
+    sqlx::query("SELECT * FROM provider_credential_profiles WHERE provider_id = ?1 ORDER BY reference_id")
+        .bind(provider_id.as_str())
+        .fetch_all(pool)
+        .await
+        .map_err(|error| map_sqlx("list_provider_credential_profiles", error))?
+        .into_iter()
+        .map(|row| decode(row).map(|registration| registration.profile))
+        .collect()
+}
+
 pub(crate) async fn profile(
     pool: &SqlitePool,
     provider_id: &ProviderIdV1,

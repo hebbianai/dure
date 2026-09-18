@@ -5,7 +5,7 @@ import {
 	useState,
 	useSyncExternalStore,
 } from "react";
-import type { UsageLimitResumeResult } from "@/lib/agents/chat/resumeUsageLimitTurn";
+import type { RecoveryObservation } from "@/lib/agents/accountRecoveryContract";
 import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredentialTransition";
 import type {
 	LatestTurnFailure,
@@ -21,13 +21,13 @@ import {
 	type UsageLimitHandoffOutcome,
 	usageLimitHandoffState,
 } from "@/lib/agents/usageLimitHandoffState";
+import { t } from "@/lib/i18n";
 import { usageRecent } from "@/lib/ipc";
 import { accountUsageObservations } from "@/lib/usage/accountUsageObservations";
 import type { AccountProfile, Provider } from "@/types";
 
-/** Reasons an observed conversation moves on by itself; a sign-in failure only offers the
- * move, because switching accounts cannot fix credentials that are wrong. */
-const AUTOMATIC_REASONS: ReadonlySet<TurnFailureReason> = new Set([
+/** Actual limit failures outrank an older usage reading for manual suggestions. */
+const LIMIT_REASONS: ReadonlySet<TurnFailureReason> = new Set([
 	"usage_limit",
 	"rate_limit",
 ]);
@@ -55,27 +55,21 @@ export type UsageLimitHandoffView =
 	| { readonly kind: "deciding" }
 	| { readonly kind: "decided"; readonly decision: UsageLimitHandoffDecision };
 
-/** Decides and, when opted in, performs the usage-limit handoff for one
- * observed Chat conversation. Target selection is the policy's alone; the banner's "Switch
- * to X", the `handoff` pane action, and the automatic trigger all read the
- * same decision, so they can never name different accounts. The automatic
- * move fires only for a failure that happened while this observer was mounted,
- * never for one replayed from history after a reload. */
+/** Manual account suggestions and the backend's observed automatic outcome.
+ * Mounting a conversation never changes its account or sends retained input. */
 export function useUsageLimitHandoff({
 	agentId,
 	provider,
-	automatic,
+	recovery,
 	accountMovesLocked,
 	currentCredentialId,
 	pool,
 	failure,
 	performAccountSwitch,
-	resumeAfterHandoff,
 }: {
 	readonly agentId: string;
 	readonly provider: Provider;
-	/** Settings opt-in and a local conversation permit an automatic move. */
-	readonly automatic: boolean;
+	readonly recovery?: RecoveryObservation | null;
 	/** The toolbar switcher's own disabled predicate; while true the pane
 	 * neither offers nor performs an account move. */
 	readonly accountMovesLocked: boolean;
@@ -85,10 +79,6 @@ export function useUsageLimitHandoff({
 	readonly performAccountSwitch: (
 		credentialId: string,
 	) => Promise<AgentCredentialTransitionResult>;
-	readonly resumeAfterHandoff: (
-		failure: LatestTurnFailure,
-		result: AgentCredentialTransitionResult,
-	) => Promise<UsageLimitResumeResult>;
 }): {
 	readonly view: UsageLimitHandoffView;
 	readonly requestHandoff: () => Promise<void>;
@@ -99,11 +89,8 @@ export function useUsageLimitHandoff({
 		usageLimitHandoffState.revision,
 	);
 	const [decision, setDecision] = useState<UsageLimitHandoffDecision>();
-	const mountedAtMs = useRef(Date.now());
 	const switchRef = useRef(performAccountSwitch);
 	switchRef.current = performAccountSwitch;
-	const resumeRef = useRef(resumeAfterHandoff);
-	resumeRef.current = resumeAfterHandoff;
 	const poolRef = useRef(pool);
 	poolRef.current = pool;
 	const failureRef = useRef(failure);
@@ -127,7 +114,7 @@ export function useUsageLimitHandoff({
 		if (
 			currentCredentialId !== undefined &&
 			failureCreatedAtMs !== undefined &&
-			AUTOMATIC_REASONS.has(failureReason)
+			LIMIT_REASONS.has(failureReason)
 		) {
 			reportedLimitAtSec.set(
 				`${provider}:${currentCredentialId}`,
@@ -141,9 +128,6 @@ export function useUsageLimitHandoff({
 				if (!current) return;
 				const nowSec = Date.now() / 1000;
 				const currentPool = poolRef.current;
-				const currentName = currentPool.find(
-					(account) => account.id === currentCredentialId,
-				)?.name;
 				const observations = accountUsageObservations(
 					provider,
 					report,
@@ -165,52 +149,6 @@ export function useUsageLimitHandoff({
 					nowSec,
 				});
 				setDecision(next);
-				const latest = failureRef.current;
-				if (
-					next.kind !== "handoff" ||
-					!automatic ||
-					accountMovesLocked ||
-					!latest ||
-					!AUTOMATIC_REASONS.has(latest.reason) ||
-					latest.createdAtMs < mountedAtMs.current
-				) {
-					return;
-				}
-				const attempt = usageLimitHandoffState.begin(
-					agentId,
-					latest.createdAtMs,
-					"automatic",
-				);
-				if (!attempt) return;
-				void switchRef
-					.current(next.targetCredentialId)
-					.then(async (result) => {
-						if (result.kind !== "completed") return;
-						const outcome: UsageLimitHandoffOutcome = {
-							...(currentName !== undefined ? { fromName: currentName } : {}),
-							toName: next.targetName,
-						};
-						// Keep the manual resend hidden until this one automatic
-						// attempt settles. A lost receipt never starts a second turn.
-						try {
-							const resume = await resumeRef.current(latest, result);
-							usageLimitHandoffState.settle(attempt, {
-								kind: "completed",
-								outcome: { ...outcome, resume },
-							});
-						} catch {
-							usageLimitHandoffState.settle(attempt, {
-								kind: "completed",
-								outcome,
-							});
-						}
-					})
-					.catch((error: unknown) => {
-						usageLimitHandoffState.settle(attempt, {
-							kind: "failed",
-							error: error instanceof Error ? error.message : String(error),
-						});
-					});
 			})
 			.catch(() => {
 				if (current) setDecision(undefined);
@@ -221,8 +159,6 @@ export function useUsageLimitHandoff({
 	}, [
 		agentId,
 		provider,
-		automatic,
-		accountMovesLocked,
 		currentCredentialId,
 		poolKey,
 		failureItemId,
@@ -231,7 +167,7 @@ export function useUsageLimitHandoff({
 	]);
 
 	const requestHandoff = useCallback(async () => {
-		if (!decision) throw new Error("handoff_undecided");
+		if (accountMovesLocked || !decision) throw new Error("handoff_undecided");
 		if (decision.kind === "refused") {
 			throw new Error(
 				`handoff_refused:${decision.code}: ${decision.nextAction}`,
@@ -239,11 +175,7 @@ export function useUsageLimitHandoff({
 		}
 		const latest = failureRef.current;
 		if (!latest) throw new Error("handoff_undecided");
-		const attempt = usageLimitHandoffState.begin(
-			agentId,
-			latest.createdAtMs,
-			"requested",
-		);
+		const attempt = usageLimitHandoffState.begin(agentId, latest.createdAtMs);
 		if (!attempt) {
 			throw new Error("handoff_already_performed");
 		}
@@ -268,7 +200,7 @@ export function useUsageLimitHandoff({
 			});
 			throw error;
 		}
-	}, [agentId, currentCredentialId, decision]);
+	}, [agentId, currentCredentialId, decision, accountMovesLocked]);
 
 	const outcome =
 		episode?.result.kind === "completed" ? episode.result.outcome : undefined;
@@ -281,5 +213,38 @@ export function useUsageLimitHandoff({
 				: decision
 					? { kind: "decided", decision }
 					: { kind: "deciding" };
+	if (recovery && !episode && recovery.stopped?.kind !== "superseded") {
+		if (recovery.stopped || recovery.turnState === "failed") {
+			return {
+				view: {
+					kind: "failed",
+					decision,
+					error: t(
+						recovery.stopped?.kind === "exhausted"
+							? "agents.recovery.exhausted"
+							: "agents.recovery.failed",
+					),
+				},
+				requestHandoff,
+			};
+		}
+		return {
+			view: {
+				kind: "handled",
+				...(recovery.target && recovery.turnState !== null
+					? {
+							outcome: {
+								toName: recovery.target.name,
+								resume:
+									recovery.turnState === "accepted"
+										? ("accepted" as const)
+										: ("uncertain" as const),
+							},
+						}
+					: {}),
+			},
+			requestHandoff,
+		};
+	}
 	return { view, requestHandoff };
 }

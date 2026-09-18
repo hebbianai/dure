@@ -28,7 +28,6 @@ import {
 import { AgentPanelWindowActions } from "@/components/panels/AgentPanelWindowActions";
 import type { AgentPanelDockProps } from "@/components/panels/agentPanelContract";
 import {
-	useAutoSwitchAccounts,
 	useStructuredAgentPanelState,
 } from "@/components/panels/useAgentPanelState";
 import { useRemoteAgentCredentialActions } from "@/components/panels/useRemoteAgentCredentialActions";
@@ -48,7 +47,6 @@ import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePrese
 import type { StructuredAgentRuntimeProjectionGenerationV1 } from "@/lib/agents/agentRuntimeProjectionRecovery";
 import type { AgentStructuredInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { latestTurnFailure } from "@/lib/agents/chat/turnFailureReason";
-import { resumeUsageLimitTurn } from "@/lib/agents/chat/resumeUsageLimitTurn";
 import { usageLimitHandoffState } from "@/lib/agents/usageLimitHandoffState";
 import {
 	providerLoginCmd,
@@ -111,7 +109,6 @@ export function StructuredAgentPanel({
 		setAgentActivity,
 		getActiveSpaceId,
 	} = useStructuredAgentPanelState(agent);
-	const autoSwitchAccounts = useAutoSwitchAccounts();
 	const session = useAgentChatSession(agent.id, profile, onRuntimeInvalidated);
 	const activeTurn = "activeTurn" in session ? session.activeTurn : undefined;
 	const answeringRequestId =
@@ -275,12 +272,9 @@ export function StructuredAgentPanel({
 		setAccountFailure(undefined);
 		setRemoteRecoveryAccount(undefined);
 		setAccountBusy(true);
-		const episode = turnFailure
-			? usageLimitHandoffState.read(agent.id, turnFailure.createdAtMs)
-			: undefined;
-		const recoveryAttempt = episode?.result.kind === "failed"
-			? usageLimitHandoffState.begin(agent.id, episode.attempt.failureAtMs, "requested")
-			: undefined;
+        const recoveryAttempt = turnFailure
+            ? usageLimitHandoffState.begin(agent.id, turnFailure.createdAtMs)
+            : undefined;
 		return switchCredential(agent.id, accountId)
 			.then((result) => {
 				// Manual toolbar/CLI recovery consumes the same failed attempt.
@@ -321,13 +315,12 @@ export function StructuredAgentPanel({
 	const { view: handoffView, requestHandoff } = useUsageLimitHandoff({
 		agentId: agent.id,
 		provider: agent.provider,
-		automatic: autoSwitchAccounts && project?.kind !== "ssh",
+		recovery: "page" in session ? session.page?.recovery : undefined,
 		accountMovesLocked,
 		currentCredentialId: currentAccount?.id,
 		pool: accountPool,
 		failure: turnFailure,
 		performAccountSwitch,
-		resumeAfterHandoff: resumeUsageLimitTurn,
 	});
 	const handoffDecision =
 		handoffView.kind === "decided" || handoffView.kind === "failed"

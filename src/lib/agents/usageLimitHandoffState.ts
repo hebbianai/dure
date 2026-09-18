@@ -1,9 +1,7 @@
-import type { UsageLimitResumeResult } from "./chat/resumeUsageLimitTurn";
-
 export interface UsageLimitHandoffOutcome {
 	readonly fromName?: string;
 	readonly toName: string;
-	readonly resume?: UsageLimitResumeResult;
+	readonly resume?: "accepted" | "not_sent" | "uncertain";
 }
 
 type HandoffResult =
@@ -49,14 +47,13 @@ export const usageLimitHandoffState = {
 	begin(
 		agentId: string,
 		failureAtMs: number,
-		mode: "automatic" | "requested",
 	): HandoffAttempt | undefined {
 		const prior = episodes.get(agentId);
 		if (
 			prior &&
 			(prior.attempt.failureAtMs > failureAtMs ||
 				(prior.attempt.failureAtMs === failureAtMs &&
-					(mode === "automatic" || prior.result.kind !== "failed")))
+					prior.result.kind !== "failed"))
 		)
 			return undefined;
 		const attempt = { agentId, failureAtMs };

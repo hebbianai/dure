@@ -53,6 +53,7 @@ use super::*;
 
 mod agent_conversation_recovery_tests;
 mod agent_goal_tests;
+mod agent_recovery_tests;
 mod claude_goal_smoke;
 pub(crate) mod goal_provider_smoke;
 mod dispatch_stop_tests;

@@ -378,12 +378,6 @@ export function useStructuredAgentPanelState(agent: Agent) {
 	};
 }
 
-/** The usage-limit handoff opt-in (Settings › General). Read through this
- * cluster hook so the chat surface never imports the store directly. */
-export function useAutoSwitchAccounts(): boolean {
-	return useStore((state) => state.autoSwitchAccounts);
-}
-
 function getActiveSpaceId() {
 	return useStore.getState().activeSpaceId;
 }

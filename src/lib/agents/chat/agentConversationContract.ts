@@ -1,3 +1,4 @@
+import { type RecoveryObservation, parseRecoveryObservation } from "@/lib/agents/accountRecoveryContract";
 import {
 	hasOnlyKeys,
 	nonNegativeInteger,
@@ -345,6 +346,7 @@ export interface AgentTimelinePageV1 {
 	pendingRequests: AgentPendingRequestV1[];
 	activeTurn: AgentTimelineActiveTurnV1 | null;
 	latestFailure: AgentTimelineFailureV1 | null;
+	recovery: RecoveryObservation | null;
 	goal: AgentGoalRecordV1 | null;
 	queuedInputs?: AgentQueuedInputPageV1;
 	finalCursor: AgentTimelineCursorV1;
@@ -924,6 +926,7 @@ export function parseAgentTimelineReadV1(
 		page?.latestFailure === null
 			? null
 			: parseTimelineFailure(page?.latestFailure);
+	const recovery = page?.recovery === null ? null : parseRecoveryObservation(page?.recovery);
 	const activeTurn =
 		page?.activeTurn === null ? null : parseActiveTurn(page?.activeTurn);
 	if (
@@ -935,6 +938,7 @@ export function parseAgentTimelineReadV1(
 			"pendingRequests",
 			"activeTurn",
 			"latestFailure",
+			"recovery",
 			"goal",
 			"queuedInputs",
 			"finalCursor",
@@ -949,6 +953,7 @@ export function parseAgentTimelineReadV1(
 		page.pendingRequests.length > MAX_PENDING_REQUESTS ||
 		activeTurn === undefined ||
 		latestFailure === undefined ||
+		recovery === undefined ||
 		goal === undefined ||
 		(goal !== null && goal.agentId !== binding.agentId) ||
 		!finalCursor ||
@@ -1039,6 +1044,7 @@ export function parseAgentTimelineReadV1(
 			pendingRequests: pendingRequests as AgentPendingRequestV1[],
 			activeTurn,
 			latestFailure,
+			recovery,
 			goal,
 			queuedInputs,
 			finalCursor,

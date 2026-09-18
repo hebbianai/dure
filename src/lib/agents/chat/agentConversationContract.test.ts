@@ -56,6 +56,7 @@ function read() {
 			],
 			pendingRequests: [],
 			activeTurn: null,
+			recovery: null,
 			latestFailure: null,
 			goal: null,
 			queuedInputs: {

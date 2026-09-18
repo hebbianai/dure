@@ -1,3 +1,4 @@
+import { AccountRecoverySettings } from "@/components/settings/AccountRecoverySettings";
 // 설정 › 일반 페이지 — SettingsDialog(god-file)에서 추출.
 //
 // 시안 2524:64419 개편: 페이지를 감싸던 720px 카드를 걷어내고, 섹션마다
@@ -36,8 +37,6 @@ export function GeneralPage() {
   const {
     language,
     setLanguage,
-    autoSwitch,
-    setAutoSwitch,
     ui,
     setUi,
   } = useGeneralPageState();
@@ -250,13 +249,7 @@ export function GeneralPage() {
         </SettingsSection>
 
         <SettingsSection label={t("common.agent")}>
-          <SettingRow
-            title={t("settings.general.autoSwitchOnLimit.title")}
-            desc={t("settings.general.autoSwitchOnLimit.desc")}
-          >
-            <Switch checked={autoSwitch}
-              aria-label={t("settings.general.autoSwitchOnLimit.title")} onCheckedChange={setAutoSwitch} />
-          </SettingRow>
+          <AccountRecoverySettings />
 
           <AgentLaunchPreferences />
         </SettingsSection>

@@ -2,6 +2,8 @@ import type { EnglishTranslationDictionary } from "@/lib/settings/englishTransla
 
 /** Copy shared by multiple product surfaces. */
 export const commonEnglishTranslations = {
+	"common.backend.thisComputer": "This computer",
+
 	"common.closePane": "Close pane",
 	"(비어 있음)": "(empty)",
 	"오른쪽으로 분할": "Split Right",

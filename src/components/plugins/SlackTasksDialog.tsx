@@ -2,7 +2,7 @@ import { ArrowLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { SharedAgentConversation } from "@/components/agents/chat/SharedAgentConversation";
 import { LoadingRow } from "@/components/common/StatusBlocks";
-import { SlackServerSelect } from "@/components/plugins/SlackServerSelect";
+import { BackendServerSelect } from "@/components/common/BackendServerSelect";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -111,7 +111,7 @@ export function SlackTasksDialog({
 					<>
 						<div className="flex items-end gap-3">
 							<div className="flex-1">
-								<SlackServerSelect
+								<BackendServerSelect
 									profiles={profiles}
 									value={executionProfile}
 									onChange={setExecutionProfile}

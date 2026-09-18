@@ -68,7 +68,7 @@ export function settingsNavigationGroups(
 		{
 			group: t("settings.common.app"),
 			items: [
-				{ id: "general" as const, icon: SlidersVertical, label: t("settings.common.general"), keywords: [t("settings.general.tabOrder.title"), t("settings.general.autoSaveFiles.title"), t("settings.general.autoSaveDelay.title"), t("settings.general.defaultDiffView.title"), t("settings.general.diffWordWrap.title"), t("settings.general.minimap.title"), t("settings.general.markdownReviewNotes.title"), t("settings.general.language.title"), t("settings.general.autoSwitchOnLimit.title")] },
+				{ id: "general" as const, icon: SlidersVertical, label: t("settings.common.general"), keywords: [t("settings.general.tabOrder.title"), t("settings.general.autoSaveFiles.title"), t("settings.general.autoSaveDelay.title"), t("settings.general.defaultDiffView.title"), t("settings.general.diffWordWrap.title"), t("settings.general.minimap.title"), t("settings.general.markdownReviewNotes.title"), t("settings.general.language.title"), t("settings.recovery.title")] },
 				{ id: "terminal" as const, icon: TerminalSquare, label: t("common.terminal"), keywords: [t("settings.terminal.copyOnSelect.title"), t("settings.terminal.osc52.title"), t("settings.terminal.finalResponseOnly.title")] },
 				{ id: "mobile" as const, icon: Smartphone, label: t("settings.mobilePairing.title") },
 				{ id: "environments" as const, icon: HardDrive, label: t("environments.title"), keywords: ["VM", "SSH", "Pro"] },

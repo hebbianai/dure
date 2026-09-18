@@ -8,6 +8,7 @@ mod agent_bootstrap;
 mod agent_dispatch_stop;
 mod agent_goal;
 mod agent_queue;
+mod agent_recovery;
 mod agent_integration;
 mod agent_plugin_cli;
 mod agent_plugin_cli_invocation;
@@ -44,6 +45,7 @@ mod plugin_settings;
 mod plugin_views;
 mod plugin_workflows;
 mod provider_credential_profile;
+mod provider_recovery;
 mod provider_execution;
 mod provider_launch_defaults;
 mod provider_runtime_integration;
@@ -60,6 +62,7 @@ pub use agent_bootstrap::{
 pub use agent_dispatch_stop::*;
 pub use agent_goal::*;
 pub use agent_queue::*;
+pub use agent_recovery::*;
 pub use agent_integration::{
     AgentEnvironmentTargetV2, AgentIntegrationEffectOwnershipV2, AgentIntegrationEffectReceiptV2,
     AgentIntegrationInstallActionV2, AgentIntegrationInstallPlanV2,
@@ -295,6 +298,7 @@ pub use plugin_views::{
 pub use plugin_workflows::{
     PLUGIN_WORKFLOWS_SCHEMA_VERSION_V1, PluginWorkflowContributionV1, WorkflowKindIdV1,
 };
+pub use provider_recovery::*;
 pub use provider_credential_profile::{
     PROVIDER_CREDENTIAL_PROFILE_SCHEMA_VERSION_V1, ProviderCredentialEnvironmentPolicyV1,
     ProviderCredentialProfileDirectoryNameV1, ProviderCredentialProfileRegistrationV1,

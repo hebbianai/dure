@@ -97,6 +97,7 @@ function session(): AgentChatSessionView {
 			liveText: [],
 			pendingRequests: [],
 			activeTurn: null,
+			recovery: null,
 			latestFailure: null,
 			goal: null,
 			finalCursor: { epoch: "timeline-1", sequence: 0 },

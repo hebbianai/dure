@@ -190,7 +190,11 @@ async fn converge_open_turns_on(
             SELECT 1 FROM agent_timeline_rows AS terminal
             WHERE terminal.interaction_session_id = started.interaction_session_id
               AND terminal.timeline_epoch = started.timeline_epoch
-              AND terminal.client_message_id = started.client_message_id
+              AND terminal.sequence > started.sequence
+              AND json_extract(terminal.body_json, '$.type') = 'lifecycle'
+              AND (terminal.turn_id IS NOT NULL OR terminal.client_message_id IS NOT NULL)
+              AND (terminal.turn_id IS NULL OR terminal.turn_id = started.turn_id)
+              AND (terminal.client_message_id IS NULL OR terminal.client_message_id = started.client_message_id)
               AND json_extract(terminal.body_json, '$.state')
                   IN ('turn_completed', 'turn_failed', 'turn_canceled')
           )
@@ -1994,9 +1998,17 @@ pub(crate) async fn prepare_continuation_turn(
     Ok(result)
 }
 
-async fn prepare_continuation_on(
+pub(crate) async fn prepare_continuation_on(
     connection: &mut SqliteConnection,
     request: &AgentContinueTurnRequestV1,
+) -> Result<Option<AgentTurnEffectReceiptV1>, DomainStoreErrorV1> {
+    prepare_continuation_with_goal_on(connection, request, None).await
+}
+
+pub(crate) async fn prepare_continuation_with_goal_on(
+    connection: &mut SqliteConnection,
+    request: &AgentContinueTurnRequestV1,
+    goal: Option<&dure_app::AgentGoalRecordV1>,
 ) -> Result<Option<AgentTurnEffectReceiptV1>, DomainStoreErrorV1> {
     let intent = &request.intent;
     // A replay observes its original effect even if that effect advanced the
@@ -2020,7 +2032,10 @@ async fn prepare_continuation_on(
     {
         return Ok(None);
     }
-    record_turn_intent_on(connection, intent).await.map(Some)
+    match goal {
+        Some(goal) => record_goal_turn_intent_on(connection, intent, &goal.objective, goal.revision).await.map(Some),
+        None => record_turn_intent_on(connection, intent).await.map(Some),
+    }
 }
 
 pub(crate) async fn automatic_turn_ready_on(
@@ -2722,6 +2737,7 @@ async fn read_on(
     .await?;
     let active_turn = active_turn_for_session(connection, &binding).await?;
     let latest_failure = latest_failure_on(connection, &binding).await?;
+    let recovery = crate::agent_recovery::latest_on(connection, &binding).await?;
     let goal = crate::agent_goals::read_on(connection, &binding.agent_id).await?;
     let queued_inputs =
         crate::agent_queue::pending_on(connection, &binding.interaction_session_id, 0).await?;
@@ -2733,6 +2749,7 @@ async fn read_on(
             pending_requests,
             active_turn,
             latest_failure,
+            recovery,
             goal,
             queued_inputs,
             final_cursor,
@@ -2741,12 +2758,11 @@ async fn read_on(
     })
 }
 
-async fn latest_failure_on(
+/// Current turn ownership is independent of pagination and failure classification.
+pub(crate) async fn latest_turn_boundary_on(
     connection: &mut SqliteConnection,
     binding: &AgentInteractionBindingV1,
-) -> Result<Option<AgentTimelineFailureV1>, DomainStoreErrorV1> {
-    // Select the latest turn boundary first. An unknown failure or newer human
-    // input must not expose an older classified failure as current.
+) -> Result<Option<AgentTimelineRowV1>, DomainStoreErrorV1> {
     let row = sqlx::query(
         "SELECT timeline_epoch, sequence, item_id, turn_id, client_message_id, \
          provider_message_id, body_json, created_at_ms FROM agent_timeline_rows \
@@ -2763,8 +2779,16 @@ async fn latest_failure_on(
     .fetch_optional(&mut *connection)
     .await
     .map_err(|error| map_sqlx("read_agent_latest_failure", error))?;
-    let Some(row) = row else { return Ok(None) };
-    let failure = timeline_row_from_row(row)?;
+    row.map(timeline_row_from_row).transpose()
+}
+
+pub(crate) async fn latest_failure_on(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+) -> Result<Option<AgentTimelineFailureV1>, DomainStoreErrorV1> {
+    let Some(failure) = latest_turn_boundary_on(connection, binding).await? else {
+        return Ok(None);
+    };
     let AgentTimelineItemBodyV1::Lifecycle {
         state: AgentTimelineLifecycleStateV1::TurnFailed,
         detail: Some(detail),

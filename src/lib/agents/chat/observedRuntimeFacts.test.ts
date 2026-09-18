@@ -57,6 +57,7 @@ function page(rows: AgentTimelinePageV1["rows"]): AgentTimelinePageV1 {
 		liveText: [],
 		pendingRequests: [],
 		activeTurn: null,
+		recovery: null,
 		latestFailure: null,
 		goal: null,
 		finalCursor: { epoch: "timeline-1", sequence: rows.length },

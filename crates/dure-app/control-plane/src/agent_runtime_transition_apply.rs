@@ -42,7 +42,7 @@ pub(super) mod deferred;
 mod drive;
 pub(super) use drive::drive_locked;
 mod request_replay;
-pub(super) use request_replay::apply;
+pub(super) use request_replay::{apply, apply_locked};
 pub(super) mod native;
 mod replacement;
 use admission::{load_or_admit, validate_replay};
@@ -977,10 +977,8 @@ async fn converge_native_provider_conversation(
 pub(super) fn runtime_transition_identity(
     attempt_id: &str,
 ) -> Result<(OperationIdV1, String), String> {
-    runtime_operation_identity(
-        b"dure-agent-runtime-transition-attempt/v1\0",
-        &[attempt_id.as_bytes()],
-    )
+    dure_app::agent_runtime_transition_identity(attempt_id)
+        .map_err(|_| "agent_runtime_transition_request_invalid".to_string())
 }
 
 fn runtime_operation_identity(

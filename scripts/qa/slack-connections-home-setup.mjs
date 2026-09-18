@@ -42,8 +42,17 @@ if (sharing) {
     };
     const sourceIdentity = accountIdentity(isolated);
     const targetIdentity = accountIdentity(replacement);
+    const limitedAccount = process.env.DURE_QA_CODEX_LIMITED_HOME;
+    const limitedProfileDirectoryName = limitedAccount ? "codex-qa-limited" : undefined;
+    if (limitedAccount) {
+      const limited = join(home, ".dure", "accounts", limitedProfileDirectoryName);
+      mkdirSync(limited, { recursive: true, mode: 0o700 });
+      copyFileSync(join(realpathSync(limitedAccount), "auth.json"), join(limited, "auth.json"));
+      chmodSync(join(limited, "auth.json"), 0o600);
+      writeFileSync(join(limited, "config.toml"), "mcp_servers = {}\n", { flag: "wx", mode: 0o600 });
+    }
     writeFileSync(join(home, "slack-queue-account.json"), JSON.stringify({
-      profileDirectoryName, referenceId: "qa-replacement",
+      profileDirectoryName, referenceId: "qa-replacement", limitedProfileDirectoryName,
       distinctProviderAccounts: sourceIdentity !== null && targetIdentity !== null && sourceIdentity !== targetIdentity,
     }), { flag: "wx", mode: 0o600 });
   }

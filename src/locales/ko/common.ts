@@ -1,5 +1,7 @@
 /** 공유 카피의 한국어 카탈로그 — semantic ID가 키, 정본은 en/common.ts. */
 export const common: Record<string, string> = {
+	"common.backend.thisComputer": "이 컴퓨터",
+
 	"common.closePane": "pane 닫기",
 	"common.accountSwitchAfterFirstMessage": "첫 메시지를 보내 대화가 시작되면 계정을 전환할 수 있습니다.",
 	"common.actionItemsSummary": "{count}개 항목에 조치가 필요합니다. {item}부터 진행하세요.",

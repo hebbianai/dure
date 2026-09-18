@@ -183,6 +183,12 @@ impl fmt::Debug for ProviderCredentialProfileRegistrationV1 {
 }
 
 pub trait ProviderCredentialProfileStore: Send + Sync {
+    /// Lists registered public handles without opening credentials or exposing locators.
+    fn provider_credential_profiles<'a>(
+        &'a self,
+        provider_id: &'a ProviderIdV1,
+    ) -> DomainStoreFuture<'a, Vec<ProviderCredentialProfileV1>>;
+
     fn register_provider_credential_profile<'a>(
         &'a self,
         expected_credential_generation: Option<&'a str>,

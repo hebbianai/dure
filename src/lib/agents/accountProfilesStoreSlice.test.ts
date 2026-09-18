@@ -44,10 +44,4 @@ describe("accountProfilesStoreSlice", () => {
 		expect("claude" in host.state.activeAccounts).toBe(false);
 	});
 
-	it("keeps the usage-limit handoff opt-in on by default and lets the user turn it off", () => {
-		const host = harness();
-		expect(host.state.autoSwitchAccounts).toBe(true);
-		host.state.setAutoSwitchAccounts(false);
-		expect(host.state.autoSwitchAccounts).toBe(false);
-	});
 });

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { SlackConnectionsPanel } from "@/components/plugins/SlackConnectionsPanel";
-import { SlackServerSelect } from "@/components/plugins/SlackServerSelect";
+import { BackendServerSelect } from "@/components/common/BackendServerSelect";
 import { useSlackTeamConnection } from "@/components/plugins/useSlackTeamConnection";
 import { Alert } from "@/components/ui/alert";
 import { RefreshButton } from "@/components/ui/refresh-button";
@@ -17,7 +17,7 @@ export function SlackTeamConnections() {
 			<div className="space-y-3 px-4 pt-4">
 				<div className="flex items-end gap-2">
 					<div className="flex-1">
-						<SlackServerSelect
+						<BackendServerSelect
 							profiles={profiles}
 							value={selected}
 							onChange={select}

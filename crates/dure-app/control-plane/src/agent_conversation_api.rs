@@ -305,6 +305,15 @@ where
             .map_err(Into::into)
     }
 
+    pub(crate) async fn publish_recovery_change(
+        &self,
+        agent_id: &AgentIdV1,
+    ) -> Result<(), AgentConversationApiErrorV1> {
+        self.service.publish_projection_change(agent_id,
+            crate::agent_conversation::AgentConversationNotificationKindV1::Recovery)
+            .await.map_err(Into::into)
+    }
+
     pub(crate) fn notifications(&self) -> broadcast::Receiver<AgentConversationNotificationV1> {
         self.service.subscribe()
     }
@@ -321,6 +330,20 @@ where
             .await?;
         self.service
             .start_goal_turn(commands.as_ref(), request)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn start_recovery_turn(
+        &self,
+        record: &dure_app::AgentRecoveryRecordV1,
+    ) -> Result<Option<AgentTurnEffectReceiptV1>, AgentConversationApiErrorV1>
+    where
+        S: dure_app::AgentRecoveryStore,
+    {
+        let commands = self.commands(&record.source.interaction_session_id).await?;
+        self.service
+            .start_recovery_turn(commands.as_ref(), &record.attempt_id)
             .await
             .map_err(Into::into)
     }

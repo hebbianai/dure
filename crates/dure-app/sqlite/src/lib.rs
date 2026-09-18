@@ -52,6 +52,9 @@ mod orchestration;
 mod plugin_apply;
 mod plugin_native_target_binding;
 mod provider_credential_profiles;
+mod provider_recovery;
+mod provider_recovery_usage;
+mod agent_recovery;
 mod provider_launch_defaults;
 mod records;
 mod schedule_occurrences;
@@ -595,6 +598,13 @@ impl AgentTimelineStore for SqliteDomainStore {
 }
 
 impl ProviderCredentialProfileStore for SqliteDomainStore {
+    fn provider_credential_profiles<'a>(
+        &'a self,
+        provider_id: &'a dure_app::ProviderIdV1,
+    ) -> DomainStoreFuture<'a, Vec<dure_app::ProviderCredentialProfileV1>> {
+        Box::pin(provider_credential_profiles::profiles(&self.pool, provider_id))
+    }
+
     fn register_provider_credential_profile<'a>(
         &'a self,
         expected_credential_generation: Option<&'a str>,
@@ -947,6 +957,8 @@ mod checkpoint_tests;
 mod migration_test_support;
 #[cfg(test)]
 mod provider_credential_profiles_tests;
+#[cfg(test)]
+mod provider_recovery_tests;
 #[cfg(test)]
 mod provider_launch_defaults_tests;
 

@@ -13,7 +13,7 @@ const profile = {
     protocol: { minimum: { major: 1, minor: 0 }, maximum: { major: 1, minor: 0 } },
     capabilities: [
       "agent_conversation.inspect",
-      "agent_conversation.read.v6",
+      "agent_conversation.read.v7",
     ],
   },
   deadlineMs: 2_500,
@@ -82,7 +82,7 @@ describe("agent transcript CLI adapter", () => {
       "agent_conversation.read",
     ]);
     expect(requestBackend.mock.calls[1][1].requiredCapabilities).toEqual([
-      "agent_conversation.read.v6",
+      "agent_conversation.read.v7",
     ]);
     expect(formatBackendAgentTranscript(transcript)).toContain("## User\n\nship it");
     expect(JSON.parse(formatBackendAgentTranscript(transcript, { json: true }))).toMatchObject({

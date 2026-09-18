@@ -581,12 +581,14 @@ async fn an_actual_provider_command_failure_stays_failed_across_runtime_restart(
 }
 
 #[tokio::test]
-async fn goal_observation_survives_backend_handoff_and_closed_readers_negotiate_v6() {
+async fn goal_observation_survives_backend_handoff_and_closed_readers_negotiate_v7() {
     let (_root, state, _) = goal_fixture(None, false).await;
     put(&state, "goal-a", 0, "paused").await;
     let body = json!({"schemaVersion": 1, "interactionSessionId": "conversation-goal-a", "direction": "tail", "cursor": null, "limit": 1});
     for (operation, capability) in [
         ("agent_conversation.read", "agent_conversation.read.v4"),
+        ("agent_conversation.read", "agent_conversation.read.v6"),
+        ("agent_conversation.subscribe", "agent_conversation.subscribe.v6"),
         ("agent_conversation.read", "agent_conversation.read.v5"),
         ("agent_conversation.subscribe", "agent_conversation.subscribe.v5"),
     ] {
@@ -606,7 +608,7 @@ async fn goal_observation_survives_backend_handoff_and_closed_readers_negotiate_
     let current = request_over_test_connection(
         Arc::clone(&state),
         "agent_conversation.read",
-        "agent_conversation.read.v6",
+        "agent_conversation.read.v7",
         body,
     )
     .await;
@@ -701,7 +703,7 @@ async fn goal_changes_invalidate_the_existing_conversation_without_a_new_timelin
         notification.interaction_session_id,
         initial.binding.interaction_session_id
     );
-    let response = request_over_test_connection(Arc::clone(&state), "agent_conversation.read", "agent_conversation.read.v6", json!({"direction": "after", "cursor": initial.final_cursor, "schemaVersion": 1, "interactionSessionId": "conversation-goal-a", "limit": 1})).await;
+    let response = request_over_test_connection(Arc::clone(&state), "agent_conversation.read", "agent_conversation.read.v7", json!({"direction": "after", "cursor": initial.final_cursor, "schemaVersion": 1, "interactionSessionId": "conversation-goal-a", "limit": 1})).await;
     assert_eq!(response["result"]["read"]["page"]["goal"], goal);
     assert_eq!(response["result"]["read"]["page"]["rows"], json!([]));
     let updated = put(&state, "goal-a", 1, "complete").await;

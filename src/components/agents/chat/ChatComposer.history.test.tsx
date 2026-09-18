@@ -135,6 +135,7 @@ it("refreshes observed model, catalog and failure when the page changes and clea
 	value.page = {
 		...value.page!,
 		rows: facts(1, "reported-one", "Choice One", "usage_limit"),
+		recovery: null,
 		latestFailure: { itemId: "item-3", createdAtMs: 3, reason: "usage_limit", userInput: null },
 	};
 	const recovery = { manageAccounts: vi.fn() };
@@ -152,6 +153,7 @@ it("refreshes observed model, catalog and failure when the page changes and clea
 		page: {
 			...value.page,
 			rows: facts(4, "reported-two", "Choice Two", "rate_limit"),
+			recovery: null,
 			latestFailure: { itemId: "item-6", createdAtMs: 6, reason: "rate_limit" as const, userInput: null },
 		},
 	};
