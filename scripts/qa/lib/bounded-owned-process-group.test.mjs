@@ -71,6 +71,7 @@ async function captureIdentity(pid) {
 
 function startFixture({
   environment = {},
+  nodeImports = [],
   source,
   timeout = "5",
   root = fs.mkdtempSync(
@@ -81,6 +82,7 @@ function startFixture({
   const child = spawn(
     process.execPath,
     [
+      ...nodeImports.flatMap((module) => ["--import", module]),
       adapter,
       "run",
       root,
@@ -314,7 +316,32 @@ describe.runIf(["darwin", "linux"].includes(process.platform))(
     });
 
     test("starts its deadline after admission and cleans the exact command", async () => {
+      const root = fs.mkdtempSync(
+        path.join(fs.realpathSync(os.tmpdir()), "dure-bounded-deadline-"),
+      );
+      const observationPath = path.join(root, "retirement.json");
+      const groupModule = new URL("./owned-process-group.mjs", import.meta.url).href;
+      // Observe the real retirement without changing deletion or deadline timing.
+      const observer = `
+import fs from "node:fs";
+import {
+  readOwnedProcessGroup,
+  readOwnedProcessLedgerForRetirement,
+} from ${JSON.stringify(groupModule)};
+const descriptorPath = ${JSON.stringify(path.join(root, "group.json"))};
+const remove = fs.rmSync;
+fs.rmSync = function(file, options) {
+  if (file === descriptorPath) {
+    const descriptor = readOwnedProcessGroup(file);
+    const processes = readOwnedProcessLedgerForRetirement(descriptor);
+    fs.writeFileSync(${JSON.stringify(observationPath)}, JSON.stringify({ descriptor, processes }), { flag: "wx", mode: 0o600 });
+  }
+  return remove.call(this, file, options);
+};
+`;
       const fixture = startFixture({
+        root,
+        nodeImports: [`data:text/javascript,${encodeURIComponent(observer)}`],
         environment: {
           DURE_QA_PROCESS_KILL_GRACE_MS: "100",
           DURE_QA_PROCESS_TERM_GRACE_MS: "100",
@@ -329,21 +356,33 @@ describe.runIf(["darwin", "linux"].includes(process.platform))(
         timeout: "0.2",
       });
       try {
-        await waitFor(
-          () =>
-            fs.existsSync(fixture.descriptor) &&
-            fs.existsSync(fixture.marker),
+        // A delayed observer can first run after the bounded command exits.
+        await expect(fixture.closed).resolves.toEqual({ code: 124, signal: null });
+        const { descriptor, processes } = JSON.parse(
+          fs.readFileSync(observationPath, "utf8"),
         );
-        rememberDescriptorIdentities(fixture);
-        const command = await rememberMarkerIdentity(fixture, true);
-        await expect(fixture.closed).resolves.toEqual({
-          code: 124,
-          signal: null,
+        for (const process of [
+          ...processes,
+          {
+            pid: descriptor.supervisorPid,
+            kernelStartMarker: descriptor.supervisorKernelStartMarker,
+          },
+        ]) {
+          const identity = exactOwnedProcessIdentity(process);
+          fixture.identities.set(identity.pid, identity);
+        }
+        const commandPid = Number(fs.readFileSync(fixture.marker, "utf8").trim());
+        expect(processes.find(({ pid }) => pid === commandPid)).toMatchObject({
+          parentPid: descriptor.leaderPid,
+          groupId: descriptor.groupId,
         });
+        const command = fixture.identities.get(commandPid);
+        expect(command).toBeDefined();
         expect(fixture.stderr()).toBe("");
         expectCompletion(fixture);
         expect(identityLiveness(command)).toBe("stale");
         expectRememberedIdentitiesStopped(fixture);
+        fs.rmSync(observationPath);
         expect(fs.readdirSync(fixture.root)).toEqual([
           "command.pid",
           "completion.json",
