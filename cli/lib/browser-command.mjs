@@ -1,4 +1,5 @@
 import { browserSnapshotOptions } from "./browser-snapshot.mjs";
+import { BrowserCommandError } from "./browser-command-error.mjs";
 import { implicitBrowserSessionController, resolveBrowserSessionController, prepareBrowserSessionControl } from "./browser-session-control.mjs";
 import { parseBrowserArguments } from "./browser-arguments.mjs";
 import { normalizeBrowserExec } from "./browser-exec.mjs";
@@ -267,8 +268,11 @@ insert the whole string in one operation.
 Place options before -- to pass literal values such as --help after it.
 Value options also accept --name=value, including empty or option-like values
 such as --value=--help. Duplicate options, including aliases, are rejected.
+Values that match a supported option must use --name=value so a missing value
+cannot consume the next option. Invalid options include a correction hint.
 Waits default to 10000 ms and accept up to 120000 ms. Fixed waits observe the
 same page across navigation; function waits require control of their document.
+Text waits include rendered text in open shadow roots of the selected frame.
 Named scroll defaults to 300 CSS pixels when --amount is omitted. Named wait
 selects one supplied condition in this order: --url, --load, --fn, --text,
 --selector. Other conditions are ignored, including function expressions;
@@ -865,7 +869,8 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
     return {
       ok: false, operation_id: operationId,
       ...(sessionController ? { session_controller: sessionController } : {}),
-      error: error?.name === "Error" && error.message.startsWith("browser_")
+      error: error instanceof BrowserCommandError ? error.diagnostic
+        : error?.name === "Error" && error.message.startsWith("browser_")
         ? { code: error.message }
         : backendRequestFailure(error, backend?.profile),
     };

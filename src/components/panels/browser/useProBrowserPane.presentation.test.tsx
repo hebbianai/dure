@@ -16,7 +16,11 @@ import {
 import { ProBrowserPanel } from "./ProBrowserPanel";
 import { useProBrowserPane } from "./useProBrowserPane";
 
-const mocks = vi.hoisted(() => ({ client: vi.fn(), route: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	client: vi.fn(),
+	route: vi.fn(),
+	active: true,
+}));
 vi.mock("@/lib/ipc/dureBrowser", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/lib/ipc/dureBrowser")>()),
 	createDureBrowserClient: mocks.client,
@@ -30,7 +34,7 @@ vi.mock("@/components/workspace/usePaneFirstReveal", () => ({
 	usePaneFirstReveal: () => true,
 }));
 vi.mock("@/components/workspace/WorkspaceRuntimeContext", () => ({
-	useWorkspaceRuntimeActive: () => true,
+	useWorkspaceRuntimeActive: () => mocks.active,
 }));
 vi.mock("@/lib/i18n", () => ({ t: (key: string) => key }));
 vi.mock("@/lib/toast", () => ({ showToast: vi.fn() }));
@@ -64,6 +68,7 @@ const scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
 	"scrollIntoView",
 );
 afterEach(() => {
+	mocks.active = true;
 	vi.useRealTimers();
 	if (scrollIntoViewDescriptor)
 		Object.defineProperty(
@@ -540,7 +545,7 @@ it.each(["typed", "initial", "agent workspace exists"])(
 	},
 );
 
-it("hands agent control back through the mounted pane and fits the actual surface", async () => {
+it.each([true, false])("hands back when active=%s", async (active) => {
 	const f = fixture();
 	let current = projection(resource);
 	let viewport = { width: 1280, height: 633, pixel_ratio: 1 };
@@ -619,12 +624,18 @@ it("hands agent control back through the mounted pane and fits the actual surfac
 			pixel_ratio: action.action.scale,
 		};
 		current = { ...current, revision: "6", next_command_sequence: "6" };
-		return { control: current, response: { success: true }, observation: null };
+		return {
+			control: current,
+			response: { success: true },
+			observation: null,
+		};
 	});
 	const mounted = render(<ProBrowserPanel {...f.props()} />);
 	try {
 		await waitFor(() => expect(f.client.frame).toHaveBeenCalled());
 		expect(f.client.action).not.toHaveBeenCalled();
+		mocks.active = active;
+		mounted.rerender(<ProBrowserPanel {...f.props()} />);
 		const snapshot = paneActionSnapshot(f.api.id);
 		expect(snapshot?.actions).toContain("take-control");
 		let result: Awaited<ReturnType<typeof invokePaneAction>> | undefined;
@@ -635,7 +646,15 @@ it("hands agent control back through the mounted pane and fits the actual surfac
 				snapshot?.actionDefinitions?.["take-control"].current,
 			);
 		});
-		expect(result).toMatchObject({ ok: true, result: { outcome: "applied" } });
+		expect(result).toMatchObject({
+			ok: true,
+			result: { outcome: "applied" },
+		});
+		if (!active) {
+			expect(f.client.action).not.toHaveBeenCalled();
+			mocks.active = true;
+			mounted.rerender(<ProBrowserPanel {...f.props()} />);
+		}
 		await waitFor(() =>
 			expect(viewport).toMatchObject({ width: 480, height: 810 }),
 		);

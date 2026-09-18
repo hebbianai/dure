@@ -1,6 +1,7 @@
 use super::*;
 mod boundaries;
 mod loading;
+mod shadow;
 
 #[tokio::test]
 #[ignore = "requires the pinned native engine and Chromium paths"]
