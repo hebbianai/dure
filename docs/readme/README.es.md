@@ -97,7 +97,7 @@ Claude Code, Codex, OpenCode y Pi tienen integraciones de chat estructurado cuan
 | Windows | Código disponible; validación nativa de escritorio e instalador público pendientes. |
 | Linux | Código disponible; validación nativa de escritorio e instalador público pendientes. |
 | iOS | Código disponible; validación en dispositivos y distribución oficial pendientes. |
-| Android | Código disponible; validación en dispositivos y distribución oficial pendientes. |
+| Android · ARM64 | [Descargar APK preliminar](https://github.com/hebbianai/hebbian-releases/releases/download/android-v0.1.4/Dure_0.1.4_android_arm64.apk) · Android 7.0 o posterior. Probado en emulador; validación en dispositivos físicos pendiente. |
 
 Para compilar desde el código y consultar la cobertura de verificación, ve a la [guía de desarrollo por plataforma](../../CONTRIBUTING.md#platforms).
 
