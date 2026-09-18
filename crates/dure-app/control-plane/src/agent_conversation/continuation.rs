@@ -5,19 +5,23 @@ use std::sync::Arc;
 
 use dure_app::{
     AgentGoalRecordV1, AgentGoalStatusV1, AgentGoalStore, AgentIdV1, AgentQueuedTurnStore,
-    AgentTimelineStore,
+    AgentRecoveryStore, AgentTimelineStore,
 };
 use tokio::sync::broadcast;
 use tokio::task::{Id, JoinSet};
 
 use crate::agent_conversation::AgentConversationNotificationKindV1;
 use crate::agent_conversation_api::AgentConversationApiErrorV1;
-use crate::{ServiceState, agent_goal, now_ms};
+use crate::{ServiceState, agent_goal, agent_recovery, now_ms};
 
 async fn enqueue_active(
     state: &ServiceState,
     pending: &mut BTreeSet<AgentIdV1>,
 ) -> Result<(), &'static str> {
+    pending.extend(
+        state.store.agents_with_recovery().await
+            .map_err(|_| "agent_recovery_store_failed")?,
+    );
     pending.extend(
         state
             .store
@@ -42,6 +46,7 @@ async fn advance(
     agent_id: &AgentIdV1,
     goal: Option<&AgentGoalRecordV1>,
 ) -> Result<(), &'static str> {
+    let recovery = agent_recovery::advance(state, agent_id).await;
     let binding = state
         .store
         .agent_interaction_for_agent(agent_id)
@@ -59,6 +64,9 @@ async fn advance(
             Ok(_) | Err(AgentConversationApiErrorV1::RuntimeUnavailable) => Ok(()),
             Err(error) => Err(error.code()),
         };
+    }
+    if recovery? {
+        return Ok(());
     }
     match goal {
         Some(goal) => agent_goal::advance(state, goal).await,
@@ -97,7 +105,7 @@ async fn run_inner(state: Arc<ServiceState>) -> Result<(), &'static str> {
             _ = state.goal_wakeup.notified() => enqueue_active(&state, &mut pending).await?,
             notification = notifications.recv() => match notification {
                 Ok(notification) => {
-                    if notification.kinds.iter().all(|kind| matches!(kind, AgentConversationNotificationKindV1::LiveText | AgentConversationNotificationKindV1::Goal)) { continue; }
+                    if notification.kinds.iter().all(|kind| matches!(kind, AgentConversationNotificationKindV1::LiveText | AgentConversationNotificationKindV1::Goal | AgentConversationNotificationKindV1::Recovery)) { continue; }
                     if let Some(binding) = state.store.agent_interaction(&notification.interaction_session_id).await.map_err(|_| "agent_conversation_store_failed")? {
                         pending.insert(binding.agent_id);
                     }

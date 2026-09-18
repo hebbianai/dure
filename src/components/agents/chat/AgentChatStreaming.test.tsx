@@ -42,6 +42,7 @@ function page(text = longAnswer): AgentTimelinePageV1 {
 		pendingRequests: [],
 		activeTurn: { turnId: "turn-1", clientMessageId: "message-1" },
 		goal: null,
+		recovery: null,
 		latestFailure: null,
 		finalCursor: { epoch: "timeline-1", sequence: 0 },
 		hasMore: false,

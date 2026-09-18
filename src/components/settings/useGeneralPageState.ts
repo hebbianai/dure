@@ -12,8 +12,6 @@ export { DEFAULT_UI_PREFS };
 export function useGeneralPageState() {
   const language = useStore((s) => s.language);
   const setLanguage = useStore((s) => s.setLanguage);
-  const autoSwitch = useStore((s) => s.autoSwitchAccounts);
-  const setAutoSwitch = useStore((s) => s.setAutoSwitchAccounts);
   const rawUi = useStore((s) => s.uiPrefs);
   const setUi = useStore((s) => s.setUiPrefs);
   // Closed over store values only, so the defaults merge may live here.
@@ -21,8 +19,6 @@ export function useGeneralPageState() {
   return {
     language,
     setLanguage,
-    autoSwitch,
-    setAutoSwitch,
     ui,
     setUi,
   };

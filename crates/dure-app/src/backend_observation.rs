@@ -8,6 +8,7 @@ pub fn is_durable_agent_observation(operation: &str) -> bool {
             | "agent_conversation.read"
             | "agent_conversation.subscribe"
             | "agent_goal.get"
+            | "agent_recovery.read"
             | "agent_runtime.inspect"
             | "agent_runtime.projection.inspect"
             | "agent_runtime.repair_intent.inspect.v1"

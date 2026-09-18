@@ -1,7 +1,7 @@
 use super::*;
 use dure_app::{AgentTimelineMessageRoleV1, AgentTurnFailureReasonV1};
 
-fn failure_row(sequence: i64, detail: Option<&str>) -> AgentTimelineMutationV1 {
+pub(super) fn failure_row(sequence: i64, detail: Option<&str>) -> AgentTimelineMutationV1 {
     AgentTimelineMutationV1::Append {
         item: AgentTimelineItemDraftV1 {
             item_id: AgentTimelineItemIdV1::new(format!("failure-{sequence}")).unwrap(),

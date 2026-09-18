@@ -6,6 +6,15 @@ pub(crate) async fn apply(
     attempt_id: &str,
     body: AgentRuntimeTransitionApplyBodyV1,
 ) -> Result<AgentRuntimeTransitionApplyReceiptV1, crate::BackendDispatchError> {
+    let _agent_guard = state.agent_operations.acquire(&body.agent_id).await;
+    apply_locked(state, attempt_id, body).await
+}
+
+pub(crate) async fn apply_locked(
+    state: &ServiceState,
+    attempt_id: &str,
+    body: AgentRuntimeTransitionApplyBodyV1,
+) -> Result<AgentRuntimeTransitionApplyReceiptV1, crate::BackendDispatchError> {
     if body.schema_version != AGENT_RUNTIME_TRANSITION_SCHEMA_VERSION_V1
         || body
             .expected_source_revision
@@ -19,10 +28,6 @@ pub(crate) async fn apply(
         return Err("agent_runtime_transition_request_invalid".into());
     }
 
-    // Checkpoint binding writes and profile replacement for this Agent share
-    // one mutation order. Other Agents remain independent while a provider
-    // stop or structured launch is in flight.
-    let _agent_guard = state.agent_operations.acquire(&body.agent_id).await;
     let (operation_id, idempotency_key) = runtime_transition_identity(attempt_id)?;
     let fingerprint = fingerprint(&body)?;
     if let Some(receipt) = state

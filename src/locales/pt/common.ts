@@ -1,4 +1,6 @@
 export const common: Record<string, string> = {
+	"common.backend.thisComputer": "Este computador",
+
 	"터미널 열기": "Abrir terminal",
 	"시작하기": "Começar",
 	"(비어 있음)": "(vazio)",

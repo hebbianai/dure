@@ -30,6 +30,8 @@ mod queue;
 mod continuation;
 #[path = "agent_failure_tests.rs"]
 mod failure;
+#[path = "agent_recovery_tests.rs"]
+mod recovery;
 
 #[tokio::test]
 async fn canceled_effect_completion_rolls_back_before_reusing_its_connection() {

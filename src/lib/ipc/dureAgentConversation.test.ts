@@ -31,6 +31,7 @@ function read() {
 			liveText: [],
 			pendingRequests: [],
 			activeTurn: null,
+			recovery: null,
 			latestFailure: null,
 			goal: null,
 			queuedInputs: {

@@ -2083,6 +2083,11 @@ const CURRENT_SCHEMA_STATEMENTS: &[&str] = &[
     CREATE_PROJECTS,
     CREATE_WORKSPACES,
     CREATE_AGENTS,
+    crate::provider_recovery::CREATE_POLICIES,
+    crate::provider_recovery::CREATE_MUTATIONS,
+    crate::provider_recovery_usage::CREATE_USAGE,
+    crate::agent_recovery::CREATE_RECOVERIES,
+    crate::agent_recovery::RECOVERY_BY_AGENT,
     crate::agent_goals::CREATE_GOALS,
     crate::agent_goals::ACTIVE_GOALS,
     crate::agent_goals::CREATE_MUTATIONS,
@@ -3001,6 +3006,15 @@ async fn initialize_or_migrate(pool: &SqlitePool, path: &Path) -> Result<(), Dom
                     crate::agent_queue::CREATE_QUEUE,
                     crate::agent_queue::QUEUED_ORDER,
                 ], "migrate_v48_to_v49").await?;
+            }
+            49 => {
+                migrate_schema(pool, path, metadata.migration, 49, 50, &[
+                    crate::provider_recovery::CREATE_POLICIES,
+                    crate::provider_recovery::CREATE_MUTATIONS,
+                    crate::provider_recovery_usage::CREATE_USAGE,
+                    crate::agent_recovery::CREATE_RECOVERIES,
+                    crate::agent_recovery::RECOVERY_BY_AGENT,
+                ], "migrate_v49_to_v50").await?;
             }
             version => {
                 return Err(DomainStoreErrorV1::Compatibility {

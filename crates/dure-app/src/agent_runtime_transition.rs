@@ -31,6 +31,21 @@ pub use store::{
 
 pub const AGENT_RUNTIME_TRANSITION_SCHEMA_VERSION_V1: u16 = 1;
 
+/// Stable request identity shared by explicit transitions and automatic recovery.
+pub fn agent_runtime_transition_identity(
+    attempt_id: &str,
+) -> Result<(OperationIdV1, String), crate::DomainIdErrorV1> {
+    let mut digest = Sha256::new();
+    digest.update(b"dure-agent-runtime-transition-attempt/v1\0");
+    digest.update((attempt_id.len() as u64).to_be_bytes());
+    digest.update(attempt_id.as_bytes());
+    let digest = format!("{:x}", digest.finalize());
+    Ok((
+        OperationIdV1::new(format!("runtime-transition-{digest}"))?,
+        format!("runtime-attempt-{digest}"),
+    ))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentRuntimeNativeLaunchIdentityV1 {
     pub launch_idempotency_key: String,

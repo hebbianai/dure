@@ -712,7 +712,7 @@ mod tests {
                         maximum: ProtocolVersion { major: 1, minor: 0 },
                     },
                     capabilities: vec![
-                        "agent_conversation.subscribe.v6".into(),
+                        "agent_conversation.subscribe.v7".into(),
                         "backend.connection.persistent".into(),
                     ],
                 },
@@ -733,7 +733,7 @@ mod tests {
                 "generation": generation,
                 "protocol": { "major": 1, "minor": 0 },
                 "capabilities": [
-                    "agent_conversation.subscribe.v6",
+                    "agent_conversation.subscribe.v7",
                     "backend.connection.persistent"
                 ],
                 "observedAtMs": super::super::now_ms().unwrap()
@@ -763,7 +763,7 @@ mod tests {
                 "generation": generation,
                 "protocol": { "major": 1, "minor": 0 },
                 "capabilities": [
-                    "agent_conversation.subscribe.v6",
+                    "agent_conversation.subscribe.v7",
                     "backend.connection.persistent"
                 ],
                 "observedAtMs": super::super::now_ms().unwrap()
@@ -799,7 +799,7 @@ mod tests {
                         "maximum": { "major": 1, "minor": 0 }
                     },
                     "capabilities": [
-                        "agent_conversation.subscribe.v6",
+                        "agent_conversation.subscribe.v7",
                         "backend.connection.persistent"
                     ]
                 },
@@ -977,7 +977,7 @@ mod tests {
                         "maximum": { "major": 1, "minor": 0 }
                     },
                     "capabilities": [
-                        "agent_conversation.subscribe.v6",
+                        "agent_conversation.subscribe.v7",
                         "backend.connection.persistent"
                     ]
                 },
@@ -1388,7 +1388,7 @@ printf '%s\n' "$$" > '{}'
 while IFS= read -r line; do
   request_id=$(printf '%s\n' "$line" | sed -E 's/.*"requestId":"([^"]+)".*/\1/')
   observed_at_ms=$(($(date +%s) * 1000))
-  printf '{{"schemaVersion":1,"apiVersion":"dure.backend-transport/v1","kind":"dure.backend.response","requestId":"%s","backend":{{"id":"remote-backend","generation":"remote-v1","protocol":{{"major":1,"minor":0}},"capabilities":["agent_conversation.subscribe.v6","backend.connection.persistent"],"observedAtMs":%s}},"result":{{"schemaVersion":1}}}}\n' "$request_id" "$observed_at_ms"
+  printf '{{"schemaVersion":1,"apiVersion":"dure.backend-transport/v1","kind":"dure.backend.response","requestId":"%s","backend":{{"id":"remote-backend","generation":"remote-v1","protocol":{{"major":1,"minor":0}},"capabilities":["agent_conversation.subscribe.v7","backend.connection.persistent"],"observedAtMs":%s}},"result":{{"schemaVersion":1}}}}\n' "$request_id" "$observed_at_ms"
 done
 "#,
                 material_log.display(),
@@ -1427,7 +1427,7 @@ done
                                 "maximum": { "major": 1, "minor": 0 }
                             },
                             "capabilities": [
-                                "agent_conversation.subscribe.v6",
+                                "agent_conversation.subscribe.v7",
                                 "backend.connection.persistent"
                             ]
                         }

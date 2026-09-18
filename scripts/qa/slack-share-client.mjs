@@ -33,7 +33,7 @@ if (!live) {
   const request = async (operation, body) => {
     const profile = loadBackendProfiles({ configPath: catalogPath }).profiles.find((entry) => entry.id === "local");
     const response = await performBackendProfileRequest(profile, {
-      operation, requiredCapabilities: [operation === "agent_conversation.read" ? "agent_conversation.read.v6" : operation], body,
+      operation, requiredCapabilities: [operation === "agent_conversation.read" ? "agent_conversation.read.v7" : operation], body,
     }, { maxResponseBytes: 2 * 1024 * 1024 });
     return response.result;
   };
@@ -113,6 +113,14 @@ if (live) {
   assert.equal(receipt.tagSidebarConversation, true);
   assert.equal(receipt.tagGenerationRecovered, true);
   assert.equal(receipt.nativeThreadReply, true);
+  if (process.env.DURE_QA_CODEX_LIMITED_HOME) {
+    assert.equal(receipt.backendAccountRecovery, true);
+    const recovery = await waitForQaLogReceipt("account-recovery", proof);
+    assert.equal(recovery.naturalQuota, true);
+    assert.equal(recovery.noConversationView, true);
+    assert.equal(recovery.recovery.turnState, "accepted");
+    fs.writeFileSync(path.join(root, "evidence", "account-recovery.json"), JSON.stringify(recovery, null, 2));
+  }
   const source = fs.readFileSync(path.join(home, "slack-share-posts.jsonl"), "utf8");
   assert.ok(!source.includes(`QA_PRIVATE_${proof}`));
   const posts = source.trim().split("\n").map((line) => JSON.parse(line));

@@ -137,6 +137,7 @@ pub enum AgentConversationNotificationKindV1 {
     HistoryGap,
     Runtime,
     Goal,
+    Recovery,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -507,6 +508,24 @@ where
             .map(Some)
     }
 
+    pub(crate) async fn start_recovery_turn<P>(
+        &self,
+        provider: &P,
+        attempt_id: &str,
+    ) -> Result<Option<AgentTurnEffectReceiptV1>, AgentConversationErrorV1>
+    where
+        P: AgentProviderCommands + ?Sized,
+        S: dure_app::AgentRecoveryStore,
+    {
+        let Some(prepared) = self.store
+            .prepare_agent_recovery_turn(attempt_id, now_ms()?).await? else {
+            return Ok(None);
+        };
+        self.execute_prepared_start(provider, &prepared.intent.clone(), prepared)
+            .await
+            .map(Some)
+    }
+
     async fn execute_prepared_start<P>(
         &self,
         provider: &P,
@@ -747,6 +766,14 @@ where
         &self,
         agent_id: &dure_app::AgentIdV1,
     ) -> Result<(), AgentConversationErrorV1> {
+        self.publish_projection_change(agent_id, AgentConversationNotificationKindV1::Goal).await
+    }
+
+    pub(crate) async fn publish_projection_change(
+        &self,
+        agent_id: &dure_app::AgentIdV1,
+        kind: AgentConversationNotificationKindV1,
+    ) -> Result<(), AgentConversationErrorV1> {
         let Some(binding) = self.store.agent_interaction_for_agent(agent_id).await? else {
             return Ok(());
         };
@@ -763,7 +790,7 @@ where
             self.publish_after_commit(
                 binding.interaction_session_id,
                 page.final_cursor,
-                vec![AgentConversationNotificationKindV1::Goal],
+                vec![kind],
             );
         }
         Ok(())

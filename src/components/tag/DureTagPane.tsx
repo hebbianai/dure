@@ -4,7 +4,7 @@ import { SharedAgentConversation } from "@/components/agents/chat/SharedAgentCon
 import { PaneEmptyState } from "@/components/common/PaneEmptyState";
 import { LoadingStatus } from "@/components/common/PanelStatus";
 import { SlackConnectionsPanel } from "@/components/plugins/SlackConnectionsPanel";
-import { SlackServerSelect } from "@/components/plugins/SlackServerSelect";
+import { BackendServerSelect } from "@/components/common/BackendServerSelect";
 import { useSlackTeamConnection } from "@/components/plugins/useSlackTeamConnection";
 import { SectionHeaderRow } from "@/components/sidebar/SidebarItems";
 import { Alert } from "@/components/ui/alert";
@@ -201,7 +201,7 @@ function TagTasks({
 				}
 			/>
 			<div className="px-4 py-3">
-				<SlackServerSelect
+				<BackendServerSelect
 					profiles={profiles}
 					value={profileId}
 					onChange={onSelectServer}

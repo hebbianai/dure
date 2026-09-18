@@ -66,6 +66,7 @@ function read(providerId = "claude"): AgentTimelineReadV1 {
 			liveText: [],
 			pendingRequests: [],
 			activeTurn: null,
+			recovery: null,
 			latestFailure: null,
 			goal: null,
 			finalCursor: { epoch: "timeline-1", sequence: 0 },

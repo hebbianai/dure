@@ -1041,6 +1041,7 @@ pub struct AgentTimelinePageV1 {
     pub pending_requests: Vec<AgentPendingRequestV1>,
     pub active_turn: Option<AgentTimelineActiveTurnV1>,
     pub latest_failure: Option<AgentTimelineFailureV1>,
+    pub recovery: Option<crate::AgentRecoveryObservationV1>,
     pub goal: Option<crate::AgentGoalRecordV1>,
     pub queued_inputs: crate::AgentQueuedInputPageV1,
     pub final_cursor: AgentTimelineCursorV1,

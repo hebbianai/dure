@@ -91,6 +91,7 @@ export type AgentConversationInvalidationV1 =
 				| "history_gap"
 				| "runtime"
 				| "goal"
+				| "recovery"
 			>;
 	  }
 	| {
@@ -325,6 +326,7 @@ function parseSubscriptionEvent(
 					"history_gap",
 					"runtime",
 					"goal",
+					"recovery",
 				].includes(String(kind)),
 		)
 	) {
@@ -341,6 +343,7 @@ function parseSubscriptionEvent(
 			| "history_gap"
 			| "runtime"
 			| "goal"
+				| "recovery"
 		>,
 	};
 }

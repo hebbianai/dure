@@ -95,6 +95,8 @@ mod backend_scope;
 #[cfg(unix)]
 mod agent_goal;
 #[cfg(unix)]
+mod agent_recovery;
+#[cfg(unix)]
 mod slack_connector;
 #[cfg(unix)]
 pub mod pi_connection_driver;
@@ -107,6 +109,8 @@ mod private_driver_socket;
 mod private_record;
 mod project_catalog;
 mod provider_commands;
+#[cfg(unix)]
+mod provider_recovery_api;
 pub mod provider_credential_profile;
 mod provider_executable;
 use provider_executable::resolve_provider_executable;
@@ -3696,6 +3700,10 @@ async fn dispatch_authorized(
     match request.operation.as_str() {
         #[cfg(unix)]
         "workspace_environment.invoke" => workspace_environment::invoke(state, &request.body).await,
+        "provider_recovery.get" | "provider_recovery.put" | "provider_recovery.observe_usage"
+        | "agent_recovery.read" => {
+            provider_recovery_api::invoke(state, &request.operation, &request.body).await
+        }
         "agent_goal.get" | "agent_goal.put" => {
             agent_goal::invoke(state, &request.operation, &request.body).await
         }

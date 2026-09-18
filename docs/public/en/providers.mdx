@@ -54,6 +54,10 @@ Account switching may restart the provider process and resume its conversation. 
 
 Claude and Codex usage controls show available provider-reported limits and reset times. Enable their top-bar indicators in **Settings → Appearance** and inspect broader activity in **Stats and usage**. An absent or stale reading does not establish spare capacity.
 
-**Settings → General → Auto-switch when usage limit is reached** applies to supported local chat panes after a reported limit failure and requires another account with fresh observed capacity. It does not promise seamless switching for every terminal or SSH session. Sign-in failures need attention.
+**Settings → General → Automatic account recovery · Pro** configures recovery on the selected server. Choose a provider, enable recovery, select the accounts that server may use, and save. The server can switch supported Chat conversations and continue their original request with every Dure window closed. Joining a shared workspace never offers your personal accounts automatically.
+
+Fresh available usage is preferred; unknown or stale usage does not prevent trying an allowed account. A failed or uncertain attempt remains visible and is not blindly resent. Later human input takes priority. Manual account switching remains available, and authentication failures still need attention.
+
+Use `dure recovery get codex --backend SERVER --json` to inspect the policy and registered profile handles, or `dure recovery status AGENT_ID --backend SERVER --json` to read a recovery outcome. `dure recovery help` describes revision-based edits and optional usage observations. These commands connect directly to the selected backend.
 
 Default provider and permission choices are under **Settings → General**. Choose permissions for the actual task; [worktrees do not create a sandbox](/en/current-limits).

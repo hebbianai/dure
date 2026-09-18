@@ -17,6 +17,7 @@ import { asRecord } from "@/lib/payloadGuards";
 import { qaLog } from "@/lib/qa/qaLog";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { durableAppStorage, useStore } from "@/store";
+import { exerciseAccountRecovery } from "./accountRecovery";
 import { exerciseAccountQueue } from "./slackShareAccountQueue";
 import {
 	exerciseLiveSlackShare,
@@ -728,6 +729,10 @@ export function SlackShareQaRoot() {
 				authority: initial.authority,
 				wait,
 			});
+			const accountRecovery = await exerciseAccountRecovery({
+				home, proof: proof as string, binding: executed.binding,
+				authority: initial.authority, wait,
+			});
 			const native = await createDureAgentRuntimeClient({
 				profileId: initial.authority.profileId,
 			}).transition({
@@ -824,6 +829,7 @@ export function SlackShareQaRoot() {
 				queuedAcrossBackendReplacement: true,
 				independentQueueClients: true,
 				...accountQueue,
+				...accountRecovery,
 			});
 		};
 		void run().catch((error) => {

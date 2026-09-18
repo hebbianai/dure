@@ -15,17 +15,11 @@ export interface AccountProfilesStoreSlice {
 	accounts: AccountProfile[];
 	/** provider별 활성 계정 id (없으면 기본 계정) */
 	activeAccounts: Partial<Record<Provider, string>>;
-	/** Opt-in for the usage-limit handoff: a pane whose account hits its
-	 * limit moves to the provider account with the lowest fresh observed
-	 * usage (src/lib/agents/usageLimitHandoffPolicy.ts). Per-agent only —
-	 * the global active account above is never touched by it. */
-	autoSwitchAccounts: boolean;
 
 	addAccount: (a: Omit<AccountProfile, "id">) => AccountProfile;
 	renameAccount: (id: string, name: string) => void;
 	removeAccount: (id: string) => void;
 	setActiveAccount: (provider: Provider, id?: string) => void;
-	setAutoSwitchAccounts: (v: boolean) => void;
 }
 
 type AccountProfilesHostState = AccountProfilesStoreSlice;
@@ -43,7 +37,6 @@ export function createAccountProfilesStoreSlice(
 	return {
 		accounts: [],
 		activeAccounts: {},
-		autoSwitchAccounts: true,
 
 		addAccount: (a) => {
 			if (!providerSupportsAccountProfiles(a.provider)) {
@@ -83,6 +76,5 @@ export function createAccountProfilesStoreSlice(
 			}));
 		},
 
-		setAutoSwitchAccounts: (v) => set(() => ({ autoSwitchAccounts: v })),
 	};
 }

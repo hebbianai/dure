@@ -1113,6 +1113,7 @@ describe("ChatComposer turn failure recovery", () => {
 		value.page = {
 			...value.page!,
 			rows: [],
+			recovery: null,
 			latestFailure: {
 				itemId: "current-failure",
 				createdAtMs: 100,
@@ -1133,6 +1134,7 @@ describe("ChatComposer turn failure recovery", () => {
 		value.page = {
 			...value.page!,
 			rows: failedTurnRows("usage_limit"),
+			recovery: null,
 			latestFailure: null,
 		};
 		view.rerender(
@@ -1150,6 +1152,7 @@ describe("ChatComposer turn failure recovery", () => {
 		value.page = {
 			...value.page!,
 			rows: failedTurnRows("usage_limit"),
+			recovery: null,
 			latestFailure: {
 				itemId: "item-2",
 				createdAtMs: 2,
@@ -1179,6 +1182,7 @@ describe("ChatComposer turn failure recovery", () => {
 		value.page = {
 			...value.page!,
 			rows: failedTurnRows("rate_limit"),
+			recovery: null,
 			latestFailure: {
 				itemId: "item-2",
 				createdAtMs: 2,
@@ -1199,6 +1203,7 @@ describe("ChatComposer turn failure recovery", () => {
 		value.page = {
 			...value.page!,
 			rows: failedTurnRows("authentication_failed"),
+			recovery: null,
 			latestFailure: {
 				itemId: "item-2",
 				createdAtMs: 2,
@@ -1232,6 +1237,7 @@ describe("ChatComposer turn failure recovery", () => {
 		value.page = {
 			...value.page!,
 			rows: failedTurnRows("rate_limit"),
+			recovery: null,
 			latestFailure: {
 				itemId: "item-2",
 				createdAtMs: 2,
@@ -1288,6 +1294,7 @@ describe("ChatComposer handoff outcome", () => {
 		value.page = {
 			...value.page!,
 			rows: handedOffRows(),
+			recovery: null,
 			latestFailure: {
 				itemId: "item-3",
 				createdAtMs: 3,
@@ -1330,6 +1337,7 @@ describe("ChatComposer handoff outcome", () => {
 		value.page = {
 			...value.page!,
 			rows: handedOffRows(),
+			recovery: null,
 			latestFailure: {
 				itemId: "item-3",
 				createdAtMs: 3,

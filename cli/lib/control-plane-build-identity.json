@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "currentBuildId": "dure-control-plane/v128-failure-capabilities",
-  "previousBuildId": "dure-control-plane/v127-current-failure",
+  "currentBuildId": "dure-control-plane/v129-backend-account-recovery",
+  "previousBuildId": "dure-control-plane/v128-failure-capabilities",
   "identity": {
     "apiVersion": "dure.control-plane-identity/v1",
     "kind": "dure.control_plane.identity",
@@ -13,12 +13,12 @@
       "agent_conversation.inspect",
       "agent_conversation.inspect_input",
       "agent_conversation.interrupt_turn",
-      "agent_conversation.read.v6",
+      "agent_conversation.read.v7",
       "agent_conversation.read_queue",
       "agent_conversation.recover",
       "agent_conversation.start_turn",
       "agent_conversation.steer_turn",
-      "agent_conversation.subscribe.v6",
+      "agent_conversation.subscribe.v7",
       "agent_checkpoint.binding.ensure",
       "agent_checkpoint.observe",
       "agent_checkpoint.read",
@@ -89,7 +89,8 @@
       "workspace_environment.v1",
       "workflow.delegate_once",
       "workflow.delegate_once.complete",
-      "workflow.delegate_once.show"
+      "workflow.delegate_once.show",
+      "account_recovery.v1"
     ]
   }
 }

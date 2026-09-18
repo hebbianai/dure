@@ -808,7 +808,6 @@ const policies = {
 	accounts: idEntityPolicy<PersistedAppState["accounts"][number]>(),
 	activeAccounts: recordPolicy<PersistedAppState["activeAccounts"]>(),
 	customThemes: idEntityPolicy<PersistedAppState["customThemes"][number]>(),
-	autoSwitchAccounts: convergeDurableCas,
 	skipPermissions: recordPolicy<PersistedAppState["skipPermissions"]>(),
 	language: convergeDurableCas,
 } satisfies DurableFieldPolicies<IndependentPersistedAppState>;

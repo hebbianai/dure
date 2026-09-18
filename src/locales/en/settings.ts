@@ -2,6 +2,15 @@ import type { EnglishTranslationDictionary } from "@/lib/settings/englishTransla
 
 /** Settings, plugins, privacy, permissions, MCP, and shortcut copy. */
 export const settingsEnglishTranslations = {
+	"settings.recovery.title": "Automatic account recovery · Pro",
+	"settings.recovery.description": "When a conversation reaches its usage limit, the server switches to an allowed account and continues the same request, even with Dure closed.",
+	"settings.recovery.server": "Server",
+	"settings.recovery.provider": "Provider",
+	"settings.recovery.accounts": "Allow these accounts for automatic recovery on this server.",
+	"settings.recovery.empty": "Add an account on this server to make it available here.",
+	"agents.recovery.exhausted": "No allowed account is available. Choose an account to continue.",
+	"agents.recovery.failed": "Automatic recovery stopped. Check the account or continue manually.",
+
 	"environments.title": "VM environments",
 	"environments.description": "Create an isolated environment from a project’s recipe when adding an agent. Manage its lifetime here.",
 	"environments.useVm": "Use a VM · Pro",
@@ -535,7 +544,6 @@ export const settingsEnglishTranslations = {
 	"settings.privacy.usageData.title": "Anonymous usage data",
 	"settings.stats.usage.overviewLabel": "Usage Overview",
 	"settings.stats.usage.analysisTitle": "Usage Analysis",
-	"settings.general.autoSwitchOnLimit.title": "Auto-switch when usage limit is reached",
 	"settings.stats.usage.loading": "Loading usage…",
 	"settings.providers.wiring.hookTrustDesc": "Whether hooks you trusted also run without review in the account profile.",
 	"settings.storage.hmuxSessions.desc": "Live session manifests and sockets — do not edit by hand",
@@ -793,7 +801,6 @@ export const settingsEnglishTranslations = {
 	"settings.storage.revealInFolder": "Reveal in folder",
 	"settings.general.diffFileTree.shown": "Shown",
 	"settings.macosPerms.fullDisk.desc": "Recommended when projects, worktrees, or symlinked files touch macOS-protected folders",
-	"settings.general.autoSwitchOnLimit.desc": "When an account hits its usage limit, this pane switches to the provider account with the lowest fresh observed usage. Never guesses from stale or unknown usage.",
 	"settings.general.defaultProvider.title": "Default agent",
 	"settings.general.defaultProvider.desc": "Which agent a new pane starts with. Auto picks the first installed provider.",
 	"settings.general.defaultProvider.auto": "Auto",

@@ -168,7 +168,11 @@ export async function exerciseAccountQueue({
 						item.body.type === "lifecycle" &&
 						["turn_failed", "turn_canceled"].includes(item.body.state),
 				),
-				"A queued turn failed on the replacement account",
+				`A queued turn failed on the replacement account: ${JSON.stringify(
+					queuedRows.flatMap(({ item }) =>
+						item.body.type === "lifecycle" ? [item.body] : [],
+					),
+				)}`,
 			);
 			return !page.activeTurn &&
 				intents.every((intent) =>

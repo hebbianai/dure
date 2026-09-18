@@ -54,6 +54,10 @@ Claude Code、Codex、OpenCode 和 Pi 有结构化聊天集成，是否可用还
 
 Claude 和 Codex 使用量控件显示提供商返回的限额和重置时间。可在 **Settings → Appearance** 启用顶部栏指示器，在 **Stats and usage** 查看活动。缺失或过时的数据无法证明还有可用额度。
 
-**Settings → General → Auto-switch when usage limit is reached** 适用于受支持的本地聊天面板，在收到限额错误后触发，并需要另一个有近期可用容量记录的账户。它不保证所有终端或 SSH 会话都能无缝切换。登录失败需要处理。
+在 **Settings → General → 自动账户恢复 · Pro** 中配置所选服务器的恢复功能。选择提供商，启用恢复，勾选允许服务器使用的账户并保存。对于支持的 Chat 对话，即使关闭所有 Dure 窗口，服务器也能切换账户并继续原来的请求。加入共享工作区不会自动提供您的个人账户。
+
+优先使用近期用量仍有余量的账户；用量未知或过期不会阻止尝试已允许的账户。失败或结果不确定的尝试会保持可见，不会盲目重发。之后的人类输入优先。仍可手动切换账户，身份验证失败需要处理。
+
+使用 `dure recovery get codex --backend SERVER --json` 查看策略和已注册的账户，使用 `dure recovery status AGENT_ID --backend SERVER --json` 查看恢复结果。运行 `dure recovery help` 可了解指定版本的设置修改和可选用量观测。这些命令直接连接所选服务器。
 
 默认提供商和权限选项在 **Settings → General**。按实际任务选择权限；[worktree 不是沙箱](/cn/current-limits)。

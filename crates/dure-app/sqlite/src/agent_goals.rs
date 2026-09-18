@@ -199,15 +199,23 @@ async fn prepare_on(
         return Ok(None);
     }
     // A later ready/success event cannot hide a failure that has not been
-    // followed by an explicit goal resume. This also covers a missed broadcast.
+    // followed by an explicit goal resume or an accepted recovery of that
+    // exact failed input. This also covers a missed broadcast.
     let failure = sqlx::query_scalar::<_, String>("SELECT CASE json_extract(body_json, '$.type') \
         WHEN 'tool' THEN 'tool_' || json_extract(body_json, '$.state') \
-        ELSE json_extract(body_json, '$.state') END FROM agent_timeline_rows \
+        ELSE json_extract(body_json, '$.state') END FROM agent_timeline_rows AS failure \
         WHERE interaction_session_id = ?1 AND timeline_epoch = ?2 AND sequence > ?3 \
         AND ((json_extract(body_json, '$.type') = 'lifecycle' \
         AND json_extract(body_json, '$.state') IN ('turn_failed', 'turn_canceled', 'session_failed', 'session_exited')) \
         OR (json_extract(body_json, '$.type') = 'tool' \
         AND json_extract(body_json, '$.state') IN ('failed', 'canceled'))) \
+        AND NOT EXISTS (SELECT 1 FROM agent_recoveries AS recovery \
+            JOIN agent_turn_effects AS effect \
+              ON effect.interaction_session_id = failure.interaction_session_id \
+             AND effect.client_message_id = json_extract(recovery.record_json, '$.continuation.intent.clientMessageId') \
+            WHERE json_extract(recovery.record_json, '$.source.interactionSessionId') = failure.interaction_session_id \
+              AND json_extract(recovery.record_json, '$.failure.itemId') = failure.item_id \
+              AND effect.state = 'accepted') \
         ORDER BY sequence DESC LIMIT 1")
         .bind(binding.interaction_session_id.as_str()).bind(binding.timeline_epoch.as_str())
         .bind(goal.activation_cursor.sequence).fetch_optional(&mut *connection).await

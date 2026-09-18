@@ -3436,6 +3436,7 @@ Usage:
                                       Read the exact project authority used by daemonless spawn
   dure projects register <id> [--path PATH] [--name NAME] [--backend ID] [--json]
                                       Register cwd or the specified path on the selected backend
+  dure recovery <get|put|status|observe> [--backend ID] [--json]
   dure provider-defaults <get|set> [provider mode] [--backend ID] [--json]
                                       Read or change provider permission defaults on the selected backend
   dure providers capabilities [--json]
@@ -3643,6 +3644,15 @@ async function main() {
     } catch (error) {
       process.stderr.write(`${error.message}\n`);
       process.exitCode = 2;
+    }
+    return;
+  }
+  if (cmd === "recovery" || (cmd === "help" && rest[0] === "recovery")) {
+    const { runRecoveryCommand } = await import("./lib/recovery-command.mjs");
+    try {
+      process.exitCode = await runRecoveryCommand(cmd === "help" ? ["--help"] : rest, { resolveBackend: backendProfileQueryContext }) ? 0 : 2;
+    } catch (error) {
+      fail(error.message);
     }
     return;
   }
