@@ -157,6 +157,26 @@ test("only the protected build step receives signing credentials and offers the 
   }
 });
 
+test.each(["build", "draft"])(
+  "%s runs after an intentional verification skip only when its prerequisites succeed",
+  (name) => {
+    const job = workflow.jobs[name];
+    // A status function opts out of GitHub's implicit success() over ancestors.
+    // See https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-jobs
+    expect(job.if).toMatch(/always\(\)/);
+    const evaluate = new Function("needs", "always", "cancelled", `return (${job.if});`);
+    const dependencies = Array.isArray(job.needs) ? job.needs : [job.needs];
+    const needs = Object.fromEntries(dependencies.map((dependency) => [dependency, { result: "success" }]));
+    expect(evaluate(needs, () => true, () => false)).toBe(true);
+    expect(evaluate(needs, () => true, () => true)).toBe(false);
+    for (const dependency of dependencies) {
+      for (const result of ["failure", "cancelled", "skipped"]) {
+        expect(evaluate({ ...needs, [dependency]: { result } }, () => true, () => false)).toBe(false);
+      }
+    }
+  },
+);
+
 test("the workflow stops at immutable draft staging and never changes the client feed", () => {
   expect(workflow.jobs.draft.needs).toEqual(["source", "version", "build"]);
   const staging = workflow.jobs.draft.steps.find(
