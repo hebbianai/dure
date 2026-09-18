@@ -10,6 +10,7 @@ import { runSlackSocket } from "./slack/socket.mjs";
 import { requestSlackShare, requestSlackStatus, serveSlackControl } from "./slack/control.mjs";
 import { SlackShares } from "./slack/share.mjs";
 import { SlackPoller } from "./slack/poll.mjs";
+import { SlackFiles } from "./slack/files.mjs";
 
 export const SLACK_HELP = `Dure · Slack connector
 
@@ -21,6 +22,8 @@ export const SLACK_HELP = `Dure · Slack connector
 Create a Slack app from the manifest and install it in your workspace. Create an
 app-level token with connections:write. Set DURE_SLACK_APP_TOKEN and
 DURE_SLACK_BOT_TOKEN locally; do not put tokens in the configuration file.
+File attachments require files:read and files:write. After adding these scopes,
+reinstall the Slack app in the workspace and update its bot token in Connections.
 
 Configuration:
   {"schemaVersion":1,"teamId":"T...","channels":[
@@ -73,6 +76,7 @@ function journalSummary(state) {
     queued: Object.values(state?.inbox ?? {}).filter((entry) => entry.state === "queued").length,
     failed: Object.values(state?.inbox ?? {}).filter((entry) => entry.state === "failed").length +
       Object.values(state?.outbound ?? {}).filter((entry) => entry.failed).length +
+      Object.values(state?.files ?? {}).filter((entry) => ["failed", "sending"].includes(entry.state)).length +
       Object.values(state?.shares ?? {}).filter((entry) => entry.state === "failed").length };
 }
 
@@ -149,7 +153,8 @@ export async function runSlackCommand(args, { resolveBackend, presentRun, enviro
     journal = new SlackJournal(journalFile, config);
     await journal.acquire(() => backend.bind({}));
     signal.throwIfAborted();
-    const bridge = new SlackBridge({ config, botUserId: auth.user_id, journal, backend, slack });
+    const files = new SlackFiles({ journal, backend, slack });
+    const bridge = new SlackBridge({ config, botUserId: auth.user_id, journal, backend, slack, files });
     const sharing = new SlackShares({ config, journal, backend, slack });
     control = await serveSlackControl({ file: controlFile, teamId: config.teamId,
       share: (request) => sharing.share(request),

@@ -264,7 +264,9 @@ test("a failed request keeps its result while another explicit share is running"
 test("root-message reconciliation paginates channel history and only accepts this bot's delivery", async () => {
   const calls = [];
   const slack = new SlackApi({ botToken: "test-only", fetchApi: async (url, options) => {
-    calls.push({ url, body: JSON.parse(options.body) });
+    assert.equal(options.method, "GET");
+    const parsed = new URL(url);
+    calls.push({ url: parsed.origin + parsed.pathname, body: Object.fromEntries(parsed.searchParams) });
     return { ok: true, json: async () => ({ ok: true, messages: [{
       user: calls.length === 1 ? "UOTHER" : "U0", ts: calls.length === 1 ? "100.001" : "200.001",
       metadata: { event_type: "dure_delivery", event_payload: { key: "share-key" } },
@@ -273,7 +275,7 @@ test("root-message reconciliation paginates channel history and only accepts thi
   slack.botUserId = "U0";
   assert.equal(await slack.findDelivery({ channelId: "C1" }, "share-key"), "200.001");
   assert.equal(calls.length, 2);
-  assert.ok(calls.every(({ url, body }) => url.endsWith("conversations.history") && body.include_all_metadata && body.ts === undefined));
+  assert.ok(calls.every(({ url, body }) => url.endsWith("conversations.history") && body.include_all_metadata === "true" && body.ts === undefined));
   assert.equal(calls[1].body.cursor, "page-2");
 });
 

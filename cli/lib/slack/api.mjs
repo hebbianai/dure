@@ -1,5 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 
+const QUERY_METHODS = new Set(["conversations.history", "conversations.replies", "files.info", "files.getUploadURLExternal"]);
+
 export class SlackApi {
   constructor({ botToken, appToken, signal, fetchApi = fetch }) {
     this.botToken = botToken;
@@ -17,10 +19,13 @@ export class SlackApi {
       await delay(this.cooldowns.get(method) - Date.now(), undefined, { signal: this.signal });
     }
     this.signal?.throwIfAborted();
-    const response = await this.fetch(`https://slack.com/api/${method}`, {
-      method: "POST", redirect: "error", signal: AbortSignal.any([...(this.signal ? [this.signal] : []), AbortSignal.timeout(30_000)]),
+    const url = new URL(`https://slack.com/api/${method}`);
+    const query = QUERY_METHODS.has(method);
+    if (query) url.search = new URLSearchParams(Object.entries(body).map(([key, value]) => [key, String(value)])).toString();
+    const response = await this.fetch(url.href, {
+      method: query ? "GET" : "POST", redirect: "error", signal: AbortSignal.any([...(this.signal ? [this.signal] : []), AbortSignal.timeout(30_000)]),
       headers: { "Content-Type": "application/json; charset=utf-8", Authorization: `Bearer ${method === "apps.connections.open" ? this.appToken : this.botToken}` },
-      body: JSON.stringify(body),
+      ...(query ? {} : { body: JSON.stringify(body) }),
     });
     if (response.status === 429) {
       const seconds = Number(response.headers.get("retry-after"));
@@ -68,6 +73,55 @@ export class SlackApi {
     });
     this.nextPost.set(thread.channelId, entry);
     return entry.result;
+  }
+
+  async downloadFile(id, maxBytes) {
+    const { file } = await this.call("files.info", { file: id });
+    const url = new URL(file?.url_private_download ?? file?.url_private ?? "about:blank");
+    if (file?.id !== id || file.mode !== "hosted" || file.is_external ||
+        url.protocol !== "https:" || url.hostname !== "files.slack.com" || url.username || url.password ||
+        !Number.isSafeInteger(file.size) || file.size < 1 || file.size > maxBytes) {
+      throw Object.assign(new Error("Slack attachment is unavailable or too large."), { code: "slack_file_unavailable" });
+    }
+    const response = await this.fetch(url.href, { redirect: "error", signal: this.fileSignal(),
+      headers: { Authorization: `Bearer ${this.botToken}` } });
+    if (!response.ok || !response.body || response.headers.get("content-type")?.startsWith("text/html")) {
+      throw Object.assign(new Error("Slack attachment download failed."), { code: "slack_file_unavailable" });
+    }
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.length;
+      if (size > maxBytes || size > file.size) throw Object.assign(new Error("Slack attachment is too large."), { code: "slack_file_unavailable" });
+      chunks.push(chunk);
+    }
+    if (size !== file.size) throw Object.assign(new Error("Slack attachment download was incomplete."), { code: "slack_file_unavailable" });
+    return { bytes: Buffer.concat(chunks), mimetype: file.mimetype };
+  }
+
+  fileSignal() {
+    return AbortSignal.any([...(this.signal ? [this.signal] : []), AbortSignal.timeout(120_000)]);
+  }
+
+  async uploadFile(thread, { name, bytes }, allocated) {
+    const { file_id: id, upload_url: uploadUrl } = await this.call("files.getUploadURLExternal", { filename: name, length: bytes.length });
+    const url = new URL(uploadUrl ?? "about:blank");
+    if (!/^F[A-Z0-9]+$/.test(id ?? "") || url.protocol !== "https:" || url.hostname !== "files.slack.com" ||
+        url.username || url.password || !url.pathname.startsWith("/upload/")) {
+      throw Object.assign(new Error("Slack returned an invalid upload target."), { code: "slack_file_unavailable" });
+    }
+    allocated(id);
+    const response = await this.fetch(url.href, { method: "POST", redirect: "error", signal: this.fileSignal(),
+      headers: { "Content-Type": "application/octet-stream" }, body: bytes });
+    if (!response.ok) throw Object.assign(new Error("Slack file upload failed."), { code: "slack_file_unavailable" });
+    await response.body?.cancel();
+    await this.call("files.completeUploadExternal", { files: [{ id, title: name }], channel_id: thread.channelId, thread_ts: thread.threadTs });
+    const { file } = await this.call("files.info", { file: id });
+    const permalink = new URL(file?.permalink ?? "about:blank");
+    if (file?.id !== id || permalink.protocol !== "https:" || !permalink.hostname.endsWith(".slack.com") || permalink.username || permalink.password) {
+      throw Object.assign(new Error("Slack did not confirm the file link."), { code: "slack_file_unavailable" });
+    }
+    return { id, permalink: permalink.href };
   }
 
   async findDelivery(thread, key) {

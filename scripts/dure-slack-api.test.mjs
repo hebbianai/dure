@@ -2,6 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 import { SlackApi } from "../cli/lib/slack/api.mjs";
 
+test("Slack history reads send their parameters in the GET query", async () => {
+  const api = new SlackApi({ botToken: "fixture-only", fetchApi: async (url, options) => {
+    const request = new URL(url);
+    assert.equal(request.pathname, "/api/conversations.replies");
+    assert.equal(request.searchParams.get("channel"), "C1");
+    assert.equal(request.searchParams.get("ts"), "100.001");
+    assert.equal(request.searchParams.get("include_all_metadata"), "true");
+    assert.equal(options.method, "GET");
+    assert.equal(options.body, undefined);
+    assert.equal(options.headers.Authorization, "Bearer fixture-only");
+    return Response.json({ ok: true, messages: [] });
+  } });
+  await api.call("conversations.replies", { channel: "C1", ts: "100.001", include_all_metadata: true });
+});
+
 function rateLimitedApi(controller) {
   const calls = [];
   const api = new SlackApi({ signal: controller.signal, fetchApi: async (url) => {

@@ -85,6 +85,32 @@ test("unconnected channels, other workspaces, bot messages and unrelated convers
   assert.ok(incomingSlackMessage(payload({ channel: "D1", channel_type: "im", type: "message", text: "Help with onboarding" }), dm, "U0", {}));
 });
 
+test("a teammate's image reply reaches the active turn with its caption and attachment identity", async (t) => {
+  const f = await fixture(t);
+  f.bridge.accept(payload());
+  await f.bridge.tick();
+  f.setPage({ activeTurn: { turnId: "turn-running" } });
+  const event = payload({ type: "message", subtype: "file_share", ts: "101.001", thread_ts: "100.001",
+    text: "This is what I see", files: [{ id: "FIMAGE", name: "image.png", mimetype: "image/png", size: 100 }] });
+  assert.equal(f.bridge.accept(event), true);
+  assert.equal(f.bridge.accept(event), false);
+  await f.bridge.tick();
+  assert.equal(f.calls.inputs.length, 1);
+  assert.equal(f.calls.inputs[0].operation, "agent_conversation.steer_turn");
+  assert.match(f.calls.inputs[0].intent.input, /This is what I see/);
+  assert.match(f.calls.inputs[0].intent.input, /image\.png/);
+});
+
+test("an image-only reply is retained, while edited and bot attachment events remain excluded", () => {
+  const event = payload({ type: "message", subtype: "file_share", text: "", ts: "101.001", thread_ts: "100.001",
+    files: [{ id: "FIMAGE", name: "image.png", mimetype: "image/png", size: 100 }] });
+  const threads = { [slackKey("T1", "C1", "100.001")]: {} };
+  assert.equal(incomingSlackMessage(event, config, "U0", threads)?.files[0].id, "FIMAGE");
+  for (const change of [{ subtype: "message_changed" }, { bot_id: "B1" }, { user: "U0" }]) {
+    assert.equal(incomingSlackMessage({ ...event, event: { ...event.event, ...change } }, config, "U0", threads), null);
+  }
+});
+
 test("channel defaults enter only a new task's initial context and survive both config versions", () => {
   const route = {...config.channels[0], model: "model-fixture", effort: "high", accountId: "team", permissionOverride: "require_approvals", instructions: "Review before publishing."};
   for (const schemaVersion of [1, 2]) {

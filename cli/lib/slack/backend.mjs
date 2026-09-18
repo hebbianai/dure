@@ -59,6 +59,23 @@ export class DureSlackBackend {
     return response.result;
   }
 
+  async localFiles(thread) {
+    const { profile } = await this.target(thread);
+    // A connector-local path is never a path on an SSH execution server.
+    if (profile.transport.kind !== "local") return null;
+    if (!thread.agentId) {
+      await this.call(thread, "backend.scope", { schemaVersion: 1 });
+      return { root: null };
+    }
+    const snapshot = await this.call(thread, "agent_runtime.projection.inspect", { schemaVersion: 1, agentId: thread.agentId });
+    const context = snapshot?.projectionContext;
+    if (context?.agent?.agentId !== thread.agentId ||
+        context.agent.workspaceId !== context.workspace?.workspaceId || typeof context.workspace?.rootPath !== "string") {
+      throw Object.assign(new Error("The task's workspace is unavailable."), { code: "slack_file_workspace_unavailable" });
+    }
+    return { root: context.workspace.rootPath };
+  }
+
   async start(message, thread) {
     const backend = await this.target(thread);
     const idempotencyKey = `slack-${message.threadKey}`;

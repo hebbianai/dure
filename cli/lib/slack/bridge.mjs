@@ -22,8 +22,8 @@ function lifecycleMessage({ state, detail }) {
 /** Socket Mode and Dure both feed this one conversation. No task selection,
  * runtime status, provider output or decision is invented by the transport. */
 export class SlackBridge {
-  constructor({ config, botUserId, journal, backend, slack }) {
-    Object.assign(this, { config, botUserId, journal, backend, slack });
+  constructor({ config, botUserId, journal, backend, slack, files }) {
+    Object.assign(this, { config, botUserId, journal, backend, slack, files });
     this.pending = new SlackPendingRequests({ config, botUserId, journal, slack, publish: this.send.bind(this) });
   }
 
@@ -48,6 +48,14 @@ export class SlackBridge {
   async receive(entry) {
     const { message } = entry;
     const thread = this.journal.data.threads[message.threadKey];
+    if (message.files?.length && message.attachmentText === undefined && this.files) {
+      if (!thread.backend) {
+        thread.backend = await this.backend.bind(thread.route);
+        this.journal.save();
+      }
+      message.attachmentText = await this.files.prepareInput(message, thread);
+      this.journal.save();
+    }
     if (!thread.agentId) {
       if (!thread.backend) {
         thread.backend = await this.backend.bind(thread.route);
@@ -104,7 +112,7 @@ export class SlackBridge {
       if (role === "user" && Object.values(this.journal.data.inbox).some(({ message }) =>
         !message.pendingKey && message.threadKey === slackKey(thread.teamId, thread.channelId, thread.threadTs) &&
         [slackInput(message), slackInput(message, { initial: true })].includes(markdown))) return;
-      content = role === "user" ? `Dure:\n${markdown}` : markdown;
+      content = role === "user" ? `Dure:\n${markdown}` : this.files ? await this.files.publish(thread, item.itemId, markdown) : markdown;
     }
     if (!content) return;
     await this.sendText(thread, [item.itemId], content);
