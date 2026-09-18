@@ -11,7 +11,9 @@ import {
 import type { ComponentProps, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentPanelDockProps } from "@/components/panels/agentPanelContract";
+import { AgentUsageLimitHandoffHost } from "@/components/agents/chat/AgentUsageLimitHandoffHost";
 import { StructuredAgentPanel as StructuredAgentPanelImpl } from "@/components/panels/StructuredAgentPanel";
+import * as credentialTransition from "@/lib/agents/agentCredentialTransition";
 import * as usageResume from "@/lib/agents/chat/resumeUsageLimitTurn";
 import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredentialTransition";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
@@ -50,6 +52,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/components/agents/chat/useAgentChatSession", () => ({
 	useAgentChatSession: mocks.chatHook,
+}));
+vi.mock("@/lib/agents/agentCredentialTransition", () => ({
+	requestAgentCredentialTransition: vi.fn(),
+}));
+vi.mock("@/lib/agents/agentRuntimeTransitionAction", () => ({
+	recoverStructuredAgentRuntimeProjection: vi.fn(),
 }));
 vi.mock("@/components/panels/useAgentPanelState", () => ({
 	useAutoSwitchAccounts: () => mocks.autoSwitch,
@@ -760,6 +768,58 @@ describe("StructuredAgentPanel usage-limit handoff", () => {
 			| { handedOff?: { resend?: () => Promise<void> } }
 			| undefined)?.handedOff?.resend;
 	}
+
+	it.each(["handoff", "switch_account:acc-b"])("retains a background failure for a later pane and recovers through %s", async (action) => {
+		const id = `background-failure-${action}`;
+		const previous = useStore.getState();
+		const transition = vi.spyOn(credentialTransition, "requestAgentCredentialTransition");
+		let reject!: (error: Error) => void;
+		transition.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+		useStore.setState({ agents: [{ ...pinnedAgent, id }], accounts: mocks.accounts, autoSwitchAccounts: true });
+		const resume = vi.spyOn(usageResume, "resumeUsageLimitTurn");
+		try {
+			const host = render(<AgentUsageLimitHandoffHost />);
+			await waitFor(() => expect(transition).toHaveBeenCalledOnce());
+			const recover = switchCredentialMock();
+			let pane = renderPinned(recover, id);
+			expect(paneActionSnapshot(`agent:${id}`)?.actions).not.toContain("handoff");
+			expect(resendFromSurface()).toBeUndefined();
+			pane.unmount();
+			await act(async () => reject(new Error("Replacement account unavailable")));
+			pane = renderPinned(recover, id);
+			await waitFor(() => expect(paneActionSnapshot(`agent:${id}`)?.actions).toContain("handoff"));
+			expect(paneActionSnapshot(`agent:${id}`)?.error).toBe("Replacement account unavailable");
+			expect(mocks.accountProps?.failure).toBe("Replacement account unavailable");
+			expect(transition).toHaveBeenCalledOnce();
+			expect(recover).not.toHaveBeenCalled();
+			expect(resume).not.toHaveBeenCalled();
+			let finishRecovery!: (result: AgentCredentialTransitionResult) => void;
+			recover.mockImplementationOnce(() => new Promise((resolve) => { finishRecovery = resolve; }));
+			let recovery!: ReturnType<typeof invokePaneAction>;
+			act(() => { recovery = invokePaneAction(`agent:${id}`, action); });
+			expect(paneActionSnapshot(`agent:${id}`)?.actions).not.toContain("handoff");
+			expect(resendFromSurface()).toBeUndefined();
+			expect(mocks.accountProps?.failure).toBeUndefined();
+			await act(async () => {
+				finishRecovery({ kind: "completed", conversationId: "conversation-1" });
+				await expect(recovery).resolves.toMatchObject({ ok: true });
+			});
+			await waitFor(() => expect(paneActionSnapshot(`agent:${id}`)?.actions).toContain("resend_last_message"));
+			expect(mocks.accountProps?.failure).toBeUndefined();
+			expect(paneActionSnapshot(`agent:${id}`)?.error).toBeUndefined();
+			expect(recover).toHaveBeenCalledExactlyOnceWith(id, "acc-b");
+			expect(transition).toHaveBeenCalledOnce();
+			expect(resume).not.toHaveBeenCalled();
+			expect(mocks.chatSend).not.toHaveBeenCalled();
+			pane.unmount();
+			host.unmount();
+		} finally {
+			cleanup();
+			transition.mockRestore();
+			resume.mockRestore();
+			useStore.setState({ agents: previous.agents, accounts: previous.accounts, autoSwitchAccounts: previous.autoSwitchAccounts });
+		}
+	});
 
 	it.each(["accepted", "uncertain"] as const)("does not offer GUI or CLI resend during or after automatic %s delivery", async (outcome) => {
 		const id = `automatic-resume-${outcome}`;

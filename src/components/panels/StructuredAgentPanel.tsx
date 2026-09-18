@@ -49,6 +49,7 @@ import type { StructuredAgentRuntimeProjectionGenerationV1 } from "@/lib/agents/
 import type { AgentStructuredInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { latestTurnFailure } from "@/lib/agents/chat/turnFailureReason";
 import { resumeUsageLimitTurn } from "@/lib/agents/chat/resumeUsageLimitTurn";
+import { usageLimitHandoffState } from "@/lib/agents/usageLimitHandoffState";
 import {
 	providerLoginCmd,
 	supportsAccounts,
@@ -274,8 +275,34 @@ export function StructuredAgentPanel({
 		setAccountFailure(undefined);
 		setRemoteRecoveryAccount(undefined);
 		setAccountBusy(true);
+		const episode = turnFailure
+			? usageLimitHandoffState.read(agent.id, turnFailure.createdAtMs)
+			: undefined;
+		const recoveryAttempt = episode?.result.kind === "failed"
+			? usageLimitHandoffState.begin(agent.id, episode.attempt.failureAtMs, "requested")
+			: undefined;
 		return switchCredential(agent.id, accountId)
+			.then((result) => {
+				// Manual toolbar/CLI recovery consumes the same failed attempt.
+				// Only an actual completed transition can clear its shared error.
+				if (result.kind === "completed" && recoveryAttempt) {
+					usageLimitHandoffState.settle(recoveryAttempt, {
+						kind: "completed",
+						outcome: {
+							fromName: currentAccount?.name,
+							toName: targetAccount?.name ?? t("agents.account.defaultCli"),
+						},
+					});
+				}
+				return result;
+			})
 			.catch((error: unknown) => {
+				if (recoveryAttempt) {
+					usageLimitHandoffState.settle(recoveryAttempt, {
+						kind: "failed",
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
 				setRemoteRecoveryAccount(targetAccount);
 				setAccountFailure(
 					error instanceof Error ? error.message : String(error),
@@ -303,7 +330,12 @@ export function StructuredAgentPanel({
 		resumeAfterHandoff: resumeUsageLimitTurn,
 	});
 	const handoffDecision =
-		handoffView.kind === "decided" ? handoffView.decision : undefined;
+		handoffView.kind === "decided" || handoffView.kind === "failed"
+			? handoffView.decision
+			: undefined;
+	const presentedAccountFailure =
+		accountFailure ??
+		(handoffView.kind === "failed" ? handoffView.error : undefined);
 	// A handled episode no longer offers another account handoff. Resending
 	// its retained input is a separate, explicit action shared by GUI and CLI.
 	const openTurnFailure =
@@ -340,7 +372,12 @@ export function StructuredAgentPanel({
 			// Same lock the chat surface passes as `disabled`.
 			locked: accountBusy || profileBusy,
 			accountMovesLocked,
-			error: "error" in session ? session.error : undefined,
+			error:
+				handoffView.kind === "failed"
+					? handoffView.error
+					: "error" in session
+						? session.error
+						: undefined,
 			lastTurnFailure: openTurnFailure?.reason,
 			handoffRefusal:
 				handoffDecision?.kind === "refused" ? handoffDecision.code : undefined,
@@ -387,7 +424,7 @@ export function StructuredAgentPanel({
 				{supportsStructuredChat(agent.provider) &&
 					supportsAccounts(agent.provider) &&
 					toolbarControls.visible("account", {
-						mustShow: !!accountFailure,
+						mustShow: !!presentedAccountFailure,
 					}) &&
 					toolbarControls.slot(
 						"account",
@@ -398,7 +435,7 @@ export function StructuredAgentPanel({
 							currentAccount={currentAccount}
 							recoveryAccount={remoteRecoveryAccount}
 							followsGlobal={false}
-							failure={accountFailure}
+							failure={presentedAccountFailure}
 							hostName={remoteHost?.name}
 							accountBusy={accountBusy || remoteAccountBusy}
 							allowCurrentAccountReselect={session.phase !== "ready"}
