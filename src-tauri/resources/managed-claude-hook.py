@@ -54,6 +54,19 @@ CODEX_GOAL_QUERY_TIMEOUT_SECONDS = 2.0
 CODEX_GOAL_QUERY_ATTEMPTS = 3
 CODEX_GOAL_QUERY_RETRY_SECONDS = 0.05
 CODEX_APP_SERVER_MAX_LINE_BYTES = 64 * 1024
+# Mirrors dure-app's primary_checkout_guidance contract; the script test
+# compares this output with the Rust template.
+PRIMARY_CHECKOUT_QUERY_TIMEOUT_SECONDS = 0.5
+PRIMARY_CHECKOUT_REV_PARSE_ARGUMENTS = (
+    "rev-parse",
+    "--path-format=absolute",
+    "--show-toplevel",
+    "--git-dir",
+    "--git-common-dir",
+    "--abbrev-ref",
+    "HEAD",
+)
+PRIMARY_CHECKOUT_SESSION_CONTEXT_TEMPLATE = "Dure: This session started in the primary checkout of the Git repository at {toplevel} (currently on {branch}). Other agents may use this checkout at the same time, so keep it on its current branch: do not switch branches, check out other commits, rebase, or reset here. For work that needs another branch, create a separate worktree, for example `git worktree add -b <branch> .worktrees/<name> <base>`, and work there. Follow a direct request from the user to change this checkout."
 CODEX_KNOWN_GOAL_STATES = frozenset(
     ("blocked", "canceled", "cancelled", "complete", "completed", "paused")
 )
@@ -747,6 +760,58 @@ def pre_tool_use_coalesced(root, session_id):
     return False
 
 
+def absolute_git_path(path):
+    # Git prints forward slashes everywhere, with a drive prefix on Windows.
+    return path.startswith("/") or (
+        len(path) >= 3 and path[0].isascii() and path[0].isalpha() and path[1:3] == ":/"
+    )
+
+
+def primary_checkout_guidance(native, deadline):
+    """Return SessionStart output for a primary checkout, or None."""
+    if native.get("hook_event_name") != "SessionStart":
+        return None
+    cwd = native.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        cwd = os.getcwd()
+    timeout = bounded_timeout(deadline, PRIMARY_CHECKOUT_QUERY_TIMEOUT_SECONDS)
+    if timeout is None:
+        return None
+    try:
+        completed = subprocess.run(
+            ["git", "-C", cwd, *PRIMARY_CHECKOUT_REV_PARSE_ARGUMENTS],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+        lines = completed.stdout.decode("utf-8").splitlines()
+    except Exception:
+        return None
+    if completed.returncode != 0 or len(lines) != 4:
+        return None
+    toplevel, git_dir, common_dir, head = lines
+    if (
+        not all(absolute_git_path(path) for path in (toplevel, git_dir, common_dir))
+        or git_dir != common_dir
+        or not head
+    ):
+        return None
+    branch = "a detached HEAD" if head == "HEAD" else head
+    context = PRIMARY_CHECKOUT_SESSION_CONTEXT_TEMPLATE.replace(
+        "{toplevel}", toplevel
+    ).replace("{branch}", branch)
+    return json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": context,
+            }
+        }
+    )
+
+
 def codex_notification():
     if len(sys.argv) < 2:
         return None
@@ -798,6 +863,10 @@ def main():
         return
     if not isinstance(native, dict):
         return
+    guidance = primary_checkout_guidance(native, deadline)
+    if guidance is not None:
+        sys.stdout.write(guidance + "\n")
+        sys.stdout.flush()
     if codex:
         return report_to_hmux("codex", native, fence, deadline) != "hmux_identity_mismatch"
     root, writable = app_root()

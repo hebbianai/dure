@@ -44,6 +44,7 @@ mod plugin_registry;
 mod plugin_settings;
 mod plugin_views;
 mod plugin_workflows;
+mod primary_checkout_guidance;
 mod provider_credential_profile;
 mod provider_recovery;
 mod provider_execution;
@@ -297,6 +298,10 @@ pub use plugin_views::{
 };
 pub use plugin_workflows::{
     PLUGIN_WORKFLOWS_SCHEMA_VERSION_V1, PluginWorkflowContributionV1, WorkflowKindIdV1,
+};
+pub use primary_checkout_guidance::{
+    PRIMARY_CHECKOUT_REV_PARSE_ARGUMENTS_V1, PRIMARY_CHECKOUT_SESSION_CONTEXT_TEMPLATE_V1,
+    primary_checkout_session_context_v1, session_start_additional_context_output_v1,
 };
 pub use provider_recovery::*;
 pub use provider_credential_profile::{

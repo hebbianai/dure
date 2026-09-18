@@ -6,6 +6,9 @@ mod descriptor;
 
 use std::{
     collections::BTreeMap,
+    io::Write,
+    path::Path,
+    process::Stdio,
     time::{Duration, Instant},
 };
 
@@ -303,6 +306,66 @@ async fn deliver(
 
 /// One invocation owns one deadline, including input and discovery. Neither
 /// provider input nor descriptor credentials are included in failure output.
+/// Bounds the Git query so a slow repository cannot consume the report budget.
+const GUIDANCE_QUERY_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Hook output for a `SessionStart` in a repository's primary checkout. Any
+/// other event, a linked worktree or a failed query yields no guidance.
+async fn session_start_guidance(
+    raw: &[u8],
+    fallback_cwd: &Path,
+    deadline: Instant,
+) -> Option<String> {
+    let input: Value = serde_json::from_slice(raw).ok()?;
+    if input.get("hook_event_name").and_then(Value::as_str) != Some("SessionStart") {
+        return None;
+    }
+    let cwd = input
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|cwd| !cwd.is_empty())
+        .map(Path::new)
+        .unwrap_or(fallback_cwd);
+    let budget = GUIDANCE_QUERY_TIMEOUT.min(deadline.saturating_duration_since(Instant::now()));
+    if budget.is_zero() {
+        return None;
+    }
+    let output = tokio::time::timeout(
+        budget,
+        tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(dure_app::PRIMARY_CHECKOUT_REV_PARSE_ARGUMENTS_V1)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let context =
+        dure_app::primary_checkout_session_context_v1(std::str::from_utf8(&output.stdout).ok()?)?;
+    Some(dure_app::session_start_additional_context_output_v1(
+        &context,
+    ))
+}
+
+/// Claude applies hook output only after a successful exit, so a failed report
+/// must not discard guidance that was already written.
+fn completed(delivered: Result<(), HookFailure>, guided: bool) -> Result<(), HookFailure> {
+    match delivered {
+        Err(failure) if guided => {
+            eprintln!("{}", failure.code());
+            Ok(())
+        }
+        delivered => delivered,
+    }
+}
+
 pub async fn run() -> Result<(), HookFailure> {
     let sequence = source_sequence()?;
     let environment = FENCE_HEADERS
@@ -318,19 +381,32 @@ pub async fn run() -> Result<(), HookFailure> {
         SOURCE_SEQUENCE_HEADER,
         HeaderValue::from_str(&sequence.to_string()).map_err(|_| HookFailure::Unavailable)?,
     );
-    let root = descriptor::app_root().ok_or(HookFailure::Unavailable)?;
     let deadline = Instant::now() + TOTAL_TIMEOUT;
-    tokio::time::timeout(TOTAL_TIMEOUT, async {
-        let mut raw = Vec::new();
+    let expires = tokio::time::Instant::from_std(deadline);
+    let mut raw = Vec::new();
+    tokio::time::timeout_at(
+        expires,
         tokio::io::stdin()
             .take((MAX_INPUT_BYTES + 1) as u64)
-            .read_to_end(&mut raw)
-            .await
-            .map_err(|_| HookFailure::InputUnavailable)?;
-        deliver(root, headers, raw, deadline).await
-    })
+            .read_to_end(&mut raw),
+    )
     .await
     .map_err(|_| HookFailure::Timeout)?
+    .map_err(|_| HookFailure::InputUnavailable)?;
+    let fallback_cwd = std::env::current_dir().unwrap_or_default();
+    let guidance = session_start_guidance(&raw, &fallback_cwd, deadline).await;
+    if let Some(output) = &guidance {
+        let mut stdout = std::io::stdout().lock();
+        let _ = writeln!(stdout, "{output}").and_then(|()| stdout.flush());
+    }
+    let delivered = match descriptor::app_root() {
+        Some(root) => tokio::time::timeout_at(expires, deliver(root, headers, raw, deadline))
+            .await
+            .map_err(|_| HookFailure::Timeout)
+            .and_then(|delivered| delivered),
+        None => Err(HookFailure::Unavailable),
+    };
+    completed(delivered, guidance.is_some())
 }
 
 #[cfg(test)]
