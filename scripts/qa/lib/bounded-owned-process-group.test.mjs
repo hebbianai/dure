@@ -357,7 +357,8 @@ fs.rmSync = function(file, options) {
       });
       try {
         // A delayed observer can first run after the bounded command exits.
-        await expect(fixture.closed).resolves.toEqual({ code: 124, signal: null });
+        const result = await fixture.closed;
+        expect(result, fixture.stderr()).toEqual({ code: 124, signal: null });
         const { descriptor, processes } = JSON.parse(
           fs.readFileSync(observationPath, "utf8"),
         );

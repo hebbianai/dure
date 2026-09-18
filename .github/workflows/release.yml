@@ -226,6 +226,7 @@ jobs:
 
   build:
     needs: version
+    if: always() && !cancelled() && needs.version.result == 'success'
     runs-on:
       group: dure-release
       labels: [self-hosted, macOS, ARM64, dure-release]
@@ -329,6 +330,9 @@ jobs:
 
   draft:
     needs: [source, version, build]
+    if: >-
+      always() && !cancelled() && needs.source.result == 'success' &&
+      needs.version.result == 'success' && needs.build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
