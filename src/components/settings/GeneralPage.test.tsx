@@ -21,8 +21,32 @@ afterEach(() => {
 
 describe("GeneralPage", () => {
 
-  it("lets Pro choose new Agent panes and persists the choice without changing existing agents", () => {
-    vi.stubEnv("PROD", false);
+  it("lets public builds select Beta, persist it, and return to Basic", () => {
+    vi.stubEnv("PROD", true);
+    useStore.setState({ uiPrefs: { ...DEFAULT_UI_PREFS } });
+    const agents = useStore.getState().agents;
+    const view = render(<GeneralPage />);
+    const basic = () => screen.getByRole("radio", { name: t("settings.general.interfaceMode.basic") });
+    const beta = () => screen.getByRole("radio", { name: t("settings.general.interfaceMode.pro") });
+    expect(basic().getAttribute("aria-checked")).toBe("true");
+    expect(screen.queryByRole("radio", { name: t("settings.general.defaultAgentPane.chat") })).toBeNull();
+    fireEvent.click(beta());
+    expect(useStore.getState().uiPrefs.interfaceMode).toBe("pro");
+    const roundTrip = normalizePersistedState(JSON.parse(JSON.stringify(persistedSlice(useStore.getState()))));
+    expect(roundTrip.uiPrefs.interfaceMode).toBe("pro");
+    view.unmount();
+    useStore.setState({ uiPrefs: roundTrip.uiPrefs });
+    render(<GeneralPage />);
+    expect(beta().getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: t("settings.general.defaultAgentPane.chat") })).toBeTruthy();
+    fireEvent.click(basic());
+    expect(useStore.getState().uiPrefs.interfaceMode).toBe("basic");
+    expect(screen.queryByRole("radio", { name: t("settings.general.defaultAgentPane.chat") })).toBeNull();
+    expect(useStore.getState().agents).toBe(agents);
+  });
+
+  it.each([false, true])("lets Beta choose new Agent panes and persists the choice without changing existing agents (PROD: %s)", (production) => {
+    vi.stubEnv("PROD", production);
     useStore.setState((state) => ({ uiPrefs: { ...state.uiPrefs, interfaceMode: "pro" } }));
     const agents = useStore.getState().agents;
     const view = render(<GeneralPage />);

@@ -11,7 +11,7 @@ import { requestSlackShare, requestSlackStatus, serveSlackControl } from "./slac
 import { SlackShares } from "./slack/share.mjs";
 import { SlackPoller } from "./slack/poll.mjs";
 
-export const SLACK_HELP = `Dure Pro · Slack connector (development preview)
+export const SLACK_HELP = `Dure · Slack connector
 
   dure slack manifest
   dure slack serve --config FILE [--backend ID] [--owner-lifetime stdin]

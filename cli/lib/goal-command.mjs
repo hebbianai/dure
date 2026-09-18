@@ -4,7 +4,7 @@ import {
   performBackendProfileRequest,
 } from "./backend-transport.mjs";
 
-export const GOAL_HELP = `dure goal — continue an explicit goal in the same conversation (Pro)
+export const GOAL_HELP = `dure goal — continue an explicit goal in the same conversation (Beta)
 
   dure goal show AGENT_ID [--backend ID]
   dure goal put AGENT_ID --objective TEXT --status active|paused|complete|failed
