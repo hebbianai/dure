@@ -33,7 +33,7 @@ if (!live) {
   const request = async (operation, body) => {
     const profile = loadBackendProfiles({ configPath: catalogPath }).profiles.find((entry) => entry.id === "local");
     const response = await performBackendProfileRequest(profile, {
-      operation, requiredCapabilities: [operation === "agent_conversation.read" ? "agent_conversation.read.v5" : operation], body,
+      operation, requiredCapabilities: [operation === "agent_conversation.read" ? "agent_conversation.read.v6" : operation], body,
     }, { maxResponseBytes: 2 * 1024 * 1024 });
     return response.result;
   };
