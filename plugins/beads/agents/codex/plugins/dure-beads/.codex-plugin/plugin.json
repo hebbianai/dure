@@ -7,7 +7,7 @@
   },
   "homepage": "https://github.com/hebbianai/dure",
   "repository": "https://github.com/hebbianai/dure",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "keywords": [
     "beads",
     "issues",

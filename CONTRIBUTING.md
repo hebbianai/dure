@@ -6,8 +6,9 @@ documentation improvements and translations. Please follow our
 
 ## Source and development
 
-Dure's first-party source is available under [MIT](LICENSE). Third-party
-components keep their existing licenses and copyright notices.
+Dure's first-party source, including Hmux, is available under
+[GNU GPL version 3 only (GPL-3.0-only)](LICENSE). Third-party components keep
+their existing licenses and copyright notices.
 
 Install Git, the Node version in [.node-version](.node-version), and
 [rustup](https://rustup.rs/).
@@ -229,8 +230,15 @@ accepting a change.
 ## Licensing
 
 Submit only work you have the right to contribute under the project's
-[MIT license](LICENSE). Preserve third-party licenses and identify the source and
-license of any material you add.
+[GNU GPL version 3 only (GPL-3.0-only) license](LICENSE). Contributions are
+accepted under those terms. Preserve third-party licenses and identify the
+source and license of any material you add.
+
+The first-party license changed from MIT to GPL-3.0-only in
+[the licensing transition](https://github.com/hebbianai/dure/issues/27). Earlier
+versions released under MIT retain their original terms; this change does not
+relicense copies already provided under MIT. When distributing covered binaries,
+provide Corresponding Source as required by GPLv3.
 
 See the [open-source boundary](README.md#open-source-boundary) for the scope of
 this repository and [TRADEMARK.md](TRADEMARK.md) for project branding and official

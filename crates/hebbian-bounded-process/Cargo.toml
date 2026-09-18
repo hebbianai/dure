@@ -3,7 +3,7 @@ name = "hebbian-bounded-process"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "MIT"
+license = "GPL-3.0-only"
 publish = false
 description = "Deadline-bound process-group and Job execution for Hebbian probes"
 

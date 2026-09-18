@@ -4,7 +4,7 @@ version = "0.1.4"
 description = "Dure mobile attach client"
 authors = ["kattpish"]
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-only"
 publish = false
 
 # staticlib/cdylib are what the iOS and Android harnesses link against; the

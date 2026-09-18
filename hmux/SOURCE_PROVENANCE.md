@@ -90,3 +90,18 @@ and package snapshot `20260725T000000Z`. The strict exclusion file names 29
 exact collected testcases; CI rejects stale declarations and any difference
 between declared and actual expected failures. The initial native execution
 produced 83 passes and 29 strict expected failures.
+
+## 2026-09-18 GPL-3.0-only transition
+
+Hmux is first-party code owned by Hebbian AI. At the copyright holder's direction,
+the licensing transition tracked in
+[hebbianai/dure#27](https://github.com/hebbianai/dure/issues/27) changes the current
+Hmux source and workspace metadata to GNU GPL version 3 only (`GPL-3.0-only`).
+[`LICENSE`](./LICENSE) now contains that grant and the complete GPLv3 text, with
+`Copyright (C) 2026 Hebbian AI` replacing the previous `Lovecast Inc.` attribution.
+
+The imported-baseline entry above records the license as it was at import time;
+it does not describe the current license file. The earlier MIT text and
+attribution remain in Git history. Copies previously released under MIT retain
+those terms. Third-party licenses, attribution and fixture provenance are
+unchanged by this first-party licensing transition.

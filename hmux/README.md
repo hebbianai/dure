@@ -23,3 +23,10 @@ entry points select their own artifacts through the build scripts.
 Start with Dure's [contribution guide](https://github.com/hebbianai/dure/blob/main/CONTRIBUTING.md)
 for contribution and verification requirements. Discuss bug reports and proposals
 in [GitHub Issues](https://github.com/hebbianai/dure/issues).
+
+## Licensing
+
+Copyright (C) 2026 Hebbian AI. Hmux is licensed under
+[GNU GPL version 3 only (GPL-3.0-only)](LICENSE). Third-party notices remain
+applicable; earlier versions released under MIT retain those terms. The license
+transition is recorded in [SOURCE_PROVENANCE.md](SOURCE_PROVENANCE.md#2026-09-18-gpl-30-only-transition).

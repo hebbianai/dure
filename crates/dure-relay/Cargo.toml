@@ -3,7 +3,7 @@ name = "dure-relay"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "MIT"
+license = "GPL-3.0-only"
 publish = false
 description = "Zero-knowledge byte router that introduces a phone to its Dure hub"
 
