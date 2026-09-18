@@ -20,6 +20,8 @@ export const panels: Record<string, string> = {
 	"panels.mobile.reportHint": "先检查和编辑日志，再添加到智能体草稿。iOS 使用应用 ID 匹配日志子系统；使用其他子系统的应用可能没有记录。",
 	"panels.mobile.prepareReport": "准备报告",
 	"panels.mobile.inputText": "文本（ASCII，不含 %）",
+	"panels.mobile.paste": "粘贴",
+	"panels.mobile.pasteText": "要粘贴的文本（支持 Unicode 和换行）",
 	"panels.mobile.type": "输入",
 	"panels.mobile.rotate": "旋转",
 	"panels.mobile.title": "移动模拟器",

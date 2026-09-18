@@ -15,6 +15,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
 import { RefreshButton } from "@/components/ui/refresh-button";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
+import { Textarea } from "@/components/ui/textarea";
 import { usePaneActions } from "@/components/workspace/usePaneActions";
 import { useWorkspaceRuntimeActive } from "@/components/workspace/WorkspaceRuntimeContext";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
@@ -581,19 +582,45 @@ export function MobileSimulatorPanel(
 						</form>
 						{(selected.platform === "android" || live) && (
 							<form
-								className="flex shrink-0 gap-1 border-b p-2"
+								className={
+									selected.platform === "ios"
+										? "flex shrink-0 flex-wrap items-start gap-1 border-b p-2"
+										: "flex shrink-0 gap-1 border-b p-2"
+								}
 								onSubmit={(event) => {
 									event.preventDefault();
 									void act({ kind: "type", text: inputText });
 								}}
 							>
-								<Input
-									value={inputText}
-									aria-label={t("panels.mobile.inputText")}
-									placeholder={t("panels.mobile.inputText")}
-									disabled={busy}
-									onChange={(event) => setInputText(event.target.value)}
-								/>
+								{selected.platform === "ios" ? (
+									<Textarea
+										value={inputText}
+										aria-label={t("panels.mobile.pasteText")}
+										placeholder={t("panels.mobile.pasteText")}
+										disabled={busy}
+										onChange={(event) => setInputText(event.target.value)}
+										rows={2}
+										className="min-w-0 basis-full"
+									/>
+								) : (
+									<Input
+										value={inputText}
+										aria-label={t("panels.mobile.inputText")}
+										placeholder={t("panels.mobile.inputText")}
+										disabled={busy}
+										onChange={(event) => setInputText(event.target.value)}
+									/>
+								)}
+								{selected.platform === "ios" && (
+									<Button
+										type="button"
+										size="sm"
+										disabled={busy || !inputText}
+										onClick={() => void act({ kind: "paste", text: inputText })}
+									>
+										{t("panels.mobile.paste")}
+									</Button>
+								)}
 								<Button size="sm" disabled={busy || !inputText}>
 									{t("panels.mobile.type")}
 								</Button>

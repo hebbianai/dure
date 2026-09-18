@@ -20,6 +20,8 @@ export const panels: Record<string, string> = {
 	"panels.mobile.reportHint": "ログを確認・編集してからエージェントの下書きに追加してください。iOSはアプリIDをログのサブシステムとして検索するため、別のサブシステムでは記録がない場合があります。",
 	"panels.mobile.prepareReport": "報告資料を準備",
 	"panels.mobile.inputText": "テキスト（ASCII、%不可）",
+	"panels.mobile.paste": "貼り付け",
+	"panels.mobile.pasteText": "貼り付けるテキスト（Unicode・改行対応）",
 	"panels.mobile.type": "入力",
 	"panels.mobile.rotate": "回転",
 	"panels.mobile.title": "モバイルシミュレーター",

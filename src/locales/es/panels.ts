@@ -20,6 +20,8 @@ export const panels: Record<string, string> = {
 	"panels.mobile.reportHint": "Revisa y edita los registros antes de añadirlos al borrador del agente. En iOS se busca el ID de la app como subsistema; otras apps pueden no tener registros.",
 	"panels.mobile.prepareReport": "Preparar informe",
 	"panels.mobile.inputText": "Texto (ASCII, sin %)",
+	"panels.mobile.paste": "Pegar",
+	"panels.mobile.pasteText": "Texto para pegar (admite Unicode y saltos de línea)",
 	"panels.mobile.type": "Escribir",
 	"panels.mobile.rotate": "Girar",
 	"panels.mobile.title": "Simulador móvil",

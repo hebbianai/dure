@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { mobilePaneActions } from "./actions";
+import { mobileInputActions } from "./inputActions";
 import {
 	type MobileRunProfile,
 	readMobileRunProfiles,
@@ -16,6 +17,43 @@ const profile = {
 	device,
 };
 const args = { platform: device.platform, deviceId: device.id };
+
+it("pastes exact Unicode only for the selected idle iOS device", async () => {
+	const target = { platform: "ios", id: "phone" } as const;
+	const input = {
+		target,
+		isBusy: vi.fn(() => false),
+		act: vi.fn(async () => true),
+	};
+	const actions = mobileInputActions(input);
+	const args = {
+		platform: "ios",
+		deviceId: target.id,
+		text: "한글 🙂\nline\t2",
+	};
+	expect(
+		(await actions["mobile.paste"]({ ...args, deviceId: "other" })).outcome,
+	).toBe("refused");
+	input.isBusy.mockReturnValueOnce(true);
+	expect((await actions["mobile.paste"](args)).outcome).toBe("refused");
+	expect(input.act).not.toHaveBeenCalled();
+	expect((await actions["mobile.paste"](args)).outcome).toBe("applied");
+	expect(input.act).toHaveBeenCalledExactlyOnceWith({
+		kind: "paste",
+		text: args.text,
+	});
+	const android = mobileInputActions({ ...input, target: device });
+	expect(
+		(
+			await android["mobile.paste"]({
+				...args,
+				platform: device.platform,
+				deviceId: device.id,
+			})
+		).outcome,
+	).toBe("refused");
+	expect(input.act).toHaveBeenCalledTimes(1);
+});
 function fixture() {
 	const input = {
 		controls: {

@@ -73,6 +73,9 @@ pub enum Action {
     Type {
         text: String,
     },
+    Paste {
+        text: String,
+    },
     Rotate {
         landscape: bool,
     },
@@ -117,6 +120,16 @@ fn login_command(program: &str, cwd: &std::path::Path) -> Result<CommandSpec, St
 }
 
 fn execute(program: &str, args: &[&str], seconds: u64, limit: usize) -> Result<Vec<u8>, String> {
+    execute_with_input(program, args, seconds, limit, None)
+}
+
+fn execute_with_input(
+    program: &str,
+    args: &[&str],
+    seconds: u64,
+    limit: usize,
+    input: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     let operation = format!(
         "{program} {}",
         args.iter().take(2).copied().collect::<Vec<_>>().join(" ")
@@ -126,6 +139,9 @@ fn execute(program: &str, args: &[&str], seconds: u64, limit: usize) -> Result<V
         .args(args)
         .capture_stderr(true)
         .on_output_limit(OutputLimitAction::TerminateProcessTree);
+    if let Some(input) = input {
+        command.input(input.to_vec());
+    }
     let output = hebbian_bounded_process::run(&command, Duration::from_secs(seconds), limit)
         .map_err(|error| match error {
             hebbian_bounded_process::CommandFailure::Timeout(stage) => format!(
@@ -392,6 +408,18 @@ fn pixel(value: f64, size: u32) -> Result<String, String> {
         .to_string())
 }
 
+fn validate_paste(text: &str) -> Result<(), String> {
+    if text.is_empty()
+        || text.len() > 8192
+        || text
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        return Err("Paste accepts 1–8192 UTF-8 bytes; only tab and line breaks are supported control characters".into());
+    }
+    Ok(())
+}
+
 fn action_args(target: &Target, action: Action) -> Result<Vec<String>, String> {
     let ios = target.platform == Platform::Ios;
     let args: Vec<String> = match action {
@@ -619,6 +647,7 @@ fn perform(target: &Target, action: Action) -> Result<(), String> {
             action,
             Action::Gesture { .. }
                 | Action::Type { .. }
+                | Action::Paste { .. }
                 | Action::Rotate { .. }
                 | Action::Button { .. }
         )

@@ -20,6 +20,8 @@ export const panelsEnglishTranslations: Record<string, string> = {
 	"panels.mobile.reportHint": "Review and edit the logs before adding them to an agent draft. iOS logs match the app ID as the logging subsystem; apps using another subsystem may have no entries.",
 	"panels.mobile.prepareReport": "Prepare report",
 	"panels.mobile.inputText": "Text (ASCII, no %)",
+	"panels.mobile.paste": "Paste",
+	"panels.mobile.pasteText": "Text to paste (Unicode and line breaks supported)",
 	"panels.mobile.type": "Type",
 	"panels.mobile.rotate": "Rotate",
 	"panels.mobile.title": "Mobile simulator",

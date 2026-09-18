@@ -165,6 +165,37 @@ fn bounded_process_reports_native_failure() {
 }
 
 #[test]
+fn paste_preserves_unicode_and_refuses_invalid_text_before_live_admission() {
+    for text in ["한글 🙂\nsecond\tline\r\n", &"x".repeat(8192)] {
+        assert!(validate_paste(text).is_ok());
+        let error = live::act(&ios(), &Action::Paste { text: text.into() }).unwrap_err();
+        assert!(error.contains("Enable Live iOS"), "{error}");
+        assert!(action_args(&android(), Action::Paste { text: text.into() }).is_err());
+    }
+    for text in [
+        "",
+        "a\0b",
+        "\u{1b}[2J",
+        "\u{85}",
+        &"한".repeat(2731),
+        &"x".repeat(8193),
+    ] {
+        let error = live::act(&ios(), &Action::Paste { text: text.into() }).unwrap_err();
+        assert!(error.contains("Paste accepts"), "{error}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_sdk_input_preserves_exact_utf8_without_shell_arguments() {
+    let text = "한글 🙂\n'$HOME'\t%\\";
+    assert_eq!(
+        execute_with_input("/bin/cat", &[], 5, 8192, Some(text.as_bytes())).unwrap(),
+        text.as_bytes()
+    );
+}
+
+#[test]
 fn android_activity_requires_a_success_receipt_even_when_adb_exits_zero() {
     assert!(verify_android_activity(b"Starting: Intent {...}\nStatus: ok\nComplete\n").is_ok());
     assert!(
