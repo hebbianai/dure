@@ -256,6 +256,34 @@ pull request so a maintainer can coordinate it. Translation corrections for one
 language are also welcome. Do not claim availability for unreleased source,
 platforms or features.
 
+## Code design
+
+Flexibility and extensibility are primary design goals. Keep structures simple
+so new providers, platforms and clients can build on existing code with limited
+changes. Preserve correctness and compatibility as the system evolves. These
+principles apply to both human contributors and coding agents.
+
+- Search for existing implementations, utilities and components before adding
+  code. Reuse or extend them when their contracts fit. When repeated behavior has
+  the same contract, extract the shared part and migrate its callers together;
+  similar syntax alone does not justify coupling unrelated behavior.
+- Compose small, cohesive functions, components and modules with clear
+  responsibilities. Keep dependencies and data flow explicit, and separate core
+  decisions from I/O and platform mechanics through the existing boundaries.
+- Use narrow, typed contracts that hide implementation details. Keep provider,
+  platform and transport differences in their adapters so adding an implementation
+  does not spread special cases through shared code.
+- Introduce an abstraction, extension point, registry or configuration option
+  when it removes existing complexity or serves a second real consumer with
+  verified behavior. Avoid speculative frameworks and options for hypothetical
+  future requirements; evolve the structure when a concrete need appears.
+- Prefer direct, readable code with few layers of indirection. Keep related
+  behavior together; splitting files, shortening code or adding a wrapper is
+  useful only when it makes responsibilities, reuse or change easier to understand.
+- When changing shared code, inspect its real consumers and verify their behavior
+  at the affected contracts, including failure cases and supported platforms.
+  Keep improvements focused and preserve existing behavior outside the change.
+
 ## Branches and releases
 
 Dure follows [GitHub flow](https://docs.github.com/en/get-started/using-github/github-flow):

@@ -9,7 +9,7 @@ in the repository and commands defined in [package.json](package.json).
 ## Working on a change
 
 - Keep changes focused on the requested behavior. Read the existing implementation,
-  its callers and tests before editing; extend an existing solution when it fits.
+  its callers and tests before editing.
 - Work in your own task checkout. Preserve other contributors' uncommitted work
   and commits. For concurrent work, record the agent, branch, worktree and bounded
   scope on the related issue before editing shared files.
@@ -19,6 +19,9 @@ in the repository and commands defined in [package.json](package.json).
 
 ## Implementation and UI
 
+- Prioritize flexibility and extensibility through simple, reusable structures.
+  Follow the shared [code design principles](CONTRIBUTING.md#code-design) for
+  reuse, composition, dependency boundaries and justified abstraction.
 - Keep shared durable session and execution facts in [Hmux](hmux/). Keep IDE
   selection, layout and focus state in the frontend, and OS/process mechanics in
   the thin [Tauri adapter](src-tauri/). Build on the existing application services
