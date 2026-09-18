@@ -441,6 +441,11 @@ it.each(["typed", "initial", "agent workspace exists"])(
 		const f = fixture();
 		let created = false;
 		let controllerId = "";
+		let observedUrl = "about:blank";
+		let finishNavigation!: () => void;
+		const navigation = new Promise<void>((resolve) => {
+			finishNavigation = resolve;
+		});
 		const controlled = () => ({
 			...projection(resource),
 			controller: controllerId
@@ -481,13 +486,18 @@ it.each(["typed", "initial", "agent workspace exists"])(
 		f.client.observe.mockImplementation(async () => ({
 			control: controlled() as ReturnType<typeof projection>,
 			pages: [
-				{ page: page(), url: "about:blank", title: "", profile_id: "default" },
+				{ page: page(), url: observedUrl, title: "", profile_id: "default" },
 			],
 		}));
-		f.client.action.mockImplementation(async () => ({
-			control: controlled(),
-			response: { success: true, data: {} },
-		}));
+		f.client.action.mockImplementation(async (_caller, _authority, action) => {
+			await navigation;
+			observedUrl = `${action.url}/redirected`;
+			return {
+				control: controlled(),
+				response: { success: true, data: {} },
+				observation: await f.client.observe(resource),
+			};
+		});
 		const mounted = render(
 			<ProBrowserPanel
 				{...f.props()}
@@ -508,6 +518,13 @@ it.each(["typed", "initial", "agent workspace exists"])(
 					controllerId,
 					expect.anything(),
 					{ kind: "navigate", url: "https://example.com" },
+				),
+			);
+			expect((address as HTMLInputElement).value).toBe("https://example.com");
+			await act(async () => finishNavigation());
+			await waitFor(() =>
+				expect((address as HTMLInputElement).value).toBe(
+					"https://example.com/redirected",
 				),
 			);
 			expect(f.client.create).toHaveBeenCalledExactlyOnceWith(
@@ -535,6 +552,7 @@ it.each(["typed", "initial", "agent workspace exists"])(
 				}),
 			);
 		} finally {
+			finishNavigation();
 			mounted.unmount();
 		}
 	},
