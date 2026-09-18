@@ -28,7 +28,7 @@ fs.appendFileSync(process.env.GH_CALLS, JSON.stringify(args) + "\\n");
 if (args[0] === "api") console.log("b".repeat(40));
 else console.log(process.env.EXACT_CI_RUNS);
 `, { mode: 0o700 });
-  return { root, base, environment: { ...environment, PATH: `${bin}${path.delimiter}${environment.PATH}`, GITHUB_REPOSITORY: "hebbianai/dure-internal", GH_CALLS: path.join(root, "gh-calls") } };
+  return { root, base, environment: { ...environment, PATH: `${bin}${path.delimiter}${environment.PATH}`, GITHUB_REPOSITORY: "hebbianai/dure", GH_CALLS: path.join(root, "gh-calls") } };
 }
 
 function verify(target, runs, sha = target.base) {
@@ -52,4 +52,16 @@ test("rejects a different checkout and refuses another SHA's green CI", () => {
   const runs = [{ headSha: "b".repeat(40), status: "completed", conclusion: "success" }];
   expect(verify(target, runs).status).toBe(1);
   expect(verify(target, runs, "b".repeat(40)).stderr).toContain("release_checkout_mismatch");
+});
+
+test("queries the public repository workflow for an exact public source", () => {
+  const target = fixture();
+  target.environment.GITHUB_REPOSITORY = "hebbianai/dure";
+  fs.writeFileSync(path.join(target.root, "bin", "gh"), `#!${process.execPath}
+const args = process.argv.slice(2);
+if (args[args.indexOf("--workflow") + 1] !== "public-repository.yml") process.exit(1);
+console.log(process.env.EXACT_CI_RUNS);
+`, { mode: 0o700 });
+  const result = verify(target, [{ headSha: target.base, status: "completed", conclusion: "success" }]);
+  expect(result.status, result.stdout + result.stderr).toBe(0);
 });
