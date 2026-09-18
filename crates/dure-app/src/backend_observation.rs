@@ -34,6 +34,7 @@ mod tests {
         for operation in [
             "agent_conversation.recover",
             "agent_conversation.start_turn",
+            "agent_conversation.continue_turn",
             "agent_goal.put",
             "agent_runtime.transition",
             "provider_credential_profile.register",

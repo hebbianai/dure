@@ -1,5 +1,6 @@
 use dure_app::{
     AgentClientMessageIdV1, AgentCompletePendingAnswerV1, AgentCompleteTurnEffectV1,
+    AgentContinueTurnRequestV1,
     AgentHistoryHydrationAuthorityV1, AgentHistoryHydrationDispositionV1,
     AgentHistorySnapshotReceiptV1, AgentHistorySnapshotV1, AgentInteractionBindingV1,
     AgentInteractionRequestIdV1, AgentInteractionSessionIdV1, AgentPendingAnswerIntentV1,
@@ -1973,6 +1974,70 @@ pub(crate) async fn record_turn_intent(
         .await
         .map_err(|error| map_sqlx("record_agent_turn_intent", error))?;
     Ok(result)
+}
+
+pub(crate) async fn prepare_continuation_turn(
+    pool: &SqlitePool,
+    request: &AgentContinueTurnRequestV1,
+) -> Result<Option<AgentTurnEffectReceiptV1>, DomainStoreErrorV1> {
+    request.validate()?;
+    let mut connection = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| map_sqlx("prepare_agent_continuation_turn", error))?;
+    let result = prepare_continuation_on(&mut connection, request).await?;
+    connection
+        .commit()
+        .await
+        .map_err(|error| map_sqlx("prepare_agent_continuation_turn", error))?;
+    Ok(result)
+}
+
+async fn prepare_continuation_on(
+    connection: &mut SqliteConnection,
+    request: &AgentContinueTurnRequestV1,
+) -> Result<Option<AgentTurnEffectReceiptV1>, DomainStoreErrorV1> {
+    let intent = &request.intent;
+    // A replay observes its original effect even if that effect advanced the
+    // conversation. It must never acquire a second execution claim.
+    if turn_effect_on(
+        connection,
+        &intent.interaction_session_id,
+        &intent.client_message_id,
+    )
+    .await?
+    .is_some()
+    {
+        return record_turn_intent_on(connection, intent).await.map(Some);
+    }
+    let binding =
+        validate_current_runtime(connection, &intent.interaction_session_id, &intent.runtime)
+            .await?;
+    ensure_open_on(connection, &binding.agent_id).await?;
+    if timeline_cursor_on(connection, &binding).await? != request.expected_cursor
+        || !automatic_turn_ready_on(connection, &binding).await?
+    {
+        return Ok(None);
+    }
+    record_turn_intent_on(connection, intent).await.map(Some)
+}
+
+pub(crate) async fn automatic_turn_ready_on(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+) -> Result<bool, DomainStoreErrorV1> {
+    Ok(binding.history_complete
+        && !crate::agent_queue::has_pending_on(connection, &binding.interaction_session_id).await?
+        && active_turn_for_session(connection, binding)
+            .await?
+            .is_none()
+        && pending_for_runtime(
+            connection,
+            &binding.interaction_session_id,
+            &binding.runtime,
+        )
+        .await?
+        .is_empty())
 }
 
 pub(crate) async fn record_steer_intent(

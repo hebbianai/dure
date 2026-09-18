@@ -821,6 +821,22 @@ impl AgentStartTurnIntentV1 {
     }
 }
 
+/// Automatic input is admitted only while its observed conversation is idle
+/// and unchanged. Explicit human sends retain their ordinary admission path.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentContinueTurnRequestV1 {
+    pub intent: AgentStartTurnIntentV1,
+    pub expected_cursor: AgentTimelineCursorV1,
+}
+
+impl AgentContinueTurnRequestV1 {
+    pub fn validate(&self) -> Result<(), DomainStoreErrorV1> {
+        self.intent.validate()?;
+        self.expected_cursor.validate()
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentTurnEffectReceiptV1 {
@@ -1087,6 +1103,11 @@ pub trait AgentTimelineStore: Send + Sync {
         &'a self,
         intent: &'a AgentStartTurnIntentV1,
     ) -> DomainStoreFuture<'a, AgentTurnEffectReceiptV1>;
+
+    fn prepare_agent_continuation_turn<'a>(
+        &'a self,
+        request: &'a AgentContinueTurnRequestV1,
+    ) -> DomainStoreFuture<'a, Option<AgentTurnEffectReceiptV1>>;
 
     /// Journals a mid-turn steer: the durable user row joins the RUNNING
     /// turn (no TurnStarted row), with the same idempotent effect tracking

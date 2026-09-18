@@ -51,6 +51,7 @@ pub(super) fn policy_for(
         | "agent_runtime.remove"
         | agent_conversation_api::RECOVER_OPERATION
         | agent_conversation_api::START_TURN_OPERATION
+        | agent_conversation_api::CONTINUE_TURN_OPERATION
         | agent_conversation_api::STEER_TURN_OPERATION
         | agent_conversation_api::ENQUEUE_TURN_OPERATION
         | agent_conversation_api::CANCEL_QUEUED_TURN_OPERATION
@@ -114,6 +115,7 @@ mod tests {
         for operation in [
             agent_conversation_api::RECOVER_OPERATION,
             agent_conversation_api::START_TURN_OPERATION,
+            agent_conversation_api::CONTINUE_TURN_OPERATION,
             agent_conversation_api::STEER_TURN_OPERATION,
             agent_conversation_api::ENQUEUE_TURN_OPERATION,
             agent_conversation_api::CANCEL_QUEUED_TURN_OPERATION,
@@ -176,6 +178,7 @@ mod tests {
             "agent_runtime.remove",
             agent_conversation_api::RECOVER_OPERATION,
             agent_conversation_api::START_TURN_OPERATION,
+            agent_conversation_api::CONTINUE_TURN_OPERATION,
             agent_conversation_api::STEER_TURN_OPERATION,
             agent_conversation_api::ENQUEUE_TURN_OPERATION,
             agent_conversation_api::CANCEL_QUEUED_TURN_OPERATION,
@@ -211,10 +214,11 @@ mod tests {
         let (started_tx, started_rx) = oneshot::channel();
         let (release_tx, release_rx) = oneshot::channel();
         let (finished_tx, finished_rx) = oneshot::channel();
-        let policy = RequestExecutionPolicy {
-            response_deadline: Duration::from_millis(10),
-            action: ResponseDeadlineAction::FinishJournaledOperation,
-        };
+        let policy = policy_for(
+            agent_conversation_api::CONTINUE_TURN_OPERATION,
+            Duration::from_millis(10),
+            Duration::from_millis(10),
+        );
 
         let response = tokio::spawn(execute(policy, permit, async move {
             started_tx.send(()).unwrap();

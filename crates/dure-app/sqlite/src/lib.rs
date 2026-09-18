@@ -549,6 +549,13 @@ impl AgentTimelineStore for SqliteDomainStore {
         Box::pin(agent_timeline::record_turn_intent(&self.pool, intent))
     }
 
+    fn prepare_agent_continuation_turn<'a>(
+        &'a self,
+        request: &'a dure_app::AgentContinueTurnRequestV1,
+    ) -> DomainStoreFuture<'a, Option<dure_app::AgentTurnEffectReceiptV1>> {
+        Box::pin(agent_timeline::prepare_continuation_turn(&self.pool, request))
+    }
+
     fn record_agent_steer_intent<'a>(
         &'a self,
         intent: &'a dure_app::AgentStartTurnIntentV1,

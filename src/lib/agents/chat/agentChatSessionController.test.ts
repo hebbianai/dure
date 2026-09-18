@@ -205,6 +205,9 @@ function client(
 				close,
 			};
 		}),
+		continueTurn: async () => {
+			throw new Error("Unexpected automatic continuation in this fixture");
+		},
 		startTurn: vi.fn(async () => "accepted" as const),
 		steerTurn: vi.fn(async () => {}),
 		answerPending: vi.fn(async () => {}),

@@ -391,6 +391,22 @@ where
             .await
     }
 
+    pub async fn continue_turn<P>(
+        &self,
+        provider: &P,
+        request: &dure_app::AgentContinueTurnRequestV1,
+    ) -> Result<Option<AgentTurnEffectReceiptV1>, AgentConversationErrorV1>
+    where
+        P: AgentProviderCommands + ?Sized,
+    {
+        let Some(prepared) = self.store.prepare_agent_continuation_turn(request).await? else {
+            return Ok(None);
+        };
+        self.execute_prepared_start(provider, &request.intent, prepared)
+            .await
+            .map(Some)
+    }
+
     pub(crate) async fn enqueue_turn(
         &self,
         intent: &AgentStartTurnIntentV1,

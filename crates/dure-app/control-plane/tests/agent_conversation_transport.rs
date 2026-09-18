@@ -423,11 +423,33 @@ fn persistent_transport_fences_actions_and_streams_durable_invalidations() {
         input: "Persist before effect".into(),
         requested_at_ms: 10,
     };
+    let observed = backend_request(
+        &descriptor,
+        "continuation-observe",
+        "agent_conversation.read",
+        read_body.clone(),
+    );
+    let continuation = json!({
+        "intent": turn,
+        "expectedCursor": observed["result"]["read"]["page"]["finalCursor"],
+    });
+    let mut stale_continuation = continuation.clone();
+    stale_continuation["expectedCursor"]["epoch"] = json!("prior-epoch");
+    let not_started = backend_request(
+        &descriptor,
+        "continuation-obsolete",
+        "agent_conversation.continue_turn",
+        stale_continuation,
+    );
+    assert_eq!(not_started["kind"], "dure.backend.response");
+    assert!(not_started["result"]["receipt"].is_null());
+    assert_eq!(commands.starts.load(Ordering::SeqCst), 0);
+
     let started = backend_request(
         &descriptor,
         "conversation-start-1",
-        "agent_conversation.start_turn",
-        serde_json::to_value(&turn).unwrap(),
+        "agent_conversation.continue_turn",
+        continuation.clone(),
     );
     assert_eq!(started["kind"], "dure.backend.response");
     assert_eq!(commands.starts.load(Ordering::SeqCst), 1);
@@ -442,6 +464,20 @@ fn persistent_transport_fences_actions_and_streams_durable_invalidations() {
         "interaction-transport"
     );
     drop(subscription);
+
+    let continued_replay = backend_request(
+        &descriptor,
+        "continuation-replay",
+        "agent_conversation.continue_turn",
+        continuation,
+    );
+    assert_eq!(continued_replay["kind"], "dure.backend.response");
+    assert_eq!(continued_replay["result"]["receipt"]["state"], "accepted");
+    assert_eq!(
+        continued_replay["result"]["receipt"]["newlyPrepared"],
+        false
+    );
+    assert_eq!(commands.starts.load(Ordering::SeqCst), 1);
 
     let replayed = backend_request(
         &descriptor,

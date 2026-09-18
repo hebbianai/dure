@@ -146,6 +146,9 @@ it("does not interrupt the next controller turn during a claimed projection upda
 				close: async () => {},
 			};
 		},
+		continueTurn: async () => {
+			throw new Error("Unexpected automatic continuation in this fixture");
+		},
 		startTurn: async () => "accepted",
 		steerTurn: async () => {},
 		answerPending: async () => {},

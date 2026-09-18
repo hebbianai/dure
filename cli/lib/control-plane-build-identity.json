@@ -1,13 +1,14 @@
 {
   "schemaVersion": 1,
-  "currentBuildId": "dure-control-plane/v125-conversation-queue",
-  "previousBuildId": "dure-control-plane/v124-workspace-environments",
+  "currentBuildId": "dure-control-plane/v126-conditional-continuation",
+  "previousBuildId": "dure-control-plane/v125-conversation-queue",
   "identity": {
     "apiVersion": "dure.control-plane-identity/v1",
     "kind": "dure.control_plane.identity",
     "capabilities": [
       "agent_conversation.answer_pending",
       "agent_conversation.cancel_queued_turn",
+      "agent_conversation.continue_turn",
       "agent_conversation.enqueue_turn",
       "agent_conversation.inspect",
       "agent_conversation.inspect_input",

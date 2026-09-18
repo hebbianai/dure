@@ -421,6 +421,9 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 			},
 			readQueue: forbidden,
 			enqueueTurn: forbidden,
+			continueTurn: async () => {
+				throw new Error("Unexpected automatic continuation in this fixture");
+			},
 			startTurn: forbidden,
 			steerTurn: forbidden,
 			answerPending: forbidden,

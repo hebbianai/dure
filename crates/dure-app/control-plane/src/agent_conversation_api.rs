@@ -35,6 +35,7 @@ pub const READ_OPERATION: &str = "agent_conversation.read";
 pub const RECOVER_OPERATION: &str = "agent_conversation.recover";
 pub const SUBSCRIBE_OPERATION: &str = "agent_conversation.subscribe";
 pub const START_TURN_OPERATION: &str = "agent_conversation.start_turn";
+pub const CONTINUE_TURN_OPERATION: &str = "agent_conversation.continue_turn";
 pub const STEER_TURN_OPERATION: &str = "agent_conversation.steer_turn";
 pub const ENQUEUE_TURN_OPERATION: &str = "agent_conversation.enqueue_turn";
 pub const CANCEL_QUEUED_TURN_OPERATION: &str = "agent_conversation.cancel_queued_turn";
@@ -266,6 +267,7 @@ where
             READ_QUEUE_OPERATION => Some(self.read_queue(body).await),
             INSPECT_INPUT_OPERATION => Some(self.inspect_input(body).await),
             START_TURN_OPERATION => Some(self.start_turn(body).await),
+            CONTINUE_TURN_OPERATION => Some(self.continue_turn(body).await),
             STEER_TURN_OPERATION => Some(self.steer_turn(body).await),
             ENQUEUE_TURN_OPERATION => Some(self.enqueue_turn(body).await),
             CANCEL_QUEUED_TURN_OPERATION => Some(self.cancel_queued_turn(body).await),
@@ -372,6 +374,22 @@ where
         let intent: AgentStartTurnIntentV1 = serde_json::from_value(body.clone())
             .map_err(|_| AgentConversationApiErrorV1::RequestInvalid)?;
         let receipt = self.start_turn_intent(&intent).await?;
+        Ok(json!({ "schemaVersion": 1, "receipt": receipt }))
+    }
+
+    async fn continue_turn(&self, body: &Value) -> Result<Value, AgentConversationApiErrorV1> {
+        let request: dure_app::AgentContinueTurnRequestV1 = serde_json::from_value(body.clone())
+            .map_err(|_| AgentConversationApiErrorV1::RequestInvalid)?;
+        request
+            .validate()
+            .map_err(|_| AgentConversationApiErrorV1::RequestInvalid)?;
+        let commands = self
+            .commands(&request.intent.interaction_session_id)
+            .await?;
+        let receipt = self
+            .service
+            .continue_turn(commands.as_ref(), &request)
+            .await?;
         Ok(json!({ "schemaVersion": 1, "receipt": receipt }))
     }
 

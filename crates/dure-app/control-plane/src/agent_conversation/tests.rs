@@ -479,3 +479,100 @@ async fn current_runtime_exit_publishes_a_reconnect_invalidation() {
         vec![AgentConversationNotificationKindV1::Runtime]
     );
 }
+
+#[tokio::test]
+async fn conditional_continuation_executes_once_and_rejects_an_obsolete_observation() {
+    let root = TempDir::new().unwrap();
+    let store = fixture(&root.path().join("continuation.sqlite")).await;
+    let provider = FakeProvider {
+        calls: AtomicUsize::new(0),
+        store: Arc::clone(&store),
+        start_error: None,
+    };
+    let service = AgentConversationService::new(Arc::clone(&store));
+    let mut request = dure_app::AgentContinueTurnRequestV1 {
+        intent: intent(),
+        expected_cursor: timeline(&service).await.final_cursor,
+    };
+    let accepted = service
+        .continue_turn(&provider, &request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(accepted.state, AgentTurnEffectStateV1::Accepted);
+    let replay = service
+        .continue_turn(&provider, &request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(replay.state, AgentTurnEffectStateV1::Accepted);
+    assert!(!replay.newly_prepared);
+    store
+        .apply_agent_provider_event(&AgentProviderEventCommitV1 {
+            schema_version: 1,
+            interaction_session_id: request.intent.interaction_session_id.clone(),
+            event: AgentProviderEventIdentityV1 {
+                runtime: runtime(),
+                sequence: 1,
+            },
+            source_fingerprint: "completed-fixture".into(),
+            mutations: vec![dure_app::AgentTimelineMutationV1::Append {
+                item: dure_app::AgentTimelineItemDraftV1 {
+                    item_id: dure_app::AgentTimelineItemIdV1::new("completed-fixture").unwrap(),
+                    turn_id: Some(request.intent.turn_id.clone()),
+                    client_message_id: Some(request.intent.client_message_id.clone()),
+                    provider_message_id: None,
+                    body: AgentTimelineItemBodyV1::Lifecycle {
+                        state: AgentTimelineLifecycleStateV1::TurnCompleted,
+                        detail: None,
+                    },
+                    created_at_ms: 12,
+                },
+            }],
+            recorded_at_ms: 12,
+        })
+        .await
+        .unwrap();
+    let before = timeline(&service).await;
+    assert!(before.active_turn.is_none());
+    request.intent.turn_id = AgentTurnIdV1::new("retained-turn").unwrap();
+    request.intent.client_message_id = AgentClientMessageIdV1::new("retained-input").unwrap();
+    assert!(
+        service
+            .continue_turn(&provider, &request)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(timeline(&service).await, before);
+}
+
+#[tokio::test]
+async fn conditional_continuation_preserves_pending_receipts_without_provider_replay() {
+    let root = TempDir::new().unwrap();
+    let store = fixture(&root.path().join("continuation.sqlite")).await;
+    let provider = FakeProvider {
+        calls: AtomicUsize::new(0),
+        store: Arc::clone(&store),
+        start_error: None,
+    };
+    let service = AgentConversationService::new(Arc::clone(&store));
+    let request = dure_app::AgentContinueTurnRequestV1 {
+        intent: intent(),
+        expected_cursor: timeline(&service).await.final_cursor,
+    };
+    store
+        .prepare_agent_continuation_turn(&request)
+        .await
+        .unwrap()
+        .unwrap();
+    let replay = service
+        .continue_turn(&provider, &request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(replay.state, AgentTurnEffectStateV1::Uncertain);
+    assert!(!replay.newly_prepared);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}

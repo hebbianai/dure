@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "vitest";
@@ -8,6 +10,24 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const runner = join(directory, "run-isolated-app.sh");
 
 describe("isolated QA app environment", () => {
+  it.skipIf(process.platform !== "darwin")("uses the owned login profile when an outer runner supplies ZDOTDIR", () => {
+    const root = fs.mkdtempSync(join(os.tmpdir(), "dure-qa-shell-profile-"));
+    const home = join(root, "home");
+    const outer = join(root, "outer-shell");
+    fs.mkdirSync(home);
+    fs.mkdirSync(outer);
+    fs.writeFileSync(join(home, ".zprofile"), "export DURE_QA_PROFILE_SOURCE=owned\n");
+    fs.writeFileSync(join(outer, ".zprofile"), "export DURE_QA_PROFILE_SOURCE=outer\n");
+    try {
+      const result = execFileSync("sh", [runner, "/bin/zsh", "-l", "-c", 'printf %s "$DURE_QA_PROFILE_SOURCE"'], {
+        encoding: "utf8", env: { ...process.env, HOME: home, ZDOTDIR: outer },
+      });
+      assert.equal(result, "owned");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("removes inherited backend, orchestration and exact runtime identity before child execution", () => {
     const removed = [
       "DURE_CONTROL_PLANE_BIN",
