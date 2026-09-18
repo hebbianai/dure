@@ -2228,6 +2228,99 @@ describe("owned process cleanup handoff", () => {
     }
   });
 
+  test("command admission waits for a sample started after the command appeared", async () => {
+    const fixtureRoot = fs.mkdtempSync(
+      path.join(fs.realpathSync(os.tmpdir()), "dure-owned-admission-sample-"),
+    );
+    const descriptorPath = path.join(fixtureRoot, "group.json");
+    const kernelMarker = (id) =>
+      process.platform === "darwin"
+        ? `kernel-start-v3:macos:00000000-0000-0000-0000-000000000001:${id}`
+        : `kernel-start-v2:linux:test-boot:${id}`;
+    const leader = {
+      groupId: 51_001,
+      kernelStartMarker: kernelMarker(51_001),
+      parentPid: 50_001,
+      pid: 51_001,
+      sessionId: 51_001,
+      startMarker: "ps-lstart-v1:leader",
+    };
+    const commandGate = {
+      ...leader,
+      kernelStartMarker: kernelMarker(51_002),
+      parentPid: leader.pid,
+      pid: 51_002,
+      startMarker: "ps-lstart-v1:command-gate",
+    };
+    const descriptor = {
+      descriptorPath,
+      groupId: leader.groupId,
+      leaderKernelStartMarker: leader.kernelStartMarker,
+      leaderPid: leader.pid,
+      leaderStartMarker: leader.startMarker,
+      livenessWitnessVersion: "inherited-fd-v1",
+      supervisorKernelStartMarker: kernelMarker(leader.parentPid),
+      supervisorPid: leader.parentPid,
+      supervisorStartMarker: "ps-lstart-v1:supervisor",
+      terminateDetachedOwnedGenerations: false,
+    };
+    const member = (owned) => ({
+      groupId: owned.groupId,
+      parentPid: owned.parentPid,
+      pid: owned.pid,
+      processIdentity: exactOwnedProcessIdentity(owned).processIdentity,
+      sessionId: owned.sessionId,
+      startedAtUnixSeconds: 1_700_000_000,
+      state: "live",
+    });
+    const members = [member(leader)];
+    const completeObservation = observeMembersFrom(() => members);
+    let observationCount = 0;
+    let releaseObservation;
+    let reportBlocked;
+    const observationBlocked = new Promise((resolve) => {
+      reportBlocked = resolve;
+    });
+    const observationReleased = new Promise((resolve) => {
+      releaseObservation = resolve;
+    });
+    const observeMembers = async (request) => {
+      const observation = completeObservation(request);
+      observationCount += 1;
+      // The periodic sample has captured every census before the command exists.
+      if (observationCount === 6) {
+        reportBlocked();
+        await observationReleased;
+      }
+      return observation;
+    };
+    let monitor;
+    try {
+      monitor = await startOwnershipLedgerSampler(descriptor, [leader], true, {
+        observeMembers,
+        processController: {},
+        startNativeObserver: null,
+      });
+      await observationBlocked;
+      members.push(member(commandGate));
+      const admission = monitor.admitCommandGate({ pid: commandGate.pid });
+      releaseObservation();
+      await expect(admission).resolves.toMatchObject({
+        pid: commandGate.pid,
+        kernelStartMarker: commandGate.kernelStartMarker,
+        parentPid: leader.pid,
+        groupId: leader.groupId,
+      });
+      expect(readOwnedProcessLedger(descriptor)).toEqual(
+        expect.arrayContaining([expect.objectContaining({ pid: commandGate.pid })]),
+      );
+    } finally {
+      releaseObservation?.();
+      if (monitor) await monitor.stop();
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   test("does not overwrite an invalidated ledger when an in-flight sample completes", async () => {
     const fixtureRoot = fs.mkdtempSync(
       path.join(fs.realpathSync(os.tmpdir()), "dure-owned-sample-race-"),

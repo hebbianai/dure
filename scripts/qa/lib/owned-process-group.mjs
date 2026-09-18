@@ -3026,7 +3026,12 @@ export async function startOwnershipLedgerSampler(
     terminalFailure,
     async admitCommandGate(expected) {
       if (nativeObserver) await nativeObserver.barrier();
-      else await sample();
+      else {
+        // An in-flight census may predate the command's startup handshake.
+        // Finish it, then observe again before deciding command ownership.
+        if (sampleInFlight) await sampleInFlight;
+        await sample();
+      }
       if (failure) throw failure;
       const observed = known.get(expected.pid);
       const leader = known.get(descriptor.leaderPid);
