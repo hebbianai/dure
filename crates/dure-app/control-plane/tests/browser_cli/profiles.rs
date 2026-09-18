@@ -112,7 +112,7 @@ async fn profile_catalog_cli_survives_response_loss_and_backend_replacement_with
             recovered["result"] == evidence["lost"]["result"],
             &recovered,
         )?;
-        let resources = cli(&root, &["list", "--workspace", "workspace-browser"]).await?;
+        let resources = cli(&root, &["list"]).await?;
         require(resources["result"]["resources"] == json!([]), &resources)?;
         require(
             !root.join("browser/installation.json").exists(),

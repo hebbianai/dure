@@ -43,7 +43,7 @@ async fn current_target_survives_profile_routing_handoff_and_page_close() {
     let (root, endpoint, server) = fixture().await;
     let mut resources = Vec::new();
     let evidence: Result<Value, String> = async {
-        let created = recorded(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = recorded(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         resources.push(resource.to_owned());
         let shown = recorded(&root, &["show", resource]).await?;
@@ -129,7 +129,7 @@ async fn selecting_the_same_current_tab_preserves_its_snapshot() {
     let (root, endpoint, server) = fixture().await;
     let mut resources = Vec::new();
     let evidence: Result<Value, String> = async {
-        let created = recorded(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = recorded(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"]
             .as_str()
             .ok_or("resource missing")?;

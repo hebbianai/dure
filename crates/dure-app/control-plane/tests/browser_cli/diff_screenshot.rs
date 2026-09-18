@@ -10,7 +10,7 @@ async fn real_screenshot_diff_preserves_authority_files_and_recovers_lost_respon
     let evidence: Result<_, String> = async {
         let mut owned = Vec::new();
         for name in ["image-diff-owner", "image-diff-peer"] {
-            let created = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", name]).await?;
+            let created = cli(&root, &["create", "--idempotency-key", name]).await?;
             let id = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?.to_owned();
             resources.push(id.clone());
             let controlled = cli(&root, &["control", &id, "--controller", name]).await?;

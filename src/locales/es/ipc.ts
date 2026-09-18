@@ -13,10 +13,8 @@ export const ipc: Record<string, string> = {
 		"La conexión del navegador ha cambiado. Vuelve a conectarte para elegir un navegador.",
 	"ipc.browser.unavailable":
 		"Este navegador ya no está disponible. Vuelve a conectarte para elegir un navegador.",
-	"ipc.browser.developmentRequired":
-		"Pro Browser requiere un backend de desarrollo compatible. Actualiza el backend seleccionado y vuelve a conectarte.",
-	"ipc.browser.runtimeRequired":
-		"El entorno de ejecución del navegador no está instalado en el backend seleccionado. Instálalo allí antes de crear un navegador.",
+	"ipc.browser.developmentRequired": "Actualiza el servidor seleccionado y vuelve a conectarte para usar Browser.",
+	"ipc.browser.runtimeRequired": "Descarga el entorno del navegador para usar Browser en este servidor.",
 	"ipc.browser.requestFailed":
 		"La solicitud del navegador no terminó. Comprueba su estado antes de intentarlo de nuevo.",
 	"ipc.agentConversation.invalidResponse": "La respuesta de conversación del agente no es válida.",
@@ -40,4 +38,6 @@ export const ipc: Record<string, string> = {
 	"ipc.dureRun.promptUncertain": "El agente se inició, pero nunca confirmó el mensaje ({code}). Revisa su terminal antes de volver a enviarlo.",
 	"ipc.dureRun.receiptMismatch": "El backend de Dure devolvió un recibo de Run que no coincide con la solicitud.",
 	"ipc.dureRun.requestFailed": "La solicitud de Run al backend de Dure falló.",
+	"ipc.browser.installationFailed": "La instalación del navegador no se completó. Comprueba la conexión e inténtalo de nuevo.",
+	"ipc.browser.platformUnavailable": "Browser está disponible actualmente en Mac con Apple Silicon.",
 };

@@ -89,9 +89,9 @@ test("profile and source page options reach the existing profile tab creation au
 
 test("workspace selectors resolve once and the created tab remains bound to that resource", async () => {
   const f = fixture();
-  const result = await f.raw(["open-url", "--url", "https://example.test", "--workspace", resource.workspace_id, "--space", "Work", "--controller", "agent", "--epoch", "1"]);
+  const result = await f.raw(["open-url", "--url", "https://example.test", "--current", "--space", "Work", "--controller", "agent", "--epoch", "1"]);
   assert.equal(result.ok, true, JSON.stringify(result));
-  assert.deepEqual(f.events[0].backend, { kind: "list", workspace_id: resource.workspace_id });
+  assert.deepEqual(f.events[0].backend, { kind: "list" });
   assert.equal(f.events.filter((e) => e.backend?.kind === "list").length, 1);
   assert.deepEqual(result.presentation.resource, resource);
 });
@@ -107,7 +107,7 @@ test("invalid URLs, selectors, duplicate and misplaced options fail before any c
   for (const args of [
     ["open-url"], ["open-url", "file:///tmp/private"], ["open-url", "javascript:alert(1)"],
     ["open-url", "https://a", "extra"], ["open-url", "https://a", "--url", "https://b"],
-    ["open-url", "https://a", "--worktree", "all"], ["open-url", "https://a", "--worktree", "bad"],
+    ["open-url", "https://a", "--all"], ["open-url", "https://a", "--worktree", "bad"],
     ["open-url", "https://a", "--workspace", "w", "--resource", "r"],
     ["open-url", "https://a", "--output", "/tmp/x"], ["open-url", "https://a", "--space", ""],
     ["show", "r", "--space", "space:one"],

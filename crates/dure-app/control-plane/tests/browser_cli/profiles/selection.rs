@@ -19,19 +19,8 @@ struct Client {
 }
 
 impl Client {
-    async fn create(
-        root: &Path,
-        workspace: &str,
-        profile: Option<&str>,
-        operation: &str,
-    ) -> Result<Self, String> {
-        let mut args = vec![
-            "create",
-            "--workspace",
-            workspace,
-            "--idempotency-key",
-            operation,
-        ];
+    async fn create(root: &Path, profile: Option<&str>, operation: &str) -> Result<Self, String> {
+        let mut args = vec!["create", "--idempotency-key", operation];
         if let Some(profile) = profile {
             args.extend(["--profile", profile]);
         }
@@ -121,46 +110,25 @@ async fn site() -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
     (url, stop, server)
 }
 
-async fn peer_workspace(root: &Path) -> Result<(), String> {
-    use dure_app::{DomainStore, ProjectIdV1, WorkspaceIdV1, WorkspaceRecordV1};
-    let store =
-        dure_app_sqlite::SqliteDomainStore::open(root.join("backend/application-state.sqlite3"))
-            .await
-            .map_err(|error| format!("{error:?}"))?;
-    let result = store
-        .upsert_workspace(&WorkspaceRecordV1 {
-            workspace_id: WorkspaceIdV1::new("workspace-profile-peer").unwrap(),
-            project_id: ProjectIdV1::new("project-browser").unwrap(),
-            root_path: root.to_string_lossy().into_owned(),
-            base_commit_sha: None,
-            created_at_ms: 1,
-            updated_at_ms: 1,
-        })
-        .await;
-    store.close().await;
-    result.map_err(|error| format!("{error:?}"))
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires the pinned native engine, Chromium, and Node"]
-async fn default_profile_cli_shares_storage_across_workspaces_and_reopens_after_close() {
+async fn default_profile_cli_shares_storage_across_browsers_and_reopens_after_close() {
     let (root, endpoint, server) = super::super::fixture().await;
     let (url, stop_site, site) = site().await;
     let evidence: Result<_, String> = async {
-        peer_workspace(&root).await?;
-        let origin = Client::create(&root, "workspace-browser", None, "profile-default-origin").await?;
+        let origin = Client::create(&root, None, "profile-default-origin").await?;
         origin.action(&root, "goto", &url).await?;
         origin.evaluate(&root, "localStorage.setItem('profile-shared','한글 기본 프로필');document.cookie='profile_shared=default;Path=/;Max-Age=3600';window.tabOnly='원본';true").await?;
-        let peer = Client::create(&root, "workspace-profile-peer", None, "profile-default-peer").await?;
+        let peer = Client::create(&root, None, "profile-default-peer").await?;
         peer.action(&root, "goto", &url).await?;
         let shared = peer.evaluate(&root, "({local:localStorage.getItem('profile-shared'),cookie:document.cookie,tab:window.tabOnly??null})").await?;
         let origin_dom = origin.evaluate(&root, "window.tabOnly").await?;
-        let replay = cli(&root, &["create", "--workspace", "workspace-profile-peer", "--idempotency-key", "profile-default-peer"]).await?;
+        let replay = cli(&root, &["create", "--idempotency-key", "profile-default-peer"]).await?;
         let shown = cli(&root, &["show", &peer.resource]).await?;
         origin.close(&root).await?;
         let after_origin = peer.evaluate(&root, "localStorage.getItem('profile-shared')").await?;
         peer.close(&root).await?;
-        let reopened = Client::create(&root, "workspace-browser", None, "profile-default-reopened").await?;
+        let reopened = Client::create(&root, None, "profile-default-reopened").await?;
         reopened.action(&root, "goto", &url).await?;
         let persisted = reopened.evaluate(&root, "localStorage.getItem('profile-shared')").await?;
         reopened.close(&root).await?;
@@ -209,32 +177,32 @@ async fn selected_profiles_cli_share_only_their_storage_and_reject_unavailable_c
         let catalog_b = cli(&root, &["tab", "profile", "create", "--label", "분리 B"]).await?;
         let id_a = catalog_a["result"]["profile"]["profile"]["profileId"].as_str().ok_or("profile A missing")?;
         let id_b = catalog_b["result"]["profile"]["profile"]["profileId"].as_str().ok_or("profile B missing")?;
-        let a = Client::create(&root, "workspace-browser", Some(id_a), "selected-a").await?;
+        let a = Client::create(&root, Some(id_a), "selected-a").await?;
         a.action(&root, "goto", &url).await?;
         a.evaluate(&root, "localStorage.setItem('selected','한글 A');document.cookie='selected=A;Path=/;Max-Age=3600';true").await?;
-        let b = Client::create(&root, "workspace-browser", Some(id_b), "selected-b").await?;
+        let b = Client::create(&root, Some(id_b), "selected-b").await?;
         b.action(&root, "goto", &url).await?;
         let read = "({local:localStorage.getItem('selected'),cookie:document.cookie})";
         let isolated = b.evaluate(&root, read).await?;
         b.evaluate(&root, "localStorage.setItem('selected','한글 B');document.cookie='selected=B;Path=/;Max-Age=3600';true").await?;
-        let peer = Client::create(&root, "workspace-browser", Some(id_a), "selected-peer").await?;
+        let peer = Client::create(&root, Some(id_a), "selected-peer").await?;
         peer.action(&root, "goto", &url).await?;
         let shared = peer.evaluate(&root, read).await?;
         let shown = cli(&root, &["show", &peer.resource]).await?;
-        let replay = cli(&root, &["create", "--workspace", "workspace-browser", "--profile", id_a, "--idempotency-key", "selected-peer"]).await?;
-        let conflict = cli(&root, &["create", "--workspace", "workspace-browser", "--profile", id_b, "--idempotency-key", "selected-peer"]).await;
+        let replay = cli(&root, &["create", "--profile", id_a, "--idempotency-key", "selected-peer"]).await?;
+        let conflict = cli(&root, &["create", "--profile", id_b, "--idempotency-key", "selected-peer"]).await;
         a.close(&root).await?;
         let survived = peer.evaluate(&root, read).await?;
         peer.close(&root).await?;
         let b_unchanged = b.evaluate(&root, read).await?;
         b.close(&root).await?;
-        let default = Client::create(&root, "workspace-browser", Some("default"), "selected-default").await?;
+        let default = Client::create(&root, Some("default"), "selected-default").await?;
         default.action(&root, "goto", &url).await?;
         let default_isolated = default.evaluate(&root, read).await?;
         default.close(&root).await?;
-        let before = cli(&root, &["list", "--workspace", "workspace-browser"]).await?;
-        let missing = cli(&root, &["create", "--workspace", "workspace-browser", "--profile", "missing", "--idempotency-key", "selected-missing"]).await;
-        let missing_replay = match cli(&root, &["create", "--workspace", "workspace-browser", "--profile", "missing", "--idempotency-key", "selected-missing"]).await {
+        let before = cli(&root, &["list"]).await?;
+        let missing = cli(&root, &["create", "--profile", "missing", "--idempotency-key", "selected-missing"]).await;
+        let missing_replay = match cli(&root, &["create", "--profile", "missing", "--idempotency-key", "selected-missing"]).await {
             Err(error) => serde_json::from_str::<Value>(
                 error.strip_prefix("CLI create rejected: ").ok_or_else(|| error.clone())?
             ).map_err(|error| error.to_string())?,
@@ -247,14 +215,14 @@ async fn selected_profiles_cli_share_only_their_storage_and_reject_unavailable_c
         let retired: Result<_, String> = async {
             let profile = BrowserProfileIdV1::new(id_a).unwrap();
             store.begin_browser_profile_retirement(&profile).await.map_err(|error|format!("{error:?}"))?;
-            let retiring = cli(&root, &["create", "--workspace", "workspace-browser", "--profile", id_a]).await;
+            let retiring = cli(&root, &["create", "--profile", id_a]).await;
             store.complete_browser_profile_retirement(&profile).await.map_err(|error|format!("{error:?}"))?;
-            let deleted = cli(&root, &["create", "--workspace", "workspace-browser", "--profile", id_a]).await;
+            let deleted = cli(&root, &["create", "--profile", id_a]).await;
             Ok((retiring, deleted))
         }.await;
         store.close().await;
         let (retiring, deleted) = retired?;
-        let after = cli(&root, &["list", "--workspace", "workspace-browser"]).await?;
+        let after = cli(&root, &["list"]).await?;
         Ok((json!({"isolated":isolated,"shared":shared,"survived":survived,"bUnchanged":b_unchanged,"default":default_isolated,"profile":id_a,"shown":shown,"replay":replay,"created":peer.created,"before":before,"after":after,"missingReplay":missing_replay}), conflict, missing, retiring, deleted))
     }.await;
     let shutdown = backend(

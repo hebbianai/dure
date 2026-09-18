@@ -6,7 +6,7 @@ use super::require;
 async fn interception_response_loss_replays_without_replacing_newer_rules() {
     let (root, endpoint, server) = fixture().await;
     let evidence: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         cli(&root, &["control", resource, "--controller", "intercept-proof"]).await?;
         let view = cli(&root, &["show", resource]).await?;
@@ -43,9 +43,17 @@ async fn interception_response_loss_replays_without_replacing_newer_rules() {
         require(closed_replay["result"]["replayed"] == true, &closed_replay)?;
         Ok(json!({"receipt":receipt,"afterReplay":after,"closedReplay":closed_replay}))
     }.await;
-    let stopped = backend(&endpoint, "backend.shutdown", json!({"schemaVersion":2,"mode":"stop"})).await;
+    let stopped = backend(
+        &endpoint,
+        "backend.shutdown",
+        json!({"schemaVersion":2,"mode":"stop"}),
+    )
+    .await;
     let retired = timeout(Duration::from_secs(40), server).await;
-    println!("BROWSER_INTERCEPT_RECOVERY root={} evidence={evidence:?} retired={retired:?}", root.display());
+    println!(
+        "BROWSER_INTERCEPT_RECOVERY root={} evidence={evidence:?} retired={retired:?}",
+        root.display()
+    );
     retired.unwrap().unwrap().unwrap();
     assert_eq!(stopped["kind"], "dure.backend.response");
     evidence.unwrap();

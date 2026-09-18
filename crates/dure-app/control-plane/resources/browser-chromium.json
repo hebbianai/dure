@@ -1,0 +1,11 @@
+{
+  "version": "155.0.8049.0",
+  "platforms": {
+    "darwin-arm64": {
+      "url": "https://storage.googleapis.com/chromium-browser-snapshots/Mac_Arm/1694521/chrome-mac.zip?generation=1788959584826140",
+      "size": 173618606,
+      "sha256": "87c4fe5197b78618d827b9646fa5c69323a00822b74c07bf853e7aaa37a1ea80",
+      "executable": "chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+    }
+  }
+}

@@ -1,7 +1,6 @@
 import { browserCurrentPage, sameBrowserPage } from "./browser-action-authority.mjs";
-import { assertBrowserWorkspaceResource } from "./browser-workspace-target.mjs";
+import { assertBrowserResource } from "./browser-resource-target.mjs";
 import { parseBrowserWorkspaceCatalogTarget } from "./contracts/browser-workspace-target.mjs";
-import { parseBrowserWorkspacePage } from "./contracts/browser-workspaces.mjs";
 import { parseBrowserProfiles } from "./contracts/browser-profiles.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 
@@ -39,32 +38,19 @@ export function browserTabRows(view) {
   return tabs;
 }
 
-/** Traverse existing catalogs without selecting a workspace, resource or page. */
+/** Read every existing Browser on this backend without changing selection. */
 export async function allBrowserTabs(request) {
+  const catalog = (await request({ kind: "list" }))?.result;
+  if (!parseBrowserWorkspaceCatalogTarget(catalog)) throw new Error("browser_response_invalid");
   const tabs = [];
-  const resources = new Set();
-  let after;
-  do {
-    const response = await request({ kind: "workspaces", ...(after === undefined ? {} : { after }) });
-    const page = parseBrowserWorkspacePage(response?.result, after);
-    if (!page) throw new Error("browser_response_invalid");
-    for (const workspace of page.workspaces) {
-      const catalog = (await request({ kind: "list", workspace_id: workspace.workspace_id }))?.result;
-      const selection = parseBrowserWorkspaceCatalogTarget(catalog);
-      if (!selection || selection.workspace_id !== workspace.workspace_id) throw new Error("browser_response_invalid");
-      for (const row of catalog.resources) {
-        const resource = row.resource;
-        if (resources.has(resource.resource_id)) throw new Error("browser_response_invalid");
-        resources.add(resource.resource_id);
-        const observation = await request({ kind: "observe", resource_id: resource.resource_id });
-        assertBrowserWorkspaceResource(resource, "observe", observation);
-        const error = observation?.result?.observation_error;
-        if (error !== undefined) throw new Error(typeof error === "string" && /^browser_[a-z0-9_]+$/.test(error) ? error : "browser_response_invalid");
-        tabs.push(...browserTabRows(observation?.result));
-      }
-    }
-    after = page.next;
-  } while (after !== null);
+  for (const row of catalog.resources) {
+    const resource = row.resource;
+    const observation = await request({ kind: "observe", resource_id: resource.resource_id });
+    assertBrowserResource(resource, "observe", observation);
+    const error = observation?.result?.observation_error;
+    if (error !== undefined) throw new Error(typeof error === "string" && /^browser_[a-z0-9_]+$/.test(error) ? error : "browser_response_invalid");
+    tabs.push(...browserTabRows(observation?.result));
+  }
   return tabs;
 }
 

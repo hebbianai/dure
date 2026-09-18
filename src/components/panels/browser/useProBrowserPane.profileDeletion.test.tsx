@@ -64,23 +64,10 @@ async function fixture(selected = "page:kept") {
 		const body = args.body;
 		requests.push(body);
 		let result: unknown;
-		if (body.kind === "workspaces")
+		if (body.kind === "list")
 			result = {
-				workspaces: ["workspace:one", "workspace:other"].map(
-					(workspace_id) => ({
-						workspace_id,
-						project_name: workspace_id,
-						root_path: "/tmp/project",
-					}),
-				),
-				next: null,
-			};
-		else if (body.kind === "list")
-			result = {
-				resources:
-					present && body.workspace_id === resource.workspace_id
-						? [control()]
-						: [],
+				workspace_id: resource.workspace_id,
+				resources: present ? [control()] : [],
 			};
 		else if (body.kind === "observe") {
 			const pending = nextObservation;
@@ -206,24 +193,20 @@ it.each(["last-resource", "kept-selection", "removed-selection"] as const)(
 	},
 );
 
-it("ignores an old deletion completion after the user changes workspace", async () => {
+it("ignores an old deletion completion after the pane reconnects", async () => {
 	const state = await fixture();
 	try {
 		const oldCompletion = state.result.current.refreshAfterProfileDeletion;
 		await act(async () => {
-			await state.result.current.selectWorkspace("workspace:other");
+			state.result.current.reconnect();
 		});
+		await waitFor(() => expect(state.result.current.busy).toBe(false));
 		const calls = state.requests.length;
 		await act(async () => {
 			await oldCompletion();
 		});
-		expect(state.result.current.workspaceId).toBe("workspace:other");
-		expect(state.result.current.session).toBeUndefined();
+		expect(state.result.current.connected).toBe(true);
 		expect(state.requests).toHaveLength(calls);
-		expect(
-			state.updateParameters.mock.calls.slice(-1)[0]?.[0].browserBinding
-				.workspaceId,
-		).toBe("workspace:other");
 	} finally {
 		state.unmount();
 	}

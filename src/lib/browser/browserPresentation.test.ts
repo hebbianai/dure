@@ -361,9 +361,8 @@ it("prepares the exact Pro Space without opening a pane or requiring a page", as
 	).toThrow();
 });
 
-it("refuses Pro or window authority failures before reading the Browser", async () => {
+it("refuses window authority failures before reading the Browser", async () => {
 	for (const code of [
-		"browser_pro_required",
 		"browser_presentation_window_changed",
 	]) {
 		const f = fixture();
@@ -379,7 +378,7 @@ it("refuses Pro or window authority failures before reading the Browser", async 
 	}
 });
 
-it("the real presentation entry respects Basic defaults and cannot enable Pro in production", async () => {
+it("the real presentation entry checks the selected window in Basic and production", async () => {
 	try {
 		for (const [storedMode, production] of [
 			[undefined, false],
@@ -393,7 +392,7 @@ it("the real presentation entry respects Basic defaults and cannot enable Pro in
 				spaces: [],
 			} as unknown as ReturnType<typeof useStore.getState>);
 			await expect(presentBrowserPage(request)).rejects.toMatchObject({
-				code: "browser_pro_required",
+				code: "browser_presentation_window_changed",
 			});
 		}
 	} finally {

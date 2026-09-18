@@ -5,10 +5,19 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 fn require(condition: bool, evidence: impl std::fmt::Debug) -> Result<(), String> {
-    if condition { Ok(()) } else { Err(format!("interception evidence: {evidence:?}")) }
+    if condition {
+        Ok(())
+    } else {
+        Err(format!("interception evidence: {evidence:?}"))
+    }
 }
 
-async fn http_fixture() -> (String, Arc<Mutex<Vec<String>>>, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+async fn http_fixture() -> (
+    String,
+    Arc<Mutex<Vec<String>>>,
+    oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let received = Arc::new(Mutex::new(Vec::new()));
@@ -55,7 +64,7 @@ async fn actual_cli_interception_applies_every_pattern_and_restores_requests() {
     let (root, endpoint, server) = fixture().await;
     let (base, received, stop_http, http) = http_fixture().await;
     let evidence: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         let shown = cli(&root, &["show", resource]).await?;
         let page = shown["result"]["pages"][0]["page"]["page_id"].as_str().ok_or("page missing")?;
@@ -91,22 +100,33 @@ async fn actual_cli_interception_applies_every_pattern_and_restores_requests() {
         require(list["result"]["enabled"] == false && list["result"]["rules"] == json!([]), &list)?;
         Ok(json!({"before":before,"after":received.lock().await.clone(),"state":list}))
     }.await;
-    println!("BROWSER_INTERCEPT_BEFORE_CLOSE root={} evidence={evidence:?}", root.display());
-    let stopped = backend(&endpoint, "backend.shutdown", json!({"schemaVersion":2,"mode":"stop"})).await;
+    println!(
+        "BROWSER_INTERCEPT_BEFORE_CLOSE root={} evidence={evidence:?}",
+        root.display()
+    );
+    let stopped = backend(
+        &endpoint,
+        "backend.shutdown",
+        json!({"schemaVersion":2,"mode":"stop"}),
+    )
+    .await;
     let retired = timeout(Duration::from_secs(40), server).await;
     let _ = stop_http.send(());
     let http_retired = timeout(Duration::from_secs(10), http).await;
-    println!("BROWSER_INTERCEPT_CLI root={} evidence={evidence:?} stopped={stopped:?} retired={retired:?} http={http_retired:?}", root.display());
+    println!(
+        "BROWSER_INTERCEPT_CLI root={} evidence={evidence:?} stopped={stopped:?} retired={retired:?} http={http_retired:?}",
+        root.display()
+    );
     retired.unwrap().unwrap().unwrap();
     http_retired.unwrap().unwrap();
     assert_eq!(stopped["kind"], "dure.backend.response");
     evidence.unwrap();
 }
 
-#[path = "intercept_scope.rs"]
-mod scope;
 #[path = "intercept_recovery.rs"]
 mod recovery;
+#[path = "intercept_scope.rs"]
+mod scope;
 
 #[path = "intercept_cancellation.rs"]
 mod cancellation;

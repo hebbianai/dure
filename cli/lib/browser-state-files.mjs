@@ -7,7 +7,7 @@ import { browserStateEncryptionKey } from "./browser-state.mjs";
 
 const LIMIT = 64 * 1024 * 1024;
 const operations = ["list", "show", "clear", "clean", "rename"];
-const routing = ["backend", "resource", "workspace", "worktree", "page", "controller", "epoch", "operationId"];
+const routing = ["backend", "resource", "defaultResource", "page", "controller", "epoch", "operationId"];
 const fail = (code, cause) => { throw new Error(code, { cause }); };
 const sameFile = (left, right) => left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
 

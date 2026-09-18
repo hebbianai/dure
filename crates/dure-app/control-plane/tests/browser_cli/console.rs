@@ -5,7 +5,7 @@ use super::*;
 async fn actual_cli_console_reads_and_authorized_clear_share_host_history() {
     let (root, endpoint, server) = fixture().await;
     let evidence: Result<_,String> = async {
-        let created = cli(&root,&["create","--workspace","workspace-browser"]).await?;
+        let created = cli(&root,&["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("fixture resource missing")?;
         let shown = cli(&root,&["show",resource]).await?;
         let page = shown["result"]["pages"][0]["page"]["page_id"].as_str().ok_or("fixture page missing")?;

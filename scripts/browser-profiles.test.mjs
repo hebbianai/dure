@@ -43,8 +43,8 @@ test("invalid profile catalog arguments and misplaced options fail before backen
     ["tab", "profile", "delete", "--profile", "one", "--label", "label"],
     ["tab", "profile", "delete", "--profile", "one", "--profile", "two"],
     ["tab", "profile", "create", "--label", "one", "--no-ua-spoof", "--no-ua-spoof"],
-    ["list", "--workspace", "w", "--label", "one"],
-    ["create", "--workspace", "w", "--scope", "imported"],
+    ["list", "--label", "one"],
+    ["create", "--scope", "imported"],
     ["show", "r", "--no-ua-spoof"],
   ]) {
     let contacts = 0;
@@ -60,7 +60,7 @@ test("browser creation preserves explicit profile selection and default request 
   for (const profile of [undefined, "default", "browser-profile:한글"]) {
     const requests = [];
     const result = await collectBrowserCommand({
-      args: ["create", "--workspace", "w", "--idempotency-key", "create-once", ...(profile === undefined ? [] : ["--profile", profile])],
+      args: ["create", "--idempotency-key", "create-once", ...(profile === undefined ? [] : ["--profile", profile])],
       resolveBackend: async () => ({ profile: { id: "profile-test" } }),
       requestBackend: async (_profile, request) => {
         requests.push(request.body);
@@ -68,18 +68,18 @@ test("browser creation preserves explicit profile selection and default request 
       },
     });
     assert.equal(result.ok, true, JSON.stringify(result));
-    assert.deepEqual(requests, [{ kind: "create", workspace_id: "w", operation_id: "create-once", ...(profile === undefined ? {} : { profile_id: profile }) }]);
+    assert.deepEqual(requests, [{ kind: "create", operation_id: "create-once", ...(profile === undefined ? {} : { profile_id: profile }) }]);
     assert.deepEqual(result.result, { preserved: true });
   }
 });
 
 test("empty, duplicate and misplaced profile selection fails before backend contact", async () => {
   for (const args of [
-    ["create", "--workspace", "w", "--profile"],
-    ["create", "--workspace", "w", "--profile", ""],
-    ["create", "--workspace", "w", "--profile", " "],
-    ["create", "--workspace", "w", "--profile", "one", "--profile", "two"],
-    ["list", "--workspace", "w", "--profile", "one"],
+    ["create", "--profile"],
+    ["create", "--profile", ""],
+    ["create", "--profile", " "],
+    ["create", "--profile", "one", "--profile", "two"],
+    ["list", "--profile", "one"],
     ["show", "r", "--profile", "one"],
     ["tab", "profile", "create", "--label", "one", "--profile", "one"],
   ]) {

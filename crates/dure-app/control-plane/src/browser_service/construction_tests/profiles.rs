@@ -21,7 +21,7 @@ async fn scenario(retire: Option<usize>) {
     let launch = |operation: &'static str| {
         let fixture = Arc::clone(&fixture);
         tokio::spawn(async move {
-            fixture.service.dispatch(&fixture.store, &json!({"kind":"create","workspace_id":"workspace:construction","operation_id":operation,"init_scripts":["window.startup='shared';"]})).await
+            fixture.service.dispatch(&fixture.store, &json!({"kind":"create","operation_id":operation,"init_scripts":["window.startup='shared';"]})).await
         })
     };
     let origin = launch("profile:pending-origin");

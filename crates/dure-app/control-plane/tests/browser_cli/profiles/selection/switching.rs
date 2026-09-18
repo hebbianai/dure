@@ -31,17 +31,16 @@ impl Client {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires the pinned native engine, Chromium, and Node"]
-async fn profile_switch_cli_reuses_peer_workspace_storage_and_preserves_logical_page() {
+async fn profile_switch_cli_reuses_peer_browser_storage_and_preserves_logical_page() {
     let (root, endpoint, server) = super::super::super::fixture().await;
     let (url, stop_site, site) = site().await;
     let evidence: Result<_, String> = async {
-        peer_workspace(&root).await?;
         let catalog = cli(&root, &["tab", "profile", "create", "--label", "전환 대상"]).await?;
         let profile = catalog["result"]["profile"]["profile"]["profileId"].as_str().ok_or("profile missing")?;
-        let origin = Client::create(&root, "workspace-browser", None, "switch-origin").await?;
+        let origin = Client::create(&root, None, "switch-origin").await?;
         origin.action(&root, "goto", &url).await?;
         origin.evaluate(&root, "localStorage.setItem('switch','기본 저장');document.cookie='switch=default;Path=/;Max-Age=3600';window.originalOnly=1;true").await?;
-        let peer = Client::create(&root, "workspace-profile-peer", Some(profile), "switch-peer").await?;
+        let peer = Client::create(&root, Some(profile), "switch-peer").await?;
         peer.action(&root, "goto", &url).await?;
         peer.evaluate(&root, "localStorage.setItem('switch','대상 저장');document.cookie='switch=selected;Path=/;Max-Age=3600';window.peerOnly='유지';true").await?;
         let before = cli(&root, &["show", &origin.resource]).await?;
@@ -153,7 +152,7 @@ async fn orca_profile_flag_show_and_use_default_share_the_existing_page_transiti
     let evidence: Result<_, String> = async {
         let created = cli(&root, &["tab", "profile", "create", "--label", "Orca 표기"]).await?;
         let profile = created["result"]["profile"]["profile"]["profileId"].as_str().ok_or("profile missing")?;
-        let client = Client::create(&root, "workspace-browser", None, "orca-switch").await?;
+        let client = Client::create(&root, None, "orca-switch").await?;
         client.action(&root, "goto", &url).await?;
         let shown = cli(&root, &["tab", "profile", "show", &client.resource, "--page", &client.page]).await?;
         let switched = cli(&root, &["tab", "profile", "set", &client.resource, "--profile", profile,

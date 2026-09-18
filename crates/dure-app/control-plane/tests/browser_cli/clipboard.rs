@@ -70,7 +70,7 @@ async fn actual_clipboard_permissions_authority_isolation_and_receipt_recovery()
     });
     let mut resources = Vec::new();
     let evidence: Result<Value,String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         resources.push(resource.to_owned());
         let shown = cli(&root, &["show", resource]).await?;
@@ -168,7 +168,7 @@ async fn actual_clipboard_permissions_authority_isolation_and_receipt_recovery()
 
         let profile = cli(&root, &["tab", "profile", "create", "--label", "Clipboard isolation", "--scope", "isolated"]).await?;
         let profile_id = profile["result"]["profile"]["profile"]["profileId"].as_str().ok_or("profile missing")?;
-        let other = cli(&root, &["create", "--workspace", "workspace-browser", "--profile", profile_id]).await?;
+        let other = cli(&root, &["create", "--profile", profile_id]).await?;
         let other_resource = other["result"]["control"]["resource"]["resource_id"].as_str().ok_or("other resource missing")?;
         resources.push(other_resource.to_owned());
         let other_view = cli(&root, &["show", other_resource]).await?;

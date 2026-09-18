@@ -23,7 +23,6 @@ import {
 } from "@/lib/workspace/dock/dockRegistry";
 import { openOrFocusPanel } from "@/lib/workspace/dock/openOrFocusPanel";
 import { createPaneId } from "@/lib/workspace/pane/paneIdentity";
-import { resolveEffectiveInterfaceMode } from "@/lib/workspace/pane/interfaceMode";
 import { spaceWindowLabel } from "@/lib/workspace/window/windowLabel";
 import { useStore } from "@/store";
 
@@ -113,10 +112,6 @@ interface Dependencies {
 const dependencies: Dependencies = {
 	assertSpace(request) {
 		const state = useStore.getState();
-		if (
-			resolveEffectiveInterfaceMode(state.uiPrefs.interfaceMode).mode !== "pro"
-		)
-			fail("browser_pro_required", "Browser presentation requires Pro mode.");
 		const space = state.spaces.find((row) => row.id === request.spaceId);
 		if (
 			!space ||

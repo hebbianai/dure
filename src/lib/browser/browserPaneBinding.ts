@@ -33,7 +33,7 @@ export interface BrowserPaneBinding {
 }
 export interface BrowserPaneCreation {
 	readonly authority: DureBackendRouteAuthorityV1;
-	/** Null explicitly requests the backend's personal browsing workspace. */
+	/** New creates use null. Older scoped operations are recovered by receipt only. */
 	readonly workspaceId: string | null;
 	readonly operationId: string;
 }

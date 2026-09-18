@@ -33,9 +33,9 @@ async fn personal_browser_opens_a_url_without_selecting_an_agent_workspace() {
         let navigated = init_scripts::action(&fixture, &resource, json!({"kind":"navigate","url":url})).await?;
         let document = init_scripts::action(&fixture, &resource, json!({"kind":"evaluate","script":"({title:document.title,text:document.body.textContent,url:location.href})"})).await?;
         let view = fixture.service.dispatch(&fixture.store, &json!({"kind":"observe","resource_id":resource["resource_id"]})).await?;
-        let agent = fixture.list().await?;
+        let inventory = fixture.list().await?;
         let closed = fixture.service.dispatch(&fixture.store, &json!({"kind":"close","resource":resource,"operation_id":"personal:close"})).await?;
-        Ok(json!({"resource":resource,"replay":replay,"navigation":navigated,"document":document,"view":view,"agent":agent,"closed":closed}))
+        Ok(json!({"resource":resource,"replay":replay,"navigation":navigated,"document":document,"view":view,"inventory":inventory,"closed":closed}))
     }.await;
     let cleaned = fixture.finish().await;
     server.abort();
@@ -59,11 +59,9 @@ async fn personal_browser_opens_a_url_without_selecting_an_agent_workspace() {
         result["document"]["result"]["response"]["data"]["result"],
         json!({"title":"Personal browsing","text":"URL opened","url":url})
     );
-    assert!(
-        result["agent"]["result"]["resources"]
-            .as_array()
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        result["inventory"]["result"]["resources"][0]["resource"],
+        result["resource"]
     );
     assert_eq!(result["closed"]["result"]["closed"], true);
 }

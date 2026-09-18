@@ -9,7 +9,7 @@ async fn retained_react_start_survives_response_loss_handoff_and_reload_without_
     let evidence: Result<Value,String> = async {
         let mut owned = Vec::new();
         for _ in 0..2 {
-            let created = cli(&root, &["create","--workspace","workspace-browser","--enable","react-devtools"]).await?;
+            let created = cli(&root, &["create","--enable","react-devtools"]).await?;
             let id = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?.to_owned();
             resources.push(id.clone());
             let controlled = cli(&root, &["control",&id,"--controller","react-owner"]).await?;
@@ -93,17 +93,7 @@ async fn actual_profiling_react_hydration_is_measured_without_manual_timestamp_e
     let (root, endpoint, server) = fixture().await;
     let mut resources = Vec::new();
     let evidence: Result<Value, String> = async {
-        let created = cli(
-            &root,
-            &[
-                "create",
-                "--workspace",
-                "workspace-browser",
-                "--enable",
-                "react-devtools",
-            ],
-        )
-        .await?;
+        let created = cli(&root, &["create", "--enable", "react-devtools"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"]
             .as_str()
             .ok_or("resource missing")?

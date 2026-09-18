@@ -13,7 +13,7 @@ async fn retained_stop_rejects_foreign_authority_and_replays_only_its_journaled_
     let mut resources = Vec::new();
     let evidence: Result<_, String> = async {
         for operation in ["guarded-owner", "guarded-peer"] {
-            let created = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", operation]).await?;
+            let created = cli(&root, &["create", "--idempotency-key", operation]).await?;
             resources.push(created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?.to_owned());
         }
         let owner = &resources[0]; let peer = &resources[1];

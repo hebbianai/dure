@@ -91,12 +91,12 @@ test.each(cases)("named %j preserves the existing typed requests", async (named,
   const expected = fixture();
   const baseline = await expected.run([...positional, "--resource", resource.resource_id, ...flags]);
   assert.equal(baseline.ok, true, JSON.stringify({ positional, baseline }));
-  for (const selector of [["--resource", resource.resource_id], ["--worktree", "current"], []]) {
+  for (const selector of [["--resource", resource.resource_id], ["--current"], []]) {
     const client = fixture();
     const report = await client.run([...named, ...selector, ...flags]);
     assert.equal(report.ok, true, JSON.stringify({ named, selector, report }));
     const scoped = selector[0] !== "--resource";
-    if (scoped) assert.deepEqual(client.calls[0], { kind: "list", workspace_path: "/tasks/한글/nested" });
+    if (scoped) assert.deepEqual(client.calls[0], { kind: "list" });
     assert.deepEqual(client.calls.slice(scoped ? 1 : 0), expected.calls);
     assert.deepEqual(report, baseline);
   }
@@ -134,10 +134,10 @@ test("named references keep their original identity without requiring the local 
   assert.deepEqual(client.calls.at(-1).authority.page, original);
 });
 
-test("default workspace lookup refuses unknown remote cwd and changed controller or resource", async () => {
+test("shared default lookup supports remote backends and refuses changed controller or resource", async () => {
   const remote = fixture({ kind: "ssh" });
-  assert.equal((await remote.run(["get", "--what", "url"])).error?.code, "browser_workspace_required");
-  assert.deepEqual(remote.calls, []);
+  assert.equal((await remote.run(["get", "--what", "url"])).ok, true);
+  assert.deepEqual(remote.calls[0], { kind: "list" });
   const stale = fixture({ controller: { ...lease, epoch: "9" } });
   assert.equal((await stale.run(["fill", "--element", "input", "--value", "text", ...flags])).error?.code, "browser_controller_changed");
   const moved = fixture({ observed: { ...resource, generation: "replacement" } });
@@ -156,7 +156,7 @@ test("contradictory or incomplete named parameters fail before backend selection
     ["fill", "--element", "input"], ["get", "--what", "url", "--element", "input"],
     ["click", "--element", "one", "--element", "two"], ["click", "clear", "one", "--element", "two"],
     ["click", "clear", "--element", "one", "--resource", "other"],
-    ["click", "clear", "--element", "one", "--worktree", "current"],
+    ["click", "clear", "--element", "one", "--current"],
     ["viewport", "--width", "800"], ["snapshot", "--value", "extra"],
     ["cookie", "set", "--name", "n", "--value", "v", "--httpOnly", "--http-only"],
     ["wait", "--selector", "input", "--selector", "duplicate"],
@@ -207,7 +207,7 @@ test("inline named values preserve empty, Korean and option-like literals", asyn
   }
 });
 
-test("resource-free commands use current workspace only for complete forms", async () => {
+test("resource-free commands use the shared Browser only for complete forms", async () => {
   for (const args of [
     ["show"], ["snapshot"], ["network"], ["get", "--what", "url"], ["tab", "list"], ["tab", "current"],
     ["back", ...flags], ["forward", ...flags], ["reload", ...flags],
@@ -224,7 +224,7 @@ test("resource-free commands use current workspace only for complete forms", asy
     const report = await current.run(args);
     assert.equal(expected.ok, true, JSON.stringify({ args, expected }));
     assert.equal(report.ok, true, JSON.stringify({ args, report }));
-    assert.deepEqual(current.calls[0], { kind: "list", workspace_path: "/tasks/한글/nested" });
+    assert.deepEqual(current.calls[0], { kind: "list" });
     assert.deepEqual(current.calls.slice(1), explicit.calls);
     assert.deepEqual(report, expected);
   }
@@ -232,6 +232,6 @@ test("resource-free commands use current workspace only for complete forms", asy
   assert.equal((await noLease.run(["fill", "--element", "input", "--value", "text"])).ok, false);
   assert.equal(noLease.calls.some((call) => call.kind === "action" || call.kind === "claim_control"), false);
   const remote = fixture({ kind: "ssh" });
-  assert.equal((await remote.run(["get", "--what", "url", "--worktree", `id:${resource.workspace_id}`])).ok, true);
-  assert.deepEqual(remote.calls[0], { kind: "list", workspace_id: resource.workspace_id });
+  assert.equal((await remote.run(["get", "--what", "url", "--current"])).ok, true);
+  assert.deepEqual(remote.calls[0], { kind: "list" });
 });

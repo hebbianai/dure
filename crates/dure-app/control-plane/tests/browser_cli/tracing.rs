@@ -11,7 +11,7 @@ async fn real_cli_traces_and_recovers_profiler_output_after_a_lost_stop_connecti
     let (root, endpoint, server) = fixture().await;
     let mut resources = Vec::new();
     let evidence: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", "trace-create"]).await?;
+        let created = cli(&root, &["create", "--idempotency-key", "trace-create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?.to_owned();
         resources.push(resource.clone());
         let controlled = cli(&root, &["control", &resource, "--controller", "trace-agent"]).await?;

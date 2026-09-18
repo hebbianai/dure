@@ -21,7 +21,7 @@ mod state_save;
 async fn actual_cli_storage_reads_preserve_native_data_boundaries() {
     let (root, endpoint, server) = super::fixture().await;
     let evidence: Result<(), String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"]
             .as_str()
             .ok_or("fixture resource missing")?;
@@ -248,7 +248,7 @@ pub(super) async fn exercise(
         let isolated=cli(home,&["tab","profile","create","--label","Storage isolation fixture"]).await?;
         let profile=isolated["result"]["profile"]["profile"]["profileId"].as_str().filter(|id|*id!="default").ok_or("isolated profile identity missing")?.to_owned();
         other_profile=Some(profile.clone());
-        let created=cli(home,&["create","--workspace","workspace-browser","--profile",&profile]).await?;
+        let created=cli(home,&["create","--profile",&profile]).await?;
         let other=created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("second resource missing")?.to_owned();
         other_resource=Some(other.clone());
         let shown=cli(home,&["show",&other]).await?;

@@ -158,14 +158,14 @@ try {
   const profile = catalog.profiles[0];
   const observed = await performBackendProfileRequest(profile, {
     requestId: randomUUID(), operation: "browser.resource",
-    requiredCapabilities: ["browser.resource.v1"], body: { kind: "workspaces" },
+    requiredCapabilities: ["browser.resource.v1"], body: { kind: "list" },
   });
   assert.ok(observed.backend.capabilities.includes("backend.connection.persistent"));
   profile.expected.capabilities = [...new Set([...profile.expected.capabilities, "backend.connection.persistent"])];
   profile.default = true;
   writeFileSync(join(evidence, "backend-ready.json"), JSON.stringify({ ...backend, handshake: observed.backend, catalog: observed.result }, null, 2));
   writeFileSync(join(process.env.DURE_HOME, "backend-profiles.json"), JSON.stringify(catalog), { mode: 0o600 });
-  const created = await command(["create", "--workspace", "workspace-browser"]);
+  const created = await command(["create"]);
   const resource = created.result.control.resource;
   resourceId = resource.resource_id;
   const shown = await command(["show", resourceId]);
@@ -497,7 +497,7 @@ try {
   assert.deepEqual((await controlState()).controller, profileHuman);
   assert.deepEqual(fixture.submissions, [], "profile management never submits a page form");
   await action("close");
-  const listed = await command(["list", "--workspace", "workspace-browser"]);
+  const listed = await command(["list"]);
   assert.ok(!listed.result.resources.some((row) => row.resource.resource_id === resourceId));
   resourceId = undefined;
   outcome = { result: "passed", instance, resource, pageId, text, secondPageId, secondText, previewClicks: updated.result.response.data.result.previewClicks, fixtureSubmissions: fixture.submissions };

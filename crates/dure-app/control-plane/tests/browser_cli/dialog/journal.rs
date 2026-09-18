@@ -5,7 +5,7 @@ use super::*;
 async fn disconnected_dialog_response_replays_without_answering_a_new_prompt() {
     let (root, endpoint, server) = fixture().await;
     let result: Result<_,String> = async {
-        let created = cli(&root,&["create","--workspace","workspace-browser"]).await?;
+        let created = cli(&root,&["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         let shown = cli(&root,&["show",resource]).await?;
         let page = shown["result"]["pages"][0]["page"]["page_id"].as_str().ok_or("page missing")?;

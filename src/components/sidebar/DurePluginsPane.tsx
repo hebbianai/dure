@@ -16,7 +16,6 @@ import {
   usePluginViewCatalog,
 } from "@/components/plugins/usePluginViewCatalog";
 import { DurePluginSettingsDialog } from "@/components/sidebar/DurePluginSettingsDialog";
-import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import { SectionHeaderRow } from "@/components/sidebar/SidebarItems";
 import { Button } from "@/components/ui/button";
 import { GlassPanel } from "@/components/ui/glass-panel";
@@ -127,20 +126,7 @@ interface PluginSettingsTarget {
 export function DurePluginsPane() {
   const focus = useStore((state) => state.focusCtx);
   const projects = useStore((state) => state.projects);
-  const { snapshot: fullCatalog, loadState, error } = usePluginViewCatalog();
-  const interfaceMode = useInterfaceMode();
-  const catalog = useMemo(() => {
-    if (!fullCatalog || interfaceMode === "pro") return fullCatalog;
-    return {
-      ...fullCatalog,
-      outcomes: fullCatalog.outcomes.filter((outcome) => {
-        const pluginId = outcome.status === "available"
-          ? outcome.entry.manifest.id
-          : outcome.status === "conflict" ? outcome.plugin_id : outcome.manifest?.id;
-        return pluginId !== "dure.slack";
-      }),
-    };
-  }, [fullCatalog, interfaceMode]);
+  const { snapshot: catalog, loadState, error } = usePluginViewCatalog();
   const loading = loadState === "loading";
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [settingsTarget, setSettingsTarget] =

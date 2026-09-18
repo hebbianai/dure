@@ -16,7 +16,7 @@ use tokio::sync::{Mutex, watch};
 
 use crate::{
     BackendDispatchError, HmuxToolchainIdentity, ServiceState, ensure_owner_subdirectory,
-    private_record, pro_features, random_opaque_reference,
+    private_record, random_opaque_reference,
 };
 
 pub(crate) const OPERATION: &str = "slack.connector";
@@ -233,9 +233,6 @@ impl SlackConnectorService {
     }
 
     pub(crate) async fn dispatch(&self, body: &Value) -> Result<Value, BackendDispatchError> {
-        if !pro_features::available() {
-            return Err(error("slack_pro_development_only"));
-        }
         let request: Request = serde_json::from_value(body.clone())
             .map_err(|_| error("slack_connection_request_invalid"))?;
         if request.schema_version != 1 {
@@ -554,9 +551,6 @@ async fn observe_child(
 }
 
 pub(crate) async fn restore_when_active(state: Arc<ServiceState>) {
-    if !pro_features::available() {
-        return;
-    }
     state.wait_for_mutation_authority().await;
     let _ = state.slack.restore().await;
 }
