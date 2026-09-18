@@ -10,6 +10,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SpacesVisibleField } from "@/lib/spaces/spacesViewOptions";
 import type { Agent } from "@/types";
+import { focusByKeyboard } from "@/test/keyboardFocus";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -306,7 +307,7 @@ describe("OpenSpaceRow managed promotion", () => {
     const promotion = screen.getByLabelText("관리 세션으로 전환");
     expect(promotion.getAttribute("title")).toBeNull();
     expect(promotion.getAttribute("data-slot")).toBe("tooltip-trigger");
-    fireEvent.focus(promotion);
+    focusByKeyboard(promotion);
     expect(
       (await screen.findByText("관리 세션으로 전환")).getAttribute(
         "data-slot",
@@ -910,7 +911,7 @@ describe("UnopenedAgentRow diff badge", () => {
     expect(badge.getAttribute("title")).toBeNull();
     expect(badge.getAttribute("data-slot")).toBe("tooltip-trigger");
     expect(badge.textContent?.replace(/\s+/g, "")).toBe("C2W1↑1↓2");
-    fireEvent.focus(badge);
+    focusByKeyboard(badge);
     expect(
       (await screen.findByText("변경 내용")).getAttribute("data-slot"),
     ).toBe("tooltip-label");

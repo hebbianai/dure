@@ -394,6 +394,7 @@ export function ChatComposer({
 							)}
 							<IconButton
 								title={t("common.close")}
+								showTooltip={false}
 								className="-m-1 shrink-0"
 								onClick={() => setDismissedFailureItemId(handedOff.failure.itemId)}
 							>
@@ -442,6 +443,7 @@ export function ChatComposer({
 							)}
 							<IconButton
 								title={t("common.close")}
+								showTooltip={false}
 								className="-m-1 shrink-0 text-destructive hover:text-destructive"
 								onClick={() => setDismissedFailureItemId(failureRecovery.itemId)}
 							>
@@ -456,6 +458,7 @@ export function ChatComposer({
 						{!session.retryTurnAvailable && (
 							<IconButton
 								title={t("common.close")}
+								showTooltip={false}
 								className="-m-1 ml-auto shrink-0 text-destructive hover:text-destructive"
 								onClick={() => session.dismissActionError()}
 							>

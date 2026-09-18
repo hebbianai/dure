@@ -146,6 +146,7 @@ export function AutomationEditor({
 					</div>
 					<IconButton
 						title={t("common.close")}
+						showTooltip={false}
 						disabled={action.busy}
 						onClick={close}
 					>

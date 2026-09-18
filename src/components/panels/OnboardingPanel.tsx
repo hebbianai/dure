@@ -169,6 +169,7 @@ export function OnboardingPanel(props: IDockviewPanelProps) {
 		<div className="relative flex h-full min-h-0 flex-col overflow-hidden">
 			<IconButton
 				title={t("common.close")}
+				showTooltip={false}
 				className="absolute right-2 top-2 z-10"
 				onClick={() => props.api.close()}
 			>

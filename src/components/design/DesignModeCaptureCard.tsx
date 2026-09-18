@@ -59,6 +59,7 @@ export function DesignModeCaptureCard({
 				</p>
 				<IconButton
 					title={t("common.close")}
+					showTooltip={false}
 					className="-my-1 -mr-1"
 					disabled={busy}
 					onClick={onDismiss}

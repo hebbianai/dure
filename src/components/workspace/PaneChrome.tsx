@@ -783,6 +783,7 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
         <ErrorText className="max-w-40 truncate text-[10px]" title={quickCommands.error}>{quickCommands.error}</ErrorText>
         <PaneActionButton
           label={t("common.close")}
+          showTooltip={false}
           onClick={closePane}
         >
           <X />
@@ -830,16 +831,20 @@ function PaneActionButton({
   onClick,
   children,
   active,
+  showTooltip,
 }: {
   label: string;
   onClick: () => void;
   children: React.ReactNode;
   /** 눌린 상태로 남는 토글(고정 등) — 색으로 현재 상태를 알린다. */
   active?: boolean;
+  /** Off for a glyph that names itself (the close ✕). */
+  showTooltip?: boolean;
 }) {
   return (
     <IconButton
       title={label}
+      showTooltip={showTooltip}
       // Toggle buttons (pin) pass their state; plain actions leave it
       // undefined so IconButton renders no aria-pressed for them.
       pressed={active}

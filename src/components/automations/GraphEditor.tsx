@@ -296,6 +296,7 @@ function GraphEditorReady({
 						</span>
 						<IconButton
 							title={t("common.close")}
+							showTooltip={false}
 							disabled={action.busy}
 							onClick={close}
 						>
