@@ -1,5 +1,5 @@
 // Static inventory and token-check dashboard: generated beside the
-// envelope, no server, Korean. Neutral surfaces follow design/SOUL.md;
+// envelope, no server, English. Neutral surfaces follow design/SOUL.md;
 // color calls attention to errors.
 
 import { statSync } from "node:fs";
@@ -88,7 +88,7 @@ export function buildDashboardHtml(
 			? ""
 			: `
 		<section class="errors">
-			<h2>게이트 에러 ${check.errors.length}</h2>
+			<h2>Check errors ${check.errors.length}</h2>
 			<ul>${check.errors.map((e) => `<li><code>[${esc(e.code)}]</code> ${esc(e.message)}</li>`).join("")}</ul>
 		</section>`;
 
@@ -101,7 +101,7 @@ export function buildDashboardHtml(
 		.join("");
 
 	return `<!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Dure design inventory</title>
@@ -133,7 +133,7 @@ export function buildDashboardHtml(
 </head>
 <body>
 <h1>Dure design inventory</h1>
-<div class="meta">${esc(envelope.generatedAt)} · ${esc(envelope.sourceCommit.slice(0, 8))}${envelope.dirty ? " · dirty" : ""} · 디자인 원칙: <a href="../SOUL.md">design/SOUL.md</a></div>
+<div class="meta">${esc(envelope.generatedAt)} · ${esc(envelope.sourceCommit.slice(0, 8))}${envelope.dirty ? " · dirty" : ""} · Design principles: <a href="../SOUL.md">design/SOUL.md</a></div>
 
 <div class="axes">
 	<div class="axis"><div class="axis-num">${surface.length}</div><div class="axis-label">Source surfaces</div></div>
@@ -147,25 +147,25 @@ export function buildDashboardHtml(
 
 ${errorSection}
 
-<h2>소스 인벤토리</h2>
+<h2>Source inventory</h2>
 ${clusterSection}
 
-<h2>토큰</h2>
-<p class="quiet">문서화·정합 ${coveredTokens}/${token.length} · 드리프트 ${drift.length} · 토큰 밖 raw color ${envelope.rawColors.total}${envelope.rawColors.stale.length > 0 ? ` · allowlist rot ${envelope.rawColors.stale.length}` : ""}</p>
+<h2>Tokens</h2>
+<p class="quiet">Documented and matching ${coveredTokens}/${token.length} · Drift ${drift.length} · Raw color literals outside tokens ${envelope.rawColors.total}${envelope.rawColors.stale.length > 0 ? ` · allowlist rot ${envelope.rawColors.stale.length}` : ""}</p>
 ${drift.length > 0 ? `<ul>${drift.map((i) => `<li><code>${esc(String(i.id))}</code> ${esc(String(i.detail.drift))}</li>`).join("")}</ul>` : ""}
 
-<h2>목업 파일 수정 시점</h2>
-${freshness.length === 0 ? '<p class="quiet">등록된 HTML 목업이 없습니다. 목업은 선택 사항입니다.</p>' : `<table>${freshnessRows}</table>`}
+<h2>Mockup file timestamps</h2>
+${freshness.length === 0 ? '<p class="quiet">No HTML mockups are registered. Mockups are optional.</p>' : `<table>${freshnessRows}</table>`}
 
 ${
 	envelope.excluded.length > 0
-		? `<h2>제외 (${envelope.excluded.length})</h2><ul>${envelope.excluded.map((e) => `<li><code>${esc(e.id)}</code> <span class="quiet">${esc(e.reason)}</span></li>`).join("")}</ul>`
+		? `<h2>Excluded (${envelope.excluded.length})</h2><ul>${envelope.excluded.map((e) => `<li><code>${esc(e.id)}</code> <span class="quiet">${esc(e.reason)}</span></li>`).join("")}</ul>`
 		: ""
 }
 ${deadAnchors.length > 0 ? `<h2>Dead anchors</h2><p class="quiet">${deadAnchors.map(([id]) => esc(id)).join(", ")}</p>` : ""}
-${check.shrinkable.length > 0 ? `<h2>베이스라인 축소 가능 (${check.shrinkable.length})</h2><p class="quiet">covered가 됐거나 사라진 항목 — design/design-coverage-baseline.json에서 지운다.</p>` : ""}
+${check.shrinkable.length > 0 ? `<h2>Baseline entries eligible for removal (${check.shrinkable.length})</h2><p class="quiet">Entries now covered or no longer present can be removed from design/design-coverage-baseline.json.</p>` : ""}
 
-<p class="quiet">화면 목록은 소스에서 생성합니다. 토큰값과 등록된 목업의 경로·토큰 참조를 검사하며, 화면 동작이나 시각적 승인을 인증하지 않습니다.</p>
+<p class="quiet">The inventory is generated from source. These checks validate token values and optional mockup paths and token references; they do not certify UI behavior or visual approval.</p>
 </body>
 </html>
 `;

@@ -44,10 +44,10 @@ describe("buildDashboardHtml", () => {
   it("reports token drift, raw colors, exclusions and stale baseline entries", () => {
     expect(html).toContain("token:--x");
     expect(html).toContain("documented light `#111` != defined `#222`");
-    expect(html).toContain("raw color 5");
+    expect(html).toContain("Raw color literals outside tokens 5");
     expect(html).toContain("surface:x/Shim");
     expect(html).toContain("dead-anchor");
-    expect(html).toContain("베이스라인 축소 가능 (1)");
+    expect(html).toContain("Baseline entries eligible for removal (1)");
   });
 
   it("escapes diagnostics and includes baseline errors from the actual check", () => {

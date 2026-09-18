@@ -60,6 +60,46 @@ it("accepts source surfaces without a screen specification or mockup", async () 
 });
 
 describe("token drift judgment (synthetic fixtures — must not depend on live DESIGN.md state)", () => {
+  it.each([
+    [".dock", "70ms", "covered"],
+    [".dock", "90ms", "uncovered"],
+    [".missing", "70ms", "uncovered"],
+    [".conditional-only", "70ms", "uncovered"],
+  ])("checks scoped evidence for %s at %s: %s", async (selector, value, verdict) => {
+    const root = fixtureRoot();
+    mkdirSync(join(root, "src/lib/theme"), { recursive: true });
+    writeFileSync(join(root, "src/lib/theme/themeStyle.ts"), "export {};\n");
+    writeFileSync(join(root, "src/index.css"), `
+      :root { --duration: 90ms; }
+      .dock { --duration: 40ms; }
+      .dock { --duration: 70ms; }
+      .other { --duration: 90ms; }
+      @media (prefers-reduced-motion: reduce) {
+        .dock { --duration: 0ms; }
+        .conditional-only { --duration: 70ms; }
+      }
+    `);
+    writeFileSync(join(root, "DESIGN.md"), `
+| Role | Token | Base value | Dark override | Selector |
+|---|---|---|---|---|
+| Motion | \`--duration\` | \`${value}\` | — | \`${selector}\` |
+    `);
+    const tokens = await scanTokens(root);
+    const documented = scanDocumentedTokens(root);
+    const judgment = judge(emptyScan, tokens, documented, emptyEvidence, emptyOverrides);
+    expect(judgment.tokenItems[0].verdict).toBe(verdict);
+    expect(check(buildEnvelope(root, judgment, emptyScan, tokens, emptyOverrides), emptyBaseline, []).ok)
+      .toBe(verdict === "covered");
+    if (verdict === "uncovered") expect(judgment.tokenItems[0].detail.drift).toBeTruthy();
+  });
+
+  it("rejects an empty documentation row instead of counting it as evidence", () => {
+    const judgment = judge(emptyScan, inventory("--x", "#fff"),
+      [{ name: "--x", light: null, dark: null }], emptyEvidence, emptyOverrides);
+    expect(judgment.tokenItems[0].verdict).toBe("uncovered");
+    expect(judgment.tokenItems[0].detail.drift).toBeTruthy();
+  });
+
   it("flags a stale documented value as uncovered with drift detail", () => {
     const judgment = judge(
       emptyScan,

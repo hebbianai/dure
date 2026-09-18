@@ -56,3 +56,6 @@ as observed, confirmed, or unverified. A failed measurement stays unverified.
 Record design decisions, reproducible measurements and remaining work in
 [public issues](https://github.com/hebbianai/dure/issues). Include the source
 revision and measurement method so contributors can check the evidence.
+
+The checked [token table](../DESIGN.md) records values compared with CSS. Run
+`pnpm design:coverage:check` after changing tokens or their evidence.

@@ -5,8 +5,7 @@ import { agentLogoUrl } from "@/lib/agents/agentLogos";
 import { providerGlyphShape } from "@/lib/agents/providerGlyphs";
 import { cn } from "@/lib/utils";
 
-/** 브랜드 로고 타일 — 원본이 제각각 색이 있는 사각 앱아이콘이라, UI 톤에 맞춰
- *  회색으로 빼고 모서리를 살짝 둥글린다. */
+/** Normalize app-icon tiles to grayscale with subtly rounded corners. */
 function AgentLogo({ logo, className }: { logo: string; className?: string }) {
 	const src = agentLogoUrl(logo);
 	if (!src) return null;
@@ -23,7 +22,7 @@ function AgentLogo({ logo, className }: { logo: string; className?: string }) {
 		/>
 	);
 }
-/** 로고 파일이 없는 프로바이더용 폴백 글리프 (초승달). */
+/** Crescent glyph for providers without a logo file. */
 function KimiLogo({ className }: { className?: string }) {
 	return (
 		<svg viewBox="0 0 12 12" fill="none" className={className} aria-hidden>
@@ -37,15 +36,8 @@ function KimiLogo({ className }: { className?: string }) {
 	);
 }
 
-/** 프로바이더 로고 글리프 (탭·메뉴용) — 전부 회색조다.
- *
- *  왜 브랜드 색을 쓰지 않나: 매니페스트의 27개 프로바이더 중 로고 파일이 있는
- *  25개는 원본이 제각각 색인 앱아이콘이라 이미 grayscale 필터로 빼고 있었다.
- *  claude/codex만 인라인 SVG라 브랜드 틴트를 그대로 칠하고 있었고, 그래서 한
- *  줄에 나란히 서면 둘만 튀었다. 시안 2496:59514의 글리프 잉크는
- *  rgb(163,163,163)으로 보조 텍스트와 같은 값이다 — 그게 muted-foreground다.
- *
- *  Muted by default; a caller can use text-inherit to match its title tone. */
+/** Provider glyph for tabs and menus. Keep inline SVGs and image logos in the
+ *  same grayscale palette. Muted by default; callers can inherit a title tone. */
 export function ProviderGlyph({
 	provider,
 	className,
@@ -76,7 +68,7 @@ export function ProviderGlyph({
 	const logo = PROVIDERS[provider]?.logo;
 	if (logo)
 		return <AgentLogo logo={logo} className={cn("size-3.5", className)} />;
-	// 로고 파일이 없는 프로바이더 — 내장 초승달 글리프로 폴백.
+	// Providers without a logo use the built-in crescent glyph.
 	return (
 		<KimiLogo
 			className={cn("size-3 shrink-0 text-muted-foreground", className)}
@@ -84,9 +76,8 @@ export function ProviderGlyph({
 	);
 }
 
-/** 22px 로고 배지 (사이드바 에이전트 행) — 글리프가 회색조라 상자도 중립색이다.
- *  프로바이더별 분기가 없다: 상자 색이 프로바이더를 구분하던 유일한 이유가
- *  브랜드 틴트였고, 그 구분은 이제 로고 모양이 한다. */
+/** Neutral 22px badge for sidebar agent rows; the logo shape identifies the
+ *  provider, so its surrounding border and fill stay neutral too. */
 export function ProviderBadge({
 	provider,
 	className,
@@ -140,10 +131,10 @@ export function TerminalGlyph({ className }: { className?: string }) {
 				width="24"
 				height="24"
 			>
-				<rect width="24" height="24" fill="#fff" />
+				<rect width="24" height="24" fill="var(--mask-luminance-reveal)" />
 				<path
 					d="m7 11 2-2-2-2M11 13h4"
-					stroke="#000"
+					stroke="var(--mask-luminance-conceal)"
 					strokeWidth="2"
 					strokeLinecap="round"
 					strokeLinejoin="round"

@@ -34,6 +34,8 @@ export interface TokenDeclaration {
   name: string;
   scope: TokenScope;
   value: string;
+  /** Exact CSS selector, only for rules outside conditional/grouping at-rules. */
+  selector?: string;
 }
 
 export interface TokenInventory {
@@ -50,6 +52,8 @@ export interface DocumentedToken {
   name: string;
   light: string | null;
   dark: string | null;
+  /** Optional explicit selector for a component's base value instead of :root. */
+  selector?: string;
 }
 
 export interface MockupEvidence {

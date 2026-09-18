@@ -79,6 +79,7 @@ export async function scanTokenDeclarations(
       name: property,
       scope: classifyScope(this.atrule, preludeText),
       value: csstree.generate(node.value).trim(),
+      ...(this.atrule === null && preludeText !== null ? { selector: preludeText } : {}),
     });
   });
   return { declarations, scanErrors };
@@ -115,21 +116,24 @@ export async function scanTokens(repoRoot: string): Promise<TokenInventory> {
 }
 
 /**
- * Documentation rows from DESIGN.md: markdown table rows whose second code span
- * is the token name, followed by light and dark value code spans.
+ * Documentation rows from DESIGN.md: token, light/base value, dark override,
+ * and optional exact CSS selector. Read cells separately so a missing dark
+ * override cannot shift a selector into the value column.
  */
 export function scanDocumentedTokens(repoRoot: string): DocumentedToken[] {
   const text = readFileSync(join(repoRoot, TOKEN_DOC), "utf8");
   const documented: DocumentedToken[] = [];
   for (const line of text.split("\n")) {
     if (!line.trimStart().startsWith("|")) continue;
-    const spans = [...line.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
-    const nameIndex = spans.findIndex((s) => s.startsWith("--"));
+    const cells = line.split("|").map((cell) => /`([^`]+)`/.exec(cell)?.[1] ?? null);
+    const nameIndex = cells.findIndex((cell) => cell?.startsWith("--"));
     if (nameIndex === -1) continue;
+    const selector = cells[nameIndex + 3];
     documented.push({
-      name: spans[nameIndex],
-      light: spans[nameIndex + 1] ?? null,
-      dark: spans[nameIndex + 2] ?? null,
+      name: cells[nameIndex]!,
+      light: cells[nameIndex + 1] ?? null,
+      dark: cells[nameIndex + 2] ?? null,
+      ...(selector ? { selector } : {}),
     });
   }
   return documented;

@@ -186,6 +186,15 @@ export function judge(
   const declared = new Map<string, { root?: string; dark?: string }>();
   for (const decl of tokens.declarations) {
     const entry = declared.get(decl.name) ?? {};
+    const selector = documentedByName.get(decl.name)?.selector;
+    if (selector !== undefined) {
+      // Only the exact unconditional selector supplies a component's base
+      // value. Identical selectors follow source order; media/hover overrides
+      // and other components cannot satisfy the documentation row.
+      if (decl.selector === selector) entry.root = decl.value;
+      declared.set(decl.name, entry);
+      continue;
+    }
     // @theme-inline tokens are the light-scope definition for single-scope
     // build-time tokens — without this, a documented value for them could
     // never be compared and the doc row would pass vacuously.
@@ -207,7 +216,9 @@ export function judge(
     const decl = declared.get(name) ?? {};
     let covered = false;
     let drift: string | null = null;
-    if (doc) {
+    if (doc && doc.light === null && doc.dark === null) {
+      drift = "documented token has no value to compare";
+    } else if (doc) {
       // A documented value with no matching declaration scope is drift, not a
       // vacuous pass.
       const lightOk =
@@ -218,7 +229,7 @@ export function judge(
       if (!lightOk) {
         drift =
           decl.root === undefined
-            ? `documented light \`${doc.light}\` but no :root/@theme declaration`
+            ? `documented light \`${doc.light}\` but no ${doc.selector ?? ":root/@theme"} declaration`
             : `documented light \`${doc.light}\` != defined \`${decl.root}\``;
       } else if (!darkOk) {
         drift =

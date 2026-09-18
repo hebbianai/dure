@@ -135,6 +135,9 @@
     color-scheme: light;
     /* Structural alpha-mask coverage, independent of theme paint colors. */
     --mask-opaque: #000;
+    /* SVG luminance masks reveal white and conceal black in every theme. */
+    --mask-luminance-reveal: #fff;
+    --mask-luminance-conceal: #000;
     /* 시안 2156:23585 — 사이드바 헤더 컨테이너가 300x44이고, 그 안에서 20px
        워드마크가 위아래 12px, 16px 토글 아이콘이 위아래 14px으로 앉는다.
        예전 34px은 여기서 10px 낮았다(2026-08-01 실측: 워드마크 중심 17px). */
