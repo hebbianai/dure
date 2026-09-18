@@ -55,15 +55,24 @@ it("reads the server pool and writes only against the observed route and revisio
 	});
 });
 it("rejects a different provider snapshot rather than offering its profiles", async () => {
-	const invoke = vi
-		.fn()
-		.mockResolvedValue(
-			envelope({
-				policy: null,
-				profiles: [{ ...profile, providerId: "claude" }],
-			}),
-		);
+	const invoke = vi.fn().mockResolvedValue(
+		envelope({
+			policy: null,
+			profiles: [{ ...profile, providerId: "claude" }],
+		}),
+	);
 	await expect(
 		createAccountRecoveryClient("team", invoke).get("codex"),
 	).rejects.toMatchObject({ code: "provider_recovery_response_invalid" });
+});
+
+it("reads account choices against the conversation's exact server route", async () => {
+	const invoke = vi
+		.fn()
+		.mockResolvedValue(envelope({ policy: null, profiles: [profile] }));
+	await createAccountRecoveryClient("team", invoke).get("codex", authority);
+	expect(invoke.mock.calls[0]?.[1]).toMatchObject({
+		operation: "provider_recovery.get",
+		route: { kind: "exact", authority },
+	});
 });

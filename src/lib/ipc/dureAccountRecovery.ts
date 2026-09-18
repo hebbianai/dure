@@ -42,11 +42,16 @@ export function createAccountRecoveryClient(
 		);
 	}
 	return {
-		async get(providerId: string): Promise<RecoverySettingsSnapshot> {
+		async get(
+			providerId: string,
+			routeAuthority?: DureBackendRouteAuthorityV1,
+		): Promise<RecoverySettingsSnapshot> {
 			const response = await request(
 				"provider_recovery.get",
 				{ schemaVersion: 1, providerId },
-				{ kind: "complete_selected_snapshot" },
+				routeAuthority
+					? { kind: "exact", authority: routeAuthority }
+					: { kind: "complete_selected_snapshot" },
 			);
 			const policy =
 				response.result.policy === null

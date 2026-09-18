@@ -12,11 +12,16 @@ import {
 import { registerDureProviderCredentialProfile } from "@/lib/ipc/dureProviderCredentialProfile";
 import { useStore } from "@/store";
 import type { Provider } from "@/types";
+import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 
-export function useAccountRecoverySettings() {
+export function useAccountRecoverySettings(
+	authority?: DureBackendRouteAuthorityV1,
+) {
 	const accounts = useStore((state) => state.accounts);
 	const [profiles, setProfiles] = useState<DureBackendProfileSummary[]>([]);
-	const [backendId, setBackendId] = useState<string>();
+	const [backendId, setBackendId] = useState<string | undefined>(
+		authority?.profileId,
+	);
 	const [provider, setProvider] = useState<Provider>("codex");
 	const [observed, setSnapshot] = useState<RecoverySettingsSnapshot>();
 	const [enabled, setEnabled] = useState(false);
@@ -35,6 +40,7 @@ export function useAccountRecoverySettings() {
 		[backendId],
 	);
 	useEffect(() => {
+		if (authority) return;
 		let current = true;
 		void listDureBackendProfiles()
 			.then((next) => {
@@ -48,7 +54,7 @@ export function useAccountRecoverySettings() {
 		return () => {
 			current = false;
 		};
-	}, []);
+	}, [authority]);
 	useEffect(() => {
 		setSnapshot(undefined);
 		if (!client) return;
@@ -56,7 +62,7 @@ export function useAccountRecoverySettings() {
 		setLoading(true);
 		setError(undefined);
 		void client
-			.get(provider)
+			.get(provider, authority)
 			.then((next) => {
 				if (!current) return;
 				setSnapshot(next);
@@ -75,9 +81,10 @@ export function useAccountRecoverySettings() {
 		return () => {
 			current = false;
 		};
-	}, [client, provider, revision]);
-	const local =
-		profiles.find((profile) => profile.id === backendId)?.kind === "local";
+	}, [client, provider, revision, authority]);
+	const local = authority
+		? authority.target.source === "local"
+		: profiles.find((profile) => profile.id === backendId)?.kind === "local";
 	const options = new Map<string, string>();
 	for (const profile of snapshot?.profiles ?? [])
 		options.set(profile.referenceId, profile.referenceId);

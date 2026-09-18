@@ -1,9 +1,19 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import {
+	act,
+	cleanup,
+	fireEvent,
+	render,
+	renderHook,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RecoverySettingsSnapshot } from "@/lib/ipc/dureAccountRecovery";
 import { testDureBackendRouteAuthority } from "@/test/dureBackendRouteFixtures";
 import { useAccountRecoverySettings } from "./useAccountRecoverySettings";
+import { AccountRecoverySettings } from "./AccountRecoverySettings";
+import { setLang } from "@/lib/i18n";
 
 const mocks = vi.hoisted(() => ({
 	get: vi.fn(),
@@ -27,7 +37,8 @@ vi.mock("@/store", () => ({
 }));
 vi.mock("@/lib/ipc/dureAccountRecovery", () => ({
 	createAccountRecoveryClient: (backendId: string) => ({
-		get: (providerId: string) => mocks.get(backendId, providerId),
+		get: (providerId: string, authority?: unknown) =>
+			mocks.get(backendId, providerId, authority),
 		put: mocks.put,
 	}),
 }));
@@ -54,6 +65,7 @@ function snapshot(
 	};
 }
 beforeEach(() => {
+	setLang("en");
 	vi.clearAllMocks();
 	mocks.profiles.mockResolvedValue([
 		{ id: "local", kind: "local", default: true },
@@ -76,6 +88,34 @@ beforeEach(() => {
 	});
 });
 afterEach(cleanup);
+
+it("edits the viewed server's allowed account order without selecting or copying personal accounts", async () => {
+	const authority = snapshot("team").routeAuthority;
+	const profiles = ["one", "two"].map((referenceId) => ({
+		schemaVersion: 1,
+		providerId: "codex",
+		referenceId,
+		credentialGeneration: "generation-1",
+	}));
+	mocks.get.mockResolvedValue({ ...snapshot("team"), profiles });
+	const view = render(<AccountRecoverySettings authority={authority} />);
+	fireEvent.click(await screen.findByRole("checkbox", { name: "one" }));
+	fireEvent.click(screen.getByRole("checkbox", { name: "two" }));
+	view.rerender(<AccountRecoverySettings authority={structuredClone(authority)} />);
+	expect(mocks.get).toHaveBeenCalledOnce();
+	fireEvent.click(screen.getByRole("button", { name: "Move two up" }));
+	fireEvent.click(screen.getByRole("switch"));
+	fireEvent.click(screen.getByRole("button", { name: "Save" }));
+	await waitFor(() => expect(mocks.put).toHaveBeenCalledOnce());
+	expect(mocks.get).toHaveBeenCalledWith("team", "codex", authority);
+	expect(mocks.profiles).not.toHaveBeenCalled();
+	expect(mocks.register).not.toHaveBeenCalled();
+	expect(mocks.put.mock.calls[0][0]).toMatchObject({
+		enabled: true,
+		accounts: [{ profile: profiles[1] }, { profile: profiles[0] }],
+	});
+	expect(mocks.put.mock.calls[0][1]).toEqual(authority);
+});
 
 it("only offers personal accounts after explicit selection and save on the local server", async () => {
 	const view = renderHook(useAccountRecoverySettings);

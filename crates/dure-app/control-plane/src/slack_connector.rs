@@ -8,6 +8,10 @@ use std::sync::{Arc, Weak};
 #[cfg(test)]
 use std::time::Duration;
 
+use dure_app::{
+    AgentExecutionProfileV1, AgentSpawnEffortSelectionV1, AgentSpawnModelSelectionV1,
+    ProviderLaunchPermissionOverrideV1,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -47,6 +51,26 @@ struct Channel {
     objective: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     space: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<AgentSpawnModelSelectionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effort: Option<AgentSpawnEffortSelectionV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    instructions: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    permission_override: Option<ProviderLaunchPermissionOverrideV1>,
+}
+
+impl Channel {
+    fn has_launch_defaults(&self) -> bool {
+        self.model.is_some()
+            || self.effort.is_some()
+            || self.account_id.is_some()
+            || self.instructions.is_some()
+            || self.permission_override.is_some()
+    }
 }
 
 // Never derive Debug or return this private record through the API.
@@ -75,6 +99,8 @@ enum Action {
     },
     Connect {
         config: Configuration,
+        #[serde(default, rename = "replaceLaunchDefaults")]
+        replace_launch_defaults: bool,
         #[serde(default, rename = "appToken")]
         app_token: Option<String>,
         #[serde(default, rename = "botToken")]
@@ -229,7 +255,7 @@ impl SlackConnectorService {
 
     async fn snapshot(&self) -> Value {
         let connections = self.connections.lock().await;
-        json!({ "schemaVersion": 1, "connections": connections.entries.values().map(Connection::view).collect::<Vec<_>>() })
+        json!({ "schemaVersion": 1, "capabilities": ["channel_launch_defaults.v1"], "connections": connections.entries.values().map(Connection::view).collect::<Vec<_>>() })
     }
 
     pub(crate) async fn dispatch(&self, body: &Value) -> Result<Value, BackendDispatchError> {
@@ -252,7 +278,8 @@ impl SlackConnectorService {
         match request.action {
             Action::List | Action::Share { .. } | Action::Tasks { .. } => {}
             Action::Connect {
-                config,
+                mut config,
+                replace_launch_defaults,
                 app_token,
                 bot_token,
             } => {
@@ -262,6 +289,16 @@ impl SlackConnectorService {
                 if !valid_team(&config.team_id) {
                     return Err(error("slack_connection_workspace_invalid"));
                 }
+                for channel in &config.channels {
+                    if let Some(reference_id) = &channel.account_id {
+                        AgentExecutionProfileV1::CredentialReference {
+                            reference_id: reference_id.clone(),
+                            credential_generation: None,
+                        }
+                        .validate()
+                        .map_err(|_| error("slack_connection_request_invalid"))?;
+                    }
+                }
                 let team = config.team_id.clone();
                 let previous = self
                     .connections
@@ -270,6 +307,38 @@ impl SlackConnectorService {
                     .entries
                     .get(&team)
                     .map(|entry| entry.settings.clone());
+                // Older clients omit fields they cannot display. Preserve
+                // those defaults unless a capable editor explicitly replaces them.
+                if !replace_launch_defaults {
+                    for channel in &mut config.channels {
+                        if let Some(saved) = previous.as_ref().and_then(|settings| {
+                            settings
+                                .config
+                                .channels
+                                .iter()
+                                .find(|saved| saved.channel_id == channel.channel_id)
+                        }) {
+                            if saved.has_launch_defaults()
+                                && (channel.provider_id != saved.provider_id
+                                    || channel.backend != saved.backend)
+                            {
+                                return Err(error("slack_connection_defaults_unsupported"));
+                            }
+                            channel.model = channel.model.take().or_else(|| saved.model.clone());
+                            channel.effort = channel.effort.take().or_else(|| saved.effort.clone());
+                            channel.account_id = channel
+                                .account_id
+                                .take()
+                                .or_else(|| saved.account_id.clone());
+                            channel.instructions = channel
+                                .instructions
+                                .take()
+                                .or_else(|| saved.instructions.clone());
+                            channel.permission_override =
+                                channel.permission_override.or(saved.permission_override);
+                        }
+                    }
+                }
                 let settings = Settings {
                     schema_version: 1,
                     config,
@@ -328,7 +397,20 @@ impl SlackConnectorService {
         let config = directory.join("config.json");
         // Runtime input is a projection of the private settings record. The
         // adapter never receives credentials in its configuration or journal.
-        private_record::write(&config, &entry.settings.config)
+        let mut runtime_config = serde_json::to_value(&entry.settings.config)
+            .map_err(|_| error("slack_connection_save_failed"))?;
+        // An independently updated CLI must reject settings it cannot apply.
+        // The public settings projection remains v1 for older desktop clients.
+        if entry
+            .settings
+            .config
+            .channels
+            .iter()
+            .any(Channel::has_launch_defaults)
+        {
+            runtime_config["schemaVersion"] = json!(2);
+        }
+        private_record::write(&config, &runtime_config)
             .map_err(|_| error("slack_connection_save_failed"))?;
         let generation = random_opaque_reference("slack-connector")?;
         let mut command = tokio::process::Command::new(&self.cli);

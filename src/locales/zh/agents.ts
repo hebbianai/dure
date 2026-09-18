@@ -87,6 +87,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.turnFailure.providerError": "轮次失败：提供方报告了错误。",
 	"agents.chat.turnFailure.runtimeReplaced": "轮次失败：会话运行时已被替换。",
 	"agents.chat.recovery.switchTo": "切换到 {name}…",
+	"agents.chat.recovery.chooseAccount": "切换账号",
 	"agents.chat.recovery.manageAccounts": "管理账户…",
 	"agents.chat.recovery.signIn": "重新登录…",
 	"agents.chat.recovery.handedOff": "{from} 达到用量上限，已切换到 {to}。",

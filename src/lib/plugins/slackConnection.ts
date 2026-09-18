@@ -1,6 +1,15 @@
 import { t } from "@/lib/i18n";
 import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import { asRecord } from "@/lib/payloadGuards";
+import {
+	isProviderModelSelection,
+	isProviderEffortSelection,
+} from "../../../cli/lib/contracts/provider-launch-selection.mjs";
+
+export type SlackPermissionOverride =
+	| "require_approvals"
+	| "auto_edit"
+	| "bypass_approvals";
 
 export interface SlackChannelRoute {
 	channelId: string;
@@ -9,6 +18,11 @@ export interface SlackChannelRoute {
 	backend?: string;
 	objective?: string;
 	space?: string;
+	model?: string;
+	effort?: string;
+	accountId?: string;
+	instructions?: string;
+	permissionOverride?: SlackPermissionOverride;
 }
 
 export interface SlackConfiguration {
@@ -120,7 +134,16 @@ export function parseSlackConnection(value: unknown): SlackConnection {
 			typeof route.channelId !== "string" ||
 			typeof route.projectId !== "string" ||
 			typeof route.providerId !== "string" ||
-			["backend", "objective", "space"].some(
+			[
+				"backend",
+				"objective",
+				"space",
+				"model",
+				"effort",
+				"accountId",
+				"instructions",
+				"permissionOverride",
+			].some(
 				(key) => route[key] !== undefined && typeof route[key] !== "string",
 			)
 		)
@@ -134,6 +157,20 @@ export function parseSlackConnection(value: unknown): SlackConnection {
 				? { objective: route.objective }
 				: {}),
 			...(typeof route.space === "string" ? { space: route.space } : {}),
+			...(typeof route.model === "string" ? { model: route.model } : {}),
+			...(typeof route.effort === "string" ? { effort: route.effort } : {}),
+			...(typeof route.accountId === "string"
+				? { accountId: route.accountId }
+				: {}),
+			...(typeof route.instructions === "string"
+				? { instructions: route.instructions }
+				: {}),
+			...(typeof route.permissionOverride === "string"
+				? {
+						permissionOverride:
+							route.permissionOverride as SlackPermissionOverride,
+					}
+				: {}),
 		};
 	});
 	return {
@@ -181,6 +218,22 @@ export function slackConnectIntent(
 	appToken: string,
 	botToken: string,
 ): SlackConnectIntent {
+	for (const route of config.channels) {
+		if (
+			(route.model?.trim() && !isProviderModelSelection(route.model.trim())) ||
+			(route.effort?.trim() && !isProviderEffortSelection(route.effort.trim()))
+		)
+			throw new Error(t("agents.quickDispatch.invalidSelection"));
+		if (
+			(route.accountId?.trim() &&
+				!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(route.accountId.trim())) ||
+			(route.permissionOverride !== undefined &&
+				!["require_approvals", "auto_edit", "bypass_approvals"].includes(
+					route.permissionOverride,
+				))
+		)
+			throw new Error(t("plugins.slack.invalidDefaults"));
+	}
 	return {
 		config: {
 			schemaVersion: 1,
@@ -194,6 +247,17 @@ export function slackConnectIntent(
 					? { objective: route.objective.trim() }
 					: {}),
 				...(route.space?.trim() ? { space: route.space.trim() } : {}),
+				...(route.model?.trim() ? { model: route.model.trim() } : {}),
+				...(route.effort?.trim() ? { effort: route.effort.trim() } : {}),
+				...(route.accountId?.trim()
+					? { accountId: route.accountId.trim() }
+					: {}),
+				...(route.instructions?.trim()
+					? { instructions: route.instructions.trim() }
+					: {}),
+				...(route.permissionOverride
+					? { permissionOverride: route.permissionOverride }
+					: {}),
 			})),
 		},
 		...(appToken.trim() ? { appToken: appToken.trim() } : {}),

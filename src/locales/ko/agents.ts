@@ -86,6 +86,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.turnFailure.providerError": "응답 실패: 프로바이더가 오류를 보고했습니다.",
 	"agents.chat.turnFailure.runtimeReplaced": "응답 실패: 세션 런타임이 교체되었습니다.",
 	"agents.chat.recovery.switchTo": "{name}(으)로 전환…",
+	"agents.chat.recovery.chooseAccount": "계정 변경",
 	"agents.chat.recovery.manageAccounts": "계정 관리…",
 	"agents.chat.recovery.signIn": "다시 로그인…",
 	"agents.chat.recovery.handedOff": "{from}이(가) 사용량 한도에 닿아 {to}(으)로 전환했습니다.",

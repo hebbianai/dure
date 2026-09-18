@@ -87,6 +87,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.turnFailure.providerError": "ターン失敗: プロバイダーがエラーを報告しました。",
 	"agents.chat.turnFailure.runtimeReplaced": "ターン失敗: セッションランタイムが置き換えられました。",
 	"agents.chat.recovery.switchTo": "{name} に切り替え…",
+	"agents.chat.recovery.chooseAccount": "アカウントを切り替え",
 	"agents.chat.recovery.manageAccounts": "アカウントを管理…",
 	"agents.chat.recovery.signIn": "再度サインイン…",
 	"agents.chat.recovery.handedOff": "{from} が使用量の上限に達したため {to} に切り替えました。",

@@ -2,6 +2,9 @@ import type { EnglishTranslationDictionary } from "@/lib/settings/englishTransla
 
 /** Settings, plugins, privacy, permissions, MCP, and shortcut copy. */
 export const settingsEnglishTranslations = {
+	"settings.recovery.moveUp": "Move {account} up",
+	"settings.recovery.moveDown": "Move {account} down",
+	"settings.recovery.orderHint": "Accounts with lower observed usage are preferred. This order breaks ties and orders accounts with unknown usage. Automatic recovery stops when no allowed account is available.",
 	"settings.recovery.title": "Automatic account recovery · Beta",
 	"settings.recovery.description": "When a conversation reaches its usage limit, the server switches to an allowed account and continues the same request, even with Dure closed.",
 	"settings.recovery.server": "Server",

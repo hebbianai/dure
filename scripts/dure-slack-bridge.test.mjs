@@ -85,6 +85,61 @@ test("unconnected channels, other workspaces, bot messages and unrelated convers
   assert.ok(incomingSlackMessage(payload({ channel: "D1", channel_type: "im", type: "message", text: "Help with onboarding" }), dm, "U0", {}));
 });
 
+test("channel defaults enter only a new task's initial context and survive both config versions", () => {
+  const route = {...config.channels[0], model: "model-fixture", effort: "high", accountId: "team", permissionOverride: "require_approvals", instructions: "Review before publishing."};
+  for (const schemaVersion of [1, 2]) {
+    const configured = validateSlackConfig({...config, schemaVersion, channels: [route]});
+    const message = incomingSlackMessage(payload(), configured, "U0", {});
+    assert.match(slackInput(message, {initial: true}), /Shared instructions: Review before publishing/);
+    assert.doesNotMatch(slackInput(message), /Review before publishing/);
+  }
+  for (const change of [{model: "--unsafe"}, {effort: "high;exit"}, {accountId: "../private"}, {instructions: 3}, {permissionOverride: "unknown"}]) {
+    assert.throws(() => validateSlackConfig({...config, channels: [{...route, ...change}]}));
+  }
+});
+
+test("Slack passes the channel model, effort, approval mode and exact server credential into the real spawn client", async () => {
+  const requests = [];
+  const executionProfile = {kind: "credential_reference", reference_id: "team", credential_generation: "credential-current"};
+  let receipt;
+  const backend = new DureSlackBackend(async () => ({profile: {id: "team", transport: {kind: "local"}, expected: {backendId: "backend-1", scopeId: "scope-1", capabilities: []}}}), {
+    requestBackend: async (profile, request) => {
+      assert.equal(profile.expected.scopeId, "scope-1");
+      requests.push(request);
+      if (request.operation === "provider_recovery.get") return {result: {schemaVersion: 1, profiles: [
+        {schemaVersion: 1, providerId: "claude", referenceId: "team", credentialGeneration: "credential-current"},
+      ]}};
+      if (request.operation === "agent_spawn.preview") {
+        assert.deepEqual(request.body.executionProfile, executionProfile);
+        assert.equal(request.body.model, "model-fixture");
+        assert.equal(request.body.effort, "high");
+        assert.equal(request.body.permissionOverride, "require_approvals");
+        receipt = succeededStructuredReceipt({...request.body, worktree: {...request.body.worktree, base_commit_sha: "a".repeat(40)}});
+        receipt.plan.request.executionProfile = executionProfile;
+        receipt.completed[1].inputs.execution_profile = executionProfile;
+        receipt.completed[1].evidence.binding.executionProfile = executionProfile;
+        receipt.plan.authority.projectId = request.body.projectId;
+        receipt.completed[0].evidence.lease.directory_name = request.body.worktree.branch.split("/").at(-1);
+      }
+      return {backend: {id: "backend-1", generation: "g1", protocol: {major: 1, minor: 0}, capabilities: [], observedAtMs: Date.now()}, result: {schemaVersion: 1, receipt}};
+    },
+  });
+  const configured = {...config, channels: [{...config.channels[0], model: "model-fixture", effort: "high", accountId: "team", permissionOverride: "require_approvals"}]};
+  const message = incomingSlackMessage(payload(), configured, "U0", {});
+  await backend.start(message, {backend: {profileId: "team", backendId: "backend-1", scopeId: "scope-1"}});
+  assert.deepEqual(requests.map(({operation}) => operation), ["provider_recovery.get", "agent_spawn.preview", "agent_spawn.apply"]);
+});
+
+test("a missing server account prevents a Slack task launch without using the default account", async () => {
+  const requests = [];
+  const backend = new DureSlackBackend(async () => ({profile: {id: "team", expected: {backendId: "backend-1", capabilities: []}}}), {
+    requestBackend: async (_profile, request) => { requests.push(request.operation); return {result: {profiles: []}}; },
+  });
+  const message = incomingSlackMessage(payload(), {...config, channels: [{...config.channels[0], accountId: "private"}]}, "U0", {});
+  await assert.rejects(backend.start(message, {backend: {profileId: "team", backendId: "backend-1", scopeId: "scope-1"}}), {code: "slack_account_unavailable"});
+  assert.deepEqual(requests, ["provider_recovery.get"]);
+});
+
 test("Dure messages and agent replies reach Slack once; Slack input and reasoning are not echoed", async (t) => {
   const f = await fixture(t);
   f.bridge.accept(payload());

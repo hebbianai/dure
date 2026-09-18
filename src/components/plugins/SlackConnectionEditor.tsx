@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { Textarea } from "@/components/ui/textarea";
+import { SlackChannelDefaults } from "@/components/plugins/SlackChannelDefaults";
 import { PROVIDER_IDS, PROVIDERS } from "@/lib/agents/providerCatalog";
 import { t } from "@/lib/i18n";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
@@ -31,6 +32,7 @@ export function SlackConnectionEditor({
 	authority,
 	connection,
 	busy,
+	launchDefaultsSupported = false,
 	submit,
 	onClose,
 }: {
@@ -38,6 +40,7 @@ export function SlackConnectionEditor({
 	authority: DureBackendRouteAuthorityV1;
 	connection?: SlackConnection;
 	busy: boolean;
+	launchDefaultsSupported?: boolean;
 	submit: (
 		operation: () => Promise<SlackConnectionSnapshot>,
 	) => Promise<boolean>;
@@ -62,6 +65,7 @@ export function SlackConnectionEditor({
 	const [projects, setProjects] = useState<DureProjectOption[]>([]);
 	const [projectError, setProjectError] = useState<string>();
 	const [partial, setPartial] = useState(false);
+	const [validationError, setValidationError] = useState<string>();
 	useEffect(() => {
 		let current = true;
 		void client
@@ -91,7 +95,16 @@ export function SlackConnectionEditor({
 		}));
 	}
 	async function connect() {
-		const intent = slackConnectIntent(config, appToken, botToken);
+		setValidationError(undefined);
+		let intent: ReturnType<typeof slackConnectIntent>;
+		try {
+			intent = slackConnectIntent(config, appToken, botToken);
+		} catch (error) {
+			setValidationError(
+				error instanceof Error ? error.message : slackConnectionError(error),
+			);
+			return;
+		}
 		if (await submit(() => client.connect(intent, authority))) {
 			setAppToken("");
 			setBotToken("");
@@ -256,7 +269,12 @@ export function SlackConnectionEditor({
 									<SelectField
 										value={route.providerId}
 										onValueChange={(providerId) =>
-											changeRoute(index, { providerId })
+											changeRoute(index, {
+												providerId,
+												model: undefined,
+												effort: undefined,
+												accountId: undefined,
+											})
 										}
 									>
 										{!PROVIDER_IDS.some((id) => id === route.providerId) && (
@@ -281,6 +299,18 @@ export function SlackConnectionEditor({
 									}
 								/>
 							</FormField>
+							{launchDefaultsSupported ? (
+								<SlackChannelDefaults
+									route={route}
+									authority={authority}
+									client={client}
+									onChange={(update) => changeRoute(index, update)}
+								/>
+							) : (
+								<p className="text-xs text-muted-foreground">
+									{t("plugins.slack.defaultsUnavailable")}
+								</p>
+							)}
 							<details>
 								<summary className="cursor-pointer text-xs text-muted-foreground">
 									{t("plugins.slack.executionOptions")}
@@ -294,7 +324,18 @@ export function SlackConnectionEditor({
 											value={route.backend ?? ""}
 											placeholder={authority.profileId}
 											onChange={(event) =>
-												changeRoute(index, { backend: event.target.value })
+												changeRoute(index, {
+													backend: event.target.value,
+													accountId: undefined,
+												})
+											}
+										/>
+									</FormField>
+									<FormField label={t("plugins.slack.space")}>
+										<Input
+											value={route.space ?? ""}
+											onChange={(event) =>
+												changeRoute(index, { space: event.target.value })
 											}
 										/>
 									</FormField>
@@ -328,6 +369,7 @@ export function SlackConnectionEditor({
 				<Button type="button" size="sm" onClick={() => void connect()}>
 					{t(busy ? "plugins.slack.saving" : "plugins.slack.saveConnect")}
 				</Button>
+				{validationError && <Alert>{validationError}</Alert>}
 			</fieldset>
 		</section>
 	);

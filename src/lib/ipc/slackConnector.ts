@@ -13,10 +13,14 @@ import {
 	slackConnectionContractError,
 } from "@/lib/plugins/slackConnection";
 import { parseSlackTask } from "@/lib/plugins/slackTask";
+import { t } from "@/lib/i18n";
+import { createAccountRecoveryClient } from "@/lib/ipc/dureAccountRecovery";
+import { parseProviderModels } from "@/lib/agents/providerModels";
 
 export interface SlackConnectionSnapshot {
 	authority: DureBackendRouteAuthorityV1;
 	connections: SlackConnection[];
+	launchDefaultsSupported?: boolean;
 }
 
 export function createSlackConnectorClient(
@@ -46,9 +50,30 @@ export function createSlackConnectorClient(
 		return {
 			authority: routeAuthority,
 			connections: result.connections.map(parseSlackConnection),
+			launchDefaultsSupported:
+				Array.isArray(result.capabilities) &&
+				result.capabilities.includes("channel_launch_defaults.v1"),
 		};
 	}
 	return {
+		accounts: (providerId: string, authority: DureBackendRouteAuthorityV1) =>
+			createAccountRecoveryClient(
+				authority.profileId,
+				options.invokeCommand,
+			).get(providerId, authority),
+		models: async (
+			providerId: string,
+			authority: DureBackendRouteAuthorityV1,
+		) => {
+			const { result } = await request(
+				"provider_catalog.read",
+				{ schemaVersion: 1, providerId, credentialProfile: null },
+				{ kind: "exact", authority },
+			);
+			const models = parseProviderModels(result.models);
+			if (!models) slackConnectionContractError();
+			return models;
+		},
 		tasks: async (teamId: string, authority: DureBackendRouteAuthorityV1) => {
 			const { result } = await request(
 				"slack.connector",
@@ -75,10 +100,36 @@ export function createSlackConnectorClient(
 		},
 		list: (authority?: DureBackendRouteAuthorityV1) =>
 			send({ kind: "list" }, authority),
-		connect: (
+		connect: async (
 			intent: SlackConnectIntent,
 			authority: DureBackendRouteAuthorityV1,
-		) => send({ kind: "connect", ...intent }, authority),
+		) => {
+			const observed = await send({ kind: "list" }, authority);
+			if (
+				intent.config.channels.some((route) =>
+					[
+						route.model,
+						route.effort,
+						route.accountId,
+						route.instructions,
+						route.permissionOverride,
+					].some((value) => value !== undefined),
+				)
+			) {
+				if (!observed.launchDefaultsSupported)
+					throw new Error(t("plugins.slack.defaultsUnavailable"));
+			}
+			return send(
+				{
+					kind: "connect",
+					...intent,
+					...(observed.launchDefaultsSupported
+						? { replaceLaunchDefaults: true }
+						: {}),
+				},
+				authority,
+			);
+		},
 		disconnect: (teamId: string, authority: DureBackendRouteAuthorityV1) =>
 			send({ kind: "disconnect", teamId }, authority),
 		projects: (authority: DureBackendRouteAuthorityV1) =>

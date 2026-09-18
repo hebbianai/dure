@@ -43,15 +43,40 @@ function fixture({
 	loseConnect = false,
 	failed = false,
 	initial = [],
+	defaults = false,
 }: {
 	loseConnect?: boolean;
 	failed?: boolean;
 	initial?: SlackConnection[];
+	defaults?: boolean;
 } = {}) {
 	let connections = initial;
 	let delayedList: (() => Promise<unknown>) | undefined;
 	const invokeCommand = vi.fn(
 		async (_command: string, args: Record<string, unknown>) => {
+			if (args.operation === "provider_recovery.get")
+				return envelope({
+					policy: null,
+					profiles: [
+						{
+							schemaVersion: 1,
+							providerId: "codex",
+							referenceId: "team",
+							credentialGeneration: "credential-1",
+						},
+					],
+				});
+			if (args.operation === "provider_catalog.read")
+				return envelope({
+					models: [
+						{
+							value: "model-fixture",
+							displayName: "Fixture model",
+							supportsEffort: true,
+							supportedEffortLevels: ["high"],
+						},
+					],
+				});
 			if (args.operation === "projects.list")
 				return envelope({
 					projects: [{ id: "project-main", displayName: "Main" }],
@@ -91,7 +116,10 @@ function fixture({
 						: entry,
 				);
 			}
-			return envelope({ connections: structuredClone(connections) });
+			return envelope({
+				connections: structuredClone(connections),
+				...(defaults ? { capabilities: ["channel_launch_defaults.v1"] } : {}),
+			});
 		},
 	);
 	return {
@@ -108,12 +136,153 @@ function fixture({
 }
 
 beforeEach(() => {
+	// jsdom has no layout scrolling; Radix uses this when opening a select.
+	Element.prototype.scrollIntoView = vi.fn();
 	setLang("en");
 	mode.pro = true;
 });
 afterEach(() => {
 	cleanup();
 	vi.useRealTimers();
+});
+
+it("saves new-task defaults and restores them when the connection is reopened", async () => {
+	const f = fixture({
+		defaults: true,
+		initial: [
+			{
+				config: {
+					schemaVersion: 1,
+					teamId: "T1",
+					channels: [
+						{
+							channelId: "C1",
+							projectId: "project-main",
+							providerId: "codex",
+							backend: "worker",
+						},
+					],
+				},
+				enabled: true,
+				credentialsConfigured: true,
+				connection: "connected",
+				generation: "g1",
+				failure: null,
+			},
+		],
+	});
+	const view = render(<SlackConnectionsPanel client={f.client} editOnOpen />);
+	fireEvent.click(await screen.findByText("Execution defaults"));
+	fireEvent.change(await screen.findByLabelText("Model"), {
+		target: { value: "model-fixture" },
+	});
+	fireEvent.change(screen.getByLabelText("Reasoning effort"), {
+		target: { value: "high" },
+	});
+	fireEvent.change(screen.getByLabelText("Default account"), {
+		target: { value: "team" },
+	});
+	fireEvent.change(screen.getByLabelText("Shared instructions"), {
+		target: { value: "Review before publishing." },
+	});
+	fireEvent.click(screen.getByRole("combobox", { name: "Approvals" }));
+	fireEvent.click(
+		screen.getByRole("option", { name: "Approve edits automatically" }),
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Save and connect" }));
+	await waitFor(() => expect(f.actions("connect")).toHaveLength(1));
+	expect(f.actions("connect")[0][1].body).toMatchObject({
+		config: {
+			channels: [
+				{
+					model: "model-fixture",
+					effort: "high",
+					accountId: "team",
+					instructions: "Review before publishing.",
+					permissionOverride: "auto_edit",
+				},
+			],
+		},
+	});
+	expect(f.actions("connect")[0][1].body).not.toHaveProperty("appToken");
+	view.unmount();
+	render(<SlackConnectionsPanel client={f.client} editOnOpen />);
+	fireEvent.click(await screen.findByText("Execution defaults"));
+	expect(
+		((await screen.findByLabelText("Model")) as HTMLInputElement).value,
+	).toBe("model-fixture");
+	expect(
+		(screen.getByLabelText("Default account") as HTMLInputElement).value,
+	).toBe("team");
+	expect(
+		f.invokeCommand.mock.calls.some(
+			([, args]) => args.operation === "provider_recovery.get",
+		),
+	).toBe(false);
+});
+
+it("does not write execution defaults to a server that cannot preserve them", async () => {
+	const f = fixture({ defaults: false });
+	await expect(
+		f.client.connect(
+			{
+				config: {
+					schemaVersion: 1,
+					teamId: "T1",
+					channels: [
+						{
+							channelId: "C1",
+							projectId: "project-main",
+							providerId: "codex",
+							model: "model-fixture",
+						},
+					],
+				},
+			},
+			authority,
+		),
+	).rejects.toThrow("Update the connection server");
+	expect(f.actions("connect")).toHaveLength(0);
+});
+
+it("loads registered account and model choices only for the exact connection server", async () => {
+	const f = fixture({
+		defaults: true,
+		initial: [
+			{
+				config: {
+					schemaVersion: 1,
+					teamId: "T1",
+					channels: [
+						{ channelId: "C1", projectId: "project-main", providerId: "codex" },
+					],
+				},
+				enabled: true,
+				credentialsConfigured: true,
+				connection: "connected",
+				generation: "g1",
+				failure: null,
+			},
+		],
+	});
+	render(<SlackConnectionsPanel client={f.client} editOnOpen />);
+	fireEvent.click(await screen.findByText("Execution defaults"));
+	await screen.findByLabelText("Model");
+	await waitFor(() =>
+		expect(
+			f.invokeCommand.mock.calls.filter(
+				([, args]) => args.operation === "provider_catalog.read",
+			),
+		).toHaveLength(1),
+	);
+	for (const [, args] of f.invokeCommand.mock.calls.filter(([, args]) =>
+		["provider_catalog.read", "provider_recovery.get"].includes(
+			args.operation as string,
+		),
+	))
+		expect(args.route).toEqual(exactDureBackendRoute(authority));
+	fireEvent.click(screen.getByRole("combobox", { name: "Default account" }));
+	expect(await screen.findByRole("option", { name: "team" })).toBeTruthy();
 });
 
 async function newWorkspace() {
@@ -287,5 +456,51 @@ it("exposes Slack connection management in public Basic mode", async () => {
 		render(<SlackConnectionsPanel client={f.client} />);
 	});
 	expect(f.invokeCommand).toHaveBeenCalled();
-	expect(screen.getByRole("button", { name: "Connect a workspace" })).toBeTruthy();
+	expect(
+		screen.getByRole("button", { name: "Connect a workspace" }),
+	).toBeTruthy();
+});
+
+it("opens the single workspace's settings from Dure Tag and saves its Space without replacing tokens", async () => {
+	const connection: SlackConnection = {
+		config: {
+			schemaVersion: 1,
+			teamId: "T1",
+			channels: [
+				{
+					channelId: "C1",
+					projectId: "project-main",
+					providerId: "codex",
+					objective: "Shared work",
+				},
+			],
+		},
+		enabled: true,
+		credentialsConfigured: true,
+		connection: "connected",
+		generation: "connector-1",
+		failure: null,
+	};
+	const f = fixture({ initial: [connection] });
+	render(<SlackConnectionsPanel client={f.client} editOnOpen />);
+	await screen.findByLabelText("Shared goal (optional)");
+	expect(screen.getByRole("button", { name: /C1 · Codex/ })).toBeTruthy();
+	fireEvent.click(screen.getByText("Server and Space"));
+	fireEvent.change(screen.getByLabelText("Dure Space (optional)"), {
+		target: { value: "Team work" },
+	});
+	fireEvent.click(screen.getByRole("button", { name: "Save and connect" }));
+	await waitFor(() => expect(f.actions("connect")).toHaveLength(1));
+	expect(f.actions("connect")[0][1].body).toEqual({
+		schemaVersion: 1,
+		kind: "connect",
+		config: {
+			...connection.config,
+			channels: [{ ...connection.config.channels[0], space: "Team work" }],
+		},
+	});
+	fireEvent.click(screen.getByRole("button", { name: "Close" }));
+	fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+	await waitFor(() => expect(f.actions("list").length).toBeGreaterThan(1));
+	expect(screen.queryByLabelText("Shared goal (optional)")).toBeNull();
 });

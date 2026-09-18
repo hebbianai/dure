@@ -2,6 +2,7 @@ import { collectAgentRun, defaultAgentRunName } from "../agent-run.mjs";
 import { BackendTransportError, performBackendProfileRequest } from "../backend-transport.mjs";
 import { nativeSlackPage, nativeSlackTarget } from "./native.mjs";
 import { slackInput } from "./event.mjs";
+import { validExecutionProfile } from "../agent-spawn-query.mjs";
 
 export class DureSlackBackend {
   constructor(resolveBackend, { defaultBackend, signal, requestBackend = performBackendProfileRequest, presentRun, onPresentationError } = {}) {
@@ -61,10 +62,27 @@ export class DureSlackBackend {
   async start(message, thread) {
     const backend = await this.target(thread);
     const idempotencyKey = `slack-${message.threadKey}`;
+    let executionProfile;
+    if (message.route.accountId) {
+      const response = await this.request(backend.profile, {
+        operation: "provider_recovery.get",
+        body: { schemaVersion: 1, providerId: message.route.providerId },
+      }, backend.transportOptions);
+      const profile = response.result?.profiles?.find((entry) =>
+        entry.providerId === message.route.providerId && entry.referenceId === message.route.accountId);
+      executionProfile = { kind: "credential_reference", reference_id: profile?.referenceId,
+        credential_generation: profile?.credentialGeneration };
+      if (!validExecutionProfile(executionProfile)) {
+        throw Object.assign(new Error("The channel's account is unavailable on its execution server."),
+          { code: "slack_account_unavailable" });
+      }
+    }
     const { report, presentationProject } = await collectAgentRun({
       projectId: message.route.projectId, providerId: message.route.providerId,
       agentName: defaultAgentRunName(message.route.providerId, idempotencyKey),
       prompt: slackInput(message, { initial: true }), idempotencyKey,
+      model: message.route.model, effort: message.route.effort, executionProfile,
+      permissionOverride: message.route.permissionOverride,
       worktree: { kind: "dedicated", branch: `slack/${message.threadKey.slice(0, 16)}` },
       includePresentationProject: this.presentRun !== undefined,
       backend, requestBackend: this.request,

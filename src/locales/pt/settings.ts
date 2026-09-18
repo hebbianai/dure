@@ -1,4 +1,7 @@
 export const settings: Record<string, string> = {
+	"settings.recovery.moveUp": "Mover {account} para cima",
+	"settings.recovery.moveDown": "Mover {account} para baixo",
+	"settings.recovery.orderHint": "Contas com menor uso observado têm preferência. Esta ordem desempata e ordena contas com uso desconhecido. A recuperação automática para quando nenhuma conta permitida está disponível.",
 	"settings.recovery.title": "Recuperação automática de contas · Beta",
 	"settings.recovery.description": "Quando uma conversa atinge o limite de uso, o servidor muda para uma conta permitida e continua a mesma solicitação, mesmo com o Dure fechado.",
 	"settings.recovery.server": "Servidor",

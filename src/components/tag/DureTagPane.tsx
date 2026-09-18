@@ -267,7 +267,7 @@ function TagTasks({
 						<DialogHeader>
 							<DialogTitle>{t("tag.connections")}</DialogTitle>
 						</DialogHeader>
-						<SlackConnectionsPanel client={client} profiles={profiles} />
+						<SlackConnectionsPanel client={client} profiles={profiles} editOnOpen />
 					</DialogContent>
 				</Dialog>
 			)}
