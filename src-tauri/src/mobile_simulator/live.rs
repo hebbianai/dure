@@ -268,6 +268,9 @@ fn frame(endpoint: Endpoint) -> Result<Option<Frame>, String> {
     response.json().map(Some).map_err(|e| e.to_string())
 }
 pub(super) fn act(target: &Target, action: &Action) -> Result<(), String> {
+    if let Action::Paste { text } = action {
+        validate_paste(text)?;
+    }
     let endpoint = {
         let active = leases()
             .lock()
@@ -292,6 +295,17 @@ pub(super) fn act(target: &Target, action: &Action) -> Result<(), String> {
             .clone()
             .ok_or("Live connection is not ready")?
     };
+    if let Action::Paste { text } = action {
+        // Admission above must succeed before changing this exact guest's clipboard.
+        // DeviceOperation serializes the clipboard write and chord for this device.
+        execute_with_input(
+            "/usr/bin/xcrun",
+            &["simctl", "pbcopy", &target.id],
+            5,
+            8192,
+            Some(text.as_bytes()),
+        )?;
+    }
     let response = client()?
         .post(endpoint.url("action"))
         .bearer_auth(endpoint.token)

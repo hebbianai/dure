@@ -28,7 +28,7 @@ export type MobileDeviceAction =
 	| { kind: "open_url"; url: string }
 	| { kind: "install"; path: string }
 	| { kind: "launch"; appId: string }
-	| { kind: "type"; text: string }
+	| { kind: "type" | "paste"; text: string }
 	| { kind: "rotate"; landscape: boolean }
 	| { kind: "button"; button: "home" | "back" | "recents" }
 	| {

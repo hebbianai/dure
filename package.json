@@ -2,7 +2,7 @@
   "name": "dure",
   "license": "GPL-3.0-only",
   "private": true,
-  "version": "0.2.26",
+  "version": "0.2.28",
   "packageManager": "pnpm@10.34.5",
   "engines": {
     "node": "24.15.0"

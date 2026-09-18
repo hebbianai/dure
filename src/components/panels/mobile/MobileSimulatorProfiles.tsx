@@ -5,7 +5,19 @@ import { Input } from "@/components/ui/input";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { t } from "@/lib/i18n";
 import type { MobileDeviceTarget } from "@/lib/ipc/mobileSimulator";
-import type { MobileRunProfile } from "@/lib/mobileSimulator/profile";
+import {
+	type MobileRunProfile,
+	type MobileRunProfileIdentity,
+	mobileRunProfileKey,
+} from "@/lib/mobileSimulator/profile";
+
+const emptyDraft = {
+	projectPath: "",
+	buildCommand: "",
+	artifactPath: "",
+	appId: "",
+	url: "",
+};
 
 export function MobileSimulatorProfiles({
 	profiles,
@@ -20,18 +32,20 @@ export function MobileSimulatorProfiles({
 	target: MobileDeviceTarget;
 	busy: boolean;
 	save: (profile: MobileRunProfile) => void;
-	remove?: (projectPath: string) => void;
+	remove?: (profile: MobileRunProfileIdentity) => void;
 	run: (profile: MobileRunProfile) => Promise<void>;
 	select: (target: MobileDeviceTarget) => void;
 }) {
-	const [draft, setDraft] = useState({
-		projectPath: "",
-		buildCommand: "",
-		artifactPath: "",
-		appId: "",
-		url: "",
-	});
+	const [draft, setDraft] = useState(emptyDraft);
 	const [error, setError] = useState("");
+	const profileKey = mobileRunProfileKey({
+		projectPath: draft.projectPath,
+		device: target,
+	});
+	function newProfile() {
+		setDraft(emptyDraft);
+		setError("");
+	}
 	const valid = Boolean(draft.projectPath.trim() && draft.appId.trim());
 	async function directory() {
 		try {
@@ -49,27 +63,33 @@ export function MobileSimulatorProfiles({
 				<SelectField
 					value={
 						profiles.some(
-							(profile) => profile.projectPath === draft.projectPath,
+							(profile) => mobileRunProfileKey(profile) === profileKey,
 						)
-							? draft.projectPath
+							? profileKey
 							: ""
 					}
 					aria-label={t("panels.mobile.profiles")}
 					disabled={busy}
-					onValueChange={(path) => {
+					onValueChange={(key) => {
 						const profile = profiles.find(
-							(profile) => profile.projectPath === path,
+							(profile) => mobileRunProfileKey(profile) === key,
 						);
 						if (profile) {
 							setDraft(profile);
+							setError("");
 							select(profile.device);
 						}
 					}}
 				>
 					<SelectOption value="">{t("panels.mobile.loadProfile")}</SelectOption>
 					{profiles.map((profile) => (
-						<SelectOption key={profile.projectPath} value={profile.projectPath}>
-							{profile.projectPath}
+						<SelectOption
+							key={mobileRunProfileKey(profile)}
+							value={mobileRunProfileKey(profile)}
+						>
+							{profile.projectPath} ·{" "}
+							{profile.device.platform === "ios" ? "iOS" : "Android"} ·{" "}
+							{profile.device.id}
 						</SelectOption>
 					))}
 				</SelectField>
@@ -111,6 +131,14 @@ export function MobileSimulatorProfiles({
 					<Button
 						size="sm"
 						variant="outline"
+						disabled={busy}
+						onClick={newProfile}
+					>
+						{t("panels.mobile.newProfile")}
+					</Button>
+					<Button
+						size="sm"
+						variant="outline"
 						disabled={busy || !valid}
 						onClick={() => save({ ...draft, device: target })}
 					>
@@ -129,13 +157,15 @@ export function MobileSimulatorProfiles({
 					</Button>
 					{remove &&
 						profiles.some(
-							(profile) => profile.projectPath === draft.projectPath,
+							(profile) => mobileRunProfileKey(profile) === profileKey,
 						) && (
 							<Button
 								size="sm"
 								variant="outline"
 								disabled={busy}
-								onClick={() => remove(draft.projectPath)}
+								onClick={() =>
+									remove({ projectPath: draft.projectPath, device: target })
+								}
 							>
 								{t("common.remove")}
 							</Button>

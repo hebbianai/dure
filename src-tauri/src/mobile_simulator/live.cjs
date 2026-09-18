@@ -45,12 +45,14 @@ async function main() {
       }
       acting = true;
       try {
-        let body = "";
+        const chunks = [];
+        let size = 0;
         for await (const chunk of request) {
-          body += chunk;
-          if (body.length > 16384) throw Error("Input exceeds limit");
+          size += chunk.length;
+          if (size > 65536) throw Error("Input exceeds limit");
+          chunks.push(chunk);
         }
-        await input(hid, JSON.parse(body), latest);
+        await input(hid, JSON.parse(Buffer.concat(chunks).toString("utf8")), latest);
         response.end("ok");
       } finally { acting = false; }
     } catch (error) { response.writeHead(400).end(String(error)); }
@@ -91,6 +93,13 @@ async function input(hid, action, frame) {
     await hid.button("home");
   } else if (action.kind === "rotate" && typeof action.landscape === "boolean") {
     if (!await hid.orientation(action.landscape ? 3 : 1)) throw Error("Simulator refused rotation");
+  } else if (action.kind === "paste") {
+    if (typeof action.text !== "string" || !action.text.length || Buffer.byteLength(action.text, "utf8") > 8192 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(action.text)) throw Error("Paste accepts 1–8192 UTF-8 bytes; only tab and line breaks are supported control characters");
+    // The SDK adapter has populated only this simulator's pasteboard.
+    try {
+      await hid.key("down", 227);
+      try { await hid.key("down", 25); } finally { await hid.key("up", 25); }
+    } finally { await hid.key("up", 227); }
   } else if (action.kind === "type") {
     if (typeof action.text !== "string" || !action.text.length || action.text.length > 2048 || !/^[\x20-\x7e]+$/.test(action.text)) throw Error("Use printable ASCII text");
     for (const character of action.text) {

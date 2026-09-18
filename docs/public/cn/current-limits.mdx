@@ -9,14 +9,16 @@ description: "理解影响工作的平台、提供商、权限和恢复边界。
 
 | 领域 | 当前边界 |
 | --- | --- |
-| 公开下载 | Apple silicon Mac；Basic 界面，Pro 不可用 |
+| 公开下载 | Apple silicon Mac；在 **Settings → General → Interface mode** 选择 Basic 或 Beta |
+| Basic 界面 | 核心面板控件；启动器提供 Claude Code、Codex 和 Kimi Code |
+| Beta 界面 | 增加所有已注册的智能体 CLI、Terminal/Chat 切换、账户自动恢复、VM 环境和 Automations |
 | 编码智能体 | 需要已安装 CLI 和提供商账户；能力因提供商和运行时而异 |
 | GitHub | 侧栏需要桌面 `gh` 登录和仓库访问权限 |
 | Diff 审查 | 本地 worktree；SSH 变更使用远程 Git |
 | 调度工作 | 执行服务和主机必须保持可用 |
 | 会话恢复 | 取决于保存状态和提供商支持；不会让进程跨重启存活 |
 
-应用的七种显示语言与文档的四种发布语言是分开的。高级设置或集成控件可能因构建而异，请使用已安装应用显示的控件。
+应用的七种显示语言与文档的四种发布语言是分开的。Beta 还会显示 Basic 隐藏的高级设置页面和面板控件，请使用所选界面中显示的控件。
 
 ## 文件分离与权限
 

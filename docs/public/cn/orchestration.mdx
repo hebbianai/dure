@@ -11,10 +11,10 @@ description: "将 CLI 和 MCP 客户端连接到持久任务消息、人工决�
 
 ## 连接集成
 
-先检查 Dure CLI 的集成状态：
+先检查 Dure CLI 的全局集成状态。不加 `--global` 时，`dure integration status` 检查的是当前文件夹：
 
 ```sh
-dure integration status
+dure integration status --global
 dure integration --help
 ```
 
@@ -22,7 +22,7 @@ dure integration --help
 
 ```sh
 dure integration install --global --approve-global-config
-dure integration status
+dure integration status --global
 ```
 
 安装会修改提供商配置。阅读报告的变更，并用状态命令确认安装结果。此集成与选择编码智能体提供商或配置应用[插件](/cn/plugins)是分开的。

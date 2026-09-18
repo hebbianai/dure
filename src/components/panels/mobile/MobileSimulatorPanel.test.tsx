@@ -14,10 +14,18 @@ import {
 	type MobileDeviceTarget,
 	mobileSimulator,
 } from "@/lib/ipc/mobileSimulator";
+import type { MobileRunProfile } from "@/lib/mobileSimulator/profile";
 import { MobileSimulatorPanel } from "./MobileSimulatorPanel";
 
 vi.mock("@/lib/ipc/mobileSimulator", () => ({
-	mobileSimulator: { list: vi.fn(), capture: vi.fn(), act: vi.fn() },
+	mobileSimulator: {
+		list: vi.fn(),
+		capture: vi.fn(),
+		act: vi.fn(),
+		liveStart: vi.fn(),
+		liveFrame: vi.fn(),
+		liveStop: vi.fn(),
+	},
 }));
 vi.mock("@/lib/workspace/pane/paneTitleOverrideStore", () => ({
 	applyAutomaticPaneTitle: vi.fn(),
@@ -68,7 +76,11 @@ const catalog = {
 	],
 	unavailable: [],
 };
-function fixture(device?: MobileDeviceTarget, visible = true) {
+function fixture(
+	device?: MobileDeviceTarget,
+	visible = true,
+	profiles: MobileRunProfile[] = [],
+) {
 	let changed = () => {};
 	const api = {
 		isVisible: visible,
@@ -80,7 +92,10 @@ function fixture(device?: MobileDeviceTarget, visible = true) {
 	};
 	const view = render(
 		<MobileSimulatorPanel
-			{...({ api, params: { device } } as unknown as IDockviewPanelProps<{
+			{...({
+				api,
+				params: { device, profiles },
+			} as unknown as IDockviewPanelProps<{
 				device?: MobileDeviceTarget;
 			}>)}
 		/>,
@@ -132,6 +147,9 @@ it("persists exact selection and directs Android input to it", async () => {
 		iosLandscape: false,
 	});
 	expect(mobileSimulator.act).not.toHaveBeenCalled();
+	expect(
+		screen.queryByRole("button", { name: t("panels.mobile.paste") }),
+	).toBeNull();
 	fireEvent.click(
 		screen.getByRole("button", { name: t("panels.mobile.home") }),
 	);
@@ -139,6 +157,42 @@ it("persists exact selection and directs Android input to it", async () => {
 		expect(mobileSimulator.act).toHaveBeenCalledExactlyOnceWith(android, {
 			kind: "button",
 			button: "home",
+		}),
+	);
+});
+
+it("sends a multiline Unicode draft through the explicit iOS paste button", async () => {
+	vi.mocked(mobileSimulator.list).mockResolvedValue({
+		...catalog,
+		devices: catalog.devices.map((device) => ({ ...device, state: "ready" })),
+	});
+	vi.mocked(mobileSimulator.liveStart).mockResolvedValue("qa-live");
+	vi.mocked(mobileSimulator.liveFrame).mockResolvedValue({
+		dataUrl: "data:image/png;base64,YQ==",
+		width: 400,
+		height: 800,
+	});
+	vi.mocked(mobileSimulator.liveStop).mockResolvedValue();
+	fixture(ios);
+	await screen.findByRole("img");
+	expect(
+		screen.queryByRole("button", { name: t("panels.mobile.paste") }),
+	).toBeNull();
+	fireEvent.click(
+		screen.getByRole("checkbox", { name: t("panels.mobile.live") }),
+	);
+	const text = "한글 🙂\nsecond\tline";
+	fireEvent.change(
+		await screen.findByRole("textbox", { name: t("panels.mobile.pasteText") }),
+		{ target: { value: text } },
+	);
+	fireEvent.click(
+		screen.getByRole("button", { name: t("panels.mobile.paste") }),
+	);
+	await waitFor(() =>
+		expect(mobileSimulator.act).toHaveBeenCalledExactlyOnceWith(ios, {
+			kind: "paste",
+			text,
 		}),
 	);
 });
@@ -200,4 +254,34 @@ it("refreshes observed device state after a partial failure without losing the o
 		screen.queryByRole("button", { name: t("panels.mobile.boot") }),
 	).toBeNull();
 	expect(mobileSimulator.act).toHaveBeenCalledTimes(1);
+});
+
+it("removes only the selected device profile and persists its siblings", async () => {
+	const profile = {
+		projectPath: "/project",
+		buildCommand: "build",
+		artifactPath: "Build.app",
+		appId: "com.dure.qa",
+		url: "",
+		device: ios,
+	};
+	const otherPlatform = { ...profile, device: android };
+	const otherPhone = { ...profile, device: { ...ios, id: "another-phone" } };
+	const { api } = fixture(ios, true, [profile, otherPlatform, otherPhone]);
+	await waitFor(() => expect(mobileSimulator.list).toHaveBeenCalled());
+	fireEvent.click(screen.getByText(t("panels.mobile.profiles")));
+	const combo = screen.getByRole("combobox", {
+		name: t("panels.mobile.profiles"),
+	});
+	fireEvent.change(combo, {
+		target: {
+			value: (combo.querySelectorAll("option")[1] as HTMLOptionElement).value,
+		},
+	});
+	fireEvent.click(screen.getByRole("button", { name: t("common.remove") }));
+	expect(api.updateParameters).toHaveBeenLastCalledWith({
+		profiles: [otherPlatform, otherPhone],
+	});
+	expect(screen.queryByRole("button", { name: t("common.remove") })).toBeNull();
+	expect(mobileSimulator.act).not.toHaveBeenCalled();
 });
