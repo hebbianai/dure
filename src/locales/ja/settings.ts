@@ -1,4 +1,7 @@
 export const settings: Record<string, string> = {
+	"settings.recovery.moveUp": "{account}を上へ",
+	"settings.recovery.moveDown": "{account}を下へ",
+	"settings.recovery.orderHint": "確認された使用量が少ないアカウントを優先します。同じ使用量または使用量不明のアカウントにはこの順序を使います。利用できる許可済みアカウントがない場合、自動復旧を停止します。",
 	"settings.recovery.title": "アカウントの自動復旧 · Beta",
 	"settings.recovery.description": "会話が使用量の上限に達すると、サーバーが許可されたアカウントに切り替えて同じリクエストを続行します。Dureを閉じても続行されます。",
 	"settings.recovery.server": "サーバー",

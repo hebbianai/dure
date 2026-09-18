@@ -1,4 +1,7 @@
 export const settings: Record<string, string> = {
+	"settings.recovery.moveUp": "上移 {account}",
+	"settings.recovery.moveDown": "下移 {account}",
+	"settings.recovery.orderHint": "优先使用已观测用量较低的账号。用量相同或未知时按此顺序选择。没有可用的允许账号时，自动恢复停止。",
 	"settings.recovery.title": "自动账户恢复 · Beta",
 	"settings.recovery.description": "当对话达到使用上限时，服务器会切换到允许的账户并继续同一请求，即使关闭 Dure 也会继续。",
 	"settings.recovery.server": "服务器",

@@ -34,6 +34,45 @@ it("accepts only the receipt for the requested Slack conversation and channel", 
 });
 
 describe("Slack connection form boundary", () => {
+	it("normalizes execution defaults and rejects unsafe provider values before saving", () => {
+		const config = {
+			schemaVersion: 1 as const,
+			teamId: "T1",
+			channels: [
+				{
+					channelId: "C1",
+					projectId: "project",
+					providerId: "codex",
+					model: " model-fixture ",
+					effort: " high ",
+					accountId: " team ",
+					instructions: " Review first. ",
+					permissionOverride: "require_approvals" as const,
+				},
+			],
+		};
+		expect(slackConnectIntent(config, "", "").config.channels[0]).toMatchObject(
+			{
+				model: "model-fixture",
+				effort: "high",
+				accountId: "team",
+				instructions: "Review first.",
+				permissionOverride: "require_approvals",
+			},
+		);
+		for (const update of [
+			{ model: "--model" },
+			{ effort: "high;exit" },
+			{ accountId: "../account" },
+		])
+			expect(() =>
+				slackConnectIntent(
+					{ ...config, channels: [{ ...config.channels[0], ...update }] },
+					"",
+					"",
+				),
+			).toThrow();
+	});
 	it("normalizes copied links and preserves optional routes without sending empty token replacements", () => {
 		expect(
 			slackConnectIntent(

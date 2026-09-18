@@ -137,6 +137,42 @@ fn connect(team: &str) -> Value {
         "appToken": "fixture-app", "botToken": "fixture-bot" })
 }
 
+#[tokio::test]
+async fn native_legacy_editor_preserves_launch_defaults_until_explicit_replacement() {
+    let (_root, service) = fixture();
+    let mut request = connect("T1");
+    request["config"]["channels"] = json!([{ "channelId": "C1", "projectId": "project-team", "providerId": "codex", "model": "model-fixture", "effort": "high", "accountId": "team" }]);
+    service.dispatch(&request).await.unwrap();
+    observed(&service, "T1", "connected").await;
+    let mut legacy = request.clone();
+    legacy["config"]["channels"][0] = json!({ "channelId": "C1", "projectId": "project-team", "providerId": "codex", "objective": "New goal" });
+    let saved = service.dispatch(&legacy).await.unwrap();
+    assert_eq!(
+        saved["connections"][0]["config"]["channels"][0]["model"],
+        "model-fixture"
+    );
+    assert_eq!(
+        saved["connections"][0]["config"]["channels"][0]["objective"],
+        "New goal"
+    );
+    observed(&service, "T1", "connected").await;
+    let mut changed_provider = legacy.clone();
+    changed_provider["config"]["channels"][0]["providerId"] = json!("claude");
+    assert_eq!(
+        service.dispatch(&changed_provider).await.unwrap_err().code,
+        "slack_connection_defaults_unsupported"
+    );
+    legacy["replaceLaunchDefaults"] = json!(true);
+    let cleared = service.dispatch(&legacy).await.unwrap();
+    assert_eq!(cleared["connections"][0]["config"], legacy["config"]);
+    observed(&service, "T1", "connected").await;
+    let runtime: Value =
+        serde_json::from_slice(&std::fs::read(service.root.join("T1/config.json")).unwrap())
+            .unwrap();
+    assert_eq!(runtime["schemaVersion"], 1);
+    service.shutdown().await.unwrap();
+}
+
 async fn observed(service: &SlackConnectorService, team: &str, state: &str) -> Value {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -191,11 +227,22 @@ async fn native_connection_owns_one_child_and_keeps_credentials_private() {
     changed.as_object_mut().unwrap().remove("appToken");
     changed.as_object_mut().unwrap().remove("botToken");
     changed["config"]["channels"] = json!([{ "channelId": "C1", "projectId": "project-team",
-        "providerId": "claude", "backend": "worker-two", "objective": "Keep the release moving" }]);
+        "providerId": "claude", "backend": "worker-two", "objective": "Keep the release moving",
+        "model": "opus", "effort": "high", "accountId": "team", "instructions": "Review changes before publishing.",
+        "permissionOverride": "require_approvals" }]);
     service.dispatch(&changed).await.unwrap();
     let updated = observed(&service, "T1", "connected").await;
     assert_ne!(updated["generation"], connected["generation"]);
     assert_eq!(updated["config"]["channels"][0]["backend"], "worker-two");
+    assert_eq!(updated["config"], changed["config"]);
+    let runtime_config: Value =
+        serde_json::from_slice(&std::fs::read(directory.join("config.json")).unwrap()).unwrap();
+    assert_eq!(runtime_config["schemaVersion"], 2);
+    assert_eq!(runtime_config["channels"], changed["config"]["channels"]);
+    assert_eq!(
+        service.snapshot().await["capabilities"],
+        json!(["channel_launch_defaults.v1"])
+    );
     let retired: Value =
         serde_json::from_slice(&std::fs::read(directory.join("retired-settings.fixture")).unwrap())
             .unwrap();

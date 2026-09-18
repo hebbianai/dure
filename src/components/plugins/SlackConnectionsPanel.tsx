@@ -6,6 +6,8 @@ import { SlackTasksDialog } from "@/components/plugins/SlackTasksDialog";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { RefreshButton } from "@/components/ui/refresh-button";
+import { AccountRecoverySettings } from "@/components/settings/AccountRecoverySettings";
+import { PROVIDER_IDS, PROVIDERS } from "@/lib/agents/providerCatalog";
 import { t } from "@/lib/i18n";
 import type { DureBackendProfileSummary } from "@/lib/ipc/dureBackendProfiles";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
@@ -28,12 +30,15 @@ type EditorTarget = {
 export function SlackConnectionsPanel({
 	client,
 	profiles,
+	editOnOpen = false,
 }: {
 	client?: SlackConnectorClient;
 	profiles?: DureBackendProfileSummary[];
+	editOnOpen?: boolean;
 }) {
 	const [api] = useState(() => client ?? createSlackConnectorClient());
 	const [snapshot, setSnapshot] = useState<SlackConnectionSnapshot>();
+	const [recoveryOpen, setRecoveryOpen] = useState(false);
 	const [loadError, setLoadError] = useState<string>();
 	const [actionError, setActionError] = useState<string>();
 	const [loading, setLoading] = useState(true);
@@ -48,6 +53,7 @@ export function SlackConnectionsPanel({
 	const busyRef = useRef(false);
 	const observation = useRef(0);
 	const lifetime = useRef(0);
+	const initialEditorOpened = useRef(false);
 	useEffect(() => {
 		active.current = true;
 		++lifetime.current;
@@ -66,6 +72,15 @@ export function SlackConnectionsPanel({
 				if (version === observation.current) {
 					setSnapshot(next);
 					setLoadError(undefined);
+					if (editOnOpen && !initialEditorOpened.current) {
+						initialEditorOpened.current = true;
+						if (next.connections.length === 1) {
+							setEditor({
+								authority: next.authority,
+								connection: next.connections[0],
+							});
+						}
+					}
 				}
 				timer = setTimeout(() => void observe(next.authority), 1500);
 			} catch (reason) {
@@ -82,7 +97,7 @@ export function SlackConnectionsPanel({
 			++observation.current;
 			clearTimeout(timer);
 		};
-	}, [api, refresh]);
+	}, [api, refresh, editOnOpen]);
 	async function perform(
 		operation: () => Promise<SlackConnectionSnapshot>,
 	): Promise<boolean> {
@@ -186,6 +201,47 @@ export function SlackConnectionsPanel({
 								)}
 							</div>
 						</div>
+						<div className="space-y-1 text-xs">
+							<p className="text-muted-foreground">
+								{t("plugins.slack.channels")}
+							</p>
+							{connection.config.channels.length === 0 ? (
+								<p className="text-muted-foreground">
+									{t("plugins.slack.channelsHint")}
+								</p>
+							) : (
+								connection.config.channels.map((route) => {
+									const provider = PROVIDER_IDS.find(
+										(id) => id === route.providerId,
+									);
+									return (
+										<Button
+											key={route.channelId}
+											size="sm"
+											variant="ghost"
+											className="h-auto w-full justify-start whitespace-normal text-left"
+											disabled={busy}
+											onClick={() =>
+												setEditor({ authority: snapshot.authority, connection })
+											}
+										>
+											<span className="min-w-0 break-words">
+												<span className="block">
+													{route.channelId} ·{" "}
+													{provider
+														? PROVIDERS[provider].label
+														: route.providerId}
+												</span>
+												<span className="block text-muted-foreground">
+													{route.projectId}
+													{route.backend ? ` · ${route.backend}` : ""}
+												</span>
+											</span>
+										</Button>
+									);
+								})
+							)}
+						</div>
 						<Button
 							size="sm"
 							variant="ghost"
@@ -198,6 +254,23 @@ export function SlackConnectionsPanel({
 						>
 							{t("plugins.slack.teamTasks")}
 						</Button>
+						{connection.connection !== "connected" && (
+							<Button
+								size="sm"
+								variant="outline"
+								disabled={busy}
+								onClick={() =>
+									void perform(() =>
+										api.connect(
+											{ config: connection.config },
+											snapshot.authority,
+										),
+									)
+								}
+							>
+								{t("plugins.slack.reconnect")}
+							</Button>
+						)}
 						{connection.connection === "failed" && (
 							<Alert icon={false} className="text-xs">
 								{slackFailureMessage(connection.failure)}
@@ -241,9 +314,27 @@ export function SlackConnectionsPanel({
 					authority={editor.authority}
 					connection={editor.connection}
 					busy={busy}
+					launchDefaultsSupported={snapshot?.launchDefaultsSupported === true}
 					submit={perform}
 					onClose={() => setEditor(undefined)}
 				/>
+			)}
+			{snapshot && (
+				<details
+					className="border-t border-border px-4 py-4"
+					onToggle={(event) => {
+						if (event.currentTarget.open) setRecoveryOpen(true);
+					}}
+				>
+					<summary className="cursor-pointer text-xs font-medium">
+						{t("plugins.slack.recovery")}
+					</summary>
+					{recoveryOpen && (
+						<div className="mt-3">
+							<AccountRecoverySettings authority={snapshot.authority} />
+						</div>
+					)}
+				</details>
 			)}
 		</section>
 	);

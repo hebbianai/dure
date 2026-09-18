@@ -1,4 +1,7 @@
 export const settings: Record<string, string> = {
+	"settings.recovery.moveUp": "Monter {account}",
+	"settings.recovery.moveDown": "Descendre {account}",
+	"settings.recovery.orderHint": "Les comptes avec une utilisation observée plus faible sont prioritaires. Cet ordre départage les égalités et les comptes à utilisation inconnue. La récupération automatique s’arrête si aucun compte autorisé n’est disponible.",
 	"settings.recovery.title": "Récupération automatique des comptes · Beta",
 	"settings.recovery.description": "Lorsqu’une conversation atteint sa limite d’utilisation, le serveur passe à un compte autorisé et poursuit la même demande, même si Dure est fermé.",
 	"settings.recovery.server": "Serveur",

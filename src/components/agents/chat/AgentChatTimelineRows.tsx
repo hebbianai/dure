@@ -17,7 +17,7 @@ import { ChatMarkdown } from "@/components/agents/chat/ChatMarkdown";
 import { ChatToolBurst } from "@/components/agents/chat/ChatToolBurst";
 import { CodeBlock } from "@/components/common/CodeBlock";
 import { EmptyHint } from "@/components/common/StatusBlocks";
-import { Alert } from "@/components/ui/alert";
+import { ChatAlert } from "@/components/agents/chat/ChatAlert";
 import { Button } from "@/components/ui/button";
 import { ErrorText } from "@/components/ui/error-text";
 import { IconButton } from "@/components/ui/icon-button";
@@ -368,9 +368,9 @@ function TimelineRow({
 			return <PlanRow body={body} rowKey={projected.key} />;
 		case "error":
 			return (
-				<Alert>
+				<ChatAlert>
 					<span data-selectable>{body.message}</span>
-				</Alert>
+				</ChatAlert>
 			);
 		case "history_boundary":
 			return (

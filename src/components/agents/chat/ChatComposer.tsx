@@ -1,6 +1,6 @@
 import type { IDockviewPanelProps } from "dockview-react";
 import { ArrowUp, CornerUpLeft, ImageIcon, Square, X, Zap } from "lucide-react";
-import { Alert } from "@/components/ui/alert";
+import { ChatAlert } from "@/components/agents/chat/ChatAlert";
 import { Titled } from "@/components/ui/tooltip";
 import {
 	type FormEvent,
@@ -100,6 +100,7 @@ function ActionErrorText({ raw }: { raw: string }) {
 export interface ChatTurnFailureRecovery {
 	readonly switchAccount?: { readonly targetName: string; readonly run: () => void };
 	readonly manageAccounts: () => void;
+	readonly chooseAccount?: () => void;
 	readonly signIn?: () => void;
 	/** The failure on screen was already answered by an account handoff:
 	 * say what moved where, and offer to resend the message that failed. */
@@ -349,7 +350,7 @@ export function ChatComposer({
 		>
 			<div className="mx-auto max-w-3xl">
 				{session.error && !session.reconnecting && (
-					<Alert className="mb-2 items-center">
+					<ChatAlert className="mb-2 items-center">
 						<span className="min-w-0 flex-1">{session.error}</span>
 						<Button
 							type="button"
@@ -359,15 +360,15 @@ export function ChatComposer({
 						>
 							{t("common.retry")}
 						</Button>
-					</Alert>
+					</ChatAlert>
 				)}
 				{attachmentError && (
-					<Alert className="mb-2 items-center">
+					<ChatAlert className="mb-2 items-center">
 						<span className="min-w-0 flex-1">{attachmentError}</span>
-					</Alert>
+					</ChatAlert>
 				)}
 				{handedOff && (
-					<Alert className="mb-2 flex-wrap items-center" icon={false}>
+					<ChatAlert className="mb-2 flex-wrap items-center" icon={false}>
 						<span className="min-w-0 flex-1">
 							{handedOff.fromName
 								? t("agents.chat.recovery.handedOff", {
@@ -399,10 +400,10 @@ export function ChatComposer({
 								<X aria-hidden="true" />
 							</IconButton>
 						</div>
-					</Alert>
+					</ChatAlert>
 				)}
 				{failureRecovery && recovery && (
-					<Alert className="mb-2 flex-wrap items-center">
+					<ChatAlert className="mb-2 flex-wrap items-center">
 						<span className="min-w-0 flex-1">
 							{t(TURN_FAILURE_REASON_COPY[failureRecovery.reason])}
 						</span>
@@ -434,9 +435,9 @@ export function ChatComposer({
 									type="button"
 									size="xs"
 									variant="outline"
-									onClick={recovery.manageAccounts}
+									onClick={recovery.chooseAccount ?? recovery.manageAccounts}
 								>
-									{t("agents.chat.recovery.manageAccounts")}
+									{t(recovery.chooseAccount ? "agents.chat.recovery.chooseAccount" : "agents.chat.recovery.manageAccounts")}
 								</Button>
 							)}
 							<IconButton
@@ -447,10 +448,10 @@ export function ChatComposer({
 								<X aria-hidden="true" />
 							</IconButton>
 						</div>
-					</Alert>
+					</ChatAlert>
 				)}
 				{session.actionError && (
-					<Alert className="mb-2 flex-wrap items-center">
+					<ChatAlert className="mb-2 flex-wrap items-center">
 						<ActionErrorText raw={session.actionError} />
 						{!session.retryTurnAvailable && (
 							<IconButton
@@ -490,7 +491,7 @@ export function ChatComposer({
 								</Button>
 							</div>
 						)}
-					</Alert>
+					</ChatAlert>
 				)}
 				{/* glass/chrome is the input-on-glass material (the same fill
 				    SEARCH_FIELD_SURFACE uses), not the app floor. bg-background

@@ -86,6 +86,7 @@ export const agents: Record<string, string> = {
 	"agents.chat.turnFailure.providerError": "Falha no turno: o provedor relatou um erro.",
 	"agents.chat.turnFailure.runtimeReplaced": "Falha no turno: o runtime da sessão foi substituído.",
 	"agents.chat.recovery.switchTo": "Trocar para {name}…",
+	"agents.chat.recovery.chooseAccount": "Trocar de conta",
 	"agents.chat.recovery.manageAccounts": "Gerenciar contas…",
 	"agents.chat.recovery.signIn": "Entrar novamente…",
 	"agents.chat.recovery.handedOff": "Mudou para {to} depois que {from} atingiu o limite de uso.",

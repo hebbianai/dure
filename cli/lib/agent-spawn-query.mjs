@@ -233,8 +233,12 @@ function validPreviewRequest(value) {
       ...interactionKeys,
       "promptDigest",
       ...setupKeys,
+      ...["model", "effort", "executionProfile"].filter((key) => value[key] !== undefined),
     ]) &&
     value.schemaVersion === AGENT_SPAWN_QUERY_SCHEMA_VERSION &&
+    validExecutionProfile(value.executionProfile, { allowMissing: true }) &&
+    (value.model === undefined || isProviderModelSelection(value.model)) &&
+    (value.effort === undefined || isProviderEffortSelection(value.effort)) &&
     typeof value.idempotencyKey === "string" &&
     TOKEN.test(value.idempotencyKey) &&
     typeof value.providerId === "string" &&
@@ -975,7 +979,7 @@ function previewRequestMatches(plan, expectedRequest) {
   const expected = {
     ...normalized,
     worktree: { ...normalized.worktree },
-    executionProfile: { kind: "provider_default" },
+    executionProfile: normalizedExecutionProfile(expectedRequest.executionProfile),
     providerConversationRef: null,
     permissionMode:
       expectedOverride === "require_approvals"
@@ -1153,6 +1157,9 @@ function previewRequest(options) {
       ? {}
       : { projectPath: options.projectPath }),
     providerId: options.providerId,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.effort === undefined ? {} : { effort: options.effort }),
+    ...(options.executionProfile === undefined ? {} : { executionProfile: options.executionProfile }),
     ...(options.interactionPreference === undefined ? {} : { interactionPreference: options.interactionPreference }),
     agentName: options.agentName,
     worktree: options.worktree,
@@ -1177,6 +1184,9 @@ export async function collectAgentSpawnQuery({
   agentName,
   worktree,
   permissionOverride,
+  model,
+  effort,
+  executionProfile,
   includePresentationProject,
   interactionPreference,
   setupCommand,
@@ -1204,6 +1214,9 @@ export async function collectAgentSpawnQuery({
           agentName,
           worktree,
           permissionOverride,
+          model,
+          effort,
+          executionProfile,
           interactionPreference,
           includePresentationProject: presentationProjectSupported,
           setupCommand,

@@ -1,4 +1,7 @@
 export const settings: Record<string, string> = {
+	"settings.recovery.moveUp": "{account} 위로 이동",
+	"settings.recovery.moveDown": "{account} 아래로 이동",
+	"settings.recovery.orderHint": "확인된 사용량이 적은 계정을 먼저 사용합니다. 사용량이 같거나 알 수 없는 계정은 지정한 순서를 따릅니다. 사용할 수 있는 허용 계정이 없으면 자동 복구를 멈춥니다.",
 	"settings.recovery.title": "자동 계정 복구 · Beta",
 	"settings.recovery.description": "대화가 사용량 한도에 도달하면 서버가 허용된 계정으로 전환하고 같은 요청을 이어갑니다. Dure 앱을 닫아도 계속됩니다.",
 	"settings.recovery.server": "서버",
