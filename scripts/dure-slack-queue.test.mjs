@@ -16,7 +16,7 @@ const unsupported = () => new BackendTransportError("backend_transport_remote_er
   details: { code: "agent_conversation_steer_unsupported", disposition: "terminal" },
 });
 const message = (user = "U2", ts = "101.001") => ({ type: "event_callback", team_id: "T1", event: {
-  type: "message", user, channel: "C1", thread_ts: "100.001", ts, text: `Include the changes from ${user}`,
+  type: "message", user, channel: "C1", thread_ts: "100.001", ts, text: `<@U0> Include the changes from ${user}`,
 } });
 
 async function fixture(t) {

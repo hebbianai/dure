@@ -4,6 +4,7 @@ import { SharedAgentConversation } from "@/components/agents/chat/SharedAgentCon
 import { BackendServerSelect } from "@/components/common/BackendServerSelect";
 import { PaneEmptyState } from "@/components/common/PaneEmptyState";
 import { LoadingStatus } from "@/components/common/PanelStatus";
+import { SlackFilePermissionsNotice } from "@/components/plugins/SlackFilePermissionsNotice";
 import { SlackConnectionsPanel } from "@/components/plugins/SlackConnectionsPanel";
 import { useSlackTeamConnection } from "@/components/plugins/useSlackTeamConnection";
 import { SectionHeaderRow } from "@/components/sidebar/SidebarItems";
@@ -29,7 +30,11 @@ import {
 	sameDureBackendRouteAuthority,
 } from "@/lib/ipc/dureBackendRoute";
 import { createSlackConnectorClient } from "@/lib/ipc/slackConnector";
-import { slackConnectionError } from "@/lib/plugins/slackConnection";
+import {
+	type SlackConnection,
+	missingSlackFileScopes,
+	slackConnectionError,
+} from "@/lib/plugins/slackConnection";
 import type { SlackTask } from "@/lib/plugins/slackTask";
 import { useStore } from "@/store";
 
@@ -76,6 +81,7 @@ function TagTasks({
 	onSelectServer: (id: string) => void;
 }) {
 	const [client] = useState(() => createSlackConnectorClient({ profileId }));
+	const [connections, setConnections] = useState<SlackConnection[]>([]);
 	const [tasks, setTasks] = useState<SlackTask[]>();
 	const [error, setError] = useState<string>();
 	const [openError, setOpenError] = useState<string>();
@@ -83,7 +89,9 @@ function TagTasks({
 	const [authority, setAuthority] = useState<DureBackendRouteAuthorityV1>();
 	const [selected, setSelected] = useState<SlackTask>();
 	const [target, setTarget] = useState<SharedAgentConversationTarget>();
-	const [settings, setSettings] = useState(false);
+	const [settings, setSettings] = useState<
+		"connections" | "permissions" | null
+	>(null);
 	const [revision, setRevision] = useState(0);
 	const [activity, setActivity] = useState<ReadonlyMap<string, boolean>>(
 		new Map(),
@@ -110,6 +118,7 @@ function TagTasks({
 					.flat()
 					.sort((a, b) => Number(b.threadTs) - Number(a.threadTs));
 				setTasks(observedTasks);
+				setConnections(snapshot.connections);
 				setAuthority((previous) =>
 					previous &&
 					sameDureBackendRouteAuthority(previous, snapshot.authority)
@@ -128,6 +137,7 @@ function TagTasks({
 			} catch (reason) {
 				if (current) {
 					setActivity(new Map());
+					setConnections([]);
 					setError(slackConnectionError(reason));
 				}
 			} finally {
@@ -167,6 +177,40 @@ function TagTasks({
 			current = false;
 		};
 	}, [selected, authority]);
+	const settingsDialog = settings && (
+		<Dialog
+			open
+			onOpenChange={(value) => {
+				setSettings(value ? "connections" : null);
+				if (!value) setRevision((value) => value + 1);
+			}}
+		>
+			<DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-xl">
+				<DialogHeader>
+					<DialogTitle>{t("tag.connections")}</DialogTitle>
+				</DialogHeader>
+				<SlackConnectionsPanel
+					client={client}
+					profiles={profiles}
+					editOnOpen={settings === "connections"}
+				/>
+			</DialogContent>
+		</Dialog>
+	);
+	const permissionNotices = connections
+		.filter(
+			(connection) =>
+				missingSlackFileScopes(connection).length > 0 &&
+				(!selected || selected.teamId === connection.config.teamId),
+		)
+		.map((connection) => (
+			<div key={connection.config.teamId} className="px-3 pb-2">
+				<SlackFilePermissionsNotice
+					connection={connection}
+					onConfigure={() => setSettings("permissions")}
+				/>
+			</div>
+		));
 	if (selected) {
 		const header = (
 			<>
@@ -190,6 +234,8 @@ function TagTasks({
 				className="flex min-h-0 min-w-0 flex-1 flex-col"
 				data-tag-conversation={selected.agentId}
 			>
+				{permissionNotices}
+				{settingsDialog}
 				{!openError && target?.agentId === selected.agentId ? (
 					<SharedAgentConversation
 						key={selected.agentId}
@@ -223,7 +269,7 @@ function TagTasks({
 						/>
 						<IconButton
 							title={t("tag.connections")}
-							onClick={() => setSettings(true)}
+							onClick={() => setSettings("connections")}
 						>
 							<Settings />
 						</IconButton>
@@ -238,6 +284,10 @@ function TagTasks({
 					label={t("plugins.slack.teamServer")}
 				/>
 			</div>
+			{permissionNotices}
+			<p className="px-4 pb-3 text-meta text-muted-foreground">
+				{t("tag.mentionRequired")}
+			</p>
 			{(openError || error) && (
 				<div className="px-4 pb-3">
 					<Alert icon={false}>{openError || error}</Alert>
@@ -254,7 +304,7 @@ function TagTasks({
 						<Button
 							className="w-full"
 							variant="secondary"
-							onClick={() => setSettings(true)}
+							onClick={() => setSettings("connections")}
 						>
 							{t("tag.connections")}
 						</Button>
@@ -294,26 +344,7 @@ function TagTasks({
 					))}
 				</SidebarScrollArea>
 			)}
-			{settings && (
-				<Dialog
-					open
-					onOpenChange={(value) => {
-						setSettings(value);
-						if (!value) setRevision((value) => value + 1);
-					}}
-				>
-					<DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-xl">
-						<DialogHeader>
-							<DialogTitle>{t("tag.connections")}</DialogTitle>
-						</DialogHeader>
-						<SlackConnectionsPanel
-							client={client}
-							profiles={profiles}
-							editOnOpen
-						/>
-					</DialogContent>
-				</Dialog>
-			)}
+			{settingsDialog}
 		</>
 	);
 }

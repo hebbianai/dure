@@ -125,6 +125,12 @@ struct Running {
     complete: watch::Receiver<bool>,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+struct FilePermissions {
+    read: bool,
+    write: bool,
+}
+
 struct Connection {
     settings: Settings,
     generation: Option<String>,
@@ -132,6 +138,7 @@ struct Connection {
     failure: Option<String>,
     stopping: bool,
     running: Option<Running>,
+    file_permissions: Option<FilePermissions>,
 }
 
 impl Connection {
@@ -147,6 +154,7 @@ impl Connection {
             generation: None,
             stopping: false,
             running: None,
+            file_permissions: None,
         }
     }
 
@@ -159,6 +167,7 @@ impl Connection {
             "connection": self.state,
             "generation": self.generation,
             "failure": self.failure,
+            "filePermissions": self.file_permissions,
         })
     }
 }
@@ -454,6 +463,7 @@ impl SlackConnectorService {
         entry.generation = Some(generation.clone());
         entry.state = "connecting";
         entry.failure = None;
+        entry.file_permissions = None;
         entry.stopping = false;
         entry.running = Some(Running {
             owner: Some(owner),
@@ -569,6 +579,23 @@ async fn observe_child(
             let Ok(event) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
+            if event["event"] == "slack.file_permissions" {
+                let Ok(permissions) =
+                    serde_json::from_value::<Option<FilePermissions>>(event["permissions"].clone())
+                else {
+                    continue;
+                };
+                let Some(connections) = connections.upgrade() else {
+                    break;
+                };
+                let mut connections = connections.lock().await;
+                if let Some(entry) = connections.entries.get_mut(&team).filter(|entry| {
+                    entry.generation.as_deref() == Some(&generation) && !entry.stopping
+                }) {
+                    entry.file_permissions = permissions;
+                }
+                continue;
+            }
             let state = match event["event"].as_str() {
                 Some("slack.connecting") => "connecting",
                 Some("slack.connected") => "connected",
@@ -613,6 +640,7 @@ async fn observe_child(
             let stopped = requested_stop && outcome.is_ok_and(|status| status.success());
             entry.state = if stopped { "stopped" } else { "failed" };
             entry.running = None;
+            entry.file_permissions = None;
             entry.stopping = false;
             entry.failure = if stopped {
                 None

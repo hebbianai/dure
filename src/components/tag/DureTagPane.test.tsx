@@ -71,9 +71,11 @@ const route = (generation: string): DureBackendRouteAuthorityV1 => ({
 let authority = route("one");
 let failTasks = false;
 let taskTitle = "first";
+let filePermissions: { read: boolean; write: boolean } | null = null;
 beforeEach(() => {
 	authority = route("one");
 	failTasks = false;
+	filePermissions = null;
 	taskTitle = "first";
 	mocks.activity.mockResolvedValue(new Map());
 	mocks.open.mockImplementation(async (task) => ({
@@ -110,6 +112,7 @@ beforeEach(() => {
 									connection: "connected",
 									generation: "connector",
 									failure: null,
+									filePermissions,
 								},
 							],
 						}
@@ -271,4 +274,32 @@ it("clears unconfirmed activity after a failed observation and keeps the task av
 	expect(screen.queryByRole("status", { name: "common.working" })).toBeNull();
 	expect(screen.getByRole("alert")).toBeTruthy();
 	expect(screen.getByText("first")).toBeTruthy();
+});
+
+it("shows confirmed missing file permissions in the task list and conversation, and removes the notice after a grant", async () => {
+	vi.useFakeTimers();
+	filePermissions = { read: false, write: false };
+	await act(async () => {
+		render(<DureTagPane />);
+	});
+	expect(screen.getByText("plugins.slack.filePermissionsTitle")).toBeTruthy();
+	expect(screen.getByText("tag.mentionRequired")).toBeTruthy();
+	await act(async () => {
+		fireEvent.click(screen.getByText("first"));
+	});
+	expect(screen.getByText("plugins.slack.filePermissionsTitle")).toBeTruthy();
+	fireEvent.click(
+		screen.getByRole("button", { name: "plugins.slack.updatePermissions" }),
+	);
+	expect(screen.getByRole("dialog")).toBeTruthy();
+	filePermissions = { read: true, write: true };
+	await tick();
+	expect(screen.queryByText("plugins.slack.filePermissionsTitle")).toBeNull();
+	expect(screen.getByTestId("tag-conversation")).toBeTruthy();
+});
+
+it("does not invent a missing permission on an older server", async () => {
+	render(<DureTagPane />);
+	await screen.findByText("first");
+	expect(screen.queryByText("plugins.slack.filePermissionsTitle")).toBeNull();
 });

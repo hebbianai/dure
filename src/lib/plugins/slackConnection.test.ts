@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	parseSlackConnection,
+	missingSlackFileScopes,
 	parseSlackShare,
 	slackConnectIntent,
 	slackReference,
@@ -135,4 +136,47 @@ describe("Slack connection form boundary", () => {
 		expect(JSON.stringify(connection)).not.toContain("private");
 		expect(connection.config.channels).toEqual([]);
 	});
+});
+
+it("accepts older connection snapshots and validates observed file permissions without exposing extra fields", () => {
+	const base = {
+		config: { schemaVersion: 1, teamId: "T1", channels: [] },
+		enabled: true,
+		credentialsConfigured: true,
+		connection: "connected",
+		generation: "g1",
+		failure: null,
+	};
+	expect(missingSlackFileScopes(parseSlackConnection(base))).toEqual([]);
+	expect(
+		missingSlackFileScopes(
+			parseSlackConnection({
+				...base,
+				filePermissions: { read: true, write: false, token: "private" },
+			}),
+		),
+	).toEqual(["files:write"]);
+	expect(
+		parseSlackConnection({
+			...base,
+			filePermissions: { read: true, write: true, token: "private" },
+		}).filePermissions,
+	).toEqual({ read: true, write: true });
+	for (const filePermissions of [
+		false,
+		{},
+		{ read: "yes", write: true },
+		{ read: true },
+	]) {
+		expect(() => parseSlackConnection({ ...base, filePermissions })).toThrow();
+	}
+	expect(
+		missingSlackFileScopes(
+			parseSlackConnection({
+				...base,
+				enabled: false,
+				filePermissions: { read: false, write: false },
+			}),
+		),
+	).toEqual([]);
 });

@@ -221,6 +221,9 @@ async fn backend_owns_the_real_connector_across_client_close_and_server_restart(
         "appToken": tokens["appToken"], "botToken": tokens["botToken"] });
     request(&endpoint, "slack.connector", intent).await;
     let first = connected(&endpoint).await;
+    if !real {
+        assert_eq!(first["filePermissions"], json!({ "read": true, "write": false }));
+    }
     // Every request above closes its client socket. A later observation sees
     // the same live connector; the client never owns the stdin lifetime.
     assert_eq!(

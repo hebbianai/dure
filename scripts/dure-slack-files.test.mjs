@@ -45,7 +45,7 @@ async function fixture(t) {
 test("file-share captions and images enter the current turn once using the shared attachment contract", async (t) => {
   const f = await fixture(t);
   const payload = { type: "event_callback", team_id: "T1", event: { type: "message", subtype: "file_share", channel: "C1",
-    ts: "101.1", thread_ts: "100.1", user: "U1", text: "Look at this state", files: [{ id: "FIMAGE", name: "image.png", mimetype: "image/png" }] } };
+    ts: "101.1", thread_ts: "100.1", user: "U1", text: "<@UBOT> Look at this state", files: [{ id: "FIMAGE", name: "image.png", mimetype: "image/png" }] } };
   assert.equal(f.bridge.accept(payload), true);
   await f.bridge.tick(error => { throw error; });
   assert.equal(f.deliveries[0].operation, "agent_conversation.steer_turn");
@@ -63,7 +63,7 @@ test("missing file permission preserves the caption and makes unavailable image 
   const f = await fixture(t);
   f.slack.downloadFile = async () => { throw Object.assign(new Error("missing scope"), { code: "slack_missing_scope" }); };
   f.bridge.accept({ type: "event_callback", team_id: "T1", event: { type: "message", subtype: "file_share", channel: "C1",
-    ts: "101.1", thread_ts: "100.1", user: "U1", text: "The screenshot shows the problem", files: [{ id: "F1", name: "image.png" }] } });
+    ts: "101.1", thread_ts: "100.1", user: "U1", text: "<@UBOT> The screenshot shows the problem", files: [{ id: "F1", name: "image.png" }] } });
   await f.bridge.tick(error => { throw error; });
   const text = f.deliveries[0].intent.input;
   assert.match(text, /The screenshot shows the problem/);

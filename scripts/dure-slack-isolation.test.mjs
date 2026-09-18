@@ -92,7 +92,7 @@ for (const stalledShare of [false, true]) {
     await f.entered;
     await vi.waitFor(() => assert.ok(f.posts.some((post) => post.channel === "C2")), { timeout: 5000 });
     socket.receive({ type: "events_api", envelope_id: "direction", payload: { type: "event_callback", team_id: "T1", event: {
-      type: "message", channel: "C2", user: "U2", ts: "101.001", thread_ts: "100.001", text: "Continue the independent task",
+      type: "message", channel: "C2", user: "U2", ts: "101.001", thread_ts: "100.001", text: "<@U0> Continue the independent task",
     } } });
     await vi.waitFor(() => assert.equal(f.deliveries.length, 1), { timeout: 5000 });
     assert.match(f.deliveries[0].body.input, /Continue the independent task/);

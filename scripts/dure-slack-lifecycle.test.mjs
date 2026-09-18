@@ -106,7 +106,7 @@ test("owner EOF cancels authentication and removes startup listeners", async (t)
   assert.equal(fs.existsSync(`${file}.connector.json`), false);
 });
 
-function launch(file, { input, open = async () => {} } = {}) {
+function launch(file, { input, open = async () => {}, scopes = () => null } = {}) {
   const controller = new AbortController();
   const events = [];
   const sockets = [];
@@ -125,7 +125,7 @@ function launch(file, { input, open = async () => {} } = {}) {
     signal: controller.signal, input, environment: {}, WebSocketImpl: Socket,
     output: (text) => events.push(JSON.parse(text)),
     async fetchApi(url) {
-      if (url.endsWith("/auth.test")) return Response.json({ ok: true, team_id: "T1", bot_id: "B1", user_id: "U0" });
+      if (url.endsWith("/auth.test")) return Response.json({ ok: true, team_id: "T1", bot_id: "B1", user_id: "U0" }, { headers: scopes() === null ? {} : { "x-oauth-scopes": scopes() } });
       assert.ok(url.endsWith("/apps.connections.open"));
       await open(++opens);
       return Response.json({ ok: true, url: "wss://wss.slack.com/fixture" });
@@ -210,4 +210,29 @@ test("a transport failure exits once, preserves its delivery journal and does no
       assert.notEqual((await commandStatus(file)).generation, generation);
     } finally { restarted.controller.abort(); assert.equal(await restarted.running, undefined); }
   } finally { f.controller.abort(); await f.running; }
+});
+
+
+test("connector exposes token permissions and notices a grant without reconnecting", async (t) => {
+  const file = fixture(t);
+  let scopes = "chat:write";
+  const f = launch(file, { scopes: () => scopes });
+  let clock;
+  try {
+   (await f.socket).receive({ type: "hello" });
+   assert.deepEqual((await requestSlackStatus(`${file}.connector.json`, "T1")).filePermissions, { read: false, write: false });
+   scopes = "chat:write,files:read,files:write";
+   clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61_000);
+   const deadline = performance.now() + 4000;
+   let status;
+   do {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    status = await requestSlackStatus(`${file}.connector.json`, "T1");
+   } while (!status.filePermissions.write && performance.now() < deadline);
+   assert.deepEqual(status.filePermissions, { read: true, write: true });
+   assert.equal(status.connection, "connected");
+   assert.deepEqual(f.events.filter(event => event.event === "slack.file_permissions").map(event => event.permissions), [
+    { read: false, write: false }, { read: true, write: true },
+   ]);
+  } finally { clock?.mockRestore(); f.controller.abort(); await f.running; }
 });

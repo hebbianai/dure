@@ -61,14 +61,14 @@ test("teammates continue the same thread with their identities and the current t
   f.bridge.accept(payload());
   await f.bridge.tick();
   f.setPage({ activeTurn: { turnId: "turn-running" } });
-  f.bridge.accept(payload({ type: "message", ts: "101.001", thread_ts: "100.001", user: "U2", text: "Start with the empty state" }));
+  f.bridge.accept(payload({ type: "message", ts: "101.001", thread_ts: "100.001", user: "U2", text: "<@U0> Start with the empty state" }));
   await f.bridge.tick();
   assert.equal(f.calls.starts.length, 1);
   assert.equal(f.calls.inputs[0].operation, "agent_conversation.steer_turn");
   assert.equal(f.calls.inputs[0].intent.turnId, "turn-running");
   assert.match(f.calls.inputs[0].intent.input, /T1\/U2/);
   f.setPage({ activeTurn: null });
-  f.bridge.accept(payload({ type: "message", ts: "102.001", thread_ts: "100.001", user: "U3", text: "Now improve the welcome copy" }));
+  f.bridge.accept(payload({ type: "message", ts: "102.001", thread_ts: "100.001", user: "U3", text: "<@U0> Now improve the welcome copy" }));
   await f.bridge.tick();
   assert.equal(f.calls.inputs[1].operation, "agent_conversation.start_turn");
   assert.equal(f.calls.inputs[1].intent.interactionSessionId, binding.interactionSessionId);
@@ -85,13 +85,29 @@ test("unconnected channels, other workspaces, bot messages and unrelated convers
   assert.ok(incomingSlackMessage(payload({ channel: "D1", channel_type: "im", type: "message", text: "Help with onboarding" }), dm, "U0", {}));
 });
 
+test("human thread conversation never starts or steers work without an explicit mention", async (t) => {
+  const f = await fixture(t);
+  f.bridge.accept(payload());
+  await f.bridge.tick();
+  for (const activeTurn of [null, { turnId: "running" }]) {
+    f.setPage({ activeTurn });
+    for (const extra of [{}, { subtype: "file_share", files: [{ id: "FIMAGE", name: "image.png" }] }]) {
+      assert.equal(f.bridge.accept(payload({ type: "message", ts: activeTurn ? "103.001" : "102.001",
+        thread_ts: "100.001", user: "U2", text: "Discussing this with a teammate", ...extra })), false);
+    }
+    await f.bridge.tick();
+  }
+  assert.equal(f.calls.inputs.length, 0);
+  assert.equal(Object.keys(f.journal.data.inbox).length, 1);
+});
+
 test("a teammate's image reply reaches the active turn with its caption and attachment identity", async (t) => {
   const f = await fixture(t);
   f.bridge.accept(payload());
   await f.bridge.tick();
   f.setPage({ activeTurn: { turnId: "turn-running" } });
   const event = payload({ type: "message", subtype: "file_share", ts: "101.001", thread_ts: "100.001",
-    text: "This is what I see", files: [{ id: "FIMAGE", name: "image.png", mimetype: "image/png", size: 100 }] });
+    text: "<@U0> This is what I see", files: [{ id: "FIMAGE", name: "image.png", mimetype: "image/png", size: 100 }] });
   assert.equal(f.bridge.accept(event), true);
   assert.equal(f.bridge.accept(event), false);
   await f.bridge.tick();
@@ -102,7 +118,7 @@ test("a teammate's image reply reaches the active turn with its caption and atta
 });
 
 test("an image-only reply is retained, while edited and bot attachment events remain excluded", () => {
-  const event = payload({ type: "message", subtype: "file_share", text: "", ts: "101.001", thread_ts: "100.001",
+  const event = payload({ type: "message", subtype: "file_share", text: "<@U0>", ts: "101.001", thread_ts: "100.001",
     files: [{ id: "FIMAGE", name: "image.png", mimetype: "image/png", size: 100 }] });
   const threads = { [slackKey("T1", "C1", "100.001")]: {} };
   assert.equal(incomingSlackMessage(event, config, "U0", threads)?.files[0].id, "FIMAGE");
@@ -331,7 +347,7 @@ test("an unconfirmed direction change stays failed and its Slack notice is not r
     f.calls.inputs.push({ intent, operation });
     throw new Error("private transport detail");
   };
-  f.bridge.accept(payload({ type: "message", ts: "101.001", thread_ts: "100.001", user: "U2", text: "Change the direction" }));
+  f.bridge.accept(payload({ type: "message", ts: "101.001", thread_ts: "100.001", user: "U2", text: "<@U0> Change the direction" }));
   const write = f.slack.write;
   f.slack.write = async (...args) => { await write(...args); throw new Error("Slack unavailable"); };
   await f.bridge.tick();
@@ -422,7 +438,7 @@ test("assistant output cannot create Slack mentions and updates use the same del
   const requests = [];
   const slack = new SlackApi({ appToken: "xapp-test", botToken: "xoxb-test", fetchApi: async (url, request) => {
     requests.push({ url, body: JSON.parse(request.body) });
-    return { ok: true, json: async () => ({ ok: true, ts: "200.1" }) };
+    return { ok: true, headers: new Headers(), json: async () => ({ ok: true, ts: "200.1" }) };
   } });
   const thread = { channelId: "C1", threadTs: "100.1" };
   const blocks = [{ type: "section", text: { type: "plain_text", text: "<@U1> Choose a database" } },
@@ -442,7 +458,7 @@ test("assistant output cannot create Slack mentions and updates use the same del
 test("Slack credentials stay in the correct HTTP authorization header and errors omit them", async () => {
   const calls = [];
   const slack = new SlackApi({ appToken: "opaque-app-token", botToken: "opaque-bot-token", fetchApi: async (url, request) => {
-    calls.push({ url, request }); return { ok: true, json: async () => ({ ok: true, user_id: "U0" }) };
+    calls.push({ url, request }); return { ok: true, headers: new Headers(), json: async () => ({ ok: true, user_id: "U0" }) };
   } });
   await slack.call("auth.test");
   await slack.call("apps.connections.open");
@@ -450,7 +466,7 @@ test("Slack credentials stay in the correct HTTP authorization header and errors
   assert.equal(calls[1].request.headers.Authorization, "Bearer opaque-app-token");
   assert.ok(calls.every((call) => call.request.body === "{}"));
   assert.ok(calls.every((call) => !call.url.includes("opaque-")));
-  slack.fetch = async () => ({ ok: true, json: async () => ({ ok: false, error: "xoxb-secret" }) });
+  slack.fetch = async () => ({ ok: true, headers: new Headers(), json: async () => ({ ok: false, error: "xoxb-secret" }) });
   await assert.rejects(slack.call("auth.test"), /Slack API: request_failed/);
 });
 
@@ -555,7 +571,7 @@ test("one Slack bot routes two channels to their saved servers across a default 
   await restarted.acquire();
   try {
     const again = new SlackBridge({ config: changedConfig, botUserId: "U0", journal: restarted, backend: createBackend(), slack: f.slack });
-    again.accept(payload({ type: "message", thread_ts: "100.001", ts: "102.001", user: "U2", text: "Change the approach" }));
+    again.accept(payload({ type: "message", thread_ts: "100.001", ts: "102.001", user: "U2", text: "<@U0> Change the approach" }));
     again.accept(payload({ ts: "103.001", text: "<@U0> A new task" }));
     await again.tick((error) => { throw error; });
     assert.deepEqual(requests.filter(({ request }) => request.operation === "agent_spawn.apply").map(({ profile }) => profile.id), ["server-a", "server-b", "server-b"]);
@@ -622,7 +638,7 @@ for (const blockedOperation of ["deliver", "read"]) {
     };
     f.setPage({ rows: [{ item: { itemId: "completion", body: { type: "message", role: "assistant", markdown: "Work complete" } } }] });
     for (const [ts, thread_ts, text] of [["102.001", "100.001", "First"], ["103.001", "100.001", "Second"], ["104.001", "101.001", "Independent"]]) {
-      f.bridge.accept(payload({ type: "message", ts, thread_ts, text }));
+      f.bridge.accept(payload({ type: "message", ts, thread_ts, text: `<@U0> ${text}` }));
     }
     const ticking = f.bridge.tick();
     try {
@@ -671,7 +687,7 @@ test("a thread follows chat-to-terminal selection and does not replay uncertain 
   const bridge = new SlackBridge({ config, botUserId: "U0", journal: f.journal, backend, slack: f.slack });
   await bridge.tick((error) => { throw error; });
   native = true;
-  bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "104.001", text: "Continue" }));
+  bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "104.001", text: "<@U0> Continue" }));
   await bridge.tick();
   assert.equal(requests.filter(({ operation }) => operation === "agent_conversation.start_turn").length, 0);
   assert.equal(requests.filter(({ operation }) => operation === "agent_runtime.native.input").length, 1);
@@ -696,7 +712,7 @@ test("agent Markdown uses Slack's Markdown block for tables, bold text, links an
   const requests = [];
   const slack = new SlackApi({ appToken: "fixture-app", botToken: "fixture-bot", fetchApi: async (_url, request) => {
     requests.push(JSON.parse(request.body));
-    return { ok: true, json: async () => ({ ok: true, ts: "200.1" }) };
+    return { ok: true, headers: new Headers(), json: async () => ({ ok: true, ts: "200.1" }) };
   } });
   const text = "**SEO review**\n\n| Area | Result |\n| --- | --- |\n| Content | Improve |\n\n[Website](https://www.dureai.dev/) and `lang=cn`, `<div>` and `a & b`.";
   await slack.write({ channelId: "C1", threadTs: "100.1" }, text, "markdown-1");
