@@ -24,9 +24,6 @@ vi.mock("@/components/workspace/WorkspaceRuntimeContext", () => ({
 vi.mock("@/lib/workspace/pane/paneTitleOverrideStore", () => ({
 	applyAutomaticPaneTitle: vi.fn(),
 }));
-vi.mock("@/components/design/DesignModeBrowserDialog", () => ({
-	isLoopbackUrl: () => false,
-}));
 
 afterEach(() => {
 	cleanup();

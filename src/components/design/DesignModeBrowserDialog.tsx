@@ -15,7 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { t } from "@/lib/i18n";
 
-export function isLoopbackUrl(raw: string): boolean {
+function isLoopbackUrl(raw: string): boolean {
 	try {
 		const url = new URL(raw);
 		if (url.protocol !== "http:" && url.protocol !== "https:") return false;
