@@ -72,8 +72,21 @@ function api(route, { absent = false, input, compatibility = false } = {}) {
     throw error;
   }
 }
-const release = (tag) =>
-  api(`repos/${RELEASE_REPOSITORY}/releases/tags/${tag}`, { absent: true });
+function release(tag) {
+  const published = api(`repos/${RELEASE_REPOSITORY}/releases/tags/${tag}`, { absent: true });
+  if (published) return published;
+  // The tag endpoint returns published releases. Authenticated listing also
+  // returns drafts; an absent public tag must never create a duplicate draft.
+  const matches = [];
+  for (let page = 1; page <= 100; page++) {
+    const entries = api(`repos/${RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`);
+    assert(Array.isArray(entries), "release_listing_invalid");
+    matches.push(...entries.filter((entry) => entry.tag_name === tag));
+    assert(matches.length <= 1, "release_draft_ambiguous");
+    if (entries.length < 100) return matches[0] ?? null;
+  }
+  throw new Error("release_listing_incomplete");
+}
 const output = (values) => {
   console.log(JSON.stringify(values));
   if (process.env.GITHUB_OUTPUT)
@@ -450,6 +463,53 @@ function checkDraftIdentity(released, tag, proof) {
   assert.deepEqual(provenance(released), proof, "release_provenance_mismatch");
 }
 
+function completeDraft(tag, directory, assets, proof, current) {
+  checkDraftIdentity(current, tag, proof);
+  assert.equal(current.draft, true, "release_already_public: never stage again");
+  const before = current.assets.map(({ id, name, digest, size }) => ({ id, name, digest, size }));
+  for (const asset of missingReleaseAssets(assets, current.assets)) {
+    try {
+      gh("release", "upload", tag, "--repo", RELEASE_REPOSITORY, path.join(directory, asset.name));
+    } catch (error) {
+      current = release(tag);
+      checkDraftIdentity(current, tag, proof);
+      assert.equal(current.draft, true);
+      if (missingReleaseAssets(assets, current.assets).some((missing) => missing.name === asset.name)) throw error;
+    }
+  }
+  current = release(tag);
+  checkDraftIdentity(current, tag, proof);
+  assert.equal(current.draft, true);
+  missingReleaseAssets(assets, current.assets, { complete: true });
+  for (const asset of before)
+    assert.deepEqual(current.assets.filter((item) => item.id === asset.id)
+      .map(({ id, name, digest, size }) => ({ id, name, digest, size })), [asset]);
+  return current;
+}
+
+function draftRecovery(released) {
+  const matches = [...released.body.matchAll(/<!-- dure-draft-recovery-v1 (\{[^\n]+\}) -->/g)];
+  assert(matches.length <= 1, "release_recovery_ambiguous");
+  if (matches.length === 0) return null;
+  const value = JSON.parse(matches[0][1]);
+  assert.deepEqual(Object.keys(value).sort(), ["assets", "operator", "releaseId", "runId", "schemaVersion", "toolingSha"]);
+  assert.equal(value.schemaVersion, 1);
+  assert.equal(value.releaseId, released.id);
+  assert.equal(value.runId, provenance(released).runId);
+  assert(typeof value.operator === "string" && /^[a-z\d-]+$/i.test(value.operator));
+  normalizeFullCommitSha(value.toolingSha);
+  return value;
+}
+
+function reviewedRecoveryTooling(sha, operator) {
+  assert.equal(api(`repos/${RELEASE_REPOSITORY}/collaborators/${operator}/permission`).permission,
+    "admin", "release_recovery_admin_required");
+  const comparison = api(`repos/${RELEASE_REPOSITORY}/compare/${sha}...main`);
+  assert.equal(comparison.base_commit.sha, sha, "release_recovery_tooling_unreviewed");
+  assert(["identical", "ahead"].includes(comparison.status), "release_recovery_tooling_unreviewed");
+  exactCi(sha);
+}
+
 function stage() {
   assert.equal(
     args.length,
@@ -510,54 +570,7 @@ function stage() {
     }
     current = release(tag);
   }
-  checkDraftIdentity(current, tag, proof);
-  assert.equal(
-    current.draft,
-    true,
-    "release_already_public: never stage again",
-  );
-  const before = current.assets.map((asset) => ({
-    id: asset.id,
-    name: asset.name,
-    digest: asset.digest,
-    size: asset.size,
-  }));
-  for (const asset of missingReleaseAssets(assets, current.assets)) {
-    try {
-      gh(
-        "release",
-        "upload",
-        tag,
-        "--repo",
-        RELEASE_REPOSITORY,
-        path.join(directory, asset.name),
-      );
-    } catch (error) {
-      current = release(tag);
-      if (
-        missingReleaseAssets(assets, current.assets).some(
-          (missing) => missing.name === asset.name,
-        )
-      )
-        throw error;
-    }
-  }
-  current = release(tag);
-  checkDraftIdentity(current, tag, proof);
-  assert.equal(current.draft, true);
-  missingReleaseAssets(assets, current.assets, { complete: true });
-  for (const asset of before)
-    assert.deepEqual(
-      current.assets
-        .filter((item) => item.id === asset.id)
-        .map((item) => ({
-          id: item.id,
-          name: item.name,
-          digest: item.digest,
-          size: item.size,
-        })),
-      [asset],
-    );
+  current = completeDraft(tag, directory, assets, proof, current);
   output({ tag, release_id: current.id, draft: true });
 }
 
@@ -615,6 +628,9 @@ function promote() {
   assert(current, "release_draft_missing");
   const proof = provenance(current);
   checkDraftIdentity(current, tag, proof);
+  const recovering = command === "recover-draft";
+  let recovery = draftRecovery(current);
+  if (recovering) assert.equal(current.draft, true, "release_recovery_requires_draft");
   if (command === "metadata-only")
     assert.equal(current.draft, false, "metadata_only_requires_public_release");
   if (command === "publish")
@@ -632,7 +648,10 @@ function promote() {
   assert.equal(buildRun.head_branch, "main", "release_main_source_required");
   assert.equal(buildRun.head_sha, proof.workflowSha, "release_workflow_source_mismatch");
   assert.equal(buildRun.status, "completed");
-  assert.equal(buildRun.conclusion, "success", "release_run_not_successful");
+  const failedDraft = buildRun.conclusion === "failure";
+  if (recovering) assert(failedDraft, "release_recovery_requires_failed_draft");
+  assert(buildRun.conclusion === "success" || (failedDraft && (recovering || recovery)),
+    "release_run_not_successful");
   const jobs = api(
     `repos/${RELEASE_REPOSITORY}/actions/runs/${proof.runId}/jobs?filter=latest&per_page=100`,
   );
@@ -640,7 +659,7 @@ function promote() {
     jobs.total_count <= 100 && jobs.jobs.length === jobs.total_count,
     "release_job_observation_incomplete",
   );
-  for (const name of ["source", "candidate", "version", "build", "draft"]) {
+  for (const name of ["source", "candidate", "version", "build"]) {
     const matches = jobs.jobs.filter((job) => job.name === name);
     assert.equal(matches.length, 1, `release_job_missing: ${name}`);
     assert.equal(
@@ -648,6 +667,23 @@ function promote() {
       "success",
       `release_job_not_successful: ${name}`,
     );
+  }
+  const draftJobs = jobs.jobs.filter((job) => job.name === "draft");
+  assert.equal(draftJobs.length, 1, "release_job_missing: draft");
+  assert.equal(draftJobs[0].conclusion, failedDraft ? "failure" : "success",
+    "release_job_not_successful: draft");
+  if (failedDraft) {
+    assert.deepEqual(jobs.jobs.filter((job) => !["source", "candidate", "version", "build", "draft", "verification"].includes(job.name)),
+      [], "release_recovery_unexpected_job");
+    if (recovery) reviewedRecoveryTooling(recovery.toolingSha, recovery.operator);
+  }
+  let recoveryOperator, recoveryToolingSha;
+  if (recovering) {
+    recoveryOperator = api("user").login;
+    assert(typeof recoveryOperator === "string" && /^[a-z\d-]+$/i.test(recoveryOperator));
+    recoveryToolingSha = normalizeFullCommitSha(git("rev-parse", "HEAD"));
+    assert.equal(git("status", "--porcelain", "--untracked-files=no"), "", "release_recovery_tooling_dirty");
+    reviewedRecoveryTooling(recoveryToolingSha, recoveryOperator);
   }
   const verificationJobs = jobs.jobs.filter(
     (job) => job.name === "verification",
@@ -708,7 +744,9 @@ function promote() {
     original,
   );
   const expected = inspectReleaseFiles(original, tag, publicKey);
-  missingReleaseAssets(expected.assets, current.assets, { complete: true });
+  if (recovery) assert.deepEqual(recovery.assets, expected.assets, "release_recovery_asset_mismatch");
+  if (recovering) current = completeDraft(tag, original, expected.assets, proof, current);
+  else missingReleaseAssets(expected.assets, current.assets, { complete: true });
   gh(
     "release",
     "download",
@@ -724,6 +762,29 @@ function promote() {
     expected.assets,
     "release_build_asset_mismatch",
   );
+  if (recovering && !recovery) {
+    recovery = {
+      schemaVersion: 1,
+      releaseId: current.id,
+      runId: proof.runId,
+      operator: recoveryOperator,
+      toolingSha: recoveryToolingSha,
+      assets: expected.assets,
+    };
+    const notes = path.join(work, "recovered-notes.md");
+    fs.writeFileSync(notes, `${current.body}\n\nDraft upload was recovered by a repository administrator from the original successful signed build artifact. The linked build workflow retains its failed draft-job result; no rebuild or asset replacement was used. Recovery tooling: https://github.com/${RELEASE_REPOSITORY}/tree/${recoveryToolingSha}\n\n<!-- dure-draft-recovery-v1 ${JSON.stringify(recovery)} -->\n`,
+      { flag: "wx", mode: 0o600 });
+    try {
+      gh("release", "edit", tag, "--repo", RELEASE_REPOSITORY, "--notes-file", notes);
+    } catch (error) {
+      if (JSON.stringify(draftRecovery(release(tag))) !== JSON.stringify(recovery)) throw error;
+    }
+    current = release(tag);
+    checkDraftIdentity(current, tag, proof);
+    assert.equal(current.draft, true);
+    assert.deepEqual(draftRecovery(current), recovery, "release_recovery_readback_mismatch");
+    missingReleaseAssets(expected.assets, current.assets, { complete: true });
+  }
   if (command === "publish") {
     try {
       gh(
@@ -766,6 +827,7 @@ function promote() {
     assets: files.assets,
     command,
     metadataUpdated: command !== "verify" && current.draft === false,
+    ...(recovery ? { draftRecovery: recovery, originalRunConclusion: buildRun.conclusion } : {}),
     nativeAcceptance:
       "Operator prerequisite; not inferred from these integrity checks",
   };
@@ -781,10 +843,10 @@ try {
   if (command === "preflight") preflight();
   else if (command === "version") version();
   else if (command === "stage") stage();
-  else if (["verify", "publish", "metadata-only"].includes(command)) promote();
+  else if (["verify", "publish", "metadata-only", "recover-draft"].includes(command)) promote();
   else
     throw new Error(
-      "usage: release-public.mjs preflight | version CANDIDATE_DIRECTORY | stage TAG ASSETS SOURCE VERIFICATION | verify|publish|metadata-only TAG",
+      "usage: release-public.mjs preflight | version CANDIDATE_DIRECTORY | stage TAG ASSETS SOURCE VERIFICATION | verify|publish|metadata-only|recover-draft TAG",
     );
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
