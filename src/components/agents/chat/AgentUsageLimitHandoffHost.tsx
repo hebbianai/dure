@@ -66,7 +66,7 @@ function AgentUsageLimitObserver({
 			Boolean("activeTurn" in session && session.activeTurn),
 		currentCredentialId: agentCredentialReferenceId(agent),
 		pool: accounts.filter((account) => account.provider === agent.provider),
-		failure: page ? latestTurnFailure(page.rows) : undefined,
+		failure: page ? latestTurnFailure(page.latestFailure) : undefined,
 		performAccountSwitch: (targetCredentialId) =>
 			requestAgentCredentialTransition({
 				agentId: agent.id,

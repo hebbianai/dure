@@ -1,33 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { AgentTimelineRowV1 } from "@/lib/agents/chat/agentConversationContract";
 import {
 	latestTurnFailure,
 	parseTurnFailureReason,
 	turnFailureRecoveries,
 } from "@/lib/agents/chat/turnFailureReason";
-
-function row(
-	sequence: number,
-	body: AgentTimelineRowV1["item"]["body"],
-): AgentTimelineRowV1 {
-	return {
-		cursor: { epoch: "timeline-1", sequence },
-		item: {
-			itemId: `item-${sequence}`,
-			turnId: "turn-1",
-			clientMessageId: "message-1",
-			providerMessageId: null,
-			body,
-			createdAtMs: sequence,
-		},
-	};
-}
-
-const lifecycle = (
-	sequence: number,
-	state: "turn_started" | "turn_completed" | "turn_failed" | "turn_canceled" | "session_ready",
-	detail: string | null = null,
-) => row(sequence, { type: "lifecycle", state, detail });
 
 describe("parseTurnFailureReason", () => {
 	it("accepts only the shared vocabulary", () => {
@@ -50,49 +26,37 @@ describe("parseTurnFailureReason", () => {
 });
 
 describe("latestTurnFailure", () => {
-	it("returns the newest turn's classified failure", () => {
-		const rows = [
-			lifecycle(1, "turn_started"),
-			row(2, { type: "message", role: "user", markdown: "hi" }),
-			lifecycle(3, "turn_failed", "usage_limit"),
-		];
-		expect(latestTurnFailure(rows)).toEqual({
+	it("projects recovery actions and retained input from the store fact", () => {
+		expect(
+			latestTurnFailure({
+				itemId: "failed-1",
+				createdAtMs: 10,
+				reason: "usage_limit",
+				userInput: "finish this",
+			}),
+		).toEqual({
+			itemId: "failed-1",
+			createdAtMs: 10,
 			reason: "usage_limit",
+			userInput: "finish this",
 			recoveries: ["switch_account"],
-			itemId: "item-3",
-			createdAtMs: 3,
-			userInput: "hi",
 		});
 	});
-
-	it("ignores a failure once a later turn or user message follows it", () => {
-		const failed = lifecycle(1, "turn_failed", "usage_limit");
-		expect(latestTurnFailure([failed, lifecycle(2, "turn_started")])).toBeUndefined();
+	it("does not invent input or a failure when the store has none", () => {
+		expect(latestTurnFailure(null)).toBeUndefined();
+		expect(latestTurnFailure(undefined)).toBeUndefined();
 		expect(
-			latestTurnFailure([failed, row(2, { type: "message", role: "user", markdown: "again" })]),
-		).toBeUndefined();
-		// Session bookkeeping after the failure does not hide it.
-		expect(latestTurnFailure([failed, lifecycle(2, "session_ready")])?.reason).toBe(
-			"usage_limit",
-		);
-	});
-
-	it("never guesses from a failure without a shared reason", () => {
-		expect(latestTurnFailure([lifecycle(1, "turn_failed", null)])).toBeUndefined();
-		expect(latestTurnFailure([lifecycle(1, "turn_failed", "some prose")])).toBeUndefined();
-	});
-});
-
-describe("latestTurnFailure user input", () => {
-	it("keeps only the failed turn's own user message and omits it when absent", () => {
-		const other = row(1, { type: "message", role: "user", markdown: "earlier turn" });
-		other.item.turnId = "turn-0";
-		other.item.clientMessageId = "message-0";
-		expect(
-			latestTurnFailure([other, lifecycle(2, "turn_started"), lifecycle(3, "turn_failed", "rate_limit")]),
-		).toMatchObject({ reason: "rate_limit" });
-		expect(
-			latestTurnFailure([other, lifecycle(2, "turn_started"), lifecycle(3, "turn_failed", "rate_limit")])?.userInput,
-		).toBeUndefined();
+			latestTurnFailure({
+				itemId: "failed-1",
+				createdAtMs: 10,
+				reason: "provider_error",
+				userInput: null,
+			}),
+		).toEqual({
+			itemId: "failed-1",
+			createdAtMs: 10,
+			reason: "provider_error",
+			recoveries: [],
+		});
 	});
 });

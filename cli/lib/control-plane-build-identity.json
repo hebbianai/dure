@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "currentBuildId": "dure-control-plane/v126-conditional-continuation",
-  "previousBuildId": "dure-control-plane/v125-conversation-queue",
+  "currentBuildId": "dure-control-plane/v127-current-failure",
+  "previousBuildId": "dure-control-plane/v126-conditional-continuation",
   "identity": {
     "apiVersion": "dure.control-plane-identity/v1",
     "kind": "dure.control_plane.identity",

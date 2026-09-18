@@ -64,6 +64,7 @@ export function chatComposerSessionFixture(
 			liveText: [],
 			pendingRequests: [],
 			activeTurn: null,
+			latestFailure: null,
 			goal: null,
 			finalCursor: { epoch: "timeline-1", sequence: 1 },
 			hasMore: false,

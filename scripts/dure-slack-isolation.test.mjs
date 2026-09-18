@@ -53,7 +53,7 @@ async function connector(t, { stalledShare = false } = {}) {
     if (index === 0 && !stalledShare) { entered.resolve(); await held.promise; }
     return { read: { type: "page", page: {
       binding: { interactionSessionId: thread.interactionSessionId, timelineEpoch: "epoch-1", runtime: { generation: "generation-1" } },
-      activeTurn: null, finalCursor: { epoch: "epoch-1", sequence: reads[index] },
+      activeTurn: null, latestFailure: null, finalCursor: { epoch: "epoch-1", sequence: reads[index] },
       rows: [{ item: { itemId: `output-${reads[index]}`, body: { type: "message", role: "assistant", markdown: `Result ${reads[index]}` } } }],
     } } };
   });

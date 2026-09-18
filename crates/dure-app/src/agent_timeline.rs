@@ -253,7 +253,8 @@ pub enum AgentTimelineLifecycleStateV1 {
 /// lifecycle `detail` token, so every consumer parses one closed vocabulary
 /// instead of provider prose; the chat surface keys its recovery actions on
 /// this token and never on inference from a generic failure.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentTurnFailureReasonV1 {
     UsageLimit,
     RateLimit,
@@ -1021,6 +1022,16 @@ pub struct AgentTimelineActiveTurnV1 {
     pub client_message_id: AgentClientMessageIdV1,
 }
 
+/// The current failed turn and its retained input, independent of row pagination.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentTimelineFailureV1 {
+    pub item_id: AgentTimelineItemIdV1,
+    pub created_at_ms: i64,
+    pub reason: AgentTurnFailureReasonV1,
+    pub user_input: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentTimelinePageV1 {
@@ -1029,6 +1040,7 @@ pub struct AgentTimelinePageV1 {
     pub live_text: Vec<AgentTimelineLiveTextV1>,
     pub pending_requests: Vec<AgentPendingRequestV1>,
     pub active_turn: Option<AgentTimelineActiveTurnV1>,
+    pub latest_failure: Option<AgentTimelineFailureV1>,
     pub goal: Option<crate::AgentGoalRecordV1>,
     pub queued_inputs: crate::AgentQueuedInputPageV1,
     pub final_cursor: AgentTimelineCursorV1,

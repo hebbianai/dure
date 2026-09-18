@@ -28,6 +28,8 @@ mod goals;
 mod queue;
 #[path = "agent_continuation_tests.rs"]
 mod continuation;
+#[path = "agent_failure_tests.rs"]
+mod failure;
 
 #[tokio::test]
 async fn canceled_effect_completion_rolls_back_before_reusing_its_connection() {

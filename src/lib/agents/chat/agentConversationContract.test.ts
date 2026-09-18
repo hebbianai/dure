@@ -56,6 +56,7 @@ function read() {
 			],
 			pendingRequests: [],
 			activeTurn: null,
+			latestFailure: null,
 			goal: null,
 			queuedInputs: {
 				interactionSessionId: "interaction-1",
@@ -82,6 +83,51 @@ function request(direction: "after" | "before" | "tail" = "tail") {
 }
 
 describe("agent conversation contract", () => {
+	it.each(["tail", "before", "after"] as const)(
+		"reads the current failed input independently of a %s row window",
+		(direction) => {
+			const payload = read();
+			const latestFailure = {
+				itemId: "current-failure",
+				createdAtMs: 50,
+				reason: "usage_limit",
+				userInput: "Original request outside these rows",
+			};
+			expect(
+				parseAgentTimelineReadV1(
+					{ ...payload, page: { ...payload.page, latestFailure } },
+					request(direction),
+				),
+			).toMatchObject({
+				type: "page",
+				page: { latestFailure },
+			});
+		},
+	);
+
+	it.each([
+		undefined,
+		{},
+		{
+			itemId: "failure",
+			createdAtMs: 1,
+			reason: "provider prose",
+			userInput: "retained",
+		},
+		{ itemId: "failure", createdAtMs: 1, reason: "usage_limit", userInput: 42 },
+	])(
+		"does not treat an invalid failure snapshot as permission to recover",
+		(latestFailure) => {
+			const payload = read();
+			expect(
+				parseAgentTimelineReadV1(
+					{ ...payload, page: { ...payload.page, latestFailure } },
+					request(),
+				),
+			).toBeUndefined();
+		},
+	);
+
 	it("does not treat a missing queue projection as an empty accepted queue", () => {
 		const payload = read();
 		const { queuedInputs: _queue, ...page } = payload.page;

@@ -30,7 +30,7 @@ const page = {
     runtime: { runtimeGeneration: "qa", providerEpoch: "qa" }, timelineEpoch: "qa",
     bindingRevision: 1, historyComplete: true, createdAtMs: 1, updatedAtMs: 1 },
   rows: Array.from({ length: longList ? 1 : small ? 120 : 1000 }, (_, i) => row(i + 1000)),
-  liveText: [], pendingRequests: [], activeTurn: null,
+  liveText: [], pendingRequests: [], activeTurn: null, latestFailure: null,
   finalCursor: { epoch: "qa", sequence: longList ? 1000 : small ? 1119 : 1999 }, hasMore: true
 };
 function Fixture() {

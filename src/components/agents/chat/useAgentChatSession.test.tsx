@@ -58,6 +58,7 @@ const initial = {
 		liveText: [],
 		pendingRequests: [],
 		activeTurn: null,
+		latestFailure: null,
 		goal: null,
 		finalCursor: { epoch: "timeline-1", sequence: 0 },
 		hasMore: false,

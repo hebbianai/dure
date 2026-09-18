@@ -1108,9 +1108,55 @@ describe("ChatComposer turn failure recovery", () => {
 		};
 	}
 
+	it("uses the current failure even outside visible rows and clears it without reviving historical failures", () => {
+		const value = session("codex");
+		value.page = {
+			...value.page!,
+			rows: [],
+			latestFailure: {
+				itemId: "current-failure",
+				createdAtMs: 100,
+				reason: "usage_limit",
+				userInput: "Retained input",
+			},
+		};
+		const recovery = recoveryHandlers();
+		const view = render(
+			<ChatComposer session={value} disabled={false} recovery={recovery} />,
+		);
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: t("agents.chat.recovery.switchTo", { name: "work" }),
+			}),
+		);
+		expect(recovery.switchAccount?.run).toHaveBeenCalledOnce();
+		value.page = {
+			...value.page!,
+			rows: failedTurnRows("usage_limit"),
+			latestFailure: null,
+		};
+		view.rerender(
+			<ChatComposer session={value} disabled={false} recovery={recovery} />,
+		);
+		expect(
+			screen.queryByRole("button", {
+				name: t("agents.chat.recovery.switchTo", { name: "work" }),
+			}),
+		).toBeNull();
+	});
+
 	it("offers the pane-scoped switch to a named account for a usage limit", () => {
 		const value = session("codex");
-		value.page = { ...value.page!, rows: failedTurnRows("usage_limit") };
+		value.page = {
+			...value.page!,
+			rows: failedTurnRows("usage_limit"),
+			latestFailure: {
+				itemId: "item-2",
+				createdAtMs: 2,
+				reason: "usage_limit",
+				userInput: null,
+			},
+		};
 		const recovery = recoveryHandlers();
 		render(<ChatComposer session={value} disabled={false} recovery={recovery} />);
 		expect(
@@ -1130,7 +1176,16 @@ describe("ChatComposer turn failure recovery", () => {
 
 	it("falls back to account management when the pane has no other account", () => {
 		const value = session("codex");
-		value.page = { ...value.page!, rows: failedTurnRows("rate_limit") };
+		value.page = {
+			...value.page!,
+			rows: failedTurnRows("rate_limit"),
+			latestFailure: {
+				itemId: "item-2",
+				createdAtMs: 2,
+				reason: "rate_limit",
+				userInput: null,
+			},
+		};
 		const recovery = recoveryHandlers(false);
 		render(<ChatComposer session={value} disabled={false} recovery={recovery} />);
 		fireEvent.click(
@@ -1141,7 +1196,16 @@ describe("ChatComposer turn failure recovery", () => {
 
 	it("offers sign-in and switch for an authentication failure, and nothing for a generic one", () => {
 		const value = session("claude");
-		value.page = { ...value.page!, rows: failedTurnRows("authentication_failed") };
+		value.page = {
+			...value.page!,
+			rows: failedTurnRows("authentication_failed"),
+			latestFailure: {
+				itemId: "item-2",
+				createdAtMs: 2,
+				reason: "authentication_failed",
+				userInput: null,
+			},
+		};
 		const recovery = recoveryHandlers();
 		render(<ChatComposer session={value} disabled={false} recovery={recovery} />);
 		fireEvent.click(
@@ -1165,7 +1229,16 @@ describe("ChatComposer turn failure recovery", () => {
 
 	it("hides the recovery once dismissed or when the pane offers none", () => {
 		const value = session("codex");
-		value.page = { ...value.page!, rows: failedTurnRows("rate_limit") };
+		value.page = {
+			...value.page!,
+			rows: failedTurnRows("rate_limit"),
+			latestFailure: {
+				itemId: "item-2",
+				createdAtMs: 2,
+				reason: "rate_limit",
+				userInput: null,
+			},
+		};
 		const recovery = recoveryHandlers();
 		render(<ChatComposer session={value} disabled={false} recovery={recovery} />);
 		fireEvent.click(screen.getByRole("button", { name: t("common.close") }));
@@ -1212,7 +1285,16 @@ describe("ChatComposer handoff outcome", () => {
 
 	it("says where the pane moved and resends the failed message on request", () => {
 		const value = session("codex");
-		value.page = { ...value.page!, rows: handedOffRows() };
+		value.page = {
+			...value.page!,
+			rows: handedOffRows(),
+			latestFailure: {
+				itemId: "item-3",
+				createdAtMs: 3,
+				reason: "usage_limit",
+				userInput: "finish the report",
+			},
+		};
 		const resend = vi.fn();
 		render(
 			<ChatComposer
@@ -1245,7 +1327,16 @@ describe("ChatComposer handoff outcome", () => {
 
 	it("settles a rejected resend without submitting another request", async () => {
 		const value = session("codex");
-		value.page = { ...value.page!, rows: handedOffRows() };
+		value.page = {
+			...value.page!,
+			rows: handedOffRows(),
+			latestFailure: {
+				itemId: "item-3",
+				createdAtMs: 3,
+				reason: "usage_limit",
+				userInput: "finish the report",
+			},
+		};
 		const resend = vi.fn().mockRejectedValue(new Error("agent_chat_turn_already_pending"));
 		render(<ChatComposer session={value} disabled={false} recovery={{
 			manageAccounts: vi.fn(), handedOff: { toName: "work", resend },

@@ -157,7 +157,7 @@ export function StructuredAgentPanel({
 	const turnFailure =
 		activeTurn || !("page" in session)
 			? undefined
-			: latestTurnFailure(session.page?.rows ?? []);
+			: latestTurnFailure(session.page?.latestFailure);
 
 	useEffect(() => {
 		applyAutomaticPaneTitle(

@@ -31,6 +31,7 @@ function read() {
 			liveText: [],
 			pendingRequests: [],
 			activeTurn: null,
+			latestFailure: null,
 			goal: null,
 			queuedInputs: {
 				interactionSessionId: "interaction-1",

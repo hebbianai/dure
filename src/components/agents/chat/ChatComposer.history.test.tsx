@@ -130,11 +130,12 @@ function expectModelOption(label: string, absent?: string) {
 	fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
 }
 
-it("refreshes observed model, catalog and failure when rows change and clears them on detach", () => {
+it("refreshes observed model, catalog and failure when the page changes and clears them on detach", () => {
 	const value = session("codex");
 	value.page = {
 		...value.page!,
 		rows: facts(1, "reported-one", "Choice One", "usage_limit"),
+		latestFailure: { itemId: "item-3", createdAtMs: 3, reason: "usage_limit", userInput: null },
 	};
 	const recovery = { manageAccounts: vi.fn() };
 	const view = render(
@@ -151,6 +152,7 @@ it("refreshes observed model, catalog and failure when rows change and clears th
 		page: {
 			...value.page,
 			rows: facts(4, "reported-two", "Choice Two", "rate_limit"),
+			latestFailure: { itemId: "item-6", createdAtMs: 6, reason: "rate_limit" as const, userInput: null },
 		},
 	};
 	view.rerender(
@@ -181,7 +183,7 @@ it("refreshes observed model, catalog and failure when rows change and clears th
 it("updates failure visibility for active-turn changes without revisiting unchanged rows", () => {
 	const value = session("codex");
 	const history = countedRows(facts(1, "reported", "Choice", "usage_limit"));
-	value.page = { ...value.page!, rows: history.rows };
+	value.page = { ...value.page!, rows: history.rows, latestFailure: { itemId: "item-3", createdAtMs: 3, reason: "usage_limit", userInput: null } };
 	const recovery = { manageAccounts: vi.fn() };
 	const view = render(
 		<ChatComposer session={value} disabled={false} recovery={recovery} />,
