@@ -1742,6 +1742,63 @@ fn viewport_projection_fault_preserves_provider_generation_and_allows_fresh_atta
 
 #[cfg(feature = "terminal-state-stream")]
 #[test]
+fn shorter_read_only_viewport_preserves_short_output_without_resizing_the_pty() {
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create(
+        &state,
+        "standalone-short-observer-viewport",
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf 'OBSERVER_OUTPUT_READY\\n'; exec /bin/cat".into(),
+        ],
+    );
+    wait_for_replay_snapshot(&fixture.session, b"OBSERVER_OUTPUT_READY");
+    let connection = fixture
+        .session
+        .connect_with_options(TerminalSurfaceAttachment::connection_options(
+            TerminalSurfaceAccess::ReadOnly,
+            None,
+        ))
+        .unwrap();
+    let mut observer = TerminalSurfaceAttachment::from_connection(connection).unwrap();
+    assert!(
+        observer
+            .current_frame()
+            .text()
+            .contains("OBSERVER_OUTPUT_READY")
+    );
+    let frame = observer
+        .set_viewport_rows_confirmed(8, Duration::from_secs(3))
+        .unwrap();
+    assert_eq!(frame.viewport().viewport_rows, 8);
+    assert!(frame.text().contains("OBSERVER_OUTPUT_READY"));
+    assert!(frame.viewport().cursor.is_some());
+    assert!(!frame.viewport().has_more_after);
+
+    let writer_connection = fixture
+        .session
+        .connect_with_options(TerminalSurfaceAttachment::connection_options(
+            TerminalSurfaceAccess::Writer,
+            None,
+        ))
+        .unwrap();
+    let writer = TerminalSurfaceAttachment::from_connection(writer_connection).unwrap();
+    assert_eq!(writer.current_frame().viewport().viewport_rows, 24);
+    assert_eq!(writer.current_frame().viewport().canonical_columns, 80);
+    assert!(
+        writer
+            .current_frame()
+            .text()
+            .contains("OBSERVER_OUTPUT_READY")
+    );
+    writer.detach().unwrap();
+    observer.detach().unwrap();
+    fixture.terminate_and_verify();
+}
+
+#[cfg(feature = "terminal-state-stream")]
+#[test]
 fn written_input_publishes_its_next_viewport_without_the_continuous_output_delay() {
     let state = tempfile::tempdir().unwrap();
     let mut fixture = IdleRetirementFixture::create(

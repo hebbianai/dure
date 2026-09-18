@@ -1314,6 +1314,86 @@ mod tests {
     }
 
     #[test]
+    fn shorter_observer_viewport_keeps_output_above_unused_screen_rows() {
+        let mut replay = replay();
+        replay.resize(33, 48).unwrap();
+        replay
+            .ingest_output(b"DURE_IOS_QA_READY\r\nprompt> ")
+            .unwrap();
+        let mut projection = replay.attach_view_projection().unwrap();
+        let initial = take_frame(&mut replay, &mut projection);
+        assert_eq!(row_text(frame(&initial), 0), "DURE_IOS_QA_READY");
+
+        configure(&mut replay, &mut projection, 1, 29);
+        let smaller = take_frame(&mut replay, &mut projection);
+        let smaller = frame(&smaller);
+        assert_eq!(smaller.canonical_columns, 48);
+        assert_eq!(smaller.viewport_rows, 29);
+        assert_eq!(row_text(smaller, 0), "DURE_IOS_QA_READY");
+        assert_eq!(row_text(smaller, 1), "prompt>");
+        assert_eq!(smaller.cursor.as_ref().unwrap().row, 1);
+        assert!(smaller.follow_tail);
+        assert!(!smaller.has_more_after);
+        assert_eq!(replay.terminal.size(), (33, 48));
+    }
+
+    #[test]
+    fn observer_tail_preserves_content_below_a_repositioned_cursor() {
+        let mut replay = replay();
+        replay.resize(8, 24).unwrap();
+        replay
+            .ingest_output(b"prompt\x1b[6;1Hfooter\x1b[1;1H")
+            .unwrap();
+        let mut projection = replay.attach_view_projection().unwrap();
+        configure(&mut replay, &mut projection, 1, 3);
+        let record = take_frame(&mut replay, &mut projection);
+        assert_eq!(row_text(frame(&record), 2), "footer");
+        assert!(frame(&record).cursor.is_none());
+        assert!(!frame(&record).has_more_after);
+    }
+
+    #[test]
+    fn observer_tail_preserves_styled_empty_rows_and_cursor_only_rows() {
+        for output in [
+            &b"prompt\x1b[8;1H\x1b[41m\x1b[2K\x1b[0m\x1b[1;1H"[..],
+            &b"prompt\x1b[8;1H"[..],
+            &b"prompt\x1b[8;1H \x1b[1;1H"[..],
+        ] {
+            let mut replay = replay();
+            replay.resize(8, 24).unwrap();
+            replay.ingest_output(output).unwrap();
+            let mut projection = replay.attach_view_projection().unwrap();
+            let full = take_frame(&mut replay, &mut projection);
+            assert_eq!(frame(&full).rows.len(), 8);
+            configure(&mut replay, &mut projection, 1, 3);
+            let short = take_frame(&mut replay, &mut projection);
+            assert_eq!(
+                frame(&short).rows[2].logical_line_id,
+                frame(&full).rows[7].logical_line_id
+            );
+            assert!(!frame(&short).has_more_after);
+        }
+    }
+
+    #[test]
+    fn observer_tail_preserves_alternate_screen_padding() {
+        let mut replay = replay();
+        replay.resize(8, 24).unwrap();
+        replay.ingest_output(b"\x1b[?1049happlication").unwrap();
+        let mut projection = replay.attach_view_projection().unwrap();
+        let full = take_frame(&mut replay, &mut projection);
+        assert_eq!(frame(&full).rows.len(), 8);
+        configure(&mut replay, &mut projection, 1, 3);
+        let short = take_frame(&mut replay, &mut projection);
+        assert_eq!(
+            frame(&short).rows[0].logical_line_id,
+            frame(&full).rows[5].logical_line_id
+        );
+        assert_eq!(frame(&short).rows.len(), 3);
+        assert!(frame(&short).cursor.is_none());
+    }
+
+    #[test]
     fn scrolling_past_tail_reuses_the_complete_captured_viewport() {
         for downward_rows in [1, 2, 64] {
             let mut replay = replay();
