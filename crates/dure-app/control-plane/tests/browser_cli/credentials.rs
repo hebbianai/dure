@@ -131,7 +131,7 @@ async fn actual_cli_credentials_replace_reset_and_isolate_basic_authorization() 
         }
     });
     let evidence: Result<Value,String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         let shown = cli(&root, &["show",resource]).await?;
         let page = shown["result"]["pages"][0]["page"]["page_id"].as_str().ok_or("page missing")?;
@@ -207,7 +207,7 @@ async fn actual_cli_credentials_replace_reset_and_isolate_basic_authorization() 
         let neighbor = opened["result"]["observation"]["pages"].as_array().and_then(|pages|pages.iter().find(|entry|entry["url"]==neighbor_url)).and_then(|entry|entry["page"]["page_id"].as_str()).ok_or("neighbor missing")?;
         let neighbor_state = fetch(&root,resource,neighbor,epoch,"/inspect?neighbor").await?;
         require(neighbor_state["body"]["hasAuthorization"]==false,&neighbor_state)?;
-        let other = cli(&root,&["create","--workspace","workspace-browser"]).await?;
+        let other = cli(&root,&["create"]).await?;
         let other_resource = other["result"]["control"]["resource"]["resource_id"].as_str().ok_or("other resource missing")?;
         let other_view = cli(&root,&["show",other_resource]).await?;
         let other_page = other_view["result"]["pages"][0]["page"]["page_id"].as_str().ok_or("other page missing")?;

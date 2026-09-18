@@ -1,31 +1,32 @@
 ---
 title: "Dure を設定する"
-description: "Basic インターフェースで文字、言語、アカウント、通知、更新の設定を探します。"
+description: "Basic または Beta インターフェースを選び、文字、言語、アカウント、通知、更新の設定を探します。"
 ---
 
 import { ProductFigure } from "/snippets/app-capture.jsx";
 
-サイドバーの歯車で **Settings** を開きます。公開ベータ版は Basic を使い、日常の設定に Pro は必要ありません。
+サイドバーの歯車で **Settings** を開きます。**General → Interface mode** で **Basic** または **Beta** を選びます。Basic は基本のコントロールだけを表示し、Beta は **Terminal**、**Mobile**、**Shortcuts**、**Data locations**、**macOS permissions** の各ページを含むすべての項目を表示します。
 
 ## 必要な設定を探す
 
 | 設定 | 場所 |
 | --- | --- |
+| Basic または Beta インターフェース | General |
 | インストール済みバージョンと更新確認 | General |
 | 既定のプロバイダーと権限 | General |
 | 表示言語とエディターの自動保存 | General |
 | プロバイダーのアカウントプロファイル | AI provider accounts |
-| CLI の検出とプロバイダー準備 | Provider |
+| CLI の検出とプロバイダー準備 | Agent CLI |
 | Dure CLI と統合の準備 | Agent tooling |
 | テーマ、配色、ターミナルのフォントと行高 | Appearance |
-| 上部バーの Claude/Codex 使用量表示 | Appearance |
+| 上部バーの Claude/Codex 使用量表示 | Appearance → Status bar |
 | エージェント通知と音 | Notifications |
 | 活動とローカルのプロバイダーログからのトークン使用量 | Stats and usage |
 | 匿名の使用データのスイッチ、診断とフィードバックの案内（[詳細](/jp/privacy-and-telemetry)） | Privacy and telemetry |
 
 ## ターミナルを読みやすくする
 
-上部バーの **A−** と **A+** で文字サイズを変更します。**Appearance → Terminal font** でフォントとサイズ、**Line height** を調整できます。プレビューで間隔を見てから作業に戻りましょう。
+上部バーの **A-** と **A+** で文字サイズを変更します。**Appearance → Terminal font** でフォントとサイズ、**Line height** を調整できます。プレビューで間隔を見てから作業に戻りましょう。
 
 <Frame caption="外観設定の行の高さ 1.35 とターミナルフォントのプレビュー。">
   <ProductFigure scene="settings" locale="jp" label="外観設定の行の高さ 1.35 とターミナルフォントのプレビュー。" />

@@ -11,7 +11,7 @@ async fn profile_deletion_preserves_an_unrelated_closed_resource_and_its_close_a
     let service = BrowserService::new(backend, "generation:profile-delete", root.path());
     let identity = BrowserResourceIdentity {
         resource_id: BrowserResourceId::new("browser:retained-cleanup").unwrap(),
-        workspace_id: BrowserWorkspaceId::new("workspace:retained-cleanup").unwrap(),
+        workspace_id: BrowserWorkspaceId::new("workspace:dure-browser").unwrap(),
         generation: service.generation.clone(),
     };
     let runtime = Arc::new(BrowserRuntime::new(identity.clone(), root.path()));
@@ -29,7 +29,7 @@ async fn profile_deletion_preserves_an_unrelated_closed_resource_and_its_close_a
     // Native closure alone does not remove a service owner: a resource can
     // remain listed while its independently retained scratch cleanup is pending.
     runtime.close(&identity).await.unwrap();
-    let list = json!({"kind":"list","workspace_id":identity.workspace_id});
+    let list = json!({"kind":"list"});
     let before = service.dispatch(&store, &list).await.unwrap();
     let created = service
         .dispatch(
@@ -91,10 +91,7 @@ async fn desktop_envelopes_preserve_created_replayed_and_recovered_payloads() {
         .await
         .unwrap();
     let listed = service
-        .dispatch(
-            &store,
-            &json!({"kind":"list","workspace_id":"workspace:desktop"}),
-        )
+        .dispatch(&store, &json!({"kind":"list"}))
         .await
         .unwrap();
     let profiles = service

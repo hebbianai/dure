@@ -33,7 +33,6 @@ import { useStore } from "@/store";
 
 export function DureTagPane() {
 	const connection = useSlackTeamConnection();
-	if (!connection.pro) return null;
 	return (
 		<section
 			aria-label={t("tag.title")}

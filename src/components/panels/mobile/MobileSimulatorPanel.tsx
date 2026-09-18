@@ -46,7 +46,9 @@ import {
 } from "@/lib/mobileSimulator/preview";
 import {
 	type MobileRunProfile,
+	type MobileRunProfileIdentity,
 	readMobileRunProfiles,
+	removeMobileRunProfile,
 	saveMobileRunProfile,
 } from "@/lib/mobileSimulator/profile";
 import type { PaneActionEntry } from "@/lib/workspace/pane/paneActionRegistry";
@@ -304,10 +306,8 @@ export function MobileSimulatorPanel(
 		setProfiles(next);
 		props.api.updateParameters({ profiles: next });
 	}
-	function removeProfile(projectPath: string) {
-		const next = profiles.filter(
-			(profile) => profile.projectPath !== projectPath,
-		);
+	function removeProfile(profile: MobileRunProfileIdentity) {
+		const next = removeMobileRunProfile(profiles, profile);
 		setProfiles(next);
 		props.api.updateParameters({ profiles: next });
 	}

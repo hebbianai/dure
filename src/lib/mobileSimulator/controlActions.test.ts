@@ -143,3 +143,29 @@ describe("agent-accessible mobile workflows", () => {
 		);
 	});
 });
+
+it("requires the exact selected device before removing its profile", async () => {
+	const { actions, controls } = fixture();
+	expect(
+		(
+			await actions["mobile.profile.remove"]({
+				...args,
+				deviceId: "stale",
+				projectPath: "/project",
+			})
+		).outcome,
+	).toBe("refused");
+	expect(controls.remove).not.toHaveBeenCalled();
+	expect(
+		(
+			await actions["mobile.profile.remove"]({
+				...args,
+				projectPath: "/project",
+			})
+		).outcome,
+	).toBe("applied");
+	expect(controls.remove).toHaveBeenCalledExactlyOnceWith({
+		projectPath: "/project",
+		device: target,
+	});
+});

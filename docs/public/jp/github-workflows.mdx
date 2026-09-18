@@ -19,17 +19,17 @@ gh auth status
 git remote -v
 ```
 
-サイドバーはデスクトップの GitHub アクセスを使います。プロバイダーログインとは別で、組織や GitHub Projects には追加権限が必要な場合があります。
+サイドバーはデスクトップの GitHub アクセスを使います。プロバイダーログインとは別で、組織には追加権限が必要な場合があります。**Projects** には `read:project` スコープが必要です。権限エラーが表示されたら `gh auth refresh -s read:project` を実行してください。このスコープがなくても Issues と pull request は使えます。
 
 ## issue からエージェントを開始する
 
-項目の **Start** をクリックします。issue や pull request の文脈が入力された **New agent** が開きます。タスク、プロジェクト、プロバイダー、worktree の選択を確認し、**Enter** または **Start agent** で開始します。
+項目の **Start** をクリックします。プロジェクト、エージェント名、その issue や pull request に対する依頼が入力された **New agent** が開きます。**Isolate in a dedicated worktree** はオフの状態で始まるため、ファイルを分ける必要があるタスクではオンにします。依頼、プロジェクト、プロバイダーを確認し、必要なら依頼を編集してから **Enter** または **Start agent** で開始します。
 
 <Frame caption="GitHub Issue の例で Start を選ぶと、エージェントのタスク開始フローに進みます。">
   <ProductFigure scene="github" locale="jp" label="GitHub Issue の例で Start を選ぶと、エージェントのタスク開始フローに進みます。" />
 </Frame>
 
-エージェントを開始するだけでは、pull request のマージや issue のクローズは行われません。
+issue の場合、あらかじめ入力された依頼は、まず現在のコードと issue を照合するようエージェントに求めます。issue がすでに解決済みなら、重複した変更の代わりに完了の根拠をコメントして issue をクローズするよう求めることがあります。エージェントに issue を変更させたくない場合は、開始前に依頼を編集してください。pull request の場合、依頼は残りの作業に対応してレビューの準備をするよう求めます。エージェントを開始しても pull request はマージされません。
 
 ## 作業に戻る
 
@@ -39,6 +39,6 @@ git remote -v
 
 ## 統合を設定する
 
-**Plugin → GitHub → Plugin settings** で、選択したワークスペースの更新間隔や既定の issue 一覧を設定します。互換性と設定範囲は[プラグイン](/jp/plugins)を参照してください。
+**Plugins → GitHub → Plugin settings** で、選択したワークスペースの更新間隔や既定の issue 一覧を設定します。互換性と設定範囲は[プラグイン](/jp/plugins)を参照してください。
 
-リモートエージェントがデスクトップのログインで issue を読む場合は、別の [SSH GitHub 読み取り接続](/jp/remote-and-ssh)を使います。対応コマンドとアクセス範囲はローカルサイドバーと異なります。
+リモートエージェントがデスクトップのログインで issue を読む場合は、別の [SSH GitHub 読み取り接続](/jp/remote-and-ssh#デスクトップのログインで-github-issue-を読む)を使います。対応コマンドとアクセス範囲はローカルサイドバーと異なります。

@@ -7,6 +7,7 @@ export const panels: Record<string, string> = {
 	"panels.mobile.live": "实时 iOS（实验功能）",
 	"panels.mobile.profiles": "运行配置",
 	"panels.mobile.loadProfile": "加载已保存的项目",
+	"panels.mobile.newProfile": "新建配置",
 	"panels.mobile.projectPath": "项目文件夹",
 	"panels.mobile.chooseFolder": "选择文件夹",
 	"panels.mobile.buildCommand": "构建命令（可选）",
@@ -82,13 +83,11 @@ export const panels: Record<string, string> = {
 		"在新标签页中打开会保留当前页面，并使用所选配置文件的 Cookie 和存储加载同一网址。",
 	"panels.browser.profileClone": "在新标签页中打开",
 	"panels.browser.profileSwitch": "切换配置文件",
-	"panels.browser.workspace": "工作区",
 	"panels.browser.resource": "浏览器",
-	"panels.browser.chooseWorkspace": "选择工作区",
 	"panels.browser.chooseBrowser": "选择浏览器",
 	"panels.browser.browserNumber": "浏览器 {number}",
 	"panels.browser.newBrowser": "新建浏览器",
-	"panels.browser.useForWorkspace": "用于工作区命令",
+	"panels.browser.useAsDefault": "设为默认浏览器",
 	"panels.browser.reconnect": "重新连接",
 	"panels.browser.page": "页面",
 	"panels.browser.followCurrent": "跟随当前标签页",
@@ -108,10 +107,7 @@ export const panels: Record<string, string> = {
 	"panels.browser.closeConfirmation":
 		"关闭此浏览器及其所有页面？未保存的更改可能丢失。",
 	"panels.browser.chooseBrowserHint":
-		"选择工作区，然后打开浏览器或连接到正在运行的浏览器。",
-	"panels.browser.noWorkspaces":
-		"没有可用的工作区。请打开智能体工作区，然后重新连接。",
-	"panels.browser.moreWorkspaces": "更多工作区",
+		"打开浏览器或连接到正在运行的浏览器。",
 	"panels.browser.releaseFailed":
 		"无法确认浏览器输入是否已释放。请重新连接并检查浏览器后再继续。",
 	"panels.agent.toolbar.control.conversationHistory": "会话历史",
@@ -204,4 +200,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.saveEditsHint": "将编辑保存为自定义主题",
 	"panels.tokens.theme.saved": "已保存为主题",
 	"panels.tokens.theme.savedWithExclusions": "已保存为主题 — 部分令牌被排除：{names}",
+	"panels.browser.installRuntime": "安装浏览器",
+	"panels.browser.installingRuntime": "正在下载并安装浏览器…",
 };

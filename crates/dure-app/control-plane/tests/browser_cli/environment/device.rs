@@ -123,7 +123,7 @@ pub(super) async fn exercise(
         eval(home, resource, peer, epoch, DEVICE).await? == peer_before,
         "device changed peer tab",
     )?;
-    let other = cli(home, &["create", "--workspace", "workspace-browser"]).await?;
+    let other = cli(home, &["create"]).await?;
     let other_id = other["result"]["control"]["resource"]["resource_id"]
         .as_str()
         .ok_or("device peer resource missing")?;

@@ -13,10 +13,8 @@ export const ipc: Record<string, string> = {
 		"ブラウザーの接続が変更されました。再接続してブラウザーを選択してください。",
 	"ipc.browser.unavailable":
 		"このブラウザーは利用できなくなりました。再接続してブラウザーを選択してください。",
-	"ipc.browser.developmentRequired":
-		"Pro Browserには、ブラウザーに対応した開発用バックエンドが必要です。選択したバックエンドを更新してから、再接続してください。",
-	"ipc.browser.runtimeRequired":
-		"選択したバックエンドにブラウザーランタイムがインストールされていません。そのバックエンドにランタイムをインストールしてから、ブラウザーを作成してください。",
+	"ipc.browser.developmentRequired": "Browserを使うには、選択したサーバーを更新して再接続してください。",
+	"ipc.browser.runtimeRequired": "このサーバーでBrowserを使うには、ブラウザーのランタイムをダウンロードしてください。",
 	"ipc.browser.requestFailed":
 		"ブラウザーのリクエストが完了しませんでした。再試行する前に状態を確認してください。",
 	"ipc.agentConversation.invalidResponse": "エージェント会話の応答が正しくありません。",
@@ -40,4 +38,6 @@ export const ipc: Record<string, string> = {
 	"ipc.dureRun.promptUncertain": "エージェントは起動しましたが、プロンプトを受け取った確認がありません ({code})。再送する前にターミナルを確認してください。",
 	"ipc.dureRun.receiptMismatch": "Dureバックエンドがリクエストと一致しないRunレシートを返しました。",
 	"ipc.dureRun.requestFailed": "DureバックエンドへのRunリクエストに失敗しました。",
+	"ipc.browser.installationFailed": "ブラウザーのインストールが完了しませんでした。接続を確認して、もう一度インストールしてください。",
+	"ipc.browser.platformUnavailable": "Browserは現在Apple Silicon Macで利用できます。",
 };

@@ -7,6 +7,7 @@ export const panels: Record<string, string> = {
 	"panels.mobile.live": "실시간 iOS (실험 기능)",
 	"panels.mobile.profiles": "실행 프로필",
 	"panels.mobile.loadProfile": "저장된 프로젝트 불러오기",
+	"panels.mobile.newProfile": "새 프로필",
 	"panels.mobile.projectPath": "프로젝트 폴더",
 	"panels.mobile.chooseFolder": "폴더 선택",
 	"panels.mobile.buildCommand": "빌드 명령 (선택)",
@@ -82,13 +83,11 @@ export const panels: Record<string, string> = {
 		"새 탭에서 열면 현재 페이지를 유지하고 선택한 프로필의 쿠키와 저장소로 같은 URL을 엽니다.",
 	"panels.browser.profileClone": "새 탭에서 열기",
 	"panels.browser.profileSwitch": "프로필 전환",
-	"panels.browser.workspace": "워크스페이스",
 	"panels.browser.resource": "브라우저",
-	"panels.browser.chooseWorkspace": "워크스페이스 선택",
 	"panels.browser.chooseBrowser": "브라우저 선택",
 	"panels.browser.browserNumber": "브라우저 {number}",
 	"panels.browser.newBrowser": "새 브라우저",
-	"panels.browser.useForWorkspace": "작업공간 명령 대상으로 사용",
+	"panels.browser.useAsDefault": "기본 브라우저로 사용",
 	"panels.browser.reconnect": "다시 연결",
 	"panels.browser.page": "페이지",
 	"panels.browser.followCurrent": "현재 탭 따라보기",
@@ -108,10 +107,7 @@ export const panels: Record<string, string> = {
 	"panels.browser.closeConfirmation":
 		"이 브라우저와 모든 페이지를 종료할까요? 저장하지 않은 변경 사항은 사라질 수 있습니다.",
 	"panels.browser.chooseBrowserHint":
-		"워크스페이스를 선택한 뒤 새 브라우저를 열거나 실행 중인 브라우저에 연결하세요.",
-	"panels.browser.noWorkspaces":
-		"사용 가능한 워크스페이스가 없습니다. 에이전트 워크스페이스를 연 뒤 다시 연결하세요.",
-	"panels.browser.moreWorkspaces": "워크스페이스 더 보기",
+		"브라우저를 열거나 실행 중인 브라우저에 연결하세요.",
 	"panels.browser.releaseFailed":
 		"브라우저 입력 해제를 확인하지 못했습니다. 다시 연결해 브라우저 상태를 확인한 뒤 계속하세요.",
 	"panels.agent.toolbar.control.conversationHistory": "대화 히스토리",
@@ -204,4 +200,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.saveEditsHint": "편집을 커스텀 테마로 저장",
 	"panels.tokens.theme.saved": "테마로 저장했습니다",
 	"panels.tokens.theme.savedWithExclusions": "테마로 저장했습니다 — 일부 토큰은 제외됨: {names}",
+	"panels.browser.installRuntime": "브라우저 설치",
+	"panels.browser.installingRuntime": "브라우저를 다운로드하고 설치하는 중…",
 };

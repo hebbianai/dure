@@ -13,10 +13,8 @@ export const ipcEnglishTranslations: Record<string, string> = {
 		"The browser connection changed. Reconnect to choose a browser.",
 	"ipc.browser.unavailable":
 		"This browser is no longer available. Reconnect to choose a browser.",
-	"ipc.browser.developmentRequired":
-		"Pro Browser requires a compatible development backend. Update the selected backend, then reconnect.",
-	"ipc.browser.runtimeRequired":
-		"The browser runtime is missing on the selected backend. Install it there before creating a browser.",
+	"ipc.browser.developmentRequired": "Update the selected server to use Browser, then reconnect.",
+	"ipc.browser.runtimeRequired": "Download the browser runtime to use Browser on this server.",
 	"ipc.browser.requestFailed":
 		"The browser request did not finish. Check its status before trying again.",
 	"ipc.agentConversation.invalidResponse": "The agent conversation response is invalid.",
@@ -40,4 +38,6 @@ export const ipcEnglishTranslations: Record<string, string> = {
 	"ipc.dureRun.promptUncertain": "The agent started, but it never confirmed the prompt ({code}). Check its terminal before sending the request again.",
 	"ipc.dureRun.receiptMismatch": "The Dure backend returned a Run receipt that does not match the request.",
 	"ipc.dureRun.requestFailed": "The Dure backend Run request failed.",
+	"ipc.browser.installationFailed": "Browser installation did not finish. Check the connection and try installing again.",
+	"ipc.browser.platformUnavailable": "Browser is currently available on Apple Silicon Macs.",
 };

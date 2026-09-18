@@ -5,11 +5,11 @@ description: "Read local diffs, send specific comments, and verify the result be
 
 import { ProductFigure } from "/snippets/app-capture.jsx";
 
-Review the changed code and its evidence before accepting an agent's result. Dure's Diff view keeps that review close to the conversation.
+Review the changed code and its evidence before accepting an agent's result. Dure opens that review in a separate diff window you can keep beside the conversation.
 
 ## Open the correct worktree
 
-Open **Diff** for the local agent or worktree. The comparison uses the branch's fork point and includes uncommitted changes and new files. Select a changed file and read its diff. Opening the review does not stage or commit anything.
+In the local agent's pane toolbar, click the diff icon. Its tooltip reads **View diff in a new window**, and when the branch has changes it shows counters such as `C2 W1` for committed and uncommitted files. The review opens in a separate window. The comparison uses the branch's fork point and includes uncommitted changes and new files. Select a changed file and read its diff. Opening the review does not stage or commit anything.
 
 <Frame caption="Compare the original and modified search function side by side.">
   <ProductFigure scene="diff-review" locale="en" label="Compare the original and modified search function side by side." />

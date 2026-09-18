@@ -73,10 +73,10 @@ async fn installed_generations_serve_real_cli_and_preserve_running_pages_during_
     let (root, endpoint, server) = fixture_with_installation(None).await;
     let mut owned = Vec::new();
     let evidence: Result<Value,String> = async {
-        let before = cli(&root, &["create","--workspace","workspace-browser"]).await;
+        let before = cli(&root, &["create"]).await;
         require(matches!(&before,Err(error) if error.contains("browser_engine_not_installed")), &before)?;
         let first_install = install(&root, &materials).await?;
-        let created = cli(&root, &["create","--workspace","workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let first = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?.to_owned();
         owned.push(first.clone());
         let shown = cli(&root, &["show",&first]).await?;
@@ -104,7 +104,7 @@ async fn installed_generations_serve_real_cli_and_preserve_running_pages_during_
 
         let profile = cli(&root,&["tab","profile","create","--label","Installed update","--scope","isolated","--no-ua-spoof"]).await?;
         let profile_id = profile["result"]["profile"]["profile"]["profileId"].as_str().ok_or_else(||format!("profile missing: {profile}"))?;
-        let created = cli(&root,&["create","--workspace","workspace-browser","--profile",profile_id]).await?;
+        let created = cli(&root,&["create","--profile",profile_id]).await?;
         let second = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("updated resource missing")?.to_owned();
         owned.push(second.clone());
         let shown = cli(&root,&["show",&second]).await?;

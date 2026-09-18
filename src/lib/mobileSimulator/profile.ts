@@ -9,6 +9,26 @@ export interface MobileRunProfile {
 	url: string;
 	device: MobileDeviceTarget;
 }
+export type MobileRunProfileIdentity = Pick<
+	MobileRunProfile,
+	"projectPath" | "device"
+>;
+export function mobileRunProfileKey(profile: MobileRunProfileIdentity): string {
+	return JSON.stringify([
+		profile.projectPath,
+		profile.device.platform,
+		profile.device.id,
+	]);
+}
+export function removeMobileRunProfile(
+	profiles: MobileRunProfile[],
+	removed: MobileRunProfileIdentity,
+): MobileRunProfile[] {
+	return profiles.filter(
+		(profile) => mobileRunProfileKey(profile) !== mobileRunProfileKey(removed),
+	);
+}
+
 export function readMobileRunProfiles(value: unknown): MobileRunProfile[] {
 	if (!Array.isArray(value)) return [];
 	return value.slice(0, 16).flatMap((item) => {
@@ -39,8 +59,5 @@ export function saveMobileRunProfile(
 	profiles: MobileRunProfile[],
 	next: MobileRunProfile,
 ): MobileRunProfile[] {
-	return [
-		...profiles.filter((profile) => profile.projectPath !== next.projectPath),
-		next,
-	].slice(-16);
+	return [...removeMobileRunProfile(profiles, next), next].slice(-16);
 }

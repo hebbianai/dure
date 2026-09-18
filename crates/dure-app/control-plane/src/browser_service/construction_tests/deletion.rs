@@ -32,7 +32,13 @@ async fn canceled_profile_delete_retains_pending_native_owner_and_resumes_after_
         let fixture = Arc::clone(&fixture);
         let id = id.clone();
         tokio::spawn(async move {
-            fixture.service.dispatch(&fixture.store,&json!({"kind":"create","workspace_id":"workspace:construction","operation_id":"pending:launch","profile_id":id})).await
+            fixture
+                .service
+                .dispatch(
+                    &fixture.store,
+                    &json!({"kind":"create","operation_id":"pending:launch","profile_id":id}),
+                )
+                .await
         })
     };
     let starting = timeout(Duration::from_secs(5), async {
@@ -53,7 +59,13 @@ async fn canceled_profile_delete_retains_pending_native_owner_and_resumes_after_
         .join(format!("{:x}", Sha256::digest(id.as_str().as_bytes())));
     let retained =
         storage.join("profile/Default").is_dir() && storage.join("native-claim.json").is_file();
-    let rejected=fixture.service.dispatch(&fixture.store,&json!({"kind":"create","workspace_id":"workspace:construction","operation_id":"pending:late-launch","profile_id":id})).await;
+    let rejected = fixture
+        .service
+        .dispatch(
+            &fixture.store,
+            &json!({"kind":"create","operation_id":"pending:late-launch","profile_id":id}),
+        )
+        .await;
     drop(deleting);
     // Release this exact launcher even when any recorded observation failed.
     std::fs::write(&release, b"release").unwrap();

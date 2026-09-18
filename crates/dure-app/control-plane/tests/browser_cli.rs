@@ -56,6 +56,8 @@ mod profiles;
 mod queries;
 #[path = "browser_cli/react.rs"]
 mod react;
+#[path = "browser_cli/shared_context.rs"]
+mod shared_context;
 #[path = "browser_cli/tab_labels.rs"]
 mod tab_labels;
 #[path = "browser_cli/tracing.rs"]
@@ -64,8 +66,6 @@ mod tracing;
 mod vitals;
 #[path = "browser_cli/waiting.rs"]
 mod waiting;
-#[path = "browser_cli/workspace_context.rs"]
-mod workspace_context;
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -285,10 +285,10 @@ async fn real_cli_uses_backend_host_and_durable_operation_journal() {
     let database = root.join("backend/application-state.sqlite3");
     let hmux = root.join("unused-hmux");
     let evidence: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", "create-browser-proof"]).await?;
+        let created = cli(&root, &["create", "--idempotency-key", "create-browser-proof"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or_else(|| format!("create: {created}"))?;
-        let replayed = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", "create-browser-proof"]).await?;
-        let listed = cli(&root, &["list", "--workspace", "workspace-browser"]).await?;
+        let replayed = cli(&root, &["create", "--idempotency-key", "create-browser-proof"]).await?;
+        let listed = cli(&root, &["list"]).await?;
         let shown = cli(&root, &["show", resource]).await?;
         let page = shown["result"]["pages"][0]["page"]["page_id"].as_str().ok_or("page missing")?;
         queries::without_controller(&root, resource, page).await?;

@@ -70,7 +70,7 @@ async fn actual_cli_har_records_an_interval_and_recovers_the_original_artifact()
     println!("BROWSER_HAR_CLI_OWNED root={}", root.display());
     let (base, stop_http, http) = http_fixture().await;
     let evidence: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         let shown = cli(&root, &["show", resource]).await?;
         let page = shown["result"]["pages"][0]["page"]["page_id"].as_str().ok_or("page missing")?;

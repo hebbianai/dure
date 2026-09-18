@@ -1,21 +1,108 @@
 ---
 title: "VM 環境"
-description: "Pro でワークツリーごとに独立した実行環境を準備します。"
+description: "Beta インターフェースで worktree 専用の計算環境を用意します。"
 ---
 
-Pro 対応の Dure で Pro モードを選択すると、プロジェクトのレシピから VM やコンテナーを準備できます。レシピはローカルで実行され、SSH 接続の登録後、通常の手順でリモートワークツリーとエージェントを作成します。
+Dure は、リポジトリ内のレシピを使って worktree 用の独立した VM やコンテナーを準備できます。レシピをローカルで実行して SSH エンドポイントを登録し、その環境内で通常のリモートプロジェクトとエージェントのワークフローを使います。
 
-1. **エージェントを追加**でローカル Git プロジェクトを選び、**VM を使用 · Pro**を選択します。
-2. レシピと名前を選び、**環境を準備**を押します。ローカルの認証情報を使用し、有料リソースを作成する場合があるため、先にスクリプトを確認してください。
-3. 実行状態になったら**この環境で続ける**を選び、SSH ホストキーを確認してリモートワークツリーを作成します。
-4. **設定 → VM 環境**から停止・再開・削除できます。Basic に切り替えた後も既存環境の停止と削除が可能です。
+VM 環境には Beta インターフェースが必要です。**設定 → 一般 → インターフェースモード**で**ベータ**を選択してください。Basic でも既存環境の一時停止と削除はできますが、作成と再開はできません。
 
-画面を閉じても準備は続きます。エージェントの削除では VM は削除されません。必要な変更を保存またはプッシュしてから明示的に環境を削除してください。ゲストのファイルやセッションが失われる場合があります。
+## 環境を使う
 
-## ローカル Lima の例
+1. **エージェントを追加**でローカル Git プロジェクトを選び、**VM を使用 · Beta**を選択します。
+2. レシピを選んで環境に名前を付け、**環境を準備**を選択します。先にスクリプトを確認してください。スクリプトはローカルの認証情報で実行され、プロバイダーの課金対象となるリソースを作成する場合があります。
+3. 実行中になったら**この環境で続ける**を選択します。SSH ホストキーを確認し、通常どおりブランチを選んでリモート worktree を作成します。
+4. **設定 → VM 環境**で**一時停止**、**再開**、**削除**を管理します。
 
-Lima 1.2 以降、Git、Python 3 をインストールします。[レシピ](/examples/lima/lima.sh)をプロジェクトの `.dure/lima.sh`、[マニフェスト](/examples/lima/dure.environments.json)をルートの `dure.environments.json` に保存します。
+ダイアログを閉じても準備は続きます。設定から実行中の環境を開くと、SSH 登録やエージェント起動の失敗から復旧できます。エージェントを削除したりペインを閉じたりしても、環境は削除**されません**。残したい作業を保存またはプッシュしてから、明示的に**削除**を使ってください。一時停止するとセッションは切断され、削除するとゲストのファイルがすべて失われる可能性があります。Dure は実行中のプロセスを移行せず、プロバイダーのログイン認証情報を VM にコピーしません。
 
-現在のコミットのみを VM にコピーします。ホストのディレクトリはマウントせず、未コミットの変更や認証情報もコピーしません。ゲストでエージェント CLI をインストールし、ログインしてください。
+## Lima でローカル VM を試す
 
-レシピの入出力、復旧、CLI は[英語のドキュメント](/en/vm-environments#recipe-contract)をご覧ください。
+[Lima](https://lima-vm.io/docs/installation/) 1.2 以降、Git、Python 3 をインストールします。[Lima レシピ](https://github.com/hebbianai/dure/blob/main/docs/public/examples/lima/lima.sh)をプロジェクトの `.dure/lima.sh` に、その[マニフェスト](/examples/lima/dure.environments.json)をプロジェクトルートの `dure.environments.json` に保存します。プロジェクトルートで次を実行します。
+
+~~~bash
+mkdir -p .dure
+curl -fsSL https://raw.githubusercontent.com/hebbianai/dure/main/docs/public/examples/lima/lima.sh -o .dure/lima.sh
+curl -fsSL https://docs.dureai.dev/examples/lima/dure.environments.json -o dure.environments.json
+~~~
+
+Dure はレシピを Bash で実行するため、スクリプトに実行権限は必要ありません。プロジェクトにすでに `dure.environments.json` がある場合は、ファイルを上書きせず、その `environments` リストに `lima` レシピを追加してください。
+
+この例では、2 CPU、2 GiB メモリ、12 GiB ディスクの Ubuntu 24.04 VM を使います。現在コミット済みの `HEAD` を `/home/dure/project` にコピーします。未コミットの変更、無視されたファイル、認証情報は含まれません。ホストのディレクトリは一切マウントしません。エージェントの作業を始める前に、VM 内でエージェント CLI をインストールしてログインしてください。
+
+Lima が [SSH エンドポイントとキー](https://lima-vm.io/docs/usage/ssh/)を提供します。レシピはループバックポートを固定するため、再起動しても同じ接続が維持されます。対応する Mac では、Lima は [Apple の仮想化](https://lima-vm.io/docs/config/vmtype/vz/)を使います。非公開の準備ログは、`LIMA_HOME` と同じ階層にある `<LIMA_HOME directory name>-dure-logs` ディレクトリに書き込まれます。既定値: `~/.lima-dure-logs`。
+
+## レシピの契約
+
+プロジェクトルートに `dure.environments.json` を作成します。
+
+~~~json
+{
+  "schemaVersion": 1,
+  "environments": [{
+    "id": "my-vm",
+    "name": "My VM provider",
+    "create": ".dure/create.sh",
+    "destroy": ".dure/destroy.sh",
+    "suspend": ".dure/suspend.sh",
+    "resume": ".dure/resume.sh"
+  }]
+}
+~~~
+
+`create` と `destroy` は必須です。`suspend` と `resume` は両方を指定するか、両方を省略します。パスはプロジェクト内のファイルに解決される必要があります。各スクリプトは UTF-8 で 64 KiB 以下にしてください。1 つのマニフェストには最大 32 個のレシピを含められます。1 つのレシピでキャプチャしたスクリプトは、JSON エンコード後に 256 KiB 以内に収める必要があります。
+
+スクリプトは、その環境専用の非公開で永続的な作業ディレクトリで Bash により実行されます。ソースリポジトリは `DURE_PROJECT_PATH` から読み取ってください。Dure は作成前に、選択したスクリプトの内容とダイジェストをキャプチャします。選択後にスクリプトを変更した場合は、レシピを再読み込みする必要があります。以降のライフサイクル操作では、プロジェクトが削除された後もキャプチャしたスクリプトを使います。クリーンアップは自己完結させてください。ソースプロジェクト内の補助ファイルはスナップショットされません。
+
+各呼び出しは次の環境変数を受け取ります。
+
+| 変数 | 意味 |
+| --- | --- |
+| `DURE_ENVIRONMENT_ID` | 準備前から使える、事前に割り当てられた固定のインスタンス ID |
+| `DURE_ENVIRONMENT_NAME` | ユーザーが選んだ表示名 |
+| `DURE_ENVIRONMENT_ACTION` | `create`、`suspend`、`resume`、`destroy` のいずれか |
+| `DURE_ENVIRONMENT_SCHEMA_VERSION` | `1` |
+| `DURE_PROJECT_PATH` | 元のローカルプロジェクトパス |
+
+Stdin には、`schemaVersion`、`action`、`instanceId`、`name`、`projectPath`、`recipeResult`（直前に成功した結果、または `null`）を含む JSON オブジェクトが 1 つ渡されます。Dure は、名前が `DURE_`、`HMUX_`、`GIT_` で始まる継承変数をすべて削除してから、上記の変数を設定します。その他の継承された環境変数はプロバイダー CLI から利用できます。準備はフォアグラウンドで最後まで実行してください。制限付きの子プロセスは操作ロックを継承します。デーモンがそのディスクリプターを開いたままにすると、解放されるまで後続のライフサイクル操作を実行できません。
+
+成功した `create` と `resume` は、stdout に JSON 結果をちょうど 1 つ出力する必要があります。
+
+~~~json
+{
+  "schemaVersion": 1,
+  "resourceId": "provider-resource-id",
+  "connection": {
+    "host": "127.0.0.1",
+    "port": 2222,
+    "user": "developer",
+    "keyPath": "/absolute/local/path/to/private/key",
+    "projectRoot": "/absolute/guest/repository/path"
+  },
+  "userData": {}
+}
+~~~
+
+`keyPath` は省略可能で、省略すると通常の SSH agent/設定による解決を使います。ゲストのプロジェクトルートはあらかじめ存在している必要があります。`userData` は省略可能なオブジェクトで、後続のコマンドのために非公開で保持され、クライアントには返されません。再開時は同じリソース ID と接続フィールドを返す必要があります。クラウド VM では固定のアドレス/ポートまたは DNS 名を使ってください。
+
+成功した `suspend` と `destroy` は終了ステータス 0 で終了します。すべてのコマンドには 30 分の制限があり、出力は 64 KiB までです。詳細なログは非公開のファイルに残してください。Dure はプロバイダーの出力を含めず、エラーコードだけを表示します。
+
+## 復旧と所有権
+
+レコードは準備の**前に**保存されます。作成が失敗した場合や結果の形式が不正な場合は、キャプチャした destroy スクリプトが自動的に実行されます。プロバイダーのリソースには `DURE_ENVIRONMENT_ID` を使ってラベルや名前を付ける必要があり、`destroy` は `recipeResult` が `null` の場合やリソースがすでに存在しない場合でも冪等でなければなりません。
+
+バックエンドが中断すると、失敗したレコードが保持されます。設定を更新してからそのレコードを削除し、プロバイダーのリソースを整理してください。Dure は作成を再実行しません。クリーンアップの失敗は再試行できるよう表示され続けます。同じ作成キーで要求を繰り返しても、別の環境は作成されません。ローカルバックエンドごとに最大 512 件のレコードが保持され、削除済みのレコードも再試行用の識別情報を保持します。
+
+## CLI
+
+~~~sh
+dure environment recipes --project /absolute/repo
+dure environment create --project /absolute/repo --recipe my-vm \
+  --digest sha256:DIGEST_FROM_RECIPES --name task-42 --request-id task-42-vm
+dure environment list
+dure environment suspend --id ENVIRONMENT_ID --revision CURRENT_REVISION
+dure environment resume --id ENVIRONMENT_ID --revision CURRENT_REVISION
+dure environment destroy --id ENVIRONMENT_ID --revision CURRENT_REVISION
+~~~
+
+コマンドはローカルバックエンドを対象とし、JSON を返します。作成は保留中のレコードの受け付けを返すだけなので、完了は `list` で確認してください。応答を受け取れずに再試行するときは、返された `requestId` をそのまま使ってください。ライフサイクルを変更する前に、最新の revision を読み取ってください。

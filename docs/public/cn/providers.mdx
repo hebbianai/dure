@@ -9,22 +9,22 @@ Dure 使用你安装的编码智能体 CLI 和提供商账户。模型、认证�
 
 ## 准备并选择提供商
 
-在 **Settings → Provider** 查看检测结果和设置说明。先使用在普通终端能够运行的 CLI。启动器包含 Claude Code、Codex、Pi、Kimi Code、Gemini CLI、OpenCode 等注册工具。
+在 **Settings → Agent CLI** 查看检测结果和设置说明。先使用在普通终端能够运行的 CLI。Basic 界面的启动器提供 Claude Code、Codex 和 Kimi Code。在 **Settings → General → Interface mode** 选择 **Beta**，即可添加 Pi、Gemini CLI、OpenCode 等其他注册工具。
 
-在 **⌘N → New agent** 选择提供商。新智能体会打开原生终端面板。命令已注册不代表所有模型、账户功能和对话操作都可用。
+在 **⌘N → New agent** 选择提供商。新智能体会打开原生终端面板。在 Beta 中，**Settings → General → Default agent pane** 可以让支持的新智能体改为以 Chat 打开。命令已注册不代表所有模型、账户功能和对话操作都可用。
 
 ## 了解可用能力
 
 | 能力 | 需要确认 |
 | --- | --- |
 | 终端 | CLI 已安装，并能在选定目录和主机启动 |
-| 聊天视图 | 此提供商和运行时的面板提供 Terminal/Chat |
+| 聊天视图（Beta） | 此提供商和运行时的面板提供 Terminal/Chat |
 | 已有对话 | Dure 能发现提供商保存的对话记录 |
 | 恢复或分叉 | 所选对话与提供商支持该操作 |
 | 账户配置 | 此提供商具有账户选择器 |
 | 使用量 | 提供商已返回近期数据 |
 
-Claude Code、Codex、OpenCode 和 Pi 有结构化聊天集成，是否可用还取决于安装的工具和运行时。其他工具可使用原生终端界面。
+在 Beta 中，Claude Code、Codex、OpenCode 和 Pi 有结构化聊天集成，是否可用还取决于安装的工具和运行时。其他工具可使用原生终端界面。
 
 <Tabs>
   <Tab title="Codex">
@@ -52,12 +52,12 @@ Claude Code、Codex、OpenCode 和 Pi 有结构化聊天集成，是否可用还
 
 ## 查看使用量和限额
 
-Claude 和 Codex 使用量控件显示提供商返回的限额和重置时间。可在 **Settings → Appearance** 启用顶部栏指示器，在 **Stats and usage** 查看活动。缺失或过时的数据无法证明还有可用额度。
+Claude 和 Codex 使用量控件显示提供商返回的限额和重置时间。可在 **Settings → Appearance → Status bar** 显示或隐藏顶部栏指示器，在 **Stats and usage** 查看活动。缺失或过时的数据无法证明还有可用额度。
 
-在 **Settings → General → 自动账户恢复 · Pro** 中配置所选服务器的恢复功能。选择提供商，启用恢复，勾选允许服务器使用的账户并保存。对于支持的 Chat 对话，即使关闭所有 Dure 窗口，服务器也能切换账户并继续原来的请求。加入共享工作区不会自动提供您的个人账户。
+在 **Settings → General → 自动账户恢复 · Beta** 中配置所选服务器的恢复功能。选择提供商，启用恢复，勾选允许服务器使用的账户并保存。对于支持的 Chat 对话，即使关闭所有 Dure 窗口，服务器也能切换账户并继续原来的请求。加入共享工作区不会自动提供您的个人账户。
 
 优先使用近期用量仍有余量的账户；用量未知或过期不会阻止尝试已允许的账户。失败或结果不确定的尝试会保持可见，不会盲目重发。之后的人类输入优先。仍可手动切换账户，身份验证失败需要处理。
 
 使用 `dure recovery get codex --backend SERVER --json` 查看策略和已注册的账户，使用 `dure recovery status AGENT_ID --backend SERVER --json` 查看恢复结果。运行 `dure recovery help` 可了解指定版本的设置修改和可选用量观测。这些命令直接连接所选服务器。
 
-默认提供商和权限选项在 **Settings → General**。按实际任务选择权限；[worktree 不是沙箱](/cn/current-limits)。
+默认提供商和权限选项在 **Settings → General**。按实际任务选择权限；[worktree 不是沙箱](/cn/current-limits#文件分离与权限)。

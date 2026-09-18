@@ -1,17 +1,20 @@
 // @vitest-environment jsdom
 
-import { chooseSelectValue } from "@/test/select";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { afterEach, expect, it, vi } from "vitest";
 import { BrowserPanel } from "@/components/panels/BrowserPanel";
+import { chooseSelectValue } from "@/test/select";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@/lib/i18n", () => ({ t: (key: string) => key }));
-vi.mock("@/components/workspace/useInterfaceMode", () => ({
-	useInterfaceMode: () => "pro",
-}));
 vi.mock("@/components/workspace/usePaneFirstReveal", () => ({
 	usePaneFirstReveal: () => true,
 }));
@@ -21,27 +24,22 @@ vi.mock("@/components/workspace/WorkspaceRuntimeContext", () => ({
 vi.mock("@/lib/workspace/pane/paneTitleOverrideStore", () => ({
 	applyAutomaticPaneTitle: vi.fn(),
 }));
-vi.mock("@/components/design/DesignModeBrowserDialog", () => ({
-	isLoopbackUrl: () => false,
-}));
 
 afterEach(() => {
 	cleanup();
 	vi.unstubAllGlobals();
+	vi.unstubAllEnvs();
 	mocks.invoke.mockReset();
 });
 
 it.each([
-	[
-		"workspaces",
-		"browser_pro_development_only",
-		"ipc.browser.developmentRequired",
-	],
-	["workspaces", "unknown_backend_error", "ipc.browser.requestFailed"],
+	["list", "browser_pro_development_only", "ipc.browser.developmentRequired"],
+	["list", "unknown_backend_error", "ipc.browser.requestFailed"],
 	["create", "browser_engine_not_installed", "ipc.browser.runtimeRequired"],
 ])(
 	"presents %s failure %s and retains explicit recovery",
 	async (kind, code, message) => {
+		vi.stubEnv("PROD", true);
 		const route = {
 			schemaVersion: 1,
 			profileId: "local",
@@ -108,30 +106,40 @@ it.each([
 			/>,
 		);
 		try {
-			fireEvent.click(screen.getByRole("button", { name: "panels.browser.options" }));
+			fireEvent.click(
+				screen.getByRole("button", { name: "panels.browser.options" }),
+			);
 			if (kind === "create") {
 				await waitFor(() =>
-					expect(screen.getByRole("button", { name: "panels.browser.newBrowser" })).toHaveProperty("disabled", false),
+					expect(
+						screen.getByRole("button", { name: "panels.browser.newBrowser" }),
+					).toHaveProperty("disabled", false),
 				);
 				fireEvent.click(
 					screen.getByRole("button", { name: "panels.browser.newBrowser" }),
 				);
 			}
 			expect((await screen.findByRole("alert")).textContent).toBe(message);
+			if (code === "browser_engine_not_installed")
+				expect(
+					screen.getByRole("button", { name: "panels.browser.installRuntime" }),
+				).toHaveProperty("disabled", false);
 			expect(screen.queryByText("Untrusted backend diagnostic")).toBeNull();
 			expect(requests).toEqual(
-				kind === "create" ? ["workspaces", "list", "create"] : ["workspaces"],
+				kind === "create" ? ["list", "create"] : ["list"],
 			);
-			if (kind === "workspaces") {
+			if (kind === "list") {
 				unavailable = false;
 				fireEvent.click(
 					screen.getByRole("button", { name: "panels.browser.reconnect" }),
 				);
 				await waitFor(() =>
-					expect(screen.getByRole("button", { name: "panels.browser.newBrowser" })).toHaveProperty("disabled", false),
+					expect(
+						screen.getByRole("button", { name: "panels.browser.newBrowser" }),
+					).toHaveProperty("disabled", false),
 				);
 				expect(screen.queryByRole("alert")).toBeNull();
-				expect(requests).toEqual(["workspaces", "workspaces", "list"]);
+				expect(requests).toEqual(["list", "list"]);
 				expect(api.updateParameters).not.toHaveBeenCalled();
 			}
 		} finally {
@@ -212,10 +220,14 @@ it.each([false, true])(
 					};
 					break;
 				case "list":
-					result = { resources: [control] };
+					result = {
+						workspace_id: resource.workspace_id,
+						resources: [control],
+					};
 					break;
 				case "observe":
-					if (observationUnavailable) throw new Error("Fixture observation disconnected");
+					if (observationUnavailable)
+						throw new Error("Fixture observation disconnected");
 					result = observation();
 					break;
 				case "control_state":
@@ -314,9 +326,7 @@ it.each([false, true])(
 			screen.getByRole("textbox", { name: "panels.browser.address" });
 		try {
 			await screen.findByRole("combobox", { name: "panels.browser.page" });
-			await waitFor(() =>
-				expect(pageSelect().textContent).toBe(first.page_id),
-			);
+			await waitFor(() => expect(pageSelect().textContent).toBe(first.page_id));
 			chooseSelectValue(pageSelect(), second.page_id);
 			await waitFor(() =>
 				expect(address()).toHaveProperty("value", pages[1].url),
@@ -389,7 +399,9 @@ it.each([false, true])(
 			fireEvent.click(
 				screen.getByRole("button", { name: "panels.browser.reconnect" }),
 			);
-			await waitFor(() => expect(pageSelect().textContent).toBe("panels.browser.followCurrent"));
+			await waitFor(() =>
+				expect(pageSelect().textContent).toBe("panels.browser.followCurrent"),
+			);
 			control = {
 				...control,
 				revision: String(BigInt(control.revision) + 1n),
@@ -444,7 +456,7 @@ it.each([false, true])(
 	},
 );
 
-it("attaches the chosen workspace, navigates, and persists the newly selected page", async () => {
+it("attaches a shared Browser, navigates, and persists the newly selected page", async () => {
 	const route = {
 		schemaVersion: 1,
 		profileId: "local",
@@ -506,7 +518,7 @@ it("attaches the chosen workspace, navigates, and persists the newly selected pa
 				};
 				break;
 			case "list":
-				result = { resources: [control] };
+				result = { workspace_id: resource.workspace_id, resources: [control] };
 				break;
 			case "observe":
 				if (created) await observationGate;
@@ -599,12 +611,12 @@ it("attaches the chosen workspace, navigates, and persists the newly selected pa
 		/>,
 	);
 	try {
-		fireEvent.click(screen.getByRole("button", { name: "panels.browser.options" }));
-		const workspace = await screen.findByRole("combobox", {
-			name: "panels.browser.workspace",
-		});
-		await waitFor(() => expect(workspace).toHaveProperty("disabled", false));
-		chooseSelectValue(workspace, "workspace:actual");
+		fireEvent.click(
+			screen.getByRole("button", { name: "panels.browser.options" }),
+		);
+		expect(
+			screen.queryByRole("combobox", { name: "panels.browser.workspace" }),
+		).toBeNull();
 		const browser = await screen.findByRole("combobox", {
 			name: "panels.browser.resource",
 		});
@@ -649,8 +661,8 @@ it("attaches the chosen workspace, navigates, and persists the newly selected pa
 		expect
 			.soft(
 				screen.getByRole("combobox", {
-						name: "panels.browser.page",
-					}).textContent,
+					name: "panels.browser.page",
+				}).textContent,
 			)
 			.toBe("common.loading");
 		expect
@@ -660,8 +672,8 @@ it("attaches the chosen workspace, navigates, and persists the newly selected pa
 		await waitFor(() =>
 			expect(
 				screen.getByRole("combobox", {
-						name: "panels.browser.page",
-					}).textContent,
+					name: "panels.browser.page",
+				}).textContent,
 			).toBe("Created page"),
 		);
 	} finally {

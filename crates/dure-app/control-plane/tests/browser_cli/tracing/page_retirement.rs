@@ -16,10 +16,10 @@ async fn closes_last_page(mode: &str) {
     let (root, endpoint, server) = fixture().await;
     let mut resources = Vec::new();
     let evidence: Result<_, String> = async {
-        let owner = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", "last-page-owner"]).await?;
+        let owner = cli(&root, &["create", "--idempotency-key", "last-page-owner"]).await?;
         let owner = owner["result"]["control"]["resource"]["resource_id"].as_str().ok_or("owner missing")?.to_owned();
         resources.push(owner.clone());
-        let peer = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", "last-page-peer"]).await?;
+        let peer = cli(&root, &["create", "--idempotency-key", "last-page-peer"]).await?;
         let peer = peer["result"]["control"]["resource"]["resource_id"].as_str().ok_or("peer missing")?.to_owned();
         resources.push(peer.clone());
         let controlled = cli(&root, &["control", &owner, "--controller", "trace-owner"]).await?;

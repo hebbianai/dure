@@ -27,7 +27,7 @@ test.each(["up", "down", "left", "right"])("named scroll %s defaults to 300 thro
   const explicit = client();
   const expected = await explicit.run(["scroll", resource.resource_id, direction, "300", ...authority]);
   assert.equal(expected.ok, true);
-  for (const target of [["--resource", resource.resource_id], ["--worktree", "current"], []]) {
+  for (const target of [["--resource", resource.resource_id], ["--current"], []]) {
     const current = client();
     assert.deepEqual(await current.run(["scroll", "--direction", direction, ...target, ...authority]), expected);
     assert.deepEqual(current.calls.slice(target[0] === "--resource" ? 0 : 1), explicit.calls);
