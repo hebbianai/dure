@@ -1,4 +1,5 @@
 import { withAgentChatDraftMoves } from "@/lib/agents/chat/agentChatDraftMoveCoordinator";
+import { track } from "@/lib/ipc/telemetry";
 import { publishLayoutPush } from "@/lib/workspace/layout/layoutPushChannel";
 import type { DockviewApi } from "dockview-react";
 import { nanoid } from "nanoid";
@@ -724,6 +725,7 @@ export function openRemoteSshTerminalOn(
     );
     return Promise.resolve();
   }
+  track("ssh_session_opened");
   return openRemoteHmuxTerminalDetached({
     api,
     desktopId,

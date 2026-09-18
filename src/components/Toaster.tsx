@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { UpdateNoticeQueue } from "@/components/common/UpdateNoticeQueue";
 import { RestartPreparationNotice } from "@/components/common/RestartPreparationNotice";
+import { TelemetryNotice } from "@/components/common/TelemetryNotice";
+import { useOnboardingPending } from "@/components/panels/useOnboardingPanelState";
 import { Alert } from "@/components/ui/alert";
 import { t } from "@/lib/i18n";
 import {
@@ -13,6 +15,7 @@ import {
 import { useModalOpen } from "@/lib/ui/modalPresence";
 import { useUpdateNoticeSnapshot } from "@/lib/updates/useUpdateNoticeSnapshot";
 import { cn } from "@/lib/utils";
+import { isMainWindow } from "@/lib/workspace/window/windows";
 
 /** The brief-toast column. `className` places it: the main window puts it
  * inside the workspace `<main>` (absolute, so "centre" is the workspace's
@@ -108,6 +111,9 @@ export function Toaster({ brief = true }: { brief?: boolean } = {}) {
     (notice) => !notice.dismissed,
   );
   const visibleNotice = modalOpen ? undefined : updateNotice;
+  const mainWindow = isMainWindow();
+  // The first-run guide has the corner before the telemetry question does.
+  const onboarding = useOnboardingPending();
   return (
     <>
       <RestartPreparationNotice />
@@ -118,6 +124,14 @@ export function Toaster({ brief = true }: { brief?: boolean } = {}) {
         >
           <UpdateNoticeQueue notices={updateNotices} />
         </div>
+      ) : null}
+      {mainWindow ? (
+        // The same corner and the same hold-while-modal rule as the update
+        // card; an update outranks the question, which waits its turn. Kept
+        // mounted so the window asks the native side once, not per toggle.
+        <TelemetryNotice
+          hidden={modalOpen || visibleNotice !== undefined || onboarding}
+        />
       ) : null}
       {brief ? <BriefToasts className="fixed inset-x-0 bottom-4" /> : null}
     </>

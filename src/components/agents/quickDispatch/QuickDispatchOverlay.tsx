@@ -70,6 +70,7 @@ import { useProviderCatalog } from "@/components/agents/useProviderCatalog";
 import { providerCatalogSource } from "@/lib/agents/providerModelCatalogSource";
 import { saveQuickDispatchAttachments } from "@/lib/ipc";
 import { supportsDureProviderCredentialSpawn } from "@/lib/ipc/dureProviderCredentialProfile";
+import { track } from "@/lib/ipc/telemetry";
 import { insertQuickCommandText } from "@/lib/workspace/pane/quickCommands";
 import { saveSessionFiles } from "@/lib/files/sessionFileTransfer";
 import { PROVIDERS, type Provider } from "@/types";
@@ -322,6 +323,7 @@ export function QuickDispatchOverlay({
 
 		onDispatched?.();
 		onClose();
+		track("quick_dispatch_used");
 		void runQuickDispatch(intent);
 	};
 

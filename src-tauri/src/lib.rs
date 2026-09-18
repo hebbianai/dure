@@ -101,6 +101,7 @@ mod standalone_create_request;
 mod server;
 mod share;
 mod shell_corner;
+mod telemetry;
 mod traffic_lights;
 mod window_resize;
 mod spawn;
@@ -2163,10 +2164,16 @@ pub fn run() {
     } else {
         builder
     };
+    // Anonymous usage telemetry: one process, one `app_opened`, offered
+    // before any window exists and dropped unless the install already
+    // accepted. The runtime is inert without a compiled-in key.
+    let telemetry_runtime = telemetry::TelemetryRuntime::for_this_process();
+    telemetry_runtime.offer(telemetry::event::TelemetryEvent::AppOpened);
     let builder = builder
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        .manage(telemetry_runtime)
         .manage(AppState::default())
         .manage(backend_transport)
         .manage(backend_coordinator)
@@ -2449,6 +2456,9 @@ pub fn run() {
             design_mode::design_mode_close_browser,
             feedback_capture::feedback_capture_main_window,
             feedback_capture::feedback_environment,
+            telemetry::telemetry_state,
+            telemetry::telemetry_set_choice,
+            telemetry::telemetry_track,
             claude_collector::claude_collector_install,
             claude_collector::claude_collector_uninstall,
             login_identity::account_login_identity,
@@ -2511,5 +2521,12 @@ pub fn run() {
         .build(context)
         .expect("error while building tauri application");
     let mut durable_exit = durable_window_exit::DurableWindowExitCoordinator::default();
-    app.run(move |app, event| durable_exit.handle(app, event));
+    app.run(move |app, event| {
+        // Every window is already closed at `Exit`; a bounded final flush
+        // blocks no UI and the worker cannot keep the process alive.
+        if matches!(event, tauri::RunEvent::Exit) {
+            app.state::<telemetry::TelemetryRuntime>().shutdown();
+        }
+        durable_exit.handle(app, event)
+    });
 }

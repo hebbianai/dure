@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { createDockview, type DockviewApi } from "dockview-react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { track } from "@/lib/ipc/telemetry";
 import {
 	openDiffPanel,
 	openGitPanel,
@@ -10,6 +11,8 @@ import {
 	registerDockview,
 	unregisterDockview,
 } from "@/lib/workspace/dock/dockRegistry";
+
+vi.mock("@/lib/ipc/telemetry", () => ({ track: vi.fn() }));
 
 const cleanups: (() => void)[] = [];
 let api: DockviewApi;
@@ -42,6 +45,18 @@ beforeEach(() => {
 });
 afterEach(() => {
 	for (const cleanup of cleanups.splice(0).reverse()) cleanup();
+});
+
+describe("openGitPanel", () => {
+	it("offers git_panel_opened only when a new Git pane is created", () => {
+		vi.mocked(track).mockClear();
+		openGitPanel(desktopId, "project-1", "Dure");
+		openGitPanel(desktopId, "project-1", "Dure");
+		expect(
+			api.panels.filter((panel) => panel.api.component === "git"),
+		).toHaveLength(1);
+		expect(vi.mocked(track).mock.calls).toEqual([["git_panel_opened"]]);
+	});
 });
 
 describe("openSessionDiffPanel", () => {

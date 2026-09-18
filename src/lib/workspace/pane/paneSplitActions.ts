@@ -1,6 +1,7 @@
 // Generic split reserves a selector at the inherited execution location.
 // Explicit Terminal and SSH choices still open their chosen shell directly.
 
+import { track } from "@/lib/ipc/telemetry";
 import { readRecentSshHostId } from "@/lib/ssh/recentSshHost";
 import {
 	openSplitLauncherPanel,
@@ -40,6 +41,7 @@ export function paneSplitActions({
 		target: Parameters<typeof openSplitTerminalPanel>[1],
 	) => {
 		if (!desktopId) return;
+		track("pane_split", { direction });
 		openSplitTerminalPanel(desktopId, target, {
 			referencePanel: panelId,
 			direction,
@@ -48,6 +50,7 @@ export function paneSplitActions({
 	return {
 		splitPane: (direction) => {
 			if (!desktopId) return;
+			track("pane_split", { direction });
 			openSplitLauncherPanel(
 				desktopId,
 				paneSplitTargetForPanel({ id: panelId, component }, params),
