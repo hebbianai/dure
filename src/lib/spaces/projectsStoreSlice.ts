@@ -13,6 +13,7 @@ import {
 	scanWorktreesCommand,
 	sshExecOnce,
 } from "@/lib/ipc";
+import { track } from "@/lib/ipc/telemetry";
 import { reorder } from "@/lib/persistence/storeCollections";
 import { createLocalProject, projectAtPath } from "@/lib/spaces/projectAdd";
 import { repositoryDisplayName } from "@/lib/spaces/repositoryDisplayName";
@@ -51,13 +52,23 @@ export function createProjectsStoreSlice(
 	get: () => ProjectsHostState,
 	registerProject: (candidate: Project) => Promise<Project>,
 ): ProjectsStoreSlice {
+	// A registration the store already knew is a lookup, not an addition.
+	const registerNew = async (
+		candidate: Project,
+		kind: "local" | "ssh",
+	): Promise<Project> => {
+		const known = new Set(get().projects.map((project) => project.id));
+		const registered = await registerProject(candidate);
+		if (!known.has(registered.id)) track("project_added", { kind });
+		return registered;
+	};
 	return {
 		projects: [],
 		pinnedProjects: [],
 		detected: {},
 
 		addLocalProject: async (path) => {
-			return registerProject(await createLocalProject(path));
+			return registerNew(await createLocalProject(path), "local");
 		},
 
 		addRemoteProject: async (hostId, path) => {
@@ -75,7 +86,7 @@ export function createProjectsStoreSlice(
 				sshHostId: hostId,
 				isRepo: directory.isRepo,
 			};
-			return registerProject(p);
+			return registerNew(p, "ssh");
 		},
 
 		ensureProjectForPath: async (path, hostId) => {

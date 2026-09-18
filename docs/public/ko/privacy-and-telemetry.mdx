@@ -1,0 +1,45 @@
+---
+title: "개인정보와 사용 데이터"
+description: "익명 사용 데이터 공유에 동의하면 Dure가 무엇을 보내고 무엇을 절대 보내지 않는지, 어떻게 끄는지 안내합니다."
+---
+
+Dure는 여러분이 허락하기 전까지 아무것도 보내지 않습니다. 처음 실행하면 메인 창이 익명 사용 데이터를 공유할지 묻고, 답하기 전이나 거절한 뒤에는 어떤 사용 이벤트도 이 기기를 벗어나지 않습니다. 답은 언제든 **설정 → 개인정보 및 텔레메트리**에서 바꿀 수 있습니다.
+
+## 동의하면 보내는 것
+
+이벤트는 [PostHog](https://posthog.com) 미국 클라우드 리전으로 갑니다. 각 이벤트에는 임의의 설치 ID(계정, 이메일, 기기 이름은 절대 아님), 저장되지 않는 실행별 임의 세션 ID, 앱 버전, 릴리스 채널, 운영체제 이름과 버전, CPU 아키텍처가 실립니다. PostHog에는 사람 프로필을 만들지 말고 위치를 조회하지 말도록 지시하며, PostHog 프로젝트는 요청의 IP 주소를 버리도록 설정돼 있습니다.
+
+| 이벤트 | 추가 속성 |
+| --- | --- |
+| `app_opened` | — |
+| `telemetry_accepted`, `telemetry_opted_out` | — |
+| `space_created` | — |
+| `project_added` | `kind`: `local` 또는 `ssh` |
+| `agent_pane_opened` | `provider`: `codex` 같은 코딩 에이전트 ID |
+| `message_sent` | `provider` |
+| `pane_split` | `direction`: `right` 또는 `below` |
+| `pane_hidden`, `pane_restored` | — |
+| `quick_dispatch_used` | — |
+| `github_panel_opened`, `git_panel_opened`, `ssh_session_opened` | — |
+
+이 목록이 허용 목록 전부입니다. 목록에 없는 이벤트나 속성은 보낼 수 없고, `provider`는 알려진 코딩 에이전트 중 하나입니다. PostHog는 무료 플랜에서 1년, 유료 플랜에서 7년 동안 이벤트를 보관합니다.
+
+## 절대 보내지 않는 것
+
+파일 경로, 저장소·브랜치·워크트리 이름, URL, 커밋 메시지, 프롬프트, 에이전트 출력, 터미널 내용, 오류 메시지, 호스트 이름, 사용자 이름, IP 주소. 이것들을 담을 필드 자체가 없습니다.
+
+## 끄는 방법
+
+- **설정 → 개인정보 및 텔레메트리 → 익명 사용 데이터**: 스위치를 끕니다. Dure는 마지막으로 `telemetry_opted_out` 이벤트 하나를 보내려 시도하고, 설치 ID를 삭제한 뒤 멈춥니다.
+- Dure를 실행하는 환경에 `DO_NOT_TRACK=1` 또는 `DURE_TELEMETRY_DISABLED=1`을 설정합니다. 둘 중 하나만 있어도 스위치를 바꾸지 않은 채 우선하며, 설정 페이지가 어느 것이 적용 중인지 알려줍니다.
+- CI 환경(`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `CIRCLECI`, `TRAVIS`, `BUILDKITE`, `JENKINS_URL`, `TEAMCITY_VERSION`)에서는 절대 보내지 않습니다.
+
+로컬 개발 빌드처럼 텔레메트리 키가 없는 빌드는 질문도 스위치도 보여주지 않고 아무것도 보내지 않습니다.
+
+## 문서 사이트
+
+`docs.dureai.dev`는 어떤 페이지가 도움이 되는지 보려고 같은 PostHog 프로젝트로 페이지 조회를 보냅니다. Mintlify의 표준 분석 연동이며, 프로젝트는 요청의 IP 주소를 버리고, 문서 사이트의 어떤 것도 앱의 설치 ID와 연결되지 않습니다.
+
+## 다른 데이터 경로
+
+[진단 보고서](/ko/troubleshooting)와 앱 내 피드백은 별개입니다. 각각 보내기를 눌렀을 때만 전송되며, 사용 데이터의 설치 ID는 실리지 않습니다.

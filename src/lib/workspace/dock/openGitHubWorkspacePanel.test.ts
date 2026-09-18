@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 import { createDockview, type DockviewApi } from "dockview-react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { track } from "@/lib/ipc/telemetry";
 import { openGitHubWorkspacePanel } from "@/lib/workspace/dock/openGitHubWorkspacePanel";
 import {
 	registerDockview,
 	unregisterDockview,
 } from "@/lib/workspace/dock/dockRegistry";
 import { useStore } from "@/store";
+
+vi.mock("@/lib/ipc/telemetry", () => ({ track: vi.fn() }));
 
 const cleanups: (() => void)[] = [];
 let api: DockviewApi;
@@ -45,6 +48,16 @@ afterEach(() => {
 });
 
 describe("openGitHubWorkspacePanel", () => {
+	it("offers github_panel_opened only when a new pane is created", () => {
+		vi.mocked(track).mockClear();
+		openGitHubWorkspacePanel("desktop-1", "project-1", "Dure");
+		openGitHubWorkspacePanel("desktop-1", "project-2", "Other");
+		expect(
+			api.panels.filter((panel) => panel.api.component === "github"),
+		).toHaveLength(1);
+		expect(vi.mocked(track).mock.calls).toEqual([["github_panel_opened"]]);
+	});
+
 	it("opens one neutral GitHub panel scoped to the requested project", () => {
 		openGitHubWorkspacePanel("desktop-1", "project-1", "Dure");
 		const pane = api.activePanel!;

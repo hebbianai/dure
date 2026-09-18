@@ -40,6 +40,12 @@
   "icons": {
     "library": "lucide"
   },
+  "integrations": {
+    "posthog": {
+      "apiKey": "phc_kdSgvpaDWKM9nMtGzhmYM2BDwvHPdFLbda6BXdDCbwQs",
+      "apiHost": "https://us.i.posthog.com"
+    }
+  },
   "navigation": {
     "languages": [
       {
@@ -94,6 +100,7 @@
           {
             "group": "Help",
             "pages": [
+              "en/privacy-and-telemetry",
               "en/current-limits",
               "en/troubleshooting"
             ]
@@ -152,6 +159,7 @@
           {
             "group": "帮助",
             "pages": [
+              "cn/privacy-and-telemetry",
               "cn/current-limits",
               "cn/troubleshooting"
             ]
@@ -210,6 +218,7 @@
           {
             "group": "도움말",
             "pages": [
+              "ko/privacy-and-telemetry",
               "ko/current-limits",
               "ko/troubleshooting"
             ]
@@ -268,6 +277,7 @@
           {
             "group": "ヘルプ",
             "pages": [
+              "jp/privacy-and-telemetry",
               "jp/current-limits",
               "jp/troubleshooting"
             ]

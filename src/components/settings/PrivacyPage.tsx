@@ -1,19 +1,30 @@
-// 설정 › 개인정보 및 텔레메트리 페이지 — SettingsDialog의 InfoPage 자리를 대신한다.
-//
-// 시안 2525:74656의 골격(제목 + hairline으로 갈린 행들)은 그대로 따르되, 그
-// 시안이 그린 두 컨트롤은 넣지 않는다. 이 페이지에서만은 그 판단이 특히
-// 중요하다: 켜고 끌 것이 없는데 스위치를 두면, 사용자는 그걸 끄고 "이제 안
-// 보내는구나"라고 믿게 된다. 개인정보 화면에서 아무것도 제어하지 않는
-// 컨트롤은 없는 것보다 나쁘다. 그래서 컨트롤 자리에는 지금 상태를 말하는
-// 알약을 둔다 — 계정 페이지가 계정 분리를 못 하는 제공업체에 "시스템 기본값"
-// 알약을 두는 것과 같은 어휘다.
+// Settings › Privacy and telemetry — what this app sends, and what it does
+// not. Four hairline-separated rows; the one control on the page is the
+// anonymous-usage-data switch (#961), and it is wired to the native consent
+// record, so what it shows is what happens. Every other row only states the
+// current fact in a pill: a control that governs nothing is worse than none.
+
+import {
+	telemetryDocsUrl,
+	useTelemetryState,
+} from "@/components/common/useTelemetryState";
 import { FlatRow } from "@/components/settings/FlatRow";
 import { PageTitle } from "@/components/settings/PageTitle";
-import { t } from "@/lib/i18n";
+import { useGeneralPageState } from "@/components/settings/useGeneralPageState";
+import { Switch } from "@/components/ui/switch";
+import { resolveLang, t } from "@/lib/i18n";
+import type { TelemetryDisabledReason } from "@/lib/ipc/telemetry";
+import { openExternalUrl } from "@/lib/platform/externalOpen";
 import { cn } from "@/lib/utils";
 
-/** 고를 것이 없는 자리에서 지금 상태만 말하는 알약. */
-function StatePill({ children, tone }: { children: React.ReactNode; tone?: "good" }) {
+/** The pill for a row with nothing to choose: it states the current fact. */
+function StatePill({
+	children,
+	tone,
+}: {
+	children: React.ReactNode;
+	tone?: "good";
+}) {
 	return (
 		<span
 			className={cn(
@@ -28,6 +39,58 @@ function StatePill({ children, tone }: { children: React.ReactNode; tone?: "good
 	);
 }
 
+/** The environment decided; the switch is shown off and cannot be moved. */
+const ENVIRONMENT_REASONS: Partial<Record<TelemetryDisabledReason, string>> = {
+	do_not_track: "settings.privacy.usageData.reason.doNotTrack",
+	env_disabled: "settings.privacy.usageData.reason.envDisabled",
+	ci: "settings.privacy.usageData.reason.ci",
+};
+
+function UsageDataControl() {
+	const { state, busy, choose } = useTelemetryState();
+	const { language } = useGeneralPageState();
+	const title = t("settings.privacy.usageData.title");
+	if (state === null) {
+		return (
+			<FlatRow title={title} desc={t("settings.privacy.usageData.desc")} />
+		);
+	}
+	if (state.reason === "no_key") {
+		return (
+			<FlatRow title={title} desc={t("settings.privacy.usageData.desc")}>
+				<StatePill>{t("settings.privacy.usageData.notInBuild")}</StatePill>
+			</FlatRow>
+		);
+	}
+	const environmentReason = state.reason && ENVIRONMENT_REASONS[state.reason];
+	return (
+		<>
+			<FlatRow title={title} desc={t("settings.privacy.usageData.desc")}>
+				<Switch
+					checked={state.effective === "enabled"}
+					disabled={busy || Boolean(environmentReason)}
+					aria-label={title}
+					onCheckedChange={(checked) =>
+						void choose(checked ? "accepted" : "declined")
+					}
+				/>
+			</FlatRow>
+			{environmentReason ? (
+				<p className="text-xs text-muted-foreground">{t(environmentReason)}</p>
+			) : null}
+			<button
+				type="button"
+				className="self-start text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+				onClick={() =>
+					void openExternalUrl(telemetryDocsUrl(resolveLang(language)))
+				}
+			>
+				{t("settings.privacy.usageData.whatIsSent")}
+			</button>
+		</>
+	);
+}
+
 export function PrivacyPage() {
 	return (
 		<>
@@ -36,13 +99,8 @@ export function PrivacyPage() {
 				desc={t("settings.privacy.description")}
 			/>
 			<div className="flex w-full flex-col">
-				<section className="flex w-full flex-col pt-2 pb-6">
-					<FlatRow
-						title={t("settings.privacy.usageData.title")}
-						desc={t("settings.privacy.usageData.desc")}
-					>
-						<StatePill tone="good">{t("settings.privacy.usageData.notCollected")}</StatePill>
-					</FlatRow>
+				<section className="flex w-full flex-col gap-3 pt-2 pb-6">
+					<UsageDataControl />
 				</section>
 
 				<section className="flex w-full flex-col border-t border-border py-6">
@@ -50,7 +108,9 @@ export function PrivacyPage() {
 						title={t("settings.privacy.diagnostics.title")}
 						desc={t("settings.privacy.diagnostics.desc")}
 					>
-						<StatePill>{t("settings.privacy.diagnostics.onlyOnYourAction")}</StatePill>
+						<StatePill>
+							{t("settings.privacy.diagnostics.onlyOnYourAction")}
+						</StatePill>
 					</FlatRow>
 				</section>
 
@@ -59,7 +119,9 @@ export function PrivacyPage() {
 						title={t("settings.privacy.credentials.title")}
 						desc={t("settings.privacy.credentials.desc")}
 					>
-						<StatePill>{t("settings.privacy.credentials.deviceOnly")}</StatePill>
+						<StatePill>
+							{t("settings.privacy.credentials.deviceOnly")}
+						</StatePill>
 					</FlatRow>
 				</section>
 

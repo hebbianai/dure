@@ -37,6 +37,7 @@ import {
 import { PROVIDER_IDS } from "@/lib/agents/providers";
 import { t } from "@/lib/i18n";
 import { saveChatAttachments } from "@/lib/ipc";
+import { track } from "@/lib/ipc/telemetry";
 import { noteUserInput } from "@/lib/scheduling/interactionSignals";
 import type { Provider } from "@/types";
 
@@ -283,6 +284,7 @@ export function ChatComposer({
 				clearAttachments();
 				try {
 					await activeSession.steerOrQueue(input);
+					if (binding) track("message_sent", { provider: binding.providerId });
 				} catch (cause) {
 					if (authorityRef.current === authority) {
 						setAttachmentError(
@@ -297,6 +299,7 @@ export function ChatComposer({
 			clearAttachments();
 			try {
 				await activeSession.send(input);
+				if (binding) track("message_sent", { provider: binding.providerId });
 			} catch {
 				// The controller retains the exact retry intent; restoring the draft
 				// could invite a second, differently identified send.

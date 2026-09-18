@@ -1,0 +1,45 @@
+---
+title: "Privacy and usage data"
+description: "What Dure sends when you opt in to anonymous usage data, what it never sends, and how to turn it off."
+---
+
+Dure sends nothing until you say so. On first launch the main window asks whether to share anonymous usage data; until you answer, and if you decline, no usage event leaves your machine. You can change your answer at any time under **Settings → Privacy and telemetry**.
+
+## What is sent when you opt in
+
+Events go to [PostHog](https://posthog.com) in its US cloud region. Each event carries a random install id (never an account, email or device name), a random per-launch session id that is not stored, the app version, the release channel, the operating system name and version, and the CPU architecture. PostHog is told not to build a person profile and not to look up your location, and the PostHog project is configured to discard the IP address of the request.
+
+| Event | Extra property |
+| --- | --- |
+| `app_opened` | — |
+| `telemetry_accepted`, `telemetry_opted_out` | — |
+| `space_created` | — |
+| `project_added` | `kind`: `local` or `ssh` |
+| `agent_pane_opened` | `provider`: the coding agent's id, such as `codex` |
+| `message_sent` | `provider` |
+| `pane_split` | `direction`: `right` or `below` |
+| `pane_hidden`, `pane_restored` | — |
+| `quick_dispatch_used` | — |
+| `github_panel_opened`, `git_panel_opened`, `ssh_session_opened` | — |
+
+That list is the whole allowlist: an event that is not on it, or a property that is not listed, cannot be sent, and `provider` is one of the known coding agents. PostHog keeps events for one year on its free plan and seven years on paid plans.
+
+## What is never sent
+
+File paths, repository, branch and worktree names, URLs, commit messages, prompts, agent output, terminal contents, error messages, host names, user names and IP addresses. There is no field for any of them.
+
+## Turn it off
+
+- **Settings → Privacy and telemetry → Anonymous usage data**: turn the switch off. Dure tries to send one final `telemetry_opted_out` event, deletes the install id, and stops.
+- Set `DO_NOT_TRACK=1` or `DURE_TELEMETRY_DISABLED=1` in the environment Dure starts from. Either overrides the switch without changing it; the Settings page names which one is in effect.
+- Continuous-integration environments (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `CIRCLECI`, `TRAVIS`, `BUILDKITE`, `JENKINS_URL`, `TEAMCITY_VERSION`) never send.
+
+A build without a telemetry key, such as a local development build, shows no question and no switch, and sends nothing.
+
+## The documentation site
+
+`docs.dureai.dev` sends page views to the same PostHog project so we can see which pages help. That is Mintlify's standard analytics integration; the project discards the request's IP address, and nothing on the docs site is tied to the app's install id.
+
+## Other data lanes
+
+The [diagnostic report](/en/troubleshooting#collect-a-useful-report) and in-app feedback are separate: each is sent only when you press Send, and neither carries the usage-data install id.
