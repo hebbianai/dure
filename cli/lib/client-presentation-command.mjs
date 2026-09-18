@@ -25,6 +25,7 @@ Usage:
   dure client host add <SSH_CONFIG_ALIAS> [--name NAME] [--json]
   dure client host add --hostname HOST --user USER [--port PORT]
                        [--identity-file PATH] [--name NAME] [--json]
+  dure client pane open mobile (--space ID_OR_NAME | --space-id ID) [--json]
   dure client pane create [--space ID_OR_NAME | --space-id ID]
                           [--cwd PATH] [--host local|SSH_HOST_ID] [--json]
   dure client pane split <reference-session-id> [--reference-panel-id ID]
@@ -46,6 +47,8 @@ This is separate from backend-only dure projects register.
 Host add uses the app's durable SSH registration; the returned host.id works with --host.
 An alias imports ~/.ssh/config. Explicit destinations use a key file or normal SSH authentication.
 Registration creates no session. The first terminal open installs Hmux if it is missing.
+Open mobile reuses the mobile simulator pane in the explicitly selected Space.
+Use its returned panelId with pane state to discover device, profile, preview and report actions.
 Create uses the invoking pane's Space when known, otherwise the app's active Space.
 Local cwd defaults to the CLI working directory; SSH cwd defaults to the remote home.
 No Git worktree is created. --host selects a registered app SSH host, not a backend profile.
@@ -116,7 +119,7 @@ export function clientSpaceIdentityPayload({ spaceId, desktopId }) {
   return { spaceId: identity, desktopId: identity };
 }
 
-const PANE_ACTIONS = new Set(["create", "split", "close", "state", "act"]);
+const PANE_ACTIONS = new Set(["open", "create", "split", "close", "state", "act"]);
 const UNOPENED_ACTIONS = new Set(["get", "hide", "restore"]);
 
 export function clientPresentationRequestedCommand(args) {
@@ -225,6 +228,18 @@ function locationSelection(options) {
       ...(options.spaceId !== undefined ? { spaceId: boundedIdentity(options.spaceId, "Space ID") } : {}),
     },
   };
+}
+
+function parsePaneOpenCommand(tail) {
+  const { options, target } = readCommandTail(tail, {
+    values: new Map([["--space", "space"], ["--space-id", "spaceId"]]),
+    flags: new Map([["--json", "json"]]), optionLabel: "client pane open",
+  });
+  if (target !== "mobile") throw invalidRequest("Supported tool: mobile.");
+  if (options.space === undefined && options.spaceId === undefined) throw invalidRequest("pane open requires --space or --space-id.");
+  const selection = locationSelection(options);
+  return { domain: "pane", action: "open", path: "/pane/open", ...selection,
+    body: { tool: "mobile", ...(selection.body.spaceId ? { spaceId: selection.body.spaceId } : {}) } };
 }
 
 function parsePaneCreateCommand(tail) {
@@ -438,6 +453,9 @@ export function parseClientPresentationCommand(args) {
   if (domain === "host" && action === "add") {
     return { help: false, ...parseHostAddCommand(tail) };
   }
+  if (domain === "pane" && action === "open") {
+    return { help: false, ...parsePaneOpenCommand(tail) };
+  }
   if (domain === "pane" && action === "create") {
     return { help: false, ...parsePaneCreateCommand(tail) };
   }
@@ -486,8 +504,8 @@ export async function runClientPresentationCommand(
     && !(Array.isArray(descriptor.capabilities) && descriptor.capabilities.includes("unopened_agents.visibility_v1"))) {
     throw new AppControlClientError("client_capability_missing", "Update the running Dure app; unopened_agents.visibility_v1 is required.");
   }
-  if (command.action === "create" || command.domain === "project") {
-    const capability = command.domain === "project" ? "project_registration.add_v1" : "terminal_pane.create_v1";
+  if (command.action === "create" || (command.domain === "pane" && command.action === "open") || command.domain === "project") {
+    const capability = command.domain === "project" ? "project_registration.add_v1" : command.action === "open" ? "mobile_pane.open_v1" : "terminal_pane.create_v1";
     if (descriptor && !(Array.isArray(descriptor.capabilities) && descriptor.capabilities.includes(capability))) {
       throw new AppControlClientError("client_capability_missing", `Update the running Dure app; ${capability} is required.`);
     }

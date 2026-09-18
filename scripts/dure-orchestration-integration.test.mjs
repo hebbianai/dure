@@ -1796,6 +1796,7 @@ describe("immutable generic orchestration integration", () => {
         { name: "app_pane_act" },
         { name: "app_workspace_open" },
         { name: "app_pane_split" },
+        { name: "app_pane_open" },
         { name: "app_pane_create" },
         { name: "app_pane_close" },
       ],

@@ -127,7 +127,10 @@ it("persists exact selection and directs Android input to it", async () => {
 		target: { value: `android:${android.id}` },
 	});
 	await screen.findByRole("img");
-	expect(api.updateParameters).toHaveBeenCalledWith({ device: android });
+	expect(api.updateParameters).toHaveBeenCalledWith({
+		device: android,
+		iosLandscape: false,
+	});
 	expect(mobileSimulator.act).not.toHaveBeenCalled();
 	fireEvent.click(
 		screen.getByRole("button", { name: t("panels.mobile.home") }),
@@ -176,4 +179,25 @@ it("keeps native failures visible", async () => {
 	expect((await screen.findByRole("alert")).textContent).toContain(
 		"Device disconnected",
 	);
+});
+it("refreshes observed device state after a partial failure without losing the original error", async () => {
+	vi.mocked(mobileSimulator.act).mockImplementation(async () => {
+		vi.mocked(mobileSimulator.list).mockResolvedValue({
+			...catalog,
+			devices: catalog.devices.map((device) => ({ ...device, state: "ready" })),
+		});
+		throw new Error("bootstatus timed out");
+	});
+	fixture(ios);
+	fireEvent.click(
+		await screen.findByRole("button", { name: t("panels.mobile.boot") }),
+	);
+	expect((await screen.findByRole("alert")).textContent).toContain(
+		"bootstatus timed out",
+	);
+	await screen.findByRole("img");
+	expect(
+		screen.queryByRole("button", { name: t("panels.mobile.boot") }),
+	).toBeNull();
+	expect(mobileSimulator.act).toHaveBeenCalledTimes(1);
 });

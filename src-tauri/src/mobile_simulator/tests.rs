@@ -199,6 +199,18 @@ fn failed_sdk_commands_preserve_stdout_diagnostics() {
 }
 
 #[test]
+fn sdk_timeouts_identify_the_operation_and_elapsed_bound() {
+    let (program, args): (&str, &[&str]) = if cfg!(windows) {
+        ("cmd.exe", &["/C", "ping -n 10 127.0.0.1 >nul"])
+    } else {
+        ("/bin/sh", &["-c", "sleep 10"])
+    };
+    let error = execute(program, args, 1, 8192).unwrap_err();
+    assert!(error.contains("timed out after 1s"), "{error}");
+    assert!(error.contains(args[0]), "{error}");
+}
+
+#[test]
 fn launcher_resolution_requires_one_component_from_the_selected_package() {
     assert_eq!(
         android_launcher_component("com.app", b"com.app/.Main\r\n").unwrap(),

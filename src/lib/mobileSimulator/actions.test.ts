@@ -14,6 +14,20 @@ const profile = {
 const args = { platform: device.platform, deviceId: device.id };
 function fixture() {
 	const input = {
+		controls: {
+			devices: vi.fn(async () => ({
+				devices: [
+					{ ...device, name: "QA", runtime: "Android", state: "ready" },
+				],
+				unavailable: [],
+			})),
+			select: vi.fn(),
+			preview: vi.fn(),
+			save: vi.fn(),
+			remove: vi.fn(),
+			report: vi.fn(() => null),
+			agents: vi.fn(() => []),
+		},
 		target: device,
 		profiles: [profile],
 		isBusy: vi.fn(() => false),
@@ -103,4 +117,69 @@ it("restores bounded complete profiles and replaces only the same project", () =
 			appId: "com.dure.changed",
 		}),
 	).toEqual([other, { ...profile, appId: "com.dure.changed" }]);
+});
+
+it("accepts simple typed input arguments and requires the dimensions of the observed frame", async () => {
+	const { actions, input } = fixture();
+	expect(
+		(
+			await actions["mobile.tap"]({
+				...args,
+				x: 0.25,
+				y: 0.5,
+				width: 400,
+				height: 800,
+			})
+		).outcome,
+	).toBe("applied");
+	expect(input.act).toHaveBeenCalledExactlyOnceWith({
+		kind: "gesture",
+		start: { x: 0.25, y: 0.5 },
+		end: { x: 0.25, y: 0.5 },
+		width: 400,
+		height: 800,
+	});
+	expect(
+		(await actions["mobile.type"]({ ...args, text: "Dure" })).outcome,
+	).toBe("applied");
+	expect(input.act).toHaveBeenLastCalledWith({ kind: "type", text: "Dure" });
+	expect(
+		(
+			await actions["mobile.swipe"]({
+				...args,
+				startX: 0.5,
+				startY: 0.8,
+				endX: 0.5,
+				endY: 0.2,
+			})
+		).outcome,
+	).toBe("refused");
+	expect(input.act).toHaveBeenCalledTimes(2);
+});
+
+it("acknowledges slow boot and install without waiting and refuses overlapping work", async () => {
+	const { actions, input } = fixture();
+	for (const [name, parameters] of [
+		["mobile.boot", {}],
+		["mobile.install", { path: "/tmp/app.apk" }],
+	] as const) {
+		let finish!: (value: boolean) => void;
+		input.act.mockImplementationOnce(
+			() =>
+				new Promise<boolean>((resolve) => {
+					finish = resolve;
+				}),
+		);
+		const receipt = vi.fn();
+		const request = actions[name]({ ...args, ...parameters }).then(receipt);
+		await vi.waitFor(
+			() => expect(receipt).toHaveBeenCalledWith({ outcome: "pending" }),
+			{ timeout: 100 },
+		);
+		finish(true);
+		await request;
+	}
+	input.isBusy.mockReturnValue(true);
+	expect((await actions["mobile.boot"](args)).outcome).toBe("refused");
+	expect(input.act).toHaveBeenCalledTimes(2);
 });

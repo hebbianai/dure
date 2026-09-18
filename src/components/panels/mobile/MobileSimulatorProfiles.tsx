@@ -12,6 +12,7 @@ export function MobileSimulatorProfiles({
 	target,
 	busy,
 	save,
+	remove,
 	run,
 	select,
 }: {
@@ -19,6 +20,7 @@ export function MobileSimulatorProfiles({
 	target: MobileDeviceTarget;
 	busy: boolean;
 	save: (profile: MobileRunProfile) => void;
+	remove?: (projectPath: string) => void;
 	run: (profile: MobileRunProfile) => Promise<void>;
 	select: (target: MobileDeviceTarget) => void;
 }) {
@@ -105,7 +107,7 @@ export function MobileSimulatorProfiles({
 					),
 				)}
 				<p>{t("panels.mobile.profileHint")}</p>
-				<div className="flex gap-1">
+				<div className="flex flex-wrap gap-1">
 					<Button
 						size="sm"
 						variant="outline"
@@ -125,6 +127,19 @@ export function MobileSimulatorProfiles({
 					>
 						{t("panels.mobile.runProfile")}
 					</Button>
+					{remove &&
+						profiles.some(
+							(profile) => profile.projectPath === draft.projectPath,
+						) && (
+							<Button
+								size="sm"
+								variant="outline"
+								disabled={busy}
+								onClick={() => remove(draft.projectPath)}
+							>
+								{t("common.remove")}
+							</Button>
+						)}
 				</div>
 				{error && (
 					<p role="alert" className="text-destructive">

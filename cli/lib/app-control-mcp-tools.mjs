@@ -51,6 +51,13 @@ const operations = {
       ...(referencePaneId !== undefined ? ["--reference-panel-id", referencePaneId] : []),
       ...(direction !== undefined ? ["--direction", direction] : []), ...(cwd !== undefined ? ["--cwd", cwd] : [])],
   },
+  app_pane_open: {
+    description: "Open or focus the mobile simulator tool in an explicit Space, preserving its selection and saved profiles. Reuses an existing mobile pane. Use the returned panelId with app_pane_state to discover device selection, preview, profile and report actions.",
+    properties: { tool: { type: "string", enum: ["mobile"] }, space: id, spaceId: id }, required: ["tool"],
+    args: ({ tool, space, spaceId }) => ["pane", "open", tool,
+      ...(space !== undefined ? ["--space", space] : []),
+      ...(spaceId !== undefined ? ["--space-id", spaceId] : [])],
+  },
   app_pane_create: {
     description: "Create a terminal through the connected app's existing local or registered SSH creation transaction, independently of the runtime backend profile. Choose space (ID or unique name) or spaceId (exact ID without a saved projection); omission uses the invoking pane's Space when known, otherwise the app's active Space. No worktree is created. Local receipts prove attachment; SSH receipts prove durable mount. An uncertain response must not be blindly retried.",
     properties: { space: id, spaceId: id, hostId: id, cwd: { type: "string", maxLength: 4096 } }, required: [],
