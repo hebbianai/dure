@@ -4086,19 +4086,27 @@ fn agent_conversation_api_error(
 ) -> BackendDispatchError {
     use agent_conversation_api::AgentConversationApiErrorV1;
 
-    let disposition = match error {
+    let disposition = match &error {
         AgentConversationApiErrorV1::RequestInvalid
         | AgentConversationApiErrorV1::NotFound
         | AgentConversationApiErrorV1::SteerUnsupported
-        | AgentConversationApiErrorV1::ProviderFailed => BackendFailureDispositionV1::Terminal,
+        | AgentConversationApiErrorV1::ProviderFailed(_) => BackendFailureDispositionV1::Terminal,
         AgentConversationApiErrorV1::Conflict => BackendFailureDispositionV1::StaleGeneration,
         AgentConversationApiErrorV1::RuntimeUnavailable
         | AgentConversationApiErrorV1::StoreFailed => BackendFailureDispositionV1::RetrySame,
     };
     BackendDispatchError {
         code: error.code().into(),
-        message: error.code().into(),
-        details: None,
+        message: match &error {
+            AgentConversationApiErrorV1::ProviderFailed(provider) => provider.to_string(),
+            _ => error.code().into(),
+        },
+        details: match error {
+            AgentConversationApiErrorV1::ProviderFailed(provider) => {
+                Some(json!({ "providerCode": provider.code }))
+            }
+            _ => None,
+        },
         disposition,
     }
 }

@@ -22,6 +22,29 @@ struct FakeProvider {
     start_error: Option<&'static str>,
 }
 
+#[test]
+fn oversized_provider_diagnostic_still_fits_the_durable_failure_receipt() {
+    let error = AgentProviderCommandErrorV1::new("x".repeat(1000), "\0💥".repeat(100_000));
+    assert_eq!(error.code, format!("{}…", "x".repeat(256)));
+    assert_eq!(error.detail, format!("{}…", "\0💥".repeat(4096)));
+    let completion = AgentCompleteTurnEffectV1 {
+        schema_version: 1,
+        interaction_session_id: intent().interaction_session_id,
+        runtime: runtime(),
+        client_message_id: intent().client_message_id,
+        state: AgentTurnEffectStateV1::Failed,
+        provider_receipt: Some(error.receipt()),
+        updated_at_ms: 11,
+    };
+    completion.validate().unwrap();
+    assert!(
+        serde_json::to_vec(completion.provider_receipt.as_ref().unwrap())
+            .unwrap()
+            .len()
+            < dure_app::MAX_AGENT_TIMELINE_JSON_BYTES_V1
+    );
+}
+
 impl AgentProviderCommands for FakeProvider {
     fn start_turn<'a>(
         &'a self,
@@ -328,6 +351,25 @@ async fn rejected_start_turn_closes_its_durable_timeline_turn() {
     assert_eq!(
         subscription.recv().await.unwrap().timeline_cursor.sequence,
         3
+    );
+
+    let response = crate::backend_error_body(crate::agent_conversation_api_error(error.into()));
+    let replay = service.start_turn(&provider, &intent()).await.unwrap();
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(replay.state, AgentTurnEffectStateV1::Failed);
+    assert!(!replay.newly_prepared);
+    assert_eq!(
+        json!({
+            "message": response["message"],
+            "details": response["details"],
+            "receipt": replay.provider_receipt,
+        }),
+        json!({
+            "message": "provider command provider_unavailable: provider rejected the turn",
+            "details": { "disposition": "terminal", "providerCode": "provider_unavailable" },
+            "receipt": { "errorCode": "provider_unavailable", "errorDetail": "provider rejected the turn" },
+        }),
+        "The original failure explanation must survive the response and an idempotent replay",
     );
 }
 

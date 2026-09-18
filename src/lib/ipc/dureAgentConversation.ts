@@ -362,6 +362,29 @@ function assertMutationReceipt(
 	return receipt;
 }
 
+function failedCommandReceipt(receipt: Record<string, unknown>) {
+	const diagnostic = record(receipt.providerReceipt);
+	const providerCode =
+		typeof diagnostic?.errorCode === "string" && diagnostic.errorCode
+			? diagnostic.errorCode
+			: undefined;
+	const detail =
+		typeof diagnostic?.errorDetail === "string" && diagnostic.errorDetail
+			? diagnostic.errorDetail
+			: undefined;
+	const message = detail
+		? providerCode
+			? `${providerCode}: ${detail}`
+			: detail
+		: (providerCode ?? t("agents.chat.error.providerFailed"));
+	return new DureBackendRequestError(
+		"agent_conversation_provider_failed",
+		message,
+		{ kind: "operation", disposition: "terminal" },
+		{ state: "failed", ...(providerCode ? { providerCode } : {}) },
+	);
+}
+
 function defaultChannelFactory(): ConversationChannel {
 	return new Channel<unknown>();
 }
@@ -724,7 +747,7 @@ export function createDureAgentConversationClient(options?: {
 				throw contractError("agent_conversation_receipt_invalid");
 			}
 			if (receipt.state === "failed") {
-				throw contractError("agent_conversation_steer_failed");
+				throw failedCommandReceipt(receipt);
 			}
 			if (receipt.state !== "accepted") {
 				throw new DureBackendRequestError(
@@ -755,6 +778,17 @@ export function createDureAgentConversationClient(options?: {
 				)
 			) {
 				throw contractError("agent_conversation_receipt_invalid");
+			}
+			if (receipt.state === "failed") {
+				throw failedCommandReceipt(receipt);
+			}
+			if (receipt.state !== "succeeded") {
+				throw new DureBackendRequestError(
+					"agent_conversation_answer_unconfirmed",
+					t("ipc.agentConversation.deliveryUnconfirmed"),
+					{ kind: "operation", disposition: "terminal" },
+					{ state: receipt.state },
+				);
 			}
 		},
 

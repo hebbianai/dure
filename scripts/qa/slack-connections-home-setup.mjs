@@ -28,26 +28,47 @@ if (sharing) {
   copyFileSync(join(account, "auth.json"), join(isolated, "auth.json"));
   chmodSync(join(isolated, "auth.json"), 0o600);
   writeFileSync(join(isolated, "config.toml"), "mcp_servers = {}\n", { flag: "wx", mode: 0o600 });
+  if (!live) {
+    const replacementAccount = realpathSync(process.env.DURE_QA_CODEX_REPLACEMENT_HOME || account);
+    const profileDirectoryName = "codex-qa-replacement";
+    const replacement = join(home, ".dure", "accounts", profileDirectoryName);
+    mkdirSync(replacement, { recursive: true, mode: 0o700 });
+    copyFileSync(join(replacementAccount, "auth.json"), join(replacement, "auth.json"));
+    chmodSync(join(replacement, "auth.json"), 0o600);
+    writeFileSync(join(replacement, "config.toml"), "mcp_servers = {}\n", { flag: "wx", mode: 0o600 });
+    const accountIdentity = (directory) => {
+      const auth = JSON.parse(readFileSync(join(directory, "auth.json"), "utf8"));
+      return typeof auth.tokens?.account_id === "string" ? auth.tokens.account_id : null;
+    };
+    const sourceIdentity = accountIdentity(isolated);
+    const targetIdentity = accountIdentity(replacement);
+    writeFileSync(join(home, "slack-queue-account.json"), JSON.stringify({
+      profileDirectoryName, referenceId: "qa-replacement",
+      distinctProviderAccounts: sourceIdentity !== null && targetIdentity !== null && sourceIdentity !== targetIdentity,
+    }), { flag: "wx", mode: 0o600 });
+  }
   const project = join(home, "project");
   mkdirSync(project, { mode: 0o700 });
   writeFileSync(join(project, "AGENTS.md"), live
     ? "This is a disposable Slack integration test repository. Work only on the requested files in this directory. Do not inspect credentials, change configuration, contact external services, or delegate work. Preserve counts.txt.\n"
-    : "This is an isolated native Slack sharing test. Only perform the requested task. You may run python3 queue-barrier.py when explicitly requested, and wait for it to finish. Do not run other tools, inspect credentials, or contact external services.\n", { flag: "wx", mode: 0o600 });
+    : "This is an isolated native Slack sharing test. Only perform the requested task. You may run python3 queue-barrier.py or python3 queue-account-barrier.py when explicitly requested, and wait for it to finish. Do not run other tools, inspect credentials, or contact external services.\n", { flag: "wx", mode: 0o600 });
   if (!live) {
-    writeFileSync(join(project, "queue-barrier.py"), `from pathlib import Path
+    for (const name of ["queue", "queue-account"]) {
+      writeFileSync(join(project, `${name}-barrier.py`), `from pathlib import Path
 import time
 
 project = Path(__file__).resolve().parent
 assert project.name == "project" and project.parent.name == "home"
 assert project.parent.parent.name.startswith("dure-slack-share.")
-(project / "queue-active").write_text("waiting")
+(project / "${name}-active").write_text("waiting")
 deadline = time.monotonic() + 180
-while not (project / "queue-release").exists():
+while not (project / "${name}-release").exists():
     if time.monotonic() > deadline:
         raise RuntimeError("The isolated queue test did not release its tool")
     time.sleep(0.1)
 print("QA_ACTIVE_DONE")
 `, { flag: "wx", mode: 0o600 });
+    }
   }
   if (live) {
     const credentials = JSON.parse(readFileSync(process.env.DURE_QA_SLACK_LIVE_CREDENTIALS, "utf8"));

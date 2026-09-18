@@ -18,7 +18,7 @@ use tokio::time::timeout;
 
 use crate::agent_conversation::{
     AgentConversationErrorV1, AgentConversationNotificationV1, AgentConversationService,
-    AgentProviderCommands,
+    AgentProviderCommandErrorV1, AgentProviderCommands,
 };
 use crate::{
     BACKEND_ERROR_KIND, BACKEND_PROTOCOL_API, BACKEND_RESPONSE_KIND, BackendDispatchError,
@@ -41,14 +41,14 @@ pub const CANCEL_QUEUED_TURN_OPERATION: &str = "agent_conversation.cancel_queued
 pub const ANSWER_PENDING_OPERATION: &str = "agent_conversation.answer_pending";
 pub const INTERRUPT_TURN_OPERATION: &str = "agent_conversation.interrupt_turn";
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum AgentConversationApiErrorV1 {
     RequestInvalid,
     NotFound,
     Conflict,
     RuntimeUnavailable,
     SteerUnsupported,
-    ProviderFailed,
+    ProviderFailed(AgentProviderCommandErrorV1),
     StoreFailed,
 }
 
@@ -60,7 +60,7 @@ impl AgentConversationApiErrorV1 {
             Self::Conflict => "agent_conversation_conflict",
             Self::RuntimeUnavailable => "agent_conversation_runtime_unavailable",
             Self::SteerUnsupported => "agent_conversation_steer_unsupported",
-            Self::ProviderFailed => "agent_conversation_provider_failed",
+            Self::ProviderFailed(_) => "agent_conversation_provider_failed",
             Self::StoreFailed => "agent_conversation_store_failed",
         }
     }
@@ -83,7 +83,7 @@ impl From<AgentConversationErrorV1> for AgentConversationApiErrorV1 {
             AgentConversationErrorV1::Provider(error) if error.code == "steer_unsupported" => {
                 Self::SteerUnsupported
             }
-            AgentConversationErrorV1::Provider(_) => Self::ProviderFailed,
+            AgentConversationErrorV1::Provider(error) => Self::ProviderFailed(error),
         }
     }
 }

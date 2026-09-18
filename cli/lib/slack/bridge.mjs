@@ -81,7 +81,16 @@ export class SlackBridge {
       entry.state = "sending";
       this.journal.save();
     }
-    await this.backend.deliver(thread, entry.intent, entry.operation);
+    if (await this.backend.deliver(thread, entry.intent, entry.operation) === "steer_unsupported") {
+      // Only the common API's definitive refusal authorizes queueing. Persist
+      // the next exact delivery before admission so reconnect cannot steer it
+      // again or retarget it to a replacement conversation/runtime.
+      const queuedId = `slack-queued-${message.key}`;
+      entry.operation = "agent_conversation.enqueue_turn";
+      entry.intent = { ...entry.intent, turnId: queuedId, clientMessageId: queuedId };
+      this.journal.save();
+      await this.backend.deliver(thread, entry.intent, entry.operation);
+    }
     entry.state = "delivered";
     this.journal.save();
   }

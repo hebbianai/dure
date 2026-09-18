@@ -17,6 +17,7 @@ import { asRecord } from "@/lib/payloadGuards";
 import { qaLog } from "@/lib/qa/qaLog";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { durableAppStorage, useStore } from "@/store";
+import { exerciseAccountQueue } from "./slackShareAccountQueue";
 import {
 	exerciseLiveSlackShare,
 	type LiveSlackConfiguration,
@@ -672,6 +673,13 @@ export function SlackShareQaRoot() {
 				phase: "tag-sidebar-opened-existing-conversation",
 			});
 			flushSync(() => setTagView(false));
+			const accountQueue = await exerciseAccountQueue({
+				home,
+				proof: proof as string,
+				binding: executed.binding,
+				authority: initial.authority,
+				wait,
+			});
 			const native = await createDureAgentRuntimeClient({
 				profileId: initial.authority.profileId,
 			}).transition({
@@ -721,7 +729,7 @@ export function SlackShareQaRoot() {
 							channel: "C1",
 							thread_ts: parents[0].ts,
 							ts: "201.000001",
-							text: `Reply exactly ${nativeMarker}. Do not use tools.`,
+							text: `Do not use tools. Reply with only the token on the next line, without quotes or punctuation:\n${nativeMarker}`,
 						},
 					},
 				}),
@@ -766,6 +774,7 @@ export function SlackShareQaRoot() {
 				sharedTaskComposer: true,
 				queuedAcrossBackendReplacement: true,
 				independentQueueClients: true,
+				...accountQueue,
 			});
 		};
 		void run().catch((error) => {
