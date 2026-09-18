@@ -13,6 +13,7 @@ import { useCallback, useRef } from "react";
 import {
 	ensureProjectForPath,
 	readAccounts,
+	readAgentPanePreferences,
 	readActiveAccountId,
 	readAgents,
 	readSpaceById,
@@ -154,7 +155,7 @@ export function useRepositoryQuickAdd(
 						),
 						accounts: readAccounts(),
 						activeAccountId: readActiveAccountId(provider),
-						interactionPreference: agentSpawnInteractionPreference(),
+						interactionPreference: agentSpawnInteractionPreference(readAgentPanePreferences()),
 					});
 					if (project.kind !== "ssh" && !supportsCanonicalAddAgentRun(policy)) {
 						onAddRepositoryAgentWithOptions(desktopId, target, provider);

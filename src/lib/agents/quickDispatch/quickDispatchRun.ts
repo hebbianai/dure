@@ -85,8 +85,8 @@ interface QuickDispatchRunState {
 	agents: readonly Agent[];
 	accounts: readonly AccountProfile[];
 	sshHosts?: readonly SshHostConfig[];
-	/** Only interfaceMode is read; the effective-mode resolver owns parsing. */
-	uiPrefs?: { interfaceMode?: unknown };
+	/** The shared effective-mode resolver owns launch preference parsing. */
+	uiPrefs?: { interfaceMode?: unknown; defaultAgentPane?: unknown };
 }
 
 // Dependency surface kept explicit so every stage is testable with fakes.
@@ -320,9 +320,8 @@ export async function runQuickDispatch(
 				throw new QuickDispatchError("quick_dispatch_base_commit_unavailable");
 			}
 		}
-		// Every dispatch lands on the PTY surface — the same single authority
-		// every other spawn entry point reads.
-		const interactionPreference = agentSpawnInteractionPreference();
+		// Share the same default and effective Pro choice as other new panes.
+		const interactionPreference = agentSpawnInteractionPreference(state.uiPrefs);
 		let setupCommand = useWorktree ? intent.resolvedSetupCommand : null;
 		if (setupCommand === undefined) {
 			// A PTY-pinned dispatch runs in a terminal regardless of provider,

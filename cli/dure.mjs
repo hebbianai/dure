@@ -1893,6 +1893,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     collectAgentRun,
     defaultAgentRunName,
     formatAgentRun,
+    resolveAgentRunInteractionPreference,
   } = await import("./lib/agent-run.mjs");
   const backend = await backendProfileQueryContext(opts);
   const explicitWorktreeName =
@@ -1921,6 +1922,21 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     : backendProjectPathSelector(opts, backend, true);
   const deadlineMs =
     opts.deadlineMs === undefined ? undefined : Number(opts.deadlineMs);
+  let interactionPreference;
+  try {
+    interactionPreference = await resolveAgentRunInteractionPreference(
+      presentationTarget.state === "requested" ? loadServer() : undefined,
+    );
+  } catch (error) {
+    writeCliActionError(
+      error,
+      opts,
+      "dure.run-presentation/v1",
+      "dure.run.error",
+      "client_preference_failed",
+    );
+    return;
+  }
   const { report, presentationProject } = await collectAgentRun({
     projectId: opts.project || undefined,
     projectPath,
@@ -1934,6 +1950,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
       : opts.permissionOverride,
     setupCommand: opts.setupCommand,
     includePresentationProject: presentationTarget.state === "requested",
+    interactionPreference,
     backend,
     deadlineMs,
   });

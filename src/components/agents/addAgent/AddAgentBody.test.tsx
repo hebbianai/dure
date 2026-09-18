@@ -278,7 +278,7 @@ beforeEach(() => {
 	// The existing-worktree/advanced flows are pro surfaces; basic (the
 	// fresh store default) folds them.
 	useStore.setState((state) => ({
-		uiPrefs: { ...state.uiPrefs, interfaceMode: "pro" as const },
+		uiPrefs: { ...state.uiPrefs, interfaceMode: "pro" as const, defaultAgentPane: "terminal" },
 	}));
 	vi.clearAllMocks();
 	mocks.gitAvailability.mockReset().mockResolvedValue({ status: "available" });
@@ -905,6 +905,15 @@ describe("canonical backend Run", () => {
 		expect(backendRequestBody("agent_spawn.preview")).toMatchObject({
 			interactionPreference: "native_cli",
 		});
+	});
+
+	it("uses the selected Pro Chat preference in the actual new-agent request", async () => {
+		useStore.setState((state) => ({ uiPrefs: { ...state.uiPrefs, interfaceMode: "pro", defaultAgentPane: "chat" } }));
+		renderBody();
+		await waitForSubmitEnabled();
+		fireEvent.click(submitButton());
+		await waitFor(() => expect(defaultBackend.operations).toContain("agent_spawn.preview"));
+		expect(backendRequestBody("agent_spawn.preview")).not.toHaveProperty("interactionPreference");
 	});
 
 	it("continues one durable Run to a pane after a recoverable launch failure", async () => {

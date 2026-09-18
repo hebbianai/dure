@@ -218,6 +218,7 @@ function validPreviewRequest(value) {
   const presentationKeys = value.includePresentationProject === undefined
     ? []
     : ["includePresentationProject"];
+  const interactionKeys = value.interactionPreference === undefined ? [] : ["interactionPreference"];
   return (
     hasProjectId !== hasProjectPath &&
     onlyKeys(value, [
@@ -229,6 +230,7 @@ function validPreviewRequest(value) {
       "worktree",
       ...overrideKeys,
       ...presentationKeys,
+      ...interactionKeys,
       "promptDigest",
       ...setupKeys,
     ]) &&
@@ -244,6 +246,7 @@ function validPreviewRequest(value) {
       PERMISSION_OVERRIDES.includes(value.permissionOverride)) &&
     (value.includePresentationProject === undefined ||
       value.includePresentationProject === true) &&
+    (value.interactionPreference === undefined || value.interactionPreference === "native_cli") &&
     (value.promptDigest === null || SHA256.test(value.promptDigest)) &&
     validSetupCommand(value.setupCommand) &&
     (value.setupCommand === undefined || value.worktree.kind === "dedicated") &&
@@ -1150,6 +1153,7 @@ function previewRequest(options) {
       ? {}
       : { projectPath: options.projectPath }),
     providerId: options.providerId,
+    ...(options.interactionPreference === undefined ? {} : { interactionPreference: options.interactionPreference }),
     agentName: options.agentName,
     worktree: options.worktree,
     ...(options.permissionOverride === undefined
@@ -1174,6 +1178,7 @@ export async function collectAgentSpawnQuery({
   worktree,
   permissionOverride,
   includePresentationProject,
+  interactionPreference,
   setupCommand,
   prompt,
   operationId,
@@ -1199,6 +1204,7 @@ export async function collectAgentSpawnQuery({
           agentName,
           worktree,
           permissionOverride,
+          interactionPreference,
           includePresentationProject: presentationProjectSupported,
           setupCommand,
           prompt,
