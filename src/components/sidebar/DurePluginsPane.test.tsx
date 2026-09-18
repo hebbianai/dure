@@ -139,7 +139,7 @@ function CatalogProbe() {
 }
 
 describe("DurePluginsPane", () => {
-  it("makes Slack available in Pro and removes its selected detail when returning to Basic", async () => {
+  it("keeps Slack available and preserves its selected detail in Basic and Pro", async () => {
     const original = useStore.getState().uiPrefs;
     const slack: DurePluginCatalogOutcomeV2 = {
       ...available,
@@ -151,12 +151,12 @@ describe("DurePluginsPane", () => {
       useStore.setState({ uiPrefs: { ...original, interfaceMode: "basic" } });
       render(<DurePluginsPane />);
       await screen.findAllByText("Beads");
-      expect(screen.queryByText("Slack")).toBeNull();
+      expect(screen.getByText("Slack")).toBeTruthy();
       act(() => useStore.setState({ uiPrefs: { ...original, interfaceMode: "pro" } }));
       fireEvent.click(await screen.findByText("Slack"));
       expect(screen.getAllByText("Slack")).toHaveLength(2);
       act(() => useStore.setState({ uiPrefs: { ...original, interfaceMode: "basic" } }));
-      expect(screen.queryByText("Slack")).toBeNull();
+      expect(screen.getAllByText("Slack")).toHaveLength(2);
     } finally {
       act(() => useStore.setState({ uiPrefs: original }));
     }

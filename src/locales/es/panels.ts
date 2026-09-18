@@ -198,4 +198,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.saveEditsHint": "Guardar ediciones como tema personalizado",
 	"panels.tokens.theme.saved": "Guardado como tema",
 	"panels.tokens.theme.savedWithExclusions": "Guardado como tema — algunos tokens fueron excluidos: {names}",
+	"panels.browser.installRuntime": "Instalar navegador",
+	"panels.browser.installingRuntime": "Descargando e instalando el navegador…",
 };

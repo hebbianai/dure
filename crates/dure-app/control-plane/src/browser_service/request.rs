@@ -13,6 +13,8 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum BrowserRequest {
+    RuntimeStatus,
+    RuntimeInstall,
     ProfileSet {
         caller: BrowserControllerId,
         authority: BrowserActionAuthority,

@@ -36,8 +36,9 @@ import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 import { browserResourceSelection, browserCatalogResource, assertBrowserResource, selectBrowserResource } from "./browser-resource-target.mjs";
 
-export const BROWSER_HELP = `Dure Pro browser (development installation)
+export const BROWSER_HELP = `Dure browser
 Usage:
+  dure browser runtime install|status
   dure browser open-url URL [--resource ID] [--space ID|NAME] [--profile ID] [--controller ID --epoch EPOCH]
   dure browser exec [RESOURCE] --command COMMAND [--page PAGE] [--controller ID --epoch EPOCH]
   dure browser create [--profile ID] [--init-script FILE]... [--enable react-devtools] [--idempotency-key KEY]
@@ -535,6 +536,19 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
     if (options.positional[0] === "open-url") {
       const { collectBrowserOpenUrl } = await import("./browser-open-url.mjs");
       return await collectBrowserOpenUrl({ options, resolveBackend, requestBackend, cwd, sourceEnvironment, appControl, run: collectBrowserCommand });
+    }
+    if (options.positional[0] === "runtime") {
+      if (options.positional.length !== 2 || !["install", "status"].includes(options.positional[1])
+          || Object.keys(options).some((key) => !["positional", "backend"].includes(key))) throw new Error("browser_command_invalid");
+      backend = await resolveBackend({ backend: options.backend, backendSpecified: options.backend !== undefined });
+      if (!backend?.profile || backend.error) return { ok: false, error: backendRequestFailure(backend?.error, backend?.profile) };
+      const reply = await requestBackend(backend.profile, {
+        requestId: randomUUID(), operation: "browser.resource", requiredCapabilities: ["browser.resource.v1"],
+        body: { kind: options.positional[1] === "install" ? "runtime_install" : "runtime_status" },
+      }, backend.transportOptions);
+      const result = reply.result;
+      if (!["ready", "missing", "installing", "failed", "unsupported"].includes(result?.result?.state)) throw new Error("browser_response_invalid");
+      return { ok: !["failed", "unsupported"].includes(result.result.state), ...result };
     }
     if (options.focus) {
       if (options.positional[0] !== "tab" || options.positional[1] !== "switch") throw new Error("browser_command_invalid");

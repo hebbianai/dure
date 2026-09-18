@@ -1,4 +1,4 @@
-//! Workspace-bound browser resources on the existing authenticated backend.
+//! Shared browser resources on the existing authenticated backend.
 //! Operation admission uses the existing domain-store journal, including after
 //! response loss or backend replacement; it never launches a replacement worker.
 
@@ -13,7 +13,6 @@ use dure_app_sqlite::SqliteDomainStore;
 use hmux_host::browser_resource::BrowserAdmissionError;
 use hmux_host::browser_workspace::BrowserWorkspaceTargetHost;
 use hmux_session_protocol::browser_resource::*;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
@@ -34,6 +33,7 @@ mod creation;
 #[cfg(test)]
 mod desktop_tests;
 mod image;
+mod installation;
 mod profiles;
 mod request;
 mod results;
@@ -43,13 +43,6 @@ mod storage_workspace;
 mod targets;
 use request::BrowserRequest;
 use results::BrowserResults;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DevelopmentInstallation {
-    engine_executable: PathBuf,
-    chromium_executable: PathBuf,
-}
 
 struct ManagedBrowser {
     runtime: Arc<BrowserRuntime>,
@@ -61,6 +54,7 @@ pub(crate) struct BrowserService {
     results: BrowserResults,
     generation: BrowserResourceGeneration,
     installation: PathBuf,
+    installer: installation::Installer,
     resources: Mutex<BTreeMap<BrowserResourceId, ManagedBrowser>>,
     selected_browser: std::sync::Mutex<BrowserWorkspaceTargetHost>,
     slots: Arc<Semaphore>,
@@ -77,6 +71,7 @@ impl BrowserService {
             generation: BrowserResourceGeneration::new(generation)
                 .expect("validated backend generation"),
             installation: home.join("browser").join("installation.json"),
+            installer: installation::Installer::default(),
             resources: Mutex::new(BTreeMap::new()),
             selected_browser: std::sync::Mutex::new(BrowserWorkspaceTargetHost::new(
                 BrowserWorkspaceId::new(storage_workspace::ID)
@@ -90,21 +85,7 @@ impl BrowserService {
     }
 
     fn config(&self) -> Result<NativeBrowserEngineConfig, BackendDispatchError> {
-        require_development()?;
-        let source = std::fs::read(&self.installation)
-            .map_err(|_| BackendDispatchError::terminal("browser_engine_not_installed"))?;
-        if source.len() > 16 * 1024 {
-            return Err(BackendDispatchError::terminal(
-                "browser_installation_invalid",
-            ));
-        }
-        let installation: DevelopmentInstallation = serde_json::from_slice(&source)
-            .map_err(|_| BackendDispatchError::terminal("browser_installation_invalid"))?;
-        NativeBrowserEngineConfig::pinned(
-            &installation.engine_executable,
-            &installation.chromium_executable,
-        )
-        .map_err(|error| BackendDispatchError::terminal(error.code))
+        installation::config(&self.installation)
     }
 
     async fn resource(
@@ -241,6 +222,12 @@ impl BrowserService {
         request: BrowserRequest,
     ) -> Result<Value, BackendDispatchError> {
         match request {
+            BrowserRequest::RuntimeStatus => {
+                Ok(self.installer.status(&self.installation, false).await)
+            }
+            BrowserRequest::RuntimeInstall => {
+                Ok(self.installer.status(&self.installation, true).await)
+            }
             BrowserRequest::ProfileSet {
                 caller,
                 authority,
@@ -616,6 +603,7 @@ impl BrowserService {
             }
         );
         *closing = true;
+        self.installer.stop().await;
         let mut resources = self.resources.lock().await;
         let mut unconfirmed = false;
         for managed in resources.values() {
@@ -636,17 +624,6 @@ impl BrowserService {
         resources.clear();
         Ok(())
     }
-}
-
-fn require_development() -> Result<(), BackendDispatchError> {
-    // Pro is currently selectable only in development. Shipping a managed
-    // installer and an explicit Pro release policy precedes release enablement.
-    if !crate::pro_features::available() {
-        return Err(BackendDispatchError::terminal(
-            "browser_pro_development_only",
-        ));
-    }
-    Ok(())
 }
 
 async fn append(

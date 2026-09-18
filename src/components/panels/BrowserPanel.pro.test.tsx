@@ -15,9 +15,6 @@ import { chooseSelectValue } from "@/test/select";
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@/lib/i18n", () => ({ t: (key: string) => key }));
-vi.mock("@/components/workspace/useInterfaceMode", () => ({
-	useInterfaceMode: () => "pro",
-}));
 vi.mock("@/components/workspace/usePaneFirstReveal", () => ({
 	usePaneFirstReveal: () => true,
 }));
@@ -34,6 +31,7 @@ vi.mock("@/components/design/DesignModeBrowserDialog", () => ({
 afterEach(() => {
 	cleanup();
 	vi.unstubAllGlobals();
+	vi.unstubAllEnvs();
 	mocks.invoke.mockReset();
 });
 
@@ -44,6 +42,7 @@ it.each([
 ])(
 	"presents %s failure %s and retains explicit recovery",
 	async (kind, code, message) => {
+		vi.stubEnv("PROD", true);
 		const route = {
 			schemaVersion: 1,
 			profileId: "local",
@@ -124,6 +123,10 @@ it.each([
 				);
 			}
 			expect((await screen.findByRole("alert")).textContent).toBe(message);
+			if (code === "browser_engine_not_installed")
+				expect(
+					screen.getByRole("button", { name: "panels.browser.installRuntime" }),
+				).toHaveProperty("disabled", false);
 			expect(screen.queryByText("Untrusted backend diagnostic")).toBeNull();
 			expect(requests).toEqual(
 				kind === "create" ? ["list", "create"] : ["list"],

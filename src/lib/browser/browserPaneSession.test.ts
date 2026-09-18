@@ -106,7 +106,7 @@ function fixture(
 		recoverCreation: vi.fn(),
 		list: vi.fn(),
 		selectResource: vi.fn(),
-		workspaces: vi.fn(),
+		runtimeInstallation: vi.fn(),
 		profiles: vi.fn(),
 		createProfile: vi.fn(),
 		deleteProfile: vi.fn(),

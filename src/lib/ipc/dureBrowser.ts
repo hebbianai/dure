@@ -54,10 +54,32 @@ export function browserRequestFailureMessage(error: unknown): string {
 			case "browser_pro_development_only":
 				return t("ipc.browser.developmentRequired");
 			case "browser_engine_not_installed":
+			case "browser_chromium_not_installed":
 				return t("ipc.browser.runtimeRequired");
+			case "browser_engine_platform_unavailable":
+				return t("ipc.browser.platformUnavailable");
 		}
+		if (error.code.startsWith("browser_installation_"))
+			return t("ipc.browser.installationFailed");
 	}
 	return t("ipc.browser.requestFailed");
+}
+
+const runtimeConfigurationFailures = new Set([
+	"browser_engine_not_installed",
+	"browser_chromium_not_installed",
+	"browser_installation_invalid",
+	"browser_engine_unreadable",
+	"browser_engine_pin_mismatch",
+	"browser_engine_installation_invalid",
+]);
+
+export function canInstallBrowserRuntime(error: unknown): boolean {
+	return (
+		error instanceof DureBackendRequestError &&
+		(runtimeConfigurationFailures.has(error.code) ||
+			error.code.startsWith("browser_installation_"))
+	);
 }
 
 /** These Create failures precede service resource admission. Other terminal
@@ -67,7 +89,8 @@ export function isUnstartedBrowserCreation(error: unknown): boolean {
 		error instanceof DureBackendRequestError &&
 		error.failure.kind === "operation" &&
 		error.failure.disposition === "terminal" &&
-		(error.code === "browser_engine_not_installed" ||
+		(runtimeConfigurationFailures.has(error.code) ||
+			error.code === "browser_engine_platform_unavailable" ||
 			error.code === "browser_pro_development_only")
 	);
 }
@@ -202,6 +225,30 @@ export function createDureBrowserClient(
 		return created;
 	}
 	return {
+		async runtimeInstallation(start = false) {
+			const result = await payload({
+				kind: start ? "runtime_install" : "runtime_status",
+			});
+			const state = result.state;
+			if (
+				state !== "ready" &&
+				state !== "missing" &&
+				state !== "installing" &&
+				state !== "failed" &&
+				state !== "unsupported"
+			)
+				invalid();
+			if (state === "failed" || state === "unsupported") {
+				throw new DureBackendRequestError(
+					state === "unsupported"
+						? "browser_engine_platform_unavailable"
+						: "browser_installation_failed",
+					t("ipc.browser.requestFailed"),
+					{ kind: "operation", disposition: "terminal" },
+				);
+			}
+			return state;
+		},
 		async createProfile(
 			label: string,
 			userAgentMode: BrowserProfileRecord["profile"]["userAgentMode"],
@@ -296,10 +343,7 @@ export function createDureBrowserClient(
 		async list() {
 			const result = await payload({ kind: "list" });
 			if (!Array.isArray(result.resources)) invalid();
-			if (
-				"target" in result &&
-				!parseBrowserWorkspaceCatalogTarget(result)
-			)
+			if ("target" in result && !parseBrowserWorkspaceCatalogTarget(result))
 				invalid();
 			return result.resources.map((value) => {
 				const parsed = parseBrowserControl(value);

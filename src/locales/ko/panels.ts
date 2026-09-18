@@ -197,4 +197,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.saveEditsHint": "편집을 커스텀 테마로 저장",
 	"panels.tokens.theme.saved": "테마로 저장했습니다",
 	"panels.tokens.theme.savedWithExclusions": "테마로 저장했습니다 — 일부 토큰은 제외됨: {names}",
+	"panels.browser.installRuntime": "브라우저 설치",
+	"panels.browser.installingRuntime": "브라우저를 다운로드하고 설치하는 중…",
 };

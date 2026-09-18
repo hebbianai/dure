@@ -1,6 +1,6 @@
 ---
 name: slack
-description: Connect a Slack channel or bot DM to a Dure Pro project and continue the same agent conversation from either surface.
+description: Connect a Slack channel or bot DM to a Dure project and continue the same agent conversation from either surface.
 ---
 
 Use `dure slack` for the official Dure Slack connector. Dure owns tasks and
@@ -22,7 +22,7 @@ When asked to connect Slack:
   the workspace's shared @Dure; it routes to all configured servers. Existing
   threads keep their original server when channel defaults change.
 - Start `dure slack serve --config FILE` in a durable terminal owned by the
-  user. It requires Node.js 22+ and a Pro development backend. The connection
+  user. It requires Node.js 22+ and a compatible Dure backend. The connection
   lasts while that command runs. Report the actual result; do not add a
   separate readiness checklist or silently retry failed tasks.
 - To share work already running in Dure, use `dure slack share --config FILE
@@ -34,7 +34,7 @@ When asked to connect Slack:
   try again after a reported failure.
 - Use `dure slack status --config FILE` to inspect recorded delivery state.
   Stopping the connector preserves tasks and conversations in Dure.
-- Dure's Pro development UI also manages connections from the Slack plugin
+- Dure's UI also manages connections from the Slack plugin
   settings. It uses the same connector and server routes as the CLI.
 - Provider questions and permission requests appear in the task thread with
   answer controls available to every teammate. Ordinary replies remain new
@@ -60,6 +60,5 @@ automatically retried. Mark the goal complete only after verifying its outcome.
 Dure and Slack consume the same goal state; subsequent changes appear in the
 shared thread. Sharing an existing task does not backfill its earlier goal.
 
-This is a development preview, not a released paid Pro service. Actual Slack
-installation and an available execution host are still required. Do not promise
-an always-on host or production entitlement from a local connection or UI mode.
+A configured Slack app and an available execution host are required.
+The connection stays active while its owning Dure backend or CLI runs.

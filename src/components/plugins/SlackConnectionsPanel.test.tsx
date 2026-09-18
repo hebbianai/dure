@@ -280,14 +280,12 @@ it("keeps a newer connect response when a previous observation arrives late", as
 	expect(screen.queryByText("Disconnected")).toBeNull();
 });
 
-it("does not expose or request Slack connection management in Basic mode", async () => {
+it("exposes Slack connection management in public Basic mode", async () => {
 	mode.pro = false;
 	const f = fixture();
 	await act(async () => {
 		render(<SlackConnectionsPanel client={f.client} />);
 	});
-	expect(f.invokeCommand).not.toHaveBeenCalled();
-	expect(
-		screen.queryByRole("button", { name: "Connect a workspace" }),
-	).toBeNull();
+	expect(f.invokeCommand).toHaveBeenCalled();
+	expect(screen.getByRole("button", { name: "Connect a workspace" })).toBeTruthy();
 });

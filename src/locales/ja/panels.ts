@@ -197,4 +197,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.saveEditsHint": "編集をカスタムテーマとして保存",
 	"panels.tokens.theme.saved": "テーマとして保存しました",
 	"panels.tokens.theme.savedWithExclusions": "テーマとして保存しました — 一部のトークンは除外：{names}",
+	"panels.browser.installRuntime": "ブラウザーをインストール",
+	"panels.browser.installingRuntime": "ブラウザーをダウンロードしてインストールしています…",
 };

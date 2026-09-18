@@ -48,6 +48,59 @@ const control = {
 	in_flight: null,
 	next_command_sequence: "1",
 };
+
+it("installs on the bound backend and creates only after installation is ready", async () => {
+	const ready = deferred<unknown>();
+	const f = fixture({ url: "about:blank" }, async (body) => {
+		if (body.kind === "list")
+			return { workspace_id: resource.workspace_id, resources: [] };
+		if (body.kind === "runtime_install") return ready.promise;
+		if (body.kind === "create") return { control };
+		throw Error(`Unexpected request ${body.kind}`);
+	});
+	const pane = f.mount();
+	try {
+		await waitFor(() => expect(pane.result.current.connected).toBe(true));
+		act(() => {
+			void pane.result.current.installRuntime();
+		});
+		await waitFor(() => expect(pane.result.current.installing).toBe(true));
+		expect(f.requests("create")).toHaveLength(0);
+		await act(async () => {
+			ready.resolve({ state: "ready" });
+		});
+		await waitFor(() =>
+			expect(pane.result.current.session?.resource).toEqual(resource),
+		);
+		expect(f.requests("runtime_install")).toHaveLength(1);
+		expect(f.requests("create")).toHaveLength(1);
+		expect(f.requests("create")[0].route.authority).toEqual(route);
+		expect(pane.result.current.installing).toBe(false);
+	} finally {
+		pane.unmount();
+	}
+});
+
+it("does not create a browser after installation finishes for a detached pane", async () => {
+	const ready = deferred<unknown>();
+	const f = fixture({ url: "about:blank" }, async (body) => {
+		if (body.kind === "list")
+			return { workspace_id: resource.workspace_id, resources: [] };
+		if (body.kind === "runtime_install") return ready.promise;
+		throw Error(`Unexpected request ${body.kind}`);
+	});
+	const pane = f.mount();
+	await waitFor(() => expect(pane.result.current.connected).toBe(true));
+	act(() => {
+		void pane.result.current.installRuntime();
+	});
+	await waitFor(() => expect(pane.result.current.installing).toBe(true));
+	pane.unmount();
+	await act(async () => {
+		ready.resolve({ state: "ready" });
+	});
+	expect(f.requests("create")).toHaveLength(0);
+});
 function deferred<T>() {
 	let resolve!: (value: T) => void;
 	let reject!: (error: Error) => void;
@@ -277,7 +330,8 @@ it.each([true, false])(
 		const f = fixture({ url: "about:blank", browserCreation: pending });
 		const respondFromFixture = mocks.invoke.getMockImplementation()!;
 		mocks.invoke.mockImplementation(async (command, args) => {
-			if (args.body?.kind !== "receipt") return respondFromFixture(command, args);
+			if (args.body?.kind !== "receipt")
+				return respondFromFixture(command, args);
 			return {
 				schemaVersion: 1,
 				backendId: route.backend.id,
@@ -418,9 +472,18 @@ it("keeps a lost create pending until an explicit reconnect reuses the same oper
 	}
 });
 
-it.each(["fresh", "restored", "unbound"])(
-	"allows an explicit new create after a known installation failure (%s)",
-	async (mode) => {
+it.each(
+	["fresh", "restored", "unbound"].flatMap((mode) =>
+		[
+			"browser_engine_not_installed",
+			"browser_installation_invalid",
+			"browser_chromium_not_installed",
+			"browser_engine_pin_mismatch",
+		].map((code) => ({ mode, code })),
+	),
+)(
+	"allows an explicit new create after a known installation failure (%j)",
+	async ({ mode, code }) => {
 		const restored = mode !== "fresh";
 		const pending = {
 			authority: route,
@@ -450,8 +513,8 @@ it.each(["fresh", "restored", "unbound"])(
 					if (!installed) failedOperation = body.operation_id as string;
 					if (body.operation_id === failedOperation)
 						throw {
-							code: "browser_engine_not_installed",
-							message: "browser_engine_not_installed",
+							code: code,
+							message: code,
 							details: { disposition: "terminal" },
 						};
 					return { control };
@@ -477,12 +540,12 @@ it.each(["fresh", "restored", "unbound"])(
 							replayed: true,
 							result_available: true,
 							result: null,
-							error: { code: "browser_engine_not_installed" },
+							error: { code: code },
 							receipt: {
 								operationId: pending.operationId,
 								operationKind: "browser.resource",
 								state: "failed",
-								terminalCode: "browser_engine_not_installed",
+								terminalCode: code,
 							},
 						},
 					};
@@ -493,7 +556,7 @@ it.each(["fresh", "restored", "unbound"])(
 			await waitFor(() => expect(pane.result.current.busy).toBe(false));
 			if (!restored) await act(() => pane.result.current.create());
 			expect(pane.result.current.error).toMatchObject({
-				code: "browser_engine_not_installed",
+				code: code,
 			});
 			expect(f.api.updateParameters).toHaveBeenLastCalledWith({
 				browserBinding:

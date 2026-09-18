@@ -136,11 +136,11 @@ it("keeps the channel choice and visible failure without automatically posting a
 	expect(screen.getByRole("combobox").textContent).toContain("T1 / C1");
 	await waitFor(() => expect(f.invokeCommand).toHaveBeenCalledTimes(2));
 });
-it("keeps sharing unavailable in Basic without requesting any connection", () => {
+it("offers sharing in Basic and waits for the user to open it", () => {
 	mode.pro = false;
 	const f = fixture();
 	render(<AgentSlackShare identity={identity} client={f.client} />);
-	expect(screen.queryByRole("button")).toBeNull();
+	expect(screen.getByRole("button", { name: "Share in Slack" })).toBeTruthy();
 	expect(f.invokeCommand).not.toHaveBeenCalled();
 });
 

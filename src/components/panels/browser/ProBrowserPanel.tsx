@@ -23,7 +23,10 @@ import { normalizeBrowserAddress } from "@/lib/browser/browserAddress";
 import { browserPaneActions } from "@/lib/browser/browserPaneActions";
 import { acceptRemoteCapture } from "@/lib/design/designModeRuntime";
 import { t } from "@/lib/i18n";
-import { browserRequestFailureMessage } from "@/lib/ipc/dureBrowser";
+import {
+	browserRequestFailureMessage,
+	canInstallBrowserRuntime,
+} from "@/lib/ipc/dureBrowser";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
 
 export function ProBrowserPanel(
@@ -333,6 +336,19 @@ export function ProBrowserPanel(
 			{failure && (
 				<div className="border-b px-3 py-2">
 					<ErrorText>{browserRequestFailureMessage(failure)}</ErrorText>
+					{canInstallBrowserRuntime(failure) && (
+						<Button
+							disabled={pane.busy || !pane.connected}
+							onClick={() => {
+								initialAddress.current = address
+									? normalizeBrowserAddress(address)
+									: undefined;
+								void pane.installRuntime();
+							}}
+						>
+							{t("panels.browser.installRuntime")}
+						</Button>
+					)}
 				</div>
 			)}
 			{closeTarget && closeTarget === pane.session && (
@@ -383,7 +399,13 @@ export function ProBrowserPanel(
 			) : (
 				!failure && (
 					<div className="flex flex-1 items-center justify-center px-6 text-center text-xs text-muted-foreground">
-						{t(pane.busy ? "common.loading" : "panels.browser.enterAddress")}
+						{t(
+							pane.installing
+								? "panels.browser.installingRuntime"
+								: pane.busy
+									? "common.loading"
+									: "panels.browser.enterAddress",
+						)}
 					</div>
 				)
 			)}

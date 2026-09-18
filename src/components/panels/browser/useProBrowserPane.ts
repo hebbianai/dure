@@ -67,6 +67,7 @@ export function useProBrowserPane(
 	const [resources, setResources] = useState<BrowserControlProjection[]>([]);
 	const [session, setSession] = useState<BrowserPaneSession>();
 	const [busy, setBusy] = useState(false);
+	const [installing, setInstalling] = useState(false);
 	const [error, setError] = useState<unknown>();
 	const selection = useRef(0);
 	const operation = useRef(0);
@@ -175,6 +176,7 @@ export function useProBrowserPane(
 	);
 	const connect = useCallback(async () => {
 		++selection.current;
+		setInstalling(false);
 		setSession(undefined);
 		setConnection(undefined);
 		setResources([]);
@@ -434,6 +436,30 @@ export function useProBrowserPane(
 		view,
 		session,
 		busy,
+		installing,
+		installRuntime: () =>
+			run(async (current) => {
+				if (!connection) return;
+				setInstalling(true);
+				try {
+					let status = await connection.client.runtimeInstallation(true);
+					const deadline = Date.now() + 12 * 60_000;
+					while (current() && status !== "ready") {
+						if (Date.now() >= deadline)
+							throw new DureBackendRequestError(
+								"browser_installation_timeout",
+								"Browser installation timed out",
+								{ kind: "operation", disposition: "terminal" },
+							);
+						await new Promise((resolve) => setTimeout(resolve, 1500));
+						if (!current()) return;
+						status = await connection.client.runtimeInstallation();
+					}
+					if (current()) await create(current);
+				} finally {
+					if (current()) setInstalling(false);
+				}
+			}),
 		error,
 		controllerId,
 		resources,

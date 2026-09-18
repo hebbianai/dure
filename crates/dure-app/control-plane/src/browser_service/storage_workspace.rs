@@ -1,4 +1,4 @@
-use super::{BackendDispatchError, DomainStore, SqliteDomainStore, require_development};
+use super::{BackendDispatchError, DomainStore, SqliteDomainStore};
 use dure_app::{ProjectIdV1, ProjectRecordV1, WorkspaceIdV1, WorkspaceRecordV1};
 use std::path::Path;
 
@@ -14,7 +14,6 @@ pub(super) async fn personal(
     backend_root: &Path,
 ) -> Result<WorkspaceIdV1, BackendDispatchError> {
     use std::os::unix::fs::DirBuilderExt;
-    require_development()?;
     let unavailable = || BackendDispatchError::terminal("browser_workspace_unavailable");
     let directory = backend_root.join("browser-workspace");
     match std::fs::DirBuilder::new().mode(0o700).create(&directory) {

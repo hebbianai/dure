@@ -197,4 +197,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.saveEditsHint": "将编辑保存为自定义主题",
 	"panels.tokens.theme.saved": "已保存为主题",
 	"panels.tokens.theme.savedWithExclusions": "已保存为主题 — 部分令牌被排除：{names}",
+	"panels.browser.installRuntime": "安装浏览器",
+	"panels.browser.installingRuntime": "正在下载并安装浏览器…",
 };
