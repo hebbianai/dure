@@ -7,7 +7,7 @@ import { resolveRunPresentationTarget } from "./run-presentation.mjs";
 import { isDureDomainIdV1, isDureBackendProfileIdV1 } from "./contracts/protocol-identity.mjs";
 import { browserCurrentPage } from "./browser-action-authority.mjs";
 import { browserTabLabel } from "./browser-tabs.mjs";
-import { browserWorkspaceSelection, assertBrowserWorkspaceResource } from "./browser-workspace-target.mjs";
+import { browserResourceSelection, assertBrowserResource } from "./browser-resource-target.mjs";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 
 function fail(code) { throw Object.assign(new Error(code), { code }); }
@@ -47,7 +47,7 @@ export async function collectBrowserTabFocus({ options, resolveBackend, requestB
   let runtime;
   let presentation;
   try {
-    const allowed = ["positional", "focus", "space", "backend", "resource", "workspace", "worktree", "page", "index", "label", "controller", "epoch", "operationId"];
+    const allowed = ["positional", "focus", "space", "backend", "resource", "defaultResource", "page", "index", "label", "controller", "epoch", "operationId"];
     if (options.positional.length > 3 || options.space === "" || Object.keys(options).some((key) => !allowed.includes(key))) fail("browser_command_invalid");
     if (options.page === undefined && options.index === undefined && options.label === undefined) fail("browser_page_required");
     if (options.label !== undefined) {
@@ -57,10 +57,10 @@ export async function collectBrowserTabFocus({ options, resolveBackend, requestB
     if (options.page !== undefined && !isDureDomainIdV1(options.page)) fail("browser_page_required");
     if (options.index !== undefined && (!/^(0|[1-9][0-9]*)$/.test(options.index) || !Number.isSafeInteger(Number(options.index)) || Number(options.index) > 127)) fail("browser_tab_index_invalid");
     const resourceId = options.positional[2];
-    if (resourceId !== undefined && (!isDureDomainIdV1(resourceId) || ["resource", "workspace", "worktree"].some((key) => options[key] !== undefined))) fail("browser_command_invalid");
-    browserWorkspaceSelection({ ...options, positional: [...options.positional] });
+    if (resourceId !== undefined && (!isDureDomainIdV1(resourceId) || ["resource", "defaultResource"].some((key) => options[key] !== undefined))) fail("browser_command_invalid");
+    browserResourceSelection({ ...options, positional: [...options.positional] });
     const show = ["show", ...(resourceId === undefined ? [] : [resourceId])];
-    for (const key of ["resource", "workspace", "worktree"]) if (options[key] !== undefined) show.push(`--${key}`, options[key]);
+    if (options.resource !== undefined) show.push("--resource", options.resource);
     presentation = resolveBrowserPresentation({ spaceSelector: options.space, sourceEnvironment, appControl });
     backend = await resolveBackend({ backend: options.backend, backendSpecified: options.backend !== undefined });
     if (!backend?.profile || backend.error) return { ok: false, operation_id: operationId, error: backendRequestFailure(backend?.error, backend?.profile) };
@@ -75,7 +75,7 @@ export async function collectBrowserTabFocus({ options, resolveBackend, requestB
     runtime = await run({ ...context, args, requestBackend: async (selected, request, transport) => {
       if (request.body?.kind === "action" && request.body.action?.kind === "select_page") selectedPage = request.body.authority.page.page_id;
       const response = await requestBackend(selected, request, transport);
-      assertBrowserWorkspaceResource(resource, request.body?.kind, response.result);
+      assertBrowserResource(resource, request.body?.kind, response.result);
       return response;
     } });
     if (!runtime.ok) return runtime;

@@ -7,7 +7,7 @@ async fn interception_scopes_frames_workers_types_navigation_and_control_handoff
     let (root, endpoint, server) = fixture().await;
     let (base, received, stop_http, http) = http_fixture().await;
     let evidence: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         let shown = cli(&root, &["show", resource]).await?;
         let page = shown["result"]["pages"][0]["page"]["page_id"].as_str().ok_or("page missing")?;
@@ -58,12 +58,23 @@ async fn interception_scopes_frames_workers_types_navigation_and_control_handoff
         require(neighbor_state["result"]["enabled"] == false, &neighbor_state)?;
         Ok(json!({"effects":effects["result"]["response"]["data"]["result"],"restored":restored["result"]["response"]["data"]["result"],"before":before,"after":after,"handoff":handoff}))
     }.await;
-    println!("BROWSER_INTERCEPT_SCOPE_BEFORE_CLOSE root={} evidence={evidence:?}", root.display());
-    let stopped = backend(&endpoint, "backend.shutdown", json!({"schemaVersion":2,"mode":"stop"})).await;
+    println!(
+        "BROWSER_INTERCEPT_SCOPE_BEFORE_CLOSE root={} evidence={evidence:?}",
+        root.display()
+    );
+    let stopped = backend(
+        &endpoint,
+        "backend.shutdown",
+        json!({"schemaVersion":2,"mode":"stop"}),
+    )
+    .await;
     let retired = timeout(Duration::from_secs(40), server).await;
     let _ = stop_http.send(());
     let http_retired = timeout(Duration::from_secs(10), http).await;
-    println!("BROWSER_INTERCEPT_SCOPE root={} evidence={evidence:?} retired={retired:?} http={http_retired:?}", root.display());
+    println!(
+        "BROWSER_INTERCEPT_SCOPE root={} evidence={evidence:?} retired={retired:?} http={http_retired:?}",
+        root.display()
+    );
     retired.unwrap().unwrap().unwrap();
     http_retired.unwrap().unwrap();
     assert_eq!(stopped["kind"], "dure.backend.response");

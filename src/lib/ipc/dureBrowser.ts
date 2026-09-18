@@ -35,9 +35,6 @@ import {
 	browserWorkspaceSelectionResult,
 	parseBrowserWorkspaceCatalogTarget,
 } from "../../../cli/lib/contracts/browser-workspace-target.mjs";
-import { parseBrowserWorkspacePage } from "../../../cli/lib/contracts/browser-workspaces.mjs";
-
-export type { BrowserWorkspace } from "../../../cli/lib/contracts/browser-workspaces.mjs";
 
 export function browserRequestFailureMessage(error: unknown): string {
 	if (
@@ -57,10 +54,32 @@ export function browserRequestFailureMessage(error: unknown): string {
 			case "browser_pro_development_only":
 				return t("ipc.browser.developmentRequired");
 			case "browser_engine_not_installed":
+			case "browser_chromium_not_installed":
 				return t("ipc.browser.runtimeRequired");
+			case "browser_engine_platform_unavailable":
+				return t("ipc.browser.platformUnavailable");
 		}
+		if (error.code.startsWith("browser_installation_"))
+			return t("ipc.browser.installationFailed");
 	}
 	return t("ipc.browser.requestFailed");
+}
+
+const runtimeConfigurationFailures = new Set([
+	"browser_engine_not_installed",
+	"browser_chromium_not_installed",
+	"browser_installation_invalid",
+	"browser_engine_unreadable",
+	"browser_engine_pin_mismatch",
+	"browser_engine_installation_invalid",
+]);
+
+export function canInstallBrowserRuntime(error: unknown): boolean {
+	return (
+		error instanceof DureBackendRequestError &&
+		(runtimeConfigurationFailures.has(error.code) ||
+			error.code.startsWith("browser_installation_"))
+	);
 }
 
 /** These Create failures precede service resource admission. Other terminal
@@ -70,7 +89,8 @@ export function isUnstartedBrowserCreation(error: unknown): boolean {
 		error instanceof DureBackendRequestError &&
 		error.failure.kind === "operation" &&
 		error.failure.disposition === "terminal" &&
-		(error.code === "browser_engine_not_installed" ||
+		(runtimeConfigurationFailures.has(error.code) ||
+			error.code === "browser_engine_platform_unavailable" ||
 			error.code === "browser_pro_development_only")
 	);
 }
@@ -178,7 +198,57 @@ export function createDureBrowserClient(
 		if (!parsed || !sameBrowserResource(parsed.resource, resource)) invalid();
 		return parsed;
 	}
+	function createdBrowser(reply: Record<string, unknown>, operationId: string) {
+		if (reply.replayed === true && reply.result === null) {
+			const receipt = asRecord(reply.receipt);
+			const failure = asRecord(reply.error);
+			if (
+				reply.result_available !== true ||
+				receipt?.operationId !== operationId ||
+				receipt.operationKind !== "browser.resource" ||
+				receipt.state !== "failed" ||
+				typeof failure?.code !== "string" ||
+				!failure.code ||
+				receipt.terminalCode !== failure.code
+			)
+				invalid();
+			throw new DureBackendRequestError(
+				failure.code,
+				t("ipc.browser.requestFailed"),
+				{ kind: "operation", disposition: "terminal" },
+			);
+		}
+		const result = asRecord(reply.result);
+		if (!result) invalid();
+		const created = parseBrowserControl(result.control);
+		if (!created) invalid();
+		return created;
+	}
 	return {
+		async runtimeInstallation(start = false) {
+			const result = await payload({
+				kind: start ? "runtime_install" : "runtime_status",
+			});
+			const state = result.state;
+			if (
+				state !== "ready" &&
+				state !== "missing" &&
+				state !== "installing" &&
+				state !== "failed" &&
+				state !== "unsupported"
+			)
+				invalid();
+			if (state === "failed" || state === "unsupported") {
+				throw new DureBackendRequestError(
+					state === "unsupported"
+						? "browser_engine_platform_unavailable"
+						: "browser_installation_failed",
+					t("ipc.browser.requestFailed"),
+					{ kind: "operation", disposition: "terminal" },
+				);
+			}
+			return state;
+		},
 		async createProfile(
 			label: string,
 			userAgentMode: BrowserProfileRecord["profile"]["userAgentMode"],
@@ -236,50 +306,24 @@ export function createDureBrowserClient(
 			if (!result) invalid();
 			return result;
 		},
-		async workspaces(after?: string) {
-			if (after !== undefined && !isDureDomainIdV1(after)) invalid();
-			const result = await payload({
-				kind: "workspaces",
-				...(after === undefined ? {} : { after }),
-			});
-			const page = parseBrowserWorkspacePage(result, after);
-			if (!page) invalid();
-			return page;
-		},
-		async create(workspaceId: string | null, operationId: string) {
+		async create(operationId: string) {
 			const reply = await send({
 				kind: "create",
-				...(workspaceId === null ? {} : { workspace_id: workspaceId }),
 				operation_id: operationId,
 			});
-			if (reply.replayed === true && reply.result === null) {
-				const receipt = asRecord(reply.receipt);
-				const failure = asRecord(reply.error);
-				if (
-					reply.result_available !== true ||
-					receipt?.operationId !== operationId ||
-					receipt.operationKind !== "browser.resource" ||
-					receipt.state !== "failed" ||
-					typeof failure?.code !== "string" ||
-					!failure.code ||
-					receipt.terminalCode !== failure.code
-				)
-					invalid();
-				throw new DureBackendRequestError(
-					failure.code,
-					t("ipc.browser.requestFailed"),
-					{ kind: "operation", disposition: "terminal" },
-				);
-			}
-			const result = asRecord(reply.result);
-			if (!result) invalid();
-			const created = parseBrowserControl(result.control);
+			return createdBrowser(reply, operationId);
+		},
+		async recoverCreation(operationId: string) {
+			const reply = await send({ kind: "receipt", operation_id: operationId });
+			const receipt = asRecord(reply.receipt);
 			if (
-				!created ||
-				(workspaceId !== null && created.resource.workspace_id !== workspaceId)
+				reply.result_available !== true ||
+				receipt?.operationId !== operationId ||
+				receipt.operationKind !== "browser.resource" ||
+				!["succeeded", "failed"].includes(String(receipt.state))
 			)
 				invalid();
-			return created;
+			return createdBrowser({ ...reply, replayed: true }, operationId);
 		},
 		async close(resource: BrowserResourceIdentity, operationId: string) {
 			const result = await payload({
@@ -296,17 +340,15 @@ export function createDureBrowserClient(
 				invalid();
 			return result;
 		},
-		async list(workspaceId: string) {
-			const result = await payload({ kind: "list", workspace_id: workspaceId });
+		async list() {
+			const result = await payload({ kind: "list" });
 			if (!Array.isArray(result.resources)) invalid();
-			if (
-				Object.prototype.hasOwnProperty.call(result, "target") &&
-				parseBrowserWorkspaceCatalogTarget(result)?.workspace_id !== workspaceId
-			)
+			if ("target" in result && !parseBrowserWorkspaceCatalogTarget(result))
 				invalid();
 			return result.resources.map((value) => {
 				const parsed = parseBrowserControl(value);
-				if (!parsed || parsed.resource.workspace_id !== workspaceId) invalid();
+				if (!parsed || parsed.resource.workspace_id !== result.workspace_id)
+					invalid();
 				return parsed;
 			});
 		},
@@ -318,7 +360,6 @@ export function createDureBrowserClient(
 				invalid();
 			const catalog = await payload({
 				kind: "list",
-				workspace_id: resource.workspace_id,
 			});
 			const expected = parseBrowserWorkspaceCatalogTarget(catalog);
 			if (

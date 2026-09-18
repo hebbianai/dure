@@ -80,13 +80,11 @@ export const panels: Record<string, string> = {
 		"Abrir em uma nova aba mantém esta página e carrega a URL com os cookies e o armazenamento do perfil selecionado.",
 	"panels.browser.profileClone": "Abrir em nova aba",
 	"panels.browser.profileSwitch": "Trocar de perfil",
-	"panels.browser.workspace": "Espaço de trabalho",
 	"panels.browser.resource": "Navegador",
-	"panels.browser.chooseWorkspace": "Escolha um espaço de trabalho",
 	"panels.browser.chooseBrowser": "Escolha um navegador",
 	"panels.browser.browserNumber": "Navegador {number}",
 	"panels.browser.newBrowser": "Novo navegador",
-	"panels.browser.useForWorkspace": "Usar para comandos do espaço de trabalho",
+	"panels.browser.useAsDefault": "Usar como navegador padrão",
 	"panels.browser.reconnect": "Reconectar",
 	"panels.browser.page": "Página",
 	"panels.browser.followCurrent": "Acompanhar a aba atual",
@@ -106,10 +104,7 @@ export const panels: Record<string, string> = {
 	"panels.browser.closeConfirmation":
 		"Fechar este navegador e todas as páginas? Alterações não salvas podem ser perdidas.",
 	"panels.browser.chooseBrowserHint":
-		"Escolha um espaço de trabalho e abra um navegador ou conecte-se a um em execução.",
-	"panels.browser.noWorkspaces":
-		"Nenhum espaço de trabalho disponível. Abra um para um agente e reconecte-se.",
-	"panels.browser.moreWorkspaces": "Mais espaços de trabalho",
+		"Abra um navegador ou conecte-se a um que já esteja em execução.",
 	"panels.browser.releaseFailed":
 		"A liberação da entrada não foi confirmada. Reconecte-se e verifique o navegador antes de continuar.",
 	"panels.agent.toolbar.control.conversationHistory": "Histórico de conversa",
@@ -202,4 +197,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.saveEditsHint": "Salvar edições como tema personalizado",
 	"panels.tokens.theme.saved": "Salvo como tema",
 	"panels.tokens.theme.savedWithExclusions": "Salvo como tema — alguns tokens foram excluídos: {names}",
+	"panels.browser.installRuntime": "Instalar navegador",
+	"panels.browser.installingRuntime": "Baixando e instalando o navegador…",
 };

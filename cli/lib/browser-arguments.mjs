@@ -5,9 +5,9 @@ const namedValues = ["element", "value", "input", "what", "direction", "amount",
 export function parseBrowserArguments(args, { nativeValues = false } = {}) {
   const options = { positional: [] };
   const names = new Map([
-    ["--workspace", "workspace"], ["--backend", "backend"], ["--page", "page"],
-    ["--worktree", "worktree"], ["--resource", "resource"], ["--space", "space"],
-    ["--after", "after"], ["--days", "days"],
+    ["--backend", "backend"], ["--page", "page"],
+    ["--resource", "resource"], ["--space", "space"],
+    ["--days", "days"],
     ["--controller", "controller"], ["--epoch", "epoch"],
     ["--idempotency-key", "operationId"], ["--output", "output"],
     ["--timeout", "timeout"], ["--state", "state"],
@@ -31,7 +31,7 @@ export function parseBrowserArguments(args, { nativeValues = false } = {}) {
     ...namedValues.map((name) => [`--${name}`, name]),
   ]);
   const booleans = new Map([
-    ["--full", "diffFullPage"], ["--only-dynamic", "onlyDynamic"],
+    ["--current", "defaultResource"], ["--all", "all"], ["--full", "diffFullPage"], ["--only-dynamic", "onlyDynamic"],
     ...["interactive", "compact", "urls", "cursor", "annotate", "focus", "secure", "mobile", "abort", "exact"].map((name) => [`--${name}`, name]),
     ["--show-profile", "showProfile"], ["--no-ua-spoof", "noUaSpoof"],
     ["--http-only", "httpOnly"], ["--httpOnly", "httpOnly"],
@@ -87,7 +87,7 @@ export function parseBrowserArguments(args, { nativeValues = false } = {}) {
   return options;
 }
 
-/** Both syntaxes converge before backend, workspace or input admission. */
+/** Both syntaxes converge before backend or input admission. */
 function normalizeNamedArguments(options) {
   const words = options.positional;
   const command = words[0];
@@ -99,15 +99,14 @@ function normalizeNamedArguments(options) {
     delete options[key];
     return value;
   };
-  const scoped = () => present("workspace", "worktree");
   const rewrite = (prefix, canonical, values, references = []) => {
     const resource = words.slice(prefix);
-    if (resource.length > 1 || (resource.length && (scoped() || present("resource")))) throw new Error("browser_command_invalid");
+    if (resource.length > 1 || (resource.length && present("resource"))) throw new Error("browser_command_invalid");
     if (resource.length) options.resource = resource[0];
     options.positional = [canonical, ...values];
     // References already contain the exact resource. Only raw targets without
-    // an explicit resource/workspace need the backend's local-cwd resolver.
-    if (!scoped() && !present("resource") && !references.some((value) => value?.trimStart().startsWith("@"))) options.worktree = "current";
+    // an explicit resource use the backend's selected Browser.
+    if (!present("resource") && !references.some((value) => value?.trimStart().startsWith("@"))) options.defaultResource = true;
   };
   const element = () => {
     if (present("element") && present("selector")) throw new Error("browser_command_invalid");
@@ -214,5 +213,5 @@ function normalizeNamedArguments(options) {
 
   const zeroArgument = words.length === 1 && ["show", "snapshot", "screenshot", "full-screenshot", "pdf", "back", "forward", "reload", "network", "console", "control", "close"].includes(command);
   const tab = command === "tab" && ((words.length === 2 && ["list", "current", "show", "create", "switch", "close"].includes(words[1])) || (words.length === 3 && words[1] === "profile" && options.page?.trim() && ["show", "set", "clone", "use-default"].includes(words[2])));
-  if ((zeroArgument || tab) && !scoped() && !present("resource") && !options.captureElement?.trimStart().startsWith("@")) options.worktree = "current";
+  if ((zeroArgument || tab) && !present("resource") && !options.captureElement?.trimStart().startsWith("@")) options.defaultResource = true;
 }

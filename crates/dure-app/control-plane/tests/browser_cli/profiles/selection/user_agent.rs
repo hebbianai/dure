@@ -75,21 +75,20 @@ async fn native_profile_device_keeps_wire_and_renderer_identity_through_shared_a
     let (root, endpoint, server) = super::super::super::fixture().await;
     let (url, stop_site, site) = identity_site().await;
     let evidence: Result<_, String> = async {
-        peer_workspace(&root).await?;
         let catalog = cli(&root, &["tab", "profile", "create", "--label", "기본 식별자 유지", "--no-ua-spoof"]).await?;
         let profile = catalog["result"]["profile"]["profile"]["profileId"].as_str().ok_or("profile missing")?;
-        let native = Client::create(&root, "workspace-browser", Some(profile), "ua-native").await?;
+        let native = Client::create(&root, Some(profile), "ua-native").await?;
         native.action(&root, "goto", &url).await?;
         native.evaluate(&root, "window.profileMarker='원본 유지';true").await?;
         let baseline = observe(&native, &root).await?;
         let native_receipt = native.action(&root, "device", "iPhone 15").await?;
         let phone = observe(&native, &root).await?;
-        let clean = Client::create(&root, "workspace-browser", None, "ua-clean").await?;
+        let clean = Client::create(&root, None, "ua-clean").await?;
         clean.action(&root, "goto", &url).await?;
         let clean_baseline = observe(&clean, &root).await?;
         clean.action(&root, "device", "iPhone 15").await?;
         let emulated = observe(&clean, &root).await?;
-        let peer = Client::create(&root, "workspace-profile-peer", Some(profile), "ua-peer").await?;
+        let peer = Client::create(&root, Some(profile), "ua-peer").await?;
         peer.action(&root, "goto", &url).await?;
         let peer_before = observe(&peer, &root).await?;
         peer.action(&root, "device", "Pixel 9").await?;
@@ -102,7 +101,7 @@ async fn native_profile_device_keeps_wire_and_renderer_identity_through_shared_a
         clean.action(&root, "device", "reset").await?;
         let clean_reset = observe(&clean, &root).await?;
         clean.close(&root).await?;
-        let reopened = Client::create(&root, "workspace-browser", Some(profile), "ua-reopened").await?;
+        let reopened = Client::create(&root, Some(profile), "ua-reopened").await?;
         reopened.action(&root, "goto", &url).await?;
         reopened.action(&root, "device", "iPhone 15").await?;
         let restored = observe(&reopened, &root).await?;

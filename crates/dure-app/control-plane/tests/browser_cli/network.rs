@@ -169,7 +169,7 @@ pub(super) async fn exercise(
 async fn network_observation_across_frames_workers_and_popups() {
     let (root, endpoint, server) = super::fixture().await;
     let result: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"]
             .as_str()
             .ok_or("resource missing")?;

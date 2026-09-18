@@ -9,7 +9,6 @@ impl BrowserService {
         store: &SqliteDomainStore,
         profile: BrowserProfileIdV1,
     ) -> Result<Value, BackendDispatchError> {
-        require_development()?;
         let resources = self.resources.lock().await;
         let record = store.browser_profile(&profile).await.map_err(store_error)?;
         if profile.is_default()

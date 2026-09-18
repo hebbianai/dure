@@ -69,7 +69,7 @@ async fn launch_init_scripts_execute_before_first_navigation_in_owned_and_shared
         let mut resources=Vec::new();
         let mut before=Vec::new();let mut after=Vec::new();
         for (index,sources) in [vec!["window.order=['first'];window.preloaded='한글';","window.order.push('second');"],vec!["window.order=['peer'];window.preloaded='동료';"]].into_iter().enumerate() {
-            let request=json!({"kind":"create","workspace_id":"workspace:construction","operation_id":format!("startup:create:{index}"),"init_scripts":sources});
+            let request=json!({"kind":"create","operation_id":format!("startup:create:{index}"),"init_scripts":sources});
             let created=fixture.service.dispatch(&fixture.store,&request).await?;
             let resource=created["result"]["control"]["resource"].clone();
             fixture.service.dispatch(&fixture.store,&json!({"kind":"control","resource":resource,"controller_id":"agent","expected":null,"operation_id":format!("startup:control:{index}")})).await?;

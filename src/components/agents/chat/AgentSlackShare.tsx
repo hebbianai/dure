@@ -11,7 +11,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { ToolbarControl } from "@/components/ui/toolbar-control";
-import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import type { AgentChatDraftIdentity } from "@/lib/agents/chat/agentChatDraftTypes";
 import { t } from "@/lib/i18n";
 import {
@@ -30,9 +29,7 @@ export function AgentSlackShare({
 	disabled?: boolean;
 	client?: SlackConnectorClient;
 }) {
-	const pro = useInterfaceMode() === "pro";
 	const [open, setOpen] = useState(false);
-	if (!pro) return null;
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<ToolbarControl

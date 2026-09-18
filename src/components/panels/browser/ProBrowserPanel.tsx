@@ -7,7 +7,7 @@ import {
 	Settings2,
 	X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserElementPicker } from "@/components/panels/browser/BrowserElementPicker";
 import { BrowserPageSurface } from "@/components/panels/browser/BrowserPageSurface";
 import { BrowserProfileDialog } from "@/components/panels/browser/BrowserProfileDialog";
@@ -22,9 +22,11 @@ import { usePaneActions } from "@/components/workspace/usePaneActions";
 import { normalizeBrowserAddress } from "@/lib/browser/browserAddress";
 import { browserPaneActions } from "@/lib/browser/browserPaneActions";
 import { acceptRemoteCapture } from "@/lib/design/designModeRuntime";
-import { normalizeSlashPath, pathBasename } from "@/lib/files/paths";
 import { t } from "@/lib/i18n";
-import { browserRequestFailureMessage } from "@/lib/ipc/dureBrowser";
+import {
+	browserRequestFailureMessage,
+	canInstallBrowserRuntime,
+} from "@/lib/ipc/dureBrowser";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
 
 export function ProBrowserPanel(
@@ -35,40 +37,6 @@ export function ProBrowserPanel(
 	}>,
 ) {
 	const pane = useProBrowserPane(props);
-	const workspaceOptions = useMemo(() => {
-		const counts = new Map<string, number>();
-		for (const workspace of pane.workspaces)
-			counts.set(
-				workspace.root_path,
-				(counts.get(workspace.root_path) ?? 0) + 1,
-			);
-		return pane.workspaces.map((workspace) => {
-			const folder = pathBasename(normalizeSlashPath(workspace.root_path));
-			const label =
-				folder === workspace.project_name
-					? folder
-					: `${folder} · ${workspace.project_name}`;
-			return (
-				<SelectOption
-					key={workspace.workspace_id}
-					value={workspace.workspace_id}
-					textValue={label}
-					title={workspace.root_path}
-					description={
-						<span className="break-all">
-							{workspace.root_path}
-							{(counts.get(workspace.root_path) ?? 0) > 1 && (
-								<span className="block">{workspace.workspace_id}</span>
-							)}
-						</span>
-					}
-				>
-					<span className="min-w-0 truncate">{label}</span>
-				</SelectOption>
-			);
-		});
-	}, [pane.workspaces]);
-	const selectWorkspaceBrowser = pane.useForWorkspace;
 	const [address, setAddress] = useState(
 		props.params.url === "about:blank" ? "" : props.params.url || "",
 	);
@@ -254,36 +222,11 @@ export function ProBrowserPanel(
 			</div>
 			{optionsOpen && (
 				<div className="flex shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1">
-					<div className="min-w-28 flex-1">
-						<SelectField
-							aria-label={t("panels.browser.workspace")}
-							value={pane.workspaceId}
-							contentClassName="w-max min-w-64 max-w-[min(32rem,var(--radix-select-content-available-width))] max-h-[min(24rem,var(--radix-select-content-available-height))]"
-							disabled={pane.busy}
-							onValueChange={(nextValue) =>
-								void pane.selectWorkspace(nextValue)
-							}
-						>
-							<SelectOption value="">
-								{t("panels.browser.chooseWorkspace")}
-							</SelectOption>
-							{workspaceOptions}
-						</SelectField>
-					</div>
-					{pane.next && (
-						<Button
-							size="sm"
-							variant="ghost"
-							onClick={() => void pane.loadMore()}
-						>
-							{t("panels.browser.moreWorkspaces")}
-						</Button>
-					)}
 					<div className="min-w-24 flex-1">
 						<SelectField
 							aria-label={t("panels.browser.resource")}
 							value={pane.session?.resource.resource_id ?? ""}
-							disabled={pane.busy || !pane.workspaceId}
+							disabled={pane.busy || !pane.connected}
 							onValueChange={(nextValue) => pane.attach(nextValue)}
 						>
 							<SelectOption value="">
@@ -310,9 +253,9 @@ export function ProBrowserPanel(
 						size="sm"
 						variant="ghost"
 						disabled={pane.busy || !pane.session || !pane.active}
-						onClick={() => void selectWorkspaceBrowser()}
+						onClick={() => void pane.selectDefaultBrowser()}
 					>
-						{t("panels.browser.useForWorkspace")}
+						{t("panels.browser.useAsDefault")}
 					</Button>
 				</div>
 			)}
@@ -393,6 +336,19 @@ export function ProBrowserPanel(
 			{failure && (
 				<div className="border-b px-3 py-2">
 					<ErrorText>{browserRequestFailureMessage(failure)}</ErrorText>
+					{canInstallBrowserRuntime(failure) && (
+						<Button
+							disabled={pane.busy || !pane.connected}
+							onClick={() => {
+								initialAddress.current = address
+									? normalizeBrowserAddress(address)
+									: undefined;
+								void pane.installRuntime();
+							}}
+						>
+							{t("panels.browser.installRuntime")}
+						</Button>
+					)}
 				</div>
 			)}
 			{closeTarget && closeTarget === pane.session && (
@@ -443,7 +399,13 @@ export function ProBrowserPanel(
 			) : (
 				!failure && (
 					<div className="flex flex-1 items-center justify-center px-6 text-center text-xs text-muted-foreground">
-						{t(pane.busy ? "common.loading" : "panels.browser.enterAddress")}
+						{t(
+							pane.installing
+								? "panels.browser.installingRuntime"
+								: pane.busy
+									? "common.loading"
+									: "panels.browser.enterAddress",
+						)}
 					</div>
 				)
 			)}

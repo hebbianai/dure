@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import {
 	type DureBackendProfileSummary,
 	listDureBackendProfiles,
@@ -8,7 +7,6 @@ import { slackConnectionError } from "@/lib/plugins/slackConnection";
 import { useStore } from "@/store";
 
 export function useSlackTeamConnection() {
-	const pro = useInterfaceMode() === "pro";
 	const selected = useStore((state) => state.uiPrefs.slackTeamProfileId);
 	const setUiPrefs = useStore((state) => state.setUiPrefs);
 	const [profiles, setProfiles] = useState<DureBackendProfileSummary[]>([]);
@@ -16,7 +14,6 @@ export function useSlackTeamConnection() {
 	const [loading, setLoading] = useState(true);
 	const [revision, setRevision] = useState(0);
 	useEffect(() => {
-		if (!pro) return;
 		let current = true;
 		setLoading(true);
 		setError(undefined);
@@ -33,9 +30,8 @@ export function useSlackTeamConnection() {
 		return () => {
 			current = false;
 		};
-	}, [pro, revision]);
+	}, [revision]);
 	return {
-		pro,
 		profiles,
 		error,
 		loading,

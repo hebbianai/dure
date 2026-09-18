@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { resolveBrowserPresentation } from "./browser-presentation.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 import { browserCurrentPage } from "./browser-action-authority.mjs";
-import { browserWorkspaceSelection, assertBrowserWorkspaceResource } from "./browser-workspace-target.mjs";
+import { assertBrowserResource } from "./browser-resource-target.mjs";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 
 function fail(code) { throw Object.assign(new Error(code), { code }); }
 function commandArguments(options) {
-  const allowed = ["positional", "url", "space", "backend", "resource", "workspace", "worktree", "page", "controller", "epoch", "operationId", "profileId"];
+  const allowed = ["positional", "url", "space", "backend", "resource", "defaultResource", "page", "controller", "epoch", "operationId", "profileId"];
   if (Object.keys(options).some((key) => !allowed.includes(key)) || options.positional.length > 2 ||
       (options.positional.length === 2 && options.url !== undefined) || options.space === "") fail("browser_command_invalid");
   const url = options.positional[1] ?? options.url;
@@ -15,17 +15,14 @@ function commandArguments(options) {
   let parsed;
   try { parsed = new URL(url); } catch { fail("browser_url_invalid"); }
   if (!["http:", "https:"].includes(parsed.protocol)) fail("browser_url_invalid");
-  const selected = { ...options, positional: ["show"] };
-  if (options.resource === undefined && options.workspace === undefined && options.worktree === undefined) selected.worktree = "current";
-  // Validate selector conflicts before reading client state or contacting a backend.
-  browserWorkspaceSelection({ ...selected });
+  if (options.defaultResource && options.resource !== undefined) fail("browser_command_invalid");
   if (options.resource !== undefined && !isDureDomainIdV1(options.resource)) fail("browser_command_invalid");
   for (const key of ["page", "controller", "operationId"]) {
     if (options[key] !== undefined && !isDureDomainIdV1(options[key])) fail("browser_command_invalid");
   }
   if (options.profileId !== undefined && !options.profileId.trim()) fail("browser_command_invalid");
   const show = ["show"];
-  for (const key of ["resource", "workspace", "worktree"]) if (selected[key] !== undefined) show.push(`--${key}`, selected[key]);
+  if (options.resource !== undefined) show.push("--resource", options.resource);
   return { url, show };
 }
 
@@ -55,7 +52,7 @@ export async function collectBrowserOpenUrl({ options, resolveBackend, requestBa
     }
     runtime = await run({ ...context, args, requestBackend: async (selected, request, transport) => {
       const response = await requestBackend(selected, request, transport);
-      assertBrowserWorkspaceResource(resource, request.body?.kind, response.result);
+      assertBrowserResource(resource, request.body?.kind, response.result);
       return response;
     } });
     if (!runtime.ok) return runtime;

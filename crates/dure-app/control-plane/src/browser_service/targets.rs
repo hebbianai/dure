@@ -7,19 +7,15 @@ use tokio::sync::MutexGuard;
 impl BrowserService {
     // Every projection/transition requires the caller to hold resource admission.
     // The target mutex is short-lived and never survives an await/native call.
-    pub(super) fn workspace_target(
+    pub(super) fn selected_browser(
         &self,
         _resources: &MutexGuard<'_, BTreeMap<BrowserResourceId, ManagedBrowser>>,
-        workspace: &BrowserWorkspaceId,
     ) -> Result<BrowserWorkspaceTarget, BackendDispatchError> {
-        let targets = self.workspace_targets.lock().map_err(|_| unavailable())?;
-        Ok(targets.get(workspace).map_or_else(
-            || {
-                BrowserWorkspaceTargetHost::new(workspace.clone(), self.generation.clone())
-                    .projection()
-            },
-            BrowserWorkspaceTargetHost::projection,
-        ))
+        Ok(self
+            .selected_browser
+            .lock()
+            .map_err(|_| unavailable())?
+            .projection())
     }
 
     pub(super) fn target_created(
@@ -27,16 +23,9 @@ impl BrowserService {
         _resources: &MutexGuard<'_, BTreeMap<BrowserResourceId, ManagedBrowser>>,
         resource: &BrowserResourceIdentity,
     ) -> Result<(), BackendDispatchError> {
-        self.workspace_targets
+        self.selected_browser
             .lock()
             .map_err(|_| unavailable())?
-            .entry(resource.workspace_id.clone())
-            .or_insert_with(|| {
-                BrowserWorkspaceTargetHost::new(
-                    resource.workspace_id.clone(),
-                    self.generation.clone(),
-                )
-            })
             .created(resource)
             .map_err(target_error)?;
         Ok(())
@@ -47,14 +36,11 @@ impl BrowserService {
         _resources: &MutexGuard<'_, BTreeMap<BrowserResourceId, ManagedBrowser>>,
         resource: &BrowserResourceIdentity,
     ) -> Result<(), BackendDispatchError> {
-        if let Some(target) = self
-            .workspace_targets
+        self.selected_browser
             .lock()
             .map_err(|_| unavailable())?
-            .get_mut(&resource.workspace_id)
-        {
-            target.retired(resource).map_err(target_error)?;
-        }
+            .retired(resource)
+            .map_err(target_error)?;
         Ok(())
     }
 
@@ -81,16 +67,9 @@ impl BrowserService {
             ));
         }
         let target = self
-            .workspace_targets
+            .selected_browser
             .lock()
             .map_err(|_| unavailable())?
-            .entry(resource.workspace_id.clone())
-            .or_insert_with(|| {
-                BrowserWorkspaceTargetHost::new(
-                    resource.workspace_id.clone(),
-                    self.generation.clone(),
-                )
-            })
             .select(expected, resource)
             .map_err(target_error)?;
         Ok(json!({"target":target}))

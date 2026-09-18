@@ -80,13 +80,11 @@ export const panelsEnglishTranslations: Record<string, string> = {
 		"Opening in a new tab keeps this page and loads its URL using the selected profile’s cookies and storage.",
 	"panels.browser.profileClone": "Open in new tab",
 	"panels.browser.profileSwitch": "Switch profile",
-	"panels.browser.workspace": "Workspace",
 	"panels.browser.resource": "Browser",
-	"panels.browser.chooseWorkspace": "Choose a workspace",
 	"panels.browser.chooseBrowser": "Choose a browser",
 	"panels.browser.browserNumber": "Browser {number}",
 	"panels.browser.newBrowser": "New browser",
-	"panels.browser.useForWorkspace": "Use for workspace commands",
+	"panels.browser.useAsDefault": "Use as default browser",
 	"panels.browser.reconnect": "Reconnect",
 	"panels.browser.page": "Page",
 	"panels.browser.followCurrent": "Follow current tab",
@@ -106,10 +104,7 @@ export const panelsEnglishTranslations: Record<string, string> = {
 	"panels.browser.closeConfirmation":
 		"Close this browser and all its pages? Unsaved page changes may be lost.",
 	"panels.browser.chooseBrowserHint":
-		"Choose a workspace, then open a browser or connect to one already running.",
-	"panels.browser.noWorkspaces":
-		"No workspaces are available. Open an agent workspace, then reconnect.",
-	"panels.browser.moreWorkspaces": "More workspaces",
+		"Open a browser or connect to one already running.",
 	"panels.browser.releaseFailed":
 		"Browser input release was not confirmed. Reconnect and check the browser before continuing.",
 	"panels.agent.toolbar.control.conversationHistory": "Conversation history",
@@ -202,4 +197,6 @@ export const panelsEnglishTranslations: Record<string, string> = {
 	"panels.tokens.theme.saveEditsHint": "Save edits as a custom theme",
 	"panels.tokens.theme.saved": "Saved as a theme",
 	"panels.tokens.theme.savedWithExclusions": "Saved as a theme — some tokens were excluded: {names}",
+	"panels.browser.installRuntime": "Install browser",
+	"panels.browser.installingRuntime": "Downloading and installing the browser…",
 };

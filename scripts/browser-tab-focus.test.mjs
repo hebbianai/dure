@@ -57,10 +57,10 @@ test("without --focus the existing switch neither contacts the app nor adds pres
 });
 
 test("workspace selection is resolved once before presenting and switching the exact resource", async () => {
-  const f = fixture(); const result = await f.run(["tab", "switch", "--workspace", resource.workspace_id, "--focus", "--space", "Chosen", "--index", "0", ...authority]);
+  const f = fixture(); const result = await f.run(["tab", "switch", "--current", "--focus", "--space", "Chosen", "--index", "0", ...authority]);
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(f.requests.filter((r) => r.kind === "list").length, 1);
-  assert.deepEqual(f.requests[0], { kind: "list", workspace_id: resource.workspace_id });
+  assert.deepEqual(f.requests[0], { kind: "list" });
   assert.equal(result.presentation.pageId, first.page_id);
 });
 

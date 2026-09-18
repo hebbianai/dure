@@ -58,7 +58,6 @@ async fn destination_policy_survives_switch_clone_and_actual_backend_replacement
     let (root, endpoint, server) = super::super::super::super::fixture().await;
     let (url, stop_site, site) = identity_site().await;
     let first: Result<_, String> = async {
-        peer_workspace(&root).await?;
         let mut profiles = Vec::new();
         for label in ["공유 대상", "새 실행 대상"] {
             let record = cli(
@@ -80,19 +79,12 @@ async fn destination_policy_survives_switch_clone_and_actual_backend_replacement
                     .to_owned(),
             );
         }
-        let origin =
-            Client::create(&root, "workspace-browser", None, "ua-lifecycle-origin").await?;
+        let origin = Client::create(&root, None, "ua-lifecycle-origin").await?;
         origin.action(&root, "goto", &url).await?;
         let baseline = observe(&origin, &root).await?;
         origin.action(&root, "device", "iPhone 15").await?;
         let source = observe(&origin, &root).await?;
-        let peer = Client::create(
-            &root,
-            "workspace-profile-peer",
-            Some(&profiles[0]),
-            "ua-lifecycle-peer",
-        )
-        .await?;
+        let peer = Client::create(&root, Some(&profiles[0]), "ua-lifecycle-peer").await?;
         peer.action(&root, "goto", &url).await?;
         peer.evaluate(&root, "window.profileMarker='공유 문서 유지';true")
             .await?;
@@ -146,13 +138,8 @@ async fn destination_policy_survives_switch_clone_and_actual_backend_replacement
                 let profile = evidence["profiles"][1]
                     .as_str()
                     .ok_or("retained profile missing")?;
-                let reopened = Client::create(
-                    &root,
-                    "workspace-browser",
-                    Some(profile),
-                    "ua-after-backend-replacement",
-                )
-                .await?;
+                let reopened =
+                    Client::create(&root, Some(profile), "ua-after-backend-replacement").await?;
                 reopened.action(&root, "goto", &url).await?;
                 reopened.action(&root, "device", "iPhone 15").await?;
                 let observed = observe(&reopened, &root).await?;

@@ -136,11 +136,11 @@ test.each(["start", "stop", "status"])("capture %s preserves explicit and legacy
   for (const [args, scoped] of [
     [["capture", resource.resource_id, action, ...flags], false],
     [["capture", action, ...flags], true],
-    [["capture", action, "--worktree", "current", ...flags], true],
+    [["capture", action, "--current", ...flags], true],
   ]) {
     const current = client(bytes, "application/json");
     assert.deepEqual(await current.run(args), expected);
-    if (scoped) assert.deepEqual(current.calls[0], { kind: "list", workspace_path: "/tasks/한글" });
+    if (scoped) assert.deepEqual(current.calls[0], { kind: "list" });
     assert.deepEqual(current.calls.slice(scoped ? 1 : 0), explicit.calls);
   }
 });

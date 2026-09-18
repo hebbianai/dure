@@ -12,10 +12,8 @@ export const ipc: Record<string, string> = {
 		"浏览器连接已更改。请重新连接并选择浏览器。",
 	"ipc.browser.unavailable":
 		"此浏览器已不可用。请重新连接并选择浏览器。",
-	"ipc.browser.developmentRequired":
-		"Pro Browser 需要兼容的开发版后端。请更新所选后端，然后重新连接。",
-	"ipc.browser.runtimeRequired":
-		"所选后端尚未安装浏览器运行时。请先在该后端安装运行时，再创建浏览器。",
+	"ipc.browser.developmentRequired": "请更新所选服务器并重新连接以使用Browser。",
+	"ipc.browser.runtimeRequired": "请下载浏览器运行时，以在此服务器上使用Browser。",
 	"ipc.browser.requestFailed": "浏览器请求未完成。请先检查状态，再重试。",
 	"ipc.agentConversation.invalidResponse": "代理对话响应无效。",
 	"ipc.agentConversation.requestFailed": "代理对话请求失败。",
@@ -38,4 +36,6 @@ export const ipc: Record<string, string> = {
 	"ipc.dureRun.promptUncertain": "智能体已启动，但没有确认收到提示（{code}）。再次发送前请查看它的终端。",
 	"ipc.dureRun.receiptMismatch": "Dure 后端返回了与请求不一致的 Run 回执。",
 	"ipc.dureRun.requestFailed": "对 Dure 后端的 Run 请求失败。",
+	"ipc.browser.installationFailed": "浏览器安装未完成。请检查连接并重试。",
+	"ipc.browser.platformUnavailable": "Browser目前支持Apple Silicon Mac。",
 };

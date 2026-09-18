@@ -6,7 +6,6 @@ import { SlackTasksDialog } from "@/components/plugins/SlackTasksDialog";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { RefreshButton } from "@/components/ui/refresh-button";
-import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import { t } from "@/lib/i18n";
 import type { DureBackendProfileSummary } from "@/lib/ipc/dureBackendProfiles";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
@@ -49,9 +48,7 @@ export function SlackConnectionsPanel({
 	const busyRef = useRef(false);
 	const observation = useRef(0);
 	const lifetime = useRef(0);
-	const pro = useInterfaceMode() === "pro";
 	useEffect(() => {
-		if (!pro) return;
 		active.current = true;
 		++lifetime.current;
 		let current = true;
@@ -85,7 +82,7 @@ export function SlackConnectionsPanel({
 			++observation.current;
 			clearTimeout(timer);
 		};
-	}, [api, pro, refresh]);
+	}, [api, refresh]);
 	async function perform(
 		operation: () => Promise<SlackConnectionSnapshot>,
 	): Promise<boolean> {
@@ -111,7 +108,6 @@ export function SlackConnectionsPanel({
 			if (active.current) setBusy(false);
 		}
 	}
-	if (!pro) return null;
 	return (
 		<section aria-label={t("plugins.slack.connections")}>
 			<div className="space-y-3 px-4 py-4">

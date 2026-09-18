@@ -3673,15 +3673,6 @@ async fn dispatch_authorized(
     authority: BackendRequestAuthority,
     request: &BackendRequest,
 ) -> Result<Value, BackendDispatchError> {
-    if request
-        .expected
-        .required_capabilities
-        .iter()
-        .any(|capability| capability == "plugin.slack")
-        && !pro_features::available()
-    {
-        return Err(BackendDispatchError::terminal("slack_pro_development_only"));
-    }
     #[cfg(unix)]
     if request.operation == slack_connector::OPERATION {
         return state.slack.dispatch(&request.body).await;

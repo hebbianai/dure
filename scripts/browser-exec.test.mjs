@@ -85,7 +85,7 @@ const cases = [
 test.each(cases)("exec %s uses the same typed operation and authority", async (command, canonical) => {
   const direct = fixture(); const expected = await direct.run(["--resource", resource.resource_id, ...authority, ...canonical]);
   assert.equal(expected.ok, true, JSON.stringify({ canonical, expected }));
-  for (const selector of [[resource.resource_id], ["--resource", resource.resource_id], ["--worktree", "id:w:exec"], []]) {
+  for (const selector of [[resource.resource_id], ["--resource", resource.resource_id], ["--current"], []]) {
     const f = fixture(); const result = await f.run(["exec", ...selector, "--command", command, ...authority]);
     assert.equal(result.ok, true, JSON.stringify({ command, selector, result }));
     assert.deepEqual(result, expected);
@@ -118,7 +118,7 @@ test("exec rejects routing/control injection, unsupported engine paths and ambig
 
 test.each(["window new", "tap button", "swipe left 50", "close", "quit", "exit", 'addinitscript "window.ready = true"', "removeinitscript init:v1:eyJmaXh0dXJlIjp0cnVlfQ", "pushstate /next", "click input", 'keyboard type "한글\t다음"', 'type input "한글\t다음"'])("exec %s preserves workspace generation validation and never invents input authority", async (command) => {
   const f = fixture({ changedResource: { ...resource, generation: "replaced" } });
-  const changed = await f.run(["exec", "--workspace", resource.workspace_id, "--command", command, ...authority]);
+  const changed = await f.run(["exec", "--current", "--command", command, ...authority]);
   assert.equal(changed.error?.code, "browser_resource_mismatch");
   assert.equal(f.calls.some((row) => row.kind === "action"), false);
   const noLease = fixture({ missingController: true });
@@ -130,7 +130,7 @@ test("window creation keeps resource/workspace selection and admits only an isol
   for (const args of [
     ["window", "new", resource.resource_id, ...authority],
     ["window", "new", "--resource", resource.resource_id, ...authority],
-    ["window", "new", "--workspace", resource.workspace_id, ...authority],
+    ["window", "new", "--current", ...authority],
   ]) {
     const f = fixture();
     const result = await f.run(args);

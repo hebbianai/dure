@@ -9,9 +9,8 @@ import type { DureBackendProfileSummary } from "@/lib/ipc/dureBackendProfiles";
 import { createSlackConnectorClient } from "@/lib/ipc/slackConnector";
 
 export function SlackTeamConnections() {
-	const { pro, profiles, selected, select, error, loading, refresh } =
+	const { profiles, selected, select, error, loading, refresh } =
 		useSlackTeamConnection();
-	if (!pro) return null;
 	return (
 		<>
 			<div className="space-y-3 px-4 pt-4">

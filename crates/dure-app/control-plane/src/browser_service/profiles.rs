@@ -8,7 +8,7 @@ use dure_app_sqlite::SqliteDomainStore;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use super::{BackendDispatchError, BrowserService, ManagedBrowser, require_development};
+use super::{BackendDispatchError, BrowserService, ManagedBrowser};
 use crate::browser_engine::runtime::{BrowserProfileAction, BrowserProfileSource};
 use hmux_session_protocol::browser_resource::{
     BrowserActionAuthority, BrowserControllerId, BrowserResourceId,
@@ -53,7 +53,6 @@ impl BrowserService {
 }
 
 pub(super) async fn list(store: &SqliteDomainStore) -> Result<Value, BackendDispatchError> {
-    require_development()?;
     Ok(json!({"profiles":store.browser_profiles().await.map_err(store_error)?}))
 }
 
@@ -85,7 +84,6 @@ pub(super) async fn create(
     scope: BrowserProfileScopeV1,
     user_agent_mode: BrowserProfileUserAgentModeV1,
 ) -> Result<Value, BackendDispatchError> {
-    require_development()?;
     let id = BrowserProfileIdV1::new(format!(
         "browser-profile:{:x}",
         Sha256::digest(operation.as_str().as_bytes())

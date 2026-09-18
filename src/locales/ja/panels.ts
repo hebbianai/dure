@@ -80,13 +80,11 @@ export const panels: Record<string, string> = {
 		"新しいタブで開くと、現在のページを保持し、選択したプロファイルの Cookie とストレージで同じ URL を読み込みます。",
 	"panels.browser.profileClone": "新しいタブで開く",
 	"panels.browser.profileSwitch": "プロファイルを切り替え",
-	"panels.browser.workspace": "ワークスペース",
 	"panels.browser.resource": "ブラウザー",
-	"panels.browser.chooseWorkspace": "ワークスペースを選択",
 	"panels.browser.chooseBrowser": "ブラウザーを選択",
 	"panels.browser.browserNumber": "ブラウザー {number}",
 	"panels.browser.newBrowser": "新しいブラウザー",
-	"panels.browser.useForWorkspace": "ワークスペースのコマンド対象にする",
+	"panels.browser.useAsDefault": "デフォルトのブラウザにする",
 	"panels.browser.reconnect": "再接続",
 	"panels.browser.page": "ページ",
 	"panels.browser.followCurrent": "現在のタブを追跡",
@@ -106,10 +104,7 @@ export const panels: Record<string, string> = {
 	"panels.browser.closeConfirmation":
 		"このブラウザーとすべてのページを終了しますか？未保存の変更が失われる場合があります。",
 	"panels.browser.chooseBrowserHint":
-		"ワークスペースを選択し、ブラウザーを開くか、実行中のブラウザーに接続してください。",
-	"panels.browser.noWorkspaces":
-		"利用できるワークスペースがありません。エージェントのワークスペースを開いてから再接続してください。",
-	"panels.browser.moreWorkspaces": "他のワークスペース",
+		"ブラウザを開くか、実行中のブラウザに接続してください。",
 	"panels.browser.releaseFailed":
 		"ブラウザー入力の解放を確認できませんでした。再接続して状態を確認してから続行してください。",
 	"panels.agent.toolbar.control.conversationHistory": "会話履歴",
@@ -202,4 +197,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.saveEditsHint": "編集をカスタムテーマとして保存",
 	"panels.tokens.theme.saved": "テーマとして保存しました",
 	"panels.tokens.theme.savedWithExclusions": "テーマとして保存しました — 一部のトークンは除外：{names}",
+	"panels.browser.installRuntime": "ブラウザーをインストール",
+	"panels.browser.installingRuntime": "ブラウザーをダウンロードしてインストールしています…",
 };

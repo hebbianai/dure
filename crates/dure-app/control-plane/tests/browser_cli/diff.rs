@@ -8,7 +8,7 @@ async fn real_snapshot_diff_preserves_page_authority_and_compares_caller_files()
     let evidence: Result<_, String> = async {
         let mut owned = Vec::new();
         for name in ["diff-owner", "diff-peer"] {
-            let created = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", name]).await?;
+            let created = cli(&root, &["create", "--idempotency-key", name]).await?;
             let id = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?.to_owned();
             resources.push(id.clone());
             let controlled = cli(&root, &["control", &id, "--controller", name]).await?;
@@ -93,7 +93,7 @@ async fn snapshot_depth_preserves_u32_values_and_native_snapshot_grammar() {
     let (root, endpoint, server) = fixture().await;
     let mut resource = None;
     let evidence: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", "depth-owner"]).await?;
+        let created = cli(&root, &["create", "--idempotency-key", "depth-owner"]).await?;
         let id = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?.to_owned();
         resource = Some(id.clone());
         let controlled = cli(&root, &["control", &id, "--controller", "depth-owner"]).await?;
