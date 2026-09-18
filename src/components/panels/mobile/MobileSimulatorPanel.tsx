@@ -17,6 +17,7 @@ import { RefreshButton } from "@/components/ui/refresh-button";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { usePaneActions } from "@/components/workspace/usePaneActions";
 import { useWorkspaceRuntimeActive } from "@/components/workspace/WorkspaceRuntimeContext";
+import { agentDisplayName } from "@/lib/agents/agentDisplayName";
 import { t } from "@/lib/i18n";
 import {
 	type MobileDeviceAction,
@@ -27,7 +28,15 @@ import {
 } from "@/lib/ipc/mobileSimulator";
 import { saveTempImage } from "@/lib/ipc/system";
 import { mobilePaneActions } from "@/lib/mobileSimulator/actions";
+import type {
+	MobilePreviewMode,
+	MobileReportControls,
+} from "@/lib/mobileSimulator/controlActions";
 import { MobileLiveObserver } from "@/lib/mobileSimulator/live";
+import {
+	mobileFramebufferGesture,
+	presentMobileFrame,
+} from "@/lib/mobileSimulator/presentation";
 import {
 	MobileFrameObserver,
 	mobileDeviceKey,
@@ -36,11 +45,14 @@ import {
 } from "@/lib/mobileSimulator/preview";
 import {
 	type MobileRunProfile,
+	type MobileRunProfileIdentity,
 	readMobileRunProfiles,
+	removeMobileRunProfile,
 	saveMobileRunProfile,
 } from "@/lib/mobileSimulator/profile";
 import type { PaneActionEntry } from "@/lib/workspace/pane/paneActionRegistry";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
+import { usePaneAgentChoices } from "../usePaneAgentChoices";
 import { MobileSimulatorAppForm } from "./MobileSimulatorAppForm";
 import { MobileSimulatorCaptureButton } from "./MobileSimulatorCaptureButton";
 import { MobileSimulatorProfiles } from "./MobileSimulatorProfiles";
@@ -50,8 +62,11 @@ export function MobileSimulatorPanel(
 	props: IDockviewPanelProps<{
 		device?: MobileDeviceTarget;
 		profiles?: MobileRunProfile[];
+		iosLandscape?: boolean;
 	}>,
 ) {
+	const agents = usePaneAgentChoices();
+	const reportControls = useRef<MobileReportControls>(null);
 	const [profiles, setProfiles] = useState(() =>
 		readMobileRunProfiles(props.params.profiles),
 	);
@@ -61,12 +76,17 @@ export function MobileSimulatorPanel(
 	const [target, setTarget] = useState(() =>
 		readMobileDeviceTarget(props.params.device),
 	);
+	const [iosLandscape, setIosLandscape] = useState(
+		props.params.iosLandscape === true,
+	);
 	const [visible, setVisible] = useState(props.api.isVisible);
 	const workspaceActive = useWorkspaceRuntimeActive();
 	const [documentVisible, setDocumentVisible] = useState(!document.hidden);
 	const active = visible && workspaceActive && documentVisible;
 	const [loading, setLoading] = useState(false);
-	const [busy, setBusy] = useState(false);
+	const [operationBusy, setBusy] = useState(false);
+	const [reportBusy, setReportBusy] = useState(false);
+	const busy = operationBusy || reportBusy;
 	const [error, setError] = useState<string>();
 	const [captured, setCaptured] = useState<{
 		key: string;
@@ -83,12 +103,38 @@ export function MobileSimulatorPanel(
 	const [revision, setRevision] = useState(0);
 	const [url, setUrl] = useState("");
 	const selection = target ? mobileDeviceKey(target) : "";
+	const projection = useMemo(
+		() => ({
+			key: selection,
+			active,
+			landscape: target?.platform === "ios" && iosLandscape,
+		}),
+		[selection, target?.platform, iosLandscape, active],
+	);
+	const currentProjection = useRef(projection);
+	currentProjection.current = projection;
 	const frame = captured?.key === selection ? captured.frame : undefined;
 	const selected = catalog?.devices.find(
 		(device) => mobileDeviceKey(device) === selection,
 	);
 	const ready = selected?.state === "ready";
+	const currentFrame = useRef(frame);
+	currentFrame.current = frame;
 	const mounted = useRef(true);
+	async function publishFrame(raw: MobileFrame) {
+		const view = currentProjection.current;
+		if (view.key !== selection || !view.active) return;
+		const frame = await presentMobileFrame(raw, view.landscape);
+		if (mounted.current && currentProjection.current === view)
+			setCaptured({ key: selection, frame });
+	}
+	async function captureDisplay() {
+		if (!target) throw new Error("No device selected");
+		return presentMobileFrame(
+			await mobileSimulator.capture(target),
+			projection.landscape,
+		);
+	}
 	const gesture = useRef<{
 		start: NonNullable<ReturnType<typeof mobileFramePoint>>;
 		width: number;
@@ -125,9 +171,11 @@ export function MobileSimulatorPanel(
 			const next = await mobileSimulator.list();
 			if (mounted.current && generation === listGeneration.current)
 				setCatalog(next);
+			return next;
 		} catch (cause) {
 			if (mounted.current && generation === listGeneration.current)
 				setError(String(cause));
+			throw cause;
 		} finally {
 			if (mounted.current && generation === listGeneration.current)
 				setLoading(false);
@@ -135,7 +183,7 @@ export function MobileSimulatorPanel(
 	}
 
 	useEffect(() => {
-		if (active) void refreshDevices();
+		if (active) void refreshDevices().catch(() => {});
 	}, [active]);
 	useEffect(() => {
 		applyAutomaticPaneTitle(
@@ -150,17 +198,17 @@ export function MobileSimulatorPanel(
 		return observer.observe({
 			target,
 			repeat: autoRefresh,
-			publish: (frame) => setCaptured({ key: selection, frame }),
+			publish: publishFrame,
 			fail: (cause) => {
 				setError(String(cause));
 			},
 		});
-	}, [target, active, ready, busy, autoRefresh, revision, live]);
+	}, [target, active, ready, busy, autoRefresh, revision, live, iosLandscape]);
 	useEffect(() => {
 		if (!live || !active || !target || !ready) return;
 		return liveObserver.observe({
 			target,
-			publish: (frame) => setCaptured({ key: selection, frame }),
+			publish: publishFrame,
 			fail: (error) => {
 				setError(String(error));
 				setLive(false);
@@ -168,17 +216,41 @@ export function MobileSimulatorPanel(
 		});
 	}, [live, active, target, ready]);
 
+	function isOperating() {
+		return operation.current || reportControls.current?.busy() === true;
+	}
 	async function act(action: MobileDeviceAction) {
-		if (!target || operation.current) return false;
+		if (!target || isOperating()) return false;
 		operation.current = true;
 		setBusy(true);
 		setError(undefined);
 		try {
-			await mobileSimulator.act(target, action);
+			let nativeAction = action;
+			if (target.platform === "ios" && action.kind === "gesture") {
+				const mapped = mobileFramebufferGesture(
+					action,
+					currentFrame.current,
+					iosLandscape,
+				);
+				if (!mapped) throw new Error(t("panels.mobile.orientationChanged"));
+				nativeAction = mapped;
+			}
+			await mobileSimulator.act(target, nativeAction);
+			if (
+				mounted.current &&
+				target.platform === "ios" &&
+				action.kind === "rotate"
+			) {
+				setIosLandscape(action.landscape);
+				props.api.updateParameters({ iosLandscape: action.landscape });
+			}
 			if (mounted.current) await refreshDevices();
 			return true;
 		} catch (cause) {
-			if (mounted.current) setError(String(cause));
+			if (mounted.current) {
+				await refreshDevices().catch(() => {});
+				if (mounted.current) setError(String(cause));
+			}
 			return false;
 		} finally {
 			operation.current = false;
@@ -190,7 +262,7 @@ export function MobileSimulatorPanel(
 	}
 
 	async function runProfile(profile: MobileRunProfile) {
-		if (operation.current || !target) return;
+		if (isOperating() || !target) return;
 		operation.current = true;
 		setBusy(true);
 		setError(undefined);
@@ -202,7 +274,10 @@ export function MobileSimulatorPanel(
 				await refreshDevices();
 			}
 		} catch (cause) {
-			if (mounted.current) setError(String(cause));
+			if (mounted.current) {
+				await refreshDevices().catch(() => {});
+				if (mounted.current) setError(String(cause));
+			}
 		} finally {
 			operation.current = false;
 			if (mounted.current) {
@@ -211,13 +286,39 @@ export function MobileSimulatorPanel(
 			}
 		}
 	}
-	function chooseTarget(next: MobileDeviceTarget) {
-		if (operation.current) return;
+	function chooseTarget(next: MobileDeviceTarget | null) {
+		if (isOperating()) return;
 		setTarget(next);
 		setError(undefined);
 		setAutoRefresh(false);
 		setLive(false);
-		props.api.updateParameters({ device: next });
+		const preserveAngle =
+			next && target && mobileDeviceKey(next) === mobileDeviceKey(target);
+		if (!preserveAngle) setIosLandscape(false);
+		props.api.updateParameters({
+			device: next,
+			iosLandscape: Boolean(preserveAngle && iosLandscape),
+		});
+	}
+	function saveProfile(profile: MobileRunProfile) {
+		const next = saveMobileRunProfile(profiles, profile);
+		setProfiles(next);
+		props.api.updateParameters({ profiles: next });
+	}
+	function removeProfile(profile: MobileRunProfileIdentity) {
+		const next = removeMobileRunProfile(profiles, profile);
+		setProfiles(next);
+		props.api.updateParameters({ profiles: next });
+	}
+	function preview(mode: MobilePreviewMode) {
+		if (isOperating()) throw new Error(t("panels.mobile.working"));
+		if (mode !== "snapshot" && (!ready || !active))
+			throw new Error(t("panels.mobile.previewUnavailable"));
+		if (mode === "live" && target?.platform !== "ios")
+			throw new Error(t("panels.mobile.liveRequiresIos"));
+		setError(undefined);
+		setAutoRefresh(mode === "auto");
+		setLive(mode === "live");
 	}
 	const paneActions = useMemo<PaneActionEntry>(
 		() => ({
@@ -228,20 +329,46 @@ export function MobileSimulatorPanel(
 			actions: mobilePaneActions({
 				target,
 				profiles,
-				isBusy: () => operation.current,
+				isBusy: isOperating,
 				status: () => ({
 					device: target,
-					busy: operation.current,
+					busy: isOperating(),
 					live,
 					error,
 					buildOutput,
 					profiles,
+					deviceState: selected?.state,
+					preview: {
+						viewingAngle: projection.landscape ? "landscape" : "portrait",
+						mode: live ? "live" : autoRefresh ? "auto" : "snapshot",
+						active,
+						frameReady: Boolean(currentFrame.current),
+						liveFrameReady: Boolean(
+							live &&
+								currentFrame.current?.dataUrl.startsWith("data:image/jpeg"),
+						),
+					},
 				}),
+				controls: {
+					devices: refreshDevices,
+					select: chooseTarget,
+					preview,
+					save: saveProfile,
+					remove: removeProfile,
+					report: () => reportControls.current,
+					agents: () =>
+						agents.map((agent) => ({
+							id: agent.id,
+							name: agentDisplayName(agent),
+						})),
+				},
 				act,
 				run: runProfile,
 				capture: async () => {
 					if (!target) throw new Error("No device selected");
-					const frame = await mobileSimulator.capture(target);
+					const frame = await captureDisplay();
+					if (mounted.current && !live)
+						setCaptured({ key: mobileDeviceKey(target), frame });
 					return {
 						path: await saveTempImage({
 							dataB64: frame.dataUrl.split(",")[1],
@@ -257,7 +384,20 @@ export function MobileSimulatorPanel(
 				},
 			}),
 		}),
-		[props.api.id, target, profiles, busy, error, buildOutput, live],
+		[
+			props.api.id,
+			target,
+			profiles,
+			busy,
+			error,
+			buildOutput,
+			live,
+			autoRefresh,
+			active,
+			selected?.state,
+			agents,
+			projection,
+		],
 	);
 	usePaneActions(`${props.api.id}:${selection}`, paneActions);
 
@@ -266,11 +406,7 @@ export function MobileSimulatorPanel(
 			(candidate) => mobileDeviceKey(candidate) === key,
 		);
 		const next = device ? { platform: device.platform, id: device.id } : null;
-		setTarget(next);
-		setError(undefined);
-		setAutoRefresh(false);
-		setLive(false);
-		props.api.updateParameters({ device: next });
+		chooseTarget(next);
 	}
 
 	return (
@@ -301,7 +437,7 @@ export function MobileSimulatorPanel(
 					disabled={loading || busy}
 					busy={loading}
 					title={t("panels.mobile.refreshDevices")}
-					onClick={() => void refreshDevices()}
+					onClick={() => void refreshDevices().catch(() => {})}
 				/>
 			</div>
 			{selected && (
@@ -371,9 +507,7 @@ export function MobileSimulatorPanel(
 								checked={live}
 								disabled={!ready || busy}
 								onChange={(event) => {
-									setError(undefined);
-									setAutoRefresh(false);
-									setLive(event.target.checked);
+									preview(event.target.checked ? "live" : "snapshot");
 								}}
 							/>
 							{t("panels.mobile.live")}
@@ -385,8 +519,7 @@ export function MobileSimulatorPanel(
 							checked={autoRefresh}
 							disabled={!ready || busy || live}
 							onChange={(event) => {
-								setError(undefined);
-								setAutoRefresh(event.target.checked);
+								preview(event.target.checked ? "auto" : "snapshot");
 							}}
 						/>
 						{t("panels.mobile.autoRefresh")}
@@ -409,11 +542,8 @@ export function MobileSimulatorPanel(
 						busy={busy}
 						select={chooseTarget}
 						run={runProfile}
-						save={(profile) => {
-							const next = saveMobileRunProfile(profiles, profile);
-							setProfiles(next);
-							props.api.updateParameters({ profiles: next });
-						}}
+						save={saveProfile}
+						remove={removeProfile}
 					/>
 				)}
 				{buildOutput && (
@@ -485,8 +615,11 @@ export function MobileSimulatorPanel(
 						)}
 						<MobileSimulatorReport
 							key={selection}
+							ref={reportControls}
 							target={selected}
-							busy={busy}
+							busy={operationBusy}
+							onWorkingChange={setReportBusy}
+							capture={captureDisplay}
 						/>
 						<MobileSimulatorAppForm
 							platform={selected.platform}

@@ -1,6 +1,8 @@
+import { BrowserCommandError } from "./browser-command-error.mjs";
+
 const namedValues = ["element", "value", "input", "what", "direction", "amount", "expression", "selector", "load", "fn", "key", "width", "height", "latitude", "longitude", "from", "to", "files", "x", "y", "button", "dy", "dx", "locator", "action", "headers"];
 
-export function parseBrowserArguments(args) {
+export function parseBrowserArguments(args, { nativeValues = false } = {}) {
   const options = { positional: [] };
   const names = new Map([
     ["--workspace", "workspace"], ["--backend", "backend"], ["--page", "page"],
@@ -28,6 +30,15 @@ export function parseBrowserArguments(args) {
     ["--accuracy", "accuracy"], ["--scale", "scale"], ["--color-scheme", "colorScheme"], ["--reduced-motion", "reducedMotion"],
     ...namedValues.map((name) => [`--${name}`, name]),
   ]);
+  const booleans = new Map([
+    ["--full", "diffFullPage"], ["--only-dynamic", "onlyDynamic"],
+    ...["interactive", "compact", "urls", "cursor", "annotate", "focus", "secure", "mobile", "abort", "exact"].map((name) => [`--${name}`, name]),
+    ["--show-profile", "showProfile"], ["--no-ua-spoof", "noUaSpoof"],
+    ["--http-only", "httpOnly"], ["--httpOnly", "httpOnly"],
+  ]);
+  const duplicate = (flag) => {
+    throw new BrowserCommandError("browser_command_invalid", `Option ${flag} was supplied more than once.`, "Supply this option once; alternate spellings count as the same option.", flag);
+  };
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
     if (argument === "--") {
@@ -35,61 +46,41 @@ export function parseBrowserArguments(args) {
       break;
     }
     if (argument === "--json") continue;
-    if (argument === "--full") {
-      if (options.diffFullPage !== undefined) throw new Error("browser_command_invalid");
-      options.diffFullPage = true; continue;
-    }
-    if (argument === "--only-dynamic") {
-      if (options.onlyDynamic !== undefined) throw new Error("browser_command_invalid");
-      options.onlyDynamic = true; continue;
-    }
-    if (["--interactive", "--compact", "--urls", "--cursor", "--annotate"].includes(argument)) {
-      const name = argument.slice(2);
-      if (options[name] !== undefined) throw new Error("browser_command_invalid");
-      options[name] = true; continue;
-    }
-    if (argument === "--focus") {
-      if (options.focus) throw new Error("browser_command_invalid");
-      options.focus = true; continue;
-    }
-    if (argument === "--show-profile") {
-      if (options.showProfile) throw new Error("browser_command_invalid");
-      options.showProfile = true; continue;
-    }
-    if (argument === "--no-ua-spoof") {
-      if (options.noUaSpoof) throw new Error("browser_command_invalid");
-      options.noUaSpoof = true; continue;
-    }
-    if (argument === "--secure" || argument === "--http-only" || argument === "--httpOnly" || argument === "--mobile") {
-      const name = argument === "--mobile" ? "mobile" : argument === "--secure" ? "secure" : "httpOnly";
-      if (options[name] !== undefined) throw new Error("browser_command_invalid");
-      options[name] = true; continue;
-    }
-    if (argument === "--abort") {
-      if (options.abort) throw new Error("browser_command_invalid");
-      options.abort = true; continue;
-    }
-    if (argument === "--exact") {
-      if (options.exact) throw new Error("browser_command_invalid");
-      options.exact = true; continue;
+    if (booleans.has(argument)) {
+      const name = booleans.get(argument);
+      if (options[name] !== undefined) duplicate(argument);
+      options[name] = true;
+      continue;
     }
     const equals = argument.startsWith("--") ? argument.indexOf("=") : -1;
     const flag = equals < 0 ? argument : argument.slice(0, equals);
+    const value = () => {
+      if (equals >= 0) return argument.slice(equals + 1);
+      const next = args[index + 1];
+      const nextFlag = next?.split("=", 1)[0];
+      // Native command strings have their own value grammar. Preserve their
+      // already-translated literal values; outer CLI flags use this guard.
+      const optionValue = names.has(nextFlag) || booleans.has(nextFlag) || ["--", "--json", "--enable", "--init-script", "-h"].includes(nextFlag);
+      if (next === undefined || (!nativeValues && optionValue)) {
+        throw new BrowserCommandError("browser_command_invalid", `Option ${flag} requires a value.`, `Supply a value after ${flag}. For a literal value starting with --, use ${flag}=VALUE.`, flag);
+      }
+      return args[++index];
+    };
     if (flag === "--enable") {
-      if (equals < 0 && args[index + 1] === undefined) throw new Error("browser_command_invalid");
-      (options.enabledFeatures ??= []).push(equals < 0 ? args[++index] : argument.slice(equals + 1));
+      (options.enabledFeatures ??= []).push(value());
       continue;
     }
     if (flag === "--init-script") {
-      if (equals < 0 && args[index + 1] === undefined) throw new Error("browser_command_invalid");
-      (options.initScriptFiles ??= []).push(equals < 0 ? args[++index] : argument.slice(equals + 1));
+      (options.initScriptFiles ??= []).push(value());
       continue;
     }
     if (names.has(flag)) {
       const name = names.get(flag);
-      if (options[name] !== undefined || (equals < 0 && args[index + 1] === undefined)) throw new Error("browser_command_invalid");
-      options[name] = equals < 0 ? args[++index] : argument.slice(equals + 1);
-    } else if (argument.startsWith("--")) throw new Error("browser_command_invalid");
+      if (options[name] !== undefined) duplicate(flag);
+      options[name] = value();
+    } else if (argument.startsWith("--")) {
+      throw new BrowserCommandError("browser_command_invalid", `Unknown option ${flag}.`, "Run dure browser --help to see supported options. Put literal positional values after --.", flag);
+    }
     else options.positional.push(argument);
   }
   normalizeNamedArguments(options);

@@ -1,4 +1,9 @@
 export const panelsEnglishTranslations: Record<string, string> = {
+	"panels.mobile.frameUnavailable": "Unable to display the simulator image. Capture a fresh screenshot.",
+	"panels.mobile.orientationChanged": "Device view changed. Capture a fresh screenshot before interacting.",
+	"panels.mobile.reportChanged": "Report changed. Prepare and review a new report.",
+	"panels.mobile.previewUnavailable": "Select a running device and show this pane before enabling preview.",
+	"panels.mobile.liveRequiresIos": "Live mode requires an iOS simulator.",
 	"panels.mobile.live": "Live iOS (experimental)",
 	"panels.mobile.profiles": "Run profile",
 	"panels.mobile.loadProfile": "Load a saved project",

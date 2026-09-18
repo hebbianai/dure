@@ -135,6 +135,33 @@ dure client host add ec2-106 --json
 dure client host add --hostname example.com --user ec2-user --identity-file ~/.ssh/key.pem --json
 ```
 
+Mobile simulator workflows use the same pane UI and native device owner:
+
+```sh
+dure client pane open mobile --space-id SPACE --json
+dure client pane state PANE --json
+dure client pane act PANE mobile.devices --json
+dure client pane act PANE mobile.select --args-json '{"platform":"ios","deviceId":"EXACT_ID"}' --json
+```
+
+Discover parameters with `pane state`. Use `mobile.profile.save` then
+`mobile.run`, and `mobile.preview` with mode `live` for iOS input. Poll
+`mobile.status` for `busy: false`, errors and `preview.liveFrameReady` before
+input; `pending` is not completion. `mobile.boot` and `mobile.install` also return
+`pending` immediately and use the same operation status. `mobile.tap`,
+`mobile.swipe`, `mobile.type` and the other named actions accept plain arguments
+without nested action JSON. Observe the screenshot before targeting guest dialogs.
+Touch uses normalized coordinates (0..1) plus the width/height returned by
+`mobile.capture`; a capture from the previous orientation cannot authorize input.
+For iOS, `mobile.rotate` also sets the pane's viewing angle, retained across
+preview reconnects. External Simulator.app rotations do not change this view;
+set portrait/landscape through the pane before continuing its workflow.
+Every device operation requires the exact platform/device ID. Android uses
+`auto` preview. For evidence, `mobile.report.prepare` returns a reviewable text,
+screenshot path and report ID; `mobile.report.agents` lists recipients.
+`mobile.report.draft` requires that report ID and an explicitly authorized
+recipient, accepts edited/redacted text, and never submits the draft.
+
 `project add` registers a shared working location in the connected app and
 creates no pane, session or worktree; it is the client-side counterpart of the
 backend-only `dure projects register` above, and neither substitutes for the

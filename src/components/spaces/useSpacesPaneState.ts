@@ -65,6 +65,7 @@ export const ensureProjectForPath: AppState["ensureProjectForPath"] = (
 ) => useStore.getState().ensureProjectForPath(path, hostId);
 
 export const readSshHosts = () => useStore.getState().sshHosts;
+export const readAgentPanePreferences = () => useStore.getState().uiPrefs;
 
 /** Credential profiles and the provider's active one — quick-add launches
  *  under the same account the dialog would have preselected. */

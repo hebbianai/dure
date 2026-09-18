@@ -51,10 +51,22 @@ describe("effective interface mode", () => {
 });
 
 describe("agent spawn interaction preference", () => {
-	/** Every mode, not just basic (owner decision 2026-09-01): the provider
-	 *  default is a capability probe, and letting it choose moved the surface
-	 *  under the user when a CLI version table grew an entry. */
-	it("pins every new agent to the PTY surface", () => {
+	it("defaults new agents to the PTY surface", () => {
 		expect(agentSpawnInteractionPreference()).toBe("native_cli");
+	});
+
+	it("uses Chat only for an explicit Pro preference", () => {
+		expect(agentSpawnInteractionPreference({ interfaceMode: "pro", defaultAgentPane: "chat" }, { PROD: false })).toBeUndefined();
+		for (const defaultAgentPane of [undefined, "terminal", "unknown"]) {
+			expect(agentSpawnInteractionPreference({ interfaceMode: "pro", defaultAgentPane }, { PROD: false })).toBe("native_cli");
+		}
+	});
+
+	it("keeps Basic and production native without erasing the saved Chat choice", () => {
+		const prefs = { interfaceMode: "pro", defaultAgentPane: "chat" };
+		expect(agentSpawnInteractionPreference(prefs, { PROD: true })).toBe("native_cli");
+		expect(agentSpawnInteractionPreference(prefs, { PROD: false, VITE_DURE_INTERFACE_MODE_POLICY: "basic-only" })).toBe("native_cli");
+		expect(agentSpawnInteractionPreference({ ...prefs, interfaceMode: "basic" }, { PROD: false })).toBe("native_cli");
+		expect(prefs.defaultAgentPane).toBe("chat");
 	});
 });

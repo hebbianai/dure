@@ -977,3 +977,25 @@ describe("Dure connected-client pane CLI", () => {
     expect(fixture.requests).toEqual([]);
   });
 });
+
+describe("mobile pane opening through the shared client transport", () => {
+ it("opens the exact Space over CLI and MCP without creating a terminal", async () => {
+  const fixture = await fixtureClient(() => ({ status: 200, body: { ok: true, pane: { panelId: "mobile", spaceId: "space-1", component: "mobileSimulator", reused: true } } }), ["mobile_pane.open_v1"]);
+  terminalSpaces(fixture);
+  const cli = await runCli(["client", "pane", "open", "mobile", "--space", "Selected", "--json"], fixture.environment);
+  expect(cli).toMatchObject({ code: 0, stderr: "" });
+  expect(JSON.parse(cli.stdout)).toMatchObject({ action: "open", pane: { panelId: "mobile", reused: true } });
+  const mcp = await handleMcpRequest({ jsonrpc: "2.0", id: 42, method: "tools/call", params: { name: "app_pane_open", arguments: { tool: "mobile", spaceId: "space-1" } } }, { DURE_HOME: join(fixture.home, ".dure") });
+  expect(mcp.isError).not.toBe(true);
+  expect(fixture.requests.filter((request) => request.method === "POST")).toHaveLength(2);
+  for (const request of fixture.requests.filter((request) => request.method === "POST")) expect(request).toMatchObject({ url: "/pane/open", body: { tool: "mobile", spaceId: "space-1" } });
+ });
+ it("refuses unsupported tools, missing Space and unsupported app capabilities before mutation", async () => {
+  expect(() => parseClientPresentationCommand(["pane", "open", "mobile"])).toThrow();
+  expect(() => parseClientPresentationCommand(["pane", "open", "unknown", "--space-id", "exact"])).toThrow();
+  const fixture = await fixtureClient(undefined, []);
+  const result = await runCli(["client", "pane", "open", "mobile", "--space-id", "exact", "--json"], fixture.environment);
+  expect(result.code).toBe(2); expect(JSON.parse(result.stderr).error.code).toBe("client_capability_missing");
+  expect(fixture.requests.filter((request) => request.method === "POST")).toEqual([]);
+ });
+});

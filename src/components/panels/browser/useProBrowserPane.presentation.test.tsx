@@ -16,7 +16,11 @@ import {
 import { ProBrowserPanel } from "./ProBrowserPanel";
 import { useProBrowserPane } from "./useProBrowserPane";
 
-const mocks = vi.hoisted(() => ({ client: vi.fn(), route: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	client: vi.fn(),
+	route: vi.fn(),
+	active: true,
+}));
 vi.mock("@/lib/ipc/dureBrowser", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/lib/ipc/dureBrowser")>()),
 	createDureBrowserClient: mocks.client,
@@ -30,7 +34,7 @@ vi.mock("@/components/workspace/usePaneFirstReveal", () => ({
 	usePaneFirstReveal: () => true,
 }));
 vi.mock("@/components/workspace/WorkspaceRuntimeContext", () => ({
-	useWorkspaceRuntimeActive: () => true,
+	useWorkspaceRuntimeActive: () => mocks.active,
 }));
 vi.mock("@/lib/i18n", () => ({ t: (key: string) => key }));
 vi.mock("@/lib/toast", () => ({ showToast: vi.fn() }));
@@ -64,6 +68,7 @@ const scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
 	"scrollIntoView",
 );
 afterEach(() => {
+	mocks.active = true;
 	vi.useRealTimers();
 	if (scrollIntoViewDescriptor)
 		Object.defineProperty(
@@ -441,6 +446,11 @@ it.each(["typed", "initial", "agent workspace exists"])(
 		const f = fixture();
 		let created = false;
 		let controllerId = "";
+		let observedUrl = "about:blank";
+		let finishNavigation!: () => void;
+		const navigation = new Promise<void>((resolve) => {
+			finishNavigation = resolve;
+		});
 		const controlled = () => ({
 			...projection(resource),
 			controller: controllerId
@@ -481,13 +491,18 @@ it.each(["typed", "initial", "agent workspace exists"])(
 		f.client.observe.mockImplementation(async () => ({
 			control: controlled() as ReturnType<typeof projection>,
 			pages: [
-				{ page: page(), url: "about:blank", title: "", profile_id: "default" },
+				{ page: page(), url: observedUrl, title: "", profile_id: "default" },
 			],
 		}));
-		f.client.action.mockImplementation(async () => ({
-			control: controlled(),
-			response: { success: true, data: {} },
-		}));
+		f.client.action.mockImplementation(async (_caller, _authority, action) => {
+			await navigation;
+			observedUrl = `${action.url}/redirected`;
+			return {
+				control: controlled(),
+				response: { success: true, data: {} },
+				observation: await f.client.observe(resource),
+			};
+		});
 		const mounted = render(
 			<ProBrowserPanel
 				{...f.props()}
@@ -508,6 +523,13 @@ it.each(["typed", "initial", "agent workspace exists"])(
 					controllerId,
 					expect.anything(),
 					{ kind: "navigate", url: "https://example.com" },
+				),
+			);
+			expect((address as HTMLInputElement).value).toBe("https://example.com");
+			await act(async () => finishNavigation());
+			await waitFor(() =>
+				expect((address as HTMLInputElement).value).toBe(
+					"https://example.com/redirected",
 				),
 			);
 			expect(f.client.create).toHaveBeenCalledExactlyOnceWith(
@@ -535,12 +557,13 @@ it.each(["typed", "initial", "agent workspace exists"])(
 				}),
 			);
 		} finally {
+			finishNavigation();
 			mounted.unmount();
 		}
 	},
 );
 
-it("hands agent control back through the mounted pane and fits the actual surface", async () => {
+it.each([true, false])("hands back when active=%s", async (active) => {
 	const f = fixture();
 	let current = projection(resource);
 	let viewport = { width: 1280, height: 633, pixel_ratio: 1 };
@@ -619,12 +642,18 @@ it("hands agent control back through the mounted pane and fits the actual surfac
 			pixel_ratio: action.action.scale,
 		};
 		current = { ...current, revision: "6", next_command_sequence: "6" };
-		return { control: current, response: { success: true }, observation: null };
+		return {
+			control: current,
+			response: { success: true },
+			observation: null,
+		};
 	});
 	const mounted = render(<ProBrowserPanel {...f.props()} />);
 	try {
 		await waitFor(() => expect(f.client.frame).toHaveBeenCalled());
 		expect(f.client.action).not.toHaveBeenCalled();
+		mocks.active = active;
+		mounted.rerender(<ProBrowserPanel {...f.props()} />);
 		const snapshot = paneActionSnapshot(f.api.id);
 		expect(snapshot?.actions).toContain("take-control");
 		let result: Awaited<ReturnType<typeof invokePaneAction>> | undefined;
@@ -635,7 +664,15 @@ it("hands agent control back through the mounted pane and fits the actual surfac
 				snapshot?.actionDefinitions?.["take-control"].current,
 			);
 		});
-		expect(result).toMatchObject({ ok: true, result: { outcome: "applied" } });
+		expect(result).toMatchObject({
+			ok: true,
+			result: { outcome: "applied" },
+		});
+		if (!active) {
+			expect(f.client.action).not.toHaveBeenCalled();
+			mocks.active = true;
+			mounted.rerender(<ProBrowserPanel {...f.props()} />);
+		}
 		await waitFor(() =>
 			expect(viewport).toMatchObject({ width: 480, height: 810 }),
 		);

@@ -1,4 +1,9 @@
 export const panels: Record<string, string> = {
+	"panels.mobile.frameUnavailable": "시뮬레이터 이미지를 표시할 수 없습니다. 새 스크린샷을 촬영하세요.",
+	"panels.mobile.orientationChanged": "기기 화면 방향이 변경되었습니다. 새 스크린샷을 확인한 뒤 조작하세요.",
+	"panels.mobile.reportChanged": "보고 자료가 변경되었습니다. 새 자료를 준비하고 검토하세요.",
+	"panels.mobile.previewUnavailable": "실행 중인 기기를 선택하고 이 패널을 표시한 뒤 미리보기를 켜세요.",
+	"panels.mobile.liveRequiresIos": "실시간 모드는 iOS 시뮬레이터에서 사용할 수 있습니다.",
 	"panels.mobile.live": "실시간 iOS (실험 기능)",
 	"panels.mobile.profiles": "실행 프로필",
 	"panels.mobile.loadProfile": "저장된 프로젝트 불러오기",

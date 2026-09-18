@@ -53,6 +53,14 @@ for (const name of [".profile", ".bash_profile", ".zprofile"]) {
   });
 }
 
+if (process.env.DURE_QA_PERFORMANCE_PHASE === "retention") {
+  // Renderer-only workload: managed shells exec the same normal/alternate
+  // fake TUIs without pretending to implement a native provider protocol.
+  writeFileSync(path.join(home, ".zshrc"),
+    'case "${HMUX_SESSION_ID:-}" in dure-perf-claude-*) exec "$HOME/.local/bin/claude" ;; dure-perf-codex-*) exec "$HOME/.local/bin/codex" ;; esac\n',
+    { encoding: "utf8", flag: "wx", mode: 0o600 });
+}
+
 writeFileSync(
   path.join(stateRoot, "workspace-performance-home-setup.json"),
   `${JSON.stringify({ installed, schema: 1 })}\n`,

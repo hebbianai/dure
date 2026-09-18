@@ -106,7 +106,7 @@ impl Condition {
                 format!("(()=>{{const node={node};return {predicate};}})()")
             }
             Self::Text { text } => {
-                format!("(document.body?.innerText??'').includes({})", json!(text))
+                format!("({})({})", include_str!("text.js"), json!(text))
             }
             Self::Url { pattern } => {
                 return Ok(pattern.matches(&observation::url(&mut cdp, target.as_str()).await?));

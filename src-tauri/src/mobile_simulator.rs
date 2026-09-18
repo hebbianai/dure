@@ -117,15 +117,25 @@ fn login_command(program: &str, cwd: &std::path::Path) -> Result<CommandSpec, St
 }
 
 fn execute(program: &str, args: &[&str], seconds: u64, limit: usize) -> Result<Vec<u8>, String> {
+    let operation = format!(
+        "{program} {}",
+        args.iter().take(2).copied().collect::<Vec<_>>().join(" ")
+    );
     let mut command = CommandSpec::new(program);
     command
         .args(args)
         .capture_stderr(true)
         .on_output_limit(OutputLimitAction::TerminateProcessTree);
     let output = hebbian_bounded_process::run(&command, Duration::from_secs(seconds), limit)
-        .map_err(|error| format!("{program}: {}", error.stage()))?;
+        .map_err(|error| match error {
+            hebbian_bounded_process::CommandFailure::Timeout(stage) => format!(
+                "{operation}: timed out after {seconds}s ({stage}). Inspect the device state before retrying.",
+                stage = stage.token()
+            ),
+            _ => format!("{operation}: {}", error.stage()),
+        })?;
     if output.exceeded_limit {
-        return Err(format!("{program}: output limit exceeded"));
+        return Err(format!("{operation}: output limit exceeded"));
     }
     if !output.status.success() {
         let detail = format!(
@@ -134,7 +144,7 @@ fn execute(program: &str, args: &[&str], seconds: u64, limit: usize) -> Result<V
             String::from_utf8_lossy(&output.stdout)
         );
         return Err(format!(
-            "{program} ({}): {}",
+            "{operation} ({}): {}",
             output.status,
             detail.trim().chars().take(8192).collect::<String>()
         ));

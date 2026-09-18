@@ -95,7 +95,7 @@ dure ls
 | Windows | 源代码已公开；原生桌面验证和公开安装包尚待完成。 |
 | Linux | 源代码已公开；原生桌面验证和公开安装包尚待完成。 |
 | iOS | 源代码已公开；设备验证和官方分发尚待完成。 |
-| Android | 源代码已公开；设备验证和官方分发尚待完成。 |
+| Android · ARM64 | [下载预览版 APK](https://github.com/hebbianai/hebbian-releases/releases/download/android-v0.1.4/Dure_0.1.4_android_arm64.apk) · Android 7.0 及以上。已通过模拟器验证；尚未完成真机验证。 |
 
 源码构建和验证详情见[各平台开发指南](../../CONTRIBUTING.md#platforms)。
 

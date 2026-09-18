@@ -1,5 +1,6 @@
 use super::*;
 
+mod idle;
 mod scrollbars;
 
 #[tokio::test]

@@ -1,4 +1,9 @@
 export const panels: Record<string, string> = {
+	"panels.mobile.frameUnavailable": "Impossible d’afficher l’image du simulateur. Prenez une nouvelle capture.",
+	"panels.mobile.orientationChanged": "La vue de l’appareil a changé. Prenez une nouvelle capture avant d’interagir.",
+	"panels.mobile.reportChanged": "Le rapport a changé. Préparez et vérifiez un nouveau rapport.",
+	"panels.mobile.previewUnavailable": "Sélectionnez un appareil en cours d’exécution et affichez ce panneau avant d’activer l’aperçu.",
+	"panels.mobile.liveRequiresIos": "Le mode en direct nécessite un simulateur iOS.",
 	"panels.mobile.live": "iOS en direct (expérimental)",
 	"panels.mobile.profiles": "Profil d’exécution",
 	"panels.mobile.loadProfile": "Charger un projet enregistré",

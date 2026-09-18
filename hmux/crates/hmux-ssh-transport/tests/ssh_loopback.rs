@@ -140,6 +140,13 @@ struct Observed {
 struct FakeGateway {
     behaviour: Behaviour,
     observed: Observed,
+    delays: GatewayDelays,
+}
+
+#[derive(Clone, Copy, Default)]
+struct GatewayDelays {
+    authentication: Duration,
+    exec: Duration,
 }
 
 impl Server for FakeGateway {
@@ -166,6 +173,7 @@ impl Handler for FakeGateway {
         _user: &str,
         _key: &ssh_key::PublicKey,
     ) -> Result<Auth, Self::Error> {
+        tokio::time::sleep(self.delays.authentication).await;
         self.observed
             .authentication_attempted
             .store(true, Ordering::Release);
@@ -213,6 +221,7 @@ impl Handler for FakeGateway {
         command: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        tokio::time::sleep(self.delays.exec).await;
         let command = String::from_utf8_lossy(command).into_owned();
         *self.observed.exec_command.lock().expect("command lock") = Some(command.clone());
         self.observed
@@ -795,6 +804,10 @@ struct Fixture {
 
 /// Starts a bounded-connection SSH server on loopback and returns how to reach it.
 fn start(behaviour: Behaviour) -> Fixture {
+    start_with_delays(behaviour, GatewayDelays::default())
+}
+
+fn start_with_delays(behaviour: Behaviour, delays: GatewayDelays) -> Fixture {
     let host_key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).expect("host key");
     let host_fingerprint = host_key
         .public_key()
@@ -843,6 +856,7 @@ fn start(behaviour: Behaviour) -> Fixture {
                 let mut server = FakeGateway {
                     behaviour,
                     observed: server_observed,
+                    delays,
                 };
                 let connection_count = if matches!(
                     behaviour,
@@ -1008,6 +1022,90 @@ fn catalog_discovery_uses_the_same_no_pty_exec_channel() {
             "request": "list_sessions"
         })
     );
+}
+
+#[test]
+fn catalog_deadline_is_shared_by_authentication_and_exec_open() {
+    let fixture = start_with_delays(
+        Behaviour::Catalog,
+        GatewayDelays {
+            authentication: Duration::from_millis(300),
+            exec: Duration::from_millis(300),
+        },
+    );
+    let result = list_sessions_over_ssh(
+        config_for(&fixture, &fixture.host_fingerprint),
+        Duration::from_millis(500),
+    );
+    assert_eq!(result.unwrap_err().code(), "hmux_ssh_timed_out");
+    assert!(
+        fixture
+            .observed
+            .authentication_attempted
+            .load(Ordering::Acquire)
+    );
+    assert!(
+        fixture
+            .observed
+            .request_documents
+            .lock()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn catalog_version_fallback_keeps_the_original_deadline() {
+    let fixture = start_with_delays(
+        Behaviour::CatalogWithShippedSessionFacts,
+        GatewayDelays {
+            authentication: Duration::from_millis(300),
+            exec: Duration::from_millis(300),
+        },
+    );
+    let result = list_sessions_with_facts_over_ssh(
+        config_for(&fixture, &fixture.host_fingerprint),
+        Duration::from_millis(800),
+    );
+    assert_eq!(result.unwrap_err().code(), "hmux_ssh_timed_out");
+    assert_eq!(fixture.observed.request_documents.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn expired_channel_open_preserves_other_channels_on_the_shared_connection() {
+    let fixture = start_with_delays(
+        Behaviour::Echo,
+        GatewayDelays {
+            authentication: Duration::ZERO,
+            exec: Duration::from_millis(100),
+        },
+    );
+    let config = config_for(&fixture, &fixture.host_fingerprint);
+    let mut existing = SshExecDialer::open_halves(config.clone()).unwrap();
+    let result = SshExecDialer::open_halves_before(
+        config.clone(),
+        std::time::Instant::now() + Duration::from_millis(30),
+    );
+    assert!(matches!(result, Err(SshTransportError::Timeout { .. })));
+    let frame = detach("the existing pane still works");
+    existing
+        .writer
+        .write_frame(&codec().encode(&frame).unwrap())
+        .unwrap();
+    existing
+        .reader
+        .set_first_byte_timeout(Some(Duration::from_secs(2)));
+    assert_eq!(
+        existing
+            .reader
+            .read_frame(&codec())
+            .unwrap()
+            .unwrap()
+            .frame(),
+        &frame
+    );
+    let _next = SshExecDialer::open_halves(config).unwrap();
+    assert_eq!(fixture.observed.connections.load(Ordering::Acquire), 1);
 }
 
 #[test]

@@ -7,7 +7,7 @@ import {
 	Settings2,
 	X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserElementPicker } from "@/components/panels/browser/BrowserElementPicker";
 import { BrowserPageSurface } from "@/components/panels/browser/BrowserPageSurface";
 import { BrowserProfileDialog } from "@/components/panels/browser/BrowserProfileDialog";
@@ -73,6 +73,20 @@ export function ProBrowserPanel(
 		props.params.url === "about:blank" ? "" : props.params.url || "",
 	);
 	const [optionsOpen, setOptionsOpen] = useState(false);
+	const [navigation, setNavigation] = useState<{ url: string }>();
+	const navigate = useCallback(
+		async (url: string) => {
+			const intent = { url };
+			setNavigation(intent);
+			setAddress(url);
+			try {
+				await pane.navigate(url);
+			} finally {
+				setNavigation((pending) => (pending === intent ? undefined : pending));
+			}
+		},
+		[pane.navigate],
+	);
 	const initialAddress = useRef(
 		!props.params.browserBinding && !props.params.browserCreation
 			? props.params.url
@@ -102,11 +116,11 @@ export function ProBrowserPanel(
 		!pane.busy &&
 		!pane.error;
 	useEffect(() => {
-		if (current) {
+		if (current && !navigation) {
 			if (!editing.current) setAddress(current.url);
 			applyAutomaticPaneTitle(props.api, current.title || current.url);
 		}
-	}, [current?.url, current?.title, props.api]);
+	}, [current?.url, current?.title, props.api, navigation]);
 	const canNavigate =
 		pane.active &&
 		!pane.busy &&
@@ -116,20 +130,20 @@ export function ProBrowserPanel(
 		const url = initialAddress.current;
 		if (!url || url === "about:blank" || !canNavigate) return;
 		initialAddress.current = undefined;
-		void pane.navigate(normalizeBrowserAddress(url));
-	}, [canNavigate, pane.navigate]);
+		void navigate(normalizeBrowserAddress(url));
+	}, [canNavigate, navigate]);
 	useEffect(() => {
-		const navigate = (event: Event) => {
+		const requested = (event: Event) => {
 			const url = normalizeBrowserAddress(
 				(event as CustomEvent<string>).detail,
 			);
 			setAddress(url);
-			if (canNavigate) void pane.navigate(url);
+			if (canNavigate) void navigate(url);
 		};
-		window.addEventListener(`browser-navigate:${props.api.id}`, navigate);
+		window.addEventListener(`browser-navigate:${props.api.id}`, requested);
 		return () =>
-			window.removeEventListener(`browser-navigate:${props.api.id}`, navigate);
-	}, [canNavigate, props.api.id, pane.navigate]);
+			window.removeEventListener(`browser-navigate:${props.api.id}`, requested);
+	}, [canNavigate, props.api.id, navigate]);
 	const action = (kind: "back" | "forward" | "reload" | "new_page") => {
 		if (!pane.session) return;
 		void pane.run(() =>
@@ -146,7 +160,6 @@ export function ProBrowserPanel(
 		paneId: props.api.id,
 		session: pane.session,
 		view: pane.view,
-		active: pane.active,
 		busy: pane.busy,
 		take: async (expected) => {
 			setReturnTo(expected?.controller_id);
@@ -198,17 +211,18 @@ export function ProBrowserPanel(
 					}}
 					onBlur={() => {
 						editing.current = false;
-						if (current) setAddress(current.url);
+						if (navigation) setAddress(navigation.url);
+						else if (current) setAddress(current.url);
 					}}
 					onKeyDown={(event) => {
 						if (event.key === "Escape" && current) {
-							setAddress(current.url);
+							setAddress(navigation?.url ?? current.url);
 							event.currentTarget.blur();
 						}
 						if (event.key === "Enter" && canNavigate) {
 							initialAddress.current = undefined;
 							editing.current = false;
-							void pane.navigate(normalizeBrowserAddress(address));
+							void navigate(normalizeBrowserAddress(address));
 						}
 					}}
 				/>

@@ -153,3 +153,35 @@ it("does not execute a request already claimed by another window", async () => {
 	expect(send).not.toHaveBeenCalled();
 	expect(complete).not.toHaveBeenCalled();
 });
+
+for (const action of ["pane.state", "pane.act"]) {
+	it(`answers ${action} when its local pane mounts during ownership discovery`, async () => {
+		const send = vi.fn(async () => {});
+		const complete = vi.fn<CliPaneActionDependencies["complete"]>(
+			async () => {},
+		);
+		const claim = vi.fn(async () => true);
+		await dispatchCliPaneActionRequest(
+			{
+				reqId: "cold-mount",
+				action,
+				params: {
+					targetPanelId: "cold-pane",
+					actionId: "terminal.input",
+					arguments: { text: "once" },
+				},
+			},
+			{
+				claim,
+				complete,
+				isFallbackWindow: () => true,
+				delay: async () => {
+					mount("cold-pane", send, "session=cold");
+				},
+			},
+		);
+		expect(claim).toHaveBeenCalledOnce();
+		expect(complete.mock.calls[0]?.[1]).toMatchObject({ ok: true });
+		expect(send).toHaveBeenCalledTimes(action === "pane.act" ? 1 : 0);
+	});
+}

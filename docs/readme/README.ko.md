@@ -95,7 +95,7 @@ Claude Code, Codex, OpenCode, Pi는 설치된 런타임이 지원할 때 구조�
 | Windows | 소스 공개 · 네이티브 데스크톱 검증과 공개 설치 파일은 준비 단계 |
 | Linux | 소스 공개 · 네이티브 데스크톱 검증과 공개 설치 파일은 준비 단계 |
 | iOS | 소스 공개 · 기기 검증과 공식 배포는 준비 단계 |
-| Android | 소스 공개 · 기기 검증과 공식 배포는 준비 단계 |
+| Android · ARM64 | [APK 프리뷰 다운로드](https://github.com/hebbianai/hebbian-releases/releases/download/android-v0.1.4/Dure_0.1.4_android_arm64.apk) · Android 7.0 이상. 에뮬레이터 검증 완료 · 실제 기기 미검증 |
 
 소스 빌드와 검증 범위는 다음 안내를 참고하세요: [플랫폼별 개발 안내](../../CONTRIBUTING.md#platforms).
 

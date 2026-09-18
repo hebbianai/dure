@@ -7,6 +7,7 @@ import { t } from "@/lib/i18n";
 import type { MobileDeviceTarget } from "@/lib/ipc/mobileSimulator";
 import {
 	type MobileRunProfile,
+	type MobileRunProfileIdentity,
 	mobileRunProfileKey,
 } from "@/lib/mobileSimulator/profile";
 
@@ -23,6 +24,7 @@ export function MobileSimulatorProfiles({
 	target,
 	busy,
 	save,
+	remove,
 	run,
 	select,
 }: {
@@ -30,6 +32,7 @@ export function MobileSimulatorProfiles({
 	target: MobileDeviceTarget;
 	busy: boolean;
 	save: (profile: MobileRunProfile) => void;
+	remove?: (profile: MobileRunProfileIdentity) => void;
 	run: (profile: MobileRunProfile) => Promise<void>;
 	select: (target: MobileDeviceTarget) => void;
 }) {
@@ -152,6 +155,21 @@ export function MobileSimulatorProfiles({
 					>
 						{t("panels.mobile.runProfile")}
 					</Button>
+					{remove &&
+						profiles.some(
+							(profile) => mobileRunProfileKey(profile) === profileKey,
+						) && (
+							<Button
+								size="sm"
+								variant="outline"
+								disabled={busy}
+								onClick={() =>
+									remove({ projectPath: draft.projectPath, device: target })
+								}
+							>
+								{t("common.remove")}
+							</Button>
+						)}
 				</div>
 				{error && (
 					<p role="alert" className="text-destructive">

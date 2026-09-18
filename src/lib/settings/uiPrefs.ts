@@ -35,6 +35,8 @@ export interface UiPrefs {
    *  first available provider). Resolved only by lib/agents/defaultProvider.ts,
    *  which ignores a stored value that is no longer installed. */
   defaultProvider?: Provider;
+  /** New Agent panes only; effective Basic mode always uses Terminal. */
+  defaultAgentPane: "terminal" | "chat";
   /** 터미널 고정폭 글꼴군 ("" = 기본 스택) */
   terminalFontFamily: string;
   /** Terminal and code-view row height as a multiplier of font size. */
@@ -107,6 +109,7 @@ export const DEFAULT_UI_PREFS: UiPrefs = {
   // production availability is enforced by the effective-mode resolver.
   interfaceMode: "basic",
   agentFinalResponseOnly: false,
+  defaultAgentPane: "terminal",
   theme: "dark", // 기존 동작 유지 (라이트는 아직 하드코딩 다크 표면이 남음)
   terminalFontFamily: "",
   terminalLineHeight: DEFAULT_TERMINAL_LINE_HEIGHT,
@@ -185,6 +188,7 @@ export const UI_PREFS_KEYS = [
   "showGitIgnored",
   "showResourceMonitor",
   "defaultProvider",
+  "defaultAgentPane",
 ] as const satisfies readonly (keyof UiPrefs)[];
 
 export type UiPrefsKey = (typeof UI_PREFS_KEYS)[number];

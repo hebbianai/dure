@@ -43,7 +43,8 @@ assert.ok(runtime, "Install an iOS simulator runtime in Xcode first");
 const name = `Dure Mobile QA ${randomUUID()}`;
 const id = run("/usr/bin/xcrun", ["simctl", "create", name, "com.apple.CoreSimulator.SimDeviceType.iPhone-16", runtime.identifier]).trim();
 writeFileSync(join(root, "ownership.json"), JSON.stringify({ root, id, name, runtime: runtime.identifier, cwd: process.cwd() }, null, 2));
-const url = `index.html?qaWindowSmokeController=1&qaMobileSimulator=${encodeURIComponent(id)}&fixture=${Buffer.from(app).toString("base64url")}`;
+const agentWorkflow = process.argv.includes("--agent-workflow");
+const url = agentWorkflow ? "index.html" : `index.html?qaWindowSmokeController=1&qaMobileSimulator=${encodeURIComponent(id)}&fixture=${Buffer.from(app).toString("base64url")}`;
 console.log("Disposable simulator ownership:", join(root, "ownership.json"));
 // The managed parent can pin its live backend binary. QA builds its own source.
 const environment = { ...process.env };
@@ -51,8 +52,8 @@ for (const key of ["DURE_CONTROL_PLANE_BIN", "DURE_CLAUDE_PROCESS_RELAY_BIN", "C
 try {
  const child = spawn("sh", ["scripts/qa/lib/tauri-app-runner.sh"], {
   stdio: "inherit",
-  env: { ...environment, SHELL: "/bin/zsh", DURE_QA_HOME_SETUP: resolve("scripts/qa/mobile-simulator-home-setup.mjs"), DURE_QA_MOBILE_DEVICE: id, DURE_QA_CLIENT: resolve("scripts/qa/mobile-simulator-client.mjs"), DURE_QA_NAME: "Native mobile simulator", DURE_QA_ARTIFACT_NAME: "mobile-simulator", DURE_QA_LAYER: "background", DURE_QA_UNIQUE_APP_CHANNEL: "1", DURE_QA_WINDOW_URL: url,
-   DURE_QA_WINDOW_PLAN_JSON: JSON.stringify([{ label: "main", title: "Dure Mobile Simulator QA", url, width: 560, height: 950, x: -4000, y: -2000, visible: true, focus: false, focusable: false }]) },
+  env: { ...environment, SHELL: "/bin/zsh", DURE_QA_HOME_SETUP: resolve("scripts/qa/mobile-simulator-home-setup.mjs"), DURE_QA_MOBILE_DEVICE: id, DURE_QA_MOBILE_APP: app, DURE_QA_CLIENT: resolve(agentWorkflow ? "scripts/qa/mobile-agent-workflow-client.mjs" : "scripts/qa/mobile-simulator-client.mjs"), DURE_QA_NAME: "Native mobile simulator", DURE_QA_ARTIFACT_NAME: agentWorkflow ? "mobile-agent-workflow" : "mobile-simulator", DURE_QA_LAYER: "background", DURE_QA_UNIQUE_APP_CHANNEL: "1", DURE_QA_WINDOW_URL: url,
+   DURE_QA_WINDOW_PLAN_JSON: JSON.stringify([{ label: "main", title: "Dure Mobile Simulator QA", url, width: agentWorkflow ? 1100 : 560, height: 950, x: -4000, y: -2000, visible: true, focus: false, focusable: false }]) },
  });
  process.exitCode = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (code) => resolve(code ?? 1)); });
 } finally {

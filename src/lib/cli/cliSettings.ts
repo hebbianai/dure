@@ -58,6 +58,9 @@ export function planUiPrefsUpdate(
 ): CliSettingsOutcome<Partial<UiPrefs>> {
 	if (!isUiPrefsKey(key)) return { ok: false, error: unknownKey(key) };
 	const value = parseUiPrefsValue(raw);
+	if (key === "defaultAgentPane" && value !== "terminal" && value !== "chat") {
+		return { ok: false, error: 'setting "defaultAgentPane" expects "terminal" or "chat"' };
+	}
 	// Only keys with a shipped default carry a type to check against. The
 	// optional ones (themeScheme, …) are structured and validated
 	// by the store's own normalizer on the way to disk.

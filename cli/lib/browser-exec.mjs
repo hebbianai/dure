@@ -268,7 +268,7 @@ export function normalizeBrowserExec(options) {
   }
   if (outer.resource === undefined && outer.workspace === undefined && outer.worktree === undefined) outer.worktree = "current";
   const args = nativeArguments(commandWords(options.execCommand));
-  const inner = parseBrowserArguments(["--resource", "exec:target", ...args]);
+  const inner = parseBrowserArguments(["--resource", "exec:target", ...args], { nativeValues: true });
   // Only the parsed tab reference may supply a page. Native routing flags in
   // other commands still cannot replace the outer caller's selection.
   if (args.length === 4 && args[0] === "tab" && ["switch", "close"].includes(args[1]) && args[2] === "--page") {

@@ -25,6 +25,7 @@ export interface CliDesktopPaneDependencies {
 	waitForSpace(spaceId: string): Promise<unknown | undefined>;
 	removeSpace(spaceId: string): void;
 	spaceName(spaceId: string): string | undefined;
+	openMobile(spaceId: string): Promise<object>;
 }
 
 function errorPayload(error: unknown, fallbackCode: string) {
@@ -129,6 +130,29 @@ async function handleSpaceCreate(
 	};
 }
 
+async function handlePaneOpen(
+	request: CliDesktopPaneRequest,
+	dependencies: CliDesktopPaneDependencies,
+) {
+	let claimed = false;
+	try {
+		const spaceId = resolveCliSpaceId(request.params, { required: true });
+		if (!spaceId || request.params.tool !== "mobile")
+			throw new Error("pane open requires tool mobile and an exact Space");
+		if ((await dependencies.routeToSpaceOwner(request)).kind === "forwarded")
+			return null;
+		claimed = await dependencies.claim(request.reqId);
+		if (!claimed) return null;
+		return {
+			ok: true,
+			pane: { spaceId, ...(await dependencies.openMobile(spaceId)) },
+		};
+	} catch (error) {
+		if (!claimed && !(await dependencies.claim(request.reqId))) return null;
+		return { ok: false, error: errorPayload(error, "pane_open_failed") };
+	}
+}
+
 /**
  * Dispatch the desktop/pane lifecycle subset without importing Store or
  * Dockview. Effects are explicit dependencies so parsing and completion
@@ -141,6 +165,8 @@ export async function dispatchCliDesktopPaneRequest(
 	let result: Record<string, unknown> | null;
 	if (request.action === "pane.close") {
 		result = await handlePaneClose(request, dependencies);
+	} else if (request.action === "pane.open") {
+		result = await handlePaneOpen(request, dependencies);
 	} else if (
 		request.action === "space.create" ||
 		request.action === "desktop.create"

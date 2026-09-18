@@ -8,6 +8,9 @@ export const settings: Record<string, string> = {
 	"agents.recovery.exhausted": "No hay cuentas permitidas disponibles. Elige una cuenta para continuar.",
 	"agents.recovery.failed": "La recuperación automática se detuvo. Revisa la cuenta o continúa manualmente.",
 
+	"settings.general.defaultAgentPane.title": "Panel de agente predeterminado",
+	"settings.general.defaultAgentPane.desc": "Solo se aplica a agentes nuevos. El chat requiere un proveedor y una configuración de inicio compatibles. Los paneles existentes no cambian.",
+	"settings.general.defaultAgentPane.chat": "Chat",
 	"environments.title": "Entornos VM",
 	"environments.description": "Crea un entorno aislado desde una receta del proyecto al añadir un agente. Gestiona aquí su ciclo de vida.",
 	"environments.useVm": "Usar una VM · Pro",

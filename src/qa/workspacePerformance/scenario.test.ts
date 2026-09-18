@@ -69,6 +69,9 @@ describe("workspace performance scenarios", () => {
 			"full",
 		);
 		expect(
+			workspacePerformanceQaPhaseFromLocation({ search: "?phase=retention" }),
+		).toBe("retention");
+		expect(
 			workspacePerformanceQaPhaseFromLocation({
 				search: "?phase=native_focus",
 			}),
