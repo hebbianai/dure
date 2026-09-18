@@ -10,6 +10,29 @@ function deferred<T>() {
 	return { promise, resolve };
 }
 afterEach(() => vi.useRealTimers());
+it("bounds frame conversion to one frame and releases the worker after conversion settles", async () => {
+	vi.useFakeTimers();
+	const converted = deferred<void>();
+	const native = {
+		liveStart: vi.fn().mockResolvedValue("lease"),
+		liveStop: vi.fn().mockResolvedValue(undefined),
+		liveFrame: vi
+			.fn()
+			.mockResolvedValue({ dataUrl: "frame", width: 10, height: 20 }),
+	};
+	const stop = new MobileLiveObserver(native).observe({
+		target: { platform: "ios", id: "device" },
+		publish: () => converted.promise,
+		fail: vi.fn(),
+	});
+	await vi.advanceTimersByTimeAsync(1000);
+	expect(native.liveFrame).toHaveBeenCalledOnce();
+	stop();
+	converted.resolve();
+	await vi.advanceTimersByTimeAsync(1000);
+	expect(native.liveFrame).toHaveBeenCalledOnce();
+	expect(native.liveStop).toHaveBeenCalledExactlyOnceWith("lease");
+});
 it("releases a late-starting worker before starting the newly selected device", async () => {
 	const started = deferred<string>();
 	const stopped = deferred<void>();

@@ -14,6 +14,10 @@ const prefs: UiPrefs = {
 };
 
 describe("cliSettings", () => {
+	it("accepts only Terminal or Chat as the default Agent pane", () => {
+		for (const value of ["terminal", "chat"]) expect(planUiPrefsUpdate("defaultAgentPane", value)).toEqual({ ok: true, value: { defaultAgentPane: value } });
+		for (const value of ["unknown", "false", "null"]) expect(planUiPrefsUpdate("defaultAgentPane", value).ok).toBe(false);
+	});
 	it("reads the whole set when no key is named", () => {
 		const result = readUiPrefsSetting(prefs);
 

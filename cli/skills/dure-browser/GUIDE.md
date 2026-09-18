@@ -120,6 +120,8 @@ dure client pane state PANE --json
 ```
 
 The action uses the pane's mounted identity and refuses a changed controller.
+An explicitly addressed mounted pane can receive control while its Space is
+inactive. Its viewport fits when the pane becomes visible again.
 Read `pane.result.outcome`; `pending` is not a completed handback. Verify the
 fresh controller and viewport, then stop browser input. Its viewport fits the
 pane after transfer. If no matching mounted pane or action is available, report

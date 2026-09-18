@@ -245,7 +245,8 @@ private channel in [SECURITY.md](SECURITY.md).
 5. Push your branch to your fork and open a pull request against
    `hebbianai/dure:main`. Explain the problem, the change, and how you checked it;
    link a related issue when one exists.
-6. Address review feedback and wait for the required checks and maintainer review.
+6. Address any review feedback and wait for the required checks. Maintainers
+   decide when a pull request is ready to merge.
 
 English is the canonical documentation language. The English [README](README.md)
 lives at the root; the six translations live in [docs/readme/](docs/readme/).
@@ -265,7 +266,7 @@ files available in the repository. These prefixes are naming suggestions.
 
 Keep each pull request focused on one change. Open a draft pull request when you
 want feedback before the work is ready. Multiple commits during review are fine;
-maintainers squash the approved change when merging. After merging, start the
+maintainers squash the change when merging. After merging, start the
 next change from the updated `main`. Merged branches in this repository are
 deleted automatically; remove the completed topic branch from your fork too.
 
@@ -324,15 +325,16 @@ machines. Platform-native
 desktop/mobile packaging and device acceptance remain separate checks.
 
 Contributors submit changes to `main` through pull requests. Merging requires
-passing checks, an up-to-date branch, one approving review, code-owner approval
-where applicable, and resolved review conversations. New changes dismiss stale
-approvals; the latest push needs approval from someone other than its pusher.
-Maintainers squash approved pull requests; the ruleset blocks force pushes and
-deletion of `main`. See the [active repository rules](https://github.com/hebbianai/dure/rules)
-for the enforced settings.
+passing checks, an up-to-date branch, and resolved review conversations.
+Approving reviews are optional, including code-owner and latest-push approvals.
+Only people with write, maintain or admin access can merge pull requests; making
+reviews optional does not grant repository access. Maintainers squash pull
+requests when merging; the ruleset blocks force pushes and deletion of `main`.
+See the [active repository rules](https://github.com/hebbianai/dure/rules) for the
+enforced settings.
 
 The repository administrator `komojini` has an explicit always-on bypass for this
-ruleset, including direct pushes and merges without the required review or checks.
+ruleset, including direct pushes and merges without the required checks.
 Other contributors and administrators remain subject to the rules above.
 
 Contributors remain responsible for everything they submit, including work

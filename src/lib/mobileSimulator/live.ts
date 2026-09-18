@@ -7,7 +7,7 @@ import type {
 export class MobileLiveObserver {
 	private current?: {
 		target: MobileDeviceTarget;
-		publish: (frame: MobileFrame) => void;
+		publish: (frame: MobileFrame) => void | Promise<void>;
 		fail: (error: unknown) => void;
 	};
 	private running = false;
@@ -34,7 +34,8 @@ export class MobileLiveObserver {
 			id = await this.native.liveStart(observation.target);
 			while (this.current === observation) {
 				const frame = await this.native.liveFrame(id);
-				if (this.current === observation && frame) observation.publish(frame);
+				if (this.current === observation && frame)
+					await observation.publish(frame);
 				await new Promise((resolve) => setTimeout(resolve, 50));
 			}
 		} catch (error) {

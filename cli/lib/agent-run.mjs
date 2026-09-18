@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { AppControlClientError, requestAppControl } from "./app-control-client.mjs";
 import {
   agentSpawnQueryExitCode,
   collectAgentSpawnQuery,
@@ -18,6 +19,34 @@ export function defaultAgentRunName(providerId, idempotencyKey) {
   return `${provider}-${suffix}`;
 }
 
+/** Resolve new CLI panes through the app's existing preference authority. */
+export async function resolveAgentRunInteractionPreference(
+  clientDescriptor,
+  requestClient = requestAppControl,
+) {
+  if (
+    !Array.isArray(clientDescriptor?.capabilities) ||
+    !clientDescriptor.capabilities.includes("agent.launch_preference_v1")
+  ) {
+    return "native_cli";
+  }
+  const preference = await requestClient({
+    descriptor: clientDescriptor,
+    path: "/agent/launch-preference",
+  });
+  if (
+    preference?.ok !== true ||
+    preference.schemaVersion !== 1 ||
+    !["native_cli", null].includes(preference.interactionPreference)
+  ) {
+    throw new AppControlClientError(
+      "client_response_invalid",
+      "The Dure client returned an invalid Agent pane preference.",
+    );
+  }
+  return preference.interactionPreference ?? undefined;
+}
+
 export async function collectAgentRun({
   projectId,
   projectPath,
@@ -32,6 +61,7 @@ export async function collectAgentRun({
   backend,
   deadlineMs,
   requestBackend,
+  interactionPreference,
 } = {}) {
   const preview = await collectAgentSpawnQuery({
     action: "preview",
@@ -41,6 +71,7 @@ export async function collectAgentRun({
     agentName,
     worktree,
     permissionOverride,
+    interactionPreference,
     setupCommand,
     includePresentationProject,
     prompt,

@@ -58,8 +58,7 @@ export interface CanonicalAddAgentRunInput {
 	prompt?: string;
 	model?: string;
 	effort?: string;
-	/** From agentSpawnInteractionPreference — basic interface mode pins the
-	 * PTY surface so structured-capable providers still open a terminal. */
+	/** The shared preference resolver pins Terminal unless Pro opts into Chat. */
 	interactionPreference?: "native_cli";
 	actionId: string;
 	referencePanelId?: string;

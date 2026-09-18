@@ -14,6 +14,7 @@ import {
 } from "@/lib/workspace/dock";
 import { PaneCommandError } from "@/lib/workspace/pane/paneCommandError";
 import { waitForDesktopDockview } from "@/lib/workspace/dock/dockRegistry";
+import { openMobileSimulatorPanel } from "@/lib/workspace/dock/openMobileSimulatorPanel";
 import { closePanelById } from "@/lib/workspace/pane/paneCloseCoordinator";
 import { hmux, type ProviderPreflight } from "@/lib/ipc";
 import { inspectHmuxSessionExact } from "@/lib/hmux/identity/exactHmuxSessionInspection";
@@ -78,6 +79,15 @@ import { dispatchCliWorktreePresentation } from "@/lib/cli/cliWorktreePresentati
 import { dispatchCliUnopenedAgentVisibility } from "@/lib/cli/cliUnopenedAgentVisibility";
 
 const cliDesktopPaneDependencies = {
+  openMobile: async (spaceId: string) => {
+    const state = useStore.getState();
+    if (!state.spaces.some((space) => space.id === spaceId))
+      throw new Error(`Space ${spaceId} does not exist`);
+    state.setActiveSpace(spaceId);
+    const api = await waitForDesktopDockview(spaceId);
+    if (!api) throw new Error(`Space ${spaceId} is not mounted`);
+    return openMobileSimulatorPanel(api);
+  },
   routeToSpaceOwner: routeCliRequestToSpaceOwner,
   claim: claimCliRequest,
   complete: completeCliRequest,

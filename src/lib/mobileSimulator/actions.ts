@@ -3,6 +3,12 @@ import type {
 	MobileDeviceTarget,
 } from "@/lib/ipc/mobileSimulator";
 import { definePaneAction } from "@/lib/workspace/pane/paneAction";
+import {
+	type MobilePaneControls,
+	mobileControlActions,
+	mobileTargetParameters,
+} from "./controlActions";
+import { mobileInputActions } from "./inputActions";
 import type { MobileRunProfile } from "./profile";
 
 /** Each external mutation names the observed device, never whatever is now selected. */
@@ -15,11 +21,9 @@ export function mobilePaneActions(input: {
 	run: (profile: MobileRunProfile) => Promise<void>;
 	profiles: MobileRunProfile[];
 	report: (appId: string) => Promise<unknown>;
+	controls: MobilePaneControls;
 }) {
-	const expected = {
-		deviceId: { type: "string", required: true },
-		platform: { type: "string", required: true, values: ["ios", "android"] },
-	} as const;
+	const expected = mobileTargetParameters;
 	const matches = (args: { readonly [key: string]: unknown }) =>
 		input.target?.id === args.deviceId &&
 		input.target?.platform === args.platform;
@@ -34,6 +38,8 @@ export function mobilePaneActions(input: {
 			},
 		}) as const;
 	return {
+		...mobileControlActions(input),
+		...mobileInputActions(input),
 		"mobile.status": definePaneAction(
 			{
 				description:
@@ -118,7 +124,7 @@ export function mobilePaneActions(input: {
 						error: {
 							code: "mobile_profile_missing",
 							message:
-								"Save a profile for this exact device in the pane first.",
+								"Save a profile for this exact device with mobile.profile.save first.",
 							retryable: false,
 						},
 					};

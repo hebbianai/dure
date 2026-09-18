@@ -222,10 +222,6 @@ impl BrowserCdp {
         self.request_with_deadline("Page.printToPDF",json!({"printBackground":true,"preferCSSPageSize":true,"transferMode":"ReturnAsStream"}),Some(session),Duration::from_secs(30)).await
     }
 
-    pub(super) async fn capture_frame(&self, session: &str) -> Result<Value, &'static str> {
-        self.connection.capture_frame(session).await
-    }
-
     pub(super) async fn document(&mut self, session: &str) -> Result<String, &'static str> {
         let result = self
             .request("Page.getFrameTree", json!({}), Some(session))

@@ -11,6 +11,9 @@ export const settingsEnglishTranslations = {
 	"agents.recovery.exhausted": "No allowed account is available. Choose an account to continue.",
 	"agents.recovery.failed": "Automatic recovery stopped. Check the account or continue manually.",
 
+	"settings.general.defaultAgentPane.title": "Default agent pane",
+	"settings.general.defaultAgentPane.desc": "Applies to new agents only. Chat requires a supported provider and launch configuration. Existing panes stay unchanged.",
+	"settings.general.defaultAgentPane.chat": "Chat",
 	"environments.title": "VM environments",
 	"environments.description": "Create an isolated environment from a project’s recipe when adding an agent. Manage its lifetime here.",
 	"environments.useVm": "Use a VM · Pro",

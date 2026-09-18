@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Project } from "@/types";
 import { supportsCanonicalAddAgentRun } from "@/lib/agents/addAgentCanonicalRun";
 import type { QuickDispatchIntentV1 } from "@/lib/agents/quickDispatch/quickDispatchIntent";
@@ -369,10 +369,7 @@ describe("runQuickDispatch", () => {
 		expect(deps.fail).not.toHaveBeenCalled();
 	});
 
-	/** Every dispatch lands in a terminal now (owner decision 2026-09-01), so
-	 *  the setup probe that used to be skipped for chat-eligible providers runs
-	 *  for them too — a fresh worktree needs its install either way, and the
-	 *  terminal is where the user can watch it. */
+	/** Default Terminal launches retain their setup probe for all providers. */
 	it("probes setup for a structured provider as well", async () => {
 		const deps = makeDeps();
 		await runQuickDispatch(intent, deps as never);
@@ -396,13 +393,21 @@ describe("runQuickDispatch", () => {
 		expect(call.setupCommand).toContain("pnpm install");
 	});
 
-	/** Pro used to leave the surface to the provider default; every dispatch
-	 *  now lands in a terminal (owner decision 2026-09-01). */
-	it("pro mode pins the PTY surface too", async () => {
+	it("defaults Pro to the PTY surface too", async () => {
 		const deps = makeDeps();
 		await runQuickDispatch(intent, deps as never);
 		const call = deps.runCanonical.mock.calls[0]?.[0];
 		expect(call.interactionPreference).toBe("native_cli");
+	});
+
+	afterEach(() => vi.unstubAllEnvs());
+	it("honors explicit Pro Chat and leaves setup selection with the existing Chat path", async () => {
+		vi.stubEnv("PROD", false);
+		const deps = makeDeps();
+		deps.readState = () => ({ projects: [project], agents: [], accounts: [], uiPrefs: { interfaceMode: "pro", defaultAgentPane: "chat" } });
+		await runQuickDispatch(intent, deps as never);
+		expect(deps.runCanonical.mock.calls[0][0].interactionPreference).toBeUndefined();
+		expect(deps.probeSetup).not.toHaveBeenCalled();
 	});
 
 	it("keeps the probed setup command for a native-only provider", async () => {

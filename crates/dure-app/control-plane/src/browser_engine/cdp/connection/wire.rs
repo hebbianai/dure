@@ -21,11 +21,6 @@ struct Pending {
     reply: oneshot::Sender<Reply>,
 }
 
-struct PendingFrame {
-    session: String,
-    reply: Option<oneshot::Sender<Reply>>,
-}
-
 #[derive(Default)]
 struct State {
     next_id: u64,
@@ -33,7 +28,6 @@ struct State {
     events: Option<VecDeque<(Value, usize)>>,
     event_bytes: usize,
     error: Option<&'static str>,
-    frame: Option<PendingFrame>,
 }
 
 #[derive(Default)]
@@ -51,26 +45,6 @@ pub(super) struct Wire {
 }
 
 impl Wire {
-    pub(super) fn frame(
-        &self,
-        session: &str,
-    ) -> Result<(Frame, oneshot::Receiver<Reply>), &'static str> {
-        let mut state = self.shared.state.lock().expect("CDP state");
-        if let Some(error) = state.error {
-            return Err(error);
-        }
-        if state.frame.is_some() {
-            return Err("browser_frame_in_progress");
-        }
-        let (reply, received) = oneshot::channel();
-        state.frame = Some(PendingFrame {
-            session: session.to_owned(),
-            reply: Some(reply),
-        });
-        self.shared.changed.notify_one();
-        Ok((Frame(Arc::clone(&self.shared)), received))
-    }
-
     pub(super) fn start(socket: Socket) -> Self {
         let shared = Arc::new(Shared::default());
         let owner = Arc::clone(&shared);
@@ -205,15 +179,6 @@ impl Drop for Wire {
     }
 }
 
-pub(super) struct Frame(Arc<Shared>);
-
-impl Drop for Frame {
-    fn drop(&mut self) {
-        self.0.state.lock().expect("CDP state").frame = None;
-        self.0.changed.notify_one();
-    }
-}
-
 /// Cancellation removes the response budget synchronously before returning
 /// to the caller. The task then resumes the same socket with the smaller bound.
 struct Request<'a> {
@@ -246,11 +211,6 @@ impl Shared {
         }
         state.events = None;
         state.event_bytes = 0;
-        if let Some(frame) = &mut state.frame
-            && let Some(reply) = frame.reply.take()
-        {
-            let _ = reply.send(Err(error));
-        }
         self.observed.notify_waiters();
     }
 
@@ -288,18 +248,6 @@ impl Shared {
             };
             let _ = pending.reply.send(result);
         } else {
-            if response["method"] == "Page.screencastFrame"
-                && let Some(frame) = &mut state.frame
-                && response["sessionId"].as_str() == Some(frame.session.as_str())
-            {
-                if text.len() > CAPTURE_BYTES {
-                    return Err("browser_cdp_event_limit");
-                }
-                if let Some(reply) = frame.reply.take() {
-                    let _ = reply.send(Ok(response["params"].clone()));
-                }
-                return Ok(());
-            }
             if text.len() > CONTROL_BYTES {
                 return Err("browser_cdp_event_limit");
             }
@@ -358,17 +306,13 @@ async fn run(mut socket: Socket, shared: &Shared) -> &'static str {
         // cancellation returns, no read can allocate against its former budget.
         let message = {
             let state = shared.state.lock().expect("CDP state");
-            let bytes = if state.frame.is_some() {
-                CAPTURE_BYTES
-            } else {
-                state
-                    .pending
-                    .values()
-                    .map(|pending| pending.bytes)
-                    .max()
-                    .unwrap_or(CONTROL_BYTES)
-                    .min(CAPTURE_BYTES)
-            };
+            let bytes = state
+                .pending
+                .values()
+                .map(|pending| pending.bytes)
+                .max()
+                .unwrap_or(CONTROL_BYTES)
+                .min(CAPTURE_BYTES);
             socket.read_limit(bytes).socket.try_next()
         };
         match message {

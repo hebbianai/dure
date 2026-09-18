@@ -37,7 +37,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{Manager, State, WebviewWindow};
 
 use crate::hmux::{
@@ -871,12 +871,14 @@ pub(crate) async fn remote_hmux_provision(
 fn list_remote_sessions(
     target: &RemoteHmuxTargetRequest,
 ) -> Result<Vec<RemoteCatalogSession>, String> {
+    let started = Instant::now();
+    let remaining = || CATALOG_TIMEOUT.saturating_sub(started.elapsed());
     // The compatibility config (a second key-file read) is built only for a
     // box whose gateway predates the facts protocol.
-    match list_sessions_with_facts_over_ssh(build_config(target)?, CATALOG_TIMEOUT) {
+    match list_sessions_with_facts_over_ssh(build_config(target)?, remaining()) {
         Ok(sessions) => Ok(sessions),
         Err(error) if error.is_unsupported_protocol_version() => {
-            list_sessions_over_ssh(build_config(target)?, CATALOG_TIMEOUT)
+            list_sessions_over_ssh(build_config(target)?, remaining())
         }
         Err(error) => Err(error),
     }

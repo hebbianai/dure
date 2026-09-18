@@ -17,6 +17,7 @@ export type WorkspacePerformanceQaPhase =
 	| "full"
 	| "focus"
 	| "sash"
+	| "retention"
 	| "native_focus";
 
 export function workspacePerformanceScenario(
@@ -59,6 +60,7 @@ export function workspacePerformanceQaPhaseFromLocation(
 		phase !== "full" &&
 		phase !== "focus" &&
 		phase !== "sash" &&
+		phase !== "retention" &&
 		phase !== "native_focus"
 	) {
 		throw new Error(`unknown workspace performance phase: ${phase}`);

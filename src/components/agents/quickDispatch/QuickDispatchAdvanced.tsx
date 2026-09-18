@@ -4,6 +4,7 @@ import { Titled } from "@/components/ui/tooltip";
 import { DisclosureChevron } from "@/components/ui/disclosure-chevron";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { Switch } from "@/components/ui/switch";
+import { QuickDispatchField } from "./QuickDispatchParameters";
 import {
 	type LaunchPermissionSelection,
 	launchPermissionDescription,
@@ -74,46 +75,48 @@ export function QuickDispatchAdvanced({
 			</div>
 			<div id={contentId} hidden={!open} className="col-span-2">
 				{open && (
-					<div className="flex min-w-0 flex-col gap-4 border-t border-glass-hairline px-1 pt-3">
-						<div className="flex min-w-0 flex-wrap items-center gap-1">
+					<div className="@container flex min-w-0 flex-col gap-4 border-t border-glass-hairline px-2 pt-4">
+						<div className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-4 @sm:grid-cols-2">
 							{children}
-							<SelectField
-								aria-label={t("agents.chat.permissionLabel")}
-								value={permission}
-								onValueChange={(next) =>
-									onPermissionChange(next as LaunchPermissionSelection)
-								}
-								display={launchPermissionLabel(permission)}
-								className={cn(
-									"w-56",
-									permission === "bypass_approvals" && "text-destructive",
-								)}
-								aria-describedby={
-									permission === "bypass_approvals"
-										? `${contentId}-permission-hint`
-										: undefined
-								}
-							>
-								{permissionChoices.map((choice) => (
-									<SelectOption
-										key={choice}
-										value={choice}
-										textValue={launchPermissionLabel(choice)}
-										aria-label={launchPermissionLabel(choice)}
-										aria-describedby={`${contentId}-${choice}`}
-										className={
-											choice === "bypass_approvals" ? "text-destructive" : undefined
-										}
-										description={
-											<span id={`${contentId}-${choice}`}>
-												{launchPermissionDescription(choice)}
-											</span>
-										}
-									>
-										{launchPermissionLabel(choice)}
-									</SelectOption>
-								))}
-							</SelectField>
+							<QuickDispatchField label={t("agents.chat.permissionLabel")}>
+								<SelectField
+									aria-label={t("agents.chat.permissionLabel")}
+									value={permission}
+									onValueChange={(next) =>
+										onPermissionChange(next as LaunchPermissionSelection)
+									}
+									display={launchPermissionLabel(permission)}
+									className={cn(
+										"w-full",
+										permission === "bypass_approvals" && "text-destructive",
+									)}
+									aria-describedby={
+										permission === "bypass_approvals"
+											? `${contentId}-permission-hint`
+											: undefined
+									}
+								>
+									{permissionChoices.map((choice) => (
+										<SelectOption
+											key={choice}
+											value={choice}
+											textValue={launchPermissionLabel(choice)}
+											aria-label={launchPermissionLabel(choice)}
+											aria-describedby={`${contentId}-${choice}`}
+											className={
+												choice === "bypass_approvals" ? "text-destructive" : undefined
+											}
+											description={
+												<span id={`${contentId}-${choice}`}>
+													{launchPermissionDescription(choice)}
+												</span>
+											}
+										>
+											{launchPermissionLabel(choice)}
+										</SelectOption>
+									))}
+								</SelectField>
+							</QuickDispatchField>
 						</div>
 						{permission === "bypass_approvals" && (
 							<p

@@ -64,14 +64,16 @@ export async function dispatchCliPaneActionRequest(
 		return true;
 	}
 
-	const snapshot = paneActionSnapshot(paneId);
+	let snapshot = paneActionSnapshot(paneId);
 	if (!snapshot) {
 		if (!dependencies.isFallbackWindow()) return true;
 		await dependencies.delay(NOT_MOUNTED_GRACE_MS);
-		if (paneActionSnapshot(paneId)) return true;
-		if (!(await dependencies.claim(reqId))) return true;
-		await dependencies.complete(reqId, notMountedPayload(paneId), action);
-		return true;
+		snapshot = paneActionSnapshot(paneId);
+		if (!snapshot) {
+			if (!(await dependencies.claim(reqId))) return true;
+			await dependencies.complete(reqId, notMountedPayload(paneId), action);
+			return true;
+		}
 	}
 
 	if (action === "pane.state") {

@@ -1,5 +1,6 @@
 import { DEFAULT_UI_PREFS, type UiPrefs } from "@/lib/settings/uiPrefs";
 import { normalizeQuickCommands } from "@/lib/workspace/pane/quickCommands";
+import { agentSpawnInteractionPreference } from "@/lib/workspace/pane/interfaceMode";
 import { planUiPrefsUpdate, readUiPrefsSetting } from "./cliSettings";
 
 interface SettingsDependencies {
@@ -15,6 +16,9 @@ function settingsResult(
 	dependencies: SettingsDependencies,
 ): unknown {
 	const prefs = dependencies.getPrefs() ?? DEFAULT_UI_PREFS;
+	if (action === "agent.launch-preference") {
+		return { ok: true, schemaVersion: 1, interactionPreference: agentSpawnInteractionPreference(prefs) ?? null };
+	}
 	if (action === "quick-commands") {
 		const commands = prefs.quickCommands ?? [];
 		if (params.operation === "list") return { ok: true, commands };
@@ -74,7 +78,7 @@ export async function dispatchCliSettingsRequest(
 	dependencies: SettingsDependencies,
 ): Promise<boolean> {
 	if (
-		!["settings.get", "settings.set", "quick-commands"].includes(request.action)
+		!["settings.get", "settings.set", "quick-commands", "agent.launch-preference"].includes(request.action)
 	)
 		return false;
 	if (!(await dependencies.claim(request.reqId))) return true;

@@ -180,6 +180,7 @@ export function AddAgentBody({
     addAgent,
     ensureProjectForPath,
     activeSpaceId,
+    uiPrefs,
   } = useAddAgentBodyState();
   const availableProviders = useAvailableProviders();
 
@@ -430,7 +431,7 @@ export function AddAgentBody({
           )
         : undefined;
       const interactionPreference =
-        agentSpawnInteractionPreference();
+        agentSpawnInteractionPreference(uiPrefs);
       const canonicalPolicy: CanonicalAddAgentRunPolicy = {
         project: launchProject,
         agentName,
