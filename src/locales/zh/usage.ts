@@ -100,7 +100,6 @@ export const usage: Record<string, string> = {
 	"usage.window.fiveHourAllModels": "5 小时 · 所有模型",
 	"usage.window.weekly": "每周",
 	"usage.window.weeklyAllModels": "每周 · 所有模型",
-	"usage.window.weeklyOpus": "每周 · Opus",
 	"usage.credits.remaining": "工作区积分：{balance}",
 	"usage.credits.unlimited": "工作区积分无限制",
 	"usage.credits.unavailable": "无法获取工作区积分",

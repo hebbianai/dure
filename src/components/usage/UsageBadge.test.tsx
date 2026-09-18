@@ -469,9 +469,12 @@ describe("UsageBadge", () => {
 		expect(popover).not.toBeNull();
 		const view = within(popover as HTMLElement);
 		expect(view.getByText("주간 · 전체 모델")).toBeTruthy();
-		expect(view.getByText("주간 · Opus").parentElement?.textContent).toContain(
-			"—",
+		// statusLine은 모델별 주간 창을 주지 않는다 — 값 없는 자리표시 행을 그리지 않는다.
+		const limitRows = (popover as HTMLElement).querySelectorAll(
+			'[data-slot="usage-popover-limit"]',
 		);
+		expect(limitRows).toHaveLength(1);
+		expect(limitRows[0]?.textContent).not.toContain("—");
 		expect(view.getByText(/에 재설정/)).toBeTruthy();
 		expect(view.getByText("42%", { exact: false })).toBeTruthy();
 		expect(view.getByText("입력 · 출력 · 캐시 쓰기")).toBeTruthy();

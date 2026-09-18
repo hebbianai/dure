@@ -114,12 +114,6 @@ export function ClaudeUsagePopover({
 			pct: claude.usedPercentWeekly,
 			reset: weeklyReset,
 		});
-		limits.push({
-			id: "claude-weekly-opus",
-			label: t("usage.window.weeklyOpus"),
-			value: "—",
-			pct: null,
-		});
 	}
 	const metrics =
 		limits.length === 0
