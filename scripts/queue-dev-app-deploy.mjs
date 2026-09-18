@@ -95,7 +95,7 @@ const MAX_CHILD_OUTPUT_BYTES = 1024 * 1024;
 const DEFAULT_DEV_PORT = 1420;
 const USAGE = `Usage:
   pnpm app:dev:deploy --live-worktree <path> [--force] [--target-commit <full-sha>] [--adopt-integrated-target] [--json]
-  pnpm app:dev:deploy --live-worktree <path> --retire-preserved-live-head \\
+  pnpm app:dev:deploy --live-worktree <path> [--target-commit <full-sha>] --retire-preserved-live-head \\
     --retire-reason <text> --retire-evidence <text> --retire-wip-ref <ref> [--json]
   pnpm app:dev:deploy:status [--json]
   pnpm app:dev:deploy:resume [--json]

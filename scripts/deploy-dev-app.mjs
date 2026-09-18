@@ -78,6 +78,7 @@ import {
   isHeadTransitionArgument,
   resolveHeadTransitionRequest,
   resolveTargetCommitRequest,
+  supportsExactTargetTransition,
 } from "./lib/dev-deploy-head-transition-options.mjs";
 import { resolveDevDeployServerProfile } from "./lib/dev-server-profile.mjs";
 import {
@@ -420,7 +421,7 @@ function assertExactLocalFastForwardBoundary(root, currentHead, targetHead) {
   }
 }
 
-function assertExactLocalFastForwardResult(root, targetHead) {
+function assertExactLocalTargetResult(root, targetHead) {
   if (git(root, ["rev-parse", "HEAD"]) !== targetHead) {
     throw new Error("exact local deploy did not reach the requested commit");
   }
@@ -454,7 +455,7 @@ function deployTarget(transaction, requestedTargetCommit, headTransition) {
     }
     if (
       transaction.targetAuthority === "exact-local-candidate" &&
-      headTransition
+      !supportsExactTargetTransition(headTransition)
     ) {
       throw new Error(
         "exact-local queued deploy transaction cannot use a head transition",
@@ -1197,7 +1198,7 @@ async function deploy(options) {
     // The ordinary path stays fast-forward only. Every exceptional divergent
     // transition uses the same durable retained-head state machine and adds its
     // own proof before the shared boundary.
-    if (targetAuthority === "exact-local-candidate") {
+    if (targetAuthority === "exact-local-candidate" && !transitionPlan) {
       assertExactLocalFastForwardBoundary(root, observedHead, targetHead);
     }
     const sourceMutationStartedAtMs = Date.now();
@@ -1205,7 +1206,7 @@ async function deploy(options) {
       ? executeHeadTransition(transitionPlan)
       : (git(root, ["merge", "--ff-only", "--quiet", targetHead]), undefined);
     if (targetAuthority === "exact-local-candidate") {
-      assertExactLocalFastForwardResult(root, targetHead);
+      assertExactLocalTargetResult(root, targetHead);
     }
     options.attemptRecorder?.recordTargetApplied(targetHead);
     const deployedAtMs = Date.now();

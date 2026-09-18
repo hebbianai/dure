@@ -1111,7 +1111,8 @@ beforeEach(() => {
   git(upstream, ["commit", "--quiet", "-m", "base"]);
 
   const live = join(workspace, "live");
-  execFileSync("git", ["clone", "--quiet", upstream, live], {
+  // Git transport tolerates auto-maintenance repacking the source during clone.
+  execFileSync("git", ["clone", "--no-local", "--quiet", upstream, live], {
     env: fixtureEnvironment,
   });
   git(live, ["checkout", "--quiet", "-B", "main", "origin/main"]);
@@ -1723,6 +1724,39 @@ describe("deploy-dev-app", () => {
     );
   });
 
+  it("deploys an exact unrelated source while preserving the old checkout and upstream", () => {
+    const { checkpoint, currentHead, live } = createConflictingRetirement();
+    const upstream = join(workspace, "upstream");
+    const reviewed = join(workspace, "reviewed-source");
+    git(live, ["clone", "--no-local", "--quiet", upstream, reviewed]);
+    git(reviewed, ["checkout", "--quiet", "--orphan", "reviewed"]);
+    const targetHead = commit(reviewed, "reviewed independent source");
+    git(live, ["fetch", "--quiet", reviewed, "reviewed"]);
+    const originHead = git(live, ["rev-parse", "origin/main"]);
+    const originUrl = git(live, ["remote", "get-url", "origin"]);
+    const other = join(workspace, "other-task");
+    git(live, ["worktree", "add", "--quiet", "-b", "other-task", other, currentHead]);
+    writeFileSync(join(other, "file.txt"), "other task WIP\n");
+    expect(() => git(live, ["merge-base", currentHead, targetHead])).toThrow();
+
+    const result = run([...retireArguments(live, checkpoint), "--target-commit", targetHead]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      action: "deploy", targetHead, targetAuthority: "exact-local-candidate",
+      headTransition: "retire-preserved-live-head", previousHead: currentHead,
+      wipCheckpoint: { object: checkpoint.object, base: currentHead },
+    });
+    expect(git(live, ["rev-parse", "HEAD"])).toBe(targetHead);
+    expect(git(live, ["rev-parse", retainedRefFor(live, currentHead)])).toBe(currentHead);
+    expect(git(live, ["rev-parse", checkpoint.ref])).toBe(checkpoint.object);
+    expect(git(live, ["rev-parse", "origin/main"])).toBe(originHead);
+    expect(git(live, ["remote", "get-url", "origin"])).toBe(originUrl);
+    expect(git(other, ["rev-parse", "HEAD"])).toBe(currentHead);
+    expect(readFileSync(join(other, "file.txt"), "utf8")).toBe("other task WIP\n");
+    expect(git(live, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
+  });
+
   it("retires a conflicting live head only after preserving its exact WIP checkpoint", () => {
     const { checkpoint, currentHead, live, targetHead } =
       createConflictingRetirement();
@@ -1820,7 +1854,7 @@ describe("deploy-dev-app", () => {
   it("rejects a WIP checkpoint owned by another worktree", () => {
     const { checkpoint, currentHead, live } = createConflictingRetirement();
     const other = join(workspace, "other");
-    execFileSync("git", ["clone", "--quiet", join(workspace, "upstream"), other], {
+    execFileSync("git", ["clone", "--no-local", "--quiet", join(workspace, "upstream"), other], {
       env: fixtureEnvironment,
     });
     writeFileSync(join(other, "other-wip.txt"), "other WIP\n");

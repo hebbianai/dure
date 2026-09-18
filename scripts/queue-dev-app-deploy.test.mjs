@@ -802,7 +802,8 @@ beforeEach(() => {
   git(upstream, ["add", "."]);
   git(upstream, ["commit", "--quiet", "-m", "deploy executor baseline"]);
   const live = join(workspace, "live");
-  execFileSync("git", ["clone", "--quiet", upstream, live], {
+  // Git transport tolerates auto-maintenance repacking the source during clone.
+  execFileSync("git", ["clone", "--no-local", "--quiet", upstream, live], {
     env: fixtureEnvironment,
   });
   git(live, ["checkout", "--quiet", "-B", "main", "origin/main"]);
@@ -895,7 +896,7 @@ ${readFileSync(sourcePath, "utf8").replace(/^#![^\n]*\n/, "")}`, "record queued 
     const liveRoot = realpathSync(live);
     const other = join(workspace, "other");
     const upstream = join(workspace, "upstream");
-    execFileSync("git", ["clone", "--quiet", upstream, other], {
+    execFileSync("git", ["clone", "--no-local", "--quiet", upstream, other], {
       env: fixtureEnvironment,
     });
     const identity = processIdentity(process.pid);
@@ -2400,7 +2401,7 @@ syncBuiltinESMExports();
     const live = join(workspace, "live");
     const other = join(workspace, "other");
     commit(upstream, "one");
-    execFileSync("git", ["clone", "--quiet", upstream, other], {
+    execFileSync("git", ["clone", "--no-local", "--quiet", upstream, other], {
       env: fixtureEnvironment,
     });
     git(other, ["reset", "--hard", "HEAD~1"]);
@@ -3536,6 +3537,53 @@ syncBuiltinESMExports();
       lastSuccessfulDeployment: { sourceHead: targetHead },
     });
     expect(git(live, ["rev-parse", "HEAD"])).toBe(targetHead);
+  });
+
+  it("replays an exact unrelated source through the preserved-head coordinator", () => {
+    const upstream = join(workspace, "upstream");
+    const live = join(workspace, "live");
+    const currentHead = commit(live, "retained source");
+    startOwnedDevLaunchFixture(live);
+    writeFileSync(join(live, "preserved-wip.txt"), "preserved WIP\n");
+    const checkpoint = checkpointWorktree(live);
+    const reviewed = join(workspace, "reviewed-source");
+    git(live, ["clone", "--no-local", "--quiet", upstream, reviewed]);
+    git(reviewed, ["checkout", "--quiet", "--orphan", "reviewed"]);
+    const targetHead = commit(reviewed, "reviewed independent source");
+    git(live, ["fetch", "--quiet", reviewed, "reviewed"]);
+    const originHead = git(live, ["rev-parse", "origin/main"]);
+    const originUrl = git(live, ["remote", "get-url", "origin"]);
+    const deployLock = join(home, ".dure", "dev-deploy.lock");
+    writeFileSync(deployLock, `${process.pid}\n`);
+    const reason = "adopt reviewed independent source";
+    const evidence = "preserved original source and WIP";
+    const queued = run([
+      "--live-worktree", live, "--json", "--force", "--target-commit", targetHead,
+      "--retire-preserved-live-head", "--retire-reason", reason,
+      "--retire-evidence", evidence, "--retire-wip-ref", checkpoint.ref, "--no-verify",
+    ]);
+    expect(queued.status, queued.stderr).toBe(0);
+    expect(readState()).toMatchObject({ status: "pending", request: { transaction: {
+      targetHead, targetAuthority: "exact-local-candidate",
+    } } });
+    expect(git(live, ["rev-parse", "HEAD"])).toBe(currentHead);
+    commit(upstream, "unselected upstream moved after admission");
+    unlinkSync(deployLock);
+
+    const runner = run(["--internal-runner", "--once"]);
+
+    expect(runner.status, runner.stderr).toBe(0);
+    expect(readState()).toMatchObject({ status: "succeeded", lastAttempt: { receipt: {
+      targetHead, targetAuthority: "exact-local-candidate", previousHead: currentHead,
+      headTransition: "retire-preserved-live-head", headTransitionReason: reason,
+      headTransitionEvidence: evidence, wipCheckpoint: { object: checkpoint.object },
+    } }, lastSuccessfulDeployment: { sourceHead: targetHead } });
+    const retained = readState().lastAttempt.receipt.retainedRef;
+    expect(git(live, ["rev-parse", retained])).toBe(currentHead);
+    expect(git(live, ["rev-parse", "HEAD"])).toBe(targetHead);
+    expect(git(live, ["rev-parse", checkpoint.ref])).toBe(checkpoint.object);
+    expect(git(live, ["rev-parse", "origin/main"])).toBe(originHead);
+    expect(git(live, ["remote", "get-url", "origin"])).toBe(originUrl);
   });
 
   it("persists and replays every preserved-head retirement identity with the 1437 profile", () => {

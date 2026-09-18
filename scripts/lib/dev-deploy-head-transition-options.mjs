@@ -99,6 +99,11 @@ export function resolveHeadTransitionRequest(args) {
   };
 }
 
+export function supportsExactTargetTransition(transition) {
+  return transition === undefined ||
+    transition.mode === HEAD_TRANSITION_MODE.RETIRE_PRESERVED_HEAD;
+}
+
 export function resolveTargetCommitRequest(args, headTransition) {
   let targetCommit;
   for (let index = 0; index < args.length; index += 1) {
@@ -123,7 +128,7 @@ export function resolveTargetCommitRequest(args, headTransition) {
     headTransition === undefined
       ? resolveHeadTransitionRequest(args)
       : headTransition;
-  if (transition) {
+  if (!supportsExactTargetTransition(transition)) {
     throw new Error(
       "--target-commit cannot be combined with a head transition mode",
     );
