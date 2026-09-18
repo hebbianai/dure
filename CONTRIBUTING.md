@@ -10,10 +10,37 @@ Dure's first-party source, including Hmux, is available under
 [GNU GPL version 3 only (GPL-3.0-only)](LICENSE). Third-party components keep
 their existing licenses and copyright notices.
 
-Install Git, the Node version in [.node-version](.node-version), and
-[rustup](https://rustup.rs/).
-[package.json](package.json) pins pnpm, and
-[rust-toolchain.toml](rust-toolchain.toml) pins Rust and its required targets.
+## Development installation
+
+Start with Git, the exact Node version in [.node-version](.node-version), and
+[rustup](https://rustup.rs/). Use the host prerequisites in the
+[platform sections below](#platforms) before launching a native app.
+[package.json](package.json) pins pnpm; Corepack selects that version.
+[rust-toolchain.toml](rust-toolchain.toml) pins Rust, components and targets.
+An initial setup needs network access to download packages and native build inputs.
+
+Clone the public repository, or substitute your fork's URL if you plan to open a
+pull request. Run the remaining commands from the repository root:
+
+```sh
+git clone https://github.com/hebbianai/dure.git
+cd dure
+corepack enable
+pnpm install --frozen-lockfile
+pnpm hooks:install
+rustup show active-toolchain
+```
+
+If `corepack` is unavailable, install it with `npm install --global corepack`,
+then retry `corepack enable`; see the
+[Corepack installation guide](https://github.com/nodejs/corepack#how-to-install).
+Check `node --version` against `.node-version` and `pnpm --version` against
+`packageManager` in `package.json`. Run Rust commands inside this checkout so
+rustup uses its pinned toolchain.
+
+On an Apple Silicon Mac, continue with [running the development app](#run-the-development-app).
+For a standalone `.app`, follow [building and installing a local app](#build-and-install-a-local-app).
+Windows/Linux and mobile setup are described in their platform sections.
 
 ## Platforms
 
@@ -26,27 +53,48 @@ client. Shared runtime and protocol changes can affect several platforms.
 | macOS, Apple Silicon | `pnpm app:dev`, `pnpm build:app` | Anonymous source app build and isolated background native smoke verified. Official desktop download available. |
 | Windows, x86_64 MSVC | `pnpm app:windows:doctor`, `pnpm app:windows:verify`, `pnpm app:windows:build` | Desktop source and NSIS packaging configuration included. Native desktop acceptance and a public installer remain separate from shared-code CI. |
 | Linux, x86_64 | `pnpm app:linux:doctor`, `pnpm app:linux:verify`, `pnpm app:linux:build` | Desktop source and Debian/AppImage packaging configuration included. Linux script/frontend CI does not establish desktop runtime acceptance. |
-| iOS | `pnpm --dir mobile ios:dev` | Mobile source and Xcode project included. Web tests and shared protocol checks run in CI; device builds, signing and distribution require their own verification. |
+| iOS | `pnpm --dir mobile tauri ios dev` | Mobile source and Xcode project included. Web tests and shared protocol checks run in CI; device builds, signing and distribution require their own verification. |
 | Android | `pnpm --dir mobile android:dev` | Mobile source and Gradle project included. Web tests and shared protocol checks run in CI; emulator/device builds and distribution require their own verification. |
 
 ### macOS desktop
 
-Install Xcode Command Line Tools. Use an official Node macOS binary for app
-packaging; the bundled executable must depend only on macOS system libraries.
-Clone your fork, then run these commands from its root:
+The current automatic native bootstrap and `build:app` support Apple Silicon.
+Install Xcode Command Line Tools and finish its installer before continuing:
 
 ```sh
-corepack enable
-pnpm install --frozen-lockfile
+xcode-select --install
+```
+
+Use the [official Node macOS binary](https://nodejs.org/download/release/)
+matching `.node-version` for app packaging; the bundled executable must depend
+only on macOS system libraries. Complete the [shared setup](#development-installation).
+Install and sign in to a supported coding-agent CLI to use agents in the app;
+provider accounts and subscriptions are your own.
+
+#### Run the development app
+
+From the repository root:
+
+```sh
 pnpm app:dev
 ```
 
-The development launcher starts an independent supervisor and prints its log
-path. Each checkout gets a development app channel. Development channels share
-ordinary Dure application data; use disposable data and discovery roots for
-automated runtime QA.
+The launcher prepares the development Hmux runtime and Dure CLI, starts the
+frontend and native app, and prints its log path after readiness. The first
+launch compiles native components and can take longer than later launches.
+There is no separate global Hmux or Dure CLI installation step for this workflow.
+Use the full launcher for desktop development; `pnpm dev` starts the frontend
+preparation/server and does not launch the native app by itself.
 
-To package a local app, commit your changes on your topic branch and run:
+Each checkout gets a development app channel. The supervisor continues running
+independently of the launching terminal, so closing that terminal does not stop
+it. Development channels share ordinary Dure application data; use disposable
+data and discovery roots for automated runtime QA.
+
+#### Build and install a local app
+
+Commit your changes on your topic branch, check that the tracked tree is clean
+with `git status --short`, then run:
 
 ```sh
 pnpm build:app
@@ -56,9 +104,24 @@ Packaging requires a clean tracked source tree. The command builds the frontend,
 Hmux, remote helpers, CLI and native app. It writes
 `src-tauri/target/release/bundle/macos/Dure.app` without publisher signing,
 notarization or updater artifacts. It does not install or launch the app.
-Use [official downloads](https://www.dureai.dev/download/mac/) for the distributed
-build. Rebuilding from source does not require signing keys or GitHub credentials;
-the pinned native inputs are downloaded from a public release and verified.
+After a successful build, open it in place:
+
+```sh
+open src-tauri/target/release/bundle/macos/Dure.app
+```
+
+For a Finder installation, reveal the result with
+`open -R src-tauri/target/release/bundle/macos/Dure.app`, then copy it into
+`~/Applications` or `/Applications`. Check any replacement prompt if you already
+have Dure installed. This packaged app uses Dure's normal application identity
+and data; changing its filename does not create a separate development channel.
+Use macOS's per-app approval if it asks to allow your local build, as described in
+[the installation guide](https://docs.dureai.dev/en/install).
+
+Rebuilding from source does not require publisher signing keys or GitHub
+credentials; the pinned native inputs are downloaded from a public release and
+verified. [Official downloads](https://www.dureai.dev/download/mac/) are available
+for users who want the distributed build.
 
 The build checks free disk space and concurrent reservations before it starts.
 The current local full-build requirement is 110 GiB free, plus other active build
@@ -69,6 +132,15 @@ instead of bypassing admission. The build budgets are defined in
 For frontend-only work, `pnpm build:frontend` builds the web UI. It does not
 produce the native desktop app.
 
+#### CLI during development
+
+The macOS development launcher prepares a CLI for its own channel. Terminals
+opened in that app receive the channel's tool paths. Use `dure --help` there, or
+`node cli/dure.mjs --help` from the repository root to inspect source CLI usage.
+See [cli/README.md](cli/README.md) for installation and bundle details. The
+separate `pnpm dure:install` command installs the CLI; it does not install the
+GUI and is not required before `pnpm app:dev`.
+
 ### Windows and Linux desktop
 
 Install the [Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/)
@@ -77,14 +149,34 @@ also expects Git Bash and the x86_64 MSVC Rust host. Linux requires the GTK,
 WebKitGTK and other packages checked by
 [linux-desktop-doctor.sh](scripts/qa/linux-desktop-doctor.sh).
 
-Run `corepack enable` and `pnpm install --frozen-lockfile`, then the matching
-`app:windows:doctor` or `app:linux:doctor` command before its verify/build commands.
-These entrypoints target native hosts. The pinned Ghostty proof builder currently
+Complete the [shared setup](#development-installation), then run the doctor
+for your native host:
+
+```sh
+# Windows x86_64, with MSVC and Git Bash available on PATH
+pnpm app:windows:doctor
+```
+
+```sh
+# Linux x86_64
+pnpm app:linux:doctor
+```
+
+The Linux doctor prints the missing commands/packages and its Ubuntu install
+command. A successful doctor verifies host prerequisites, not the complete
+native artifact supply. The pinned Ghostty proof builder currently
 requires a macOS ARM64 build host; a cold Windows/Linux desktop build needs the
 matching prepared proof. Windows packaging also consumes prepared Linux remote
 checkout helpers. Preserve the artifact receipts and digest checks when supplying
-these inputs. The source entrypoints do not yet constitute a verified standalone
-Windows/Linux bootstrap; report missing prerequisites with the target and commit.
+these inputs. Once those inputs are prepared, run the matching
+`pnpm app:windows:verify` / `pnpm app:windows:build` or
+`pnpm app:linux:verify` / `pnpm app:linux:build` commands. The build commands create
+NSIS or Debian/AppImage packages respectively; they do not install them.
+
+The source entrypoints do not yet constitute a verified standalone Windows/Linux
+bootstrap; report missing prerequisites with the target and commit. Use the
+[public source checks](#checks-and-review) for frontend and shared-code contributions
+that do not require a native desktop build.
 
 ### iOS and Android
 
@@ -99,11 +191,30 @@ pnpm verify:push:mobile-web
 This checks mobile lint, tests and its web build. For native development, follow
 [Tauri's mobile prerequisites](https://v2.tauri.app/start/prerequisites/#configure-for-mobile-targets):
 iOS needs macOS with full Xcode; Android needs its SDK/NDK and Java toolchain.
-Use your own signing/provisioning configuration. `pnpm --dir mobile ios:dev`
-selects a connected physical iPhone; `pnpm --dir mobile tauri ios dev` is the
-Tauri device/simulator entrypoint. `pnpm --dir mobile android:dev` is the Android
-entrypoint. Native projects already exist under `mobile/src-tauri/gen/`; review
-generated-project changes before committing them.
+Use your own signing/provisioning configuration. The checked-in iOS project
+contains the Dure bundle ID and team; for a fork, configure your own identifier
+and development team in Tauri and the native project. Select one native workflow:
+
+```sh
+# iOS device/simulator development through Tauri (macOS + Xcode)
+pnpm --dir mobile tauri ios dev
+```
+
+```sh
+# Android emulator or connected device (Android SDK/NDK + Java)
+pnpm --dir mobile android:dev
+```
+
+The separate `pnpm --dir mobile ios:dev` wrapper builds a debug archive, verifies
+its push-signing configuration, installs it on a physical iPhone and launches it.
+It currently requires Dure's fixed `dev.hebbian.ide.mobile` App ID and a matching
+APNs provisioning profile, as checked by
+[ios-push-signing.mjs](scripts/ios-push-signing.mjs). It is intended for maintainers
+with that provisioning; use the Tauri entrypoint above for a fork's configuration.
+With multiple iPhones connected, maintainers can select one with
+`pnpm --dir mobile ios:dev 'My iPhone'`.
+Native projects already exist under `mobile/src-tauri/gen/`; review generated
+project and signing changes before committing them.
 
 For mobile Rust changes, use `pnpm verify:push:mobile-rust` on a suitably
 provisioned host and run the relevant device/simulator smoke. Include the device,

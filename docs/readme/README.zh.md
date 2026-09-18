@@ -116,6 +116,20 @@ dure ls
 
 </details>
 
+### 从源码搭建开发环境
+
+在 Apple Silicon Mac 上安装 Git、Xcode Command Line Tools、[仓库指定的 Node 版本](../../.node-version)和 [rustup](https://rustup.rs/)，然后运行：
+
+```sh
+git clone https://github.com/hebbianai/dure.git
+cd dure
+corepack enable
+pnpm install --frozen-lockfile
+pnpm app:dev
+```
+
+这些命令会准备开发用运行时和 CLI，并启动应用。首次原生构建可能需要一些时间。本地 `.app` 安装、工具配置以及 Windows/Linux/iOS/Android 的步骤见[开发环境安装指南](../../CONTRIBUTING.md#development-installation)。
+
 ## 开源范围
 
 Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).

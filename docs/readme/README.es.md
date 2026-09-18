@@ -118,6 +118,20 @@ Para compilar desde el código y consultar la cobertura de verificación, ve a l
 
 </details>
 
+### Instalación para desarrollar desde el código
+
+En un Mac con Apple Silicon, instala Git, Xcode Command Line Tools, la [versión fijada de Node](../../.node-version) y [rustup](https://rustup.rs/). Después ejecuta:
+
+```sh
+git clone https://github.com/hebbianai/dure.git
+cd dure
+corepack enable
+pnpm install --frozen-lockfile
+pnpm app:dev
+```
+
+Esto prepara el entorno de ejecución y la CLI e inicia la aplicación de desarrollo. La primera compilación nativa puede tardar. Consulta la [guía de instalación para desarrollo](../../CONTRIBUTING.md#development-installation) para instalar la `.app` local, configurar las herramientas y trabajar en Windows/Linux/iOS/Android.
+
 ## Alcance del código abierto
 
 Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).
