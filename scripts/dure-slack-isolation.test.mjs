@@ -68,7 +68,8 @@ async function connector(t, { stalledShare = false } = {}) {
     async fetchApi(url, options) {
       if (url.endsWith("/auth.test")) return Response.json({ ok: true, team_id: "T1", bot_id: "B1", user_id: "U0" });
       if (url.endsWith("/apps.connections.open")) return Response.json({ ok: true, url: "wss://wss.slack.com/fixture" });
-      if (url.endsWith("/conversations.history") && stalledShare) {
+      if (new URL(url).pathname === "/api/conversations.history" && stalledShare) {
+        assert.equal(options.method, "GET");
         entered.resolve(); await held.promise;
         return Response.json({ ok: true, messages: [{ ts: "200.001", user: "U0", metadata: { event_type: "dure_delivery", event_payload: { key: slackKey("T1", "share-1") } } }] });
       }
