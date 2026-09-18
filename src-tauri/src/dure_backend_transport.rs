@@ -39,7 +39,7 @@ const BACKEND_ERROR_KIND: &str = "dure.backend.error";
 const PERSISTENT_CAPABILITY: &str = "backend.connection.persistent";
 const DURE_CONTROL_PLANE_GATEWAY: &str = "~/.local/bin/dure-control-plane";
 const SSH_GATEWAY_CAPABILITY: &str = "backend.transport.ssh_gateway";
-const SUBSCRIBE_CAPABILITY: &str = "agent_conversation.subscribe.v5";
+const SUBSCRIBE_CAPABILITY: &str = "agent_conversation.subscribe.v6";
 const MAX_CATALOG_BYTES: u64 = 64 * 1024;
 const MAX_PROFILES: usize = 32;
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
@@ -1934,9 +1934,9 @@ mod tests {
         }
         assert_eq!(
             operation_capability("agent_conversation.read"),
-            Some("agent_conversation.read.v5")
+            Some("agent_conversation.read.v6")
         );
-        assert_eq!(SUBSCRIBE_CAPABILITY, "agent_conversation.subscribe.v5");
+        assert_eq!(SUBSCRIBE_CAPABILITY, "agent_conversation.subscribe.v6");
         assert_eq!(operation_capability("agent_conversation.create"), None);
         assert_eq!(operation_capability("agent_conversation.subscribe"), None);
         assert_eq!(operation_capability("claude_conversation.launch"), None);
@@ -2021,7 +2021,7 @@ mod tests {
                 "capabilities": [
                     "backend.connection.persistent",
                     "client_view.authority.read",
-                    "agent_conversation.read.v5",
+                    "agent_conversation.read.v6",
                     "agent_runtime.transition",
                     "dispatch.stop.status"
                 ]
@@ -2106,7 +2106,7 @@ mod tests {
                     "capabilities": [
                         "backend.connection.persistent",
                         "client_view.authority.read",
-                        "agent_conversation.read.v5",
+                        "agent_conversation.read.v6",
                         "agent_runtime.transition",
                         "dispatch.stop.status"
                     ],
