@@ -17,6 +17,10 @@ import {
 	observationAfterReportedLimit,
 	type UsageLimitHandoffDecision,
 } from "@/lib/agents/usageLimitHandoffPolicy";
+import {
+	type UsageLimitHandoffOutcome,
+	usageLimitHandoffState,
+} from "@/lib/agents/usageLimitHandoffState";
 import { usageRecent } from "@/lib/ipc";
 import { accountUsageObservations } from "@/lib/usage/accountUsageObservations";
 import type { AccountProfile, Provider } from "@/types";
@@ -33,59 +37,21 @@ const CREDENTIAL_REASONS: ReadonlySet<TurnFailureReason> = new Set([
 	"authentication_failed",
 ]);
 
-/** Once per failed-turn episode, across remounts, duplicate mounts, and the
- * history replay a successful handoff performs into its new session (which
- * re-emits the same failure with the same provider timestamp under a new
- * row id). Keyed by agent, valued by the newest failure already acted on. */
-const handledFailureAtMs = new Map<string, number>();
-
-interface UsageLimitHandoffOutcome {
-	readonly fromName?: string;
-	readonly toName: string;
-	readonly resume?: UsageLimitResumeResult;
-}
-
-/** What the last performed handoff did, keyed by agent, so the pane can say
- * "moved from X to Y" after the new session replays the failed turn. */
-const handoffOutcomes = new Map<string, UsageLimitHandoffOutcome>();
-const listeners = new Set<() => void>();
-let revision = 0;
-function publishHandoff() {
-	revision += 1;
-	for (const listener of listeners) listener();
-}
-function subscribeHandoff(listener: () => void) {
-	listeners.add(listener);
-	return () => {
-		listeners.delete(listener);
-	};
-}
-const handoffRevision = () => revision;
-
 /** Accounts the provider itself reported at their limit, keyed
  * `<provider>:<credentialId>`, valued by when. Outranks an older poll so a
  * pane never hops back onto the account it just left. */
 const reportedLimitAtSec = new Map<string, number>();
-
-function markHandled(agentId: string, failure: LatestTurnFailure): boolean {
-	const handled = handledFailureAtMs.get(agentId);
-	if (handled !== undefined && handled >= failure.createdAtMs) return false;
-	handledFailureAtMs.set(agentId, failure.createdAtMs);
-	handoffOutcomes.delete(agentId);
-	publishHandoff();
-	return true;
-}
-
-function episodeHandled(agentId: string, failure: LatestTurnFailure): boolean {
-	const handled = handledFailureAtMs.get(agentId);
-	return handled !== undefined && handled >= failure.createdAtMs;
-}
 
 export type UsageLimitHandoffView =
 	| { readonly kind: "none" }
 	/** This episode was already acted on (here or in a previous mount of
 	 * the pane): no recovery action is left; `outcome` says what was done. */
 	| { readonly kind: "handled"; readonly outcome?: UsageLimitHandoffOutcome }
+	| {
+			readonly kind: "failed";
+			readonly error: string;
+			readonly decision?: UsageLimitHandoffDecision;
+	  }
 	| { readonly kind: "deciding" }
 	| { readonly kind: "decided"; readonly decision: UsageLimitHandoffDecision };
 
@@ -127,7 +93,11 @@ export function useUsageLimitHandoff({
 	readonly view: UsageLimitHandoffView;
 	readonly requestHandoff: () => Promise<void>;
 } {
-	useSyncExternalStore(subscribeHandoff, handoffRevision, handoffRevision);
+	useSyncExternalStore(
+		usageLimitHandoffState.subscribe,
+		usageLimitHandoffState.revision,
+		usageLimitHandoffState.revision,
+	);
 	const [decision, setDecision] = useState<UsageLimitHandoffDecision>();
 	const mountedAtMs = useRef(Date.now());
 	const switchRef = useRef(performAccountSwitch);
@@ -140,9 +110,10 @@ export function useUsageLimitHandoff({
 	failureRef.current = failure;
 	const credentialFailure =
 		failure && CREDENTIAL_REASONS.has(failure.reason) ? failure : undefined;
-	const handled =
-		credentialFailure !== undefined &&
-		episodeHandled(agentId, credentialFailure);
+	const episode = credentialFailure
+		? usageLimitHandoffState.read(agentId, credentialFailure.createdAtMs)
+		: undefined;
+	const handled = episode !== undefined && episode.result.kind !== "failed";
 	const failureItemId = handled ? undefined : credentialFailure?.itemId;
 	const failureReason = credentialFailure?.reason;
 	const failureCreatedAtMs = credentialFailure?.createdAtMs;
@@ -201,11 +172,16 @@ export function useUsageLimitHandoff({
 					accountMovesLocked ||
 					!latest ||
 					!AUTOMATIC_REASONS.has(latest.reason) ||
-					latest.createdAtMs < mountedAtMs.current ||
-					!markHandled(agentId, latest)
+					latest.createdAtMs < mountedAtMs.current
 				) {
 					return;
 				}
+				const attempt = usageLimitHandoffState.begin(
+					agentId,
+					latest.createdAtMs,
+					"automatic",
+				);
+				if (!attempt) return;
 				void switchRef
 					.current(next.targetCredentialId)
 					.then(async (result) => {
@@ -218,15 +194,23 @@ export function useUsageLimitHandoff({
 						// attempt settles. A lost receipt never starts a second turn.
 						try {
 							const resume = await resumeRef.current(latest, result);
-							handoffOutcomes.set(agentId, { ...outcome, resume });
+							usageLimitHandoffState.settle(attempt, {
+								kind: "completed",
+								outcome: { ...outcome, resume },
+							});
 						} catch {
-							handoffOutcomes.set(agentId, outcome);
-						} finally {
-							publishHandoff();
+							usageLimitHandoffState.settle(attempt, {
+								kind: "completed",
+								outcome,
+							});
 						}
 					})
-					.catch(() => {})
-					.finally(() => setDecision(undefined));
+					.catch((error: unknown) => {
+						usageLimitHandoffState.settle(attempt, {
+							kind: "failed",
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
 			})
 			.catch(() => {
 				if (current) setDecision(undefined);
@@ -254,30 +238,48 @@ export function useUsageLimitHandoff({
 			);
 		}
 		const latest = failureRef.current;
-		if (latest && episodeHandled(agentId, latest)) {
+		if (!latest) throw new Error("handoff_undecided");
+		const attempt = usageLimitHandoffState.begin(
+			agentId,
+			latest.createdAtMs,
+			"requested",
+		);
+		if (!attempt) {
 			throw new Error("handoff_already_performed");
 		}
-		if (latest) markHandled(agentId, latest);
 		const fromName = poolRef.current.find(
 			(account) => account.id === currentCredentialId,
 		)?.name;
-		const result = await switchRef.current(decision.targetCredentialId);
-		if (result.kind === "completed")
-			handoffOutcomes.set(agentId, {
-				...(fromName !== undefined ? { fromName } : {}),
-				toName: decision.targetName,
+		try {
+			const result = await switchRef.current(decision.targetCredentialId);
+			if (result.kind === "completed")
+				usageLimitHandoffState.settle(attempt, {
+					kind: "completed",
+					outcome: {
+						...(fromName !== undefined ? { fromName } : {}),
+						toName: decision.targetName,
+					},
+				});
+			setDecision(undefined);
+		} catch (error) {
+			usageLimitHandoffState.settle(attempt, {
+				kind: "failed",
+				error: error instanceof Error ? error.message : String(error),
 			});
-		publishHandoff();
-		setDecision(undefined);
+			throw error;
+		}
 	}, [agentId, currentCredentialId, decision]);
 
-	const outcome = handoffOutcomes.get(agentId);
+	const outcome =
+		episode?.result.kind === "completed" ? episode.result.outcome : undefined;
 	const view: UsageLimitHandoffView = !credentialFailure
 		? { kind: "none" }
-		: handled
-			? { kind: "handled", ...(outcome ? { outcome } : {}) }
-			: decision
-				? { kind: "decided", decision }
-				: { kind: "deciding" };
+		: episode?.result.kind === "failed"
+			? { kind: "failed", error: episode.result.error, decision }
+			: handled
+				? { kind: "handled", ...(outcome ? { outcome } : {}) }
+				: decision
+					? { kind: "decided", decision }
+					: { kind: "deciding" };
 	return { view, requestHandoff };
 }
