@@ -7,6 +7,7 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import { DureTagPane } from "./DureTagPane";
@@ -18,15 +19,20 @@ vi.mock("@/lib/agents/chat/sharedAgentConversation", () => ({
 vi.mock("@/components/agents/chat/SharedAgentConversation", () => ({
 	SharedAgentConversation: ({
 		target,
+		header,
 	}: {
 		target: { agentId: string; authority: DureBackendRouteAuthorityV1 };
+		header?: ReactNode;
 	}) => (
-		<div
-			data-testid="tag-conversation"
-			data-generation={target.authority.backend.generation}
-		>
-			{target.agentId}
-		</div>
+		<>
+			{header}
+			<div
+				data-testid="tag-conversation"
+				data-generation={target.authority.backend.generation}
+			>
+				{target.agentId}
+			</div>
+		</>
 	),
 }));
 vi.mock("@/components/plugins/useSlackTeamConnection", () => ({
