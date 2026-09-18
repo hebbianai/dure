@@ -1,7 +1,7 @@
 import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredentialTransition";
 import {
-	latestTurnFailure,
 	type LatestTurnFailure,
+	latestTurnFailure,
 } from "@/lib/agents/chat/turnFailureReason";
 import {
 	createDureAgentConversationClient,
@@ -57,17 +57,20 @@ export async function resumeUsageLimitTurn(
 	)
 		return "not_sent";
 	const id = `handoff-${failure.createdAtMs.toString(36)}`;
-	let state: Awaited<ReturnType<DureAgentConversationClient["startTurn"]>>;
+	let state: Awaited<ReturnType<DureAgentConversationClient["continueTurn"]>>;
 	try {
-		state = await conversation.startTurn(
+		state = await conversation.continueTurn(
 			{
-				schemaVersion: 1,
-				interactionSessionId: binding.interactionSessionId,
-				runtime: binding.runtime,
-				turnId: id,
-				clientMessageId: id,
-				input: failure.userInput,
-				requestedAtMs: failure.createdAtMs,
+				expectedCursor: read.page.finalCursor,
+				intent: {
+					schemaVersion: 1,
+					interactionSessionId: binding.interactionSessionId,
+					runtime: binding.runtime,
+					turnId: id,
+					clientMessageId: id,
+					input: failure.userInput,
+					requestedAtMs: failure.createdAtMs,
+				},
 			},
 			target.routeAuthority,
 		);
@@ -77,7 +80,7 @@ export async function resumeUsageLimitTurn(
 	}
 	return state === "accepted"
 		? "accepted"
-		: state === "failed"
+		: state === null || state === "failed"
 			? "not_sent"
 			: "uncertain";
 }

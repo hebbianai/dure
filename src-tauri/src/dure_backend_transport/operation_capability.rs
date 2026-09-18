@@ -15,6 +15,7 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
         "agent_conversation.inspect_input" => Some("agent_conversation.inspect_input"),
         "agent_conversation.recover" => Some("agent_conversation.recover"),
         "agent_conversation.start_turn" => Some("agent_conversation.start_turn"),
+        "agent_conversation.continue_turn" => Some("agent_conversation.continue_turn"),
         "agent_conversation.enqueue_turn" => Some("agent_conversation.enqueue_turn"),
         "agent_conversation.cancel_queued_turn" => Some("agent_conversation.cancel_queued_turn"),
         "agent_conversation.steer_turn" => Some("agent_conversation.steer_turn"),

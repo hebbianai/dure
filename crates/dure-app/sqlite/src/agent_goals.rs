@@ -7,7 +7,7 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::SqliteDomainStore;
 use crate::agent_timeline::{
-    active_turn_for_session, binding_for_agent_on, pending_for_runtime, record_goal_turn_intent_on,
+    automatic_turn_ready_on, binding_for_agent_on, record_goal_turn_intent_on,
     timeline_cursor_on,
 };
 use crate::error::{corrupt_row, map_sqlx, serialization};
@@ -228,19 +228,7 @@ async fn prepare_on(
         .await?;
         return Ok(None);
     }
-    if !binding.history_complete
-        || crate::agent_queue::has_pending_on(connection, &binding.interaction_session_id).await?
-        || active_turn_for_session(connection, &binding)
-            .await?
-            .is_some()
-        || !pending_for_runtime(
-            connection,
-            &binding.interaction_session_id,
-            &binding.runtime,
-        )
-        .await?
-        .is_empty()
-    {
+    if !automatic_turn_ready_on(connection, &binding).await? {
         return Ok(None);
     }
     record_goal_turn_intent_on(connection, &request.intent, &goal.objective, goal.revision)

@@ -98,6 +98,7 @@ if (live) {
   assert.equal(receipt.noViewQueueAfterReload, true);
   assert.equal(receipt.queuedAcrossBackendReplacement, true);
   assert.equal(receipt.independentQueueClients, true);
+  assert.equal(receipt.obsoleteContinuationNotSent, true);
   assert.equal(receipt.queuedAcrossRuntimeReplacement, true);
   assert.equal(receipt.credentialProfileChanged, true);
   const accountQueue = await waitForQaLogReceipt("slack-account-queue", proof);

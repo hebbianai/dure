@@ -402,6 +402,29 @@ export function SlackShareQaRoot() {
 				),
 			);
 			requireFact(!composer.disabled, "Shared composer is disabled");
+			const observed = await conversation.read({
+				schemaVersion: 1,
+				interactionSessionId: binding.interactionSessionId,
+				direction: "tail",
+				cursor: null,
+				limit: 100,
+			});
+			requireFact(
+				observed.read.type === "page",
+				"Continuation needs an observed page",
+			);
+			const retained = {
+				expectedCursor: observed.read.page.finalCursor,
+				intent: {
+					schemaVersion: 1 as const,
+					interactionSessionId: binding.interactionSessionId,
+					runtime: binding.runtime,
+					turnId: `retained-${proof}`,
+					clientMessageId: `retained-${proof}`,
+					input: "Reply OBSOLETE. Do not use tools.",
+					requestedAtMs: Date.now(),
+				},
+			};
 			const setter = Object.getOwnPropertyDescriptor(
 				HTMLTextAreaElement.prototype,
 				"value",
@@ -420,6 +443,31 @@ export function SlackShareQaRoot() {
 				})
 			).click();
 			const page = await completed(binding, marker);
+			requireFact(
+				(await conversation.continueTurn(retained, observed.routeAuthority)) ===
+					null,
+				"An obsolete automatic request was sent after the teammate completed",
+			);
+			const afterContinuation = await conversation.read({
+				schemaVersion: 1,
+				interactionSessionId: binding.interactionSessionId,
+				direction: "tail",
+				cursor: null,
+				limit: 100,
+			});
+			requireFact(
+				afterContinuation.read.type === "page" &&
+					!afterContinuation.read.page.activeTurn &&
+					!afterContinuation.read.page.rows.some(
+						({ item }) =>
+							item.clientMessageId === retained.intent.clientMessageId,
+					),
+				"Rejected continuation changed the shared conversation",
+			);
+			qaLog("slack-share-progress", {
+				proof,
+				phase: "obsolete-continuation-not-sent",
+			});
 			const reply = page.rows.find(
 				({ item }) =>
 					item.body.type === "message" &&
@@ -764,6 +812,7 @@ export function SlackShareQaRoot() {
 			});
 			await finish({
 				nativeThreadReply: true,
+				obsoleteContinuationNotSent: true,
 				nativeAssistantReply,
 				tagSidebarConversation: true,
 				tagGenerationRecovered: true,

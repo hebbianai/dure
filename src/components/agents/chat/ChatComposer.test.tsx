@@ -403,6 +403,9 @@ describe("ChatComposer queueing", () => {
 				subscriptionId: "test",
 				close: async () => {},
 			}),
+			continueTurn: async () => {
+				throw new Error("Unexpected automatic continuation in this fixture");
+			},
 			startTurn: vi.fn(),
 			steerTurn: vi.fn(),
 			answerPending: vi.fn(),
@@ -502,6 +505,9 @@ describe("ChatComposer queueing", () => {
 				subscriptionId: "test",
 				close: async () => {},
 			}),
+			continueTurn: async () => {
+				throw new Error("Unexpected automatic continuation in this fixture");
+			},
 			startTurn: vi.fn(async () => "accepted" as const),
 			steerTurn: vi.fn(async () => {
 				throw new Error("Delivery response lost");
@@ -656,6 +662,9 @@ describe("ChatComposer uncertain send recovery", () => {
 				subscriptionId: "test",
 				close: async () => {},
 			}),
+			continueTurn: async () => {
+				throw new Error("Unexpected automatic continuation in this fixture");
+			},
 			startTurn: vi.fn(),
 			steerTurn: vi.fn(),
 			answerPending: vi.fn(),

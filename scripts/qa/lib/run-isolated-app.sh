@@ -11,6 +11,7 @@ set -eu
 # stable remains the compatibility default for older standalone callers.
 qa_app_channel=${DURE_QA_APP_CHANNEL:-stable}
 exec env \
+  -u ZDOTDIR \
   -u HEBBIAN_APP_CHANNEL \
   -u VITE_HEBBIAN_APP_CHANNEL \
   -u HEBBIAN_DEV_HOST \

@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
+	type AgentContinueTurnRequestV1,
 	type AgentGoalPutRequestV1,
 	type AgentGoalRecordV1,
 	type AgentInputObservationV1,
@@ -49,6 +50,7 @@ const MAX_QUEUED_EVENTS = 64;
 type AgentConversationReadRequestV1 = AgentTimelineReadRequestV1;
 
 export type AgentConversationStartTurnV1 = AgentStartTurnIntentV1;
+type TurnEffectState = "prepared" | "accepted" | "failed" | "uncertain";
 
 interface AgentConversationCancelQueuedTurnV1 {
 	schemaVersion: 1;
@@ -149,7 +151,11 @@ export interface DureAgentConversationClient {
 	startTurn(
 		request: AgentConversationStartTurnV1,
 		routeAuthority: DureBackendRouteAuthorityV1,
-	): Promise<"prepared" | "accepted" | "failed" | "uncertain">;
+	): Promise<TurnEffectState>;
+	continueTurn(
+		request: AgentContinueTurnRequestV1,
+		routeAuthority: DureBackendRouteAuthorityV1,
+	): Promise<TurnEffectState | null>;
 	/** Resolves only after confirmed delivery into the running turn.
 	 * A rejected request may already have reached the provider. */
 	steerTurn(
@@ -360,6 +366,23 @@ function assertMutationReceipt(
 		throw contractError("agent_conversation_receipt_invalid");
 	}
 	return receipt;
+}
+
+function assertTurnReceipt(
+	value: unknown,
+	turn: AgentStartTurnIntentV1,
+): Record<string, unknown> & { state: TurnEffectState } {
+	const receipt = assertMutationReceipt(value, turn);
+	const intent = record(receipt.intent);
+	if (
+		intent?.turnId !== turn.turnId ||
+		intent.input !== turn.input ||
+		!["prepared", "accepted", "failed", "uncertain"].includes(
+			String(receipt.state),
+		)
+	)
+		throw contractError("agent_conversation_receipt_invalid");
+	return receipt as Record<string, unknown> & { state: TurnEffectState };
 }
 
 function failedCommandReceipt(receipt: Record<string, unknown>) {
@@ -715,18 +738,18 @@ export function createDureAgentConversationClient(options?: {
 				turn as unknown as Record<string, unknown>,
 				routeAuthority,
 			);
-			const receipt = assertMutationReceipt(response.result.receipt, turn);
-			const intent = record(receipt.intent);
-			if (
-				intent?.turnId !== turn.turnId ||
-				intent.input !== turn.input ||
-				!["prepared", "accepted", "failed", "uncertain"].includes(
-					String(receipt.state),
-				)
-			) {
-				throw contractError("agent_conversation_receipt_invalid");
-			}
-			return receipt.state as "prepared" | "accepted" | "failed" | "uncertain";
+			const receipt = assertTurnReceipt(response.result.receipt, turn);
+			return receipt.state;
+		},
+
+		async continueTurn(request, routeAuthority) {
+			const response = await requestEffect(
+				"agent_conversation.continue_turn",
+				{ ...request },
+				routeAuthority,
+			);
+			if (response.result.receipt === null) return null;
+			return assertTurnReceipt(response.result.receipt, request.intent).state;
 		},
 
 		async steerTurn(turn, routeAuthority) {
@@ -735,17 +758,7 @@ export function createDureAgentConversationClient(options?: {
 				turn as unknown as Record<string, unknown>,
 				routeAuthority,
 			);
-			const receipt = assertMutationReceipt(response.result.receipt, turn);
-			const intent = record(receipt.intent);
-			if (
-				intent?.turnId !== turn.turnId ||
-				intent.input !== turn.input ||
-				!["prepared", "accepted", "failed", "uncertain"].includes(
-					String(receipt.state),
-				)
-			) {
-				throw contractError("agent_conversation_receipt_invalid");
-			}
+			const receipt = assertTurnReceipt(response.result.receipt, turn);
 			if (receipt.state === "failed") {
 				throw failedCommandReceipt(receipt);
 			}

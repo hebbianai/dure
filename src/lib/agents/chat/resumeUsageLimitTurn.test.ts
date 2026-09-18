@@ -10,7 +10,7 @@ import type {
 import { resumeUsageLimitTurn } from "./resumeUsageLimitTurn";
 import { latestTurnFailure } from "./turnFailureReason";
 
-function fixture() {
+function fixture(afterRead: (page: AgentTimelinePageV1) => void = () => {}) {
 	const route = testDureBackendRouteAuthority(
 		"backend-team",
 		"generation-team",
@@ -83,9 +83,19 @@ function fixture() {
 			expect(args.route).toEqual({ kind: "exact", authority: route });
 			const body = args.body as Record<string, unknown>;
 			let result: Record<string, unknown>;
-			if (args.operation === "agent_conversation.read")
-				result = { read: { type: "page", page } };
-			else if (args.operation === "agent_conversation.start_turn") {
+			if (args.operation === "agent_conversation.read") {
+				result = { read: { type: "page", page: structuredClone(page) } };
+				afterRead(page);
+			} else if (args.operation === "agent_conversation.continue_turn") {
+				const current =
+					JSON.stringify(body.expectedCursor) ===
+						JSON.stringify(page.finalCursor) &&
+					page.queuedInputs?.inputs.length === 0;
+				if (current) sent.push(body.intent as Record<string, unknown>);
+				result = {
+					receipt: current ? { intent: body.intent, state: "accepted" } : null,
+				};
+			} else if (args.operation === "agent_conversation.start_turn") {
 				sent.push(body);
 				result = { receipt: { intent: body, state: "accepted" } };
 			} else throw new Error(String(args.operation));
@@ -140,6 +150,24 @@ it("submits the captured failed request to the exact successor and uses a stable
 		input: "Finish the report",
 	});
 });
+it.each(["completed-turn", "queued-direction"])(
+	"does not resubmit after a teammate's %s between observation and admission",
+	async (change) => {
+		const f = fixture((page) => {
+			if (change === "completed-turn") page.finalCursor.sequence += 3;
+			else
+				page.queuedInputs!.inputs.push({
+					clientMessageId: "teammate-direction",
+					sequence: 1,
+					preview: "Use the updated brief",
+				});
+		});
+		expect(await resumeUsageLimitTurn(f.failure, f.result, f.client)).toBe(
+			"not_sent",
+		);
+		expect(f.sent).toEqual([]);
+	},
+);
 it.each([
 	"completed",
 	"new-input",
@@ -171,7 +199,7 @@ it.each([
 it("retains an uncertain send without issuing another request", async () => {
 	const f = fixture();
 	const start = vi
-		.spyOn(f.client, "startTurn")
+		.spyOn(f.client, "continueTurn")
 		.mockRejectedValue(new Error("receipt lost"));
 	await expect(
 		resumeUsageLimitTurn(f.failure, f.result, f.client),
@@ -183,9 +211,45 @@ it.each(["prepared", "failed", "uncertain"] as const)(
 	"does not report %s delivery as resumed",
 	async (state) => {
 		const f = fixture();
-		vi.spyOn(f.client, "startTurn").mockResolvedValue(state);
+		vi.spyOn(f.client, "continueTurn").mockResolvedValue(state);
 		expect(await resumeUsageLimitTurn(f.failure, f.result, f.client)).toBe(
 			state === "failed" ? "not_sent" : "uncertain",
 		);
+	},
+);
+
+it.each(["missing", "foreign-input", "foreign-runtime", "unknown-state"])(
+	"does not retry automatic input when the continuation receipt is %s",
+	async (change) => {
+		const f = fixture();
+		const original = f.invoke.getMockImplementation()!;
+		f.invoke.mockImplementation(async (...args) => {
+			const response = structuredClone(await original(...args));
+			if (args[1].operation === "agent_conversation.continue_turn") {
+				const result: Record<string, unknown> = response.result;
+				const receipt = result.receipt as {
+					intent: Record<string, unknown>;
+					state: string;
+				};
+				if (change === "missing") delete result.receipt;
+				if (change === "foreign-input")
+					receipt.intent.input = "Unrelated request";
+				if (change === "foreign-runtime")
+					receipt.intent.runtime = {
+						runtimeGeneration: "other",
+						providerEpoch: "other",
+					};
+				if (change === "unknown-state") receipt.state = "not_sent";
+			}
+			return response;
+		});
+		expect(await resumeUsageLimitTurn(f.failure, f.result, f.client)).toBe(
+			"uncertain",
+		);
+		expect(f.invoke.mock.calls.map((call) => call[1].operation)).toEqual([
+			"agent_conversation.read",
+			"agent_conversation.continue_turn",
+		]);
+		expect(f.sent).toHaveLength(1);
 	},
 );

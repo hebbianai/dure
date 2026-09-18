@@ -232,6 +232,11 @@ export interface AgentStartTurnIntentV1 {
 	requestedAtMs: number;
 }
 
+export interface AgentContinueTurnRequestV1 {
+	intent: AgentStartTurnIntentV1;
+	expectedCursor: AgentTimelineCursorV1;
+}
+
 export interface AgentQueuedTurnRecordV1 {
 	intent: AgentStartTurnIntentV1;
 	state: AgentQueuedTurnStateV1;

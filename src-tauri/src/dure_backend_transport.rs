@@ -1923,6 +1923,7 @@ mod tests {
             "agent_conversation.inspect",
             "agent_conversation.recover",
             "agent_conversation.start_turn",
+            "agent_conversation.continue_turn",
             "agent_conversation.answer_pending",
             "agent_conversation.interrupt_turn",
             "claude_conversation.open",
