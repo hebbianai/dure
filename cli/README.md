@@ -26,6 +26,14 @@ Agent-facing instructions are packaged in [the Dure skill](skills/dure/SKILL.md)
 and the separate [orchestration integration](../orchestration/integration/SKILL.md).
 Customer-facing guides belong to [public documentation](../docs/public/).
 
+Browser input errors retain their machine-readable `error.code` and include
+`message`, `hint`, and an `option` name when applicable. Unknown or duplicate
+options, missing option values, and invalid wait states are rejected before
+backend selection. Supplied values are omitted from these diagnostics.
+Use `--value=--json` to enter a literal value that matches a supported option;
+use `--` before literal positional values. Native `browser exec --command`
+strings retain their own value grammar.
+
 ## Licensing
 
 Copyright (C) 2026 Hebbian AI. The Dure CLI is licensed under

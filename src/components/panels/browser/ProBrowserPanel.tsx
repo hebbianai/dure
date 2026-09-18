@@ -160,7 +160,6 @@ export function ProBrowserPanel(
 		paneId: props.api.id,
 		session: pane.session,
 		view: pane.view,
-		active: pane.active,
 		busy: pane.busy,
 		take: async (expected) => {
 			setReturnTo(expected?.controller_id);

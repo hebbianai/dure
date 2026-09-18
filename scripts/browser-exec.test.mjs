@@ -26,6 +26,8 @@ function fixture({ changedResource = resource, missingController = false } = {})
 }
 
 const cases = [
+  ['find role button click --name "--json"', ["find", "role", "button", "click", "--name=--json"]],
+  ['find role button click --name "--page"', ["find", "role", "button", "click", "--name=--page"]],
   ["window new", ["window-new"]],
   ["window new ignored --backend peer", ["window-new"]],
   ["tap button", ["tap", "button"]],

@@ -8,14 +8,12 @@ export function browserPaneActions({
 	paneId,
 	session,
 	view,
-	active,
 	busy,
 	take,
 }: {
 	paneId: string;
 	session?: BrowserPaneSession;
 	view: BrowserPaneView;
-	active: boolean;
 	busy: boolean;
 	take: (expected: BrowserControllerLease | null) => Promise<void>;
 }) {
@@ -25,10 +23,11 @@ export function browserPaneActions({
 	const unavailable =
 		!session ||
 		!control ||
-		!active ||
 		busy ||
 		control.phase !== "ready" ||
 		!!control.requested_controller;
+	// An explicit handback targets this mounted session even in a hidden Space.
+	// Visibility still gates page input and viewport fitting in the pane.
 	const takeControl = definePaneAction(
 		{
 			description:
