@@ -87,12 +87,15 @@ jobs:
     environment: macos-release
     timeout-minutes: 180
     env:
-      RUSTUP_HOME: ${{ runner.temp }}/dure-rustup-home
-      NODE_COMPILE_CACHE: ${{ runner.temp }}/dure-node-cache
-      HEBBIAN_CI_RUNNER_TEMP: ${{ runner.temp }}
       HEBBIAN_CI_TARGET_PROFILE: verify
-      DURE_GHOSTTY_VT_CACHE_ROOT: ${{ runner.temp }}/dure-ghostty-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Isolate release tool state
+        run: |
+          printf '%s\n' \
+            "RUSTUP_HOME=$RUNNER_TEMP/dure-rustup-home" \
+            "NODE_COMPILE_CACHE=$RUNNER_TEMP/dure-node-cache" \
+            "HEBBIAN_CI_RUNNER_TEMP=$RUNNER_TEMP" \
+            "DURE_GHOSTTY_VT_CACHE_ROOT=$RUNNER_TEMP/dure-ghostty-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -183,10 +186,12 @@ jobs:
       labels: [self-hosted, macOS, ARM64, dure-release]
     environment: macos-release
     timeout-minutes: 90
-    env:
-      RUSTUP_HOME: ${{ runner.temp }}/dure-rustup-home
-      NODE_COMPILE_CACHE: ${{ runner.temp }}/dure-node-cache
     steps:
+      - name: Isolate release tool state
+        run: |
+          printf '%s\n' \
+            "RUSTUP_HOME=$RUNNER_TEMP/dure-rustup-home" \
+            "NODE_COMPILE_CACHE=$RUNNER_TEMP/dure-node-cache" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.version.outputs.release_sha }}

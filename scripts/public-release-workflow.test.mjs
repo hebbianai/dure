@@ -1,10 +1,70 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { expect, test } from "vitest";
 import YAML from "yaml";
 
 const workflow = YAML.parse(
   fs.readFileSync(".github/workflows/release.yml", "utf8"),
 );
+
+test.each(["verification", "build"])(
+  "initializes %s runner paths only after the job starts",
+  (name) => {
+    const job = workflow.jobs[name];
+    const initialization = job.steps.find(
+      (step) => step.name === "Isolate release tool state",
+    );
+    expect(initialization).toBeDefined();
+    expect(JSON.stringify(job.env ?? {})).not.toContain("runner.");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-workflow-env-"));
+    try {
+      const output = path.join(root, "environment");
+      const runnerTemp = path.join(root, "runner temp");
+      execFileSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-e",
+          "-o",
+          "pipefail",
+          "-c",
+          initialization.run,
+        ],
+        {
+          env: {
+            PATH: "/usr/bin:/bin",
+            RUNNER_TEMP: runnerTemp,
+            GITHUB_ENV: output,
+            GITHUB_RUN_ID: "123",
+            GITHUB_RUN_ATTEMPT: "2",
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(fs.readFileSync(output, "utf8").trim().split("\n")).toEqual([
+        `RUSTUP_HOME=${runnerTemp}/dure-rustup-home`,
+        `NODE_COMPILE_CACHE=${runnerTemp}/dure-node-cache`,
+        ...(name === "verification"
+          ? [
+              `HEBBIAN_CI_RUNNER_TEMP=${runnerTemp}`,
+              `DURE_GHOSTTY_VT_CACHE_ROOT=${runnerTemp}/dure-ghostty-123-2`,
+            ]
+          : []),
+      ]);
+      expect(job.steps.indexOf(initialization)).toBeLessThan(
+        job.steps.findIndex((step) =>
+          step.uses?.startsWith("dtolnay/rust-toolchain@"),
+        ),
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test("release admission is manual, canonical-main-only and read-only by default", () => {
   expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
   expect(workflow.permissions).toEqual({ contents: "read" });
