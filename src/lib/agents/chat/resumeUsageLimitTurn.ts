@@ -48,7 +48,7 @@ export async function resumeUsageLimitTurn(
 		binding.runtime.providerEpoch !== target.binding.runtime.providerEpoch
 	)
 		return "not_sent";
-	const current = latestTurnFailure(read.page.rows);
+	const current = latestTurnFailure(read.page.latestFailure);
 	// A teammate may already have continued while the account was switching.
 	if (
 		current?.createdAtMs !== failure.createdAtMs ||

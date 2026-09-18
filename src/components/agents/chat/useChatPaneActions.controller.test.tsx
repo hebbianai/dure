@@ -90,6 +90,7 @@ it("does not interrupt the next controller turn during a claimed projection upda
 				clientMessageId: "message-turn-original",
 			},
 			goal: null,
+			latestFailure: null,
 			finalCursor: { epoch: "timeline-1", sequence: 1 },
 			hasMore: false,
 		},

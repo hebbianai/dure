@@ -4,6 +4,10 @@ import {
 	positiveInteger,
 	asRecord as record,
 } from "@/lib/payloadGuards";
+import {
+	type AgentTimelineFailureV1,
+	parseTurnFailureReason,
+} from "./turnFailureReason";
 
 const DOMAIN_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const MAX_TOKEN_BYTES = 512;
@@ -340,6 +344,7 @@ export interface AgentTimelinePageV1 {
 	liveText: AgentTimelineLiveTextV1[];
 	pendingRequests: AgentPendingRequestV1[];
 	activeTurn: AgentTimelineActiveTurnV1 | null;
+	latestFailure: AgentTimelineFailureV1 | null;
 	goal: AgentGoalRecordV1 | null;
 	queuedInputs?: AgentQueuedInputPageV1;
 	finalCursor: AgentTimelineCursorV1;
@@ -868,6 +873,33 @@ function parseActiveTurn(
 		: undefined;
 }
 
+function parseTimelineFailure(
+	value: unknown,
+): AgentTimelineFailureV1 | undefined {
+	const failure = record(value);
+	const reason = parseTurnFailureReason(
+		typeof failure?.reason === "string" ? failure.reason : null,
+	);
+	if (
+		!failure ||
+		!hasOnlyKeys(failure, ["itemId", "createdAtMs", "reason", "userInput"]) ||
+		!domainId(failure.itemId) ||
+		!nonNegativeInteger(failure.createdAtMs) ||
+		!reason ||
+		!(
+			failure.userInput === null ||
+			boundedText(failure.userInput, MAX_TEXT_BYTES, true)
+		)
+	)
+		return undefined;
+	return {
+		itemId: failure.itemId,
+		createdAtMs: failure.createdAtMs,
+		reason,
+		userInput: failure.userInput,
+	};
+}
+
 export function parseAgentTimelineReadV1(
 	value: unknown,
 	request: AgentTimelineReadRequestV1,
@@ -888,6 +920,10 @@ export function parseAgentTimelineReadV1(
 	const binding = parseAgentInteractionBindingV1(page?.binding);
 	const finalCursor = parseAgentTimelineCursorV1(page?.finalCursor);
 	const goal = page?.goal === null ? null : parseAgentGoalRecordV1(page?.goal);
+	const latestFailure =
+		page?.latestFailure === null
+			? null
+			: parseTimelineFailure(page?.latestFailure);
 	const activeTurn =
 		page?.activeTurn === null ? null : parseActiveTurn(page?.activeTurn);
 	if (
@@ -898,6 +934,7 @@ export function parseAgentTimelineReadV1(
 			"liveText",
 			"pendingRequests",
 			"activeTurn",
+			"latestFailure",
 			"goal",
 			"queuedInputs",
 			"finalCursor",
@@ -911,6 +948,7 @@ export function parseAgentTimelineReadV1(
 		!Array.isArray(page.pendingRequests) ||
 		page.pendingRequests.length > MAX_PENDING_REQUESTS ||
 		activeTurn === undefined ||
+		latestFailure === undefined ||
 		goal === undefined ||
 		(goal !== null && goal.agentId !== binding.agentId) ||
 		!finalCursor ||
@@ -1000,6 +1038,7 @@ export function parseAgentTimelineReadV1(
 			liveText: liveText as AgentTimelineLiveTextV1[],
 			pendingRequests: pendingRequests as AgentPendingRequestV1[],
 			activeTurn,
+			latestFailure,
 			goal,
 			queuedInputs,
 			finalCursor,

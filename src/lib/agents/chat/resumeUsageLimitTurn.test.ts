@@ -61,13 +61,23 @@ function fixture(afterRead: (page: AgentTimelinePageV1) => void = () => {}) {
 			},
 		},
 	];
-	const failure = { ...latestTurnFailure(rows)!, itemId: "original-failure" };
+	const snapshot = {
+		itemId: "replayed-failure",
+		createdAtMs: 20,
+		reason: "usage_limit" as const,
+		userInput: "Finish the report",
+	};
+	const failure = {
+		...latestTurnFailure(snapshot)!,
+		itemId: "original-failure",
+	};
 	const page: AgentTimelinePageV1 = {
 		binding,
 		rows,
 		liveText: [],
 		pendingRequests: [],
 		activeTurn: null,
+		latestFailure: snapshot,
 		goal: null,
 		queuedInputs: {
 			interactionSessionId: binding.interactionSessionId,
@@ -150,6 +160,17 @@ it("submits the captured failed request to the exact successor and uses a stable
 		input: "Finish the report",
 	});
 });
+
+it("resumes the retained request when the original input is outside the tail window", async () => {
+	const f = fixture();
+	f.page.rows = f.page.rows.slice(1);
+	f.page.hasMore = true;
+	expect(await resumeUsageLimitTurn(f.failure, f.result, f.client)).toBe(
+		"accepted",
+	);
+	expect(f.sent).toHaveLength(1);
+	expect(f.sent[0]?.input).toBe("Finish the report");
+});
 it.each(["completed-turn", "queued-direction"])(
 	"does not resubmit after a teammate's %s between observation and admission",
 	async (change) => {
@@ -187,6 +208,8 @@ it.each([
 			role: "user",
 			markdown: "A teammate continued",
 		};
+	if (change === "completed" || change === "new-input")
+		f.page.latestFailure = null;
 	if (change === "replaced-runtime")
 		f.binding.runtime.runtimeGeneration = "runtime-unrelated";
 	if (change === "different-conversation")

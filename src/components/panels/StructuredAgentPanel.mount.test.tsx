@@ -662,7 +662,9 @@ const switchCredentialMock = () =>
 
 describe("StructuredAgentPanel usage-limit handoff", () => {
 	const NOW_SEC = Math.floor(Date.now() / 1000);
+	const failedAt = Date.now() + 60_000;
 	const failedTurnPage = {
+		latestFailure: { itemId: "item-2", createdAtMs: failedAt, reason: "usage_limit", userInput: "finish the report" },
 		rows: [
 			{
 				cursor: { epoch: "timeline-1", sequence: 1 },
@@ -696,7 +698,7 @@ describe("StructuredAgentPanel usage-limit handoff", () => {
 					body: { type: "lifecycle", state: "turn_failed", detail: "usage_limit" },
 					// Newer than any mount in this file: the automatic move only
 					// acts on a failure that happened while the pane was up.
-					createdAtMs: Date.now() + 60_000,
+					createdAtMs: failedAt,
 				},
 			},
 		],
@@ -882,8 +884,8 @@ describe("StructuredAgentPanel usage-limit handoff", () => {
 		["reconnecting", { reconnecting: true }],
 		["not ready", { phase: "connecting" }],
 		["active turn", { activeTurn: { turnId: "next-turn" } }],
-		["missing retained input", { page: { rows: failedTurnPage.rows.filter((row) => row.item.body.type !== "message") } }],
-		["newer user input", { page: { rows: [...failedTurnPage.rows, failedTurnPage.rows[1]] } }],
+		["missing retained input", { page: { latestFailure: { ...failedTurnPage.latestFailure, userInput: null }, rows: failedTurnPage.rows.filter((row) => row.item.body.type !== "message") } }],
+		["newer user input", { page: { latestFailure: null, rows: [...failedTurnPage.rows, failedTurnPage.rows[1]] } }],
 	])("removes GUI and CLI resend together when %s", async (label, patch) => {
 		const id = `resend-eligibility-${label}`;
 		const switchCredential = switchCredentialMock();
@@ -948,6 +950,7 @@ describe("StructuredAgentPanel usage-limit handoff", () => {
 			answeringRequestId: undefined,
 			activeTurn: undefined,
 			page: {
+				latestFailure: { ...failedTurnPage.latestFailure, createdAtMs: Date.now() - 60_000 },
 				rows: failedTurnPage.rows.map((row) =>
 					row.item.itemId === "item-2"
 						? { ...row, item: { ...row.item, createdAtMs: Date.now() - 60_000 } }

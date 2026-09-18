@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import type { AgentTimelineFailureV1 } from "@/lib/agents/chat/turnFailureReason";
 import { AgentUsageLimitHandoffHost } from "./AgentUsageLimitHandoffHost";
 
 const mocks = vi.hoisted(() => ({
@@ -17,7 +18,10 @@ const mocks = vi.hoisted(() => ({
 		autoSwitchAccounts: true,
 	},
 	session: {
-		page: { rows: [] as unknown[] },
+		page: {
+			rows: [] as unknown[],
+			latestFailure: null as AgentTimelineFailureV1 | null,
+		},
 		sending: false,
 		activeTurn: undefined,
 	},
@@ -64,6 +68,7 @@ it("continues a newly failed registered conversation without mounting any pane",
 	];
 	mocks.state.autoSwitchAccounts = true;
 	mocks.session.page.rows = [];
+	mocks.session.page.latestFailure = null;
 	mocks.switchAccount.mockResolvedValue({
 		kind: "completed",
 		conversationId: "same-conversation",
@@ -78,30 +83,12 @@ it("continues a newly failed registered conversation without mounting any pane",
 	expect(view.container.childElementCount).toBe(0);
 	expect(mocks.switchAccount).not.toHaveBeenCalled();
 	const failedAt = Date.now() + 1000;
-	mocks.session.page.rows = [
-		{
-			item: {
-				body: {
-					type: "message",
-					role: "user",
-					markdown: "Continue the exact background task",
-				},
-				turnId: "failed-turn",
-			},
-		},
-		{
-			item: {
-				itemId: "background-failure",
-				body: {
-					type: "lifecycle",
-					state: "turn_failed",
-					detail: "usage_limit",
-				},
-				turnId: "failed-turn",
-				createdAtMs: failedAt,
-			},
-		},
-	];
+	mocks.session.page.latestFailure = {
+		itemId: "background-failure",
+		createdAtMs: failedAt,
+		reason: "usage_limit",
+		userInput: "Continue the exact background task",
+	};
 	view.rerender(
 		<>
 			<AgentUsageLimitHandoffHost />

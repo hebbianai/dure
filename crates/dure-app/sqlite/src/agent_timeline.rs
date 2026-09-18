@@ -9,7 +9,8 @@ use dure_app::{
     AgentProviderCursorV1, AgentProviderEventCommitV1, AgentProviderGapV1,
     AgentProviderMessageIdV1, AgentProviderRuntimeFenceV1, AgentRuntimeReplacementV1,
     AgentStartTurnIntentV1, AgentTimelineActiveTurnV1, AgentTimelineCommitReceiptV1,
-    AgentTimelineCursorV1, AgentTimelineEpochV1, AgentTimelineItemBodyV1, AgentTimelineItemDraftV1,
+    AgentTimelineCursorV1, AgentTimelineEpochV1, AgentTimelineFailureV1,
+    AgentTimelineItemBodyV1, AgentTimelineItemDraftV1,
     AgentTimelineItemIdV1, AgentTimelineLifecycleStateV1, AgentTimelineLiveTextV1,
     AgentTimelineMessageRoleV1, AgentTimelineMutationV1, AgentTimelinePageV1,
     AgentTimelineReadDirectionV1, AgentTimelineReadRequestV1, AgentTimelineReadV1,
@@ -2720,6 +2721,7 @@ async fn read_on(
     )
     .await?;
     let active_turn = active_turn_for_session(connection, &binding).await?;
+    let latest_failure = latest_failure_on(connection, &binding).await?;
     let goal = crate::agent_goals::read_on(connection, &binding.agent_id).await?;
     let queued_inputs =
         crate::agent_queue::pending_on(connection, &binding.interaction_session_id, 0).await?;
@@ -2730,12 +2732,77 @@ async fn read_on(
             live_text,
             pending_requests,
             active_turn,
+            latest_failure,
             goal,
             queued_inputs,
             final_cursor,
             has_more,
         },
     })
+}
+
+async fn latest_failure_on(
+    connection: &mut SqliteConnection,
+    binding: &AgentInteractionBindingV1,
+) -> Result<Option<AgentTimelineFailureV1>, DomainStoreErrorV1> {
+    // Select the latest turn boundary first. An unknown failure or newer human
+    // input must not expose an older classified failure as current.
+    let row = sqlx::query(
+        "SELECT timeline_epoch, sequence, item_id, turn_id, client_message_id, \
+         provider_message_id, body_json, created_at_ms FROM agent_timeline_rows \
+         WHERE interaction_session_id = ?1 AND timeline_epoch = ?2 \
+         AND ((json_extract(body_json, '$.type') = 'message' \
+               AND json_extract(body_json, '$.role') = 'user') \
+           OR (json_extract(body_json, '$.type') = 'lifecycle' \
+               AND json_extract(body_json, '$.state') IN \
+                 ('turn_started', 'turn_completed', 'turn_failed', 'turn_canceled'))) \
+         ORDER BY sequence DESC LIMIT 1",
+    )
+    .bind(binding.interaction_session_id.as_str())
+    .bind(binding.timeline_epoch.as_str())
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("read_agent_latest_failure", error))?;
+    let Some(row) = row else { return Ok(None) };
+    let failure = timeline_row_from_row(row)?;
+    let AgentTimelineItemBodyV1::Lifecycle {
+        state: AgentTimelineLifecycleStateV1::TurnFailed,
+        detail: Some(detail),
+    } = &failure.item.body
+    else {
+        return Ok(None);
+    };
+    let Some(reason) = dure_app::AgentTurnFailureReasonV1::from_token(detail) else {
+        return Ok(None);
+    };
+    let user_input = sqlx::query_scalar::<_, String>(
+        "SELECT json_extract(body_json, '$.markdown') FROM agent_timeline_rows \
+         WHERE interaction_session_id = ?1 AND timeline_epoch = ?2 AND sequence < ?3 \
+         AND (turn_id = ?4 OR client_message_id = ?5) \
+         AND json_extract(body_json, '$.type') = 'message' \
+         AND json_extract(body_json, '$.role') = 'user' \
+         ORDER BY sequence DESC LIMIT 1",
+    )
+    .bind(binding.interaction_session_id.as_str())
+    .bind(binding.timeline_epoch.as_str())
+    .bind(failure.cursor.sequence)
+    .bind(failure.item.turn_id.as_ref().map(|id| id.as_str()))
+    .bind(
+        failure
+            .item
+            .client_message_id
+            .as_ref()
+            .map(|id| id.as_str()),
+    )
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| map_sqlx("read_agent_failed_input", error))?;
+    Ok(Some(AgentTimelineFailureV1 {
+        item_id: failure.item.item_id,
+        created_at_ms: failure.item.created_at_ms,
+        reason,
+        user_input,
+    }))
 }
 
 pub(crate) async fn active_turn_for_session(

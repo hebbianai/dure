@@ -153,10 +153,11 @@ export function ChatComposer({
 		return {
 			model: observedSessionInit(page).model,
 			catalog: observedProviderCatalog(page),
-			turnFailure: latestTurnFailure(rows ?? []),
 		};
 	}, [rows]);
-	const turnFailure = session.activeTurn ? undefined : historyFacts.turnFailure;
+	const turnFailure = session.activeTurn
+		? undefined
+		: latestTurnFailure(session.page?.latestFailure);
 	const handedOff =
 		recovery?.handedOff && turnFailure && turnFailure.itemId !== dismissedFailureItemId
 			? { failure: turnFailure, ...recovery.handedOff }

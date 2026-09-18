@@ -192,6 +192,7 @@ const chatSession: AgentChatSessionView = {
 		liveText: [],
 		pendingRequests: [],
 		activeTurn: null,
+		latestFailure: null,
 		finalCursor: { epoch: "fixture", sequence: 0 },
 		hasMore: false,
 	},

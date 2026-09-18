@@ -5,8 +5,6 @@
  * once inferred "sign in again" from provider_failed and was removed twice
  * for guessing. */
 
-import type { AgentTimelineRowV1 } from "@/lib/agents/chat/agentConversationContract";
-
 export type TurnFailureReason =
 	| "usage_limit"
 	| "rate_limit"
@@ -34,7 +32,9 @@ export function parseTurnFailureReason(
 
 /** i18n keys use lowerCamel segments: snake_case segments fall out of the
  * semantic-ID pattern and would bypass the catalogs. */
-export const TURN_FAILURE_REASON_COPY: Readonly<Record<TurnFailureReason, string>> = {
+export const TURN_FAILURE_REASON_COPY: Readonly<
+	Record<TurnFailureReason, string>
+> = {
 	usage_limit: "agents.chat.turnFailure.usageLimit",
 	rate_limit: "agents.chat.turnFailure.rateLimit",
 	authentication_failed: "agents.chat.turnFailure.authenticationFailed",
@@ -74,59 +74,24 @@ export interface LatestTurnFailure {
 	readonly userInput?: string;
 }
 
-/** The failure of the newest turn on the page, or nothing when a later turn
- * has started or a user message followed it — the banner must describe the
- * turn the user is looking at, not history. */
-export function latestTurnFailure(
-	rows: readonly AgentTimelineRowV1[],
-): LatestTurnFailure | undefined {
-	for (let index = rows.length - 1; index >= 0; index -= 1) {
-		const row = rows[index];
-		if (!row) continue;
-		const body = row.item.body;
-		if (body.type === "message" && body.role === "user") return undefined;
-		if (body.type !== "lifecycle") continue;
-		switch (body.state) {
-			case "turn_failed": {
-				const reason = parseTurnFailureReason(body.detail);
-				if (!reason) return undefined;
-				const userInput = turnUserInput(rows, index, row);
-				return {
-					reason,
-					recoveries: turnFailureRecoveries(reason),
-					itemId: row.item.itemId,
-					createdAtMs: row.item.createdAtMs,
-					...(userInput !== undefined ? { userInput } : {}),
-				};
-			}
-			case "turn_started":
-			case "turn_completed":
-			case "turn_canceled":
-				return undefined;
-			default:
-				continue;
-		}
-	}
-	return undefined;
+/** Store-derived current failure, independent of the displayed row window. */
+export interface AgentTimelineFailureV1 {
+	readonly itemId: string;
+	readonly createdAtMs: number;
+	readonly reason: TurnFailureReason;
+	readonly userInput: string | null;
 }
 
-/** The user message row that belongs to the failed turn (same turn id or
- * client message id), searched backwards from the failed lifecycle row. */
-function turnUserInput(
-	rows: readonly AgentTimelineRowV1[],
-	failedIndex: number,
-	failed: AgentTimelineRowV1,
-): string | undefined {
-	for (let index = failedIndex - 1; index >= 0; index -= 1) {
-		const row = rows[index];
-		if (!row) continue;
-		const sameTurn =
-			(failed.item.turnId !== null && row.item.turnId === failed.item.turnId) ||
-			(failed.item.clientMessageId !== null &&
-				row.item.clientMessageId === failed.item.clientMessageId);
-		if (!sameTurn) continue;
-		const body = row.item.body;
-		if (body.type === "message" && body.role === "user") return body.markdown;
-	}
-	return undefined;
+/** Add presentation actions to the authoritative failure without rereading rows. */
+export function latestTurnFailure(
+	failure: AgentTimelineFailureV1 | null | undefined,
+): LatestTurnFailure | undefined {
+	if (!failure) return undefined;
+	return {
+		reason: failure.reason,
+		recoveries: turnFailureRecoveries(failure.reason),
+		itemId: failure.itemId,
+		createdAtMs: failure.createdAtMs,
+		...(failure.userInput !== null ? { userInput: failure.userInput } : {}),
+	};
 }

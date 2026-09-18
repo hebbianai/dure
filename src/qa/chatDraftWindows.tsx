@@ -312,6 +312,7 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 			liveText: [],
 			pendingRequests: [],
 			activeTurn: null,
+			latestFailure: null,
 			goal: null,
 			finalCursor: { epoch: "native-qa", sequence: 0 },
 			hasMore: false,

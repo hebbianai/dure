@@ -33,6 +33,7 @@ function page(sequence = 1): AgentTimelinePageV1 {
 		liveText: [],
 		pendingRequests: [],
 		activeTurn: null,
+		latestFailure: null,
 		goal: null,
 		finalCursor: { epoch: "timeline-1", sequence },
 		hasMore: false,
@@ -54,6 +55,31 @@ function row(sequence: number): AgentTimelinePageV1["rows"][number] {
 }
 
 describe("agent chat projection", () => {
+	it("replaces the failure snapshot on deltas without deriving it from retained rows", () => {
+		const current = page(1);
+		current.rows = [row(1)];
+		const next = page(2);
+		next.rows = [row(2)];
+		next.latestFailure = {
+			itemId: "failed",
+			createdAtMs: 2,
+			reason: "usage_limit",
+			userInput: "original",
+		};
+		const identity = {
+			agentId: "agent-1",
+			interactionSessionId: "interaction-1",
+		};
+		const failed = convergeAgentChatDelta(current, next, identity, 1);
+		expect(failed.rows).toHaveLength(1);
+		expect(failed.latestFailure?.userInput).toBe("original");
+		const continued = page(3);
+		continued.rows = [row(3)];
+		expect(
+			convergeAgentChatDelta(failed, continued, identity).latestFailure,
+		).toBeNull();
+	});
+
 	it("ignores an older complete snapshot and accepts a runtime replacement", () => {
 		const current = page(4);
 		expect(

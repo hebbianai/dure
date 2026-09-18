@@ -24,7 +24,7 @@ async function fixture(t) {
   await journal.acquire();
   t.onTestFinished(() => { journal.close(); fs.rmSync(root, { recursive: true, force: true }); });
   const calls = { starts: [], inputs: [], writes: [], recoveries: [] };
-  let page = { binding, activeTurn: null, rows: [], finalCursor: { epoch: "epoch-1", sequence: 0 } };
+  let page = { binding, activeTurn: null, latestFailure: null, rows: [], finalCursor: { epoch: "epoch-1", sequence: 0 } };
   const backend = {
     async bind() { return { profileId: "local", backendId: "backend-1" }; },
     async start(message) { calls.starts.push(message); return "agent-1"; },
@@ -570,7 +570,7 @@ test("a thread follows chat-to-terminal selection and does not replay uncertain 
           authority: { binding: { agentId: "agent-1" }, terminalEpoch: "terminal-1" } },
       } } };
       if (request.operation === "agent_conversation.read") return { result: { read: { type: "page", page: {
-        binding, activeTurn: null, rows: [], finalCursor: { epoch: "epoch-1", sequence: 0 },
+        binding, activeTurn: null, latestFailure: null, rows: [], finalCursor: { epoch: "epoch-1", sequence: 0 },
       } } } };
       if (request.operation === "agent_runtime.native.read") return { result: { schemaVersion: 1,
         cursor: { terminalEpoch: "terminal-1", turnCompletedCount: completed, conversationId: "provider-1" },

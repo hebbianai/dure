@@ -61,7 +61,7 @@ describe("agent transcript CLI adapter", () => {
               ],
               liveText: [],
               pendingRequests: [],
-              activeTurn: null,
+              activeTurn: null, latestFailure: null,
               finalCursor: { epoch: "timeline-1", sequence: 1 },
               hasMore: false,
             },

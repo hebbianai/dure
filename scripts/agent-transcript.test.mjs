@@ -43,7 +43,7 @@ function page(rows, { hasMore = false, liveText = [], finalSequence } = {}) {
       rows,
       liveText,
       pendingRequests: [],
-      activeTurn: null,
+      activeTurn: null, latestFailure: null,
       finalCursor: {
         epoch: "timeline-1",
         sequence: finalSequence ?? rows.at(-1)?.cursor.sequence ?? 0,
