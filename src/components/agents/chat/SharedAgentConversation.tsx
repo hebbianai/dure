@@ -1,36 +1,39 @@
-import { KeyRound } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ChatAlert } from "@/components/agents/chat/ChatAlert";
-import { SharedConversationAccountDialog } from "@/components/agents/chat/SharedConversationAccountDialog";
+import { SharedConversationAccountMenu } from "@/components/agents/chat/SharedConversationAccountMenu";
 import { StructuredAgentChatSurface } from "@/components/agents/chat/StructuredAgentChatSurface";
 import { useAgentChatSession } from "@/components/agents/chat/useAgentChatSession";
-import { Button } from "@/components/ui/button";
+import { useSharedConversationAccountsState } from "@/components/agents/chat/useSharedConversationAccountsState";
 import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
 import type { SharedAgentConversationTarget } from "@/lib/agents/chat/sharedAgentConversation";
 import { switchSharedConversationAccount } from "@/lib/agents/chat/sharedConversationAccounts";
 import { latestTurnFailure } from "@/lib/agents/chat/turnFailureReason";
 import { PROVIDER_IDS } from "@/lib/agents/providerCatalog";
-import { supportsDureProviderCredentialSpawn } from "@/lib/ipc/dureProviderCredentialProfile";
 import { t } from "@/lib/i18n";
-import { useSharedConversationAccountsState } from "@/components/agents/chat/useSharedConversationAccountsState";
+import { supportsDureProviderCredentialSpawn } from "@/lib/ipc/dureProviderCredentialProfile";
 
 export function SharedAgentConversation({
 	target,
+	header,
 }: {
 	target: SharedAgentConversationTarget;
+	header?: ReactNode;
 }) {
 	return (
 		<SharedConversationContent
 			key={JSON.stringify(target)}
 			initialTarget={target}
+			header={header}
 		/>
 	);
 }
 
 function SharedConversationContent({
 	initialTarget,
+	header,
 }: {
 	initialTarget: SharedAgentConversationTarget;
+	header?: ReactNode;
 }) {
 	const [target, setTarget] = useState(initialTarget);
 	const session: AgentChatSessionView = useAgentChatSession(
@@ -40,7 +43,7 @@ function SharedConversationContent({
 		target.authority,
 	);
 	const accounts = useSharedConversationAccountsState();
-	const [accountDialog, setAccountDialog] = useState(false);
+	const [accountMenu, setAccountMenu] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string>();
 	const [switched, setSwitched] = useState<{
@@ -112,7 +115,7 @@ function SharedConversationContent({
 				},
 			});
 			setSwitched({ failureId: failure?.itemId, accountId: id, name });
-			setAccountDialog(false);
+			setAccountMenu(false);
 			session.retryConnection();
 		} catch (reason) {
 			if (mounted.current)
@@ -128,25 +131,27 @@ function SharedConversationContent({
 	}
 	return (
 		<div className="flex h-full min-h-0 flex-col">
-			{supported && (
-				<div className="flex shrink-0 justify-end px-2 pb-1">
-					<Button
-						size="xs"
-						variant="ghost"
-						title={t("agents.chat.recovery.chooseAccount")}
-						onClick={() => setAccountDialog(true)}
-						disabled={busy}
-					>
-						<KeyRound />
-						<span className="max-w-40 truncate">
-							{busy ? t("agents.account.switchInProgress") : currentName}
-						</span>
-					</Button>
+			{(header || supported) && (
+				<div className="flex shrink-0 items-center gap-2 px-3 py-2">
+					{header}
+					{supported && (
+						<div className="ml-auto shrink-0">
+							<SharedConversationAccountMenu
+								target={target}
+								provider={provider}
+								selectedId={accountId}
+								currentName={currentName}
+								busy={busy}
+								disabled={locked}
+								open={accountMenu}
+								onOpenChange={setAccountMenu}
+								onSelect={(id, name) => void selectAccount(id, name)}
+							/>
+						</div>
+					)}
 				</div>
 			)}
-			{error && !accountDialog && (
-				<ChatAlert className="mx-2 mb-2">{error}</ChatAlert>
-			)}
+			{error && <ChatAlert className="mx-2 mb-2">{error}</ChatAlert>}
 			<div className="min-h-0 flex-1">
 				<StructuredAgentChatSurface
 					session={session}
@@ -155,8 +160,8 @@ function SharedConversationContent({
 					recovery={
 						supported
 							? {
-									manageAccounts: () => setAccountDialog(true),
-									chooseAccount: () => setAccountDialog(true),
+									manageAccounts: () => setAccountMenu(true),
+									chooseAccount: () => setAccountMenu(true),
 									...(handled && switched
 										? {
 												handedOff: {
@@ -174,18 +179,6 @@ function SharedConversationContent({
 					}
 				/>
 			</div>
-			{accountDialog && provider && (
-				<SharedConversationAccountDialog
-					target={target}
-					provider={provider}
-					selectedId={accountId}
-					busy={busy}
-					disabled={locked}
-					error={error}
-					onSelect={(id, name) => void selectAccount(id, name)}
-					onClose={() => setAccountDialog(false)}
-				/>
-			)}
 		</div>
 	);
 }

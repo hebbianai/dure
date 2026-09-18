@@ -1,30 +1,15 @@
-import {
-	Check,
-	Clock3,
-	KeyRound,
-	LogIn,
-	Plus,
-	Upload,
-	X,
-	Zap,
-} from "lucide-react";
+import { Clock3, KeyRound, LogIn, Upload, X, Zap } from "lucide-react";
 import { useState } from "react";
+import { CredentialAccountMenu } from "@/components/agents/CredentialAccountMenu";
 import {
-	DropdownMenu,
-	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuLabel,
 	DropdownMenuSeparator,
-	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { DureLoader } from "@/components/ui/dure-loader";
 import { ToolbarControl } from "@/components/ui/toolbar-control";
-import { AccountMenuLabel } from "@/components/usage/AccountMenuLabel";
-import { useAccountUsageReport } from "@/components/usage/useAccountUsageReport";
 import { t } from "@/lib/i18n";
 import { useManagedCredentialSwitchTransition } from "@/lib/sessions/managed/managedCredentialSwitchTransition";
-import { providerAccountMeter } from "@/lib/usage/accountUsageMeter";
-import { usageDurationLabel, usageResetLabel } from "@/lib/usage/usageLabels";
 import { cn } from "@/lib/utils";
 import {
 	type AccountProfile,
@@ -80,24 +65,6 @@ export function AgentCredentialSwitcher({
 	onManageAccounts,
 }: AgentCredentialSwitcherProps) {
 	const [open, setOpen] = useState(false);
-	const usage = useAccountUsageReport(provider, open && !hostName);
-	const accountLimit = (account?: AccountProfile) => {
-		const meter = usage
-			? providerAccountMeter(
-					provider,
-					usage,
-					account?.id,
-					account?.dir,
-					Date.now() / 1000,
-				)
-			: null;
-		return meter
-			? {
-					pct: meter.pct,
-					reset: usageResetLabel(usageDurationLabel(meter.resetLabel)),
-				}
-			: null;
-	};
 	const replacing = useManagedCredentialSwitchTransition(agentId);
 	const switching = accountBusy || replacing;
 	const mutationDisabled = disabled || switching;
@@ -141,8 +108,27 @@ export function AgentCredentialSwitcher({
 						: disabledTitle;
 
 	return (
-		<DropdownMenu onOpenChange={setOpen}>
-			<DropdownMenuTrigger asChild>
+		<CredentialAccountMenu
+			open={open}
+			onOpenChange={setOpen}
+			provider={provider}
+			accounts={accounts}
+			currentAccountId={selectedAccountId}
+			pendingAccountId={pending?.targetCredentialId}
+			followsGlobal={followsGlobal}
+			hostName={hostName}
+			disabled={mutationDisabled}
+			disabledTitle={switching ? title : disabled ? disabledTitle : undefined}
+			onSwitch={switchAccount}
+			onManageAccounts={onManageAccounts}
+			header={
+				statusLabel && (
+					<DropdownMenuLabel className="whitespace-normal text-xs text-muted-foreground">
+						{title}
+					</DropdownMenuLabel>
+				)
+			}
+			trigger={
 				<ToolbarControl
 					label={title}
 					aria-busy={switching}
@@ -190,120 +176,53 @@ export function AgentCredentialSwitcher({
 							: (currentAccount?.name ?? t("common.default"))}
 					</span>
 				</ToolbarControl>
-			</DropdownMenuTrigger>
-			<DropdownMenuContent
-				align="end"
-				className="w-64 max-w-(--radix-dropdown-menu-content-available-width)"
-			>
-				{statusLabel && (
-					<DropdownMenuLabel className="whitespace-normal text-xs text-muted-foreground">
-						{title}
-					</DropdownMenuLabel>
-				)}
-				<DropdownMenuLabel className="text-[10px] text-muted-foreground">
-					{PROVIDERS[provider].label}
-					{hostName ? ` · ${hostName}` : ""}
-				</DropdownMenuLabel>
-				<DropdownMenuItem
-					disabled={mutationDisabled}
-					title={switching ? title : disabled ? disabledTitle : undefined}
-					onSelect={() => switchAccount(null)}
-				>
-					<span className="w-3 shrink-0">
-						{pending?.targetCredentialId === null ? (
-							<Clock3 className="text-status-warn" />
-						) : (
-							!currentAccount && <Check className="text-status-run" />
-						)}
-					</span>
-					<AccountMenuLabel
-						label={t("agents.account.defaultCli")}
-						limit={accountLimit()}
-					/>
-					{followsGlobal && !currentAccount && (
-						<span className="shrink-0 text-[10px] text-muted-foreground">
-							{t("agents.account.global")}
-						</span>
+			}
+		>
+			{pending && (
+				<>
+					<DropdownMenuSeparator />
+					{pending.lastError && (
+						<DropdownMenuLabel className="text-[10px] text-destructive">
+							{t("agents.account.switchFailedReselect")}
+						</DropdownMenuLabel>
 					)}
-				</DropdownMenuItem>
-				{accounts.map((account) => (
-					<DropdownMenuItem
-						key={account.id}
-						disabled={mutationDisabled}
-						title={switching ? title : disabled ? disabledTitle : undefined}
-						onSelect={() => switchAccount(account.id)}
-					>
-						<span className="w-3 shrink-0">
-							{pending?.targetCredentialId === account.id ? (
-								<Clock3 className="text-status-warn" />
-							) : (
-								currentAccount?.id === account.id && (
-									<Check className="text-status-run" />
-								)
-							)}
+					<DropdownMenuItem disabled={mutationDisabled} onSelect={onApplyNow}>
+						<Zap />
+						<span className="text-xs">
+							{t("agents.account.interruptAndSwitchNow")}
 						</span>
-						<AccountMenuLabel
-							label={account.name}
-							limit={accountLimit(account)}
-						/>
-						{followsGlobal && currentAccount?.id === account.id && (
-							<span className="shrink-0 text-[10px] text-muted-foreground">
-								{t("agents.account.global")}
-							</span>
-						)}
 					</DropdownMenuItem>
-				))}
-				{pending && (
-					<>
-						<DropdownMenuSeparator />
-						{pending.lastError && (
-							<DropdownMenuLabel className="text-[10px] text-destructive">
-								{t("agents.account.switchFailedReselect")}
-							</DropdownMenuLabel>
-						)}
-						<DropdownMenuItem disabled={mutationDisabled} onSelect={onApplyNow}>
-							<Zap />
-							<span className="text-xs">
-								{t("agents.account.interruptAndSwitchNow")}
-							</span>
-						</DropdownMenuItem>
-						<DropdownMenuItem disabled={mutationDisabled} onSelect={onCancel}>
-							<X />
-							<span className="text-xs">
-								{t("agents.account.cancelScheduledSwitch")}
-							</span>
-						</DropdownMenuItem>
-					</>
-				)}
-				{hostName && remoteActionAccount && (
-					<>
-						<DropdownMenuSeparator />
+					<DropdownMenuItem disabled={mutationDisabled} onSelect={onCancel}>
+						<X />
+						<span className="text-xs">
+							{t("agents.account.cancelScheduledSwitch")}
+						</span>
+					</DropdownMenuItem>
+				</>
+			)}
+			{hostName && remoteActionAccount && (
+				<>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem
+						disabled={switching}
+						onSelect={() => onRemoteLogin(remoteActionAccount)}
+					>
+						<LogIn />
+						<span className="text-xs">{t("agents.account.loginOnHost")}</span>
+					</DropdownMenuItem>
+					{PROVIDERS[provider].credentialFiles.length > 0 && (
 						<DropdownMenuItem
-							disabled={switching}
-							onSelect={() => onRemoteLogin(remoteActionAccount)}
+							disabled={mutationDisabled}
+							onSelect={() => onCopyToHost(remoteActionAccount)}
 						>
-							<LogIn />
-							<span className="text-xs">{t("agents.account.loginOnHost")}</span>
+							<Upload />
+							<span className="text-xs">
+								{t("agents.account.copyLocalToHost")}
+							</span>
 						</DropdownMenuItem>
-						{PROVIDERS[provider].credentialFiles.length > 0 && (
-							<DropdownMenuItem
-								disabled={mutationDisabled}
-								onSelect={() => onCopyToHost(remoteActionAccount)}
-							>
-								<Upload />
-								<span className="text-xs">
-									{t("agents.account.copyLocalToHost")}
-								</span>
-							</DropdownMenuItem>
-						)}
-					</>
-				)}
-				<DropdownMenuSeparator />
-				<DropdownMenuItem onSelect={onManageAccounts}>
-					<Plus />
-					<span className="text-xs">{t("agents.account.add")}</span>
-				</DropdownMenuItem>
-			</DropdownMenuContent>
-		</DropdownMenu>
+					)}
+				</>
+			)}
+		</CredentialAccountMenu>
 	);
 }

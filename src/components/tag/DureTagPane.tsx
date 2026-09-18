@@ -1,10 +1,10 @@
 import { ArrowLeft, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 import { SharedAgentConversation } from "@/components/agents/chat/SharedAgentConversation";
+import { BackendServerSelect } from "@/components/common/BackendServerSelect";
 import { PaneEmptyState } from "@/components/common/PaneEmptyState";
 import { LoadingStatus } from "@/components/common/PanelStatus";
 import { SlackConnectionsPanel } from "@/components/plugins/SlackConnectionsPanel";
-import { BackendServerSelect } from "@/components/common/BackendServerSelect";
 import { useSlackTeamConnection } from "@/components/plugins/useSlackTeamConnection";
 import { SectionHeaderRow } from "@/components/sidebar/SidebarItems";
 import { Alert } from "@/components/ui/alert";
@@ -147,38 +147,49 @@ function TagTasks({
 			current = false;
 		};
 	}, [selected, authority]);
-	if (selected)
+	if (selected) {
+		const header = (
+			<>
+				<IconButton
+					title={t("common.back")}
+					showTooltip={false}
+					onClick={() => setSelected(undefined)}
+				>
+					<ArrowLeft />
+				</IconButton>
+				<h2
+					className="min-w-0 flex-1 truncate text-xs font-medium"
+					title={title(selected)}
+				>
+					{title(selected)}
+				</h2>
+			</>
+		);
 		return (
 			<div
 				className="flex min-h-0 min-w-0 flex-1 flex-col"
 				data-tag-conversation={selected.agentId}
 			>
-				<div className="flex shrink-0 items-center gap-2 px-3 py-2">
-					<IconButton
-						title={t("common.back")}
-						showTooltip={false}
-						onClick={() => setSelected(undefined)}
-					>
-						<ArrowLeft />
-					</IconButton>
-					<h2
-						className="min-w-0 truncate text-xs font-medium"
-						title={title(selected)}
-					>
-						{title(selected)}
-					</h2>
-				</div>
-				<div className="min-h-0 flex-1 bg-background">
-					{openError ? (
-						<Alert>{openError}</Alert>
-					) : target?.agentId === selected.agentId ? (
-						<SharedAgentConversation key={selected.agentId} target={target} />
-					) : (
-						<LoadingStatus />
-					)}
-				</div>
+				{!openError && target?.agentId === selected.agentId ? (
+					<SharedAgentConversation
+						key={selected.agentId}
+						target={target}
+						header={header}
+					/>
+				) : (
+					<>
+						<div className="flex shrink-0 items-center gap-2 px-3 py-2">
+							{header}
+						</div>
+						<div className="min-h-0 flex-1 bg-background">
+							{openError ? <Alert>{openError}</Alert> : <LoadingStatus />}
+						</div>
+					</>
+				)}
 			</div>
 		);
+	}
+
 	return (
 		<>
 			<SectionHeaderRow
@@ -267,7 +278,11 @@ function TagTasks({
 						<DialogHeader>
 							<DialogTitle>{t("tag.connections")}</DialogTitle>
 						</DialogHeader>
-						<SlackConnectionsPanel client={client} profiles={profiles} editOnOpen />
+						<SlackConnectionsPanel
+							client={client}
+							profiles={profiles}
+							editOnOpen
+						/>
 					</DialogContent>
 				</Dialog>
 			)}
