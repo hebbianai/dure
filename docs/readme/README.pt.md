@@ -120,7 +120,7 @@ Para compilar a partir do código e consultar a cobertura de verificação, veja
 
 ## Escopo do código aberto
 
-O código próprio de desktop, mobile, ambiente de execução, CLI e serviços publicado aqui está sob a licença [MIT](../../LICENSE); componentes de terceiros mantêm suas licenças e avisos. Você pode compilar, modificar e redistribuir o código conforme essas licenças.
+O código próprio de desktop, mobile, ambiente de execução (incluindo Hmux), CLI e serviços publicado aqui está sob a [GNU GPL somente versão 3 (GPL-3.0-only)](../../LICENSE); componentes de terceiros mantêm suas licenças e avisos. Você pode usar, modificar e redistribuir o código conforme essas licenças. Ao distribuir binários cobertos pela GPL, é necessário fornecer o código-fonte correspondente (Corresponding Source) conforme a GPLv3. As versões publicadas anteriormente sob MIT continuam disponíveis sob esses termos.
 
 [TRADEMARK.md](../../TRADEMARK.md) descreve o uso do nome, logotipo e ícones do Dure e a distinção entre compilações da comunidade e compilações oficiais da Hebbian AI.
 

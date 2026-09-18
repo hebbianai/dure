@@ -1,6 +1,6 @@
 [package]
 name = "dure"
-license = "MIT"
+license = "GPL-3.0-only"
 version = "0.2.26"
 description = "Multi-agent AI workspace IDE"
 authors = ["kattpish"]

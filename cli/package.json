@@ -1,6 +1,6 @@
 {
   "name": "dure-cli",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "version": "0.2.26",
   "description": "Command-line control for Dure agents",
   "type": "module",

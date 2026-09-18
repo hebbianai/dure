@@ -1,6 +1,6 @@
 {
 	"name": "@dure/claude-sdk-host",
-	"license": "MIT",
+	"license": "GPL-3.0-only",
 	"private": true,
 	"type": "module",
 	"engines": {

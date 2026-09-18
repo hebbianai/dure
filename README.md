@@ -118,7 +118,7 @@ For source builds and verification details, see the [platform development guide]
 
 ## Open-source boundary
 
-The first-party desktop, mobile, runtime, CLI and service code published here is available under [MIT](LICENSE); third-party components retain their licenses and notices. You may build, modify and redistribute the code under those licenses.
+The first-party desktop, mobile, runtime (including Hmux), CLI and service code published here is available under [GNU GPL version 3 only (GPL-3.0-only)](LICENSE); third-party components retain their licenses and notices. You may use, modify and redistribute the code under those licenses. Distribution of covered binaries requires providing Corresponding Source as specified by GPLv3. Earlier versions released under MIT remain available under those terms.
 
 The Dure name, logo, app icons and distinction between community and Hebbian AI official builds are covered by [TRADEMARK.md](TRADEMARK.md).
 

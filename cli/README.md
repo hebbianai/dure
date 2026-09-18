@@ -25,3 +25,8 @@ result; never replay an input batch blindly.
 Agent-facing instructions are packaged in [the Dure skill](skills/dure/SKILL.md)
 and the separate [orchestration integration](../orchestration/integration/SKILL.md).
 Customer-facing guides belong to [public documentation](../docs/public/).
+
+## Licensing
+
+Copyright (C) 2026 Hebbian AI. The Dure CLI is licensed under
+[GNU GPL version 3 only (GPL-3.0-only)](LICENSE).

@@ -3,7 +3,7 @@ name = "dure-feedback-intake"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "MIT"
+license = "GPL-3.0-only"
 publish = false
 description = "Receives in-app feedback submissions and turns them into GitHub issues"
 

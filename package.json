@@ -1,6 +1,6 @@
 {
   "name": "dure",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "private": true,
   "version": "0.2.26",
   "packageManager": "pnpm@10.34.5",

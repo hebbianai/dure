@@ -120,7 +120,7 @@ Pour compiler les sources et consulter la couverture de vérification, voir le [
 
 ## Périmètre open source
 
-Le code propre au projet publié ici pour le bureau, le mobile, le moteur d'exécution, la CLI et les services est sous licence [MIT](../../LICENSE) ; les composants tiers conservent leurs licences et mentions. Vous pouvez compiler, modifier et redistribuer le code selon ces licences.
+Le code propre au projet publié ici pour le bureau, le mobile, le moteur d’exécution (dont Hmux), la CLI et les services est sous [GNU GPL version 3 uniquement (GPL-3.0-only)](../../LICENSE) ; les composants tiers conservent leurs licences et mentions. Vous pouvez utiliser, modifier et redistribuer le code selon ces licences. La distribution de binaires couverts par la GPL exige de fournir le code source correspondant (Corresponding Source) selon les modalités de la GPLv3. Les versions précédemment publiées sous MIT restent disponibles selon ces conditions.
 
 [TRADEMARK.md](../../TRADEMARK.md) décrit l'utilisation du nom, du logo et des icônes de Dure, ainsi que la distinction entre les versions communautaires et les versions officielles de Hebbian AI.
 

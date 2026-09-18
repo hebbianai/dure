@@ -1,6 +1,6 @@
 {
   "name": "dure-mobile",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "private": true,
   "version": "0.1.4",
   "type": "module",
