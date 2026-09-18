@@ -2,6 +2,7 @@ import type * as React from "react";
 import { useState } from "react";
 import { Tooltip as TooltipPrimitive } from "radix-ui";
 
+import { lastInputMovedFocus } from "@/lib/ui/inputModality";
 import { MENU_SIDE_OFFSET } from "@/lib/ui/menuSurface";
 import { cn } from "@/lib/utils";
 
@@ -64,14 +65,14 @@ function Tooltip({
 }
 
 /**
- * Focus opens the tooltip only where the focus ring shows. Radix opens on any
- * focus a press on the trigger did not cause, which includes focus the user
- * never moved: a dialog opened by mouse hands focus to its first control, and
- * that control's hint popped over the dialog as it appeared (owner report
- * 2026-09-18, Refresh in the Connections dialog). `:focus-visible` is the
- * engine's own answer to "did the keyboard bring focus here" — false for that
- * hand-off in WebKit and Chromium, true for Tab and for a dialog opened from
- * the keyboard. Radix skips its handler once the event is default-prevented.
+ * Focus opens the tooltip only when the user walked there with the keyboard.
+ * Radix opens on any focus a press on the trigger did not cause, which
+ * includes focus the user never moved: a dialog hands focus to its first
+ * control as it opens, and hands it back to the button that opened it as it
+ * closes — the hint popped each time (owner report 2026-09-18, Refresh in the
+ * Connections dialog). The last input decides, not `:focus-visible`;
+ * inputModality.ts says why. Radix skips its handler once the event is
+ * default-prevented.
  */
 function TooltipTrigger({
   onFocus,
@@ -82,7 +83,7 @@ function TooltipTrigger({
       data-slot="tooltip-trigger"
       onFocus={(event) => {
         onFocus?.(event);
-        if (!event.currentTarget.matches(":focus-visible")) {
+        if (!lastInputMovedFocus(event.currentTarget.ownerDocument)) {
           event.preventDefault();
         }
       }}

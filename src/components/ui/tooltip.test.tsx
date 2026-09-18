@@ -3,7 +3,11 @@ import type * as React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { focusByKeyboard, focusWithoutKeyboard } from "@/test/keyboardFocus";
+import {
+  focusByKeyboard,
+  focusWithoutKeyboard,
+  pressKey,
+} from "@/test/keyboardFocus";
 import {
   Tooltip,
   TooltipContent,
@@ -30,7 +34,10 @@ function renderOpenTooltip(
 // Portalled content lands in document.body, outside RTL's container. Vitest
 // runs without `globals`, so RTL auto-cleanup never registers — clean up
 // explicitly or a previous test's portal satisfies the next query.
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  pressKey();
+});
 
 const queryContent = () =>
   document.querySelector("[data-slot='tooltip-content']");
@@ -73,6 +80,25 @@ describe("Tooltip", () => {
     );
     expect(queryContent()?.textContent).toBe("Open settings");
   });
+
+  it.each(["Enter", "Escape"])(
+    "stays closed when %s moved focus here — the user did not walk to it",
+    (key) => {
+      render(
+        <Tooltip>
+          <TooltipTrigger>Settings</TooltipTrigger>
+          <TooltipContent>Open settings</TooltipContent>
+        </Tooltip>,
+      );
+      const trigger = document.querySelector(
+        "[data-slot='tooltip-trigger']",
+      ) as HTMLElement;
+
+      pressKey(document, key);
+      act(() => trigger.focus());
+      expect(queryContent()).toBeNull();
+    },
+  );
 
   it("stays closed when focus arrives without the keyboard", () => {
     const onFocus = vi.fn();
