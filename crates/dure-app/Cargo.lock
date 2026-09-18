@@ -990,7 +990,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hmux-client"
-version = "0.2.26"
+version = "0.2.28"
 dependencies = [
  "dirs",
  "fs2",
@@ -1011,7 +1011,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-host"
-version = "0.2.26"
+version = "0.2.28"
 dependencies = [
  "alacritty_terminal",
  "fs2",
@@ -1026,7 +1026,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-local-platform"
-version = "0.2.26"
+version = "0.2.28"
 dependencies = [
  "hmux-session-protocol",
  "libc",
@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-runtime-contract"
-version = "0.2.26"
+version = "0.2.28"
 dependencies = [
  "hmux-session-protocol",
  "serde",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-session-protocol"
-version = "0.2.26"
+version = "0.2.28"
 dependencies = [
  "base64",
  "serde",
@@ -2501,7 +2501,7 @@ dependencies = [
 
 [[package]]
 name = "terminal-state-protocol"
-version = "0.2.26"
+version = "0.2.28"
 dependencies = [
  "prost",
 ]
