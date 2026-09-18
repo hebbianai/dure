@@ -12,7 +12,8 @@ export function useAddAgentBodyState() {
   const sshHosts = useStore((s) => s.sshHosts);
   const ensureProjectForPath = useStore((s) => s.ensureProjectForPath);
   const activeSpaceId = useStore((s) => s.activeSpaceId);
-  return { agents, sshHosts, addAgent, ensureProjectForPath, activeSpaceId };
+  const uiPrefs = useStore((s) => s.uiPrefs);
+  return { agents, sshHosts, addAgent, ensureProjectForPath, activeSpaceId, uiPrefs };
 }
 
 // Call-time store reads below match the previous inline useStore.getState()

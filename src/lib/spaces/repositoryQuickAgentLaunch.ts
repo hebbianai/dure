@@ -22,8 +22,7 @@ export interface RepositoryQuickAgentInput {
 	accounts: readonly AccountProfile[];
 	/** Globally active account for this provider, if any. */
 	activeAccountId?: string;
-	/** From agentSpawnInteractionPreference — basic interface mode pins the
-	 * PTY surface for quick-added agents too. */
+	/** The shared preference resolver pins Terminal unless Pro opts into Chat. */
 	interactionPreference?: "native_cli";
 }
 

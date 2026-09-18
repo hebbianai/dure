@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
 	ensureProjectForPath: vi.fn(),
@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 	ensureRuntime: vi.fn(),
 	ensureDefaults: vi.fn(),
 	openAgentPanel: vi.fn(),
+	readAgentPanePreferences: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ message: mocks.message }));
@@ -31,6 +32,7 @@ vi.mock("@/components/spaces/useSpacesPaneState", () => ({
 	readAgents: () => [],
 	readSpaceById: () => ({ id: "space-1", name: "Main" }),
 	readSshHosts: () => [],
+	readAgentPanePreferences: mocks.readAgentPanePreferences,
 }));
 vi.mock("@/lib/agents/addAgentCanonicalRun", () => ({
 	prepareCanonicalAddAgentRun: mocks.prepare,
@@ -65,6 +67,14 @@ const project = {
 const target = { label: "Repo", path: "/repo" };
 
 describe("repository quick Add Agent action", () => {
+	afterEach(() => vi.unstubAllEnvs());
+	it.each(["terminal", "chat"])("passes the Pro %s preference to repository creation", async (defaultAgentPane) => {
+		vi.stubEnv("PROD", false);
+		mocks.readAgentPanePreferences.mockReturnValue({ interfaceMode: "pro", defaultAgentPane });
+		const { result } = renderHook(() => useRepositoryQuickAdd(vi.fn()));
+		await act(async () => result.current.onAddRepositoryAgent("space-1", target, "codex"));
+		expect(mocks.prepare.mock.calls[0][0].interactionPreference).toBe(defaultAgentPane === "terminal" ? "native_cli" : undefined);
+	});
 	beforeEach(() => {
 		for (const mock of Object.values(mocks)) mock.mockReset();
 		mocks.ensureProjectForPath.mockResolvedValue(project);

@@ -1214,7 +1214,7 @@ function runCliAsync(root, args, environment = {}, cwd = process.cwd()) {
 
 async function installClientControlFixture(
   root,
-  { error: clientError = null, result: clientResult = null } = {},
+  { error: clientError = null, result: clientResult = null, interactionPreference } = {},
 ) {
   const requests = [];
   const server = createServer((request, response) => {
@@ -1233,6 +1233,10 @@ async function installClientControlFixture(
       response.writeHead(clientError ? 409 : 200, {
         "Content-Type": "application/json",
       });
+      if (request.url === "/agent/launch-preference" && interactionPreference !== undefined) {
+        response.end(JSON.stringify({ ok: true, schemaVersion: 1, interactionPreference }));
+        return;
+      }
       response.end(
         JSON.stringify(
           clientError
@@ -1271,6 +1275,7 @@ async function installClientControlFixture(
       channel: "stable",
       generation: "client-generation-1",
       processId: 42,
+      ...(interactionPreference !== undefined ? { capabilities: ["agent.launch_preference_v1"] } : {}),
     }),
     { mode: 0o600 },
   );
@@ -1299,6 +1304,42 @@ async function installClientControlFixture(
 }
 
 describe("dure run and spawn CLI", () => {
+  it("reports invalid client pane preferences as JSON before any spawn request", async () => {
+    const root = temporaryRoot();
+    const remote = installRunRemoteFixture(root);
+    const client = await installClientControlFixture(root, { interactionPreference: "future-profile" });
+    try {
+      const result = await runCliAsync(root, ["run", prompt, "--project", "dure", "--provider", "codex", "--idempotency-key", "invalid-preference-1", "--backend", "remote-a", "--json"], {
+        DURE_AGENT_SPAWN_LOG: remote.log,
+        HMUX_SESSION_ID: "source-session", HMUX_WORKSPACE_ID: "source-workspace",
+        PATH: `${remote.bin}:${process.env.PATH}`,
+      });
+      expect(result.status).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(JSON.parse(result.stderr)).toMatchObject({ kind: "dure.run.error", error: { code: "client_response_invalid" } });
+      expect(existsSync(remote.log)).toBe(false);
+    } finally { await client.close(); }
+  });
+
+  it.each(["native_cli", null])("uses the connected app preference before creating a new CLI pane (%s)", async (interactionPreference) => {
+    const root = temporaryRoot();
+    const remote = installRunRemoteFixture(root);
+    const client = await installClientControlFixture(root, { interactionPreference });
+    try {
+      const result = await runCliAsync(root, ["run", prompt, "--project", "dure", "--provider", "codex", "--idempotency-key", "preference-run-1", "--backend", "remote-a", "--json"], {
+        DURE_AGENT_SPAWN_LOG: remote.log,
+        HMUX_SESSION_ID: "source-session", HMUX_WORKSPACE_ID: "source-workspace",
+        PATH: `${remote.bin}:${process.env.PATH}`,
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(client.requests.map(({ url }) => url)).toEqual(["/agent/launch-preference", "/hmux/attach"]);
+      const observations = JSON.parse(readFileSync(remote.log, "utf8"));
+      expect(observations[0].request.body.interactionPreference).toBe(interactionPreference ?? undefined);
+      expect(observations.map(({ request }) => request.operation)).toEqual(["agent_spawn.preview", "agent_spawn.apply"]);
+      expect(JSON.parse(result.stdout).presentation.state).toBe("opened");
+    } finally { await client.close(); }
+  });
+
   it("resolves explicit and invoking-pane Space targets without backend state", () => {
     const projection = {
       state: "available",
