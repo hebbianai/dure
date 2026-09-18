@@ -104,15 +104,19 @@ Dure 把这些工作集中到一处。让 Claude Code、Codex 和 Pi 并排运�
 
 [会话与恢复](https://docs.dureai.dev/cn/session-model) · [SSH](https://docs.dureai.dev/cn/remote-and-ssh) · [工作安全指南](https://docs.dureai.dev/cn/current-limits)
 
-## 源代码开放情况
+## 开源范围
 
 **许可证：[MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI。**
 
-Dure 自有源代码在本仓库中以 MIT 许可证提供。第三方组件保留各自的许可证和版权声明。
+本仓库发布的自有代码以 [MIT](../../LICENSE) 许可证提供，包括桌面应用、移动客户端、本地运行时、CLI 以及仓库中包含的服务代码。第三方组件保留各自的许可证和版权声明。
 
 本仓库包含 **macOS、Windows 和 Linux** 桌面端，以及 **iOS 和 Android** 移动端的源代码。构建入口和当前验证范围请参阅[各平台开发说明](../../CONTRIBUTING.md#platforms)。目前可下载的桌面应用面向 Apple Silicon macOS。
 
 从源码构建请参阅[贡献指南](../../CONTRIBUTING.md#source-and-development)。应用可从[官网](https://www.dureai.dev/download/mac/)下载。
+
+**Dure 名称、标志和应用图标**的使用遵循 [TRADEMARK.md](../../TRADEMARK.md)。你可以按照代码许可证构建、修改和再分发软件；发布自己的发行版时，请明确区分其发布者与 Hebbian AI 的[官方构建](../../TRADEMARK.md#official-builds)。
+
+**运营服务和非公开运营资料**与源代码发布分开管理。源代码许可证不授予对 Hebbian AI 运营的基础设施或第三方服务的访问权；本仓库已包含的代码仍遵循其声明的许可证。签名密钥、部署凭据以及机密商业和运营记录保持非公开。本仓库的贡献通过公开议题和拉取请求管理。
 
 ## 参与贡献
 

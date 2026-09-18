@@ -106,15 +106,19 @@ Indica los comandos y los archivos que los documentan.
 
 <sub>Los enlaces a la documentación de esta traducción llevan a la versión en inglés.</sub>
 
-## Disponibilidad del código fuente
+## Alcance del código abierto
 
 **Licencia: [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
-El código propio de Dure está disponible en este repositorio bajo MIT. Los componentes de terceros conservan sus licencias y avisos de copyright.
+El código propio publicado aquí está disponible bajo [MIT](../../LICENSE), incluidas las aplicaciones de escritorio, el cliente móvil, el entorno de ejecución local, la CLI y el código de servicios incluido. Los componentes de terceros conservan sus licencias y avisos de copyright.
 
 Este repositorio incluye código de escritorio para **macOS, Windows y Linux**, y código móvil para **iOS y Android**. Consulta el [desarrollo y la verificación por plataforma](../../CONTRIBUTING.md#platforms) para conocer los comandos de compilación y la cobertura actual. La aplicación de escritorio descargable actualmente está dirigida a macOS con Apple Silicon.
 
 Consulta la [guía de contribución](../../CONTRIBUTING.md#source-and-development) para compilar desde el código fuente. La app se descarga desde el [sitio web](https://www.dureai.dev/download/mac/).
+
+El uso del **nombre, el logotipo y los iconos de Dure** se describe en [TRADEMARK.md](../../TRADEMARK.md). Puedes compilar, modificar y redistribuir el código según sus licencias; identifica claramente al responsable de tu distribución y distínguela de las [compilaciones oficiales](../../TRADEMARK.md#official-builds) de Hebbian AI.
+
+Los **servicios operados y la documentación operativa privada** son independientes de la publicación del código. La licencia del código no concede acceso a la infraestructura operada por Hebbian AI ni a servicios de terceros; el código incluido aquí conserva su licencia declarada. Las claves de firma, las credenciales de despliegue y los registros comerciales y operativos confidenciales permanecen privados. Las contribuciones a este repositorio se gestionan mediante issues y pull requests públicos.
 
 ## Contribuir
 

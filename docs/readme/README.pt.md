@@ -106,15 +106,19 @@ Informe os comandos e os arquivos que os documentam.
 
 <sub>Os links de documentação desta tradução levam à versão em inglês.</sub>
 
-## Disponibilidade do código-fonte
+## Escopo do código aberto
 
 **Licença: [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
-O código próprio do Dure está disponível neste repositório sob a licença MIT. Os componentes de terceiros mantêm suas licenças e avisos de direitos autorais.
+O código próprio publicado aqui está disponível sob a licença [MIT](../../LICENSE), incluindo os aplicativos desktop, o cliente móvel, o ambiente de execução local, a CLI e o código dos serviços incluídos. Os componentes de terceiros mantêm suas licenças e avisos de direitos autorais.
 
 Este repositório inclui código de desktop para **macOS, Windows e Linux** e código móvel para **iOS e Android**. Consulte o [desenvolvimento e a verificação por plataforma](../../CONTRIBUTING.md#platforms) para os comandos de compilação e a cobertura atual. O aplicativo de desktop disponível para download atualmente é para macOS com Apple Silicon.
 
 Consulte o [guia de contribuição](../../CONTRIBUTING.md#source-and-development) para compilar a partir do código-fonte. O aplicativo está disponível no [site](https://www.dureai.dev/download/mac/).
+
+O uso do **nome, logotipo e ícones do Dure** é descrito em [TRADEMARK.md](../../TRADEMARK.md). Você pode compilar, modificar e redistribuir o código conforme suas licenças; identifique claramente o responsável pela sua distribuição e diferencie-a das [compilações oficiais](../../TRADEMARK.md#official-builds) da Hebbian AI.
+
+Os **serviços operados e os registros operacionais privados** são separados da publicação do código. A licença do código não concede acesso à infraestrutura operada pela Hebbian AI nem a serviços de terceiros; o código incluído aqui mantém sua licença declarada. Chaves de assinatura, credenciais de implantação e registros comerciais e operacionais confidenciais permanecem privados. As contribuições a este repositório são acompanhadas por issues e pull requests públicos.
 
 ## Contribuir
 

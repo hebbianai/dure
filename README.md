@@ -104,15 +104,19 @@ Tell me the commands and which files document them.
 
 [Sessions and recovery](https://docs.dureai.dev/en/session-model) · [SSH](https://docs.dureai.dev/en/remote-and-ssh) · [Work-safety guidance](https://docs.dureai.dev/en/current-limits)
 
-## Source availability
+## Open-source boundary
 
 **License: [MIT](LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
-Dure's first-party source is available in this repository under MIT. Third-party components retain their own licenses and copyright notices.
+The first-party code published here is available under [MIT](LICENSE), including the desktop apps, mobile client, local runtime, CLI and included service code. Third-party components retain their own licenses and copyright notices.
 
 This repository includes desktop source for **macOS, Windows and Linux**, and mobile source for **iOS and Android**. See [platform development and verification](CONTRIBUTING.md#platforms) for build entrypoints and current coverage. The current downloadable desktop app targets macOS on Apple Silicon.
 
 Build from source using the [contribution guide](CONTRIBUTING.md#source-and-development). App downloads are available from the [website](https://www.dureai.dev/download/mac/).
+
+The **Dure name, logo and app icons** are covered by [TRADEMARK.md](TRADEMARK.md). You may build, modify and redistribute the code under its licenses; distinguish your own distribution from Hebbian AI's [official builds](TRADEMARK.md#official-builds).
+
+**Operated services and private operations** are separate from the source release. The source license does not grant access to Hebbian AI-operated infrastructure or third-party services; any code included here keeps its stated license. Signing keys, deployment credentials and confidential business and operational records remain private. Public issues and pull requests track contributions to this repository.
 
 ## Contributing
 
