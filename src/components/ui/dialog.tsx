@@ -6,6 +6,7 @@ import { Dialog as DialogPrimitive } from "radix-ui"
 import { cn } from "@/lib/utils"
 import { t } from "@/lib/i18n"
 import { registerOpenModal } from "@/lib/ui/modalPresence"
+import { keepPointerOpenFocusOnSurface } from "@/lib/ui/pointerOpenFocus"
 import { ConfirmationButton } from "@/components/ui/button"
 import { IconButton } from "@/components/ui/icon-button"
 import { XIcon } from "lucide-react"
@@ -82,6 +83,7 @@ function DialogContent({
   dismiss = "all",
   onInteractOutside,
   onEscapeKeyDown,
+  onOpenAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
@@ -102,6 +104,12 @@ function DialogContent({
         onEscapeKeyDown={(event) => {
           if (dismiss === "none") event.preventDefault()
           onEscapeKeyDown?.(event)
+        }}
+        // A caller's own choice of focus wins; otherwise a dialog opened by
+        // mouse keeps focus off its first button (pointerOpenFocus.ts).
+        onOpenAutoFocus={(event) => {
+          onOpenAutoFocus?.(event)
+          keepPointerOpenFocusOnSurface(event)
         }}
         className={cn(
           // grid-cols-1 (minmax(0,1fr)) is required: an implicit auto column's

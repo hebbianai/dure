@@ -4,6 +4,7 @@ import { ProviderGlyph } from "@/components/agents/ProviderLogo";
 import { Titled } from "@/components/ui/tooltip";
 import { t } from "@/lib/i18n";
 import { MENU_GLASS_FILL_CLASS, MENU_SIDE_OFFSET } from "@/lib/ui/menuSurface";
+import { keepPointerOpenFocusOnSurface } from "@/lib/ui/pointerOpenFocus";
 import { compactUsageIndicator } from "@/lib/usage/usageMeter";
 import { cn } from "@/lib/utils";
 import { PROVIDERS, type Provider } from "@/types";
@@ -126,6 +127,9 @@ export function UsageMeterPopover({
 					align="end"
 					sideOffset={MENU_SIDE_OFFSET}
 					collisionPadding={8}
+					// Opened by mouse, the popover takes focus itself rather than
+					// lighting up its refresh button (pointerOpenFocus.ts).
+					onOpenAutoFocus={keepPointerOpenFocusOnSurface}
 					// 메뉴와 같은 유리 재질이다. 이 팝오버는 메뉴와 같은 층에 같은
 					// 방식으로 떠오르므로(트리거 옆, MENU_SIDE_OFFSET, shadow-menu)
 					// 불투명 pane 면이면 그 층에서 혼자 다른 재질로 읽혔다.
