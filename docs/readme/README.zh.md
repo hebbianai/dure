@@ -118,6 +118,8 @@ dure ls
 
 ## 开源范围
 
+Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).
+
 本仓库发布的桌面端、移动端、运行时（包括 Hmux）、CLI 和服务自有代码以 [GNU GPL 仅限第 3 版（GPL-3.0-only）](../../LICENSE)提供；第三方组件保留各自的许可证和声明。你可以按照这些许可证使用、修改和再分发代码。分发受 GPL 约束的二进制文件时，必须按 GPLv3 的规定提供对应源代码（Corresponding Source）。此前以 MIT 发布的版本仍适用原有 MIT 条款。
 
 Dure 名称、标志、应用图标以及社区构建与 Hebbian AI 官方构建的区别见 [TRADEMARK.md](../../TRADEMARK.md)。
