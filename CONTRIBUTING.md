@@ -223,3 +223,8 @@ accepting a change.
 Submit only work you have the right to contribute under the project's
 [MIT license](LICENSE). Preserve third-party licenses and identify the source and
 license of any material you add.
+
+See the [open-source boundary](README.md#open-source-boundary) for the scope of
+this repository and [TRADEMARK.md](TRADEMARK.md) for project branding and official
+builds. Independent builds and forks remain permitted under the source licenses;
+identify their publisher clearly when distributing them.

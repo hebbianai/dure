@@ -106,15 +106,19 @@ Indique les commandes et les fichiers qui les documentent.
 
 <sub>Les liens de documentation de cette traduction renvoient à la version anglaise.</sub>
 
-## Disponibilité du code source
+## Périmètre open source
 
 **Licence : [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
-Le code propre à Dure est disponible dans ce dépôt sous licence MIT. Les composants tiers conservent leurs licences et mentions de copyright.
+Le code propre au projet publié ici est disponible sous licence [MIT](../../LICENSE), y compris les applications de bureau, le client mobile, le moteur d'exécution local, la CLI et le code des services inclus. Les composants tiers conservent leurs licences et mentions de copyright.
 
 Ce dépôt comprend le code de bureau pour **macOS, Windows et Linux**, ainsi que le code mobile pour **iOS et Android**. Consultez le [développement et la vérification par plateforme](../../CONTRIBUTING.md#platforms) pour les commandes de compilation et la couverture actuelle. L’application de bureau actuellement téléchargeable cible macOS sur Apple Silicon.
 
 Consultez le [guide de contribution](../../CONTRIBUTING.md#source-and-development) pour compiler depuis les sources. L'application se télécharge sur le [site web](https://www.dureai.dev/download/mac/).
+
+L'utilisation du **nom, du logo et des icônes de Dure** est décrite dans [TRADEMARK.md](../../TRADEMARK.md). Vous pouvez compiler, modifier et redistribuer le code selon ses licences ; identifiez clairement l'éditeur de votre distribution et distinguez-la des [versions officielles](../../TRADEMARK.md#official-builds) de Hebbian AI.
+
+Les **services exploités et les documents opérationnels privés** sont distincts de la publication du code. La licence du code ne donne pas accès aux infrastructures exploitées par Hebbian AI ni aux services tiers ; le code inclus ici conserve la licence indiquée. Les clés de signature, les identifiants de déploiement et les documents commerciaux et opérationnels confidentiels restent privés. Les contributions à ce dépôt sont suivies dans les issues et les pull requests publiques.
 
 ## Contribuer
 

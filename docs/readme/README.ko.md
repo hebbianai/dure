@@ -104,15 +104,19 @@ Dure는 그 일을 한곳에 모읍니다. Claude Code 옆에 Codex와 Pi를 두
 
 [세션과 복구](https://docs.dureai.dev/ko/session-model) · [SSH](https://docs.dureai.dev/ko/remote-and-ssh) · [작업 안전 안내](https://docs.dureai.dev/ko/current-limits)
 
-## 소스 공개 안내
+## 오픈소스 공개 범위
 
 **라이선스: [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
 
-Dure의 자체 소스 코드는 이 저장소에서 MIT 라이선스로 제공됩니다. 외부 구성 요소의 기존 라이선스와 저작권 고지는 유지합니다.
+이 저장소에 공개된 자체 코드는 [MIT](../../LICENSE) 라이선스로 제공됩니다. 데스크톱 앱, 모바일 클라이언트, 로컬 런타임, CLI와 저장소에 포함된 서비스 코드가 모두 해당됩니다. 외부 구성 요소의 기존 라이선스와 저작권 고지는 유지합니다.
 
 이 저장소에는 **macOS·Windows·Linux** 데스크톱과 **iOS·Android** 모바일 소스가 함께 들어 있습니다. 빌드 명령과 현재 검증 범위는 [플랫폼별 개발 안내](../../CONTRIBUTING.md#platforms)를 참고하세요. 현재 다운로드할 수 있는 데스크톱 앱은 Apple Silicon macOS용입니다.
 
 소스 빌드는 [기여 가이드](../../CONTRIBUTING.md#source-and-development)를 참고하세요. 앱은 [웹사이트](https://www.dureai.dev/download/mac/)에서 다운로드할 수 있습니다.
+
+**Dure 이름·로고·앱 아이콘**의 사용은 [TRADEMARK.md](../../TRADEMARK.md)에 안내되어 있습니다. 코드의 라이선스에 따라 직접 빌드·수정·재배포할 수 있으며, 배포할 때는 Hebbian AI의 [공식 빌드](../../TRADEMARK.md#official-builds)와 제작자를 구분해 표시해야 합니다.
+
+**운영 서비스와 비공개 운영자료**는 소스 공개와 별개입니다. 소스 라이선스는 Hebbian AI가 운영하는 인프라나 외부 서비스에 대한 접근권을 부여하지 않습니다. 이 저장소에 포함된 코드는 명시된 라이선스를 그대로 따릅니다. 서명 키, 배포 자격 증명, 기밀 사업·운영자료는 비공개로 유지합니다. 이 저장소의 기여 작업은 공개 이슈와 풀 리퀘스트로 관리합니다.
 
 ## 기여하기
 
