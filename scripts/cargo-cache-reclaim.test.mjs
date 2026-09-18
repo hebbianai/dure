@@ -163,7 +163,9 @@ with open(sys.argv[1], "r+") as lock:
       holder.stdin.end();
       await ended;
     }
-    run("--cache-only", "--apply");
+    const released = run("--cache-only", "--apply");
+    expect(released.receipt.refused).toEqual([]);
+    expect(released.receipt.skipped).toEqual([]);
     expect(existsSync(join(profile, "deps", "libfixture-123.rlib"))).toBe(false);
     expect(existsSync(object)).toBe(false);
   });

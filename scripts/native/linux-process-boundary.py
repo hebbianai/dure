@@ -254,17 +254,27 @@ def observe_points(arguments, include_cwd=False):
                     try:
                         path = os.readlink("cwd", dir_fd=proc_directory)
                     except OSError as error:
-                        if read_process_identity_from_directory(proc_directory) is None:
+                        after = read_process_identity_from_directory(proc_directory)
+                        if after is None:
                             continue
-                        fail(f"process cwd unavailable errno={error.errno}")
-                    after = read_process_identity_from_directory(proc_directory)
-                    if after is None:
-                        continue
-                    if identity["start_ticks"] != after["start_ticks"]:
-                        fail("process identity changed during cwd observation")
-                    if not os.path.isabs(path):
-                        fail("process cwd is not absolute")
-                    cwd = os.fsencode(path).hex()
+                        if identity["start_ticks"] != after["start_ticks"]:
+                            fail("process identity changed during cwd observation")
+                        # Exit withdraws cwd before the parent reaps the zombie.
+                        # A live process with an unreadable cwd stays unknown.
+                        if after["state"] != "Z":
+                            fail(f"process cwd unavailable errno={error.errno}")
+                        identity = after
+                        cwd = "-"
+                    else:
+                        after = read_process_identity_from_directory(proc_directory)
+                        if after is None:
+                            continue
+                        if identity["start_ticks"] != after["start_ticks"]:
+                            fail("process identity changed during cwd observation")
+                        if not os.path.isabs(path):
+                            fail("process cwd is not absolute")
+                        identity = after
+                        cwd = os.fsencode(path).hex()
             emit_process_member(
                 pid,
                 identity,
