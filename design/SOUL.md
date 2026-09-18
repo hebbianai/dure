@@ -1,9 +1,9 @@
 # Dure design charter
 
-Read this before making a design decision. It translates the
-[product philosophy](../docs/product/PHILOSOPHY.md) into attention, interaction,
-and visual intent. It does not describe shipped behavior. Implementations and
-tests are the authority for what works; open decisions belong in GitHub Issues.
+Read this before making a design decision. This charter defines Dure's attention,
+interaction and visual intent. It does not describe shipped behavior.
+Implementations and tests are the authority for what works; open decisions
+belong in GitHub Issues.
 
 ## 1. Attention and agency
 

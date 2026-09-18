@@ -12,7 +12,9 @@ hover that moves layout, and multiple competing primary actions. Labels must
 remain visible rather than being replaced by placeholders.
 
 Product imagery must depict the actual product, using its fonts and geometry.
-Use the [capture workflow](../.agents/skills/capture-product-media/SKILL.md) for
-reviewed footage rather than redrawing a stale mockup as a current screenshot.
-The [public documentation identity](../docs/architecture/public-documentation-visual-identity.md)
-owns the Mintlify reading surface and its native navigation/theme behavior.
+Follow the [public media workflow](../tools/media-capture/README.md) to capture,
+review and sanitize footage. Do not present a redrawn mockup as a current
+screenshot. The [documentation maintenance guide](../docs/public/README.md#keep-media-and-brand-assets-reviewable)
+describes product figures and the Mintlify reading surface. Its
+[configuration](../docs/public/docs.json) and [stylesheet](../docs/public/style.css)
+own the published navigation, theme and typography.

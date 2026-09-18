@@ -2,10 +2,9 @@
 
 [SOUL](SOUL.md) owns design judgment. Current values and behavior live in
 [desktop CSS](../src/index.css), [theme code](../src/lib/theme/),
-[UI primitives](../src/components/ui/), and their consumers. [DESIGN](../DESIGN.md)
-contains the token evidence read by the coverage engine; it is not a component
-catalog. Historical canvases and measurements are references, not another
-implementation authority.
+[UI primitives](../src/components/ui/), and their consumers. Reuse those values
+instead of maintaining a second palette in prose. Historical canvases and
+measurements do not define current behavior.
 
 ## 1. Materials
 
@@ -54,5 +53,6 @@ layout/interaction idea and translate it into Dure's existing components and val
 Measure source/computed values, preserve settled sections, and verify affected
 light/dark, focus, contrast, layout, and native-composition behavior. Label evidence
 as observed, confirmed, or unverified. A failed measurement stays unverified.
-New design decisions and remaining work belong in Issues; old measurements are
-available in [Git history](https://github.com/hebbianai/dure-internal/tree/7e4edc7dabbe43cf7630ad793a8bef9f2b859ac6/design/reports).
+Record design decisions, reproducible measurements and remaining work in
+[public issues](https://github.com/hebbianai/dure/issues). Include the source
+revision and measurement method so contributors can check the evidence.

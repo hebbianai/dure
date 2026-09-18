@@ -73,8 +73,8 @@ for figure containment, provider tabs and localized accessibility checks. Upgrad
 the pinned Mintlify version as a separate reviewed tooling change rather than
 implicitly using latest.
 
-Land through the repository's reviewed fast-forward workflow. After deployment,
-check the changed public pages and run `pnpm docs:check-downloads` from the
+Follow the repository's [contribution and branch workflow](../../CONTRIBUTING.md#branches-and-releases).
+After deployment, check the changed public pages and run `pnpm docs:check-downloads` from the
 repository root. That check verifies the published installation Markdown and
 `llms-full.txt`, as well as the shared download destination. A local validation
 pass alone is not proof of public delivery.
@@ -92,7 +92,7 @@ clear of the fade. The figure contains no app runtime and cannot start an agent.
 Its only embedded script restores captured scroll positions once the viewport
 is visible and fonts load.
 
-Regenerate with the repository's pinned Node version:
+From the repository root, regenerate with the repository's pinned Node version:
 
 ```sh
 node scripts/run-with-build-storage.mjs frontend -- node tools/media-capture/docs-product-figures.mjs
@@ -138,11 +138,14 @@ the favicon uses the website mark.
 
 ## Preserve the public boundary
 
-Keep user instructions free of private source links, internal issue evidence,
-source-build instructions and speculative roadmap, pricing or license claims.
-Public release artifacts and the curated public repository do not make the
-private development tree public. Track plans and drafts in GitHub Issues.
-Navigation visibility alone does not prevent direct access to a published file.
+Follow the repository's [open-source boundary](../../README.md#open-source-boundary).
+Keep user instructions free of private source links, internal issue evidence and
+speculative roadmap, pricing or license claims. Link contributors to
+[development installation](../../CONTRIBUTING.md#development-installation) rather
+than duplicating source-build steps in end-user pages. Track public proposals in
+GitHub Issues; keep confidential plans, credentials and raw evidence outside the
+published tree. Navigation visibility alone does not prevent direct access to a
+published file.
 
 The Mintlify dashboard's Git settings select `hebbianai/dure`, branch `main`
 and the `docs/public` subdirectory. When changing that source, preserve the

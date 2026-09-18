@@ -12,8 +12,8 @@ Dure's patch carries `WindowConfig.data_store_identifier` through the existing
 windows and JS-created windows discard an explicit WKWebsiteDataStore identity.
 The default remains unchanged when no identifier is supplied. The colocated
 behavioral tests exercise this conversion directly, including the JS config
-deserialization boundary; native store-sharing evidence belongs to
-<https://github.com/hebbianai/dure-internal/issues/790>.
+deserialization boundary. Native WebKit store-sharing requires a separate
+runtime check; these conversion tests alone do not establish it.
 
 Keep this diff limited to that field and its contract tests. Remove the path
 patch when a pinned upstream release passes the same tests and native checks.
