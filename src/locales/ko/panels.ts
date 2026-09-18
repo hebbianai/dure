@@ -19,6 +19,8 @@ export const panels: Record<string, string> = {
 	"panels.mobile.reportHint": "로그를 검토·편집한 뒤 에이전트 입력란에 추가하세요. iOS 로그는 앱 ID와 같은 로깅 서브시스템으로 조회하므로 다른 서브시스템을 쓰는 앱은 기록이 없을 수 있습니다.",
 	"panels.mobile.prepareReport": "보고 자료 준비",
 	"panels.mobile.inputText": "입력할 텍스트 (ASCII, % 제외)",
+	"panels.mobile.paste": "붙여넣기",
+	"panels.mobile.pasteText": "붙여넣을 텍스트 (한글·줄바꿈 지원)",
 	"panels.mobile.type": "입력",
 	"panels.mobile.rotate": "회전",
 	"panels.mobile.title": "모바일 시뮬레이터",

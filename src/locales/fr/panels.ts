@@ -19,6 +19,8 @@ export const panels: Record<string, string> = {
 	"panels.mobile.reportHint": "Vérifiez et modifiez les journaux avant de les ajouter au brouillon de l’agent. iOS utilise l’identifiant de l’app comme sous-système ; les autres sous-systèmes peuvent ne rien renvoyer.",
 	"panels.mobile.prepareReport": "Préparer le rapport",
 	"panels.mobile.inputText": "Texte (ASCII, sans %)",
+	"panels.mobile.paste": "Coller",
+	"panels.mobile.pasteText": "Texte à coller (Unicode et sauts de ligne pris en charge)",
 	"panels.mobile.type": "Saisir",
 	"panels.mobile.rotate": "Pivoter",
 	"panels.mobile.title": "Simulateur mobile",

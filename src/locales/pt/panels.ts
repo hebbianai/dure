@@ -19,6 +19,8 @@ export const panels: Record<string, string> = {
 	"panels.mobile.reportHint": "Revise e edite os logs antes de adicioná-los ao rascunho do agente. No iOS, o ID do app é usado como subsistema; outros subsistemas podem não retornar registros.",
 	"panels.mobile.prepareReport": "Preparar relatório",
 	"panels.mobile.inputText": "Texto (ASCII, sem %)",
+	"panels.mobile.paste": "Colar",
+	"panels.mobile.pasteText": "Texto para colar (aceita Unicode e quebras de linha)",
 	"panels.mobile.type": "Digitar",
 	"panels.mobile.rotate": "Girar",
 	"panels.mobile.title": "Simulador móvel",

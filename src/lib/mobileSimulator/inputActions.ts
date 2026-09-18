@@ -37,6 +37,11 @@ export function mobileInputActions(input: {
 						"Wait for the current operation to complete.",
 					);
 				const operation = action(args);
+				if (operation.kind === "paste" && input.target.platform !== "ios")
+					return mobileRefusal(
+						"mobile_action_unsupported",
+						"Paste requires an iOS simulator with ready live mode.",
+					);
 				if (operation.kind === "boot" || operation.kind === "install") {
 					void input.act(operation);
 					return { outcome: "pending" };
@@ -101,6 +106,11 @@ export function mobileInputActions(input: {
 			"Type printable ASCII into the focused guest field. iOS requires ready live mode; Android excludes %.",
 			{ text },
 			(args) => ({ kind: "type", text: String(args.text) }),
+		),
+		"mobile.paste": command(
+			"Paste exact text into the focused iOS guest field through that simulator's clipboard. Requires ready live mode. Accepts 1–8192 UTF-8 bytes (agent arguments also have a 4096-character limit), including Unicode, tabs and line breaks. Leaves the guest clipboard updated; does not access the host clipboard. Android is unsupported.",
+			{ text },
+			(args) => ({ kind: "paste", text: String(args.text) }),
 		),
 		"mobile.button": command(
 			"Press home on iOS live mode, or home/back/recents on Android.",
