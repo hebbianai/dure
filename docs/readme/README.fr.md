@@ -8,8 +8,8 @@
 
 ### Vous donnez le cap.<br>Vos agents travaillent ensemble.
 
-Un **Agent Development Environment (ADE)** pour vos agents de programmation IA.<br>
-Projets, conversations, terminaux et modifications de code, réunis dans un même espace de travail.
+Un **espace de travail open source pour les agents de programmation IA**.<br>
+Coordonnez Claude Code, Codex et Pi entre vos projets et hôtes SSH, avec des worktrees dédiés et une revue de code intégrée.
 
 **[Télécharger pour macOS](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [Site web](https://www.dureai.dev/) &nbsp;·&nbsp; [Documentation (anglais)](https://docs.dureai.dev/en/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_) &nbsp;·&nbsp; [Discord](https://discord.gg/aTuRV6DXhb)
 
@@ -29,74 +29,86 @@ Projets, conversations, terminaux et modifications de code, réunis dans un mêm
 
 </div>
 
-## Plus d'agents. Un seul endroit pour les guider.
+<sub>Les liens de documentation de cette traduction renvoient à la version anglaise.</sub>
 
-Le plus difficile n'est pas de lancer un agent de plus. C'est de savoir quelle tâche a besoin de vous, ce qui a changé et quoi faire ensuite.
+## Quatre façons de faire avancer le travail
 
-Dure rassemble ce travail au même endroit. Placez Claude Code à côté de Codex et de Pi. Suivez les sessions de plusieurs projets et machines SSH. Lisez les différences, envoyez vos retours et donnez une direction claire à la tâche suivante.
+### Des agents en parallèle, des worktrees séparés
 
-## De la première tâche à la revue finale
+Lancez un agent avec **⌘N** ou depuis une issue GitHub. Choisissez son projet et son fournisseur, puis attribuez un worktree et une branche Git dédiés aux tâches de modification indépendantes.
 
-### 01 — Commencez par un objectif
+[Démarrer des tâches en parallèle →](https://docs.dureai.dev/en/first-parallel-workflow)
 
-Appuyez sur **⌘N**, décrivez la tâche, puis choisissez un projet et un fournisseur. Attribuez un Git worktree et une branche dédiés aux tâches qui doivent modifier des fichiers indépendamment. Vous pouvez aussi choisir **Start** sur une issue GitHub pour ouvrir une tâche préremplie.
+<a href="https://docs.dureai.dev/en/first-parallel-workflow">
+  <img src="../../public/readme/start-agent.png" alt="Choisissez la tâche, le fournisseur et l&#x27;option de worktree dédié." width="880" />
+</a>
 
-### 02 — Organisez votre attention
+<sub>Choisissez la tâche, le fournisseur et l'option de worktree dédié.</sub>
 
-Divisez les volets, déplacez les onglets, changez de bureau ou ouvrez une session dans sa propre fenêtre. Spaces réunit le travail local et SSH, avec des indicateurs d'activité et de changements pour repérer ce qui mérite votre attention.
+### Spaces pour le travail local et SSH
 
-<table>
-<tr>
-<td width="50%">
-<a href="https://docs.dureai.dev/en/quickstart"><img src="../../public/readme/start-agent.png" alt="Fenêtre New agent ouverte avec Command-N, proposant la tâche, le projet, le fournisseur et un worktree dédié" width="460" /></a>
-<br><sub>Décrivez le travail. Choisissez l'agent.</sub>
-</td>
-<td width="50%">
-<a href="https://docs.dureai.dev/en/spaces-and-panes"><img src="../../public/readme/pane-arrangement.png" alt="Déplacement d'un onglet de terminal actif vers la zone Split Right de Dure" width="460" /></a>
-<br><sub>Déplacez la vue. Gardez le contexte.</sub>
-</td>
-</tr>
-</table>
+Regroupez projets et sessions dans Spaces. Divisez les panneaux, déplacez les onglets et ouvrez des fenêtres séparées tout en gardant le travail local et SSH en vue.
 
-### 03 — Relisez et orientez
+[Spaces et panneaux →](https://docs.dureai.dev/en/spaces-and-panes) · [Configurer SSH](https://docs.dureai.dev/en/remote-and-ssh)
 
-Examinez les changements locaux, y compris les fichiers nouveaux et les modifications non commitées. Ajoutez des commentaires de ligne et renvoyez-les à l'agent. Vérifiez le code et les résultats des tests avant d'intégrer le travail : vous décidez de la suite.
+<a href="https://docs.dureai.dev/en/spaces-and-panes">
+  <img src="../../public/readme/pane-arrangement.png" alt="Organisez les panneaux d&#x27;agents actifs dans un projet d&#x27;exemple." width="880" />
+</a>
 
-[Votre premier agent →](https://docs.dureai.dev/en/quickstart) &nbsp; [Tâches en parallèle →](https://docs.dureai.dev/en/first-parallel-workflow) &nbsp; [Revue et retours →](https://docs.dureai.dev/en/review-and-feedback)
+<sub>Organisez les panneaux d'agents actifs dans un projet d'exemple.</sub>
 
-## L'espace de travail autour de vos agents
+### La revue de code à côté de la conversation
 
-| Lorsque vous devez… | Dure propose… |
+Examinez les diffs locaux, y compris les modifications non commitées et les nouveaux fichiers. Commentez un fichier ou une ligne, envoyez vos remarques à l'agent associé et relisez la révision suivante avant d'intégrer le travail.
+
+[Revue et commentaires →](https://docs.dureai.dev/en/review-and-feedback)
+
+<a href="https://docs.dureai.dev/en/review-and-feedback">
+  <img src="../../docs/public/images/diff-review.png" alt="Examinez le diff d&#x27;un projet d&#x27;exemple avant d&#x27;ajouter des commentaires." width="880" />
+</a>
+
+<sub>Examinez le diff d'un projet d'exemple avant d'ajouter des commentaires.</sub>
+
+### Exécutions, planification et coordination des agents
+
+Lancez des tâches et planifiez du travail récurrent avec la CLI de Dure. Les intégrations CLI et MCP permettent aux personnes et aux agents de partager des messages de progression, des demandes de décision et des rapports de fin de tâche.
+
+```sh
+dure run --provider codex --worktree readme-review \
+  "Review the README against the code. Do not change files."
+dure ls
+```
+
+[Exécutions et planification CLI →](https://docs.dureai.dev/en/cli-and-automation) · [Messages et décisions](https://docs.dureai.dev/en/orchestration)
+
+## Agents compatibles
+
+**Claude Code · Codex · Pi · OpenCode · Gemini CLI · Kimi Code**
+
+Utilisez les CLI d'agents déjà installées et vos comptes de fournisseur existants. L'accès aux modèles, les abonnements et les frais d'utilisation restent gérés par vos fournisseurs.
+
+Claude Code, Codex, OpenCode et Pi disposent d'intégrations de chat structuré lorsque l'environnement installé les prend en charge. Les fonctions de terminal, d'historique, de reprise et de compte varient selon le fournisseur. [Consulter les capacités par fournisseur →](https://docs.dureai.dev/en/providers)
+
+## Installation et disponibilité par plateforme
+
+| Plateforme | Disponibilité actuelle |
 | --- | --- |
-| Avancer sur des tâches indépendantes | Des Git worktrees et des branches dédiés, avec les fichiers de chaque tâche séparés. |
-| Suivre le travail en cours | Spaces, volets divisés, bureaux et fenêtres indépendantes entre projets. |
-| Revenir après avoir fermé l'application | La reconnexion aux sessions gérées encore actives ; un parcours de récupération distinct pour les processus terminés. |
-| Travailler sur plusieurs machines | Des projets SSH et terminaux distants à côté du travail local, avec collage d'images et transfert de fichiers. |
-| Utiliser vos comptes habituels | Des profils par agent et l'usage communiqué par les fournisseurs compatibles. |
-| Relier les tâches récurrentes | Des exécutions et planifications CLI ; des messages, demandes de décision et comptes rendus via CLI/MCP. |
-| Personnaliser votre environnement | Des thèmes, la typographie du terminal et une interface en sept langues. |
+| macOS · Apple Silicon | [Téléchargement officiel](https://www.dureai.dev/download/mac/) |
+| Windows | Code disponible ; validation native de bureau et installateur public en attente. |
+| Linux | Code disponible ; validation native de bureau et installateur public en attente. |
+| iOS | Code disponible ; validation sur appareil et distribution officielle en attente. |
+| Android | Code disponible ; validation sur appareil et distribution officielle en attente. |
 
-### Vos outils. Vos comptes.
+Pour compiler les sources et consulter la couverture de vérification, voir le [guide de développement par plateforme](../../CONTRIBUTING.md#platforms).
 
-Utilisez les CLI natives d'agents de programmation comme **Claude Code, Codex, Pi, Gemini CLI, OpenCode et Kimi Code**. Dure est un espace de travail, pas un modèle ni un abonnement à un fournisseur. Les abonnements et frais d'utilisation des fournisseurs restent distincts.
-
-La prise en charge du terminal, l'historique des conversations, les vues de chat et les outils de compte varient selon le fournisseur. [Consulter les capacités par fournisseur →](https://docs.dureai.dev/en/providers)
-
-## Commencez sur votre Mac
+### Commencer sur votre Mac
 
 1. **[Téléchargez Dure pour macOS](https://www.dureai.dev/download/mac/)** sur un Mac Apple Silicon. Ouvrez l'image disque et déplacez l'application dans **Applications**.
 2. Installez au moins une CLI d'agent compatible et connectez-vous à votre compte. Suivez le [guide d'installation](https://docs.dureai.dev/en/install), y compris les consignes de sécurité macOS.
 3. Ouvrez dans Dure un projet Git que vous connaissez. Appuyez sur **⌘N** et commencez par une petite tâche.
 
-Essayez d'abord ceci :
-
-```text
-Trouve comment exécuter les tests de ce dépôt.
-Ne modifie aucun fichier.
-Indique les commandes et les fichiers qui les documentent.
-```
-
-### Quelques limites à connaître
+<details>
+<summary>Quelques limites à connaître</summary>
 
 - **Les worktrees séparent les fichiers, pas les permissions.** Ce ne sont pas des bacs à sable de sécurité : ils n'isolent ni les identifiants, ni les processus, ni l'accès au réseau. Des conflits restent possibles lors de l'intégration des changements.
 - **L'hôte doit rester actif.** Les sessions gérées peuvent continuer sans la fenêtre de l'application tant que le processus hôte et la machine fonctionnent. Un redémarrage termine le processus d'origine ; la récupération en crée un autre.
@@ -104,25 +116,24 @@ Indique les commandes et les fichiers qui les documentent.
 
 [Sessions et récupération](https://docs.dureai.dev/en/session-model) · [SSH](https://docs.dureai.dev/en/remote-and-ssh) · [Travailler en sécurité](https://docs.dureai.dev/en/current-limits)
 
-<sub>Les liens de documentation de cette traduction renvoient à la version anglaise.</sub>
+</details>
 
 ## Périmètre open source
 
-**Licence : [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
+Le code propre au projet publié ici pour le bureau, le mobile, le moteur d'exécution, la CLI et les services est sous licence [MIT](../../LICENSE) ; les composants tiers conservent leurs licences et mentions. Vous pouvez compiler, modifier et redistribuer le code selon ces licences.
 
-Le code propre au projet publié ici est disponible sous licence [MIT](../../LICENSE), y compris les applications de bureau, le client mobile, le moteur d'exécution local, la CLI et le code des services inclus. Les composants tiers conservent leurs licences et mentions de copyright.
+[TRADEMARK.md](../../TRADEMARK.md) décrit l'utilisation du nom, du logo et des icônes de Dure, ainsi que la distinction entre les versions communautaires et les versions officielles de Hebbian AI.
 
-Ce dépôt comprend le code de bureau pour **macOS, Windows et Linux**, ainsi que le code mobile pour **iOS et Android**. Consultez le [développement et la vérification par plateforme](../../CONTRIBUTING.md#platforms) pour les commandes de compilation et la couverture actuelle. L’application de bureau actuellement téléchargeable cible macOS sur Apple Silicon.
-
-Consultez le [guide de contribution](../../CONTRIBUTING.md#source-and-development) pour compiler depuis les sources. L'application se télécharge sur le [site web](https://www.dureai.dev/download/mac/).
-
-L'utilisation du **nom, du logo et des icônes de Dure** est décrite dans [TRADEMARK.md](../../TRADEMARK.md). Vous pouvez compiler, modifier et redistribuer le code selon ses licences ; identifiez clairement l'éditeur de votre distribution et distinguez-la des [versions officielles](../../TRADEMARK.md#official-builds) de Hebbian AI.
-
-Les **services exploités et les documents opérationnels privés** sont distincts de la publication du code. La licence du code ne donne pas accès aux infrastructures exploitées par Hebbian AI ni aux services tiers ; le code inclus ici conserve la licence indiquée. Les clés de signature, les identifiants de déploiement et les documents commerciaux et opérationnels confidentiels restent privés. Les contributions à ce dépôt sont suivies dans les issues et les pull requests publiques.
+La licence du code n'inclut pas l'accès aux services exploités. Les clés de signature, les identifiants de déploiement et les documents commerciaux et opérationnels confidentiels restent privés.
 
 ## Contribuer
 
 Consultez le [guide de contribution](../../CONTRIBUTING.md) et le [code de conduite](../../CODE_OF_CONDUCT.md), ou [signalez un bug ou proposez une fonctionnalité](https://github.com/hebbianai/dure/issues/new/choose). Pour les vulnérabilités, utilisez le canal privé indiqué dans la [politique de sécurité](../../SECURITY.md). Les documents de contribution et de communauté sont actuellement disponibles en anglais.
+
+- **Notes de version:** [GitHub Releases](https://github.com/hebbianai/hebbian-releases/releases)
+- **Confidentialité et télémétrie:** [Confidentialité et télémétrie](https://docs.dureai.dev/en/privacy-and-telemetry)
+- **Communauté:** [Discord](https://discord.gg/aTuRV6DXhb)
+- **Actualités:** [X · @hebbianai_](https://x.com/hebbianai_)
 
 ---
 
