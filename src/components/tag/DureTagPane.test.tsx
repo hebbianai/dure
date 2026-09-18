@@ -12,7 +12,14 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import { DureTagPane } from "./DureTagPane";
 
-const mocks = vi.hoisted(() => ({ open: vi.fn(), invoke: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	open: vi.fn(),
+	invoke: vi.fn(),
+	activity: vi.fn(),
+}));
+vi.mock("@/lib/agents/chat/sharedConversationActivity", () => ({
+	readSharedConversationActivity: mocks.activity,
+}));
 vi.mock("@/lib/agents/chat/sharedAgentConversation", () => ({
 	openSharedAgentConversation: mocks.open,
 }));
@@ -68,6 +75,7 @@ beforeEach(() => {
 	authority = route("one");
 	failTasks = false;
 	taskTitle = "first";
+	mocks.activity.mockResolvedValue(new Map());
 	mocks.open.mockImplementation(async (task) => ({
 		agentId: task.agentId,
 		authority,
@@ -220,4 +228,47 @@ it("ignores a late conversation response after selecting a different task", asyn
 		});
 	});
 	expect(screen.getByTestId("tag-conversation").textContent).toBe("second");
+});
+
+it("shows the Dure spinner only for observed work and removes it on the next idle observation", async () => {
+	vi.useFakeTimers();
+	mocks.activity.mockResolvedValue(
+		new Map([
+			["first", true],
+			["second", false],
+		]),
+	);
+	await act(async () => {
+		render(<DureTagPane />);
+	});
+	const working = screen.getByText("first").closest("button")!;
+	expect(working.getAttribute("aria-busy")).toBe("true");
+	expect(working.querySelector(".dure-loader")).toBeTruthy();
+	expect(screen.getByRole("status", { name: "common.working" })).toBeTruthy();
+	expect(
+		screen.getByText("second").closest("button")!.querySelector(".dure-loader"),
+	).toBeNull();
+	mocks.activity.mockResolvedValue(
+		new Map([
+			["first", false],
+			["second", false],
+		]),
+	);
+	await tick();
+	expect(working.querySelector(".dure-loader")).toBeNull();
+	expect(working.hasAttribute("aria-busy")).toBe(false);
+});
+
+it("clears unconfirmed activity after a failed observation and keeps the task available", async () => {
+	vi.useFakeTimers();
+	mocks.activity.mockResolvedValue(new Map([["first", true]]));
+	await act(async () => {
+		render(<DureTagPane />);
+	});
+	expect(screen.getByRole("status", { name: "common.working" })).toBeTruthy();
+	mocks.activity.mockRejectedValue(new Error("backend unavailable"));
+	await tick();
+	expect(screen.queryByRole("status", { name: "common.working" })).toBeNull();
+	expect(screen.getByRole("alert")).toBeTruthy();
+	expect(screen.getByText("first")).toBeTruthy();
 });

@@ -15,11 +15,13 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { DureLoader } from "@/components/ui/dure-loader";
 import { IconButton } from "@/components/ui/icon-button";
 import { RefreshButton } from "@/components/ui/refresh-button";
 import { SidebarScrollArea } from "@/components/ui/scroll-area";
 import type { SharedAgentConversationTarget } from "@/lib/agents/chat/sharedAgentConversation";
 import { openSharedAgentConversation } from "@/lib/agents/chat/sharedAgentConversation";
+import { readSharedConversationActivity } from "@/lib/agents/chat/sharedConversationActivity";
 import { t } from "@/lib/i18n";
 import type { DureBackendProfileSummary } from "@/lib/ipc/dureBackendProfiles";
 import {
@@ -83,9 +85,14 @@ function TagTasks({
 	const [target, setTarget] = useState<SharedAgentConversationTarget>();
 	const [settings, setSettings] = useState(false);
 	const [revision, setRevision] = useState(0);
+	const [activity, setActivity] = useState<ReadonlyMap<string, boolean>>(
+		new Map(),
+	);
+	const showTaskActivity = !selected;
 	const projects = useStore((state) => state.projects);
 	useEffect(() => {
 		let current = true;
+		const controller = new AbortController();
 		let timer: ReturnType<typeof setTimeout>;
 		setLoading(true);
 		// This is the Slack source adapter. Conversation and pane routing below
@@ -99,9 +106,10 @@ function TagTasks({
 					),
 				);
 				if (!current) return;
-				setTasks(
-					linked.flat().sort((a, b) => Number(b.threadTs) - Number(a.threadTs)),
-				);
+				const observedTasks = linked
+					.flat()
+					.sort((a, b) => Number(b.threadTs) - Number(a.threadTs));
+				setTasks(observedTasks);
 				setAuthority((previous) =>
 					previous &&
 					sameDureBackendRouteAuthority(previous, snapshot.authority)
@@ -109,8 +117,19 @@ function TagTasks({
 						: snapshot.authority,
 				);
 				setError(undefined);
+				if (showTaskActivity) {
+					const observedActivity = await readSharedConversationActivity(
+						observedTasks,
+						snapshot.authority,
+						{ signal: controller.signal },
+					);
+					if (current) setActivity(observedActivity);
+				}
 			} catch (reason) {
-				if (current) setError(slackConnectionError(reason));
+				if (current) {
+					setActivity(new Map());
+					setError(slackConnectionError(reason));
+				}
 			} finally {
 				if (current) {
 					setLoading(false);
@@ -121,9 +140,10 @@ function TagTasks({
 		void observe();
 		return () => {
 			current = false;
+			controller.abort();
 			clearTimeout(timer);
 		};
-	}, [client, revision]);
+	}, [client, revision, showTaskActivity]);
 
 	const title = (task: SlackTask) =>
 		task.title ||
@@ -252,8 +272,9 @@ function TagTasks({
 							className="h-auto w-full justify-start px-2 py-2.5 text-left"
 							onClick={() => setSelected(task)}
 							data-tag-agent-id={task.agentId}
+							aria-busy={activity.get(task.agentId) || undefined}
 						>
-							<span className="min-w-0">
+							<span className="min-w-0 flex-1">
 								<span className="block truncate text-xs font-medium">
 									{title(task)}
 								</span>
@@ -262,6 +283,13 @@ function TagTasks({
 									Slack
 								</span>
 							</span>
+							{activity.get(task.agentId) && (
+								<DureLoader
+									size={14}
+									label={t("common.working")}
+									className="shrink-0 text-muted-foreground"
+								/>
+							)}
 						</Button>
 					))}
 				</SidebarScrollArea>
