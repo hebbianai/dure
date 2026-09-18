@@ -6,6 +6,7 @@ import type {
 import type { terminalStableDiagnosticSnapshot } from "@/lib/terminal/qa/terminalStableDiagnostics";
 import type { WorkspaceTransitionSample } from "@/lib/workspace/performance/workspacePerformance";
 import type { NativePaneFocusEvidence } from "./nativePaneFocus";
+import type { WorkspaceRetentionEvidence } from "./retention";
 import type { WorkspacePerformanceSashGeometryEvidence } from "./sashGeometry";
 import type { WorkspacePerformanceSashSelectionEvidence } from "./sashSelection";
 
@@ -56,6 +57,7 @@ declare global {
 			sashSelection?: WorkspacePerformanceSashSelectionEvidence;
 			sashTarget?: { readonly x: number; readonly y: number };
 			nativeFocus?: NativePaneFocusEvidence;
+			retention?: WorkspaceRetentionEvidence;
 			runtimeErrorScope?: QaRuntimeErrorCursor;
 			runtimeErrors?: QaRuntimeErrorSnapshot;
 		};

@@ -1,0 +1,16 @@
+{
+	"short": {
+		"returnSamples": 9,
+		"idleSamples": 0,
+		"idleIntervalMs": 60000,
+		"sampleWindowMs": 5000,
+		"clientTimeoutMs": 240000
+	},
+	"extended": {
+		"returnSamples": 61,
+		"idleSamples": 6,
+		"idleIntervalMs": 60000,
+		"sampleWindowMs": 5000,
+		"clientTimeoutMs": 1200000
+	}
+}

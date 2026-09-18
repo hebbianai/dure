@@ -45,6 +45,11 @@ import { runNativePaneFocus } from "./nativePaneFocus";
 import { runNativeSashGeometry } from "./nativeSashGeometry";
 import { workspacePerformanceQuiescence } from "./quiescence";
 import {
+	assertRetentionSurfacesReleased,
+	createWorkspaceRetentionSessions,
+	runWorkspaceRetention,
+} from "./retention";
+import {
 	workspacePerformanceQaPhaseFromLocation,
 	workspacePerformanceScenarioFromLocation,
 } from "./scenario";
@@ -78,12 +83,17 @@ export async function prepareWorkspacePerformanceQa() {
 	setQaStatus("running", "setup");
 	const startedAt = performance.now();
 	const scenario = workspacePerformanceScenarioFromLocation();
-	const lease = await createWorkspacePerformanceSessions(scenario);
+	const lease = await (workspacePerformanceQaPhaseFromLocation() === "retention"
+		? createWorkspaceRetentionSessions(scenario)
+		: createWorkspacePerformanceSessions(scenario));
 	let terminalSurfaces: WorkspacePerformanceStructuredTerminalLease | undefined;
 	try {
 		const fixture = buildWorkspacePerformanceFixture(lease.sessions, scenario);
-		terminalSurfaces =
-			createWorkspacePerformanceStructuredTerminalLease(fixture);
+		// Retention observes product-owned registrations, never a QA replacement.
+		if (workspacePerformanceQaPhaseFromLocation() !== "retention") {
+			terminalSurfaces =
+				createWorkspacePerformanceStructuredTerminalLease(fixture);
+		}
 		qaLog("workspace-performance", {
 			state: "running",
 			phase: "setup_complete",
@@ -159,11 +169,14 @@ async function finishWorkspacePerformanceQa(
 	const cleanupErrors: unknown[] = [];
 	try {
 		await detachWorkspacePerformanceSurfaces(setup.fixture);
+		if (workspacePerformanceQaPhaseFromLocation() === "retention") {
+			await assertRetentionSurfacesReleased();
+		}
 	} catch (error) {
 		cleanupErrors.push(error);
 	}
 	try {
-		setup.terminalSurfaces.dispose();
+		setup.terminalSurfaces?.dispose();
 	} catch (error) {
 		cleanupErrors.push(error);
 	}
@@ -223,8 +236,13 @@ function errorMessage(error: unknown) {
 async function runWorkspacePerformanceQa(
 	fixture: WorkspacePerformanceFixture,
 	workloadStartedAt: number,
-	terminalSurfaces: WorkspacePerformanceStructuredTerminalLease,
+	terminalSurfaces: WorkspacePerformanceStructuredTerminalLease | undefined,
 ) {
+	if (workspacePerformanceQaPhaseFromLocation() === "retention") {
+		await runWorkspaceRetention(fixture);
+		return;
+	}
+	if (!terminalSurfaces) throw new Error("workspace performance probes missing");
 	const stopFocusTrace = installWorkspacePerformanceFocusTrace();
 	try {
 	await focusInitialWorkspace(fixture, terminalSurfaces);
@@ -718,6 +736,7 @@ function setQaStatus(
 		...(sashSelection ? { sashSelection } : {}),
 		...(sashTarget ? { sashTarget } : {}),
 		...(current?.nativeFocus ? { nativeFocus: current.nativeFocus } : {}),
+		...(current?.retention ? { retention: current.retention } : {}),
 		...(activeRuntimeErrorScope
 			? { runtimeErrorScope: activeRuntimeErrorScope }
 			: {}),
