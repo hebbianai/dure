@@ -8,7 +8,6 @@ use std::{
     collections::BTreeMap,
     io::Write,
     path::Path,
-    process::Stdio,
     time::{Duration, Instant},
 };
 
@@ -306,9 +305,6 @@ async fn deliver(
 
 /// One invocation owns one deadline, including input and discovery. Neither
 /// provider input nor descriptor credentials are included in failure output.
-/// Bounds the Git query so a slow repository cannot consume the report budget.
-const GUIDANCE_QUERY_TIMEOUT: Duration = Duration::from_millis(500);
-
 /// Hook output for a `SessionStart` in a repository's primary checkout. Any
 /// other event, a linked worktree or a failed query yields no guidance.
 async fn session_start_guidance(
@@ -326,29 +322,9 @@ async fn session_start_guidance(
         .filter(|cwd| !cwd.is_empty())
         .map(Path::new)
         .unwrap_or(fallback_cwd);
-    let budget = GUIDANCE_QUERY_TIMEOUT.min(deadline.saturating_duration_since(Instant::now()));
-    if budget.is_zero() {
-        return None;
-    }
-    let output = tokio::time::timeout(
-        budget,
-        tokio::process::Command::new("git")
-            .arg("-C")
-            .arg(cwd)
-            .args(dure_app::PRIMARY_CHECKOUT_REV_PARSE_ARGUMENTS_V1)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let context =
-        dure_app::primary_checkout_session_context_v1(std::str::from_utf8(&output.stdout).ok()?)?;
+    let budget = crate::primary_checkout::PRIMARY_CHECKOUT_QUERY_TIMEOUT
+        .min(deadline.saturating_duration_since(Instant::now()));
+    let context = crate::primary_checkout::primary_checkout_session_context(cwd, budget).await?;
     Some(dure_app::session_start_additional_context_output_v1(
         &context,
     ))
