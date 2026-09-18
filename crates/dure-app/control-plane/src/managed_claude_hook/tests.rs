@@ -1,6 +1,7 @@
 use super::*;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
+mod guidance;
 mod http;
 
 #[test]
