@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 // 의존 경계 게이트 (dependency-cruiser) — 2026-08-01 폴더 정리와 함께 도입.
 //
 // 역할 분담: architecture-fitness(자체 게이트)는 "양"의 라쳇(god-file 줄 수,

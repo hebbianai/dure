@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 // Design Mode 주입 스크립트 전용 빌드.
 //
 // 왜 별도 빌드인가: 이 스크립트는 우리 앱이 아니라 **사용자 앱 창**에서 돈다.
