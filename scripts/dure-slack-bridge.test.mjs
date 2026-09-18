@@ -91,14 +91,66 @@ test("human thread conversation never starts or steers work without an explicit 
   await f.bridge.tick();
   for (const activeTurn of [null, { turnId: "running" }]) {
     f.setPage({ activeTurn });
-    for (const extra of [{}, { subtype: "file_share", files: [{ id: "FIMAGE", name: "image.png" }] }]) {
-      assert.equal(f.bridge.accept(payload({ type: "message", ts: activeTurn ? "103.001" : "102.001",
-        thread_ts: "100.001", user: "U2", text: "Discussing this with a teammate", ...extra })), false);
+    for (const [index, extra] of [{}, { subtype: "file_share", files: [{ id: "FIMAGE", name: "image.png" }] }].entries()) {
+      const event = payload({ type: "message", ts: `${activeTurn ? 103 : 102}.00${index + 1}`,
+        thread_ts: "100.001", user: "U2", text: "Discussing this with a teammate", ...extra });
+      assert.equal(f.bridge.accept(event), true);
+      assert.equal(f.bridge.accept(event), false);
     }
     await f.bridge.tick();
   }
   assert.equal(f.calls.inputs.length, 0);
-  assert.equal(Object.keys(f.journal.data.inbox).length, 1);
+  assert.equal(Object.keys(f.journal.data.inbox).length, 5);
+  assert.equal(f.calls.writes.length, 0);
+});
+
+test("untagged discussion survives reconnect and enters only the next mention in its own thread", async (t) => {
+  const f = await fixture(t);
+  f.bridge.accept(payload());
+  f.bridge.accept(payload({ ts: "200.001" }));
+  await f.bridge.tick();
+  f.bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "102.001", user: "U3", text: "Keep the blue version" }));
+  f.bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "101.001", user: "U2", text: "Can we try blue?" }));
+  f.bridge.accept(payload({ type: "message", thread_ts: "200.001", ts: "201.001", text: "Other task discussion" }));
+  await f.bridge.tick();
+  assert.equal(f.calls.inputs.length, 0);
+  f.journal.close();
+  const journal = new SlackJournal(f.file, config);
+  await journal.acquire();
+  try {
+    const bridge = new SlackBridge({ config, botUserId: "U0", journal, backend: f.backend, slack: f.slack });
+    bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "103.001", text: "<@U0> Apply what we agreed" }));
+    bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "104.001", text: "Discuss the next change later" }));
+    await bridge.tick(error => { throw error; });
+    const first = f.calls.inputs[0].intent.input;
+    assert.match(first, /context only/);
+    assert.match(first, /T1\/U2[\s\S]*Can we try blue\?[\s\S]*T1\/U3[\s\S]*Keep the blue version[\s\S]*Apply what we agreed/);
+    assert.doesNotMatch(first, /Other task discussion|Discuss the next change later/);
+    f.setPage({ rows: [{ item: { itemId: "echo", body: { type: "message", role: "user", markdown: first } } }] });
+    const read = f.backend.read;
+    f.backend.read = async (thread) => thread.threadTs === "200.001" ? { ...await read(), rows: [] } : read();
+    await bridge.tick();
+    assert.equal(f.calls.writes.length, 0, "context must not echo back into Slack");
+    bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "105.001", text: "<@U0> Continue" }));
+    await bridge.tick(error => { throw error; });
+    assert.match(f.calls.inputs[1].intent.input, /Discuss the next change later/);
+    assert.doesNotMatch(f.calls.inputs[1].intent.input, /Keep the blue version|Can we try blue|Other task discussion/);
+  } finally { journal.close(); }
+});
+
+test("failed delivery preserves background discussion for the next explicit request", async (t) => {
+  const f = await fixture(t);
+  f.bridge.accept(payload());
+  await f.bridge.tick();
+  f.bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "101.001", text: "Use the smaller version" }));
+  f.bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "102.001", text: "<@U0> Apply it" }));
+  const deliver = f.backend.deliver;
+  f.backend.deliver = async () => { throw new Error("Delivery refused"); };
+  await f.bridge.tick();
+  f.backend.deliver = deliver;
+  f.bridge.accept(payload({ type: "message", thread_ts: "100.001", ts: "103.001", text: "<@U0> Try again" }));
+  await f.bridge.tick(error => { throw error; });
+  assert.match(f.calls.inputs[0].intent.input, /Use the smaller version/);
 });
 
 test("a teammate's image reply reaches the active turn with its caption and attachment identity", async (t) => {

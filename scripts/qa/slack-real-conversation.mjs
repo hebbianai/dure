@@ -173,7 +173,7 @@ async function observed(label, shared, ready) {
 
 function slackTurn(user, text, ts, threadTs) {
   assert.equal(bridge.accept({ type: "event_callback", team_id: "TQA", event: {
-    type: "message", channel: "CQA", user, text, ts, thread_ts: threadTs,
+    type: "message", channel: "CQA", user, text: `<@UBOT> ${text}`, ts, thread_ts: threadTs,
   } }), true);
 }
 
@@ -186,7 +186,13 @@ try {
   const shared = await sharing.share({ schemaVersion: 1, teamId: "TQA", channelId: "CQA", agentId, requestId: "qa-share" });
   sharedThread = shared;
   assert.equal(shared.interactionSessionId, first.binding.interactionSessionId);
-  slackTurn("UQA1", "Use a shell command in this disposable QA repository to create result.txt containing exactly FIRST followed by a newline. Work only in the current directory. Do not use network services or inspect credentials. Then reply QA_FIRST_DONE.", "200.001", shared.threadTs);
+  assert.equal(bridge.accept({ type: "event_callback", team_id: "TQA", event: {
+    type: "message", channel: "CQA", user: "UQA2", ts: "199.001", thread_ts: shared.threadTs,
+    text: "We agreed that result.txt should contain exactly FIRST followed by a newline.",
+  } }), true);
+  await bridge.tick((error) => { throw error; });
+  assert.equal((await backend.tail(initial)).activeTurn, null, "untagged discussion must not start the provider");
+  slackTurn("UQA1", "Use a shell command in this disposable QA repository to create result.txt with the exact content agreed in the background thread discussion. Work only in the current directory. Do not use network services or inspect credentials. Then reply QA_FIRST_DONE.", "200.001", shared.threadTs);
   const firstShared = await completed("QA_FIRST_DONE", true);
   assert.equal(fs.readFileSync(artifact, "utf8"), "FIRST\n");
   assert.ok(steeredTurnId, "both additional directions must arrive before the first shared turn finishes");

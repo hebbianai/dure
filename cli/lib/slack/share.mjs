@@ -80,7 +80,7 @@ export class SlackShares {
     this.journal.data.shares[key] = entry;
     this.journal.save();
     try {
-      const result = await this.slack.write(thread, "This Dure task is now shared here. Mention @Dure in this thread to continue the work together. Untagged messages stay between teammates.", key);
+      const result = await this.slack.write(thread, "This Dure task is now shared here. Mention @Dure in this thread to continue the work together. Untagged messages are saved as context for your next mention without starting or steering work.", key);
       return this.complete(entry, result.ts);
     } catch (error) { return this.failed(entry, error); }
   }

@@ -48,13 +48,26 @@ export class SlackBridge {
   async receive(entry) {
     const { message } = entry;
     const thread = this.journal.data.threads[message.threadKey];
-    if (message.files?.length && message.attachmentText === undefined && this.files) {
-      if (!thread.backend) {
-        thread.backend = await this.backend.bind(thread.route);
+    if (!entry.intent) {
+      if (message.context === undefined) {
+        // Freeze the discussion before any asynchronous work. Later messages
+        // belong to a later mention, and reconnect must replay this snapshot.
+        message.context = Object.values(this.journal.data.inbox)
+          .filter((candidate) => candidate.state === "context" && candidate.message.threadKey === message.threadKey &&
+            Number(candidate.message.messageTs) < Number(message.messageTs))
+          .sort((a, b) => Number(a.message.messageTs) - Number(b.message.messageTs))
+          .map((candidate) => structuredClone(candidate.message));
         this.journal.save();
       }
-      message.attachmentText = await this.files.prepareInput(message, thread);
-      this.journal.save();
+      for (const input of [...message.context, message]) {
+        if (!input.files?.length || input.attachmentText !== undefined || !this.files) continue;
+        if (!thread.backend) {
+          thread.backend = await this.backend.bind(thread.route);
+          this.journal.save();
+        }
+        input.attachmentText = await this.files.prepareInput(input, thread);
+        this.journal.save();
+      }
     }
     if (!thread.agentId) {
       if (!thread.backend) {
@@ -62,8 +75,7 @@ export class SlackBridge {
         this.journal.save();
       }
       thread.agentId = await this.backend.start({ ...message, route: thread.route }, thread);
-      entry.state = "delivered";
-      this.journal.save();
+      this.delivered(entry);
       return;
     }
     if (!entry.intent) {
@@ -99,7 +111,15 @@ export class SlackBridge {
       this.journal.save();
       await this.backend.deliver(thread, entry.intent, entry.operation);
     }
+    this.delivered(entry);
+  }
+
+  delivered(entry) {
     entry.state = "delivered";
+    for (const context of entry.message.context ?? []) {
+      const source = this.journal.data.inbox[context.key];
+      if (source?.state === "context") source.state = "delivered";
+    }
     this.journal.save();
   }
 

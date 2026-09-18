@@ -72,6 +72,23 @@ test("missing file permission preserves the caption and makes unavailable image 
   assert.equal(splitPromptAttachments(text).attachments.length, 0);
 });
 
+test("untagged images wait for a mention and keep the shared attachment contract alongside the request's image", async (t) => {
+  const f = await fixture(t);
+  const downloads = [];
+  f.slack.downloadFile = async (id) => { downloads.push(id); return { bytes: Buffer.from(id), mimetype: "image/png" }; };
+  const event = { type: "event_callback", team_id: "T1", event: { type: "message", subtype: "file_share", channel: "C1",
+    ts: "101.1", thread_ts: "100.1", user: "U1", text: "The design we discussed", files: [{ id: "FCONTEXT", name: "background.png" }] } };
+  assert.equal(f.bridge.accept(event), true);
+  await f.bridge.tick(error => { throw error; });
+  assert.deepEqual(downloads, []);
+  assert.equal(f.deliveries.length, 0);
+  f.bridge.accept({ ...event, event: { ...event.event, ts: "102.1", text: "<@UBOT> Compare these", files: [{ id: "FREQUEST", name: "request.png" }] } });
+  await f.bridge.tick(error => { throw error; });
+  const parsed = splitPromptAttachments(f.deliveries[0].intent.input);
+  assert.match(parsed.body, /The design we discussed[\s\S]*Compare these/);
+  assert.deepEqual(parsed.attachments.map(({ path: file }) => fs.readFileSync(file, "utf8")), ["FCONTEXT", "FREQUEST"]);
+});
+
 test("file access resolves the exact task workspace and refuses a foreign projection or SSH route", async () => {
   const thread = { agentId: "agent", backend: { profileId: "local", backendId: "backend", scopeId: "saved-scope" } };
   const profile = { id: "local", transport: { kind: "local" }, expected: { backendId: "backend", scopeId: "saved-scope" } };
