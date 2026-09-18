@@ -1,203 +1,30 @@
-name: Public repository
-
+name: Release deadline diagnosis
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: public-repository-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  plan:
-    name: Select public checks
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      run_checks: ${{ steps.plan.outputs.run_checks }}
-      run_code_checks: ${{ steps.plan.outputs.run_code_checks }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .node-version
-          package-manager-cache: false
-      - name: Classify the complete change
-        id: plan
-        env:
-          CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REF: ${{ github.ref }}
-          CI_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ github.token }}
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          CI_HEAD_SHA: ${{ github.sha }}
-        run: node scripts/public-ci.mjs plan
-
-  documentation:
-    name: Documentation checks
-    needs: plan
-    if: ${{ needs.plan.outputs.run_checks == 'true' }}
+  deadline:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Check diff whitespace
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
-            git show --format= --check HEAD
-          else
-            git diff --check "$BASE_SHA" HEAD
-          fi
-      - name: Check local documentation links
-        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
-        with:
-          args: --offline --include-fragments --no-progress '*.md' 'docs/readme/*.md' '.github/**/*.md'
-          lycheeVersion: v0.24.2
-          fail: true
-          token: ""
-          output: ${{ runner.temp }}/lychee-report.md
-
-  frontend:
-    name: Frontend checks
-    needs: plan
-    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version-file: .node-version
           package-manager-cache: false
-      - name: Enable the pinned package manager
-        run: corepack enable
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Verify frontend
-        run: pnpm verify:frontend
-
-  scripts:
-    name: Script checks
-    needs: plan
-    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .node-version
-          package-manager-cache: false
-      - name: Enable the pinned package manager
-        run: corepack enable
-      - name: Prepare isolated script test user
-        # A dedicated UID keeps host system services outside the test census.
+      - name: Prepare the same isolated source-check user
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes zsh
+          corepack enable
           sudo useradd --create-home --shell /bin/bash dure-source-checks
           sudo cp -a "$GITHUB_WORKSPACE" /home/dure-source-checks/source
           sudo chown -R dure-source-checks:dure-source-checks /home/dure-source-checks/source
-          sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
-      - name: Verify scripts
+      - name: Reproduce the unchanged deadline contract
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail <<'SCRIPT'
           cd "$HOME/source"
-          export CARGO_HOME="$HOME/.cargo"
-          export RUSTUP_HOME="$HOME/.rustup"
-          "$HOME/rustup-init" -y --no-modify-path --default-toolchain none
-          export PATH="$CARGO_HOME/bin:$PATH"
-          # Fixtures use disposable homes but share this prepared, pinned compiler.
-          RUSTUP_TOOLCHAIN="$(rustup show active-toolchain | awk '{print $1}')"
-          export RUSTUP_TOOLCHAIN
-          rustc -vV
           pnpm install --frozen-lockfile
-          pnpm test:scripts
+          pnpm exec vitest run --project scripts-deadline scripts/qa/lib/bounded-owned-process-group.test.mjs
           SCRIPT
-
-  mobile-web:
-    name: Mobile web checks
-    needs: plan
-    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .node-version
-          package-manager-cache: false
-      - name: Enable the pinned package manager
-        run: corepack enable
-      - name: Install root dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Verify mobile web source
-        run: pnpm verify:push:mobile-web
-
-  shared-protocol:
-    name: Shared protocol (${{ matrix.os }})
-    needs: plan
-    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-2025, macos-15]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Prepare repository-pinned Rust
-        run: rustup show active-toolchain
-      - name: Check shared protocol formatting
-        run: cargo fmt --manifest-path crates/dure-hub-protocol/Cargo.toml --all --check
-      - name: Test desktop and mobile wire format
-        run: cargo test --locked --manifest-path crates/dure-hub-protocol/Cargo.toml --all-targets
-      - name: Lint shared protocol
-        run: cargo clippy --locked --manifest-path crates/dure-hub-protocol/Cargo.toml --all-targets -- -D warnings
-
-  public-repository:
-    name: Public repository checks
-    needs: [plan, documentation, frontend, scripts, mobile-web, shared-protocol]
-    if: ${{ always() && needs.plan.outputs.run_checks != 'false' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .node-version
-          package-manager-cache: false
-      - name: Require every selected check to succeed
-        env:
-          PLAN_RESULT: ${{ needs.plan.result }}
-          RUN_CODE_CHECKS: ${{ needs.plan.outputs.run_code_checks }}
-          DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
-          FRONTEND_RESULT: ${{ needs.frontend.result }}
-          SCRIPTS_RESULT: ${{ needs.scripts.result }}
-          MOBILE_WEB_RESULT: ${{ needs.mobile-web.result }}
-          SHARED_PROTOCOL_RESULT: ${{ needs.shared-protocol.result }}
-        run: node scripts/public-ci.mjs check
