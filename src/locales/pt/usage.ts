@@ -100,7 +100,6 @@ export const usage: Record<string, string> = {
 	"usage.window.fiveHourAllModels": "5 horas · Todos os modelos",
 	"usage.window.weekly": "Semanal",
 	"usage.window.weeklyAllModels": "Semanal · Todos os modelos",
-	"usage.window.weeklyOpus": "Semanal · Opus",
 	"usage.credits.remaining": "Créditos do espaço de trabalho: {balance}",
 	"usage.credits.unlimited": "Créditos do espaço de trabalho ilimitados",
 	"usage.credits.unavailable": "Créditos do espaço de trabalho indisponíveis",

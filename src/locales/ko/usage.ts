@@ -100,7 +100,6 @@ export const usage: Record<string, string> = {
 	"usage.window.fiveHourAllModels": "5시간 · 전체 모델",
 	"usage.window.weekly": "주간",
 	"usage.window.weeklyAllModels": "주간 · 전체 모델",
-	"usage.window.weeklyOpus": "주간 · Opus",
 	"usage.credits.remaining": "워크스페이스 크레딧 {balance}",
 	"usage.credits.unlimited": "워크스페이스 크레딧 무제한",
 	"usage.credits.unavailable": "워크스페이스 크레딧 확인 불가",
