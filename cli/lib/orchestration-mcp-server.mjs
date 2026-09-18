@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline";
+import { callJevMcpTool, jevMcpTool } from "./jev-mcp-tool.mjs";
 import { appControlMcpTools, callAppControlMcpTool } from "./app-control-mcp-tools.mjs";
 import {
   checkpointCursor,
@@ -325,11 +326,12 @@ export async function handleMcpRequest(
       serverInfo: { name: "dure-orchestration", version: "1" },
     };
   }
-  if (message.method === "tools/list") return { tools: [...tools, ...appControlMcpTools] };
+  if (message.method === "tools/list") return { tools: [...tools, ...appControlMcpTools, jevMcpTool] };
   if (message.method !== "tools/call") throw new Error(`unsupported MCP method: ${message.method}`);
   const endpoint = defaultOrchestrationEndpoint(environment);
   const name = message.params?.name;
   const input = message.params?.arguments ?? {};
+  if (name === "jev_evaluate") return callJevMcpTool(input, environment, dependencies);
   const appResult = await callAppControlMcpTool(name, input, environment, dependencies);
   if (appResult !== undefined) return appResult;
   if (name === "orchestration_context_get_current") {

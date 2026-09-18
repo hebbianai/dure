@@ -648,6 +648,7 @@ function prepareCodexMcp(configPath, receipt) {
 function renderCodexBlock(receipt) {
   const entry = claudeMcpEntry(receipt);
   const forwarded = [
+    "TYPESAFE_API_KEY",
     "DURE_HOME",
     "DURE_APP_CHANNEL",
     "HEBBIAN_APP_CHANNEL",

@@ -871,6 +871,7 @@ describe("immutable generic orchestration integration", () => {
       ], { cwd: root, encoding: "utf8", input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n` });
       expect(installedServer.status, installedServer.stderr).toBe(0);
       expect(JSON.parse(installedServer.stdout).result.tools.map((tool) => tool.name)).toContain("app_pane_act");
+      expect(JSON.parse(installedServer.stdout).result.tools.map((tool) => tool.name)).toContain("jev_evaluate");
     }
     const claudeConfig = JSON.parse(fs.readFileSync(path.join(root, ".claude.json"), "utf8"));
     expect(claudeConfig.mcpServers["dure-orchestration"].args[0]).toBe(
@@ -878,6 +879,9 @@ describe("immutable generic orchestration integration", () => {
     );
     expect(fs.readFileSync(path.join(root, ".codex", "config.toml"), "utf8")).toContain(
       `[mcp_servers.dure-orchestration]\ncommand = ${JSON.stringify(process.execPath)}`,
+    );
+    expect(fs.readFileSync(path.join(root, ".codex", "config.toml"), "utf8")).toMatch(
+      /env_vars = \[[^\n]*"TYPESAFE_API_KEY"/,
     );
     for (const provider of ["claude", "codex"]) {
       const hookFile = provider === "claude" ? "settings.json" : "hooks.json";
@@ -1799,6 +1803,7 @@ describe("immutable generic orchestration integration", () => {
         { name: "app_pane_open" },
         { name: "app_pane_create" },
         { name: "app_pane_close" },
+        { name: "jev_evaluate" },
       ],
     });
     const eventRead = result.tools.find(
