@@ -98,6 +98,11 @@ if (live) {
   assert.equal(receipt.noViewQueueAfterReload, true);
   assert.equal(receipt.queuedAcrossBackendReplacement, true);
   assert.equal(receipt.independentQueueClients, true);
+  assert.equal(receipt.queuedAcrossRuntimeReplacement, true);
+  assert.equal(receipt.credentialProfileChanged, true);
+  const accountQueue = await waitForQaLogReceipt("slack-account-queue", proof);
+  assert.equal(receipt.distinctProviderAccounts, accountQueue.distinctProviderAccounts);
+  fs.writeFileSync(path.join(root, "evidence", "account-queue.json"), JSON.stringify(accountQueue, null, 2));
   const log = fs.readFileSync(path.join(root, "qa.log"), "utf8");
   const queueCompleted = log.indexOf("queue-completed-without-view-after-reload");
   assert.ok(queueCompleted >= 0, "the new WebView observed queued completion");

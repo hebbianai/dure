@@ -1,5 +1,5 @@
 import { collectAgentRun, defaultAgentRunName } from "../agent-run.mjs";
-import { performBackendProfileRequest } from "../backend-transport.mjs";
+import { BackendTransportError, performBackendProfileRequest } from "../backend-transport.mjs";
 import { nativeSlackPage, nativeSlackTarget } from "./native.mjs";
 import { slackInput } from "./event.mjs";
 
@@ -125,7 +125,16 @@ export class DureSlackBackend {
   }
 
   async deliver(thread, intent, operation) {
-    const { receipt } = await this.call(thread, operation, intent);
+    let receipt;
+    try { ({ receipt } = await this.call(thread, operation, intent)); }
+    catch (error) {
+      if (operation === "agent_conversation.steer_turn" && error instanceof BackendTransportError &&
+          error.code === "backend_transport_remote_error" &&
+          error.details?.code === "agent_conversation_steer_unsupported" && error.details.disposition === "terminal") {
+        return "steer_unsupported";
+      }
+      throw error;
+    }
     if (operation === "agent_runtime.native.input") {
       if (receipt?.terminalEpoch !== intent.expectedTerminalEpoch ||
           receipt.state !== "written_to_pty") {
@@ -133,8 +142,9 @@ export class DureSlackBackend {
       }
       return;
     }
-    const expected = operation === "agent_conversation.answer_pending" ? "succeeded" : "accepted";
-    if (receipt?.state !== expected) {
+    const expected = operation === "agent_conversation.enqueue_turn" ? ["queued", "dispatched"] :
+      [operation === "agent_conversation.answer_pending" ? "succeeded" : "accepted"];
+    if (!expected.includes(receipt?.state)) {
       throw Object.assign(new Error(`Dure has not confirmed message delivery (${receipt?.state ?? "unavailable"}).`), { code: "slack_task_input_failed" });
     }
   }

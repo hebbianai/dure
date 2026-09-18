@@ -32,10 +32,24 @@ pub struct AgentProviderCommandErrorV1 {
 impl AgentProviderCommandErrorV1 {
     pub fn new(code: impl Into<String>, detail: impl Into<String>) -> Self {
         Self {
-            code: code.into(),
-            detail: detail.into(),
+            code: bounded_provider_diagnostic(code.into(), 256),
+            detail: bounded_provider_diagnostic(detail.into(), 8192),
         }
     }
+
+    fn receipt(&self) -> Value {
+        json!({ "errorCode": self.code, "errorDetail": self.detail })
+    }
+}
+
+// Bound provider diagnostics once, before either the response or durable JSON
+// receipt consumes them. Even maximally escaped text fits the receipt budget.
+fn bounded_provider_diagnostic(mut value: String, max_chars: usize) -> String {
+    if let Some((boundary, _)) = value.char_indices().nth(max_chars) {
+        value.truncate(boundary);
+        value.push('…');
+    }
+    value
 }
 
 impl std::fmt::Display for AgentProviderCommandErrorV1 {
@@ -520,7 +534,7 @@ where
                         runtime: intent.runtime.clone(),
                         client_message_id: intent.client_message_id.clone(),
                         state: AgentTurnEffectStateV1::Failed,
-                        provider_receipt: Some(json!({ "errorCode": error.code })),
+                        provider_receipt: Some(error.receipt()),
                         updated_at_ms: now_ms()?,
                     })
                     .await?;
@@ -579,7 +593,7 @@ where
                         runtime: intent.runtime.clone(),
                         client_message_id: intent.client_message_id.clone(),
                         state: AgentTurnEffectStateV1::Failed,
-                        provider_receipt: Some(json!({ "errorCode": error.code })),
+                        provider_receipt: Some(error.receipt()),
                         updated_at_ms: now_ms()?,
                     })
                     .await?;
@@ -621,7 +635,7 @@ where
                         schema_version: intent.schema_version,
                         idempotency_key: intent.idempotency_key.clone(),
                         state: AgentPendingAnswerStateV1::Failed,
-                        provider_receipt: Some(json!({ "errorCode": error.code })),
+                        provider_receipt: Some(error.receipt()),
                         updated_at_ms: now_ms()?,
                     })
                     .await?;

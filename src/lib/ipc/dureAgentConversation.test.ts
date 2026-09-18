@@ -61,6 +61,35 @@ function routeAuthority() {
 }
 
 describe("Dure agent conversation client", () => {
+	it("retains the provider explanation and terminal disposition without replaying a failed command", async () => {
+		const failure = {
+			code: "agent_conversation_provider_failed",
+			message:
+				"provider command provider_busy: Wait for the current tool to finish.",
+			details: { providerCode: "provider_busy", disposition: "terminal" },
+		};
+		const invokeCommand = vi.fn().mockRejectedValue(failure);
+		const client = createDureAgentConversationClient({ invokeCommand });
+		await expect(
+			client.steerTurn(
+				{
+					schemaVersion: 1,
+					interactionSessionId: "interaction-1",
+					runtime: read().page.binding.runtime,
+					turnId: "turn-1",
+					clientMessageId: "message-failed",
+					input: "change direction",
+					requestedAtMs: 10,
+				},
+				routeAuthority(),
+			),
+		).rejects.toMatchObject({
+			...failure,
+			failure: { kind: "operation", disposition: "terminal" },
+		});
+		expect(invokeCommand).toHaveBeenCalledTimes(1);
+	});
+
 	it("inspects the original input using a read operation and never grants execution", async () => {
 		const intent = {
 			schemaVersion: 1 as const,
@@ -215,7 +244,7 @@ describe("Dure agent conversation client", () => {
 		expect(invokeCommand).toHaveBeenCalledTimes(2);
 	});
 
-	it.each(["prepared", "uncertain"])(
+	it.each(["prepared", "uncertain", "failed"])(
 		"does not report a %s steering receipt as delivered",
 		async (state) => {
 			const turn = {
@@ -228,14 +257,30 @@ describe("Dure agent conversation client", () => {
 				requestedAtMs: 10,
 			};
 			const invokeCommand = vi.fn(async () =>
-				envelope({ receipt: { intent: turn, state } }),
+				envelope({
+					receipt: {
+						intent: turn,
+						state,
+						providerReceipt: {
+							errorCode: "steer_unsupported",
+							errorDetail: "Steering is unavailable for this turn.",
+						},
+					},
+				}),
 			);
 			const client = createDureAgentConversationClient({ invokeCommand });
 			await expect(
 				client.steerTurn(turn, routeAuthority()),
-			).rejects.toMatchObject({
-				code: "agent_conversation_steer_unconfirmed",
-			});
+			).rejects.toMatchObject(
+				state === "failed"
+					? {
+							code: "agent_conversation_provider_failed",
+							message:
+								"steer_unsupported: Steering is unavailable for this turn.",
+							failure: { kind: "operation", disposition: "terminal" },
+						}
+					: { code: "agent_conversation_steer_unconfirmed" },
+			);
 			expect(invokeCommand).toHaveBeenCalledTimes(1);
 		},
 	);
@@ -821,43 +866,68 @@ describe("Dure agent conversation client", () => {
 		]);
 	});
 
-	it("accepts an uncertain pending-answer receipt after crash recovery", async () => {
-		const answer = {
-			schemaVersion: 1 as const,
-			interactionSessionId: "interaction-1",
-			runtime: {
-				runtimeGeneration: "runtime-1",
-				providerEpoch: "query-1",
-			},
-			requestId: "permission-1",
-			clientMessageId: "message-1",
-			idempotencyKey: "answer-1",
-			answer: { decision: "allow" },
-			requestedAtMs: 10,
-		};
-		const invokeCommand = vi.fn().mockResolvedValue(
-			envelope({
-				receipt: {
-					intent: answer,
-					request: { request: { requestId: "permission-1" } },
-					state: "uncertain",
-					providerReceipt: null,
-					newlyPrepared: false,
-					updatedAtMs: 11,
+	it.each(["prepared", "failed", "uncertain", "succeeded"])(
+		"confirms only a succeeded pending-answer receipt after recovery: %s",
+		async (state) => {
+			const answer = {
+				schemaVersion: 1 as const,
+				interactionSessionId: "interaction-1",
+				runtime: {
+					runtimeGeneration: "runtime-1",
+					providerEpoch: "query-1",
 				},
-			}),
-		);
-		const client = createDureAgentConversationClient({ invokeCommand });
+				requestId: "permission-1",
+				clientMessageId: "message-1",
+				idempotencyKey: "answer-1",
+				answer: { decision: "allow" },
+				requestedAtMs: 10,
+			};
+			const invokeCommand = vi.fn().mockResolvedValue(
+				envelope({
+					receipt: {
+						intent: answer,
+						request: { request: { requestId: "permission-1" } },
+						state,
+						providerReceipt:
+							state === "failed"
+								? {
+										errorCode: "answer_rejected",
+										errorDetail: "This request is no longer pending.",
+									}
+								: null,
+						newlyPrepared: false,
+						updatedAtMs: 11,
+					},
+				}),
+			);
+			const client = createDureAgentConversationClient({ invokeCommand });
 
-		await expect(
-			client.answerPending(answer, routeAuthority()),
-		).resolves.toBeUndefined();
-		expect(invokeCommand).toHaveBeenCalledWith("dure_backend_request", {
-			route: { kind: "exact", authority: routeAuthority() },
-			operation: "agent_conversation.answer_pending",
-			body: answer,
-		});
-	});
+			const result = client.answerPending(answer, routeAuthority());
+			if (state === "succeeded") {
+				await expect(result).resolves.toBeUndefined();
+			} else {
+				await expect(result).rejects.toMatchObject(
+					state === "failed"
+						? {
+								code: "agent_conversation_provider_failed",
+								message: "answer_rejected: This request is no longer pending.",
+								failure: { kind: "operation", disposition: "terminal" },
+							}
+						: {
+								code: "agent_conversation_answer_unconfirmed",
+								failure: { kind: "operation", disposition: "terminal" },
+								details: { state },
+							},
+				);
+			}
+			expect(invokeCommand).toHaveBeenCalledTimes(1);
+			expect(invokeCommand).toHaveBeenCalledWith("dure_backend_request", {
+				route: { kind: "exact", authority: routeAuthority() },
+				operation: "agent_conversation.answer_pending",
+				body: answer,
+			});
+		},
+	);
 
 	it("interrupts only through the observed exact route", async () => {
 		const interrupt = {

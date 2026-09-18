@@ -96,7 +96,10 @@ fn recovery_runtime_error(error: StructuredProviderRuntimeErrorV1) -> AgentConve
         }
         StructuredProviderRuntimeErrorKindV1::LaunchFailed
         | StructuredProviderRuntimeErrorKindV1::StopFailed => {
-            AgentConversationApiErrorV1::ProviderFailed
+            let detail = error.detail.unwrap_or_else(|| error.code.clone());
+            AgentConversationApiErrorV1::ProviderFailed(
+                crate::agent_conversation::AgentProviderCommandErrorV1::new(error.code, detail),
+            )
         }
     }
 }
