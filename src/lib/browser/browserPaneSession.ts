@@ -522,7 +522,25 @@ export class BrowserPaneSession {
 		});
 		return this.releasing;
 	}
-	private async releaseHeld(known: BrowserControllerLease): Promise<void> {
+	private async releaseHeld(
+		known: BrowserControllerLease,
+		inputWasPending = false,
+	): Promise<void> {
+		if (known.controller_id !== this.controllerId) return;
+		const observed = this.view.control;
+		// A settled receipt already confirms that this view holds no contacts.
+		// Space changes and blur need no network request in that case. A lost
+		// input receipt or a disposal racing input still requires a fresh read.
+		if (
+			!inputWasPending &&
+			!this.inputError &&
+			observed &&
+			sameLease(observed.controller, known) &&
+			!observed.in_flight &&
+			!observed.keyboard?.keys.length &&
+			!observed.pointer?.buttons
+		)
+			return;
 		let control = await this.client.control(this.resource);
 		this.control(control);
 		if (
@@ -574,12 +592,15 @@ export class BrowserPaneSession {
 	dispose(releaseInputs = true) {
 		if (this.disposed) return Promise.resolve();
 		const known = this.view.control?.controller;
+		const inputWasPending = !!this.draining;
 		this.disposed = true;
 		for (const item of this.queue.splice(0))
 			for (const reject of item.reject) reject(failure("browser_view_closed"));
 		this.listeners.clear();
 		return releaseInputs && known
-			? Promise.resolve(this.draining).then(() => this.releaseHeld(known))
+			? Promise.resolve(this.draining).then(() =>
+					this.releaseHeld(known, inputWasPending),
+				)
 			: Promise.resolve();
 	}
 }

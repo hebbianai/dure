@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { afterEach, expect, it, vi } from "vitest";
+import { showToast } from "@/lib/toast";
 import {
 	invokePaneAction,
 	paneActionSnapshot,
@@ -168,6 +169,53 @@ function projection(selected: typeof resource) {
 		next_command_sequence: "5",
 	};
 }
+
+it("changes Spaces without a release warning when an idle browser loses its backend", async () => {
+	const f = fixture();
+	const props = f.props();
+	const hook = renderHook(useProBrowserPane, { initialProps: props });
+	try {
+		await waitFor(() => expect(hook.result.current.view.frame).toBeDefined());
+		f.client.observe.mockImplementation(async (selected) => ({
+			control: {
+				...projection(selected),
+				revision: "5",
+				controller: {
+					resource: selected,
+					controller_id: hook.result.current.controllerId,
+					epoch: "4",
+				},
+			},
+			pages: [
+				{
+					page: page(selected),
+					url: "about:blank",
+					title: "",
+					profile_id: "default",
+				},
+			],
+		}));
+		await act(() => hook.result.current.session!.refresh());
+		await waitFor(() =>
+			expect(hook.result.current.view.control?.controller?.controller_id).toBe(
+				hook.result.current.controllerId,
+			),
+		);
+		f.client.control.mockRejectedValue(new Error("backend restarted"));
+		for (let attempt = 0; attempt < 3; attempt++) {
+			mocks.active = false;
+			await act(async () => hook.rerender(props));
+			mocks.active = true;
+			await act(async () => hook.rerender(props));
+		}
+		hook.unmount();
+		await act(async () => {});
+		expect(showToast).not.toHaveBeenCalled();
+		expect(f.client.control).not.toHaveBeenCalled();
+	} finally {
+		hook.unmount();
+	}
+});
 
 it("shows current URLs in a focused address field until its value is edited", async () => {
 	const f = fixture();

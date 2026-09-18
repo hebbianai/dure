@@ -34,6 +34,7 @@ interface Configuration {
 	controlled?: boolean;
 	profileId?: string;
 	profileName?: string;
+	previousRevision?: string;
 	nativeUserAgent?: boolean;
 	focusAddressBeforeObservation?: boolean;
 }
@@ -150,10 +151,36 @@ export async function runBrowserPanelProbe(): Promise<void> {
 		element.querySelector<HTMLTextAreaElement>(
 			`textarea[aria-label="${t("panels.browser.pageInput")}"]`,
 		);
-	const pageSelect = () =>
-		element.querySelector<HTMLSelectElement>(
-			`select[aria-label="${t("panels.browser.page")}"]`,
+	const selectTrigger = (key: Parameters<typeof t>[0]) =>
+		document.querySelector<HTMLButtonElement>(
+			`[role="combobox"][aria-label="${t(key)}"]`,
 		);
+	const openSelect = async (key: Parameters<typeof t>[0]) => {
+		await waitFor("selector ready", () => {
+			const trigger = selectTrigger(key);
+			return !!trigger && !trigger.disabled;
+		});
+		selectTrigger(key)!.dispatchEvent(
+			new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+		);
+		await waitFor(
+			"selector options",
+			() => !!document.querySelector('[role="listbox"]'),
+		);
+		return document.querySelector<HTMLElement>('[role="listbox"]')!;
+	};
+	const selectOption = (list: HTMLElement, value: string) =>
+		[...list.querySelectorAll<HTMLElement>('[role="option"]')].find(
+			(option) => option.dataset.value === value,
+		);
+	const finishSelect = async (
+		list: HTMLElement,
+		key: "Enter" | "Escape",
+		target = list,
+	) => {
+		target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+		await waitFor("selector closed", () => !list.isConnected);
+	};
 	const click = (key: Parameters<typeof t>[0], text = false) => {
 		const button = [...element.querySelectorAll("button")].find((node) =>
 			text
@@ -447,17 +474,9 @@ export async function runBrowserPanelProbe(): Promise<void> {
 					);
 				const value = config.action === "follow" ? "" : config.pageId;
 				if (value === undefined) throw new Error("Missing page selection");
-				await waitFor("page selector ready", () => {
-					const select = pageSelect();
-					return (
-						!!select &&
-						!select.disabled &&
-						[...select.options].some((option) => option.value === value)
-					);
-				});
-				const select = pageSelect()!;
-				select.value = value;
-				select.dispatchEvent(new Event("change", { bubbles: true }));
+				const list = await openSelect("panels.browser.page");
+				await waitFor("page option ready", () => !!selectOption(list, value));
+				await finishSelect(list, "Enter", selectOption(list, value));
 			} else if (config.action === "profile-new") {
 				const button = [
 					...document.querySelectorAll<HTMLButtonElement>(
@@ -533,7 +552,7 @@ export async function runBrowserPanelProbe(): Promise<void> {
 					await waitFor(
 						"profile deletion confirmation",
 						() =>
-							!document.querySelector('[role="dialog"] select') &&
+							!selectTrigger("panels.browser.profileDestination") &&
 							[...document.querySelectorAll('[role="dialog"] button')].some(
 								(node) =>
 									node.textContent === t("panels.browser.confirmDeleteProfile"),
@@ -542,44 +561,49 @@ export async function runBrowserPanelProbe(): Promise<void> {
 				else if (config.action === "profile-delete-cancel")
 					await waitFor(
 						"profile deletion canceled",
-						() =>
-							!!document.querySelector(
-								`select[aria-label="${t("panels.browser.profileDestination")}"]`,
-							),
+						() => !!selectTrigger("panels.browser.profileDestination"),
 					);
-				else
+				else {
 					await waitFor(
 						"profile deletion settled",
 						() =>
 							!document.querySelector('[role="dialog"]') &&
 							!!config.pageId &&
-							!!pageSelect() &&
-							![...pageSelect()!.options].some(
-								(option) => option.value === config.pageId,
-							),
+							!!selectTrigger("panels.browser.page") &&
+							!observedSession
+								?.read()
+								.observation?.pages.some(
+									(row) => row.page.page_id === config.pageId,
+								),
 					);
+					const list = await openSelect("panels.browser.page");
+					await waitFor(
+						"deleted profile page is removed from the selector",
+						() => !selectOption(list, config.pageId!),
+					);
+					await finishSelect(list, "Escape");
+				}
 			} else if (config.action === "profiles-open") {
 				click("panels.browser.profiles", true);
+				if (!config.profileId)
+					throw new Error("Missing saved profile identity");
+				const list = await openSelect("panels.browser.profileDestination");
 				await waitFor(
 					"saved profile catalog",
-					() =>
-						!!document
-							.querySelector<HTMLSelectElement>(
-								`select[aria-label="${t("panels.browser.profileDestination")}"]`,
-							)
-							?.querySelector(`option[value="${config.profileId}"]`),
+					() => !!selectOption(list, config.profileId!),
 				);
+				await finishSelect(list, "Escape");
 			} else if (
 				config.action === "profile-switch" ||
 				config.action === "profile-clone"
 			) {
-				const select = document.querySelector<HTMLSelectElement>(
-					`select[aria-label="${t("panels.browser.profileDestination")}"]`,
+				if (!config.profileId) throw new Error("Missing saved profile dialog");
+				const list = await openSelect("panels.browser.profileDestination");
+				await waitFor(
+					"saved profile option",
+					() => !!selectOption(list, config.profileId!),
 				);
-				if (!select || !config.profileId)
-					throw new Error("Missing saved profile dialog");
-				select.value = config.profileId;
-				select.dispatchEvent(new Event("change", { bubbles: true }));
+				await finishSelect(list, "Enter", selectOption(list, config.profileId));
 				const key =
 					config.action === "profile-switch"
 						? "panels.browser.profileSwitch"
@@ -714,6 +738,19 @@ export async function runBrowserPanelProbe(): Promise<void> {
 				await waitFor("reconnected Browser input surface", () => {
 					const currentInput = input();
 					return !!currentInput && currentInput !== previousInput;
+				});
+			} else if (config.action === "route-recovered") {
+				if (!config.previousRevision)
+					throw new Error("Previous route revision is missing");
+				await waitFor("automatic Browser route recovery", () => {
+					const binding = api?.getPanel("browser:native-panel-proof")?.params
+						?.browserBinding;
+					return (
+						!!binding &&
+						binding.authority.revision !== config.previousRevision &&
+						!!input() &&
+						!observedSession?.read().error
+					);
 				});
 			} else if (config.action === "close") {
 				click("panels.browser.closeBrowser");
