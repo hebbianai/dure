@@ -118,6 +118,8 @@ Claude Code, Codex, OpenCode, Pi는 설치된 런타임이 지원할 때 구조�
 
 ## 오픈소스 공개 범위
 
+Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).
+
 이 저장소에 공개된 데스크톱·모바일·런타임(Hmux 포함)·CLI·서비스 자체 코드는 [GNU GPL 버전 3 전용(GPL-3.0-only)](../../LICENSE)으로 제공되며, 외부 구성 요소의 라이선스와 고지는 유지됩니다. 해당 라이선스에 따라 사용·수정·재배포할 수 있습니다. GPL 적용 바이너리를 배포할 때는 GPLv3가 정한 방식으로 해당 소스 코드(Corresponding Source)를 제공해야 합니다. 이전에 MIT로 공개된 버전에는 기존 MIT 조건이 계속 적용됩니다.
 
 Dure 이름·로고·앱 아이콘의 사용과 커뮤니티 빌드·Hebbian AI 공식 빌드의 구분은 [TRADEMARK.md](../../TRADEMARK.md)에 안내되어 있습니다.

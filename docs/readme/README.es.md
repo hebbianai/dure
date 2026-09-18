@@ -120,6 +120,8 @@ Para compilar desde el código y consultar la cobertura de verificación, ve a l
 
 ## Alcance del código abierto
 
+Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).
+
 El código propio de escritorio, móvil, entorno de ejecución (incluido Hmux), CLI y servicios publicado aquí está disponible bajo [GNU GPL solo versión 3 (GPL-3.0-only)](../../LICENSE); los componentes de terceros conservan sus licencias y avisos. Puedes usar, modificar y redistribuir el código conforme a esas licencias. Al distribuir binarios cubiertos por GPL, debes proporcionar el código fuente correspondiente (Corresponding Source) según GPLv3. Las versiones publicadas anteriormente bajo MIT siguen disponibles bajo esos términos.
 
 [TRADEMARK.md](../../TRADEMARK.md) explica el uso del nombre, logotipo e iconos de Dure, y la distinción entre las compilaciones comunitarias y las oficiales de Hebbian AI.
