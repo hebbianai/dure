@@ -155,6 +155,25 @@ refuses a second selection within the same run. If source admission itself
 failed before producing any candidate/version, start a new dispatch only after
 reconciling that the intended version is still unused.
 
+If the frozen publisher itself is defective, rerunning that job repeats its
+defect. After merging and checking the repair, a repository administrator may
+resume the existing draft from a clean checkout of reviewed tooling on `main`:
+
+```sh
+node scripts/release-public.mjs recover-draft v0.2.29
+node scripts/release-public.mjs verify v0.2.29
+```
+
+Recovery requires exact tooling CI, the original successful source, candidate,
+version and signed build jobs, the declared verification result, and a failed
+draft job. It checks the original selection and build artifacts, uploads only
+missing matching assets, downloads them for comparison, and records the operator,
+tooling commit, original run, release identity and asset hashes in the draft.
+It does not publish or update the compatibility feed. The original workflow
+remains failed and the notes disclose recovery; subsequent verification and
+publication accept this recorded case while retaining every artifact and CI
+check. Packaged native acceptance remains required before publication.
+
 If publication succeeded but metadata writing or anonymous cache readback is
 uncertain, resume only:
 

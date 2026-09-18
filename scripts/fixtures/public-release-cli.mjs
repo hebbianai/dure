@@ -23,7 +23,11 @@ const sha=bytes=>crypto.createHash('sha1').update('blob '+bytes.length+'\0').upd
 const previous=bytes=>({type:'file',path:'beta/latest.json',encoding:'base64',sha:sha(bytes),content:bytes.toString('base64')});
 if(argv[0]==='api'){
   const route=argv[1];
-  if(route.includes('/collaborators/')){
+  if(route==='user'){
+    answer({login:state.operator??'release-admin'});
+  }else if(route.includes('/compare/')){
+    answer({base_commit:{sha:route.split('/compare/')[1].split('...')[0]},status:state.toolingComparison??'identical'});
+  }else if(route.includes('/collaborators/')){
     answer({permission:state.permissions?.[route.split('/').at(-2)]??'admin'});
   }else if(route.includes('/commits/')){
     const ref=decodeURIComponent(route.split('/commits/')[1]);
@@ -40,11 +44,16 @@ if(argv[0]==='api'){
     }else if(state.previous)answer(state.previous);else fail(404);
   }else if(route.includes('/releases/tags/')){
     if(state.releaseReadError)fail(state.releaseReadError);
+    if(state.draftByTagMissing&&state.release?.draft)fail(404);
     if(route.startsWith('repos/hebbianai/dure/')&&state.release)answer(state.release);else fail(404);
+  }else if(route.startsWith('repos/hebbianai/dure/releases?')){
+    if(state.releaseListError)fail(state.releaseListError);
+    const page=Number(new URL('https://fixture/'+route).searchParams.get('page'));
+    answer(state.releasePages?.[page-1]??[...(state.release?[state.release]:[]),...(state.extraReleases??[])]);
   }else if(route.includes('/git/ref/')){
     if(route.startsWith('repos/hebbianai/dure/')&&state.hasRemoteTag)answer({object:{type:'commit',sha:state.tagSha}});else fail(404);
   }else if(route.includes('/actions/runs/')&&route.includes('/jobs?')){
-    answer({total_count:6,jobs:['source','candidate','version','build','draft','verification'].map(name=>({name,conclusion:name==='verification'?(state.actualVerification??'success'):'success'}))});
+    answer({total_count:6,jobs:['source','candidate','version','build','draft','verification'].map(name=>({name,conclusion:state.jobConclusions?.[name]??(name==='verification'?(state.actualVerification??'success'):'success')}))});
   }else if(route.includes('/actions/runs/')){
     answer({repository:{full_name:'hebbianai/dure'},path:'.github/workflows/release.yml',event:'workflow_dispatch',head_branch:state.headBranch??'main',head_sha:state.workflowSha??state.sourceSha,status:'completed',conclusion:state.runConclusion??'success'});
   }else fail(400,'unmodeled API '+route);
@@ -76,9 +85,14 @@ if(argv[0]==='api'){
     if(state.tamperDownload&&asset.name==='Dure.app.tar.gz')fs.appendFileSync(dest,'changed');
   }
 }else if(argv[0]==='release'&&argv[1]==='edit'){
-  if(!argv.includes('--draft=false')||!argv.includes('--latest=false')||!argv.includes('--prerelease'))fail(400);
-  if(!state.publishStillDraft)state.release.draft=false;
-  if(state.lostPublishResponse)fail(500,'response lost after publish');
+  if(argv.includes('--notes-file')){
+    state.release.body=fs.readFileSync(arg('--notes-file'),'utf8');
+    if(state.lostNotesResponse)fail(500,'response lost after notes update');
+  }else{
+    if(!argv.includes('--draft=false')||!argv.includes('--latest=false')||!argv.includes('--prerelease'))fail(400);
+    if(!state.publishStillDraft)state.release.draft=false;
+    if(state.lostPublishResponse)fail(500,'response lost after publish');
+  }
   answer(state.release);
 }else fail(400,'unmodeled gh '+argv.join(' '));
 `;

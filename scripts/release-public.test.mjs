@@ -49,6 +49,101 @@ test("stages exactly four immutable assets once and observes a repeated stage wi
   expect(writes(value)).toHaveLength(5);
 });
 
+test("finds an authenticated draft when the published-by-tag endpoint returns 404", () => {
+  const value = fixture();
+  value.change({ draftByTagMissing: true });
+  success(stage(value));
+  success(value.run(script, "verify", "v0.2.29"));
+  expect(value.state().release.assets).toHaveLength(4);
+  expect(writes(value).filter((args) => args[1] === "create")).toHaveLength(1);
+});
+
+test("paginates authenticated drafts and refuses ambiguous matches or failed listing", () => {
+  const value = fixture();
+  success(stage(value));
+  const released = value.state().release;
+  const page = Array.from({ length: 100 }, (_, id) => ({ id, tag_name: `v0.1.${id}` }));
+  value.change({ draftByTagMissing: true, releasePages: [page, [released]] });
+  success(value.run(script, "verify", "v0.2.29"));
+  const before = writes(value).length;
+  value.change({ releasePages: [[released, { ...released, id: 92 }]] });
+  expect(stage(value).stderr).toContain("release_draft_ambiguous");
+  value.change({ releaseListError: 403 });
+  expect(stage(value).status).toBe(1);
+  expect(writes(value)).toHaveLength(before);
+});
+
+function failedDraft(value) {
+  value.change({ failedUpload: "Dure_0.2.29_aarch64.dmg", draftByTagMissing: true });
+  expect(stage(value).status).toBe(1);
+  value.change({ failedUpload: null, runConclusion: "failure", jobConclusions: { draft: "failure" } });
+}
+
+test("recovers only missing original assets, retains the failed run, and permits verified publication", () => {
+  const value = fixture();
+  failedDraft(value);
+  const existing = value.state().release.assets;
+  const feed = value.state().previous;
+  expect(value.run(script, "publish", "v0.2.29").stderr).toContain("release_run_not_successful");
+  value.change({ lostUpload: "Dure_0.2.29_aarch64.dmg", lostNotesResponse: true });
+  success(value.run(script, "recover-draft", "v0.2.29"));
+  const recovered = value.state();
+  expect(recovered.runConclusion).toBe("failure");
+  expect(recovered.release.draft).toBe(true);
+  expect(recovered.previous).toEqual(feed);
+  expect(recovered.release.assets.slice(0, 2)).toEqual(existing);
+  expect(recovered.release.body).toContain("dure-draft-recovery-v1");
+  const before = writes(value).length;
+  success(value.run(script, "recover-draft", "v0.2.29"));
+  success(value.run(script, "verify", "v0.2.29"));
+  expect(writes(value)).toHaveLength(before);
+  success(value.run(script, "publish", "v0.2.29"));
+  success(value.run(script, "metadata-only", "v0.2.29"));
+  expect(value.state().release.draft).toBe(false);
+  expect(value.state().release.assets).toEqual(recovered.release.assets);
+  expect(writes(value).flat()).not.toContain("--clobber");
+  expect(value.run(script, "recover-draft", "v0.2.29").stderr).toContain("release_recovery_requires_draft");
+});
+
+test.each([
+  { jobConclusions: { draft: "failure", build: "failure" } },
+  { jobConclusions: { draft: "skipped" } },
+  { actualVerification: "skipped" },
+  { permissions: { "release-admin": "write" } },
+  { toolingComparison: "diverged" },
+  { ciConclusion: "failure" },
+])("recovery refuses missing build, authority, review or CI evidence before writing: %j", (failure) => {
+  const value = fixture();
+  failedDraft(value);
+  value.change(failure);
+  const before = writes(value).length;
+  expect(value.run(script, "recover-draft", "v0.2.29").status).toBe(1);
+  expect(writes(value)).toHaveLength(before);
+});
+
+test("recovery requires clean tracked tooling and rejects a changed recovery receipt", () => {
+  const value = fixture();
+  failedDraft(value);
+  const manifest = path.join(value.repo, "package.json");
+  const original = fs.readFileSync(manifest);
+  fs.appendFileSync(manifest, "\n");
+  const before = writes(value).length;
+  expect(value.run(script, "recover-draft", "v0.2.29").stderr).toContain("release_recovery_tooling_dirty");
+  expect(writes(value)).toHaveLength(before);
+  fs.writeFileSync(manifest, original);
+  success(value.run(script, "recover-draft", "v0.2.29"));
+  const released = value.state().release;
+  released.body = released.body.replace(/<!-- dure-draft-recovery-v1 (\{[^\n]+\}) -->/, (_, text) => {
+    const receipt = JSON.parse(text);
+    receipt.assets[0].size++;
+    return `<!-- dure-draft-recovery-v1 ${JSON.stringify(receipt)} -->`;
+  });
+  value.change({ release: released });
+  const recoveredWrites = writes(value).length;
+  expect(value.run(script, "publish", "v0.2.29").stderr).toContain("release_recovery_asset_mismatch");
+  expect(writes(value)).toHaveLength(recoveredWrites);
+});
+
 test("reconciles lost create and upload responses without duplicate or clobber writes", () => {
   const value = fixture();
   value.change({ lostCreateResponse: true, lostUpload: "Dure.app.tar.gz" });
