@@ -131,6 +131,7 @@ export function GitPanel(props: IDockviewPanelProps<{ projectId: string }>) {
           className="ml-auto size-5 rounded hover:bg-accent"
           onClick={refresh}
           title={t("common.refresh")}
+          showTooltip={false}
         >
           <RefreshCw className="size-3.5" />
         </IconButton>

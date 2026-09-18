@@ -132,6 +132,7 @@ export function WorktreeAgentDialog({
             <IconButton
               onClick={onClose}
               title={t("common.close")}
+              showTooltip={false}
               className="absolute top-[14px] right-[14px]"
             >
               <X />

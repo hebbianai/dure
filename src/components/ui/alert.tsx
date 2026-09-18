@@ -205,6 +205,7 @@ function Alert({
 				<IconButton
 					className="-my-1 -mr-1 shrink-0 self-start"
 					title={dismiss.label}
+					showTooltip={false}
 					onClick={dismiss.onClick}
 				>
 					<X />

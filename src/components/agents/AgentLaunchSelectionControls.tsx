@@ -185,6 +185,7 @@ export function AgentLaunchSelectionControls({
 					</ErrorText>
 					<IconButton
 						title={t("common.close")}
+						showTooltip={false}
 						className="size-5 shrink-0 text-destructive/70 hover:text-destructive"
 						onClick={launch.dismissError}
 					>

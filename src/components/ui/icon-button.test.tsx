@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { IconButton, RowMenuButton } from "@/components/ui/icon-button";
+import { focusByKeyboard } from "@/test/keyboardFocus";
 
 describe("IconButton", () => {
   afterEach(cleanup);
@@ -43,10 +44,11 @@ describe("IconButton", () => {
       const button = target.querySelector("button")!;
       expect(ref.current).toBe(button);
 
-      fireEvent.focus(button);
+      // The hint answers keyboard focus only (tooltip.test.tsx).
+      focusByKeyboard(button);
       expect(target.querySelector('[role="tooltip"]')?.textContent).toBe("Close");
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
-      fireEvent.blur(button);
+      act(() => button.blur());
       expect(target.querySelector('[role="tooltip"]')).toBeNull();
     } finally {
       cleanup();
@@ -99,7 +101,7 @@ describe("IconButton", () => {
     );
     const button = screen.getByRole("button", { name: "추가 메뉴" });
 
-    fireEvent.focus(button);
+    focusByKeyboard(button);
     expect(screen.queryByRole("tooltip")).toBeNull();
     expect(button.getAttribute("title")).toBe("");
     expect(button.getAttribute("aria-label")).toBe("추가 메뉴");

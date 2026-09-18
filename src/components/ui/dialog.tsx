@@ -159,6 +159,7 @@ function DialogContent({
           <DialogPrimitive.Close data-slot="dialog-close" asChild>
             <IconButton
               title={t("common.close")}
+              showTooltip={false}
               className="absolute top-2.5 right-2.5"
             >
               <XIcon />

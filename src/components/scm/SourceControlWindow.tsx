@@ -252,7 +252,7 @@ function DetailArea({ target, onClose }: { target: DetailTarget; onClose: () => 
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
           {heading}
         </span>
-        <IconButton title={t("common.close")} onClick={onClose}>
+        <IconButton title={t("common.close")} showTooltip={false} onClick={onClose}>
           <X />
         </IconButton>
       </div>

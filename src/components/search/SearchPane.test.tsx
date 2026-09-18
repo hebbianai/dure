@@ -14,6 +14,7 @@ vi.mock("@/lib/files/fileViewerPane", () => ({ openFileViewer: mocks.open }));
 vi.mock("@/lib/ipc", () => ({ saveTempFile: mocks.save }));
 import { SearchPane } from "./SearchPane";
 import { t } from "@/lib/i18n";
+import { focusByKeyboard } from "@/test/keyboardFocus";
 import { OVERFLOW_REVEAL_DELAY_MS } from "@/components/ui/overflow-reveal-text";
 
 function deferred() {
@@ -62,10 +63,10 @@ it.each(optionLabels)("shows the shared hint for %s on focus", (label) => {
   fireEvent.click(screen.getByRole("button", { name: t("search.replace.action") }));
   const option = screen.getByRole("button", { name: t(label) });
 
-  fireEvent.focus(option);
+  focusByKeyboard(option);
   expect(screen.getByRole("tooltip").textContent).toBe(t(label));
   expect(option.getAttribute("title")).toBe("");
-  fireEvent.blur(option);
+  act(() => option.blur());
   expect(screen.queryByRole("tooltip")).toBeNull();
 });
 

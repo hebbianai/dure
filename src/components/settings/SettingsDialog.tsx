@@ -203,7 +203,7 @@ export function SettingsDialog({
               className="flex h-12 shrink-0 items-center justify-end px-3.5"
             >
               <DialogClose asChild>
-                <IconButton title={t("common.close")}>
+                <IconButton title={t("common.close")} showTooltip={false}>
                   <X />
                 </IconButton>
               </DialogClose>

@@ -80,6 +80,7 @@ export function FilesPane() {
         <>
           <IconButton
             title={t("common.refresh")}
+            showTooltip={false}
             disabled={!focus}
             onClick={() => setReloadKey((k) => k + 1)}
           >

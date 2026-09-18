@@ -320,6 +320,7 @@ export function DiffPanel(props: IDockviewPanelProps<DiffReviewPanelParams>) {
           className="size-5 rounded hover:bg-accent"
           onClick={refresh}
           title={t("common.refresh")}
+          showTooltip={false}
         >
           {busy ? <DureLoader decorative /> : <RefreshCw className="size-3.5" />}
         </IconButton>

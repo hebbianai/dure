@@ -427,7 +427,7 @@ export function QuickDispatchOverlay({
 										</DropdownMenuContent>
 									</DropdownMenu>
 									<DialogClose asChild>
-										<IconButton title={t("common.close")} className="size-7 shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"><X /></IconButton>
+										<IconButton title={t("common.close")} showTooltip={false} className="size-7 shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"><X /></IconButton>
 									</DialogClose>
 								</div>
 								<IntentJournalRows

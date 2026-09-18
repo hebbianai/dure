@@ -9,11 +9,14 @@ import { t } from "@/lib/i18n";
  * site's policy — pass `disabled` alongside `busy` to refuse re-entry, omit
  * it for fire-and-forget refreshes that tolerate one. The accessible name
  * defaults to t("common.refresh"); override `title` when the action needs a sharper
- * one (e.g. discarding a draft). */
+ * one (e.g. discarding a draft). The plain label gets no tooltip — it only
+ * repeats the glyph (owner call 2026-09-18) — while a sharper one keeps it;
+ * `showTooltip` still overrides either way. */
 export function RefreshButton({
 	busy = false,
 	title,
 	iconClassName,
+	showTooltip,
 	...rest
 }: {
 	/** True while the refresh runs — spins the icon. */
@@ -26,8 +29,14 @@ export function RefreshButton({
 	React.ComponentProps<typeof IconButton>,
 	"title" | "children" | "pressed"
 >) {
+	const plain = t("common.refresh");
+	const label = title ?? plain;
 	return (
-		<IconButton title={title ?? t("common.refresh")} {...rest}>
+		<IconButton
+			title={label}
+			showTooltip={showTooltip ?? label !== plain}
+			{...rest}
+		>
 			{busy ? (
 				<DureLoader decorative className={iconClassName} />
 			) : (

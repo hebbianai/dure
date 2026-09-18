@@ -37,6 +37,7 @@ export function UpdateNoticeCard({
 				{onDismiss ? (
 					<IconButton
 						title={t("common.close")}
+						showTooltip={false}
 						className="-my-1 -mr-1"
 						disabled={notice.phase === "running"}
 						onClick={onDismiss}

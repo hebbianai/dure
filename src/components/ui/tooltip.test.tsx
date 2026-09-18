@@ -3,6 +3,7 @@ import type * as React from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { focusByKeyboard, focusWithoutKeyboard } from "@/test/keyboardFocus";
 import {
   Tooltip,
   TooltipContent,
@@ -57,6 +58,36 @@ describe("Tooltip", () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  it("opens on keyboard focus", () => {
+    render(
+      <Tooltip>
+        <TooltipTrigger>Settings</TooltipTrigger>
+        <TooltipContent>Open settings</TooltipContent>
+      </Tooltip>,
+    );
+
+    focusByKeyboard(
+      document.querySelector("[data-slot='tooltip-trigger']") as HTMLElement,
+    );
+    expect(queryContent()?.textContent).toBe("Open settings");
+  });
+
+  it("stays closed when focus arrives without the keyboard", () => {
+    const onFocus = vi.fn();
+    render(
+      <Tooltip>
+        <TooltipTrigger onFocus={onFocus}>Settings</TooltipTrigger>
+        <TooltipContent>Open settings</TooltipContent>
+      </Tooltip>,
+    );
+
+    focusWithoutKeyboard(
+      document.querySelector("[data-slot='tooltip-trigger']") as HTMLElement,
+    );
+    expect(onFocus).toHaveBeenCalledOnce();
+    expect(queryContent()).toBeNull();
   });
 
   it("닫힘 상태에서는 content를 렌더하지 않는다", () => {

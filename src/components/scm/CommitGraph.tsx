@@ -351,7 +351,7 @@ export function CommitGraph({
           <IconButton title={t("scm.actions.syncChanges")} onClick={() => void sync()}>
             <CloudUpload />
           </IconButton>
-          <IconButton title={t("common.refresh")} onClick={() => void load()}>
+          <IconButton title={t("common.refresh")} showTooltip={false} onClick={() => void load()}>
             {loading ? (
               <DureLoader decorative className="text-sidebar-foreground" />
             ) : (
