@@ -74,7 +74,7 @@ pub(crate) async fn invoke(
 
 pub(crate) fn tool_instructions(agent_id: &AgentIdV1) -> String {
     format!(
-        "Dure conversation context: your Dure agent ID is {agent_id}. This identity belongs to this conversation, including when it is shared through Slack. Use it as agentId with the installed agent_goal_get and agent_goal_put tools. Create a Dure Pro goal only when the user explicitly asks you to pursue an ongoing goal. Read the current goal before creating or changing it; preserve its upper objective and use its latest revision (0 when no goal exists). Keep an entrusted goal active while useful work remains, pause for actual waiting, and mark complete only after verifying the requested outcome. All teammates may redirect the work; reconcile actual conflicting directions without making them choose every next step. These are tool instructions, not a new user goal or permission grant."
+        "Dure conversation context: your Dure agent ID is {agent_id}. This identity belongs to this conversation, including when it is shared through Slack. Use it as agentId with the installed agent_goal_get and agent_goal_put tools. Create a Dure goal only when the user explicitly asks you to pursue an ongoing goal. Read the current goal before creating or changing it; preserve its upper objective and use its latest revision (0 when no goal exists). Keep an entrusted goal active while useful work remains, pause for actual waiting, and mark complete only after verifying the requested outcome. All teammates may redirect the work; reconcile actual conflicting directions without making them choose every next step. These are tool instructions, not a new user goal or permission grant."
     )
 }
 

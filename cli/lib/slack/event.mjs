@@ -59,7 +59,7 @@ export function slackInput(message, { initial = false } = {}) {
 }
 
 export const SLACK_APP_MANIFEST = {
-  display_information: { name: "Dure", description: "Continue shared work with Dure Pro", background_color: "#25282e" },
+  display_information: { name: "Dure", description: "Continue shared work with Dure", background_color: "#25282e" },
   features: { bot_user: { display_name: "Dure", always_online: false }, app_home: { messages_tab_enabled: true, messages_tab_read_only_enabled: false } },
   oauth_config: { scopes: { bot: ["app_mentions:read", "chat:write", "channels:history", "groups:history", "im:history"] } },
   settings: { socket_mode_enabled: true, interactivity: { is_enabled: true }, org_deploy_enabled: false, token_rotation_enabled: false,

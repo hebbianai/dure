@@ -5,12 +5,23 @@ import {
 } from "@/lib/workspace/pane/interfaceMode";
 
 describe("effective interface mode", () => {
-	it.each(["pro", undefined, "future-mode"])(
-		"clamps production raw %s to the Basic-only product surface",
+	it("lets production select the Beta interface", () => {
+		expect(resolveEffectiveInterfaceMode("pro", { PROD: true })).toEqual({
+			mode: "pro",
+			selectable: true,
+		});
+		expect(resolveEffectiveInterfaceMode("basic", { PROD: true })).toEqual({
+			mode: "basic",
+			selectable: true,
+		});
+	});
+
+	it.each([undefined, "future-mode"])(
+		"reads production raw %s as Basic",
 		(storedMode) => {
 			expect(resolveEffectiveInterfaceMode(storedMode, { PROD: true })).toEqual({
 				mode: "basic",
-				selectable: false,
+				selectable: true,
 			});
 		},
 	);
@@ -34,20 +45,17 @@ describe("effective interface mode", () => {
 		});
 	});
 
-	it("honors the Basic-only override without allowing production to reopen", () => {
-		expect(
-			resolveEffectiveInterfaceMode("pro", {
-				PROD: false,
-				VITE_DURE_INTERFACE_MODE_POLICY: "basic-only",
-			}),
-		).toEqual({ mode: "basic", selectable: false });
-		expect(
-			resolveEffectiveInterfaceMode("pro", {
-				PROD: true,
-				VITE_DURE_INTERFACE_MODE_POLICY: "selectable",
-			}),
-		).toEqual({ mode: "basic", selectable: false });
-	});
+	it.each([false, true])(
+		"honors the Basic-only override when PROD is %s",
+		(PROD) => {
+			expect(
+				resolveEffectiveInterfaceMode("pro", {
+					PROD,
+					VITE_DURE_INTERFACE_MODE_POLICY: "basic-only",
+				}),
+			).toEqual({ mode: "basic", selectable: false });
+		},
+	);
 });
 
 describe("agent spawn interaction preference", () => {
@@ -62,9 +70,13 @@ describe("agent spawn interaction preference", () => {
 		}
 	});
 
-	it("keeps Basic and production native without erasing the saved Chat choice", () => {
+	it("honors the Beta Chat choice in production", () => {
+		expect(agentSpawnInteractionPreference({ interfaceMode: "pro", defaultAgentPane: "chat" }, { PROD: true })).toBeUndefined();
+	});
+
+	it("keeps Basic and the Basic-only policy native without erasing the saved Chat choice", () => {
 		const prefs = { interfaceMode: "pro", defaultAgentPane: "chat" };
-		expect(agentSpawnInteractionPreference(prefs, { PROD: true })).toBe("native_cli");
+		expect(agentSpawnInteractionPreference(prefs, { PROD: true, VITE_DURE_INTERFACE_MODE_POLICY: "basic-only" })).toBe("native_cli");
 		expect(agentSpawnInteractionPreference(prefs, { PROD: false, VITE_DURE_INTERFACE_MODE_POLICY: "basic-only" })).toBe("native_cli");
 		expect(agentSpawnInteractionPreference({ ...prefs, interfaceMode: "basic" }, { PROD: false })).toBe("native_cli");
 		expect(prefs.defaultAgentPane).toBe("chat");

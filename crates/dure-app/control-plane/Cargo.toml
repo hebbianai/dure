@@ -8,8 +8,8 @@ publish = false
 description = "Standalone local Dure control plane"
 
 [features]
-# The development app installs optimized backend binaries. Public bundles do
-# not select this feature; compiler optimization is not the Pro build policy.
+# Retained for compatibility with development installers. Browser and Slack
+# availability no longer depends on this feature.
 browser-development = []
 
 [dependencies]

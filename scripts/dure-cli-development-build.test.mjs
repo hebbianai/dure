@@ -56,7 +56,7 @@ it("builds the explicitly selected development Browser in the optimized backend"
   ]);
 });
 
-it("keeps ordinary installations Basic-only even with a development channel name", () => {
+it("omits the legacy development feature for ordinary installations regardless of channel name", () => {
   const { cargo } = invoke([]);
   expect(cargo).toEqual([
     "build", "--release", "--locked", "--manifest-path", expect.any(String),

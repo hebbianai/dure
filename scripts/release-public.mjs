@@ -485,7 +485,7 @@ function stage() {
     verification === "full"
       ? "Full release regression completed."
       : "Full regression is DEFERRED for this emergency 0.2.x beta; no full-suite success is claimed. Focused and packaged checks do not certify every provider, platform or previously reported incident.";
-  const notes = `Dure ${tag} Public Beta for macOS Apple Silicon.\n\nBasic interface. Developer ID signed; the app is notarized and stapled. Installation and restart require your explicit action.\n\n${notice}\n\nCorresponding source: https://github.com/${RELEASE_REPOSITORY}/tree/${tagSha}\nBuild: https://github.com/${RELEASE_REPOSITORY}/actions/runs/${proof.runId}\nProtected workflow: https://github.com/${RELEASE_REPOSITORY}/tree/${proof.workflowSha}\n\n<!-- dure-release-v2 ${JSON.stringify(proof)} -->`;
+  const notes = `Dure ${tag} Public Beta for macOS Apple Silicon.\n\nBasic and Beta interfaces. Developer ID signed; the app is notarized and stapled. Installation and restart require your explicit action.\n\n${notice}\n\nCorresponding source: https://github.com/${RELEASE_REPOSITORY}/tree/${tagSha}\nBuild: https://github.com/${RELEASE_REPOSITORY}/actions/runs/${proof.runId}\nProtected workflow: https://github.com/${RELEASE_REPOSITORY}/tree/${proof.workflowSha}\n\n<!-- dure-release-v2 ${JSON.stringify(proof)} -->`;
   provenance({ body: notes, tag_name: tag });
   let current = release(tag);
   if (!current) {

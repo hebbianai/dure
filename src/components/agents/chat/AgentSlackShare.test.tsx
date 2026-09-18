@@ -144,6 +144,17 @@ it("offers sharing in Basic and waits for the user to open it", () => {
 	expect(f.invokeCommand).not.toHaveBeenCalled();
 });
 
+it("offers Slack sharing in production Beta without connecting on mount", () => {
+	vi.stubEnv("PROD", true);
+	try {
+		const f = fixture();
+		render(<AgentSlackShare identity={identity} client={f.client} />);
+		expect(screen.getByRole("button")).toBeTruthy();
+		expect(f.invokeCommand).not.toHaveBeenCalled();
+	} finally {
+		vi.unstubAllEnvs();
+	}
+});
 it("can share work from another server without changing the channel default", async () => {
 	const f = fixture(false, "worker-two");
 	render(<AgentSlackShare identity={identity} client={f.client} />);

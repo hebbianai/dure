@@ -4,7 +4,7 @@ import {
   performBackendProfileRequest,
 } from "./backend-transport.mjs";
 
-export const RECOVERY_HELP = `dure recovery — automatic account recovery on the owning backend (Pro)
+export const RECOVERY_HELP = `dure recovery — automatic account recovery on the owning backend (Beta)
 
   dure recovery get PROVIDER [--backend ID]
   dure recovery put PROVIDER --enabled true|false --accounts JSON

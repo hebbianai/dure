@@ -179,7 +179,7 @@ After response loss, inspect that control receipt and the input operation_id
 separately before continuing. Environment values are lookup hints; backend
 authentication and Host control still authorize the operation. Remote selection
 must verify the same session on that backend; local hints do not grant remote control.
-open-url creates an HTTP(S) tab in the selected Browser and requests its Pro
+open-url creates an HTTP(S) tab in the selected Browser and requests its Browser
 panel in the invoking pane's Space, or --space. It checks the mounted client
 before creation. A failed later presentation retains the runtime receipt; read
 it with "receipt OPERATION_ID" instead of creating another tab. A requested

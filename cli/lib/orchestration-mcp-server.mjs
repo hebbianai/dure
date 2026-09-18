@@ -128,7 +128,7 @@ const tools = [
   {
     name: "agent_goal_put",
     description:
-      "Start or update an explicitly requested Dure Pro goal. The common backend continues successful segments in the same conversation; no tracker or mandatory next-work Decision is introduced. Preserve the upper objective and latest revision from agent_goal_get (0 only for a new goal). Keep active while useful work remains, pause for actual waiting, and mark complete only after verifying the full outcome. A stale revision is a changed direction to reconcile, not a mutation to resend blindly. Pausing stops future continuation without interrupting already admitted work.",
+      "Start or update an explicitly requested Dure goal. The common backend continues successful segments in the same conversation; no tracker or mandatory next-work Decision is introduced. Preserve the upper objective and latest revision from agent_goal_get (0 only for a new goal). Keep active while useful work remains, pause for actual waiting, and mark complete only after verifying the full outcome. A stale revision is a changed direction to reconcile, not a mutation to resend blindly. Pausing stops future continuation without interrupting already admitted work.",
     inputSchema: {
       type: "object",
       required: ["body"],

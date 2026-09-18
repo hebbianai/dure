@@ -1,3 +1,4 @@
+/** `pro` is the persisted identifier of the interface shown as Beta. */
 export type InterfaceMode = "basic" | "pro";
 
 export interface InterfaceModeEnvironment {
@@ -10,10 +11,10 @@ export interface EffectiveInterfaceMode {
 	readonly selectable: boolean;
 }
 
-/** Pin Terminal unless the user explicitly chooses Chat in effective Pro.
+/** Pin Terminal unless the user explicitly chooses Chat in effective Beta.
  * An omitted wire preference lets the existing backend capability authority
  * select Chat for supported launches and Terminal for the others. This never
- * changes an existing pane or weakens the Basic-only production policy. */
+ * changes an existing pane or weakens a Basic-only build policy. */
 export function agentSpawnInteractionPreference(
 	prefs?: { interfaceMode?: unknown; defaultAgentPane?: unknown },
 	environment: InterfaceModeEnvironment = import.meta.env,
@@ -24,15 +25,14 @@ export function agentSpawnInteractionPreference(
 		: "native_cli";
 }
 
-/** Resolve persisted mode through the build policy, never reopening Pro in
- * Basic-only production. Missing and unknown selections use Basic. */
+/** Resolve persisted mode through the build policy, never reopening Beta in
+ * a Basic-only build. Missing and unknown selections use Basic. */
 export function resolveEffectiveInterfaceMode(
 	storedMode: unknown,
 	environment: InterfaceModeEnvironment = import.meta.env,
 ): EffectiveInterfaceMode {
 	const configuredPolicy = environment.VITE_DURE_INTERFACE_MODE_POLICY;
-	const selectable =
-		!environment.PROD && configuredPolicy !== "basic-only";
+	const selectable = configuredPolicy !== "basic-only";
 	return {
 		mode: selectable && storedMode === "pro" ? "pro" : "basic",
 		selectable,
