@@ -15,6 +15,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: Select public checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run_code_checks: ${{ steps.plan.outputs.run_code_checks }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Classify the complete change
+        id: plan
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_HEAD_SHA: ${{ github.sha }}
+        run: node scripts/public-ci.mjs plan
+
   documentation:
     name: Documentation checks
     runs-on: ubuntu-24.04
@@ -44,6 +67,8 @@ jobs:
 
   frontend:
     name: Frontend checks
+    needs: plan
+    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -63,6 +88,8 @@ jobs:
 
   scripts:
     name: Script checks
+    needs: plan
+    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -102,6 +129,8 @@ jobs:
 
   mobile-web:
     name: Mobile web checks
+    needs: plan
+    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -121,6 +150,8 @@ jobs:
 
   shared-protocol:
     name: Shared protocol (${{ matrix.os }})
+    needs: plan
+    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -142,23 +173,25 @@ jobs:
 
   public-repository:
     name: Public repository checks
-    needs: [documentation, frontend, scripts, mobile-web, shared-protocol]
+    needs: [plan, documentation, frontend, scripts, mobile-web, shared-protocol]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - name: Require every check to succeed
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Require every selected check to succeed
         env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          RUN_CODE_CHECKS: ${{ needs.plan.outputs.run_code_checks }}
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           SCRIPTS_RESULT: ${{ needs.scripts.result }}
           MOBILE_WEB_RESULT: ${{ needs.mobile-web.result }}
           SHARED_PROTOCOL_RESULT: ${{ needs.shared-protocol.result }}
-        run: |
-          if [[ "$DOCUMENTATION_RESULT" != success ||
-                "$FRONTEND_RESULT" != success ||
-                "$SCRIPTS_RESULT" != success ||
-                "$MOBILE_WEB_RESULT" != success ||
-                "$SHARED_PROTOCOL_RESULT" != success ]]; then
-            exit 1
-          fi
+        run: node scripts/public-ci.mjs check

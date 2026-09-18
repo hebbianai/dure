@@ -192,9 +192,17 @@ lychee --offline --include-fragments --no-progress '*.md' 'docs/readme/*.md' '.g
 ```
 
 The workflow pins its action versions in
-[public-repository.yml](.github/workflows/public-repository.yml). The required
-`Public repository checks` result requires documentation, frontend, script,
-mobile web and every shared-protocol matrix check to succeed. Mobile web checks
+[public-repository.yml](.github/workflows/public-repository.yml). It runs for
+pushes to `main`, pull requests targeting `main`, and manual dispatches.
+Documentation-only changes run change classification and documentation checks;
+code suites are skipped. Code, dependency and CI changes, uncertain comparisons,
+and manual dispatches run the complete public checks. The existing
+[scope classifier](scripts/lib/push-gate-scope.mjs) owns path classification.
+
+The required `Public repository checks` result always runs. It requires successful
+classification and documentation checks, plus every selected frontend, script,
+mobile web and shared-protocol check. A failed classification or an unexpectedly
+skipped, failed or cancelled required job cannot pass this result. Mobile web checks
 run on Linux, and the shared desktop/mobile protocol is formatted, tested and
 linted on Linux, Windows and macOS. These jobs use hosted runners with read-only
 repository permissions; they do not use publisher credentials or maintainer

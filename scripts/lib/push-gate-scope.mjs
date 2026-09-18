@@ -178,6 +178,7 @@ const VERIFICATION_AUTHORITY_PATHS = new Set([
   "scripts/lib/script-test-graph-paths.mjs",
   "scripts/lib/script-test-projects.mjs",
   "scripts/node-dependency-preflight.mjs",
+  "scripts/public-ci.mjs",
   "scripts/run-changed-script-tests.mjs",
   "scripts/run-push-gates.mjs",
 ]);
