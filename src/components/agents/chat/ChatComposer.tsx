@@ -192,6 +192,16 @@ export function ChatComposer({
 	const replacementInFlight = runtimeLaunch.switching;
 	const submissionInFlight =
 		authority !== null && submittingAuthority === authority;
+	const pendingQueueEdits = session.pendingQueueEdits ?? [];
+	const queueRows = [
+		...pendingQueueEdits,
+		...session.queuedMessages.filter(
+			(queued) =>
+				!pendingQueueEdits.some(
+					(edit) => edit.clientMessageId === queued.clientMessageId,
+				),
+		),
+	];
 	blockedRef.current = disabled || replacementInFlight || draftMoving;
 	const { deferSubmit, attachments, clear: clearAttachments, remove: removeAttachment, inputProps: attachmentInput } = usePromptAttachments({
 		attachments: composed.attachments,
@@ -464,13 +474,10 @@ export function ChatComposer({
 									onClick={() => {
 										if (!mayEditDraft()) return;
 										void session
-											.editRetryableTurn()
-											.then((restored) => {
-												if (restored !== undefined) {
-													setDraft((current) =>
-														current ? `${restored}\n${current}` : restored,
-													);
-												}
+											.editRetryableTurn((restored) => {
+												setDraft((current) =>
+													current ? `${restored}\n${current}` : restored,
+												);
 											})
 											.catch(() => {});
 									}}
@@ -488,9 +495,9 @@ export function ChatComposer({
 				    — and the gap widened once the pane surface stopped sharing
 				    the app floor's value. */}
 				<div className="flex flex-col gap-0.5 rounded-xl border border-glass-hairline bg-glass-chrome px-2 py-1.5 shadow-card backdrop-blur-xl transition-shadow duration-150 focus-within:shadow-menu @2xl/chat:rounded-2xl @2xl/chat:px-2.5">
-					{session.queuedMessages.length > 0 && (
+					{queueRows.length > 0 && (
 						<div className="flex flex-col gap-1 border-b border-glass-hairline px-1 pt-0.5 pb-1.5">
-							{session.queuedMessages.map((input) => (
+							{queueRows.map((input) => (
 								<div
 									key={input.clientMessageId}
 									className="group/queued flex items-baseline gap-1.5 text-[0.92em]"
@@ -501,17 +508,23 @@ export function ChatComposer({
 									>
 										{input.preview}
 									</span>
+									{pendingQueueEdits.includes(input) && (
+										<span className="shrink-0 text-muted-foreground">
+											{t("agents.chat.queuedEditPending")}
+										</span>
+									)}
 									<IconButton
 										title={t("agents.chat.queuedEdit")}
 										className="size-5 opacity-0 group-hover/queued:opacity-100 focus-visible:opacity-100"
 										onClick={() => {
 											if (!mayEditDraft()) return;
 											void session
-												.dequeueMessage(input.clientMessageId)
-												.then((removed) => {
+												.dequeueMessage(input.clientMessageId, (removed) => {
+													if (!mayEditDraft()) return false;
 													setDraft((current) =>
 														current ? `${current}\n${removed}` : removed,
 													);
+													return true;
 												})
 												.catch(() => {});
 										}}
@@ -546,26 +559,26 @@ export function ChatComposer({
 							    a sentence-long button dominated the row); its fast
 							    tooltip carries the full "interrupt and send now"
 							    label, and the hint keeps truncating first. */}
-							<span className="flex items-center justify-between gap-2 text-[0.77em] text-muted-foreground/80">
-								<Titled title={t("agents.chat.queuedHint")}>
-									<span
-										className="min-w-0 flex-1 truncate"
-									>
-										{t("agents.chat.queuedHint")}
-									</span>
-								</Titled>
-								{"activeTurn" in session && session.activeTurn && (
-									<ToolbarControl
-										label={t("agents.chat.queuedInterruptSend")}
-										icon={
-											<Zap aria-hidden="true" className="size-3.5 shrink-0" />
-										}
-										className="shrink-0"
-										disabled={session.interrupting}
-										onClick={() => void session.interrupt().catch(() => {})}
-									/>
-								)}
-							</span>
+							{session.queuedMessages.length > 0 && (
+								<span className="flex items-center justify-between gap-2 text-[0.77em] text-muted-foreground/80">
+									<Titled title={t("agents.chat.queuedHint")}>
+										<span className="min-w-0 flex-1 truncate">
+											{t("agents.chat.queuedHint")}
+										</span>
+									</Titled>
+									{"activeTurn" in session && session.activeTurn && (
+										<ToolbarControl
+											label={t("agents.chat.queuedInterruptSend")}
+											icon={
+												<Zap aria-hidden="true" className="size-3.5 shrink-0" />
+											}
+											className="shrink-0"
+											disabled={session.interrupting}
+											onClick={() => void session.interrupt().catch(() => {})}
+										/>
+									)}
+								</span>
+							)}
 						</div>
 					)}
 					{attachments.length > 0 && (

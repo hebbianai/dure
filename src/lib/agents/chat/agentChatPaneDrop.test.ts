@@ -900,6 +900,42 @@ it("moves a remote-source draft through actual window commands while keeping the
 	).toEqual(["move_chat_pane", "stage", "drop_chat_pane", "commit"]);
 });
 
+it("accepts a new drop after the same draft has returned from that window", async () => {
+	expect((await performDrop()).movedPanelIds).toEqual([panelId]);
+	await vi.waitFor(() =>
+		expect(
+			[...native.windows.values()].every((window) => window.moving.size === 0),
+		).toBe(true),
+	);
+	const returned = await native.context.run("main", () =>
+		movePanelToDesktopDrop({ panelId, fromDesktopId: "target" }, "source", {
+			direction: "right",
+		}),
+	);
+	expect(returned.movedPanelIds).toEqual([panelId]);
+	await vi.waitFor(() =>
+		expect(
+			[...native.windows.values()].every((window) => window.moving.size === 0),
+		).toBe(true),
+	);
+	expect(target().store.getState().chatDraftMoves[identity.agentId]?.role).toBe(
+		"departed",
+	);
+	const original = source().store.getState().chatDrafts[identity.agentId];
+	const log = vi.spyOn(console, "error").mockImplementation(() => {});
+	try {
+		expect((await performDrop()).movedPanelIds).toEqual([panelId]);
+		expect(target().store.getState().chatDrafts[identity.agentId]).toEqual(
+			original,
+		);
+		expect(
+			source().store.getState().chatDrafts[identity.agentId],
+		).toBeUndefined();
+	} finally {
+		log.mockRestore();
+	}
+});
+
 it("keeps the shared draft when a drop moves between two Spaces in the same window", async () => {
 	source().docks.set("target", target().docks.get("target")!);
 	native.windows.delete("win-100-2");

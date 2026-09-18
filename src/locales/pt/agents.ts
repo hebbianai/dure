@@ -47,6 +47,11 @@ export const agents: Record<string, string> = {
 	"agents.chat.permissionSkip": "Ignorar aprovações",
 	"agents.chat.queuedMore": "Carregar mais",
 	"agents.chat.queuedEdit": "Devolver à entrada",
+	"agents.chat.queuedEditPending": "Edição pendente",
+	"agents.chat.error.queuedEditBackendChanged":
+		"Volte ao servidor de equipe original para terminar de editar esta mensagem.",
+	"agents.chat.error.queuedEditInputUnavailable":
+		"Não foi possível ler a mensagem original em espera. Reconecte e tente novamente.",
 	"agents.chat.error.conflict": "A sessão mudou durante esta ação. Tente novamente.",
 	"agents.chat.error.deadline": "O backend não respondeu a tempo. Tente novamente.",
 	"agents.chat.error.notFound": "Esta conversa não existe mais no backend.",

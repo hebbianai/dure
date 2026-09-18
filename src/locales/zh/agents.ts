@@ -48,6 +48,11 @@ export const agents: Record<string, string> = {
 	"agents.chat.permissionSkip": "绕过审批",
 	"agents.chat.queuedMore": "加载更多",
 	"agents.chat.queuedEdit": "移回输入框",
+	"agents.chat.queuedEditPending": "待完成的编辑",
+	"agents.chat.error.queuedEditBackendChanged":
+		"请返回原团队服务器以完成此消息的编辑。",
+	"agents.chat.error.queuedEditInputUnavailable":
+		"无法读取原始待处理消息。请重新连接后再试。",
 	"agents.chat.error.conflict": "操作期间会话发生了变化。请重试。",
 	"agents.chat.error.deadline": "后端未及时响应。请重试。",
 	"agents.chat.error.notFound": "该对话在后端已不存在。",

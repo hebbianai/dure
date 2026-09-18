@@ -51,6 +51,21 @@ beforeEach(async () => {
 });
 
 describe("durable chat submissions", () => {
+	it("persists queue editing separately from delivery with the same input identity", async () => {
+		const delivery = { ...submission("queued"), kind: "enqueue" as const };
+		const edit = { ...delivery, kind: "edit" as const };
+		await agentChatSubmissionStore.put(delivery);
+		await agentChatSubmissionStore.put(edit);
+		await agentChatSubmissionStore.remove(delivery);
+		await rehydrateAppStoreFromDurableStorage();
+		expect(
+			await agentChatSubmissionStore.list("agent-1", "interaction-1"),
+		).toEqual([edit]);
+		await agentChatSubmissionStore.remove(edit);
+		expect(
+			await agentChatSubmissionStore.list("agent-1", "interaction-1"),
+		).toEqual([]);
+	});
 	it("preserves multiple submissions across projection writes and app rehydration", async () => {
 		const a = submission("a"),
 			b = submission("b");

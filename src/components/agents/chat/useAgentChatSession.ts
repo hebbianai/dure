@@ -104,9 +104,12 @@ export function useAgentChatSession(
 			controller
 				? controller.steerOrQueue(input)
 				: Promise.reject(new Error("agent_chat_controller_unavailable")),
-		dequeueMessage: (clientMessageId: string) =>
+		dequeueMessage: (
+			clientMessageId: string,
+			restore?: (input: string) => boolean,
+		) =>
 			controller
-				? controller.dequeueMessage(clientMessageId)
+				? controller.dequeueMessage(clientMessageId, restore)
 				: Promise.reject(new Error("agent_chat_controller_unavailable")),
 		loadMoreQueued: () =>
 			controller
@@ -120,7 +123,8 @@ export function useAgentChatSession(
 			controller
 				? controller.retryTurn()
 				: Promise.reject(new Error("agent_chat_controller_unavailable")),
-		editRetryableTurn: async () => controller?.editRetryableTurn(),
+		editRetryableTurn: async (restore: (input: string) => void) =>
+			controller?.editRetryableTurn(restore),
 		answerPending: (requestId: string, answer: unknown) =>
 			controller
 				? controller.answerPending(requestId, answer)

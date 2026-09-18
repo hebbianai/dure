@@ -48,6 +48,11 @@ export const agents: Record<string, string> = {
 	"agents.chat.permissionSkip": "承認を回避",
 	"agents.chat.queuedMore": "さらに表示",
 	"agents.chat.queuedEdit": "入力欄に戻す",
+	"agents.chat.queuedEditPending": "編集中のメッセージ",
+	"agents.chat.error.queuedEditBackendChanged":
+		"このメッセージの編集を完了するには、元のチームサーバーに戻ってください。",
+	"agents.chat.error.queuedEditInputUnavailable":
+		"待機中のメッセージの原文を読み取れませんでした。再接続して、もう一度お試しください。",
 	"agents.chat.error.conflict": "この操作の間にセッションが変わりました。再試行してください。",
 	"agents.chat.error.deadline": "バックエンドが時間内に応答しませんでした。再試行してください。",
 	"agents.chat.error.notFound": "この会話はバックエンドに存在しません。",

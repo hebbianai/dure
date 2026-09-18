@@ -35,6 +35,7 @@ import type {
 import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import {
+	type AgentChatDeliverySubmission,
 	type AgentChatSubmission,
 	type AgentChatSubmissionStore,
 	agentChatSubmissionKey,
@@ -98,14 +99,23 @@ export class AgentChatSessionController {
 	private reconnectAttempts = 0;
 	private reconnectTimer?: TimerHandle;
 	private subscription?: AgentConversationSubscriptionV1;
+	private stopSubmissionSubscription?: () => void;
 	private routeAuthority?: DureBackendRouteAuthorityV1;
 	private refreshRequested = false;
 	private refreshing?: Promise<void>;
 	private loadingOlder?: Promise<void>;
 	private retainExpandedHistory = false;
-	private readonly pendingTurns = new Map<string, AgentChatSubmission>();
-	private get retryableTurn(): AgentChatSubmission | undefined {
-		return this.pendingTurns.values().next().value;
+	private readonly pendingInputs = new Map<
+		string,
+		{ input: AgentChatSubmission; persisted: boolean }
+	>();
+	private get pendingSubmissions(): AgentChatSubmission[] {
+		return [...this.pendingInputs.values()].map(({ input }) => input);
+	}
+	private get retryableTurn(): AgentChatDeliverySubmission | undefined {
+		return this.pendingSubmissions.find(
+			(input): input is AgentChatDeliverySubmission => input.kind !== "edit",
+		);
 	}
 	private readonly retryableAnswers = new Map<string, RetryablePendingAnswer>();
 	private retryableInterrupt?: ConversationEffectLease<AgentConversationInterruptTurnV1>;
@@ -183,12 +193,19 @@ export class AgentChatSessionController {
 	start(): void {
 		if (this.active) return;
 		this.active = true;
+		this.stopSubmissionSubscription = this.submissionStore.subscribe(() => {
+			this.refreshRequested = true;
+			if (this.snapshot.phase === "ready" && !this.snapshot.reconnecting)
+				void this.refresh();
+		});
 		void this.connect();
 	}
 
 	stop(): void {
 		if (!this.active && this.snapshot.phase === "detached") return;
 		this.active = false;
+		this.stopSubmissionSubscription?.();
+		this.stopSubmissionSubscription = undefined;
 		this.connectionAttempt += 1;
 		this.loadingOlder = undefined;
 		this.clearReconnectTimer();
@@ -319,13 +336,16 @@ export class AgentChatSessionController {
 			throw new Error("agent_chat_turn_already_pending");
 		}
 		const { binding, routeAuthority } = this.requireConversationAuthority();
-		const turn: AgentChatSubmission = {
+		const turn: AgentChatDeliverySubmission = {
 			agentId: this.agentId,
 			kind: "start",
 			routeAuthority,
 			request: this.actionRequests.startTurn(binding.runtime, parsedInput),
 		};
-		this.pendingTurns.set(agentChatSubmissionKey(turn), turn);
+		this.pendingInputs.set(agentChatSubmissionKey(turn), {
+			input: turn,
+			persisted: false,
+		});
 		await this.submitTurn(turn);
 	}
 
@@ -365,13 +385,16 @@ export class AgentChatSessionController {
 		if (this.snapshot.sending)
 			throw new Error("agent_chat_turn_already_pending");
 		const { binding, routeAuthority } = this.requireConversationAuthority();
-		const turn: AgentChatSubmission = {
+		const turn: AgentChatDeliverySubmission = {
 			agentId: this.agentId,
 			kind: "enqueue",
 			routeAuthority,
 			request: this.actionRequests.startTurn(binding.runtime, parsedInput),
 		};
-		this.pendingTurns.set(agentChatSubmissionKey(turn), turn);
+		this.pendingInputs.set(agentChatSubmissionKey(turn), {
+			input: turn,
+			persisted: false,
+		});
 		await this.submitTurn(turn);
 	}
 
@@ -380,24 +403,71 @@ export class AgentChatSessionController {
 		this.update({ actionError: undefined });
 	}
 
-	async dequeueMessage(clientMessageId: string): Promise<string> {
+	async dequeueMessage(
+		clientMessageId: string,
+		restore?: (input: string) => boolean,
+	): Promise<string> {
 		const { routeAuthority } = this.requireConversationAuthority();
+		const request = {
+			schemaVersion: 1 as const,
+			interactionSessionId: this.interactionSessionId,
+			clientMessageId,
+		};
+		let edit = this.pendingSubmissions.find(
+			(input) =>
+				input.kind === "edit" &&
+				input.request.clientMessageId === clientMessageId,
+		);
+		if (this.snapshot.sending)
+			throw new Error("agent_chat_turn_already_pending");
+		this.update({ sending: true, actionError: undefined });
 		try {
+			if (edit && !submissionBelongsToRoute(edit, routeAuthority))
+				throw new Error("agent_chat_queue_edit_backend_changed");
+			if (restore) {
+				const observed = await this.client.inspectInput(
+					request,
+					routeAuthority,
+				);
+				if (
+					observed?.kind !== "queued" ||
+					(edit && !sameAgentStartTurnIntent(edit.request, observed.intent))
+				)
+					throw new Error("agent_chat_queue_edit_input_unavailable");
+				edit ??= {
+					agentId: this.agentId,
+					kind: "edit",
+					routeAuthority,
+					request: observed.intent,
+				};
+				// Persist the original before cancellation can remove it from the queue.
+				await this.submissionStore.put(edit);
+				this.pendingInputs.set(agentChatSubmissionKey(edit), {
+					input: edit,
+					persisted: true,
+				});
+				this.update({});
+			}
 			const receipt = await this.client.cancelQueuedTurn(
-				{
-					schemaVersion: 1,
-					interactionSessionId: this.interactionSessionId,
-					clientMessageId,
-				},
+				request,
 				routeAuthority,
 			);
-			await this.refresh();
+			if (edit && !sameAgentStartTurnIntent(edit.request, receipt.intent))
+				throw new Error("agent_chat_queue_edit_input_unavailable");
+			if (!restore || restore(receipt.intent.input)) {
+				if (edit) {
+					await this.submissionStore.remove(edit);
+					this.pendingInputs.delete(agentChatSubmissionKey(edit));
+				}
+			}
 			return receipt.intent.input;
 		} catch (error) {
 			this.update({ actionError: agentChatErrorMessage(error) });
 			this.reconnectAfterActionFailure(error);
-			void this.refresh();
 			throw error;
+		} finally {
+			this.update({ sending: false });
+			await this.refresh();
 		}
 	}
 
@@ -457,21 +527,23 @@ export class AgentChatSessionController {
 		}
 	}
 
-	async editRetryableTurn(): Promise<string | undefined> {
-		if (this.snapshot.sending) return undefined;
+	async editRetryableTurn(restore: (input: string) => void): Promise<void> {
+		if (this.snapshot.sending) return;
 		const turn = this.retryableTurn;
-		if (!turn) return undefined;
+		if (!turn) return;
 		this.update({ sending: true });
 		try {
+			// Transfer the text synchronously before retiring its recovery record.
+			// A window move can then capture the restored draft during persistence.
+			restore(turn.request.input);
 			await this.submissionStore.remove(turn);
-			this.pendingTurns.delete(agentChatSubmissionKey(turn));
+			this.pendingInputs.delete(agentChatSubmissionKey(turn));
 			this.update({
 				retryTurnAvailable: !!this.retryableTurn,
 				actionError: this.retryableTurn
 					? t("ipc.agentConversation.deliveryUnconfirmed")
 					: undefined,
 			});
-			return turn.request.input;
 		} catch (error) {
 			this.update({ actionError: agentChatErrorMessage(error) });
 			throw error;
@@ -550,8 +622,32 @@ export class AgentChatSessionController {
 	}
 
 	private update(patch: Partial<AgentChatSessionSnapshot>): void {
-		this.snapshot = { ...this.snapshot, ...patch };
+		this.snapshot = {
+			...this.snapshot,
+			...patch,
+			pendingQueueEdits: this.pendingSubmissions
+				.filter((input) => input.kind === "edit")
+				.map((input) => ({
+					clientMessageId: input.request.clientMessageId,
+					preview: input.request.input.slice(0, 512),
+				})),
+		};
 		for (const listener of this.listeners) listener();
+	}
+
+	private mergePendingInputs(inputs: AgentChatSubmission[]): void {
+		const stored = new Set(inputs.map(agentChatSubmissionKey));
+		// Replace persisted projections, retaining originals that never reached storage.
+		if (!this.snapshot.sending) {
+			for (const [key, entry] of this.pendingInputs)
+				if (entry.persisted && !stored.has(key)) this.pendingInputs.delete(key);
+		}
+		for (const input of inputs)
+			this.pendingInputs.set(agentChatSubmissionKey(input), {
+				input,
+				persisted: true,
+			});
+		this.update({});
 	}
 
 	private requireConversationAuthority() {
@@ -586,17 +682,18 @@ export class AgentChatSessionController {
 		);
 		if (
 			!observation ||
-			observation.kind !== (input.kind === "enqueue" ? "queued" : "turn") ||
+			observation.kind !== (input.kind === "start" ? "turn" : "queued") ||
 			!sameAgentStartTurnIntent(input.request, observation.intent) ||
-			(observation.kind === "turn" && observation.state !== "accepted")
+			(observation.kind === "turn" && observation.state !== "accepted") ||
+			(input.kind === "edit" && observation.state !== "dispatched")
 		)
 			return false;
 		await this.submissionStore.remove(input);
-		this.pendingTurns.delete(agentChatSubmissionKey(input));
+		this.pendingInputs.delete(agentChatSubmissionKey(input));
 		return true;
 	}
 
-	private async submitTurn(turn: AgentChatSubmission): Promise<void> {
+	private async submitTurn(turn: AgentChatDeliverySubmission): Promise<void> {
 		this.update({
 			sending: true,
 			retryTurnAvailable: false,
@@ -604,6 +701,10 @@ export class AgentChatSessionController {
 		});
 		try {
 			await this.submissionStore.put(turn);
+			this.pendingInputs.set(agentChatSubmissionKey(turn), {
+				input: turn,
+				persisted: true,
+			});
 			let state: "prepared" | "accepted" | "failed" | "uncertain";
 			if (turn.kind === "enqueue") {
 				await this.client.enqueueTurn(turn.request, turn.routeAuthority);
@@ -620,7 +721,7 @@ export class AgentChatSessionController {
 				);
 			}
 			await this.submissionStore.remove(turn);
-			this.pendingTurns.delete(agentChatSubmissionKey(turn));
+			this.pendingInputs.delete(agentChatSubmissionKey(turn));
 			this.update({ sending: false, retryTurnAvailable: !!this.retryableTurn });
 			await this.refresh();
 		} catch (error) {
@@ -703,9 +804,8 @@ export class AgentChatSessionController {
 				return;
 			}
 			// Preserve the originating backend authority even if this profile is retargeted.
-			for (const input of inputs)
-				this.pendingTurns.set(agentChatSubmissionKey(input), input);
-			for (const input of this.pendingTurns.values()) {
+			this.mergePendingInputs(inputs);
+			for (const input of this.pendingSubmissions) {
 				await this.confirmSubmission(input, opened.routeAuthority);
 			}
 			if (!this.active || attempt !== this.connectionAttempt) {
@@ -730,6 +830,7 @@ export class AgentChatSessionController {
 						? this.snapshot.actionError
 						: undefined,
 			});
+			if (this.refreshRequested) void this.refresh();
 		} catch (error) {
 			if (opened) void opened.close().catch(() => {});
 			if (!this.active || attempt !== this.connectionAttempt) return;
@@ -862,6 +963,12 @@ export class AgentChatSessionController {
 				await Promise.resolve();
 				while (this.active && this.refreshRequested) {
 					this.refreshRequested = false;
+					const inputs = await this.submissionStore.list(
+						this.agentId,
+						this.interactionSessionId,
+					);
+					if (!this.active || attempt !== this.connectionAttempt) return;
+					this.mergePendingInputs(inputs);
 					let page = this.snapshot.page;
 					if (!page || !this.routeAuthority) {
 						throw new Error("agent_chat_page_unavailable");
@@ -906,7 +1013,7 @@ export class AgentChatSessionController {
 						}
 					} while (this.active && moreNewerRows);
 					if (!this.snapshot.sending) {
-						for (const input of this.pendingTurns.values()) {
+						for (const input of this.pendingSubmissions) {
 							await this.confirmSubmission(input, this.routeAuthority);
 						}
 						if (!this.active || attempt !== this.connectionAttempt) return;

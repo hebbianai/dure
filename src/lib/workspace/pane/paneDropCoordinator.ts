@@ -106,7 +106,8 @@ export function movePanelToDesktopDrop(
 			panelId: item.panelId,
 		});
 		if (agent) {
-			if (useStore.getState().chatDraftMoves[agent.id])
+			const move = useStore.getState().chatDraftMoves[agent.id];
+			if (move && move.role !== "departed")
 				throw new Error("This draft already has an unfinished move.");
 			if (!dockviewRegistry.get(item.fromDesktopId)?.getPanel(item.panelId))
 				return moveChatPaneFromDestination(

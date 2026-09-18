@@ -25,6 +25,24 @@ function transport(label: string) {
 }
 
 describe("durableStoreBroadcast", () => {
+	it("can notify shared input observers about commits from their own window", async () => {
+		const main = transport("main");
+		const changed = vi.fn();
+		const stop = subscribeDurableStoreChanged(
+			"agent-ide",
+			changed,
+			main.backend,
+			true,
+		);
+		await Promise.resolve();
+		changed.mockClear();
+		await publishDurableStoreChanged("agent-ide", main.backend);
+		await main.backend.emitChanged({ source: "peer", store: "agent-ide" });
+		await main.backend.emitChanged({ source: "peer", store: "other" });
+		expect(changed).toHaveBeenCalledTimes(2);
+		stop();
+		expect(main.unlisten).toHaveBeenCalledOnce();
+	});
 	it("names the completed store write and its source", async () => {
 		const main = transport("main");
 

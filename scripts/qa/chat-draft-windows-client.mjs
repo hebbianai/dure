@@ -24,6 +24,9 @@ console.log("Native two-WebView pane/Agent identity, draft/image migration, repl
 
 function verifyReceipt(report) {
   const { createdPane, original, appended, editedText, observations } = report;
+  assert.equal(report.recoveryRetiredAfterMove, true);
+  assert.equal(report.queuedEditRestored, true);
+  assert.ok(original.text.startsWith(`${report.restoredInput}\n`), "The moved draft must contain the unconfirmed input");
   const nonempty = (value, label) => assert.ok(typeof value === "string" && value.length > 0, `Missing ${label}`);
   nonempty(createdPane?.id, "creation pane ID");
   assert.equal(createdPane.component, "agent");
@@ -46,6 +49,7 @@ function verifyReceipt(report) {
   assert.equal(appended.text, `${original.text}\n\nAdditional capture`);
   assert.deepEqual(appended.attachments, [...original.attachments, ...original.attachments]);
   const edited = { ...appended, text: editedText };
+  const recovered = { ...edited, text: `${editedText}\n${report.queuedInput}` };
   const phases = [
     ["source-ready", source, [createdPane], original],
     ["ready", peer, [sibling], null],
@@ -56,6 +60,10 @@ function verifyReceipt(report) {
     ["replayed", peer, [sibling, createdPane], edited],
     ["return", peer, [sibling], null],
     ["returned", source, [createdPane], edited],
+    ["queued-drop", peer, [sibling, createdPane], edited],
+    ["queued-edit", peer, [sibling, createdPane], recovered],
+    ["queued-return", peer, [sibling], null],
+    ["queued-returned", source, [createdPane], recovered],
   ];
   assert.deepEqual(observations.map(({ phase }) => phase), phases.map(([phase]) => phase));
   const targets = (panes) => panes.map(({ id, component, params }) => ({ id, component, agentRef: params?.agentRef }))
@@ -76,4 +84,6 @@ function verifyReceipt(report) {
   }
   assert.deepEqual(observations[6].layout, observations[5].layout, "Replay reverted native layout edits");
   assert.equal(report.submissions, 0);
+  assert.equal(observations[10].queuedCancellations, 1);
+  assert.equal(observations[12].queuedCancellations, 1);
 }

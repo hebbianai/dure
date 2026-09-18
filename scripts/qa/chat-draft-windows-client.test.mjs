@@ -14,10 +14,13 @@ afterEach(() => {
 function receipt() {
   const createdPane = { id: "pane:opaque-slot", component: "agent", params: { agentRef: { agentId: "agent-target" } } };
   const reference = { id: "reference-slot", component: "agent", params: { agentRef: null } };
-  const original = { text: "Draft", attachments: [{ fileName: "image.png", dataB64: "image-bytes" }] };
-  const appended = { text: "Draft\n\nAdditional capture", attachments: [...original.attachments, ...original.attachments] };
+  const restoredInput = "Recovered instruction";
+  const queuedInput = "Previously queued instruction";
+  const original = { text: `${restoredInput}\nDraft`, attachments: [{ fileName: "image.png", dataB64: "image-bytes" }] };
+  const appended = { text: `${original.text}\n\nAdditional capture`, attachments: [...original.attachments, ...original.attachments] };
   const editedText = "Edited after move";
   const edited = { ...appended, text: editedText };
+  const recovered = { ...edited, text: `${editedText}\n${queuedInput}` };
   const phases = [
     ["source-ready", "source", [createdPane], original],
     ["ready", "peer", [reference], null],
@@ -28,14 +31,20 @@ function receipt() {
     ["replayed", "peer", [reference, createdPane], edited],
     ["return", "peer", [reference], null],
     ["returned", "source", [createdPane], edited],
+    ["queued-drop", "peer", [reference, createdPane], edited],
+    ["queued-edit", "peer", [reference, createdPane], recovered],
+    ["queued-return", "peer", [reference], null],
+    ["queued-returned", "source", [createdPane], recovered],
   ];
   return structuredClone({
     proof: "draft-proof", result: "passed", createdPane, original, appended, editedText, submissions: 0,
-    observations: phases.map(([phase, label, panes, draft]) => structuredClone({
+    restoredInput, queuedInput, recoveryRetiredAfterMove: true, queuedEditRestored: true,
+    observations: phases.map(([phase, label, panes, draft], index) => structuredClone({
       proof: "draft-proof", phase, label, generation: `${label}-generation`,
       userAgent: "AppleWebKit/605.1.15", panes, paneIds: panes.map(({ id }) => id),
       layout: { panels: Object.fromEntries(panes.map((pane) => [pane.id, { ...pane, contentComponent: pane.component }])) },
       draft, composerText: draft?.text ?? null, submissions: 0,
+      queuedCancellations: index >= 10 ? 1 : 0,
       interactionProfile: { schemaVersion: 1, kind: "structured_protocol", backendProfileId: "local", interactionSessionId: "conversation-1" },
     })),
   });
@@ -65,6 +74,12 @@ it("accepts unchanged pane/Agent targeting and drafts through two native windows
 });
 
 it.each([
+  ["recovery record retired too early", (report) => { report.recoveryRetiredAfterMove = false; }],
+  ["lost recovered input", (report) => { report.original.text = "Draft"; }],
+  ["unfinished queued edit", (report) => { report.queuedEditRestored = false; }],
+  ["lost queued edit after return", (report) => { report.observations[12].draft.text = report.editedText; }],
+  ["queued edit never canceled", (report) => { report.observations[10].queuedCancellations = 0; }],
+  ["queued edit canceled twice", (report) => { report.observations[12].queuedCancellations = 2; }],
   ["missing creation reference", (report) => { delete report.createdPane; }],
   ["missing explicit original Agent", (report) => { report.createdPane.params.agentRef = null; }],
   ["missing pane observations", (report) => { delete report.observations[2].panes; }],
