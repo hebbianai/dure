@@ -8,6 +8,7 @@
       "vitest.config.ts"
     ]
   },
+
   "linter": {
     "enabled": true,
     "rules": {
