@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 
 assert.equal(process.platform, "darwin", "iOS simulator smoke requires macOS");
 assert.ok(existsSync(new URL("./native/serve-sim-native.node", import.meta.resolve("serve-sim/middleware"))), "Install the pinned live iOS module before QA");
+await import("../stage-mobile-runtime.mjs");
 const run = (program, args) => execFileSync(program, args, { encoding: "utf8", timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
 const root = mkdtempSync(join(tmpdir(), "dure-mobile-simulator-fixture-"));
 const app = join(root, "MobileQA.app");
@@ -14,13 +15,13 @@ mkdirSync(app);
 const source = join(root, "main.m");
 writeFileSync(source, `#import <UIKit/UIKit.h>
 #import <os/log.h>
-@interface QADelegate : UIResponder <UIApplicationDelegate>
+@interface QADelegate : UIResponder <UIApplicationDelegate, UITextViewDelegate>
 @property(strong, nonatomic) UIWindow *window;
 @end
 @implementation QADelegate
 - (BOOL)application:(UIApplication *)app openURL:(NSURL *)url options:(NSDictionary *)options { os_log_with_type(os_log_create("com.dure.mobile-simulator-qa", "qa"), OS_LOG_TYPE_DEFAULT, "link:%{public}@", url.absoluteString); self.window.rootViewController.view.backgroundColor = [UIColor colorWithRed:180.0/255 green:100.0/255 blue:30.0/255 alpha:1]; return YES; }
 - (void)tapped { os_log_with_type(os_log_create("com.dure.mobile-simulator-qa", "qa"), OS_LOG_TYPE_DEFAULT, "touch-received"); self.window.rootViewController.view.backgroundColor = [UIColor colorWithRed:40.0/255 green:150.0/255 blue:80.0/255 alpha:1]; }
-- (void)typed:(UITextField *)field { os_log_with_type(os_log_create("com.dure.mobile-simulator-qa", "qa"), OS_LOG_TYPE_DEFAULT, "text:%{public}@", field.text); if ([field.text isEqualToString:@"Dure"]) self.window.rootViewController.view.backgroundColor = [UIColor colorWithRed:120.0/255 green:60.0/255 blue:190.0/255 alpha:1]; }
+- (void)textViewDidChange:(UITextView *)field { os_log_with_type(os_log_create("com.dure.mobile-simulator-qa", "qa"), OS_LOG_TYPE_DEFAULT, "text:%{public}@", field.text); if ([field.text isEqualToString:@"Dure"]) self.window.rootViewController.view.backgroundColor = [UIColor colorWithRed:120.0/255 green:60.0/255 blue:190.0/255 alpha:1]; }
 - (BOOL)application:(UIApplication *)app didFinishLaunchingWithOptions:(NSDictionary *)options {
  self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
  UIViewController *controller = [UIViewController new];
@@ -29,7 +30,7 @@ writeFileSync(source, `#import <UIKit/UIKit.h>
  label.text = @"Dure simulator QA"; label.textColor = UIColor.whiteColor;
  label.font = [UIFont systemFontOfSize:28]; [controller.view addSubview:label];
  UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem]; button.frame = CGRectMake(20, 330, 350, 80); [button setTitle:@"Tap QA" forState:UIControlStateNormal]; button.backgroundColor = UIColor.whiteColor; [button addTarget:self action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside]; [controller.view addSubview:button];
- UITextField *field = [[UITextField alloc] initWithFrame:CGRectMake(20, 440, 350, 60)]; field.backgroundColor = UIColor.whiteColor; [field addTarget:self action:@selector(typed:) forControlEvents:UIControlEventEditingChanged]; [controller.view addSubview:field];
+ UITextView *field = [[UITextView alloc] initWithFrame:CGRectMake(20, 440, 350, 100)]; field.backgroundColor = UIColor.whiteColor; field.accessibilityLabel = @"QA input"; field.delegate = self; [controller.view addSubview:field];
  self.window.rootViewController = controller; [self.window makeKeyAndVisible]; return YES;
 }
 @end

@@ -28,3 +28,25 @@ test("typing releases the modifier after a native failure and rejects Unicode be
   await assert.rejects(input(hid, { kind: "type", text: "A" }), /key failed/);
   assert.deepEqual(calls.at(-1), ["up", 225]);
 });
+
+test("paste sends one Command-V chord for Unicode and releases both keys after any failure", async () => {
+  const expected = [["down", 227], ["down", 25], ["up", 25], ["up", 227]];
+  for (const failAt of [-1, 0, 1, 2]) {
+    const calls = [];
+    const hid = { key: async (...args) => { calls.push(args); if (calls.length - 1 === failAt) throw Error("injected paste failure"); } };
+    const result = input(hid, { kind: "paste", text: "한글 🙂\nsecond\tline" });
+    if (failAt < 0) await result;
+    else await assert.rejects(result, /injected paste failure/);
+    assert.deepEqual(calls.at(-1), ["up", 227]);
+    if (failAt !== 0) assert.deepEqual(calls, expected);
+  }
+});
+
+test("paste refuses empty, oversized or control text before HID input", async () => {
+  const calls = [];
+  const hid = { key: async (...args) => calls.push(args) };
+  for (const text of ["", "x".repeat(8193), "한".repeat(2731), "a\0b", "\x1b[2J", null]) {
+    await assert.rejects(input(hid, { kind: "paste", text }), /Paste/);
+  }
+  assert.deepEqual(calls, []);
+});

@@ -6,7 +6,11 @@ import {
 	definePaneAction,
 	type PaneActionExecution,
 } from "@/lib/workspace/pane/paneAction";
-import { type MobileRunProfile, readMobileRunProfiles } from "./profile";
+import {
+	type MobileRunProfile,
+	type MobileRunProfileIdentity,
+	readMobileRunProfiles,
+} from "./profile";
 
 export type MobilePreviewMode = "snapshot" | "auto" | "live";
 export interface MobileReportControls {
@@ -23,7 +27,7 @@ export interface MobilePaneControls {
 	select(target: MobileDeviceTarget | null): void;
 	preview(mode: MobilePreviewMode): void;
 	save(profile: MobileRunProfile): void;
-	remove(projectPath: string): void;
+	remove(profile: MobileRunProfileIdentity): void;
 	report(): MobileReportControls | null;
 	agents(): { id: string; name: string }[];
 }
@@ -47,7 +51,7 @@ export function mobileControlActions(input: {
 	const controls = input.controls;
 	const guarded = async (
 		args: { readonly [key: string]: unknown },
-		run: () => Promise<PaneActionExecution>,
+		run: (target: MobileDeviceTarget) => Promise<PaneActionExecution>,
 	): Promise<PaneActionExecution> => {
 		if (input.isBusy())
 			return mobileRefusal(
@@ -55,14 +59,15 @@ export function mobileControlActions(input: {
 				"Wait for the current operation to complete.",
 			);
 		if (
-			input.target?.id !== args.deviceId ||
-			input.target?.platform !== args.platform
+			!input.target ||
+			input.target.id !== args.deviceId ||
+			input.target.platform !== args.platform
 		)
 			return mobileRefusal(
 				"mobile_device_changed",
 				"Select this exact device with mobile.select before acting.",
 			);
-		return run();
+		return run(input.target);
 	};
 	return {
 		"mobile.devices": definePaneAction(
@@ -177,18 +182,20 @@ export function mobileControlActions(input: {
 		"mobile.profile.remove": definePaneAction(
 			{
 				description:
-					"Remove a saved project profile from this pane; never deletes project files or apps.",
-				parameters: { projectPath: { type: "string", required: true } },
+					"Remove the project profile for this exact device; preserves other devices and never deletes project files or apps.",
+				parameters: {
+					...mobileTargetParameters,
+					projectPath: { type: "string", required: true },
+				},
 			},
-			async (args) => {
-				if (input.isBusy())
-					return mobileRefusal(
-						"mobile_device_busy",
-						"Wait for the current operation to complete.",
-					);
-				controls.remove(String(args.projectPath));
-				return { outcome: "applied" };
-			},
+			(args) =>
+				guarded(args, async (target) => {
+					controls.remove({
+						projectPath: String(args.projectPath),
+						device: target,
+					});
+					return { outcome: "applied" };
+				}),
 		),
 		"mobile.report.agents": definePaneAction(
 			{

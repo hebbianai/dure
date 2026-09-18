@@ -81,6 +81,10 @@ assert.match(ran.buildOutput, /mobile-agent-build/u);
 assert.equal(ran.deviceState, "ready");
 console.log("PASS: real app CLI/MCP open, reuse, discovery, selection, profile build/boot/install/launch");
 
+const clipboard = () => execFileSync("/usr/bin/xcrun", ["simctl", "pbpaste", deviceId], { encoding: "utf8" });
+execFileSync("/usr/bin/xcrun", ["simctl", "pbcopy", deviceId], { input: "qa clipboard sentinel" });
+assert.equal(action("mobile.paste", { ...target, text: "must not write" }, 2).outcome, "failed");
+assert.equal(clipboard(), "qa clipboard sentinel", "A missing live lease cannot change the clipboard");
 action("mobile.preview", { ...target, mode: "live" });
 await observe("live frames", status, (state) => state.preview.liveFrameReady);
 const capture = () => action("mobile.capture", target).value;
@@ -128,6 +132,24 @@ await color([40, 150, 80], "tap");
 action("mobile.tap", { ...touchTarget, x: 0.5, y: 470 * 3 / first.height });
 action("mobile.type", { ...target, text: "Dure" });
 await color([120, 60, 190], "typed");
+const addon = { exports: {} };
+process.dlopen(addon, new URL("./native/serve-sim-native.node", import.meta.resolve("serve-sim/middleware")).pathname);
+const guestText = async () => {
+  const nodes = JSON.parse(await addon.exports.axDescribe(deviceId));
+  const find = (nodes) => { for (const node of nodes) { if (node.AXLabel === "QA input") return node.AXValue; const found = find(node.children ?? []); if (found !== undefined) return found; } };
+  return find(nodes);
+};
+const pastedText = "\n한글 🙂\nsecond\tline\nhmux-pair://test?token=Exact%2BCharacters_0123456789";
+assert.equal(action("mobile.paste", { ...target, text: pastedText }).outcome, "applied");
+await observe("exact Unicode multiline paste", guestText, (value) => value === `Dure${pastedText}`);
+assert.equal(clipboard(), pastedText);
+for (const [text, outcome] of [["", "failed"], ["x".repeat(8193), "refused"], ["한".repeat(2731), "failed"], ["a\u0000b", "failed"]]) {
+  assert.equal(action("mobile.paste", { ...target, text }, 2).outcome, outcome);
+  assert.equal(clipboard(), pastedText, "Rejected paste cannot replace the clipboard");
+}
+assert.equal(await guestText(), `Dure${pastedText}`);
+copyFileSync(capture().path, join(evidence, "pasted-unicode.png"));
+console.log("PASS: exact iOS Unicode, emoji, multiline and URL paste; missing lease and invalid text leave clipboard unchanged");
 const windowId = execFileSync(pixelProgram, ["window", String(descriptor.processId)], { encoding: "utf8" }).trim();
 execFileSync("/usr/sbin/screencapture", ["-x", "-l", windowId, join(evidence, "dure-app.png")]);
 action("mobile.rotate", { ...target, landscape: true });
@@ -156,7 +178,7 @@ assert.ok(report.reportId && report.text.includes(appId));
 assert.ok(readFileSync(report.screenshot.path).length > 1000);
 assert.match(action("mobile.report.draft", { ...target, reportId: "stale", agentId: "unavailable" }, 2).error.message, /Report changed/u);
 assert.deepEqual(action("mobile.report.agents").value, [], "Disposable app must not expose the user's agents");
-action("mobile.profile.remove", { projectPath });
+action("mobile.profile.remove", { ...target, projectPath });
 assert.deepEqual(status().profiles, []);
 action("mobile.clear", target);
 assert.equal(status().device, null);
