@@ -116,6 +116,20 @@ For source builds and verification details, see the [platform development guide]
 
 </details>
 
+### Develop from source
+
+On an Apple Silicon Mac, install Git, Xcode Command Line Tools, the [pinned Node version](.node-version), and [rustup](https://rustup.rs/). Then run:
+
+```sh
+git clone https://github.com/hebbianai/dure.git
+cd dure
+corepack enable
+pnpm install --frozen-lockfile
+pnpm app:dev
+```
+
+This starts the development app and prepares its runtime and CLI. The first native build can take time. For local `.app` installation, tool setup, and Windows/Linux/iOS/Android instructions, see the [development installation guide](CONTRIBUTING.md#development-installation).
+
 ## Open-source boundary
 
 Copyright (C) 2026 [Hebbian AI](COPYRIGHT).

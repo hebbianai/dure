@@ -116,6 +116,20 @@ Claude Code、Codex、OpenCode、Pi は、インストールされたランタ�
 
 </details>
 
+### ソースから開発環境をセットアップ
+
+Apple Silicon Mac に Git、Xcode Command Line Tools、[指定の Node バージョン](../../.node-version)、[rustup](https://rustup.rs/) をインストールし、次を実行します。
+
+```sh
+git clone https://github.com/hebbianai/dure.git
+cd dure
+corepack enable
+pnpm install --frozen-lockfile
+pnpm app:dev
+```
+
+開発用ランタイムと CLI を準備してアプリを起動します。初回のネイティブビルドには時間がかかる場合があります。ローカル `.app` のインストール、ツール設定、Windows/Linux/iOS/Android の手順は[開発環境のインストールガイド](../../CONTRIBUTING.md#development-installation)を参照してください。
+
 ## オープンソースの範囲
 
 Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).

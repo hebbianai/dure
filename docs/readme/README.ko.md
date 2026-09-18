@@ -116,6 +116,20 @@ Claude Code, Codex, OpenCode, Pi는 설치된 런타임이 지원할 때 구조�
 
 </details>
 
+### 소스로 개발 환경 설치하기
+
+Apple Silicon Mac에 Git, Xcode Command Line Tools, [저장소가 지정한 Node 버전](../../.node-version), [rustup](https://rustup.rs/)을 설치한 뒤 실행하세요:
+
+```sh
+git clone https://github.com/hebbianai/dure.git
+cd dure
+corepack enable
+pnpm install --frozen-lockfile
+pnpm app:dev
+```
+
+개발용 런타임과 CLI를 준비하고 앱을 실행합니다. 첫 네이티브 빌드에는 시간이 걸릴 수 있습니다. 로컬 `.app` 설치, 도구 설정과 Windows/Linux/iOS/Android 안내는 [개발 환경 설치 가이드](../../CONTRIBUTING.md#development-installation)를 참고하세요.
+
 ## 오픈소스 공개 범위
 
 Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).

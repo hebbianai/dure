@@ -118,6 +118,20 @@ Para compilar a partir do código e consultar a cobertura de verificação, veja
 
 </details>
 
+### Instalar o ambiente de desenvolvimento
+
+Em um Mac com Apple Silicon, instale Git, Xcode Command Line Tools, a [versão de Node fixada pelo repositório](../../.node-version) e [rustup](https://rustup.rs/). Depois execute:
+
+```sh
+git clone https://github.com/hebbianai/dure.git
+cd dure
+corepack enable
+pnpm install --frozen-lockfile
+pnpm app:dev
+```
+
+Esses comandos preparam o ambiente de execução e a CLI e iniciam o aplicativo de desenvolvimento. A primeira compilação nativa pode demorar. Consulte o [guia de instalação para desenvolvimento](../../CONTRIBUTING.md#development-installation) para instalar a `.app` local, configurar as ferramentas e trabalhar no Windows/Linux/iOS/Android.
+
 ## Escopo do código aberto
 
 Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).
