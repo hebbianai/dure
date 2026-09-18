@@ -771,6 +771,7 @@ describe("push-gate-scope", () => {
       "scripts/lib/script-test-projects.mjs",
       "scripts/lib/script-test-graph-paths.mjs",
       "scripts/lib/push-gate-scope.mjs",
+      "scripts/public-ci.mjs",
       "scripts/run-changed-script-tests.mjs",
       "scripts/run-push-gates.mjs",
       "scripts/stage-hmux-runtime.sh",
