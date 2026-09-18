@@ -2,6 +2,7 @@ export const panels: Record<string, string> = {
 	"panels.mobile.live": "iOS ao vivo (experimental)",
 	"panels.mobile.profiles": "Perfil de execução",
 	"panels.mobile.loadProfile": "Carregar projeto salvo",
+	"panels.mobile.newProfile": "Novo perfil",
 	"panels.mobile.projectPath": "Pasta do projeto",
 	"panels.mobile.chooseFolder": "Escolher pasta",
 	"panels.mobile.buildCommand": "Comando de compilação (opcional)",

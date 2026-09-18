@@ -9,6 +9,16 @@ export interface MobileRunProfile {
 	url: string;
 	device: MobileDeviceTarget;
 }
+export function mobileRunProfileKey(
+	profile: Pick<MobileRunProfile, "projectPath" | "device">,
+): string {
+	return JSON.stringify([
+		profile.projectPath,
+		profile.device.platform,
+		profile.device.id,
+	]);
+}
+
 export function readMobileRunProfiles(value: unknown): MobileRunProfile[] {
 	if (!Array.isArray(value)) return [];
 	return value.slice(0, 16).flatMap((item) => {
@@ -40,7 +50,9 @@ export function saveMobileRunProfile(
 	next: MobileRunProfile,
 ): MobileRunProfile[] {
 	return [
-		...profiles.filter((profile) => profile.projectPath !== next.projectPath),
+		...profiles.filter(
+			(profile) => mobileRunProfileKey(profile) !== mobileRunProfileKey(next),
+		),
 		next,
 	].slice(-16);
 }

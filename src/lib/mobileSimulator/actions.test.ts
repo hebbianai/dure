@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { mobilePaneActions } from "./actions";
-import { readMobileRunProfiles, saveMobileRunProfile } from "./profile";
+import {
+	type MobileRunProfile,
+	readMobileRunProfiles,
+	saveMobileRunProfile,
+} from "./profile";
 
 const device = { platform: "android", id: "emulator-5554" } as const;
 const profile = {
@@ -15,7 +19,7 @@ const args = { platform: device.platform, deviceId: device.id };
 function fixture() {
 	const input = {
 		target: device,
-		profiles: [profile],
+		profiles: [profile] as MobileRunProfile[],
 		isBusy: vi.fn(() => false),
 		status: vi.fn(() => ({ device, busy: false })),
 		act: vi.fn(async () => true),
@@ -66,6 +70,19 @@ describe("mobile pane actions", () => {
 		).toBe("pending");
 		expect(input.run).toHaveBeenCalledExactlyOnceWith(profile);
 	});
+	it("can still run the selected device after saving another device for the same project", async () => {
+		const { input, actions } = fixture();
+		input.profiles = saveMobileRunProfile([profile], {
+			...profile,
+			buildCommand: "pnpm build:other",
+			device: { ...device, id: "emulator-5556" },
+		});
+		expect(
+			(await actions["mobile.run"]({ ...args, projectPath: "/project" }))
+				.outcome,
+		).toBe("pending");
+		expect(input.run).toHaveBeenCalledExactlyOnceWith(profile);
+	});
 	it("never accepts an unsaved build command through run", async () => {
 		const { input, actions } = fixture();
 		expect(
@@ -92,7 +109,7 @@ describe("mobile pane actions", () => {
 		expect(input.capture).toHaveBeenCalledOnce();
 	});
 });
-it("restores bounded complete profiles and replaces only the same project", () => {
+it("restores bounded complete profiles and replaces only the same project and device", () => {
 	expect(
 		readMobileRunProfiles([profile, {}, { ...profile, device: null }]),
 	).toEqual([profile]);

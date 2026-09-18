@@ -2,6 +2,7 @@ export const panels: Record<string, string> = {
 	"panels.mobile.live": "실시간 iOS (실험 기능)",
 	"panels.mobile.profiles": "실행 프로필",
 	"panels.mobile.loadProfile": "저장된 프로젝트 불러오기",
+	"panels.mobile.newProfile": "새 프로필",
 	"panels.mobile.projectPath": "프로젝트 폴더",
 	"panels.mobile.chooseFolder": "폴더 선택",
 	"panels.mobile.buildCommand": "빌드 명령 (선택)",
