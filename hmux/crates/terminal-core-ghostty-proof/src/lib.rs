@@ -256,6 +256,7 @@ mod external {
         ) -> i32;
         fn hmux_ghostty_core_observe(core: *mut c_void, observation: *mut NativeObservation)
         -> i32;
+        fn hmux_ghostty_core_content_rows(core: *mut c_void, rows: *mut u16) -> i32;
         fn hmux_ghostty_core_format(
             core: *mut c_void,
             styled: u8,
@@ -1644,6 +1645,15 @@ mod external {
                 scrollback_rows: native.scrollback_rows,
                 title_hash: native.title_hash,
             })
+        }
+
+        /// Active rows through the cursor or last nonempty cell. Alternate
+        /// screens retain their complete geometry, including blank rows.
+        pub fn content_rows(&self) -> Result<u16, ProofError> {
+            let mut rows = 0;
+            // SAFETY: the core and output pointer remain live during the call.
+            result(unsafe { hmux_ghostty_core_content_rows(self.raw.as_ptr(), &mut rows) })?;
+            Ok(rows)
         }
 
         pub fn format(&self, format: Format) -> Result<Vec<u8>, ProofError> {

@@ -1881,6 +1881,69 @@ int hmux_ghostty_core_observe(HmuxGhosttyCore *core,
   return hmux_observe(core, observation);
 }
 
+/* Only untouched normal-screen padding can be excluded from a transcript's
+   tail. Inspect at most the active screen below its cursor, never scrollback;
+   keep explicit spaces, styling, hyperlinks, protected cells and wrapped rows. */
+int hmux_ghostty_core_content_rows(HmuxGhosttyCore *core, uint16_t *rows) {
+  if (core == NULL || rows == NULL) return HMUX_GHOSTTY_SHIM_ERROR;
+  HmuxGhosttyObservation observation;
+  int result = hmux_observe(core, &observation);
+  if (result != GHOSTTY_SUCCESS) return result;
+  *rows = observation.rows;
+  if (observation.alternate_screen) return GHOSTTY_SUCCESS;
+
+  while (*rows > (uint32_t)observation.cursor_row + 1) {
+    GhosttyPoint point = {
+        .tag = GHOSTTY_POINT_TAG_ACTIVE,
+        .value = {.coordinate = {.x = 0, .y = *rows - 1}},
+    };
+    GhosttyGridRef reference = GHOSTTY_INIT_SIZED(GhosttyGridRef);
+    result = ghostty_terminal_grid_ref(core->terminal, point, &reference);
+    if (result != GHOSTTY_SUCCESS) return result;
+    GhosttyRow row = 0;
+    result = ghostty_grid_ref_row(&reference, &row);
+    if (result != GHOSTTY_SUCCESS) return result;
+    bool wraps = false, continues = false;
+    result = ghostty_row_get(row, GHOSTTY_ROW_DATA_WRAP, &wraps);
+    if (result != GHOSTTY_SUCCESS) return result;
+    result = ghostty_row_get(row, GHOSTTY_ROW_DATA_WRAP_CONTINUATION, &continues);
+    if (result != GHOSTTY_SUCCESS) return result;
+    if (wraps || continues) return GHOSTTY_SUCCESS;
+
+    for (uint16_t column = 0; column < observation.columns; ++column) {
+      reference.x = column;
+      GhosttyCell cell = 0;
+      result = ghostty_grid_ref_cell(&reference, &cell);
+      if (result != GHOSTTY_SUCCESS) return result;
+      bool text = false, styled = false, hyperlink = false, protected_cell = false;
+      GhosttyCellContentTag tag = GHOSTTY_CELL_CONTENT_CODEPOINT;
+      GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+      GhosttyCellSemanticContent semantic = GHOSTTY_CELL_SEMANTIC_OUTPUT;
+      const GhosttyCellData keys[] = {
+          GHOSTTY_CELL_DATA_HAS_TEXT, GHOSTTY_CELL_DATA_HAS_STYLING,
+          GHOSTTY_CELL_DATA_HAS_HYPERLINK, GHOSTTY_CELL_DATA_PROTECTED,
+          GHOSTTY_CELL_DATA_CONTENT_TAG, GHOSTTY_CELL_DATA_WIDE,
+          GHOSTTY_CELL_DATA_SEMANTIC_CONTENT,
+      };
+      void *values[] = {&text, &styled, &hyperlink, &protected_cell,
+                        &tag, &wide, &semantic};
+      size_t written = 0;
+      result = ghostty_cell_get_multi(cell, sizeof(keys) / sizeof(keys[0]),
+                                      keys, values, &written);
+      if (result != GHOSTTY_SUCCESS || written != sizeof(keys) / sizeof(keys[0])) {
+        return result == GHOSTTY_SUCCESS ? HMUX_GHOSTTY_SHIM_ERROR : result;
+      }
+      if (text || styled || hyperlink || protected_cell ||
+          tag != GHOSTTY_CELL_CONTENT_CODEPOINT ||
+          wide != GHOSTTY_CELL_WIDE_NARROW || semantic != GHOSTTY_CELL_SEMANTIC_OUTPUT) {
+        return GHOSTTY_SUCCESS;
+      }
+    }
+    *rows -= 1;
+  }
+  return GHOSTTY_SUCCESS;
+}
+
 extern int hmux_ghostty_formatter_format_active(GhosttyFormatter formatter,
                                                 uint8_t *buffer,
                                                 size_t capacity,

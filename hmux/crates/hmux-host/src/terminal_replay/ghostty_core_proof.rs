@@ -838,6 +838,15 @@ impl GhosttyProofAdapter {
         if observation.total_rows == 0 || requests.is_empty() {
             return Err(TerminalReplayError::ColdHistoryInvariant);
         }
+        let content_rows = self
+            .core
+            .content_rows()
+            .map_err(|error| engine_error("observe screen content extent", error.0))?;
+        let total_rows = observation
+            .scrollback_rows
+            .checked_add(usize::from(content_rows))
+            .filter(|rows| *rows > 0 && *rows <= observation.total_rows)
+            .ok_or(TerminalReplayError::ColdHistoryInvariant)?;
         let first_logical_line_id = if observation.alternate_screen {
             ALTERNATE_LOGICAL_LINE_BASE
         } else {
@@ -850,9 +859,11 @@ impl GhosttyProofAdapter {
         }
         .map_err(|error| engine_error("track hot history start", error.0))?;
         let row_index = anchor
-            .index_rows(observation.total_rows)
+            .index_rows(total_rows)
             .map_err(|error| engine_error("index hot history", error.0))?;
-        if row_index.rows.len() != observation.total_rows || row_index.has_more_after {
+        if row_index.rows.len() != total_rows
+            || row_index.has_more_after != (total_rows < observation.total_rows)
+        {
             return Err(TerminalReplayError::ColdHistoryInvariant);
         }
         let rows = index_rows(first_logical_line_id, observation.columns, &row_index.rows)?;
@@ -896,7 +907,7 @@ impl GhosttyProofAdapter {
             if projection.rows.len() != end.saturating_sub(start)
                 || projection.visited_rows != projection.rows.len()
                 || projection.has_more_before != (start != 0)
-                || projection.has_more_after != (end < rows.len())
+                || projection.has_more_after != (end < observation.total_rows)
             {
                 return Err(TerminalReplayError::ColdHistoryInvariant);
             }
@@ -914,7 +925,7 @@ impl GhosttyProofAdapter {
         let cursor_row = observation
             .scrollback_rows
             .checked_add(usize::from(observation.cursor_row))
-            .filter(|row| *row < observation.total_rows)
+            .filter(|row| *row < total_rows)
             .ok_or(TerminalReplayError::ColdHistoryInvariant)?;
         Ok(Arc::new(ImmutableGhosttyHotSource {
             capture: Arc::new(GhosttyHotCapture {
@@ -922,7 +933,7 @@ impl GhosttyProofAdapter {
                 windows,
                 accounted_bytes,
                 metrics: TerminalViewportMetrics {
-                    total_rows: Some(observation.total_rows),
+                    total_rows: Some(total_rows),
                     scrollback_rows: Some(observation.scrollback_rows),
                     alternate_screen: observation.alternate_screen,
                 },
