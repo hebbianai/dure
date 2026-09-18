@@ -219,38 +219,22 @@ impl Execution<'_> {
         } else {
             None
         };
-        // Recording and live capture share Chromium's Page session. Admission
-        // of a recording cannot overlap a temporary screencast on that session.
-        let recordings = self.binding.retirement.recordings.lock().await;
-        let captured = if live && recordings.is_empty() {
-            let frame = observed.cdp.capture_frame(&session).await?;
-            let metadata = &frame["metadata"];
-            let native_width = positive(&metadata["deviceWidth"])?;
-            let native_height = positive(&metadata["deviceHeight"])?;
-            // Emulated devices can extend beyond the actual native surface.
-            // Only a surface that covers this exact CSS viewport can supply
-            // its live image; exports retain their emulated physical density.
-            if (native_width - viewport_width * page_scale).abs() < 1.0
-                && (native_height - viewport_height * page_scale).abs() < 1.0
-                && metadata["offsetTop"].as_f64() == Some(0.0)
-            {
-                frame
-            } else {
-                observed.cdp.capture_screenshot(params, &session).await?
-            }
-        } else {
-            observed.cdp.capture_screenshot(params, &session).await?
-        };
-        drop(recordings);
+        if live {
+            // A frame read needs the current surface even when a resize produces
+            // no subsequent compositor event. Keep the live image in CSS pixels.
+            params["clip"] = json!({"x":x,"y":y,"width":width,"height":height,"scale":1.0 / scale});
+            params["optimizeForSpeed"] = true.into();
+        }
+        let captured = observed.cdp.capture_screenshot(params, &session).await?;
         let mut bytes = STANDARD
             .decode(captured["data"].as_str().ok_or("browser_capture_invalid")?)
             .map_err(|_| "browser_capture_invalid")?;
         if bytes.is_empty() || bytes.len() > MAX_ARTIFACT_BYTES {
             return Err("browser_capture_byte_limit".into());
         }
-        if captured.get("metadata").is_some() {
-            // The compositor's density can differ from the emulated DPR.
-            // Read encoded dimensions without decoding/allocating its pixels.
+        if live {
+            // Validate encoded bounds and publish the actual CSS-to-image ratio
+            // without decoding or allocating its pixels.
             let (width, height) = image::ImageReader::with_format(
                 std::io::Cursor::new(&bytes),
                 image::ImageFormat::Jpeg,

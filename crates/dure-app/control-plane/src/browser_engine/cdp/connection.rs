@@ -1,7 +1,6 @@
 use super::socket::Socket;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, timeout};
@@ -37,7 +36,6 @@ fn response_bytes(method: &str) -> usize {
 pub(super) struct Connection {
     wire: Wire,
     sessions: Mutex<BTreeMap<String, String>>,
-    frame: Arc<Mutex<()>>,
 }
 
 impl Connection {
@@ -69,7 +67,6 @@ impl Connection {
             Ok(Self {
                 wire: Wire::start(socket),
                 sessions: Mutex::new(BTreeMap::new()),
-                frame: Arc::new(Mutex::new(())),
             })
         })
         .await
@@ -107,17 +104,6 @@ impl Connection {
         session: Option<&str>,
         expired: impl std::future::Future<Output = &'static str>,
     ) -> Result<Value, &'static str> {
-        tokio::pin!(expired);
-        // A canceled frame reader leaves its stop with the capture task.
-        // Recording must wait for that acknowledgement on this same session.
-        let _capture = if method == "Page.startScreenRecording" {
-            Some(tokio::select! {
-                guard = self.frame.lock() => guard,
-                error = &mut expired => return Err(error),
-            })
-        } else {
-            None
-        };
         self.wire
             .request_until(method, params, session, expired, response_bytes(method))
             .await
@@ -136,48 +122,6 @@ impl Connection {
             CAPTURE_BYTES,
         )
         .await
-    }
-
-    /// Sample the compositor without the screenshot path's forced redraw.
-    /// The owned task stops capture even if its view/request is canceled.
-    pub(super) async fn capture_frame(
-        self: &Arc<Self>,
-        session: &str,
-    ) -> Result<Value, &'static str> {
-        let guard = Arc::clone(&self.frame).lock_owned().await;
-        let connection = Arc::clone(self);
-        let session = session.to_owned();
-        tokio::spawn(async move {
-            let _guard = guard;
-            let (_frame, received) = connection.wire.frame(&session)?;
-            let captured = async {
-                connection
-                    .request(
-                        "Page.startScreencast",
-                        json!({"format":"jpeg","quality":90,"everyNthFrame":1}),
-                        Some(&session),
-                    )
-                    .await?;
-                timeout(Duration::from_secs(5), received)
-                    .await
-                    .map_err(|_| "browser_frame_timeout")?
-                    .map_err(|_| "browser_cdp_closed")?
-            }
-            .await;
-            // No acknowledgement requests another image. Stop after the one
-            // admitted sample, including uncertain starts and canceled readers.
-            if connection
-                .request("Page.stopScreencast", json!({}), Some(&session))
-                .await
-                .is_err()
-            {
-                connection.wire.retire().await;
-                return Err("browser_frame_stop_unknown");
-            }
-            captured
-        })
-        .await
-        .map_err(|_| "browser_frame_interrupted")?
     }
 
     async fn request_with_limit(
