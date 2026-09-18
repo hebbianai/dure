@@ -47,6 +47,11 @@ export const agents: Record<string, string> = {
 	"agents.chat.permissionSkip": "Contourner les approbations",
 	"agents.chat.queuedMore": "Charger plus",
 	"agents.chat.queuedEdit": "Renvoyer dans la saisie",
+	"agents.chat.queuedEditPending": "Modification à terminer",
+	"agents.chat.error.queuedEditBackendChanged":
+		"Revenez au serveur d’équipe d’origine pour terminer la modification de ce message.",
+	"agents.chat.error.queuedEditInputUnavailable":
+		"Impossible de lire le message original en attente. Reconnectez-vous et réessayez.",
 	"agents.chat.error.conflict": "La session a changé pendant cette action. Réessayez.",
 	"agents.chat.error.deadline": "Le backend n'a pas répondu à temps. Réessayez.",
 	"agents.chat.error.notFound": "Cette conversation n'existe plus côté backend.",

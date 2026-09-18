@@ -23,6 +23,7 @@ const storedSubmissions = vi.hoisted(
 );
 vi.mock("./agentChatSubmissionStore", () => ({
 	agentChatSubmissionStore: {
+		subscribe: () => () => {},
 		list: async (agentId: string, session: string) =>
 			[...storedSubmissions.values()].filter(
 				(x) =>
@@ -72,7 +73,10 @@ function read(providerId = "claude"): AgentTimelineReadV1 {
 	};
 }
 
-function client(initial: AgentTimelineReadV1 = read()) {
+function client(
+	initial: AgentTimelineReadV1 = read(),
+	authority = () => ROUTE_AUTHORITY,
+) {
 	if (initial.type !== "page") throw new Error("expected page fixture");
 	let invalidation:
 		| ((event: AgentConversationInvalidationV1) => void)
@@ -142,7 +146,12 @@ function client(initial: AgentTimelineReadV1 = read()) {
 		};
 	};
 	const transport: DureAgentConversationClient = {
-		inspectInput: vi.fn(async () => null),
+		inspectInput: vi.fn(async (request) => {
+			const input = queued.get(request.clientMessageId);
+			return input
+				? { kind: "queued" as const, intent: input.intent, state: input.state }
+				: null;
+		}),
 		readQueue: vi.fn(async (request) => queuePage(request.afterSequence)),
 		enqueueTurn: vi.fn(async (intent) => {
 			const prior = queued.get(intent.clientMessageId);
@@ -176,22 +185,22 @@ function client(initial: AgentTimelineReadV1 = read()) {
 			throw new Error("unused fixture goal write");
 		},
 		inspect: vi.fn(async () => ({
-			backend: { id: "backend", generation: "one" },
-			routeAuthority: ROUTE_AUTHORITY,
+			backend: authority().backend,
+			routeAuthority: authority(),
 			binding: initial.page.binding,
 		})),
 		recover: vi.fn(async (binding) => binding),
 		read: vi.fn(async (request) => ({
-			backend: { id: "backend", generation: "one" },
-			routeAuthority: ROUTE_AUTHORITY,
+			backend: authority().backend,
+			routeAuthority: authority(),
 			read: observed(initial, request),
 		})),
 		subscribe: vi.fn(async (_request, onInvalidation) => {
 			invalidation = onInvalidation;
 			return {
 				subscriptionId: "subscription-1",
-				backend: { id: "backend", generation: "one" },
-				routeAuthority: ROUTE_AUTHORITY,
+				backend: authority().backend,
+				routeAuthority: authority(),
 				initial: observed(),
 				close,
 			};
@@ -206,6 +215,7 @@ function client(initial: AgentTimelineReadV1 = read()) {
 		invalidation: () => invalidation,
 		transport,
 		queuePage,
+		queued,
 		project: observed,
 	};
 }
@@ -295,6 +305,320 @@ function deltaRange(
 }
 
 describe("AgentChatSessionController", () => {
+	it.each([true, false])(
+		"reconciles recovery retirement without dropping an unpersisted input (stored=%s)",
+		async (persisted) => {
+			const fixture = client();
+			let changed = () => {};
+			vi.mocked(fixture.transport.startTurn).mockRejectedValue(
+				new Error("response lost"),
+			);
+			const controller = new AgentChatSessionController({
+				agentId: "agent-1",
+				interactionSessionId: "interaction-1",
+				client: fixture.transport,
+				submissionStore: {
+					subscribe: (listener) => {
+						changed = listener;
+						return () => {};
+					},
+					list: async () => [...storedSubmissions.values()],
+					put: async (input) => {
+						if (!persisted) throw new Error("storage unavailable");
+						storedSubmissions.set(agentChatSubmissionKey(input), input);
+					},
+					remove: async (input) => {
+						storedSubmissions.delete(agentChatSubmissionKey(input));
+					},
+				},
+			});
+			controller.start();
+			try {
+				await vi.waitFor(() =>
+					expect(controller.getSnapshot().phase).toBe("ready"),
+				);
+				await expect(controller.send("recoverable input")).rejects.toThrow();
+				storedSubmissions.clear(); // Another window finished editing the persisted input.
+				changed();
+				await vi.waitFor(() =>
+					expect(fixture.transport.read).toHaveBeenCalled(),
+				);
+				await settle();
+				const restore = vi.fn();
+				await controller.editRetryableTurn(restore);
+				if (persisted) expect(restore).not.toHaveBeenCalled();
+				else expect(restore).toHaveBeenCalledWith("recoverable input");
+			} finally {
+				controller.stop();
+			}
+		},
+	);
+	it.each(["same backend", "other backend"])(
+		"retains a lost edit response after reopening on %s",
+		async (destination) => {
+			let route = ROUTE_AUTHORITY;
+			const fixture = client(read(), () => route);
+			const create = () =>
+				new AgentChatSessionController({
+					agentId: "agent-1",
+					interactionSessionId: "interaction-1",
+					client: fixture.transport,
+				});
+			const first = create();
+			first.start();
+			await vi.waitFor(() => expect(first.getSnapshot().phase).toBe("ready"));
+			await first.queueMessage("recover the original queue input");
+			const id = first.getSnapshot().queuedMessages[0].clientMessageId;
+			const cancel = vi
+				.mocked(fixture.transport.cancelQueuedTurn)
+				.getMockImplementation()!;
+			vi.mocked(fixture.transport.cancelQueuedTurn).mockImplementationOnce(
+				async (...args) => {
+					await cancel(...args);
+					throw new Error("edit response lost");
+				},
+			);
+			const restore = vi.fn(() => true);
+			await expect(first.dequeueMessage(id, restore)).rejects.toThrow(
+				"edit response lost",
+			);
+			expect(restore).not.toHaveBeenCalled();
+			const original = [...storedSubmissions.values()][0];
+			expect(original.kind).toBe("edit");
+			first.stop();
+			route = testDureBackendRouteAuthority(
+				destination === "same backend" ? "backend" : "other",
+				"replacement",
+			);
+			const reopened = create();
+			reopened.start();
+			try {
+				await vi.waitFor(() =>
+					expect(reopened.getSnapshot().phase).toBe("ready"),
+				);
+				expect(reopened.getSnapshot().pendingQueueEdits).toEqual([
+					{ clientMessageId: id, preview: original.request.input },
+				]);
+				expect(reopened.getSnapshot().queuedMessages).toEqual([]);
+				expect(fixture.transport.cancelQueuedTurn).toHaveBeenCalledTimes(1);
+				await expect(reopened.retryTurn()).rejects.toThrow("retry_unavailable");
+				if (destination === "same backend") {
+					await reopened.dequeueMessage(id, restore);
+					expect(restore).toHaveBeenCalledWith(original.request.input);
+					expect(fixture.transport.cancelQueuedTurn).toHaveBeenLastCalledWith(
+						{
+							schemaVersion: 1,
+							interactionSessionId: "interaction-1",
+							clientMessageId: id,
+						},
+						route,
+					);
+					expect(storedSubmissions.size).toBe(0);
+				} else {
+					await expect(reopened.dequeueMessage(id, restore)).rejects.toThrow(
+						"backend_changed",
+					);
+					expect(fixture.transport.cancelQueuedTurn).toHaveBeenCalledTimes(1);
+					expect([...storedSubmissions.values()]).toEqual([original]);
+					expect(restore).not.toHaveBeenCalled();
+				}
+				expect(fixture.transport.startTurn).not.toHaveBeenCalled();
+			} finally {
+				first.stop();
+				reopened.stop();
+			}
+		},
+	);
+
+	it("observes an input committed while the initial store read is still resolving", async () => {
+		const fixture = client();
+		let changed = () => {};
+		let release!: () => void;
+		const reading = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const list = vi.fn(async () => [...storedSubmissions.values()]);
+		list.mockImplementationOnce(async () => {
+			await reading;
+			return [];
+		});
+		const controller = new AgentChatSessionController({
+			agentId: "agent-1",
+			interactionSessionId: "interaction-1",
+			client: fixture.transport,
+			submissionStore: {
+				subscribe: (listener) => {
+					changed = listener;
+					return () => {};
+				},
+				list,
+				put: vi.fn(),
+				remove: vi.fn(),
+			},
+		});
+		controller.start();
+		try {
+			await vi.waitFor(() => expect(list).toHaveBeenCalledOnce());
+			const initial = read();
+			if (initial.type !== "page") throw new Error("expected page");
+			const input: AgentChatSubmission = {
+				agentId: "agent-1",
+				kind: "edit",
+				routeAuthority: ROUTE_AUTHORITY,
+				request: {
+					schemaVersion: 1,
+					interactionSessionId: "interaction-1",
+					runtime: initial.page.binding.runtime,
+					turnId: "late-turn",
+					clientMessageId: "late-input",
+					input: "committed during connection",
+					requestedAtMs: 1,
+				},
+			};
+			storedSubmissions.set(agentChatSubmissionKey(input), input);
+			changed();
+			release();
+			await vi.waitFor(() =>
+				expect(controller.getSnapshot().pendingQueueEdits).toEqual([
+					{
+						clientMessageId: input.request.clientMessageId,
+						preview: input.request.input,
+					},
+				]),
+			);
+			expect(fixture.transport.startTurn).not.toHaveBeenCalled();
+			expect(fixture.transport.cancelQueuedTurn).not.toHaveBeenCalled();
+		} finally {
+			release();
+			controller.stop();
+		}
+	});
+
+	it("reobserves edits created and finished by a different view while already connected", async () => {
+		const fixture = client();
+		let changed = () => {};
+		const stop = vi.fn();
+		const controller = new AgentChatSessionController({
+			agentId: "agent-1",
+			interactionSessionId: "interaction-1",
+			client: fixture.transport,
+			submissionStore: {
+				subscribe: (listener) => {
+					changed = listener;
+					return stop;
+				},
+				list: async () => [...storedSubmissions.values()],
+				put: async (input) => {
+					storedSubmissions.set(agentChatSubmissionKey(input), input);
+				},
+				remove: async (input) => {
+					storedSubmissions.delete(agentChatSubmissionKey(input));
+				},
+			},
+		});
+		controller.start();
+		try {
+			await vi.waitFor(() =>
+				expect(controller.getSnapshot().phase).toBe("ready"),
+			);
+			await controller.queueMessage("late edit");
+			const id = controller.getSnapshot().queuedMessages[0].clientMessageId;
+			const receipt = await fixture.transport.cancelQueuedTurn(
+				{
+					schemaVersion: 1,
+					interactionSessionId: "interaction-1",
+					clientMessageId: id,
+				},
+				ROUTE_AUTHORITY,
+			);
+			const input: AgentChatSubmission = {
+				agentId: "agent-1",
+				kind: "edit",
+				request: receipt.intent,
+				routeAuthority: ROUTE_AUTHORITY,
+			};
+			storedSubmissions.set(agentChatSubmissionKey(input), input);
+			changed();
+			await vi.waitFor(() =>
+				expect(controller.getSnapshot().pendingQueueEdits).toHaveLength(1),
+			);
+			storedSubmissions.delete(agentChatSubmissionKey(input));
+			changed();
+			await vi.waitFor(() =>
+				expect(controller.getSnapshot().pendingQueueEdits).toEqual([]),
+			);
+			expect(fixture.transport.cancelQueuedTurn).toHaveBeenCalledTimes(1);
+			expect(fixture.transport.startTurn).not.toHaveBeenCalled();
+		} finally {
+			controller.stop();
+		}
+		expect(stop).toHaveBeenCalledOnce();
+	});
+
+	it("discards an unfinished edit only when explicitly removed", async () => {
+		const fixture = client();
+		const controller = new AgentChatSessionController({
+			agentId: "agent-1",
+			interactionSessionId: "interaction-1",
+			client: fixture.transport,
+		});
+		controller.start();
+		try {
+			await vi.waitFor(() =>
+				expect(controller.getSnapshot().phase).toBe("ready"),
+			);
+			await controller.queueMessage("cancel the unfinished edit");
+			const id = controller.getSnapshot().queuedMessages[0].clientMessageId;
+			const retiredComposer = vi.fn(() => false);
+			await controller.dequeueMessage(id, retiredComposer);
+			expect(controller.getSnapshot().pendingQueueEdits).toHaveLength(1);
+			await controller.dequeueMessage(id);
+			expect(controller.getSnapshot().pendingQueueEdits).toEqual([]);
+			expect(storedSubmissions.size).toBe(0);
+			expect(retiredComposer).toHaveBeenCalledOnce();
+			expect(fixture.transport.startTurn).not.toHaveBeenCalled();
+		} finally {
+			controller.stop();
+		}
+	});
+
+	it("does not restore an edit that loses the dispatch race", async () => {
+		const fixture = client();
+		const controller = new AgentChatSessionController({
+			agentId: "agent-1",
+			interactionSessionId: "interaction-1",
+			client: fixture.transport,
+		});
+		controller.start();
+		try {
+			await vi.waitFor(() =>
+				expect(controller.getSnapshot().phase).toBe("ready"),
+			);
+			await controller.queueMessage("already executing");
+			const id = controller.getSnapshot().queuedMessages[0].clientMessageId;
+			const cancel = vi
+				.mocked(fixture.transport.cancelQueuedTurn)
+				.getMockImplementation()!;
+			vi.mocked(fixture.transport.cancelQueuedTurn).mockImplementationOnce(
+				async (...args) => {
+					fixture.queued.set(id, {
+						...fixture.queued.get(id)!,
+						state: "dispatched",
+					});
+					return cancel(...args);
+				},
+			);
+			const restore = vi.fn(() => true);
+			await expect(controller.dequeueMessage(id, restore)).rejects.toThrow(
+				"already dispatched",
+			);
+			expect(restore).not.toHaveBeenCalled();
+			expect(controller.getSnapshot().pendingQueueEdits).toEqual([]);
+			expect(storedSubmissions.size).toBe(0);
+		} finally {
+			controller.stop();
+		}
+	});
 	it.each(["start", "enqueue"] as const)(
 		"reconciles a lost %s acknowledgment after reopen without sending again",
 		async (kind) => {
@@ -383,6 +707,7 @@ describe("AgentChatSessionController", () => {
 			interactionSessionId: "interaction-1",
 			client: fixture.transport,
 			submissionStore: {
+				subscribe: () => () => {},
 				list: async () => [],
 				put: () => persisted,
 				remove: async () => {},
@@ -543,9 +868,9 @@ describe("AgentChatSessionController", () => {
 			} else {
 				expect(reopened.controller.getSnapshot().retryTurnAvailable).toBe(true);
 				expect(reopened.controller.getSnapshot().actionError).toBeTruthy();
-				expect(await reopened.controller.editRetryableTurn()).toBe(
-					"retain this input",
-				);
+				const restore = vi.fn();
+				await reopened.controller.editRetryableTurn(restore);
+				expect(restore).toHaveBeenCalledWith("retain this input");
 			}
 			reopened.release();
 			releases[1]();
@@ -1494,7 +1819,10 @@ describe("AgentChatSessionController", () => {
 			retryTurnAvailable: true,
 		});
 
-		const restored = await controller.editRetryableTurn();
+		let restored: string | undefined;
+		await controller.editRetryableTurn((input) => {
+			restored = input;
+		});
 		expect(restored).toBe("original input");
 		expect(controller.getSnapshot()).toMatchObject({
 			retryTurnAvailable: false,
@@ -2724,9 +3052,9 @@ describe("AgentChatSessionController", () => {
 						"failed",
 					);
 					await expect(controller.retryTurn()).rejects.toBeInstanceOf(Error);
-					expect(await controller.editRetryableTurn()).toBe(
-						"preserve this request",
-					);
+					const restore = vi.fn();
+					await controller.editRetryableTurn(restore);
+					expect(restore).toHaveBeenCalledWith("preserve this request");
 				} else {
 					await controller.retryTurn();
 				}

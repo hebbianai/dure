@@ -5,8 +5,13 @@ import { t } from "@/lib/i18n";
  * the one fact an operator needs (the 2026-08-27 outage was prolonged by a
  * masked reason). An unrecognized token renders verbatim. */
 const KNOWN_ACTION_ERRORS: Record<string, string> = {
+	agent_chat_queue_edit_backend_changed:
+		"agents.chat.error.queuedEditBackendChanged",
+	agent_chat_queue_edit_input_unavailable:
+		"agents.chat.error.queuedEditInputUnavailable",
 	agent_conversation_provider_failed: "agents.chat.error.providerFailed",
-	agent_conversation_runtime_unavailable: "agents.chat.error.runtimeUnavailable",
+	agent_conversation_runtime_unavailable:
+		"agents.chat.error.runtimeUnavailable",
 	agent_conversation_conflict: "agents.chat.error.conflict",
 	agent_conversation_not_found: "agents.chat.error.notFound",
 	agent_conversation_request_invalid: "agents.chat.error.requestInvalid",

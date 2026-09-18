@@ -25,6 +25,11 @@ export interface AgentChatSessionSnapshot {
 	olderHistoryError?: string;
 	/** Accepted input awaiting execution in the conversation service. */
 	queuedMessages: readonly AgentQueuedInputV1[];
+	/** Local edits whose original input has not yet reached its draft. */
+	pendingQueueEdits?: readonly Pick<
+		AgentQueuedInputV1,
+		"clientMessageId" | "preview"
+	>[];
 	queuedMoreAfter?: number | null;
 	loadingQueued?: boolean;
 }
@@ -36,10 +41,13 @@ interface AgentChatSessionActions {
 	send(input: string): Promise<void>;
 	queueMessage(input: string): Promise<void>;
 	steerOrQueue(input: string): Promise<"steered" | "queued">;
-	dequeueMessage(clientMessageId: string): Promise<string>;
+	dequeueMessage(
+		clientMessageId: string,
+		restore?: (input: string) => boolean,
+	): Promise<string>;
 	loadMoreQueued(): Promise<void>;
 	retryTurn(): Promise<void>;
-	editRetryableTurn(): Promise<string | undefined>;
+	editRetryableTurn(restore: (input: string) => void): Promise<void>;
 	answerPending(requestId: string, answer: unknown): Promise<void>;
 	interrupt(): Promise<void>;
 	dismissActionError(): void;

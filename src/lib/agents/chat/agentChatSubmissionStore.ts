@@ -1,7 +1,9 @@
+import { DURABLE_APP_STORE_NAME } from "@/lib/persistence/durableAppStoreName";
 import {
 	normalizePersistedState,
 	persistedSlice,
 } from "@/lib/persistence/persistedAppState";
+import { subscribeDurableStoreChanged } from "@/lib/workspace/window/durableStoreBroadcast";
 import {
 	type AgentChatSubmission,
 	type AgentChatSubmissionStore,
@@ -11,6 +13,13 @@ import {
 
 /** Uses the existing app-state transaction and cross-window writer authority. */
 export const agentChatSubmissionStore: AgentChatSubmissionStore = {
+	subscribe: (onChanged) =>
+		subscribeDurableStoreChanged(
+			DURABLE_APP_STORE_NAME,
+			onChanged,
+			undefined,
+			true,
+		),
 	async list(agentId, interactionSessionId) {
 		const { durableAppStorage, DURABLE_APP_STORE_NAME } = await import(
 			"@/store"

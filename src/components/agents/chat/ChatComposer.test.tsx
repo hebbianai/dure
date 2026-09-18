@@ -10,6 +10,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "@/components/agents/chat/ChatComposer";
 import { AgentChatSessionController } from "@/lib/agents/chat/agentChatSessionController";
+import type { AgentChatSubmission } from "@/lib/agents/chat/agentChatSubmission";
 import { chatInputLatency } from "@/lib/agents/chat/chatInputLatency";
 import { t } from "@/lib/i18n";
 import type { DureAgentConversationClient } from "@/lib/ipc/dureAgentConversation";
@@ -337,6 +338,128 @@ describe("ChatComposer attachments", () => {
 
 describe("ChatComposer queueing", () => {
 	afterEach(() => cleanup());
+	it("keeps a canceled input recoverable when its edit finishes after a pane move", async () => {
+		const value = session("claude");
+		const page = value.page!;
+		const routeAuthority = testDureBackendRouteAuthority("backend", "one");
+		const intent = {
+			schemaVersion: 1 as const,
+			interactionSessionId: page.binding.interactionSessionId,
+			runtime: page.binding.runtime,
+			turnId: "queued-turn",
+			clientMessageId: "queued-input",
+			input: "Original queued message",
+			requestedAtMs: 10,
+		};
+		page.queuedInputs = {
+			interactionSessionId: intent.interactionSessionId,
+			inputs: [
+				{
+					clientMessageId: intent.clientMessageId,
+					sequence: 1,
+					preview: intent.input,
+				},
+			],
+			nextAfter: null,
+		};
+		let release!: () => void;
+		const response = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let canceled = false;
+		const client: DureAgentConversationClient = {
+			inspectInput: async () => ({
+				kind: "queued",
+				intent,
+				state: canceled ? "canceled" : "queued",
+			}),
+			readQueue: vi.fn(),
+			enqueueTurn: vi.fn(),
+			cancelQueuedTurn: vi.fn(async () => {
+				canceled = true;
+				page.queuedInputs!.inputs = [];
+				await response;
+				return {
+					intent,
+					state: "canceled" as const,
+					timelineCursor: { epoch: page.binding.timelineEpoch, sequence: 2 },
+				};
+			}),
+			inspect: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				binding: page.binding,
+			}),
+			recover: async (binding) => binding,
+			read: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				read: { type: "page", page },
+			}),
+			subscribe: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				initial: { type: "page", page },
+				subscriptionId: "test",
+				close: async () => {},
+			}),
+			startTurn: vi.fn(),
+			steerTurn: vi.fn(),
+			answerPending: vi.fn(),
+			interruptTurn: vi.fn(),
+			putGoal: vi.fn(),
+		};
+		const stored = new Map<string, AgentChatSubmission>();
+		const controller = new AgentChatSessionController({
+			agentId: page.binding.agentId,
+			interactionSessionId: intent.interactionSessionId,
+			client,
+			submissionStore: {
+				subscribe: () => () => {},
+				list: async () => [...stored.values()],
+				put: async (input) => {
+					stored.set(input.request.clientMessageId, input);
+				},
+				remove: async (input) => {
+					stored.delete(input.request.clientMessageId);
+				},
+			},
+		});
+		controller.start();
+		await vi.waitFor(() =>
+			expect(controller.getSnapshot().phase).toBe("ready"),
+		);
+		Object.assign(value, controller.getSnapshot());
+		value.dequeueMessage = (id, restore) =>
+			controller.dequeueMessage(id, restore);
+		try {
+			render(<ChatComposer session={value} disabled={false} />);
+			fireEvent.click(
+				screen.getByRole("button", { name: t("agents.chat.queuedEdit") }),
+			);
+			await vi.waitFor(() => expect(canceled).toBe(true));
+			// A completed native move retires the source composer's draft epoch.
+			act(() =>
+				useStore.setState({ chatDraftEpochs: { [page.binding.agentId]: 1 } }),
+			);
+			await act(async () => {
+				release();
+			});
+			expect(page.queuedInputs.inputs).toEqual([]);
+			expect(
+				[...stored.values()].some(
+					(input) => input.request.input === intent.input,
+				),
+				"the canceled input must remain recoverable after its source composer loses ownership",
+			).toBe(true);
+			expect(client.startTurn).not.toHaveBeenCalled();
+		} finally {
+			release();
+			controller.stop();
+			cleanup();
+			useStore.setState({ chatDraftEpochs: {} });
+		}
+	});
 
     it("loads more queued inputs without submitting the current draft", async () => {
         const value = session("claude");
@@ -471,14 +594,20 @@ describe("ChatComposer queueing", () => {
 		value.queuedMessages = [
 			{ clientMessageId: "queue-1", sequence: 1, preview: "park me" },
 		];
-		value.dequeueMessage = vi.fn(async () => "park me");
+		value.dequeueMessage = vi.fn(async (_id, restore) => {
+			restore?.("park me");
+			return "park me";
+		});
 		render(<ChatComposer session={value} disabled={false} />);
 		await act(async () => {
 			fireEvent.click(
 				screen.getByRole("button", { name: t("agents.chat.queuedEdit") }),
 			);
 		});
-		expect(value.dequeueMessage).toHaveBeenCalledWith("queue-1");
+		expect(value.dequeueMessage).toHaveBeenCalledWith(
+			"queue-1",
+			expect.any(Function),
+		);
 		expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
 			"park me",
 		);
@@ -486,6 +615,145 @@ describe("ChatComposer queueing", () => {
 });
 
 describe("ChatComposer uncertain send recovery", () => {
+	it("keeps unconfirmed input recoverable when its draft moves during restoration", async () => {
+		const value = session("claude");
+		const page = value.page!;
+		const routeAuthority = testDureBackendRouteAuthority("backend", "one");
+		const input: AgentChatSubmission = {
+			agentId: page.binding.agentId,
+			kind: "start",
+			routeAuthority,
+			request: {
+				schemaVersion: 1,
+				interactionSessionId: page.binding.interactionSessionId,
+				runtime: page.binding.runtime,
+				turnId: "unconfirmed-turn",
+				clientMessageId: "unconfirmed-input",
+				input: "original input",
+				requestedAtMs: 10,
+			},
+		};
+		const client: DureAgentConversationClient = {
+			inspectInput: async () => null,
+			readQueue: vi.fn(),
+			enqueueTurn: vi.fn(),
+			cancelQueuedTurn: vi.fn(),
+			inspect: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				binding: page.binding,
+			}),
+			recover: async (binding) => binding,
+			read: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				read: { type: "page", page },
+			}),
+			subscribe: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				initial: { type: "page", page },
+				subscriptionId: "test",
+				close: async () => {},
+			}),
+			startTurn: vi.fn(),
+			steerTurn: vi.fn(),
+			answerPending: vi.fn(),
+			interruptTurn: vi.fn(),
+			putGoal: vi.fn(),
+		};
+		let release!: () => void;
+		const removing = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let removed = false;
+		const controller = new AgentChatSessionController({
+			agentId: input.agentId,
+			interactionSessionId: input.request.interactionSessionId,
+			client,
+			submissionStore: {
+				subscribe: () => () => {},
+				list: async () => (removed ? [] : [input]),
+				put: vi.fn(),
+				remove: async () => {
+					await removing;
+					removed = true;
+				},
+			},
+		});
+		controller.start();
+		await vi.waitFor(() =>
+			expect(controller.getSnapshot().phase).toBe("ready"),
+		);
+		value.actionError = controller.getSnapshot().actionError;
+		value.retryTurnAvailable = controller.getSnapshot().retryTurnAvailable;
+		value.editRetryableTurn = (restore) =>
+			controller.editRetryableTurn(restore);
+		try {
+			render(<ChatComposer session={value} disabled={false} />);
+			fireEvent.change(screen.getByRole("textbox"), {
+				target: { value: "new draft" },
+			});
+			fireEvent.click(
+				screen.getByRole("button", {
+					name: t("agents.chat.editUncertainSend"),
+				}),
+			);
+			const drafts = useStore.getState().chatDrafts[input.agentId];
+			act(() =>
+				useStore.getState().applyChatDraftMove({
+					action: "begin",
+					expected: drafts,
+					packet: {
+						drafts,
+						transfer: {
+							id: "recovery-move",
+							digest: `sha256:${"0".repeat(64)}`,
+							target: {
+								identity: value.draftIdentity,
+								sessionId: "runtime",
+								projectId: "project",
+								provider: "claude",
+								worktreePath: "/repo",
+								project: undefined,
+							},
+							source: {
+								schemaVersion: 1,
+								desktopId: "source",
+								dockviewId: "dock-1",
+								windowLabel: "main",
+								windowGeneration: "boot-1",
+								paneId: "agent:agent-1",
+							},
+							destination: {
+								schemaVersion: 1,
+								desktopId: "target",
+								dockviewId: "dock-2",
+								windowLabel: "peer",
+								windowGeneration: "boot-2",
+							},
+						},
+					},
+				}),
+			);
+			await act(async () => {
+				release();
+			});
+			const transferredText = Object.values(drafts ?? {})
+				.map((draft) => draft.text)
+				.join("\n");
+			expect(
+				transferredText.includes(input.request.input) || !removed,
+				"the input must be in the transfer or remain in its durable recovery record",
+			).toBe(true);
+			expect(client.startTurn).not.toHaveBeenCalled();
+		} finally {
+			release();
+			controller.stop();
+			cleanup();
+			useStore.setState({ chatDraftMoves: {}, chatDraftEpochs: {} });
+		}
+	});
 	afterEach(() => cleanup());
 
 	it("humanizes catalogued action errors and keeps the raw token visible", () => {
@@ -519,7 +787,7 @@ describe("ChatComposer uncertain send recovery", () => {
 		const value = session("claude");
 		value.actionError = "backend route changed";
 		value.retryTurnAvailable = true;
-		value.editRetryableTurn = vi.fn(async () => "original input");
+		value.editRetryableTurn = vi.fn(async (restore) => restore("original input"));
 		render(<ChatComposer session={value} disabled={false} />);
 		const composer = screen.getByRole("textbox");
 		fireEvent.change(composer, { target: { value: "new draft" } });

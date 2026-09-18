@@ -47,6 +47,11 @@ export const agents: Record<string, string> = {
 	"agents.chat.permissionSkip": "승인 우회",
 	"agents.chat.queuedMore": "더 보기",
 	"agents.chat.queuedEdit": "입력창으로 되돌리기",
+	"agents.chat.queuedEditPending": "복원할 메시지",
+	"agents.chat.error.queuedEditBackendChanged":
+		"이 메시지 편집을 마치려면 원래 팀 서버로 돌아가세요.",
+	"agents.chat.error.queuedEditInputUnavailable":
+		"대기 메시지의 원문을 읽지 못했어요. 다시 연결한 뒤 시도하세요.",
 	"agents.chat.error.conflict": "작업 중에 세션이 바뀌었습니다. 다시 시도하세요.",
 	"agents.chat.error.deadline": "백엔드가 제시간에 응답하지 않았습니다. 다시 시도하세요.",
 	"agents.chat.error.notFound": "이 대화가 백엔드에 더 이상 존재하지 않습니다.",

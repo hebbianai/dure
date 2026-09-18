@@ -52,6 +52,7 @@ export function subscribeDurableStoreChanged(
 	store: string,
 	onChanged: () => void,
 	transport: DurableStoreBroadcastBackend = backend,
+	includeCurrentWindow = false,
 ): () => void {
 	const self = source(transport);
 	let disposed = false;
@@ -60,7 +61,11 @@ export function subscribeDurableStoreChanged(
 		.listenChanged((candidate) => {
 			if (!candidate || typeof candidate !== "object") return;
 			const payload = candidate as Partial<DurableStoreChangedPayload>;
-			if (payload.store !== store || payload.source === self) return;
+			if (
+				payload.store !== store ||
+				(!includeCurrentWindow && payload.source === self)
+			)
+				return;
 			onChanged();
 		})
 		.then((unlisten) => {

@@ -5,6 +5,7 @@ import {
 } from "@tauri-apps/api/webviewWindow";
 import type { BackgroundThrottlingPolicy } from "@tauri-apps/api/window";
 import { createDockview, type DockviewApi } from "dockview-react";
+import { useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { ChatComposer } from "@/components/agents/chat/ChatComposer";
 import { deliverAgentChatDraft } from "@/lib/agents/chat/agentChatDraftDelivery";
@@ -15,10 +16,17 @@ import {
 	type AgentChatPaneDropRequest,
 	parseAgentChatPaneDropRequest,
 } from "@/lib/agents/chat/agentChatPaneDropRequest";
+import { AgentChatSessionController } from "@/lib/agents/chat/agentChatSessionController";
 import type { AgentChatSessionView } from "@/lib/agents/chat/agentChatSessionView";
+import type { AgentChatSubmission } from "@/lib/agents/chat/agentChatSubmission";
+import { agentChatSubmissionStore } from "@/lib/agents/chat/agentChatSubmissionStore";
+import type { AgentTimelinePageV1 } from "@/lib/agents/chat/agentConversationContract";
 import { normalizeAgentInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
 import { computeTextDigest } from "@/lib/agents/promptIdentity";
+import { t } from "@/lib/i18n";
+import { homeDir, readFile, writeFile } from "@/lib/ipc";
 import { webviewStorageOptions } from "@/lib/ipc/core";
+import type { DureAgentConversationClient } from "@/lib/ipc/dureAgentConversation";
 import {
 	rehydrateDurableStore,
 	subscribeDurableStoreLayoutProjection,
@@ -43,6 +51,7 @@ import {
 import { durableAppStorage, useStore } from "@/store";
 import { agentFixture } from "@/test/agentFixtures";
 import draftFixture from "@/test/chatDraftFixtures.json";
+import { testDureBackendRouteAuthority } from "@/test/dureBackendRouteFixtures";
 
 const {
 	nativeChatDraftEditedText: editedText,
@@ -73,6 +82,7 @@ interface Report {
 	imageSources: string[];
 	interactionProfile: unknown;
 	submissions: number;
+	queuedCancellations: number;
 	commandResults: unknown[];
 	lastDrop?: AgentChatPaneDropRequest;
 	receipt?: unknown;
@@ -125,6 +135,19 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 	let createdPane: ReturnType<typeof dockPanelReference> | undefined;
 	let lastDrop: AgentChatPaneDropRequest | undefined;
 	let submissions = 0;
+	let recovery: AgentChatSessionController | undefined;
+	let releaseRemoval: (() => void) | undefined;
+	let restoration: Promise<void> | undefined;
+	const restoredInput = "Native unconfirmed input";
+	const queuedInput = "Native queued input restored after moving its composer";
+	let queuedCancellations = 0;
+	let queuedEditing: Promise<string> | undefined;
+	let holdQueueRead = false;
+	let queueReadStarted = false;
+	let releaseQueueRead: (() => void) | undefined;
+	const queueRead = new Promise<void>((resolve) => {
+		releaseQueueRead = resolve;
+	});
 	const commandResults: unknown[] = [];
 	const element = document.createElement("section");
 	element.style.cssText = "position:absolute;inset:0;width:800px;height:600px";
@@ -184,6 +207,7 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 				.agents.find((agent) => agent.id === identity.agentId)
 				?.interactionProfile,
 			submissions,
+			queuedCancellations,
 			commandResults: [...commandResults],
 			lastDrop,
 			receipt,
@@ -266,6 +290,188 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 				normalizeAgentInteractionProfileV1(currentAgent.interactionProfile),
 			"Native QA requires the canonical structured Agent profile in both windows",
 		);
+		const routeAuthority = testDureBackendRouteAuthority("native-qa", proof);
+		const page: AgentTimelinePageV1 = {
+			binding: {
+				schemaVersion: 1,
+				...identity,
+				providerId: "codex",
+				executionProfile: { kind: "provider_default" },
+				providerConversationRef: null,
+				runtime: {
+					runtimeGeneration: "native-qa",
+					providerEpoch: "native-qa",
+				},
+				timelineEpoch: "native-qa",
+				bindingRevision: 1,
+				historyComplete: true,
+				createdAtMs: 1,
+				updatedAtMs: 1,
+			},
+			rows: [],
+			liveText: [],
+			pendingRequests: [],
+			activeTurn: null,
+			goal: null,
+			finalCursor: { epoch: "native-qa", sequence: 0 },
+			hasMore: false,
+		};
+		const input: AgentChatSubmission = {
+			agentId: identity.agentId,
+			kind: "start",
+			routeAuthority,
+			request: {
+				schemaVersion: 1,
+				interactionSessionId: identity.interactionSessionId,
+				runtime: page.binding.runtime,
+				turnId: "native-unconfirmed-turn",
+				clientMessageId: "native-unconfirmed-input",
+				input: restoredInput,
+				requestedAtMs: 1,
+			},
+		};
+		if (!peerMode) await agentChatSubmissionStore.put(input);
+		const forbidden = async (): Promise<never> => {
+			submissions += 1;
+			throw new Error("Native draft QA must not submit provider work");
+		};
+		const home = (await homeDir()).replace(/\/$/, "");
+		check(
+			home.includes("/dure-chat-draft-windows.") && home.endsWith("/home"),
+			"Native draft QA escaped its disposable HOME",
+		);
+		const queueFile = `${home}/queued-input-state.txt`;
+		if (!peerMode) await writeFile(queueFile, "inactive");
+		const queuedIntent = {
+			...input.request,
+			turnId: "native-queued-turn",
+			clientMessageId: "native-queued-input",
+			input: queuedInput,
+		};
+		async function read() {
+			return {
+				backend: routeAuthority.backend,
+				routeAuthority,
+				read: {
+					type: "page" as const,
+					page: {
+						...page,
+						queuedInputs: {
+							interactionSessionId: identity.interactionSessionId,
+							inputs:
+								(await readFile(queueFile)).content === "queued"
+									? [
+											{
+												clientMessageId: queuedIntent.clientMessageId,
+												sequence: 1,
+												preview: queuedInput,
+											},
+										]
+									: [],
+							nextAfter: null,
+						},
+					},
+				},
+			};
+		}
+		const client: DureAgentConversationClient = {
+			inspect: async () => ({
+				backend: routeAuthority.backend,
+				routeAuthority,
+				binding: page.binding,
+			}),
+			recover: async (binding) => binding,
+			read,
+			subscribe: async () => {
+				const observed = await read();
+				return {
+					...observed,
+					initial: observed.read,
+					subscriptionId: "native-qa",
+					close: async () => {},
+				};
+			},
+			inspectInput: async (request) => {
+				if (request.clientMessageId !== queuedIntent.clientMessageId)
+					return null;
+				if (holdQueueRead) {
+					queueReadStarted = true;
+					await queueRead;
+				}
+				const state = (await readFile(queueFile)).content;
+				if (state === "inactive") return null;
+				check(
+					state === "queued" || state === "canceled",
+					"Invalid fixture queue state",
+				);
+				return { kind: "queued", intent: queuedIntent, state };
+			},
+			cancelQueuedTurn: async (request) => {
+				check(
+					request.clientMessageId === queuedIntent.clientMessageId,
+					"Unexpected cancellation",
+				);
+				await writeFile(queueFile, "canceled");
+				queuedCancellations += 1;
+				return {
+					intent: queuedIntent,
+					state: "canceled",
+					timelineCursor: { epoch: "native-qa", sequence: 2 },
+				};
+			},
+			readQueue: forbidden,
+			enqueueTurn: forbidden,
+			startTurn: forbidden,
+			steerTurn: forbidden,
+			answerPending: forbidden,
+			interruptTurn: forbidden,
+			putGoal: forbidden,
+		};
+		const removing = new Promise<void>((resolve) => {
+			releaseRemoval = resolve;
+		});
+		const controller = new AgentChatSessionController({
+			...identity,
+			client,
+			submissionStore: {
+				...agentChatSubmissionStore,
+				remove: async (submission) => {
+					if (!peerMode && submission.kind !== "edit") await removing;
+					await agentChatSubmissionStore.remove(submission);
+				},
+			},
+		});
+		recovery = controller;
+		controller.start();
+		await waitFor(
+			"persisted recovery input",
+			() => controller.getSnapshot().phase === "ready",
+		);
+
+		session.editRetryableTurn = (restore) => {
+			restoration = controller.editRetryableTurn(restore);
+			return restoration;
+		};
+		session.dequeueMessage = (id, restore) => {
+			queuedEditing = controller.dequeueMessage(id, restore);
+			return queuedEditing;
+		};
+		function Composer() {
+			const snapshot = useSyncExternalStore(
+				controller.subscribe,
+				controller.getSnapshot,
+			);
+			return (
+				<ChatComposer session={{ ...session, ...snapshot }} disabled={false} />
+			);
+		}
+		function queueEditButton() {
+			return [...element.querySelectorAll("button")].find(
+				(button) =>
+					button.getAttribute("aria-label") === t("agents.chat.queuedEdit"),
+			);
+		}
+
 		useStore.setState({ activeSpaceId: desktopId });
 		api = createDockview(element, {
 			createComponent: () => {
@@ -276,7 +482,7 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 					init(parameters) {
 						if (parameters.api.id === panelId) {
 							root = createRoot(pane);
-							root.render(<ChatComposer session={session} disabled={false} />);
+							root.render(<Composer />);
 						} else pane.textContent = "Reference pane";
 					},
 					dispose() {
@@ -322,7 +528,7 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 					if (payload.proof !== proof) return;
 					void (async () => {
 						let receipt: unknown;
-						if (payload.action === "drop") {
+						if (payload.action === "drop" || payload.action === "queued-drop") {
 							receipt = await movePanelToDesktopDrop(
 								{ panelId, fromDesktopId: "draft-source" },
 								desktopId,
@@ -337,7 +543,19 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 								text: editedText,
 							}));
 							mounted.getPanel(panelId)!.api.setTitle("Edited after transfer");
-						} else if (payload.action === "return") {
+						} else if (payload.action === "queued-edit") {
+							await waitFor(
+								"late queued edit reaches the connected destination",
+								() =>
+									controller.getSnapshot().pendingQueueEdits?.length === 1 &&
+									Boolean(queueEditButton()),
+							);
+							queueEditButton()!.click();
+							await queuedEditing;
+						} else if (
+							payload.action === "return" ||
+							payload.action === "queued-return"
+						) {
 							receipt = await movePanelsToDesktop(
 								[{ panelId, fromDesktopId: desktopId }],
 								"draft-source",
@@ -356,6 +574,7 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 			window.addEventListener(
 				"pagehide",
 				() => {
+					controller.stop();
 					for (const stop of stops.splice(0).reverse()) stop();
 				},
 				{ once: true },
@@ -373,12 +592,25 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 			fileName: nativeChatDraftImageName,
 			dataB64: canvas.toDataURL("image/png").split(",")[1],
 		};
-		const original = { text: originalText, attachments: [image] };
+		const original = {
+			text: `${restoredInput}\n${originalText}`,
+			attachments: [image],
+		};
 		await deliverAgentChatDraft(
 			prepareAgentChatDraftTarget(useStore.getState().agents[0]),
 			originalText,
 			[image],
 		);
+		await waitFor("unconfirmed input recovery button", () =>
+			[...element.querySelectorAll("button")].some(
+				(button) => button.textContent === t("agents.chat.editUncertainSend"),
+			),
+		);
+		[...element.querySelectorAll("button")]
+			.find(
+				(button) => button.textContent === t("agents.chat.editUncertainSend"),
+			)!
+			.click();
 		await report("source-ready");
 		observations.push(snapshot("source-ready"));
 		peer = new WebviewWindow(peerLabel, {
@@ -429,6 +661,26 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 			"Source draft was not released",
 		);
 		observations.push(snapshot("source-released"));
+		check(
+			(
+				await agentChatSubmissionStore.list(
+					identity.agentId,
+					identity.interactionSessionId,
+				)
+			).length === 1,
+			"Recovery retirement was not held across the native window move",
+		);
+		releaseRemoval!();
+		await restoration;
+		check(
+			(
+				await agentChatSubmissionStore.list(
+					identity.agentId,
+					identity.interactionSessionId,
+				)
+			).length === 0,
+			"Completed draft recovery retained its submission record",
+		);
 		const appended = {
 			text: `${original.text}\n\nAdditional capture`,
 			attachments: [...original.attachments, image],
@@ -473,6 +725,65 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 		);
 		await report("returned");
 		observations.push(snapshot("returned"));
+		await writeFile(queueFile, "queued");
+		controller.retryConnection();
+		await waitFor(
+			"queued input available to edit",
+			() =>
+				controller.getSnapshot().phase === "ready" &&
+				Boolean(queueEditButton()),
+		);
+		holdQueueRead = true;
+		queueEditButton()!.click();
+		await waitFor("edit original read is held", () => queueReadStarted);
+		await action("queued-drop");
+		await waitFor(
+			"source composer retires before the edit intent is persisted",
+			() => !mounted.getPanel(panelId),
+		);
+		holdQueueRead = false;
+		releaseQueueRead!();
+		await queuedEditing;
+		check(
+			(
+				await agentChatSubmissionStore.list(
+					identity.agentId,
+					identity.interactionSessionId,
+				)
+			).length === 1,
+			"Canceled edit lost its original after the source composer retired",
+		);
+		const recovered = await action("queued-edit");
+		check(
+			draftMatches(recovered.draft, {
+				...appended,
+				text: `${editedText}\n${queuedInput}`,
+			}),
+			"Destination did not restore the canceled input and existing attachments",
+		);
+		check(
+			recovered.queuedCancellations === 1 && queuedCancellations === 1,
+			"Queue recovery repeated or skipped the explicit cancellation",
+		);
+		check(
+			(
+				await agentChatSubmissionStore.list(
+					identity.agentId,
+					identity.interactionSessionId,
+				)
+			).length === 0,
+			"Completed queued edit retained its durable recovery record",
+		);
+		await action("queued-return");
+		await waitFor(
+			"recovered queued edit returns to source",
+			() =>
+				Boolean(mounted.getPanel(panelId)) &&
+				element.querySelector("textarea")?.value ===
+					`${editedText}\n${queuedInput}`,
+		);
+		await report("queued-returned");
+		observations.push(snapshot("queued-returned"));
 		check(submissions === 0, "Draft migration submitted a provider turn");
 		qaLog("chat-draft-windows", {
 			proof,
@@ -484,6 +795,10 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 			appended,
 			editedText,
 			submissions,
+			restoredInput,
+			recoveryRetiredAfterMove: true,
+			queuedEditRestored: true,
+			queuedInput,
 			imageDigest: await computeTextDigest(image.dataB64),
 			limitation:
 				"Actual hidden WKWebViews, native events/storage and ChatComposer with fixture Agent/session/image. Dockview projection subscriber is a QA adapter; physical OS input, full Workspace shell and provider submission are not claimed.",
@@ -499,7 +814,10 @@ export async function runChatDraftWindowsProbe(): Promise<void> {
 			current: snapshot("failed"),
 		});
 	} finally {
+		releaseRemoval?.();
+		releaseQueueRead?.();
 		if (!peerMode) {
+			recovery?.stop();
 			if (peer)
 				await peer.destroy().catch((error) =>
 					qaLog("chat-draft-windows-cleanup", {
