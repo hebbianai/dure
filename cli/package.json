@@ -1,7 +1,7 @@
 {
   "name": "dure-cli",
   "license": "GPL-3.0-only",
-  "version": "0.2.28",
+  "version": "0.2.29",
   "description": "Command-line control for Dure agents",
   "type": "module",
   "bin": {
