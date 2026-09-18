@@ -8,7 +8,7 @@ async fn failed_react_activation_rolls_back_and_main_page_profiling_leaves_child
     let (root, endpoint, server) = fixture().await;
     let mut resources = Vec::new();
     let evidence: Result<Value,String>=async {
-        let created=cli(&root,&["create","--workspace","workspace-browser","--enable","react-devtools"]).await?;
+        let created=cli(&root,&["create","--enable","react-devtools"]).await?;
         let resource=created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?.to_owned();resources.push(resource.clone());
         let controlled=cli(&root,&["control",&resource,"--controller","react-owner"]).await?;
         let epoch=controlled["result"]["controller"]["epoch"].as_str().ok_or("epoch missing")?;

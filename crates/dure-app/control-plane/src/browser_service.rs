@@ -39,8 +39,8 @@ mod request;
 mod results;
 #[cfg(test)]
 mod results_tests;
+mod storage_workspace;
 mod targets;
-mod workspaces;
 use request::BrowserRequest;
 use results::BrowserResults;
 
@@ -62,7 +62,7 @@ pub(crate) struct BrowserService {
     generation: BrowserResourceGeneration,
     installation: PathBuf,
     resources: Mutex<BTreeMap<BrowserResourceId, ManagedBrowser>>,
-    workspace_targets: std::sync::Mutex<BTreeMap<BrowserWorkspaceId, BrowserWorkspaceTargetHost>>,
+    selected_browser: std::sync::Mutex<BrowserWorkspaceTargetHost>,
     slots: Arc<Semaphore>,
     journal_admission: Mutex<()>,
     // Service shutdown drains admitted receipts before its store is closed.
@@ -78,7 +78,11 @@ impl BrowserService {
                 .expect("validated backend generation"),
             installation: home.join("browser").join("installation.json"),
             resources: Mutex::new(BTreeMap::new()),
-            workspace_targets: std::sync::Mutex::new(BTreeMap::new()),
+            selected_browser: std::sync::Mutex::new(BrowserWorkspaceTargetHost::new(
+                BrowserWorkspaceId::new(storage_workspace::ID)
+                    .expect("static browser storage identity"),
+                BrowserResourceGeneration::new(generation).expect("validated backend generation"),
+            )),
             slots: Arc::new(Semaphore::new(8)),
             journal_admission: Mutex::new(()),
             closing: RwLock::new(false),
@@ -237,7 +241,6 @@ impl BrowserService {
         request: BrowserRequest,
     ) -> Result<Value, BackendDispatchError> {
         match request {
-            BrowserRequest::Workspaces { after } => workspaces::list(store, after.as_ref()).await,
             BrowserRequest::ProfileSet {
                 caller,
                 authority,
@@ -299,18 +302,12 @@ impl BrowserService {
                 .await
                 .map_err(runtime_error),
             BrowserRequest::Create {
-                workspace_id,
-                workspace_path,
                 operation_id,
                 profile_id,
                 init_scripts,
                 features,
             } => {
-                let workspace_id = if workspace_id.is_none() && workspace_path.is_none() {
-                    workspaces::personal(store, self.root.durable()).await?
-                } else {
-                    workspaces::resolve(store, workspace_id, workspace_path).await?
-                };
+                let workspace_id = storage_workspace::personal(store, self.root.durable()).await?;
                 self.create(
                     store,
                     workspace_id,
@@ -320,11 +317,8 @@ impl BrowserService {
                 )
                 .await
             }
-            BrowserRequest::List {
-                workspace_id,
-                workspace_path,
-            } => {
-                let workspace_id = workspaces::resolve(store, workspace_id, workspace_path).await?;
+            BrowserRequest::List {} => {
+                let workspace_id = storage_workspace::personal(store, self.root.durable()).await?;
                 let table = self.resources.lock().await;
                 let mut resources = Vec::new();
                 for managed in table.values() {
@@ -333,9 +327,7 @@ impl BrowserService {
                         resources.push(control);
                     }
                 }
-                let workspace = BrowserWorkspaceId::new(workspace_id.as_str())
-                    .expect("validated workspace identity");
-                let target = self.workspace_target(&table, &workspace)?;
+                let target = self.selected_browser(&table)?;
                 Ok(json!({"workspace_id":workspace_id,"resources":resources,"target":target}))
             }
             BrowserRequest::SelectResource {

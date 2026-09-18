@@ -10,17 +10,17 @@ installed version's command contract; results are JSON.
 
 ## Find the actual tab
 
-For your current workspace, start with `dure browser tab list --json`. When the
-user refers to an open tab elsewhere in Dure, use the cross-workspace inventory:
+Browsers are shared across worktrees on each backend. Start by listing all
+existing tabs:
 
 ```sh
-dure browser tab list --worktree all --show-profile --json
+dure browser tab list --all --show-profile --json
 ```
 
 Match the requested URL/title and read `page.resource.resource_id` and
 `page.page_id` from that row. Use those exact IDs for the task. `browser:main`
-is a UI pane ID, not a Browser resource. `--worktree current` and `active`
-resolve from your working directory; neither means the user's focused pane.
+is a UI pane ID, not a Browser resource. Commands without a resource use the
+backend's selected Browser; they do not follow your working directory or UI focus.
 Use `--backend ID` consistently when the requested Browser is remote.
 
 Reuse the user's pane and tab before creating anything. Also inspect the app:
@@ -57,8 +57,8 @@ dure browser open-url https://www.dureai.dev/ --resource RESOURCE --space SPACE 
 
 Unless the user explicitly requests a separate Browser, create one with
 `dure browser create --json` only after both inventories confirm there is no
-existing Browser to reuse or recover. It belongs to your current local workspace
-unless explicitly selected otherwise. Pass the returned resource ID to
+existing Browser to reuse or recover. It belongs to the selected backend
+and is available from every worktree. Pass the returned resource ID to
 `open-url --resource RESOURCE`. Runtime and presentation results are separate;
 a created tab does not prove it was displayed. Keep the returned pane/resource
 IDs so any task-created duplicates can be distinguished from the user's panes.

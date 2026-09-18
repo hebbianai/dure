@@ -74,7 +74,8 @@ function fixture(
 			};
 		if (body.kind === "list")
 			return {
-				resources: body.workspace_id === resource.workspace_id ? [control] : [],
+				workspace_id: resource.workspace_id,
+				resources: [control],
 			};
 		if (body.kind === "create") return { control };
 		if (body.kind === "observe")
@@ -141,7 +142,7 @@ function fixture(
 	};
 }
 
-it("viewer attachment is passive and explicit workspace selection binds the inspected resource", async () => {
+it("viewer attachment is passive and explicit default selection binds the inspected resource", async () => {
 	const second = { ...resource, resource_id: "browser:second" };
 	let selected: {
 		workspace_id: string;
@@ -184,20 +185,19 @@ it("viewer attachment is passive and explicit workspace selection binds the insp
 	});
 	const pane = f.mount();
 	try {
-		await waitFor(() => expect(pane.result.current.workspaces).toHaveLength(1));
-		await act(() => pane.result.current.selectWorkspace(resource.workspace_id));
+		await waitFor(() => expect(pane.result.current.connected).toBe(true));
 		act(() => pane.result.current.attach(second.resource_id));
 		await act(() => pane.result.current.session!.refresh());
 		expect(f.requests("select_resource")).toHaveLength(0);
 		expect(selected.current_resource).toBeNull();
-		await act(() => pane.result.current.useForWorkspace());
+		await act(() => pane.result.current.selectDefaultBrowser());
 		expect(selected.current_resource).toEqual(second);
-		const stale = pane.result.current.useForWorkspace;
+		const stale = pane.result.current.selectDefaultBrowser;
 		act(() => pane.result.current.attach(resource.resource_id));
 		await act(stale);
 		expect(f.requests("select_resource")).toHaveLength(1);
 		expect(selected.current_resource).toEqual(second);
-		await act(() => pane.result.current.useForWorkspace());
+		await act(() => pane.result.current.selectDefaultBrowser());
 		expect(selected.current_resource).toEqual(resource);
 		expect(f.requests("control")).toHaveLength(0);
 		expect(f.requests("action")).toHaveLength(0);
@@ -210,8 +210,7 @@ it("reconnects the latest saved browser and page on its exact route", async () =
 	const f = fixture();
 	const pane = f.mount();
 	try {
-		await waitFor(() => expect(pane.result.current.workspaces).toHaveLength(2));
-		await act(() => pane.result.current.selectWorkspace("workspace:one"));
+		await waitFor(() => expect(pane.result.current.connected).toBe(true));
 		act(() => pane.result.current.attach(resource.resource_id));
 		await act(() => pane.result.current.session!.refresh());
 		act(() => pane.result.current.selectPage("page:selected"));
@@ -234,7 +233,7 @@ it("reconnects the latest saved browser and page on its exact route", async () =
 	}
 });
 
-it.each([resource.workspace_id, null])(
+it.each([null])(
 	"recovers an uncertain create after remount using its original route and operation (%s)",
 	async (workspaceId) => {
 		const pending = {
@@ -251,7 +250,6 @@ it.each([resource.workspace_id, null])(
 			expect(f.requests("create")[0]).toMatchObject({
 				route: { kind: "exact", authority: route },
 				body: {
-					...(workspaceId === null ? {} : { workspace_id: workspaceId }),
 					operation_id: pending.operationId,
 				},
 			});
@@ -268,38 +266,83 @@ it.each([resource.workspace_id, null])(
 	},
 );
 
-it("loads the saved workspace beyond the first catalog page", async () => {
-	const f = fixture(
-		{ url: "about:blank", browserBinding: { authority: route, resource } },
-		async (body) => {
-			if (body.kind === "workspaces")
-				return body.after
-					? { workspaces: [workspace(resource.workspace_id)], next: null }
-					: {
-							workspaces: [workspace("workspace:earlier")],
-							next: "workspace:earlier",
-						};
-			if (body.kind === "list") return { resources: [control] };
-			throw Error(`Unexpected request ${body.kind}`);
-		},
-	);
+it.each([true, false])(
+	"recovers a legacy worktree create by receipt without changing or replaying it (available: %s)",
+	async (available) => {
+		const pending = {
+			authority: route,
+			workspaceId: resource.workspace_id,
+			operationId: "create:legacy",
+		};
+		const f = fixture({ url: "about:blank", browserCreation: pending });
+		const respondFromFixture = mocks.invoke.getMockImplementation()!;
+		mocks.invoke.mockImplementation(async (command, args) => {
+			if (args.body?.kind !== "receipt") return respondFromFixture(command, args);
+			return {
+				schemaVersion: 1,
+				backendId: route.backend.id,
+				backendGeneration: route.backend.generation,
+				routeAuthority: route,
+				result: {
+					schemaVersion: 1,
+					operation_id: pending.operationId,
+					result_available: available,
+					receipt: {
+						operationId: pending.operationId,
+						operationKind: "browser.resource",
+						state: available ? "succeeded" : "running",
+					},
+					result: available ? { control } : null,
+				},
+			};
+		});
+		const pane = f.mount();
+		try {
+			await waitFor(() => expect(pane.result.current.busy).toBe(false));
+			if (available) {
+				expect(pane.result.current.session?.resource).toEqual(resource);
+				expect(pane.result.current.error).toBeUndefined();
+			} else {
+				expect(pane.result.current.error).toBeDefined();
+				await act(() => pane.result.current.create());
+				expect(pane.result.current.session).toBeUndefined();
+				expect(f.api.updateParameters).toHaveBeenLastCalledWith({
+					browserBinding: undefined,
+					browserCreation: pending,
+				});
+			}
+			expect(f.requests("create")).toHaveLength(0);
+			expect(f.requests("receipt").map((row) => row.body)).toEqual(
+				Array.from({ length: available ? 1 : 2 }, () => ({
+					kind: "receipt",
+					operation_id: pending.operationId,
+				})),
+			);
+		} finally {
+			pane.unmount();
+		}
+	},
+);
+
+it("restores an existing binding directly from the shared catalog without worktree discovery", async () => {
+	const f = fixture({
+		url: "about:blank",
+		browserBinding: { authority: route, resource },
+	});
 	const pane = f.mount();
 	try {
 		await waitFor(() => expect(pane.result.current.busy).toBe(false));
-		expect(
-			pane.result.current.workspaces.map((row) => row.workspace_id),
-		).toContain(resource.workspace_id);
 		expect(pane.result.current.session?.resource).toEqual(resource);
-		expect(f.requests("workspaces").map((args) => args.body.after)).toEqual([
-			undefined,
-			"workspace:earlier",
+		expect(f.requests("workspaces")).toHaveLength(0);
+		expect(f.requests("list").map((row) => row.body)).toEqual([
+			{ kind: "list" },
 		]);
 	} finally {
 		pane.unmount();
 	}
 });
 
-it.each(["workspace create", "personal navigation"])(
+it.each(["explicit create", "personal navigation"])(
 	"does not write a completed create into a pane that has been removed (%s)",
 	async (mode) => {
 		mocks.active = mode === "personal navigation";
@@ -313,14 +356,10 @@ it.each(["workspace create", "personal navigation"])(
 		});
 		const pane = f.mount();
 		await waitFor(() => expect(pane.result.current.busy).toBe(false));
-		if (mode === "workspace create")
-			await act(() =>
-				pane.result.current.selectWorkspace(resource.workspace_id),
-			);
 		let creating!: Promise<void>;
 		act(() => {
 			creating =
-				mode === "workspace create"
+				mode === "explicit create"
 					? pane.result.current.create()
 					: pane.result.current.navigate("https://example.com");
 		});
@@ -338,7 +377,7 @@ it.each(["workspace create", "personal navigation"])(
 it("keeps a lost create pending until an explicit reconnect reuses the same operation", async () => {
 	const pending = {
 		authority: route,
-		workspaceId: resource.workspace_id,
+		workspaceId: null,
 		operationId: "create:lost",
 	};
 	let attempts = 0;
@@ -385,7 +424,7 @@ it.each(["fresh", "restored", "unbound"])(
 		const restored = mode !== "fresh";
 		const pending = {
 			authority: route,
-			workspaceId: resource.workspace_id,
+			workspaceId: null,
 			operationId: "create:missing-installation",
 		};
 		let installed = false;
@@ -420,7 +459,7 @@ it.each(["fresh", "restored", "unbound"])(
 				throw Error(`Unexpected request ${body.kind}`);
 			},
 		);
-		const invoke = mocks.invoke.getMockImplementation()!;
+		const respondFromFixture = mocks.invoke.getMockImplementation()!;
 		if (restored)
 			mocks.invoke.mockImplementation(async (command, args) => {
 				if (
@@ -447,7 +486,7 @@ it.each(["fresh", "restored", "unbound"])(
 							},
 						},
 					};
-				return invoke(command, args);
+				return respondFromFixture(command, args);
 			});
 		let pane = f.mount();
 		try {
@@ -457,10 +496,13 @@ it.each(["fresh", "restored", "unbound"])(
 				code: "browser_engine_not_installed",
 			});
 			expect(f.api.updateParameters).toHaveBeenLastCalledWith({
-				browserBinding: {
-					authority: route,
-					workspaceId: resource.workspace_id,
-				},
+				browserBinding:
+					mode === "unbound"
+						? undefined
+						: {
+								authority: route,
+								workspaceId: resource.workspace_id,
+							},
 				browserCreation: undefined,
 			});
 			expect(f.requests("create")).toHaveLength(1);
@@ -476,7 +518,10 @@ it.each(["fresh", "restored", "unbound"])(
 			const creates = f.requests("create");
 			expect(creates).toHaveLength(2);
 			expect(creates[1].body.operation_id).not.toBe(failedOperation);
-			expect(creates[1].route).toEqual({ kind: "exact", authority: route });
+			expect(creates[1].route).toEqual({
+				kind: "exact",
+				authority: mode === "unbound" ? otherRoute : route,
+			});
 		} finally {
 			pane.unmount();
 		}
@@ -491,7 +536,7 @@ it.each([
 	async (failure) => {
 		const pending = {
 			authority: route,
-			workspaceId: resource.workspace_id,
+			workspaceId: null,
 			operationId: "create:uncertain",
 		};
 		const f = fixture(
@@ -533,44 +578,30 @@ it.each([
 	},
 );
 
-it("does not let an old workspace failure clear the newer selection's pending state", async () => {
+it("does not let an old catalog failure clear a newer reconnect", async () => {
 	const old = deferred<unknown>();
-	const current = deferred<unknown>();
+	const latest = deferred<unknown>();
+	let count = 0;
 	const f = fixture(undefined, async (body) => {
-		if (body.kind === "workspaces")
-			return {
-				workspaces: [workspace("workspace:one"), workspace("workspace:two")],
-				next: null,
-			};
 		if (body.kind === "list")
-			return body.workspace_id === "workspace:one"
-				? old.promise
-				: current.promise;
+			return ++count === 1 ? old.promise : latest.promise;
 		throw Error(`Unexpected request ${body.kind}`);
 	});
 	const pane = f.mount();
 	try {
-		await waitFor(() => expect(pane.result.current.busy).toBe(false));
-		let first!: Promise<void>;
-		let second!: Promise<void>;
-		act(() => {
-			first = pane.result.current.selectWorkspace("workspace:one");
-		});
-		act(() => {
-			second = pane.result.current.selectWorkspace("workspace:two");
-		});
+		await waitFor(() => expect(count).toBe(1));
+		act(() => pane.result.current.reconnect());
+		await waitFor(() => expect(count).toBe(2));
 		await act(async () => {
-			old.reject(Error("old workspace unavailable"));
-			await first;
+			old.reject(Error("old catalog unavailable"));
 		});
 		expect(pane.result.current.busy).toBe(true);
 		expect(pane.result.current.error).toBeUndefined();
 		await act(async () => {
-			current.resolve({ resources: [] });
-			await second;
+			latest.resolve({ resources: [] });
 		});
-		expect(pane.result.current.workspaceId).toBe("workspace:two");
 		expect(pane.result.current.busy).toBe(false);
+		expect(pane.result.current.connected).toBe(true);
 	} finally {
 		pane.unmount();
 	}
@@ -605,14 +636,14 @@ const obsoleteRouteError = {
 	message: "the exact backend route changed",
 };
 function rejectSavedRoute(currentRoute = restartedRoute) {
-	const invoke = mocks.invoke.getMockImplementation()!;
+	const respondFromFixture = mocks.invoke.getMockImplementation()!;
 	mocks.invoke.mockImplementation(async (command, args) => {
 		if (command === "dure_backend_route_assert") {
 			if (args.route.kind === "exact") throw obsoleteRouteError;
 			expect(args.route.profileId).toBe(route.profileId);
 			return currentRoute;
 		}
-		return invoke(command, args);
+		return respondFromFixture(command, args);
 	});
 }
 
@@ -631,11 +662,8 @@ it("loads the current catalog after the saved backend generation restarts withou
 	const pane = f.mount();
 	try {
 		await waitFor(() => expect(pane.result.current.busy).toBe(false));
-		expect(pane.result.current.workspaces).toEqual([
-			workspace(resource.workspace_id),
-		]);
+		expect(pane.result.current.resources).toEqual([]);
 		expect(pane.result.current.error).toBeUndefined();
-		expect(pane.result.current.workspaceId).toBe(resource.workspace_id);
 		expect(pane.result.current.session).toBeUndefined();
 		expect(params.browserBinding).toEqual({
 			authority: restartedRoute,
@@ -710,7 +738,7 @@ it.each([
 it("keeps an uncertain create on its obsolete exact route even after explicit reconnect", async () => {
 	const pending = {
 		authority: route,
-		workspaceId: resource.workspace_id,
+		workspaceId: null,
 		operationId: "create:uncertain-before-restart",
 	};
 	const params = { url: "about:blank", browserCreation: pending };
@@ -738,11 +766,10 @@ it("persists a replacement route only after its catalog and resource list succee
 	const params = { url: "about:blank", browserBinding: saved };
 	let fail = true;
 	const f = fixture(params, async (body) => {
-		if (body.kind === "workspaces") {
+		if (body.kind === "list") {
 			if (fail) throw new Error("catalog interrupted");
-			return { workspaces: [workspace(resource.workspace_id)], next: null };
+			return { resources: [] };
 		}
-		if (body.kind === "list") return { resources: [] };
 		throw Error(`Unexpected request ${body.kind}`);
 	});
 	rejectSavedRoute();

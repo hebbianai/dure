@@ -7,21 +7,20 @@ async fn delete_cli_retires_only_selected_profile_consumers_and_storage() {
     let (root, endpoint, server) = super::super::super::fixture().await;
     let (url, stop_site, site) = site().await;
     let evidence: Result<_, String> = async {
-        peer_workspace(&root).await?;
         let a = cli(&root, &["tab", "profile", "create", "--label", "삭제할 프로필"]).await?;
         let a = a["result"]["profile"]["profile"]["profileId"].as_str().ok_or("profile A missing")?;
         let b = cli(&root, &["tab", "profile", "create", "--label", "유지할 프로필"]).await?;
         let b = b["result"]["profile"]["profile"]["profileId"].as_str().ok_or("profile B missing")?;
-        let origin = Client::create(&root, "workspace-browser", Some(a), "delete-origin").await?;
+        let origin = Client::create(&root, Some(a), "delete-origin").await?;
         origin.action(&root, "goto", &url).await?;
         origin.evaluate(&root, "localStorage.setItem('value','삭제할 한글');document.cookie='value=deleted;Path=/;Max-Age=3600';window.original='삭제';true").await?;
-        let peer = Client::create(&root, "workspace-profile-peer", Some(a), "delete-peer").await?;
+        let peer = Client::create(&root, Some(a), "delete-peer").await?;
         peer.action(&root, "goto", &url).await?;
         let shared = peer.evaluate(&root, "localStorage.getItem('value')").await?;
         let cloned = cli(&root, &["tab","profile","clone",&origin.resource,"--profile",b,"--page",&origin.page,"--controller","profile-agent","--epoch",&origin.epoch]).await?;
         let retained = Client { resource:origin.resource.clone(), page:cloned["result"]["response"]["data"]["page"]["page_id"].as_str().ok_or("profile B page missing")?.to_owned(), epoch:origin.epoch.clone(), created:Value::Null };
         retained.evaluate(&root, "localStorage.setItem('value','유지할 한글');window.retained='문서 유지';true").await?;
-        let default = Client::create(&root, "workspace-browser", None, "delete-default").await?;
+        let default = Client::create(&root, None, "delete-default").await?;
         default.action(&root, "goto", &url).await?;
         default.evaluate(&root, "localStorage.setItem('value','기본 유지');true").await?;
         let profile_path = root.join("backend/browser-profiles").join(format!("{:x}",Sha256::digest(a.as_bytes())));
@@ -35,10 +34,10 @@ async fn delete_cli_retires_only_selected_profile_consumers_and_storage() {
         let peer_gone = cli(&root, &["show",&peer.resource]).await;
         let retained_value = retained.evaluate(&root, "({stored:localStorage.getItem('value'),document:window.retained})").await?;
         let default_value = default.evaluate(&root, "localStorage.getItem('value')").await?;
-        let rejected = cli(&root, &["create","--workspace","workspace-browser","--profile",a]).await;
+        let rejected = cli(&root, &["create","--profile",a]).await;
         let entries = std::fs::read_dir(&profile_path).map_err(|e|e.to_string())?.map(|e|e.map(|e|e.file_name().to_string_lossy().into_owned())).collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
         let catalog = cli(&root, &["tab","profile","list"]).await?;
-        let list = cli(&root, &["list","--workspace","workspace-browser"]).await?;
+        let list = cli(&root, &["list"]).await?;
         Ok(json!({"a":a,"b":b,"shared":shared,"storageExisted":storage_existed,"deleted":deleted,"replay":replay,"again":again,"protected":protected,"missing":missing,
             "selected":selected,"peerGone":peer_gone.err(),"retained":retained_value,"default":default_value,"rejected":rejected.err(),"entries":entries,"catalog":catalog,"list":list,"retainedPage":retained.page}))
     }.await;

@@ -178,7 +178,7 @@ pub(super) async fn exercise(
         require(replayed["result"]["replayed"]==true,&replayed)?;
         require(eval(home,resource,page,epoch,OBSERVE).await?["width"]==900,"replay restored old viewport")?;
 
-        let created = cli(home,&["create","--workspace","workspace-browser"]).await?;
+        let created = cli(home,&["create"]).await?;
         let other = created["result"]["control"]["resource"]["resource_id"].as_str().unwrap().to_owned();
         other_resource = Some(other.clone());
         let shown = cli(home,&["show",&other]).await?;

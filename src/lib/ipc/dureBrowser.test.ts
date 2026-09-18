@@ -75,7 +75,7 @@ describe("Browser creation receipt recovery", () => {
 			.fn()
 			.mockResolvedValue(reply({ control }, "create:personal"));
 		await expect(
-			createDureBrowserClient(route, invoke).create(null, "create:personal"),
+			createDureBrowserClient(route, invoke).create("create:personal"),
 		).resolves.toEqual(control);
 		expect(invoke).toHaveBeenCalledTimes(1);
 		expect(invoke.mock.calls[0][1]).toMatchObject({
@@ -83,12 +83,6 @@ describe("Browser creation receipt recovery", () => {
 			body: { kind: "create", operation_id: "create:personal" },
 		});
 		expect(invoke.mock.calls[0][1].body).not.toHaveProperty("workspace_id");
-		await expect(
-			createDureBrowserClient(route, invoke).create(
-				"workspace:other",
-				"create:personal",
-			),
-		).rejects.toThrow();
 	});
 	const operationId = "create:missing-installation";
 	const failed = {
@@ -108,10 +102,7 @@ describe("Browser creation receipt recovery", () => {
 	it("preserves the terminal failure from the exact journaled create", async () => {
 		const invoke = vi.fn().mockResolvedValue(envelope(failed));
 		await expect(
-			createDureBrowserClient(route, invoke).create(
-				resource.workspace_id,
-				operationId,
-			),
+			createDureBrowserClient(route, invoke).create(operationId),
 		).rejects.toMatchObject({
 			code: "browser_engine_not_installed",
 			failure: { kind: "operation", disposition: "terminal" },
@@ -136,17 +127,14 @@ describe("Browser creation receipt recovery", () => {
 		async (result) => {
 			const invoke = vi.fn().mockResolvedValue(envelope(result));
 			await expect(
-				createDureBrowserClient(route, invoke).create(
-					resource.workspace_id,
-					operationId,
-				),
+				createDureBrowserClient(route, invoke).create(operationId),
 			).rejects.toMatchObject({ code: "browser_desktop_response_invalid" });
 			expect(invoke).toHaveBeenCalledTimes(1);
 		},
 	);
 });
 
-describe("Browser workspace selection", () => {
+describe("Shared Browser selection", () => {
 	const target = {
 		workspace_id: resource.workspace_id,
 		generation: resource.generation,
@@ -158,16 +146,16 @@ describe("Browser workspace selection", () => {
 		revision: "9007199254740994",
 		current_resource: resource,
 	};
-	it("rejects an empty catalog projected for another workspace", async () => {
+	it("rejects a catalog whose ownership disagrees with its target", async () => {
 		const invoke = vi.fn().mockResolvedValue(
 			reply({
 				workspace_id: "foreign",
 				resources: [],
-				target: { ...target, workspace_id: "foreign" },
+				target,
 			}),
 		);
 		await expect(
-			createDureBrowserClient(route, invoke).list(resource.workspace_id),
+			createDureBrowserClient(route, invoke).list(),
 		).rejects.toThrow();
 		expect(invoke).toHaveBeenCalledTimes(1);
 	});
@@ -189,7 +177,7 @@ describe("Browser workspace selection", () => {
 			),
 		).toEqual(selected);
 		expect(invoke.mock.calls.map(([, args]) => args.body)).toEqual([
-			{ kind: "list", workspace_id: resource.workspace_id },
+			{ kind: "list" },
 			{
 				kind: "select_resource",
 				resource,
@@ -367,51 +355,6 @@ describe("Browser profile page changes", () => {
 			expect(
 				kind === "profile_clone" ? result.createdPage : result.replacedPage,
 			).toEqual(changed);
-		},
-	);
-});
-
-describe("Browser workspace discovery", () => {
-	const row = {
-		workspace_id: "workspace:one",
-		project_name: "Workspace project",
-		root_path: "/srv/remote/workspace",
-	};
-
-	it("keeps workspace paths on their backend and passes the exact continuation", async () => {
-		const result = { workspaces: [row], next: row.workspace_id };
-		const invoke = vi.fn().mockResolvedValue(reply(result));
-		const client = createDureBrowserClient(route, invoke);
-		expect(await client.workspaces("workspace:before")).toEqual(result);
-		expect(invoke).toHaveBeenCalledTimes(1);
-		expect(invoke.mock.calls[0]?.[1]).toMatchObject({
-			operation: "browser.resource",
-			body: { kind: "workspaces", after: "workspace:before" },
-		});
-	});
-
-	it.each([
-		{ workspaces: [row], next: "workspace:other" },
-		{ workspaces: [row, row], next: null },
-		{ workspaces: [row], next: null },
-	])("rejects malformed or repeated catalog progress %j", async (result) => {
-		const invoke = vi.fn().mockResolvedValue(reply(result));
-		await expect(
-			createDureBrowserClient(route, invoke).workspaces(row.workspace_id),
-		).rejects.toThrow();
-		expect(invoke).toHaveBeenCalledTimes(1);
-	});
-
-	it.each(["", "invalid cursor"])(
-		"rejects invalid continuation %j before backend contact",
-		async (after) => {
-			const invoke = vi
-				.fn()
-				.mockResolvedValue(reply({ workspaces: [], next: null }));
-			await expect(
-				createDureBrowserClient(route, invoke).workspaces(after),
-			).rejects.toThrow();
-			expect(invoke).not.toHaveBeenCalled();
 		},
 	);
 });

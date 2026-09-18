@@ -31,7 +31,7 @@ test("use selects the exact resource with the observed workspace revision and no
     assert.equal(report.ok, true, JSON.stringify(report));
     assert.deepEqual(client.calls, [
       { kind: "control_state", resource_id: resource.resource_id },
-      { kind: "list", workspace_id: resource.workspace_id },
+      { kind: "list" },
       { kind: "select_resource", resource, expected: target, operation_id: "select:once" },
     ]);
     assert.deepEqual(report.result, { target: selected });
@@ -69,7 +69,7 @@ test("uncertain selection is never automatically replayed", async () => {
 });
 
 test("use requires an explicit choice and rejects input options before dispatch", async () => {
-  for (const args of [["use", "--worktree", "current"], ["use", resource.resource_id, "--controller", "agent"], ["use", resource.resource_id, "--page", "page:one"]]) {
+  for (const args of [["use", "--current"], ["use", resource.resource_id, "--controller", "agent"], ["use", resource.resource_id, "--page", "page:one"]]) {
     const client = fixture();
     const report = await client.run(args);
     assert.equal(report.error?.code, "browser_command_invalid");

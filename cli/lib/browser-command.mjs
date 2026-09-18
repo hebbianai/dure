@@ -33,17 +33,15 @@ import { collectBrowserStateFiles, defaultBrowserStateOutput } from "./browser-s
 import { stageBrowserUploadBytes, stageBrowserUploads } from "./browser-upload.mjs";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
-import { parseBrowserWorkspacePage } from "./contracts/browser-workspaces.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
-import { browserWorkspaceSelection, resolveBrowserWorkspaceTarget, browserWorkspaceResource, assertBrowserWorkspaceResource, selectBrowserWorkspaceResource } from "./browser-workspace-target.mjs";
+import { browserResourceSelection, browserCatalogResource, assertBrowserResource, selectBrowserResource } from "./browser-resource-target.mjs";
 
 export const BROWSER_HELP = `Dure Pro browser (development installation)
 Usage:
-  dure browser open-url URL [--resource ID | --workspace ID | --worktree SELECTOR] [--space ID|NAME] [--profile ID] [--controller ID --epoch EPOCH]
-  dure browser exec [RESOURCE | --workspace ID | --worktree SELECTOR] --command COMMAND [--page PAGE] [--controller ID --epoch EPOCH]
-  dure browser workspaces [--after WORKSPACE_ID]
-  dure browser create [--workspace ID | --worktree SELECTOR] [--profile ID] [--init-script FILE]... [--enable react-devtools] [--idempotency-key KEY]
-  dure browser list [--workspace ID | --worktree SELECTOR]
+  dure browser open-url URL [--resource ID] [--space ID|NAME] [--profile ID] [--controller ID --epoch EPOCH]
+  dure browser exec [RESOURCE] --command COMMAND [--page PAGE] [--controller ID --epoch EPOCH]
+  dure browser create [--profile ID] [--init-script FILE]... [--enable react-devtools] [--idempotency-key KEY]
+  dure browser list
   dure browser use RESOURCE [--idempotency-key KEY]
   dure browser tab profile list
   dure browser tab profile create --label NAME [--scope isolated|imported] [--no-ua-spoof] [--idempotency-key KEY]
@@ -53,8 +51,8 @@ Usage:
   dure browser tab profile clone RESOURCE --profile ID --page ID --controller ID --epoch EPOCH [--idempotency-key KEY]
   dure browser tab profile delete --profile ID [--idempotency-key KEY]
   dure browser show RESOURCE
-  dure browser tab list [RESOURCE | --workspace ID | --worktree SELECTOR|all] [--show-profile]
-  dure browser tab current [RESOURCE | --workspace ID | --worktree SELECTOR|all]
+  dure browser tab list [RESOURCE] [--all] [--show-profile]
+  dure browser tab current [RESOURCE] [--all]
   dure browser tab show RESOURCE --page PAGE
   dure browser tab create RESOURCE [URL] --controller ID --epoch EPOCH [--page PAGE] [--profile ID]
   dure browser tab switch RESOURCE --page PAGE|--index INDEX --controller ID --epoch EPOCH [--focus [--space ID|NAME]]
@@ -206,40 +204,30 @@ Named arguments can replace positional action values, for example:
   dure browser download --selector a --path file.zip --controller ID --epoch EPOCH
 Use named or positional action values in one command, without mixing them.
 Named commands and commands with no action values, such as snapshot or tab list,
-default to the current local workspace when no resource/workspace is specified.
-Tab profile commands also require --page for this default. Remote backends need
-an explicit workspace ID or server path, resource ID, or snapshot reference.
+default to the selected Browser on the chosen backend, regardless of the current
+directory or worktree. Tab profile commands also require --page for this default.
 The same controller lease and operation recovery rules apply to both syntaxes.
 An encoded @br1 snapshot reference supplies its own resource for get/is and
 element input commands, for example dure browser get value @br1.REFERENCE or
 dure browser fill @br1.REFERENCE TEXT --controller ID --epoch EPOCH.
-The original workspace, resource generation, page and document remain bound to
-the reference. It does not select a backend or acquire controller authority.
-Positional CSS selectors need an explicit resource or workspace target.
-Use --worktree current|active|id:ID|path:PATH or --workspace ID instead of RESOURCE
-to target the workspace's selected Browser, for example:
-  dure browser get url --worktree current
-  dure browser fill input "Hello" --worktree current --controller ID --epoch EPOCH
-The selector replaces RESOURCE, so do not combine it with a positional resource
-or --resource. Use "dure browser use RESOURCE" to select a Browser for workspace
-commands. New Browsers become selected; closing the selected Browser clears it.
-Viewing another Browser does not select it. Older backends support this lookup
-only when the workspace contains exactly one Browser. Missing selection requires
-an explicit Browser choice. This lookup neither creates a Browser nor acquires
-control. Existing references
-retain their own page/document identity and must match the selected resource.
-Workspaces returns one page of up to 128 entries. Pass result.next as --after
-to continue; a null next marks the final page. Paths belong to the selected backend.
-Tab list --worktree all follows every workspace page on the selected backend and
-lists every Browser resource. Each tab's page.resource identifies its workspace;
-active marks the current page within that resource. This read never changes the
-selected Browser or page. --show-profile includes the saved profile_label.
-The full enumeration has a 45-second deadline; a failed observation returns an
-error instead of a partial list. Tab current --worktree all returns the first
-resource-current tab in catalog order; it does not report OS focus.
-Create/list default to the current directory on a local backend. Worktree selectors
-are current, active, id:ID or path:PATH. Remote backends require an explicit ID or
-server path. The backend selects the unique deepest enclosing workspace.
+The original resource generation, page and document remain bound to the reference.
+It does not select a backend or acquire controller authority.
+Use --current in place of RESOURCE for positional commands. Named commands use the
+selected Browser, for example:
+  dure browser get --what url
+  dure browser fill --element input --value "Hello" --controller ID --epoch EPOCH
+Use "dure browser use RESOURCE" to select the default Browser. New Browsers become
+selected; closing the selected Browser clears it. Viewing another Browser does
+not select it. Missing selection requires an explicit Browser choice. This lookup
+neither creates a Browser nor acquires control. Existing references retain their
+own page/document identity and must match the selected resource.
+Create/list use the shared browser collection on the selected local or remote
+backend. Browser storage is independent of project and worktree directories.
+Tab list --all lists every Browser resource on that backend; active marks the
+current page within each resource. This read never changes Browser or page
+selection. --show-profile includes the saved profile_label. Enumeration has one
+45-second deadline; a failed observation returns an error instead of a partial list.
+Tab current --all returns the first resource-current tab in catalog order, not OS focus.
 Snapshots include cursor, mouse-listener, focusable and editable elements.
 The --cursor flag is accepted for native command compatibility; discovery also
 runs for default snapshots.
@@ -369,8 +357,8 @@ authentication applies across origins visited by the selected page.
 Network capture records HTTP metadata for the page across navigation.
 Start/stop require control; status is passive. Use --output FILE.har to save stop's
 result to a local file, or omit it for base64 HAR data. Capture also accepts
-the prefix form, for example capture stop --worktree current --controller ID
---epoch EPOCH. Without a resource/workspace selector it uses the local workspace.
+the prefix form, for example capture stop --controller ID
+--epoch EPOCH. Without a resource selector it uses the backend's selected Browser.
 The HAR retains bounded request/response headers, POST data and timing;
 truncation is reported in the file. Recover a stopped recording through
 artifact and its operation ID. Requests already in flight, including their
@@ -423,7 +411,7 @@ Create defaults to isolated scope and a clean User-Agent setting; --no-ua-spoof
 selects native. Imported scope does not read another browser's personal data.
 Browser create selects the persistent default profile unless --profile ID is given.
 Regular tabs using the same profile share cookies and local storage across
-workspaces; different profiles have separate storage. Closing the last resource
+Browsers; different profiles have separate storage. Closing the last resource
 preserves profile data. Private window data lasts only while its context is open.
 Tab create --profile ID opens the requested URL directly in that saved profile,
 preserving the source page. Omit --profile to use the current page's profile.
@@ -446,7 +434,7 @@ reconnects to the selected owned page. Direct close retires the browser resource
 trace and profiler share one recording interval in the selected browser instance.
 Task scope requires a browser that has only admitted this resource and prevents
 other resources from joining during capture. --scope browser explicitly includes
-all pages in that instance, including other workspaces and private windows.
+all pages in that instance, including other Browsers and private windows.
 Only the originating resource's current controller may stop and export it.
 Stop writes JSON to the supplied client path or an owner-only browser-traces file
 under DURE_HOME. Recover its immutable artifact with the stop operation receipt.
@@ -504,7 +492,7 @@ function normalizeResource(options) {
   const words = options.positional;
   const command = words[0];
   if (options.resource !== undefined) {
-    if (!isDureDomainIdV1(options.resource) || ["workspaces", "create", "list", "receipt", "artifact"].includes(command)) throw new Error("browser_command_invalid");
+    if (!isDureDomainIdV1(options.resource) || ["create", "list", "receipt", "artifact"].includes(command)) throw new Error("browser_command_invalid");
     let index = command === "tab" ? 2 : 1;
     if (command === "tab" && words[1] === "profile") {
       if (!["show", "set", "clone", "use-default"].includes(words[2])) throw new Error("browser_command_invalid");
@@ -555,18 +543,18 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
     }
     if (options.space !== undefined) throw new Error("browser_command_invalid");
     const implicitController = implicitBrowserSessionController(options, sourceEnvironment);
-    const workspaceSelection = browserWorkspaceSelection(options);
+    const resourceSelection = browserResourceSelection(options);
     const elementTarget = normalizeResource(options);
     const tab = options.positional[0] === "tab" && options.positional[1] !== "profile" ? options.positional[1] : undefined;
     if (tab !== undefined) {
       const [, , resource, ...values] = options.positional;
       const mapped = { list: "tab-list", current: "tab-current", show: "tab-show", create: "tab-new", switch: "tab-switch", close: "tab-close" };
-      if (!Object.hasOwn(mapped, tab) || (!resource && !workspaceSelection.all)) throw new Error("browser_command_invalid");
+      if (!Object.hasOwn(mapped, tab) || (!resource && !resourceSelection.all)) throw new Error("browser_command_invalid");
       if (tab === "create") {
         if (values.length > 1 || (values.length && options.url !== undefined)) throw new Error("browser_command_invalid");
         options.positional = [mapped[tab], resource, values[0] ?? options.url ?? "about:blank"];
         delete options.url;
-      } else options.positional = [mapped[tab], ...(workspaceSelection.all ? [] : [resource]), ...values];
+      } else options.positional = [mapped[tab], ...(resourceSelection.all ? [] : [resource]), ...values];
     }
 
     operationId = options.operationId ?? randomUUID();
@@ -581,10 +569,8 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
     const diffScreenshot = diff?.kind === "screenshot" ? diff : undefined;
     const snapshotOptions = diff ? diffSnapshot : browserSnapshotOptions(command, options);
     if (options.showProfile && command !== "tab-list") throw new Error("browser_command_invalid");
-    if (workspaceSelection.all && Object.keys(options).some((key) => !["positional", "backend", "operationId", "showProfile"].includes(key))) throw new Error("browser_command_invalid");
+    if (resourceSelection.all && Object.keys(options).some((key) => !["positional", "backend", "operationId", "showProfile"].includes(key))) throw new Error("browser_command_invalid");
     if (command === "use" && (!isDureDomainIdV1(requestedResourceId) || Object.keys(options).some((key) => !["positional", "backend", "operationId"].includes(key)))) throw new Error("browser_command_invalid");
-    if (options.after !== undefined && (command !== "workspaces" || !isDureDomainIdV1(options.after))) throw new Error("browser_command_invalid");
-    if (command === "workspaces" && Object.keys(options).some((key) => !["positional", "backend", "after", "operationId"].includes(key))) throw new Error("browser_command_invalid");
     const profiles = command === "tab" && requestedResourceId === "profile" ? browserProfiles(values, options, operationId) : undefined;
     const tabLabel = options.label !== undefined && ["tab-new", "tab-switch", "tab-close", "tab-show"].includes(command) ? browserTabLabel(options.label) : undefined;
     const profileNewPage = command === "tab-new" && options.profileId !== undefined
@@ -631,9 +617,9 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
     const networkQuery = command === "network" && !networkHistory ? browserNetworkQuery(options) : undefined;
     if (command !== "cookie" && ["url", "domain", "path", "secure", "httpOnly", "sameSite", "expires", "cookieFile"].some((key) => options[key] !== undefined)) throw new Error("browser_command_invalid");
     if (!["viewport", "media", "geo", "offline", "headers", "permission", "set"].includes(command) && ["scale", "mobile", "colorScheme", "reducedMotion", "accuracy"].some((key) => options[key] !== undefined)) throw new Error("browser_command_invalid");
-    const counts = { workspaces: 0, create: 0, list: 0, use: 1, show: 1, "tab-list": 1, "tab-current": 1, "tab-show": 1, network: 1, control: 1, snapshot: 1, screenshot: 1, "full-screenshot": 1, pdf: 1, artifact: 1, download: 2, goto: 2, pushstate: 2, "init-script": 3, back: 1, forward: 1, reload: 1, tap: 2, swipe: 2, click: 2, dblclick: 2, select: 3, check: 2, uncheck: 2, focus: 2, clear: 2, "select-all": 2, hover: 2, highlight: 2, scrollintoview: 2, scroll: 3, drag: 3, fill: 3, inserttext: 2, keyboard: 3, key: 2, keydown: 2, keyup: 2, eval: 2, "tab-new": 2, "tab-switch": 1, "tab-close": 1, close: 1, disconnect: 1, receipt: 1 };
+    const counts = { create: 0, list: 0, use: 1, show: 1, "tab-list": 1, "tab-current": 1, "tab-show": 1, network: 1, control: 1, snapshot: 1, screenshot: 1, "full-screenshot": 1, pdf: 1, artifact: 1, download: 2, goto: 2, pushstate: 2, "init-script": 3, back: 1, forward: 1, reload: 1, tap: 2, swipe: 2, click: 2, dblclick: 2, select: 3, check: 2, uncheck: 2, focus: 2, clear: 2, "select-all": 2, hover: 2, highlight: 2, scrollintoview: 2, scroll: 3, drag: 3, fill: 3, inserttext: 2, keyboard: 3, key: 2, keydown: 2, keyup: 2, eval: 2, "tab-new": 2, "tab-switch": 1, "tab-close": 1, close: 1, disconnect: 1, receipt: 1 };
     if (imageCapture) counts[command] += values.length;
-    if (workspaceSelection.all) counts[command] = 0;
+    if (resourceSelection.all) counts[command] = 0;
     counts.vitals = values.length + 1;
     if (diff) counts.diff = 2;
     if (react) counts.react = values.length + 1;
@@ -708,8 +694,7 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
     const deadlineMs = waiting?.deadlineMs ?? 45_000;
     backend = await resolveBackend({ backend: options.backend, backendSpecified: options.backend !== undefined });
     if (!backend?.profile || backend.error) return { ok: false, operation_id: operationId, error: backendRequestFailure(backend?.error, backend?.profile) };
-    const workspaceTarget = resolveBrowserWorkspaceTarget(workspaceSelection, backend.profile, cwd);
-    const aggregateDeadline = workspaceSelection.all ? Date.now() + deadlineMs : undefined;
+    const aggregateDeadline = resourceSelection.all ? Date.now() + deadlineMs : undefined;
     let selectedResource;
     const request = async (body) => {
       const remainingMs = aggregateDeadline === undefined ? deadlineMs : aggregateDeadline - Date.now();
@@ -719,12 +704,12 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
         { requestId: randomUUID(), operation: "browser.resource", requiredCapabilities: ["browser.resource.v1", ...(uploading || downloading || stateLoading || diff ? ["browser.files.v1"] : []), ...(exportsFile ? ["browser.capture.v1"] : []), ...(tracing ? ["browser.tracing.v1"] : []), ...(query || console ? ["browser.query.v1"] : []), ...(finding ? ["browser.find.v1"] : []), ...(waiting ? ["browser.wait.v1"] : []), ...(command === "network" || networkCapture || interception ? ["browser.network.v1"] : [])], body },
         { ...backend.transportOptions, deadlineMs: remainingMs, maxResponseBytes: 2 * 1024 * 1024 },
       );
-      assertBrowserWorkspaceResource(selectedResource, body.kind, response.result);
+      assertBrowserResource(selectedResource, body.kind, response.result);
       return response.result;
     };
-    if (workspaceSelection.scoped) {
-      const catalog = await request({ kind: "list", ...workspaceTarget });
-      selectedResource = browserWorkspaceResource(catalog?.result, workspaceTarget);
+    if (resourceSelection.scoped) {
+      const catalog = await request({ kind: "list" });
+      selectedResource = browserCatalogResource(catalog?.result);
       resourceId = selectedResource.resource_id;
     }
     const needsController = !!(action || profileChange || dialog?.response || console?.clear || networkHistory?.clear
@@ -742,7 +727,7 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
       }
     }
     let result;
-    if (workspaceSelection.all) {
+    if (resourceSelection.all) {
       const tabs = await allBrowserTabs(request);
       if (command === "tab-current") {
         const tab = tabs.find((row) => row.active);
@@ -751,15 +736,10 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
       } else result = { result: { tabs: options.showProfile ? await browserTabsWithProfiles(request, tabs) : tabs } };
     } else if (profiles && !profileChange && !profileShow) {
       result = await request(profiles);
-    } else if (command === "workspaces") {
-      result = await request({ kind: "workspaces", ...(options.after === undefined ? {} : { after: options.after }) });
-      const page = parseBrowserWorkspacePage(result?.result, options.after);
-      if (!page) throw new Error("browser_response_invalid");
-      result = { ...result, result: page };
     } else if (command === "create" || command === "list") {
-      result = await request({ kind: command, ...workspaceTarget, ...(command === "create" ? { operation_id: operationId, ...(options.profileId !== undefined ? { profile_id: options.profileId } : {}), ...(launchScripts !== undefined ? { init_scripts: launchScripts } : {}), ...(launchFeatures !== undefined ? { features: launchFeatures } : {}) } : {}) });
+      result = await request({ kind: command, ...(command === "create" ? { operation_id: operationId, ...(options.profileId !== undefined ? { profile_id: options.profileId } : {}), ...(launchScripts !== undefined ? { init_scripts: launchScripts } : {}), ...(launchFeatures !== undefined ? { features: launchFeatures } : {}) } : {}) });
     } else if (command === "use") {
-      result = await selectBrowserWorkspaceResource(request, resourceId, operationId);
+      result = await selectBrowserResource(request, resourceId, operationId);
     } else if (command === "receipt") {
       result = await request({ kind: "receipt", operation_id: resourceId });
     } else if (command === "artifact") {

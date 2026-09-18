@@ -229,7 +229,7 @@ export async function runBrowserPanelProbe(): Promise<void> {
 					throw new Error("Invalid native fixture resource");
 				const authority =
 					await resolveSelectedDureBackendRouteAuthority(undefined);
-				await createDureBrowserClient(authority).workspaces();
+				await createDureBrowserClient(authority).list();
 				useStore.setState((state) => ({
 					uiPrefs: { ...state.uiPrefs, interfaceMode: "pro" },
 				}));

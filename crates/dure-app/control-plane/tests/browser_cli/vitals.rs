@@ -64,7 +64,7 @@ async fn real_cli_measures_reload_and_url_without_reloading_its_peer() {
     let evidence: Result<_, String> = async {
         let mut owned = Vec::new();
         for (index, name) in ["vitals-owner", "vitals-peer"].iter().enumerate() {
-            let created = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", name]).await?;
+            let created = cli(&root, &["create", "--idempotency-key", name]).await?;
             let id = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?.to_owned();
             resources.push(id.clone());
             let controlled = cli(&root, &["control", &id, "--controller", name]).await?;
@@ -147,7 +147,7 @@ async fn disconnected_measurement_finishes_once_and_foreign_navigation_cannot_su
     let (root, endpoint, server) = fixture().await;
     let mut resources = Vec::new();
     let evidence: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser", "--idempotency-key", "vitals-fault-create"]).await?;
+        let created = cli(&root, &["create", "--idempotency-key", "vitals-fault-create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?.to_owned();
         resources.push(resource.clone());
         let controlled = cli(&root, &["control", &resource, "--controller", "vitals-owner"]).await?;
@@ -233,7 +233,7 @@ async fn measurement_registration_is_removed_after_same_document_reload_and_reje
     let (root, endpoint, server) = fixture().await;
     let mut resources = Vec::new();
     let evidence: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"]
             .as_str().ok_or("resource missing")?.to_owned();
         resources.push(resource.clone());

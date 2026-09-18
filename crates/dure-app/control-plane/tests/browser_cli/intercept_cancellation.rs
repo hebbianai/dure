@@ -7,7 +7,7 @@ async fn interception_request_cancellation_preserves_observation_and_later_traff
     let (root, endpoint, server) = fixture().await;
     let (base, received, stop_http, http) = http_fixture().await;
     let evidence: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         let shown = cli(&root, &["show", resource]).await?;
         let page = shown["result"]["pages"][0]["page"]["page_id"].as_str().ok_or("page missing")?;
@@ -33,12 +33,23 @@ async fn interception_request_cancellation_preserves_observation_and_later_traff
         require(received.lock().await.contains(&"/later".into()), "later request did not reach server")?;
         Ok(json!({"cancelled":cancelled["result"]["response"]["data"]["result"],"history":history}))
     }.await;
-    println!("BROWSER_INTERCEPTION_CANCEL_BEFORE_CLOSE root={} evidence={evidence:?}", root.display());
-    let stopped = backend(&endpoint, "backend.shutdown", json!({"schemaVersion":2,"mode":"stop"})).await;
+    println!(
+        "BROWSER_INTERCEPTION_CANCEL_BEFORE_CLOSE root={} evidence={evidence:?}",
+        root.display()
+    );
+    let stopped = backend(
+        &endpoint,
+        "backend.shutdown",
+        json!({"schemaVersion":2,"mode":"stop"}),
+    )
+    .await;
     let retired = timeout(Duration::from_secs(40), server).await;
     let _ = stop_http.send(());
     let http_retired = timeout(Duration::from_secs(10), http).await;
-    println!("BROWSER_INTERCEPTION_CANCEL root={} evidence={evidence:?} retired={retired:?} http={http_retired:?}", root.display());
+    println!(
+        "BROWSER_INTERCEPTION_CANCEL root={} evidence={evidence:?} retired={retired:?} http={http_retired:?}",
+        root.display()
+    );
     retired.unwrap().unwrap().unwrap();
     http_retired.unwrap().unwrap();
     assert_eq!(stopped["kind"], "dure.backend.response");

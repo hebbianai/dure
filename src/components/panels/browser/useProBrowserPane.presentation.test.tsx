@@ -93,17 +93,7 @@ function fixture() {
 	const action = vi.fn();
 	const client = {
 		create: vi.fn(),
-		workspaces: vi.fn(async () => ({
-			workspaces: [resource, other].map((row) => ({
-				workspace_id: row.workspace_id,
-				project_name: "Project",
-				root_path: `/tmp/${row.workspace_id}`,
-			})),
-			next: null,
-		})),
-		list: vi.fn(async (workspace: string) => [
-			projection(workspace === resource.workspace_id ? resource : other),
-		]),
+		list: vi.fn(async () => [projection(resource), projection(other)]),
 		observe: vi.fn(async (selected: typeof resource) => ({
 			control: projection(selected),
 			pages: ["page:one", "page:two"].map((id) => ({
@@ -338,7 +328,9 @@ it("revalidates an external resource binding and never renders a frame from the 
 		),
 	);
 	expect(hook.result.current.session).not.toBe(first);
-	expect(hook.result.current.workspaceId).toBe(other.workspace_id);
+	expect(hook.result.current.session?.resource.workspace_id).toBe(
+		other.workspace_id,
+	);
 	expect(mocks.route).toHaveBeenCalledTimes(2);
 	expect(f.client.requestControl).not.toHaveBeenCalled();
 	expect(f.client.action).not.toHaveBeenCalled();
@@ -417,9 +409,7 @@ it("does not apply an earlier Close confirmation to a newly presented browser", 
 
 it("distinguishes a failed catalog load from an empty catalog and reconnects the pane", async () => {
 	const f = fixture();
-	f.client.workspaces.mockRejectedValueOnce(
-		new Error("connection interrupted"),
-	);
+	f.client.list.mockRejectedValueOnce(new Error("connection interrupted"));
 	const mounted = render(<ProBrowserPanel {...f.props()} />);
 	try {
 		await waitFor(() =>
@@ -434,17 +424,16 @@ it("distinguishes a failed catalog load from an empty catalog and reconnects the
 		);
 		await expectSelectedBrowser(resource.resource_id);
 		expect(screen.queryByText("ipc.browser.requestFailed")).toBeNull();
-		expect(f.client.workspaces).toHaveBeenCalledTimes(2);
+		expect(f.client.list).toHaveBeenCalledTimes(2);
 	} finally {
 		mounted.unmount();
 	}
 });
 
-it.each(["typed", "initial", "agent workspace exists"])(
+it.each(["typed", "initial"])(
 	"opens a typed URL from a new pane without selecting a workspace or browser (%s)",
 	async (mode) => {
 		const f = fixture();
-		let created = false;
 		let controllerId = "";
 		let observedUrl = "about:blank";
 		let finishNavigation!: () => void;
@@ -457,28 +446,8 @@ it.each(["typed", "initial", "agent workspace exists"])(
 				? { ...projection(resource).controller, controller_id: controllerId }
 				: null,
 		});
-		f.client.workspaces.mockImplementation(async () => ({
-			workspaces: created
-				? [
-						{
-							workspace_id: resource.workspace_id,
-							project_name: "Browser",
-							root_path: "/tmp/personal-browser",
-						},
-					]
-				: mode === "agent workspace exists"
-					? [
-							{
-								workspace_id: "agent:workspace",
-								project_name: "Agent project",
-								root_path: "/tmp/agent",
-							},
-						]
-					: [],
-			next: null,
-		}));
+		f.client.list.mockResolvedValue([]);
 		f.client.create.mockImplementation(async () => {
-			created = true;
 			return controlled();
 		});
 		f.client.control.mockImplementation(
@@ -513,7 +482,7 @@ it.each(["typed", "initial", "agent workspace exists"])(
 			const address = screen.getByRole("textbox", {
 				name: "panels.browser.address",
 			});
-			await waitFor(() => expect(f.client.workspaces).toHaveBeenCalled());
+			await waitFor(() => expect(f.client.list).toHaveBeenCalled());
 			if (mode !== "initial") {
 				fireEvent.change(address, { target: { value: "example.com" } });
 				fireEvent.keyDown(address, { key: "Enter" });
@@ -533,7 +502,6 @@ it.each(["typed", "initial", "agent workspace exists"])(
 				),
 			);
 			expect(f.client.create).toHaveBeenCalledExactlyOnceWith(
-				null,
 				expect.any(String),
 			);
 			fireEvent.change(address, { target: { value: "second.example" } });
@@ -546,7 +514,7 @@ it.each(["typed", "initial", "agent workspace exists"])(
 				),
 			);
 			expect(f.client.create).toHaveBeenCalledTimes(1);
-			expect(f.client.list).not.toHaveBeenCalled();
+			expect(f.client.list).toHaveBeenCalledExactlyOnceWith();
 			expect(f.client.requestControl).toHaveBeenCalledTimes(1);
 			expect(f.api.updateParameters).toHaveBeenCalledWith(
 				expect.objectContaining({

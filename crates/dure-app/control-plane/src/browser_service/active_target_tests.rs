@@ -2,7 +2,7 @@
 use super::*;
 
 #[tokio::test]
-async fn workspace_selection_is_explicit_fenced_recoverable_and_cleared_on_close() {
+async fn shared_selection_is_explicit_fenced_recoverable_and_cleared_on_close() {
     let root = tempfile::tempdir().unwrap();
     let store = SqliteDomainStore::open(root.path().join("domain.sqlite3"))
         .await
@@ -13,7 +13,7 @@ async fn workspace_selection_is_explicit_fenced_recoverable_and_cleared_on_close
     for id in ["browser:first", "browser:second"] {
         let identity = BrowserResourceIdentity {
             resource_id: BrowserResourceId::new(id).unwrap(),
-            workspace_id: BrowserWorkspaceId::new("workspace:selection").unwrap(),
+            workspace_id: BrowserWorkspaceId::new("workspace:dure-browser").unwrap(),
             generation: service.generation.clone(),
         };
         let runtime = Arc::new(BrowserRuntime::new(identity.clone(), root.path()));
@@ -26,7 +26,7 @@ async fn workspace_selection_is_explicit_fenced_recoverable_and_cleared_on_close
         );
         identities.push(identity);
     }
-    let list = json!({"kind":"list","workspace_id":"workspace:selection"});
+    let list = json!({"kind":"list"});
     let initial = service.dispatch(&store, &list).await.unwrap();
     let first_request = json!({"kind":"select_resource","resource":identities[0],
         "expected":initial["result"]["target"],"operation_id":"selection:first"});
@@ -71,7 +71,7 @@ async fn workspace_selection_is_explicit_fenced_recoverable_and_cleared_on_close
     assert_eq!(
         initial["result"]["target"],
         json!({
-        "workspace_id":"workspace:selection","generation":"generation:selection",
+        "workspace_id":"workspace:dure-browser","generation":"generation:selection",
         "revision":"1","current_resource":null})
     );
     let first = first.unwrap();

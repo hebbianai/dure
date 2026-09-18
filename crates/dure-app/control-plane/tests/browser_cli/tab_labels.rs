@@ -35,7 +35,7 @@ async fn named_tabs_preserve_resource_profile_and_lost_response_ownership() {
     let (root, endpoint, server) = fixture().await;
     let mut resources = Vec::new();
     let evidence: Result<Value, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         resources.push(resource.to_owned());
         let controlled = cli(&root, &["control", resource, "--controller", "label-agent"]).await?;
@@ -66,7 +66,7 @@ async fn named_tabs_preserve_resource_profile_and_lost_response_ownership() {
         let replaced = named(&root, resource, "docs").await?;
         require(replaced["page"]["page_id"] == docs_id && replaced["profile_id"] == profile_id && replaced["label"] == "docs", &replaced)?;
 
-        let peer_created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let peer_created = cli(&root, &["create"]).await?;
         let peer = peer_created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("peer missing")?;
         resources.push(peer.to_owned());
         let peer_control = cli(&root, &["control", peer, "--controller", "label-agent"]).await?;

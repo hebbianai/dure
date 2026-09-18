@@ -66,7 +66,7 @@ it.runIf(process.env.DURE_BROWSER_DESKTOP_WIRE_RECEIPT)(
 			.mockResolvedValueOnce(wrap(replies.recovered))
 			.mockResolvedValueOnce(wrap(replies.missing));
 		const client = createDureBrowserClient(authority, invoke);
-		expect(await client.list("workspace:desktop")).toEqual([]);
+		expect(await client.list()).toEqual([]);
 		const recovered = await client.receipt("desktop:profile");
 		expect(recovered.result).toEqual(replies.created.result);
 		expect(recovered.result_available).toBe(true);

@@ -80,14 +80,11 @@ export const panels: Record<string, string> = {
 		"Ouvrir dans un nouvel onglet conserve cette page et charge son URL avec les cookies et le stockage du profil sélectionné.",
 	"panels.browser.profileClone": "Ouvrir dans un nouvel onglet",
 	"panels.browser.profileSwitch": "Changer de profil",
-	"panels.browser.workspace": "Espace de travail",
 	"panels.browser.resource": "Navigateur",
-	"panels.browser.chooseWorkspace": "Choisir un espace de travail",
 	"panels.browser.chooseBrowser": "Choisir un navigateur",
 	"panels.browser.browserNumber": "Navigateur {number}",
 	"panels.browser.newBrowser": "Nouveau navigateur",
-	"panels.browser.useForWorkspace":
-		"Utiliser pour les commandes de l’espace de travail",
+	"panels.browser.useAsDefault": "Utiliser comme navigateur par défaut",
 	"panels.browser.reconnect": "Reconnecter",
 	"panels.browser.page": "Page",
 	"panels.browser.followCurrent": "Suivre l’onglet actif",
@@ -108,10 +105,7 @@ export const panels: Record<string, string> = {
 	"panels.browser.closeConfirmation":
 		"Fermer ce navigateur et toutes ses pages ? Les modifications non enregistrées peuvent être perdues.",
 	"panels.browser.chooseBrowserHint":
-		"Choisissez un espace de travail, puis ouvrez un navigateur ou connectez-vous à un navigateur en cours.",
-	"panels.browser.noWorkspaces":
-		"Aucun espace de travail disponible. Ouvrez un espace pour un agent, puis reconnectez-vous.",
-	"panels.browser.moreWorkspaces": "Autres espaces de travail",
+		"Ouvrez un navigateur ou connectez-vous à un navigateur déjà ouvert.",
 	"panels.browser.releaseFailed":
 		"La libération des entrées n’a pas été confirmée. Reconnectez-vous et vérifiez le navigateur avant de continuer.",
 	"panels.agent.toolbar.control.conversationHistory": "Historique de conversation",

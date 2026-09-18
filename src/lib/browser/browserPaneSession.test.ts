@@ -103,6 +103,7 @@ function fixture(
 			}),
 		close: vi.fn(),
 		create: vi.fn(),
+		recoverCreation: vi.fn(),
 		list: vi.fn(),
 		selectResource: vi.fn(),
 		workspaces: vi.fn(),

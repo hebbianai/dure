@@ -5,7 +5,7 @@ use super::*;
 async fn backend_shutdown_retires_a_disconnected_operation_waiting_for_a_dialog() {
     let (root, endpoint, mut server) = fixture().await;
     let setup: Result<_, String> = async {
-        let created = cli(&root, &["create", "--workspace", "workspace-browser"]).await?;
+        let created = cli(&root, &["create"]).await?;
         let resource = created["result"]["control"]["resource"]["resource_id"]
             .as_str().ok_or("resource missing")?;
         cli(&root, &["control", resource, "--controller", "agent-proof"]).await?;

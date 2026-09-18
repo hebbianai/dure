@@ -80,13 +80,11 @@ export const panels: Record<string, string> = {
 		"Abrir en una pestaña nueva conserva esta página y carga su URL con las cookies y el almacenamiento del perfil seleccionado.",
 	"panels.browser.profileClone": "Abrir en pestaña nueva",
 	"panels.browser.profileSwitch": "Cambiar de perfil",
-	"panels.browser.workspace": "Espacio de trabajo",
 	"panels.browser.resource": "Navegador",
-	"panels.browser.chooseWorkspace": "Elige un espacio de trabajo",
 	"panels.browser.chooseBrowser": "Elige un navegador",
 	"panels.browser.browserNumber": "Navegador {number}",
 	"panels.browser.newBrowser": "Nuevo navegador",
-	"panels.browser.useForWorkspace": "Usar para comandos del espacio de trabajo",
+	"panels.browser.useAsDefault": "Usar como navegador predeterminado",
 	"panels.browser.reconnect": "Reconectar",
 	"panels.browser.page": "Página",
 	"panels.browser.followCurrent": "Seguir la pestaña actual",
@@ -107,10 +105,7 @@ export const panels: Record<string, string> = {
 	"panels.browser.closeConfirmation":
 		"¿Cerrar este navegador y todas sus páginas? Los cambios sin guardar pueden perderse.",
 	"panels.browser.chooseBrowserHint":
-		"Elige un espacio de trabajo y abre un navegador o conéctate a uno en ejecución.",
-	"panels.browser.noWorkspaces":
-		"No hay espacios de trabajo. Abre uno para un agente y vuelve a conectarte.",
-	"panels.browser.moreWorkspaces": "Más espacios de trabajo",
+		"Abre un navegador o conecta con uno que ya esté en ejecución.",
 	"panels.browser.releaseFailed":
 		"No se confirmó la liberación de la entrada. Reconecta y comprueba el navegador antes de continuar.",
 	"panels.agent.toolbar.control.conversationHistory": "Historial de conversación",

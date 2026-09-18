@@ -47,15 +47,14 @@ async fn clone_cli_opens_the_source_url_in_selected_storage_without_replacing_so
     let (root, endpoint, server) = super::super::super::fixture().await;
     let (url, stop_site, site) = site().await;
     let evidence: Result<_, String> = async {
-        peer_workspace(&root).await?;
         let catalog = cli(&root, &["tab", "profile", "create", "--label", "공유 복제 대상"]).await?;
         let profile = catalog["result"]["profile"]["profile"]["profileId"].as_str().ok_or("shared profile missing")?;
         let clean_catalog = cli(&root, &["tab", "profile", "create", "--label", "빈 복제 대상"]).await?;
         let clean_profile = clean_catalog["result"]["profile"]["profile"]["profileId"].as_str().ok_or("clean profile missing")?;
-        let origin = Client::create(&root, "workspace-browser", None, "clone-origin").await?;
+        let origin = Client::create(&root, None, "clone-origin").await?;
         origin.action(&root, "goto", &url).await?;
         origin.evaluate(&root, "localStorage.setItem('clone','원본 저장');document.cookie='clone=default;Path=/;Max-Age=3600';window.originalOnly='원본 문서';true").await?;
-        let peer = Client::create(&root, "workspace-profile-peer", Some(profile), "clone-peer").await?;
+        let peer = Client::create(&root, Some(profile), "clone-peer").await?;
         peer.action(&root, "goto", &url).await?;
         peer.evaluate(&root, "localStorage.setItem('clone','대상 저장');document.cookie='clone=selected;Path=/;Max-Age=3600';window.peerOnly='다른 문서';true").await?;
         let before = cli(&root, &["show", &origin.resource]).await?;

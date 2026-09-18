@@ -42,10 +42,10 @@ test("tab create binds an explicit profile and URL to one existing action author
 });
 
 test("profile tab creation uses the same selected workspace resource and current page", async () => {
-  const { result, requests } = await run(["tab", "create", "--workspace", "w", "--profile", "default", ...flags]);
+  const { result, requests } = await run(["tab", "create", "--current", "--profile", "default", ...flags]);
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(requests, [
-    { kind: "list", workspace_id: "w" }, { kind: "observe", resource_id: "r" },
+    { kind: "list" }, { kind: "observe", resource_id: "r" },
     { kind: "profile_new_page", caller: "agent", authority, profile_id: "default", url: "about:blank" },
   ]);
 });
@@ -83,7 +83,7 @@ test("duplicate, empty and misplaced creation options refuse before backend cont
     ["tab", "create", "r", "--profile", " "],
     ["tab", "create", "r", "--profile", "one", "--profile", "two"],
     ["tab", "create", "r", "about:blank", "--url", "https://example.com", "--profile", "one"],
-    ["tab", "create", "r", "--worktree", "all", "--profile", "one"],
+    ["tab", "create", "r", "--all", "--profile", "one"],
     ["tab", "switch", "r", "--page", "p", "--profile", "one"],
   ]) {
     let contacts = 0;

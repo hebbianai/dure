@@ -3,7 +3,6 @@ use crate::browser_engine::runtime::{
 };
 use dure_app::{
     BrowserProfileIdV1, BrowserProfileScopeV1, BrowserProfileUserAgentModeV1, OperationIdV1,
-    WorkspaceIdV1,
 };
 use hmux_session_protocol::browser_dialog::{BrowserDialogIdentity, BrowserDialogResponse};
 use hmux_session_protocol::browser_resource::*;
@@ -14,9 +13,6 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum BrowserRequest {
-    Workspaces {
-        after: Option<WorkspaceIdV1>,
-    },
     ProfileSet {
         caller: BrowserControllerId,
         authority: BrowserActionAuthority,
@@ -52,8 +48,6 @@ pub(super) enum BrowserRequest {
         chunk: crate::browser_engine::runtime::BrowserUploadChunk,
     },
     Create {
-        workspace_id: Option<WorkspaceIdV1>,
-        workspace_path: Option<String>,
         operation_id: OperationIdV1,
         #[serde(default)]
         profile_id: Option<BrowserProfileIdV1>,
@@ -62,10 +56,7 @@ pub(super) enum BrowserRequest {
         #[serde(default)]
         features: Vec<crate::browser_engine::runtime::BrowserLaunchFeature>,
     },
-    List {
-        workspace_id: Option<WorkspaceIdV1>,
-        workspace_path: Option<String>,
-    },
+    List {},
     Observe {
         resource_id: BrowserResourceId,
     },

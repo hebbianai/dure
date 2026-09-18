@@ -49,13 +49,13 @@ test.each([
 
 test("React hook installation is explicit creation input, including the upstream environment alias", async () => {
   for (const [args, environment] of [
-    [["create", "--workspace", "workspace:react", "--enable", "react-devtools"], {}],
-    [["create", "--workspace", "workspace:react", "--enable=react"], {}],
-    [["create", "--workspace", "workspace:react"], { AGENT_BROWSER_ENABLE: "react-devtools" }],
+    [["create", "--enable", "react-devtools"], {}],
+    [["create", "--enable=react"], {}],
+    [["create"], { AGENT_BROWSER_ENABLE: "react-devtools" }],
   ]) {
     const f = fixture({ environment }); const result = await f.run(args);
     assert.equal(result.ok, true, JSON.stringify(result));
-    assert.deepEqual(f.calls, [{ kind: "create", workspace_id: "workspace:react", operation_id: "react-once", features: ["react_devtools"] }]);
+    assert.deepEqual(f.calls, [{ kind: "create", operation_id: "react-once", features: ["react_devtools"] }]);
   }
 });
 
@@ -77,7 +77,7 @@ test.each([
   ["react", resource.resource_id, "tree", "--only-dynamic"],
   ["react", resource.resource_id, "renders", "reset"],
   ["exec", resource.resource_id, "--command", "react tree --page foreign"],
-  ["create", "--workspace", "workspace:react", "--enable", "unknown-feature"],
+  ["create", "--enable", "unknown-feature"],
   ["react", resource.resource_id, "tree", "--enable", "react-devtools"],
 ].map(args => [args]))("invalid React request %j fails before backend contact", async args => {
   const f = fixture(); assert.equal((await f.run(args)).ok, false); assert.deepEqual(f.calls, []);

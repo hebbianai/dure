@@ -4,7 +4,7 @@ import { nativeDiffArguments } from "./browser-diff.mjs";
 import { browserTabLabel } from "./browser-tabs.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 
-const routing = ["backend", "resource", "workspace", "worktree", "page", "controller", "epoch", "operationId"];
+const routing = ["backend", "resource", "defaultResource", "page", "controller", "epoch", "operationId"];
 
 /** Match Orca's command-string tokenization: quotes group text; there is no
  * expansion, escape processing or shell execution. Empty quoted words vanish. */
@@ -263,10 +263,10 @@ export function normalizeBrowserExec(options) {
   if (options.positional.length > 2 || Object.keys(options).some((key) => !["positional", "execCommand", ...routing].includes(key))) throw new Error("browser_command_invalid");
   const outer = Object.fromEntries(routing.filter((key) => options[key] !== undefined).map((key) => [key, options[key]]));
   if (options.positional.length === 2) {
-    if (["resource", "workspace", "worktree"].some((key) => outer[key] !== undefined)) throw new Error("browser_command_invalid");
+    if (outer.resource !== undefined) throw new Error("browser_command_invalid");
     outer.resource = options.positional[1];
   }
-  if (outer.resource === undefined && outer.workspace === undefined && outer.worktree === undefined) outer.worktree = "current";
+  if (outer.resource === undefined) outer.defaultResource = true;
   const args = nativeArguments(commandWords(options.execCommand));
   const inner = parseBrowserArguments(["--resource", "exec:target", ...args], { nativeValues: true });
   // Only the parsed tab reference may supply a page. Native routing flags in

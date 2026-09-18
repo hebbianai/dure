@@ -35,9 +35,6 @@ import {
 	browserWorkspaceSelectionResult,
 	parseBrowserWorkspaceCatalogTarget,
 } from "../../../cli/lib/contracts/browser-workspace-target.mjs";
-import { parseBrowserWorkspacePage } from "../../../cli/lib/contracts/browser-workspaces.mjs";
-
-export type { BrowserWorkspace } from "../../../cli/lib/contracts/browser-workspaces.mjs";
 
 export function browserRequestFailureMessage(error: unknown): string {
 	if (
@@ -178,6 +175,32 @@ export function createDureBrowserClient(
 		if (!parsed || !sameBrowserResource(parsed.resource, resource)) invalid();
 		return parsed;
 	}
+	function createdBrowser(reply: Record<string, unknown>, operationId: string) {
+		if (reply.replayed === true && reply.result === null) {
+			const receipt = asRecord(reply.receipt);
+			const failure = asRecord(reply.error);
+			if (
+				reply.result_available !== true ||
+				receipt?.operationId !== operationId ||
+				receipt.operationKind !== "browser.resource" ||
+				receipt.state !== "failed" ||
+				typeof failure?.code !== "string" ||
+				!failure.code ||
+				receipt.terminalCode !== failure.code
+			)
+				invalid();
+			throw new DureBackendRequestError(
+				failure.code,
+				t("ipc.browser.requestFailed"),
+				{ kind: "operation", disposition: "terminal" },
+			);
+		}
+		const result = asRecord(reply.result);
+		if (!result) invalid();
+		const created = parseBrowserControl(result.control);
+		if (!created) invalid();
+		return created;
+	}
 	return {
 		async createProfile(
 			label: string,
@@ -236,50 +259,24 @@ export function createDureBrowserClient(
 			if (!result) invalid();
 			return result;
 		},
-		async workspaces(after?: string) {
-			if (after !== undefined && !isDureDomainIdV1(after)) invalid();
-			const result = await payload({
-				kind: "workspaces",
-				...(after === undefined ? {} : { after }),
-			});
-			const page = parseBrowserWorkspacePage(result, after);
-			if (!page) invalid();
-			return page;
-		},
-		async create(workspaceId: string | null, operationId: string) {
+		async create(operationId: string) {
 			const reply = await send({
 				kind: "create",
-				...(workspaceId === null ? {} : { workspace_id: workspaceId }),
 				operation_id: operationId,
 			});
-			if (reply.replayed === true && reply.result === null) {
-				const receipt = asRecord(reply.receipt);
-				const failure = asRecord(reply.error);
-				if (
-					reply.result_available !== true ||
-					receipt?.operationId !== operationId ||
-					receipt.operationKind !== "browser.resource" ||
-					receipt.state !== "failed" ||
-					typeof failure?.code !== "string" ||
-					!failure.code ||
-					receipt.terminalCode !== failure.code
-				)
-					invalid();
-				throw new DureBackendRequestError(
-					failure.code,
-					t("ipc.browser.requestFailed"),
-					{ kind: "operation", disposition: "terminal" },
-				);
-			}
-			const result = asRecord(reply.result);
-			if (!result) invalid();
-			const created = parseBrowserControl(result.control);
+			return createdBrowser(reply, operationId);
+		},
+		async recoverCreation(operationId: string) {
+			const reply = await send({ kind: "receipt", operation_id: operationId });
+			const receipt = asRecord(reply.receipt);
 			if (
-				!created ||
-				(workspaceId !== null && created.resource.workspace_id !== workspaceId)
+				reply.result_available !== true ||
+				receipt?.operationId !== operationId ||
+				receipt.operationKind !== "browser.resource" ||
+				!["succeeded", "failed"].includes(String(receipt.state))
 			)
 				invalid();
-			return created;
+			return createdBrowser({ ...reply, replayed: true }, operationId);
 		},
 		async close(resource: BrowserResourceIdentity, operationId: string) {
 			const result = await payload({
@@ -296,17 +293,18 @@ export function createDureBrowserClient(
 				invalid();
 			return result;
 		},
-		async list(workspaceId: string) {
-			const result = await payload({ kind: "list", workspace_id: workspaceId });
+		async list() {
+			const result = await payload({ kind: "list" });
 			if (!Array.isArray(result.resources)) invalid();
 			if (
-				Object.prototype.hasOwnProperty.call(result, "target") &&
-				parseBrowserWorkspaceCatalogTarget(result)?.workspace_id !== workspaceId
+				"target" in result &&
+				!parseBrowserWorkspaceCatalogTarget(result)
 			)
 				invalid();
 			return result.resources.map((value) => {
 				const parsed = parseBrowserControl(value);
-				if (!parsed || parsed.resource.workspace_id !== workspaceId) invalid();
+				if (!parsed || parsed.resource.workspace_id !== result.workspace_id)
+					invalid();
 				return parsed;
 			});
 		},
@@ -318,7 +316,6 @@ export function createDureBrowserClient(
 				invalid();
 			const catalog = await payload({
 				kind: "list",
-				workspace_id: resource.workspace_id,
 			});
 			const expected = parseBrowserWorkspaceCatalogTarget(catalog);
 			if (

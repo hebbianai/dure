@@ -66,10 +66,7 @@ impl Fixture {
 
     async fn list(&self) -> Result<Value, BackendDispatchError> {
         self.service
-            .dispatch(
-                &self.store,
-                &json!({"kind":"list","workspace_id":"workspace:construction"}),
-            )
+            .dispatch(&self.store, &json!({"kind":"list"}))
             .await
     }
 
@@ -114,7 +111,7 @@ async fn initial_browser_construction_is_listed_and_closeable_before_startup_fin
     .unwrap();
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
     let fixture = Fixture::new(&executable).await;
-    let body = json!({"kind":"create","workspace_id":"workspace:construction","operation_id":"create:during-startup","init_scripts":["window.startup='owned';"]});
+    let body = json!({"kind":"create","operation_id":"create:during-startup","init_scripts":["window.startup='owned';"]});
     let evidence: Result<_, BackendDispatchError> = async {
         let mut creating = Box::pin(fixture.service.dispatch(&fixture.store, &body));
         let prepared = tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -195,7 +192,7 @@ async fn failed_initial_browser_cleanup_remains_reachable_for_service_close_retr
         .unwrap(),
     )
     .unwrap();
-    let body = json!({"kind":"create","workspace_id":"workspace:construction","operation_id":"create:cleanup-failure"});
+    let body = json!({"kind":"create","operation_id":"create:cleanup-failure"});
     let evidence: Result<_, BackendDispatchError> = async {
         let mut creating = Box::pin(fixture.service.dispatch(&fixture.store, &body));
         let prepared = tokio::time::timeout(std::time::Duration::from_secs(5), async {

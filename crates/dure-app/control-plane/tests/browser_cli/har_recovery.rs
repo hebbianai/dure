@@ -14,7 +14,7 @@ async fn har_stop_response_loss_replays_the_receipt_without_stopping_a_new_recor
     let (root, endpoint, server) = fixture().await;
     println!("BROWSER_HAR_RECOVERY_OWNED root={}", root.display());
     let evidence:Result<_,String>=async {
-        let created=cli(&root,&["create","--workspace","workspace-browser"]).await?;
+        let created=cli(&root,&["create"]).await?;
         let resource=created["result"]["control"]["resource"]["resource_id"].as_str().ok_or("resource missing")?;
         let view=cli(&root,&["show",resource]).await?;
         let page=view["result"]["pages"][0]["page"]["page_id"].as_str().ok_or("page missing")?;

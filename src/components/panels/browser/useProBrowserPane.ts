@@ -25,7 +25,6 @@ import {
 	sameBrowserPage,
 	sameBrowserResource,
 } from "@/lib/browser/browserResourceContract";
-import { browserWorkspaceCatalog } from "@/lib/browser/browserWorkspaceCatalog";
 import { t } from "@/lib/i18n";
 import {
 	assertDureBackendRouteAuthority,
@@ -38,7 +37,6 @@ import {
 	sameDureBackendRouteTarget,
 } from "@/lib/ipc/dureBackendRoute";
 import {
-	type BrowserWorkspace,
 	createDureBrowserClient,
 	isUnstartedBrowserCreation,
 } from "@/lib/ipc/dureBrowser";
@@ -66,9 +64,6 @@ export function useProBrowserPane(
 	active.current = visible && workspaceActive;
 	const [controllerId] = useState(() => `view:${crypto.randomUUID()}`);
 	const [connection, setConnection] = useState<Connection>();
-	const [workspaces, setWorkspaces] = useState<BrowserWorkspace[]>([]);
-	const [next, setNext] = useState<string | null>(null);
-	const [workspaceId, setWorkspaceId] = useState("");
 	const [resources, setResources] = useState<BrowserControlProjection[]>([]);
 	const [session, setSession] = useState<BrowserPaneSession>();
 	const [busy, setBusy] = useState(false);
@@ -107,10 +102,11 @@ export function useProBrowserPane(
 			current: () => boolean,
 		) => {
 			try {
-				return await connection.client.create(
-					pending.workspaceId,
-					pending.operationId,
-				);
+				// A legacy scoped operation must retain its original journal identity.
+				// Recover its receipt without issuing a differently scoped Create.
+				return pending.workspaceId === null
+					? await connection.client.create(pending.operationId)
+					: await connection.client.recoverCreation(pending.operationId);
 			} catch (error) {
 				if (
 					current() &&
@@ -120,7 +116,7 @@ export function useProBrowserPane(
 					creation.current = undefined;
 					const binding = savedBinding.current;
 					persist(
-						binding?.workspaceId === pending.workspaceId &&
+						binding &&
 							sameDureBackendRouteAuthority(
 								binding.authority,
 								pending.authority,
@@ -182,9 +178,6 @@ export function useProBrowserPane(
 		setSession(undefined);
 		setConnection(undefined);
 		setResources([]);
-		setWorkspaces([]);
-		setWorkspaceId("");
-		setNext(null);
 		await run(async (current) => {
 			if (bindingError.current) throw bindingError.current;
 			let binding = savedBinding.current;
@@ -221,65 +214,44 @@ export function useProBrowserPane(
 			}
 			if (!current()) return;
 			const rebound = binding !== savedBinding.current;
-			let workspaceId = pending
-				? (pending.workspaceId ?? undefined)
-				: binding?.workspaceId;
 			let resource = pending ? undefined : binding?.resource;
 			const client = createDureBrowserClient(authority);
-			const catalog = await browserWorkspaceCatalog(
-				client,
-				workspaceId,
-				current,
-			);
-			const rows = catalog.workspaces;
+			let resources = await client.list();
 			if (!current()) return;
-			if (rebound && !rows.some((row) => row.workspace_id === workspaceId)) {
-				binding = undefined;
-				workspaceId = undefined;
-				resource = undefined;
-			}
 			setConnection({ authority, client });
-			setWorkspaces(rows);
-			setNext(catalog.next);
-			setWorkspaceId(workspaceId ?? "");
-			if (workspaceId || pending) {
-				let resources = workspaceId ? await client.list(workspaceId) : [];
+			if (pending) {
+				const created = await createResource(
+					{ authority, client },
+					pending,
+					current,
+				);
 				if (!current()) return;
-				if (pending) {
-					const created = await createResource(
-						{ authority, client },
-						pending,
-						current,
-					);
-					if (!current()) return;
-					resource = created.resource;
-					workspaceId = resource.workspace_id;
-					setWorkspaceId(workspaceId);
-					resources = [
-						...resources.filter(
-							(row) => !sameBrowserResource(row.resource, created.resource),
-						),
-						created,
-					];
-					creation.current = undefined;
-					persist({ authority, workspaceId, resource });
-				}
-				setResources(resources);
-				if (
-					resource &&
-					!resources.some((row) => sameBrowserResource(row.resource, resource!))
-				)
-					throw new Error("browser_saved_resource_missing");
-				if (resource)
-					setSession(
-						new BrowserPaneSession(
-							client,
-							resource,
-							controllerId,
-							pending || binding?.followCurrent ? undefined : binding?.pageId,
-						),
-					);
+				resource = created.resource;
+				resources = [
+					...resources.filter(
+						(row) => !sameBrowserResource(row.resource, resource!),
+					),
+					created,
+				];
+				creation.current = undefined;
+				binding = { authority, workspaceId: resource.workspace_id, resource };
+				persist(binding);
 			}
+			setResources(resources);
+			if (
+				resource &&
+				!resources.some((row) => sameBrowserResource(row.resource, resource!))
+			)
+				throw new Error("browser_saved_resource_missing");
+			if (resource)
+				setSession(
+					new BrowserPaneSession(
+						client,
+						resource,
+						controllerId,
+						pending || binding?.followCurrent ? undefined : binding?.pageId,
+					),
+				);
 			if (rebound && current()) persist(binding);
 		});
 	}, [controllerId, persist, run, createResource]);
@@ -431,19 +403,16 @@ export function useProBrowserPane(
 	};
 	const create = async (current: () => boolean) => {
 		if (!connection) return;
-		const targetWorkspace = workspaceId || null;
 		const pending = creation.current;
-		if (pending && pending.workspaceId !== targetWorkspace)
-			throw new Error("browser_creation_pending");
 		if (
 			pending &&
 			!sameDureBackendRouteAuthority(pending.authority, connection.authority)
 		)
 			throw new Error("browser_creation_route_changed");
 		const operationId = pending?.operationId ?? crypto.randomUUID();
-		creation.current = {
+		creation.current = pending ?? {
 			authority: connection.authority,
-			workspaceId: targetWorkspace,
+			workspaceId: null,
 			operationId,
 		};
 		persist(savedBinding.current);
@@ -456,17 +425,7 @@ export function useProBrowserPane(
 			created,
 		]);
 		creation.current = undefined;
-		setWorkspaceId(created.resource.workspace_id);
-		const attached = attach(created);
-		const catalog = await browserWorkspaceCatalog(
-			connection.client,
-			created.resource.workspace_id,
-			current,
-		);
-		if (!current()) return;
-		setWorkspaces(catalog.workspaces);
-		setNext(catalog.next);
-		return attached;
+		return attach(created);
 	};
 	const renderedSelection = selection.current;
 	return {
@@ -477,10 +436,7 @@ export function useProBrowserPane(
 		busy,
 		error,
 		controllerId,
-		workspaces,
-		workspaceId,
 		resources,
-		next,
 		refreshAfterProfileDeletion: async () => {
 			if (renderedSelection !== selection.current || !session || !connection)
 				return;
@@ -489,9 +445,7 @@ export function useProBrowserPane(
 				setSession(undefined);
 				await session.dispose(false);
 				if (!current()) return;
-				const rows = await connection.client.list(
-					session.resource.workspace_id,
-				);
+				const rows = await connection.client.list();
 				if (!current()) return;
 				setResources(rows);
 				const surviving = rows.find((row) =>
@@ -521,33 +475,6 @@ export function useProBrowserPane(
 		},
 		reconnect: () => void connect(),
 		run,
-		selectWorkspace: async (id: string) => {
-			if (!connection) return;
-			const ticket = ++selection.current;
-			setWorkspaceId(id);
-			setResources([]);
-			setSession(undefined);
-			persist(
-				id ? { authority: connection.authority, workspaceId: id } : undefined,
-			);
-			await run(async () => {
-				if (!id) return;
-				const rows = await connection.client.list(id);
-				if (ticket === selection.current) setResources(rows);
-			});
-		},
-		loadMore: () =>
-			run(async (current) => {
-				if (!connection || !next) return;
-				const page = await connection.client.workspaces(next);
-				if (!current()) return;
-				setWorkspaces((rows) => [
-					...new Map(
-						[...rows, ...page.workspaces].map((row) => [row.workspace_id, row]),
-					).values(),
-				]);
-				setNext(page.next);
-			}),
 		attach: (id: string) => {
 			const resource = resources.find((row) => row.resource.resource_id === id);
 			if (resource) {
@@ -577,7 +504,7 @@ export function useProBrowserPane(
 			run(async () => {
 				await session?.handoff(target, expected);
 			}),
-		useForWorkspace: () =>
+		selectDefaultBrowser: () =>
 			run(async () => {
 				if (renderedSelection !== selection.current || !session || !connection)
 					return;
