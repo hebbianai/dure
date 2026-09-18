@@ -25,7 +25,11 @@ import {
   releaseAdmission,
   releaseVersion,
 } from "./lib/public-release-contract.mjs";
-import { readUnifiedVersion } from "./lib/release-version.mjs";
+import {
+  VERSION_FILES,
+  readUnifiedVersion,
+  readVersionText,
+} from "./lib/release-version.mjs";
 
 const [command, ...args] = process.argv.slice(2);
 const environment = withoutLocalGitOverrides();
@@ -81,22 +85,57 @@ const output = (values) => {
     );
 };
 
-function admission() {
-  assert.equal(
-    git("rev-parse", "HEAD"),
-    process.env.GITHUB_SHA,
-    "release_checkout_mismatch",
-  );
+function admission(source, current) {
   return releaseAdmission({
     repository: process.env.GITHUB_REPOSITORY,
     event: process.env.GITHUB_EVENT_NAME,
     ref: process.env.GITHUB_REF,
     head: process.env.GITHUB_SHA,
-    source: process.env.REQUESTED_SOURCE_SHA,
-    current: readUnifiedVersion(),
+    source,
+    current,
     bumpKind: process.env.RELEASE_BUMP,
     verification: process.env.RELEASE_VERIFICATION,
   });
+}
+
+function sourceRef() {
+  const ref = process.env.REQUESTED_SOURCE_REF || "main";
+  assert(!/[\s\x00-\x1f\x7f]/.test(ref), "release_source_ref_invalid");
+  assert(
+    !ref.startsWith("refs/") || /^refs\/(heads|tags)\//.test(ref),
+    "release_source_ref_invalid",
+  );
+  assert(!ref.includes("@{"), "release_source_ref_invalid");
+  // Git owns ref syntax; never interpret shell expressions, revision ranges or PR refs.
+  git("check-ref-format", "--branch", ref);
+  return ref;
+}
+
+function requireReleaseAdmin() {
+  const actors = new Set([
+    process.env.GITHUB_ACTOR,
+    process.env.GITHUB_TRIGGERING_ACTOR,
+  ]);
+  for (const actor of actors) {
+    assert(actor && /^[a-z\d-]+$/i.test(actor), "release_admin_required");
+    assert.equal(
+      api(`repos/${RELEASE_REPOSITORY}/collaborators/${actor}/permission`).permission,
+      "admin",
+      "release_admin_required",
+    );
+  }
+}
+
+function selectionRecord(selected, tag, runId) {
+  return {
+    schemaVersion: 1,
+    runId,
+    sourceRef: selected.sourceRef,
+    workflowSha: selected.workflowSha,
+    sourceSha: selected.sourceSha,
+    tag,
+    verification: selected.verification,
+  };
 }
 
 function exactCi(sha) {
@@ -158,14 +197,40 @@ function checkVersionCommit(tagSha, sourceSha, tag) {
 }
 
 function preflight() {
-  assert.equal(args.length, 0);
-  const selected = admission();
+  assert(args.length <= 1, "preflight accepts an optional selection receipt path");
+  assert.equal(process.env.GITHUB_REPOSITORY, RELEASE_REPOSITORY);
+  assert.equal(process.env.GITHUB_EVENT_NAME, "workflow_dispatch");
+  assert.equal(process.env.GITHUB_REF, "refs/heads/main");
+  const workflowSha = normalizeFullCommitSha(process.env.GITHUB_SHA);
+  assert.equal(
+    git("rev-parse", "HEAD"), workflowSha, "release_checkout_mismatch",
+  );
+  requireReleaseAdmin();
+  // A successful source job is never reselected. Resume failed downstream jobs instead.
+  assert.equal(
+    process.env.GITHUB_RUN_ATTEMPT || "1", "1",
+    "release_selection_rerun_forbidden: rerun failed jobs or start a new unused version",
+  );
+  const ref = sourceRef();
+  const sourceSha = ["main", "refs/heads/main"].includes(ref)
+    ? workflowSha
+    : normalizeFullCommitSha(
+        api(`repos/${RELEASE_REPOSITORY}/commits/${encodeURIComponent(ref)}`).sha,
+      );
+  git(
+    "fetch", "--no-tags", `https://github.com/${RELEASE_REPOSITORY}.git`, sourceSha,
+  );
+  const versions = VERSION_FILES.map((file) =>
+    readVersionText(file, run("git", ["show", `${sourceSha}:${file.path}`])),
+  );
+  assert.equal(new Set(versions).size, 1, "release_source_inventory_mismatch");
+  const selected = { ...admission(sourceSha, versions[0]), sourceRef: ref };
   assert.equal(
     git("status", "--porcelain", "--untracked-files=all"),
     "",
     "release_clean_source_required",
   );
-  exactCi(selected.sourceSha);
+  for (const sha of new Set([sourceSha, workflowSha])) exactCi(sha);
   for (const repository of [RELEASE_REPOSITORY, COMPATIBILITY_REPOSITORY]) {
     for (const route of [
       `git/ref/tags/${selected.tag}`,
@@ -183,12 +248,27 @@ function preflight() {
     })
   )
     throw new Error("release_branch_already_reserved");
+  if (args[0])
+    fs.writeFileSync(
+      path.resolve(args[0]),
+      JSON.stringify(selectionRecord(selected, selected.tag, process.env.GITHUB_RUN_ID)),
+      { flag: "wx" },
+    );
+  if (process.env.GITHUB_STEP_SUMMARY)
+    fs.appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      `Source ref: ${ref}\n\nFrozen source: ${sourceSha}\n\nProtected workflow: ${workflowSha}\n\nVersion: ${selected.tag}; verification: ${selected.verification}\n`,
+    );
   output(selected);
 }
 
 function version() {
   assert.equal(args.length, 1, "version requires the candidate directory");
-  const selected = admission();
+  requireReleaseAdmin();
+  const selected = admission(process.env.RELEASE_SOURCE_SHA, readUnifiedVersion());
+  assert.equal(
+    git("rev-parse", "HEAD"), selected.sourceSha, "release_checkout_mismatch",
+  );
   const directory = path.resolve(args[0]);
   assert.deepEqual(fs.readdirSync(directory).sort(), [
     "candidate.json",
@@ -339,17 +419,24 @@ function version() {
 }
 
 function provenance(released) {
-  const match = released.body?.match(/<!-- dure-release-v1 (\{[^\n]+\}) -->/);
+  const match = released.body?.match(/<!-- dure-release-v2 (\{[^\n]+\}) -->/);
   if (!match) throw new Error("release_provenance_missing");
   const value = JSON.parse(match[1]);
   assert.deepEqual(Object.keys(value).sort(), [
     "runId",
+    "sourceRef",
     "sourceSha",
     "tagSha",
     "verification",
+    "workflowSha",
   ]);
   normalizeFullCommitSha(value.sourceSha);
   normalizeFullCommitSha(value.tagSha);
+  normalizeFullCommitSha(value.workflowSha);
+  assert(
+    typeof value.sourceRef === "string" && value.sourceRef.length > 0 &&
+    !/[\r\n]/.test(value.sourceRef),
+  );
   assert(/^[1-9]\d*$/.test(value.runId));
   assert(["full", "emergency-0.2"].includes(value.verification));
   if (value.verification === "emergency-0.2")
@@ -370,17 +457,21 @@ function stage() {
     "stage requires TAG ASSET_DIRECTORY SOURCE_SHA VERIFICATION",
   );
   const [tag, directory, rawSource, verification] = args;
+  requireReleaseAdmin();
   const sourceSha = normalizeFullCommitSha(rawSource);
   const tagSha = git("rev-parse", "HEAD");
   const proof = {
     runId: process.env.GITHUB_RUN_ID,
+    sourceRef: sourceRef(),
+    workflowSha: normalizeFullCommitSha(process.env.GITHUB_SHA),
     sourceSha,
     tagSha,
     verification,
   };
   assert.equal(process.env.GITHUB_REPOSITORY, RELEASE_REPOSITORY);
   assert.equal(process.env.GITHUB_EVENT_NAME, "workflow_dispatch");
-  assert.equal(process.env.GITHUB_SHA, sourceSha);
+  assert.equal(process.env.GITHUB_REF, "refs/heads/main");
+  assert.equal(process.env.RELEASE_SOURCE_SHA, sourceSha);
   assert.equal(
     api(`repos/${RELEASE_REPOSITORY}/git/ref/tags/${tag}`).object.sha,
     tagSha,
@@ -394,7 +485,7 @@ function stage() {
     verification === "full"
       ? "Full release regression completed."
       : "Full regression is DEFERRED for this emergency 0.2.x beta; no full-suite success is claimed. Focused and packaged checks do not certify every provider, platform or previously reported incident.";
-  const notes = `Dure ${tag} Public Beta for macOS Apple Silicon.\n\nBasic interface. Developer ID signed; the app is notarized and stapled. Installation and restart require your explicit action.\n\n${notice}\n\nCorresponding source: https://github.com/${RELEASE_REPOSITORY}/tree/${tagSha}\nBuild: https://github.com/${RELEASE_REPOSITORY}/actions/runs/${proof.runId}\n\n<!-- dure-release-v1 ${JSON.stringify(proof)} -->`;
+  const notes = `Dure ${tag} Public Beta for macOS Apple Silicon.\n\nBasic interface. Developer ID signed; the app is notarized and stapled. Installation and restart require your explicit action.\n\n${notice}\n\nCorresponding source: https://github.com/${RELEASE_REPOSITORY}/tree/${tagSha}\nBuild: https://github.com/${RELEASE_REPOSITORY}/actions/runs/${proof.runId}\nProtected workflow: https://github.com/${RELEASE_REPOSITORY}/tree/${proof.workflowSha}\n\n<!-- dure-release-v2 ${JSON.stringify(proof)} -->`;
   provenance({ body: notes, tag_name: tag });
   let current = release(tag);
   if (!current) {
@@ -539,7 +630,7 @@ function promote() {
   assert.equal(buildRun.path, ".github/workflows/release.yml");
   assert.equal(buildRun.event, "workflow_dispatch");
   assert.equal(buildRun.head_branch, "main", "release_main_source_required");
-  assert.equal(buildRun.head_sha, proof.sourceSha);
+  assert.equal(buildRun.head_sha, proof.workflowSha, "release_workflow_source_mismatch");
   assert.equal(buildRun.status, "completed");
   assert.equal(buildRun.conclusion, "success", "release_run_not_successful");
   const jobs = api(
@@ -549,7 +640,7 @@ function promote() {
     jobs.total_count <= 100 && jobs.jobs.length === jobs.total_count,
     "release_job_observation_incomplete",
   );
-  for (const name of ["candidate", "version", "build", "draft"]) {
+  for (const name of ["source", "candidate", "version", "build", "draft"]) {
     const matches = jobs.jobs.filter((job) => job.name === name);
     assert.equal(matches.length, 1, `release_job_missing: ${name}`);
     assert.equal(
@@ -579,14 +670,28 @@ function promote() {
     proof.sourceSha,
   );
   checkVersionCommit(proof.tagSha, proof.sourceSha, tag);
-  exactCi(proof.sourceSha);
-  exactCi(proof.tagSha);
+  for (const sha of new Set([proof.sourceSha, proof.workflowSha, proof.tagSha]))
+    exactCi(sha);
   const publicKey = JSON.parse(
     run("git", ["show", `${proof.tagSha}:src-tauri/tauri.conf.json`]),
   ).plugins.updater.pubkey;
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "dure-public-release-"));
   // Retained on failure for reconciliation; no updater or user app is invoked.
   console.log(`Release evidence: ${work}`);
+  const selection = path.join(work, "selection");
+  fs.mkdirSync(selection);
+  gh(
+    "run", "download", proof.runId, "--repo", RELEASE_REPOSITORY,
+    "--name", "release-selection", "--dir", selection,
+  );
+  assert.deepEqual(
+    fs.readdirSync(selection), ["selection.json"], "release_selection_mismatch",
+  );
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(selection, "selection.json"))),
+    selectionRecord(proof, tag, proof.runId),
+    "release_selection_mismatch",
+  );
   const original = path.join(work, "original"),
     downloaded = path.join(work, "downloaded");
   fs.mkdirSync(original);

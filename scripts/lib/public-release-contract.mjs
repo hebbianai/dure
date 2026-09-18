@@ -57,8 +57,7 @@ export function releaseAdmission({
     throw new Error("release_requires_canonical_main_dispatch");
   }
   const sourceSha = normalizeFullCommitSha(source);
-  if (sourceSha !== normalizeFullCommitSha(head))
-    throw new Error("release_source_moved");
+  const workflowSha = normalizeFullCommitSha(head);
   const version = bump(current, bumpKind);
   const tag = `v${version}`;
   releaseVersion(tag);
@@ -68,7 +67,9 @@ export function releaseAdmission({
   ) {
     throw new Error("release_verification_scope_invalid");
   }
-  return { sourceSha, current, version, tag, verification, channel: "beta" };
+  return {
+    sourceSha, workflowSha, current, version, tag, verification, channel: "beta",
+  };
 }
 
 /** The privileged version writer reconstructs every allowed byte from its own source. */

@@ -44,13 +44,17 @@ test("selects an exact public source and separates emergency beta from full veri
     version: "0.3.0",
     verification: "full",
   });
+  expect(releaseAdmission({ ...admitted, source: "b".repeat(40) })).toMatchObject({
+    sourceSha: "b".repeat(40),
+    workflowSha: admitted.head,
+  });
 });
 
 test.each([
   { repository: "example/fork" },
   { event: "pull_request" },
   { ref: "refs/heads/topic" },
-  { source: "b".repeat(40) },
+  { head: "main" },
   { source: "HEAD" },
   { bumpKind: "major" },
   { verification: "skip" },

@@ -23,7 +23,13 @@ const sha=bytes=>crypto.createHash('sha1').update('blob '+bytes.length+'\0').upd
 const previous=bytes=>({type:'file',path:'beta/latest.json',encoding:'base64',sha:sha(bytes),content:bytes.toString('base64')});
 if(argv[0]==='api'){
   const route=argv[1];
-  if(route.includes('/contents/beta/latest.json')){
+  if(route.includes('/collaborators/')){
+    answer({permission:state.permissions?.[route.split('/').at(-2)]??'admin'});
+  }else if(route.includes('/commits/')){
+    const ref=decodeURIComponent(route.split('/commits/')[1]);
+    const sha=state.refs?.[ref];
+    if(!sha)fail(404);else answer({sha});
+  }else if(route.includes('/contents/beta/latest.json')){
     if(argv.includes('--method')){
       const input=JSON.parse(fs.readFileSync(0,'utf8'));
       if(state.metadataConflict){state.previous=previous(Buffer.from(JSON.stringify({...JSON.parse(Buffer.from(state.previous.content,'base64')),version:'0.2.30',platforms:{'darwin-aarch64':{signature:'other',url:'https://github.com/hebbianai/dure/releases/download/v0.2.30/Dure.app.tar.gz'}}})));fail(409);}
@@ -38,15 +44,17 @@ if(argv[0]==='api'){
   }else if(route.includes('/git/ref/')){
     if(route.startsWith('repos/hebbianai/dure/')&&state.hasRemoteTag)answer({object:{type:'commit',sha:state.tagSha}});else fail(404);
   }else if(route.includes('/actions/runs/')&&route.includes('/jobs?')){
-    answer({total_count:5,jobs:['candidate','version','build','draft','verification'].map(name=>({name,conclusion:name==='verification'?(state.actualVerification??'success'):'success'}))});
+    answer({total_count:6,jobs:['source','candidate','version','build','draft','verification'].map(name=>({name,conclusion:name==='verification'?(state.actualVerification??'success'):'success'}))});
   }else if(route.includes('/actions/runs/')){
-    answer({repository:{full_name:'hebbianai/dure'},path:'.github/workflows/release.yml',event:'workflow_dispatch',head_branch:state.headBranch??'main',head_sha:state.sourceSha,status:'completed',conclusion:state.runConclusion??'success'});
+    answer({repository:{full_name:'hebbianai/dure'},path:'.github/workflows/release.yml',event:'workflow_dispatch',head_branch:state.headBranch??'main',head_sha:state.workflowSha??state.sourceSha,status:'completed',conclusion:state.runConclusion??'success'});
   }else fail(400,'unmodeled API '+route);
 }else if(argv[0]==='run'&&argv[1]==='list'){
   if(arg('--workflow')!=='public-repository.yml')fail(404,'wrong workflow');
-  answer([{headSha:arg('--commit'),status:'completed',conclusion:state.ciConclusion??'success'}]);
+  answer([{headSha:arg('--commit'),status:'completed',conclusion:state.ciConclusions?.[arg('--commit')]??state.ciConclusion??'success'}]);
 }else if(argv[0]==='run'&&argv[1]==='download'){
-  for(const name of fs.readdirSync(state.original))fs.copyFileSync(path.join(state.original,name),path.join(arg('--dir'),name));
+  if(arg('--name')==='release-selection'){
+    fs.writeFileSync(path.join(arg('--dir'),'selection.json'),JSON.stringify(state.selection??{schemaVersion:1,runId:'239',sourceRef:'main',workflowSha:state.workflowSha??state.sourceSha,sourceSha:state.sourceSha,tag:'v0.2.29',verification:'full'}));
+  }else for(const name of fs.readdirSync(state.original))fs.copyFileSync(path.join(state.original,name),path.join(arg('--dir'),name));
 }else if(argv[0]==='release'&&argv[1]==='create'){
   if(state.release)fail(422);
   state.release={id:91,tag_name:argv[2],body:arg('--notes'),draft:true,prerelease:true,assets:[]};
@@ -262,8 +270,12 @@ export function createPublicReleaseFixture({ remoteVersion = true } = {}) {
     GITHUB_REF: "refs/heads/main",
     GITHUB_EVENT_NAME: "workflow_dispatch",
     GITHUB_SHA: sourceSha,
-    REQUESTED_SOURCE_SHA: sourceSha,
+    RELEASE_SOURCE_SHA: sourceSha,
+    REQUESTED_SOURCE_REF: "main",
+    GITHUB_ACTOR: "release-admin",
+    GITHUB_TRIGGERING_ACTOR: "release-admin",
     GITHUB_RUN_ID: "239",
+    GITHUB_RUN_ATTEMPT: "1",
     RELEASE_BUMP: "patch",
     RELEASE_VERIFICATION: "full",
     GH_TOKEN: "fixture-token",

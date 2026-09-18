@@ -69,15 +69,20 @@ test("release admission is manual, canonical-main-only and read-only by default"
   expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
   expect(workflow.permissions).toEqual({ contents: "read" });
   expect(workflow.concurrency["cancel-in-progress"]).toBe(false);
-  expect(workflow.jobs.candidate.if).toBe(
+  expect(workflow.jobs.source.if).toBe(
     "github.repository == 'hebbianai/dure' && github.ref == 'refs/heads/main'",
   );
   expect(workflow.on.workflow_dispatch.inputs.verification.default).toBe(
     "full",
   );
   expect(
-    workflow.jobs.candidate.steps.find((step) => step.id === "admission").run,
-  ).toBe("node scripts/release-public.mjs preflight");
+    workflow.jobs.source.steps.find((step) => step.id === "admission").run,
+  ).toBe('node scripts/release-public.mjs preflight "$RUNNER_TEMP/selection.json"');
+  expect(workflow.on.workflow_dispatch.inputs.source_ref).toMatchObject({ default: "main", required: false });
+  expect(workflow.on.workflow_dispatch.inputs).not.toHaveProperty("source_sha");
+  const selection = workflow.jobs.source.steps.at(-1);
+  expect(selection.with).toMatchObject({ name: "release-selection", path: "${{ runner.temp }}/selection.json" });
+  expect(selection.with.overwrite).not.toBe(true);
 });
 
 test("public PR checks remain on hosted runners with no signing secrets", () => {
@@ -109,7 +114,7 @@ test("full verification and owned target cleanup precede the independently valid
     if: "always()",
     run: "sh scripts/manage-ci-cargo-target.sh release",
   });
-  expect(workflow.jobs.version.needs).toEqual(["candidate", "verification"]);
+  expect(workflow.jobs.version.needs).toEqual(["source", "candidate", "verification"]);
   expect(workflow.jobs.version.if).toContain(
     "needs.candidate.result == 'success'",
   );
@@ -132,7 +137,7 @@ test("only the protected build step receives signing credentials and remains Bas
     (step) => step.name === "Build signed and notarized Basic beta",
   );
   expect(build.env.VITE_DURE_INTERFACE_MODE_POLICY).toBe("basic-only");
-  expect(build.run).toContain("node scripts/check-macos-signing.mjs");
+  expect(build.run).toContain("node ../scripts/check-macos-signing.mjs");
   expect(build.run).toContain(
     "node scripts/run-with-build-storage.mjs full -- corepack pnpm tauri build --config src-tauri/tauri.beta.conf.json",
   );
@@ -153,7 +158,7 @@ test("only the protected build step receives signing credentials and remains Bas
 });
 
 test("the workflow stops at immutable draft staging and never changes the client feed", () => {
-  expect(workflow.jobs.draft.needs).toEqual(["version", "build"]);
+  expect(workflow.jobs.draft.needs).toEqual(["source", "version", "build"]);
   const staging = workflow.jobs.draft.steps.find(
     (step) => step.name === "Reconcile only missing draft assets",
   );
@@ -168,4 +173,26 @@ test("the workflow stops at immutable draft staging and never changes the client
     ),
   ).toBe(false);
   expect(JSON.stringify(workflow)).not.toContain("BETA_FEED_TOKEN");
+});
+
+test("separates protected workflow helpers from the immutable selected application checkout", () => {
+  const checks = (name) => workflow.jobs[name].steps.filter((step) => step.uses?.startsWith("actions/checkout@"));
+  for (const name of ["candidate", "version", "build", "draft"]) {
+    const [control, source] = checks(name);
+    expect(control.with.ref).toBe("${{ github.sha }}");
+    expect(control.with.path).toBeUndefined();
+    expect(source.with.path).toBe("source");
+    expect(source.with.ref).toBe(["candidate", "version"].includes(name)
+      ? "${{ needs.source.outputs.source_sha }}" : "${{ needs.version.outputs.release_sha }}");
+    expect(workflow.jobs[name].defaults.run["working-directory"]).toBe("source");
+    for (const step of workflow.jobs[name].steps) {
+      if (/node .*\/(?:release-public|prepare-release-candidate|validate-release-assets|build-latest-json)\.mjs/.test(step.run ?? ""))
+        expect(step.run).toMatch(/node \.\.\/scripts\//);
+    }
+  }
+  expect(checks("verification")[0].with.ref).toBe("${{ needs.source.outputs.source_sha }}");
+  expect(workflow.jobs.candidate.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");
+  expect(workflow.jobs.version.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");
+  expect(workflow.jobs.draft.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");
+  expect(workflow.jobs.build.steps[0]["working-directory"]).toBe("${{ github.workspace }}");
 });

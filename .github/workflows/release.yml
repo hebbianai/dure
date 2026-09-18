@@ -3,9 +3,10 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      source_sha:
-        description: Exact reviewed main commit with successful Public repository checks
-        required: true
+      source_ref:
+        description: Reviewed source in this repository (branch, tag or full SHA); main freezes the dispatch commit
+        required: false
+        default: main
         type: string
       bump:
         description: Version increment after reconciling previously reserved versions
@@ -28,20 +29,22 @@ permissions:
   contents: read
 
 env:
-  REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
+  REQUESTED_SOURCE_REF: ${{ inputs.source_ref }}
   RELEASE_BUMP: ${{ inputs.bump }}
   RELEASE_VERIFICATION: ${{ inputs.verification }}
 
 jobs:
-  candidate:
+  source:
     if: github.repository == 'hebbianai/dure' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 5
     permissions:
       contents: read
       actions: read
     outputs:
       tag: ${{ steps.admission.outputs.tag }}
+      source_sha: ${{ steps.admission.outputs.sourceSha }}
+      source_ref: ${{ steps.admission.outputs.sourceRef }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,12 +59,44 @@ jobs:
         id: admission
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release-public.mjs preflight
+        run: node scripts/release-public.mjs preflight "$RUNNER_TEMP/selection.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-selection
+          path: ${{ runner.temp }}/selection.json
+          if-no-files-found: error
+          retention-days: 30
+
+  candidate:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: source
+    env:
+      RELEASE_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+    steps:
+      # The orchestration helpers always come from protected main, not the selected ref.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.97.1
       - name: Prepare version-only candidate
-        run: node scripts/prepare-release-candidate.mjs "$RELEASE_BUMP" "$GITHUB_SHA" "$RUNNER_TEMP/release-candidate"
+        run: node ../scripts/prepare-release-candidate.mjs "$RELEASE_BUMP" "$RELEASE_SOURCE_SHA" "$RUNNER_TEMP/release-candidate"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-candidate-${{ github.sha }}
@@ -77,7 +112,7 @@ jobs:
           fi
 
   verification:
-    needs: candidate
+    needs: [source, candidate]
     if: inputs.verification == 'full'
     # Restrict this dedicated group to this workflow on refs/heads/main.
     # Never attach the public PR workflow or a maintainer's daily-driver host.
@@ -98,7 +133,7 @@ jobs:
             "DURE_GHOSTTY_VT_CACHE_ROOT=$RUNNER_TEMP/dure-ghostty-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.source.outputs.source_sha }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -141,13 +176,18 @@ jobs:
         run: sh scripts/manage-ci-cargo-target.sh release
 
   version:
-    needs: [candidate, verification]
+    needs: [source, candidate, verification]
     if: >-
-      always() && !cancelled() && needs.candidate.result == 'success' &&
+      always() && !cancelled() && needs.source.result == 'success' && needs.candidate.result == 'success' &&
       (needs.verification.result == 'success' ||
        (needs.verification.result == 'skipped' && inputs.verification == 'emergency-0.2'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: source
+    env:
+      RELEASE_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
     permissions:
       contents: write
       actions: write
@@ -158,6 +198,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          path: source
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -172,7 +217,7 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release-public.mjs version "$RUNNER_TEMP/release-candidate"
+        run: node ../scripts/release-public.mjs version "$RUNNER_TEMP/release-candidate"
       - name: Request exact-tag public CI
         env:
           GH_TOKEN: ${{ github.token }}
@@ -186,15 +231,24 @@ jobs:
       labels: [self-hosted, macOS, ARM64, dure-release]
     environment: macos-release
     timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: source
     steps:
       - name: Isolate release tool state
+        working-directory: ${{ github.workspace }}
         run: |
           printf '%s\n' \
             "RUSTUP_HOME=$RUNNER_TEMP/dure-rustup-home" \
             "NODE_COMPILE_CACHE=$RUNNER_TEMP/dure-node-cache" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
           ref: ${{ needs.version.outputs.release_sha }}
+          path: source
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -204,7 +258,7 @@ jobs:
       - name: Check immutable version state
         env:
           TAG: ${{ needs.version.outputs.tag }}
-        run: node scripts/verify-release-state.mjs "$TAG"
+        run: node ../scripts/verify-release-state.mjs "$TAG"
       - name: Isolate Cargo home
         env:
           CARGO_HOME: ${{ runner.temp }}/hebbian-cargo-home
@@ -233,7 +287,7 @@ jobs:
           APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
         run: |
           test "$(uname -m)" = arm64
-          node scripts/check-macos-signing.mjs
+          node ../scripts/check-macos-signing.mjs
           test -n "$DURE_TELEMETRY_KEY" || { echo 'DURE_TELEMETRY_KEY is required'; exit 1; }
           if [ -n "$APPLE_API_KEY_PATH" ]; then
             unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
@@ -256,7 +310,7 @@ jobs:
         id: assets
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: node scripts/validate-release-assets.mjs src-tauri/target/release/bundle "$GITHUB_OUTPUT"
+        run: node ../scripts/validate-release-assets.mjs src-tauri/target/release/bundle "$GITHUB_OUTPUT"
       - name: Stage four immutable files
         env:
           TAG: ${{ needs.version.outputs.tag }}
@@ -264,7 +318,7 @@ jobs:
           ARCHIVE: ${{ steps.assets.outputs.tarball }}
           SIGNATURE: ${{ steps.assets.outputs.sig }}
         run: |
-          node scripts/build-latest-json.mjs "${TAG#v}" "$SIGNATURE" Dure.app.tar.gz hebbianai/dure beta
+          node ../scripts/build-latest-json.mjs "${TAG#v}" "$SIGNATURE" Dure.app.tar.gz hebbianai/dure beta
           mkdir "$RUNNER_TEMP/release-assets"
           cp "$DMG" "$ARCHIVE" "$SIGNATURE" latest.json "$RUNNER_TEMP/release-assets/"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -275,16 +329,27 @@ jobs:
           retention-days: 30
 
   draft:
-    needs: [version, build]
+    needs: [source, version, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: source
+    env:
+      RELEASE_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+      REQUESTED_SOURCE_REF: ${{ needs.source.outputs.source_ref }}
     permissions:
       contents: write
       actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
           ref: ${{ needs.version.outputs.release_sha }}
+          path: source
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -299,6 +364,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
-        run: node scripts/release-public.mjs stage "$TAG" "$RUNNER_TEMP/release-assets" "$GITHUB_SHA" "$RELEASE_VERIFICATION"
+        run: node ../scripts/release-public.mjs stage "$TAG" "$RUNNER_TEMP/release-assets" "$RELEASE_SOURCE_SHA" "$RELEASE_VERIFICATION"
       - name: Report the remaining operator acceptance
         run: echo 'Draft only. Accept the unchanged signed app in an isolated home, then use release-public.mjs publish. No user app is installed or restarted by this workflow.' >> "$GITHUB_STEP_SUMMARY"

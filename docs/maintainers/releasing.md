@@ -1,7 +1,8 @@
 # Official macOS beta releases
 
-Official builds use an exact reviewed commit from `hebbianai/dure:main`, not a
-different repository or a moving branch. The [Release workflow](../../.github/workflows/release.yml)
+Official builds default to the dispatch's exact `hebbianai/dure:main` commit.
+A repository administrator may instead select a reviewed branch, tag or full
+commit SHA in this repository. The [Release workflow](../../.github/workflows/release.yml)
 creates a version-only commit, signed build and four-asset **draft** in
 `hebbianai/dure`. It does not publish, install or restart a user's app.
 
@@ -14,6 +15,8 @@ repository and `hebbianai/dure/.github/workflows/release.yml@refs/heads/main`;
 its runners need the
 `dure-release`, `macOS` and `ARM64` labels. Public PR/source checks stay on
 GitHub-hosted runners and receive no publisher credentials.
+The workflow must first exist on `main`: GitHub rejects a selected-workflow
+runner-group rule for a workflow that is only present on a topic branch.
 An organization runner administrator must verify the selected-workflow policy
 is available and enforced before registration. Do not substitute an unrestricted
 group when that policy is unavailable; choose separately isolated signing
@@ -21,8 +24,9 @@ infrastructure first. Environment approval alone does not protect a persistent
 host from other workflows. See GitHub's
 [runner-group access policy](https://docs.github.com/en/enterprise-cloud@latest/actions/how-tos/manage-runners/self-hosted-runners/manage-access).
 
-Create the `macos-release` environment with a main-only deployment policy and
-maintainer approval. Register these secrets in that environment:
+Create the `macos-release` environment with a main-only deployment policy,
+`komojini` as its required reviewer, and administrator bypass disabled.
+Register these secrets in that environment:
 
 - `APPLE_SIGNING_IDENTITY`: the existing valid Developer ID Application identity.
 - One notarization route: `APPLE_ID`, app-specific `APPLE_PASSWORD` and
@@ -55,10 +59,31 @@ The initial public snapshot still says `0.2.26`, so that bookkeeping needs a
 separately reviewed update before the first run. Never copy historical product
 files over current main or rewrite existing tags/assets.
 
-Wait for `Public repository checks` on the exact selected commit. Run Release
-only on main, supplying its full 40-character SHA as `source_sha` and `patch` or
-`minor` as `bump`. GitHub's selected source must equal the requested SHA; later
-main changes do not alter an admitted run.
+Run Release only on `main`, with `patch` or `minor` as `bump`. Leave `source_ref`
+empty or set it to `main` to use GitHub's dispatch commit, without manually
+copying a SHA. Alternatively supply a same-repository branch, tag or full
+40-character commit SHA. Qualified `refs/heads/...` and `refs/tags/...` remove
+name ambiguity. Fork URLs, pull-request refs and revision expressions are not
+release sources. The dispatch actor and rerun actor must have repository admin
+permission; approval of the protected signing environment remains separate.
+
+The hosted source job resolves the input once and records the immutable source
+SHA, protected workflow SHA, requested ref, version and verification profile in
+`release-selection`. Its summary shows both SHAs before protected jobs start.
+`Public repository checks` must be green for both exact commits. Later branch
+movement never changes candidate preparation, verification or the tag parent.
+The privileged version writer and draft publisher execute helpers from the
+protected workflow commit, not from the chosen application branch. The signed
+app is built from the version-only tag commit. Source selection is a trusted
+administrator operation: approving arbitrary unreviewed code for a signing
+host is unsafe, even when the workflow definition is protected.
+
+For example, after the workflow is on main:
+
+```sh
+gh workflow run release.yml --repo hebbianai/dure --ref main \
+  -f source_ref=main -f bump=patch -f verification=full
+```
 
 `verification=full` is the default and requires remote `pnpm verify:release`.
 An explicitly authorized `emergency-0.2` selection is confined to beta versions
@@ -81,9 +106,12 @@ After the Release workflow and exact-tag Public repository CI succeed:
 node scripts/release-public.mjs verify v0.2.29
 ```
 
-This compares the draft's exact four files with the successful workflow
-artifact, checks the single-parent version commit, verifies the updater archive
-against the exact-tag public key, and checks beta/version/immutable URLs.
+Run these operator commands from the reviewed release-tool checkout, not an
+arbitrary application branch. They match the successful run's protected workflow
+SHA and frozen selection artifact to the draft provenance, then compare the
+draft's exact four files with the successful workflow artifact, check the
+single-parent version commit, verify the updater archive
+against the exact-tag public key, and check beta/version/immutable URLs.
 It is integrity evidence, **not native acceptance**.
 
 Before publishing, inspect the unchanged signed DMG and mode-preserved archive;
@@ -122,6 +150,10 @@ response is reobserved before another write. Never delete or overwrite a
 versioned asset to make a retry pass. A failed draft-upload job can be rerun on
 the same workflow artifact; do not rebuild or dispatch another version to mask
 an upload failure.
+Use **Re-run failed jobs**, not **Re-run all jobs**: the source job deliberately
+refuses a second selection within the same run. If source admission itself
+failed before producing any candidate/version, start a new dispatch only after
+reconciling that the intended version is still unused.
 
 If publication succeeded but metadata writing or anonymous cache readback is
 uncertain, resume only:

@@ -284,3 +284,122 @@ test("preflight requires an unused next version and exact public source CI", () 
   );
   expect(writes(value)).toEqual([]);
 });
+
+test("freezes default main without a manually copied source SHA", () => {
+  const value = fixture({ remoteVersion: false });
+  delete value.env.REQUESTED_SOURCE_SHA;
+  delete value.env.RELEASE_SOURCE_SHA;
+  delete value.env.REQUESTED_SOURCE_REF;
+  const result = value.run(script, "preflight");
+  success(result);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    sourceSha: value.sourceSha, workflowSha: value.sourceSha, sourceRef: "main",
+  });
+  expect(value.calls().some((args) => args[1]?.includes("/commits/"))).toBe(false);
+  expect(writes(value)).toEqual([]);
+});
+
+test.each(["release-candidate", "refs/tags/reviewed-candidate", "sha"])(
+  "freezes %s once while privileged versioning uses the selected parent",
+  (input) => {
+    const value = fixture({ remoteVersion: false });
+    value.git("-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "new workflow main");
+    const workflowSha = value.git("rev-parse", "HEAD");
+    const sourceRef = input === "sha" ? value.sourceSha : input;
+    value.env.GITHUB_SHA = workflowSha;
+    value.env.REQUESTED_SOURCE_REF = sourceRef;
+    delete value.env.REQUESTED_SOURCE_SHA;
+    delete value.env.RELEASE_SOURCE_SHA;
+    value.change({ workflowSha, refs: { [sourceRef]: value.sourceSha } });
+    const result = value.run(script, "preflight", path.join(value.root, "selection.json"));
+    success(result);
+    expect(JSON.parse(result.stdout)).toMatchObject({ sourceSha: value.sourceSha, workflowSha, sourceRef });
+    const selection = JSON.parse(fs.readFileSync(path.join(value.root, "selection.json")));
+    expect(selection).toMatchObject({ sourceSha: value.sourceSha, workflowSha, sourceRef, tag: "v0.2.29" });
+    value.change({ refs: { [sourceRef]: workflowSha } });
+    value.git("switch", "--detach", value.sourceSha);
+    value.env.RELEASE_SOURCE_SHA = value.sourceSha;
+    success(value.run(script, "version", value.candidate));
+    expect(value.git("show", "-s", "--format=%P", "HEAD")).toBe(value.sourceSha);
+    expect(value.calls().filter((args) => args[1]?.includes("/commits/"))).toHaveLength(1);
+  },
+);
+
+test("rejects non-admin dispatch and rerun actors before source resolution or writes", () => {
+  const value = fixture({ remoteVersion: false });
+  value.change({ permissions: { "release-admin": "write" } });
+  expect(value.run(script, "preflight").stderr).toContain("release_admin_required");
+  value.env.GITHUB_TRIGGERING_ACTOR = "reader";
+  value.change({ permissions: { reader: "read" } });
+  expect(value.run(script, "preflight").stderr).toContain("release_admin_required");
+  expect(value.calls().some((args) => args[1]?.includes("/commits/"))).toBe(false);
+  expect(writes(value)).toEqual([]);
+});
+
+test("binds publication to the workflow SHA and its frozen selection artifact, not mutable main", () => {
+  const value = fixture();
+  const workflowSha = "b".repeat(40);
+  value.env.GITHUB_SHA = workflowSha;
+  value.change({ workflowSha });
+  success(stage(value));
+  success(value.run(script, "verify", "v0.2.29"));
+  value.change({ selection: {
+    schemaVersion: 1, runId: "239", sourceRef: "main", workflowSha,
+    sourceSha: "c".repeat(40), tag: "v0.2.29", verification: "full",
+  } });
+  const before = writes(value).length;
+  expect(value.run(script, "publish", "v0.2.29").stderr).toContain("release_selection_mismatch");
+  expect(writes(value)).toHaveLength(before);
+});
+
+test.each(["refs/pull/1/head", "https://github.com/other/fork", "main~1", "--help", "main\nforged=value"])(
+  "refuses non-source input %j before resolving it",
+  (ref) => {
+    const value = fixture({ remoteVersion: false });
+    value.env.REQUESTED_SOURCE_REF = ref;
+    expect(value.run(script, "preflight").status).toBe(1);
+    expect(value.calls().some((args) => args[1]?.includes("/commits/"))).toBe(false);
+    expect(writes(value)).toEqual([]);
+  },
+);
+
+test("does not reselect a moving branch when rerunning the source job", () => {
+  const value = fixture({ remoteVersion: false });
+  value.env.GITHUB_RUN_ATTEMPT = "2";
+  value.env.REQUESTED_SOURCE_REF = "candidate";
+  expect(value.run(script, "preflight").stderr).toContain("release_selection_rerun_forbidden");
+  expect(value.calls().some((args) => args[1]?.includes("/commits/"))).toBe(false);
+  expect(writes(value)).toEqual([]);
+});
+
+test("checks both the protected workflow CI and selected source CI", () => {
+  const value = fixture({ remoteVersion: false });
+  value.git("-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "workflow main");
+  const workflowSha = value.git("rev-parse", "HEAD");
+  value.env.GITHUB_SHA = workflowSha;
+  value.env.REQUESTED_SOURCE_REF = "candidate";
+  value.change({ refs: { candidate: value.sourceSha }, ciConclusions: { [workflowSha]: "failure" } });
+  expect(value.run(script, "preflight").stderr).toContain(`release_exact_ci_required: ${workflowSha}`);
+  value.change({ ciConclusions: { [value.sourceSha]: "failure" } });
+  expect(value.run(script, "preflight").stderr).toContain(`release_exact_ci_required: ${value.sourceSha}`);
+  expect(writes(value)).toEqual([]);
+});
+
+test("refuses a successful build run from a different protected workflow commit", () => {
+  const value = fixture();
+  success(stage(value));
+  value.change({ workflowSha: "d".repeat(40) });
+  const before = writes(value).length;
+  expect(value.run(script, "publish", "v0.2.29").stderr).toContain("release_workflow_source_mismatch");
+  expect(writes(value)).toHaveLength(before);
+});
+
+test.each(["version", "stage"])("refuses a non-admin rerun of privileged %s", (command) => {
+  const value = fixture({ remoteVersion: command === "stage" });
+  value.env.GITHUB_TRIGGERING_ACTOR = "reader";
+  value.change({ permissions: { reader: "read" } });
+  const result = command === "stage" ? stage(value) : value.run(script, "version", value.candidate);
+  expect(result.stderr).toContain("release_admin_required");
+  expect(value.git("rev-parse", "HEAD")).toBe(command === "stage" ? value.tagSha : value.sourceSha);
+  expect(writes(value)).toEqual([]);
+});
