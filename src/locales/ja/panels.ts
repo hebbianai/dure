@@ -7,6 +7,7 @@ export const panels: Record<string, string> = {
 	"panels.mobile.live": "リアルタイム iOS（試験機能）",
 	"panels.mobile.profiles": "実行プロファイル",
 	"panels.mobile.loadProfile": "保存済みプロジェクトを読み込む",
+	"panels.mobile.newProfile": "新しいプロファイル",
 	"panels.mobile.projectPath": "プロジェクトフォルダー",
 	"panels.mobile.chooseFolder": "フォルダーを選択",
 	"panels.mobile.buildCommand": "ビルドコマンド（任意）",

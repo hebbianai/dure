@@ -156,7 +156,7 @@ assert.ok(report.reportId && report.text.includes(appId));
 assert.ok(readFileSync(report.screenshot.path).length > 1000);
 assert.match(action("mobile.report.draft", { ...target, reportId: "stale", agentId: "unavailable" }, 2).error.message, /Report changed/u);
 assert.deepEqual(action("mobile.report.agents").value, [], "Disposable app must not expose the user's agents");
-action("mobile.profile.remove", { projectPath });
+action("mobile.profile.remove", { ...target, projectPath });
 assert.deepEqual(status().profiles, []);
 action("mobile.clear", target);
 assert.equal(status().device, null);

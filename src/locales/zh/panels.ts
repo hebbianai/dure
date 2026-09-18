@@ -7,6 +7,7 @@ export const panels: Record<string, string> = {
 	"panels.mobile.live": "实时 iOS（实验功能）",
 	"panels.mobile.profiles": "运行配置",
 	"panels.mobile.loadProfile": "加载已保存的项目",
+	"panels.mobile.newProfile": "新建配置",
 	"panels.mobile.projectPath": "项目文件夹",
 	"panels.mobile.chooseFolder": "选择文件夹",
 	"panels.mobile.buildCommand": "构建命令（可选）",

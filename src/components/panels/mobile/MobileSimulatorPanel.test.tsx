@@ -14,6 +14,7 @@ import {
 	type MobileDeviceTarget,
 	mobileSimulator,
 } from "@/lib/ipc/mobileSimulator";
+import type { MobileRunProfile } from "@/lib/mobileSimulator/profile";
 import { MobileSimulatorPanel } from "./MobileSimulatorPanel";
 
 vi.mock("@/lib/ipc/mobileSimulator", () => ({
@@ -68,7 +69,11 @@ const catalog = {
 	],
 	unavailable: [],
 };
-function fixture(device?: MobileDeviceTarget, visible = true) {
+function fixture(
+	device?: MobileDeviceTarget,
+	visible = true,
+	profiles: MobileRunProfile[] = [],
+) {
 	let changed = () => {};
 	const api = {
 		isVisible: visible,
@@ -80,7 +85,10 @@ function fixture(device?: MobileDeviceTarget, visible = true) {
 	};
 	const view = render(
 		<MobileSimulatorPanel
-			{...({ api, params: { device } } as unknown as IDockviewPanelProps<{
+			{...({
+				api,
+				params: { device, profiles },
+			} as unknown as IDockviewPanelProps<{
 				device?: MobileDeviceTarget;
 			}>)}
 		/>,
@@ -200,4 +208,34 @@ it("refreshes observed device state after a partial failure without losing the o
 		screen.queryByRole("button", { name: t("panels.mobile.boot") }),
 	).toBeNull();
 	expect(mobileSimulator.act).toHaveBeenCalledTimes(1);
+});
+
+it("removes only the selected device profile and persists its siblings", async () => {
+	const profile = {
+		projectPath: "/project",
+		buildCommand: "build",
+		artifactPath: "Build.app",
+		appId: "com.dure.qa",
+		url: "",
+		device: ios,
+	};
+	const otherPlatform = { ...profile, device: android };
+	const otherPhone = { ...profile, device: { ...ios, id: "another-phone" } };
+	const { api } = fixture(ios, true, [profile, otherPlatform, otherPhone]);
+	await waitFor(() => expect(mobileSimulator.list).toHaveBeenCalled());
+	fireEvent.click(screen.getByText(t("panels.mobile.profiles")));
+	const combo = screen.getByRole("combobox", {
+		name: t("panels.mobile.profiles"),
+	});
+	fireEvent.change(combo, {
+		target: {
+			value: (combo.querySelectorAll("option")[1] as HTMLOptionElement).value,
+		},
+	});
+	fireEvent.click(screen.getByRole("button", { name: t("common.remove") }));
+	expect(api.updateParameters).toHaveBeenLastCalledWith({
+		profiles: [otherPlatform, otherPhone],
+	});
+	expect(screen.queryByRole("button", { name: t("common.remove") })).toBeNull();
+	expect(mobileSimulator.act).not.toHaveBeenCalled();
 });
