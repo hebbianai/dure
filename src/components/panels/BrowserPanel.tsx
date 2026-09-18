@@ -19,11 +19,13 @@ import { openDesignModeBrowser } from "@/lib/design/designModeBrowser";
 import { t } from "@/lib/i18n";
 import { openExternalUrl } from "@/lib/platform/externalOpen";
 import { showToast } from "@/lib/toast";
+import { developmentPreviewsAvailable } from "@/lib/workspace/pane/interfaceMode";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
 
 export function BrowserPanel(props: IDockviewPanelProps<{ url: string }>) {
 	const mode = useInterfaceMode();
-	return mode === "pro" ? (
+	// The managed Browser needs a runtime that public bundles do not ship.
+	return mode === "pro" && developmentPreviewsAvailable() ? (
 		<ProBrowserPanel {...props} />
 	) : (
 		<BasicBrowserPanel {...props} />

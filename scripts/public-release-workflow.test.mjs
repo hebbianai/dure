@@ -132,11 +132,11 @@ test("full verification and owned target cleanup precede the independently valid
   );
 });
 
-test("only the protected build step receives signing credentials and remains Basic beta", () => {
+test("only the protected build step receives signing credentials and offers the Beta interface", () => {
   const build = workflow.jobs.build.steps.find(
-    (step) => step.name === "Build signed and notarized Basic beta",
+    (step) => step.name === "Build signed and notarized beta",
   );
-  expect(build.env.VITE_DURE_INTERFACE_MODE_POLICY).toBe("basic-only");
+  expect(build.env).not.toHaveProperty("VITE_DURE_INTERFACE_MODE_POLICY");
   expect(build.run).toContain("node ../scripts/check-macos-signing.mjs");
   expect(build.run).toContain(
     "node scripts/run-with-build-storage.mjs full -- corepack pnpm tauri build --config src-tauri/tauri.beta.conf.json",

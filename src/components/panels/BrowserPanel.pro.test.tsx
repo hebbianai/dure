@@ -669,3 +669,32 @@ it("attaches the chosen workspace, navigates, and persists the newly selected pa
 		mounted.unmount();
 	}
 });
+
+it("keeps the managed Browser development preview out of production Beta", () => {
+	vi.stubEnv("PROD", true);
+	const api = {
+		id: "browser:main",
+		isVisible: true,
+		updateParameters: vi.fn(),
+		onDidVisibilityChange: () => ({ dispose() {} }),
+	};
+	try {
+		render(
+			<BrowserPanel
+				{...({
+					api,
+					params: { url: "https://example.com" },
+				} as unknown as IDockviewPanelProps<{ url: string }>)}
+			/>,
+		);
+		expect(
+			screen.getByRole("textbox", { name: "panels.browser.address" }),
+		).toBeTruthy();
+		expect(
+			screen.queryByRole("button", { name: "panels.browser.options" }),
+		).toBeNull();
+		expect(mocks.invoke).not.toHaveBeenCalled();
+	} finally {
+		vi.unstubAllEnvs();
+	}
+});

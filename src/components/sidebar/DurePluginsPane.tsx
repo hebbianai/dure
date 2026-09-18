@@ -17,6 +17,7 @@ import {
 } from "@/components/plugins/usePluginViewCatalog";
 import { DurePluginSettingsDialog } from "@/components/sidebar/DurePluginSettingsDialog";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
+import { developmentPreviewsAvailable } from "@/lib/workspace/pane/interfaceMode";
 import { SectionHeaderRow } from "@/components/sidebar/SidebarItems";
 import { Button } from "@/components/ui/button";
 import { GlassPanel } from "@/components/ui/glass-panel";
@@ -129,8 +130,10 @@ export function DurePluginsPane() {
   const projects = useStore((state) => state.projects);
   const { snapshot: fullCatalog, loadState, error } = usePluginViewCatalog();
   const interfaceMode = useInterfaceMode();
+  // Slack remains a development preview even when Beta is selected.
+  const slackPreview = interfaceMode === "pro" && developmentPreviewsAvailable();
   const catalog = useMemo(() => {
-    if (!fullCatalog || interfaceMode === "pro") return fullCatalog;
+    if (!fullCatalog || slackPreview) return fullCatalog;
     return {
       ...fullCatalog,
       outcomes: fullCatalog.outcomes.filter((outcome) => {
@@ -140,7 +143,7 @@ export function DurePluginsPane() {
         return pluginId !== "dure.slack";
       }),
     };
-  }, [fullCatalog, interfaceMode]);
+  }, [fullCatalog, slackPreview]);
   const loading = loadState === "loading";
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [settingsTarget, setSettingsTarget] =

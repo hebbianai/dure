@@ -14,7 +14,7 @@ export const ipc: Record<string, string> = {
 	"ipc.browser.unavailable":
 		"이 브라우저를 더 이상 사용할 수 없습니다. 다시 연결한 뒤 브라우저를 선택하세요.",
 	"ipc.browser.developmentRequired":
-		"Pro Browser를 사용하려면 브라우저를 지원하는 개발용 백엔드가 필요합니다. 선택한 백엔드를 업데이트한 뒤 다시 연결하세요.",
+		"관리형 브라우저를 사용하려면 브라우저를 지원하는 개발용 백엔드가 필요합니다. 선택한 백엔드를 업데이트한 뒤 다시 연결하세요.",
 	"ipc.browser.runtimeRequired":
 		"선택한 백엔드에 브라우저 런타임이 설치되어 있지 않습니다. 해당 백엔드에 런타임을 설치한 뒤 브라우저를 생성하세요.",
 	"ipc.browser.requestFailed":

@@ -20,6 +20,7 @@ import {
 	type SlackConnectorClient,
 } from "@/lib/ipc/slackConnector";
 import { slackShareError } from "@/lib/plugins/slackConnection";
+import { developmentPreviewsAvailable } from "@/lib/workspace/pane/interfaceMode";
 
 export function AgentSlackShare({
 	identity,
@@ -30,9 +31,11 @@ export function AgentSlackShare({
 	disabled?: boolean;
 	client?: SlackConnectorClient;
 }) {
-	const pro = useInterfaceMode() === "pro";
+	// Slack remains a development preview even when Beta is selected.
+	const available =
+		useInterfaceMode() === "pro" && developmentPreviewsAvailable();
 	const [open, setOpen] = useState(false);
-	if (!pro) return null;
+	if (!available) return null;
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<ToolbarControl

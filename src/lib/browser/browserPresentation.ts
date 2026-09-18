@@ -23,7 +23,10 @@ import {
 } from "@/lib/workspace/dock/dockRegistry";
 import { openOrFocusPanel } from "@/lib/workspace/dock/openOrFocusPanel";
 import { createPaneId } from "@/lib/workspace/pane/paneIdentity";
-import { resolveEffectiveInterfaceMode } from "@/lib/workspace/pane/interfaceMode";
+import {
+	developmentPreviewsAvailable,
+	resolveEffectiveInterfaceMode,
+} from "@/lib/workspace/pane/interfaceMode";
 import { spaceWindowLabel } from "@/lib/workspace/window/windowLabel";
 import { useStore } from "@/store";
 
@@ -113,10 +116,16 @@ interface Dependencies {
 const dependencies: Dependencies = {
 	assertSpace(request) {
 		const state = useStore.getState();
+		// The managed Browser stays a development preview even in Beta.
 		if (
-			resolveEffectiveInterfaceMode(state.uiPrefs.interfaceMode).mode !== "pro"
+			resolveEffectiveInterfaceMode(state.uiPrefs.interfaceMode).mode !==
+				"pro" ||
+			!developmentPreviewsAvailable()
 		)
-			fail("browser_pro_required", "Browser presentation requires Pro mode.");
+			fail(
+				"browser_pro_required",
+				"Browser presentation requires Beta mode in a development build.",
+			);
 		const space = state.spaces.find((row) => row.id === request.spaceId);
 		if (
 			!space ||

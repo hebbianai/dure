@@ -28,10 +28,11 @@ afterEach(() => {
 	useWindowSidebarStore.setState({ open: true, tab: "spaces" });
 });
 
-it.each(["basic", "production"])(
+it.each(["basic", "basic-only"])(
 	"projects persisted Automations to Spaces under %s policy",
 	async (policy) => {
-		if (policy === "production") vi.stubEnv("PROD", true);
+		if (policy === "basic-only")
+			vi.stubEnv("VITE_DURE_INTERFACE_MODE_POLICY", "basic-only");
 		else
 			useStore.setState((state) => ({
 				uiPrefs: { ...state.uiPrefs, interfaceMode: "basic" },
@@ -85,4 +86,17 @@ it("unmounts Automations in Basic and restores its selection in Pro", async () =
 			.getByRole("button", { name: t("automations.title") })
 			.getAttribute("aria-pressed"),
 	).toBe("true");
+});
+
+it("shows Automations but keeps the Dure Tag preview out of production Beta", async () => {
+	vi.stubEnv("PROD", true);
+	render(<Sidebar />);
+
+	expect(
+		await screen.findByRole("region", { name: "Automations content" }),
+	).toBeTruthy();
+	expect(
+		screen.getByRole("button", { name: t("automations.title") }),
+	).toBeTruthy();
+	expect(screen.queryByRole("button", { name: t("tag.title") })).toBeNull();
 });

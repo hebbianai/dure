@@ -144,6 +144,17 @@ it("keeps sharing unavailable in Basic without requesting any connection", () =>
 	expect(f.invokeCommand).not.toHaveBeenCalled();
 });
 
+it("keeps the Slack development preview out of production Beta", () => {
+	vi.stubEnv("PROD", true);
+	try {
+		const f = fixture();
+		render(<AgentSlackShare identity={identity} client={f.client} />);
+		expect(screen.queryByRole("button")).toBeNull();
+		expect(f.invokeCommand).not.toHaveBeenCalled();
+	} finally {
+		vi.unstubAllEnvs();
+	}
+});
 it("can share work from another server without changing the channel default", async () => {
 	const f = fixture(false, "worker-two");
 	render(<AgentSlackShare identity={identity} client={f.client} />);

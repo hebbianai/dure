@@ -37,7 +37,7 @@ import { parseBrowserWorkspacePage } from "./contracts/browser-workspaces.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 import { browserWorkspaceSelection, resolveBrowserWorkspaceTarget, browserWorkspaceResource, assertBrowserWorkspaceResource, selectBrowserWorkspaceResource } from "./browser-workspace-target.mjs";
 
-export const BROWSER_HELP = `Dure Pro browser (development installation)
+export const BROWSER_HELP = `Dure managed browser (development installation)
 Usage:
   dure browser open-url URL [--resource ID | --workspace ID | --worktree SELECTOR] [--space ID|NAME] [--profile ID] [--controller ID --epoch EPOCH]
   dure browser exec [RESOURCE | --workspace ID | --worktree SELECTOR] --command COMMAND [--page PAGE] [--controller ID --epoch EPOCH]
@@ -180,7 +180,7 @@ After response loss, inspect that control receipt and the input operation_id
 separately before continuing. Environment values are lookup hints; backend
 authentication and Host control still authorize the operation. Remote selection
 must verify the same session on that backend; local hints do not grant remote control.
-open-url creates an HTTP(S) tab in the selected Browser and requests its Pro
+open-url creates an HTTP(S) tab in the selected Browser and requests its managed
 panel in the invoking pane's Space, or --space. It checks the mounted client
 before creation. A failed later presentation retains the runtime receipt; read
 it with "receipt OPERATION_ID" instead of creating another tab. A requested

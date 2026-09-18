@@ -82,7 +82,7 @@ do not type orchestration payloads into a PTY or provider conversation.
 
 ## Agent goals
 
-`agent_goal_get` and `agent_goal_put` carry an explicitly requested Dure Pro
+`agent_goal_get` and `agent_goal_put` carry an explicitly requested Dure
 goal. They are not part of the Dispatch lifecycle above: a goal is a standing
 objective the backend continues across segments of the same conversation, and
 it introduces no tracker and no mandatory next-work Decision. Touch them only

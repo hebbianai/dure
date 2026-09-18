@@ -14,7 +14,7 @@ export const ipc: Record<string, string> = {
 	"ipc.browser.unavailable":
 		"Este navegador ya no está disponible. Vuelve a conectarte para elegir un navegador.",
 	"ipc.browser.developmentRequired":
-		"Pro Browser requiere un backend de desarrollo compatible. Actualiza el backend seleccionado y vuelve a conectarte.",
+		"El navegador gestionado requiere un backend de desarrollo compatible. Actualiza el backend seleccionado y vuelve a conectarte.",
 	"ipc.browser.runtimeRequired":
 		"El entorno de ejecución del navegador no está instalado en el backend seleccionado. Instálalo allí antes de crear un navegador.",
 	"ipc.browser.requestFailed":

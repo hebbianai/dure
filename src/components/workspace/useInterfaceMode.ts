@@ -1,6 +1,7 @@
 import { basicFoldedSettingsPages } from "@/components/settings/settingsNav";
 import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 import {
+	developmentPreviewsAvailable,
 	type InterfaceMode,
 	resolveEffectiveInterfaceMode,
 } from "@/lib/workspace/pane/interfaceMode";
@@ -16,14 +17,17 @@ export function useInterfaceMode(): InterfaceMode {
 }
 
 const NO_FOLDED_TABS: ReadonlySet<string> = new Set();
+const PREVIEW_FOLDED_TABS: ReadonlySet<string> = new Set(["tag"]);
 const BASIC_FOLDED_TABS: ReadonlySet<string> = new Set(["automations", "tag"]);
 
 /** One resolver feeds rail visibility and effective selection. SSH, Sessions,
  * Source control, and Plugins stay reachable in every mode, including before
- * setup or while the plugin catalog is loading. Automations and Dure Tag are Pro-only. */
+ * setup or while the plugin catalog is loading. Automations needs Beta; the
+ * Slack-backed Dure Tag also stays a development preview. */
 export function useBasicFoldedRailTabs(): ReadonlySet<string> {
 	const mode = useInterfaceMode();
-	return mode === "pro" ? NO_FOLDED_TABS : BASIC_FOLDED_TABS;
+	if (mode !== "pro") return BASIC_FOLDED_TABS;
+	return developmentPreviewsAvailable() ? NO_FOLDED_TABS : PREVIEW_FOLDED_TABS;
 }
 
 /** Sidebar tab with the basic-mode downgrade applied: a persisted selection

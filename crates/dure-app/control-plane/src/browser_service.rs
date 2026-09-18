@@ -647,9 +647,9 @@ impl BrowserService {
 }
 
 fn require_development() -> Result<(), BackendDispatchError> {
-    // Pro is currently selectable only in development. Shipping a managed
-    // installer and an explicit Pro release policy precedes release enablement.
-    if !crate::pro_features::available() {
+    // Public bundles do not ship the pinned Chromium runtime. A managed
+    // installer and an explicit release policy precede release enablement.
+    if !crate::pro_features::development_previews_available() {
         return Err(BackendDispatchError::terminal(
             "browser_pro_development_only",
         ));

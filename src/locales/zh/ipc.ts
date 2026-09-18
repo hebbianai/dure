@@ -13,7 +13,7 @@ export const ipc: Record<string, string> = {
 	"ipc.browser.unavailable":
 		"此浏览器已不可用。请重新连接并选择浏览器。",
 	"ipc.browser.developmentRequired":
-		"Pro Browser 需要兼容的开发版后端。请更新所选后端，然后重新连接。",
+		"托管浏览器需要兼容的开发版后端。请更新所选后端，然后重新连接。",
 	"ipc.browser.runtimeRequired":
 		"所选后端尚未安装浏览器运行时。请先在该后端安装运行时，再创建浏览器。",
 	"ipc.browser.requestFailed": "浏览器请求未完成。请先检查状态，再重试。",

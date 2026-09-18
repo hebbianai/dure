@@ -14,7 +14,7 @@ export const ipc: Record<string, string> = {
 	"ipc.browser.unavailable":
 		"このブラウザーは利用できなくなりました。再接続してブラウザーを選択してください。",
 	"ipc.browser.developmentRequired":
-		"Pro Browserには、ブラウザーに対応した開発用バックエンドが必要です。選択したバックエンドを更新してから、再接続してください。",
+		"管理ブラウザーには、ブラウザーに対応した開発用バックエンドが必要です。選択したバックエンドを更新してから、再接続してください。",
 	"ipc.browser.runtimeRequired":
 		"選択したバックエンドにブラウザーランタイムがインストールされていません。そのバックエンドにランタイムをインストールしてから、ブラウザーを作成してください。",
 	"ipc.browser.requestFailed":

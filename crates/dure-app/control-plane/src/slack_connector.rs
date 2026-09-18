@@ -233,7 +233,7 @@ impl SlackConnectorService {
     }
 
     pub(crate) async fn dispatch(&self, body: &Value) -> Result<Value, BackendDispatchError> {
-        if !pro_features::available() {
+        if !pro_features::development_previews_available() {
             return Err(error("slack_pro_development_only"));
         }
         let request: Request = serde_json::from_value(body.clone())
@@ -554,7 +554,7 @@ async fn observe_child(
 }
 
 pub(crate) async fn restore_when_active(state: Arc<ServiceState>) {
-    if !pro_features::available() {
+    if !pro_features::development_previews_available() {
         return;
     }
     state.wait_for_mutation_authority().await;

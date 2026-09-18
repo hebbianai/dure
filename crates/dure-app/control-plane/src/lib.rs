@@ -3678,7 +3678,7 @@ async fn dispatch_authorized(
         .required_capabilities
         .iter()
         .any(|capability| capability == "plugin.slack")
-        && !pro_features::available()
+        && !pro_features::development_previews_available()
     {
         return Err(BackendDispatchError::terminal("slack_pro_development_only"));
     }
