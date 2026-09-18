@@ -167,6 +167,7 @@ async fn picker_connections_can_overlap_reopen_and_close_without_stopping_the_tu
     let endpoint = directory.path().join("client.sock");
     let listener = bind_endpoint(&endpoint).unwrap();
     let lifecycle = ManagedLifecycle {
+        guidance: None,
         reporter: ManagedAgentStateReporter::new("/usr/bin/false", directory.path()),
         request: ManagedAttachRequest::new("fixture-session", "fixture-workspace").unwrap(),
         fence: SessionFence {
@@ -239,4 +240,158 @@ async fn picker_connections_can_overlap_reopen_and_close_without_stopping_the_tu
     echo_server.abort();
     let _ = echo_server.await;
     result.expect("picker connections must remain responsive");
+}
+
+fn thread_request(method: &str, params: serde_json::Value) -> Value {
+    json!({"id": 7, "method": method, "params": params})
+}
+
+#[test]
+fn thread_start_receives_the_checkout_guidance() {
+    let mut payload = thread_request("thread/start", json!({"cwd": "/work"}));
+    assert!(inject_thread_developer_guidance(&mut payload, "keep main"));
+    assert_eq!(payload["params"]["developerInstructions"], "keep main");
+    assert_eq!(payload["params"]["cwd"], "/work");
+}
+
+#[test]
+fn thread_resume_receives_the_checkout_guidance() {
+    let mut payload = thread_request("thread/resume", json!({"threadId": "t-1"}));
+    assert!(inject_thread_developer_guidance(&mut payload, "keep main"));
+    assert_eq!(payload["params"]["developerInstructions"], "keep main");
+}
+
+#[test]
+fn existing_developer_instructions_are_kept_ahead_of_guidance() {
+    let mut payload = thread_request(
+        "thread/start",
+        json!({"developerInstructions": "user rules"}),
+    );
+    assert!(inject_thread_developer_guidance(&mut payload, "keep main"));
+    assert_eq!(
+        payload["params"]["developerInstructions"],
+        "user rules\n\nkeep main"
+    );
+}
+
+#[test]
+fn ephemeral_and_system_threads_keep_their_payload() {
+    for params in [
+        json!({"ephemeral": true}),
+        json!({"threadSource": "system"}),
+    ] {
+        let mut payload = thread_request("thread/start", params.clone());
+        assert!(!inject_thread_developer_guidance(&mut payload, "keep main"));
+        assert_eq!(payload["params"], params);
+    }
+}
+
+#[test]
+fn other_methods_and_shapeless_requests_keep_their_payload() {
+    for mut payload in [
+        thread_request("turn/start", json!({"threadId": "t-1"})),
+        json!({"id": 7, "method": "thread/start"}),
+        json!({"id": 7, "method": "thread/start", "params": ["cwd"]}),
+    ] {
+        let before = payload.clone();
+        assert!(!inject_thread_developer_guidance(&mut payload, "keep main"));
+        assert_eq!(payload, before);
+    }
+}
+
+#[tokio::test]
+async fn relay_forwards_thread_start_with_the_checkout_guidance() {
+    let directory = tempfile::tempdir().unwrap();
+    let upstream_path = directory.path().join("server.sock");
+    let listener = bind_endpoint(&upstream_path).unwrap();
+    let echo_server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async_with_config(stream, Some(websocket_configuration()))
+            .await
+            .unwrap();
+        while let Some(Ok(message)) = socket.next().await {
+            if message.is_close() || socket.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+    let child = || {
+        Command::new("/bin/cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap()
+    };
+    let mut server = child();
+    let mut tui = child();
+    let server_input = server.stdin.take().unwrap();
+    let tui_input = tui.stdin.take().unwrap();
+    let upstream = connect_upstream(&upstream_path, &mut server).await.unwrap();
+    let endpoint = directory.path().join("client.sock");
+    let listener = bind_endpoint(&endpoint).unwrap();
+    let lifecycle = ManagedLifecycle {
+        guidance: Some("keep main".into()),
+        reporter: ManagedAgentStateReporter::new("/usr/bin/false", directory.path()),
+        request: ManagedAttachRequest::new("fixture-session", "fixture-workspace").unwrap(),
+        fence: SessionFence {
+            session_id: "fixture-session".into(),
+            workspace_id: "fixture-workspace".into(),
+            runner_principal: "fixture".into(),
+            runner_instance: "fixture-runner".into(),
+            channel_epoch: 1,
+            host_instance_id: "fixture-host".into(),
+            terminal_epoch: "fixture-terminal".into(),
+        },
+        diagnostics: None,
+        projection: Lifecycle::default(),
+        recovery: None,
+        recovery_changed: Arc::default(),
+    };
+    let driver = tokio::spawn(async move {
+        let result = serve(
+            listener,
+            upstream_path,
+            upstream,
+            &mut server,
+            &mut tui,
+            lifecycle,
+        )
+        .await;
+        drop(server_input);
+        server.wait().await.unwrap();
+        result
+    });
+    let interactions = async {
+        let mut client = open_upstream(&endpoint).await.unwrap();
+        client
+            .send(Message::Text(
+                json!({"id": 0, "method": "thread/start", "params": {"cwd": "/work"}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        let echoed = message_json(client.next().await.unwrap().unwrap()).unwrap();
+        assert_eq!(echoed["params"]["developerInstructions"], "keep main");
+        assert_eq!(echoed["params"]["cwd"], "/work");
+        // Requests outside a thread selection keep their exact payload.
+        let passthrough = json!({"id": 1, "method": "thread/start",
+            "params": {"ephemeral": true}});
+        client
+            .send(Message::Text(passthrough.to_string().into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            message_json(client.next().await.unwrap().unwrap()).unwrap(),
+            passthrough
+        );
+        drop(tui_input);
+        driver.await.unwrap().unwrap();
+    };
+    tokio::time::timeout(Duration::from_secs(5), interactions)
+        .await
+        .unwrap();
+    echo_server.abort();
+    let _ = echo_server.await;
 }

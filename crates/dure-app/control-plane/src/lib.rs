@@ -105,6 +105,7 @@ mod pi_session_client;
 #[cfg(unix)]
 mod pi_timeline_bridge;
 #[cfg(unix)]
+mod primary_checkout;
 mod private_driver_socket;
 mod private_record;
 mod project_catalog;

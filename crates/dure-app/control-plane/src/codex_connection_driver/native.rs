@@ -22,6 +22,7 @@ struct Options {
 }
 
 struct ManagedLifecycle {
+    guidance: Option<String>,
     reporter: ManagedAgentStateReporter,
     request: ManagedAttachRequest,
     fence: SessionFence,
@@ -98,6 +99,40 @@ impl Options {
     }
 }
 
+/// Merge primary-checkout guidance into a native `thread/start` or
+/// `thread/resume` request. Ephemeral title-generation threads keep their
+/// wire payload untouched.
+fn inject_thread_developer_guidance(payload: &mut Value, guidance: &str) -> bool {
+    if !matches!(
+        payload.get("method").and_then(Value::as_str),
+        Some("thread/start" | "thread/resume")
+    ) {
+        return false;
+    }
+    // Native clients also start ephemeral threads for title generation; those
+    // are not the pane's conversation and keep their payload.
+    if payload
+        .pointer("/params/ephemeral")
+        .and_then(Value::as_bool)
+        == Some(true)
+        || payload
+            .pointer("/params/threadSource")
+            .and_then(Value::as_str)
+            == Some("system")
+    {
+        return false;
+    }
+    let Some(params) = payload.get_mut("params").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let merged = match params.get("developerInstructions").and_then(Value::as_str) {
+        Some(existing) if !existing.is_empty() => format!("{existing}\n\n{guidance}"),
+        _ => guidance.to_owned(),
+    };
+    params.insert("developerInstructions".into(), Value::String(merged));
+    true
+}
+
 fn fence() -> Result<SessionFence, CodexConnectionDriverError> {
     let read = |key: &str| {
         std::env::var(key).map_err(|_| CodexConnectionDriverError::new("native_fence_missing"))
@@ -124,6 +159,11 @@ pub async fn run_from_arguments(
         .map_err(|_| CodexConnectionDriverError::new("native_fence_invalid"))?;
     let cwd = std::env::current_dir()
         .map_err(|_| CodexConnectionDriverError::new("native_cwd_unavailable"))?;
+    let guidance = crate::primary_checkout::primary_checkout_session_context(
+        &cwd,
+        crate::primary_checkout::PRIMARY_CHECKOUT_QUERY_TIMEOUT,
+    )
+    .await;
     let mut reporter = ManagedAgentStateReporter::new(&options.runtime, &cwd);
     if let Some(root) = std::env::var_os("HMUX_DISCOVERY_ROOT") {
         reporter = reporter.with_discovery_root(root);
@@ -169,6 +209,7 @@ pub async fn run_from_arguments(
             &mut server,
             &mut tui,
             ManagedLifecycle {
+                guidance,
                 reporter,
                 request,
                 fence,
@@ -281,12 +322,19 @@ async fn relay(
                         continue;
                     }
                 };
+                let mut message = message;
                 if matches!(message, Message::Text(_) | Message::Binary(_)) {
-                    let payload = message_json(message.clone())?;
+                    let mut payload = message_json(message.clone())?;
                     if payload.get("method").is_some() && Lifecycle::owns_request_id(&payload) {
                         return Err(CodexConnectionDriverError::new("native_request_id_reserved"));
                     }
-                    if !matches!(lifecycle.lock().await.client(connection, &payload).await, Ok(true)) {
+                    let (admitted, guidance) = {
+                        let mut lifecycle = lifecycle.lock().await;
+                        let admitted =
+                            matches!(lifecycle.client(connection, &payload).await, Ok(true));
+                        (admitted, lifecycle.guidance.clone())
+                    };
+                    if !admitted {
                         // A full pending-request budget or one helper's bad
                         // request must not terminate other clients' live work.
                         let rejection = json!({"id": payload["id"], "error": {
@@ -296,6 +344,17 @@ async fn relay(
                             return Ok(());
                         }
                         continue;
+                    }
+                    if let Some(guidance) = guidance
+                        && inject_thread_developer_guidance(&mut payload, &guidance)
+                    {
+                        // Preserve the client's frame type on the rewritten wire.
+                        message = match message {
+                            Message::Binary(_) => {
+                                Message::Binary(payload.to_string().into_bytes().into())
+                            }
+                            _ => Message::Text(payload.to_string().into()),
+                        };
                     }
                 }
                 if upstream.send(message).await.is_err() { return Ok(()) }
