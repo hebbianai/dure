@@ -16,7 +16,9 @@ function manifest(bytes) {
     !version.every(Number.isSafeInteger) ||
     Object.keys(value.platforms ?? {}).join() !== "darwin-aarch64" ||
     Object.keys(platform ?? {}).sort().join() !== "signature,url" ||
-    platform?.url !== `https://github.com/hebbianai/hebbian-releases/releases/download/v${value.version}/Dure.app.tar.gz` ||
+    !["hebbianai/hebbian-releases", "hebbianai/dure"].some(
+      repository => platform?.url === `https://github.com/${repository}/releases/download/v${value.version}/Dure.app.tar.gz`,
+    ) ||
     typeof platform.signature !== "string" || !platform.signature.trim()
   ) throw new Error("beta_manifest_invalid: require beta macOS ARM64 and an immutable archive URL/signature");
   return value;

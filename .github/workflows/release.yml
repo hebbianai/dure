@@ -1,0 +1,369 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Reviewed source in this repository (branch, tag or full SHA); main freezes the dispatch commit
+        required: false
+        default: main
+        type: string
+      bump:
+        description: Version increment after reconciling previously reserved versions
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor]
+      verification:
+        description: Full regression, or an explicitly authorized 0.2.x emergency beta
+        required: true
+        default: full
+        type: choice
+        options: [full, emergency-0.2]
+
+concurrency:
+  group: official-macos-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REQUESTED_SOURCE_REF: ${{ inputs.source_ref }}
+  RELEASE_BUMP: ${{ inputs.bump }}
+  RELEASE_VERIFICATION: ${{ inputs.verification }}
+
+jobs:
+  source:
+    if: github.repository == 'hebbianai/dure' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.admission.outputs.tag }}
+      source_sha: ${{ steps.admission.outputs.sourceSha }}
+      source_ref: ${{ steps.admission.outputs.sourceRef }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Admit exact source and unused beta version
+        id: admission
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-public.mjs preflight "$RUNNER_TEMP/selection.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-selection
+          path: ${{ runner.temp }}/selection.json
+          if-no-files-found: error
+          retention-days: 30
+
+  candidate:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: source
+    env:
+      RELEASE_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+    steps:
+      # The orchestration helpers always come from protected main, not the selected ref.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.97.1
+      - name: Prepare version-only candidate
+        run: node ../scripts/prepare-release-candidate.mjs "$RELEASE_BUMP" "$RELEASE_SOURCE_SHA" "$RUNNER_TEMP/release-candidate"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/release-candidate
+          if-no-files-found: error
+          retention-days: 14
+      - name: Disclose the selected verification profile
+        run: |
+          if [ "$RELEASE_VERIFICATION" = emergency-0.2 ]; then
+            echo 'Full regression is DEFERRED for this explicitly selected 0.2.x emergency beta. Signing, artifact integrity and packaged acceptance remain required.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Full native release verification is required before version publication.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  verification:
+    needs: [source, candidate]
+    if: inputs.verification == 'full'
+    # Restrict this dedicated group to this workflow on refs/heads/main.
+    # Never attach the public PR workflow or a maintainer's daily-driver host.
+    runs-on:
+      group: dure-release
+      labels: [self-hosted, macOS, ARM64, dure-release]
+    environment: macos-release
+    timeout-minutes: 180
+    env:
+      HEBBIAN_CI_TARGET_PROFILE: verify
+    steps:
+      - name: Isolate release tool state
+        run: |
+          printf '%s\n' \
+            "RUSTUP_HOME=$RUNNER_TEMP/dure-rustup-home" \
+            "NODE_COMPILE_CACHE=$RUNNER_TEMP/dure-node-cache" \
+            "HEBBIAN_CI_RUNNER_TEMP=$RUNNER_TEMP" \
+            "DURE_GHOSTTY_VT_CACHE_ROOT=$RUNNER_TEMP/dure-ghostty-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Isolate Cargo home
+        env:
+          CARGO_HOME: ${{ runner.temp }}/hebbian-cargo-home
+          CARGO_TARGET_DIR: ""
+        run: sh scripts/prepare-ci-cargo-home.sh
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+          targets: aarch64-apple-ios
+      - name: Lease isolated verification target
+        env:
+          CARGO_TARGET_DIR: ""
+          HEBBIAN_CI_TARGET_STALE_LEASE_SECONDS: "11400"
+        run: sh scripts/manage-ci-cargo-target.sh prepare
+      - name: Install pinned dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Materialize public pinned Ghostty proof
+        id: ghostty
+        run: |
+          node scripts/run-with-build-storage.mjs full -- node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { ensureGhosttyVtProof } from './scripts/ensure-ghostty-vt-proof.mjs';
+          if (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) throw new Error('Publisher credentials must not reach verification');
+          const proof = ensureGhosttyVtProof({target: 'aarch64-apple-darwin'});
+          if (/[\r\n]/.test(proof)) throw new Error('Invalid proof path');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `prefix=${proof}\n`);
+          NODE
+      - name: Full exact-source release verification
+        env:
+          HMUX_GHOSTTY_VT_PROOF_PREFIX: ${{ steps.ghostty.outputs.prefix }}
+        run: corepack pnpm verify:release
+      - name: Release the exact verification target lease
+        if: always()
+        run: sh scripts/manage-ci-cargo-target.sh release
+
+  version:
+    needs: [source, candidate, verification]
+    if: >-
+      always() && !cancelled() && needs.source.result == 'success' && needs.candidate.result == 'success' &&
+      (needs.verification.result == 'success' ||
+       (needs.verification.result == 'skipped' && inputs.verification == 'emergency-0.2'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: source
+    env:
+      RELEASE_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+    permissions:
+      contents: write
+      actions: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      release_sha: ${{ steps.version.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/release-candidate
+      - name: Independently validate and atomically publish version-only refs
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node ../scripts/release-public.mjs version "$RUNNER_TEMP/release-candidate"
+      - name: Request exact-tag public CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh workflow run public-repository.yml --repo hebbianai/dure --ref "$TAG"
+
+  build:
+    needs: version
+    runs-on:
+      group: dure-release
+      labels: [self-hosted, macOS, ARM64, dure-release]
+    environment: macos-release
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - name: Isolate release tool state
+        working-directory: ${{ github.workspace }}
+        run: |
+          printf '%s\n' \
+            "RUSTUP_HOME=$RUNNER_TEMP/dure-rustup-home" \
+            "NODE_COMPILE_CACHE=$RUNNER_TEMP/dure-node-cache" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.release_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Check immutable version state
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: node ../scripts/verify-release-state.mjs "$TAG"
+      - name: Isolate Cargo home
+        env:
+          CARGO_HOME: ${{ runner.temp }}/hebbian-cargo-home
+          CARGO_TARGET_DIR: ""
+          HEBBIAN_CI_RUNNER_TEMP: ${{ runner.temp }}
+        run: sh scripts/prepare-ci-cargo-home.sh
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.97.1
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - name: Install pinned dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Build signed and notarized Basic beta
+        env:
+          VITE_DURE_INTERFACE_MODE_POLICY: basic-only
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+          DURE_TELEMETRY_KEY: ${{ vars.DURE_TELEMETRY_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+        run: |
+          test "$(uname -m)" = arm64
+          node ../scripts/check-macos-signing.mjs
+          test -n "$DURE_TELEMETRY_KEY" || { echo 'DURE_TELEMETRY_KEY is required'; exit 1; }
+          if [ -n "$APPLE_API_KEY_PATH" ]; then
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          else
+            unset APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_PATH
+          fi
+          osascript -e 'tell application "Finder" to get version'
+          node scripts/run-with-build-storage.mjs full -- corepack pnpm tauri build --config src-tauri/tauri.beta.conf.json
+      - name: Verify compiled telemetry configuration
+        env:
+          DURE_TELEMETRY_KEY: ${{ vars.DURE_TELEMETRY_KEY }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const key = process.env.DURE_TELEMETRY_KEY;
+          const binary = fs.readFileSync('src-tauri/target/release/bundle/macos/Dure.app/Contents/MacOS/dure');
+          if (!key || !binary.includes(Buffer.from(key))) throw new Error('Compiled telemetry configuration is missing');
+          NODE
+      - name: Validate Apple distribution and bundle identity
+        id: assets
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: node ../scripts/validate-release-assets.mjs src-tauri/target/release/bundle "$GITHUB_OUTPUT"
+      - name: Stage four immutable files
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          DMG: ${{ steps.assets.outputs.dmg }}
+          ARCHIVE: ${{ steps.assets.outputs.tarball }}
+          SIGNATURE: ${{ steps.assets.outputs.sig }}
+        run: |
+          node ../scripts/build-latest-json.mjs "${TAG#v}" "$SIGNATURE" Dure.app.tar.gz hebbianai/dure beta
+          mkdir "$RUNNER_TEMP/release-assets"
+          cp "$DMG" "$ARCHIVE" "$SIGNATURE" latest.json "$RUNNER_TEMP/release-assets/"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets-${{ needs.version.outputs.tag }}
+          path: ${{ runner.temp }}/release-assets
+          if-no-files-found: error
+          retention-days: 30
+
+  draft:
+    needs: [source, version, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: source
+    env:
+      RELEASE_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+      REQUESTED_SOURCE_REF: ${{ needs.source.outputs.source_ref }}
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.release_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets-${{ needs.version.outputs.tag }}
+          path: ${{ runner.temp }}/release-assets
+      - name: Reconcile only missing draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: node ../scripts/release-public.mjs stage "$TAG" "$RUNNER_TEMP/release-assets" "$RELEASE_SOURCE_SHA" "$RELEASE_VERIFICATION"
+      - name: Report the remaining operator acceptance
+        run: echo 'Draft only. Accept the unchanged signed app in an isolated home, then use release-public.mjs publish. No user app is installed or restarted by this workflow.' >> "$GITHUB_STEP_SUMMARY"
