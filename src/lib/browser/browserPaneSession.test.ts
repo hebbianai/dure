@@ -1154,6 +1154,79 @@ describe("Browser pane ordered input and frame lifetime", () => {
 		await session.dispose(false);
 	});
 
+	it.each(["release", "dispose"] as const)(
+		"does not contact a disconnected backend to %s when no input is held",
+		async (method) => {
+			const { client, session } = fixture();
+			await session.refresh();
+			client.control.mockRejectedValue(new Error("backend restarted"));
+			await expect(session[method]()).resolves.toBeUndefined();
+			expect(client.control).not.toHaveBeenCalled();
+			expect(client.action).not.toHaveBeenCalled();
+			await session.dispose(false);
+		},
+	);
+
+	it("does not query another controller's input when disposing an observer", async () => {
+		const { client, session, setControl } = fixture();
+		setControl({
+			...initial,
+			controller: { ...lease, controller_id: "agent:other" },
+			keyboard: { page, keys: ["ShiftLeft"] },
+		});
+		await session.refresh();
+		client.control.mockRejectedValue(new Error("backend restarted"));
+		await expect(session.dispose()).resolves.toBeUndefined();
+		expect(client.control).not.toHaveBeenCalled();
+	});
+
+	it("still checks held input after a key-down loses its acknowledgement", async () => {
+		const { client, session, setControl } = fixture();
+		await session.refresh();
+		client.action.mockRejectedValueOnce(new Error("reply lost"));
+		await expect(
+			session.input({ kind: "key_down", key: "ShiftLeft" }),
+		).rejects.toThrow("reply lost");
+		setControl({
+			...initial,
+			revision: "2",
+			next_command_sequence: "2",
+			keyboard: { page, keys: ["ShiftLeft"] },
+		});
+		await session.release();
+		expect(client.action.mock.calls[1][2]).toEqual({
+			kind: "key_up",
+			key: "ShiftLeft",
+		});
+		await session.dispose(false);
+	});
+
+	it("waits for in-flight key-down before disposing and releases its contact", async () => {
+		const { client, session, setControl } = fixture();
+		await session.refresh();
+		const pending = deferred<Awaited<ReturnType<typeof client.action>>>();
+		client.action.mockImplementationOnce(() => pending.promise);
+		const down = session.input({ kind: "key_down", key: "ShiftLeft" });
+		const disposed = session.dispose();
+		const held = {
+			...initial,
+			revision: "2",
+			next_command_sequence: "2",
+			keyboard: { page, keys: ["ShiftLeft"] },
+		};
+		setControl(held);
+		pending.resolve({
+			control: held,
+			response: { success: true },
+			observation: null,
+		});
+		await Promise.all([down, disposed]);
+		expect(client.action.mock.calls[1][2]).toEqual({
+			kind: "key_up",
+			key: "ShiftLeft",
+		});
+	});
+
 	it("does not release input belonging to a replacement controller epoch", async () => {
 		const { client, session, setControl } = fixture();
 		await session.refresh();

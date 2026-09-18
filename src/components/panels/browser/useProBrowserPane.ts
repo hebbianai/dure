@@ -64,6 +64,9 @@ export function useProBrowserPane(
 	active.current = visible && workspaceActive;
 	const [controllerId] = useState(() => `view:${crypto.randomUUID()}`);
 	const [connection, setConnection] = useState<Connection>();
+	const recoveredAuthority = useRef<DureBackendRouteAuthorityV1 | undefined>(
+		undefined,
+	);
 	const [resources, setResources] = useState<BrowserControlProjection[]>([]);
 	const [session, setSession] = useState<BrowserPaneSession>();
 	const [busy, setBusy] = useState(false);
@@ -174,89 +177,131 @@ export function useProBrowserPane(
 		},
 		[],
 	);
-	const connect = useCallback(async () => {
-		++selection.current;
-		setInstalling(false);
-		setSession(undefined);
-		setConnection(undefined);
-		setResources([]);
-		await run(async (current) => {
-			if (bindingError.current) throw bindingError.current;
-			let binding = savedBinding.current;
-			const pending = creation.current;
-			const savedRoute = pending?.authority ?? binding?.authority;
-			let authority: DureBackendRouteAuthorityV1;
-			try {
-				authority = savedRoute
-					? await assertDureBackendRouteAuthority(savedRoute)
-					: await resolveSelectedDureBackendRouteAuthority(undefined);
-			} catch (caught) {
-				if (
-					pending ||
-					!binding ||
-					!savedRoute ||
-					!(caught instanceof DureBackendRequestError) ||
-					caught.failure.kind !== "authority_changed"
-				)
-					throw caught;
-				// Refresh only this profile's passive view. An uncertain mutation
-				// keeps its original route; no input or creation crosses generations.
-				authority = await resolveSelectedDureBackendRouteAuthority(
-					savedRoute.profileId,
-				);
-				if (
-					authority.backend.id !== savedRoute.backend.id ||
-					!sameDureBackendRouteTarget(authority.target, savedRoute.target)
-				)
-					throw caught;
-				binding =
-					authority.backend.generation === savedRoute.backend.generation
-						? { ...binding, authority }
-						: { authority, workspaceId: binding.workspaceId };
-			}
-			if (!current()) return;
-			const rebound = binding !== savedBinding.current;
-			let resource = pending ? undefined : binding?.resource;
-			const client = createDureBrowserClient(authority);
-			let resources = await client.list();
-			if (!current()) return;
-			setConnection({ authority, client });
-			if (pending) {
-				const created = await createResource(
-					{ authority, client },
-					pending,
-					current,
-				);
+	const connect = useCallback(
+		async (releasePreviousInputs = false) => {
+			++selection.current;
+			setInstalling(false);
+			setSession(undefined);
+			setConnection(undefined);
+			setResources([]);
+			await run(async (current) => {
+				if (bindingError.current) throw bindingError.current;
+				let binding = savedBinding.current;
+				const pending = creation.current;
+				const savedRoute = pending?.authority ?? binding?.authority;
+				let authority: DureBackendRouteAuthorityV1;
+				try {
+					authority = savedRoute
+						? await assertDureBackendRouteAuthority(savedRoute)
+						: await resolveSelectedDureBackendRouteAuthority(undefined);
+				} catch (caught) {
+					if (
+						pending ||
+						!binding ||
+						!savedRoute ||
+						!(caught instanceof DureBackendRequestError) ||
+						caught.failure.kind !== "authority_changed"
+					)
+						throw caught;
+					// Refresh only this profile's passive view. An uncertain mutation
+					// keeps its original route; no input or creation crosses generations.
+					authority = await resolveSelectedDureBackendRouteAuthority(
+						savedRoute.profileId,
+					);
+					if (
+						authority.backend.id !== savedRoute.backend.id ||
+						!sameDureBackendRouteTarget(authority.target, savedRoute.target)
+					)
+						throw caught;
+					binding =
+						authority.backend.generation === savedRoute.backend.generation
+							? { ...binding, authority }
+							: { authority, workspaceId: binding.workspaceId };
+				}
 				if (!current()) return;
-				resource = created.resource;
-				resources = [
-					...resources.filter(
-						(row) => !sameBrowserResource(row.resource, resource!),
-					),
-					created,
-				];
-				creation.current = undefined;
-				binding = { authority, workspaceId: resource.workspace_id, resource };
-				persist(binding);
-			}
-			setResources(resources);
-			if (
-				resource &&
-				!resources.some((row) => sameBrowserResource(row.resource, resource!))
-			)
-				throw new Error("browser_saved_resource_missing");
-			if (resource)
-				setSession(
-					new BrowserPaneSession(
+				const rebound = binding !== savedBinding.current;
+				let resource = pending ? undefined : binding?.resource;
+				const client = createDureBrowserClient(authority);
+				let resources = await client.list();
+				if (!current()) return;
+				setConnection({ authority, client });
+				if (pending) {
+					const created = await createResource(
+						{ authority, client },
+						pending,
+						current,
+					);
+					if (!current()) return;
+					resource = created.resource;
+					resources = [
+						...resources.filter(
+							(row) => !sameBrowserResource(row.resource, resource!),
+						),
+						created,
+					];
+					creation.current = undefined;
+					binding = { authority, workspaceId: resource.workspace_id, resource };
+					persist(binding);
+				}
+				setResources(resources);
+				if (
+					resource &&
+					!resources.some((row) => sameBrowserResource(row.resource, resource!))
+				)
+					throw new Error("browser_saved_resource_missing");
+				if (resource) {
+					const attached = new BrowserPaneSession(
 						client,
 						resource,
 						controllerId,
 						pending || binding?.followCurrent ? undefined : binding?.pageId,
-					),
-				);
-			if (rebound && current()) persist(binding);
-		});
-	}, [controllerId, persist, run, createResource]);
+					);
+					if (releasePreviousInputs) {
+						// A surviving browser can still hold this view's keys across a
+						// route revision. Release only freshly observed contacts under
+						// the same controller lease; never replay the failed input.
+						await attached.refresh();
+						if (current()) await attached.release();
+						if (!current()) {
+							void attached.dispose(false);
+							return;
+						}
+					}
+					setSession(attached);
+				}
+				if (rebound && current()) persist(binding);
+			});
+		},
+		[controllerId, persist, run, createResource],
+	);
+
+	useEffect(() => {
+		if (
+			!session ||
+			!connection ||
+			busy ||
+			view.submitting ||
+			creation.current ||
+			![error, view.error].some(
+				(failure) =>
+					failure instanceof DureBackendRequestError &&
+					failure.failure.kind === "authority_changed",
+			) ||
+			(recoveredAuthority.current &&
+				sameDureBackendRouteAuthority(
+					recoveredAuthority.current,
+					connection.authority,
+				))
+		)
+			return;
+		// Retry passive attachment once per obsolete authority. The existing
+		// reconnect path fences backend identity and pending Create receipts.
+		recoveredAuthority.current = connection.authority;
+		// This route already rejected our authority; cleanup must not send held
+		// input releases through it or produce a second stale-route notification.
+		void session.dispose(false);
+		void connect(true);
+	}, [session, connection, busy, error, view.error, view.submitting, connect]);
 
 	useEffect(() => {
 		if (!revealed) return;
@@ -499,7 +544,10 @@ export function useProBrowserPane(
 					);
 			});
 		},
-		reconnect: () => void connect(),
+		reconnect: () => {
+			recoveredAuthority.current = undefined;
+			void connect();
+		},
 		run,
 		attach: (id: string) => {
 			const resource = resources.find((row) => row.resource.resource_id === id);

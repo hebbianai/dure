@@ -2,6 +2,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { afterEach, expect, it, vi } from "vitest";
+import type { BrowserControlProjection } from "@/lib/browser/browserResourceContract";
 import { useProBrowserPane } from "./useProBrowserPane";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), active: false }));
@@ -15,6 +16,7 @@ vi.mock("@/components/workspace/WorkspaceRuntimeContext", () => ({
 afterEach(() => {
 	mocks.invoke.mockReset();
 	mocks.active = false;
+	vi.unstubAllGlobals();
 });
 
 const route = {
@@ -164,7 +166,8 @@ function fixture(
 			routeAuthority: authority,
 			result: {
 				schemaVersion: 1,
-				operation_id: args.body.operation_id ?? null,
+				operation_id:
+					args.body.operation_id ?? args.body.authority?.operation_id ?? null,
 				result: await handle(args.body),
 			},
 		};
@@ -867,4 +870,232 @@ it("does not query or persist a late replacement route after the pane unmounts",
 	await act(async () => replacement.resolve(restartedRoute));
 	expect(f.requests("workspaces")).toHaveLength(0);
 	expect(f.api.updateParameters).not.toHaveBeenCalled();
+});
+
+function liveRouteFixture(rejectObservation = false) {
+	vi.stubGlobal(
+		"Image",
+		class {
+			src = "";
+			naturalWidth = 400;
+			naturalHeight = 600;
+			async decode() {}
+		},
+	);
+	const params = {
+		url: "https://www.dureai.dev/",
+		browserBinding: { authority: route, resource, pageId: "page:selected" },
+	};
+	let currentRoute = route;
+	let currentControl: BrowserControlProjection = { ...control, phase: "ready" };
+	const page = { resource, page_id: "page:selected", document_revision: "1" };
+	const f = fixture(params, async (body) => {
+		if (body.kind === "list")
+			return {
+				workspace_id: resource.workspace_id,
+				resources:
+					currentRoute.backend.generation === route.backend.generation
+						? [control]
+						: [],
+			};
+		if (body.kind === "observe") {
+			if (rejectObservation) throw obsoleteRouteError;
+			return {
+				control: currentControl,
+				pages: [
+					{ page, url: params.url, title: "Browser", profile_id: "default" },
+				],
+			};
+		}
+		if (body.kind === "frame")
+			return {
+				page,
+				mimeType: "image/jpeg",
+				base64: "aW1hZ2U=",
+				viewport: { width: 400, height: 600, pixel_ratio: 1 },
+			};
+		if (body.kind === "control_state") return currentControl;
+		if (body.kind === "action")
+			return {
+				control: { ...currentControl, revision: "3", keyboard: undefined },
+				response: { success: true },
+				observation: null,
+			};
+		throw Error(`Unexpected request ${body.kind}`);
+	});
+	const respond = mocks.invoke.getMockImplementation()!;
+	mocks.invoke.mockImplementation(async (command, args) => {
+		if (
+			args.route.kind === "exact" &&
+			args.route.authority.revision !== currentRoute.revision
+		)
+			throw obsoleteRouteError;
+		if (command === "dure_backend_route_assert") return currentRoute;
+		return respond(command, args);
+	});
+	return {
+		...f,
+		params,
+		setControl: (next: BrowserControlProjection) => {
+			currentControl = next;
+		},
+		changeRoute: (next: typeof route) => {
+			currentRoute = next;
+		},
+	};
+}
+
+it("automatically reconnects a mounted browser after its backend restarts", async () => {
+	const f = liveRouteFixture();
+	const pane = f.mount();
+	try {
+		await waitFor(() => expect(pane.result.current.session).toBeDefined());
+		const old = pane.result.current.session!;
+		f.changeRoute(restartedRoute);
+		await act(() => old.refresh());
+		await waitFor(() =>
+			expect(f.params.browserBinding).toEqual({
+				authority: restartedRoute,
+				workspaceId: resource.workspace_id,
+			}),
+		);
+		expect(pane.result.current.connected).toBe(true);
+		expect(pane.result.current.session).toBeUndefined();
+		expect(pane.result.current.error).toBeUndefined();
+		expect(pane.result.current.view.error).toBeUndefined();
+		expect(f.requests("list").slice(-1)[0]?.route.authority).toEqual(
+			restartedRoute,
+		);
+		for (const kind of ["create", "control_state", "action", "close"])
+			expect(f.requests(kind)).toHaveLength(0);
+	} finally {
+		pane.unmount();
+	}
+});
+
+it("releases this view's surviving held keys on the new route without replaying input", async () => {
+	const f = liveRouteFixture();
+	const pane = f.mount();
+	try {
+		await waitFor(() => expect(pane.result.current.session).toBeDefined());
+		const old = pane.result.current.session!;
+		const page = { resource, page_id: "page:selected", document_revision: "1" };
+		f.setControl({
+			...control,
+			phase: "ready",
+			revision: "2",
+			current_page: page,
+			controller: {
+				resource,
+				controller_id: pane.result.current.controllerId,
+				epoch: "1",
+			},
+			keyboard: { page, keys: ["ShiftLeft"] },
+		});
+		const updated = { ...route, revision: restartedRoute.revision };
+		f.changeRoute(updated);
+		await act(() => old.refresh());
+		expect(pane.result.current.error).toBeUndefined();
+		await waitFor(() =>
+			expect(f.params.browserBinding.authority).toEqual(updated),
+		);
+		expect(f.requests("action")).toHaveLength(1);
+		expect(f.requests("action")[0].route.authority).toEqual(updated);
+		expect(f.requests("action")[0].body.action).toEqual({
+			kind: "key_up",
+			key: "ShiftLeft",
+		});
+		expect(pane.result.current.error).toBeUndefined();
+		expect(pane.result.current.view.error).toBeUndefined();
+	} finally {
+		pane.unmount();
+	}
+});
+
+it("automatically refreshes the route while retaining a surviving browser and selected page", async () => {
+	const f = liveRouteFixture();
+	const pane = f.mount();
+	try {
+		await waitFor(() => expect(pane.result.current.session).toBeDefined());
+		const old = pane.result.current.session!;
+		const updated = { ...route, revision: restartedRoute.revision };
+		f.changeRoute(updated);
+		await act(() => old.refresh());
+		await waitFor(() =>
+			expect(f.params.browserBinding.authority).toEqual(updated),
+		);
+		expect(pane.result.current.session).not.toBe(old);
+		expect(pane.result.current.session?.resource).toEqual(resource);
+		expect(f.params.browserBinding.pageId).toBe("page:selected");
+		expect(pane.result.current.error).toBeUndefined();
+		expect(pane.result.current.view.error).toBeUndefined();
+		for (const kind of ["create", "control_state", "action", "close"])
+			expect(f.requests(kind)).toHaveLength(0);
+	} finally {
+		pane.unmount();
+	}
+});
+
+it("does not automatically attach a mounted browser to a different backend", async () => {
+	const f = liveRouteFixture();
+	const pane = f.mount();
+	try {
+		await waitFor(() => expect(pane.result.current.session).toBeDefined());
+		const old = pane.result.current.session!;
+		const saved = f.params.browserBinding;
+		f.changeRoute(otherRoute);
+		await act(() => old.refresh());
+		await waitFor(() => expect(pane.result.current.error).toBeDefined());
+		expect(pane.result.current.connected).toBe(false);
+		expect(pane.result.current.session).toBeUndefined();
+		expect(f.params.browserBinding).toBe(saved);
+		expect(f.requests("list")).toHaveLength(1);
+	} finally {
+		pane.unmount();
+	}
+});
+
+it("bounds automatic recovery when the resolved authority is still rejected and retains manual reconnect", async () => {
+	const f = liveRouteFixture(true);
+	const pane = f.mount();
+	try {
+		await waitFor(() => expect(pane.result.current.session).toBeDefined());
+		const first = pane.result.current.session!;
+		await act(() => first.refresh());
+		await waitFor(() => {
+			expect(pane.result.current.session).toBeDefined();
+			expect(pane.result.current.session).not.toBe(first);
+		});
+		const second = pane.result.current.session!;
+		await act(() => second.refresh());
+		expect(pane.result.current.session).toBe(second);
+		expect(pane.result.current.view.error).toBeDefined();
+		expect(f.requests("list")).toHaveLength(2);
+		act(() => pane.result.current.reconnect());
+		await waitFor(() => {
+			expect(pane.result.current.session).toBeDefined();
+			expect(pane.result.current.session).not.toBe(second);
+		});
+		expect(f.requests("list")).toHaveLength(3);
+	} finally {
+		pane.unmount();
+	}
+});
+
+it("keeps an uncertain Create on its exact route when a mounted browser connection changes", async () => {
+	const f = liveRouteFixture();
+	const pane = f.mount();
+	try {
+		await waitFor(() => expect(pane.result.current.session).toBeDefined());
+		const attached = pane.result.current.session;
+		f.changeRoute(restartedRoute);
+		await act(() => pane.result.current.create());
+		expect(pane.result.current.error).toBeDefined();
+		expect(pane.result.current.session).toBe(attached);
+		expect(f.params).toHaveProperty("browserCreation.authority", route);
+		expect(f.requests("create")).toHaveLength(1);
+		expect(f.requests("list")).toHaveLength(1);
+	} finally {
+		pane.unmount();
+	}
 });

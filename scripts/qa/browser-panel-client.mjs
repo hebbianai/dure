@@ -278,12 +278,30 @@ try {
   const updated = await command(["eval", resourceId, "document.body.style.background='rgb(230,210,180)';window.fixture", ...flags(lease)]);
   assert.equal(updated.result.response.data.result.instance, instance);
   assert.equal(updated.result.response.data.result.previewClicks, 0, "preview must not click either page element");
+  // The toolbar offers reconnect after a read failure; healthy views reload.
+  await action("frame-fail");
   const reconnected = await action("reconnect", { color: [230, 210, 180] });
+  await action("frame-resume", { color: [230, 210, 180] });
   assert.deepEqual(reconnected.binding.resource, resource);
   assert.equal(reconnected.binding.pageId, pageId);
   assert.equal(reconnected.inputReadOnly, true);
   assert.equal((await command(["get", resourceId, "value", "input", "--page", pageId])).result.data.value, text);
   assert.deepEqual(fixture.submissions, [], "handoff and composition must not submit the fixture form");
+  // A semantic profile change invalidates the mounted pane's exact route even
+  // while its browser, page and controller remain alive on the same backend.
+  assert.ok(profile.expected.capabilities.includes("browser.tracing.v1"));
+  profile.expected.capabilities = profile.expected.capabilities.filter((capability) => capability !== "browser.tracing.v1");
+  writeFileSync(join(process.env.DURE_HOME, "backend-profiles.json"), JSON.stringify(catalog), { mode: 0o600 });
+  const recovered = await action("route-recovered", {
+    previousRevision: reconnected.binding.authority.revision, pageId, color: [230, 210, 180],
+  });
+  assert.notEqual(recovered.binding.authority.revision, reconnected.binding.authority.revision);
+  assert.deepEqual(recovered.binding.authority.backend, reconnected.binding.authority.backend);
+  assert.deepEqual(recovered.binding.resource, resource);
+  assert.equal(recovered.inputReadOnly, true);
+  assert.deepEqual((await command(["show", resourceId])).result.control.controller, lease);
+  assert.equal((await command(["get", resourceId, "value", "input", "--page", pageId])).result.data.value, text);
+  assert.deepEqual(fixture.submissions, [], "automatic reconnection must not replay input");
   const controllerFlags = (current) => ["--controller", current.controller_id, "--epoch", current.epoch];
   const secondUrl = `${fixture.url}/?owner=native-current-second`;
   await command(["tab", "create", resourceId, secondUrl, ...controllerFlags(lease)]);
@@ -326,7 +344,9 @@ try {
   await command(["tab", "switch", resourceId, "--page", pageId, ...controllerFlags(finalLease)]);
   const agentSwitch = await action("observe", { pageId, color: [230, 210, 180] });
   assert.equal(agentSwitch.binding.followCurrent, true);
+  await action("frame-fail");
   const followReconnect = await action("reconnect", { pageId, color: [230, 210, 180] });
+  await action("frame-resume", { pageId, color: [230, 210, 180] });
   assert.equal(followReconnect.binding.followCurrent, true);
   assert.equal(followReconnect.inputReadOnly, true);
   assert.deepEqual(fixture.submissions, [], "tab selection and both compositions must not submit either fixture form");
