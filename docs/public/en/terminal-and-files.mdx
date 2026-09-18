@@ -5,7 +5,7 @@ description: "Run shell commands, inspect code, and give an agent text, images o
 
 import { ProductFigure } from "/snippets/app-capture.jsx";
 
-New agents open in terminal panes. Each uses its provider's native CLI, so you can keep using that tool's commands and shortcuts alongside Dure's workspace controls.
+New agents open in terminal panes by default. Each uses its provider's native CLI, so you can keep using that tool's commands and shortcuts alongside Dure's workspace controls.
 
 ## Run checks in a shell
 
@@ -37,6 +37,6 @@ You can also paste or drop screenshots into the **⌘N** task entry before start
 
 ## Terminal or chat view
 
-For a provider/runtime combination that supports it, the pane's Terminal/Chat control can switch the interaction view. New agents still start in terminals. Check [provider capabilities](/en/providers) instead of assuming every CLI offers the same views or resume behavior.
+In the Beta interface, the pane's Terminal/Chat control can switch the interaction view for a provider/runtime combination that supports it. New agents start in terminals unless you set **Settings → General → Default agent pane** to Chat. Basic keeps each agent in the view it opened with. Check [provider capabilities](/en/providers) instead of assuming every CLI offers the same views or resume behavior.
 
 For text size and line height, see [appearance settings](/en/settings). For remote file preparation, see [SSH projects](/en/remote-and-ssh).

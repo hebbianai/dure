@@ -1,19 +1,19 @@
 ---
 title: "VM environments"
-description: "Give a worktree its own compute environment with Pro."
+description: "Give a worktree its own compute environment in the Beta interface."
 ---
 
-Pro can prepare a separate VM or container for a worktree using a recipe in your
-repository. Dure runs the recipe locally, registers its SSH endpoint, and uses
+Dure can prepare a separate VM or container for a worktree using a recipe in
+your repository. It runs the recipe locally, registers its SSH endpoint, and uses
 the normal remote project and agent workflow inside that environment.
 
-This requires a Pro-enabled Dure build and Pro interface mode. Public Basic
-builds do not admit creation or resume. Suspending and destroying an existing
-environment remain available in Basic.
+VM environments require the Beta interface: choose **Beta** under
+**Settings → General → Interface mode**. Basic can still suspend or destroy an
+existing environment, but cannot create or resume one.
 
 ## Use an environment
 
-1. Select a local Git project in **Add agent** and choose **Use a VM · Pro**.
+1. Select a local Git project in **Add agent** and choose **Use a VM · Beta**.
 2. Choose a recipe, name the environment, and select **Prepare environment**.
    Review the scripts first: they run with your local credentials and can create
    resources billed by your provider.
@@ -31,9 +31,19 @@ Dure does not migrate live processes or copy provider login credentials into a V
 ## Try a local VM with Lima
 
 Install [Lima](https://lima-vm.io/docs/installation/) 1.2 or later, Git, and Python 3.
-Download the [Lima recipe](/examples/lima/lima.sh) into your project at
-`.dure/lima.sh` and its [manifest](/examples/lima/dure.environments.json) at
-`dure.environments.json` in the project root.
+Save the [Lima recipe](https://github.com/hebbianai/dure/blob/main/docs/public/examples/lima/lima.sh)
+as `.dure/lima.sh` in your project and its [manifest](/examples/lima/dure.environments.json)
+as `dure.environments.json` in the project root. From the project root, run:
+
+~~~bash
+mkdir -p .dure
+curl -fsSL https://raw.githubusercontent.com/hebbianai/dure/main/docs/public/examples/lima/lima.sh -o .dure/lima.sh
+curl -fsSL https://docs.dureai.dev/examples/lima/dure.environments.json -o dure.environments.json
+~~~
+
+Dure runs the recipe through Bash, so it does not need to be executable. If your
+project already has `dure.environments.json`, add the `lima` recipe to its
+`environments` list instead of overwriting the file.
 
 The example uses an Ubuntu 24.04 VM with 2 CPUs, 2 GiB memory, and a 12 GiB disk.
 It copies the currently committed `HEAD` into `/home/dure/project`; uncommitted
@@ -90,8 +100,9 @@ Each invocation receives these environment variables:
 
 Stdin contains one JSON object with `schemaVersion`, `action`, `instanceId`,
 `name`, `projectPath`, and `recipeResult` (the last successful result or `null`).
-Ambient Dure, Hmux, and Git routing variables are excluded. Other inherited
-environment variables are available to your provider CLI.
+Dure removes every inherited variable whose name starts with `DURE_`, `HMUX_`,
+or `GIT_` before setting the variables above. Other inherited environment
+variables are available to your provider CLI.
 Run provisioning to completion in the foreground. The bounded child inherits
 an operation lock; a daemon that keeps that descriptor open prevents subsequent
 lifecycle operations until it releases it.

@@ -11,10 +11,10 @@ State the goal, allowed changes, verification and the point at which the agent s
 
 ## Connect the integration
 
-Inspect the Dure CLI's integration state first:
+Inspect the Dure CLI's global integration state first. Without `--global`, `dure integration status` checks the current folder instead:
 
 ```sh
-dure integration status
+dure integration status --global
 dure integration --help
 ```
 
@@ -22,7 +22,7 @@ To install the supported Codex and Claude discovery entries into your global pro
 
 ```sh
 dure integration install --global --approve-global-config
-dure integration status
+dure integration status --global
 ```
 
 Installation changes provider configuration. Review the reported changes and use the status command to confirm what is installed. This integration is separate from choosing a coding-agent provider or configuring an app [plugin](/en/plugins).

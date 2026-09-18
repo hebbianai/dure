@@ -19,17 +19,17 @@ gh auth status
 git remote -v
 ```
 
-The sidebar uses your desktop GitHub access. Provider login is separate, and organization or GitHub Projects access may require additional GitHub permissions.
+The sidebar uses your desktop GitHub access. Provider login is separate, and organization access may require additional GitHub permissions. **Projects** needs the `read:project` scope; if it reports a permission error, run `gh auth refresh -s read:project`. Issues and pull requests still work without it.
 
 ## Start an agent from an issue
 
-Click **Start** on the work item. Dure opens **New agent** with the issue or pull-request context filled in. Review the task, project, provider and worktree choices, then press **Enter** or **Start agent**.
+Click **Start** on the work item. Dure opens **New agent** with the project, an agent name and a request for the issue or pull request filled in. **Isolate in a dedicated worktree** starts off; turn it on when the task needs separate files. Review and edit the request, project and provider, then press **Enter** or **Start agent**.
 
 <Frame caption="The Start action on an example GitHub issue opens the agent task flow.">
   <ProductFigure scene="github" locale="en" label="The Start action on an example GitHub issue opens the agent task flow." />
 </Frame>
 
-Starting the agent does not itself merge a pull request or close an issue.
+For an issue, the prefilled request asks the agent to check it against the current code first. If the issue is already resolved, the request may ask the agent to comment with the completion evidence and close the issue instead of making duplicate changes. Edit the request before starting if the agent should not change the issue. For a pull request, the request asks the agent to address the remaining work and prepare it for review; starting the agent does not merge it.
 
 ## Return to the work
 
@@ -39,6 +39,6 @@ Review the agent's changes and verification using [Diff](/en/review-and-feedback
 
 ## Configure the integration
 
-Open **Plugin → GitHub → Plugin settings** for settings such as refresh interval and the default issue list in the selected workspace. See [plugins](/en/plugins) for compatibility and settings scope.
+Open **Plugins → GitHub → Plugin settings** for settings such as refresh interval and the default issue list in the selected workspace. See [plugins](/en/plugins) for compatibility and settings scope.
 
-For a remote agent reading issues through the desktop login, use the separate [SSH GitHub read connection](/en/remote-and-ssh). Its supported commands and access boundaries differ from the local sidebar.
+For a remote agent reading issues through the desktop login, use the separate [SSH GitHub read connection](/en/remote-and-ssh#read-github-issues-with-your-desktop-login). Its supported commands and access boundaries differ from the local sidebar.

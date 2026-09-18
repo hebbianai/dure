@@ -11,10 +11,10 @@ description: "CLI と MCP を、永続的なメッセージ、ユーザーの判
 
 ## 統合を接続する
 
-先に Dure CLI の統合状態を確認します。
+先に Dure CLI のグローバルな統合状態を確認します。`--global` を付けない `dure integration status` は現在のフォルダーを確認します。
 
 ```sh
-dure integration status
+dure integration status --global
 dure integration --help
 ```
 
@@ -22,7 +22,7 @@ dure integration --help
 
 ```sh
 dure integration install --global --approve-global-config
-dure integration status
+dure integration status --global
 ```
 
 インストールはプロバイダー設定を変更します。報告された変更を読み、状態コマンドで結果を確認してください。プロバイダー選択やアプリの[プラグイン](/jp/plugins)設定とは別です。

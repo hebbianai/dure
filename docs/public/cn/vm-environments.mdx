@@ -1,21 +1,108 @@
 ---
 title: "VM 环境"
-description: "在 Pro 中为工作树准备独立的计算环境。"
+description: "在 Beta 界面中为 worktree 提供独立的计算环境。"
 ---
 
-在支持 Pro 的 Dure 中启用 Pro 模式，通过项目配方创建 VM 或容器。配方在本机运行，返回 SSH 连接后，即可使用现有流程创建远程工作树和代理。
+Dure 可以根据仓库中的配方，为 worktree 准备独立的 VM 或容器。它在本机运行配方、注册 SSH 端点，并在该环境中沿用常规的远程项目和智能体工作流程。
 
-1. 在**添加代理**中选择本地 Git 项目，然后选择**使用 VM · Pro**。
-2. 选择配方和名称，点击**准备环境**。配方使用本机凭据，可能创建收费资源，请先审阅脚本。
-3. 运行后选择**在此环境中继续**，确认 SSH 主机密钥，然后创建远程工作树。
-4. 在**设置 → VM 环境**中暂停、恢复或销毁。切换到 Basic 后仍可暂停和销毁已有环境。
+VM 环境需要 Beta 界面：在**设置 → 常规 → 界面模式**中选择**Beta**。Basic 界面仍可暂停或销毁已有环境，但不能创建或恢复环境。
 
-关闭窗口不会停止准备。删除代理不会销毁 VM。请保存或推送所需更改后，显式销毁环境；销毁可能删除所有客户机文件并终止会话。
+## 使用环境
 
-## 本地 Lima 示例
+1. 在**添加代理**中选择本地 Git 项目，然后选择**使用 VM · Beta**。
+2. 选择配方，为环境命名，然后选择**准备环境**。请先审阅脚本：它们使用你的本机凭据运行，并可能创建由提供商计费的资源。
+3. 环境运行后，选择**在此环境中继续**。确认 SSH 主机密钥，然后像平常一样选择分支并创建远程 worktree。
+4. 在**设置 → VM 环境**中管理**暂停**、**恢复**和**销毁**。
 
-安装 Lima 1.2 或更高版本、Git 和 Python 3。将[配方](/examples/lima/lima.sh)保存为项目中的 `.dure/lima.sh`，将[清单](/examples/lima/dure.environments.json)保存为根目录的 `dure.environments.json`。
+关闭对话框后，准备过程仍会继续。从设置中打开运行中的环境，可以在 SSH 注册或智能体启动失败后恢复。删除智能体或关闭其窗格**不会**销毁对应的环境。保存或推送需要保留的工作后，请显式使用**销毁**。暂停会断开会话；销毁可能删除所有客户机文件。Dure 不会迁移运行中的进程，也不会把提供商登录凭据复制到 VM 中。
 
-示例仅复制当前提交，不挂载主机目录，也不复制未提交更改或登录凭据。请在 VM 内安装代理 CLI 并登录。
+## 使用 Lima 试用本地 VM
 
-有关配方协议、故障恢复和 CLI，请参阅[英文文档](/en/vm-environments#recipe-contract)。
+安装 [Lima](https://lima-vm.io/docs/installation/) 1.2 或更高版本、Git 和 Python 3。将 [Lima 配方](https://github.com/hebbianai/dure/blob/main/docs/public/examples/lima/lima.sh)保存为项目中的 `.dure/lima.sh`，并将其[清单](/examples/lima/dure.environments.json)保存为项目根目录下的 `dure.environments.json`。在项目根目录运行：
+
+~~~bash
+mkdir -p .dure
+curl -fsSL https://raw.githubusercontent.com/hebbianai/dure/main/docs/public/examples/lima/lima.sh -o .dure/lima.sh
+curl -fsSL https://docs.dureai.dev/examples/lima/dure.environments.json -o dure.environments.json
+~~~
+
+Dure 通过 Bash 运行配方，因此脚本无需可执行权限。如果项目中已有 `dure.environments.json`，请将 `lima` 配方添加到其 `environments` 列表中，不要覆盖该文件。
+
+该示例使用 Ubuntu 24.04 VM，配置 2 个 CPU、2 GiB 内存和 12 GiB 磁盘。它将当前已提交的 `HEAD` 复制到 `/home/dure/project`；未提交的更改、被忽略的文件和凭据都不会包含在内。它不挂载任何主机目录。开始智能体工作前，请在 VM 内安装智能体 CLI 并登录。
+
+Lima 提供 [SSH 端点和密钥](https://lima-vm.io/docs/usage/ssh/)。配方固定了一个回环端口，因此重启后仍保持相同的连接。在支持的 Mac 上，Lima 使用 [Apple 虚拟化](https://lima-vm.io/docs/config/vmtype/vz/)。私有的准备日志写入 `LIMA_HOME` 旁边的同级目录，目录名为 `<LIMA_HOME directory name>-dure-logs`。默认：`~/.lima-dure-logs`。
+
+## 配方协议
+
+在项目根目录创建 `dure.environments.json`：
+
+~~~json
+{
+  "schemaVersion": 1,
+  "environments": [{
+    "id": "my-vm",
+    "name": "My VM provider",
+    "create": ".dure/create.sh",
+    "destroy": ".dure/destroy.sh",
+    "suspend": ".dure/suspend.sh",
+    "resume": ".dure/resume.sh"
+  }]
+}
+~~~
+
+`create` 和 `destroy` 为必填项。`suspend` 和 `resume` 必须同时提供或同时省略。路径必须解析为项目内的文件。每个脚本必须使用 UTF-8 编码且不超过 64 KiB；一个清单最多包含 32 个配方。单个配方捕获的脚本经 JSON 编码后不得超过 256 KiB。
+
+脚本通过 Bash 在该环境专用的私有持久工作目录中执行。使用 `DURE_PROJECT_PATH` 读取源仓库。Dure 在创建前捕获所选脚本的内容及其摘要。选择脚本后如有更改，需要重新加载配方。后续生命周期操作使用捕获的脚本，即使项目已被删除也是如此。请让清理逻辑自成一体；源项目中的辅助文件不会被快照。
+
+每次调用都会收到以下环境变量：
+
+| 变量 | 含义 |
+| --- | --- |
+| `DURE_ENVIRONMENT_ID` | 稳定的预分配实例 ID，在准备前即可使用 |
+| `DURE_ENVIRONMENT_NAME` | 用户选择的显示名称 |
+| `DURE_ENVIRONMENT_ACTION` | `create`、`suspend`、`resume` 或 `destroy` |
+| `DURE_ENVIRONMENT_SCHEMA_VERSION` | `1` |
+| `DURE_PROJECT_PATH` | 原始本地项目路径 |
+
+Stdin 包含一个 JSON 对象，其中有 `schemaVersion`、`action`、`instanceId`、`name`、`projectPath` 和 `recipeResult`（上一次成功的结果或 `null`）。Dure 会先移除所有名称以 `DURE_`、`HMUX_` 或 `GIT_` 开头的继承变量，再设置上述变量。其他继承的环境变量可供你的提供商 CLI 使用。请在前台运行准备过程直至完成。受限子进程会继承一个操作锁；如果守护进程一直保持该描述符打开，后续生命周期操作会被阻止，直到它释放为止。
+
+成功的 `create` 和 `resume` 必须向 stdout 输出且仅输出一个 JSON 结果：
+
+~~~json
+{
+  "schemaVersion": 1,
+  "resourceId": "provider-resource-id",
+  "connection": {
+    "host": "127.0.0.1",
+    "port": 2222,
+    "user": "developer",
+    "keyPath": "/absolute/local/path/to/private/key",
+    "projectRoot": "/absolute/guest/repository/path"
+  },
+  "userData": {}
+}
+~~~
+
+`keyPath` 可选；省略时使用常规的 SSH agent/配置解析。客户机中的项目根目录必须已经存在。`userData` 是可选对象，会被私下保留供后续命令使用，不会返回给客户端。恢复时必须返回相同的资源 ID 和连接字段。云端 VM 请使用固定的地址/端口或 DNS 名称。
+
+成功的 `suspend` 和 `destroy` 以状态码 0 退出。所有命令都有 30 分钟时限，输出上限为 64 KiB。详细日志请写入私有文件。Dure 只公开错误代码，不包含提供商输出。
+
+## 恢复与所有权
+
+记录会在准备**之前**持久化。创建失败或输出格式错误时，会自动运行捕获的 destroy 脚本。你的提供商必须使用 `DURE_ENVIRONMENT_ID` 为资源添加标签或命名；即使 `recipeResult` 为 `null` 或资源已不存在，`destroy` 也必须是幂等的。
+
+后端中断会留下一条保留的失败记录。刷新设置后将其销毁，以清理提供商资源；Dure 不会重放创建过程。清理失败会保持可见，以便重试。使用相同创建键的重复请求不会再创建环境。每个本地后端最多保留 512 条记录；已销毁的记录仍保留重试标识。
+
+## CLI
+
+~~~sh
+dure environment recipes --project /absolute/repo
+dure environment create --project /absolute/repo --recipe my-vm \
+  --digest sha256:DIGEST_FROM_RECIPES --name task-42 --request-id task-42-vm
+dure environment list
+dure environment suspend --id ENVIRONMENT_ID --revision CURRENT_REVISION
+dure environment resume --id ENVIRONMENT_ID --revision CURRENT_REVISION
+dure environment destroy --id ENVIRONMENT_ID --revision CURRENT_REVISION
+~~~
+
+命令面向本地后端并返回 JSON。创建操作只确认一条待处理记录；请使用 `list` 观察完成情况。确认响应丢失后重试时，请保留返回的 `requestId`。执行生命周期变更前，请先读取最新的 revision。

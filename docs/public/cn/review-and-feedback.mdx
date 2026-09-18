@@ -5,11 +5,11 @@ description: "阅读本地 diff，发送具体意见，并在合并之前验证�
 
 import { ProductFigure } from "/snippets/app-capture.jsx";
 
-接受智能体结果前，检查修改的代码及其验证证据。Dure 的 Diff 视图让审查紧邻对话进行。
+接受智能体结果前，检查修改的代码及其验证证据。Dure 会在单独的 diff 窗口中打开审查，你可以把它放在对话旁边。
 
 ## 打开正确的 worktree
 
-为本地智能体或 worktree 打开 **Diff**。比较以分支的分叉点为基准，包含未提交的修改和新文件。选择变更文件并阅读 diff。打开审查不会自动暂存或提交。
+在本地智能体面板的工具栏中点击 diff 图标。其提示为 **View diff in a new window**；分支有变更时，它会显示 `C2 W1` 这样的计数，分别表示已提交和未提交的文件。审查会在单独的窗口中打开。比较以分支的分叉点为基准，包含未提交的修改和新文件。选择变更文件并阅读 diff。打开审查不会自动暂存或提交。
 
 <Frame caption="并排比较搜索函数的原始版本和修改版本。">
   <ProductFigure scene="diff-review" locale="cn" label="并排比较搜索函数的原始版本和修改版本。" />

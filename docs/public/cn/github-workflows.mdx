@@ -19,17 +19,17 @@ gh auth status
 git remote -v
 ```
 
-侧栏使用桌面的 GitHub 访问权限。提供商登录与此无关，组织或 GitHub Projects 访问可能需要额外权限。
+侧栏使用桌面的 GitHub 访问权限。提供商登录与此无关，组织访问可能需要额外权限。**Projects** 需要 `read:project` 权限范围；如果提示权限错误，请运行 `gh auth refresh -s read:project`。没有该权限时 Issues 和 pull request 仍可使用。
 
 ## 从 issue 启动智能体
 
-点击条目上的 **Start**。Dure 会打开 **New agent**，填入 issue 或 pull request 上下文。检查任务、项目、提供商和 worktree 选项，再按 **Enter** 或 **Start agent**。
+点击条目上的 **Start**。Dure 会打开 **New agent**，并填入项目、智能体名称以及针对该 issue 或 pull request 的请求。**Isolate in a dedicated worktree** 默认关闭；任务需要独立文件时请打开。检查并按需编辑请求、项目和提供商，再按 **Enter** 或 **Start agent**。
 
 <Frame caption="示例 GitHub Issue 的 Start 操作进入智能体任务启动流程。">
   <ProductFigure scene="github" locale="cn" label="示例 GitHub Issue 的 Start 操作进入智能体任务启动流程。" />
 </Frame>
 
-启动智能体本身不会合并 pull request 或关闭 issue。
+对于 issue，预填的请求会让智能体先对照当前代码检查该 issue。如果 issue 已经解决，请求可能会让智能体评论记录完成证据并关闭 issue，而不是做重复修改。如果不希望智能体改动 issue，请在启动前编辑请求。对于 pull request，请求会让智能体处理剩余工作并准备审查；启动智能体不会合并它。
 
 ## 返回工作
 
@@ -39,6 +39,6 @@ git remote -v
 
 ## 配置集成
 
-打开 **Plugin → GitHub → Plugin settings**，设置选定工作区的刷新间隔、默认 issue 列表等。兼容性和设置范围见[插件](/cn/plugins)。
+打开 **Plugins → GitHub → Plugin settings**，设置选定工作区的刷新间隔、默认 issue 列表等。兼容性和设置范围见[插件](/cn/plugins)。
 
-远程智能体通过桌面登录读取 issue 时，使用单独的 [SSH GitHub 读取连接](/cn/remote-and-ssh)。其支持的命令和访问边界与本地侧栏不同。
+远程智能体通过桌面登录读取 issue 时，使用单独的 [SSH GitHub 读取连接](/cn/remote-and-ssh#通过桌面登录读取-github-issue)。其支持的命令和访问边界与本地侧栏不同。

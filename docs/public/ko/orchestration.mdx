@@ -11,10 +11,10 @@ description: "CLI와 MCP 클라이언트를 작업 메시지, 사용자 결정�
 
 ## 통합 연결
 
-먼저 Dure CLI의 통합 상태를 확인하세요.
+먼저 Dure CLI의 전역 통합 상태를 확인하세요. `--global` 없이 실행한 `dure integration status`는 현재 폴더를 확인합니다.
 
 ```sh
-dure integration status
+dure integration status --global
 dure integration --help
 ```
 
@@ -22,7 +22,7 @@ dure integration --help
 
 ```sh
 dure integration install --global --approve-global-config
-dure integration status
+dure integration status --global
 ```
 
 설치는 제공자 설정을 변경합니다. 보고된 변경을 읽고 상태 명령으로 설치 결과를 확인하세요. 코딩 에이전트 제공자를 선택하거나 앱 [플러그인](/ko/plugins)을 설정하는 것과는 별개입니다.

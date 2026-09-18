@@ -1,31 +1,32 @@
 ---
 title: "自定义 Dure"
-description: "在 Basic 界面中找到字体、语言、账户、通知和更新设置。"
+description: "选择 Basic 或 Beta 界面，并找到字体、语言、账户、通知和更新设置。"
 ---
 
 import { ProductFigure } from "/snippets/app-capture.jsx";
 
-点击侧栏齿轮打开 **Settings**。公开测试版使用 Basic 界面，日常设置无需 Pro。
+点击侧栏齿轮打开 **Settings**。在 **General → Interface mode** 中选择 **Basic** 或 **Beta**。Basic 只保留核心控件；Beta 显示全部内容，包括 **Terminal**、**Mobile**、**Shortcuts**、**Data locations** 和 **macOS permissions** 页面。
 
 ## 找到需要的设置
 
 | 设置 | 位置 |
 | --- | --- |
+| Basic 或 Beta 界面 | General |
 | 已安装版本与更新检查 | General |
 | 默认提供商与提供商权限默认值 | General |
 | 显示语言与编辑器自动保存 | General |
 | 提供商账户配置 | AI provider accounts |
-| CLI 检测与提供商准备 | Provider |
+| CLI 检测与提供商准备 | Agent CLI |
 | Dure CLI 与集成准备 | Agent tooling |
 | 主题、配色、终端字体和行高 | Appearance |
-| 顶部栏 Claude/Codex 使用量指示器 | Appearance |
+| 顶部栏 Claude/Codex 使用量指示器 | Appearance → Status bar |
 | 智能体提醒与声音 | Notifications |
 | 活动与本地提供商日志中的 token 使用量 | Stats and usage |
 | 匿名使用数据开关、诊断与反馈说明（[详情](/cn/privacy-and-telemetry)） | Privacy and telemetry |
 
 ## 调整终端文字
 
-用顶部栏的 **A−** 和 **A+** 调整终端字号。在 **Appearance → Terminal font** 选择字体、字号并设置 **Line height**。先在预览中判断间距，再返回工作。
+用顶部栏的 **A-** 和 **A+** 调整终端字号。在 **Appearance → Terminal font** 选择字体、字号并设置 **Line height**。先在预览中判断间距，再返回工作。
 
 <Frame caption="外观设置中的行高 1.35 和终端字体预览。">
   <ProductFigure scene="settings" locale="cn" label="外观设置中的行高 1.35 和终端字体预览。" />
