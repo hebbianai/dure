@@ -271,6 +271,8 @@ deleted automatically; remove the completed topic branch from your fork too.
 
 Maintainers manage version bumps, release branches, tags and publication. Include
 release changes in an ordinary contribution only when a maintainer requests them.
+The [official macOS release guide](docs/maintainers/releasing.md) covers protected
+signing, exact-source builds, compatibility feeds and publication recovery.
 
 ## Checks and review
 

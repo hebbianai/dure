@@ -37,7 +37,7 @@ try {
     "--commit",
     base,
     "--workflow",
-    "CI",
+    "public-repository.yml",
     "--limit",
     "20",
     "--json",
