@@ -52,6 +52,7 @@ const SERVER_CAPABILITIES: &[&str] = &[
     "quick_commands_v1",
     "pane_actions.arguments_results_v1",
     "terminal_pane.create_v1",
+    "mobile_pane.open_v1",
     "project_registration.add_v1",
     "ssh_hosts.add_v1",
     "worktree.presentation_export_v1",
@@ -61,7 +62,7 @@ const SERVER_CAPABILITIES: &[&str] = &[
 ];
 fn claimed_request_timeout(action: &str) -> Duration {
     match action {
-        "agent.present" | "browser.present" | "hmux.attach" | "pane.act" => {
+        "agent.present" | "browser.present" | "hmux.attach" | "pane.act" | "pane.open" => {
             PANE_OPERATION_CLAIMED_REQUEST_TIMEOUT
         }
         "hmux.create" => HMUX_CREATE_CLAIMED_REQUEST_TIMEOUT,
@@ -301,6 +302,14 @@ const FRONTEND_ROUTES: &[FrontendRoute] = &[
         method: Method::Post,
         path: "/desktop/create",
         action: "desktop.create",
+        waits_for_receipt: true,
+        scope: RouteScope::Control,
+        destructive: false,
+    },
+    FrontendRoute {
+        method: Method::Post,
+        path: "/pane/open",
+        action: "pane.open",
         waits_for_receipt: true,
         scope: RouteScope::Control,
         destructive: false,
@@ -2560,6 +2569,7 @@ mod tests {
                 "quick_commands_v1",
                 "pane_actions.arguments_results_v1",
                 "terminal_pane.create_v1",
+                "mobile_pane.open_v1",
                 "project_registration.add_v1",
                 "ssh_hosts.add_v1",
                 "worktree.presentation_export_v1",

@@ -23,7 +23,7 @@ export function mobileDeviceKey(target: MobileDeviceTarget): string {
 
 interface FrameObservation {
 	target: MobileDeviceTarget;
-	publish: (frame: MobileFrame) => void;
+	publish: (frame: MobileFrame) => void | Promise<void>;
 	fail: (error: unknown) => void;
 	repeat: boolean;
 }
@@ -64,7 +64,8 @@ export class MobileFrameObserver {
 		try {
 			const frame = await this.capture(observation.target);
 			if (generation !== this.generation) return;
-			observation.publish(frame);
+			await observation.publish(frame);
+			if (generation !== this.generation) return;
 			if (observation.repeat)
 				this.timer = setTimeout(() => void this.next(), 1000);
 		} catch (error) {

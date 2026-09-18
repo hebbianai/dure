@@ -1,4 +1,9 @@
 export const panels: Record<string, string> = {
+	"panels.mobile.frameUnavailable": "无法显示模拟器图像。请重新截取屏幕截图。",
+	"panels.mobile.orientationChanged": "设备视图已更改。请先截取新屏幕截图再操作。",
+	"panels.mobile.reportChanged": "报告已更改。请准备并检查新报告。",
+	"panels.mobile.previewUnavailable": "请选择正在运行的设备并显示此面板，然后启用预览。",
+	"panels.mobile.liveRequiresIos": "实时模式需要 iOS 模拟器。",
 	"panels.mobile.live": "实时 iOS（实验功能）",
 	"panels.mobile.profiles": "运行配置",
 	"panels.mobile.loadProfile": "加载已保存的项目",

@@ -1,4 +1,9 @@
 export const panels: Record<string, string> = {
+	"panels.mobile.frameUnavailable": "シミュレーター画像を表示できません。新しいスクリーンショットを撮影してください。",
+	"panels.mobile.orientationChanged": "デバイスの表示方向が変わりました。新しいスクリーンショットを確認してから操作してください。",
+	"panels.mobile.reportChanged": "レポートが変更されました。新しいレポートを作成して確認してください。",
+	"panels.mobile.previewUnavailable": "起動中のデバイスを選択し、このパネルを表示してからプレビューを有効にしてください。",
+	"panels.mobile.liveRequiresIos": "ライブモードにはiOSシミュレーターが必要です。",
 	"panels.mobile.live": "リアルタイム iOS（試験機能）",
 	"panels.mobile.profiles": "実行プロファイル",
 	"panels.mobile.loadProfile": "保存済みプロジェクトを読み込む",

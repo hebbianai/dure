@@ -12,6 +12,7 @@ function dependencies(
 		claim: vi.fn(async () => true),
 		complete: vi.fn(async () => undefined),
 		closePanel: vi.fn(async () => null),
+		openMobile: vi.fn(async () => ({ panelId: "mobile-pane", reused: true })),
 		addSpace: vi.fn(() => "desktop-new"),
 		waitForSpace: vi.fn(async () => ({})),
 		removeSpace: vi.fn(),
@@ -175,4 +176,52 @@ describe("dispatchCliDesktopPaneRequest", () => {
 			"desktop.create",
 		);
 	});
+});
+
+it("routes a mobile open before claim and preserves exact Space authority", async () => {
+	const request = {
+		reqId: "open-mobile",
+		action: "pane.open",
+		params: { spaceId: "space", tool: "mobile" },
+	};
+	const forwarded = dependencies({
+		routeToSpaceOwner: vi.fn(async () => ({ kind: "forwarded" as const })),
+	});
+	await dispatchCliDesktopPaneRequest(request, forwarded);
+	expect(forwarded.claim).not.toHaveBeenCalled();
+	expect(forwarded.openMobile).not.toHaveBeenCalled();
+	const owner = dependencies();
+	await dispatchCliDesktopPaneRequest(request, owner);
+	expect(owner.openMobile).toHaveBeenCalledExactlyOnceWith("space");
+	expect(owner.complete).toHaveBeenCalledWith(
+		"open-mobile",
+		{
+			ok: true,
+			pane: {
+				panelId: "mobile-pane",
+				reused: true,
+				spaceId: "space",
+				desktopId: "space",
+			},
+		},
+		"pane.open",
+	);
+});
+it("refuses unscoped or unknown tool opens without creating any pane", async () => {
+	for (const params of [
+		{ tool: "mobile" },
+		{ spaceId: "space", tool: "shell" },
+	]) {
+		const deps = dependencies();
+		await dispatchCliDesktopPaneRequest(
+			{ reqId: "invalid", action: "pane.open", params },
+			deps,
+		);
+		expect(deps.openMobile).not.toHaveBeenCalled();
+		expect(deps.complete).toHaveBeenCalledWith(
+			"invalid",
+			expect.objectContaining({ ok: false }),
+			"pane.open",
+		);
+	}
 });

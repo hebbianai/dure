@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type Ref, useImperativeHandle, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
@@ -7,52 +7,93 @@ import { deliverCaptureToAgent } from "@/lib/agents/captureDraftDelivery";
 import { t } from "@/lib/i18n";
 import {
 	type MobileDeviceTarget,
+	type MobileFrame,
 	mobileSimulator,
 } from "@/lib/ipc/mobileSimulator";
+import { saveTempImage } from "@/lib/ipc/system";
+import type { MobileReportControls } from "@/lib/mobileSimulator/controlActions";
 import { usePaneAgentChoices } from "../usePaneAgentChoices";
 
 export function MobileSimulatorReport({
 	target,
 	busy,
+	ref,
+	onWorkingChange,
+	capture,
 }: {
 	target: MobileDeviceTarget;
 	busy: boolean;
+	ref?: Ref<MobileReportControls>;
+	onWorkingChange?: (working: boolean) => void;
+	capture: () => Promise<MobileFrame>;
 }) {
 	const agents = usePaneAgentChoices();
 	const [appId, setAppId] = useState("");
 	const [agentId, setAgentId] = useState("");
-	const [pending, setPending] = useState<{ text: string; image: string }>();
+	const [pending, setPending] = useState<{
+		reportId: string;
+		text: string;
+		image: string;
+	}>();
 	const [working, setWorking] = useState(false);
 	const [error, setError] = useState("");
 	const [sent, setSent] = useState(false);
-	async function prepare() {
+	const operation = useRef(false);
+	const details = useRef<HTMLDetailsElement>(null);
+	async function prepare(selectedAppId: string) {
+		if (busy || operation.current) throw new Error(t("panels.mobile.working"));
+		operation.current = true;
+		setAppId(selectedAppId);
+		if (details.current) details.current.open = true;
 		setWorking(true);
+		onWorkingChange?.(true);
 		setError("");
 		setPending(undefined);
 		setSent(false);
 		try {
-			const report = await mobileSimulator.report(target, appId);
-			const frame = await mobileSimulator.capture(target);
-			setPending({
+			const report = await mobileSimulator.report(target, selectedAppId);
+			const frame = await capture();
+			const packet = {
+				reportId: crypto.randomUUID(),
 				text: JSON.stringify(
 					{ capturedAt: new Date().toISOString(), ...report },
 					null,
 					2,
 				),
 				image: frame.dataUrl,
+			};
+			const path = await saveTempImage({
+				dataB64: frame.dataUrl.split(",")[1],
+				ext: "png",
 			});
+			setPending(packet);
+			return {
+				reportId: packet.reportId,
+				text: packet.text,
+				screenshot: { path, width: frame.width, height: frame.height },
+			};
 		} catch (cause) {
 			setError(String(cause));
+			throw cause;
 		} finally {
+			operation.current = false;
 			setWorking(false);
+			onWorkingChange?.(false);
 		}
 	}
-	async function deliver() {
-		if (!pending || !agentId || working) return;
+	async function deliver(reportId: string, recipient: string, text?: string) {
+		if (busy || operation.current) throw new Error(t("panels.mobile.working"));
+		if (!pending || pending.reportId !== reportId)
+			throw new Error(t("panels.mobile.reportChanged"));
+		if (!agents.some((agent) => agent.id === recipient))
+			throw new Error(t("common.sendToAgent"));
+		operation.current = true;
+		setAgentId(recipient);
 		setWorking(true);
+		onWorkingChange?.(true);
 		setError("");
 		try {
-			await deliverCaptureToAgent(agentId, pending.text, [
+			await deliverCaptureToAgent(recipient, text ?? pending.text, [
 				{
 					kind: "bytes",
 					file: {
@@ -65,12 +106,23 @@ export function MobileSimulatorReport({
 			setSent(true);
 		} catch (cause) {
 			setError(String(cause));
+			throw cause;
 		} finally {
+			operation.current = false;
 			setWorking(false);
+			onWorkingChange?.(false);
 		}
 	}
+	useImperativeHandle(ref, () => ({
+		prepare,
+		draft: deliver,
+		busy: () => operation.current,
+	}));
 	return (
-		<details className="shrink-0 border-b px-3 py-2 text-xs text-muted-foreground">
+		<details
+			ref={details}
+			className="shrink-0 border-b px-3 py-2 text-xs text-muted-foreground"
+		>
 			<summary>{t("panels.mobile.report")}</summary>
 			<div className="mt-2 flex flex-col gap-2">
 				<Input
@@ -85,7 +137,7 @@ export function MobileSimulatorReport({
 					size="sm"
 					variant="outline"
 					disabled={busy || working || !appId.trim()}
-					onClick={() => void prepare()}
+					onClick={() => void prepare(appId).catch(() => {})}
 				>
 					{t("panels.mobile.prepareReport")}
 				</Button>
@@ -121,7 +173,9 @@ export function MobileSimulatorReport({
 						<Button
 							size="sm"
 							disabled={!agentId || working}
-							onClick={() => void deliver()}
+							onClick={() =>
+								void deliver(pending.reportId, agentId).catch(() => {})
+							}
 						>
 							{t("common.typeIntoPrompt")}
 						</Button>
