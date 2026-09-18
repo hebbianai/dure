@@ -8,8 +8,8 @@
 
 ### 방향은 당신이.<br>에이전트들은 함께.
 
-AI 코딩 에이전트를 위한 **Agent Development Environment (ADE)**.<br>
-프로젝트, 대화, 터미널, 코드 변경을 하나의 작업 공간에 모았습니다.
+AI 코딩 에이전트를 위한 **오픈소스 작업 공간**.<br>
+전용 worktree와 코드 리뷰를 활용해 여러 프로젝트와 SSH 호스트의 Claude Code, Codex, Pi를 한곳에서 이끄세요.
 
 **[macOS용 다운로드](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [웹사이트](https://www.dureai.dev/) &nbsp;·&nbsp; [문서](https://docs.dureai.dev/ko/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_) &nbsp;·&nbsp; [Discord](https://discord.gg/aTuRV6DXhb)
 
@@ -29,74 +29,84 @@ AI 코딩 에이전트를 위한 **Agent Development Environment (ADE)**.<br>
 
 </div>
 
-## 에이전트가 늘어나도, 이끄는 곳은 하나.
+## 작업을 이어가는 네 가지 방법
 
-어려운 건 에이전트를 하나 더 시작하는 일이 아닙니다. 어떤 작업에 내 판단이 필요한지, 무엇이 바뀌었는지, 다음에 무엇을 해야 하는지 파악하는 일입니다.
+### 에이전트는 병렬로, worktree는 따로
 
-Dure는 그 일을 한곳에 모읍니다. Claude Code 옆에 Codex와 Pi를 두고, 여러 프로젝트와 SSH 호스트의 세션을 함께 살펴보세요. 변경 사항을 읽고, 피드백을 보내고, 다음 작업의 방향을 정하세요.
+**⌘N**이나 GitHub 이슈에서 에이전트를 시작하세요. 프로젝트와 프로바이더를 고르고, 독립적으로 파일을 수정하는 작업에는 전용 Git worktree와 브랜치를 지정할 수 있습니다.
 
-## 첫 작업부터 마지막 리뷰까지
+[병렬 작업 시작하기 →](https://docs.dureai.dev/ko/first-parallel-workflow)
 
-### 01 — 목표로 시작하세요
+<a href="https://docs.dureai.dev/ko/first-parallel-workflow">
+  <img src="../../public/readme/start-agent.png" alt="작업, 프로바이더, 전용 worktree 옵션을 선택하세요." width="880" />
+</a>
 
-**⌘N**을 누르고 작업을 설명한 뒤 프로젝트와 프로바이더를 선택하세요. 독립적으로 파일을 수정하는 작업에는 전용 Git worktree와 브랜치를 지정하세요. GitHub 이슈에서 **Start**를 선택하면 이슈 내용이 채워진 작업을 시작할 수도 있습니다.
+<sub>작업, 프로바이더, 전용 worktree 옵션을 선택하세요.</sub>
 
-### 02 — 필요한 곳에 시선을 두세요
+### 로컬과 SSH 작업을 모으는 Spaces
 
-패널을 나누고, 탭을 옮기고, 데스크톱을 전환하거나 세션을 별도 창으로 여세요. Spaces에서 로컬과 SSH 작업을 함께 보고, 활동·변경 표시로 확인이 필요한 작업을 찾을 수 있습니다.
+프로젝트와 세션을 Spaces로 묶으세요. 패널을 나누고 탭을 옮기거나 별도 창을 열어 로컬과 SSH 작업을 함께 살펴볼 수 있습니다.
 
-<table>
-<tr>
-<td width="50%">
-<a href="https://docs.dureai.dev/ko/quickstart"><img src="../../public/readme/start-agent.png" alt="Command-N으로 연 새 에이전트 창의 작업, 프로젝트, 프로바이더, 전용 worktree 옵션" width="460" /></a>
-<br><sub>할 일을 설명하고, 에이전트를 고르세요.</sub>
-</td>
-<td width="50%">
-<a href="https://docs.dureai.dev/ko/spaces-and-panes"><img src="../../public/readme/pane-arrangement.png" alt="실행 중인 터미널 탭을 Dure의 Split Right 위치로 드래그하는 모습" width="460" /></a>
-<br><sub>화면은 옮기고, 작업 맥락은 유지하세요.</sub>
-</td>
-</tr>
-</table>
+[Spaces와 패널 →](https://docs.dureai.dev/ko/spaces-and-panes) · [SSH 설정](https://docs.dureai.dev/ko/remote-and-ssh)
 
-### 03 — 검토하고 방향을 잡으세요
+<a href="https://docs.dureai.dev/ko/spaces-and-panes">
+  <img src="../../public/readme/pane-arrangement.png" alt="샘플 프로젝트에서 실행 중인 에이전트 패널을 배치하는 모습입니다." width="880" />
+</a>
 
-커밋 전 변경과 새 파일을 포함한 로컬 변경 사항을 확인하세요. 코드 줄에 댓글을 달아 에이전트에게 피드백으로 보낼 수 있습니다. 작업을 합치기 전에 변경 내용과 테스트 결과를 확인하세요. 다음 단계는 당신이 결정합니다.
+<sub>샘플 프로젝트에서 실행 중인 에이전트 패널을 배치하는 모습입니다.</sub>
 
-[첫 에이전트 시작하기 →](https://docs.dureai.dev/ko/quickstart) &nbsp; [병렬 작업 →](https://docs.dureai.dev/ko/first-parallel-workflow) &nbsp; [리뷰와 피드백 →](https://docs.dureai.dev/ko/review-and-feedback)
+### 대화 옆에서 검토하는 코드
 
-## 에이전트의 작업을 둘러싼 도구들
+커밋 전 변경과 새 파일을 포함한 로컬 diff를 확인하세요. 파일이나 코드 줄에 댓글을 달아 연결된 에이전트에게 보내고, 작업을 합치기 전에 다음 수정본을 검토할 수 있습니다.
 
-| 이런 일이 필요할 때 | Dure에서 할 수 있는 일 |
+[리뷰와 피드백 →](https://docs.dureai.dev/ko/review-and-feedback)
+
+<a href="https://docs.dureai.dev/ko/review-and-feedback">
+  <img src="../../docs/public/images/diff-review.png" alt="리뷰 댓글을 달기 전에 샘플 프로젝트의 변경 내용을 확인하는 화면입니다." width="880" />
+</a>
+
+<sub>리뷰 댓글을 달기 전에 샘플 프로젝트의 변경 내용을 확인하는 화면입니다.</sub>
+
+### CLI 실행·예약과 에이전트 조정
+
+Dure CLI로 작업을 실행하고 반복 작업을 예약하세요. CLI와 MCP 통합을 통해 사람과 에이전트가 진행 메시지, 판단 요청, 완료 보고를 주고받을 수 있습니다.
+
+```sh
+dure run --provider codex --worktree readme-review \
+  "Review the README against the code. Do not change files."
+dure ls
+```
+
+[CLI 실행과 예약 →](https://docs.dureai.dev/ko/cli-and-automation) · [메시지와 판단 요청](https://docs.dureai.dev/ko/orchestration)
+
+## 지원 에이전트
+
+**Claude Code · Codex · Pi · OpenCode · Gemini CLI · Kimi Code**
+
+설치된 코딩 에이전트 CLI와 기존 프로바이더 계정을 그대로 사용하세요. 모델 이용권, 구독, 사용 요금은 각 프로바이더에서 관리합니다.
+
+Claude Code, Codex, OpenCode, Pi는 설치된 런타임이 지원할 때 구조화된 채팅 통합을 제공합니다. 터미널, 대화 기록, 이어하기, 계정 기능은 프로바이더마다 다릅니다. [프로바이더별 기능 확인 →](https://docs.dureai.dev/ko/providers)
+
+## 설치와 플랫폼별 지원 현황
+
+| 플랫폼 | 현재 제공 범위 |
 | --- | --- |
-| 독립적인 작업을 동시에 진행하기 | 전용 Git worktree와 브랜치로 작업별 파일 분리. |
-| 실행 중인 작업을 한눈에 보기 | 여러 프로젝트의 Spaces, 분할 패널, 데스크톱, 별도 창. |
-| 앱을 닫았다가 돌아오기 | 실행 중인 관리형 세션에 다시 연결하고, 종료된 프로세스는 별도 복구 흐름으로 처리. |
-| 여러 머신에서 작업하기 | 로컬 작업 옆에 SSH 프로젝트와 원격 터미널을 두고 이미지 붙여넣기·파일 전송. |
-| 기존 계정 활용하기 | 지원되는 프로바이더의 에이전트별 계정 프로필과 사용량 표시. |
-| 반복 작업 연결하기 | CLI 실행·스케줄과 CLI/MCP 메시지, 의사결정 요청, 완료 보고. |
-| 나에게 맞게 꾸미기 | 테마, 터미널 글꼴 설정, 7개 언어의 인터페이스. |
+| macOS · Apple Silicon | [공식 다운로드](https://www.dureai.dev/download/mac/) |
+| Windows | 소스 공개 · 네이티브 데스크톱 검증과 공개 설치 파일은 준비 단계 |
+| Linux | 소스 공개 · 네이티브 데스크톱 검증과 공개 설치 파일은 준비 단계 |
+| iOS | 소스 공개 · 기기 검증과 공식 배포는 준비 단계 |
+| Android | 소스 공개 · 기기 검증과 공식 배포는 준비 단계 |
 
-### 도구도, 계정도 그대로.
+소스 빌드와 검증 범위는 다음 안내를 참고하세요: [플랫폼별 개발 안내](../../CONTRIBUTING.md#platforms).
 
-**Claude Code, Codex, Pi, Gemini CLI, OpenCode, Kimi Code** 같은 네이티브 코딩 에이전트 CLI를 사용하세요. Dure는 작업 공간이지, 모델이나 프로바이더 구독 상품이 아닙니다. 프로바이더 구독료와 사용 요금은 별도입니다.
-
-터미널 지원, 대화 기록, 채팅 화면, 계정 도구의 범위는 프로바이더마다 다릅니다. [프로바이더별 지원 확인 →](https://docs.dureai.dev/ko/providers)
-
-## Mac에서 시작하세요
+### Mac에서 시작하기
 
 1. Apple Silicon Mac에서 <strong><a href="https://www.dureai.dev/download/mac/">macOS용 Dure를 다운로드</a></strong>하세요. 디스크 이미지를 열고 앱을 **응용 프로그램** 폴더로 옮기세요.
 2. 지원되는 코딩 에이전트 CLI를 하나 이상 설치하고 로그인하세요. macOS 보안 안내를 포함한 [설치 가이드](https://docs.dureai.dev/ko/install)를 확인하세요.
 3. Dure에서 익숙한 Git 프로젝트를 여세요. **⌘N**을 누르고 작은 작업 하나로 시작하세요.
 
-첫 요청은 이렇게 해보세요.
-
-```text
-이 저장소의 테스트를 실행하는 방법을 찾아줘.
-파일은 수정하지 마.
-실행 명령어와 그 명령어가 설명된 파일을 알려줘.
-```
-
-### 사용 전에 알아둘 점
+<details>
+<summary>사용 전에 알아둘 점</summary>
 
 - **Worktree는 파일을 분리할 뿐, 권한을 격리하지 않습니다.** 보안 샌드박스가 아니므로 자격 증명, 프로세스, 네트워크 접근은 격리되지 않습니다. 변경을 합칠 때 충돌이 생길 수도 있습니다.
 - **호스트가 실행 중이어야 합니다.** 관리형 세션은 호스트 프로세스와 머신이 실행 중인 동안 앱 창과 별개로 계속 실행될 수 있습니다. 재부팅하면 원래 프로세스는 종료되며, 복구는 새 프로세스를 만듭니다.
@@ -104,23 +114,24 @@ Dure는 그 일을 한곳에 모읍니다. Claude Code 옆에 Codex와 Pi를 두
 
 [세션과 복구](https://docs.dureai.dev/ko/session-model) · [SSH](https://docs.dureai.dev/ko/remote-and-ssh) · [작업 안전 안내](https://docs.dureai.dev/ko/current-limits)
 
+</details>
+
 ## 오픈소스 공개 범위
 
-**라이선스: [MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI.**
+이 저장소에 공개된 데스크톱·모바일·런타임·CLI·서비스 자체 코드는 [MIT](../../LICENSE) 라이선스로 제공되며, 외부 구성 요소의 라이선스와 고지는 유지됩니다. 해당 라이선스에 따라 직접 빌드·수정·재배포할 수 있습니다.
 
-이 저장소에 공개된 자체 코드는 [MIT](../../LICENSE) 라이선스로 제공됩니다. 데스크톱 앱, 모바일 클라이언트, 로컬 런타임, CLI와 저장소에 포함된 서비스 코드가 모두 해당됩니다. 외부 구성 요소의 기존 라이선스와 저작권 고지는 유지합니다.
+Dure 이름·로고·앱 아이콘의 사용과 커뮤니티 빌드·Hebbian AI 공식 빌드의 구분은 [TRADEMARK.md](../../TRADEMARK.md)에 안내되어 있습니다.
 
-이 저장소에는 **macOS·Windows·Linux** 데스크톱과 **iOS·Android** 모바일 소스가 함께 들어 있습니다. 빌드 명령과 현재 검증 범위는 [플랫폼별 개발 안내](../../CONTRIBUTING.md#platforms)를 참고하세요. 현재 다운로드할 수 있는 데스크톱 앱은 Apple Silicon macOS용입니다.
-
-소스 빌드는 [기여 가이드](../../CONTRIBUTING.md#source-and-development)를 참고하세요. 앱은 [웹사이트](https://www.dureai.dev/download/mac/)에서 다운로드할 수 있습니다.
-
-**Dure 이름·로고·앱 아이콘**의 사용은 [TRADEMARK.md](../../TRADEMARK.md)에 안내되어 있습니다. 코드의 라이선스에 따라 직접 빌드·수정·재배포할 수 있으며, 배포할 때는 Hebbian AI의 [공식 빌드](../../TRADEMARK.md#official-builds)와 제작자를 구분해 표시해야 합니다.
-
-**운영 서비스와 비공개 운영자료**는 소스 공개와 별개입니다. 소스 라이선스는 Hebbian AI가 운영하는 인프라나 외부 서비스에 대한 접근권을 부여하지 않습니다. 이 저장소에 포함된 코드는 명시된 라이선스를 그대로 따릅니다. 서명 키, 배포 자격 증명, 기밀 사업·운영자료는 비공개로 유지합니다. 이 저장소의 기여 작업은 공개 이슈와 풀 리퀘스트로 관리합니다.
+소스 라이선스는 운영 서비스 접근권을 포함하지 않습니다. 서명 키, 배포 자격 증명, 기밀 사업·운영자료는 비공개로 유지합니다.
 
 ## 기여하기
 
 [기여 가이드](../../CONTRIBUTING.md)와 [행동강령](../../CODE_OF_CONDUCT.md)을 확인하고, [버그를 제보하거나 기능을 제안](https://github.com/hebbianai/dure/issues/new/choose)해 주세요. 보안 취약점은 [보안 정책](../../SECURITY.md)에 안내된 비공개 경로로 제보해 주세요. 기여·운영 문서는 현재 영어로 제공됩니다.
+
+- **릴리스 노트:** [GitHub Releases](https://github.com/hebbianai/hebbian-releases/releases)
+- **개인정보와 사용 데이터:** [개인정보와 사용 데이터](https://docs.dureai.dev/ko/privacy-and-telemetry)
+- **커뮤니티:** [Discord](https://discord.gg/aTuRV6DXhb)
+- **소식:** [X · @hebbianai_](https://x.com/hebbianai_)
 
 ---
 

@@ -8,8 +8,8 @@
 
 ### あなたが導く。<br>エージェントが共に働く。
 
-AI コーディングエージェントのための **Agent Development Environment（ADE）**。<br>
-プロジェクト、会話、ターミナル、コードの変更を、ひとつのワークスペースに。
+AI コーディングエージェントのための**オープンソース・ワークスペース**。<br>
+専用 worktree とコードレビューを使い、複数のプロジェクトや SSH ホストの Claude Code、Codex、Pi をまとめて指揮できます。
 
 **[macOS 版をダウンロード](https://www.dureai.dev/download/mac/)** &nbsp;·&nbsp; [ウェブサイト](https://www.dureai.dev/) &nbsp;·&nbsp; [ドキュメント](https://docs.dureai.dev/jp/introduction) &nbsp;·&nbsp; [X](https://x.com/hebbianai_) &nbsp;·&nbsp; [Discord](https://discord.gg/aTuRV6DXhb)
 
@@ -29,74 +29,84 @@ AI コーディングエージェントのための **Agent Development Environm
 
 </div>
 
-## エージェントが増えても、導く場所はひとつ。
+## 仕事を進める四つの方法
 
-難しいのは、エージェントをもうひとつ起動することではありません。どのタスクに自分の判断が必要で、何が変わり、次に何をすべきかを把握することです。
+### エージェントは並列に、worktree は個別に
 
-Dure は、その仕事をひとつの場所にまとめます。Claude Code の隣に Codex と Pi を並べ、複数のプロジェクトや SSH ホストのセッションを追いかける。差分を読み、フィードバックを送り、次のタスクの方向を決める。
+**⌘N** または GitHub Issue からエージェントを開始します。プロジェクトとプロバイダーを選び、独立してファイルを変更するタスクには専用の Git worktree とブランチを割り当てられます。
 
-## 最初のタスクから最後のレビューまで
+[並列タスクを始める →](https://docs.dureai.dev/jp/first-parallel-workflow)
 
-### 01 — 目標から始める
+<a href="https://docs.dureai.dev/jp/first-parallel-workflow">
+  <img src="../../public/readme/start-agent.png" alt="タスク、プロバイダー、専用 worktree の設定を選びます。" width="880" />
+</a>
 
-**⌘N** を押し、タスクを説明して、プロジェクトとプロバイダーを選びます。独立してファイルを編集するタスクには、専用の Git worktree とブランチを指定しましょう。GitHub の Issue で **Start** を選ぶと、内容が入力済みのタスクを開くこともできます。
+<sub>タスク、プロバイダー、専用 worktree の設定を選びます。</sub>
 
-### 02 — 注意を向ける場所を整える
+### ローカルと SSH の仕事をまとめる Spaces
 
-ペインを分割し、タブを移動し、デスクトップを切り替えたり、セッションを独立したウィンドウで開いたりできます。Spaces ではローカルと SSH の作業を一緒に表示し、活動や変更の表示から確認が必要なタスクを見つけられます。
+プロジェクトとセッションを Spaces で整理します。ペインの分割、タブの移動、別ウィンドウの表示で、ローカルと SSH の仕事を一緒に確認できます。
 
-<table>
-<tr>
-<td width="50%">
-<a href="https://docs.dureai.dev/jp/quickstart"><img src="../../public/readme/start-agent.png" alt="Command-N で開いた新規エージェント画面。タスク、プロジェクト、プロバイダー、専用 worktree の設定" width="460" /></a>
-<br><sub>仕事を伝え、エージェントを選ぶ。</sub>
-</td>
-<td width="50%">
-<a href="https://docs.dureai.dev/jp/spaces-and-panes"><img src="../../public/readme/pane-arrangement.png" alt="実行中のターミナルタブを Dure の Split Right 領域にドラッグする様子" width="460" /></a>
-<br><sub>表示を動かし、作業の文脈はそのままに。</sub>
-</td>
-</tr>
-</table>
+[Spaces とペイン →](https://docs.dureai.dev/jp/spaces-and-panes) · [SSH の設定](https://docs.dureai.dev/jp/remote-and-ssh)
 
-### 03 — レビューして、導く
+<a href="https://docs.dureai.dev/jp/spaces-and-panes">
+  <img src="../../public/readme/pane-arrangement.png" alt="サンプルプロジェクトで実行中のエージェントのペインを配置する様子です。" width="880" />
+</a>
 
-未コミットの変更や新規ファイルを含め、ローカルの変更を確認します。行コメントを追加し、エージェントにフィードバックとして送れます。作業を統合する前に、変更内容とテスト結果を確認してください。次の一手を決めるのは、あなたです。
+<sub>サンプルプロジェクトで実行中のエージェントのペインを配置する様子です。</sub>
 
-[最初のエージェント →](https://docs.dureai.dev/jp/quickstart) &nbsp; [並列タスク →](https://docs.dureai.dev/jp/first-parallel-workflow) &nbsp; [レビューとフィードバック →](https://docs.dureai.dev/jp/review-and-feedback)
+### 会話の隣でコードをレビュー
 
-## エージェントの仕事を支えるワークスペース
+未コミットの変更や新規ファイルを含むローカル diff を確認します。ファイルや行にコメントを付け、紐づくエージェントへ送り、変更を統合する前に次の修正をレビューできます。
 
-| こんなときに | Dure が提供するもの |
+[レビューとフィードバック →](https://docs.dureai.dev/jp/review-and-feedback)
+
+<a href="https://docs.dureai.dev/jp/review-and-feedback">
+  <img src="../../docs/public/images/diff-review.png" alt="レビューコメントを付ける前にサンプルプロジェクトの diff を確認します。" width="880" />
+</a>
+
+<sub>レビューコメントを付ける前にサンプルプロジェクトの diff を確認します。</sub>
+
+### CLI 実行・スケジュールとエージェント連携
+
+Dure CLI でタスクを実行し、繰り返す仕事をスケジュールできます。CLI と MCP の統合を通じて、人とエージェントが進捗メッセージ、判断の依頼、完了報告をやり取りできます。
+
+```sh
+dure run --provider codex --worktree readme-review \
+  "Review the README against the code. Do not change files."
+dure ls
+```
+
+[CLI 実行とスケジュール →](https://docs.dureai.dev/jp/cli-and-automation) · [メッセージと判断](https://docs.dureai.dev/jp/orchestration)
+
+## 対応エージェント
+
+**Claude Code · Codex · Pi · OpenCode · Gemini CLI · Kimi Code**
+
+インストール済みのコーディングエージェント CLI と既存のプロバイダーアカウントを利用できます。モデルへのアクセス、サブスクリプション、利用料金は各プロバイダーが管理します。
+
+Claude Code、Codex、OpenCode、Pi は、インストールされたランタイムが対応している場合に構造化チャットを利用できます。ターミナル、履歴、再開、アカウントの機能はプロバイダーによって異なります。 [プロバイダー別の機能を確認 →](https://docs.dureai.dev/jp/providers)
+
+## インストールとプラットフォームの状況
+
+| プラットフォーム | 現在の提供範囲 |
 | --- | --- |
-| 独立したタスクを並行して進めたい | タスクごとに作業ファイルを分ける、専用の Git worktree とブランチ。 |
-| 実行中の仕事を把握したい | 複数プロジェクトをまたぐ Spaces、分割ペイン、デスクトップ、独立ウィンドウ。 |
-| アプリを閉じた後に戻りたい | 実行中の管理対象セッションへの再接続と、終了したプロセスのための別の復旧フロー。 |
-| 複数のマシンで作業したい | ローカル作業と並べられる SSH プロジェクトとリモートターミナル。画像貼り付けとファイル転送にも対応。 |
-| 既存のアカウントを使いたい | 対応プロバイダーでのエージェント別プロファイルと、プロバイダーが報告する使用量。 |
-| 繰り返す仕事をつなぎたい | CLI 実行とスケジュール、CLI/MCP のメッセージ、判断リクエスト、完了報告。 |
-| 自分に合った環境にしたい | テーマ、ターミナルの文字設定、7言語のインターフェース。 |
+| macOS · Apple Silicon | [公式ダウンロード](https://www.dureai.dev/download/mac/) |
+| Windows | ソース公開済み。ネイティブデスクトップの検証と公開インストーラーは準備中です。 |
+| Linux | ソース公開済み。ネイティブデスクトップの検証と公開インストーラーは準備中です。 |
+| iOS | ソース公開済み。実機検証と公式配布は準備中です。 |
+| Android | ソース公開済み。実機検証と公式配布は準備中です。 |
 
-### いつものツール。いつものアカウント。
+ソースからのビルドと検証範囲は[プラットフォーム別の開発ガイド](../../CONTRIBUTING.md#platforms)をご覧ください。
 
-**Claude Code、Codex、Pi、Gemini CLI、OpenCode、Kimi Code** などのネイティブなコーディングエージェント CLI を使えます。Dure はワークスペースであり、モデルやプロバイダーのサブスクリプションではありません。プロバイダーの契約と利用料金は別途必要です。
-
-ターミナル対応、会話履歴、チャット表示、アカウント機能はプロバイダーによって異なります。[プロバイダー別の対応を確認 →](https://docs.dureai.dev/jp/providers)
-
-## Mac で始める
+### Mac で始める
 
 1. Apple Silicon Mac で **[macOS 版 Dure をダウンロード](https://www.dureai.dev/download/mac/)**します。ディスクイメージを開き、アプリを**アプリケーション**フォルダに移動します。
 2. 対応するコーディングエージェント CLI をひとつ以上インストールし、ログインします。macOS のセキュリティ案内を含む[インストールガイド](https://docs.dureai.dev/jp/install)を確認してください。
 3. Dure で使い慣れた Git プロジェクトを開きます。**⌘N** を押して、小さなタスクから始めましょう。
 
-最初は、こんな依頼を試してみてください。
-
-```text
-このリポジトリのテストを実行する方法を調べてください。
-ファイルは変更しないでください。
-実行コマンドと、その説明があるファイルを教えてください。
-```
-
-### 知っておきたい境界
+<details>
+<summary>知っておきたい境界</summary>
 
 - **Worktree が分けるのはファイルであり、権限ではありません。** セキュリティサンドボックスではなく、認証情報、プロセス、ネットワークアクセスは隔離されません。変更を統合するときに競合することもあります。
 - **ホストが動いている必要があります。** ホストプロセスとマシンが稼働している間、管理対象セッションはアプリのウィンドウと独立して実行を続けられます。再起動すると元のプロセスは終了し、復旧では代わりのプロセスを作成します。
@@ -104,23 +114,24 @@ Dure は、その仕事をひとつの場所にまとめます。Claude Code の
 
 [セッションと復旧](https://docs.dureai.dev/jp/session-model) · [SSH](https://docs.dureai.dev/jp/remote-and-ssh) · [安全に作業するために](https://docs.dureai.dev/jp/current-limits)
 
+</details>
+
 ## オープンソースの範囲
 
-**ライセンス：[MIT](../../LICENSE) · Copyright (c) 2026 Hebbian AI。**
+このリポジトリで公開するデスクトップ、モバイル、ランタイム、CLI、サービスの独自コードは [MIT](../../LICENSE) ライセンスで提供されます。サードパーティのライセンスと表示は維持され、各ライセンスに従ってビルド、変更、再配布できます。
 
-このリポジトリで公開する独自コードには、デスクトップアプリ、モバイルクライアント、ローカルランタイム、CLI、収録されたサービスコードが含まれ、[MIT](../../LICENSE) ライセンスが適用されます。サードパーティのコンポーネントには、それぞれのライセンスと著作権表示が引き続き適用されます。
+Dure の名称、ロゴ、アプリアイコン、およびコミュニティビルドと Hebbian AI の公式ビルドの区別は [TRADEMARK.md](../../TRADEMARK.md) に記載しています。
 
-このリポジトリには **macOS・Windows・Linux** 向けデスクトップと、**iOS・Android** 向けモバイルのソースが含まれます。ビルド手順と現在の検証範囲は[プラットフォーム別の開発案内](../../CONTRIBUTING.md#platforms)をご覧ください。現在ダウンロードできるデスクトップアプリは Apple Silicon macOS 向けです。
-
-ソースからのビルド手順は[貢献ガイド](../../CONTRIBUTING.md#source-and-development)をご覧ください。アプリは[ウェブサイト](https://www.dureai.dev/download/mac/)からダウンロードできます。
-
-**Dure の名称、ロゴ、アプリアイコン**の使用については [TRADEMARK.md](../../TRADEMARK.md) を参照してください。コードのライセンスに従ってビルド、変更、再配布できます。独自の配布物は、その発行者と Hebbian AI の[公式ビルド](../../TRADEMARK.md#official-builds)を明確に区別してください。
-
-**運営サービスと非公開の運営資料**は、ソース公開とは別に扱います。ソースのライセンスは、Hebbian AI が運営するインフラや外部サービスへのアクセス権を付与しません。このリポジトリに含まれるコードには、明記されたライセンスが引き続き適用されます。署名鍵、デプロイ用の認証情報、機密の事業・運営記録は非公開です。このリポジトリへの貢献は、公開 Issue とプルリクエストで管理します。
+ソースのライセンスに運営サービスへのアクセス権は含まれません。署名鍵、デプロイ用の認証情報、機密の事業・運営記録は非公開です。
 
 ## 貢献する
 
 [貢献ガイド](../../CONTRIBUTING.md)と[行動規範](../../CODE_OF_CONDUCT.md)をご確認ください。[不具合の報告や機能の提案](https://github.com/hebbianai/dure/issues/new/choose)も歓迎します。脆弱性は[セキュリティポリシー](../../SECURITY.md)に記載された非公開の窓口へご報告ください。貢献・運営に関する文書は現在英語で提供しています。
+
+- **リリースノート:** [GitHub Releases](https://github.com/hebbianai/hebbian-releases/releases)
+- **プライバシーとテレメトリー:** [プライバシーとテレメトリー](https://docs.dureai.dev/jp/privacy-and-telemetry)
+- **コミュニティ:** [Discord](https://discord.gg/aTuRV6DXhb)
+- **最新情報:** [X · @hebbianai_](https://x.com/hebbianai_)
 
 ---
 
