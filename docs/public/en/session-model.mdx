@@ -22,9 +22,15 @@ While the session host and its machine remain running, managed work can continue
 
 Closing a pane, stopping an agent and deleting its working files are different actions. Read the action and any confirmation before ending work you want to retain.
 
-## Use Session Recovery
+## Recover an ended agent
 
-Open **Session Recovery** to inspect disconnected or ended sessions and the proposed recovery. Confirm when requested. Provider resume support and the saved session determine what can be restored.
+When an agent's session process has ended, its pane shows the recovery actions in place:
+
+- **Resume session** or **Resume exact conversation** continues the saved conversation in a new process. If no conversation ID was saved, first choose one of the conversations found in the working directory.
+- **Start fresh** or **New conversation** starts a new conversation in the same pane. The saved conversation history is kept.
+- **Open shell**, offered for local agents, replaces the agent pane with a shell in its working folder.
+
+If the task's worktree is missing, **Recreate worktree and resume** restores it before resuming. To find earlier work that no longer has a pane, open **Sessions** in the sidebar, search by session name, ID or folder, and select the session to continue it in a pane. Provider resume support and the saved conversation determine what can be restored.
 
 After recovery, check the conversation, working folder, changed files and any external effects before repeating a command. Recovery cannot undo an already completed deployment or guarantee every provider conversation can resume.
 

@@ -2,9 +2,9 @@
 
 This directory is the complete source root for
 [docs.dureai.dev](https://docs.dureai.dev/en/introduction). Mintlify publishes
-`/docs/public` from the development repository's `main` branch. The parent
-`docs/` tree contains internal policy and design material and must remain
-outside that publishing boundary.
+`/docs/public` from the `main` branch of the public
+[hebbianai/dure](https://github.com/hebbianai/dure) repository. Files outside
+this directory must remain outside that publishing boundary.
 
 ## Edit the user journey
 
@@ -14,9 +14,9 @@ The four locale trees share one structure in `docs.json`:
 2. Work on tasks: independent worktrees, GitHub task starts and review.
 3. Workspace: Spaces, panes, terminals, files and everyday settings.
 4. Coding agents: providers, accounts, sessions and recovery.
-5. Connections: SSH projects and app plugins.
+5. Connections: SSH projects, VM environments and app plugins.
 6. Automation: CLI runs, schedules, messages and decisions.
-7. Help: current limits and troubleshooting.
+7. Help: privacy and usage data, current limits and troubleshooting.
 
 Write the English version first, then synchronize `cn`, `ko` and `jp` in the
 same change. `cn` and `jp` are Mintlify's identifiers for Simplified Chinese
@@ -32,8 +32,7 @@ installation-route checker. Keep the route-compatible configuration until a
 hosted language-tag correction is verified; do not hide the remaining HTML issue
 with a client-side patch or weaken the download checks.
 
-Lead with the user's task, result and next decision, following
-`docs/product/PHILOSOPHY.md` outside this source root. Explain sessions and
+Lead with the user's task, result and next decision. Explain sessions and
 worktrees where they help the workflow. Code and behavioral tests own current
 implementation; release metadata owns the download, signing and update claims.
 Check both before changing user instructions. Features implemented on `main`
@@ -113,7 +112,6 @@ structured terminal renderer; do not recolor captured text with a CSS overlay.
 The twelve decorative wallpapers in `images/gradients/` are exact Figma MCP
 renders of BRIX Templates' [Gradient Backgrounds](https://www.figma.com/design/OurOyJ2hBqhGzVlGoylekU/Gradient-Backgrounds---Visual-Assets-%7C-BRIX-Templates--Community-?node-id=2393-1484).
 Files `brix-01.png` through `brix-12.png` follow the original numbered designs.
-Their node IDs, hashes and visual review are recorded on work issue #908.
 These decorative backgrounds are raster artwork; all product UI remains HTML.
 
 Pass the scene, locale and localized description, and keep the caption consistent
@@ -127,8 +125,7 @@ evidence stay outside the publishing tree.
 Configure the neutral palette, vector logos, fonts and appearance in `docs.json`.
 Keep `style.css` overrides limited to typography, insets, focus and the documented
 action hook, and figure styles scoped to `.dure-figure`. Mintlify owns the Maple
-reading layout. The rationale lives in
-`docs/architecture/public-documentation-visual-identity.md` outside this tree.
+reading layout.
 
 The font assets reuse `@fontsource-variable/geist@5.3.0`,
 `@fontsource-variable/inter@5.3.0`, `@fontsource-variable/geist-mono@5.3.0` and
@@ -147,7 +144,8 @@ Public release artifacts and the curated public repository do not make the
 private development tree public. Track plans and drafts in GitHub Issues.
 Navigation visibility alone does not prevent direct access to a published file.
 
-For a Mintlify source migration, preserve the `main` deployment branch and
-explicit `/docs/public` monorepo path until the replacement source is reviewed.
+The Mintlify dashboard's Git settings select `hebbianai/dure`, branch `main`
+and the `docs/public` subdirectory. When changing that source, preserve the
+branch and path until the replacement source is reviewed.
 Grant the GitHub App access only to the required repository. Verify the assigned
 preview URL and domain ownership before changing public links or DNS.

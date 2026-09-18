@@ -9,14 +9,16 @@ description: "작업에 영향을 주는 플랫폼, 제공자, 권한과 복구 
 
 | 영역 | 현재 범위 |
 | --- | --- |
-| 공개 다운로드 | Apple silicon Mac, Basic 인터페이스. Pro는 사용 불가 |
+| 공개 다운로드 | Apple silicon Mac. **Settings → General → Interface mode**에서 Basic 또는 Beta 선택 |
+| Basic 인터페이스 | 필수 pane 컨트롤. 런처에서 Claude Code, Codex, Kimi Code 제공 |
+| Beta 인터페이스 | 등록된 모든 에이전트 CLI, Terminal/Chat 전환, 자동 계정 복구, VM 환경, Automations 추가 |
 | 코딩 에이전트 | 설치된 CLI와 제공자 계정 필요. 제공자·런타임별 기능 차이 |
 | GitHub | 사이드바에 데스크톱 `gh` 로그인과 저장소 접근 권한 필요 |
 | Diff 리뷰 | 로컬 worktree용. SSH 변경은 원격 Git 사용 |
 | 예약 작업 | 실행 서비스와 호스트를 사용할 수 있어야 함 |
 | 세션 복구 | 저장 상태와 제공자 지원에 따라 다름. 재부팅 전 프로세스를 유지하지 않음 |
 
-앱의 표시 언어 7개와 공개 문서 언어 4개는 별개입니다. 빌드에 따라 고급 설정이나 통합 컨트롤이 다를 수 있으므로 설치된 앱에 표시된 기능을 사용하세요.
+앱의 표시 언어 7개와 공개 문서 언어 4개는 별개입니다. Beta에서는 Basic이 숨기는 고급 설정 페이지와 pane 컨트롤도 표시되므로, 선택한 인터페이스에 표시된 기능을 사용하세요.
 
 ## 파일 분리와 권한
 
