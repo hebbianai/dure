@@ -8,7 +8,7 @@ import { ChevronDown, Folder, KeyRound, X } from "lucide-react";
 import { ProviderGlyph, TerminalGlyph } from "@/components/agents/ProviderLogo";
 import { QuickDispatchAdvanced } from "./QuickDispatchAdvanced";
 import { type LaunchPermissionSelection, launchPermissionLabel } from "@/lib/agents/providerPermissions";
-import { NameParamChip } from "./QuickDispatchParameters";
+import { NameParamChip, QuickDispatchField } from "./QuickDispatchParameters";
 import { DureLoader } from "@/components/ui/dure-loader";
 import {
 	type ChangeEvent,
@@ -564,46 +564,48 @@ export function QuickDispatchOverlay({
 										<NameParamChip label={t("agents.quickDispatch.modelLabel")} value={model ?? ""} placeholder={t("agents.quickDispatch.autoModel")} commit={(value) => setModel(value.trim() || null)} />
 										<NameParamChip label={t("agents.quickDispatch.effortLabel")} value={effort ?? ""} placeholder={t("agents.quickDispatch.autoEffort")} commit={(value) => setEffort(value.trim() || null)} />
 										</> : <>
-										<SelectField
-											aria-label={t("agents.quickDispatch.modelLabel")}
-											value={model ?? ""}
-											display={modelLabel}
-											onValueChange={(next) => chooseModel(next || null)}
-											onOpenChange={catalog.onOpenChange}
-											className="w-48"
-										>
-											{catalogStatus && (
-												<p role="status" className="px-2 py-1 text-xs text-muted-foreground">
-													{catalogStatus}
-												</p>
-											)}
-											<SelectOption value="">{t("agents.quickDispatch.autoModel")}</SelectOption>
-											{modelOptions.map((option) => (
-												<SelectOption key={option.value} value={option.value}>
-													{option.label}
-												</SelectOption>
-											))}
-										</SelectField>
-										<SelectField
-											aria-label={t("agents.quickDispatch.effortLabel")}
-											value={effort ?? ""}
-											display={effortLabel}
-											onValueChange={(next) => setEffort(next || null)}
-											onOpenChange={catalog.onOpenChange}
-											className="w-40"
-										>
-											{catalogStatus && (
-												<p role="status" className="px-2 py-1 text-xs text-muted-foreground">
-													{catalogStatus}
-												</p>
-											)}
-											<SelectOption value="">{t("agents.quickDispatch.autoEffort")}</SelectOption>
-											{effortOptions.map((option) => (
-												<SelectOption key={option.value} value={option.value}>
-													{option.label}
-												</SelectOption>
-											))}
-										</SelectField>
+										<QuickDispatchField label={t("agents.quickDispatch.modelLabel")}>
+											<SelectField
+												aria-label={t("agents.quickDispatch.modelLabel")}
+												value={model ?? ""}
+												display={modelLabel}
+												onValueChange={(next) => chooseModel(next || null)}
+												onOpenChange={catalog.onOpenChange}
+											>
+												{catalogStatus && (
+													<p role="status" className="px-2 py-1 text-xs text-muted-foreground">
+														{catalogStatus}
+													</p>
+												)}
+												<SelectOption value="">{t("agents.quickDispatch.autoModel")}</SelectOption>
+												{modelOptions.map((option) => (
+													<SelectOption key={option.value} value={option.value}>
+														{option.label}
+													</SelectOption>
+												))}
+											</SelectField>
+										</QuickDispatchField>
+										<QuickDispatchField label={t("agents.quickDispatch.effortLabel")}>
+											<SelectField
+												aria-label={t("agents.quickDispatch.effortLabel")}
+												value={effort ?? ""}
+												display={effortLabel}
+												onValueChange={(next) => setEffort(next || null)}
+												onOpenChange={catalog.onOpenChange}
+											>
+												{catalogStatus && (
+													<p role="status" className="px-2 py-1 text-xs text-muted-foreground">
+														{catalogStatus}
+													</p>
+												)}
+												<SelectOption value="">{t("agents.quickDispatch.autoEffort")}</SelectOption>
+												{effortOptions.map((option) => (
+													<SelectOption key={option.value} value={option.value}>
+														{option.label}
+													</SelectOption>
+												))}
+											</SelectField>
+										</QuickDispatchField>
 
 									</>}
 
