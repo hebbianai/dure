@@ -52,6 +52,91 @@ const catalog = {
 };
 
 describe("remote Hmux runtime transition", () => {
+  it("accepts a command bridge from a directly opened SSH shell", () => {
+    const managed = planRemoteHmuxManagedTransition(
+      remote,
+      undefined,
+      marker,
+      catalog,
+    );
+    expect(managed?.sessionId).toBe(marker.target.sessionId);
+    expect(managed?.stopFence?.terminalEpoch).toBe(catalog.terminalEpoch);
+  });
+
+  it("restores a direct SSH shell only from its exact managed generation", () => {
+    const managed = planRemoteHmuxManagedTransition(
+      remote,
+      undefined,
+      marker,
+      catalog,
+    )!;
+    const managedReturn = {
+      schemaVersion: 1,
+      sourceBinding: remote,
+      targetBinding: managed,
+    };
+    expect(
+      planRemoteHmuxExitTransition(managed, undefined, managedReturn),
+    ).toEqual({ binding: remote, transition: undefined });
+    for (const replaced of [
+      { ...managed, sessionId: "another-session" },
+      { ...managed, workspaceId: "another-workspace" },
+      { ...managed, hostId: "another-host" },
+      { ...managed, commandBridgeNonce: "another-bridge" },
+      {
+        ...managed,
+        stopFence: { ...managed.stopFence!, terminalEpoch: "replacement" },
+      },
+    ]) {
+      expect(
+        planRemoteHmuxExitTransition(replaced, undefined, managedReturn),
+      ).toBeUndefined();
+    }
+    expect(planRemoteHmuxExitTransition(remote, undefined)).toBeUndefined();
+    expect(
+      planRemoteHmuxExitTransition(managed, undefined, {
+        ...managedReturn,
+        sourceBinding: source,
+      }),
+    ).toBeUndefined();
+    expect(
+      planRemoteHmuxExitTransition(managed, undefined, {
+        ...managedReturn,
+        sourceBinding: { ...remote, commandBridgeNonce: "another-bridge" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects forged markers and incomplete SSH handoffs on direct and converted panes", () => {
+    for (const prior of [undefined, transition]) {
+      for (const forged of [
+        { ...marker, bridgeNonce: "forged" },
+        { ...marker, sourceSessionId: "forged" },
+        { ...marker, sourceWorkspaceId: "forged" },
+      ]) {
+        expect(
+          planRemoteHmuxManagedTransition(remote, prior, forged, catalog),
+        ).toBeUndefined();
+      }
+      expect(
+        planRemoteHmuxManagedTransition(remote, prior, marker, {
+          ...catalog,
+          terminalEpoch: "replacement",
+        }),
+      ).toBeUndefined();
+    }
+    for (const invalid of [
+      null,
+      {},
+      beginRemoteHmuxPaneTransition(source, "host-rts", "create-1"),
+      { ...transition, targetBinding: { ...remote, sessionId: "other" } },
+    ]) {
+      expect(
+        planRemoteHmuxManagedTransition(remote, invalid, marker, catalog),
+      ).toBeUndefined();
+    }
+  });
+
   it("accepts a managed marker only with the exact source and live catalog fence", () => {
     const managed = planRemoteHmuxManagedTransition(
       remote,

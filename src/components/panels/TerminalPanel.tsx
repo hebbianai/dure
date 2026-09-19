@@ -10,18 +10,14 @@ import {
   useWorkspaceRuntimeDesktopId,
 } from "@/components/workspace/WorkspaceRuntimeContext";
 import { openSplitLauncherOn, paneSplitTargetForPanel } from "@/lib/workspace/pane/paneSplit";
-import {
-  type RemoteHmuxManagedStartedMarkerV1,
-  remoteHmuxBridgeMarkerMatchesSource,
-} from "@/lib/hmux/remote/remoteHmuxCommandBridge";
+import type { RemoteHmuxManagedStartedMarkerV1 } from "@/lib/hmux/remote/remoteHmuxCommandBridge";
 import { resolveRemoteHmuxStandaloneController } from "@/lib/hmux/remote/remoteHmuxControllerResolution";
-import {
-  isRemoteHmuxPaneTransitionV1,
-  type RemoteHmuxPaneTransitionV1,
-} from "@/lib/hmux/remote/remoteHmuxPaneTransition";
+import type { RemoteHmuxPaneTransitionV1 } from "@/lib/hmux/remote/remoteHmuxPaneTransition";
 import {
   planRemoteHmuxExitTransition,
   planRemoteHmuxManagedTransition,
+  remoteHmuxCommandBridgeSourceMatches,
+  type RemoteHmuxManagedReturnV1,
   sameRemoteHmuxBinding,
 } from "@/lib/hmux/remote/remoteHmuxRuntimeTransition";
 import { t } from "@/lib/i18n";
@@ -47,7 +43,6 @@ import {
 import {
   hmuxPaneConversationId,
   isHmuxPaneBinding,
-  isRemoteHmuxStandalonePaneBinding,
   type HmuxPaneBindingV1,
   remoteHmuxManagedBinding,
   type TerminalPaneBindingV1,
@@ -59,6 +54,7 @@ import {
   useTerminalExecutionLocationObservation,
 } from "@/lib/terminal/terminalExecutionLocationStore";
 import { dockPanelParameters } from "@/lib/workspace/dock/dockPanelParameters";
+import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { commitExplicitDockviewMutation } from "@/lib/workspace/dock/explicitDockviewCommit";
 import { closePanelById } from "@/lib/workspace/pane/paneCloseCoordinator";
 import { PaneCommandError } from "@/lib/workspace/pane/paneCommandError";
@@ -76,6 +72,7 @@ export interface TerminalPanelParams {
   cwd?: string;
   binding?: TerminalPaneBindingV1;
   remoteHmuxTransition?: RemoteHmuxPaneTransitionV1;
+  remoteHmuxManagedReturn?: RemoteHmuxManagedReturnV1;
   /** Command panes only: close this pane when the command exits 0 instead of
    *  leaving a tombstone. Failures always keep the log visible. */
   closeOnSuccess?: boolean;
@@ -230,6 +227,49 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     props.containerApi,
   ]);
 
+  const commitRemoteParameters = useCallback(
+    (next: TerminalPanelParams) => {
+      if (!desktopId) {
+        throw new PaneCommandError("pane_changed", "Remote pane has no workspace");
+      }
+      // Dockview gives panel renderers a separate container API facade. Use
+      // the registered workspace API for the durable mutation identity check.
+      const api = getDockview(desktopId);
+      if (!api) {
+        throw new PaneCommandError(
+          "pane_changed",
+          "Remote pane changed before handoff",
+        );
+      }
+      commitExplicitDockviewMutation({
+        desktopId,
+        api,
+        mutate: () => {
+          if (api.getPanel(props.api.id)?.api !== props.api) {
+            throw new PaneCommandError(
+              "pane_changed",
+              "Remote pane changed before handoff",
+            );
+          }
+          // Dockview merges parameter updates; explicit undefined values remove
+          // completed return addresses from the serialized layout.
+          props.api.updateParameters({
+            ...next,
+            remoteHmuxManagedReturn: next.remoteHmuxManagedReturn,
+            remoteHmuxTransition: next.remoteHmuxTransition,
+          });
+        },
+        targetChangedError: () =>
+          new PaneCommandError(
+            "pane_changed",
+            "Remote pane changed before handoff",
+          ),
+      });
+      paramsRef.current = next;
+    },
+    [desktopId, props.api],
+  );
+
   const handleRemoteManagedStarted = useCallback(
     async (marker: RemoteHmuxManagedStartedMarkerV1) => {
       if (remoteTransitionInFlight.current) return;
@@ -237,11 +277,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       const currentBinding = current.binding;
       const transition = current.remoteHmuxTransition;
       if (
-        !isRemoteHmuxStandalonePaneBinding(currentBinding) ||
-        !isRemoteHmuxPaneTransitionV1(transition) ||
-        transition.phase === "preparing" ||
-        !sameRemoteHmuxBinding(currentBinding, transition.targetBinding) ||
-        !remoteHmuxBridgeMarkerMatchesSource(marker, currentBinding)
+        !remoteHmuxCommandBridgeSourceMatches(currentBinding, transition, marker)
       ) {
         return;
       }
@@ -280,14 +316,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         }
         const latest = paramsRef.current;
         if (
-          !isRemoteHmuxStandalonePaneBinding(latest.binding) ||
+          !remoteHmuxCommandBridgeSourceMatches(
+            latest.binding,
+            latest.remoteHmuxTransition,
+            marker,
+          ) ||
           !sameRemoteHmuxBinding(latest.binding, currentBinding) ||
-          !isRemoteHmuxPaneTransitionV1(latest.remoteHmuxTransition) ||
-          latest.remoteHmuxTransition.phase === "preparing" ||
-          !sameRemoteHmuxBinding(
-            latest.remoteHmuxTransition.targetBinding,
-            transition.targetBinding,
-          )
+          props.containerApi.getPanel(props.api.id)?.api !== props.api
         ) {
           throw new Error("remote_hmux_pane_changed_before_managed_handoff");
         }
@@ -295,10 +330,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           ...latest,
           sessionId: managedBinding.sessionId,
           binding: managedBinding,
+          remoteHmuxManagedReturn: {
+            schemaVersion: 1 as const,
+            sourceBinding: currentBinding,
+            targetBinding: managedBinding,
+          },
         };
-        paramsRef.current = next;
-        props.api.updateParameters(next);
-        commitWorkspaceLayout?.();
+        commitRemoteParameters(next);
       } catch (error) {
         await messageDialog(
           t("common.hmuxSwitch.failed", { error: String(error) }),
@@ -308,7 +346,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         remoteTransitionInFlight.current = false;
       }
     },
-    [commitWorkspaceLayout, props.api],
+    [commitRemoteParameters, props.api, props.containerApi],
   );
 
   const handleRemoteHmuxExit = useCallback(() => {
@@ -316,30 +354,22 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     const planned = planRemoteHmuxExitTransition(
       current.binding,
       current.remoteHmuxTransition,
+      current.remoteHmuxManagedReturn,
     );
     if (!planned) return;
-    if (planned.transition) {
-      const next = {
-        ...current,
-        sessionId: planned.binding.sessionId,
-        binding: planned.binding,
-        remoteHmuxTransition: planned.transition,
-      };
-      paramsRef.current = next;
-      props.api.updateParameters(next);
-      commitWorkspaceLayout?.();
-      return;
-    }
-    const { remoteHmuxTransition: _transition, ...withoutTransition } = current;
-    const next = {
+    const {
+      remoteHmuxManagedReturn: _managedReturn,
+      ...withoutManagedReturn
+    } = current;
+    const { remoteHmuxTransition: _transition, ...withoutTransition } =
+      withoutManagedReturn;
+    commitRemoteParameters({
       ...withoutTransition,
       sessionId: planned.binding.sessionId,
       binding: planned.binding,
-    };
-    paramsRef.current = next;
-    props.api.updateParameters(next);
-    commitWorkspaceLayout?.();
-  }, [commitWorkspaceLayout, props.api]);
+      ...(planned.transition ? { remoteHmuxTransition: planned.transition } : {}),
+    });
+  }, [commitRemoteParameters]);
 
   const handleHmuxSessionExit = useCallback(
     (receipt: HmuxSessionExitReceipt) => {
