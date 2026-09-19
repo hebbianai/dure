@@ -85,12 +85,13 @@ export async function preflightRemoteAccountLaunch(
 	const executable = providerExecutable(provider);
 	const inner = [
 		`cd ${shellQuote(cwd)}`,
+		`export PATH="\${PATH:+$PATH:}$HOME/.local/bin"`,
 		`if ! command -v ${shellQuote(executable)} >/dev/null 2>&1 && [ -s "$HOME/.nvm/nvm.sh" ]; then NVM_DIR="$HOME/.nvm"; export NVM_DIR; . "$NVM_DIR/nvm.sh"; nvm use --silent node >/dev/null; fi`,
 		`command -v ${shellQuote(executable)} >/dev/null`,
 		...(needsVersion ? [`${shellQuote(executable)} --version`] : []),
 	].join(" && ");
-	// Match the managed launch's non-interactive shell. The explicit NVM fallback
-	// above supplies its PATH without Bash job-control warnings or rc-file output.
+	// Match the managed launch's non-interactive shell and user-local installs.
+	// The NVM fallback supplies its PATH without interactive shell startup.
 	const command = `remote_shell=\${SHELL:-/bin/sh}; "$remote_shell" -lc ${shellQuote(inner)}`;
 	const result = await sshExecOnce(hostToOpts(host), command);
 	const diagnostic = `${result.stdout}\n${result.stderr}`.trim();

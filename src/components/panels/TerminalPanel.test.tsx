@@ -6,6 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   homeDir: vi.fn(async () => "/Users/test"),
+  resolveRemoteController: vi.fn(),
+  remoteManagedStartedHandler: undefined as
+    | ((
+        marker: import("@/lib/hmux/remote/remoteHmuxCommandBridge").RemoteHmuxManagedStartedMarkerV1,
+      ) => void)
+    | undefined,
   hmuxExitHandler: undefined as
     | ((
         receipt: import("@/lib/terminal/structuredTerminalRecord").HmuxSessionExitReceipt,
@@ -42,6 +48,9 @@ vi.mock("@/components/terminal/TerminalView", () => ({
   TerminalView: (props: {
     binding?: import("@/lib/terminal/terminalBinding").TerminalPaneBindingV1;
     onKill?: () => void;
+    onRemoteManagedStarted?: (
+      marker: import("@/lib/hmux/remote/remoteHmuxCommandBridge").RemoteHmuxManagedStartedMarkerV1,
+    ) => void;
     onSplit?: (direction: "right" | "below") => void;
     onHmuxSessionExit?: (
       receipt: import("@/lib/terminal/structuredTerminalRecord").HmuxSessionExitReceipt,
@@ -57,6 +66,7 @@ vi.mock("@/components/terminal/TerminalView", () => ({
   }) => {
     mocks.terminalBindings.push(props.binding);
     mocks.killHandler = props.onKill;
+    mocks.remoteManagedStartedHandler = props.onRemoteManagedStarted;
     mocks.splitHandler = props.onSplit;
     mocks.hmuxExitHandler = props.onHmuxSessionExit;
     mocks.providerConversationIdentityHandler =
@@ -74,6 +84,10 @@ vi.mock("@/components/workspace/WorkspaceRuntimeContext", () => ({
 
 vi.mock("@/lib/ipc", () => ({
   homeDir: mocks.homeDir,
+}));
+
+vi.mock("@/lib/hmux/remote/remoteHmuxControllerResolution", () => ({
+  resolveRemoteHmuxStandaloneController: mocks.resolveRemoteController,
 }));
 
 vi.mock("@/lib/workspace/dock/openBrowserPanel", () => ({
@@ -117,6 +131,10 @@ import {
 } from "@/components/panels/TerminalPanel";
 import { setLang } from "@/lib/i18n";
 import {
+  acceptRemoteHmuxAttachReceipt,
+  beginRemoteHmuxPaneTransition,
+} from "@/lib/hmux/remote/remoteHmuxPaneTransition";
+import {
   hmuxStandaloneBinding,
   remoteHmuxManagedBinding,
   remoteHmuxStandaloneBinding,
@@ -124,6 +142,7 @@ import {
 import type { TerminalPaneBindingV1 } from "@/lib/terminal/terminalBinding";
 import { publishTerminalExecutionLocation } from "@/lib/terminal/terminalExecutionLocationStore";
 import { useStore } from "@/store";
+import { dockviewRegistry } from "@/lib/workspace/dock/dockRegistry";
 
 const legacyLocalBinding = (sessionId: string) =>
   ({
@@ -150,7 +169,7 @@ function panelProps(
     close: vi.fn(),
   };
   const panel = { params, api: panelApi };
-  return {
+  const props = {
     params,
     api: panelApi,
     containerApi: {
@@ -159,18 +178,23 @@ function panelProps(
       toJSON: vi.fn(() => ({ grid: {} })),
     },
   } as unknown as IDockviewPanelProps<TerminalPanelParams>;
+  dockviewRegistry.set("desktop-test", props.containerApi);
+  return props;
 }
 
 beforeEach(() => {
   setLang("en");
   vi.clearAllMocks();
   mocks.killHandler = undefined;
+  mocks.remoteManagedStartedHandler = undefined;
+  mocks.resolveRemoteController.mockReset();
   mocks.splitHandler = undefined;
   mocks.hmuxExitHandler = undefined;
   mocks.providerConversationIdentityHandler = undefined;
   mocks.workingDirectoryHandler = undefined;
   mocks.terminalBindings.length = 0;
   mocks.commitLayout.mockReturnValue(true);
+  mocks.commitDockviewMutation.mockImplementation((input) => input.mutate());
   mocks.prepareConversion.mockReset();
   mocks.commitConversion.mockReset();
   useStore.setState({
@@ -185,9 +209,190 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  dockviewRegistry.clear();
 });
 
 describe("TerminalPanel", () => {
+  const remoteShell = remoteHmuxStandaloneBinding(
+    "remote-shell",
+    "remote-workspace",
+    "ssh-host",
+    "bridge-1",
+  );
+  const managedMarker = {
+    schemaVersion: 1,
+    event: "managed_started",
+    bridgeNonce: "bridge-1",
+    sourceSessionId: remoteShell.sessionId,
+    sourceWorkspaceId: remoteShell.workspaceId,
+    target: {
+      sessionId: "managed-codex",
+      workspaceId: "provider-workspace",
+      sessionClass: "managed",
+      lifecycle: "ready",
+      providerId: "codex",
+      runnerPrincipal: "ssh-user",
+      runnerInstance: "runner-1",
+      channelEpoch: "1",
+      hostInstanceId: "host-1",
+      terminalEpoch: "terminal-1",
+    },
+  } as const;
+
+  it.each([false, true])(
+    "presents Codex and restores its SSH shell (local handoff: %s)",
+    async (fromLocal) => {
+      // Background windows cannot use the focus-gated layout writer.
+      mocks.commitLayout.mockReturnValue(false);
+      const local = hmuxStandaloneBinding("local-shell", "local-workspace");
+      const transition = fromLocal
+        ? acceptRemoteHmuxAttachReceipt(
+            beginRemoteHmuxPaneTransition(
+              local,
+              remoteShell.hostId,
+              "create-1",
+            ),
+            { createIdempotencyKey: "create-1", targetBinding: remoteShell },
+          )!
+        : undefined;
+      const update = vi.fn();
+      const props = panelProps(
+        {
+          sessionId: remoteShell.sessionId,
+          binding: remoteShell,
+          remoteHmuxTransition: transition,
+        },
+        update,
+      );
+      mocks.resolveRemoteController.mockResolvedValue({
+        session: managedMarker.target,
+      });
+      const view = render(<TerminalPanel {...props} />);
+      act(() => mocks.remoteManagedStartedHandler?.(managedMarker));
+      await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+      expect(mocks.commitDockviewMutation).toHaveBeenCalledOnce();
+      const managedParams = update.mock.calls[0][0];
+      expect(managedParams.binding.sessionId).toBe(
+        managedMarker.target.sessionId,
+      );
+      expect(managedParams.remoteHmuxManagedReturn.sourceBinding).toEqual(
+        remoteShell,
+      );
+
+      // The serialized layout must retain the return address across a remount.
+      view.unmount();
+      render(
+        <TerminalPanel
+          {...panelProps(JSON.parse(JSON.stringify(managedParams)), update)}
+        />,
+      );
+      act(() => mocks.hmuxExitHandler?.({ exitCode: 0, reason: "completed" }));
+      expect(update).toHaveBeenLastCalledWith({
+        sessionId: remoteShell.sessionId,
+        binding: remoteShell,
+        ...(transition ? { remoteHmuxTransition: transition } : {}),
+      });
+      expect(update.mock.lastCall?.[0].remoteHmuxManagedReturn).toBeUndefined();
+      expect(mocks.commitDockviewMutation).toHaveBeenCalledTimes(2);
+      act(() => mocks.hmuxExitHandler?.({ exitCode: 0, reason: "completed" }));
+      if (fromLocal) {
+        expect(update).toHaveBeenLastCalledWith({
+          sessionId: local.sessionId,
+          binding: local,
+        });
+      } else {
+        expect(update).toHaveBeenCalledTimes(2);
+      }
+    },
+  );
+
+  it("clears completed handoff metadata from the real Dockview layout", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const api = createDockview(container, {
+      createComponent: () => ({
+        element: document.createElement("div"),
+        init() {},
+      }),
+    });
+    api.layout(1000, 700);
+    const local = hmuxStandaloneBinding("local-shell", "local-workspace");
+    const transition = acceptRemoteHmuxAttachReceipt(
+      beginRemoteHmuxPaneTransition(local, remoteShell.hostId, "create-1"),
+      { createIdempotencyKey: "create-1", targetBinding: remoteShell },
+    )!;
+    const panel = api.addPanel({
+      id: "bridge-pane",
+      component: "terminal",
+      params: {
+        sessionId: remoteShell.sessionId,
+        binding: remoteShell,
+        remoteHmuxTransition: transition,
+      },
+    });
+    // React panel props expose another facade over the registered Dockview.
+    const containerApi = new Proxy(api, {});
+    const props = () => {
+      const props = panelProps(panel.params as TerminalPanelParams);
+      dockviewRegistry.set("desktop-test", api);
+      return { ...props, api: panel.api, containerApi };
+    };
+    const actual = await vi.importActual<
+      typeof import("@/lib/workspace/dock/explicitDockviewCommit")
+    >("@/lib/workspace/dock/explicitDockviewCommit");
+    mocks.commitDockviewMutation.mockImplementation((input) =>
+      actual.commitExplicitDockviewMutation(
+        input as Parameters<typeof actual.commitExplicitDockviewMutation>[0],
+      ),
+    );
+    const view = render(<TerminalPanel {...props()} />);
+    try {
+      mocks.resolveRemoteController.mockResolvedValue({
+        session: managedMarker.target,
+      });
+      act(() => mocks.remoteManagedStartedHandler?.(managedMarker));
+      await waitFor(() =>
+        expect(panel.params?.sessionId).toBe(managedMarker.target.sessionId),
+      );
+      view.rerender(<TerminalPanel {...props()} />);
+      act(() => mocks.hmuxExitHandler?.({ exitCode: 0, reason: "completed" }));
+      expect(panel.params?.sessionId).toBe(remoteShell.sessionId);
+      expect(panel.params?.remoteHmuxManagedReturn).toBeUndefined();
+      view.rerender(<TerminalPanel {...props()} />);
+      act(() => mocks.hmuxExitHandler?.({ exitCode: 0, reason: "completed" }));
+      const saved = JSON.parse(JSON.stringify(api.toJSON())).panels[panel.id]
+        .params;
+      expect(saved).toEqual({ sessionId: local.sessionId, binding: local });
+      expect(useStore.getState().layouts["desktop-test"]).toEqual(api.toJSON());
+    } finally {
+      view.unmount();
+      api.dispose();
+      container.remove();
+    }
+  });
+
+  it("does not switch a pane replaced while the remote catalog is loading", async () => {
+    let resolve!: (value: unknown) => void;
+    mocks.resolveRemoteController.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const update = vi.fn();
+    const props = panelProps(
+      { sessionId: remoteShell.sessionId, binding: remoteShell },
+      update,
+    );
+    render(<TerminalPanel {...props} />);
+    act(() => mocks.remoteManagedStartedHandler?.(managedMarker));
+    expect(mocks.resolveRemoteController).toHaveBeenCalledOnce();
+    props.containerApi.getPanel = vi.fn(() => undefined);
+    await act(async () => {
+      resolve({ session: managedMarker.target });
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it.each(["right", "below"] as const)(
     "reserves a launcher for body split %s without starting a terminal",
     (direction) => {

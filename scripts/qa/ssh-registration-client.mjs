@@ -315,6 +315,52 @@ try {
 	});
 	const sourceAfterOpen = hmux(["session", "show", handoff.binding.sessionId], remoteRoot);
 	assert.deepEqual([sourceAfterOpen.host_process, sourceAfterOpen.provider_process], remoteProcesses);
+	// Direct SSH panes have no local-shell handoff record. A provider started by
+	// their command bridge must still take over this pane, then return to it.
+	await ok("/pane/act", {
+		targetPanelId: directPane.panelId,
+		actionId: "terminal.input",
+		arguments: { text: "codex resume", appendEnter: true },
+		idempotencyKey: `direct-codex-${fixture.runId}`,
+	});
+	const providerSession = await waitFor("remote Codex fixture start", () => {
+		const file = path.join(root, "codex-bridge-session");
+		return fs.existsSync(file) && fs.readFileSync(file, "utf8").trim();
+	});
+	const provider = hmux(["session", "show", providerSession], remoteRoot);
+	assert.equal(provider.provider_id, "codex");
+	assert.equal(provider.session_class, "managed");
+	let bridgeObservation;
+	const waitForPresentedSession = (sessionId) => waitFor(`pane presenting ${sessionId}`, async () => {
+		const registry = JSON.parse(fs.readFileSync(path.join(
+			home, ".dure", "channels", descriptor.channel, "agents.json",
+		), "utf8"));
+		const space = registry.clientPresentation.spaces.find((candidate) => candidate.id === directPane.desktopId);
+		const pane = space?.panes.find((candidate) => candidate.id === directPane.panelId);
+		const state = await post("/pane/state", { targetPanelId: directPane.panelId });
+		bridgeObservation = { binding: pane?.binding, status: state.body.pane?.status, error: state.body.error };
+		return state.body.pane?.status === "attached" &&
+			pane?.binding?.sessionId === sessionId &&
+			state.body.pane.actions.includes("terminal.input");
+	}).catch((error) => {
+		console.error(JSON.stringify({ event: "command-bridge-presentation", expectedSession: sessionId, ...bridgeObservation }));
+		console.error(JSON.stringify(hmux(["read", directPane.sessionId, "-n", "10"], remoteRoot)));
+		throw error;
+	});
+	await waitForPresentedSession(providerSession);
+	assert(hmux(["read", providerSession, "-n", "30"], remoteRoot).lines.some(
+		(line) => line.includes("SSH_CODEX_BRIDGE_READY"),
+	));
+	await ok("/pane/act", {
+		targetPanelId: directPane.panelId,
+		actionId: "terminal.input",
+		arguments: { text: "exit", appendEnter: true },
+		idempotencyKey: `direct-codex-exit-${fixture.runId}`,
+	});
+	await waitForPresentedSession(directPane.sessionId);
+	assert.equal(fs.readFileSync(path.join(root, "codex-bridge-input"), "utf8").trim(), "exit");
+	const restoredShell = hmux(["session", "show", directPane.sessionId], remoteRoot);
+	assert.deepEqual([restoredShell.host_process, restoredShell.provider_process], directProcesses);
 	evidence = {
 		schemaVersion: 1,
 		runId: fixture.runId,
@@ -331,6 +377,7 @@ try {
 			workspaceId: directPane.workspaceId,
 			inputReplay: true,
 			sourceGenerationPreserved: true,
+			commandBridge: { provider: "codex-fixture", providerSession, samePane: true, restoredShell: true },
 		},
 	};
 } catch (error) {

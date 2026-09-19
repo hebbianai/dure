@@ -10,6 +10,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tauri::Manager;
 
 const MAX_INSTALL_METADATA_BYTES: u64 = 16 * 1024;
 const MAX_INSTALL_OUTPUT_BYTES: usize = 64 * 1024;
@@ -132,26 +133,42 @@ pub(crate) async fn dure_cli_install_status() -> Result<DureCliInstallStatus, St
 }
 
 #[tauri::command(async)]
-pub(crate) async fn install_dure_cli() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(install_from_current_channel)
-        .await
-        .map_err(|error| format!("Dure CLI install task failed: {error}"))?
+pub(crate) async fn install_dure_cli(app: tauri::AppHandle) -> Result<(), String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("resolve Dure CLI bundle resources failed: {error}"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let channel = crate::app_channel::current_name()
+            .map_err(|error| format!("resolve Dure app channel failed: {error}"))?;
+        let home = dirs::home_dir()
+            .ok_or_else(|| "resolve home for Dure CLI install failed".to_string())?;
+        install_for_channel(&channel, &home, &resource_dir)
+    })
+    .await
+    .map_err(|error| format!("Dure CLI install task failed: {error}"))?
 }
 
 pub(crate) fn prepare_startup_channel(channel: &str, resource_dir: &Path) -> Result<(), String> {
     if channel != "stable" {
         return Ok(());
     }
-    let Some(bundle) = commands::startup_bundle(channel, resource_dir) else {
-        return install_from_current_channel();
-    };
     let home =
         dirs::home_dir().ok_or_else(|| "resolve home for Dure CLI bootstrap failed".to_string())?;
+    install_for_channel(channel, &home, resource_dir)
+}
+
+fn install_for_channel(channel: &str, home: &Path, resource_dir: &Path) -> Result<(), String> {
+    // Manual retries use the same verified bundle as startup, even when the
+    // installed CLI is missing or predates the current metadata schema.
+    let Some(bundle) = commands::startup_bundle(channel, resource_dir) else {
+        return install_channel_cli(channel, home);
+    };
     let node = bundle.join("bin/node");
     validate_executable_file(&node, "bundled Dure Node runtime")?;
     let mut command = CommandSpec::new(node);
     command.arg(bundle.join("bin/lib/dure-cli-bootstrap.mjs"));
-    command.arg(&home).arg(channel);
+    command.arg(home).arg(channel);
     let output = hebbian_bounded_process::run(&command, INSTALL_TIMEOUT, MAX_INSTALL_OUTPUT_BYTES)
         .map_err(|error| format!("run bundled Dure CLI bootstrap failed: {}", error.stage()))?;
     if output.exceeded_limit {
@@ -160,18 +177,14 @@ pub(crate) fn prepare_startup_channel(channel: &str, resource_dir: &Path) -> Res
     if !output.status.success() {
         return Err(format!("Dure CLI bootstrap exited with {}", output.status));
     }
-    required_channel_cli(channel, &home)?;
+    read_cli_identity(&required_channel_cli(channel, home)?)?;
     Ok(())
 }
 
-fn install_from_current_channel() -> Result<(), String> {
-    let channel = crate::app_channel::current_name()
-        .map_err(|error| format!("resolve Dure app channel failed: {error}"))?;
-    let home =
-        dirs::home_dir().ok_or_else(|| "resolve home for Dure CLI install failed".to_string())?;
-    let cli = required_channel_cli(&channel, &home)?;
+fn install_channel_cli(channel: &str, home: &Path) -> Result<(), String> {
+    let cli = required_channel_cli(channel, home)?;
     read_cli_identity(&cli)?;
-    if DureCliInstallScope::for_channel(&channel) == DureCliInstallScope::ChannelPinned {
+    if DureCliInstallScope::for_channel(channel) == DureCliInstallScope::ChannelPinned {
         return Ok(());
     }
     let mut command = CommandSpec::new(cli);
@@ -600,6 +613,39 @@ mod tests {
         assert_eq!(status.state, DureCliInstallState::Current);
         assert_eq!(status.installed, Some(expected.clone()));
         assert_eq!(status.available, expected);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn packaged_retry_bootstraps_before_reading_the_legacy_install() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().unwrap();
+        let resources = tempfile::tempdir().unwrap();
+        let installed = install_test_payload(home.path(), "stable", "0.1.4+old", &"a".repeat(64));
+        let metadata_path = Path::new(&installed.install_root).join("install.json");
+        let current_metadata = fs::read_to_string(&metadata_path).unwrap();
+        fs::write(
+            &metadata_path,
+            current_metadata.replace("\"schemaVersion\":3", "\"schemaVersion\":2"),
+        ).unwrap();
+        assert!(read_cli_identity(Path::new(&installed.executable_path)).is_err());
+        let bin = resources.path().join("resources/dure-cli/current/bin");
+        fs::create_dir_all(&bin).unwrap();
+        let node = bin.join("node");
+        fs::write(&node, concat!(
+            "#!/bin/sh\n",
+            "[ \"$3\" = stable ] || exit 91\n",
+            "sed 's/\"schemaVersion\":2/\"schemaVersion\":3/' \"$2/.local/share/hebbian-ide-cli/current/install.json\" > \"$2/repaired.json\"\n",
+            "mv \"$2/repaired.json\" \"$2/.local/share/hebbian-ide-cli/current/install.json\"\n",
+        )).unwrap();
+        fs::set_permissions(&node, fs::Permissions::from_mode(0o700)).unwrap();
+
+        install_for_channel("stable", home.path(), resources.path()).unwrap();
+        assert_eq!(
+            read_cli_identity(Path::new(&installed.executable_path)).unwrap(),
+            installed,
+        );
     }
 
     #[test]

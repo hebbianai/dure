@@ -54,7 +54,14 @@ const gateway = path.join(root, "gateway.sh");
 const gatewayFixture = path.resolve("scripts/qa/ssh-registration-gateway.mjs");
 write(
 	gateway,
-	`#!/bin/sh\nset -eu\ncd ${quote(remote)}\nexec env -u DURE_HOME -u DURE_APP_CHANNEL HOME=${quote(remote)} HMUX_DISCOVERY_ROOT=${quote(remoteDiscovery)} HMUX_RUNTIME=${quote(process.env.DURE_HMUX_RUNTIME_BIN)} /bin/sh -c "$SSH_ORIGINAL_COMMAND"\n`,
+	`#!/bin/sh\nset -eu\ncd ${quote(remote)}\nexec env -u DURE_HOME -u DURE_APP_CHANNEL HOME=${quote(remote)} PATH=${quote(`${remote}/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin`)} HMUX_DISCOVERY_ROOT=${quote(remoteDiscovery)} HMUX_RUNTIME=${quote(process.env.DURE_HMUX_RUNTIME_BIN)} /bin/sh -c "$SSH_ORIGINAL_COMMAND"\n`,
+	0o700,
+);
+// Exercise the real command bridge and managed Host without an account,
+// network request or user configuration.
+write(
+	path.join(remote, ".local/bin/codex"),
+	`#!/bin/bash\n[ "$1" = resume ] || exit 64\nprintf '%s\\n' "$HMUX_SESSION_ID" > ${quote(path.join(root, "codex-bridge-session"))}\nprintf 'SSH_CODEX_BRIDGE_READY\\n'\nread -r -t 30 answer\nprintf '%s\\n' "$answer" > ${quote(path.join(root, "codex-bridge-input"))}\n[ "$answer" = exit ]\n`,
 	0o700,
 );
 write(

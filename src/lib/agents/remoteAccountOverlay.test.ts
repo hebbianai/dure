@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -50,6 +54,36 @@ beforeEach(() => {
 });
 
 describe("remote account launch preflight", () => {
+	it.skipIf(process.platform === "win32")(
+		"finds a standalone provider outside the SSH login PATH",
+		async () => {
+			const home = mkdtempSync(join(tmpdir(), "dure-remote-provider-"));
+			try {
+				const bin = join(home, ".local/bin");
+				mkdirSync(bin, { recursive: true });
+				writeFileSync(
+					join(bin, "codex"),
+					"#!/bin/sh\nprintf 'codex-cli 0.155.1\\n'\n",
+					{ mode: 0o700 },
+				);
+				mocks.sshExecOnce.mockImplementation(async (_host, command) => ({
+					code: 0,
+					stdout: execFileSync("/bin/sh", ["-c", command], {
+						encoding: "utf8",
+						env: { HOME: home, SHELL: "/bin/sh", PATH: "/usr/bin:/bin" },
+					}),
+					stderr: "",
+				}));
+				await expect(
+					preflightRemoteAccountLaunch(host, "codex", home),
+				).resolves.toEqual({ version: "" });
+				expect(mocks.sshPrepareAccountOverlay).not.toHaveBeenCalled();
+			} finally {
+				rmSync(home, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it.each(["claude", "codex"] as const)(
 		"provisions the selected %s credential before returning a ready overlay",
 		async (provider) => {

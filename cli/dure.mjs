@@ -7,6 +7,7 @@
 
 import {
   readFileSync,
+  writeSync,
   writeFileSync,
   readdirSync,
   existsSync,
@@ -194,6 +195,16 @@ async function runSystemSsh(argv) {
     child.once("error", reject);
     child.once("exit", (code, signal) => resolve({ code, signal }));
   });
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    // A dropped SSH connection can leave the remote application's Kitty
+    // keyboard stack active. Restore shell key encoding only after SSH exits;
+    // never add terminal controls to a pipe or redirected command output.
+    try {
+      writeSync(process.stdout.fd, "\x1b[<999u\x1b[=0u");
+    } catch {
+      // A closed terminal must not replace SSH's exit status or signal.
+    }
+  }
   if (status.signal) {
     process.kill(process.pid, status.signal);
     return;
