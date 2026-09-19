@@ -31,6 +31,42 @@ fn output_sequence_is_strictly_monotonic() {
 
 #[cfg(feature = "ghostty-core-proof")]
 #[test]
+fn command_bridge_marker_reaches_the_structured_stream_across_pty_reads() {
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    let first = replay
+        .ingest_output(b"\x1b]778;dure-hmux-command-")
+        .unwrap();
+    assert!(first.terminal_records.is_empty());
+    let completed = replay
+        .ingest_output(b"bridge-v1;eyJvayI6dHJ1ZX0\x07")
+        .unwrap();
+    assert_eq!(completed.terminal_records.len(), 1);
+    let record = &completed.terminal_records[0];
+    assert_eq!(record.terminal_epoch, replay.fence().terminal_epoch);
+    assert_eq!(record.through_output_seq, 2);
+    let Some(terminal_state_protocol::terminal_state_record::Body::Event(event)) = &record.body
+    else {
+        panic!("command bridge must publish a typed event");
+    };
+    assert_eq!(event.event_id, 1);
+    let Some(terminal_state_protocol::terminal_event::Event::ExecutionMarker(marker)) =
+        &event.event
+    else {
+        panic!("command bridge must publish an execution marker");
+    };
+    assert_eq!(marker.label, "dure-hmux-command-bridge-v1;eyJvayI6dHJ1ZX0");
+    terminal_state_protocol::encode_record(1, record).unwrap();
+    assert!(
+        replay
+            .ingest_output(b"plain output")
+            .unwrap()
+            .terminal_records
+            .is_empty()
+    );
+}
+
+#[cfg(feature = "ghostty-core-proof")]
+#[test]
 fn native_history_clear_advances_state_and_keeps_the_live_viewport() {
     let visible_viewport = |record: terminal_state_protocol::TerminalStateRecord| {
         let Some(terminal_state_protocol::terminal_state_record::Body::ViewportFrame(frame)) =

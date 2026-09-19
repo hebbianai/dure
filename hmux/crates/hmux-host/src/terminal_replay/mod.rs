@@ -7,6 +7,8 @@ mod cold_history;
 #[cfg(feature = "ghostty-core-proof")]
 mod cold_history_journal;
 #[cfg(feature = "ghostty-core-proof")]
+mod command_bridge_markers;
+#[cfg(feature = "ghostty-core-proof")]
 mod composite_viewport_source;
 mod delta_retention;
 mod execution_location;
@@ -380,6 +382,8 @@ pub struct TerminalReplay {
     terminal_state_revision: u64,
     #[cfg(feature = "ghostty-core-proof")]
     terminal_event_id: u64,
+    #[cfg(feature = "ghostty-core-proof")]
+    command_bridge_markers: command_bridge_markers::CommandBridgeMarkers,
     output_seq: u64,
     retained: DeltaRetention,
     /// A resize is ordered before the next PTY bytes. Carry the new grid once
@@ -698,6 +702,7 @@ impl TerminalReplay {
             history_transfer,
             terminal_state_revision: 1,
             terminal_event_id: 0,
+            command_bridge_markers: command_bridge_markers::CommandBridgeMarkers::default(),
             output_seq: 0,
             retained: DeltaRetention::new(limits.max_retained_records, limits.max_retained_bytes),
             pending_output_geometry: None,
@@ -852,7 +857,7 @@ impl TerminalReplay {
         #[cfg(not(feature = "ghostty-core-proof"))]
         let presentation_changed = true;
         #[cfg(feature = "ghostty-core-proof")]
-        let terminal_events = core_write
+        let mut terminal_events = core_write
             .events
             .into_iter()
             .filter_map(|event| match event {
@@ -869,6 +874,16 @@ impl TerminalReplay {
                 TerminalCoreEvent::ClipboardWrite(_) => None,
             })
             .collect::<Vec<_>>();
+        #[cfg(feature = "ghostty-core-proof")]
+        let (markers, marker_overflow) = self.command_bridge_markers.ingest(bytes);
+        #[cfg(feature = "ghostty-core-proof")]
+        terminal_events.extend(markers.into_iter().enumerate().map(|(index, label)| {
+            terminal_event::Event::ExecutionMarker(terminal_state_protocol::ExecutionMarkerEvent {
+                marker_id: format!("command-bridge-{output_seq}-{index}"),
+                kind: terminal_state_protocol::MarkerKind::Command as i32,
+                label,
+            })
+        }));
         #[cfg(feature = "ghostty-core-proof")]
         let state_changed = presentation_changed || !terminal_events.is_empty();
         #[cfg(not(feature = "ghostty-core-proof"))]
@@ -916,7 +931,7 @@ impl TerminalReplay {
             #[cfg(feature = "ghostty-core-proof")]
             terminal_records,
             #[cfg(feature = "ghostty-core-proof")]
-            terminal_event_overflow: core_write.event_overflow,
+            terminal_event_overflow: core_write.event_overflow || marker_overflow,
             projection_changed: presentation_changed,
             presentation_degradation: core_write.presentation_degradation,
             history_degradation,
