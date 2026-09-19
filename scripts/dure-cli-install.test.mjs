@@ -264,6 +264,95 @@ describe("Dure CLI installation", () => {
     }).status).toBe("current");
   });
 
+  it.each(["standalone", "bundled"])("upgrades a schema-2 %s CLI without executing or changing it", (layout) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-cli-schema-two-"));
+    temporaryDirectories.push(root);
+    const repository = copyInstallerFixture(root);
+    const preparedRoot = path.join(root, "prepared");
+    const controlPlane = path.join(root, "dure-control-plane");
+    writeControlPlaneFixture(controlPlane);
+    execFileSync(process.execPath, ["scripts/install-dure-cli.mjs"], {
+      cwd: repository,
+      env: dureCliInstallerFixtureEnvironment(repository, {
+        ...fixtureEnvironment,
+        HOME: root,
+        DURE_HOME: path.join(root, ".dure"),
+        HMUX_DISCOVERY_ROOT: path.join(root, "discovery"),
+        DURE_APP_CHANNEL: "stable",
+        DURE_CLI_INSTALL_ROOT: preparedRoot,
+        DURE_CLI_INSTALL_DIR: path.join(root, "prepared-bin"),
+        DURE_CONTROL_PLANE_BIN: controlPlane,
+        DURE_HMUX_BIN: controlPlane,
+        DURE_HMUX_RUNTIME_BIN: controlPlane,
+        DURE_HMUX_BUILD_ID: "hmux-test-v1",
+      }),
+      stdio: "pipe",
+    });
+    const incoming = fs.realpathSync(path.join(preparedRoot, "current"));
+    const installRoot = path.join(root, "installed");
+    const sourceDigest = "a".repeat(64);
+    const buildId = `0.1.4+${sourceDigest.slice(0, 16)}`;
+    const legacy = path.join(installRoot, "versions", buildId);
+    const bin = path.join(legacy, "bin");
+    fs.mkdirSync(bin, { recursive: true });
+    const script = path.join(bin, layout === "standalone" ? "dure" : "dure.mjs");
+    const scriptBytes = "#!/bin/sh\nexit 99\n";
+    fs.writeFileSync(script, scriptBytes, { mode: 0o755 });
+    if (layout === "bundled") fs.symlinkSync("dure.mjs", path.join(bin, "dure"));
+    for (const name of ["hebbian-ade", "hebbian-ide"]) fs.symlinkSync("dure", path.join(bin, name));
+    const metadata = {
+      schemaVersion: 2, buildId, packageVersion: "0.1.4", sourceDigest,
+      command: "dure", compatibilityCommands: ["hebbian-ade", "hebbian-ide"],
+      ...(layout === "bundled" ? {
+        controlPlaneCommand: path.basename(controlPlane),
+        bundle: { schemaVersion: 1, controlPlane: { digest: "b".repeat(64) }, orchestration: { digest: "c".repeat(64) } },
+      } : {}),
+    };
+    const metadataPath = path.join(legacy, "install.json");
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata));
+    const oldBytes = fs.readFileSync(metadataPath);
+    const current = path.join(installRoot, "current");
+    fs.symlinkSync(`versions/${buildId}`, current);
+    const globalCommands = path.join(root, "global-bin");
+    fs.mkdirSync(globalCommands);
+    for (const name of ["dure", "hebbian-ade", "hebbian-ide"]) {
+      // Old launchers can pin the previous immutable version directly.
+      fs.symlinkSync(path.join(bin, name), path.join(globalCommands, name));
+    }
+    const promote = () => promoteDureCli({ sourceVersionDirectory: incoming, installRoot,
+      commandDirectory: path.join(installRoot, "bin"), reconcileManaged: true });
+    expect(() => promoteDureCli({ sourceVersionDirectory: legacy, installRoot: path.join(root, "invalid-source"),
+      commandDirectory: path.join(root, "invalid-bin"), reconcileManaged: true })).toThrow();
+    expect(fs.existsSync(path.join(root, "invalid-source"))).toBe(false);
+    fs.writeFileSync(metadataPath, JSON.stringify({ ...metadata, sourceDigest: "b".repeat(64) }));
+    expect(promote).toThrow();
+    expect(fs.realpathSync(current)).toBe(fs.realpathSync(legacy));
+    fs.writeFileSync(metadataPath, oldBytes);
+    fs.unlinkSync(current);
+    const outside = path.join(root, "outside", "versions", buildId);
+    fs.cpSync(legacy, outside, { recursive: true, verbatimSymlinks: true });
+    fs.symlinkSync(outside, current);
+    expect(promote).toThrow();
+    expect(fs.realpathSync(current)).toBe(fs.realpathSync(outside));
+    fs.unlinkSync(current);
+    fs.symlinkSync(`versions/${buildId}`, current);
+    fs.unlinkSync(script);
+    fs.symlinkSync(path.join(outside, "bin", path.basename(script)), script);
+    expect(promote).toThrow();
+    fs.unlinkSync(script);
+    fs.writeFileSync(script, scriptBytes, { mode: 0o755 });
+    expect(promote().buildId).toBe(path.basename(incoming));
+    expect(reconcileDureCliLauncher({ sourceVersionDirectory: incoming, installRoot,
+      commandDirectory: globalCommands }).status).toBe("repaired");
+    for (const name of ["dure", "hebbian-ade", "hebbian-ide"]) {
+      expect(fs.realpathSync(path.join(globalCommands, name)))
+        .toBe(fs.realpathSync(path.join(installRoot, "launcher", "dure.mjs")));
+    }
+    expect(fs.readFileSync(metadataPath)).toEqual(oldBytes);
+    expect(fs.readFileSync(script, "utf8")).toBe(scriptBytes);
+    expect(promote().status).toBe("current");
+  });
+
   it("runs the channel CLI in the invoking Node without process replacement", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-cli-node-runtime-"));
     temporaryDirectories.push(root);

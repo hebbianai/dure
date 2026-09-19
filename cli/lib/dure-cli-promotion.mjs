@@ -189,7 +189,7 @@ function schemaTwoVersionOwnedByDure(versionRoot) {
   const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
   const commandPath = join(versionRoot, "bin", COMMAND);
   const scriptPath = join(versionRoot, "bin", COMMAND_SCRIPT);
-  return (
+  const commonIdentity =
     metadata?.schemaVersion === 2 &&
     typeof metadata.packageVersion === "string" &&
     /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/.test(metadata.buildId) &&
@@ -198,9 +198,22 @@ function schemaTwoVersionOwnedByDure(versionRoot) {
       `${metadata.packageVersion}+${metadata.sourceDigest.slice(0, 16)}` &&
     basename(versionRoot) === metadata.buildId &&
     metadata.command === COMMAND &&
-    metadata.controlPlaneCommand === CONTROL_PLANE_COMMAND &&
     JSON.stringify(metadata.compatibilityCommands) ===
       JSON.stringify(COMPATIBILITY_COMMANDS) &&
+    COMPATIBILITY_COMMANDS.every((name) => {
+      const alias = join(versionRoot, "bin", name);
+      return lstatSync(alias).isSymbolicLink() && readlinkSync(alias) === COMMAND;
+    });
+  if (!commonIdentity) return false;
+  // The original schema-2 CLI was a standalone script, before companions and
+  // bundle identities existed. This establishes replacement ownership only;
+  // incoming payloads must still satisfy the current verified bundle contract.
+  if (metadata.bundle === undefined && metadata.controlPlaneCommand === undefined) {
+    const command = lstatSync(commandPath);
+    return !command.isSymbolicLink() && command.isFile() && (command.mode & 0o111) !== 0;
+  }
+  return (
+    metadata.controlPlaneCommand === CONTROL_PLANE_COMMAND &&
     metadata.bundle?.schemaVersion === 1 &&
     /^[a-f0-9]{64}$/.test(metadata.bundle.controlPlane?.digest) &&
     /^[a-f0-9]{64}$/.test(metadata.bundle.orchestration?.digest) &&
@@ -217,9 +230,12 @@ function verifiedLegacyCommand(commandPath, canonicalInstallRoot) {
   }
   try {
     const target = realpathSync(commandPath);
-    if (basename(target) !== COMMAND_SCRIPT) return false;
+    if (![COMMAND, COMMAND_SCRIPT].includes(basename(target))) return false;
     const versionRoot = dirname(dirname(target));
-    if (realpathSync(dirname(dirname(versionRoot))) !== canonicalInstallRoot) {
+    if (
+      dirname(versionRoot) !== join(canonicalInstallRoot, "versions") ||
+      target !== join(versionRoot, "bin", basename(target))
+    ) {
       return false;
     }
     try {
@@ -327,10 +343,13 @@ export function promoteDureCli({
     if (reconcileManaged) {
       const current = join(canonicalInstallRoot, "current");
       if (pathExists(current)) {
-        const installed = validateOwnedVersion(current);
-        if (dirname(installed.source) !== versionsDirectory) {
+        const source = realpathSync(current);
+        if (dirname(source) !== versionsDirectory) {
           throw new Error("Dure CLI current pointer escaped immutable versions");
         }
+        const installed = schemaTwoVersionOwnedByDure(source)
+          ? { source, metadata: null }
+          : validateOwnedVersion(source);
         const launcher = join(canonicalInstallRoot, "launcher", "dure.mjs");
         const sourceLauncher = join(prepared.source, "bin", "lib", "dure-cli-channel-launcher.mjs");
         if (
