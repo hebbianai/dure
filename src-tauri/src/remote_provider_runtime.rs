@@ -374,7 +374,7 @@ pub(crate) fn launch_command(
         .map(|directory| format!("export PATH={}:\"$PATH\"; ", crate::ssh::shell_quote(directory)))
         .unwrap_or_default();
     let launch = format!(
-        "if ! command -v {executable} >/dev/null 2>&1 && [ -s \"$HOME/.nvm/nvm.sh\" ]; then NVM_DIR=\"$HOME/.nvm\"; export NVM_DIR; . \"$NVM_DIR/nvm.sh\"; nvm use --silent node >/dev/null; fi; {github_path}command -v {executable} >/dev/null 2>&1 || exit 127; exec {command}"
+        "export PATH=\"${{PATH:+$PATH:}}$HOME/.local/bin\"; if ! command -v {executable} >/dev/null 2>&1 && [ -s \"$HOME/.nvm/nvm.sh\" ]; then NVM_DIR=\"$HOME/.nvm\"; export NVM_DIR; . \"$NVM_DIR/nvm.sh\"; nvm use --silent node >/dev/null; fi; {github_path}command -v {executable} >/dev/null 2>&1 || exit 127; exec {command}"
     );
     Ok(vec!["/bin/sh".to_string(), "-lc".to_string(), launch])
 }
@@ -863,6 +863,42 @@ sys.stdout.buffer.write(len(reply).to_bytes(4, 'big') + reply)
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(output.stdout, b"desktop-issue-comment\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_launch_finds_standalone_provider_in_user_local_bin() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("Dure's home");
+        let bin = home.join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let executable = bin.join("dure-provider-fixture");
+        std::fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let command = launch_command(
+            "codex",
+            AgentProviderLaunchPlanV1 {
+                executable: "dure-provider-fixture".into(),
+                arguments: vec!["resume".into(), "exact-conversation".into()],
+            },
+            None,
+            None,
+        )
+        .unwrap();
+        let output = std::process::Command::new(&command[0])
+            .args(&command[1..])
+            .env_clear()
+            .env("HOME", &home)
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"resume\nexact-conversation\n");
     }
 
     #[test]
