@@ -176,6 +176,7 @@
     "test:app-spawn-receipt-loss": "sh scripts/qa/spawn-prompt-receipt-loss-smoke.sh",
     "test:app-spawn-ssh-receipt-loss": "sh scripts/qa/spawn-prompt-ssh-receipt-loss-smoke.sh",
     "test:notification-click": "node scripts/qa/notification-click-smoke.mjs",
+    "test:computer-input": "node scripts/run-with-build-storage.mjs qa -- node scripts/qa/computer-input-smoke.mjs",
     "test:diffpane": "sh scripts/qa/diffpane-smoke.sh",
     "hmux:runtime:stage:dev": "sh scripts/stage-hmux-runtime.sh debug",
     "hmux:runtime:stage:release": "sh scripts/stage-hmux-runtime.sh release",

@@ -13,19 +13,78 @@ afterEach(() => {
 });
 
 // Run the real CLI, but never let a regression type into or capture the desktop.
-function run(args) {
+function run(args, fixture = {}) {
   const root = mkdtempSync(join(tmpdir(), "dure-computer-"));
   roots.push(root);
   const callsPath = join(root, "calls.jsonl");
+  const inputPath = join(root, "input.jsonl");
   const preload = join(root, "desktop-stub.cjs");
   writeFileSync(preload, `
 const cp = require("node:child_process");
 const fs = require("node:fs");
+const fixture = ${JSON.stringify(fixture)};
+Object.defineProperty(process, "platform", { value: "darwin" });
 cp.spawnSync = (command, args) => {
   if (command !== "osascript" && command !== "screencapture") {
     throw new Error("Unexpected child process: " + command);
   }
   fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ command, args }) + "\\n");
+  if (args[0] === "-l") {
+    let activePid = 42;
+    let postedCount = 0;
+    const record = (kind, value) => fs.appendFileSync(${JSON.stringify(inputPath)}, JSON.stringify({ kind, ...value }) + "\\n");
+    const events = {
+      applicationProcesses: { whose: (selector) => ({ unixId: () => { record("resolve", selector); return [42]; } }) },
+      keystroke: () => { throw new Error("Global input is forbidden"); },
+      keyCode: () => { throw new Error("Global input is forbidden"); },
+    };
+    const native = Object.assign((text) => ({ dataUsingEncoding: () => ({ bytes: text }) }), {
+      NSRunningApplication: { runningApplicationWithProcessIdentifier: (pid) => ({
+        isNil: () => false, terminated: false,
+        activateWithOptions: () => { record("activate", { pid }); return true; },
+      }) },
+      NSMutableData: { dataWithLength: () => {
+        const data = { subdataWithRange: () => ({ base64EncodedStringWithOptions: () => "fixture-generation" }) };
+        data.mutableBytes = data;
+        return data;
+      } },
+      proc_pidinfo: () => 56, NSMakeRange: () => null,
+      NSWorkspace: { sharedWorkspace: { frontmostApplication: { get processIdentifier() { return activePid; } } } },
+      NSProcessInfo: { processInfo: { systemUptime: 0 } },
+      NSRunLoop: { currentRunLoop: { runUntilDate() {} } },
+      NSDate: { dateWithTimeIntervalSinceNow() {} },
+      TISCopyCurrentASCIICapableKeyboardLayoutInputSource: () => ({}),
+      TISGetInputSourceProperty: () => ({}),
+      CFDataGetBytePtr: (value) => value,
+      LMGetKbdType: () => 46,
+      UCKeyTranslate: (layout, code, action, shifts, keyboard, options, dead, max, length, output) => {
+        const plain = { 0: "a", 1: "s", 24: "=", 27: "-", 39: "'", 42: String.fromCharCode(92) };
+        if (fixture.alternateLayout) { delete plain[0]; plain[12] = "a"; }
+        const shifted = { 24: "+", 39: '"' };
+        output.text = (shifts === 0 ? plain : shifts === 2 ? shifted : {})[code] ?? "";
+        return 0;
+      },
+      NSString: { alloc: { initWithDataEncoding: (data) => data.text } },
+      CGPreflightPostEventAccess: () => fixture.postAccess !== false,
+      CGEventSourceCreate: () => ({}),
+      CGEventCreateKeyboardEvent: (source, code, down) => ({ code, down }),
+      CGEventSetFlags: (event, flags) => { event.flags = flags; },
+      CGEventKeyboardSetUnicodeString: (event, length, text) => { event.text = text; },
+      CGEventPostToPid: (pid, event) => {
+        record("posted", { pid, ...event });
+        if (++postedCount === fixture.loseFocusAfterEvents) activePid = 7;
+        if (event.text !== undefined) record("unicode", { pid, ...event });
+        else if (event.down) record("keyCode", { code: event.code, modifiers:
+          [[1048576, "command down"], [262144, "control down"], [524288, "option down"], [131072, "shift down"]]
+            .filter(([flag]) => event.flags & flag).map(([, name]) => name) });
+      },
+    });
+    const stdout = require("node:vm").runInNewContext(args[3], {
+      Application: () => events, $: native,
+      ObjC: { import() {}, bindFunction() {}, unwrap: (value) => value },
+    });
+    return { status: 0, stdout, stderr: "" };
+  }
   return { status: 0, stdout: "", stderr: "" };
 };
 require("node:module").syncBuiltinESMExports();
@@ -39,7 +98,29 @@ require("node:module").syncBuiltinESMExports();
   const calls = existsSync(callsPath)
     ? readFileSync(callsPath, "utf8").trim().split("\n").map(JSON.parse)
     : [];
-  return { ...result, calls };
+  const inputs = existsSync(inputPath)
+    ? readFileSync(inputPath, "utf8").trim().split("\n").map(JSON.parse)
+    : [];
+  return { ...result, calls, inputs };
+}
+
+function expectInput(args, input) {
+  const result = run(["computer", ...args]);
+  expect(result).toMatchObject({ status: 0, stderr: "" });
+  expect(result.calls).toHaveLength(1);
+  if (input.kind === "unicode") {
+    const posted = result.inputs.filter(({ kind }) => kind === "unicode");
+    expect(posted.filter(({ down }) => down).map(({ text }) => text).join("")).toBe(input.text);
+    expect(posted.filter(({ down }) => !down).map(({ text }) => text).join("")).toBe(input.text);
+    expect(posted.every(({ pid }) => pid === 42)).toBe(true);
+    expect(result.inputs.some(({ kind }) => kind === "keystroke")).toBe(false);
+  } else expect(result.inputs).toContainEqual(input);
+  if (args[0] !== "activate") {
+    const posted = result.inputs.filter(({ kind }) => kind === "posted");
+    expect(posted.length).toBeGreaterThanOrEqual(2);
+    expect(posted.every(({ pid }, index) => pid === 42 && posted[index].down === (index % 2 === 0))).toBe(true);
+  }
+  return result;
 }
 
 function expectScript(args, fragment) {
@@ -58,14 +139,14 @@ describe("dure computer input", () => {
     ["type", "Notes", "--text", "hello world"],
     ["type", "--app", "Notes", "--text", "hello world"],
   ])("preserves all text: %j", (...args) => {
-    const script = expectScript(args, 'keystroke "hello world"');
-    expect(script).toContain('tell application "Notes" to activate');
+    const result = expectInput(args, { kind: "unicode", text: "hello world" });
+    expect(result.inputs).toContainEqual({ kind: "resolve", name: "Notes" });
   });
 
   it("preserves Unicode, whitespace, quotes and backslashes in text", () => {
-    expectScript(
-      ["type", "--app", "Notes", "--text", '  한글 "QA" \\ path\nnext  '],
-      'keystroke "  한글 \\"QA\\" \\\\ path\nnext  "',
+    expectInput(
+      ["type", "--app", "Notes", "--text", '  한글 😀 "QA" \\ path\nnext  '],
+      { kind: "unicode", text: '  한글 😀 "QA" \\ path\nnext  ' },
     );
   });
 
@@ -73,7 +154,7 @@ describe("dure computer input", () => {
     ["type", "Notes", "--", "--help", "--json"],
     ["type", "--app", "Notes", "--", "--help", "--json"],
   ])("preserves literal flags after --: %j", (...args) => {
-    expectScript(args, 'keystroke "--help --json"');
+    expectInput(args, { kind: "unicode", text: "--help --json" });
   });
 
   it.each([
@@ -82,21 +163,21 @@ describe("dure computer input", () => {
     ["key", "Notes", "--key", "cmd+s"],
     ["key", "--app", "Notes", "--key", "cmd+s"],
   ])("accepts positional and explicit key arguments: %j", (...args) => {
-    expectScript(args, 'keystroke "s" using {command down}');
+    expectInput(args, { kind: "keyCode", code: 1, modifiers: ["command down"] });
   });
 
   it.each([
-    ["ctrl+shift+return", "key code 36 using {control down, shift down}"],
-    ["COMMAND+OPT+LEFT", "key code 123 using {command down, option down}"],
-    ["alt+tab", "key code 48 using {option down}"],
-    ["backspace", "key code 51"],
-    ["+", 'keystroke "+"'],
-    ["cmd+plus", 'keystroke "+" using {command down}'],
-    ["-", 'keystroke "-"'],
-    ['"', 'keystroke "\\""'],
-    ["\\", 'keystroke "\\\\"'],
+    ["ctrl+shift+return", { kind: "keyCode", code: 36, modifiers: ["control down", "shift down"] }],
+    ["COMMAND+OPT+LEFT", { kind: "keyCode", code: 123, modifiers: ["command down", "option down"] }],
+    ["alt+tab", { kind: "keyCode", code: 48, modifiers: ["option down"] }],
+    ["backspace", { kind: "keyCode", code: 51, modifiers: [] }],
+    ["+", { kind: "keyCode", code: 24, modifiers: ["shift down"] }],
+    ["cmd+plus", { kind: "keyCode", code: 24, modifiers: ["command down", "shift down"] }],
+    ["-", { kind: "keyCode", code: 27, modifiers: [] }],
+    ['"', { kind: "keyCode", code: 39, modifiers: ["shift down"] }],
+    ["\\", { kind: "keyCode", code: 42, modifiers: [] }],
   ])("encodes supported key %s", (key, action) => {
-    expectScript(["key", "Notes", key], action);
+    expectInput(["key", "Notes", key], action);
   });
 
   it.each([
@@ -110,7 +191,43 @@ describe("dure computer input", () => {
     ["activate", "Notes"],
     ["activate", "--app", "Notes"],
   ])("preserves app activation syntax: %j", (...args) => {
-    expectScript(args, 'tell application "Notes" to activate');
+    expectInput(args, { kind: "activate", pid: 42 });
+  });
+
+  it("selects a PID without resolving or launching an app by name", () => {
+    const result = expectInput(["type", "--pid", "42", "hello"], { kind: "unicode", text: "hello" });
+    expect(result.inputs).not.toContainEqual(expect.objectContaining({ kind: "resolve" }));
+    expect(result.inputs).toContainEqual({ kind: "activate", pid: 42 });
+  });
+
+  it("uses the selected layout instead of assuming US letter positions", () => {
+    const result = run(["computer", "key", "--pid", "42", "cmd+a"], { alternateLayout: true });
+    expect(result.status).toBe(0);
+    expect(result.inputs).toContainEqual({ kind: "keyCode", code: 12, modifiers: ["command down"] });
+  });
+
+  it("stops between Unicode characters when focus changes, without retrying", () => {
+    const result = run(["computer", "type", "--pid", "42", "한글"], { loseFocusAfterEvents: 2 });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("computer_input_unconfirmed");
+    expect(result.inputs.filter(({ kind }) => kind === "posted")).toEqual([
+      { kind: "posted", pid: 42, code: 0, down: true, flags: 0, text: "한" },
+      { kind: "posted", pid: 42, code: 0, down: false, flags: 0, text: "한" },
+    ]);
+  });
+
+  it("does not post events when native input permission is denied", () => {
+    const result = run(["computer", "type", "--pid", "42", "blocked"], { postAccess: false });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Accessibility permission");
+    expect(result.inputs.some(({ kind }) => kind === "posted")).toBe(false);
+  });
+
+  it("rejects a character unavailable in the keyboard layout without input", () => {
+    const result = run(["computer", "key", "--pid", "42", "한"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Use type for Unicode text");
+    expect(result.inputs.some(({ kind }) => kind === "posted")).toBe(false);
   });
 
   it.each(["capture.png", "--help"])("keeps screenshot path %j out of OS options", (path) => {
@@ -182,6 +299,16 @@ describe("dure computer validation before OS effects", () => {
     ["menu", "Notes", "File", "New Note", "extra"],
     ["screenshot", "first.png", "second.png"],
     ["screenshot", ""],
+    ["type", "--pid", "0", "hello"],
+    ["type", "--pid", "1", "hello"],
+    ["type", "--pid", "-1", "hello"],
+    ["type", "--pid", "1.5", "hello"],
+    ["type", "--pid", "1e3", "hello"],
+    ["type", "--pid", "2147483648", "hello"],
+    ["type", "--pid", "42", "--app", "Notes", "hello"],
+    ["type", "--pid", "42", "--pid", "43", "hello"],
+    ["activate", "--pid", "42", "Notes"],
+    ["menu", "--pid", "42", "File", "New Note"],
   ])("rejects invalid arguments without OS effects: %j", (...args) => {
     const result = run(["computer", ...args]);
     expect(result).toMatchObject({ status: 1, stdout: "", calls: [] });

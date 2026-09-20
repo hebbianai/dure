@@ -3171,7 +3171,7 @@ function esc(s) {
   return String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-function cmdComputer(opts) {
+async function cmdComputer(opts) {
   const { sub, app } = opts;
   switch (sub) {
     case "apps": {
@@ -3192,26 +3192,13 @@ function cmdComputer(opts) {
       process.stdout.write(`frontmost: ${front}\n` + (wins ? `windows(${app || front}): ${wins}\n` : ""));
       return;
     }
-    case "activate": {
-      osa(`tell application "${esc(app)}" to activate`);
-      process.stdout.write(`\x1b[32m✓\x1b[0m Activated ${app}\n`);
-      return;
-    }
-    case "type": {
-      const { text } = opts;
-      osa(`tell application "${esc(app)}" to activate\ndelay 0.2\ntell application "System Events" to keystroke "${esc(text)}"`);
-      process.stdout.write(`\x1b[32m✓\x1b[0m Typed into ${app}\n`);
-      return;
-    }
+    case "activate":
+    case "type":
     case "key": {
-      const { key, keyAction: { code, character, modifiers } } = opts;
-      const using = modifiers.length ? ` using {${modifiers.join(", ")}}` : "";
-      const action =
-        code !== undefined
-          ? `key code ${code}${using}`
-          : `keystroke "${esc(character)}"${using}`;
-      osa(`tell application "${esc(app)}" to activate\ndelay 0.2\ntell application "System Events" to ${action}`);
-      process.stdout.write(`\x1b[32m✓\x1b[0m ${app}: sent key ${key}\n`);
+      const { runMacComputerInput } = await import("./lib/macos-computer-input.mjs");
+      const receipt = runMacComputerInput(opts);
+      const action = sub === "activate" ? "Activated" : "Sent input to";
+      process.stdout.write(`${action} ${app ?? "app"} (PID ${receipt.pid})\n`);
       return;
     }
     case "menu": {
@@ -3649,7 +3636,7 @@ async function main() {
     try {
       const options = parseComputerArgs(cmd === "help" ? ["--help"] : rest);
       if (options.sub === "help") process.stdout.write(`${COMPUTER_HELP}\n`);
-      else cmdComputer(options);
+      else await cmdComputer(options);
     } catch (error) {
       fail(error.message);
     }

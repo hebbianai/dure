@@ -15,6 +15,13 @@ An app may also be the first positional argument:
   type <app> <text...>
   key <app> <key>
   menu <app> <menu> <item>
+activate, type and key require an already running app. A name must match
+exactly one process; use --pid PID instead of --app to choose an exact process:
+  type --pid 12345 "hello world"
+Activation waits up to 5 seconds. Process identity and focus are checked
+before and after input. Keyboard events target the PID; focus checks are not
+atomic with dispatch. Re-observe after uncertain input before retrying.
+Success reports dispatch, not the app's resulting content.
 Use either positional text/key or --text/--key, not both.
 Use -- before literal arguments beginning with - (including --help):
   type --app Notes -- --help
@@ -26,15 +33,17 @@ delete/backspace, up, down, left, right, home, end, plus.
 Modifiers: cmd/command, ctrl/control, alt/opt/option, shift.
 Use + or plus for a literal +, and cmd+plus with a modifier.
 Function keys such as F5 are not supported.
+Printable keys must exist in the current ASCII-capable keyboard layout.
+Use type for Unicode text.
 
 Accessibility and Screen Recording permissions are required.`;
 
 const COMMAND_OPTIONS = new Map([
   ["apps", []],
   ["state", ["--app"]],
-  ["activate", ["--app"]],
-  ["type", ["--app", "--text"]],
-  ["key", ["--app", "--key"]],
+  ["activate", ["--app", "--pid"]],
+  ["type", ["--app", "--pid", "--text"]],
+  ["key", ["--app", "--pid", "--key"]],
   ["menu", ["--app"]],
   ["screenshot", []],
 ]);
@@ -117,13 +126,22 @@ export function parseComputerArgs(args) {
   }
 
   const takesApp = allowed.includes("--app");
-  const app = takesApp
+  let pid;
+  if (options.has("--pid")) {
+    const raw = options.get("--pid");
+    if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) <= 1 || Number(raw) > 2_147_483_647) {
+      throw new Error("--pid requires a positive process ID greater than 1.");
+    }
+    if (options.has("--app")) throw new Error("Choose either --app or --pid, not both.");
+    pid = Number(raw);
+  }
+  const app = takesApp && pid === undefined
     ? options.get("--app") ?? positional.shift()
     : undefined;
-  if (takesApp && (app !== undefined || sub !== "state") && !app?.trim()) {
+  if (takesApp && pid === undefined && (app !== undefined || sub !== "state") && !app?.trim()) {
     throw new Error("An app name is required (--app <name> or the first positional argument).");
   }
-  const result = { sub, app };
+  const result = { sub, app, ...(pid === undefined ? {} : { pid }) };
   if (sub === "type" || sub === "key") {
     const flag = sub === "type" ? "--text" : "--key";
     if (options.has(flag) && positional.length > 0) {
