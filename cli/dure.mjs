@@ -3171,8 +3171,8 @@ function esc(s) {
   return String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-function cmdComputer(reg, sub, opts) {
-  const app = opts.app || opts.rest[1];
+function cmdComputer(opts) {
+  const { sub, app } = opts;
   switch (sub) {
     case "apps": {
       const out = osa(
@@ -3193,41 +3193,29 @@ function cmdComputer(reg, sub, opts) {
       return;
     }
     case "activate": {
-      if (!app) fail("--app <name> is required.");
       osa(`tell application "${esc(app)}" to activate`);
       process.stdout.write(`\x1b[32m✓\x1b[0m Activated ${app}\n`);
       return;
     }
     case "type": {
-      if (!app) fail("--app <name> is required.");
-      const text = opts.text || opts.rest.slice(2).join(" ");
-      if (!text) fail("Text to type is required.");
+      const { text } = opts;
       osa(`tell application "${esc(app)}" to activate\ndelay 0.2\ntell application "System Events" to keystroke "${esc(text)}"`);
       process.stdout.write(`\x1b[32m✓\x1b[0m Typed into ${app}\n`);
       return;
     }
     case "key": {
-      if (!app) fail("--app <name> is required.");
-      const key = opts.key || opts.rest[2];
-      if (!key) fail("A key is required (for example: return, tab, cmd+s).");
-      const MODS = { cmd: "command down", command: "command down", ctrl: "control down", control: "control down", alt: "option down", opt: "option down", option: "option down", shift: "shift down" };
-      const CODES = { return: 36, enter: 36, tab: 48, space: 49, esc: 53, escape: 53, delete: 51, backspace: 51, up: 126, down: 125, left: 123, right: 124, home: 115, end: 119 };
-      const parts = key.toLowerCase().split("+");
-      const base = parts.pop();
-      const mods = parts.map((m) => MODS[m]).filter(Boolean);
-      const using = mods.length ? ` using {${mods.join(", ")}}` : "";
+      const { key, keyAction: { code, character, modifiers } } = opts;
+      const using = modifiers.length ? ` using {${modifiers.join(", ")}}` : "";
       const action =
-        CODES[base] !== undefined
-          ? `key code ${CODES[base]}${using}`
-          : `keystroke "${esc(base)}"${using}`;
+        code !== undefined
+          ? `key code ${code}${using}`
+          : `keystroke "${esc(character)}"${using}`;
       osa(`tell application "${esc(app)}" to activate\ndelay 0.2\ntell application "System Events" to ${action}`);
       process.stdout.write(`\x1b[32m✓\x1b[0m ${app}: sent key ${key}\n`);
       return;
     }
     case "menu": {
-      const menu = opts.rest[2];
-      const item = opts.rest[3];
-      if (!app || !menu || !item) fail("Usage: dure computer menu <app> <menu> <item>");
+      const { menu, item } = opts;
       osa(
         `tell application "System Events" to tell process "${esc(app)}" to click menu item "${esc(item)}" of menu "${esc(menu)}" of menu bar 1`,
       );
@@ -3235,24 +3223,13 @@ function cmdComputer(reg, sub, opts) {
       return;
     }
     case "screenshot": {
-      const path = opts.rest[1] || join(APP_CONTROL_DIR, `screenshot-${nowMs()}.png`);
-      const r = spawnSync("screencapture", ["-x", path], { encoding: "utf8" });
+      const path = opts.path ?? join(APP_CONTROL_DIR, `screenshot-${nowMs()}.png`);
+      // A literal path after -- must not become a screencapture option.
+      const r = spawnSync("screencapture", ["-x", resolvePath(path)], { encoding: "utf8" });
       if (r.status !== 0) fail("screencapture failed (Screen Recording permission may be required).");
       process.stdout.write(path + "\n");
       return;
     }
-    default:
-      process.stdout.write(
-        `dure computer <sub> — macOS desktop control (osascript)\n` +
-          `  apps                          List running apps\n` +
-          `  state [--app A]               Show the frontmost app and window titles\n` +
-          `  activate --app A              Bring an app to the front\n` +
-          `  type --app A "text"            Type into an app\n` +
-          `  key --app A <return|cmd+s|…>  Send a key\n` +
-          `  menu <app> <menu> <item>       Click a menu item\n` +
-          `  screenshot [path]             Capture the screen and return its path\n` +
-          `\nAccessibility and Screen Recording permissions are required.\n`,
-      );
   }
 }
 
@@ -3667,6 +3644,17 @@ async function cmdProfiles(opts) {
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
+  if (cmd === "computer" || (cmd === "help" && rest[0] === "computer")) {
+    const { COMPUTER_HELP, parseComputerArgs } = await import("./lib/computer-options.mjs");
+    try {
+      const options = parseComputerArgs(cmd === "help" ? ["--help"] : rest);
+      if (options.sub === "help") process.stdout.write(`${COMPUTER_HELP}\n`);
+      else cmdComputer(options);
+    } catch (error) {
+      fail(error.message);
+    }
+    return;
+  }
   if (cmd === "jev" || (cmd === "help" && rest[0] === "jev")) {
     const { runJevCommand } = await import("./lib/jev-command.mjs");
     process.exitCode = await runJevCommand(cmd === "help" ? ["--help"] : rest);
@@ -3873,7 +3861,6 @@ async function main() {
   if (cmd === "profiles") return await cmdProfiles(opts);
   if (cmd === "integration") return await cmdIntegration(opts.rest[0], opts);
   if (cmd === "skills") return cmdSkills(null, opts.rest[0], opts);
-  if (cmd === "computer") return cmdComputer(null, opts.rest[0], opts);
   if (cmd === "hmux") return await cmdHmux(opts.rest[0], opts);
   if (cmd === "perf") return await cmdPerf(opts.rest[0], opts);
   if (cmd === "ls" || cmd === "list") return await cmdLs(opts);
@@ -3991,9 +3978,6 @@ async function main() {
       break;
     case "skills":
       cmdSkills(reg, opts.rest[0], opts);
-      break;
-    case "computer":
-      cmdComputer(reg, opts.rest[0], opts);
       break;
     default:
       fail(`Unknown command: ${cmd}\n\n${HELP}`);

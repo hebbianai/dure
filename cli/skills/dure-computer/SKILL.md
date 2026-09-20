@@ -48,30 +48,46 @@ dure computer state --app Safari
 ```sh
 dure computer activate --app Safari
 dure computer type Notes hello world
+dure computer type --app Notes hello world
 dure computer type --app Notes --text "hello world"
 dure computer key Notes cmd+s
+dure computer key --app Notes cmd+s
 dure computer key --app Notes --key cmd+s
 dure computer menu Safari File "New Window"
+dure computer menu --app Safari File "New Window"
 ```
 
-`activate`, `type` and `key` each activate the app first and pause briefly, so
-they take focus from whatever the user is doing. Keystrokes go to whatever is
-frontmost at that moment: never fire one at an app you have not just checked
-with `state`.
+`activate`, `type` and `key` each activate the app first; `type` and `key` then
+pause briefly. They take focus from whatever the user is doing. Keystrokes go
+to whatever is frontmost at that moment: never fire one at an app you have not
+just checked with `state`.
 
-**Give the app either positionally or with `--app`, and do not mix styles.**
-`type` reads its text from `--text` or from everything after a positional app
-name; `key` reads its key from `--key` or the token after one. So
-`dure computer type --app Notes hello` sends nothing and fails with "Text to
-type is required": the positional text is counted from the slot the app name
-would have used. `menu` takes app, menu and item positionally — `--app` breaks
-it the same way.
+Give the app once, either as the first positional argument or with `--app`.
+When `--app` is present, every positional argument belongs to the command's
+payload: `type --app Notes hello world` types both words. For `type` and `key`,
+choose positional input or `--text`/`--key`; combining them is an error.
+`menu` accepts both app forms and requires exactly one menu and one item.
+
+`--help` and `-h` anywhere before a literal `--` print help without activating
+an app, typing, clicking or capturing the screen. This also applies after
+`--text` or `--key`. Put literal arguments beginning with `-` after `--`:
+
+```sh
+dure computer type --app Notes -- --help --json
+```
+
+Unknown commands, unsupported options (including `--json`), duplicate options,
+missing values and extra arguments are rejected before any OS action. Input
+validation does not check the current focus or prove that an app received input.
 
 Key syntax is `[modifier+…]base`. Modifiers: `cmd`/`command`, `ctrl`/`control`,
 `alt`/`opt`/`option`, `shift`. Named bases: `return`/`enter`, `tab`, `space`,
 `esc`/`escape`, `delete`/`backspace`, `up`, `down`, `left`, `right`, `home`,
-`end`. Any other base is typed as that literal character, so `cmd+s` works and
-`cmd+F5` does not.
+`end`, `plus`. A base can also be one printable character. Use `+` or `plus`
+for a literal plus sign, and `cmd+plus` with a modifier. Names and letters are
+case-insensitive; use `shift+a` for Shift-A. Unknown or repeated modifiers,
+empty bases and unsupported names such as `F5` are rejected before activation.
+Use `type` to send multiple characters.
 
 `menu` clicks by exact title in menu bar 1, so the item must already be visible
 and enabled; it does not walk submenus.
@@ -92,9 +108,10 @@ took once you are done reading them.
 ## If `dure` does not recognize something here
 
 This file installs separately from the binary, so it can be older or newer than
-the `dure` on PATH. When a command or flag named above is rejected as unknown, that
-mismatch is the likely cause — do not invent a different spelling, and do not
-abandon the task silently. Read the real grammar from `dure <command> --help`,
+the `dure` on PATH. When a command or flag documented as supported above is
+rejected as unknown, that mismatch is the likely cause — do not invent a
+different spelling, and do not abandon the task silently. Read the real grammar
+from `dure <command> --help`,
 check `dure skills status` for whether this skill reports `outdated`, and run
 `dure skills install --global` to bring every shipped skill back in step with
 the installed CLI.
