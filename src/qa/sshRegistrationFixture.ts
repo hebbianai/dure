@@ -38,6 +38,13 @@ export async function readSshRegistrationFixture() {
 		port: number;
 		user: string;
 		recovery?: SshRegistrationRecovery;
+		repeatedClose?: {
+			desktopId: string;
+			panelId: string;
+			sessionId: string;
+			workspaceId: string;
+			hostId: string;
+		};
 	};
 }
 

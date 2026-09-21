@@ -125,6 +125,7 @@ let handoff;
 let remoteProcesses;
 let directPane;
 let directProcesses;
+let directPaneClosed = false;
 let evidence;
 let lostRemote;
 try {
@@ -361,6 +362,16 @@ try {
 	assert.equal(fs.readFileSync(path.join(root, "codex-bridge-input"), "utf8").trim(), "exit");
 	const restoredShell = hmux(["session", "show", directPane.sessionId], remoteRoot);
 	assert.deepEqual([restoredShell.host_process, restoredShell.provider_process], directProcesses);
+	const flagPath = path.join(root, "qa.autorun");
+	fs.writeFileSync(flagPath, JSON.stringify({
+		...JSON.parse(fs.readFileSync(flagPath, "utf8")),
+		repeatedClose: directPane,
+	}), { mode: 0o600 });
+	const repeatedClose = await waitFor("repeated SSH pane close", () => reports.find(
+		(report) => report.event === "repeated-close" && report.panelId === directPane.panelId,
+	));
+	assert.deepEqual(repeatedClose.receipts[0], repeatedClose.receipts[1]);
+	directPaneClosed = true;
 	evidence = {
 		schemaVersion: 1,
 		runId: fixture.runId,
@@ -377,6 +388,7 @@ try {
 			workspaceId: directPane.workspaceId,
 			inputReplay: true,
 			sourceGenerationPreserved: true,
+			repeatedClose: true,
 			commandBridge: { provider: "codex-fixture", providerSession, samePane: true, restoredShell: true },
 		},
 	};
@@ -394,7 +406,7 @@ try {
 	try {
 		try {
 			if (directPane) {
-				await ok("/pane/close", {
+				if (!directPaneClosed) await ok("/pane/close", {
 					targetPanelId: directPane.panelId,
 					spaceId: directPane.desktopId,
 					confirm: true,
