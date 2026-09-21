@@ -13,6 +13,7 @@ import {
   matchesPersistedLayoutRevision,
   matchesExactPaneBinding,
   persistedLayoutRevision,
+  type ExactPaneBindingSnapshot,
 } from "@/lib/workspace/layout/layoutCloseIdentity";
 import {
   panelsFromLayout,
@@ -38,6 +39,13 @@ export interface ClosePanelReceipt {
   departure?: HmuxPaneDepartureReceipt;
 }
 
+const mountedCloseRequests = new WeakMap<IDockviewPanel, {
+  api: DockviewApi;
+  desktopId: string;
+  binding: ExactPaneBindingSnapshot;
+  result: Promise<ClosePanelReceipt>;
+}>();
+
 /**
  * Close one mounted pane generation with a durable before/after journal.
  * Layout siblings are deliberately not part of the final CAS: they may split,
@@ -52,8 +60,20 @@ async function closeMountedPanel(
   const panel = api.getPanel(panelId);
   if (!panel) return null;
 
-  return enqueueDesktopCloseMutation(desktopId, async () => {
-    if (registry.get(desktopId) !== api || api.getPanel(panelId) !== panel) {
+  // Repeated clicks while SSH departure is pending join the same close. A
+  // retargeted pane still needs its own explicitly requested transaction.
+  const pending = mountedCloseRequests.get(panel);
+  if (
+    pending?.api === api && pending.desktopId === desktopId &&
+    matchesExactPaneBinding(panel.params, pending.binding)
+  ) return pending.result;
+  const binding = exactPaneBindingSnapshot(panel.params);
+
+  const result = enqueueDesktopCloseMutation(desktopId, async () => {
+    if (
+      registry.get(desktopId) !== api || api.getPanel(panelId) !== panel ||
+      !matchesExactPaneBinding(panel.params, binding)
+    ) {
       throw new PaneCommandError(
         "pane_changed",
         `pane ${panelId} changed before close started`,
@@ -157,6 +177,14 @@ async function closeMountedPanel(
       ...(departure ? { departure } : {}),
     };
   });
+  mountedCloseRequests.set(panel, { api, desktopId, binding, result });
+  try {
+    return await result;
+  } finally {
+    if (mountedCloseRequests.get(panel)?.result === result) {
+      mountedCloseRequests.delete(panel);
+    }
+  }
 }
 
 async function closePersistedPanel(

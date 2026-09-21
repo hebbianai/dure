@@ -5,6 +5,7 @@ import { registerTerminalWindowFocusProbe } from "@/lib/terminal/qa/terminalWind
 import { bindingFromPane } from "@/lib/terminal/terminalBinding";
 import { dockPanelReference } from "@/lib/workspace/dock/dockPanelParameters";
 import { mountedDockviewEntries } from "@/lib/workspace/dock/dockRegistry";
+import { closePanelById } from "@/lib/workspace/pane/paneCloseCoordinator";
 import { useStore } from "@/store";
 import { runSshRegistrationQa } from "./sshRegistration";
 import {
@@ -137,6 +138,56 @@ export async function prepareSshRegistrationQa() {
 					beforeInput,
 					observation,
 				});
+				// The HTTP command owner can serialize requests. Invoke both closes in
+				// this WebView turn to exercise repeated UI clicks during real SSH I/O.
+				const closeDeadline = performance.now() + 60_000;
+				while (performance.now() < closeDeadline) {
+					const request = (await readSshRegistrationFixture()).repeatedClose;
+					if (!request) {
+						await new Promise<void>((resolve) => setTimeout(resolve, 100));
+						continue;
+					}
+					const closeApi = mountedDockviewEntries().find(
+						([id]) => id === request.desktopId,
+					)?.[1];
+					const closePanel = closeApi?.getPanel(request.panelId);
+					const closeBinding = closePanel?.params?.binding;
+					const closeHost = useStore
+						.getState()
+						.sshHosts.find((host) => host.id === request.hostId);
+					if (
+						request.desktopId !== recovery.desktopId ||
+						closeHost?.host !== flag.host ||
+						closeHost.port !== flag.port ||
+						closeHost.user !== flag.user ||
+						request.panelId === recovery.panelId ||
+						closeBinding?.runtime !== "hmux_standalone_v1" ||
+						closeBinding.source !== "ssh" ||
+						closeBinding.hostId !== request.hostId ||
+						closeBinding.sessionId !== request.sessionId ||
+						closeBinding.workspaceId !== request.workspaceId
+					)
+						throw new Error(
+							"repeated close changed the owned SSH pane identity",
+						);
+					const receipts = await Promise.all([
+						closePanelById(request.panelId, request.desktopId),
+						closePanelById(request.panelId, request.desktopId),
+					]);
+					if (
+						!receipts[0] ||
+						JSON.stringify(receipts[0]) !== JSON.stringify(receipts[1]) ||
+						closeApi?.getPanel(request.panelId)
+					)
+						throw new Error(
+							"repeated close did not converge on one successful removal",
+						);
+					if (await nativeWindow.isFocused())
+						throw new Error("background SSH close took native focus");
+					await publish("repeated-close", { ...request, receipts });
+					return;
+				}
+				throw new Error("QA client did not arm repeated SSH close");
 			} catch (error) {
 				await publish("failed", { error: String(error) });
 				throw error;
