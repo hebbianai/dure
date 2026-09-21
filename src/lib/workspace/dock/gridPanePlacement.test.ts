@@ -31,7 +31,7 @@ describe("rightRailPosition measurement boundary", () => {
 		},
 	);
 
-	it("leaves default sizing to Dockview when no visible agent width is usable", () => {
+	it("uses terminal widths when no visible agent width is usable", () => {
 		expect(
 			rightRailPosition({
 				width: 1200,
@@ -41,12 +41,54 @@ describe("rightRailPosition measurement boundary", () => {
 					panel("agent:invalid", Number.NaN),
 				],
 			} as unknown as DockviewApi),
+		).toEqual({ direction: "right", initialWidth: 600 });
+	});
+
+	it("leaves default sizing to Dockview when neither agent nor terminal width is usable", () => {
+		expect(
+			rightRailPosition({
+				width: 1200,
+				panels: [
+					panel("file:first", 1200, "file"),
+					panel("term:unmeasured", 0, "terminal"),
+					panel("agent:invalid", Number.NaN),
+				],
+			} as unknown as DockviewApi),
 		).toEqual({ direction: "right" });
 	});
 
-	it.each(["slot", "launcher:previous", "term:previous", "agent:current"])("measures actual Agent content at %s, ignoring historical Agent spellings", (panelId) => {
-		expect(rightRailPosition({ width: 1200, panels: [panel(panelId, 600), panel("agent:old", 1200, "terminal")] } as unknown as DockviewApi)).toEqual({ direction: "right", initialWidth: 400 });
+	it("counts each visible grid terminal group once in the fallback", () => {
+		const first = panel("term:first", 400, "terminal");
+		const hidden = panel("term:hidden", 1200, "terminal");
+		hidden.group.api.isVisible = false;
+		const floating = panel("term:floating", 1200, "terminal");
+		floating.group.api.location.type = "floating";
+		expect(
+			rightRailPosition({
+				width: 1200,
+				panels: [
+					first,
+					{ ...first, id: "term:tab" },
+					panel("term:second", 800, "terminal"),
+					hidden,
+					floating,
+					panel("file:first", 1200, "file"),
+				],
+			} as unknown as DockviewApi),
+		).toEqual({ direction: "right", initialWidth: 400 });
 	});
+
+	it.each(["slot", "launcher:previous", "term:previous", "agent:current"])(
+		"measures actual Agent content at %s, ignoring historical Agent spellings",
+		(panelId) => {
+			expect(
+				rightRailPosition({
+					width: 1200,
+					panels: [panel(panelId, 600), panel("agent:old", 1200, "terminal")],
+				} as unknown as DockviewApi),
+			).toEqual({ direction: "right", initialWidth: 400 });
+		},
+	);
 });
 
 describe("pickGridSplit", () => {

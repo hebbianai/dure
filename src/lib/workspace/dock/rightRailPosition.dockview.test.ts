@@ -99,6 +99,77 @@ describe("ordinary right rail with installed Dockview", () => {
 		}
 	});
 
+	it.each([
+		{ component: "agent", widths: [400, 400, 400] },
+		{ component: "terminal", widths: [400, 400, 400] },
+		{ component: "agent", widths: [600, 400, 200] },
+	])(
+		"adds a peer-width $component rail beside terminal columns $widths",
+		({ component, widths }) => {
+			const { api, id, addAgent } = setup();
+			const top = api.addPanel({ id: "term:top", component: "terminal" });
+			const bottom = api.addPanel({
+				id: "term:bottom",
+				component: "terminal",
+				position: { referencePanel: top.id, direction: "below" },
+			});
+			for (const first of [top, bottom]) {
+				const second = api.addPanel({
+					id: `${first.id}-middle`,
+					component: "terminal",
+					position: { referencePanel: first.id, direction: "right" },
+				});
+				const third = api.addPanel({
+					id: `${first.id}-right`,
+					component: "terminal",
+					position: { referencePanel: second.id, direction: "right" },
+				});
+				first.group.api.setSize({ width: widths[0] });
+				second.group.api.setSize({ width: widths[1] });
+				expect(
+					[first, second, third].map((panel) => panel.group.api.width),
+				).toEqual(widths);
+			}
+			top.group.api.setSize({ height: 500 });
+			const existing = api.panels.map((panel) => ({
+				panel,
+				element: panel.group.element,
+				height: panel.group.api.height,
+				width: panel.group.api.width,
+			}));
+
+			const rail =
+				component === "agent"
+					? addAgent("first-agent")
+					: addPanePreservingSizes(api, {
+							id: "term:new",
+							component,
+							...placementOptions(rightRailPosition(api)),
+						});
+			expect(rail.group.api.width).toBeCloseTo(300, 0);
+			expect(rail.group.api.height).toBeCloseTo(800, 0);
+			for (const { panel, element, height, width } of existing) {
+				expect(api.getPanel(panel.id)).toBe(panel);
+				expect(panel.group.element).toBe(element);
+				expect(panel.group.api.width).toBeCloseTo(width * 0.75, 0);
+				expect(panel.group.api.height).toBeCloseTo(height, 0);
+			}
+			if (component === "agent") {
+				const saved = useStore.getState().layouts[id] as ReturnType<
+					DockviewApi["toJSON"]
+				>;
+				expect(saved.grid).toEqual(api.toJSON().grid);
+				const restored = setup().api;
+				restored.fromJSON(saved);
+				for (const panel of api.panels) {
+					const group = restored.getPanel(panel.id)!.group.api;
+					expect(group.width).toBeCloseTo(panel.group.api.width, 0);
+					expect(group.height).toBeCloseTo(panel.group.api.height, 0);
+				}
+			}
+		},
+	);
+
 	it("matches the post-add agent mean while preserving an uneven row's proportions", () => {
 		const { api, addAgent } = setup();
 		const first = addAgent("first");

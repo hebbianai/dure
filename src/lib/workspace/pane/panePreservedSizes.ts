@@ -6,11 +6,10 @@
  * two lines and why `initialWidth` cannot express this), so the sizes are
  * captured before the mutation and re-applied after it.
  *
- * The restore is deliberately conservative: it only acts when the mutation
- * stayed inside one splitview, which it checks by comparing the row before and
- * after. A split that creates a new nested branch — opening below a pane that
- * sits in a row — already leaves its siblings alone, and this stands down there
- * rather than guessing at sizes recorded on the other axis.
+ * Restore by matching rows and axes before and after a mutation. General edge
+ * additions also preserve unchanged nested rows when the grid is reparented.
+ * Explicit splits that create a new branch already leave siblings alone, so
+ * they stand down rather than guessing at sizes recorded on the other axis.
  */
 import type { DockviewApi } from "dockview-react";
 import {
@@ -53,6 +52,43 @@ const sameRowMinusOne = (before: PaneRow, after: PaneRow, removed: string) =>
 		before.order.filter((id) => id !== removed),
 		after.order,
 	);
+
+/** Root wrapping can distort nested rows as Dockview reparents the old grid.
+ * Restore their ratios parent-first, measuring each row after its parent. */
+function preserveUnchangedRows(
+	api: DockviewApi,
+	before: PaneGridSnapshot,
+): void {
+	for (const previous of before.rows) {
+		const row = capturePaneGrid(api).rows.find(
+			(candidate) =>
+				candidate.vertical === previous.vertical &&
+				sameOrder(candidate.order, previous.order),
+		);
+		if (!row || row.order.length < 2) continue;
+		const total = (sizes: ReadonlyMap<string, number>) =>
+			row.order.reduce((sum, id) => sum + (sizes.get(id) ?? Number.NaN), 0);
+		const previousTotal = total(previous.sizes);
+		const currentTotal = total(row.sizes);
+		if (
+			!Number.isFinite(previousTotal) ||
+			previousTotal <= 0 ||
+			!Number.isFinite(currentTotal) ||
+			currentTotal <= 0
+		)
+			continue;
+		applyPaneRowSizes(
+			api,
+			row,
+			row.order.slice(0, -1).map((id) => ({
+				id,
+				size: Math.round(
+					(previous.sizes.get(id)! * currentTotal) / previousTotal,
+				),
+			})),
+		);
+	}
+}
 
 export function applyPaneRowSizes(
 	api: DockviewApi,
@@ -110,8 +146,8 @@ export function preserveSizesAfterAdd(
 			sameRowPlusOne(row, afterRow, addedChild),
 	);
 	// Adding on the perpendicular root axis wraps the prior grid as one child.
-	// A requested rail size applies to that new root without flattening or
-	// rewriting the preserved layout inside its remaining child.
+	// A requested rail size applies to that new root; the old grid keeps its
+	// nested topology and proportions inside the remaining child.
 	if (
 		!beforeRow &&
 		preferredAddedSize !== undefined &&
@@ -143,6 +179,7 @@ export function preserveSizesAfterAdd(
 			preferredAddedSize,
 		}),
 	);
+	preserveUnchangedRows(api, before);
 }
 
 /**

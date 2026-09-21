@@ -27,24 +27,28 @@ export interface GridSplitChoice {
 }
 
 /** Ordinary terminals and agents form one predictable full-height right rail.
- * Match the post-add mean of visible Agent groups, counting a tabbed group once. */
+ * Match visible Agent groups, falling back to terminals before the first Agent.
+ * Use their post-add mean width, counting a tabbed group once. */
 export function rightRailPosition(api: DockviewApi): PanelPosition | undefined {
 	if (api.panels.length === 0) return undefined;
 	if (!Number.isFinite(api.width) || api.width <= 0) return { direction: "right" };
-	const widths = new Map<string, number>();
+	const agentWidths = new Map<string, number>();
+	const terminalWidths = new Map<string, number>();
 	for (const panel of api.panels) {
 		const { group } = panel;
 		const width = group.api.width;
 		if (
-			panel.api.component === "agent" &&
 			group.api.location.type === "grid" &&
 			group.api.isVisible &&
 			Number.isFinite(width) &&
 			width > 0
 		) {
-			widths.set(group.id, width);
+			if (panel.api.component === "agent") agentWidths.set(group.id, width);
+			else if (panel.api.component === "terminal")
+				terminalWidths.set(group.id, width);
 		}
 	}
+	const widths = agentWidths.size > 0 ? agentWidths : terminalWidths;
 	if (widths.size === 0) return { direction: "right" };
 	const meanWidth =
 		[...widths.values()].reduce((sum, width) => sum + width, 0) / widths.size;
