@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
 	client: vi.fn(),
 	route: vi.fn(),
 	active: true,
+	revealed: true,
 }));
 vi.mock("@/lib/ipc/dureBrowser", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/lib/ipc/dureBrowser")>()),
@@ -32,7 +33,7 @@ vi.mock("@/lib/ipc/dureBackend", async (importOriginal) => ({
 	resolveSelectedDureBackendRouteAuthority: mocks.route,
 }));
 vi.mock("@/components/workspace/usePaneFirstReveal", () => ({
-	usePaneFirstReveal: () => true,
+	usePaneFirstReveal: () => mocks.revealed,
 }));
 vi.mock("@/components/workspace/WorkspaceRuntimeContext", () => ({
 	useWorkspaceRuntimeActive: () => mocks.active,
@@ -70,6 +71,7 @@ const scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
 );
 afterEach(() => {
 	mocks.active = true;
+	mocks.revealed = true;
 	vi.useRealTimers();
 	if (scrollIntoViewDescriptor)
 		Object.defineProperty(
@@ -169,6 +171,114 @@ function projection(selected: typeof resource) {
 		next_command_sequence: "5",
 	};
 }
+
+it("binds a browser before its Space is first revealed without capturing or taking control", async () => {
+	const f = fixture();
+	mocks.active = false;
+	mocks.revealed = false;
+	const mounted = render(
+		<ProBrowserPanel {...f.props(resource, "page:two")} />,
+	);
+	try {
+		await waitFor(() => {
+			const state = paneActionSnapshot(f.api.id)!;
+			expect(state.status).toBe("attached");
+			expect(JSON.parse(state.context!)).toMatchObject({
+				resource,
+				page: page(resource, "page:two"),
+				controller: projection(resource).controller,
+			});
+			expect(
+				state.actionDefinitions!["take-control"].unavailable,
+			).toBeUndefined();
+		});
+		expect(f.client.observe).toHaveBeenCalledTimes(1);
+		expect(f.client.frame).not.toHaveBeenCalled();
+		expect(f.client.create).not.toHaveBeenCalled();
+		expect(f.client.requestControl).not.toHaveBeenCalled();
+		expect(f.client.action).not.toHaveBeenCalled();
+		mocks.active = true;
+		mocks.revealed = true;
+		mounted.rerender(<ProBrowserPanel {...f.props(resource, "page:two")} />);
+		await waitFor(() => expect(f.client.frame).toHaveBeenCalled());
+		expect(f.client.list).toHaveBeenCalledTimes(1);
+	} finally {
+		mounted.unmount();
+	}
+});
+
+it.each([false, true])(
+	"defers a hidden pane, then connects when an external binding arrives (pending create: %s)",
+	async (pending) => {
+		const f = fixture();
+		mocks.active = false;
+		mocks.revealed = false;
+		const hook = renderHook(useProBrowserPane, {
+			initialProps: {
+				...f.props(),
+				params: {
+					url: "about:blank",
+					...(pending
+						? {
+								browserCreation: {
+									authority,
+									workspaceId: null,
+									operationId: "create:hidden",
+								},
+							}
+						: {}),
+				},
+			} as Props,
+		});
+		try {
+			await act(async () => {});
+			expect(f.client.list).not.toHaveBeenCalled();
+			hook.rerender(f.props());
+			await waitFor(() =>
+				expect(hook.result.current.view.page).toEqual(page()),
+			);
+			const session = hook.result.current.session;
+			hook.rerender(f.props(resource, "page:two"));
+			await waitFor(() =>
+				expect(hook.result.current.view.page).toEqual(
+					page(resource, "page:two"),
+				),
+			);
+			expect(f.client.frame).not.toHaveBeenCalled();
+			mocks.active = true;
+			mocks.revealed = true;
+			hook.rerender(f.props(resource, "page:two"));
+			await waitFor(() => expect(hook.result.current.view.frame).toBeDefined());
+			expect(hook.result.current.session).toBe(session);
+			expect(f.client.list).toHaveBeenCalledTimes(1);
+			expect(f.client.create).not.toHaveBeenCalled();
+		} finally {
+			hook.unmount();
+		}
+	},
+);
+
+it("discards a manual connection when a never-revealed pane unmounts", async () => {
+	const f = fixture();
+	mocks.active = false;
+	mocks.revealed = false;
+	let finish!: (rows: ReturnType<typeof projection>[]) => void;
+	f.client.list.mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				finish = resolve;
+			}),
+	);
+	const hook = renderHook(useProBrowserPane, {
+		initialProps: { ...f.props(), params: { url: "about:blank" } } as Props,
+	});
+	act(() => hook.result.current.reconnect());
+	await waitFor(() => expect(f.client.list).toHaveBeenCalledTimes(1));
+	hook.unmount();
+	await act(async () => finish([projection(resource)]));
+	expect(f.client.observe).not.toHaveBeenCalled();
+	expect(f.api.updateParameters).not.toHaveBeenCalled();
+});
 
 it("changes Spaces without a release warning when an idle browser loses its backend", async () => {
 	const f = fixture();
@@ -464,9 +574,19 @@ it("distinguishes a failed catalog load from an empty catalog and reconnects the
 			expect(screen.getByText("ipc.browser.requestFailed")).toBeTruthy(),
 		);
 		expect(screen.queryByText("panels.browser.noWorkspaces")).toBeNull();
-		fireEvent.click(
+		expect(paneActionSnapshot(f.api.id)).toMatchObject({
+			status: "error",
+			error: "connection interrupted",
+		});
+		expect(
 			screen.getByRole("button", { name: "panels.browser.reconnect" }),
-		);
+		).toBeTruthy();
+		await act(async () => {
+			expect(await invokePaneAction(f.api.id, "reconnect")).toMatchObject({
+				ok: true,
+				result: { outcome: "pending" },
+			});
+		});
 		await waitFor(() =>
 			expect(f.client.observe).toHaveBeenCalledWith(resource),
 		);

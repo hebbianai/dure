@@ -75,6 +75,12 @@ export function useProBrowserPane(
 	const selection = useRef(0);
 	const operation = useRef(0);
 	const [restored] = useState(() => readBrowserPaneBinding(props.params));
+	// An exact resource binding can be inspected before its Space is revealed.
+	// Empty panes and pending creates still wait for the user's first reveal.
+	const [bindingRequested, setBindingRequested] = useState(
+		!!restored.binding?.resource && !restored.creation,
+	);
+	const connectionRequested = revealed || bindingRequested;
 	const bindingError = useRef(restored.error);
 	const receivedParameters = useRef({
 		binding: props.params.browserBinding,
@@ -256,12 +262,14 @@ export function useProBrowserPane(
 						controllerId,
 						pending || binding?.followCurrent ? undefined : binding?.pageId,
 					);
-					if (releasePreviousInputs) {
+					if (releasePreviousInputs || !active.current) {
+						// Populate the binding and control once without starting the
+						// hidden viewer's continuous frame capture.
+						await attached.refresh({ capture: active.current });
 						// A surviving browser can still hold this view's keys across a
 						// route revision. Release only freshly observed contacts under
 						// the same controller lease; never replay the failed input.
-						await attached.refresh();
-						if (current()) await attached.release();
+						if (current() && releasePreviousInputs) await attached.release();
 						if (!current()) {
 							void attached.dispose(false);
 							return;
@@ -304,12 +312,11 @@ export function useProBrowserPane(
 	}, [session, connection, busy, error, view.error, view.submitting, connect]);
 
 	useEffect(() => {
-		if (!revealed) return;
-		void connect();
+		if (connectionRequested) void connect();
 		return () => {
 			selection.current++;
 		};
-	}, [revealed, connect]);
+	}, [connectionRequested, connect]);
 	useEffect(() => {
 		const previous = receivedParameters.current;
 		if (
@@ -348,14 +355,15 @@ export function useProBrowserPane(
 			// control continue to come from the existing session's observations.
 			setError(undefined);
 			session.selectPage(binding.followCurrent ? undefined : binding.pageId);
-			void session.refresh();
-		} else if (revealed) void connect();
+			void session.refresh({ capture: active.current });
+		} else if (connectionRequested) void connect();
+		else if (binding?.resource && !incoming.creation) setBindingRequested(true);
 	}, [
 		props.params.browserBinding,
 		props.params.browserCreation,
 		session,
 		connection,
-		revealed,
+		connectionRequested,
 		connect,
 	]);
 	useEffect(() => {

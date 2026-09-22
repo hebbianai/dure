@@ -9,14 +9,19 @@ export function browserPaneActions({
 	session,
 	view,
 	busy,
+	error,
+	reconnect,
 	take,
 }: {
 	paneId: string;
 	session?: BrowserPaneSession;
 	view: BrowserPaneView;
 	busy: boolean;
+	error?: unknown;
+	reconnect: () => void;
 	take: (expected: BrowserControllerLease | null) => Promise<void>;
 }) {
+	const failure = error || view.error;
 	const control = view.control;
 	const expected = control?.controller;
 	const expectedState = JSON.stringify([session?.resource, expected]);
@@ -83,10 +88,35 @@ export function browserPaneActions({
 			};
 		},
 	);
+	const reconnectAction = definePaneAction(
+		{
+			description:
+				"Reconnect this browser pane to its saved backend and resource.",
+			parameters: {},
+			...(busy || view.submitting
+				? {
+						unavailable: {
+							code: "browser_pane_busy",
+							message: "Wait for the current browser operation to finish.",
+							retryable: true,
+						},
+					}
+				: {}),
+		},
+		async () => {
+			reconnect();
+			return { outcome: "pending" };
+		},
+	);
 	const entry: PaneActionEntry = {
 		paneId,
-		status: !session ? "connecting" : view.error ? "error" : "attached",
-		error: view.error?.message,
+		status: failure ? "error" : !session ? "connecting" : "attached",
+		error:
+			failure instanceof Error
+				? failure.message
+				: failure
+					? String(failure)
+					: undefined,
 		context: JSON.stringify({
 			kind: "browser",
 			resource: session?.resource,
@@ -94,7 +124,7 @@ export function browserPaneActions({
 			controller: expected,
 			viewport: view.frame?.capture.viewport,
 		}),
-		actions: { "take-control": takeControl },
+		actions: { "take-control": takeControl, reconnect: reconnectAction },
 	};
 	return { entry, takeControl };
 }

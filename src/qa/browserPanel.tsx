@@ -1,10 +1,13 @@
 import { type DockviewApi, DockviewReact } from "dockview-react";
 import { createRoot } from "react-dom/client";
 import { BrowserPanel } from "@/components/panels/BrowserPanel";
+import { WorkspaceRuntimeProvider } from "@/components/workspace/WorkspaceRuntimeContext";
+import { readBrowserPaneBinding } from "@/lib/browser/browserPaneBinding";
 import {
 	BrowserPaneSession,
 	type BrowserPaneView,
 } from "@/lib/browser/browserPaneSession";
+import { presentBrowserPage } from "@/lib/browser/browserPresentation";
 import { parseBrowserResource } from "@/lib/browser/browserResourceContract";
 import { t } from "@/lib/i18n";
 import {
@@ -13,14 +16,17 @@ import {
 } from "@/lib/ipc/dureBackend";
 import { createDureBrowserClient } from "@/lib/ipc/dureBrowser";
 import { startRegistrySync } from "@/lib/persistence/registry";
+import { TerminalPresentationRoleStore } from "@/lib/terminal/presentation/terminalPresentationRoleStore";
 import {
 	registerDockview,
 	unregisterDockview,
 } from "@/lib/workspace/dock/dockRegistry";
+import { paneActionSnapshot } from "@/lib/workspace/pane/paneActionRegistry";
 import { useStore } from "@/store";
 
 interface Configuration {
 	presentation?: boolean;
+	hidden?: boolean;
 	revision: number;
 	action: string;
 	resource?: unknown;
@@ -54,6 +60,7 @@ export async function runBrowserPanelProbe(): Promise<void> {
 	let root: ReturnType<typeof createRoot> | undefined;
 	let spaceId: string | undefined;
 	let stopRegistry: (() => void) | undefined;
+	let renderWorkspace: ((active: boolean) => void) | undefined;
 	let revision = 0;
 	let stopped = false;
 	let currentAction = "";
@@ -88,7 +95,7 @@ export async function runBrowserPanelProbe(): Promise<void> {
 	};
 	const originalRefresh = BrowserPaneSession.prototype.refresh;
 	const originalSelect = BrowserPaneSession.prototype.selectPage;
-	BrowserPaneSession.prototype.refresh = function () {
+	BrowserPaneSession.prototype.refresh = function (options) {
 		if (focusAddressBeforeObservation) {
 			const address = element.querySelector<HTMLInputElement>(
 				`input[aria-label="${t("panels.browser.address")}"]`,
@@ -118,7 +125,7 @@ export async function runBrowserPanelProbe(): Promise<void> {
 		}
 		const timings = refreshTimings;
 		const start = performance.now();
-		const result = originalRefresh.call(this);
+		const result = originalRefresh.call(this, options);
 		if (timings)
 			void result.then(() => timings.push({ start, end: performance.now() }));
 		return result;
@@ -260,15 +267,41 @@ export async function runBrowserPanelProbe(): Promise<void> {
 				useStore.setState((state) => ({
 					uiPrefs: { ...state.uiPrefs, interfaceMode: "pro" },
 				}));
+				if (config.presentation) {
+					const previousSpace =
+						useStore.getState().activeSpaceId ??
+						useStore.getState().addSpace({ name: "Foreground Browser QA" });
+					spaceId = useStore
+						.getState()
+						.addSpace({ name: "Browser presentation QA" });
+					if (config.hidden) useStore.getState().setActiveSpace(previousSpace);
+				}
 				root = createRoot(element);
-				root.render(
+				const dockview = (
 					<DockviewReact
 						components={{ browser: BrowserPanel }}
 						onReady={(event) => {
 							api = event.api;
 						}}
-					/>,
+					/>
 				);
+				const roleStore = new TerminalPresentationRoleStore();
+				renderWorkspace = (active) =>
+					root!.render(
+						spaceId ? (
+							<WorkspaceRuntimeProvider
+								desktopId={spaceId}
+								active={active}
+								presentationRoleStore={roleStore}
+								commitLayout={() => true}
+							>
+								{dockview}
+							</WorkspaceRuntimeProvider>
+						) : (
+							dockview
+						),
+					);
+				renderWorkspace(!config.hidden);
 				await waitFor("React Dockview ready", () => !!api);
 				if (!api) throw new Error("React Dockview unavailable");
 				api.layout(element.clientWidth, element.clientHeight);
@@ -287,12 +320,30 @@ export async function runBrowserPanelProbe(): Promise<void> {
 					},
 				});
 				if (config.presentation) {
-					spaceId = useStore
-						.getState()
-						.addSpace({ name: "Browser presentation QA" });
-					registerDockview(spaceId, api);
+					registerDockview(spaceId!, api);
 					stopRegistry = startRegistrySync();
 				}
+			} else if (config.action === "present-page") {
+				const binding = readBrowserPaneBinding(
+					api?.getPanel("browser:native-panel-proof")?.params ?? {},
+				).binding;
+				if (!spaceId || !binding?.resource || !config.pageId)
+					throw new Error("Browser presentation target is missing");
+				await presentBrowserPage({
+					kind: "present",
+					schemaVersion: 1,
+					spaceId,
+					windowLabel: "main",
+					backendProfileId: binding.authority.profileId,
+					backend: binding.authority.backend,
+					resource: binding.resource,
+					pageId: config.pageId,
+				});
+			} else if (config.action === "reveal") {
+				if (!spaceId || !renderWorkspace)
+					throw new Error("Hidden workspace is not mounted");
+				useStore.getState().setActiveSpace(spaceId);
+				renderWorkspace(true);
 			} else if (config.action === "frame-fail") {
 				const session = observedSession;
 				if (!session || resumeFrames)
@@ -564,24 +615,30 @@ export async function runBrowserPanelProbe(): Promise<void> {
 						() => !!selectTrigger("panels.browser.profileDestination"),
 					);
 				else {
-					await waitFor(
-						"profile deletion settled",
-						() =>
+					await waitFor("profile deletion settled", () => {
+						const observation = observedSession?.read().observation;
+						// A replacement session starts with no observation. Wait for
+						// its actual inventory before opening the updated selector.
+						return (
 							!document.querySelector('[role="dialog"]') &&
 							!!config.pageId &&
 							!!selectTrigger("panels.browser.page") &&
-							!observedSession
-								?.read()
-								.observation?.pages.some(
-									(row) => row.page.page_id === config.pageId,
-								),
-					);
+							!!observation &&
+							!observation.pages.some(
+								(row) => row.page.page_id === config.pageId,
+							)
+						);
+					});
 					const list = await openSelect("panels.browser.page");
 					await waitFor(
 						"deleted profile page is removed from the selector",
 						() => !selectOption(list, config.pageId!),
 					);
 					await finishSelect(list, "Escape");
+					await waitFor(
+						"profile deletion restores the surviving input surface",
+						() => !!input() && (!!frame() || input()?.readOnly === true),
+					);
 				}
 			} else if (config.action === "profiles-open") {
 				click("panels.browser.profiles", true);
@@ -776,7 +833,21 @@ export async function runBrowserPanelProbe(): Promise<void> {
 							api?.getPanel("browser:native-panel-proof")?.params
 								?.browserBinding?.pageId === config.pageId,
 					);
-				if (config.action === "select-pending") {
+				if (config.hidden) {
+					await waitFor("hidden browser binding and control action", () => {
+						const state = paneActionSnapshot("browser:native-panel-proof");
+						return (
+							state?.status === "attached" &&
+							JSON.parse(state.context ?? "{}").page?.page_id ===
+								config.pageId &&
+							!state.actionDefinitions?.["take-control"].unavailable
+						);
+					});
+					if (observedFrame || frame())
+						throw new Error("Hidden browser captured a frame");
+					if (useStore.getState().activeSpaceId === spaceId)
+						throw new Error("Browser presentation activated its hidden Space");
+				} else if (config.action === "select-pending") {
 					await waitFor(
 						"pending viewer discards the old frame",
 						() => transferring() && input()?.readOnly === true && !frame(),

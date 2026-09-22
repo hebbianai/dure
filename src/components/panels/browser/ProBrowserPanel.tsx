@@ -129,6 +129,8 @@ export function ProBrowserPanel(
 		session: pane.session,
 		view: pane.view,
 		busy: pane.busy,
+		error: pane.error,
+		reconnect: pane.reconnect,
 		take: async (expected) => {
 			setReturnTo(expected?.controller_id);
 			await pane.handoff(pane.controllerId, expected);

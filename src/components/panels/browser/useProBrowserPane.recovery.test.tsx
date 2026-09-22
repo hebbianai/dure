@@ -1059,12 +1059,12 @@ it("bounds automatic recovery when the resolved authority is still rejected and 
 	const f = liveRouteFixture(true);
 	const pane = f.mount();
 	try {
-		await waitFor(() => expect(pane.result.current.session).toBeDefined());
-		const first = pane.result.current.session!;
-		await act(() => first.refresh());
+		// The initial passive observation now detects the obsolete authority
+		// even while this Space is hidden, and admits exactly one recovery.
 		await waitFor(() => {
 			expect(pane.result.current.session).toBeDefined();
-			expect(pane.result.current.session).not.toBe(first);
+			expect(pane.result.current.busy).toBe(false);
+			expect(f.requests("list")).toHaveLength(2);
 		});
 		const second = pane.result.current.session!;
 		await act(() => second.refresh());
@@ -1075,8 +1075,14 @@ it("bounds automatic recovery when the resolved authority is still rejected and 
 		await waitFor(() => {
 			expect(pane.result.current.session).toBeDefined();
 			expect(pane.result.current.session).not.toBe(second);
+			expect(pane.result.current.busy).toBe(false);
+			expect(f.requests("list")).toHaveLength(4);
 		});
-		expect(f.requests("list")).toHaveLength(3);
+		// Explicit reconnect admits one new attempt and one automatic recovery.
+		const retried = pane.result.current.session!;
+		await act(() => retried.refresh());
+		expect(pane.result.current.session).toBe(retried);
+		expect(f.requests("list")).toHaveLength(4);
 	} finally {
 		pane.unmount();
 	}

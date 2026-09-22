@@ -192,7 +192,35 @@ try {
   assert.ok(instance);
   assert.equal(initial.result.response.data.result.pixelRatio, 1, "fixture hover coordinates use CSS-sized decoded frames");
   const addressFocus = process.env.DURE_BROWSER_PANEL_INTERACTION === "1";
-  const attached = await action("attach", { resource, pageId, url: addressFocus ? "" : url, focusAddressBeforeObservation: addressFocus, color: [210, 220, 230] });
+  const hidden = !addressFocus && process.env.DURE_BROWSER_PANEL_OS_IME !== "1";
+  let attached = await action("attach", { resource, pageId, url: addressFocus ? "" : url, focusAddressBeforeObservation: addressFocus, color: [210, 220, 230], presentation: hidden, hidden });
+  if (hidden) {
+    const args = ["client", "pane", "state", "browser:native-panel-proof", "--json"];
+    const state = JSON.parse((await execute(cli, args, { timeout: 30_000 })).stdout);
+    receipts.push({ args, result: state });
+    assert.equal(state.pane.status, "attached");
+    assert.deepEqual(JSON.parse(state.pane.context).resource, resource);
+    assert.equal(JSON.parse(state.pane.context).page.page_id, pageId);
+    assert.equal(state.pane.actionDefinitions["take-control"].unavailable, undefined);
+    assert.ok(state.pane.actions.includes("reconnect"));
+    assert.equal(attached.frame, undefined, "a never-revealed Space must not capture frames");
+    assert.deepEqual((await command(["show", resourceId])).result.control.controller, initialLease);
+    const opened = await command(["open-url", `${fixture.url}/next`, "--resource", resourceId, "--space", attached.spaceId,
+      "--controller", initialLease.controller_id, "--epoch", initialLease.epoch]);
+    assert.equal(opened.presentation.state, "requested");
+    assert.equal(opened.presentation.panelId, "browser:native-panel-proof");
+    const presentedPage = opened.result.response.data.page.page_id;
+    await action("presentation-watch", { pageId: presentedPage, hidden: true });
+    const presented = JSON.parse((await execute(cli, args, { timeout: 30_000 })).stdout);
+    receipts.push({ args, result: presented });
+    assert.equal(presented.pane.status, "attached");
+    assert.equal(JSON.parse(presented.pane.context).page.page_id, presentedPage);
+    assert.equal(presented.pane.actionDefinitions["take-control"].unavailable, undefined);
+    await command(["tab", "close", resourceId, "--page", presentedPage,
+      "--controller", initialLease.controller_id, "--epoch", initialLease.epoch]);
+    await action("present-page", { pageId, hidden: true });
+    attached = await action("reveal", { pageId, color: [210, 220, 230] });
+  }
   assert.deepEqual(attached.binding.resource, resource);
   assert.equal(attached.binding.pageId, pageId);
   assert.equal(attached.address, url, "current URL arrives even when the untouched address field is already focused");

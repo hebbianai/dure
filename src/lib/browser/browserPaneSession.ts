@@ -269,19 +269,19 @@ export class BrowserPaneSession {
 		this.selectedPage = pageId ? { id: pageId } : undefined;
 		if (this.view.observation) this.observe(this.view.observation);
 	}
-	refresh(): Promise<void> {
+	refresh({ capture = true }: { capture?: boolean } = {}): Promise<void> {
 		if (this.disposed) return Promise.resolve();
-		this.refreshing ??= this.refreshFrame().finally(() => {
+		this.refreshing ??= this.refreshFrame(capture).finally(() => {
 			this.refreshing = undefined;
 		});
 		return this.refreshing;
 	}
-	private async refreshFrame() {
+	private async refreshFrame(captureFrame: boolean) {
 		let stage: "observe" | "frame" = "observe";
 		try {
 			this.observe(await this.client.observe(this.resource));
 			const page = this.view.page;
-			if (!page || this.disposed) return;
+			if (!page || this.disposed || !captureFrame) return;
 			stage = "frame";
 			const capture = await this.client.frame(page);
 			const src = await this.decode(capture);
