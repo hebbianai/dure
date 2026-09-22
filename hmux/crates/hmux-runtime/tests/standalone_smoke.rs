@@ -276,6 +276,28 @@ impl IdleRetirementFixture {
 }
 
 #[test]
+fn local_file_routing_observes_the_live_native_provider() {
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create_idle_shell(&state, "local-file-route");
+    let path = state.path().join("attachment.txt");
+    fs::write(&path, "attachment").unwrap();
+    let paths = vec![path.to_str().unwrap().to_owned()];
+    let routed = hmux_client::session_files::route_files(
+        &fixture.catalog,
+        &SessionSelector::new(
+            &fixture.descriptor.session_id,
+            Some(fixture.descriptor.workspace_id.clone()),
+        ),
+        &fixture.descriptor.terminal_epoch,
+        paths.clone(),
+    )
+    .unwrap();
+    assert_eq!(routed, paths);
+    fixture.assert_preserved();
+    fixture.terminate_and_verify();
+}
+
+#[test]
 fn read_only_legacy_discovery_reattaches_the_exact_live_host_generation() {
     let state = tempfile::tempdir().unwrap();
     let legacy_home = state.path().join("legacy-home");

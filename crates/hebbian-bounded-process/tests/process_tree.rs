@@ -79,6 +79,18 @@ fn output_at_the_exact_limit_is_not_oversized() {
     assert!(!output.exceeded_limit);
 }
 
+#[cfg(unix)]
+#[test]
+fn large_output_drains_within_the_process_sampling_deadline() {
+    let count = 2 * 1024 * 1024;
+    let mut command = fixture();
+    command.args(["write", &count.to_string()]);
+    let output = run(&command, Duration::from_secs(1), count).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, vec![b'x'; count]);
+    assert!(!output.exceeded_limit);
+}
+
 #[test]
 fn output_over_the_limit_is_bounded() {
     let mut command = fixture();

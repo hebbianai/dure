@@ -72,7 +72,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(2);
 const OVERLOAD_REPLY_TIMEOUT: Duration = Duration::from_millis(50);
 const MAX_SAMPLER_WORKERS: usize = 4;
 const MAX_PENDING_CONNECTIONS: usize = 32;
-/// Bound consecutive timeouts before serving locally between recovery probes.
+/// Bound consecutive timeouts or unavailable replies before deferring peer probes.
 const MAX_UNRESPONSIVE_ATTEMPTS: u32 = 3;
 const PEER_RECOVERY_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -441,10 +441,7 @@ impl SharedProcessSampler {
             return Ok(PeerOutcome::Unusable(state));
         }
         let first = match self.request(request) {
-            Ok(response) => {
-                self.peer_responded()?;
-                return Ok(PeerOutcome::Answered(response));
-            }
+            Ok(response) => return self.peer_response(response),
             Err(error) => error,
         };
         if is_peer_unusable(&first) {
@@ -455,10 +452,7 @@ impl SharedProcessSampler {
         }
         self.ensure_server()?;
         match self.request(request) {
-            Ok(response) => {
-                self.peer_responded()?;
-                Ok(PeerOutcome::Answered(response))
-            }
+            Ok(response) => self.peer_response(response),
             // Ownership recovery already ran and the peer still will not
             // answer, so retrying on the caller's next poll would only repeat
             // this. `ensure_server` cannot dislodge a live peer by design —
@@ -468,6 +462,24 @@ impl SharedProcessSampler {
             }
             Err(second) => Err(second),
         }
+    }
+
+    fn peer_response(&self, response: SamplerResponse) -> io::Result<PeerOutcome> {
+        if matches!(response, SamplerResponse::Unavailable) {
+            // A compatible, live owner can still be unable to observe processes.
+            // Treating its refusal as recovery strands one-shot callers (such as
+            // file routing) behind that owner indefinitely. Use our bounded local
+            // source with the same fresh/complete validation, without evicting the
+            // peer or interpreting unavailability as an empty process table.
+            return self
+                .degrade(&io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "shared process sampler is temporarily unavailable",
+                ))
+                .map(PeerOutcome::Unusable);
+        }
+        self.peer_responded()?;
+        Ok(PeerOutcome::Answered(response))
     }
 
     fn cooling_down_fallback(&self) -> io::Result<Option<Arc<SharedSamplerState>>> {
@@ -3348,7 +3360,13 @@ mod tests {
                 table: ProcessTable {
                     children: HashMap::new(),
                     agents: HashMap::from([(pid, AgentProvider::Codex)]),
-                    terminal_groups: HashMap::new(),
+                    terminal_groups: HashMap::from([(
+                        pid,
+                        TerminalProcessGroups {
+                            process_group: pid as i32,
+                            foreground_process_group: pid as i32,
+                        },
+                    )]),
                     records: vec![ProcessRecord {
                         pid,
                         parent_pid: 1,
@@ -3449,6 +3467,162 @@ mod tests {
             reason.contains(&format!("serves protocol v{}", PROTOCOL_VERSION + 1)),
             "{reason}"
         );
+    }
+
+    fn reply_unavailable(mut stream: UnixStream) {
+        stream.write_all(&encode_attestation()).unwrap();
+        stream
+            .write_all(&encode_response(SamplerResponse::Unavailable).unwrap())
+            .unwrap();
+    }
+
+    #[test]
+    fn unavailable_peer_uses_local_observation_for_every_request_kind() {
+        let pid = std::process::id();
+        for request in [
+            SamplerRequest::Agent(pid),
+            SamplerRequest::Foreground(pid),
+            SamplerRequest::Snapshot,
+            SamplerRequest::FreshSnapshot,
+            SamplerRequest::CompleteSnapshot {
+                required_pid: pid,
+                max_age_ms: 500,
+            },
+        ] {
+            let runtime = tempfile::tempdir().unwrap();
+            let sampler = sampler_behind_peer(&runtime, reply_unavailable);
+            match request {
+                SamplerRequest::Agent(pid) => {
+                    assert!(sampler.agent_process(pid).unwrap().is_some());
+                }
+                SamplerRequest::Foreground(pid) => {
+                    assert_eq!(
+                        sampler.foreground_process(pid).unwrap(),
+                        Some(ForegroundProcess {
+                            pid,
+                            start_time: process_start_time(pid).unwrap(),
+                        })
+                    );
+                }
+                SamplerRequest::Snapshot => {
+                    assert_eq!(sampler.process_snapshot().unwrap().processes[0].pid, pid);
+                }
+                SamplerRequest::FreshSnapshot => {
+                    assert_eq!(
+                        sampler.fresh_process_snapshot().unwrap().processes[0].pid,
+                        pid
+                    );
+                }
+                SamplerRequest::CompleteSnapshot { required_pid, .. } => {
+                    assert_eq!(
+                        sampler
+                            .complete_process_snapshot_containing(
+                                required_pid,
+                                MAX_COMPLETE_SNAPSHOT_AGE,
+                            )
+                            .unwrap()
+                            .processes[0]
+                            .pid,
+                        pid
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unavailable_peer_cools_down_and_recovers_only_after_a_usable_response() {
+        let runtime = tempfile::tempdir().unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let peer_requests = Arc::clone(&requests);
+        let available = Arc::new(AtomicBool::new(false));
+        let peer_available = Arc::clone(&available);
+        let sampler = sampler_behind_peer(&runtime, move |mut stream| {
+            peer_requests.fetch_add(1, Ordering::SeqCst);
+            if !peer_available.load(Ordering::SeqCst) {
+                reply_unavailable(stream);
+                return;
+            }
+            stream.write_all(&encode_attestation()).unwrap();
+            stream
+                .write_all(
+                    &encode_response(SamplerResponse::Snapshot(ProcessSnapshot {
+                        revision: 99,
+                        processes: vec![],
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+        });
+        for _ in 0..MAX_UNRESPONSIVE_ATTEMPTS + 2 {
+            assert_eq!(sampler.clone().process_snapshot().unwrap().revision, 1);
+        }
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            MAX_UNRESPONSIVE_ATTEMPTS as usize
+        );
+        assert!(
+            sampler
+                .degraded_peer_reason()
+                .unwrap()
+                .contains("unavailable")
+        );
+
+        *sampler.fallback.retry_after.lock().unwrap() = Some(Instant::now());
+        assert_eq!(sampler.process_snapshot().unwrap().revision, 1);
+        assert!(sampler.degraded_peer_reason().is_some());
+        available.store(true, Ordering::SeqCst);
+        // A refused recovery probe must retain the cooldown and local cache.
+        assert_eq!(sampler.process_snapshot().unwrap().revision, 1);
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            MAX_UNRESPONSIVE_ATTEMPTS as usize + 1
+        );
+        *sampler.fallback.retry_after.lock().unwrap() = Some(Instant::now());
+        assert_eq!(sampler.process_snapshot().unwrap().revision, 99);
+        assert!(sampler.degraded_peer_reason().is_none());
+        assert!(sampler.fallback.state.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn unavailable_peer_still_fails_closed_when_local_census_is_unusable() {
+        let runtime = tempfile::tempdir().unwrap();
+        let mut sampler = sampler_behind_peer(&runtime, reply_unavailable);
+        sampler.source = Arc::new(FailingSource {
+            samples: AtomicUsize::new(0),
+        });
+        assert!(sampler.process_snapshot().is_err());
+        assert!(sampler.fresh_process_snapshot().is_err());
+        assert!(sampler.complete_process_snapshot_containing(
+            std::process::id(), MAX_COMPLETE_SNAPSHOT_AGE,
+        ).is_err());
+
+        let runtime = tempfile::tempdir().unwrap();
+        let mut sampler = sampler_behind_peer(&runtime, reply_unavailable);
+        sampler.source = Arc::new(CountingSource {
+            samples: AtomicUsize::new(0),
+            table: ProcessTable {
+                records_truncated: true,
+                ..ProcessTable::default()
+            },
+        });
+        assert!(sampler.fresh_process_snapshot().is_err());
+        assert!(sampler.complete_process_snapshot_containing(
+            std::process::id(), MAX_COMPLETE_SNAPSHOT_AGE,
+        ).is_err());
+    }
+
+    #[test]
+    fn unavailable_peer_uses_a_complete_native_census() {
+        let runtime = tempfile::tempdir().unwrap();
+        let mut sampler = sampler_behind_peer(&runtime, reply_unavailable);
+        sampler.source = Arc::new(PsProcessSource);
+        let pid = std::process::id();
+        let snapshot = sampler
+            .complete_process_snapshot_containing(pid, MAX_COMPLETE_SNAPSHOT_AGE)
+            .unwrap();
+        assert!(snapshot.processes.iter().any(|process| process.pid == pid));
+        assert!(sampler.fresh_process_snapshot().unwrap().revision > snapshot.revision);
     }
 
     #[test]
