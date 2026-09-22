@@ -415,6 +415,115 @@ function handlerFixture(referenceSpaceId = request.spaceId) {
 }
 
 describe("managed Run pane transaction", () => {
+	it.each(["main", "win-popout-space-1"])(
+		"leaves the claim to %s when another WebView receives the request first",
+		async (targetWindow) => {
+			const target = handlerFixture();
+			const peer = handlerFixture();
+			target.dependencies.windowLabel = () => targetWindow;
+			peer.dependencies.windowLabel = () =>
+				targetWindow === "main" ? "win-popout-other-space" : "main";
+			if (targetWindow !== "main") {
+				target.dependencies.setState((current) => ({
+					spaces: current.spaces.map((space) => ({
+						...space,
+						kind: "popout" as const,
+					})),
+				}));
+			}
+			const claimedRequests = new Set<string>();
+			const claim = async (reqId: string) => {
+				if (claimedRequests.has(reqId)) return false;
+				claimedRequests.add(reqId);
+				return true;
+			};
+			target.dependencies.claim = vi.fn(claim);
+			peer.dependencies.claim = vi.fn(claim);
+			const params = { ...request, windowLabel: targetWindow };
+
+			// Native cli:request delivery can reach every WebView. A faster peer
+			// must not consume a succeeded Run's presentation or its exact replay.
+			for (const [reqId, outcome] of [
+				["request-first", "created"],
+				["request-replay", "reused"],
+			]) {
+				expect(
+					await handleCliManagedRunPresentation(
+						params,
+						reqId,
+						peer.dependencies,
+					),
+				).toBeNull();
+				expect(
+					await handleCliManagedRunPresentation(
+						params,
+						reqId,
+						target.dependencies,
+					),
+				).toMatchObject({
+					ok: true,
+					pane: {
+						outcome,
+						sessionId: request.sessionId,
+						workspaceId: request.workspaceId,
+					},
+				});
+			}
+			expect(peer.dependencies.claim).not.toHaveBeenCalled();
+			expect(peer.dependencies.inspectBinding).not.toHaveBeenCalled();
+			expect(peer.openAgent).not.toHaveBeenCalled();
+			expect(peer.readState().agents).toEqual([]);
+			expect(target.dependencies.claim).toHaveBeenCalledTimes(2);
+			expect(target.readState().agents).toHaveLength(1);
+			expect(target.readState().stats.agentsStarted).toBe(4);
+		},
+	);
+
+	it("lets only main claim malformed requests and return the typed refusal", async () => {
+		const main = handlerFixture();
+		const peer = handlerFixture();
+		peer.dependencies.windowLabel = () => "win-popout-other-space";
+		const invalid = { ...request, unexpected: true };
+
+		expect(
+			await handleCliManagedRunPresentation(
+				invalid,
+				"request-invalid",
+				peer.dependencies,
+			),
+		).toBeNull();
+		expect(peer.dependencies.claim).not.toHaveBeenCalled();
+		expect(
+			await handleCliManagedRunPresentation(
+				invalid,
+				"request-invalid",
+				main.dependencies,
+			),
+		).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+		expect(main.dependencies.claim).toHaveBeenCalledExactlyOnceWith(
+			"request-invalid",
+		);
+		expect(main.dependencies.inspectBinding).not.toHaveBeenCalled();
+		expect(main.openAgent).not.toHaveBeenCalled();
+	});
+
+	it("does not present when the addressed window loses the broker claim", async () => {
+		const fixture = handlerFixture();
+		fixture.dependencies.claim = vi.fn(async () => false);
+		expect(
+			await handleCliManagedRunPresentation(
+				{ ...request },
+				"request-lost",
+				fixture.dependencies,
+			),
+		).toBeNull();
+		expect(fixture.dependencies.claim).toHaveBeenCalledExactlyOnceWith(
+			"request-lost",
+		);
+		expect(fixture.dependencies.inspectBinding).not.toHaveBeenCalled();
+		expect(fixture.openAgent).not.toHaveBeenCalled();
+	});
+
 	it("requires the backend's canonical project root instead of reinterpreting its ID", async () => {
 		const fixture = handlerFixture();
 		const { projectPath: _projectPath, ...withoutProjectRoot } = request;

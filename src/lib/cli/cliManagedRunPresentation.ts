@@ -399,6 +399,20 @@ export async function handleCliManagedRunPresentation(
 	reqId: string,
 	dependencies: CliManagedRunPresentationDependencies = defaultDependencies,
 ) {
+	let request: CliManagedRunPresentationRequest;
+	try {
+		request = parseCliManagedRunPresentationRequest(params);
+	} catch (error) {
+		if (
+			dependencies.windowLabel() !== "main" ||
+			!(await dependencies.claim(reqId))
+		)
+			return null;
+		return { ok: false, error: errorPayload(error) };
+	}
+	// cli:request may reach peer WebViews. Only the addressed window can
+	// claim the request, including a refusal if the Space moved meanwhile.
+	if (dependencies.windowLabel() !== request.windowLabel) return null;
 	let claimed = false;
 	const claim = async () => {
 		if (claimed) return true;
@@ -407,7 +421,7 @@ export async function handleCliManagedRunPresentation(
 	};
 	try {
 		return await performManagedRunPresentation(
-			parseCliManagedRunPresentationRequest(params),
+			request,
 			dependencies,
 			claim,
 		);
