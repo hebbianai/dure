@@ -453,6 +453,28 @@ impl SupervisedProcess for OwnedUnixProcess {
         OwnedUnixProcess::terminate(self)
     }
 
+    fn wait_for_output(&mut self, duration: Duration) -> Result<(), CommandFailure> {
+        // Small pipe buffers can make a fixed sleep per refill dominate an SDK
+        // command's deadline (notably adb PNG captures on macOS). Wake as soon
+        // as either pipe can be drained, but still poll the leader's exit when
+        // it is silent. Closed streams use poll's ignored negative descriptor.
+        let mut pipes = [&self.stdout, &self.stderr].map(|pipe| libc::pollfd {
+            fd: pipe.as_ref().map_or(-1, AsRawFd::as_raw_fd),
+            events: libc::POLLIN,
+            revents: 0,
+        });
+        let timeout = duration.as_millis().min(i32::MAX as u128) as i32;
+        // SAFETY: the owned files outlive this call and `pipes` has exactly the
+        // number of initialized pollfd entries passed to poll.
+        let result =
+            unsafe { libc::poll(pipes.as_mut_ptr(), pipes.len() as libc::nfds_t, timeout) };
+        if result < 0 && io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+            return Err(CommandFailure::ProcessWait);
+        }
+        // On interruption, recheck output and the deadline before waiting again.
+        Ok(())
+    }
+
     fn read_available(
         &mut self,
         stream: OutputStream,

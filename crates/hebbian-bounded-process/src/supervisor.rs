@@ -43,6 +43,13 @@ impl OutputStream {
 pub(crate) trait SupervisedProcess {
     fn terminate(&mut self) -> Result<(), CommandFailure>;
 
+    /// Wait only while neither output stream is ready. Platforms without a
+    /// readiness wait retain the bounded process-exit polling interval.
+    fn wait_for_output(&mut self, duration: Duration) -> Result<(), CommandFailure> {
+        std::thread::sleep(duration);
+        Ok(())
+    }
+
     fn read_available(
         &mut self,
         stream: OutputStream,
@@ -59,7 +66,11 @@ pub(crate) trait SupervisedProcess {
 
 trait Clock {
     fn now(&self) -> Instant;
-    fn sleep(&mut self, duration: Duration);
+    fn wait(
+        &mut self,
+        process: &mut impl SupervisedProcess,
+        duration: Duration,
+    ) -> Result<(), CommandFailure>;
 }
 
 struct SystemClock;
@@ -69,8 +80,12 @@ impl Clock for SystemClock {
         Instant::now()
     }
 
-    fn sleep(&mut self, duration: Duration) {
-        std::thread::sleep(duration);
+    fn wait(
+        &mut self,
+        process: &mut impl SupervisedProcess,
+        duration: Duration,
+    ) -> Result<(), CommandFailure> {
+        process.wait_for_output(duration)
     }
 }
 
@@ -98,7 +113,8 @@ fn supervise_with_clock(
 ) -> Result<CommandOutput, CommandFailure> {
     let mut execution = Supervision::new(process, deadline, output_limit, output_limit_action);
     while !execution.poll(|| clock.now())? {
-        clock.sleep(PROCESS_POLL_INTERVAL);
+        let remaining = deadline.saturating_duration_since(clock.now());
+        clock.wait(&mut execution.process, remaining.min(PROCESS_POLL_INTERVAL))?;
     }
     Ok(execution.into_output())
 }
@@ -267,8 +283,13 @@ mod tests {
             self.now
         }
 
-        fn sleep(&mut self, duration: Duration) {
+        fn wait(
+            &mut self,
+            _process: &mut impl SupervisedProcess,
+            duration: Duration,
+        ) -> Result<(), CommandFailure> {
             self.now += duration;
+            Ok(())
         }
     }
 

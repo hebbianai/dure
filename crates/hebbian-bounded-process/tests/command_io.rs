@@ -7,6 +7,29 @@ fn fixture(mode: &str) -> CommandSpec {
     command
 }
 
+#[cfg(unix)]
+#[test]
+fn screenshot_sized_output_does_not_spend_its_deadline_sleeping_between_reads() {
+    let count = 2 * 1024 * 1024;
+    for (mode, capture_stderr) in [("write", false), ("stderr-only", true)] {
+        let mut command = fixture(mode);
+        command
+            .arg(count.to_string())
+            .capture_stderr(capture_stderr);
+        let output = run(&command, Duration::from_secs(3), count)
+            .expect("ready output must drain without a polling delay per pipe refill");
+        assert!(output.status.success());
+        assert!(!output.exceeded_limit);
+        if capture_stderr {
+            assert_eq!(output.stderr, vec![b'e'; count]);
+            assert!(output.stdout.is_empty());
+        } else {
+            assert_eq!(output.stdout, vec![b'x'; count]);
+            assert!(output.stderr.is_empty());
+        }
+    }
+}
+
 #[test]
 fn input_larger_than_a_pipe_progresses_while_both_outputs_are_full() {
     let input = vec![b'i'; 512 * 1024];
