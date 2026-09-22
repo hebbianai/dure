@@ -140,12 +140,8 @@ export const DEFAULT_UI_PREFS: UiPrefs = {
   splitterSize: 4,
   // 기본은 보이기 — 지금까지 보이던 파일이 업데이트만으로 사라지면 안 된다.
   showGitIgnored: true,
-  // 기본은 꺼짐 — 상단 바에 없던 위젯이 업데이트만으로 생기지 않게 한다.
-  // 켜야 폴링도 시작한다.
-  // Default-on: the widget itself only renders in the pro interface mode
-  // (ResourceMonitor.tsx), so basic never sees it; pro sees it out of the
-  // box and this setting is the opt-out (owner request 2026-09-01).
-  showResourceMonitor: true,
+  // Keep chrome quiet until the user opts in. Sampling starts only when shown.
+  showResourceMonitor: false,
 };
 
 /** Every preference a caller outside the settings UI may read or write — the

@@ -15,7 +15,7 @@ vi.mock("@/components/settings/ThemeSchemePicker", () => ({
 
 import { AppearancePage } from "@/components/settings/AppearancePage";
 import { t } from "@/lib/i18n";
-import { useStore } from "@/store";
+import { DEFAULT_UI_PREFS, useStore } from "@/store";
 
 const setFont = (name: string) => {
   useStore.getState().setUiPrefs({ terminalFontFamily: name });
@@ -104,6 +104,24 @@ describe("AppearancePage terminal line height", () => {
 
     expect(useStore.getState().uiPrefs.terminalLineHeight).toBe(1.6);
     expect(useStore.getState().terminalFontSize).toBe(previousFontSize);
+  });
+});
+
+describe("AppearancePage resource monitor", () => {
+  it("starts off and saves both toggle choices", async () => {
+    useStore.setState({ uiPrefs: { ...DEFAULT_UI_PREFS, interfaceMode: "pro" } });
+    render(<AppearancePage />);
+    await waitFor(() => expect(systemFontFamiliesMock).toHaveBeenCalled());
+    const toggle = screen.getByRole("switch", {
+      name: t("settings.appearance.resourceMonitor.title"),
+    });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggle);
+    expect(useStore.getState().uiPrefs.showResourceMonitor).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(toggle);
+    expect(useStore.getState().uiPrefs.showResourceMonitor).toBe(false);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 });
 

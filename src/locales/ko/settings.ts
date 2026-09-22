@@ -96,7 +96,7 @@ export const settings: Record<string, string> = {
 	"settings.storage.cliInstall.name": "CLI 설치",
 	"settings.macosPerms.camera.desc": "CLI 웹캠 캡처 및 카메라 기반 로컬 테스트 앱",
 	"settings.macosPerms.footnote": "CLI·로컬 앱·자동화 도구가 macOS 개인정보 보호 접근이 필요할 때 여기서 확인하세요. 접근성·화면 녹화·전체 디스크는 실시간 상태이고, 나머지는 시스템 설정에서 직접 확인합니다.",
-	"settings.appearance.resourceMonitor.desc": "CPU·메모리·세션·워크스페이스 디스크 사용량을 표시합니다.",
+	"settings.appearance.resourceMonitor.desc": "상단 바에 CPU·메모리·세션 수·디스크 여유 공간을 표시합니다. 기본값은 꺼짐입니다.",
 	"settings.agentTooling.hook.claudeSessionStart": "Claude Code SessionStart 훅 (체크포인트 규율)",
 	"settings.stats.usage.autoAggregateHint": "Claude Code·Codex로 작업하면 로컬 세션 로그에서 토큰 사용량을 자동 집계합니다.",
 	"settings.appearance.claudeUsage.title": "Claude 사용량",

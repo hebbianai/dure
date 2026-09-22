@@ -363,7 +363,7 @@ export const settingsEnglishTranslations = {
 	"settings.storage.cliInstall.name": "CLI install",
 	"settings.macosPerms.camera.desc": "CLI webcam capture and camera-based local test apps",
 	"settings.macosPerms.footnote": "Check here when CLIs, local apps, or automation tools need macOS privacy access. Accessibility, screen recording, and full disk show live status; verify the rest directly in System Settings.",
-	"settings.appearance.resourceMonitor.desc": "Shows CPU, memory, session and workspace disk usage.",
+	"settings.appearance.resourceMonitor.desc": "Shows CPU, memory, sessions and free disk space in the top bar. Off by default.",
 	"settings.agentTooling.hook.claudeSessionStart": "Claude Code SessionStart hook (checkpoint discipline)",
 	"settings.stats.usage.autoAggregateHint": "Token usage is aggregated automatically from local session logs as you work with Claude Code / Codex.",
 	"settings.appearance.claudeUsage.title": "Claude usage",

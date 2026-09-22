@@ -8,6 +8,18 @@ import { DEFAULT_UI_PREFS } from "@/lib/settings/uiPrefs";
 import { DEFAULT_SPACES_VIEW_OPTIONS } from "@/lib/spaces/spacesViewOptions";
 import { DEFAULT_TERMINAL_LINE_HEIGHT } from "@/lib/terminal/renderer/terminalFont";
 
+describe("resource monitor preference", () => {
+  it.each([
+    [{}, false],
+    [{ showResourceMonitor: true }, true],
+    [{ showResourceMonitor: false }, false],
+  ] as const)("defaults missing settings off and preserves saved choices: %o", (uiPrefs, expected) => {
+    const restored = normalizePersistedState({ uiPrefs });
+    expect(restored.uiPrefs.showResourceMonitor).toBe(expected);
+    expect(persistedSlice(restored).uiPrefs.showResourceMonitor).toBe(expected);
+  });
+});
+
 describe("migratePersistedState — v6 Space 저장 모델", () => {
   it("legacy Desktop 저장분을 같은 identity의 canonical Space 저장분으로 옮긴다", () => {
     const persisted = migratePersistedState(

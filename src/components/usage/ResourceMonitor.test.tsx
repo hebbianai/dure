@@ -60,7 +60,11 @@ beforeEach(() => {
 	});
 	// The widget is pro-only; the fresh-store default is basic.
 	useStore.setState({
-		uiPrefs: { ...DEFAULT_UI_PREFS, interfaceMode: "pro" },
+		uiPrefs: {
+			...DEFAULT_UI_PREFS,
+			interfaceMode: "pro",
+			showResourceMonitor: true,
+		},
 		agents: [],
 		projects: [],
 	});
@@ -77,7 +81,7 @@ afterEach(() => {
 describe("ResourceMonitor", () => {
 	it("opens read-only cleanup diagnostics from the Pro resource widget", async () => {
 		render(<ResourceMonitor />);
-		await screen.findByText("CPU 12%");
+		await screen.findByText("12%");
 		fireEvent.click(
 			screen.getByRole("button", { name: t("usage.cleanup.title") }),
 		);
@@ -87,7 +91,7 @@ describe("ResourceMonitor", () => {
 	});
 	it("reads only when opened or manually refreshed and replaces the scan page", async () => {
 		render(<ResourceMonitor />);
-		await screen.findByText("CPU 12%");
+		await screen.findByText("12%");
 		expect(inspectIdleMock).not.toHaveBeenCalled();
 		await openDiagnostics();
 		await screen.findByText("agent-first");
@@ -155,7 +159,7 @@ describe("ResourceMonitor", () => {
 				uiPrefs: { ...state.uiPrefs, interfaceMode: "pro" },
 			})),
 		);
-		await screen.findByText("CPU 12%");
+		await screen.findByText("12%");
 		expect(screen.queryByRole("dialog")).toBeNull();
 		expect(inspectIdleMock).toHaveBeenCalledTimes(1);
 	});
@@ -229,10 +233,35 @@ describe("ResourceMonitor", () => {
 		expect(screen.queryByText(/CPU/)).toBeNull();
 	});
 
-	it("pro에서는 기본값만으로 보인다 — 설정을 켤 필요가 없다", async () => {
-		render(<ResourceMonitor />);
+	it.each(["basic", "pro"] as const)(
+		"defaults to hidden without polling in %s mode",
+		(interfaceMode) => {
+			useStore.setState({ uiPrefs: { ...DEFAULT_UI_PREFS, interfaceMode } });
+			const { container } = render(<ResourceMonitor />);
+			expect(container.childElementCount).toBe(0);
+			expect(systemResourcesMock).not.toHaveBeenCalled();
+			expect(inspectIdleMock).not.toHaveBeenCalled();
+		},
+	);
 
-		await waitFor(() => expect(screen.getByText("CPU 12%")).toBeTruthy());
+	it("stops polling when disabled and resumes when enabled again", async () => {
+		vi.useFakeTimers();
+		render(<ResourceMonitor />);
+		await act(async () => {});
+		expect(systemResourcesMock).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("12%")).toBeTruthy();
+		act(() => useStore.getState().setUiPrefs({ showResourceMonitor: false }));
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(20_000);
+		});
+		expect(systemResourcesMock).toHaveBeenCalledTimes(1);
+		expect(
+			screen.queryByRole("button", { name: t("usage.cleanup.title") }),
+		).toBeNull();
+		act(() => useStore.getState().setUiPrefs({ showResourceMonitor: true }));
+		await act(async () => {});
+		expect(systemResourcesMock).toHaveBeenCalledTimes(2);
+		expect(screen.getByText("12%")).toBeTruthy();
 	});
 
 	it("basic 모드에서는 설정과 무관하게 접히고 폴링도 없다", () => {
@@ -252,9 +281,9 @@ describe("ResourceMonitor", () => {
 
 		render(<ResourceMonitor />);
 
-		await waitFor(() => expect(screen.getByText("CPU 12%")).toBeTruthy());
+		await waitFor(() => expect(screen.getByText("12%")).toBeTruthy());
 		expect(screen.getByText("4.5GB")).toBeTruthy();
-		expect(screen.getByText("세션 0")).toBeTruthy();
+		expect(screen.getByText("0")).toBeTruthy();
 		expect(screen.getByText("120GB")).toBeTruthy();
 	});
 
@@ -270,7 +299,7 @@ describe("ResourceMonitor", () => {
 
 		render(<ResourceMonitor />);
 
-		await waitFor(() => expect(screen.getByText("CPU 5%")).toBeTruthy());
+		await waitFor(() => expect(screen.getByText("5%")).toBeTruthy());
 		expect(screen.queryByText(/GB \/ /)).toBeNull();
 	});
 

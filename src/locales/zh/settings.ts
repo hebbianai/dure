@@ -332,7 +332,7 @@ export const settings: Record<string, string> = {
 	"settings.storage.cliInstall.name": "CLI 安装",
 	"settings.macosPerms.camera.desc": "CLI 摄像头捕获及基于摄像头的本地测试应用",
 	"settings.macosPerms.footnote": "当 CLI、本地应用或自动化工具需要 macOS 隐私访问权限时，可在此处检查。辅助功能、屏幕录制和完全磁盘访问显示实时状态，其余权限请直接在系统设置中确认。",
-	"settings.appearance.resourceMonitor.desc": "显示 CPU、内存、会话与工作区磁盘使用量。",
+	"settings.appearance.resourceMonitor.desc": "在顶部栏显示 CPU、内存、会话数和可用磁盘空间。默认关闭。",
 	"settings.agentTooling.hook.claudeSessionStart": "Claude Code SessionStart 钩子（检查点纪律）",
 	"settings.stats.usage.autoAggregateHint": "使用 Claude Code / Codex 工作时，会自动从本地会话日志中汇总 token 用量。",
 	"settings.appearance.claudeUsage.title": "Claude 用量",

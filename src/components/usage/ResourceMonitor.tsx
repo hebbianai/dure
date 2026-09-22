@@ -1,12 +1,12 @@
 // 상단 바 자원 위젯 — CPU·메모리·세션 수·워크스페이스 볼륨 여유.
 //
-// pro 인터페이스 모드 전용이고 기본 표시다(소유자 요청 2026-09-01) —
-// basic은 접히고, pro는 설정(외관 > 상태 표시줄 > 자원 관리자)으로만 끈다.
+// Pro에서 설정(외관 > 상태 표시줄 > 자원 관리자)으로 켜고 끈다. 기본은 꺼짐.
 // 렌더하지 않을 때는 폴링도 시작하지 않는다 — 안 보이는 사람에게는
 // 주기적인 표본 하나도 돌지 않아야 한다.
 //
 // 숫자는 곁눈으로 읽는 자리라 요약만 두고, 전체 값(메모리 총량·디스크 총량)은
 // 호버 title로 미룬다. 표시 규칙은 순수 모듈 systemResources가 소유한다.
+import { Cpu, HardDrive, Layers, MemoryStick } from "lucide-react";
 import { useEffect, useState } from "react";
 import { t } from "@/lib/i18n";
 import { systemResources } from "@/lib/ipc";
@@ -73,6 +73,30 @@ export function ResourceMonitor() {
 	if (!enabled || !sample) return null;
 
 	const diskFree = formatDiskFree(sample);
+	const description = describeResources(sample, sessions, {
+		cpu: t("CPU"),
+		memory: t("usage.resources.memory"),
+		sessions: t("common.session"),
+		disk: t("usage.resources.disk"),
+	});
+	const metrics = [
+		{ label: t("CPU"), icon: Cpu, value: formatPercent(sample.cpuPercent) },
+		{
+			label: t("usage.resources.memory"),
+			icon: MemoryStick,
+			value: formatMemory(sample),
+		},
+		{ label: t("common.session"), icon: Layers, value: String(sessions) },
+		...(diskFree === null
+			? []
+			: [
+					{
+						label: t("usage.resources.disk"),
+						icon: HardDrive,
+						value: diskFree,
+					},
+				]),
+	];
 	return (
 		<AgentCleanupDiagnostics>
 			<Button
@@ -80,26 +104,17 @@ export function ResourceMonitor() {
 				variant="ghost"
 				size="sm"
 				aria-label={t("usage.cleanup.title")}
-				title={`${t("usage.cleanup.title")}\n${describeResources(
-					sample,
-					sessions,
-					{
-						cpu: t("CPU"),
-						memory: t("usage.resources.memory"),
-						sessions: t("common.session"),
-						disk: t("usage.resources.disk"),
-					},
-				)}`}
-				className="gap-2 font-mono text-[11px] font-normal text-muted-foreground tabular-nums"
+				aria-description={description}
+				title={`${t("usage.cleanup.title")}\n${description}`}
+				className="gap-3 px-2 font-normal text-muted-foreground"
 			>
-				<span>
-					{t("CPU")} {formatPercent(sample.cpuPercent)}
-				</span>
-				<span>{formatMemory(sample)}</span>
-				<span>
-					{t("common.session")} {sessions}
-				</span>
-				{diskFree !== null && <span>{diskFree}</span>}
+				{metrics.map(({ label, icon: Icon, value }) => (
+					<span key={label} className="inline-flex items-center gap-1.5">
+						<Icon className="size-3" aria-hidden="true" />
+						<span className="sr-only">{label} </span>
+						<span className="font-mono text-meta tabular-nums">{value}</span>
+					</span>
+				))}
 			</Button>
 		</AgentCleanupDiagnostics>
 	);
