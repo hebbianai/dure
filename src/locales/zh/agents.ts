@@ -275,6 +275,8 @@ export const agents: Record<string, string> = {
 	"agents.quickDispatch.progress.failed": "发送失败 — 按 ⌘N 查看详情",
 	"agents.quickDispatch.progress.naming": "正在为代理命名…",
 	"agents.quickDispatch.progress.spawning": "正在准备工作树并启动代理…",
+	"agents.quickDispatch.noProject": "无项目",
+	"agents.quickDispatch.homeFolderHint": "在此电脑的主文件夹中启动。",
 	"agents.quickDispatch.projectLabel": "项目",
 	"agents.quickDispatch.projectMissing": "没有可用的本地项目 — 打开完整对话框以添加一个。",
 	"agents.quickDispatch.promptTooLong": "请求过长(最多 16 KiB)。",

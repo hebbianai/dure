@@ -274,6 +274,8 @@ export const agents: Record<string, string> = {
 	"agents.quickDispatch.progress.failed": "El despacho falló — pulsa ⌘N para ver detalles.",
 	"agents.quickDispatch.progress.naming": "Nombrando el agente…",
 	"agents.quickDispatch.progress.spawning": "Preparando el worktree e iniciando el agente…",
+	"agents.quickDispatch.noProject": "Sin proyecto",
+	"agents.quickDispatch.homeFolderHint": "Se inicia en la carpeta personal de este equipo.",
 	"agents.quickDispatch.projectLabel": "Proyecto",
 	"agents.quickDispatch.projectMissing": "No hay ningún proyecto local disponible — abre el diálogo completo para añadir uno.",
 	"agents.quickDispatch.promptTooLong": "La solicitud es demasiado larga (máx. 16 KiB).",

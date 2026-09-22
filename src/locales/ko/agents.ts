@@ -274,6 +274,8 @@ export const agents: Record<string, string> = {
 	"agents.quickDispatch.progress.failed": "디스패치 실패 — ⌘N에서 자세히 보기",
 	"agents.quickDispatch.progress.naming": "에이전트 이름 짓는 중…",
 	"agents.quickDispatch.progress.spawning": "워크트리 준비하고 에이전트 시작하는 중…",
+	"agents.quickDispatch.noProject": "프로젝트 없음",
+	"agents.quickDispatch.homeFolderHint": "이 컴퓨터의 홈 폴더에서 시작합니다.",
 	"agents.quickDispatch.projectLabel": "프로젝트",
 	"agents.quickDispatch.projectMissing": "사용 가능한 로컬 프로젝트가 없습니다 — 전체 대화상자를 열어 하나를 추가하세요.",
 	"agents.quickDispatch.promptTooLong": "요청이 너무 길어요 (최대 16 KiB).",

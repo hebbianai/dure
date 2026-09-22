@@ -38,6 +38,8 @@ const mocks = vi.hoisted(() => {
 		run: vi.fn().mockResolvedValue(undefined),
 		saveRemote: vi.fn().mockResolvedValue(["/tmp/remote/image.png"]),
 		saveAttachments: vi.fn().mockResolvedValue([]),
+		homeDir: vi.fn(),
+		ensureProject: vi.fn(),
 		catalog: vi.fn().mockResolvedValue([]),
 		paste: vi.fn(),
 	};
@@ -61,6 +63,10 @@ vi.mock("@/lib/ipc/system", async (orig) => ({
 	...(await orig<object>()),
 	saveQuickDispatchAttachments: mocks.saveAttachments,
 }));
+vi.mock("@/lib/ipc/git", async (orig) => ({
+	...(await orig<object>()),
+	homeDir: mocks.homeDir,
+}));
 
 import { QuickDispatchOverlay } from "@/components/agents/quickDispatch/QuickDispatchOverlay";
 import { useStore } from "@/store";
@@ -71,6 +77,14 @@ const repo: Project = {
 	path: "/repo",
 	kind: "local",
 	isRepo: true,
+};
+
+const homeProject: Project = {
+	id: "project-home",
+	name: "Home",
+	path: "/home/test",
+	kind: "local",
+	isRepo: false,
 };
 
 const claudeWork: AccountProfile = {
@@ -89,10 +103,16 @@ const codexPersonal: AccountProfile = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mocks.homeDir.mockReset().mockResolvedValue(homeProject.path);
+	mocks.ensureProject.mockReset().mockImplementation(async () => {
+		useStore.setState({ projects: [...useStore.getState().projects, homeProject] });
+		return homeProject;
+	});
 	mocks.journal.intents = [];
 	useStore.setState({
 		uiPrefs: { ...useStore.getState().uiPrefs, quickCommands: [], interfaceMode: "pro" },
 		projects: [repo],
+		ensureProjectForPath: mocks.ensureProject,
 		sshHosts: [],
 		agents: [],
 		installedAgents: [],
@@ -118,6 +138,95 @@ async function choosePermission(label: string) {
 }
 
 describe("QuickDispatchOverlay", () => {
+	it("clears the project and starts in the home folder without worktree setup", async () => {
+		render(<QuickDispatchOverlay open onClose={vi.fn()} />);
+		fireEvent.change(screen.getByRole("textbox"), { target: { value: "Plan my day" } });
+		fireEvent.click(screen.getByRole("switch", { name: t("agents.worktree.isolateDedicated") }));
+		openSelect(screen.getByRole("combobox", { name: t("agents.quickDispatch.projectLabel") }));
+		fireEvent.click(screen.getByRole("option", { name: t("agents.quickDispatch.noProject") }));
+		expect(screen.getByRole<HTMLButtonElement>("switch").disabled).toBe(true);
+		expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("false");
+		expect(mocks.ensureProject).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole("button", { name: t("agents.quickDispatch.startAgent") }));
+		await waitFor(() => expect(mocks.run).toHaveBeenCalledOnce());
+		expect(mocks.ensureProject).toHaveBeenCalledWith(homeProject.path);
+		expect(mocks.begin).toHaveBeenCalledWith(expect.objectContaining({
+			projectId: homeProject.id, promptText: "Plan my day", useWorktree: false, runSetup: false,
+		}));
+		expect(mocks.begin.mock.calls[0][0]).not.toHaveProperty("remoteTarget");
+	});
+
+	it("accepts an image-only request before any project has been registered", async () => {
+		useStore.setState({ projects: [] });
+		mocks.paste.mockResolvedValueOnce({ kind: "image", dataB64: "QUJD", ext: "png" });
+		mocks.saveAttachments.mockResolvedValueOnce(["/saved/image.png"]);
+		render(<QuickDispatchOverlay open onClose={vi.fn()} />);
+		fireEvent.paste(screen.getByRole("textbox"), { clipboardData: { items: [{ type: "image/png", getAsFile: () => null }] } });
+		await screen.findByText(/pasted-.*\.png/);
+		fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+		await waitFor(() => expect(mocks.run).toHaveBeenCalledOnce());
+		expect(mocks.begin).toHaveBeenCalledWith(expect.objectContaining({
+			projectId: homeProject.id, promptText: "", attachmentPaths: ["/saved/image.png"], useWorktree: false,
+		}));
+	});
+
+	it("keeps a home-folder failure retryable and coalesces repeated submissions", async () => {
+		useStore.setState({ projects: [] });
+		mocks.homeDir.mockRejectedValueOnce(new Error("Home unavailable"));
+		const onClose = vi.fn();
+		render(<QuickDispatchOverlay open onClose={onClose} prefill={{ promptText: "Plan my day", projectId: "", typedName: "" }} />);
+		fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+		await screen.findByText("Error: Home unavailable");
+		expect(onClose).not.toHaveBeenCalled();
+		expect(mocks.begin).not.toHaveBeenCalled();
+		fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+		fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+		await waitFor(() => expect(mocks.run).toHaveBeenCalledOnce());
+		expect(mocks.ensureProject).toHaveBeenCalledOnce();
+	});
+
+	it.each(["close", "project"])("cancels home resolution after changing %s", async (change) => {
+		let finish!: (path: string) => void;
+		mocks.homeDir.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+		const view = render(<QuickDispatchOverlay open onClose={vi.fn()} prefill={{ promptText: "Plan my day", projectId: "", typedName: "" }} />);
+		openSelect(screen.getByRole("combobox", { name: t("agents.quickDispatch.projectLabel") }));
+		fireEvent.click(screen.getByRole("option", { name: t("agents.quickDispatch.noProject") }));
+		fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+		if (change === "close") view.rerender(<QuickDispatchOverlay open={false} onClose={vi.fn()} />);
+		else {
+			openSelect(screen.getByRole("combobox", { name: t("agents.quickDispatch.projectLabel") }));
+			fireEvent.click(screen.getByRole("option", { name: repo.name }));
+		}
+		await act(async () => { finish(homeProject.path); });
+		expect(mocks.ensureProject).not.toHaveBeenCalled();
+		expect(mocks.begin).not.toHaveBeenCalled();
+	});
+
+	it("does not silently use local home for an unmatched SSH context", () => {
+		useStore.setState({ focusCtx: { source: "ssh", hostId: "missing", cwd: "/repo", label: "remote" } });
+		render(<QuickDispatchOverlay open onClose={vi.fn()} />);
+		expect(screen.queryByRole("textbox")).toBeNull();
+		expect(mocks.homeDir).not.toHaveBeenCalled();
+	});
+
+	it("can return from no project to an SSH project without registering local home", async () => {
+		const host = { id: "remote", name: "Build", host: "build.test", user: "dev", port: 22, auth: "auto" as const };
+		const remote = { ...repo, id: "remote-project", kind: "ssh" as const, sshHostId: host.id };
+		useStore.setState({ projects: [remote], sshHosts: [host] });
+		render(<QuickDispatchOverlay open onClose={vi.fn()} />);
+		const select = () => openSelect(screen.getByRole("combobox", { name: t("agents.quickDispatch.projectLabel") }));
+		select();
+		fireEvent.click(screen.getByRole("option", { name: t("agents.quickDispatch.noProject") }));
+		select();
+		fireEvent.click(screen.getByRole("option", { name: "Build · repo" }));
+		fireEvent.change(screen.getByRole("textbox"), { target: { value: "Remote task" } });
+		fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+		await waitFor(() => expect(mocks.run).toHaveBeenCalledOnce());
+		expect(mocks.homeDir).not.toHaveBeenCalled();
+		expect(mocks.ensureProject).not.toHaveBeenCalled();
+		expect(mocks.begin).toHaveBeenCalledWith(expect.objectContaining({ projectId: remote.id, remoteTarget: expect.objectContaining({ hostId: host.id }) }));
+	});
+
 	it("waits for an in-flight image paste before dispatching text", async () => {
 		let finish!: (value: { kind: string; dataB64: string; ext: string }) => void;
 		mocks.paste.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));

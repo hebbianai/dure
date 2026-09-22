@@ -274,6 +274,8 @@ export const agentsEnglishTranslations: Record<string, string> = {
 	"agents.quickDispatch.progress.failed": "Dispatch failed — press ⌘N for details.",
 	"agents.quickDispatch.progress.naming": "Naming the agent…",
 	"agents.quickDispatch.progress.spawning": "Preparing the worktree and starting the agent…",
+	"agents.quickDispatch.noProject": "No project",
+	"agents.quickDispatch.homeFolderHint": "Starts in your local home folder.",
 	"agents.quickDispatch.projectLabel": "Project",
 	"agents.quickDispatch.projectMissing": "No local project available — open the full dialog to add one.",
 	"agents.quickDispatch.promptTooLong": "Request is too long (16 KiB max).",

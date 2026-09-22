@@ -68,12 +68,12 @@ import type { QuickDispatchPrefill } from "@/lib/agents/quickDispatch/quickDispa
 import { t } from "@/lib/i18n";
 import { useProviderCatalog } from "@/components/agents/useProviderCatalog";
 import { providerCatalogSource } from "@/lib/agents/providerModelCatalogSource";
-import { saveQuickDispatchAttachments } from "@/lib/ipc";
+import { homeDir, saveQuickDispatchAttachments } from "@/lib/ipc";
 import { supportsDureProviderCredentialSpawn } from "@/lib/ipc/dureProviderCredentialProfile";
 import { track } from "@/lib/ipc/telemetry";
 import { insertQuickCommandText } from "@/lib/workspace/pane/quickCommands";
 import { saveSessionFiles } from "@/lib/files/sessionFileTransfer";
-import { PROVIDERS, type Provider } from "@/types";
+import { PROVIDERS, type Project, type Provider } from "@/types";
 import { isProviderEffortSelection, isProviderModelSelection } from "../../../../cli/lib/contracts/provider-launch-selection.mjs";
 
 // Lazy: WorktreeAgentDialog pulls in the full AddAgentBody form (worktree
@@ -99,7 +99,7 @@ export function QuickDispatchOverlay({
 	 *  closes — the launcher shows its confirmation pill from this. */
 	onDispatched?: () => void;
 }) {
-	const { projects, agents, focusCtx, defaultProvider, accounts, sshHosts, quickCommands } =
+	const { projects, agents, focusCtx, defaultProvider, accounts, sshHosts, quickCommands, ensureProjectForPath } =
 		useQuickDispatch();
 	const activeSpaceId = useActiveSpaceId();
 	const availableProviders = useAvailableProviders();
@@ -108,7 +108,8 @@ export function QuickDispatchOverlay({
 	const [quickDialogOpen, setQuickDialogOpen] = useState(true);
 	const [addAgentDialogOpen, setAddAgentDialogOpen] = useState(false);
 
-	const [projectId, setProjectId] = useState<string | null>(
+	// null selects local home; undefined leaves an unmatched SSH context unresolved.
+	const [projectId, setProjectId] = useState<string | null | undefined>(
 		() => {
 			const prefilled = projects.find(
 				(project) => project.id === prefill?.projectId,
@@ -116,7 +117,7 @@ export function QuickDispatchOverlay({
 			return (
 				prefilled?.id ??
 				resolveQuickDispatchProject({ focusCtx, agents, projects })?.id ??
-				null
+				(focusCtx?.source === "ssh" ? undefined : null)
 			);
 		},
 	);
@@ -239,11 +240,11 @@ export function QuickDispatchOverlay({
 
 	const [attachments, setAttachments] = useState<DroppedFilePayload[]>([]);
 	const submissionRef = useRef<object | null>(null);
-	useEffect(() => () => { submissionRef.current = null; }, [open, quickDialogOpen, project?.id]);
+	useEffect(() => () => { submissionRef.current = null; }, [open, quickDialogOpen, projectId, project?.id]);
 	const { deferSubmit, remove: removeAttachment, inputProps: attachmentInput } = usePromptAttachments({
 		attachments,
 		setAttachments,
-		scope: open && quickDialogOpen ? project?.id ?? null : null,
+		scope: open && quickDialogOpen ? project?.id ?? (projectId === null ? "local-home" : null) : null,
 		imageName: (ext) => `pasted-${Date.now()}.${ext}`,
 		onText: (value) => setText((current) => current + value),
 		onError: setInlineError,
@@ -251,7 +252,7 @@ export function QuickDispatchOverlay({
 	});
 
 	const handleSubmit = async () => {
-		if (!project || !open || !quickDialogOpen || submissionRef.current) return;
+		if ((!project && projectId !== null) || !open || !quickDialogOpen || submissionRef.current) return;
 		if (deferSubmit()) return;
 		if (!text.trim() && attachments.length === 0) return;
 		if ((model && !isProviderModelSelection(model)) || (effort && !isProviderEffortSelection(effort))) {
@@ -268,11 +269,19 @@ export function QuickDispatchOverlay({
 		// instead of minting its own (F4).
 		const intentId = newQuickDispatchIntentId();
 		let remoteTarget: QuickDispatchIntentV1["remoteTarget"];
+		let launchProject: Project;
 		let attachmentPaths: string[] = [];
 		try {
-			remoteTarget = quickDispatchRemoteTarget(project, sshHosts);
-			if (attachments.length > 0) attachmentPaths = project.kind === "ssh"
-				? await saveSessionFiles(project.sshHostId, attachments)
+			if (project) launchProject = project;
+			else {
+				const path = await homeDir();
+				if (submissionRef.current !== submission) return;
+				launchProject = await ensureProjectForPath(path);
+			}
+			if (submissionRef.current !== submission) return;
+			remoteTarget = quickDispatchRemoteTarget(launchProject, sshHosts);
+			if (attachments.length > 0) attachmentPaths = launchProject.kind === "ssh"
+				? await saveSessionFiles(launchProject.sshHostId, attachments)
 				: await saveQuickDispatchAttachments(intentId, attachments);
 		} catch (cause) {
 			if (submissionRef.current !== submission) return;
@@ -298,7 +307,7 @@ export function QuickDispatchOverlay({
 				{
 					promptText: text,
 					attachmentPaths,
-					projectId: project.id,
+					projectId: launchProject.id,
 					...(remoteTarget ? { remoteTarget } : {}),
 					providerId,
 					accountId,
@@ -346,7 +355,7 @@ export function QuickDispatchOverlay({
 					showCloseButton={false}
 					className="max-h-[min(680px,80dvh)] w-[min(640px,calc(100vw-32px))] max-w-none gap-0 overflow-x-hidden overflow-y-auto p-0 shadow-2xl sm:max-w-none"
 				>
-					{!project ? (
+					{!project && projectId !== null ? (
 						<div className="flex flex-col gap-3 p-4">
 							<DialogTitle>{t("agents.quickDispatch.title")}</DialogTitle>
 							<IntentJournalRows
@@ -488,19 +497,20 @@ export function QuickDispatchOverlay({
 								<div className="flex min-w-0 flex-wrap items-center gap-1.5">
 									<SelectField
 										aria-label={t("agents.quickDispatch.projectLabel")}
-										value={project.id}
+										value={project?.id ?? ""}
 										leadingIcon={<Folder />}
 										className="w-52"
 										onValueChange={(id) => {
 											const candidate = launchProjects.find((entry) => entry.id === id);
-											if (!candidate) return;
-											setProjectId(candidate.id);
-											if (candidate.kind === "local")
+											if (id && !candidate) return;
+											setProjectId(candidate?.id ?? null);
+											if (!candidate || candidate.kind === "local")
 												chooseProvider(resolveDefaultProvider(providerId, availableProviders));
 											setModel(null);
 											setEffort(null);
 										}}
 									>
+										<SelectOption value="">{t("agents.quickDispatch.noProject")}</SelectOption>
 										{launchProjects.map((candidate) => (
 											<SelectOption key={candidate.id} value={candidate.id}>
 												{candidate.kind === "ssh"
@@ -516,7 +526,7 @@ export function QuickDispatchOverlay({
 										leadingIcon={<ProviderGlyph provider={providerId} />}
 										className="w-40"
 									>
-										{(project.kind === "ssh" ? visibleProviders : availableProviders).map(
+										{(project?.kind === "ssh" ? visibleProviders : availableProviders).map(
 											(provider) => (
 												<SelectOption key={provider} value={provider}>
 													{PROVIDERS[provider].label}
@@ -543,11 +553,14 @@ export function QuickDispatchOverlay({
 									)}
 
 								</div>
+								{projectId === null && (
+									<p className="px-2 text-xs text-muted-foreground">{t("agents.quickDispatch.homeFolderHint")}</p>
+								)}
 								<div className="flex items-center justify-between gap-3 px-2 py-1">
 									<label htmlFor={worktreeToggleId} className="text-xs text-muted-foreground">
 										{t("agents.worktree.isolateDedicated")}
 									</label>
-									<Switch id={worktreeToggleId} checked={worktreeOn} onCheckedChange={setUseWorktree} disabled={!project.isRepo} />
+									<Switch id={worktreeToggleId} checked={worktreeOn} onCheckedChange={setUseWorktree} disabled={!project?.isRepo} />
 								</div>
 								<QuickDispatchAdvanced
 									provider={providerId}
@@ -560,7 +573,7 @@ export function QuickDispatchOverlay({
 										<span aria-hidden className="text-primary-foreground/60">⏎</span>
 									</Button>}
 								>
-										{project.kind === "ssh" ? <>
+										{project?.kind === "ssh" ? <>
 										<NameParamChip label={t("agents.quickDispatch.modelLabel")} value={model ?? ""} placeholder={t("agents.quickDispatch.autoModel")} commit={(value) => setModel(value.trim() || null)} />
 										<NameParamChip label={t("agents.quickDispatch.effortLabel")} value={effort ?? ""} placeholder={t("agents.quickDispatch.autoEffort")} commit={(value) => setEffort(value.trim() || null)} />
 										</> : <>

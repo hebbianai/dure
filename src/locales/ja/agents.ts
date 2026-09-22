@@ -275,6 +275,8 @@ export const agents: Record<string, string> = {
 	"agents.quickDispatch.progress.failed": "送信に失敗しました — 詳細は ⌘N で確認してください",
 	"agents.quickDispatch.progress.naming": "エージェントに名前を付けています…",
 	"agents.quickDispatch.progress.spawning": "ワークツリーを準備してエージェントを起動しています…",
+	"agents.quickDispatch.noProject": "プロジェクトなし",
+	"agents.quickDispatch.homeFolderHint": "このコンピューターのホームフォルダーで開始します。",
 	"agents.quickDispatch.projectLabel": "プロジェクト",
 	"agents.quickDispatch.projectMissing": "利用可能なローカルプロジェクトがありません — 完全なダイアログを開いて追加してください。",
 	"agents.quickDispatch.promptTooLong": "リクエストが長すぎます(最大16 KiB)。",

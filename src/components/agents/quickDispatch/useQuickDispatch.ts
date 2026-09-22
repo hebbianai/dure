@@ -16,6 +16,7 @@ export function useQuickDispatch() {
 	const sshHosts = useStore((s) => s.sshHosts);
 	const accounts = useStore((s) => s.accounts);
 	const quickCommands = useStore((s) => s.uiPrefs.quickCommands);
+	const ensureProjectForPath = useStore((s) => s.ensureProjectForPath);
 	return {
 		projects,
 		agents,
@@ -25,6 +26,7 @@ export function useQuickDispatch() {
 		accounts,
 		sshHosts,
 		quickCommands,
+		ensureProjectForPath,
 	};
 }
 
