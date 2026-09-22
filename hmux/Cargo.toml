@@ -20,7 +20,7 @@ resolver = "2"
 opt-level = 2
 
 [workspace.package]
-version = "0.2.29"
+version = "0.2.30"
 edition = "2024"
 rust-version = "1.85"
 license = "GPL-3.0-only"
