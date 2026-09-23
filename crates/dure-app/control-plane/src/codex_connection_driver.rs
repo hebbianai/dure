@@ -25,7 +25,11 @@ mod tests;
 use state::*;
 
 const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
-const UPSTREAM_READY_TIMEOUT: Duration = Duration::from_secs(10);
+/// A first app-server start can index the whole rollout history under Codex's
+/// 15-minute backfill lease before it listens. Stopping it earlier leaves the
+/// lease held and every Codex session sharing that home fails until it lapses.
+/// A server that exits is still reported as soon as it exits.
+const UPSTREAM_READY_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const UPSTREAM_READY_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Debug)]
