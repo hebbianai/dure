@@ -167,7 +167,10 @@ export function useProBrowserPane(
 		});
 	}, [selectedPageId, followingCurrent, session, connection, persist]);
 	const run = useCallback(
-		async (action: (current: () => boolean) => Promise<unknown>) => {
+		async (
+			action: (current: () => boolean) => Promise<unknown>,
+			{ rethrow = false }: { rethrow?: boolean } = {},
+		) => {
 			const ticket = selection.current;
 			const job = ++operation.current;
 			const current = () => ticket === selection.current;
@@ -177,6 +180,7 @@ export function useProBrowserPane(
 				await action(current);
 			} catch (caught) {
 				if (current() && job === operation.current) setError(caught);
+				if (rethrow) throw caught;
 			} finally {
 				if (current() && job === operation.current) setBusy(false);
 			}
@@ -488,6 +492,7 @@ export function useProBrowserPane(
 		connected: !!connection,
 		view,
 		session,
+		binding: savedBinding.current,
 		busy,
 		installing,
 		installRuntime: () =>
@@ -583,9 +588,14 @@ export function useProBrowserPane(
 				void run(() => session.input({ kind: "select_page" }, page));
 		},
 		handoff: (target: string, expected?: BrowserControllerLease | null) =>
-			run(async () => {
-				await session?.handoff(target, expected);
-			}),
+			run(
+				async () => {
+					if (!session || renderedSelection !== selection.current)
+						throw new Error("browser_view_closed");
+					await session.handoff(target, expected);
+				},
+				{ rethrow: true },
+			),
 		selectDefaultBrowser: () =>
 			run(async () => {
 				if (renderedSelection !== selection.current || !session || !connection)

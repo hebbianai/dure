@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { afterEach, expect, it, vi } from "vitest";
+import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import { showToast } from "@/lib/toast";
 import {
 	invokePaneAction,
@@ -171,6 +172,179 @@ function projection(selected: typeof resource) {
 		next_command_sequence: "5",
 	};
 }
+
+it("preserves the handback failure and saved resource while reconnecting", async () => {
+	const f = fixture();
+	mocks.active = false;
+	const failure = new DureBackendRequestError(
+		"browser_resource_unavailable",
+		"Browser resource is unavailable",
+		{ kind: "operation", disposition: "terminal" },
+	);
+	f.client.requestControl.mockRejectedValueOnce(failure);
+	const mounted = render(<ProBrowserPanel {...f.props()} />);
+	try {
+		await waitFor(() =>
+			expect(paneActionSnapshot(f.api.id)?.status).toBe("attached"),
+		);
+		let result: Awaited<ReturnType<typeof invokePaneAction>> | undefined;
+		await act(async () => {
+			result = await invokePaneAction(
+				f.api.id,
+				"take-control",
+				paneActionSnapshot(f.api.id)?.actionDefinitions?.["take-control"]
+					.current,
+			);
+		});
+		expect(result).toMatchObject({
+			ok: true,
+			result: {
+				outcome: "failed",
+				error: {
+					code: "browser_resource_unavailable",
+					retryable: false,
+					nextAction: expect.stringContaining("reconnect"),
+				},
+			},
+		});
+		expect(JSON.parse(paneActionSnapshot(f.api.id)!.context!)).toMatchObject({
+			resource,
+			failure: {
+				code: "browser_resource_unavailable",
+				kind: "operation",
+				disposition: "terminal",
+			},
+		});
+		let finish!: (rows: ReturnType<typeof projection>[]) => void;
+		f.client.list.mockReturnValueOnce(
+			new Promise((resolve) => {
+				finish = resolve;
+			}),
+		);
+		await act(async () => {
+			await invokePaneAction(f.api.id, "reconnect");
+		});
+		await waitFor(() =>
+			expect(paneActionSnapshot(f.api.id)?.status).toBe("connecting"),
+		);
+		expect(JSON.parse(paneActionSnapshot(f.api.id)!.context!)).toMatchObject({
+			resource,
+		});
+		await act(async () => finish([]));
+		await waitFor(() =>
+			expect(paneActionSnapshot(f.api.id)?.status).toBe("error"),
+		);
+		expect(JSON.parse(paneActionSnapshot(f.api.id)!.context!)).toMatchObject({
+			resource,
+			failure: { code: "browser_saved_resource_missing" },
+		});
+		expect(f.client.requestControl).toHaveBeenCalledTimes(1);
+		expect(f.client.create).not.toHaveBeenCalled();
+		expect(f.client.close).not.toHaveBeenCalled();
+	} finally {
+		mounted.unmount();
+	}
+});
+
+it("reports a changed controller and clears that failure after a fresh exact handback", async () => {
+	const f = fixture();
+	mocks.active = false;
+	const mounted = render(<ProBrowserPanel {...f.props()} />);
+	try {
+		await waitFor(() =>
+			expect(paneActionSnapshot(f.api.id)?.status).toBe("attached"),
+		);
+		const stale = paneActionSnapshot(f.api.id)!.actionDefinitions![
+			"take-control"
+		].current;
+		let current = {
+			...projection(resource),
+			revision: "5",
+			controller: {
+				...projection(resource).controller,
+				epoch: "4",
+				controller_id: "agent:new",
+			},
+		};
+		f.client.control.mockImplementation(async () => current);
+		f.client.observe.mockImplementation(async () => ({
+			control: current,
+			pages: [
+				{
+					page: page(),
+					url: "about:blank",
+					title: "",
+					profile_id: "default",
+				},
+			],
+		}));
+		let result: Awaited<ReturnType<typeof invokePaneAction>> | undefined;
+		await act(async () => {
+			result = await invokePaneAction(f.api.id, "take-control", stale);
+		});
+		expect(result).toMatchObject({
+			ok: true,
+			result: {
+				outcome: "failed",
+				error: { code: "browser_controller_changed", retryable: false },
+			},
+		});
+		expect(f.client.requestControl).not.toHaveBeenCalled();
+		f.client.requestControl.mockImplementation(
+			async (_resource, controllerId, expected) => {
+				expect(expected).toEqual(current.controller);
+				current = {
+					...current,
+					revision: "6",
+					controller: {
+						...current.controller,
+						controller_id: controllerId,
+						epoch: "5",
+					},
+				};
+				return current;
+			},
+		);
+		await act(async () => {
+			result = await invokePaneAction(
+				f.api.id,
+				"take-control",
+				paneActionSnapshot(f.api.id)!.actionDefinitions!["take-control"]
+					.current,
+			);
+		});
+		expect(result).toMatchObject({ ok: true, result: { outcome: "applied" } });
+		expect(paneActionSnapshot(f.api.id)?.status).toBe("attached");
+		expect(paneActionSnapshot(f.api.id)?.error).toBeUndefined();
+		expect(f.client.requestControl).toHaveBeenCalledTimes(1);
+		expect(f.client.create).not.toHaveBeenCalled();
+		const owned = paneActionSnapshot(f.api.id)!.actionDefinitions![
+			"take-control"
+		].current;
+		current = {
+			...current,
+			revision: "7",
+			controller: {
+				...current.controller,
+				controller_id: "agent:new",
+				epoch: "6",
+			},
+		};
+		await act(async () => {
+			result = await invokePaneAction(f.api.id, "take-control", owned);
+		});
+		expect(result).toMatchObject({
+			ok: true,
+			result: {
+				outcome: "failed",
+				error: { code: "browser_controller_changed" },
+			},
+		});
+		expect(f.client.requestControl).toHaveBeenCalledTimes(1);
+	} finally {
+		mounted.unmount();
+	}
+});
 
 it("binds a browser before its Space is first revealed without capturing or taking control", async () => {
 	const f = fixture();

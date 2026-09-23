@@ -462,6 +462,10 @@ export class BrowserPaneSession {
 						await this.refreshing;
 						await this.refresh({ capture: false });
 					}
+					// The new, acknowledged control intent supersedes a previous
+					// failed handoff. Independent observation errors remain visible.
+					this.inputError = undefined;
+					this.publish(this.view);
 					for (const resolve of item.resolve) resolve();
 					continue;
 				}

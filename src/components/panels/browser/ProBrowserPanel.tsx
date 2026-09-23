@@ -127,6 +127,7 @@ export function ProBrowserPanel(
 	const { entry, takeControl } = browserPaneActions({
 		paneId: props.api.id,
 		session: pane.session,
+		binding: pane.binding,
 		view: pane.view,
 		busy: pane.busy,
 		error: pane.error,
@@ -327,7 +328,7 @@ export function ProBrowserPanel(
 								size="sm"
 								variant="outline"
 								disabled={pane.busy || !!control?.requested_controller}
-								onClick={() => void pane.handoff(returnTo)}
+								onClick={() => void pane.handoff(returnTo).catch(() => {})}
 							>
 								{t("panels.browser.returnControl")}
 							</Button>

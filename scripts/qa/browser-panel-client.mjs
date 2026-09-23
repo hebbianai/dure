@@ -208,11 +208,27 @@ try {
     const oldRevision = JSON.parse(state.pane.context).page.document_revision;
     await command(["goto", resourceId, url, ...flags(initialLease)]);
     await command(["snapshot", resourceId, "--page", pageId]);
+    initialLease = (await command(["control", resourceId, "--controller", "native-panel-next-agent"])).result.controller;
+    const staleArgs = ["client", "pane", "act", "browser:native-panel-proof", "take-control", "--args-json",
+      JSON.stringify(state.pane.actionDefinitions["take-control"].current), "--json"];
+    const stale = await execute(cli, staleArgs, { timeout: 30_000 }).then(
+      () => assert.fail("a stale pane controller cannot confirm handback"),
+      (error) => {
+        assert.equal(error.code, 2);
+        return JSON.parse(error.stdout || error.stderr);
+      },
+    );
+    assert.equal(stale.pane.result.error.code, "browser_controller_changed", "preserve the authoritative handback failure");
+    receipts.push({ args: staleArgs, result: stale });
     const beforeHandback = JSON.parse((await execute(cli, args, { timeout: 30_000 })).stdout);
+    assert.deepEqual(JSON.parse(beforeHandback.pane.context).resource, resource);
+    assert.deepEqual(JSON.parse(beforeHandback.pane.context).controller, initialLease);
     const handbackArgs = ["client", "pane", "act", "browser:native-panel-proof", "take-control", "--args-json",
       JSON.stringify(beforeHandback.pane.actionDefinitions["take-control"].current), "--json"];
     const handback = JSON.parse((await execute(cli, handbackArgs, { timeout: 30_000 })).stdout);
     assert.equal(handback.pane.result.outcome, "applied");
+    assert.deepEqual(handback.pane.result.value.resource, resource);
+    assert.match(handback.pane.result.value.controller.controller_id, /^view:/u);
     const afterHandback = JSON.parse((await execute(cli, args, { timeout: 30_000 })).stdout);
     assert.equal(afterHandback.pane.status, "attached", "handback must not leave browser_document_changed");
     assert.ok(BigInt(JSON.parse(afterHandback.pane.context).page.document_revision) > BigInt(oldRevision));

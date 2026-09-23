@@ -1,12 +1,33 @@
+import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import { definePaneAction } from "../workspace/pane/paneAction";
 import type { PaneActionEntry } from "../workspace/pane/paneActionRegistry";
+import type { BrowserPaneBinding } from "./browserPaneBinding";
 import type { BrowserPaneSession, BrowserPaneView } from "./browserPaneSession";
 import type { BrowserControllerLease } from "./browserResourceContract";
+
+function failureDetails(error: unknown) {
+	if (error instanceof DureBackendRequestError)
+		return { code: error.code, ...error.failure };
+	return {
+		code:
+			error instanceof Error && /^browser_[a-z_]+$/.test(error.message)
+				? error.message
+				: "browser_control_not_transferred",
+		kind: "local",
+	};
+}
+
+function recoveryInstruction(code: string) {
+	return code === "browser_controller_changed"
+		? "Read this pane's state again and copy the fresh take-control expectedState before another request."
+		: "Inspect this pane's saved resource and backend. Use reconnect to refresh the saved binding; do not recreate the browser or replay the request automatically.";
+}
 
 /** The mounted pane supplies the same handoff handler to its button and agents. */
 export function browserPaneActions({
 	paneId,
 	session,
+	binding,
 	view,
 	busy,
 	error,
@@ -15,6 +36,7 @@ export function browserPaneActions({
 }: {
 	paneId: string;
 	session?: BrowserPaneSession;
+	binding?: BrowserPaneBinding;
 	view: BrowserPaneView;
 	busy: boolean;
 	error?: unknown;
@@ -22,9 +44,11 @@ export function browserPaneActions({
 	take: (expected: BrowserControllerLease | null) => Promise<void>;
 }) {
 	const failure = error || view.error;
+	const diagnostic = failure ? failureDetails(failure) : undefined;
+	const resource = session?.resource ?? binding?.resource;
 	const control = view.control;
 	const expected = control?.controller;
-	const expectedState = JSON.stringify([session?.resource, expected]);
+	const expectedState = JSON.stringify([resource, expected]);
 	const unavailable =
 		!session ||
 		!control ||
@@ -51,6 +75,11 @@ export function browserPaneActions({
 							code: "browser_control_unavailable",
 							message: "The browser pane is not ready to receive control.",
 							retryable: false,
+							nextAction: busy
+								? "Wait for this pane's current operation, then inspect its state again."
+								: recoveryInstruction(
+										diagnostic?.code ?? "browser_control_unavailable",
+									),
 						},
 					}
 				: {}),
@@ -65,18 +94,42 @@ export function browserPaneActions({
 						retryable: false,
 					},
 				};
-			if (expected?.controller_id === session.controllerId)
-				return { outcome: "unchanged" };
-			await take(expected ?? null);
+			try {
+				await take(expected ?? null);
+			} catch (caught) {
+				const { code } = failureDetails(caught);
+				return {
+					outcome: "failed",
+					error: {
+						code,
+						message: `Browser control was not confirmed: ${code}.`,
+						retryable: false,
+						nextAction: recoveryInstruction(code),
+					},
+				};
+			}
 			const current = session.read().control;
+			const value = {
+				resource,
+				controller: current?.controller,
+				revision: current?.revision,
+				phase: current?.phase,
+				requestedController: current?.requested_controller,
+			};
 			if (current?.requested_controller === session.controllerId)
-				return { outcome: "pending" };
+				return { outcome: "pending", value };
 			if (
 				current?.controller?.controller_id === session.controllerId &&
 				current.phase === "ready" &&
 				!current.requested_controller
 			)
-				return { outcome: "applied" };
+				return {
+					outcome:
+						expected?.controller_id === session.controllerId
+							? "unchanged"
+							: "applied",
+					value,
+				};
 			return {
 				outcome: "failed",
 				error: {
@@ -84,6 +137,7 @@ export function browserPaneActions({
 					message:
 						"Control was not confirmed. Inspect the browser before retrying.",
 					retryable: false,
+					nextAction: recoveryInstruction("browser_control_not_transferred"),
 				},
 			};
 		},
@@ -119,7 +173,17 @@ export function browserPaneActions({
 					: undefined,
 		context: JSON.stringify({
 			kind: "browser",
-			resource: session?.resource,
+			resource,
+			backend: binding?.authority.backend,
+			profileId: binding?.authority.profileId,
+			...(diagnostic
+				? {
+						failure: {
+							...diagnostic,
+							nextAction: recoveryInstruction(diagnostic.code),
+						},
+					}
+				: {}),
 			page: view.page,
 			controller: expected,
 			viewport: view.frame?.capture.viewport,
