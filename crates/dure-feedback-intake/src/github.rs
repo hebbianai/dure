@@ -1,6 +1,6 @@
 //! Thin GitHub REST client for the feedback sink.
 //!
-//! It does three things: commits attachments to the asset repository via the
+//! It does three things: commits private reports and attachments via the
 //! Contents API, files issues (or comments on an existing one for dedupe),
 //! and lists currently-open feedback issues so the sink can search their
 //! bodies for a fingerprint marker. The API base URL is a constructor
@@ -12,26 +12,33 @@ use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use serde_json::json;
 
-/// The repository committed attachments live in.
+/// The private repository original reports and committed attachments live in.
 const ASSETS_REPO: &str = "hebbianai/dure-feedback-assets";
 
 /// The repository feedback issues are filed against.
-const ISSUES_REPO: &str = "hebbianai/dure-internal";
+const ISSUES_REPO: &str = "hebbianai/dure";
 
 /// A failure talking to the GitHub API. Every variant is a real failure —
 /// unlike Telegram, there is no best-effort path here.
 #[derive(Debug)]
 pub enum GithubError {
+    AssetsNotPrivate,
     /// The request itself could not be sent, or the response body could not
     /// be parsed as the expected JSON shape.
     Request(reqwest::Error),
     /// GitHub answered with a non-2xx status. The body is kept for logs.
-    Status { status: StatusCode, body: String },
+    Status {
+        status: StatusCode,
+        body: String,
+    },
 }
 
 impl std::fmt::Display for GithubError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            GithubError::AssetsNotPrivate => {
+                write!(f, "feedback evidence repository is not private")
+            }
             GithubError::Request(err) => write!(f, "github request failed: {err}"),
             GithubError::Status { status, body } => {
                 write!(f, "github responded {status}: {body}")
@@ -83,8 +90,8 @@ pub struct OpenIssue {
 /// It holds two credentials rather than one: a fine-grained PAT applies one
 /// permission set to every repository it selects, so a single token here
 /// would mean an internet-facing service holds Contents write on
-/// `ASSETS_REPO` (the code repository) merely because it also needs Issues
-/// write on `ISSUES_REPO` — compromising the intake would then let someone
+/// `ISSUES_REPO` (the code repository) merely because it also needs Contents
+/// write on `ASSETS_REPO` — compromising the intake would then let someone
 /// rewrite code, not just spam issues. `token` and `assets_token` are
 /// scoped to exactly one repository each.
 pub struct GithubClient {
@@ -92,9 +99,9 @@ pub struct GithubClient {
     api_base: String,
     /// Used for every call against [`ISSUES_REPO`]: the dedupe listing,
     /// issue creation, comment creation. Needs only Issues read/write on
-    /// `dure-internal`.
+    /// `dure`.
     token: String,
-    /// Used only for the Contents API calls against [`ASSETS_REPO`]. Needs
+    /// Used for metadata and Contents API calls against [`ASSETS_REPO`]. Needs
     /// only Contents read/write on `dure-feedback-assets` — never anything
     /// on the code repository.
     assets_token: String,
@@ -123,10 +130,9 @@ impl GithubClient {
         Self::stamp(builder, &self.token)
     }
 
-    /// Same headers, but bearing `assets_token` — for Contents API calls
+    /// Same headers, but bearing `assets_token` — for metadata and Contents calls
     /// against `ASSETS_REPO`. A distinct method so the two credentials can
-    /// never be mixed up by an inline typo at a call site: `put_asset` is
-    /// the only caller.
+    /// never be mixed up by an inline typo at a call site.
     fn authed_for_assets(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         Self::stamp(builder, &self.assets_token)
     }
@@ -150,7 +156,7 @@ impl GithubClient {
         Err(GithubError::Status { status, body })
     }
 
-    /// Commits one attachment at `path` (relative to the assets repo root).
+    /// Commits one private report or attachment at `path` (relative to the assets repo root).
     /// `content_b64` is passed straight through to the Contents API, which
     /// itself expects base64 — the wire format already carries attachment
     /// bytes that way, so this never decodes and re-encodes them.
@@ -169,6 +175,23 @@ impl GithubClient {
         let response = Self::error_for_status(response).await?;
         let parsed: ContentsResponse = response.json().await?;
         Ok(parsed.content)
+    }
+
+    /// Original reports can contain contact details and application content.
+    /// Check the repository boundary before writing any part of a submission.
+    pub async fn require_private_assets(&self) -> Result<(), GithubError> {
+        let response = self
+            .authed_for_assets(
+                self.http
+                    .get(format!("{}/repos/{ASSETS_REPO}", self.api_base)),
+            )
+            .send()
+            .await?;
+        let metadata: serde_json::Value = Self::error_for_status(response).await?.json().await?;
+        if metadata.get("private").and_then(serde_json::Value::as_bool) != Some(true) {
+            return Err(GithubError::AssetsNotPrivate);
+        }
+        Ok(())
     }
 
     /// Files a new issue with the given title, body and labels.

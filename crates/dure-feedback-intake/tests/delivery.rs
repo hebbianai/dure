@@ -9,7 +9,7 @@ use axum::Router;
 use axum::extract::Path;
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{post, put};
+use axum::routing::{get, post, put};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use dure_feedback_intake::http::{AppState, FeedbackSink, router};
@@ -31,11 +31,13 @@ struct GithubState {
     comments: Vec<CommentCall>,
     list_calls: Vec<String>,
     fail_issue_creation: bool,
+    fail_report_storage: bool,
+    assets_public: bool,
     /// Basenames that should fail their Contents PUT with a 500, so tests
     /// can exercise a partial-attachment-failure delivery.
     fail_put_names: Vec<String>,
     next_number: u64,
-    /// `Authorization` headers seen on every call against `dure-internal`
+    /// `Authorization` headers seen on every call against `dure`
     /// (dedupe listing, issue creation, comment creation) — kept separate
     /// from `PutCall::authorization` (the Contents API, against
     /// `dure-feedback-assets`) so a test can assert the two GitHub
@@ -75,12 +77,20 @@ struct CommentCall {
 type SharedGithub = Arc<Mutex<GithubState>>;
 
 fn github_router(state: SharedGithub) -> Router {
+    let metadata_state = state.clone();
     let put_state = state.clone();
     let create_state = state.clone();
     let list_state = state.clone();
     let comment_state = state;
 
     Router::new()
+        .route("/repos/hebbianai/dure-feedback-assets", get(move |headers: HeaderMap| {
+            let state = metadata_state.clone();
+            async move {
+                assert_eq!(authorization_header(&headers), "Bearer test-assets-token");
+                Json(json!({"private": !state.lock().unwrap().assets_public}))
+            }
+        }))
         .route(
             "/repos/hebbianai/dure-feedback-assets/contents/{*path}",
             put(
@@ -91,7 +101,7 @@ fn github_router(state: SharedGithub) -> Router {
             ),
         )
         .route(
-            "/repos/hebbianai/dure-internal/issues",
+            "/repos/hebbianai/dure/issues",
             post(move |headers: HeaderMap, Json(payload): Json<Value>| {
                 let state = create_state.clone();
                 async move { create_issue(state, authorization_header(&headers), payload) }
@@ -102,7 +112,7 @@ fn github_router(state: SharedGithub) -> Router {
             }),
         )
         .route(
-            "/repos/hebbianai/dure-internal/issues/{number}/comments",
+            "/repos/hebbianai/dure/issues/{number}/comments",
             post(
                 move |Path(number): Path<u64>, headers: HeaderMap, Json(payload): Json<Value>| {
                     let state = comment_state.clone();
@@ -131,7 +141,9 @@ fn put_contents(
 ) -> Response {
     let mut guard = state.lock().unwrap();
     let basename = path.rsplit('/').next().unwrap_or(&path).to_string();
-    if guard.fail_put_names.contains(&basename) {
+    if guard.fail_put_names.contains(&basename)
+        || (guard.fail_report_storage && path.starts_with("reports/"))
+    {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             "mock github: this attachment is configured to fail",
@@ -320,6 +332,85 @@ fn sha256_hex(device: &str, body: &str) -> String {
 
 // --- Tests -----------------------------------------------------------
 
+fn private_report(state: &GithubState, index: usize) -> String {
+    let stored = state
+        .puts
+        .iter()
+        .filter(|put| put.path.starts_with("reports/"))
+        .nth(index)
+        .expect("private report was stored");
+    String::from_utf8(BASE64.decode(&stored.content_b64).unwrap()).unwrap()
+}
+
+fn public_fingerprint(value: &str) -> String {
+    format!("{:x}", Sha256::digest(value.as_bytes()))
+}
+
+#[tokio::test]
+async fn public_tracking_and_duplicates_never_publish_original_content() {
+    let (github_base, state) = spawn_github().await;
+    let sink = sink_without_telegram(github_base);
+    let submission = Submission::parse(
+        &json!({
+            "schema": 1, "kind": "bug", "body": "private-body-marker",
+            "device": "private-device-marker", "contact": "private-contact-marker",
+            "env": { "app": "private-app-marker", "channel": "private-channel-marker",
+                "os": "private-os-marker", "arch": "private-arch-marker",
+                "locale": "private-locale-marker", "window": "private-window-marker" },
+            "attachments": [{"name":"private-image.png", "media_type":"image/png",
+                "bytes_b64": BASE64.encode(b"private image") }]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    sink.deliver(&submission).await.unwrap();
+    sink.deliver(&submission).await.unwrap();
+    let state = state.lock().unwrap();
+    assert_eq!(state.issues.len(), 1);
+    assert_eq!(state.comments.len(), 1);
+    for text in [
+        &state.issues[0].title,
+        &state.issues[0].body,
+        &state.comments[0].body,
+    ] {
+        assert!(
+            !text.contains("private-"),
+            "original content leaked: {text}"
+        );
+    }
+    for index in 0..2 {
+        let report = private_report(&state, index);
+        assert!(report.contains(r"private\-body\-marker"));
+        assert!(report.contains(r"private\-contact\-marker"));
+        assert!(report.contains("private-image.png"));
+    }
+    assert!(state.issues[0].body.contains("/reports/"));
+    assert!(state.comments[0].body.contains("/reports/"));
+}
+
+#[tokio::test]
+async fn public_assets_repository_or_failed_private_report_storage_refuses_delivery() {
+    for public in [true, false] {
+        let (github_base, state) = spawn_github().await;
+        {
+            let mut state = state.lock().unwrap();
+            state.assets_public = public;
+            state.fail_report_storage = !public;
+        }
+        let sink = sink_without_telegram(github_base);
+        let submission = Submission::parse(&format!(
+            r#"{{"schema":1,"kind":"bug","body":"Private original","device":"d-private",{}}}"#,
+            env_block()
+        ))
+        .unwrap();
+        assert!(sink.deliver(&submission).await.is_err());
+        let state = state.lock().unwrap();
+        assert!(state.issues.is_empty());
+        assert!(state.comments.is_empty());
+        assert!(state.puts.is_empty());
+    }
+}
+
 #[tokio::test]
 async fn bug_with_png_attachment_commits_the_asset_then_files_one_issue() {
     let (github_base, github_state) = spawn_github().await;
@@ -342,8 +433,8 @@ async fn bug_with_png_attachment_commits_the_asset_then_files_one_issue() {
     let guard = github_state.lock().unwrap();
     assert_eq!(
         guard.puts.len(),
-        1,
-        "exactly one Contents PUT per attachment"
+        2,
+        "one attachment and one private written report"
     );
     let put = &guard.puts[0];
     assert!(
@@ -358,6 +449,7 @@ async fn bug_with_png_attachment_commits_the_asset_then_files_one_issue() {
 
     assert_eq!(guard.issues.len(), 1, "exactly one issue created");
     let issue = &guard.issues[0];
+    let report = private_report(&guard, 0);
     assert!(
         issue.body.contains("github.mock/blob"),
         "body links the committed asset: {}",
@@ -366,17 +458,18 @@ async fn bug_with_png_attachment_commits_the_asset_then_files_one_issue() {
     // Every environment value crosses `render_untrusted` (fix round 5), so
     // markdown's own punctuation arrives backslash-escaped in the stored
     // body and renders back as the literal text that was submitted.
-    assert!(issue.body.contains(r"| App | 0\.2\.19 |"));
-    assert!(issue.body.contains("| Channel | beta |"));
-    assert!(issue.body.contains(r"| OS | macOS 15\.5 |"));
-    assert!(issue.body.contains("| Arch | aarch64 |"));
-    assert!(issue.body.contains("| Locale | ko |"));
-    assert!(issue.body.contains("| Window | 1512x982 |"));
+    assert!(report.contains(r"| App | 0\.2\.19 |"));
+    assert!(report.contains("| Channel | beta |"));
+    assert!(report.contains(r"| OS | macOS 15\.5 |"));
+    assert!(report.contains("| Arch | aarch64 |"));
+    assert!(report.contains("| Locale | ko |"));
+    assert!(report.contains("| Window | 1512x982 |"));
     assert_eq!(
         issue.labels,
         vec!["source:feedback".to_string(), "feedback:bug".to_string()]
     );
-    assert!(issue.title.starts_with("[feedback] It crashed on save"));
+    assert_eq!(issue.title, format!("[feedback] bug report {reference}"));
+    assert!(!issue.body.contains("It crashed"));
 
     assert!(
         guard
@@ -421,8 +514,8 @@ async fn a_second_submission_with_a_known_fingerprint_comments_instead_of_filing
     );
     assert_eq!(guard.comments[0].issue_number, guard.issues[0].number);
     assert!(
-        guard.comments[0].body.contains("Same bug again"),
-        "the comment still carries the submitted text"
+        private_report(&guard, 1).contains("Same bug again"),
+        "the duplicate still retains its original text privately"
     );
 }
 
@@ -450,8 +543,11 @@ async fn a_crash_submission_takes_its_fingerprint_from_the_incident_bundle() {
     assert_eq!(guard.issues.len(), 1);
     let issue_body = &guard.issues[0].body;
     assert!(
-        issue_body.contains("dure-feedback-fingerprint: cafef00d1234"),
-        "marker must carry the bundle's fingerprint: {issue_body}"
+        issue_body.contains(&format!(
+            "dure-feedback-fingerprint: {}",
+            public_fingerprint("cafef00d1234")
+        )),
+        "marker must carry a digest of the bundle fingerprint: {issue_body}"
     );
     let sha_fallback = sha256_hex(device, text);
     assert!(
@@ -514,7 +610,7 @@ async fn a_crash_fingerprint_comment_escape_attempt_never_reaches_the_issue_body
     // closing delimiter, immediately after the fallback sha256 fingerprint.
     let expected_marker = format!(
         "dure-feedback-fingerprint: {} -->",
-        sha256_hex(device, text)
+        public_fingerprint(&sha256_hex(device, text))
     );
     assert!(
         issue_body.contains(&expected_marker),
@@ -548,7 +644,7 @@ async fn a_crash_fingerprint_with_a_disallowed_character_falls_back_to_the_sha25
         "the rejected bundle value must not appear anywhere: {issue_body}"
     );
     assert!(
-        issue_body.contains(&sha256_hex(device, text)),
+        issue_body.contains(&public_fingerprint(&sha256_hex(device, text))),
         "must fall back to sha256(device+body): {issue_body}"
     );
 }
@@ -581,11 +677,12 @@ async fn a_realistic_error_v1_fingerprint_still_dedupes() {
         "a genuine shared fingerprint must still dedupe across different devices/bodies"
     );
     assert_eq!(guard.comments.len(), 1);
-    assert!(
-        guard.issues[0]
-            .body
-            .contains(&format!("dure-feedback-fingerprint: {fingerprint} -->"))
-    );
+    assert!(guard.issues[0].body.contains(&format!(
+        "dure-feedback-fingerprint: {} -->",
+        public_fingerprint(fingerprint)
+    )));
+    assert!(!guard.issues[0].body.contains(fingerprint));
+    assert!(!guard.comments[0].body.contains(fingerprint));
 }
 
 #[tokio::test]
@@ -714,11 +811,11 @@ async fn a_failed_attachment_upload_does_not_block_the_issue_or_the_other_attach
     let guard = github_state.lock().unwrap();
     assert_eq!(
         guard.puts.len(),
-        1,
-        "only the attachment that succeeded is committed"
+        2,
+        "the good attachment and private written report are committed"
     );
     assert_eq!(guard.issues.len(), 1, "the issue is still filed");
-    let issue_body = &guard.issues[0].body;
+    let issue_body = private_report(&guard, 0);
     assert!(
         issue_body.contains("good.png") && issue_body.contains("github.mock/blob"),
         "the issue links the attachment that succeeded: {issue_body}"
@@ -750,7 +847,7 @@ async fn an_attachment_name_with_path_traversal_is_reduced_to_its_basename() {
     let reference = sink.deliver(&submission).await.expect("delivers");
 
     let guard = github_state.lock().unwrap();
-    assert_eq!(guard.puts.len(), 1);
+    assert_eq!(guard.puts.len(), 2);
     let put_path = &guard.puts[0].path;
     assert!(
         !put_path.contains(".."),
@@ -785,11 +882,11 @@ async fn an_attachment_name_with_unsafe_characters_is_rejected_not_renamed() {
     let guard = github_state.lock().unwrap();
     assert_eq!(
         guard.puts.len(),
-        0,
-        "the unsafe name must never reach the Contents API, sanitized or not"
+        1,
+        "only the written report is stored; the unsafe attachment is never uploaded"
     );
     assert_eq!(guard.issues.len(), 1);
-    let issue_body = &guard.issues[0].body;
+    let issue_body = private_report(&guard, 0);
     assert!(
         !issue_body.contains("screen shot.png"),
         "an unvalidated, attacker-controlled name must never be echoed into the issue body: {issue_body}"
@@ -825,13 +922,13 @@ async fn an_attachment_name_of_only_dots_is_rejected_not_uploaded() {
     let guard = github_state.lock().unwrap();
     assert_eq!(
         guard.puts.len(),
-        0,
+        1,
         "a dot-only basename must never reach the Contents API — reqwest's own \
          dot-segment normalization would otherwise cancel the reference folder \
          and land the PUT one level up"
     );
     assert_eq!(guard.issues.len(), 1);
-    assert!(guard.issues[0].body.contains("1 attachment was rejected"));
+    assert!(private_report(&guard, 0).contains("1 attachment was rejected"));
 }
 
 #[tokio::test]
@@ -856,11 +953,11 @@ async fn a_malicious_attachment_name_is_never_echoed_into_the_issue_body() {
     let guard = github_state.lock().unwrap();
     assert_eq!(
         guard.puts.len(),
-        0,
-        "the malicious name must never reach the Contents API"
+        1,
+        "only the written report is stored; the malicious attachment is never uploaded"
     );
     assert_eq!(guard.issues.len(), 1);
-    let issue_body = &guard.issues[0].body;
+    let issue_body = private_report(&guard, 0);
     assert!(
         !issue_body.contains("evil.test"),
         "no fragment of the payload may appear in the issue body: {issue_body}"
@@ -905,7 +1002,7 @@ async fn an_env_value_cannot_inject_markdown_a_mention_or_a_table_row() {
     sink.deliver(&submission).await.expect("delivers");
 
     let guard = github_state.lock().unwrap();
-    let issue_body = &guard.issues[0].body;
+    let issue_body = private_report(&guard, 0);
     assert!(
         !issue_body.contains("## Injected"),
         "an env value must not be able to open a heading: {issue_body}"
@@ -945,7 +1042,7 @@ async fn a_contact_value_cannot_inject_a_mention_or_a_link() {
     sink.deliver(&submission).await.expect("delivers");
 
     let guard = github_state.lock().unwrap();
-    let issue_body = &guard.issues[0].body;
+    let issue_body = private_report(&guard, 0);
     assert!(
         !issue_body.contains('@'),
         "a contact must not be able to page a team: {issue_body}"
@@ -987,7 +1084,7 @@ async fn a_whitespace_only_contact_never_produces_a_contact_line() {
     sink.deliver(&submission).await.expect("delivers");
 
     let guard = github_state.lock().unwrap();
-    let issue_body = &guard.issues[0].body;
+    let issue_body = private_report(&guard, 0);
     assert!(
         !issue_body.contains("**Contact:**"),
         "a blank contact must never produce a contact line: {issue_body}"
@@ -1091,7 +1188,7 @@ async fn a_malicious_attachment_name_never_reaches_the_telegram_upload_either() 
 //
 // The intake now holds two GitHub credentials rather than one: a
 // fine-grained PAT applies one permission set to every repository it
-// selects, so a single token needing Issues write on `dure-internal` and
+// selects, so a single token needing Issues write on `dure` and
 // Contents write on `dure-feedback-assets` would give this internet-facing
 // service Contents write on the code repository too. `sink_pointed_at` uses
 // two distinct token strings ("test-github-token" / "test-assets-token")
@@ -1115,10 +1212,17 @@ async fn contents_calls_carry_the_assets_token_while_issue_calls_carry_the_other
     sink.deliver(&submission).await.expect("delivers");
 
     let guard = github_state.lock().unwrap();
-    assert_eq!(guard.puts.len(), 1, "the attachment PUT happened");
     assert_eq!(
-        guard.puts[0].authorization, "Bearer test-assets-token",
-        "the Contents API call must carry the assets credential, not the issues one"
+        guard.puts.len(),
+        2,
+        "the attachment and private report PUTs happened"
+    );
+    assert!(
+        guard
+            .puts
+            .iter()
+            .all(|put| put.authorization == "Bearer test-assets-token"),
+        "every Contents API call must carry the assets credential, not the issues one"
     );
     assert!(
         !guard.issues_api_authorizations.is_empty(),
@@ -1129,7 +1233,7 @@ async fn contents_calls_carry_the_assets_token_while_issue_calls_carry_the_other
             .issues_api_authorizations
             .iter()
             .all(|authorization| authorization == "Bearer test-github-token"),
-        "every dure-internal call (dedupe listing, issue creation, comments) \
+        "every dure call (dedupe listing, issue creation, comments) \
          must carry the issues credential, never the assets one: {:?}",
         guard.issues_api_authorizations
     );

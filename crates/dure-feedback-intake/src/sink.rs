@@ -1,5 +1,5 @@
-//! The real [`FeedbackSink`]: commits attachments to the asset repository,
-//! files a GitHub issue (or comments on an existing one carrying the same
+//! The real [`FeedbackSink`]: stores original reports and attachments privately,
+//! files a public tracking issue (or comments on an existing one carrying the same
 //! fingerprint), and best-effort pings Telegram.
 //!
 //! GitHub is the durable record — any failure talking to it is a real
@@ -51,11 +51,11 @@ const FALLBACK_UPLOAD_NAME: &str = "screenshot.png";
 /// `github_token` and `github_assets_token` are deliberately two separate,
 /// both-required fields rather than one: a fine-grained PAT applies one
 /// permission set to every repository it selects, so a single token needing
-/// Issues write on `dure-internal` and Contents write on
+/// Issues write on `dure` and Contents write on
 /// `dure-feedback-assets` would give this internet-facing service Contents
 /// write on the code repository — compromising the intake would then let
 /// someone rewrite code. `github_token` needs only Issues read/write on
-/// `dure-internal`; `github_assets_token` needs only Contents read/write on
+/// `dure`; `github_assets_token` needs only Contents read/write on
 /// `dure-feedback-assets`. Both are required at startup for the same reason
 /// `GITHUB_TOKEN` alone was before: a screenshot is evidence, not
 /// convenience, so an intake that booted without the assets credential
@@ -143,6 +143,10 @@ impl GithubTelegramSink {
 #[async_trait]
 impl FeedbackSink for GithubTelegramSink {
     async fn deliver(&self, submission: &Submission) -> Result<String, SinkError> {
+        self.github
+            .require_private_assets()
+            .await
+            .map_err(|err| SinkError(err.to_string()))?;
         let reference = generate_reference();
         let (year, month) = year_month_utc(SystemTime::now());
 
@@ -150,8 +154,9 @@ impl FeedbackSink for GithubTelegramSink {
         // must already exist before either is created. Neither an unsafe
         // name nor a failed upload is fatal to the whole submission — the
         // user's written report is what actually matters, so each problem
-        // attachment is just noted in the issue body instead of discarding
-        // the report. Only issue/comment creation itself can fail `deliver`.
+        // attachment is just noted in the private report instead of discarding
+        // the report. The private written report and public tracking receipt
+        // must both be stored before delivery is accepted.
         //
         // A rejected attachment's raw `attachment.name` is never put in the
         // note: it is unvalidated by definition, and a name shaped as a
@@ -184,16 +189,44 @@ impl FeedbackSink for GithubTelegramSink {
             }
         }
 
-        let fingerprint = fingerprint_for(submission);
+        // Crash fingerprints are client-controlled text. Publish only a digest,
+        // never a potentially identifying raw fingerprint in the public marker.
+        let fingerprint = format!(
+            "{:x}",
+            Sha256::digest(fingerprint_for(submission).as_bytes())
+        );
         let marker = fingerprint_marker(&fingerprint);
-        let title = issue_title(&submission.body);
-        let body = issue_body(
+        let report = private_report_body(
             submission,
             &asset_links,
             &failed_uploads,
             rejected_count,
             &reference,
             &fingerprint,
+        );
+        // Separate from the attachment directory so an uploaded report.md
+        // cannot collide with or replace the canonical written report.
+        let stored = self
+            .github
+            .put_asset(
+                &format!("reports/{year:04}/{month:02}/{reference}.md"),
+                &BASE64.encode(report),
+                &format!("feedback {reference}: store private report"),
+            )
+            .await
+            .map_err(|err| SinkError(err.to_string()))?;
+        let title = format!(
+            "[feedback] {} report {reference}",
+            kind_label(submission.kind)
+        );
+        let body = format!(
+            "A **{}** report was received through Dure feedback.\n\n\
+             **Reference:** {reference}\n\n\
+             [Maintainer report (restricted access)]({})\n\n\
+             The original description, environment, contact and attachments are retained privately. \
+             A maintainer can add a reviewed public summary here.\n\n{marker}\n",
+            kind_label(submission.kind),
+            stored.html_url,
         );
 
         let open_issues = self
@@ -220,7 +253,12 @@ impl FeedbackSink for GithubTelegramSink {
             created.html_url
         };
 
-        let summary = telegram_summary(&title, submission, &issue_url, &reference);
+        let summary = telegram_summary(
+            &issue_title(&submission.body),
+            submission,
+            &issue_url,
+            &reference,
+        );
         self.notify_telegram(submission, &summary).await;
 
         Ok(reference)
@@ -474,19 +512,18 @@ fn render_untrusted(value: &str, placement: Placement) -> String {
     rendered
 }
 
-/// Builds the issue (and duplicate-comment) body: the submitted text, the
+/// Builds the private report: the submitted text, the
 /// environment table, the contact when given, links to the committed
 /// assets, a note for each attachment that could not be uploaded or was
-/// rejected, the reference, and the fingerprint marker the dedupe lookup
-/// searches for.
+/// rejected, the reference, and the fingerprint used by public tracking.
 ///
 /// `failed_uploads` holds each `safe_name` (already constrained to
 /// `[A-Za-z0-9._-]{1,64}`) whose upload failed — safe to render, so it is
 /// named directly, backtick-quoted. `rejected_count` is a bare count of
 /// attachments whose raw name failed validation: that name is
-/// unvalidated, attacker-controlled input and must never be echoed into an
-/// internal tracker issue, so only the count and reason are reported.
-fn issue_body(
+/// unvalidated, attacker-controlled input and must never be echoed into a
+/// stored report, so only the count and reason are reported.
+fn private_report_body(
     submission: &Submission,
     asset_links: &[(String, String)],
     failed_uploads: &[String],

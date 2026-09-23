@@ -189,10 +189,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let app = Router::new()
-            .route(
-                "/repos/hebbianai/dure-internal",
-                get(move || async move { status }),
-            )
+            .route("/repos/hebbianai/dure", get(move || async move { status }))
             .route(
                 "/repos/hebbianai/dure-feedback-assets",
                 get(move || async move { status }),
