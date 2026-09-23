@@ -71,6 +71,11 @@ Both forms above keep the dashes. A bare `-` and a negative number such as
 
 On success the reference id is the only thing on stdout — `{"reference":"…"}`
 with `--json`. Errors go to stderr, as `{"error":"…"}` under `--json`.
+When the intake supplies a retry delay for a 429, the error also includes
+`retryAfterSeconds` and the text names the wait. Keep the report text and
+wait at least that long before retrying; the CLI does not queue or retry it
+automatically. Older intakes may not supply a delay. The quota is shared by
+agents using the same device id, and a separate IP quota applies too.
 
 - **0** — accepted, reference returned.
 - **1** — the report was built but not sent: a declined confirmation, network

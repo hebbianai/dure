@@ -140,8 +140,12 @@ export function classifyFeedbackArgs(rawArgs, { parseOptsImpl = parseOpts } = {}
 
 /** The one place the `--json` decision is made for every failure exit —
  *  every non-zero return path routes its message through this. */
-export function formatFeedbackError(message, json) {
-	return json ? `${JSON.stringify({ error: message })}\n` : `${message}\n`;
+export function formatFeedbackError(message, json, retryAfterSeconds) {
+	const error = { error: message };
+	if (retryAfterSeconds !== undefined) error.retryAfterSeconds = retryAfterSeconds;
+	return json
+		? `${JSON.stringify(error)}\n`
+		: `${message}\n`;
 }
 
 // The CLI entry script, which is what identifies the running build: an
@@ -382,10 +386,18 @@ export async function postFeedback(envelope, { fetchImpl = globalThis.fetch, end
 		};
 	}
 	if (response.status === 429) {
+		const retryAfter = response.headers.get("retry-after");
+		const seconds =
+			retryAfter !== null && /^\d+$/.test(retryAfter) ? Number(retryAfter) : undefined;
+		const retryAfterSeconds = Number.isSafeInteger(seconds) ? seconds : undefined;
 		return {
 			ok: false,
 			kind: "rate_limited",
-			message: "Feedback rate limited. Try again later.",
+			...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+			message:
+				retryAfterSeconds === undefined
+					? "Feedback rate limited. Try again later."
+					: `Feedback rate limited. Try again in ${retryAfterSeconds} seconds.`,
 		};
 	}
 	return {
@@ -458,7 +470,8 @@ export async function runFeedbackCommand(opts, overrides = {}) {
 
 	// Every failure exit routes through this one call so the --json decision
 	// is made in exactly one place, not re-decided at each return site.
-	const fail = (message) => stderr.write(formatFeedbackError(message, opts.json));
+	const fail = (message, retryAfterSeconds) =>
+		stderr.write(formatFeedbackError(message, opts.json, retryAfterSeconds));
 
 	const kind = opts.kind ?? "bug";
 	if (!FEEDBACK_CLI_KINDS.includes(kind)) {
@@ -517,7 +530,7 @@ export async function runFeedbackCommand(opts, overrides = {}) {
 
 	const outcome = await postFeedback(envelope, { fetchImpl, endpoint });
 	if (!outcome.ok) {
-		fail(outcome.message);
+		fail(outcome.message, outcome.retryAfterSeconds);
 		return 1;
 	}
 

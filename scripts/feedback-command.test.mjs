@@ -703,6 +703,30 @@ describe("runFeedbackCommand exit codes and --json output", () => {
 		expect(JSON.parse(stderr.text())).toEqual({ error: expect.stringContaining("rate limited") });
 	});
 
+	it.each([false, true])("reports Retry-After without retrying the submission (json=%s)", async (json) => {
+		const { endpoint, requests } = await startFixtureServer((response) => {
+			response.writeHead(429, { "content-type": "application/json", "retry-after": "42" });
+			response.end(JSON.stringify({ error: "RATE_LIMITED", retryAfterSeconds: 42 }));
+		});
+		const { overridesObject, stdout, stderr } = overrides({ endpoint, home: tempHome() });
+		const code = await runFeedbackCommand({ rest: ["keep this report"], json }, overridesObject);
+		expect(code).toBe(1);
+		expect(stdout.text()).toBe("");
+		expect(requests).toHaveLength(1);
+		const error = "Feedback rate limited. Try again in 42 seconds.";
+		expect(stderr.text()).toBe(json ? `${JSON.stringify({ error, retryAfterSeconds: 42 })}\n` : `${error}\n`);
+	});
+
+	it.each(["later", "-1", "1.5", "9007199254740992"])("ignores an invalid retry delay %s", async (retryAfter) => {
+		const { endpoint } = await startFixtureServer((response) => {
+			response.writeHead(429, { "retry-after": retryAfter });
+			response.end();
+		});
+		const { overridesObject, stderr } = overrides({ endpoint, home: tempHome() });
+		expect(await runFeedbackCommand({ rest: ["keep this report"], json: true }, overridesObject)).toBe(1);
+		expect(JSON.parse(stderr.text())).toEqual({ error: "Feedback rate limited. Try again later." });
+	});
+
 	it("exits 1 on a 413 and names the oversized field", async () => {
 		const { endpoint } = await startFixtureServer((response) => {
 			response.writeHead(413, { "content-type": "application/json" });

@@ -19,7 +19,7 @@ use dure_feedback_intake::wire::Submission;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::SystemTime;
 use tower::ServiceExt;
 
 // --- Mock GitHub -----------------------------------------------------------
@@ -643,7 +643,7 @@ async fn a_github_failure_surfaces_as_503_through_the_http_layer() {
     let (telegram_base, _telegram_state) = spawn_telegram(StatusCode::OK).await;
     let sink = Arc::new(sink_pointed_at(github_base, telegram_base));
 
-    let start = Instant::now();
+    let start = SystemTime::now();
     let state = AppState::new(sink, RateLimiter::new(Box::new(move || start)), false);
 
     let env = env_block();

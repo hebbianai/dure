@@ -21,7 +21,7 @@
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::SystemTime;
 
 use dure_feedback_intake::github::{CredentialCheck, GithubClient};
 use dure_feedback_intake::http::{AppState, router};
@@ -155,7 +155,7 @@ async fn main() {
 
     let state = AppState::new(
         Arc::new(sink),
-        RateLimiter::new(Box::new(Instant::now)),
+        RateLimiter::new(Box::new(SystemTime::now)),
         disabled,
     );
 

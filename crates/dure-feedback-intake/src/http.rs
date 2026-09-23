@@ -253,10 +253,20 @@ async fn submit_feedback(
     };
 
     let ip = client_ip(&headers, connect_info.0);
-    if !state.limiter.allow(&submission.device, &ip) {
+    if let Err(wait) = state.limiter.check(&submission.device, &ip) {
+        let seconds = wait
+            .as_secs()
+            .saturating_add(u64::from(wait.subsec_nanos() > 0));
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({ "error": "RATE_LIMITED" })),
+            [
+                (header::RETRY_AFTER, seconds.to_string()),
+                (
+                    header::ACCESS_CONTROL_EXPOSE_HEADERS,
+                    "retry-after".to_string(),
+                ),
+            ],
+            Json(json!({ "error": "RATE_LIMITED", "retryAfterSeconds": seconds })),
         )
             .into_response();
     }
@@ -280,7 +290,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, SystemTime};
     use tower::ServiceExt;
 
     #[derive(Default)]
@@ -313,7 +323,7 @@ mod tests {
             .unwrap()
     }
 
-    fn state(clock: impl Fn() -> Instant + Send + Sync + 'static) -> AppState {
+    fn state(clock: impl Fn() -> SystemTime + Send + Sync + 'static) -> AppState {
         AppState::new(
             Arc::new(RecordingSink::default()),
             RateLimiter::new(Box::new(clock)),
@@ -323,7 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn accepts_a_valid_submission_and_returns_a_reference() {
-        let start = Instant::now();
+        let start = SystemTime::now();
         let response = router(state(move || start))
             .oneshot(post("d-1"))
             .await
@@ -341,7 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_the_sixth_submission_from_one_device_within_an_hour() {
-        let start = Instant::now();
+        let start = SystemTime::now();
         let app = router(state(move || start));
         for _ in 0..5 {
             assert_eq!(
@@ -356,8 +366,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rate_limit_tells_clients_when_to_retry() {
+        let start = SystemTime::now();
+        let tick = Arc::new(Mutex::new(start));
+        let reading = Arc::clone(&tick);
+        let app = router(state(move || *reading.lock().unwrap()));
+        for _ in 0..5 {
+            assert_eq!(
+                app.clone().oneshot(post("d-retry")).await.unwrap().status(),
+                StatusCode::CREATED
+            );
+        }
+        *tick.lock().unwrap() = start + Duration::from_millis(1_250);
+        let response = app.oneshot(post("d-retry")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers().get(header::RETRY_AFTER).unwrap(), "3599");
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_EXPOSE_HEADERS)
+                .unwrap(),
+            "retry-after"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            json!({"error": "RATE_LIMITED", "retryAfterSeconds": 3599})
+        );
+    }
+
+    #[tokio::test]
     async fn forgets_the_device_once_the_hour_has_passed() {
-        let start = Instant::now();
+        let start = SystemTime::now();
         let tick = Arc::new(Mutex::new(start));
         let reading = Arc::clone(&tick);
         let app = router(state(move || *reading.lock().unwrap()));
@@ -373,7 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_503_when_the_kill_switch_is_set() {
-        let start = Instant::now();
+        let start = SystemTime::now();
         let disabled = AppState::new(
             Arc::new(RecordingSink::default()),
             RateLimiter::new(Box::new(move || start)),
@@ -391,7 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn answers_preflight_for_the_app_origin_only() {
-        let start = Instant::now();
+        let start = SystemTime::now();
         let app = router(state(move || start));
         let preflight = |origin: &str| {
             Request::builder()
@@ -431,7 +473,7 @@ mod tests {
     // in `wire.rs`.
     #[tokio::test]
     async fn rejects_a_201_character_contact() {
-        let start = Instant::now();
+        let start = SystemTime::now();
         let long_contact = "x".repeat(201);
         let body = format!(
             r#"{{"schema":1,"kind":"bug","body":"it froze","device":"d-contact","contact":"{long_contact}",
@@ -489,7 +531,7 @@ mod tests {
     // every Windows bundle windows-desktop.yml builds.
     #[tokio::test]
     async fn answers_preflight_for_the_windows_webview_origin() {
-        let start = Instant::now();
+        let start = SystemTime::now();
         let app = router(state(move || start));
         for origin in ["http://tauri.localhost", "https://tauri.localhost"] {
             let request = Request::builder()
@@ -542,7 +584,7 @@ mod tests {
     // a delivery attempt has already been spent.
     #[tokio::test]
     async fn rejects_an_oversized_environment_value() {
-        let start = Instant::now();
+        let start = SystemTime::now();
         let huge = "x".repeat(200_000);
         let body = format!(
             r#"{{"schema":1,"kind":"bug","body":"it froze","device":"d-env",
@@ -563,7 +605,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_three_attachments() {
-        let start = Instant::now();
+        let start = SystemTime::now();
         let attachment = r#"{"name":"a.png","media_type":"image/png","bytes_b64":"QQ=="}"#;
         let body = format!(
             r#"{{"schema":1,"kind":"bug","body":"it froze","device":"d-attach",
