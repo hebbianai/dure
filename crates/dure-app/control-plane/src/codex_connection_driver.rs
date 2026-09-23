@@ -629,6 +629,58 @@ async fn connect_upstream(
     path: &Path,
     child: &mut Child,
 ) -> Result<Socket, CodexConnectionDriverError> {
+    let daemon_directory = fs::canonicalize("/tmp")
+        .map(|root| root.join(format!("codex-daemon-{}", unsafe { libc::geteuid() })))
+        .map_err(|_| CodexConnectionDriverError::new("upstream_socket_unsafe"))?;
+    connect_upstream_in(path, child, &daemon_directory).await
+}
+
+/// Codex 0.156+ binds inside its per-user daemon directory and publishes the
+/// requested path as a symlink. Accept only the alias Codex itself derives:
+/// sha256 of the canonical requested path, in a user-owned 0700 directory.
+fn codex_protected_socket_path(
+    alias: &Path,
+    daemon_directory: &Path,
+) -> Result<PathBuf, CodexConnectionDriverError> {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::ffi::OsStrExt;
+
+    let unsafe_socket = || CodexConnectionDriverError::new("upstream_socket_unsafe");
+    let parent =
+        fs::canonicalize(alias.parent().ok_or_else(unsafe_socket)?).map_err(|_| unsafe_socket())?;
+    let name = alias.file_name().ok_or_else(unsafe_socket)?;
+    let hash = Sha256::digest(parent.join(name).as_os_str().as_bytes());
+    Ok(daemon_directory.join(format!("{hash:x}")))
+}
+
+fn codex_rendezvous_socket(
+    alias: &Path,
+    daemon_directory: &Path,
+) -> Result<PathBuf, CodexConnectionDriverError> {
+    let unsafe_socket = || CodexConnectionDriverError::new("upstream_socket_unsafe");
+    let physical = codex_protected_socket_path(alias, daemon_directory)?;
+    if fs::read_link(alias).map_err(|_| unsafe_socket())? != physical {
+        return Err(unsafe_socket());
+    }
+    let uid = unsafe { libc::geteuid() };
+    let directory = fs::symlink_metadata(daemon_directory).map_err(|_| unsafe_socket())?;
+    let socket = fs::symlink_metadata(&physical).map_err(|_| unsafe_socket())?;
+    if !directory.is_dir()
+        || directory.uid() != uid
+        || directory.permissions().mode() & 0o777 != 0o700
+        || !socket.file_type().is_socket()
+        || socket.uid() != uid
+    {
+        return Err(unsafe_socket());
+    }
+    Ok(physical)
+}
+
+async fn connect_upstream_in(
+    path: &Path,
+    child: &mut Child,
+    daemon_directory: &Path,
+) -> Result<Socket, CodexConnectionDriverError> {
     let deadline = Instant::now() + UPSTREAM_READY_TIMEOUT;
     loop {
         match fs::symlink_metadata(path) {
@@ -639,6 +691,10 @@ async fn connect_upstream(
                 fs::set_permissions(path, fs::Permissions::from_mode(0o600))
                     .map_err(|_| CodexConnectionDriverError::new("upstream_socket_unsafe"))?;
                 return open_upstream(path).await;
+            }
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let socket = codex_rendezvous_socket(path, daemon_directory)?;
+                return open_upstream(&socket).await;
             }
             Ok(_) => return Err(CodexConnectionDriverError::new("upstream_socket_unsafe")),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
