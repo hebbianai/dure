@@ -218,6 +218,36 @@ test("a transient observation timeout re-queries the same response without chang
   expect(querySession).toHaveBeenCalledTimes(3);
 });
 
+test("a transient failed Host probe preserves the exact cursor until completion", async () => {
+  const { result, querySession } = observe([
+    snapshot({ count: "37" }),
+    snapshot({ session: { health: "unprobed" } }),
+    snapshot({ count: "38", revision: "2" }),
+  ]);
+  expect(await result).toMatchObject({ state: "completed", target: { afterTurn: "37", terminalEpoch: "terminal-1" } });
+  expect(querySession).toHaveBeenCalledTimes(3);
+});
+
+test("persistent failed probes reach the requested deadline with actionable diagnostics", async () => {
+  const result = await observe([snapshot({ count: "37" }), snapshot({ session: { health: "unprobed" } })]).result;
+  expect(result).toMatchObject({ state: "unknown", exitCode: 124, durationMs: 2000,
+    diagnostic: { reason: "host_generation_unobserved", exactGeneration: false },
+    observation: { turnCompletedCount: "37" },
+    nextAction: { kind: "inspect_then_resume", resume: ["dure", "wait", "session-1", "--workspace", "workspace-1", "--after-turn", "37", "--terminal-epoch", "terminal-1", "--json"] },
+  });
+});
+
+test("an exact Host with no response observer reports a distinct reason and preserves recovery", async () => {
+  const report = snapshot();
+  report.session.runtime.agentRuntimeState = null;
+  const result = await observe([snapshot({ count: "37" }), report]).result;
+  expect(result).toMatchObject({ exitCode: 2, durationMs: 500,
+    diagnostic: { reason: "response_observation_missing", exactGeneration: true },
+    nextAction: { kind: "inspect_then_resume" },
+    target: { afterTurn: "37", terminalEpoch: "terminal-1" },
+  });
+});
+
 test("the existing session boundary refuses a different session's completion", async () => {
   const wrong = hmuxSession(2);
   const { result } = observe([], {

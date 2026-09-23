@@ -26,6 +26,8 @@ prompt delivery completed, not provider response or task completion. Never retri
 Task: reads the exact delegated task/dispatch generation completed by 'dure workflow done'.
 
 JSON is one dure.wait/v1 result with the target, observation and outcome.
+Unknown response results include exact inspect/resume argv in nextAction;
+diagnostic distinguishes a failed Host probe from a missing response observer.
 Exit: 0 condition met; 1 reported failure/action required; 2 unknown/invalid;
 124 observation deadline (target outcome unknown); 130 observer interrupted.
 Timeout and interruption do not stop the Agent. Repeat the exact target to resume.
@@ -105,10 +107,25 @@ export async function collectWait(options, {
   let observation = null;
   let latestRevision = -1n;
   let lastError;
+  let diagnostic;
   const result = (state, exitCode, code, message) => ({
     apiVersion: "dure.wait/v1", subject, state, target, observation,
     ...(backend?.profile ? { backendId: backend.profile.id } : {}),
     durationMs: Math.max(0, Math.round(now() - startedAt)), exitCode,
+    ...(diagnostic && state !== "completed" ? { diagnostic } : {}),
+    ...(subject === "response" && state !== "completed" && target.workspaceId ? {
+      nextAction: {
+        kind: "inspect_then_resume",
+        inspect: ["dure", "inspect", target.sessionId, "--workspace", target.workspaceId,
+          ...(backend?.profile ? ["--backend", backend.profile.id] : []), "--json"],
+        ...(target.afterTurn !== undefined && target.terminalEpoch ? {
+          resume: ["dure", "wait", target.sessionId, "--workspace", target.workspaceId,
+            "--after-turn", target.afterTurn, "--terminal-epoch", target.terminalEpoch,
+            ...(backend?.profile ? ["--backend", backend.profile.id] : []), "--json"],
+        } : {}),
+        message: "Inspect the exact Session generation before resuming; do not resend the prompt. A replacement cannot complete this wait.",
+      },
+    } : {}),
     ...(code ? { error: { code, message, ...(lastError ? { cause: lastError } : {}) } } : {}),
   });
   try {
@@ -157,7 +174,20 @@ export async function collectWait(options, {
         if (observation.status === "start_failed") return result("failed", 1, "wait_task_start_failed", "The delegated task could not start.");
       } else {
         const { runtime, liveness } = report.session;
-        if (!liveness.exactGeneration || !runtime.agentRuntimeState) return result("unknown", 2, "wait_response_unavailable", "The Host has no exact response observation. Process liveness or silence cannot prove response completion.");
+        diagnostic = {
+          reason: !liveness.exactGeneration ? "host_generation_unobserved"
+            : !runtime.agentRuntimeState ? "response_observation_missing" : "awaiting_completed_turn",
+          health: liveness.health,
+          exactGeneration: liveness.exactGeneration,
+          observedAtDurationMs: Math.max(0, Math.round(now() - startedAt)),
+        };
+        // A single failed Host probe must not terminate a previously pinned wait.
+        // Keep its last response and cursor, but never treat the manifest as live evidence.
+        if (!liveness.exactGeneration && observation) {
+          await pause(Math.min(500, Math.max(1, options.timeoutMs - (now() - startedAt))));
+          continue;
+        }
+        if (!liveness.exactGeneration || !runtime.agentRuntimeState) return result("unknown", 2, "wait_response_unavailable", "Observation ended before the deadline because an exact Host response observation is unavailable. See diagnostic.reason and nextAction; process liveness or silence cannot prove completion.");
         if ((target.generation && !sameGeneration(target.generation, runtime.generation)) ||
             (target.terminalEpoch && target.terminalEpoch !== runtime.generation.terminalEpoch)) return result("unknown", 2, "wait_generation_changed", "The Session generation changed. The old response is not completed by a replacement.");
         target.generation ??= runtime.generation;
