@@ -2,8 +2,9 @@
 use serde::Serialize;
 use serde_json::Value;
 use std::{
+    collections::VecDeque,
     fs,
-    io::Read,
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -274,20 +275,56 @@ pub fn transcript_from_file(
     conversation_id: &str,
     parse: fn(&Value) -> Option<(ConversationTurnRole, String)>,
 ) -> Result<ProviderConversationTranscript, String> {
-    let before =
-        fs::metadata(path).map_err(|error| format!("read provider transcript: {error}"))?;
-    if before.len() > MAX_TRANSCRIPT_SOURCE_BYTES {
-        return Err("provider transcript exceeds the source byte limit".to_string());
+    transcript_window(
+        path,
+        provider,
+        conversation_id,
+        parse,
+        MAX_TRANSCRIPT_SOURCE_BYTES,
+        MAX_TRANSCRIPT_OUTPUT_BYTES,
+        MAX_TRANSCRIPT_ENTRIES,
+    )
+}
+
+fn transcript_window(
+    path: &Path,
+    provider: &str,
+    conversation_id: &str,
+    parse: fn(&Value) -> Option<(ConversationTurnRole, String)>,
+    source_limit: u64,
+    output_limit: usize,
+    entry_limit: usize,
+) -> Result<ProviderConversationTranscript, String> {
+    let read_error = |error| format!("read provider transcript: {error}");
+    let mut file = fs::File::open(path).map_err(read_error)?;
+    let before = file.metadata().map_err(read_error)?;
+    if !before.is_file() {
+        return Err("provider transcript is not a regular file".to_string());
     }
-    let bytes = fs::read(path).map_err(|error| format!("read provider transcript: {error}"))?;
-    if bytes.len() > MAX_TRANSCRIPT_SOURCE_BYTES as usize {
-        return Err("provider transcript exceeds the source byte limit".to_string());
-    }
-    let utf8_complete = std::str::from_utf8(&bytes).is_ok();
-    let content = String::from_utf8_lossy(&bytes);
-    let mut entries = Vec::new();
+    // Snapshot a bounded suffix, even while the provider continues appending.
+    // Start one byte earlier so a record exactly on the boundary is retained.
+    let start = before.len().saturating_sub(source_limit);
+    file.seek(SeekFrom::Start(start.saturating_sub(1)))
+        .map_err(read_error)?;
+    let mut bytes = Vec::new();
+    file.take(before.len().min(source_limit + u64::from(start > 0)))
+        .read_to_end(&mut bytes)
+        .map_err(read_error)?;
+    let bytes = if start > 0 {
+        // Never decode a partial JSON record or split UTF-8 code point.
+        let boundary = bytes
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(bytes.len(), |index| index + 1);
+        &bytes[boundary..]
+    } else {
+        &bytes[..]
+    };
+    let utf8_complete = std::str::from_utf8(bytes).is_ok();
+    let content = String::from_utf8_lossy(bytes);
+    let mut entries = VecDeque::new();
     let mut output_bytes = 0usize;
-    let mut history_complete = utf8_complete;
+    let mut history_complete = start == 0 && utf8_complete;
     let mut final_response = None;
     for line in content.lines().filter(|line| !line.trim().is_empty()) {
         let value = match serde_json::from_str::<Value>(line) {
@@ -316,10 +353,13 @@ pub fn transcript_from_file(
         }
         let entry = ProviderTranscriptEntry { role, text };
         output_bytes = output_bytes.saturating_add(entry.text.len());
-        if output_bytes > MAX_TRANSCRIPT_OUTPUT_BYTES || entries.len() == MAX_TRANSCRIPT_ENTRIES {
-            return Err("provider transcript exceeds the output limit".to_string());
+        entries.push_back(entry);
+        while output_bytes > output_limit || entries.len() > entry_limit {
+            if let Some(oldest) = entries.pop_front() {
+                output_bytes -= oldest.text.len();
+                history_complete = false;
+            }
         }
-        entries.push(entry);
     }
     let unchanged = fs::metadata(path).ok().is_some_and(|after| {
         after.len() == before.len() && after.modified().ok() == before.modified().ok()
@@ -330,7 +370,7 @@ pub fn transcript_from_file(
         conversation_id: conversation_id.to_string(),
         history_complete: history_complete && unchanged,
         final_response,
-        entries,
+        entries: entries.into(),
     })
 }
 
@@ -372,3 +412,7 @@ pub fn read_roots(
     let path = path.ok_or_else(|| "provider conversation was not found".to_string())?;
     transcript_from_file(&path, provider, conversation_id, parse)
 }
+
+#[cfg(test)]
+#[path = "transcript_tests.rs"]
+mod tests;
