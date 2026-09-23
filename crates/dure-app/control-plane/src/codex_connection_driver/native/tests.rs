@@ -44,7 +44,58 @@ async fn upstream_readiness_connects_when_the_server_takes_six_seconds() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn upstream_readiness_still_stops_waiting_after_ten_seconds() {
+async fn upstream_readiness_waits_while_a_live_server_backfills_its_session_history() {
+    // Codex holds a 15-minute backfill lease while its first startup indexes
+    // the rollout history. Stopping the server mid-backfill leaves that lease
+    // running and blocks every Codex session sharing the account.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("server.sock");
+    let (mut child, input) = readiness_child();
+    let result = {
+        let connection = connect_upstream(&path, &mut child);
+        tokio::pin!(connection);
+        assert!(futures_util::poll!(&mut connection).is_pending());
+        tokio::time::advance(Duration::from_secs(5 * 60)).await;
+        if let std::task::Poll::Ready(result) = futures_util::poll!(&mut connection) {
+            result
+        } else {
+            let listener = bind_endpoint(&path).unwrap();
+            tokio::time::advance(UPSTREAM_READY_INTERVAL).await;
+            let (accepted, connected) = tokio::join!(
+                async {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    accept_async_with_config(stream, Some(websocket_configuration())).await
+                },
+                connection
+            );
+            accepted.unwrap();
+            connected
+        }
+    };
+    drop(input);
+    child.wait().await.unwrap();
+    result.expect("a live server finishing its history backfill must still connect");
+}
+
+#[tokio::test]
+async fn upstream_readiness_reports_a_server_that_exits_before_listening() {
+    // Codex waiting on another process's backfill exits after its own 30
+    // seconds; the long readiness ceiling must not hide that exit.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("server.sock");
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", "exit 1"])
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(5), connect_upstream(&path, &mut child))
+        .await
+        .expect("a server exit must end readiness without waiting for the ceiling");
+    assert_eq!(result.unwrap_err().reason, "upstream_exited");
+}
+
+#[tokio::test(start_paused = true)]
+async fn upstream_readiness_still_stops_waiting_after_the_backfill_lease() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("server.sock");
     let (mut child, input) = readiness_child();
@@ -52,13 +103,13 @@ async fn upstream_readiness_still_stops_waiting_after_ten_seconds() {
         let connection = connect_upstream(&path, &mut child);
         tokio::pin!(connection);
         assert!(futures_util::poll!(&mut connection).is_pending());
-        tokio::time::advance(Duration::from_secs(9)).await;
+        tokio::time::advance(UPSTREAM_READY_TIMEOUT - Duration::from_secs(1)).await;
         if let std::task::Poll::Ready(result) = futures_util::poll!(&mut connection) {
             (true, result)
         } else {
             tokio::time::advance(Duration::from_secs(1)).await;
             let std::task::Poll::Ready(result) = futures_util::poll!(&mut connection) else {
-                panic!("an absent endpoint must time out after ten seconds");
+                panic!("an absent endpoint must time out after the backfill lease");
             };
             (false, result)
         }
@@ -67,7 +118,7 @@ async fn upstream_readiness_still_stops_waiting_after_ten_seconds() {
     child.wait().await.unwrap();
     assert!(
         !expired_early,
-        "readiness must not time out before ten seconds"
+        "readiness must not time out before the backfill lease"
     );
     assert_eq!(result.unwrap_err().reason, "upstream_readiness_failed");
 }
