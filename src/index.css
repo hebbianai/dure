@@ -1145,16 +1145,20 @@
     overflow: hidden;
 }
 /* Keep large-view visibility in one CSS contract so utility ordering cannot
-   override the whole-pane hover state. Hidden actions do not intercept the
-   title bar, but remain keyboard reachable through :focus-visible. Limit hover
-   invalidation to the direct header child, outside the terminal content tree. */
+   override the whole-pane hover state. Hidden actions return their width to the
+   title and do not intercept it, but remain keyboard reachable through
+   :focus-visible. Limit hover invalidation to the direct header child, outside
+   the terminal content tree. */
 .dockview-theme-abyss [data-pane-window-action] {
+    width: 0;
+    overflow: hidden;
     opacity: 0;
     pointer-events: none;
 }
 .dockview-theme-abyss [data-pane-window-action-active],
 .dockview-theme-abyss .dv-groupview:hover > .dv-tabs-and-actions-container [data-pane-window-action],
 .dockview-theme-abyss [data-pane-window-action]:focus-visible {
+    width: calc(var(--spacing) * 5);
     opacity: 1;
     pointer-events: auto;
 }
