@@ -182,6 +182,12 @@ async fn runtime_idle_legacy_credential_target_uses_real_hmux() {
 }
 
 #[tokio::test]
+#[ignore = "requires isolated real Hmux and disposable credential registration"]
+async fn runtime_idle_shared_credential_target_uses_real_hmux() {
+    legacy_credential_target(CredentialState::Shared).await;
+}
+
+#[tokio::test]
 #[ignore = "requires isolated real Hmux and disposable credential fault injection"]
 async fn runtime_idle_unverified_legacy_credential_retains_real_hmux() {
     for credential in [CredentialState::Missing, CredentialState::Replaced] {
@@ -191,6 +197,7 @@ async fn runtime_idle_unverified_legacy_credential_retains_real_hmux() {
 
 enum CredentialState {
     Current,
+    Shared,
     Missing,
     Replaced,
 }
@@ -208,6 +215,20 @@ async fn legacy_credential_target(credential: CredentialState) {
     let profile = accounts.join("codex-idle-account");
     fs::create_dir(&profile).unwrap();
     fs::set_permissions(&profile, fs::Permissions::from_mode(0o700)).unwrap();
+    if matches!(credential, CredentialState::Shared) {
+        state
+            .credential_profiles
+            .register(
+                provider_credential_profile::RegisterProviderCredentialProfileBodyV1 {
+                    schema_version: 1,
+                    provider_id: "codex".into(),
+                    reference_id: "another-client-account".into(),
+                    profile_directory_name: "codex-idle-account".into(),
+                },
+            )
+            .await
+            .unwrap();
+    }
     let registration = if matches!(credential, CredentialState::Missing) {
         None
     } else {
@@ -258,11 +279,14 @@ async fn legacy_credential_target(credential: CredentialState) {
         fs::set_permissions(&profile, fs::Permissions::from_mode(0o700)).unwrap();
     }
     let result = call(&state, "hibernate", "legacy-account-idle", body.clone()).await;
-    if !matches!(credential, CredentialState::Current) {
+    if !matches!(
+        credential,
+        CredentialState::Current | CredentialState::Shared
+    ) {
         let expected = match credential {
             CredentialState::Missing => "provider_credential_profile_unavailable",
             CredentialState::Replaced => "provider_credential_profile_stale_generation",
-            CredentialState::Current => unreachable!(),
+            CredentialState::Current | CredentialState::Shared => unreachable!(),
         };
         assert_eq!(result.unwrap_err().code, expected);
         let retained = hmux.session(&source);

@@ -1085,6 +1085,18 @@ CREATE TABLE IF NOT EXISTS provider_credential_profiles (
 )
 "#;
 
+const CREATE_PROVIDER_CREDENTIAL_PROFILE_ALIASES: &str = r#"
+CREATE TABLE IF NOT EXISTS provider_credential_profile_aliases (
+    provider_id TEXT NOT NULL,
+    reference_id TEXT NOT NULL,
+    canonical_reference_id TEXT NOT NULL,
+    PRIMARY KEY (provider_id, reference_id),
+    FOREIGN KEY (provider_id, canonical_reference_id)
+        REFERENCES provider_credential_profiles(provider_id, reference_id) ON DELETE RESTRICT,
+    CHECK (reference_id <> canonical_reference_id)
+)
+"#;
+
 const NORMALIZE_LEGACY_AGENT_PROVIDER_IDS: &str = r#"
 UPDATE agents
 SET provider_id = substr(provider_id, length('provider.') + 1)
@@ -2141,6 +2153,7 @@ const CURRENT_SCHEMA_STATEMENTS: &[&str] = &[
     CREATE_PROVIDER_LAUNCH_DEFAULTS,
     CREATE_PROVIDER_LAUNCH_DEFAULTS_PUT_RECEIPTS,
     CREATE_PROVIDER_CREDENTIAL_PROFILES,
+    CREATE_PROVIDER_CREDENTIAL_PROFILE_ALIASES,
     crate::workflow_graph::execution_schema::RUNS,
     CREATE_WORKFLOW_TASKS,
     crate::workflow_graph::execution_schema::DISPATCHES,
@@ -3015,6 +3028,11 @@ async fn initialize_or_migrate(pool: &SqlitePool, path: &Path) -> Result<(), Dom
                     crate::agent_recovery::CREATE_RECOVERIES,
                     crate::agent_recovery::RECOVERY_BY_AGENT,
                 ], "migrate_v49_to_v50").await?;
+            }
+            50 => {
+                migrate_schema(pool, path, metadata.migration, 50, 51, &[
+                    CREATE_PROVIDER_CREDENTIAL_PROFILE_ALIASES,
+                ], "migrate_v50_to_v51").await?;
             }
             version => {
                 return Err(DomainStoreErrorV1::Compatibility {

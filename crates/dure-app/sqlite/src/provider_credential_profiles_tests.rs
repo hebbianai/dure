@@ -151,6 +151,212 @@ async fn credential_profile_survives_reopen_and_converges_on_replacement() {
 }
 
 #[tokio::test]
+async fn schema_50_migration_preserves_profile_and_admits_client_alias() {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("domain.sqlite");
+    let store = SqliteDomainStore::open(&path).await.unwrap();
+    let original = registration();
+    store
+        .register_provider_credential_profile(None, &original)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE provider_credential_profile_aliases")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE store_metadata SET schema_version = 50 WHERE singleton = 1")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store.close().await;
+    let migrated = SqliteDomainStore::open(&path).await.unwrap();
+    assert_eq!(
+        migrated.schema_info.schema_version,
+        CURRENT_STORE_SCHEMA_VERSION
+    );
+    assert_eq!(
+        migrated
+            .provider_credential_profile(
+                &original.profile.provider_id,
+                &original.profile.reference_id
+            )
+            .await
+            .unwrap(),
+        Some(original.clone())
+    );
+    let mut alias = original.clone();
+    alias.profile.reference_id = "acc-migrated-client".into();
+    migrated
+        .register_provider_credential_profile(None, &alias)
+        .await
+        .unwrap();
+    assert_eq!(
+        migrated
+            .provider_credential_profiles(&original.profile.provider_id)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    let owners: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM provider_credential_profiles")
+        .fetch_one(&migrated.pool)
+        .await
+        .unwrap();
+    assert_eq!(owners, 1);
+}
+
+#[tokio::test]
+async fn credential_alias_retains_canonical_identity_and_rejects_remapping() {
+    let temporary = TempDir::new().unwrap();
+    let path = temporary.path().join("domain.sqlite");
+    let store = SqliteDomainStore::open(&path).await.unwrap();
+    let original = registration();
+    store
+        .register_provider_credential_profile(None, &original)
+        .await
+        .unwrap();
+    let mut alias = original.clone();
+    alias.profile.reference_id = "acc-other-client".into();
+    assert_eq!(
+        store
+            .register_provider_credential_profile(None, &alias)
+            .await
+            .unwrap(),
+        alias
+    );
+    assert_eq!(
+        store
+            .provider_credential_profile_for_launch_reference(
+                &original.profile.provider_id,
+                "claude-work"
+            )
+            .await
+            .unwrap(),
+        Some(original.clone())
+    );
+    assert_eq!(
+        store
+            .provider_credential_profile_for_launch_reference(
+                &original.profile.provider_id,
+                &alias.profile.reference_id
+            )
+            .await
+            .unwrap(),
+        Some(alias.clone())
+    );
+    let mut remapped = alias.clone();
+    remapped.profile_directory_name = ProviderCredentialProfileDirectoryNameV1::new(
+        &original.profile.provider_id,
+        "claude-different",
+    )
+    .unwrap();
+    assert!(matches!(
+        store
+            .register_provider_credential_profile(
+                Some(&alias.profile.credential_generation),
+                &remapped
+            )
+            .await,
+        Err(DomainStoreErrorV1::IdentityConflict { .. })
+    ));
+    let mut stale_alias = original.clone();
+    stale_alias.profile.reference_id = "acc-stale-client".into();
+    stale_alias.profile.credential_generation = "credential-v1-stale".into();
+    assert!(matches!(
+        store
+            .register_provider_credential_profile(None, &stale_alias)
+            .await,
+        Err(DomainStoreErrorV1::IdentityConflict { .. })
+    ));
+    store.close().await;
+    let reopened = SqliteDomainStore::open(&path).await.unwrap();
+    assert_eq!(
+        reopened
+            .provider_credential_profile(&original.profile.provider_id, &alias.profile.reference_id)
+            .await
+            .unwrap(),
+        Some(alias)
+    );
+    assert_eq!(
+        reopened
+            .provider_credential_profile(
+                &original.profile.provider_id,
+                &original.profile.reference_id
+            )
+            .await
+            .unwrap(),
+        Some(original)
+    );
+}
+
+#[tokio::test]
+async fn credential_alias_keeps_public_and_directory_namespaces_unambiguous() {
+    let temporary = TempDir::new().unwrap();
+    let store = SqliteDomainStore::open(temporary.path().join("domain.sqlite"))
+        .await
+        .unwrap();
+    let mut original = registration();
+    original.profile.reference_id = original.profile_directory_name.as_str().into();
+    store
+        .register_provider_credential_profile(None, &original)
+        .await
+        .unwrap();
+    let mut alias = original.clone();
+    alias.profile.reference_id = "claude-client-reference".into();
+    store
+        .register_provider_credential_profile(None, &alias)
+        .await
+        .unwrap();
+    // A legacy canonical reference equal to its own directory remains usable.
+    store
+        .register_provider_credential_profile(
+            Some(&original.profile.credential_generation),
+            &original,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .provider_credential_profile_for_launch_reference(
+                &original.profile.provider_id,
+                "claude-work"
+            )
+            .await
+            .unwrap(),
+        Some(original.clone())
+    );
+    let mut collision = original.clone();
+    collision.profile.reference_id = "acc-new-profile".into();
+    collision.profile_directory_name = ProviderCredentialProfileDirectoryNameV1::new(
+        &original.profile.provider_id,
+        "claude-client-reference",
+    )
+    .unwrap();
+    assert!(matches!(
+        store
+            .register_provider_credential_profile(None, &collision)
+            .await,
+        Err(DomainStoreErrorV1::IdentityConflict { .. })
+    ));
+    let mut remapped = original.clone();
+    remapped.profile.reference_id = alias.profile.reference_id.clone();
+    remapped.profile_directory_name = ProviderCredentialProfileDirectoryNameV1::new(
+        &original.profile.provider_id,
+        "claude-other",
+    )
+    .unwrap();
+    assert!(matches!(
+        store
+            .register_provider_credential_profile(
+                Some(&alias.profile.credential_generation),
+                &remapped
+            )
+            .await,
+        Err(DomainStoreErrorV1::IdentityConflict { .. })
+    ));
+}
+
+#[tokio::test]
 async fn credential_launch_reference_rejects_new_and_legacy_alias_collisions() {
     let temporary = TempDir::new().unwrap();
     let store = SqliteDomainStore::open(temporary.path().join("domain.sqlite"))

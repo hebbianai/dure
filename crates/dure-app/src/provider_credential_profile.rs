@@ -189,6 +189,9 @@ pub trait ProviderCredentialProfileStore: Send + Sync {
         provider_id: &'a ProviderIdV1,
     ) -> DomainStoreFuture<'a, Vec<ProviderCredentialProfileV1>>;
 
+    /// Registers an immutable reference-to-directory association. Distinct
+    /// client references may share one directory and its current generation;
+    /// a generation update through any reference applies to that single owner.
     fn register_provider_credential_profile<'a>(
         &'a self,
         expected_credential_generation: Option<&'a str>,

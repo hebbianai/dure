@@ -348,6 +348,19 @@ where
         }) {
             return Err(ProviderCredentialProfileErrorV1::Conflict);
         }
+        let directory_owner = self
+            .store
+            .provider_credential_profile_for_launch_reference(
+                &provider_id,
+                profile_directory_name.as_str(),
+            )
+            .await
+            .map_err(map_store_error)?;
+        if directory_owner.as_ref().is_some_and(|registration| {
+            registration.profile_directory_name != profile_directory_name
+        }) {
+            return Err(ProviderCredentialProfileErrorV1::Conflict);
+        }
         let observation = observe_profile_directory(
             &self.home,
             &profile_directory_name,
@@ -363,6 +376,7 @@ where
             Some(generation) => generation.clone(),
             None => match existing
                 .as_ref()
+                .or(directory_owner.as_ref())
                 .filter(|registration| registration.profile_inode == observation.inode)
             {
                 Some(registration) => registration.profile.credential_generation.clone(),
@@ -395,12 +409,23 @@ where
         {
             Ok(stored) => stored,
             Err(DomainStoreErrorV1::IdentityConflict { .. }) => {
-                let converged = self
+                let concurrent_reference = self
                     .store
                     .provider_credential_profile(&provider_id, &body.reference_id)
                     .await
-                    .map_err(map_store_error)?
-                    .ok_or(ProviderCredentialProfileErrorV1::Conflict)?;
+                    .map_err(map_store_error)?;
+                let converged = match concurrent_reference {
+                    Some(registration) => Some(registration),
+                    None => self
+                        .store
+                        .provider_credential_profile_for_launch_reference(
+                            &provider_id,
+                            profile_directory_name.as_str(),
+                        )
+                        .await
+                        .map_err(map_store_error)?,
+                }
+                .ok_or(ProviderCredentialProfileErrorV1::Conflict)?;
                 if converged.profile_directory_name != profile_directory_name
                     || converged.profile_inode != observation.inode
                     || marker_generation.as_ref().is_some_and(|generation| {
@@ -413,7 +438,8 @@ where
                     converged.profile.credential_generation.clone();
                 self.store
                     .register_provider_credential_profile(
-                        Some(converged.profile.credential_generation.as_str()),
+                        (converged.profile.reference_id == body.reference_id)
+                            .then_some(converged.profile.credential_generation.as_str()),
                         &registration,
                     )
                     .await
@@ -1278,7 +1304,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn client_account_ids_share_one_profile_and_retain_generation_fences() {
+        let temporary = tempfile::tempdir().unwrap();
+        let home = temporary.path();
+        owner_directory_at(&home.join("accounts"));
+        let directory = home.join("accounts/codex-shared");
+        owner_directory_at(&directory);
+        let database = home.join("application-state.sqlite3");
+        let store = Arc::new(SqliteDomainStore::open(&database).await.unwrap());
+        let registry = ProviderCredentialProfileRegistry::new(home.to_path_buf(), store.clone());
+        let request = |reference: &str| RegisterProviderCredentialProfileBodyV1 {
+            schema_version: 1,
+            provider_id: "codex".into(),
+            reference_id: reference.into(),
+            profile_directory_name: "codex-shared".into(),
+        };
+        let first = registry
+            .register(request("acc-first-client"))
+            .await
+            .unwrap();
+        let second = registry
+            .register(request("acc-second-client"))
+            .await
+            .unwrap();
+        assert_eq!(first.reference_id, "acc-first-client");
+        assert_eq!(second.reference_id, "acc-second-client");
+        assert_eq!(first.credential_generation, second.credential_generation);
+        let provider = ProviderIdV1::new("codex").unwrap();
+        let execution =
+            |profile: &ProviderCredentialProfileV1| AgentExecutionProfileV1::CredentialReference {
+                reference_id: profile.reference_id.clone(),
+                credential_generation: Some(profile.credential_generation.clone()),
+            };
+        store.close().await;
+        let reopened = Arc::new(SqliteDomainStore::open(&database).await.unwrap());
+        let registry = ProviderCredentialProfileRegistry::new(home.to_path_buf(), reopened);
+        for profile in [&first, &second] {
+            let resolved = registry
+                .resolve(&provider, &execution(profile))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(resolved.profile(), profile);
+            assert_eq!(resolved.directory(), directory.canonicalize().unwrap());
+        }
+        assert_eq!(
+            registry
+                .registered_launch_reference(&provider, "codex-shared")
+                .await
+                .unwrap()
+                .profile,
+            first
+        );
+        fs::rename(&directory, home.join("accounts/retired")).unwrap();
+        owner_directory_at(&directory);
+        for profile in [&first, &second] {
+            assert_eq!(
+                registry
+                    .resolve(&provider, &execution(profile))
+                    .await
+                    .unwrap_err(),
+                ProviderCredentialProfileErrorV1::StaleGeneration
+            );
+        }
+        let refreshed = registry
+            .register(request("acc-second-client"))
+            .await
+            .unwrap();
+        assert_ne!(refreshed.credential_generation, first.credential_generation);
+        let canonical = registry
+            .register(request("acc-first-client"))
+            .await
+            .unwrap();
+        assert_eq!(
+            canonical.credential_generation,
+            refreshed.credential_generation
+        );
+        for profile in [&first, &second] {
+            assert_eq!(
+                registry
+                    .resolve(&provider, &execution(profile))
+                    .await
+                    .unwrap_err(),
+                ProviderCredentialProfileErrorV1::StaleGeneration
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn concurrent_registration_converges_on_one_generation() {
+        concurrent_registration("acc-profile-a").await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_client_account_ids_converge_on_one_generation() {
+        concurrent_registration("acc-another-client").await;
+    }
+
+    async fn concurrent_registration(second_reference: &str) {
         let temporary = tempfile::tempdir().unwrap();
         let home = temporary.path();
         owner_directory_at(&home.join("accounts"));
@@ -1295,10 +1418,14 @@ mod tests {
             reference_id: "acc-profile-a".into(),
             profile_directory_name: "claude-work".into(),
         };
-        let (first, second) =
-            tokio::join!(registry.register(body.clone()), registry.register(body),);
+        let second_body = RegisterProviderCredentialProfileBodyV1 {
+            reference_id: second_reference.into(),
+            ..body.clone()
+        };
+        let (first, second) = tokio::join!(registry.register(body), registry.register(second_body));
         let first = first.unwrap();
         let second = second.unwrap();
+        assert_eq!(second.reference_id, second_reference);
         assert_eq!(first.credential_generation, second.credential_generation);
         assert_eq!(
             fs::read_to_string(profile_generation_path(&home.join("accounts/claude-work")))
