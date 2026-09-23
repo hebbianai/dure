@@ -126,6 +126,7 @@ export function parseOpts(args) {
     else if (a === "--cwd") opts.cwd = args[++i];
     else if (a === "--repo") opts.repo = args[++i];
     else if (a === "--workspace") opts.workspace = args[++i];
+    else if (a === "--cursor") opts.cursor = args[++i] ?? "";
     else if (a === "--deadline-ms") opts.deadlineMs = args[++i];
     else if (a === "--probe-budget-ms") opts.probeBudgetMs = args[++i];
     else if (a === "--global" || a === "-g") opts.global = true;

@@ -8,6 +8,10 @@ import {
 } from "./client-presentation-state.mjs";
 import { supportsHmuxCapability } from "./runtime-diagnostics.mjs";
 import {
+  HMUX_SESSION_PAGINATION_CAPABILITY, SESSION_PAGINATION_CAPABILITY,
+  compareSessionIdentities, parseSessionCursor, sessionCursor,
+} from "./session-cursor.mjs";
+import {
   GENERATION_FIELDS,
   MAX_ID_BYTES,
   SESSION_QUERY_SCHEMA_VERSION,
@@ -494,6 +498,7 @@ export async function collectSessionQuery({
   hmuxCommand = "hmux",
   sessionId,
   workspaceId,
+  cursor,
   registry = { state: "absent", clientId: null, updatedAtMs: null, agents: [] },
   deadlineMs = DEFAULT_SESSION_QUERY_DEADLINE_MS,
   probeBudgetMs = DEFAULT_SESSION_PROBE_BUDGET_MS,
@@ -525,9 +530,16 @@ export async function collectSessionQuery({
     maxOutputBytes: MAX_SESSION_QUERY_OUTPUT_BYTES,
   };
   const startedAt = Date.now();
+  let page;
+  try {
+    page = parseSessionCursor(cursor);
+  } catch {
+    return errorReport(action, "dure_session_cursor_invalid", Date.now(), 0, limits);
+  }
   if (
     !["list", "show"].includes(action) ||
     (action === "show" && !boundedString(sessionId)) ||
+    (action !== "list" && page !== undefined) ||
     (workspaceId !== undefined && !boundedString(workspaceId))
   ) {
     return errorReport(action, "dure_session_query_invalid", Date.now(), 0, limits);
@@ -553,7 +565,7 @@ export async function collectSessionQuery({
         profile.expected?.capabilities?.includes(
           BOUNDED_BACKEND_SESSION_CATALOG_CAPABILITY,
         ) === true;
-      const prioritized = boundedCatalog
+      const prioritized = boundedCatalog && !page
         ? currentClientBindingTargets(
             registry,
             profile.transport.kind === "ssh" ? "ssh" : "local",
@@ -570,6 +582,7 @@ export async function collectSessionQuery({
                   probeBudgetMs: probeBudget,
                   maxItems: MAX_SESSION_QUERY_ITEMS,
                   ...(boundedCatalog ? { prioritized } : {}),
+                  ...(page ? { page } : {}),
                 }
               : {
                   schemaVersion: SESSION_QUERY_SCHEMA_VERSION,
@@ -577,7 +590,7 @@ export async function collectSessionQuery({
                   ...(workspaceId === undefined ? {} : { workspaceId }),
                 },
           operation: `sessions.${action}`,
-          requiredCapabilities: [`sessions.${action}`],
+          requiredCapabilities: [`sessions.${action}`, ...(page ? [SESSION_PAGINATION_CAPABILITY] : [])],
         },
         {
           ...backend.transportOptions,
@@ -600,7 +613,7 @@ export async function collectSessionQuery({
     bindingHostId = profile.transport.kind === "ssh" ? profile.id : "local";
   } else {
     const prioritized =
-      action === "list"
+      action === "list" && !page
         ? currentClientBindingTargets(
             registry,
             bindingSource,
@@ -648,6 +661,10 @@ export async function collectSessionQuery({
           { capability: BOUNDED_HMUX_SESSION_CATALOG_CAPABILITY },
         );
       }
+      if (page && !supportsHmuxCapability(manifest, HMUX_SESSION_PAGINATION_CAPABILITY)) {
+        return errorReport(action, "dure_session_hmux_incompatible", capabilityObservedAtMs,
+          capabilityDurationMs, limits, { capability: HMUX_SESSION_PAGINATION_CAPABILITY });
+      }
     }
     const argv =
       action === "list"
@@ -663,6 +680,7 @@ export async function collectSessionQuery({
               maxItems: MAX_SESSION_QUERY_ITEMS,
               maxOutputBytes: MAX_HMUX_SESSION_CATALOG_BYTES,
               prioritized,
+              ...(page ? { page } : {}),
             }),
           ]
         : [hmuxCommand, "--json", "session", "show", sessionId];
@@ -703,7 +721,7 @@ export async function collectSessionQuery({
     parsed = parsePayload(result, action);
     source = { kind: "local_hmux", appDaemonRequired: false };
     if (action === "list" && !parsed.error) {
-      const prioritized = prioritizeCurrentClientBindings(
+      const prioritized = page ? parsed.sessions : prioritizeCurrentClientBindings(
         parsed.sessions,
         registry,
         bindingSource,
@@ -828,7 +846,16 @@ export async function collectSessionQuery({
       source.kind,
     );
   }
-  const prioritized = prioritizeCurrentClientBindings(
+  if (page && (
+    (parsed.omittedCount > 0 && projected.length === 0) ||
+    projected.some((session, index) => {
+      const previous = index === 0 ? page.after : projected[index - 1];
+      return previous && compareSessionIdentities(session, previous) <= 0;
+    })
+  )) {
+    return errorReport(action, "dure_session_page_invalid", observedAtMs, durationMs, limits);
+  }
+  const prioritized = page ? projected : prioritizeCurrentClientBindings(
     projected,
     registry,
     bindingSource,
@@ -846,12 +873,18 @@ export async function collectSessionQuery({
     apiVersion: "dure.sessions/v1",
     kind: `dure.sessions.${action}`,
     complete: true,
+    inventoryComplete: omittedCount === 0,
+    observationComplete: !observationIncomplete,
     partial: omittedCount > 0 || observationIncomplete,
     observedAtMs,
     durationMs,
     source,
     limits,
     truncation: { items: omittedCount > 0, omittedCount },
+    ...(page ? { pagination: {
+      nextCursor: omittedCount > 0 ? sessionCursor(sessions.at(-1)) : null,
+      consistency: "live",
+    } } : {}),
   };
   const report = action === "list"
     ? { ...base, sessions }
@@ -900,6 +933,11 @@ export function formatSessionQuery(report) {
           : "-",
       ].join("\t"),
     );
+  }
+  if (report.pagination?.nextCursor) {
+    lines.push(`Next page: dure ls --cursor ${report.pagination.nextCursor}${report.source.profileId ? ` --backend ${report.source.profileId}` : ""}`);
+  } else if (report.truncation.items) {
+    lines.push("Inventory truncated. Use dure ls --cursor start to enumerate all pages.");
   }
   return lines.join("\n");
 }

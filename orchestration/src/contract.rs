@@ -1,7 +1,9 @@
 //! Versioned transport-neutral request and response contract.
 
 mod event_inspection;
+mod interaction_progress;
 pub use event_inspection::InspectEventsRequest;
+pub use interaction_progress::*;
 
 use std::collections::BTreeSet;
 

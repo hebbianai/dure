@@ -74,6 +74,13 @@ impl Store for InMemoryStore {
         Box::pin(async move { self.inspect(|state| Ok(state.interaction(request))) })
     }
 
+    fn interaction_progress<'a>(
+        &'a self,
+        request: &'a GetInteractionRequest,
+    ) -> StoreFuture<'a, Option<crate::contract::InteractionProgressReceipt>> {
+        Box::pin(async move { self.inspect(|state| Ok(state.interaction_progress(request))) })
+    }
+
     fn answer_decision<'a>(
         &'a self,
         request: AnswerDecisionRequest,

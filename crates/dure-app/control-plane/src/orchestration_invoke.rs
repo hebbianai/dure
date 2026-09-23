@@ -164,6 +164,19 @@ pub(crate) async fn invoke_orchestration(
             )
             .map_err(|_| BackendDispatchError::from("orchestration_receipt_invalid"))?
         }
+        "interaction.progress" => {
+            let request: GetInteractionRequest = serde_json::from_value(envelope.body)
+                .map_err(|_| BackendDispatchError::from("orchestration_request_invalid"))?;
+            serde_json::to_value(
+                state
+                    .store
+                    .interaction_service()
+                    .progress(request)
+                    .await
+                    .map_err(orchestration_service_error)?,
+            )
+            .map_err(|_| BackendDispatchError::from("orchestration_receipt_invalid"))?
+        }
         "interaction.answer" => {
             let request: AnswerDecisionRequest = serde_json::from_value(envelope.body)
                 .map_err(|_| BackendDispatchError::from("orchestration_request_invalid"))?;

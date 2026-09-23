@@ -475,6 +475,8 @@ struct SessionsListBody {
     max_items: usize,
     #[serde(default)]
     prioritized: Vec<SessionsListPriority>,
+    #[serde(default)]
+    page: Option<hmux_client::SessionCatalogPage>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1859,6 +1861,7 @@ async fn list_sessions(state: &ServiceState, body: SessionsListBody) -> Result<V
         || body.max_items != MAX_SESSION_ITEMS
         || body.probe_budget_ms > MAX_SESSION_PROBE_BUDGET_MS
         || body.prioritized.len() > body.max_items
+        || (body.page.is_some() && !body.prioritized.is_empty())
         || unique_priorities.len() != body.prioritized.len()
         || body.prioritized.iter().any(|priority| {
             !valid_token(&priority.session_id) || !valid_token(&priority.workspace_id)
@@ -1867,12 +1870,27 @@ async fn list_sessions(state: &ServiceState, body: SessionsListBody) -> Result<V
         return Err("dure_session_query_invalid".into());
     }
     let requested_priorities = body.prioritized.len();
-    let catalog_query = json!({
+    let mut catalog_query = json!({
         "schemaVersion": 1,
         "maxItems": body.max_items,
         "maxOutputBytes": MAX_HMUX_SESSION_CATALOG_BYTES,
         "prioritized": body.prioritized,
     });
+    if let Some(page) = body.page {
+        let manifest = query_hmux_sessions(&state.hmux_identity, &["capabilities".into()]).await?;
+        if !manifest["capabilities"]
+            .as_array()
+            .is_some_and(|capabilities| {
+                capabilities
+                    .iter()
+                    .any(|capability| capability == "bounded_session_catalog_pagination_v1")
+            })
+        {
+            return Err("hmux_session_catalog_pagination_unsupported".into());
+        }
+        catalog_query["page"] =
+            serde_json::to_value(page).map_err(|_| "dure_session_query_invalid".to_string())?;
+    }
     let payload = query_hmux_sessions(
         &state.hmux_identity,
         &[

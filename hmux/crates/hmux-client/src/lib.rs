@@ -78,7 +78,8 @@ mod terminal_surface;
 
 pub use catalog::{
     DISCOVERY_ROOT_ENV, LocalSessionCatalog, SESSION_CATALOG_QUERY_SCHEMA_VERSION,
-    SessionCatalogIdentity, SessionCatalogQuery, SessionCatalogSnapshot, SessionCatalogTruncation,
+    SessionCatalogIdentity, SessionCatalogPage, SessionCatalogQuery, SessionCatalogSnapshot,
+    SessionCatalogTruncation,
 };
 #[cfg(feature = "local-runtime")]
 pub use catalog::{StaleSessionRetirement, default_discovery_root};

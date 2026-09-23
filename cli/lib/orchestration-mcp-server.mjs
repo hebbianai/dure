@@ -56,6 +56,16 @@ const tools = [
     },
   },
   {
+    name: "orchestration_interaction_progress",
+    description: "Inspect one Message or Decision's committed delivery, wake, observation, acknowledgement and dispatch completion without consuming its inbox. Uses the same body as orchestration_interaction_get; observation is not task completion.",
+    inputSchema: {
+      type: "object",
+      required: ["body"],
+      properties: { body: { type: "object" } },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "orchestration_events_read",
     description:
       "Read this managed Session's durable Events after its persisted acknowledgement cursor.",
@@ -357,6 +367,7 @@ export async function handleMcpRequest(
     agent_goal_put: "agent_goal.put",
     orchestration_interaction_open: "interaction.open",
     orchestration_interaction_get: "interaction.get",
+    orchestration_interaction_progress: "interaction.progress",
     orchestration_decision_answer: "interaction.answer",
     orchestration_dispatch_complete: "dispatch.complete",
   }[name];

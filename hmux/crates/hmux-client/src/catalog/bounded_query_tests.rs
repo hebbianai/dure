@@ -2,6 +2,45 @@ use super::tests::publish_ready;
 use super::*;
 use tempfile::TempDir;
 
+#[test]
+fn pages_order_workspace_then_session_and_reject_priorities() {
+    let temporary = TempDir::new().unwrap();
+    let root = DiscoveryRoot::create(temporary.path().join("discovery")).unwrap();
+    for workspace in ["workspace-b", "workspace-a"] {
+        for session in ["session-b", "session-a"] {
+            publish_ready(&root, workspace, session, "token");
+        }
+    }
+    let catalog = LocalSessionCatalog::new(root.path());
+    let query = SessionCatalogQuery::new(2, 64 * 1024, vec![])
+        .unwrap()
+        .with_page(SessionCatalogPage { after: None })
+        .unwrap();
+    let first = catalog.query(&query).unwrap();
+    assert_eq!(first.truncation.omitted_count, 2);
+    let boundary = SessionCatalogIdentity::new("workspace-a", "session-b").unwrap();
+    let query = SessionCatalogQuery::new(2, 64 * 1024, vec![])
+        .unwrap()
+        .with_page(SessionCatalogPage {
+            after: Some(boundary.clone()),
+        })
+        .unwrap();
+    let second = catalog.query(&query).unwrap();
+    assert_eq!(second.truncation.omitted_count, 0);
+    assert!(
+        second
+            .sessions
+            .iter()
+            .all(|session| session.workspace_id == "workspace-b")
+    );
+    assert!(
+        SessionCatalogQuery::new(2, 64 * 1024, vec![boundary])
+            .unwrap()
+            .with_page(SessionCatalogPage { after: None })
+            .is_err()
+    );
+}
+
 #[cfg(feature = "local-runtime")]
 #[test]
 fn bounded_query_censuses_each_configured_discovery_root() {

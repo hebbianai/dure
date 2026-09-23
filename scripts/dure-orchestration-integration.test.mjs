@@ -1178,10 +1178,10 @@ describe("immutable generic orchestration integration", () => {
     ]);
   });
 
-  it("carries the identical semantic request over local and SSH backend profiles", async () => {
+  it.each(["events.read", "interaction.progress"])("carries %s over local and SSH backend profiles with negotiated capabilities", async (method) => {
     const root = fixture();
     const semantic = createOrchestrationRequest({
-      method: "events.read",
+      method,
       body: {
         schemaVersion: 1,
         authority: { workspaceId: "workspace-1" },
@@ -1279,12 +1279,12 @@ describe("immutable generic orchestration integration", () => {
       {
         operation: "orchestration.invoke",
         body: semantic,
-        requiredCapabilities: ["orchestration.invoke"],
+        requiredCapabilities: ["orchestration.invoke", ...(method === "interaction.progress" ? ["orchestration.interaction.progress_v1"] : [])],
       },
       {
         operation: "orchestration.invoke",
         body: semantic,
-        requiredCapabilities: ["orchestration.invoke"],
+        requiredCapabilities: ["orchestration.invoke", ...(method === "interaction.progress" ? ["orchestration.interaction.progress_v1"] : [])],
       },
     ]);
     expect(observed.map(({ profile }) => profile.transport.kind)).toEqual([
@@ -1789,6 +1789,7 @@ describe("immutable generic orchestration integration", () => {
         { name: "orchestration_context_get_current" },
         { name: "orchestration_interaction_open" },
         { name: "orchestration_interaction_get" },
+        { name: "orchestration_interaction_progress" },
         { name: "orchestration_events_read" },
         { name: "orchestration_decision_answer" },
         { name: "orchestration_dispatch_complete" },
@@ -1821,6 +1822,24 @@ describe("immutable generic orchestration integration", () => {
       additionalProperties: false,
     });
     expect(eventRead.inputSchema.properties).not.toHaveProperty("body");
+  });
+
+  it("inspects interaction progress through one read-only request without inbox or wake side effects", async () => {
+    const body = { schemaVersion: 1, interactionId: "message-1", participant: "coordinator",
+      authority: { workspaceId: "workspace-1" }, readCapability: "private-capability" };
+    const receipt = { dispatchState: "active", completedAtMs: null, deliveries: [
+      { delivery: { state: "acknowledged" }, guidance: "await_completion" },
+    ] };
+    const request = vi.fn(async (_endpoint, operation) => {
+      expect(operation.method).toBe("interaction.progress");
+      expect(operation.body).toEqual(body);
+      return { apiVersion: "dure.orchestration/v1", method: operation.method, receipt };
+    });
+    const result = await handleMcpRequest({ jsonrpc: "2.0", id: 1, method: "tools/call",
+      params: { name: "orchestration_interaction_progress", arguments: { body } },
+    }, { DURE_BACKEND_PROFILE: "local" }, { request });
+    expect(result.structuredContent.receipt).toEqual(receipt);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it.each([undefined, "dispatch_completed"])("preserves a typed backend rejection at the MCP boundary: %s", async (reasonCode) => {

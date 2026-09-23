@@ -1,3 +1,5 @@
+mod interaction_progress;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;

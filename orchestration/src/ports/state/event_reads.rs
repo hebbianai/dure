@@ -10,6 +10,13 @@ impl StoreState {
         request: ReadEventsRequest,
         acknowledgement_fingerprint: Option<String>,
     ) -> Result<(ReadEventsReceipt, bool), StoreError> {
+        let observed_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+            .ok_or(StoreError::Unavailable {
+                code: "observation_clock_invalid",
+            })?;
         let mut changed = false;
         let selected = self.checked_event_cursors(&request)?;
 
@@ -65,6 +72,8 @@ impl StoreState {
                     && delivery.receipt.state != DeliveryState::Acknowledged
                 {
                     delivery.receipt.state = DeliveryState::Acknowledged;
+                    delivery.acknowledged_at_ms =
+                        Some(observed_at_ms.max(delivery.observed_at_ms.unwrap_or(0)));
                     changed = true;
                 }
             }
@@ -86,6 +95,7 @@ impl StoreState {
                 && delivery.receipt.state == DeliveryState::Queued
             {
                 delivery.receipt.state = DeliveryState::Observed;
+                delivery.observed_at_ms = Some(observed_at_ms);
                 changed = true;
             }
         }

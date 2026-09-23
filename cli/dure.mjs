@@ -1441,6 +1441,7 @@ async function emitSessionQuery(action, sessionId, opts) {
     hmuxCommand: hmuxCommand(),
     sessionId,
     workspaceId: opts.workspace,
+    cursor: opts.cursor,
     registry,
     deadlineMs:
       opts.deadlineMs === undefined ? undefined : Number(opts.deadlineMs),
@@ -1457,19 +1458,23 @@ async function emitSessionQuery(action, sessionId, opts) {
 async function cmdLs(opts) {
   if (opts.rest.length !== 0 || opts.workspace !== undefined) {
     fail(
-      "Usage: dure ls [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]",
+      "Usage: dure ls [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]",
     );
   }
   return emitSessionQuery("list", undefined, opts);
 }
 
-const SESSION_QUERY_HELP = `Usage: dure ls [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]
-       dure sessions list [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]
+const SESSION_QUERY_HELP = `Usage: dure ls [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]
+       dure sessions list [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]
        dure inspect <session-id> [--workspace ID] [--backend ID] [--json]
        dure sessions show <session-id> [--workspace ID] [--backend ID] [--json]
        dure sessions recent [--json]
 
 List and inspect read canonical backend Sessions without requiring a running app.
+Use --cursor start for the first ordered page, then pagination.nextCursor until null.
+Pages are live observations ordered by workspace/session ID, not a frozen snapshot.
+complete means the census succeeded; inventoryComplete means no more rows remain
+after this page, and observationComplete means every returned row was probed.
 Recent lists provider history through the connected app.
 Use --help or -h to show this help without contacting a backend.
 `;

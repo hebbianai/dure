@@ -32,6 +32,16 @@ dure projects list             # project ids; dure spaces list gives desk ids
 
 `FAILURE`, not `LIVE`, is the column that explains a broken session.
 
+For a full backend inventory, start with `dure ls --cursor start --json` and
+pass each `pagination.nextCursor` back to `--cursor` until it is `null`. Keep
+the same backend for every page. This includes sessions without client panes.
+`inventoryComplete` means no identities remain after this page;
+`observationComplete` means every returned session was probed. `complete` alone
+does not mean every session was returned. Pages use workspace/session ordering
+over the live catalog, not a frozen snapshot: restart from `start` to reconcile
+sessions created behind the cursor while traversing. Older runtimes without
+pagination support return an explicit capability error.
+
 ## Where `dure run` puts the files
 
 ```sh

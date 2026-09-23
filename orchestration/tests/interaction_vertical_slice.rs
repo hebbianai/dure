@@ -1,3 +1,6 @@
+#[path = "interaction_vertical_slice/interaction_progress.rs"]
+mod interaction_progress;
+
 #[path = "interaction_vertical_slice/event_inspection.rs"]
 mod event_inspection;
 
@@ -297,6 +300,13 @@ impl Store for BatchErrorStore {
         &'a self,
         _request: &'a GetInteractionRequest,
     ) -> StoreFuture<'a, Option<InteractionRecord>> {
+        unused_store_call()
+    }
+
+    fn interaction_progress<'a>(
+        &'a self,
+        _request: &'a GetInteractionRequest,
+    ) -> StoreFuture<'a, Option<agent_orchestration::contract::InteractionProgressReceipt>> {
         unused_store_call()
     }
 

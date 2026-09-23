@@ -19,6 +19,49 @@ client and canonical service as Dure desktop, CLI, SDK, and remote workers.
 - Report completion through the interaction service so dispatch state, the
   completion Message, and audit Event commit together.
 
+## Inspect message delivery
+
+Use `orchestration_interaction_progress` with the same `body` as
+`orchestration_interaction_get` to inspect one interaction without reading or
+acknowledging its inbox. The fallback is
+`dure orchestration invoke interaction.progress '<body-json>' --json`.
+Use `schemaVersion: 1`, `authority`, `interactionId`, `participant`,
+`readCapability`, and the worker's `endpointFence` when reading as that worker.
+For your own sent message, use your author participant and the exact Dispatch's
+`interactionCapability` as `readCapability`, without a worker fence. Keep these
+capabilities private.
+
+The result separates acceptance, each delivery's queued/read/acknowledged state,
+the wake receipt, and Dispatch completion. `observed` means an authenticated
+durable inbox read; it does not prove comprehension. `acknowledged` means the
+client handled its cursor, not that the task finished. A wait timeout establishes
+neither read status nor message loss. Completion is for the exact Dispatch;
+an update accepted after its completion is not new completed work.
+
+Timestamps absent from older stored records are `null`. `workerEndpoint`
+identifies the associated worker generation; `workerTurnCorrelation:
+"not_recorded"` explicitly means the inbox has no provider turn mapping. Do not
+infer one from whichever terminal turn is active. A wake effect is not a turn.
+
+Follow each delivery's `guidance`:
+
+- `await_inbox_read`, `await_acknowledgement`, `await_completion`: wait for that
+  durable transition; do not duplicate the message.
+- `resolve_exact_session_then_wait`: the message is already durable. For
+  `hmux_agent_prompt_runtime_changed`, re-resolve the same Session and check its
+  generation, then wait for its next inbox read. Do not retarget a replacement
+  worker or create another interaction to force a wake.
+- `inspect_before_retry`: the wake may have written. Inspect progress first;
+  never infer failure from silence or repeat an uncertain terminal write.
+- `dispatch_completed`: inspect the recorded completion, separately from the
+  message's delivery state.
+
+After a lost submission response, retry only the identical interaction payload
+and idempotency key. Once a receipt is accepted, progress reads are the recovery
+path; replaying the accepted operation does not force another wake. Older
+backends report a missing `orchestration.interaction.progress_v1` capability;
+keep the original receipt and use existing exact interaction/event inspection.
+
 ## Completion reports
 
 Write for someone who did not follow the work. Before any heading or list, open

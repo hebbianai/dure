@@ -29,7 +29,9 @@ export async function requestOrchestrationThroughBackendProfile(
     {
       operation: "orchestration.invoke",
       body: request,
-      requiredCapabilities: ["orchestration.invoke"],
+      requiredCapabilities: ["orchestration.invoke",
+        ...(request.method === "interaction.progress" ? ["orchestration.interaction.progress_v1"] : []),
+      ],
     },
     {
       maxResponseBytes: 2 * 1024 * 1024,

@@ -488,6 +488,18 @@ impl Store for WorkflowInteractionStore {
         })
     }
 
+    fn interaction_progress<'a>(
+        &'a self,
+        request: &'a GetInteractionRequest,
+    ) -> StoreFuture<'a, Option<agent_orchestration::contract::InteractionProgressReceipt>> {
+        Box::pin(async move {
+            self.inspect(&request.authority, |state| {
+                Ok(state.interaction_progress(request))
+            })
+            .await
+        })
+    }
+
     fn answer_decision<'a>(
         &'a self,
         request: AnswerDecisionRequest,

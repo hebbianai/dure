@@ -9,7 +9,7 @@ use crate::contract::{
     InspectEventsRequest, OpenInteractionReceipt, OpenInteractionRequest,
     ReadEventsBatchItemOutcome, ReadEventsBatchItemReceipt, ReadEventsBatchReceipt,
     ReadEventsBatchRequest, ReadEventsReceipt, ReadEventsRequest, ServiceError,
-    TransitionDeliveryWakeReceipt, TransitionDeliveryWakeRequest, validate_schema,
+    TransitionDeliveryWakeReceipt, TransitionDeliveryWakeRequest,
 };
 use crate::domain::{
     DispatchId, DispatchState, Generation, InteractionRecord, InteractionTarget, RunId,
@@ -85,16 +85,23 @@ impl InteractionService {
         &self,
         request: GetInteractionRequest,
     ) -> Result<InteractionRecord, ServiceError> {
-        validate_schema(request.schema_version)?;
-        request.authority.validate()?;
-        request.interaction_id.validate()?;
-        request.participant.validate()?;
-        request.read_capability.validate()?;
-        if let Some(fence) = &request.endpoint_fence {
-            fence.validate()?;
-        }
+        request.validate()?;
         self.store
             .interaction(&request)
+            .await
+            .map_err(ServiceError::from)?
+            .ok_or(ServiceError::NotFound {
+                resource: "interaction",
+            })
+    }
+
+    pub async fn progress(
+        &self,
+        request: GetInteractionRequest,
+    ) -> Result<crate::contract::InteractionProgressReceipt, ServiceError> {
+        request.validate()?;
+        self.store
+            .interaction_progress(&request)
             .await
             .map_err(ServiceError::from)?
             .ok_or(ServiceError::NotFound {

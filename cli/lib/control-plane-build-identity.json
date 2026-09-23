@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "currentBuildId": "dure-control-plane/v129-backend-account-recovery",
-  "previousBuildId": "dure-control-plane/v128-failure-capabilities",
+  "currentBuildId": "dure-control-plane/v130-feedback-observation",
+  "previousBuildId": "dure-control-plane/v129-backend-account-recovery",
   "identity": {
     "apiVersion": "dure.control-plane-identity/v1",
     "kind": "dure.control_plane.identity",
@@ -79,9 +79,11 @@
       "schedule.show",
       "sessions.list",
       "sessions.list.bounded_catalog_v1",
+      "sessions.list.pagination_v1",
       "sessions.read",
       "sessions.show",
       "orchestration.invoke",
+      "orchestration.interaction.progress_v1",
       "plugin.slack",
       "slack.connector.v1",
       "backend.scope.v1",

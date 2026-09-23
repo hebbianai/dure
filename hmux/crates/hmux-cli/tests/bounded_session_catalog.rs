@@ -158,6 +158,58 @@ fn bounded_query_serializes_client_priority_before_the_capture_limit() {
 }
 
 #[test]
+fn ordered_pages_enumerate_every_session_without_client_priorities() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = DiscoveryRoot::create(fixture.path().join("hmux")).unwrap();
+    for index in 0..160 {
+        publish_ready(&root, index);
+    }
+    let mut after = Value::Null;
+    let mut identities = Vec::new();
+    for _ in 0..10 {
+        let query = json!({
+            "schemaVersion": 1, "maxItems": 128, "maxOutputBytes": CATALOG_LIMIT_BYTES,
+            "prioritized": [], "page": { "after": after },
+        });
+        let output = hmux(
+            &root,
+            &[
+                "--json",
+                "session",
+                "list",
+                "--no-probe",
+                "--catalog-query-json",
+                &query.to_string(),
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.len() <= CATALOG_LIMIT_BYTES);
+        let page: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let sessions = page["sessions"].as_array().unwrap();
+        assert!(!sessions.is_empty() && sessions.len() <= 128);
+        for session in sessions {
+            identities.push(session["session_id"].as_str().unwrap().to_owned());
+        }
+        assert_eq!(page["truncation"]["omittedCount"], 160 - identities.len());
+        if page["truncation"]["items"] == false {
+            break;
+        }
+        let last = sessions.last().unwrap();
+        after = json!({"workspaceId": last["workspace_id"], "sessionId": last["session_id"]});
+    }
+    assert_eq!(
+        identities,
+        (0..160)
+            .map(|i| format!("session-{i:03}"))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 #[ignore = "requires Node, native dure-control-plane/hmux-runtime, and a loopback sshd"]
 fn backend_spaces_preserves_bounded_catalog_and_partial_membership() {
     let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -178,8 +230,18 @@ fn backend_spaces_preserves_bounded_catalog_and_partial_membership() {
         .arg(repository.join("scripts/qa/bounded-catalog-spaces-smoke.mjs"))
         .arg(fixture.path())
         .arg(env!("CARGO_BIN_EXE_hmux"))
-        .arg(repository.join("hmux/target/debug/hmux-runtime"))
-        .arg(repository.join("crates/dure-app/target/debug/dure-control-plane"))
+        .arg(
+            std::env::var_os("DURE_QA_HMUX_RUNTIME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| repository.join("hmux/target/debug/hmux-runtime")),
+        )
+        .arg(
+            std::env::var_os("DURE_QA_CONTROL_PLANE_BIN")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    repository.join("crates/dure-app/target/debug/dure-control-plane")
+                }),
+        )
         .output()
         .unwrap();
     if !output.status.success() {

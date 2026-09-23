@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
 import { LocalBackendError } from "../cli/lib/local-backend.mjs";
 import { collectSessionQuery } from "../cli/lib/session-query.mjs";
+import { sessionCursor } from "../cli/lib/session-cursor.mjs";
 import { collectSessionRead } from "../cli/lib/session-read.mjs";
 import {
   hmuxSession,
@@ -55,6 +56,60 @@ function agentPresentation(paneId, agentId = "agent-1", source = "local", hostId
 }
 
 describe("dure sessions list/show/read", () => {
+  it("enumerates 300 backend Sessions in bounded pages without a client registry", () => {
+    const root = temporaryRoot();
+    const payload = Array.from({ length: 300 }, (_, i) => hmuxSession(i + 1));
+    const hmux = installHmuxStub(root, payload, { capabilities: [
+      "bounded_session_catalog_query_v1", "bounded_session_catalog_pagination_v1",
+    ] });
+    const ids = [];
+    let cursor = "start";
+    for (let page = 0; page < 4 && cursor; page++) {
+      const result = runCli(root, hmux, ["ls", "--cursor", cursor, "--json"]);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const report = JSON.parse(result.stdout);
+      expect(report.sessions.length).toBeLessThanOrEqual(128);
+      expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(1024 * 1024);
+      ids.push(...report.sessions.map((session) => session.sessionId));
+      expect(report.truncation.omittedCount).toBe(300 - ids.length);
+      expect(report.inventoryComplete).toBe(ids.length === 300);
+      cursor = report.pagination.nextCursor;
+    }
+    expect(cursor).toBeNull();
+    expect(new Set(ids).size).toBe(300);
+  });
+
+  it("rejects cursors before transport and requires pagination capability", async () => {
+    const root = temporaryRoot();
+    const markerPath = join(root, "invoked");
+    const hmux = installHmuxStub(root, [], { markerPath });
+    const invalid = runCli(root, hmux, ["ls", "--cursor", "invalid", "--json"]);
+    expect(JSON.parse(invalid.stdout).error.code).toBe("dure_session_cursor_invalid");
+    expect(existsSync(markerPath)).toBe(false);
+    const unsupported = runCli(root, hmux, ["ls", "--cursor", "start", "--json"]);
+    expect(JSON.parse(unsupported.stdout).error).toMatchObject({
+      code: "dure_session_hmux_incompatible", capability: "bounded_session_catalog_pagination_v1",
+    });
+  });
+
+  it.each(["local", "ssh"])("passes ordered continuation to the %s backend and validates advancement", async (kind) => {
+    const cursor = sessionCursor({ workspaceId: "workspace-1", sessionId: "session-1" });
+    let request;
+    const collect = (sessions) => collectSessionQuery({
+      action: "list", cursor,
+      backend: { profile: { id: "test", transport: { kind }, expected: { capabilities: ["sessions.list"] } } },
+      requestBackend: async (_profile, value) => {
+        request = value;
+        return { backend: {}, result: { schemaVersion: 1, complete: true, sessions } };
+      },
+    });
+    const report = await collect([hmuxSession(2)]);
+    expect(request.requiredCapabilities).toContain("sessions.list.pagination_v1");
+    expect(request.body.page.after).toEqual({ workspaceId: "workspace-1", sessionId: "session-1" });
+    expect(report.pagination.nextCursor).toBeNull();
+    expect((await collect([hmuxSession(1)])).error.code).toBe("dure_session_page_invalid");
+  });
+
   it.each([
     ["inspect", "--help"], ["inspect", "-h"],
     ["sessions", "show", "--help"], ["sessions", "list", "--help"],

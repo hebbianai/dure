@@ -124,7 +124,9 @@ try {
   // The shared inspection fixture otherwise requests only basic list/show.
   const profilesPath = join(environment.DURE_HOME, "backend-profiles.json");
   const profiles = JSON.parse(readFileSync(profilesPath, "utf8"));
-  for (const profile of profiles.profiles) profile.expected.capabilities.push("sessions.list.bounded_catalog_v1");
+  for (const profile of profiles.profiles) profile.expected.capabilities.push(
+    "sessions.list.bounded_catalog_v1", "sessions.list.pagination_v1",
+  );
   writeFileSync(profilesPath, JSON.stringify(profiles), { mode: 0o600 });
   writeRegistry("qa-local");
   writeFileSync(unboundedFlag, "QA only", { mode: 0o600 });
@@ -169,6 +171,18 @@ try {
     assertBounded(snapshot);
     assert.ok(!snapshot.sessions.some((session) => session.sessionId === "session-159"));
     const savedRegistry = writeRegistry(profile);
+    const paged = [];
+    let cursor = "start";
+    for (let page = 0; cursor !== null && page < 10; page += 1) {
+      const report = readCli(["ls", "--cursor", cursor, ...args]);
+      paged.push(...report.sessions.map((session) => `${session.workspaceId}/${session.sessionId}`));
+      assert.equal(report.truncation.omittedCount, 160 - paged.length);
+      assert.equal(report.inventoryComplete, report.pagination.nextCursor === null);
+      cursor = report.pagination.nextCursor;
+    }
+    assert.equal(cursor, null);
+    assert.deepEqual(paged, Array.from({ length: 160 }, (_, index) =>
+      `workspace/session-${String(index).padStart(3, "0")}`));
     const late = await collectSpaceQuery({ action: "show", spaceId: "desk-catalog",
       registry: { state: "available", clientId: "qa-client", updatedAtMs: savedRegistry.updatedAt,
         clientPresentation: savedRegistry.clientPresentation }, collectSessions: async () => snapshot });
@@ -176,7 +190,8 @@ try {
       ["unavailable", "runtime_snapshot_partial"], ["unavailable", "runtime_snapshot_partial"],
     ]);
     results.push({ phase: "green", path: profile ?? "direct", repetitions: 3,
-      returned: expected.length, omitted: 160 - expected.length, lateBindingState: "runtime_snapshot_partial" });
+      returned: expected.length, omitted: 160 - expected.length, paged: paged.length,
+      lateBindingState: "runtime_snapshot_partial" });
   }
   const exact = JSON.parse(command(hmux, ["--discovery-root", discovery, "--json", "session", "show", "session-159", "--workspace", "workspace"]));
   assert.equal(exact.session_id, "session-159");

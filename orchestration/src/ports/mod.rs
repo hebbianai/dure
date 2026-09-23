@@ -67,6 +67,13 @@ impl StoreHandle {
         self.inner.interaction(request)
     }
 
+    pub(crate) fn interaction_progress<'a>(
+        &'a self,
+        request: &'a GetInteractionRequest,
+    ) -> StoreFuture<'a, Option<crate::contract::InteractionProgressReceipt>> {
+        self.inner.interaction_progress(request)
+    }
+
     pub(crate) fn answer_decision(
         &self,
         request: AnswerDecisionRequest,
@@ -152,6 +159,11 @@ pub trait Store: Send + Sync {
         &'a self,
         request: &'a GetInteractionRequest,
     ) -> StoreFuture<'a, Option<InteractionRecord>>;
+
+    fn interaction_progress<'a>(
+        &'a self,
+        request: &'a GetInteractionRequest,
+    ) -> StoreFuture<'a, Option<crate::contract::InteractionProgressReceipt>>;
 
     fn answer_decision<'a>(
         &'a self,

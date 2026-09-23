@@ -172,8 +172,11 @@ if (args.includes("probe-batch")) {
   const query = JSON.parse(args[queryIndex + 1]);
   const identity = (session) =>
     session.workspace_id + "\\u0000" + session.session_id;
+  const after = query.page?.after;
+  const eligible = payload.filter((session) => !after ||
+    identity(session) > after.workspaceId + "\\u0000" + after.sessionId);
   const sessionsByIdentity = new Map(
-    payload.map((session) => [identity(session), session]),
+    eligible.map((session) => [identity(session), session]),
   );
   const prioritized = [];
   const prioritizedIdentities = new Set();
@@ -185,7 +188,7 @@ if (args.includes("probe-batch")) {
       prioritizedIdentities.add(key);
     }
   }
-  const remaining = payload
+  const remaining = eligible
     .filter((session) => !prioritizedIdentities.has(identity(session)))
     .sort((left, right) =>
       identity(left) < identity(right) ? -1 : identity(left) > identity(right) ? 1 : 0,
@@ -198,8 +201,8 @@ if (args.includes("probe-batch")) {
       prioritizedItems: prioritized.length,
       sessions: selected,
       truncation: {
-        items: selected.length < payload.length,
-        omittedCount: payload.length - selected.length,
+        items: selected.length < eligible.length,
+        omittedCount: eligible.length - selected.length,
       },
     });
   let document = serialize();

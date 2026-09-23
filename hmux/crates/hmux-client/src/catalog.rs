@@ -90,6 +90,14 @@ pub struct SessionCatalogQuery {
     max_items: usize,
     max_output_bytes: usize,
     prioritized: Vec<SessionCatalogIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    page: Option<SessionCatalogPage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionCatalogPage {
+    pub after: Option<SessionCatalogIdentity>,
 }
 
 impl SessionCatalogQuery {
@@ -116,7 +124,19 @@ impl SessionCatalogQuery {
             max_items,
             max_output_bytes,
             prioritized,
+            page: None,
         })
+    }
+
+    pub fn with_page(mut self, page: SessionCatalogPage) -> Result<Self, ClientError> {
+        if !self.prioritized.is_empty() {
+            return Err(ClientError::transport(
+                "hmux_session_catalog_query_invalid",
+                "ordered catalog pages cannot prioritize client bindings",
+            ));
+        }
+        self.page = Some(page);
+        Ok(self)
     }
 
     #[must_use]
@@ -148,6 +168,8 @@ impl<'de> Deserialize<'de> for SessionCatalogQuery {
             max_output_bytes: usize,
             #[serde(default)]
             prioritized: Vec<SessionCatalogIdentity>,
+            #[serde(default)]
+            page: Option<SessionCatalogPage>,
         }
 
         let wire = WireQuery::deserialize(deserializer)?;
@@ -156,8 +178,15 @@ impl<'de> Deserialize<'de> for SessionCatalogQuery {
                 "unsupported session catalog query schema",
             ));
         }
-        SessionCatalogQuery::new(wire.max_items, wire.max_output_bytes, wire.prioritized)
-            .map_err(|error| serde::de::Error::custom(error.code()))
+        let query =
+            SessionCatalogQuery::new(wire.max_items, wire.max_output_bytes, wire.prioritized)
+                .map_err(|error| serde::de::Error::custom(error.code()))?;
+        match wire.page {
+            Some(page) => query
+                .with_page(page)
+                .map_err(|error| serde::de::Error::custom(error.code())),
+            None => Ok(query),
+        }
     }
 }
 
@@ -191,6 +220,7 @@ struct SessionCatalogAccumulator<'a> {
     seen: BTreeMap<SessionCatalogIdentity, SeenCatalogGeneration>,
     prioritized: BTreeMap<SessionCatalogIdentity, DiscoveredSession>,
     remaining: BTreeMap<SessionCatalogIdentity, DiscoveredSession>,
+    eligible_items: usize,
     error: Option<ClientError>,
 }
 
@@ -203,6 +233,7 @@ impl<'a> SessionCatalogAccumulator<'a> {
             seen: BTreeMap::new(),
             prioritized: BTreeMap::new(),
             remaining: BTreeMap::new(),
+            eligible_items: 0,
             error: None,
         }
     }
@@ -249,6 +280,18 @@ impl<'a> SessionCatalogAccumulator<'a> {
                 manifest_digest,
             },
         );
+        // Census and ambiguity checks still cover every manifest. Apply the
+        // continuation boundary before item/byte selection, not afterward.
+        if self
+            .query
+            .page
+            .as_ref()
+            .and_then(|page| page.after.as_ref())
+            .is_some_and(|after| &identity <= after)
+        {
+            return;
+        }
+        self.eligible_items += 1;
         if self.priorities.contains(&identity) {
             self.prioritized.insert(identity, candidate);
             return;
@@ -276,7 +319,7 @@ impl<'a> SessionCatalogAccumulator<'a> {
                 .take(self.query.max_items.saturating_sub(sessions.len()))
                 .map(|(_, session)| SessionDescriptor::from(session)),
         );
-        let total_items = self.seen.len();
+        let total_items = self.eligible_items;
         let mut snapshot = SessionCatalogSnapshot {
             schema_version: SESSION_CATALOG_QUERY_SCHEMA_VERSION,
             // Reaching this snapshot proves the filesystem census completed.

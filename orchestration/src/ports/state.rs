@@ -1,4 +1,5 @@
 mod event_reads;
+mod interaction_progress;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -16,8 +17,8 @@ use crate::contract::{
 };
 use crate::domain::{
     AnswerRecord, AuthorityScope, CapabilityRef, DecisionState, DeliveryReceiptId, DispatchRecord,
-    DispatchState, EventCursor, InteractionCommon, InteractionRecord, InteractionTarget,
-    MessagePurpose, Revision, ValidationError, WakeReasonCode, WorkerEndpoint,
+    DispatchState, EventCursor, INTERACTION_SCHEMA_VERSION, InteractionCommon, InteractionRecord,
+    InteractionTarget, MessagePurpose, Revision, ValidationError, WakeReasonCode, WorkerEndpoint,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -33,6 +34,10 @@ pub struct StoreState {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeliveryEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acknowledged_at_ms: Option<i64>,
     pub receipt: DeliveryReceipt,
     pub delivery_capability: crate::domain::CapabilityRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1050,6 +1055,8 @@ impl StoreState {
             wake: None,
         };
         self.deliveries.push(DeliveryEntry {
+            observed_at_ms: None,
+            acknowledged_at_ms: None,
             receipt: receipt.clone(),
             delivery_capability,
             wake_capability,
