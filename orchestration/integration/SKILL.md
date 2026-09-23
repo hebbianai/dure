@@ -19,6 +19,43 @@ client and canonical service as Dure desktop, CLI, SDK, and remote workers.
 - Report completion through the interaction service so dispatch state, the
   completion Message, and audit Event commit together.
 
+## Choose a message destination
+
+`interaction.open` uses the audience in its payload. Your current context's
+coordinator grant addresses your own coordinator; it does not discover another
+agent or the user-facing orchestrator. For a message to another managed Session,
+discover that exact destination with `dure inspect ... --json`, then resolve
+`dispatch.context.get.exact-session` with `{ "schemaVersion": 1, "session": ... }`.
+Copy the complete Session generation (sessionId, workspaceId, providerId,
+runnerPrincipal, runnerInstance, channelEpoch, hostInstanceId, terminalEpoch)
+and the returned `endpointFence.endpointRef`.
+
+Call `orchestration_message_open_exact_session` with this body, substituting
+observed identities and a unique operation key:
+
+```json
+{
+  "schemaVersion": 1,
+  "session": {
+    "sessionId": "observed-session", "workspaceId": "observed-workspace",
+    "providerId": "claude", "runnerPrincipal": "observed-principal",
+    "runnerInstance": "observed-instance", "channelEpoch": "observed-channel",
+    "hostInstanceId": "observed-host", "terminalEpoch": "observed-terminal"
+  },
+  "expectedEndpointRef": "observed-endpoint",
+  "idempotencyKey": "message-operation-key",
+  "interactionId": "message-id",
+  "title": "Review update",
+  "descriptionMarkdown": "The requested review is ready.",
+  "openedAtMs": 1
+}
+```
+
+Use the current Unix time for openedAtMs. The CLI fallback method is
+`interaction.message.open.exact-session`. Check the returned
+`deliveries[].endpoint.sessionIdentity` against the destination and retain that
+receipt. A generation conflict requires fresh discovery, never a guessed fence.
+
 ## Inspect message delivery
 
 Use `orchestration_interaction_progress` with the same `body` as
@@ -30,6 +67,25 @@ Use `schemaVersion: 1`, `authority`, `interactionId`, `participant`,
 For your own sent message, use your author participant and the exact Dispatch's
 `interactionCapability` as `readCapability`, without a worker fence. Keep these
 capabilities private.
+
+For example, both get and progress accept the following body when reading as
+the author. Copy authority and author from the accepted interaction, and use
+that interaction's Dispatch capability. For exact-session messages, this is the
+destination context resolved above, not the sender's current context:
+
+```json
+{
+  "schemaVersion": 1,
+  "authority": { "workspaceId": "observed-workspace" },
+  "interactionId": "message-id",
+  "participant": "observed-author-participant",
+  "readCapability": "private-dispatch-interaction-capability"
+}
+```
+
+For a worker reader, instead copy its audience readCapability and participant,
+and include its complete observed endpointFence. Never put capabilities in logs
+or feedback reports.
 
 The result separates acceptance, each delivery's queued/read/acknowledged state,
 the wake receipt, and Dispatch completion. `observed` means an authenticated

@@ -21,6 +21,24 @@ import {
   publishNextWorkDecision,
 } from "./orchestration-next-work.mjs";
 
+const identitySchema = { type: "string", minLength: 1 };
+const sessionFields = ["sessionId", "workspaceId", "providerId", "runnerPrincipal", "runnerInstance", "channelEpoch", "hostInstanceId", "terminalEpoch"];
+const interactionReadSchema = {
+  type: "object", additionalProperties: false,
+  required: ["schemaVersion", "authority", "interactionId", "participant", "readCapability"],
+  properties: {
+    schemaVersion: { type: "integer", const: 1 },
+    authority: { type: "object", required: ["workspaceId"], properties: { workspaceId: identitySchema, tenantRef: identitySchema }, additionalProperties: false },
+    interactionId: identitySchema, participant: identitySchema, readCapability: identitySchema,
+    endpointFence: {
+      type: "object", additionalProperties: false,
+      description: "Copy the exact worker endpointFence from dispatch context when reading as that worker; omit when reading as author.",
+      required: ["endpointRef", "sessionIdentity", "generation", "deliveryCapability", "acknowledgementCapability"],
+      properties: { endpointRef: identitySchema, sessionIdentity: identitySchema,
+        generation: { type: "integer", minimum: 1 }, deliveryCapability: identitySchema, acknowledgementCapability: identitySchema },
+    },
+  },
+};
 const tools = [
   {
     name: "orchestration_context_get_current",
@@ -35,13 +53,31 @@ const tools = [
   {
     name: "orchestration_interaction_open",
     description:
-      "Open one nonblocking Markdown Message or one blocking Text/Select Decision.",
+      "Open one nonblocking Markdown Message or one blocking Text/Select Decision for an explicit dispatch audience. Copying your coordinator grant targets your own coordinator, not another session. For a message to a discovered managed session use orchestration_message_open_exact_session.",
     inputSchema: {
       type: "object",
       required: ["body"],
       properties: {
         body: { type: "object" },
       },
+    },
+  },
+  {
+    name: "orchestration_message_open_exact_session",
+    description: "Send one durable Message to an explicitly discovered managed Session generation. Resolve the destination with sessions discovery and dispatch.context.get.exact-session first; copy its session and endpointFence.endpointRef. Never substitute the sender's context. The receipt's deliveries[].endpoint.sessionIdentity identifies the destination; acceptance is not a read or completion. Retry only an identical payload and idempotency key after an uncertain response.",
+    inputSchema: {
+      type: "object", required: ["body"], additionalProperties: false,
+      properties: { body: {
+        type: "object", additionalProperties: false,
+        required: ["schemaVersion", "session", "expectedEndpointRef", "idempotencyKey", "interactionId", "title", "descriptionMarkdown", "openedAtMs"],
+        properties: {
+          schemaVersion: { type: "integer", const: 1 },
+          session: { type: "object", required: sessionFields, additionalProperties: false,
+            properties: Object.fromEntries(sessionFields.map((field) => [field, identitySchema])) },
+          expectedEndpointRef: identitySchema, idempotencyKey: identitySchema, interactionId: identitySchema,
+          title: identitySchema, descriptionMarkdown: identitySchema, openedAtMs: { type: "integer" },
+        },
+      } },
     },
   },
   {
@@ -51,7 +87,7 @@ const tools = [
       type: "object",
       required: ["body"],
       properties: {
-        body: { type: "object" },
+        body: interactionReadSchema,
       },
     },
   },
@@ -61,7 +97,7 @@ const tools = [
     inputSchema: {
       type: "object",
       required: ["body"],
-      properties: { body: { type: "object" } },
+      properties: { body: interactionReadSchema },
       additionalProperties: false,
     },
   },
@@ -366,6 +402,7 @@ export async function handleMcpRequest(
     agent_goal_get: "agent_goal.get",
     agent_goal_put: "agent_goal.put",
     orchestration_interaction_open: "interaction.open",
+    orchestration_message_open_exact_session: "interaction.message.open.exact-session",
     orchestration_interaction_get: "interaction.get",
     orchestration_interaction_progress: "interaction.progress",
     orchestration_decision_answer: "interaction.answer",

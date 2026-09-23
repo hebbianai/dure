@@ -1856,6 +1856,7 @@ describe("immutable generic orchestration integration", () => {
       tools: [
         { name: "orchestration_context_get_current" },
         { name: "orchestration_interaction_open" },
+        { name: "orchestration_message_open_exact_session" },
         { name: "orchestration_interaction_get" },
         { name: "orchestration_interaction_progress" },
         { name: "orchestration_events_read" },
@@ -1906,6 +1907,24 @@ describe("immutable generic orchestration integration", () => {
     const result = await handleMcpRequest({ jsonrpc: "2.0", id: 1, method: "tools/call",
       params: { name: "orchestration_interaction_progress", arguments: { body } },
     }, { DURE_BACKEND_PROFILE: "local" }, { request });
+    expect(result.structuredContent.receipt).toEqual(receipt);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes explicit message destination fields and preserves the exact-session receipt", async () => {
+    const catalogue = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/list" });
+    const tool = catalogue.tools.find((tool) => tool.name === "orchestration_message_open_exact_session");
+    expect(tool.inputSchema.properties.body.required).toContain("expectedEndpointRef");
+    expect(tool.inputSchema.properties.body.properties.session.required).toContain("terminalEpoch");
+    const body = { schemaVersion: 1, session: { sessionId: "destination" }, expectedEndpointRef: "endpoint", idempotencyKey: "message-op" };
+    const receipt = { deliveries: [{ endpoint: { sessionIdentity: { sessionId: "destination" } } }] };
+    const request = vi.fn(async (_endpoint, operation) => {
+      expect(operation.method).toBe("interaction.message.open.exact-session");
+      expect(operation.body).toEqual(body);
+      return { apiVersion: "dure.orchestration/v1", method: operation.method, receipt };
+    });
+    const result = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/call",
+      params: { name: tool.name, arguments: { body } } }, { DURE_BACKEND_PROFILE: "local" }, { request });
     expect(result.structuredContent.receipt).toEqual(receipt);
     expect(request).toHaveBeenCalledTimes(1);
   });
