@@ -291,6 +291,7 @@ async fn picker_connections_can_overlap_reopen_and_close_without_stopping_the_tu
     let listener = bind_endpoint(&endpoint).unwrap();
     let lifecycle = ManagedLifecycle {
         guidance: None,
+        resume_permissions: None,
         reporter: ManagedAgentStateReporter::new("/usr/bin/false", directory.path()),
         request: ManagedAttachRequest::new("fixture-session", "fixture-workspace").unwrap(),
         fence: SessionFence {
@@ -455,6 +456,7 @@ async fn relay_forwards_thread_start_with_the_checkout_guidance() {
     let listener = bind_endpoint(&endpoint).unwrap();
     let lifecycle = ManagedLifecycle {
         guidance: Some("keep main".into()),
+        resume_permissions: None,
         reporter: ManagedAgentStateReporter::new("/usr/bin/false", directory.path()),
         request: ManagedAttachRequest::new("fixture-session", "fixture-workspace").unwrap(),
         fence: SessionFence {
@@ -517,4 +519,109 @@ async fn relay_forwards_thread_start_with_the_checkout_guidance() {
         .unwrap();
     echo_server.abort();
     let _ = echo_server.await;
+}
+
+fn os(arguments: &[&str]) -> Vec<OsString> {
+    arguments.iter().map(OsString::from).collect()
+}
+
+#[test]
+fn remote_resume_moves_bypass_permissions_from_the_tui_to_the_thread() {
+    // Codex 0.156 exits with "Permission overrides are not supported when
+    // resuming a remote task." when the --remote TUI carries them.
+    let options = options(&[
+        "-c",
+        "notify=[]",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-c",
+        "check_for_update_on_startup=false",
+        "resume",
+        "01a0c396",
+    ]);
+    let (tui, permissions) = options.tui_arguments();
+    assert_eq!(
+        tui,
+        os(&[
+            "-c",
+            "notify=[]",
+            "-c",
+            "check_for_update_on_startup=false",
+            "resume",
+            "01a0c396"
+        ])
+    );
+    assert_eq!(
+        permissions,
+        Some(json!({"approvalPolicy": "never", "sandbox": "danger-full-access"}))
+    );
+}
+
+#[test]
+fn remote_resume_moves_auto_edit_permissions_in_both_flag_forms() {
+    let options = options(&[
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval=on-request",
+        "resume",
+        "01a0c396",
+    ]);
+    let (tui, permissions) = options.tui_arguments();
+    assert_eq!(tui, os(&["resume", "01a0c396"]));
+    assert_eq!(
+        permissions,
+        Some(json!({"approvalPolicy": "on-request", "sandbox": "workspace-write"}))
+    );
+}
+
+#[test]
+fn a_new_native_session_keeps_its_permission_flags_on_the_tui() {
+    for arguments in [
+        &[
+            "--dangerously-bypass-approvals-and-sandbox",
+            "resume the audit",
+        ][..],
+        &["-c", "resume", "--sandbox", "read-only", "prompt"][..],
+    ] {
+        let options = options(arguments);
+        assert_eq!(options.tui_arguments(), (os(arguments), None));
+    }
+}
+
+#[test]
+fn resume_permissions_fill_only_the_conversation_thread_resume() {
+    let permissions = json!({"approvalPolicy": "never", "sandbox": "danger-full-access"});
+    let mut payload = thread_request("thread/resume", json!({"threadId": "t-1"}));
+    assert!(apply_resume_permissions(&mut payload, &permissions));
+    assert_eq!(payload["params"]["approvalPolicy"], "never");
+    assert_eq!(payload["params"]["sandbox"], "danger-full-access");
+
+    let mut unset = thread_request(
+        "thread/resume",
+        json!({"threadId": "t-1", "approvalPolicy": null}),
+    );
+    assert!(apply_resume_permissions(&mut unset, &permissions));
+    assert_eq!(unset["params"]["approvalPolicy"], "never");
+
+    let mut explicit = thread_request(
+        "thread/resume",
+        json!({"threadId": "t-1", "sandbox": "read-only"}),
+    );
+    assert!(apply_resume_permissions(&mut explicit, &permissions));
+    assert_eq!(explicit["params"]["sandbox"], "read-only");
+
+    for mut untouched in [
+        thread_request("thread/start", json!({})),
+        thread_request(
+            "thread/resume",
+            json!({"threadId": "t-2", "ephemeral": true}),
+        ),
+        thread_request(
+            "thread/resume",
+            json!({"threadId": "t-2", "threadSource": "system"}),
+        ),
+    ] {
+        let before = untouched.clone();
+        assert!(!apply_resume_permissions(&mut untouched, &permissions));
+        assert_eq!(untouched, before);
+    }
 }

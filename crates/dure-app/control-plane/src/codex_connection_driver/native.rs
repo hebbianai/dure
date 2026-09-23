@@ -23,6 +23,7 @@ struct Options {
 
 struct ManagedLifecycle {
     guidance: Option<String>,
+    resume_permissions: Option<Value>,
     reporter: ManagedAgentStateReporter,
     request: ManagedAttachRequest,
     fence: SessionFence,
@@ -97,32 +98,97 @@ impl Options {
         }
         Ok(result)
     }
+
+    /// Codex rejects permission overrides on a `--remote` resume. For a
+    /// `resume` launch, return the TUI arguments without them and the same
+    /// permissions as `thread/resume` params for the relay to apply.
+    fn tui_arguments(&self) -> (Vec<OsString>, Option<Value>) {
+        const VALUE_FLAGS: &[&str] = &[
+            "-c",
+            "--config",
+            "--enable",
+            "--disable",
+            "-m",
+            "--model",
+            "-p",
+            "--profile",
+            "-C",
+            "--cd",
+            "-i",
+            "--image",
+            "--add-dir",
+            "--local-provider",
+        ];
+        let mut stripped = Vec::with_capacity(self.arguments.len());
+        let mut permissions = serde_json::Map::new();
+        let mut subcommand = None;
+        let mut args = self.arguments.iter();
+        while let Some(argument) = args.next() {
+            let text = argument.to_str().unwrap_or_default();
+            let (flag, inline) = match text.split_once('=') {
+                Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+                _ => (text, None),
+            };
+            let key = match flag {
+                "-a" | "--ask-for-approval" => Some("approvalPolicy"),
+                "-s" | "--sandbox" => Some("sandbox"),
+                _ => None,
+            };
+            if flag == "--dangerously-bypass-approvals-and-sandbox" {
+                permissions.insert("approvalPolicy".into(), "never".into());
+                permissions.insert("sandbox".into(), "danger-full-access".into());
+            } else if let Some(key) = key {
+                let value = inline.or_else(|| args.next().and_then(|value| value.to_str()));
+                if let Some(value) = value {
+                    permissions.insert(key.into(), value.into());
+                }
+            } else if text == "--" {
+                stripped.push(argument.clone());
+                stripped.extend(args.by_ref().cloned());
+            } else {
+                stripped.push(argument.clone());
+                if VALUE_FLAGS.contains(&flag) && inline.is_none() {
+                    stripped.extend(args.next().cloned());
+                } else if !text.starts_with('-') && subcommand.is_none() {
+                    subcommand = Some(text);
+                }
+            }
+        }
+        if subcommand != Some("resume") || permissions.is_empty() {
+            return (self.arguments.clone(), None);
+        }
+        (stripped, Some(Value::Object(permissions)))
+    }
 }
 
-/// Merge primary-checkout guidance into a native `thread/start` or
-/// `thread/resume` request. Ephemeral title-generation threads keep their
-/// wire payload untouched.
-fn inject_thread_developer_guidance(payload: &mut Value, guidance: &str) -> bool {
-    if !matches!(
-        payload.get("method").and_then(Value::as_str),
-        Some("thread/start" | "thread/resume")
-    ) {
-        return false;
-    }
-    // Native clients also start ephemeral threads for title generation; those
-    // are not the pane's conversation and keep their payload.
-    if payload
-        .pointer("/params/ephemeral")
-        .and_then(Value::as_bool)
-        == Some(true)
+/// The params of the pane conversation's own thread request. Native clients
+/// also start ephemeral threads for title generation; those are not the
+/// pane's conversation and keep their payload.
+fn conversation_thread_params<'a>(
+    payload: &'a mut Value,
+    methods: &[&str],
+) -> Option<&'a mut serde_json::Map<String, Value>> {
+    let method = payload.get("method").and_then(Value::as_str);
+    if !method.is_some_and(|method| methods.contains(&method))
+        || payload
+            .pointer("/params/ephemeral")
+            .and_then(Value::as_bool)
+            == Some(true)
         || payload
             .pointer("/params/threadSource")
             .and_then(Value::as_str)
             == Some("system")
     {
-        return false;
+        return None;
     }
-    let Some(params) = payload.get_mut("params").and_then(Value::as_object_mut) else {
+    payload.get_mut("params").and_then(Value::as_object_mut)
+}
+
+/// Merge primary-checkout guidance into a native `thread/start` or
+/// `thread/resume` request.
+fn inject_thread_developer_guidance(payload: &mut Value, guidance: &str) -> bool {
+    let Some(params) = conversation_thread_params(payload, &["thread/start", "thread/resume"])
+    else {
         return false;
     };
     let merged = match params.get("developerInstructions").and_then(Value::as_str) {
@@ -130,6 +196,24 @@ fn inject_thread_developer_guidance(payload: &mut Value, guidance: &str) -> bool
         _ => guidance.to_owned(),
     };
     params.insert("developerInstructions".into(), Value::String(merged));
+    true
+}
+
+/// Carry the launch's permissions, withheld from a `--remote` resume TUI, on
+/// the pane conversation's `thread/resume` unless the client chose its own.
+fn apply_resume_permissions(payload: &mut Value, permissions: &Value) -> bool {
+    let (Some(params), Some(permissions)) = (
+        conversation_thread_params(payload, &["thread/resume"]),
+        permissions.as_object(),
+    ) else {
+        return false;
+    };
+    for (key, value) in permissions {
+        let slot = params.entry(key.clone()).or_insert(Value::Null);
+        if slot.is_null() {
+            *slot = value.clone();
+        }
+    }
     true
 }
 
@@ -190,12 +274,13 @@ pub async fn run_from_arguments(
         .kill_on_drop(true)
         .spawn()
         .map_err(|_| CodexConnectionDriverError::new("upstream_launch_failed"))?;
+    let (tui_arguments, resume_permissions) = options.tui_arguments();
     let result = async {
         let upstream = connect_upstream(&upstream_path, &mut server).await?;
         let mut tui = Command::new(&options.executable)
             .arg("--remote")
             .arg(format!("unix://{}", endpoint.display()))
-            .args(&options.arguments)
+            .args(&tui_arguments)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -210,6 +295,7 @@ pub async fn run_from_arguments(
             &mut tui,
             ManagedLifecycle {
                 guidance,
+                resume_permissions,
                 reporter,
                 request,
                 fence,
@@ -328,11 +414,15 @@ async fn relay(
                     if payload.get("method").is_some() && Lifecycle::owns_request_id(&payload) {
                         return Err(CodexConnectionDriverError::new("native_request_id_reserved"));
                     }
-                    let (admitted, guidance) = {
+                    let (admitted, guidance, resume_permissions) = {
                         let mut lifecycle = lifecycle.lock().await;
                         let admitted =
                             matches!(lifecycle.client(connection, &payload).await, Ok(true));
-                        (admitted, lifecycle.guidance.clone())
+                        (
+                            admitted,
+                            lifecycle.guidance.clone(),
+                            lifecycle.resume_permissions.clone(),
+                        )
                     };
                     if !admitted {
                         // A full pending-request budget or one helper's bad
@@ -345,9 +435,13 @@ async fn relay(
                         }
                         continue;
                     }
-                    if let Some(guidance) = guidance
-                        && inject_thread_developer_guidance(&mut payload, &guidance)
-                    {
+                    let guided = guidance.is_some_and(|guidance| {
+                        inject_thread_developer_guidance(&mut payload, &guidance)
+                    });
+                    let permitted = resume_permissions.is_some_and(|permissions| {
+                        apply_resume_permissions(&mut payload, &permissions)
+                    });
+                    if guided || permitted {
                         // Preserve the client's frame type on the rewritten wire.
                         message = match message {
                             Message::Binary(_) => {
