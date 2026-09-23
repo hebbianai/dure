@@ -1,4 +1,4 @@
-import { readUtf8Input } from "./text-input.mjs";
+import { readUtf8Input, readUtf8Stdin } from "./text-input.mjs";
 
 const SEND_HELP = `dure send — Send text to an agent
 
@@ -96,7 +96,8 @@ export async function runSendCommand(
     if (source === 0 && process.stdin.isTTY) {
       throw new Error("--stdin requires piped or redirected input, terminated by EOF");
     }
-    text = source === undefined ? opts.rest.slice(1).join(" ") : readUtf8Input(source);
+    text = source === undefined ? opts.rest.slice(1).join(" ")
+      : source === 0 ? await readUtf8Stdin() : readUtf8Input(source);
   } catch (error) {
     return fail(error.message);
   }

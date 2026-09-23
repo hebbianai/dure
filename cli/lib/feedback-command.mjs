@@ -23,7 +23,7 @@ import {
 } from "./contracts/feedback-envelope.mjs";
 import { parseOpts } from "./cli-options.mjs";
 import { cliPackageVersion } from "./runtime-diagnostics.mjs";
-import { readUtf8Input } from "./text-input.mjs";
+import { readUtf8Stdin } from "./text-input.mjs";
 
 /** The values `dure feedback --kind` accepts. Narrower than the wire's own
  *  `FEEDBACK_KINDS` (which also has "crash") — a crash report is meant to
@@ -283,7 +283,7 @@ export function resolveFeedbackText({
 }
 
 export function readFeedbackStdin() {
-	return readUtf8Input(0, STDIN_MAX_BYTES);
+	return readUtf8Stdin(STDIN_MAX_BYTES);
 }
 
 /** Opens `$EDITOR` on an empty temp file and returns what was saved.
@@ -498,7 +498,7 @@ export async function runFeedbackCommand(opts, overrides = {}) {
 	try {
 		envelope = buildFeedbackEnvelope({
 			kind,
-			body: resolved.text,
+			body: await resolved.text,
 			contact: opts.contact,
 			env: {
 				app: readCliVersion(),

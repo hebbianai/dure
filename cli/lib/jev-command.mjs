@@ -1,4 +1,4 @@
-import { readUtf8Input } from "./text-input.mjs";
+import { readUtf8Input, readUtf8Stdin } from "./text-input.mjs";
 import { evaluateJev, JevError, JEV_REQUEST_BYTES, jevErrorReport } from "./jev.mjs";
 
 export const JEV_HELP = `dure jev — evaluate typed questions with TypeSafe Jev
@@ -51,7 +51,8 @@ export async function runJevCommand(
     }
     let input;
     try {
-      input = JSON.parse(readUtf8Input(source === "-" ? 0 : source, JEV_REQUEST_BYTES));
+      input = JSON.parse(source === "-"
+        ? await readUtf8Stdin(JEV_REQUEST_BYTES) : readUtf8Input(source, JEV_REQUEST_BYTES));
     } catch {
       throw new JevError(
         "jev_input_invalid",

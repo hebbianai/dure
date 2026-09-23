@@ -154,7 +154,7 @@ function assertTestEndpoint(endpoint) {
  * should reject this first" is exactly the assumption a RED phase or a
  * future regression breaks — so this guard does not trust it, ever.
  */
-function runCli(args, { env = {}, input } = {}) {
+function runCli(args, { env = {}, input, nodeArgs = [], inputReadyMarker } = {}) {
 	const endpoint = env.DURE_FEEDBACK_ENDPOINT;
 	if (!endpoint) {
 		throw new Error(
@@ -166,7 +166,7 @@ function runCli(args, { env = {}, input } = {}) {
 	}
 	assertTestEndpoint(endpoint);
 	return new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, [cli, "feedback", ...args], {
+		const child = spawn(process.execPath, [...nodeArgs, cli, "feedback", ...args], {
 			env: { ...process.env, DURE_APP_CHANNEL: "stable", ...env },
 			stdio: ["pipe", "pipe", "pipe"],
 			timeout: 10_000,
@@ -178,13 +178,18 @@ function runCli(args, { env = {}, input } = {}) {
 		});
 		child.stderr.on("data", (chunk) => {
 			stderr += chunk;
+			if (inputReadyMarker && stderr.includes(inputReadyMarker)) {
+				stderr = stderr.replace(inputReadyMarker, "");
+				inputReadyMarker = undefined;
+				setTimeout(() => child.stdin.end(input ?? ""), 50);
+			}
 		});
 		child.stdin.on("error", (error) => {
 			if (error.code !== "EPIPE") reject(error);
 		});
 		child.on("error", reject);
 		child.on("close", (code) => resolve({ code, stdout, stderr }));
-		child.stdin.end(input ?? "");
+		if (!inputReadyMarker) child.stdin.end(input ?? "");
 	});
 }
 
@@ -920,6 +925,24 @@ describe("runFeedbackCommand exit codes and --json output", () => {
 });
 
 describe("dure feedback (real subprocess)", () => {
+	it("waits for a pipe producer instead of failing with EAGAIN", async () => {
+		const { requests, endpoint } = await startFixtureServer((response) => {
+			response.writeHead(201, { "content-type": "application/json" });
+			response.end(JSON.stringify({ id: "gh-pipe" }));
+		});
+		const home = tempHome();
+		const preload = join(home, "stdin-ready.mjs");
+		writeFileSync(preload, `Object.defineProperty(process.stdin, "isTTY", { get() { process.stderr.write("fixture-ready\\n"); return false; } });`);
+		const body = "piped 한글 👋\\nmessage";
+		const result = await runCli(["--json"], {
+			env: { HOME: home, DURE_HOME: join(home, ".dure"), DURE_FEEDBACK_ENDPOINT: endpoint },
+			nodeArgs: ["--import", preload], inputReadyMarker: "fixture-ready\n", input: body,
+		});
+		expect(result).toEqual({ code: 0, stdout: '{"reference":"gh-pipe"}\n', stderr: "" });
+		expect(requests).toHaveLength(1);
+		expect(requests[0].payload.body).toBe(body);
+	});
+
 	it("sends positional text end to end and prints the reference", async () => {
 		const { requests, endpoint } = await startFixtureServer((response) => {
 			response.writeHead(201, { "content-type": "application/json" });

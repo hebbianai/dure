@@ -55,6 +55,18 @@ function agentPresentation(paneId, agentId = "agent-1", source = "local", hostId
 }
 
 describe("dure sessions list/show/read", () => {
+  it.each([
+    ["inspect", "--help"], ["inspect", "-h"],
+    ["sessions", "show", "--help"], ["sessions", "list", "--help"],
+    ["ls", "--help"], ["list", "-h"],
+  ])("shows help for %j without looking up a session or backend", (...args) => {
+    const root = temporaryRoot();
+    const result = runCli(root, join(root, "absent-hmux"), args);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("Usage: dure");
+    expect(result.stderr).toBe("");
+  });
+
   it("reads fenced runtime facts without app server.json and separates client projection", () => {
     const root = temporaryRoot();
     const hmux = installHmuxStub(root, [hmuxSession()]);

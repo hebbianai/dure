@@ -1463,6 +1463,17 @@ async function cmdLs(opts) {
   return emitSessionQuery("list", undefined, opts);
 }
 
+const SESSION_QUERY_HELP = `Usage: dure ls [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]
+       dure sessions list [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]
+       dure inspect <session-id> [--workspace ID] [--backend ID] [--json]
+       dure sessions show <session-id> [--workspace ID] [--backend ID] [--json]
+       dure sessions recent [--json]
+
+List and inspect read canonical backend Sessions without requiring a running app.
+Recent lists provider history through the connected app.
+Use --help or -h to show this help without contacting a backend.
+`;
+
 async function cmdSessions(sub, opts) {
   if (sub === undefined || sub === "recent") {
     if (opts.rest.length !== (sub === undefined ? 0 : 1)) {
@@ -3631,6 +3642,16 @@ async function cmdProfiles(opts) {
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
+  const sessionCommands = ["ls", "list", "inspect", "sessions"];
+  const optionEnd = rest.indexOf("--");
+  if (
+    (cmd === "help" && sessionCommands.includes(rest[0])) ||
+    (sessionCommands.includes(cmd) &&
+      (optionEnd < 0 ? rest : rest.slice(0, optionEnd)).some((arg) => arg === "--help" || arg === "-h"))
+  ) {
+    process.stdout.write(SESSION_QUERY_HELP);
+    return;
+  }
   if (cmd === "computer" || (cmd === "help" && rest[0] === "computer")) {
     const { COMPUTER_HELP, parseComputerArgs } = await import("./lib/computer-options.mjs");
     try {
