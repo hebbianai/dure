@@ -155,8 +155,8 @@ export function BrowserPageSurface({
 				ref={input}
 				aria-label={t("panels.browser.pageInput")}
 				className="absolute top-0 left-0 size-px resize-none overflow-hidden opacity-0"
-				tabIndex={enabled && !children ? 0 : -1}
-				readOnly={!enabled || resizing || !!children}
+				tabIndex={enabled && frame && !resizing && !children ? 0 : -1}
+				readOnly={!enabled || !frame || resizing || !!children}
 				autoCapitalize="off"
 				autoCorrect="off"
 				spellCheck={false}

@@ -130,6 +130,7 @@ export class BrowserPaneSession {
 	private selectedPage?: { id: string };
 	/** A completed page transition invalidates snapshots taken before its receipt. */
 	private minimumObservationRevision = 0n;
+	private pendingControlSelection?: BrowserControllerLease;
 
 	constructor(
 		readonly client: Client,
@@ -224,7 +225,20 @@ export class BrowserPaneSession {
 			BigInt(control.revision) >= BigInt(this.view.control.revision)
 		) {
 			const previousController = this.view.control?.controller;
-			this.publish({ ...this.view, control });
+			const granted = control.controller;
+			const needsObservation =
+				granted?.controller_id === this.controllerId &&
+				!sameLease(previousController, granted);
+			if (needsObservation) {
+				this.pendingControlSelection = granted;
+				if (BigInt(control.revision) > this.minimumObservationRevision)
+					this.minimumObservationRevision = BigInt(control.revision);
+			}
+			this.publish({
+				...this.view,
+				control,
+				...(needsObservation ? { page: undefined, frame: undefined } : {}),
+			});
 			this.controllerChanged(previousController);
 		}
 	}
@@ -250,9 +264,23 @@ export class BrowserPaneSession {
 			return;
 		}
 		const page = this.view.page;
+		const pending = this.pendingControlSelection;
+		if (pending && !sameLease(lease, pending))
+			this.pendingControlSelection = undefined;
+		// A controller grant does not refresh the page's document identity. Wait
+		// for an observation at least as new before selecting or fitting a page.
+		if (
+			pending &&
+			sameLease(lease, pending) &&
+			(!this.view.observation ||
+				BigInt(this.view.observation.control.revision) <
+					BigInt(control!.revision))
+		)
+			return;
+		this.pendingControlSelection = undefined;
 		if (
 			lease?.controller_id === this.controllerId &&
-			!sameLease(previous, lease) &&
+			(!sameLease(previous, lease) || (pending && sameLease(lease, pending))) &&
 			control?.phase === "ready" &&
 			!control.requested_controller &&
 			this.selectedPage &&
@@ -428,6 +456,12 @@ export class BrowserPaneSession {
 							crypto.randomUUID(),
 						),
 					);
+					if (item.controllerId === this.controllerId) {
+						// A hidden pane does not poll. Handback must refresh it without
+						// requesting a screenshot or recreating its browser resource.
+						await this.refreshing;
+						await this.refresh({ capture: false });
+					}
 					for (const resolve of item.resolve) resolve();
 					continue;
 				}

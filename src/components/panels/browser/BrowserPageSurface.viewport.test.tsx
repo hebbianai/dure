@@ -151,6 +151,35 @@ it("fits only the controlling pane and waits for held keys to be released", asyn
 			<BrowserPageSurface session={session} view={session.read()} enabled />,
 		);
 		await waitFor(() => expect(actions).toHaveLength(1));
+		const receiver = () => mounted.container.querySelector("textarea")!;
+		expect(receiver().readOnly).toBe(true);
+		mounted.rerender(
+			<BrowserPageSurface
+				session={session}
+				view={{ ...session.read(), frame: undefined }}
+				enabled
+			/>,
+		);
+		expect(receiver().readOnly).toBe(true);
+		expect(receiver().tabIndex).toBe(-1);
+		const frame = session.read().frame!;
+		mounted.rerender(
+			<BrowserPageSurface
+				session={session}
+				view={{
+					...session.read(),
+					frame: {
+						...frame,
+						capture: {
+							...frame.capture,
+							viewport: { ...frame.capture.viewport, width: 480, height: 610 },
+						},
+					},
+				}}
+				enabled
+			/>,
+		);
+		expect(receiver().readOnly).toBe(false);
 		expect(actions[0]).toMatchObject({
 			kind: "action",
 			caller: "view:one",

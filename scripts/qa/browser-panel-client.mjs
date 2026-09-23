@@ -171,11 +171,11 @@ try {
   const shown = await command(["show", resourceId]);
   const pageId = shown.result.pages[0].page.page_id;
   const controlled = await command(["control", resourceId, "--controller", "native-panel-agent"]);
-  const initialLease = controlled.result.controller;
+  let initialLease = controlled.result.controller;
   const flags = (lease) => ["--page", pageId, "--controller", lease.controller_id, "--epoch", lease.epoch];
   const url = `${fixture.url}/?owner=native-panel`;
   await command(["goto", resourceId, url, ...flags(initialLease)]);
-  const initial = await command(["eval", resourceId, `
+  const seedPage = () => command(["eval", resourceId, `
     document.body.style.background='rgb(210,220,230)';
     window.fixture.previewClicks = 0;
     for (const [id, left, width] of [['preview-one', 60, 140], ['preview-two', 230, 160]]) {
@@ -188,7 +188,8 @@ try {
     document.querySelector('input').focus();
     ({ ...window.fixture, pixelRatio: window.devicePixelRatio })
   `, ...flags(initialLease)]);
-  const instance = initial.result.response.data.result.instance;
+  let initial = await seedPage();
+  let instance = initial.result.response.data.result.instance;
   assert.ok(instance);
   assert.equal(initial.result.response.data.result.pixelRatio, 1, "fixture hover coordinates use CSS-sized decoded frames");
   const addressFocus = process.env.DURE_BROWSER_PANEL_INTERACTION === "1";
@@ -204,6 +205,22 @@ try {
     assert.equal(state.pane.actionDefinitions["take-control"].unavailable, undefined);
     assert.ok(state.pane.actions.includes("reconnect"));
     assert.equal(attached.frame, undefined, "a never-revealed Space must not capture frames");
+    const oldRevision = JSON.parse(state.pane.context).page.document_revision;
+    await command(["goto", resourceId, url, ...flags(initialLease)]);
+    await command(["snapshot", resourceId, "--page", pageId]);
+    const beforeHandback = JSON.parse((await execute(cli, args, { timeout: 30_000 })).stdout);
+    const handbackArgs = ["client", "pane", "act", "browser:native-panel-proof", "take-control", "--args-json",
+      JSON.stringify(beforeHandback.pane.actionDefinitions["take-control"].current), "--json"];
+    const handback = JSON.parse((await execute(cli, handbackArgs, { timeout: 30_000 })).stdout);
+    assert.equal(handback.pane.result.outcome, "applied");
+    const afterHandback = JSON.parse((await execute(cli, args, { timeout: 30_000 })).stdout);
+    assert.equal(afterHandback.pane.status, "attached", "handback must not leave browser_document_changed");
+    assert.ok(BigInt(JSON.parse(afterHandback.pane.context).page.document_revision) > BigInt(oldRevision));
+    receipts.push({ args: handbackArgs, result: handback }, { args, result: afterHandback });
+    initialLease = (await command(["control", resourceId, "--controller", "native-panel-agent"])).result.controller;
+    initial = await seedPage();
+    instance = initial.result.response.data.result.instance;
+
     assert.deepEqual((await command(["show", resourceId])).result.control.controller, initialLease);
     const opened = await command(["open-url", `${fixture.url}/next`, "--resource", resourceId, "--space", attached.spaceId,
       "--controller", initialLease.controller_id, "--epoch", initialLease.epoch]);

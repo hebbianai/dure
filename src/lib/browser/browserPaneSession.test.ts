@@ -130,6 +130,61 @@ function fixture(
 }
 
 describe("Browser pane ordered input and frame lifetime", () => {
+	it("cannot restore an old document from an in-flight observation after handback", async () => {
+		const { session, client, setControl } = fixture();
+		const agent = { ...lease, controller_id: "agent:one" };
+		setControl({ ...initial, controller: agent });
+		await session.refresh({ capture: false });
+		const pending = deferred<BrowserObservation>();
+		client.observe.mockReturnValueOnce(pending.promise);
+		const refresh = session.refresh({ capture: false });
+		const navigated = { ...page, document_revision: "2" };
+		const granted = {
+			...initial,
+			revision: "3",
+			controller: { ...lease, epoch: "2" },
+			current_page: navigated,
+		};
+		client.requestControl.mockResolvedValueOnce(granted);
+		client.observe.mockResolvedValueOnce(observation(granted, [navigated]));
+		const handingBack = session.handoff(lease.controller_id, agent);
+		await vi.waitFor(() => expect(session.read().control?.revision).toBe("3"));
+		expect(session.read().page).toBeUndefined();
+		await expect(session.input({ kind: "reload" })).rejects.toThrow(
+			"browser_controller_changed",
+		);
+		pending.resolve(observation({ ...initial, controller: agent }));
+		await Promise.all([refresh, handingBack]);
+		expect(session.read().page).toEqual(navigated);
+		expect(client.action).not.toHaveBeenCalled();
+		await session.dispose(false);
+	});
+	it("handback refreshes a hidden pane after agent navigation before selecting or fitting", async () => {
+		const { session, client, setControl } = fixture();
+		const agent = { ...lease, controller_id: "agent:one" };
+		setControl({ ...initial, controller: agent });
+		await session.refresh({ capture: false });
+		session.selectPage(page.page_id);
+		const navigated = { ...page, document_revision: "2" };
+		const granted = {
+			...initial,
+			revision: "3",
+			controller: { ...lease, epoch: "2" },
+			current_page: navigated,
+		};
+		client.requestControl.mockResolvedValueOnce(granted);
+		client.observe.mockResolvedValueOnce(
+			observation(granted, [navigated, second]),
+		);
+		await session.handoff(lease.controller_id, agent);
+		expect(session.read().page).toEqual(navigated);
+		expect(session.read().error).toBeUndefined();
+		expect(client.action).not.toHaveBeenCalled();
+		expect(client.frame).not.toHaveBeenCalled();
+		await session.input({ kind: "reload" });
+		expect(client.action.mock.calls[0][1].page).toEqual(navigated);
+		await session.dispose(false);
+	});
 	it.each(["observe", "frame", "decode"] as const)(
 		"replaces a transient %s failure with a fresh decoded frame",
 		async (stage) => {
