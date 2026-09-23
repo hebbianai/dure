@@ -728,6 +728,22 @@ fn validate_agent_state_report(
         if let Some(fence) = &identity.expected_fence {
             validate_fence(fence, limits)?;
         }
+        if let Some(previous) = &identity.previous_conversation_id {
+            bounded_text(
+                "agent_state_report.conversation_identity.previous_conversation_id",
+                previous,
+                limits.max_identifier_bytes,
+                false,
+            )?;
+            if !safe_opaque_identity(previous)
+                || previous == &identity.conversation_id
+                || identity.expected_fence.is_none()
+                || frame.causality.is_none()
+                || frame.identity_only
+            {
+                return Err(inconsistent("agent_state_report.conversation_continuation"));
+            }
+        }
     }
     if let Some(expected) = &frame.expected_observation {
         bounded_text(
@@ -1930,6 +1946,65 @@ mod tests {
     }
 
     #[test]
+    fn conversation_continuations_require_causality_and_an_exact_fence() {
+        let report = crate::AgentStateReport {
+            request_id: "continuation".into(),
+            identity_only: false,
+            activity: AgentRuntimeActivity::Working,
+            attention: AgentRuntimeAttention::None,
+            turn_completed: false,
+            turn_completion_id: None,
+            causality: Some(crate::AgentStateReportCausality {
+                sequence: 1,
+                work_id: Some("work".into()),
+            }),
+            working_ttl_ms: None,
+            expected_observation: None,
+            conversation_identity: Some(crate::ProviderConversationIdentityReport {
+                provider_id: "claude".into(),
+                conversation_id: "next".into(),
+                previous_conversation_id: Some("previous".into()),
+                expected_fence: Some(fence("session")),
+            }),
+        };
+        let codec = FrameCodec::new(FrameLimits::default());
+        let wire = frame(FrameBody::AgentStateReport(report.clone()));
+        assert_eq!(codec.decode(&codec.encode(&wire).unwrap()).unwrap(), wire);
+        for invalid in 0..4 {
+            let mut changed = report.clone();
+            match invalid {
+                0 => changed.causality = None,
+                1 => {
+                    changed
+                        .conversation_identity
+                        .as_mut()
+                        .unwrap()
+                        .expected_fence = None
+                }
+                2 => {
+                    changed
+                        .conversation_identity
+                        .as_mut()
+                        .unwrap()
+                        .previous_conversation_id = Some("next".into())
+                }
+                _ => {
+                    changed
+                        .conversation_identity
+                        .as_mut()
+                        .unwrap()
+                        .previous_conversation_id = Some("../invalid".into())
+                }
+            }
+            assert!(
+                frame(FrameBody::AgentStateReport(changed))
+                    .validate(&FrameLimits::default())
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn agent_state_reports_are_bounded_consistent_and_round_trip() {
         use crate::{
             AGENT_STATE_REPORT_MAX_WORKING_TTL_MS, AgentStateReport,
@@ -2065,6 +2140,7 @@ mod tests {
                     conversation_identity: Some(ProviderConversationIdentityReport {
                         provider_id: "codex".into(),
                         conversation_id: "conversation-1".into(),
+                        previous_conversation_id: None,
                         expected_fence: None,
                     }),
                     expected_observation: Some(AgentStateReportObservationFence {
@@ -2081,6 +2157,7 @@ mod tests {
                     conversation_identity: Some(ProviderConversationIdentityReport {
                         provider_id: "codex".into(),
                         conversation_id: "conversation-1".into(),
+                        previous_conversation_id: None,
                         expected_fence: None,
                     }),
                     expected_observation: Some(AgentStateReportObservationFence {

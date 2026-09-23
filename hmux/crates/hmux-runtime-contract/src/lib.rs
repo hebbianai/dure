@@ -5772,6 +5772,7 @@ mod tests {
                     hmux_session_protocol::ProviderConversationIdentityReport {
                         provider_id: "codex".into(),
                         conversation_id: "conversation-1".into(),
+                        previous_conversation_id: None,
                         expected_fence: None,
                     },
                 ),

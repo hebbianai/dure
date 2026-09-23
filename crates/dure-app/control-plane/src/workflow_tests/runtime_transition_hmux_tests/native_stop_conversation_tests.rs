@@ -50,6 +50,7 @@ async fn close_after_conversation_report(bound_conversation: Option<&str>) {
                     conversation_identity: Some(ProviderConversationIdentity {
                         provider_id: "codex".into(),
                         conversation_id: CONVERSATION.into(),
+                        previous_conversation_id: None,
                         expected_fence: Some(fence.clone()),
                     }),
                     expected_observation: None,

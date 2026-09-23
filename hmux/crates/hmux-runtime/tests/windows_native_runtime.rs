@@ -798,6 +798,7 @@ impl WindowsAgentPromptFixture {
                     conversation_identity: Some(ProviderConversationIdentity {
                         provider_id: "codex".into(),
                         conversation_id: conversation_id.into(),
+                        previous_conversation_id: None,
                         expected_fence: Some(self.expected_fence.clone()),
                     }),
                     expected_observation: None,

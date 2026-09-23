@@ -5075,6 +5075,15 @@ fn terminal_stream_reducer_fences_provider_identity_by_complete_fence_output_and
             reason: "provider conversation identity changed within one Host generation"
         })
     ));
+    reducer.conversation_continuations = true;
+    assert!(reducer.accept(&identity(fence(), 4, 2)).unwrap());
+    assert_eq!(
+        reducer.last_provider_conversation_identity,
+        Some(("codex".into(), "conversation-4".into()))
+    );
+    // Negotiated continuations still cannot reuse a revision or move backward.
+    assert!(reducer.accept(&identity(fence(), 4, 2)).is_err());
+    assert!(reducer.accept(&identity(fence(), 3, 2)).is_err());
 }
 
 #[cfg(feature = "terminal-state-stream")]
@@ -5156,6 +5165,29 @@ fn structured_semantic_staging_keeps_fences_revisions_and_identity_fail_closed()
             reason: "provider conversation identity changed within one Host generation"
         })
     ));
+    reducer.conversation_continuations = true;
+    assert!(!reducer
+        .accept_structured_control(&identity("conversation-b", 2, 4))
+        .unwrap());
+    assert!(reducer
+        .accept_structured_control(&identity("conversation-a", 1, 4))
+        .is_err());
+    reducer
+        .accept_complete_terminal_viewport(&ViewportFrameProgress {
+            terminal_epoch: "terminal-1".into(),
+            through_output_seq: 4,
+            state_revision: 3,
+            projection_revision: 3,
+            applied_intent_seq: 2,
+        })
+        .unwrap();
+    let Some(FrameBody::ProviderConversationIdentity(current)) =
+        reducer.take_ready_semantic_control().unwrap()
+    else {
+        panic!("the continuation did not survive its matching viewport");
+    };
+    assert_eq!(current.conversation_id, "conversation-b");
+    assert_eq!(current.revision, 2);
 }
 // ---- reconnect resume -------------------------------------------------
 

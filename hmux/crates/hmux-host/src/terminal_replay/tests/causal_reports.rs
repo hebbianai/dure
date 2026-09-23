@@ -1,6 +1,127 @@
 use super::*;
 use crate::local_protocol::AgentStateReportCausality;
 
+#[test]
+fn verified_conversation_continuation_keeps_turn_completion_live() {
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    let now = Instant::now();
+    let identity = |id: &str| {
+        ProviderConversationIdentityObservation::new(
+            "claude",
+            id,
+            ProviderConversationIdentitySource::ProviderEvent,
+        )
+    };
+    replay
+        .apply_agent_state_report_with_identity_at(
+            causal(10, "parent-work", false),
+            Some(identity("original")),
+            now,
+        )
+        .unwrap();
+    let before = replay.agent_runtime_state().cloned();
+    assert_eq!(
+        replay.apply_agent_state_report_with_identity_at(
+            causal(11, "child-work", false),
+            Some(identity("unrelated-child")),
+            now,
+        ),
+        Err(TerminalReplayError::ProviderConversationIdentityConflict)
+    );
+    assert_eq!(replay.agent_runtime_state(), before.as_ref());
+
+    let mut continued = identity("continued");
+    continued.previous_conversation_id = Some("original".into());
+    replay
+        .apply_agent_state_report_with_identity_at(
+            causal(12, "parent-work", false),
+            Some(continued),
+            now,
+        )
+        .unwrap();
+    let current = replay.provider_conversation_identity().unwrap();
+    assert_eq!(current.conversation_id, "continued");
+    assert_eq!(current.revision, 2);
+    replay
+        .apply_agent_state_report_with_identity_at(
+            causal(13, "parent-work", true),
+            Some(identity("continued")),
+            now,
+        )
+        .unwrap();
+    replay
+        .expire_agent_runtime_state(now + Duration::from_secs(1))
+        .unwrap();
+    assert_eq!(
+        replay.agent_runtime_state().unwrap().activity,
+        AgentRuntimeActivity::Waiting
+    );
+    assert_eq!(
+        replay.agent_runtime_state().unwrap().turn_completed_count,
+        1
+    );
+
+    let stale = replay
+        .apply_agent_state_report_with_identity_at(
+            causal(11, "parent-work", false),
+            Some(identity("original")),
+            now,
+        )
+        .unwrap();
+    assert_eq!(stale.0, AgentStateReportFold::NoOp);
+    assert_eq!(
+        replay
+            .provider_conversation_identity()
+            .unwrap()
+            .conversation_id,
+        "continued"
+    );
+    assert_eq!(
+        replay.agent_runtime_state().unwrap().activity,
+        AgentRuntimeActivity::Waiting
+    );
+}
+
+#[test]
+fn conversation_continuation_requires_the_exact_predecessor() {
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    let now = Instant::now();
+    replay
+        .apply_agent_state_report_with_identity_at(
+            causal(10, "work", false),
+            Some(ProviderConversationIdentityObservation::new(
+                "claude",
+                "current",
+                ProviderConversationIdentitySource::ProviderEvent,
+            )),
+            now,
+        )
+        .unwrap();
+    for (provider, previous) in [("claude", "another"), ("codex", "current")] {
+        let mut changed = ProviderConversationIdentityObservation::new(
+            provider,
+            "next",
+            ProviderConversationIdentitySource::ProviderEvent,
+        );
+        changed.previous_conversation_id = Some(previous.into());
+        assert_eq!(
+            replay.apply_agent_state_report_with_identity_at(
+                causal(11, "work", false),
+                Some(changed),
+                now,
+            ),
+            Err(TerminalReplayError::ProviderConversationIdentityConflict)
+        );
+        assert_eq!(
+            replay
+                .provider_conversation_identity()
+                .unwrap()
+                .conversation_id,
+            "current"
+        );
+    }
+}
+
 fn causal(sequence: u64, work: &str, completed: bool) -> AgentStateReportObservation {
     let mut report = state_report(
         if completed {

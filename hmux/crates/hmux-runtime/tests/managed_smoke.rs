@@ -5040,6 +5040,7 @@ impl UnixAgentPromptFixture {
                         ProviderConversationIdentity {
                             provider_id: "codex".into(),
                             conversation_id: conversation_id.into(),
+                            previous_conversation_id: None,
                             expected_fence: Some(self.expected_fence.clone()),
                         }
                     }),
@@ -5068,6 +5069,7 @@ impl UnixAgentPromptFixture {
                     conversation_identity: Some(ProviderConversationIdentity {
                         provider_id: "codex".into(),
                         conversation_id: conversation_id.into(),
+                        previous_conversation_id: None,
                         expected_fence: Some(self.expected_fence.clone()),
                     }),
                     expected_observation: None,
@@ -7205,6 +7207,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
         conversation_identity: Some(ProviderConversationIdentity {
             provider_id: "codex".into(),
             conversation_id: "conversation-launch".into(),
+            previous_conversation_id: None,
             expected_fence: Some(expected_fence.clone()),
         }),
         expected_observation: None,
@@ -7267,6 +7270,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
         conversation_identity: Some(ProviderConversationIdentity {
             provider_id: "codex".into(),
             conversation_id: "conversation-launch".into(),
+            previous_conversation_id: None,
             expected_fence: Some(fence),
         }),
         expected_observation: None,
@@ -7461,6 +7465,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
                 conversation_identity: Some(ProviderConversationIdentity {
                     provider_id: "codex".into(),
                     conversation_id: "conversation-conflict".into(),
+                    previous_conversation_id: None,
                     expected_fence: Some(expected_fence),
                 }),
                 expected_observation: None,
@@ -7572,6 +7577,7 @@ fn structured_semantics_follow_output_that_does_not_change_the_viewport() {
                     conversation_identity: Some(ProviderConversationIdentity {
                         provider_id: "codex".into(),
                         conversation_id: "conversation-after-noop-output".into(),
+                        previous_conversation_id: None,
                         expected_fence: Some(expected_fence),
                     }),
                     expected_observation: None,
@@ -7682,6 +7688,7 @@ fn managed_identity_only_report_establishes_a_fresh_host_snapshot() {
         conversation_identity: Some(ProviderConversationIdentity {
             provider_id: "codex".into(),
             conversation_id: "conversation-inspected".into(),
+            previous_conversation_id: None,
             expected_fence: Some(expected_fence.clone()),
         }),
         expected_observation: None,
@@ -8002,6 +8009,7 @@ fn publish_provider_conversation_identity(
                 conversation_identity: Some(ProviderConversationIdentity {
                     provider_id: provider_id.into(),
                     conversation_id: conversation_id.into(),
+                    previous_conversation_id: None,
                     expected_fence: Some(expected_fence),
                 }),
                 expected_observation: None,

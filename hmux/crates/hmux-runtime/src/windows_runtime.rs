@@ -25,6 +25,7 @@ mod windows_terminal_encoding;
 use crate::terminal_geometry::TerminalSurfaceGeometry;
 
 use client_transport::{ClientTransport, SharedFrameWriter};
+use hmux_host::local_protocol::PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY;
 use hmux_client::recovery_journal::managed_create_ledger::{
     self, ManagedStartingGeneration, ManagedStartingProviderContainment,
 };
@@ -213,6 +214,7 @@ fn managed_host_capabilities(process_observed_agent_prompt: bool) -> Vec<String>
         MANAGED_PROVIDER_CONVERSATION_FENCED_STOP_CAPABILITY,
         PROVIDER_CONVERSATION_IDENTITY_CAPABILITY,
         PROVIDER_CONVERSATION_IDENTITY_ONLY_REPORT_CAPABILITY,
+        PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY,
         PROVIDER_STATE_ENVIRONMENT_CAPABILITY,
         PROVIDER_STATE_ENVIRONMENT_REMOVAL_CAPABILITY,
     ]
@@ -2672,6 +2674,10 @@ fn serve_client(
         && selected_capabilities.iter().any(|capability| {
             capability == PROVIDER_CONVERSATION_IDENTITY_ONLY_REPORT_CAPABILITY
         });
+    let provider_conversation_continuation = agent_state_report
+        && selected_capabilities
+            .iter()
+            .any(|value| value == PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY);
     let profiles = selected_capabilities
         .iter()
         .any(|capability| capability == SCREEN_SNAPSHOT_PROFILE_CAPABILITY);
@@ -2927,6 +2933,7 @@ fn serve_client(
                                 fenced_provider_conversation_identity_report,
                             identity_only_conversation:
                                 provider_conversation_identity_only_report,
+                            conversation_continuation: provider_conversation_continuation,
                         },
                         report,
                     );

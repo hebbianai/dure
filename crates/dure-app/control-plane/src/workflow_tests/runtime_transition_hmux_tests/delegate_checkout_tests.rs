@@ -637,6 +637,7 @@ fn report_worker_state(
                 hmux_client::ProviderConversationIdentity {
                     provider_id: "codex".into(),
                     conversation_id: conversation.into(),
+                    previous_conversation_id: None,
                     expected_fence: Some(fence.clone()),
                 }
             }),

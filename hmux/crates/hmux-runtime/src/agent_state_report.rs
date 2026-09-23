@@ -22,6 +22,7 @@ pub(crate) struct Permissions {
     pub(crate) conversation_identity: bool,
     pub(crate) fenced_conversation_identity: bool,
     pub(crate) identity_only_conversation: bool,
+    pub(crate) conversation_continuation: bool,
 }
 
 pub(crate) struct Application {
@@ -98,6 +99,18 @@ pub(crate) fn apply(
     if report
         .conversation_identity
         .as_ref()
+        .is_some_and(|identity| identity.previous_conversation_id.is_some())
+        && !permissions.conversation_continuation
+    {
+        return error(
+            ErrorCode::UnsupportedCapability,
+            "provider conversation continuation was not negotiated",
+            Some(hmux_host::local_protocol::PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY),
+        );
+    }
+    if report
+        .conversation_identity
+        .as_ref()
         .is_some_and(|identity| identity.expected_fence.is_some())
         && !permissions.fenced_conversation_identity
     {
@@ -134,11 +147,13 @@ pub(crate) fn apply(
     let identity_only = report.identity_only;
     let reported_conversation_identity = report.conversation_identity.is_some();
     let conversation_identity = report.conversation_identity.map(|identity| {
-        ProviderConversationIdentityObservation::new(
+        let mut observation = ProviderConversationIdentityObservation::new(
             identity.provider_id,
             identity.conversation_id,
             hmux_host::local_protocol::ProviderConversationIdentitySource::ProviderEvent,
-        )
+        );
+        observation.previous_conversation_id = identity.previous_conversation_id;
+        observation
     });
     let mut broadcasts = Vec::new();
     let outcome = if identity_only {

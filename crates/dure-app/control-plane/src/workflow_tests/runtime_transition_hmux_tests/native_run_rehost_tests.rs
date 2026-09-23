@@ -128,6 +128,7 @@ async fn run_then_rehost(conversation: Option<&str>) {
                     conversation_identity: Some(ProviderConversationIdentity {
                         provider_id: "codex".into(),
                         conversation_id: CONVERSATION.into(),
+                        previous_conversation_id: None,
                         expected_fence: Some(source_fence.clone()),
                     }),
                     expected_observation: None,

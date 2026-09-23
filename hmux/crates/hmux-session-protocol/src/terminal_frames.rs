@@ -766,6 +766,9 @@ pub struct AgentStateReportObservationFence {
 pub struct ProviderConversationIdentityReport {
     pub provider_id: String,
     pub conversation_id: String,
+    /// Exact predecessor verified by the provider adapter; never an arbitrary replacement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_conversation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_fence: Option<SessionFence>,
 }

@@ -7,6 +7,7 @@ use crate::managed_attach::ManagedSessionAttacher;
 use crate::observer::{AgentRuntimeActivity, AgentRuntimeAttention};
 use crate::{ClientError, LocalSession, SessionFence};
 use hmux_session_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY;
+use hmux_session_protocol::PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY;
 use hmux_session_protocol::{
     AGENT_STATE_REPORT_CAPABILITY, AGENT_STATE_REPORT_COMPLETION_ID_CAPABILITY,
     AGENT_STATE_REPORT_OBSERVATION_FENCE_CAPABILITY,
@@ -60,6 +61,8 @@ pub struct AgentStateReportObservationFence {
 pub struct ProviderConversationIdentity {
     pub provider_id: String,
     pub conversation_id: String,
+    /// Exact predecessor verified by the provider adapter; never an arbitrary replacement.
+    pub previous_conversation_id: Option<String>,
     pub expected_fence: Option<SessionFence>,
 }
 
@@ -234,6 +237,21 @@ impl LocalSession {
         }
         let identified_completion = report.turn_completion_id.is_some();
         let causal = report.causality.is_some();
+        let continuation = report
+            .conversation_identity
+            .as_ref()
+            .is_some_and(|identity| identity.previous_conversation_id.is_some());
+        if continuation
+            && !self
+                .descriptor()
+                .capabilities
+                .iter()
+                .any(|capability| capability == PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY)
+        {
+            return Err(ClientError::MissingCapability {
+                capability: PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY,
+            });
+        }
         if causal
             && !self
                 .descriptor()
@@ -336,6 +354,9 @@ impl LocalSession {
         if causal {
             optional_capabilities.push(AGENT_STATE_REPORT_CAUSALITY_CAPABILITY);
         }
+        if continuation {
+            optional_capabilities.push(PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY);
+        }
         let mut connection = self.connect_with_options(
             ConnectionOptions::new(LocalAttachRole::Observer, authorization_proof_reference)
                 .with_optional_capabilities(&optional_capabilities),
@@ -348,6 +369,11 @@ impl LocalSession {
         if causal && !connection.supports(AGENT_STATE_REPORT_CAUSALITY_CAPABILITY) {
             return Err(ClientError::MissingCapability {
                 capability: AGENT_STATE_REPORT_CAUSALITY_CAPABILITY,
+            });
+        }
+        if continuation && !connection.supports(PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY) {
+            return Err(ClientError::MissingCapability {
+                capability: PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY,
             });
         }
         if fenced_observation
@@ -394,6 +420,7 @@ impl LocalSession {
                 .map(|identity| ProviderConversationIdentityReport {
                     provider_id: identity.provider_id,
                     conversation_id: identity.conversation_id,
+                    previous_conversation_id: identity.previous_conversation_id,
                     expected_fence: identity.expected_fence,
                 });
         connection
@@ -694,6 +721,42 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn old_hosts_refuse_conversation_continuation_before_any_connection() {
+        let session = session_with_capabilities(vec![
+            AGENT_STATE_REPORT_CAPABILITY.into(),
+            PROVIDER_CONVERSATION_IDENTITY_CAPABILITY.into(),
+        ]);
+        let result = session.report_agent_state(
+            AgentStateReport {
+                identity_only: false,
+                activity: AgentRuntimeActivity::Working,
+                attention: AgentRuntimeAttention::None,
+                turn_completed: false,
+                turn_completion_id: None,
+                causality: Some(hmux_session_protocol::AgentStateReportCausality {
+                    sequence: 1,
+                    work_id: Some("work".into()),
+                }),
+                working_ttl_ms: None,
+                conversation_identity: Some(ProviderConversationIdentity {
+                    provider_id: "claude".into(),
+                    conversation_id: "next".into(),
+                    previous_conversation_id: Some("previous".into()),
+                    expected_fence: None,
+                }),
+                expected_observation: None,
+            },
+            None,
+        );
+        assert!(matches!(
+            result,
+            Err(ClientError::MissingCapability {
+                capability: PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY,
+            })
+        ));
+    }
+
     #[cfg(feature = "local-runtime")]
     #[test]
     fn report_source_fence_distinguishes_a_replacement_generation() {
@@ -729,6 +792,7 @@ mod tests {
                 conversation_identity: Some(ProviderConversationIdentity {
                     provider_id: "codex".into(),
                     conversation_id: "conversation-1".into(),
+                    previous_conversation_id: None,
                     expected_fence: None,
                 }),
                 expected_observation: None,
@@ -763,6 +827,7 @@ mod tests {
                 conversation_identity: Some(ProviderConversationIdentity {
                     provider_id: "codex".into(),
                     conversation_id: "conversation-1".into(),
+                    previous_conversation_id: None,
                     expected_fence: None,
                 }),
                 expected_observation: None,
@@ -792,6 +857,7 @@ mod tests {
         let expected = ProviderConversationIdentity {
             provider_id: "codex".into(),
             conversation_id: "conversation-1".into(),
+            previous_conversation_id: None,
             expected_fence: Some(fence.clone()),
         };
         let projection = ProviderConversationIdentityProjection {

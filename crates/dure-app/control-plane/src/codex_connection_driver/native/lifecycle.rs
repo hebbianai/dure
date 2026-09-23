@@ -655,6 +655,7 @@ impl Lifecycle {
         path.is_file().then(|| ProviderConversationIdentity {
             provider_id: "codex".into(),
             conversation_id: thread.clone(),
+            previous_conversation_id: None,
             expected_fence: Some(fence.clone()),
         })
     }

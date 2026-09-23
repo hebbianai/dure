@@ -4,6 +4,8 @@
 //! resulting argv. Keeping the reviewed provider spellings here prevents
 //! spawn, recovery, and rehost paths from silently drifting apart.
 
+pub mod claude_continuation;
+
 use dure_app::{
     AgentProviderLaunchPlanV1, AgentProviderPreflightPlanV1, AgentProviderPromptTargetV1,
     AgentProviderSessionLaunchPlanV1, AgentSpawnEffortSelectionV1, AgentSpawnModelSelectionV1,

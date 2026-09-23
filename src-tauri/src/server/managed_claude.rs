@@ -7,6 +7,7 @@ pub(super) const CAUSAL_HOST_REPORT_CAPABILITY: &str = "managed_claude_host_repo
 pub(super) struct ClaudeHookReport {
     pub(super) presentation: Value,
     pub(super) host_request: crate::hmux::AgentStateReportRequest,
+    pub(super) transcript_path: Option<std::path::PathBuf>,
 }
 
 fn claude_transcript_exists(transcript_path: Option<&Value>) -> bool {
@@ -173,6 +174,10 @@ pub(super) fn normalize_hook_report(
     };
     Ok(Some(ClaudeHookReport {
         presentation,
+        transcript_path: object
+            .get("transcript_path")
+            .and_then(Value::as_str)
+            .map(Into::into),
         host_request: crate::hmux::AgentStateReportRequest {
             session_id: session_id.clone(),
             workspace_id: Some(workspace_id.clone()),
@@ -188,6 +193,7 @@ pub(super) fn normalize_hook_report(
                 crate::hmux::ReportedProviderConversationIdentity {
                     provider_id: "claude".to_string(),
                     conversation_id: conversation_id.to_string(),
+                    previous_conversation_id: None,
                     expected_fence: Some(expected_session_fence),
                 }
             }),

@@ -220,6 +220,10 @@ pub const FENCED_PROVIDER_CONVERSATION_IDENTITY_REPORT_CAPABILITY: &str =
 /// carry the complete provider-inherited fence.
 pub const PROVIDER_CONVERSATION_IDENTITY_ONLY_REPORT_CAPABILITY: &str =
     "provider_conversation_identity_only_report_v1";
+/// Allows a causally ordered report to advance a conversation from an exact
+/// predecessor verified by the provider adapter, within the same Host fence.
+pub const PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY: &str =
+    "provider_conversation_continuation_v1";
 /// Negotiates cursor-based reattach. A client that still holds the terminal it
 /// had before a drop sends `Hello.reconnect_cursor`; a Host that selected this
 /// capability answers with the retained deltas after that cursor *instead of* a

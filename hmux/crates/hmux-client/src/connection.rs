@@ -1702,6 +1702,7 @@ struct TerminalStreamReducer {
     last_agent_runtime_revision: Option<u64>,
     last_provider_conversation_identity_revision: Option<u64>,
     last_provider_conversation_identity: Option<(String, String)>,
+    conversation_continuations: bool,
     discard_output_through: Option<u64>,
     discard_agent_runtime_through: Option<u64>,
     discard_provider_conversation_identity_through: Option<u64>,
@@ -1762,6 +1763,7 @@ impl TerminalStreamReducer {
             last_agent_runtime_revision: agent_runtime_revision,
             last_provider_conversation_identity_revision: provider_conversation_identity_revision,
             last_provider_conversation_identity: provider_conversation_identity,
+            conversation_continuations: false,
             discard_output_through: None,
             discard_agent_runtime_through: None,
             discard_provider_conversation_identity_through: None,
@@ -1955,10 +1957,12 @@ impl TerminalStreamReducer {
         self.ensure_provider_conversation_identity(
             &identity.provider_id,
             &identity.conversation_id,
+            identity.revision,
         )?;
         if let Some(pending) = self.pending_provider_conversation_identity.as_ref() {
             if pending.identity.provider_id != identity.provider_id
-                || pending.identity.conversation_id != identity.conversation_id
+                || (!self.conversation_continuations
+                    && pending.identity.conversation_id != identity.conversation_id)
             {
                 return Err(ClientError::InconsistentStream {
                     reason: "provider conversation identity changed within one Host generation",
@@ -2163,6 +2167,7 @@ impl TerminalStreamReducer {
                     self.ensure_provider_conversation_identity(
                         &identity.provider_id,
                         &identity.conversation_id,
+                        identity.revision,
                     )?;
                     if self
                         .last_provider_conversation_identity_revision
@@ -2266,10 +2271,6 @@ impl TerminalStreamReducer {
                         reason: "provider conversation identity is ahead of observed output",
                     });
                 }
-                self.ensure_provider_conversation_identity(
-                    &identity.provider_id,
-                    &identity.conversation_id,
-                )?;
                 if self
                     .last_provider_conversation_identity_revision
                     .is_some_and(|revision| identity.revision <= revision)
@@ -2279,6 +2280,11 @@ impl TerminalStreamReducer {
                 {
                     return Ok(false);
                 }
+                self.ensure_provider_conversation_identity(
+                    &identity.provider_id,
+                    &identity.conversation_id,
+                    identity.revision,
+                )?;
                 if self
                     .last_provider_conversation_identity_revision
                     .is_some_and(|revision| identity.revision <= revision)
@@ -2317,12 +2323,18 @@ impl TerminalStreamReducer {
         &self,
         provider_id: &str,
         conversation_id: &str,
+        revision: u64,
     ) -> Result<(), ClientError> {
         if self
             .last_provider_conversation_identity
             .as_ref()
             .is_some_and(|(current_provider, current_conversation)| {
-                current_provider != provider_id || current_conversation != conversation_id
+                current_provider != provider_id
+                    || (current_conversation != conversation_id
+                        && (!self.conversation_continuations
+                            || self
+                                .last_provider_conversation_identity_revision
+                                .is_none_or(|current| revision <= current)))
             })
         {
             return Err(ClientError::InconsistentStream {
@@ -2551,7 +2563,7 @@ fn complete_attach(
         .as_ref()
         .and_then(|snapshot| snapshot.agent_identity.as_ref())
         .map(|identity| identity.observed_through_output_seq);
-    let stream_reducer = TerminalStreamReducer::new(
+    let mut stream_reducer = TerminalStreamReducer::new(
         expected_fence,
         sequence_through,
         initial_agent_identity_observation_seq,
@@ -2564,6 +2576,10 @@ fn complete_attach(
             )
         }),
     );
+    stream_reducer.conversation_continuations =
+        hello_ack.selected_capabilities.iter().any(|capability| {
+            capability == hmux_session_protocol::PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY
+        });
     let writer = LocalWriter {
         inner: Arc::new(Mutex::new(WriterState {
             writer,

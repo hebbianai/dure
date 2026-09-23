@@ -892,7 +892,7 @@ pub fn start(app: AppHandle, broker: Arc<CliRequestBroker>) {
                 };
                 let presentation = report.presentation;
                 let (status, value) =
-                    dispatch_agent_state_request(&app, report.host_request, "managed Claude hook");
+                    dispatch_claude_hook_request(&app, report.host_request, report.transcript_path);
                 if (200..300).contains(&status) {
                     emit_claude_activity_projection(&app, &presentation);
                     let _ = req.respond(json_response(status, serde_json::json!({})));
@@ -1636,10 +1636,10 @@ fn emit_claude_activity_projection(app: &AppHandle, presentation: &Value) {
     );
 }
 
-fn dispatch_agent_state_request(
+fn dispatch_claude_hook_request(
     app: &AppHandle,
     request: crate::hmux::AgentStateReportRequest,
-    ingress: &'static str,
+    transcript_path: Option<std::path::PathBuf>,
 ) -> (u16, Value) {
     let hmux = {
         let state = app.state::<crate::AppState>();
@@ -1648,13 +1648,17 @@ fn dispatch_agent_state_request(
     let (sender, receiver) = mpsc::sync_channel(1);
     let dispatch_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = sender.send(hmux.report_agent_state(&dispatch_app, request));
+        let _ = sender.send(hmux.report_claude_agent_state(
+            &dispatch_app,
+            request,
+            transcript_path.as_deref(),
+        ));
     });
     match receiver.recv_timeout(Duration::from_millis(1500)) {
         Ok(Ok(receipt)) => {
             // dev 관측성 — 훅 ingress가 Host까지 닿았는지 콘솔로 확인 가능.
             #[cfg(debug_assertions)]
-            eprintln!("{ingress} applied: outcome={}", receipt.outcome);
+            eprintln!("managed Claude hook applied: outcome={}", receipt.outcome);
             (200, serde_json::json!({ "ok": true, "outcome": receipt.outcome }))
         }
         Ok(Err(failure)) => (

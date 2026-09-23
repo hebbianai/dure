@@ -42,6 +42,53 @@ pub struct ExistingManagedWriterInspection {
 }
 
 impl HmuxManager {
+    /// Claude may rotate its transcript ID without replacing the native
+    /// process. Verify its forward link against the live Host identity before
+    /// proposing an atomic, causally ordered continuation to that same Host.
+    pub(crate) fn report_claude_agent_state<R: tauri::Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        mut request: super::AgentStateReportRequest,
+        transcript: Option<&Path>,
+    ) -> Result<super::AgentStateReportReceiptSummary, super::AgentStateReportFailure> {
+        if let (Some(transcript), Some(identity), Some(expected)) = (
+            transcript,
+            request.conversation_identity.as_mut(),
+            request.expected_session_fence.clone(),
+        ) {
+            if identity.provider_id == "claude" && request.causality.is_some() {
+                let expected = expected
+                    .into_session_fence()
+                    .map_err(super::report_request_failure)?;
+                let catalog = product_catalog().map_err(super::report_client_failure)?;
+                let descriptor = catalog
+                    .find(&SessionSelector::new(
+                        &request.session_id,
+                        request.workspace_id.clone(),
+                    ))
+                    .map_err(super::report_client_failure)?;
+                let observed = hmux_client::inspect_local_session(&catalog, descriptor);
+                if observed.descriptor.matches_fence(&expected) {
+                    if let Some(current) =
+                        observed.provider_conversation_identity.filter(|current| {
+                            current.provider_id == "claude"
+                                && current.conversation_id != identity.conversation_id
+                        })
+                    {
+                        if dure_provider_adapter::claude_continuation::claude_transcript_continues(
+                            transcript,
+                            &current.conversation_id,
+                            &identity.conversation_id,
+                        ) {
+                            identity.previous_conversation_id = Some(current.conversation_id);
+                        }
+                    }
+                }
+            }
+        }
+        self.report_agent_state(app, request)
+    }
+
     pub fn inspect_existing_managed_writer<R: tauri::Runtime>(
         &self,
         app: &AppHandle<R>,

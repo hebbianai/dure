@@ -96,6 +96,7 @@ fn into_client_report(
             ProviderConversationIdentity {
                 provider_id: identity.provider_id,
                 conversation_id: identity.conversation_id,
+                previous_conversation_id: identity.previous_conversation_id,
                 expected_fence: Some(expected_fence.clone()),
             }
         }),

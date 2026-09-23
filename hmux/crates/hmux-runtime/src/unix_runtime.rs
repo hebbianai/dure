@@ -47,6 +47,7 @@ use discovery_root_lifetime::{
 };
 use hebbian_process_sampler::{SharedProcessSampler, process_start_time};
 use hmux_client::default_discovery_root;
+use hmux_host::local_protocol::PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY;
 use hmux_client::recovery_journal::{
     SAVED_RECIPE_RECOVERY_NAMESPACE, lock_source, managed_create_ledger,
     managed_create_ledger::{
@@ -326,6 +327,7 @@ const HOST_CAPABILITIES: &[&str] = &[
     PROVIDER_CONVERSATION_IDENTITY_CAPABILITY,
     FENCED_PROVIDER_CONVERSATION_IDENTITY_REPORT_CAPABILITY,
     PROVIDER_CONVERSATION_IDENTITY_ONLY_REPORT_CAPABILITY,
+    PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY,
     "provider_exit_inspection",
     RECOVERED_PRESENTATION_CAPABILITY,
     RECONNECT_RESUME_CAPABILITY,
@@ -4521,6 +4523,16 @@ fn serve_client(
             .requested_capabilities
             .iter()
             .any(|value| value == PROVIDER_CONVERSATION_IDENTITY_ONLY_REPORT_CAPABILITY);
+    let provider_conversation_continuation = agent_state_report
+        && state
+            .common
+            .capabilities
+            .iter()
+            .any(|value| value == PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY)
+        && hello
+            .requested_capabilities
+            .iter()
+            .any(|value| value == PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY);
     let managed_authorization_grant_requested = state
         .common
         .capabilities
@@ -5076,6 +5088,7 @@ fn serve_client(
             provider_conversation_identity,
             fenced_provider_conversation_identity_report,
             provider_conversation_identity_only_report,
+            provider_conversation_continuation,
             managed_authorization_grant,
             #[cfg(feature = "terminal-state-stream")]
             terminal_viewport_projection,
@@ -5131,6 +5144,7 @@ struct ClientPermissions {
     provider_conversation_identity: bool,
     fenced_provider_conversation_identity_report: bool,
     provider_conversation_identity_only_report: bool,
+    provider_conversation_continuation: bool,
     managed_authorization_grant: bool,
     #[cfg(feature = "terminal-state-stream")]
     terminal_viewport_projection: bool,
@@ -5497,6 +5511,7 @@ fn client_read_loop(
                             .fenced_provider_conversation_identity_report,
                         identity_only_conversation: permissions
                             .provider_conversation_identity_only_report,
+                        conversation_continuation: permissions.provider_conversation_continuation,
                     },
                     report,
                 );

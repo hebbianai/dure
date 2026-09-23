@@ -568,6 +568,8 @@ pub struct ReportedAgentStateObservationFence {
 pub struct ReportedProviderConversationIdentity {
     pub provider_id: String,
     pub conversation_id: String,
+    /// Exact predecessor verified by the provider adapter; never an arbitrary replacement.
+    pub previous_conversation_id: Option<String>,
     pub expected_fence: Option<ReportedSessionFence>,
 }
 
@@ -1405,6 +1407,7 @@ impl HmuxManager {
                 Ok(ProviderConversationIdentity {
                     provider_id: identity.provider_id,
                     conversation_id: identity.conversation_id,
+                    previous_conversation_id: identity.previous_conversation_id,
                     expected_fence,
                 })
             })
@@ -1597,6 +1600,7 @@ impl HmuxManager {
                     conversation_identity: Some(ProviderConversationIdentity {
                         provider_id: descriptor.provider_id.clone(),
                         conversation_id: conversation_id.to_string(),
+                        previous_conversation_id: None,
                         expected_fence: Some(expected_fence.clone()),
                     }),
                     expected_observation: None,
@@ -2951,6 +2955,7 @@ mod tests {
             conversation_identity: Some(ReportedProviderConversationIdentity {
                 provider_id: "codex".into(),
                 conversation_id: "conversation-secret".into(),
+                previous_conversation_id: None,
                 expected_fence: None,
             }),
             expected_observation: None,

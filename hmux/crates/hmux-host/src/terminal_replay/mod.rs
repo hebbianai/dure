@@ -140,6 +140,7 @@ fn runtime_agent_prompt_admission(
 pub struct ProviderConversationIdentityObservation {
     pub provider_id: String,
     pub conversation_id: String,
+    pub previous_conversation_id: Option<String>,
     pub source: ProviderConversationIdentitySource,
 }
 
@@ -153,6 +154,7 @@ impl ProviderConversationIdentityObservation {
         Self {
             provider_id: provider_id.into(),
             conversation_id: conversation_id.into(),
+            previous_conversation_id: None,
             source,
         }
     }
@@ -1059,6 +1061,14 @@ impl TerminalReplay {
     ) -> Result<Option<ProviderConversationIdentityProjection>, TerminalReplayError> {
         if !valid_opaque_identity(&observation.provider_id)
             || !valid_opaque_identity(&observation.conversation_id)
+            || observation
+                .previous_conversation_id
+                .as_ref()
+                .is_some_and(|previous| {
+                    !valid_opaque_identity(previous)
+                        || previous == &observation.conversation_id
+                        || observation.source != ProviderConversationIdentitySource::ProviderEvent
+                })
         {
             return Err(TerminalReplayError::InvalidProviderConversationIdentity);
         }
@@ -1085,11 +1095,26 @@ impl TerminalReplay {
                 }
                 return Ok(None);
             }
+            if current.provider_id != observation.provider_id
+                || observation.previous_conversation_id.as_deref()
+                    != Some(current.conversation_id.as_str())
+            {
+                return Err(TerminalReplayError::ProviderConversationIdentityConflict);
+            }
+        } else if observation.previous_conversation_id.is_some() {
             return Err(TerminalReplayError::ProviderConversationIdentityConflict);
         }
         let projection = ProviderConversationIdentityProjection {
             fence: self.fence.clone(),
-            revision: 1,
+            revision: self
+                .provider_conversation_identity
+                .as_ref()
+                .map_or(Ok(1), |current| {
+                    current
+                        .revision
+                        .checked_add(1)
+                        .ok_or(TerminalReplayError::StateRevisionExhausted)
+                })?,
             observed_through_output_seq: self.output_seq,
             provider_id: observation.provider_id,
             conversation_id: observation.conversation_id,
