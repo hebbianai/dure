@@ -50,6 +50,10 @@ if(argv[0]==='api'){
     if(state.releaseListError)fail(state.releaseListError);
     const page=Number(new URL('https://fixture/'+route).searchParams.get('page'));
     answer(state.releasePages?.[page-1]??[...(state.release?[state.release]:[]),...(state.extraReleases??[])]);
+  }else if(/^repos\/hebbianai\/dure\/releases\/\d+$/.test(route)){
+    if(state.releaseDetailError)fail(state.releaseDetailError);
+    if(Number(route.split('/').at(-1))!==state.release?.id)fail(404);
+    answer(state.releaseDetail??state.release);
   }else if(route.includes('/git/ref/')){
     if(route.startsWith('repos/hebbianai/dure/')&&state.hasRemoteTag)answer({object:{type:'commit',sha:state.tagSha}});else fail(404);
   }else if(route.includes('/actions/runs/')&&route.includes('/jobs?')){

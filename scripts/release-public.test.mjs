@@ -58,6 +58,44 @@ test("finds an authenticated draft when the published-by-tag endpoint returns 40
   expect(writes(value).filter((args) => args[1] === "create")).toHaveLength(1);
 });
 
+test("refreshes an incomplete draft listing before verification, staging or publication", () => {
+  const value = fixture();
+  success(stage(value));
+  const released = value.state().release;
+  value.change({
+    draftByTagMissing: true,
+    releasePages: [[{ ...released, assets: [] }]],
+  });
+  const before = writes(value).length;
+  success(value.run(script, "verify", "v0.2.29"));
+  success(stage(value));
+  expect(writes(value)).toHaveLength(before);
+  success(value.run(script, "publish", "v0.2.29"));
+  expect(value.state().release.assets).toEqual(released.assets);
+  expect(value.state().release.draft).toBe(false);
+});
+
+test.each([403, 404, 500])("refuses draft detail HTTP %s without writes", (status) => {
+  const value = fixture();
+  success(stage(value));
+  value.change({ draftByTagMissing: true, releaseDetailError: status });
+  const before = writes(value).length;
+  expect(stage(value).status).toBe(1);
+  expect(writes(value)).toHaveLength(before);
+});
+
+test.each([{ id: 92 }, { tag_name: "v0.2.30" }])("refuses changed draft detail identity: %j", (change) => {
+  const value = fixture();
+  success(stage(value));
+  value.change({
+    draftByTagMissing: true,
+    releaseDetail: { ...value.state().release, ...change },
+  });
+  const before = writes(value).length;
+  expect(stage(value).stderr).toContain("release_draft_identity_mismatch");
+  expect(writes(value)).toHaveLength(before);
+});
+
 test("paginates authenticated drafts and refuses ambiguous matches or failed listing", () => {
   const value = fixture();
   success(stage(value));
