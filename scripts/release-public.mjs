@@ -83,7 +83,17 @@ function release(tag) {
     assert(Array.isArray(entries), "release_listing_invalid");
     matches.push(...entries.filter((entry) => entry.tag_name === tag));
     assert(matches.length <= 1, "release_draft_ambiguous");
-    if (entries.length < 100) return matches[0] ?? null;
+    if (entries.length < 100) {
+      const match = matches[0];
+      if (!match) return null;
+      assert(Number.isSafeInteger(match.id) && match.id > 0, "release_draft_id_invalid");
+      // Draft listings can omit uploaded assets. Validate the current inventory
+      // from the detail endpoint after uniquely identifying the release.
+      const detail = api(`repos/${RELEASE_REPOSITORY}/releases/${match.id}`);
+      assert(detail?.id === match.id && detail.tag_name === tag,
+        "release_draft_identity_mismatch");
+      return detail;
+    }
   }
   throw new Error("release_listing_incomplete");
 }
