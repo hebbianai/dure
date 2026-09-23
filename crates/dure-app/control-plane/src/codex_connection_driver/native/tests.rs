@@ -123,6 +123,78 @@ async fn upstream_readiness_still_stops_waiting_after_the_backfill_lease() {
     assert_eq!(result.unwrap_err().reason, "upstream_readiness_failed");
 }
 
+fn private_directory(mode: u32) -> tempfile::TempDir {
+    // Under /tmp so a 64-hex socket name stays within the Unix path limit.
+    let directory = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(mode)).unwrap();
+    directory
+}
+
+#[tokio::test]
+async fn upstream_readiness_follows_the_codex_rendezvous_alias_to_its_protected_socket() {
+    // Codex 0.156 listens in its per-user daemon directory and publishes the
+    // requested path as a symlink to that deterministic socket.
+    let listen = private_directory(0o700);
+    let daemon = private_directory(0o700);
+    let alias = listen.path().join("server.sock");
+    let physical = codex_protected_socket_path(&alias, daemon.path()).unwrap();
+    let listener = bind_endpoint(&physical).unwrap();
+    std::os::unix::fs::symlink(&physical, &alias).unwrap();
+    let (mut child, input) = readiness_child();
+    let (accepted, connected) = tokio::join!(
+        async {
+            let (stream, _) = listener.accept().await.unwrap();
+            accept_async_with_config(stream, Some(websocket_configuration())).await
+        },
+        connect_upstream_in(&alias, &mut child, daemon.path())
+    );
+    accepted.unwrap();
+    drop(input);
+    child.wait().await.unwrap();
+    connected.expect("the deterministic Codex alias must connect to its protected socket");
+}
+
+#[tokio::test]
+async fn upstream_readiness_rejects_an_alias_to_any_other_socket() {
+    let listen = private_directory(0o700);
+    let daemon = private_directory(0o700);
+    let elsewhere = private_directory(0o700);
+    let alias = listen.path().join("server.sock");
+    let other = elsewhere.path().join("other.sock");
+    let _listener = bind_endpoint(&other).unwrap();
+    std::os::unix::fs::symlink(&other, &alias).unwrap();
+    let (mut child, input) = readiness_child();
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        connect_upstream_in(&alias, &mut child, daemon.path()),
+    )
+    .await
+    .expect("an untrusted alias must be refused before any handshake");
+    drop(input);
+    child.wait().await.unwrap();
+    assert_eq!(result.unwrap_err().reason, "upstream_socket_unsafe");
+}
+
+#[tokio::test]
+async fn upstream_readiness_rejects_an_alias_into_a_shared_daemon_directory() {
+    let listen = private_directory(0o700);
+    let daemon = private_directory(0o755);
+    let alias = listen.path().join("server.sock");
+    let physical = codex_protected_socket_path(&alias, daemon.path()).unwrap();
+    let _listener = bind_endpoint(&physical).unwrap();
+    std::os::unix::fs::symlink(&physical, &alias).unwrap();
+    let (mut child, input) = readiness_child();
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        connect_upstream_in(&alias, &mut child, daemon.path()),
+    )
+    .await
+    .expect("an untrusted alias must be refused before any handshake");
+    drop(input);
+    child.wait().await.unwrap();
+    assert_eq!(result.unwrap_err().reason, "upstream_socket_unsafe");
+}
+
 #[test]
 fn native_tui_failure_is_not_reported_as_a_successful_exit() {
     assert!(tui_exited(Ok(std::process::ExitStatus::from_raw(0))).is_ok());
