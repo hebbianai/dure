@@ -13,6 +13,29 @@ import {
 } from "./profile";
 
 export type MobilePreviewMode = "snapshot" | "auto" | "live";
+export interface MobilePresentation {
+	active: boolean;
+	spaceId?: string;
+	paneId: string;
+}
+
+export function mobileHiddenPresentation(
+	presentation?: MobilePresentation,
+): PaneActionExecution | undefined {
+	if (!presentation || presentation.active) return;
+	return {
+		outcome: "refused",
+		error: {
+			code: "mobile_pane_hidden",
+			retryable: false,
+			message:
+				"Show this pane's exact Space, then enable mobile.preview and wait for frameReady (liveFrameReady for iOS input). Reuse the existing pane and device.",
+			nextAction: presentation.spaceId
+				? `Call app_space_show with ${JSON.stringify({ spaceId: presentation.spaceId })}, or run CLI argv ${JSON.stringify(["dure", "client", "space", "show", presentation.spaceId, "--json"])}; then inspect pane ${presentation.paneId}.`
+				: `Find pane ${presentation.paneId} with app_observe, then app_space_show with its exact spaceId.`,
+		},
+	};
+}
 export interface MobileReportControls {
 	busy(): boolean;
 	prepare(appId: string): Promise<{
@@ -44,6 +67,7 @@ export function mobileRefusal(
 
 /** Controls call the pane's UI owners; discovery never starts or selects a device. */
 export function mobileControlActions(input: {
+	presentation?: MobilePresentation;
 	target: MobileDeviceTarget | null;
 	isBusy(): boolean;
 	controls: MobilePaneControls;
@@ -136,6 +160,11 @@ export function mobileControlActions(input: {
 			},
 			(args) =>
 				guarded(args, async () => {
+					const hidden =
+						args.mode !== "snapshot"
+							? mobileHiddenPresentation(input.presentation)
+							: undefined;
+					if (hidden) return hidden;
 					if (args.mode === "live" && args.platform !== "ios")
 						return mobileRefusal(
 							"mobile_preview_unsupported",

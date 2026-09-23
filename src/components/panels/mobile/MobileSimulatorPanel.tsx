@@ -17,7 +17,10 @@ import { RefreshButton } from "@/components/ui/refresh-button";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { Textarea } from "@/components/ui/textarea";
 import { usePaneActions } from "@/components/workspace/usePaneActions";
-import { useWorkspaceRuntimeActive } from "@/components/workspace/WorkspaceRuntimeContext";
+import {
+	useWorkspaceRuntimeActive,
+	useWorkspaceRuntimeDesktopId,
+} from "@/components/workspace/WorkspaceRuntimeContext";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
 import { t } from "@/lib/i18n";
 import {
@@ -67,6 +70,7 @@ export function MobileSimulatorPanel(
 	}>,
 ) {
 	const agents = usePaneAgentChoices();
+	const spaceId = useWorkspaceRuntimeDesktopId();
 	const reportControls = useRef<MobileReportControls>(null);
 	const [profiles, setProfiles] = useState(() =>
 		readMobileRunProfiles(props.params.profiles),
@@ -328,6 +332,7 @@ export function MobileSimulatorPanel(
 			error,
 			context: JSON.stringify({ device: target }),
 			actions: mobilePaneActions({
+				presentation: { active, spaceId, paneId: props.api.id },
 				target,
 				profiles,
 				isBusy: isOperating,
@@ -386,6 +391,7 @@ export function MobileSimulatorPanel(
 			}),
 		}),
 		[
+			spaceId,
 			props.api.id,
 			target,
 			profiles,

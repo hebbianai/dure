@@ -129,6 +129,28 @@ function terminalSpaces(fixture, names = ["First", "Selected"]) {
   } }));
 }
 
+it("shows an exact Space through the same app transaction from CLI and MCP", async () => {
+  const fixture = await fixtureClient((request) => ({ status: 200,
+    body: { ok: true, space: { spaceId: request.body.spaceId, active: true } } }));
+  const result = await runCli(["client", "space", "show", "space-hidden", "--json"], fixture.environment);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ kind: "dure.client_space.show", space: { spaceId: "space-hidden", active: true } });
+  const mcp = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/call", params: {
+    name: "app_space_show", arguments: { spaceId: "space-hidden" } } }, { DURE_HOME: join(fixture.home, ".dure") });
+  expect(mcp.isError).toBe(false);
+  expect(fixture.requests.map(({ url, body }) => ({ url, body }))).toEqual([
+    { url: "/space/activate", body: { spaceId: "space-hidden" } },
+    { url: "/space/activate", body: { spaceId: "space-hidden" } },
+  ]);
+});
+
+it("does not accept the wrong Space as a successful activation", async () => {
+  const fixture = await fixtureClient(() => ({ status: 200, body: { ok: true, space: { spaceId: "other", active: true } } }));
+  const result = await runCli(["client", "space", "show", "space-hidden", "--json"], fixture.environment);
+  expect(result.code).not.toBe(0);
+  expect(JSON.parse(result.stderr)).toMatchObject({ error: { code: "client_response_invalid" } });
+});
+
 describe("Dure Chat failed-message action", () => {
   it.each(["sent", "refused", "unavailable"])("runs the real CLI through the shared action handler (%s)", async (outcome) => {
     let calls = 0;

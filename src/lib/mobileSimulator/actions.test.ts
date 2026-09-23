@@ -81,6 +81,63 @@ function fixture() {
 	};
 	return { input, actions: mobilePaneActions(input) };
 }
+
+it("refuses hidden iOS preview and gestures with exact Space recovery instructions", async () => {
+	const { input } = fixture();
+	const target = { platform: "ios", id: "qa-ios" } as const;
+	const actions = mobilePaneActions({
+		...input,
+		target,
+		presentation: { active: false, spaceId: "qa-space", paneId: "qa-mobile" },
+	});
+	for (const [name, extra] of [
+		["mobile.preview", { mode: "live" }],
+		["mobile.tap", { x: 0.5, y: 0.5, width: 400, height: 800 }],
+	] as const) {
+		const result = await actions[name]({
+			platform: target.platform,
+			deviceId: target.id,
+			...extra,
+		});
+		expect(result).toMatchObject({
+			outcome: "refused",
+			error: {
+				code: "mobile_pane_hidden",
+				nextAction: expect.stringContaining('"spaceId":"qa-space"'),
+			},
+		});
+	}
+	expect(input.act).not.toHaveBeenCalled();
+	expect(input.controls.preview).not.toHaveBeenCalled();
+});
+
+it("named keys require the exact idle Android device and declared key choices", async () => {
+	const { input, actions } = fixture();
+	const args = { platform: device.platform, deviceId: device.id, key: "enter" };
+	expect(
+		(await actions["mobile.key"]({ ...args, deviceId: "other" })).outcome,
+	).toBe("refused");
+	expect(
+		(await actions["mobile.key"]({ ...args, key: "66; reboot" })).outcome,
+	).toBe("refused");
+	input.isBusy.mockReturnValue(true);
+	expect((await actions["mobile.key"](args)).outcome).toBe("refused");
+	input.isBusy.mockReturnValue(false);
+	expect((await actions["mobile.key"](args)).outcome).toBe("applied");
+	expect(input.act).toHaveBeenCalledExactlyOnceWith({
+		kind: "key",
+		key: "enter",
+	});
+	const ios = mobileInputActions({
+		...input,
+		target: { platform: "ios", id: "ios" },
+	});
+	expect(
+		(await ios["mobile.key"]({ ...args, platform: "ios", deviceId: "ios" }))
+			.outcome,
+	).toBe("refused");
+	expect(input.act).toHaveBeenCalledTimes(1);
+});
 describe("mobile pane actions", () => {
 	it("refuses stale device identity without sending any input", async () => {
 		const { input, actions } = fixture();

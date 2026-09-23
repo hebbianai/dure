@@ -1864,6 +1864,7 @@ describe("immutable generic orchestration integration", () => {
         { name: "orchestration_dispatch_complete" },
         { name: "agent_goal_get" },
         { name: "agent_goal_put" },
+        { name: "app_space_show" },
         { name: "app_project_add" },
         { name: "app_observe" },
         { name: "app_pane_state" },

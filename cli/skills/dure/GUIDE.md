@@ -148,8 +148,21 @@ Discover parameters with `pane state`. Use `mobile.profile.save` then
 `mobile.run`, and `mobile.preview` with mode `live` for iOS input. Poll
 `mobile.status` for `busy: false`, errors and `preview.liveFrameReady` before
 input; `pending` is not completion. `mobile.boot` and `mobile.install` also return
-`pending` immediately and use the same operation status. `mobile.tap`,
-`mobile.swipe`, `mobile.type` and the other named actions accept plain arguments
+`pending` immediately and use the same operation status.
+
+`mobile.key` sends `enter`, `tab` or `escape` to the exact selected Android
+device through the same operation owner; iOS is currently unsupported. Enter
+submits a focused field when its app/IME handles that key. Protected screenshots
+remain protected.
+
+If a mobile pane is hidden, use `dure client space show <exact-space-id>` or
+`app_space_show` with its observed `spaceId`, then enable `mobile.preview` and
+wait for `liveFrameReady` before iOS input. Discover identities with
+`dure client observe` / `app_observe`; do not guess a Space number. Showing the
+Space reuses its pane and selected device without restarting either, and does
+not bring the Dure window to the OS foreground.
+
+`mobile.tap`, `mobile.swipe`, `mobile.type` and the other named actions accept plain arguments
 without nested action JSON. Observe the screenshot before targeting guest dialogs.
 Touch uses normalized coordinates (0..1) plus the width/height returned by
 `mobile.capture`; a capture from the previous orientation cannot authorize input.

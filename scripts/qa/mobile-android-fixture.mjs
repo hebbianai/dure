@@ -17,7 +17,7 @@ public class Main extends Activity {
   Screen() { super(Main.this); setFocusableInTouchMode(true); requestFocus(); }
   protected void onDraw(Canvas canvas) { canvas.drawColor(Color.rgb(25, 89, 166)); Paint p = new Paint(); p.setColor(Color.WHITE); p.setTextSize(48); canvas.drawText("Dure Android QA " + touches, 30, 160, p); }
   public boolean onTouchEvent(MotionEvent event) { if(event.getAction() == MotionEvent.ACTION_DOWN) { touches++; Log.i("DureMobileQA", "touch:" + touches); invalidate(); } return true; }
-  public boolean onKeyDown(int code, KeyEvent event) { Log.i("DureMobileQA", "key:" + event.getUnicodeChar()); return true; }
+  public boolean onKeyDown(int code, KeyEvent event) { Log.i("DureMobileQA", "key:" + event.getUnicodeChar()); Log.i("DureMobileQA", "keycode:" + code); return true; }
  }
 }`);
  const manifest = join(root, "AndroidManifest.xml");

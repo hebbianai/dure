@@ -96,6 +96,11 @@ const plainCwd = path.join(required("DURE_QA_STATE_ROOT"), "plain folder");
 fs.mkdirSync(plainCwd);
 assert.equal(fs.existsSync(path.join(plainCwd, ".git")), false);
 const before = listedSessions(hmuxCli, discoveryRoot);
+const shown = cli(["client", "space", "show", TARGET_SPACE_ID, "--json"]);
+assert.equal(shown.space.spaceId, TARGET_SPACE_ID);
+assert.equal(shown.space.active, true);
+assert.equal(shown.space.windowLabel, targetWindowLabel, "Exact Space selection must execute in its owning window");
+assert.deepEqual(listedSessions(hmuxCli, discoveryRoot), before, "Showing a Space must not start sessions");
 
 const projectStartedAt = Date.now();
 const added = cli(["client", "project", "add", plainCwd, "--space-id", TARGET_SPACE_ID, "--json"]);

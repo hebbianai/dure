@@ -70,6 +70,9 @@ pub enum Action {
     Button {
         button: String,
     },
+    Key {
+        key: String,
+    },
     Type {
         text: String,
     },
@@ -548,6 +551,20 @@ fn action_args(target: &Target, action: Action) -> Result<Vec<String>, String> {
                 "system".into(),
                 "user_rotation".into(),
                 if landscape { "1" } else { "0" }.into(),
+            ]
+        }
+        Action::Key { key } if !ios => {
+            let code = match key.as_str() {
+                "enter" => "66",
+                "tab" => "61",
+                "escape" => "111",
+                _ => return Err("Unsupported Android key; use enter, tab or escape".into()),
+            };
+            vec![
+                "shell".into(),
+                "input".into(),
+                "keyevent".into(),
+                code.into(),
             ]
         }
         Action::Button { button } if !ios => {

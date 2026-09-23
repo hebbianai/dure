@@ -1,5 +1,19 @@
 use super::*;
 
+#[test]
+fn named_android_keys_are_bounded_and_not_supported_on_ios() {
+    for (key, code) in [("enter", "66"), ("tab", "61"), ("escape", "111")] {
+        assert_eq!(
+            action_args(&android(), Action::Key { key: key.into() }).unwrap(),
+            ["shell", "input", "keyevent", code]
+        );
+        assert!(action_args(&ios(), Action::Key { key: key.into() }).is_err());
+    }
+    for key in ["", "66", "enter; reboot", "power"] {
+        assert!(action_args(&android(), Action::Key { key: key.into() }).is_err());
+    }
+}
+
 fn ios() -> Target {
     Target {
         platform: Platform::Ios,

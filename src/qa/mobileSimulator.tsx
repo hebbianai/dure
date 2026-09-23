@@ -188,6 +188,24 @@ export async function runMobileSimulatorProbe() {
 			throw new Error("Agent capture command failed");
 		const status = await invokePaneAction("qa-mobile", "mobile.status");
 		if (!status.ok) throw new Error("Agent status command failed");
+		if (platform === "android") {
+			for (const key of ["enter", "tab", "escape"]) {
+				const result = await invokePaneAction("qa-mobile", "mobile.key", {
+					platform,
+					deviceId: id,
+					key,
+				});
+				if (!result.ok || result.result?.outcome !== "applied")
+					throw new Error(
+						`Android ${key} pane action failed: ${JSON.stringify(result)}`,
+					);
+			}
+			const report = await mobileSimulator.report(target, appId);
+			for (const code of [66, 61, 111]) {
+				if (!report.logs.includes(`keycode:${code}`))
+					throw new Error(`Android did not receive key ${code}`);
+			}
+		}
 		if (api.getPanel("qa-mobile")?.params?.profiles?.[0]?.appId !== appId)
 			throw new Error("Saved profile was not restored");
 		if (platform === "ios") {

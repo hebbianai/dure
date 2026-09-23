@@ -18,6 +18,7 @@ export const CLIENT_PRESENTATION_HELP = `dure client — connected Dure client p
 
 Usage:
   dure client observe [--json]
+  dure client space show <space-id> [--json]
   dure client unopened get <agent-id> [--json]
   dure client unopened hide|restore <agent-id> --expected-episode N [--json]
   dure client project add [PATH] [--space ID_OR_NAME | --space-id ID]
@@ -37,6 +38,8 @@ Usage:
   dure client workspace open <panel-id> --space-id ID [--target TARGET] [--json]
 
 Commands call the connected app's existing presentation transactions.
+Space show selects that exact Space in its owning Dure window without creating panes or devices.
+Discover IDs with client observe. This changes the selected Space, not OS foreground focus.
 Unopened visibility changes only Hide from list, never sessions or worktrees.
 Use the exact registered agent ID and the episode returned by get; newer activity resurfaces it.
 After an uncertain response, get its current visibility before requesting another change.
@@ -125,6 +128,7 @@ const UNOPENED_ACTIONS = new Set(["get", "hide", "restore"]);
 export function clientPresentationRequestedCommand(args) {
   if (!Array.isArray(args)) return null;
   if (args[0] === "observe") return { domain: "app", action: "observe" };
+  if (args[0] === "space" && args[1] === "show") return { domain: "space", action: "show" };
   if (args[0] === "unopened" && UNOPENED_ACTIONS.has(args[1])) {
     return { domain: "unopened", action: args[1] };
   }
@@ -434,12 +438,16 @@ export function parseClientPresentationCommand(args) {
   if (
     !domain ||
     HELP_ARGUMENTS.has(domain) ||
-    ((domain === "pane" || domain === "workspace" || domain === "project" || domain === "host" || domain === "unopened") &&
+    ((domain === "pane" || domain === "space" || domain === "workspace" || domain === "project" || domain === "host" || domain === "unopened") &&
       (!action ||
         HELP_ARGUMENTS.has(action) ||
         tail.some((value) => value === "-h" || value === "--help")))
   ) {
     return { help: true };
+  }
+  if (domain === "space" && action === "show") {
+    const { target } = readCommandTail(tail, { values: new Map(), flags: new Map([["--json", "json"]]), optionLabel: "client space show" });
+    return { help: false, domain, action, path: "/space/activate", body: { spaceId: boundedIdentity(target, "Space ID") } };
   }
   if (domain === "unopened" && UNOPENED_ACTIONS.has(action)) {
     return { help: false, ...parseUnopenedCommand(action, tail) };
@@ -479,6 +487,7 @@ function clientIdentity(descriptor) {
 }
 
 function responseMember(payload, command) {
+  if (command.domain === "space") return payload.space;
   if (command.domain === "unopened") return payload.visibility;
   if (command.domain === "project" || command.domain === "host") return payload.registration;
   if (command.domain === "workspace") return payload.workspace;
@@ -551,6 +560,13 @@ export async function runClientPresentationCommand(
       client: clientIdentity(descriptor), visibility: member,
     };
   }
+  if (command.domain === "space") {
+    if (member.spaceId !== command.body.spaceId || member.active !== true) {
+      throw new AppControlClientError("client_response_invalid", "The requested Space was not confirmed active; inspect client observe.");
+    }
+    return { schemaVersion: 1, apiVersion: PRESENTATION_API_VERSION, kind: "dure.client_space.show",
+      action: command.action, client: clientIdentity(descriptor), space: member };
+  }
   if (command.domain === "project") {
     return {
       schemaVersion: 1, apiVersion: PRESENTATION_API_VERSION,
@@ -594,10 +610,11 @@ export function clientPresentationErrorReport(error, request = null) {
   const project = request?.domain === "project";
   const host = request?.domain === "host";
   const unopened = request?.domain === "unopened";
+  const space = request?.domain === "space";
   return {
     schemaVersion: 1,
-    apiVersion: workspace || app || project || host || unopened ? PRESENTATION_API_VERSION : PANE_API_VERSION,
-    kind: host ? "dure.client_host.error" : unopened ? "dure.client_unopened.error" : project ? "dure.client_project.error" : app ? "dure.client_observation.error" : workspace ? "dure.client_workspace.error" : "dure.client_pane.error",
+    apiVersion: workspace || app || project || host || unopened || space ? PRESENTATION_API_VERSION : PANE_API_VERSION,
+    kind: space ? "dure.client_space.error" : host ? "dure.client_host.error" : unopened ? "dure.client_unopened.error" : project ? "dure.client_project.error" : app ? "dure.client_observation.error" : workspace ? "dure.client_workspace.error" : "dure.client_pane.error",
     action: request?.action ?? null,
     error: {
       code:
@@ -624,6 +641,7 @@ function humanReceiptIdentity(value) {
 }
 
 export function formatClientPresentationReceipt(report) {
+  if (report.space) return `✓ Space selected → ${humanReceiptIdentity(report.space.spaceId) ?? "unknown"}`;
   if (report.registration?.host) {
     return `✓ SSH host ${report.registration.created ? "registered" : "already registered"} → ${humanReceiptIdentity(report.registration.host.id) ?? "unknown"}`;
   }

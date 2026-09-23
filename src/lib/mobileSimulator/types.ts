@@ -31,6 +31,7 @@ export type MobileDeviceAction =
 	| { kind: "type" | "paste"; text: string }
 	| { kind: "rotate"; landscape: boolean }
 	| { kind: "button"; button: "home" | "back" | "recents" }
+	| { kind: "key"; key: "enter" | "tab" | "escape" }
 	| {
 			kind: "gesture";
 			start: { x: number; y: number };

@@ -1,8 +1,10 @@
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   claimCliRequest,
   completeCliRequest,
 } from "@/lib/cli/cliRequestBroker";
 import { resolveCliSpaceId } from "@/lib/cli/cliSpaceIdentity";
+import { routeCliRequestToSpaceOwner } from "@/lib/cli/cliSpaceOwnerRouting";
 import {
   resolveDesktopActivationTarget,
   resolveSpaceActivationTarget,
@@ -17,6 +19,10 @@ async function handleSpaceActivate(
   let space: ReturnType<typeof resolveSpaceActivationTarget>;
   try {
     const spaceId = resolveCliSpaceId(params, { required: true });
+    const route = await routeCliRequestToSpaceOwner({
+      reqId, params, action: legacyAction ? "desktop.activate" : "space.activate",
+    });
+    if (route.kind === "forwarded") return null;
     space = legacyAction
       ? resolveDesktopActivationTarget(useStore.getState().spaces, spaceId)
       : resolveSpaceActivationTarget(useStore.getState().spaces, spaceId);
@@ -36,6 +42,7 @@ async function handleSpaceActivate(
     state.setActiveSpace(space.id);
   }
   const identity = {
+    windowLabel: getCurrentWebviewWindow().label,
     id: space.id,
     spaceId: space.id,
     desktopId: space.id,

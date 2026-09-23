@@ -87,6 +87,20 @@ assert.equal(action("mobile.paste", { ...target, text: "must not write" }, 2).ou
 assert.equal(clipboard(), "qa clipboard sentinel", "A missing live lease cannot change the clipboard");
 action("mobile.preview", { ...target, mode: "live" });
 await observe("live frames", status, (state) => state.preview.liveFrameReady);
+const otherSpace = await requestAppControl({ descriptor, path: "/space/create", body: { name: "Hidden mobile QA" } });
+const otherSpaceId = otherSpace.space.spaceId;
+cli(["space", "show", otherSpaceId]);
+await observe("mobile hidden", status, (state) => !state.preview.active && !state.preview.liveFrameReady);
+const hiddenPreview = action("mobile.preview", { ...target, mode: "live" }, 2);
+assert.equal(hiddenPreview.error.code, "mobile_pane_hidden");
+assert.ok(hiddenPreview.error.nextAction.includes('"spaceId":"desk-1"'));
+const shown = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/call", params: {
+ name: "app_space_show", arguments: { spaceId: "desk-1" } } }, process.env);
+assert.notEqual(shown.isError, true, JSON.stringify(shown));
+assert.equal(shown.structuredContent.space.spaceId, "desk-1");
+await observe("exact mobile Space restored", status, (state) => state.preview.active && state.preview.liveFrameReady);
+assert.equal(status().device.id, deviceId);
+console.log("PASS: hidden iOS preview refusal names exact Space; CLI/MCP selection restores same live device");
 const capture = () => action("mobile.capture", target).value;
 const pixelSource = join(projectPath, "pixel.swift");
 const pixelProgram = join(projectPath, "pixel");

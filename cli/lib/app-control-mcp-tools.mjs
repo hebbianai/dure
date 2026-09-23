@@ -8,6 +8,10 @@ import {
 
 const id = { type: "string", minLength: 1, maxLength: 512 };
 const operations = {
+  app_space_show: {
+    description: "Select one exact Space in its owning Dure window. Discover spaceId with app_observe. Changes the selected Space without OS foreground focus; creates no panes, sessions or devices. For a hidden mobile pane, show its Space, then inspect preview readiness before input.",
+    properties: { spaceId: id }, required: ["spaceId"], args: ({ spaceId }) => ["space", "show", spaceId],
+  },
   app_project_add: {
     description: "Register a folder in the connected app's shared project list using the GUI registration owner. Space (ID or unique name) or spaceId selects request context, not project ownership; omission uses the known invoking pane's Space or app default. Local path defaults to CLI cwd; SSH requires an explicit path and registered app hostId. Returns the canonical persisted project; creates no pane, process or worktree. Existing GUI folder trust behavior applies. Independent of backend projects.register and DURE_BACKEND_PROFILE.",
     properties: { path: { type: "string", maxLength: 4096 }, space: id, spaceId: id, hostId: id }, required: [],

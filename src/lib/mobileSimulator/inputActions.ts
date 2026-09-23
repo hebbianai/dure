@@ -7,10 +7,16 @@ import {
 	type PaneActionArguments,
 	type PaneActionDefinition,
 } from "@/lib/workspace/pane/paneAction";
-import { mobileRefusal, mobileTargetParameters } from "./controlActions";
+import {
+	type MobilePresentation,
+	mobileHiddenPresentation,
+	mobileRefusal,
+	mobileTargetParameters,
+} from "./controlActions";
 
 /** Named actions spare callers nested SDK JSON while sharing the UI operation owner. */
 export function mobileInputActions(input: {
+	presentation?: MobilePresentation;
 	target: MobileDeviceTarget | null;
 	isBusy(): boolean;
 	act(action: MobileDeviceAction): Promise<boolean>;
@@ -37,6 +43,20 @@ export function mobileInputActions(input: {
 						"Wait for the current operation to complete.",
 					);
 				const operation = action(args);
+				if (operation.kind === "key" && input.target.platform !== "android")
+					return mobileRefusal(
+						"mobile_action_unsupported",
+						"Named keys currently require Android. iOS key input is unsupported.",
+					);
+				if (
+					input.target.platform === "ios" &&
+					["gesture", "type", "paste", "button", "rotate"].includes(
+						operation.kind,
+					)
+				) {
+					const hidden = mobileHiddenPresentation(input.presentation);
+					if (hidden) return hidden;
+				}
 				if (operation.kind === "paste" && input.target.platform !== "ios")
 					return mobileRefusal(
 						"mobile_action_unsupported",
@@ -106,6 +126,11 @@ export function mobileInputActions(input: {
 			"Type printable ASCII into the focused guest field. iOS requires ready live mode; Android excludes %.",
 			{ text },
 			(args) => ({ kind: "type", text: String(args.text) }),
+		),
+		"mobile.key": command(
+			"Press Enter, Tab or Escape on the exact selected Android device. Enter submits focused fields when supported by the app/IME. Uses normal device operation receipts and does not change protected screenshot behavior. iOS is unsupported.",
+			{ key: { ...text, values: ["enter", "tab", "escape"] } },
+			(args) => ({ kind: "key", key: args.key as "enter" | "tab" | "escape" }),
 		),
 		"mobile.paste": command(
 			"Paste exact text into the focused iOS guest field through that simulator's clipboard. Requires ready live mode. Accepts 1–8192 UTF-8 bytes (agent arguments also have a 4096-character limit), including Unicode, tabs and line breaks. Leaves the guest clipboard updated; does not access the host clipboard. Android is unsupported.",
