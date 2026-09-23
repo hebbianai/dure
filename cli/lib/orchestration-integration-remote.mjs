@@ -16,6 +16,7 @@ import { isOrchestrationIntegrationReceipt } from "./orchestration-integration.m
 
 const MAX_DELIVERY_BYTES = 256 * 1024;
 const MAX_DELIVERY_RESPONSE_BYTES = 256 * 1024;
+const MAX_DELIVERY_ARCHIVE_BYTES = 512 * 1024;
 const MAX_REMOTE_SCRIPT_BYTES = 512 * 1024;
 const DELIVERY_KIND = "dure.orchestration.integration_delivery";
 const DELIVERY_ERROR_KIND = "dure.orchestration.integration_delivery_error";
@@ -54,9 +55,9 @@ function fail(code, options) {
 }
 
 function bootstrapSource(deliveryPackage) {
-  // Pin the file count to the generated manifest, not a second catalog limit.
-  // Wire, decompression and decoded-content budgets remain independently bounded.
-  const archive = gzipSync(Buffer.from(
+  // Pin file count and decoded content bytes to the generated manifest. The
+  // compressed wire budget must not also limit uncompressed file contents.
+  const archiveSource = Buffer.from(
     JSON.stringify({
       schemaVersion: deliveryPackage.schemaVersion,
       kind: deliveryPackage.kind,
@@ -64,7 +65,14 @@ function bootstrapSource(deliveryPackage) {
       files: deliveryPackage.files,
     }),
     "utf8",
-  ));
+  );
+  if (archiveSource.byteLength > MAX_DELIVERY_ARCHIVE_BYTES) {
+    fail("orchestration_integration_remote_invalid");
+  }
+  const contentBytes = deliveryPackage.files.reduce(
+    (total, file) => total + Buffer.from(file.content, "base64").byteLength, 0,
+  );
+  const archive = gzipSync(archiveSource);
   if (archive.byteLength > MAX_DELIVERY_BYTES) {
     fail("orchestration_integration_remote_invalid");
   }
@@ -77,7 +85,7 @@ function bootstrapSource(deliveryPackage) {
 const fs = require("node:fs");
 const path = require("node:path");
 const root = fs.realpathSync(process.argv[2]);
-const archive = JSON.parse(require("node:zlib").gunzipSync(Buffer.from(${encoded}, "base64"), { maxOutputLength: ${MAX_REMOTE_SCRIPT_BYTES} }).toString("utf8"));
+const archive = JSON.parse(require("node:zlib").gunzipSync(Buffer.from(${encoded}, "base64"), { maxOutputLength: ${MAX_DELIVERY_ARCHIVE_BYTES} }).toString("utf8"));
 if (archive?.schemaVersion !== 1 || archive?.kind !== "dure.orchestration.integration_package" || !Array.isArray(archive.files) || archive.files.length !== ${deliveryPackage.files.length} || !/^[a-f0-9]{64}$/.test(archive.digest)) process.exit(70);
 const digest = crypto.createHash("sha256").update("dure.orchestration.integration-package/v1\\0");
 const seen = new Set();
@@ -88,7 +96,7 @@ for (const file of archive.files) {
   const content = Buffer.from(file.content, "base64");
   if (content.toString("base64") !== file.content) process.exit(72);
   total += content.byteLength;
-  if (total > ${MAX_DELIVERY_BYTES}) process.exit(73);
+  if (total > ${contentBytes}) process.exit(73);
   seen.add(file.path);
   previous = file.path;
   digest.update(file.path + "\\0").update(content).update("\\0");
@@ -97,6 +105,7 @@ for (const file of archive.files) {
   fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
   fs.writeFileSync(destination, content, { flag: "wx", mode: 0o600 });
 }
+if (total !== ${contentBytes}) process.exit(73);
 if (digest.digest("hex") !== archive.digest) process.exit(75);
 `;
   const missingNode = JSON.stringify({

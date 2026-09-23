@@ -11,6 +11,7 @@ import { resolveClientSpaceTarget } from "./space-selection.mjs";
 const PANE_API_VERSION = "dure.client-pane/v1";
 const PRESENTATION_API_VERSION = "dure.client-presentation/v1";
 const MAX_ID_CHARACTERS = 512;
+const MAX_SPACE_NAME_CHARACTERS = 256;
 const MAX_PATH_CHARACTERS = 4096;
 const HELP_ARGUMENTS = new Set(["help", "-h", "--help"]);
 
@@ -18,6 +19,7 @@ export const CLIENT_PRESENTATION_HELP = `dure client — connected Dure client p
 
 Usage:
   dure client observe [--json]
+  dure client space create [--name NAME] [--json]
   dure client space show <space-id> [--json]
   dure client unopened get <agent-id> [--json]
   dure client unopened hide|restore <agent-id> --expected-episode N [--json]
@@ -38,6 +40,8 @@ Usage:
   dure client workspace open <panel-id> --space-id ID [--target TARGET] [--json]
 
 Commands call the connected app's existing presentation transactions.
+Space create adds and selects a new Space; omit --name to use the app's default name.
+It returns space.spaceId after the Space mounts. Inspect client observe before retrying an uncertain creation.
 Space show selects that exact Space in its owning Dure window without creating panes or devices.
 Discover IDs with client observe. This changes the selected Space, not OS foreground focus.
 Unopened visibility changes only Hide from list, never sessions or worktrees.
@@ -52,7 +56,7 @@ An alias imports ~/.ssh/config. Explicit destinations use a key file or normal S
 Registration creates no session. The first terminal open installs Hmux if it is missing.
 Open mobile reuses the mobile simulator pane in the explicitly selected Space.
 Use its returned panelId with pane state to discover device, profile, preview and report actions.
-Create uses the invoking pane's Space when known, otherwise the app's active Space.
+Pane create uses the invoking pane's Space when known, otherwise the app's active Space.
 Local cwd defaults to the CLI working directory; SSH cwd defaults to the remote home.
 No Git worktree is created. --host selects a registered app SSH host, not a backend profile.
 Client presentation uses the connected app, independently of DURE_BACKEND_PROFILE.
@@ -83,11 +87,11 @@ function containsControlCharacter(value) {
   });
 }
 
-function boundedIdentity(value, label) {
+function boundedIdentity(value, label, maxCharacters = MAX_ID_CHARACTERS) {
   const normalized = typeof value === "string" ? value.trim() : "";
   if (!normalized) throw invalidRequest(`${label} is required.`);
   if (
-    normalized.length > MAX_ID_CHARACTERS ||
+    normalized.length > maxCharacters ||
     containsControlCharacter(normalized)
   ) {
     throw invalidRequest(`${label} is invalid.`);
@@ -128,7 +132,7 @@ const UNOPENED_ACTIONS = new Set(["get", "hide", "restore"]);
 export function clientPresentationRequestedCommand(args) {
   if (!Array.isArray(args)) return null;
   if (args[0] === "observe") return { domain: "app", action: "observe" };
-  if (args[0] === "space" && args[1] === "show") return { domain: "space", action: "show" };
+  if (args[0] === "space" && (args[1] === "show" || args[1] === "create")) return { domain: "space", action: args[1] };
   if (args[0] === "unopened" && UNOPENED_ACTIONS.has(args[1])) {
     return { domain: "unopened", action: args[1] };
   }
@@ -445,6 +449,14 @@ export function parseClientPresentationCommand(args) {
   ) {
     return { help: true };
   }
+  if (domain === "space" && action === "create") {
+    const { options } = readCommandTail(tail, {
+      values: new Map([["--name", "name"]]), flags: new Map([["--json", "json"]]),
+      optionLabel: "client space create", maxTargets: 0,
+    });
+    return { help: false, domain, action, path: "/space/create",
+      body: options.name === undefined ? {} : { name: boundedIdentity(options.name, "Space name", MAX_SPACE_NAME_CHARACTERS) } };
+  }
   if (domain === "space" && action === "show") {
     const { target } = readCommandTail(tail, { values: new Map(), flags: new Map([["--json", "json"]]), optionLabel: "client space show" });
     return { help: false, domain, action, path: "/space/activate", body: { spaceId: boundedIdentity(target, "Space ID") } };
@@ -513,7 +525,7 @@ export async function runClientPresentationCommand(
     && !(Array.isArray(descriptor.capabilities) && descriptor.capabilities.includes("unopened_agents.visibility_v1"))) {
     throw new AppControlClientError("client_capability_missing", "Update the running Dure app; unopened_agents.visibility_v1 is required.");
   }
-  if (command.action === "create" || (command.domain === "pane" && command.action === "open") || command.domain === "project") {
+  if ((command.domain === "pane" && (command.action === "create" || command.action === "open")) || command.domain === "project") {
     const capability = command.domain === "project" ? "project_registration.add_v1" : command.action === "open" ? "mobile_pane.open_v1" : "terminal_pane.create_v1";
     if (descriptor && !(Array.isArray(descriptor.capabilities) && descriptor.capabilities.includes(capability))) {
       throw new AppControlClientError("client_capability_missing", `Update the running Dure app; ${capability} is required.`);
@@ -561,10 +573,19 @@ export async function runClientPresentationCommand(
     };
   }
   if (command.domain === "space") {
-    if (member.spaceId !== command.body.spaceId || member.active !== true) {
+    if (command.action === "create") {
+      const spaceId = humanReceiptIdentity(member.spaceId);
+      const name = humanReceiptIdentity(member.name);
+      if (!spaceId || spaceId !== spaceId.trim() || !name || name !== name.trim()
+        || name.length > MAX_SPACE_NAME_CHARACTERS || member.mounted !== true
+        || (member.desktopId !== undefined && member.desktopId !== spaceId)
+        || (command.body.name !== undefined && name !== command.body.name)) {
+        throw new AppControlClientError("client_response_invalid", "Space creation was not confirmed; inspect client observe before creating again.");
+      }
+    } else if (member.spaceId !== command.body.spaceId || member.active !== true) {
       throw new AppControlClientError("client_response_invalid", "The requested Space was not confirmed active; inspect client observe.");
     }
-    return { schemaVersion: 1, apiVersion: PRESENTATION_API_VERSION, kind: "dure.client_space.show",
+    return { schemaVersion: 1, apiVersion: PRESENTATION_API_VERSION, kind: `dure.client_space.${command.action}`,
       action: command.action, client: clientIdentity(descriptor), space: member };
   }
   if (command.domain === "project") {
@@ -641,7 +662,7 @@ function humanReceiptIdentity(value) {
 }
 
 export function formatClientPresentationReceipt(report) {
-  if (report.space) return `✓ Space selected → ${humanReceiptIdentity(report.space.spaceId) ?? "unknown"}`;
+  if (report.space) return `✓ Space ${report.action === "create" ? "created" : "selected"} → ${humanReceiptIdentity(report.space.spaceId) ?? "unknown"}`;
   if (report.registration?.host) {
     return `✓ SSH host ${report.registration.created ? "registered" : "already registered"} → ${humanReceiptIdentity(report.registration.host.id) ?? "unknown"}`;
   }

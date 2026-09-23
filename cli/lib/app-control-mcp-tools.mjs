@@ -8,6 +8,11 @@ import {
 
 const id = { type: "string", minLength: 1, maxLength: 512 };
 const operations = {
+  app_space_create: {
+    description: "Create and select a new Space through the connected app's existing creation transaction. Optional name defaults to the app's next Space name. Returns space.spaceId after mounting; use it for app_space_show or pane placement. Inspect app_observe before creating again after an uncertain response.",
+    properties: { name: { type: "string", minLength: 1, maxLength: 256 } }, required: [],
+    args: ({ name }) => ["space", "create", ...(name !== undefined ? ["--name", name] : [])],
+  },
   app_space_show: {
     description: "Select one exact Space in its owning Dure window. Discover spaceId with app_observe. Changes the selected Space without OS foreground focus; creates no panes, sessions or devices. For a hidden mobile pane, show its Space, then inspect preview readiness before input.",
     properties: { spaceId: id }, required: ["spaceId"], args: ({ spaceId }) => ["space", "show", spaceId],

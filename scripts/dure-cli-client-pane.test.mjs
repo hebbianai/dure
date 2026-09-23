@@ -14,6 +14,7 @@ import { requestAppControl } from "../cli/lib/app-control-client.mjs";
 import { parseClientPresentationCommand } from "../cli/lib/client-presentation-command.mjs";
 import { handleMcpRequest } from "../cli/lib/orchestration-mcp-server.mjs";
 import { dispatchCliPaneActionRequest } from "../src/lib/cli/cliPaneActions";
+import { dispatchCliDesktopPaneRequest } from "../src/lib/cli/cliDesktopPaneLifecycle";
 import { chatPaneActionEntry } from "../src/lib/workspace/pane/chatPaneActions";
 import { registerPaneActions } from "../src/lib/workspace/pane/paneActionRegistry";
 
@@ -149,6 +150,93 @@ it("does not accept the wrong Space as a successful activation", async () => {
   const result = await runCli(["client", "space", "show", "space-hidden", "--json"], fixture.environment);
   expect(result.code).not.toBe(0);
   expect(JSON.parse(result.stderr)).toMatchObject({ error: { code: "client_response_invalid" } });
+});
+
+describe("Dure Space creation CLI", () => {
+  it("creates named and default Spaces through the existing app transaction from CLI and MCP", async () => {
+    const spaces = [];
+    const fixture = await fixtureClient(async ({ url, body }) => {
+      expect(url).toBe("/space/create");
+      let receipt;
+      await dispatchCliDesktopPaneRequest({ reqId: `create-${spaces.length}`, action: "space.create", params: body }, {
+        claim: async () => true,
+        complete: async (_id, result) => { receipt = result; },
+        addSpace: (name) => {
+          const space = { spaceId: `space-${spaces.length}`, name: name ?? "Workspace" };
+          spaces.push(space);
+          return space.spaceId;
+        },
+        waitForSpace: async () => ({}),
+        spaceName: (id) => spaces.find((space) => space.spaceId === id)?.name,
+      });
+      return { status: 200, body: receipt };
+    }, []);
+    const named = await runCli(["client", "space", "create", "--name", "  빌드 QA  ", "--json"], fixture.environment);
+    expect(named.code, named.stderr).toBe(0);
+    expect(JSON.parse(named.stdout)).toMatchObject({ kind: "dure.client_space.create", action: "create",
+      space: { spaceId: "space-0", name: "빌드 QA", mounted: true } });
+    const unnamed = await runCli(["client", "space", "create"], fixture.environment);
+    expect(unnamed.code, unnamed.stderr).toBe(0);
+    expect(unnamed.stdout).toContain("Space created");
+    expect(unnamed.stdout).toContain("space-1");
+    const mcp = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/call", params: {
+      name: "app_space_create", arguments: { name: "Review" } } }, { DURE_HOME: join(fixture.home, ".dure") });
+    expect(mcp.isError).toBe(false);
+    expect(mcp.structuredContent).toMatchObject({ kind: "dure.client_space.create",
+      space: { spaceId: "space-2", name: "Review", mounted: true } });
+    expect(fixture.requests.map(({ url, body }) => ({ url, body }))).toEqual([
+      { url: "/space/create", body: { name: "빌드 QA" } },
+      { url: "/space/create", body: {} },
+      { url: "/space/create", body: { name: "Review" } },
+    ]);
+  });
+
+  it.each([
+    { spaceId: "", name: "Review", mounted: true },
+    { spaceId: "  ", name: "Review", mounted: true },
+    { spaceId: "space\nwrong", name: "Review", mounted: true },
+    { spaceId: "space-new", name: "Review", mounted: false },
+    { spaceId: "space-new", name: "Other", mounted: true },
+    { spaceId: "space-new", mounted: true },
+    { spaceId: "space-new", desktopId: "other", name: "Review", mounted: true },
+  ])("refuses an unconfirmed creation receipt without retrying (%j)", async (space) => {
+    const fixture = await fixtureClient(() => ({ status: 200, body: { ok: true, space } }), []);
+    const result = await runCli(["client", "space", "create", "--name", "Review", "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr)).toMatchObject({ kind: "dure.client_space.error", action: "create",
+      error: { code: "client_response_invalid" } });
+    expect(fixture.requests).toHaveLength(1);
+  });
+
+  it("preserves an app refusal and does not silently retry Space creation", async () => {
+    const fixture = await fixtureClient(() => ({ status: 200, body: { ok: false,
+      error: { code: "space_mount_timeout", message: "Space did not mount" } } }), []);
+    const result = await runCli(["client", "space", "create", "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr)).toMatchObject({ kind: "dure.client_space.error", action: "create",
+      error: { code: "space_mount_timeout" } });
+    expect(fixture.requests).toHaveLength(1);
+  });
+
+  it.each([
+    ["--name"], ["--name", ""], ["--name", "   "], ["--name", "Bad\nname"],
+    ["--name", "x".repeat(257)], ["--name", "One", "--name", "Two"],
+    ["unexpected"], ["--space-id", "existing"], ["--cwd", "/tmp"], ["--yes"],
+  ])("rejects invalid creation arguments before contacting the app (%j)", async (...tail) => {
+    const fixture = await fixtureClient(undefined, []);
+    const result = await runCli(["client", "space", "create", ...tail, "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr)).toMatchObject({ kind: "dure.client_space.error", action: "create",
+      error: { code: "invalid_request" } });
+    expect(fixture.requests).toHaveLength(0);
+  });
+
+  it("documents creation without requiring a running app", async () => {
+    const { environment } = isolatedHome();
+    const result = await runCli(["client", "space", "create", "--help"], environment);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain("dure client space create [--name NAME]");
+  });
 });
 
 describe("Dure Chat failed-message action", () => {

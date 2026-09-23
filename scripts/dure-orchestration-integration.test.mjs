@@ -237,6 +237,7 @@ function sshWorkerFixture(
     observedGeneration = "remote-generation-1",
     remoteError,
     deliveryFileDelta = 0,
+    deliveryContentDelta = 0,
   } = {},
 ) {
   const localHome = path.join(root, "local-home");
@@ -280,12 +281,16 @@ if (source.trimStart().startsWith("{")) {
   }));
   process.exit(0);
 }
-const bootstrapInput = ${deliveryFileDelta} === 0 ? input : Buffer.from(source.replace(
+let bootstrapSource = ${deliveryFileDelta} === 0 ? source : source.replace(
   "if (archive?.schemaVersion",
   (${deliveryFileDelta} < 0 ? "archive.files.pop();" : "archive.files.push({ path: 'unexpected', content: '' });") + "\\nif (archive?.schemaVersion",
-));
+);
+if (${deliveryContentDelta} !== 0) bootstrapSource = bootstrapSource.replace(
+  "const digest = crypto.createHash",
+  "const lastFile = archive.files.at(-1); const lastContent = Buffer.from(lastFile.content, 'base64'); lastFile.content = (${deliveryContentDelta} < 0 ? lastContent.subarray(0, lastContent.length - 1) : Buffer.concat([lastContent, Buffer.from('x')])).toString('base64');\\nconst digest = crypto.createHash",
+);
 const result = spawnSync("/bin/sh", ["-s"], {
-  input: bootstrapInput,
+  input: Buffer.from(bootstrapSource),
   env: { ...process.env, HOME: process.env.DURE_TEST_REMOTE_HOME },
   maxBuffer: 1024 * 1024,
 });
@@ -1551,6 +1556,38 @@ describe("immutable generic orchestration integration", () => {
     expect(fs.existsSync(path.join(remote.remoteHome, ".codex", "dure", "orchestration"))).toBe(false);
   });
 
+  it.each([-1, 1])("rejects a delivery content-size mismatch before installing: %s", (deliveryContentDelta) => {
+    const root = fixture();
+    const remote = sshWorkerFixture(root, { deliveryContentDelta });
+    const installed = idleWorkerCliFixture(root);
+    const result = spawnSync(process.execPath, [installed.cli, "integration", "install", "--remote", "--backend", "ssh-worker", "--global", "--provider", "codex", "--approve-global-config", "--json"], {
+      cwd: root, encoding: "utf8", env: remote.environment,
+    });
+    expect(result.status).not.toBe(0);
+    expect(JSON.parse(fs.readFileSync(remote.remoteLog, "utf8")).status).toBe(73);
+    expect(fs.existsSync(path.join(remote.remoteHome, ".codex", "dure", "orchestration"))).toBe(false);
+  });
+
+  it("refuses an oversized decoded archive before delivering it to an SSH worker", () => {
+    const root = fixture();
+    const remote = sshWorkerFixture(root);
+    const installed = idleWorkerCliFixture(root);
+    fs.appendFileSync(path.join(path.dirname(installed.cli), "lib/client-presentation-command.mjs"), `\n/*${"x".repeat(512 * 1024)}*/\n`);
+    const versionRoot = path.dirname(path.dirname(installed.cli));
+    const metadataPath = path.join(versionRoot, "install.json");
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+    metadata.bundle.orchestration = orchestrationPayloadIdentity(installed.cli);
+    metadata.bundle.artifactDigest = artifactDigest(versionRoot);
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata));
+    const result = spawnSync(process.execPath, [installed.cli, "integration", "status", "--remote", "--backend", "ssh-worker", "--global", "--provider", "codex", "--json"], {
+      cwd: root, encoding: "utf8", env: remote.environment,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("the SSH worker integration request is invalid");
+    expect(fs.existsSync(remote.remoteLog)).toBe(false);
+    expect(fs.existsSync(path.join(remote.remoteHome, ".codex"))).toBe(false);
+  });
+
   it("retries an authenticated SSH worker install after losing the applied receipt", () => {
     const root = fixture();
     const remote = sshWorkerFixture(root);
@@ -1864,6 +1901,7 @@ describe("immutable generic orchestration integration", () => {
         { name: "orchestration_dispatch_complete" },
         { name: "agent_goal_get" },
         { name: "agent_goal_put" },
+        { name: "app_space_create" },
         { name: "app_space_show" },
         { name: "app_project_add" },
         { name: "app_observe" },

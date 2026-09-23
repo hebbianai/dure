@@ -119,7 +119,21 @@ the same receipt — read `.check.required`, `.check.failed` and `.check.passed`
 not the top level — then exits non-zero when a selected runtime requirement is
 not current. Without `--check`, degraded diagnostics still exit zero.
 
-## Connected-client pane control
+## Connected-client Space and pane control
+
+Create a Space and select it through the connected app:
+
+```sh
+dure client space create --name "Review" --json
+dure client space create --json
+dure client space show <space-id> --json
+```
+
+Omitting `--name` uses the app's next default name. Creation returns
+`space.spaceId` after the new Space mounts; use that ID for `space show` or
+`pane create --space-id`. The MCP equivalent is `app_space_create` with an
+optional `name`. If the response is uncertain, inspect `client observe` /
+`app_observe` before creating again.
 
 Pane placement belongs to a connected Dure client, not to Hmux or the detached
 control plane. Use the explicit client surface when a script needs the same
