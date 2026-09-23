@@ -695,6 +695,11 @@ function replaceCodexBlock(content, replacement) {
 
 function prepareLifecycleHook(target, receipt, previousReceipt) {
   const settings = readJsonObject(target.hookPath, "provider lifecycle hook config");
+  // Removing the last owned hook can remove SessionStart and its hooks map.
+  // Recreate the insertion containers after cleanup when the Node path changes.
+  if (previousReceipt?.lifecycleCommand && previousReceipt.lifecycleCommand !== receipt.lifecycleCommand) {
+    removeHookCommand(settings, previousReceipt.lifecycleCommand);
+  }
   settings.hooks = settings.hooks ?? {};
   if (typeof settings.hooks !== "object" || Array.isArray(settings.hooks)) {
     throw new Error(`provider lifecycle hook config is invalid: ${target.hookPath}`);
@@ -702,9 +707,6 @@ function prepareLifecycleHook(target, receipt, previousReceipt) {
   settings.hooks.SessionStart = Array.isArray(settings.hooks.SessionStart)
     ? settings.hooks.SessionStart
     : [];
-  if (previousReceipt?.lifecycleCommand && previousReceipt.lifecycleCommand !== receipt.lifecycleCommand) {
-    removeHookCommand(settings, previousReceipt.lifecycleCommand);
-  }
   if (!hookCommandRegistered(settings, receipt.lifecycleCommand)) {
     settings.hooks.SessionStart.push({
       matcher: target.adapter.hookMatcher,

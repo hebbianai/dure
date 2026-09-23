@@ -375,6 +375,74 @@ process.stdout.write(result.stdout);
 }
 
 describe("immutable generic orchestration integration", () => {
+  it.each(["codex", "claude"].flatMap((provider) => [
+    [provider, "update", "owned-only"],
+    [provider, "update", "other-event"],
+    [provider, "update", "shared-start-group"],
+    [provider, "refresh", "other-event"],
+  ]))("replaces %s lifecycle hooks after a Node path change during %s with %s", (provider, action, layout) => {
+    const root = fixture();
+    const options = { provider, homeDirectory: root, global: true, channel: "stable", cliScriptPath: CLI };
+    const [installed] = mutateOrchestrationIntegrations({ ...options, action: "install", approval: true });
+    const receiptPath = path.join(installed.installRoot, "install-receipt.json");
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+    const currentCommand = receipt.lifecycleCommand;
+    const previousRuntime = `${receipt.runtimeExecutable}.previous`;
+    const previousCommand = currentCommand.replace(receipt.runtimeExecutable, previousRuntime);
+    const userHook = { type: "command", command: "echo user-hook" };
+    const hooks = JSON.parse(fs.readFileSync(installed.lifecycleHookPath, "utf8"));
+    hooks.userSetting = "preserve";
+    hooks.hooks.SessionStart[0].hooks[0].command = previousCommand;
+    if (layout === "other-event") hooks.hooks.Stop = [{ hooks: [userHook] }];
+    if (layout === "shared-start-group") hooks.hooks.SessionStart[0].hooks.push(userHook);
+    fs.writeFileSync(installed.lifecycleHookPath, JSON.stringify(hooks));
+    // Model the intact receipt/config produced by a previous bundled Node.
+    // Existing tests update payload versions but keep the same runtime path.
+    const nativeConfig = fs.readFileSync(installed.nativeConfigPath, "utf8")
+      .replace(JSON.stringify(receipt.runtimeExecutable), JSON.stringify(previousRuntime));
+    fs.writeFileSync(installed.nativeConfigPath, nativeConfig);
+    receipt.runtimeExecutable = previousRuntime;
+    receipt.lifecycleCommand = previousCommand;
+    receipt.version = "0.2.21+previous-runtime";
+    fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+    expect(inspectOrchestrationIntegrations(options)[0].status).toBe("outdated");
+    if (action === "refresh") {
+      expect(approvedOrchestrationIntegrationRefreshProviders(options)).toEqual([provider]);
+    }
+
+    const result = spawnSync(process.execPath, [CLI, "integration", action, "--global", "--provider", provider,
+      ...(action === "update" ? ["--approve-global-config"] : []), "--json"], {
+      cwd: root, encoding: "utf8", timeout: 10_000,
+      env: {
+        PATH: process.env.PATH, HOME: root, USERPROFILE: root, CODEX_HOME: path.join(root, ".codex"),
+        DURE_HOME: path.join(root, ".dure"), DURE_APP_CHANNEL: "stable",
+        HMUX_DISCOVERY_ROOT: path.join(root, "discovery"),
+      },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const [updated] = JSON.parse(result.stdout).receipts;
+    expect(updated.status).toBe("current");
+    expect(inspectOrchestrationIntegrations(options)[0].status).toBe("current");
+    const readHooks = () => JSON.parse(fs.readFileSync(installed.lifecycleHookPath, "utf8"));
+    const updatedHooks = readHooks();
+    const startCommands = updatedHooks.hooks.SessionStart.flatMap((group) => group.hooks.map((hook) => hook.command));
+    expect(startCommands.filter((command) => command === currentCommand)).toHaveLength(1);
+    expect(startCommands).not.toContain(previousCommand);
+    expect(updatedHooks.userSetting).toBe("preserve");
+    if (layout === "other-event") expect(updatedHooks.hooks.Stop).toEqual(hooks.hooks.Stop);
+    if (layout === "shared-start-group") expect(startCommands).toContain(userHook.command);
+    mutateOrchestrationIntegrations({ ...options, action, approval: action === "update" });
+    expect(readHooks()).toEqual(updatedHooks);
+    mutateOrchestrationIntegrations({ ...options, action: "uninstall", approval: true });
+    const remaining = readHooks();
+    expect(remaining.userSetting).toBe("preserve");
+    if (layout === "owned-only") expect(remaining.hooks).toBeUndefined();
+    if (layout === "other-event") expect(remaining.hooks).toEqual({ Stop: hooks.hooks.Stop });
+    if (layout === "shared-start-group") {
+      expect(remaining.hooks.SessionStart).toEqual([{ ...hooks.hooks.SessionStart[0], hooks: [userHook] }]);
+    }
+  });
+
   it.each(["codex", "claude"])("refreshes an intact older %s payload when the new bundle adds a file", (provider) => {
     const root = fixture();
     const legacy = installedCliFixture(root, "0.1.4+retained-worker");
