@@ -124,7 +124,7 @@ describe("managed conversation identity", () => {
 		expect(hookSessionFenceEvidence({})).toEqual({ kind: "legacy" });
 	});
 
-	it("keeps one opaque identity immutable within an exact Host fence", () => {
+	it("persists the newest Host-owned conversation within an exact generation", () => {
 		const first = applyProjectedConversationIdentity([managedAgent()], {
 			sessionId: "managed-1",
 			workspaceId: "workspace-1",
@@ -169,7 +169,34 @@ describe("managed conversation identity", () => {
 			revision: "3",
 			conversationId: "conversation-host-3",
 		});
-		expect(newer).toBe(first);
+		expect(newer[0].conversationId).toBe("conversation-host-3");
+		expect(newer[0].runtimeBinding).toMatchObject({
+			conversationIdentity: {
+				revision: "3",
+				conversationId: "conversation-host-3",
+			},
+		});
+		const restored: Agent[] = JSON.parse(JSON.stringify(newer));
+		expect(
+			applyProjectedConversationIdentity(
+				restored,
+				binding.conversationIdentity!,
+			),
+		).toBe(restored);
+		expect(
+			applyProjectedConversationIdentity(newer, {
+				...binding.conversationIdentity!,
+				revision: "3",
+				conversationId: "conflicting-replay",
+			}),
+		).toBe(newer);
+		expect(
+			applyProjectedConversationIdentity(newer, {
+				...binding.conversationIdentity!,
+				revision: "4",
+				source: "launch_request",
+			}),
+		).toBe(newer);
 	});
 
 	it("converges a fresh remote binding only from its exact Host report", () => {

@@ -66,22 +66,6 @@ function projectionMatchesLocus(
 	);
 }
 
-function sameProjection(
-	current: ManagedPaneBinding["conversationIdentity"],
-	next: HmuxProviderConversationIdentity,
-): boolean {
-	return (
-		current?.sessionId === next.sessionId &&
-		current.workspaceId === next.workspaceId &&
-		sameHmuxManagedGeneration(current, next) &&
-		current.revision === next.revision &&
-		current.observedThroughOutputSeq === next.observedThroughOutputSeq &&
-		current.providerId === next.providerId &&
-		current.conversationId === next.conversationId &&
-		current.source === next.source
-	);
-}
-
 /** Commits a Host-owned projection only to the exact managed generation that
  * opened the structured attachment. The typed Host boundary already validated
  * the projection; this function only performs the pane-locus CAS. */
@@ -95,7 +79,10 @@ export function projectManagedPaneConversationIdentity(
 		!managedBinding(attached) ||
 		!sameManagedLocus(current, attached) ||
 		!projectionMatchesLocus(current, identity) ||
-		sameProjection(current.conversationIdentity, identity)
+		(current.conversationIdentity !== undefined &&
+			projectionMatchesLocus(current, current.conversationIdentity) &&
+			BigInt(identity.revision) <=
+				BigInt(current.conversationIdentity.revision))
 	) {
 		return current;
 	}

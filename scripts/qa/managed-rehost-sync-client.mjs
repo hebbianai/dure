@@ -8,4 +8,4 @@ if (!proof || !stateRoot) throw new Error("Run through managed-rehost-sync-smoke
 const receipt = await waitForQaLogReceipt("managed-rehost-sync", proof);
 fs.writeFileSync(path.join(stateRoot, "evidence", "managed-rehost-sync.json"), JSON.stringify(receipt, null, 2));
 if (receipt.result !== "passed") throw new Error(JSON.stringify(receipt));
-console.log("managed rehost sync: native duplicate/reversed delivery, durable-only invalidation, and WebView reload passed", receipt);
+console.log("managed rehost sync: native persistence probe passed", receipt);

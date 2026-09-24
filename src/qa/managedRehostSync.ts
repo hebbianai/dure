@@ -1,10 +1,10 @@
 import { emit, emitTo } from "@tauri-apps/api/event";
-import { webviewStorageOptions } from "@/lib/ipc/core";
 import {
 	getCurrentWebviewWindow,
 	WebviewWindow,
 } from "@tauri-apps/api/webviewWindow";
 import type { BackgroundThrottlingPolicy } from "@tauri-apps/api/window";
+import { webviewStorageOptions } from "@/lib/ipc/core";
 import { DURABLE_STORE_REHYDRATED_EVENT } from "@/lib/persistence/durableStoreRehydration";
 import { listenWhenReady } from "@/lib/platform/tauriBridge";
 import { qaLog } from "@/lib/qa/qaLog";
@@ -12,12 +12,11 @@ import { MANAGED_AGENT_REHOSTED_EVENT } from "@/lib/sessions/managed/managedAgen
 import { startWindowSync } from "@/lib/workspace/window/windows";
 import { probeRuntimeMutationAdmission } from "@/qa/agentRuntimeMutationAdmission";
 import { probeConversationRegistrationReview } from "@/qa/conversationRegistrationReview";
-import { probePaneContextProjection } from "@/qa/paneContextProjection";
-import { probeLateNativeRehostResponse } from "@/qa/managedNativeRehostResponse";
 import {
 	managedAgentPaneReferenceCases,
 	probeManagedAgentPaneReference,
 } from "@/qa/managedAgentPaneReference";
+import { probeLateNativeRehostResponse } from "@/qa/managedNativeRehostResponse";
 import {
 	probeNativeFreshCompletion,
 	probeNativeReconciledCompletion,
@@ -25,6 +24,7 @@ import {
 	probeNativeTransactionCompletion,
 	probeNativeUnsupportedResume,
 } from "@/qa/managedNativeResumeCompletion";
+import { probePaneContextProjection } from "@/qa/paneContextProjection";
 import { DURABLE_APP_STORE_NAME, durableAppStorage, useStore } from "@/store";
 import {
 	managedRehostAgentFixture as agent,
@@ -67,6 +67,13 @@ export async function runManagedRehostSyncProbe(): Promise<void> {
 	const params = new URLSearchParams(location.search);
 	const proof = params.get("qaManagedRehostSync");
 	if (!import.meta.env.DEV || !proof) return;
+	if (params.get("conversationOnly") === "1") {
+		const { runManagedConversationContinuationProbe } = await import(
+			"./managedConversationContinuation"
+		);
+		await runManagedConversationContinuationProbe(proof);
+		return;
+	}
 	const isPeer = params.get("peer") === "1";
 	const label = getCurrentWebviewWindow().label;
 	const realm = crypto.randomUUID();
@@ -75,7 +82,8 @@ export async function runManagedRehostSyncProbe(): Promise<void> {
 	const paneReferences: Array<
 		Awaited<ReturnType<typeof probeManagedAgentPaneReference>>
 	> = [];
-	const paneContexts: Awaited<ReturnType<typeof probePaneContextProjection>>[] = [];
+	const paneContexts: Awaited<ReturnType<typeof probePaneContextProjection>>[] =
+		[];
 	let resumeCompletion:
 		| Awaited<ReturnType<typeof probeNativeResumeCompletion>>
 		| undefined;
@@ -158,7 +166,9 @@ export async function runManagedRehostSyncProbe(): Promise<void> {
 			await useStore.persist.rehydrate();
 			for (const scenario of managedAgentPaneReferenceCases) {
 				for (const exact of [false, true]) {
-					paneReferences.push(await probeManagedAgentPaneReference(scenario, exact));
+					paneReferences.push(
+						await probeManagedAgentPaneReference(scenario, exact),
+					);
 				}
 			}
 			for (const panelId of ["slot", "agent:previous", "launcher:previous"]) {

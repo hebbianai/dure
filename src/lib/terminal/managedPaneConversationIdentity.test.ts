@@ -111,6 +111,33 @@ describe("managed pane conversation identity projection", () => {
 		).toBe(current);
 	});
 
+	it("keeps a continued conversation when an older projection arrives later", () => {
+		const attached = localBinding();
+		const original = projectManagedPaneConversationIdentity(
+			attached,
+			attached,
+			identity(),
+		);
+		const continued = projectManagedPaneConversationIdentity(
+			original,
+			attached,
+			{
+				...identity(),
+				revision: "4",
+				conversationId: "continued-conversation",
+			},
+		);
+		expect(
+			projectManagedPaneConversationIdentity(continued, attached, identity()),
+		).toBe(continued);
+		expect(
+			projectManagedPaneConversationIdentity(continued, attached, {
+				...identity(),
+				revision: "4",
+			}),
+		).toBe(continued);
+	});
+
 	it("persists a later typed projection without synthesizing its revision", () => {
 		const attached = remoteBinding();
 		const current = projectManagedPaneConversationIdentity(

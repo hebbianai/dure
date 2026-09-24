@@ -1,12 +1,12 @@
 import {
-	type ConversationIdentityReadiness,
-	readinessFromEvidence,
-} from "@/lib/sessions/managed/conversationIdentityReadiness";
-import {
 	type HmuxManagedGenerationV1,
 	parseHmuxManagedGenerationV1,
 	sameHmuxManagedGeneration,
 } from "@/lib/hmux/identity/hmuxManagedGeneration";
+import {
+	type ConversationIdentityReadiness,
+	readinessFromEvidence,
+} from "@/lib/sessions/managed/conversationIdentityReadiness";
 import type {
 	Agent,
 	Provider,
@@ -58,9 +58,7 @@ export function conversationIdentityFromHook(
 	const candidate = value.conversationId;
 	if (typeof candidate !== "string") return undefined;
 	const conversationId = candidate.trim();
-	return SAFE_ID.test(conversationId)
-		? conversationId
-		: undefined;
+	return SAFE_ID.test(conversationId) ? conversationId : undefined;
 }
 
 /** Current Hosts send one complete generation fence. A present-but-invalid
@@ -281,9 +279,12 @@ export function applyProjectedConversationIdentity(
 			current.workspaceId === binding.workspaceId;
 		if (currentBelongsToBinding) {
 			if (exactProjectionFence(current, projection)) {
+				// The Host validates provider continuations before advancing this revision.
 				if (
 					current.providerId !== projection.providerId ||
-					current.conversationId !== projection.conversationId
+					(current.conversationId !== projection.conversationId &&
+						(projection.source !== "provider_event" ||
+							BigInt(projection.revision) <= BigInt(current.revision)))
 				) {
 					return agent;
 				}
