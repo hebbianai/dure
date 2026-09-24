@@ -22,6 +22,8 @@
  * [[ScanOutcome]]이 둘을 구분하는 이유다.
  */
 
+import { t } from "./i18n";
+
 /** 스캔이 무엇을 만들어냈는가. 실패도 값이다 — 예외로 던지면 화면이 구분할 수 없다. */
 export type ScanOutcome =
   | { kind: "scanned"; content: string }
@@ -105,7 +107,13 @@ function isCancellation(error: unknown): boolean {
 }
 
 function describe(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return String(error);
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object") {
+    // Native plugin rejections cross IPC as plain objects, not Error instances.
+    for (const key of ["message", "error"] as const) {
+      const detail = (error as Record<string, unknown>)[key];
+      if (typeof detail === "string" && detail.trim()) return detail;
+    }
+  }
+  return t("pairing.scanner.failed");
 }

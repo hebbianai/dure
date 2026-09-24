@@ -1,5 +1,6 @@
 /** Korean translations for semantic message IDs. */
 export const ko: Record<string, string> = {
+  "pairing.scanner.failed": "카메라 스캐너를 시작할 수 없습니다. 다시 시도하거나 페어링 코드를 붙여넣으세요.",
   "notifications.push.approvalBody": "에이전트가 승인을 기다립니다.",
   "notifications.push.doneBody": "에이전트가 작업을 마쳤습니다.",
   "notifications.push.description": "Dure를 닫아도 승인 요청과 작업 완료 알림을 받습니다. 연결한 컴퓨터에서 Dure가 실행 중이어야 합니다.",

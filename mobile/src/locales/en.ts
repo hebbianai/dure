@@ -1,5 +1,6 @@
 /** Canonical English copy. New messages use semantic IDs; legacy source keys remain supported. */
 export const en: Record<string, string> = {
+  "pairing.scanner.failed": "The camera scanner could not start. Try again or paste a pairing code.",
   "notifications.push.approvalBody": "An agent is waiting for your approval.",
   "notifications.push.doneBody": "An agent finished its turn.",
   "notifications.push.description": "Receive approval and completion alerts even when Dure is closed. The paired computer must be running Dure.",

@@ -99,7 +99,7 @@ describe("paste", () => {
     let submitted: [string, string] | undefined;
     const host = renderPaste(
       { deviceLabel: "내 폰", payload: "", notice: undefined, busy: false },
-      { back: () => {}, submit: (label, payload) => (submitted = [label, payload]) },
+      { back: () => {}, change: () => {}, submit: (label, payload) => (submitted = [label, payload]) },
     );
 
     const name = host.querySelector<HTMLInputElement>(".paste__label");
@@ -117,7 +117,7 @@ describe("paste", () => {
   it("does not hide that the key is stored in the clear", () => {
     const host = renderPaste(
       { deviceLabel: "", payload: "", busy: false },
-      { back: () => {}, submit: () => {} },
+      { back: () => {}, change: () => {}, submit: () => {} },
     );
 
     expect(host.querySelector(".pair-warning")?.textContent).toContain(
@@ -129,7 +129,7 @@ describe("paste", () => {
     let submits = 0;
     const host = renderPaste(
       { deviceLabel: "", payload: "x", busy: true },
-      { back: () => {}, submit: () => (submits += 1) },
+      { back: () => {}, change: () => {}, submit: () => (submits += 1) },
     );
 
     press(host, ".paste__submit");

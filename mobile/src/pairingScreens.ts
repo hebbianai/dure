@@ -222,6 +222,7 @@ export interface PasteModel {
 
 export interface PasteActions {
   back: () => void;
+  change: (deviceLabel: string, payload: string) => void;
   submit: (deviceLabel: string, payload: string) => void;
 }
 
@@ -267,6 +268,9 @@ export function renderPaste(model: PasteModel, actions: PasteActions): HTMLEleme
   payload.placeholder = "hmux-pair:1?a=192.168.0.12&p=47821&t=… &k=ssh-ed25519&f=…&e=…";
   payload.autocapitalize = "off";
   payload.spellcheck = false;
+  const change = () => actions.change(name.value, payload.value);
+  name.addEventListener("input", change);
+  payload.addEventListener("input", change);
   codeField.append(payload);
   form.append(codeField);
 

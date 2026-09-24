@@ -1467,6 +1467,25 @@ describe("페어링", () => {
     );
   });
 
+  it.each(["not-a-pairing-code", ""])("keeps live pairing edits when dismissing an error (initial=%s)", async (initial) => {
+    pairFromScanError = { code: "pairing_not_a_code", message: "Invalid pairing code" };
+    const root = await openPairing();
+    const area = root.querySelector<HTMLTextAreaElement>(".paste__payload")!;
+    area.value = initial;
+    pick(root, ".paste__submit").click();
+    await settle();
+    const draft = root.querySelector<HTMLTextAreaElement>(".paste__payload")!;
+    const name = root.querySelector<HTMLInputElement>(".paste__label")!;
+    draft.value = `${initial}-edited`;
+    draft.dispatchEvent(new Event("input", { bubbles: true }));
+    name.value = "Edited phone";
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(root.querySelector(".paste__payload")).toBe(draft);
+    pick(root, ".toast__close").click();
+    expect(root.querySelector<HTMLTextAreaElement>(".paste__payload")?.value).toBe(`${initial}-edited`);
+    expect(root.querySelector<HTMLInputElement>(".paste__label")?.value).toBe("Edited phone");
+  });
+
   /**
    * 스캔은 windowed 모드라 화면을 떠난 뒤에도 카메라가 계속 읽는다. 떠난
    * 화면의 답이 도착해 지금 화면을 갈아끼우면, 폰이 제멋대로 움직이는 것으로

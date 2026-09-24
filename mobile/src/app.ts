@@ -2380,6 +2380,12 @@ export function startApp(root: HTMLElement): () => void {
           },
           {
             back: nativeBack.bind(() => setState({ screen: { kind: "home" } }), busy),
+            change: (deviceLabel, payload) => {
+              const screen = state.screen;
+              if (screen.kind !== "pair" || screen.stage.kind !== "paste") return;
+              // Preserve edits without replacing the focused input on each key.
+              writeState({ screen: { ...screen, stage: { ...screen.stage, deviceLabel, payload } } });
+            },
             submit: (deviceLabel, payload) => {
               // Put what was typed into state before anything can fail. A
               // rejected payload must not also cost the person the code they

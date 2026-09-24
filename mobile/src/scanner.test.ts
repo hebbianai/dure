@@ -94,6 +94,21 @@ describe("scanPairingCode", () => {
     expect(outcome.kind).toBe("cancelled");
   });
 
+  it.each([
+    [{ message: "Camera unavailable", code: "camera_unavailable" }, "Camera unavailable"],
+    [{ error: "No capture device" }, "No capture device"],
+    [{ code: "unclassified" }, "The camera scanner could not start. Try again or paste a pairing code."],
+    [null, "The camera scanner could not start. Try again or paste a pairing code."],
+  ])("presents a readable plugin rejection %j", async (error, detail) => {
+    expect(await scanPairingCode(bridge({ scan: async () => { throw error; } })))
+      .toEqual({ kind: "failed", detail });
+  });
+
+  it("recognizes an object-shaped cancellation", async () => {
+    expect(await scanPairingCode(bridge({ scan: async () => { throw { message: "Scan cancelled by user" }; } })))
+      .toEqual({ kind: "cancelled" });
+  });
+
   it("그 밖의 실패는 이유와 함께 보고한다", async () => {
     const outcome = await scanPairingCode(
       bridge({
