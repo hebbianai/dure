@@ -30,9 +30,6 @@ vi.mock("@/lib/ipc/mobileSimulator", () => ({
 vi.mock("@/lib/workspace/pane/paneTitleOverrideStore", () => ({
 	applyAutomaticPaneTitle: vi.fn(),
 }));
-vi.mock("@/components/workspace/WorkspaceRuntimeContext", () => ({
-	useWorkspaceRuntimeActive: () => true,
-}));
 vi.mock("@/components/ui/select-field", () => ({
 	SelectField: ({
 		children,
