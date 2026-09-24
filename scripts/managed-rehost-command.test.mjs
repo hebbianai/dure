@@ -132,3 +132,14 @@ describe("operation-only retry boundary", () => {
     expect(await collectManagedRehostCommand({ ...args, run })).toMatchObject({ ok: false, error: { code: "rehost_retry_response_invalid" } });
   });
 });
+
+
+it("pins rehost to the selected Dure runtime instead of a sibling or ambient build", async () => {
+  const calls = [];
+  await collectManagedRehostCommand({ action: "start", sessionId: "session-1", workspaceId: "workspace-1",
+    operationId: "operation-1", confirmRestart: true, command: "/build/hmux", runtime: "/build/hmux-runtime-current",
+    run: async (args) => { calls.push(args); return { kind: "nonzero", stderr: "fixture" }; },
+  });
+  expect(calls).toHaveLength(1);
+  expect(calls[0].slice(-3)).toEqual(["--runtime", "/build/hmux-runtime-current", "--json"]);
+});

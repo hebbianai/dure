@@ -12,7 +12,10 @@ import {
 	projectManagedRunPresentationAgent,
 	requireManagedRunPresentationGeneration,
 } from "@/lib/cli/managedRunPresentationModel";
+import { refreshManagedRunProjection } from "@/lib/cli/refreshManagedRunProjection";
+import type { DureAgentRuntimeProjectionInspectResultV1 } from "@/lib/ipc/dureAgentRuntime";
 import { hmuxManagedBinding } from "@/lib/terminal/terminalBinding";
+import { testDureBackendRouteAuthority } from "@/test/dureBackendRouteFixtures";
 import type { Agent, Project } from "@/types";
 
 const project: Project = {
@@ -143,10 +146,7 @@ describe("managed Run presentation request", () => {
 			}).providerConversationRef,
 		).toBe(providerConversationRef);
 
-		for (const invalid of [
-			"conversation+alias",
-			`/${"a".repeat(160)}`,
-		]) {
+		for (const invalid of ["conversation+alias", `/${"a".repeat(160)}`]) {
 			expect(() =>
 				parseCliManagedRunPresentationRequest({
 					...request,
@@ -306,6 +306,57 @@ describe("managed Run Agent projection", () => {
 				binding(),
 			),
 		).toThrow("name is already in use");
+	});
+
+	it("reopens a Run after the exact Host learns or continues its conversation", () => {
+		const created = projectManagedRunPresentationAgent(
+			state(),
+			request,
+			project,
+			binding(),
+		).agent;
+		const identity = {
+			schemaVersion: 1 as const,
+			...request.generation,
+			sessionId: request.sessionId,
+			workspaceId: request.workspaceId,
+			providerId: request.providerId,
+			conversationId: "continued-conversation",
+			revision: "2",
+			observedThroughOutputSeq: "5",
+			source: "provider_event" as const,
+		};
+		const existing: Agent = {
+			...created,
+			conversationId: identity.conversationId,
+			runtimeBinding: { ...binding(), conversationIdentity: identity },
+		};
+		const reopened = projectManagedRunPresentationAgent(
+			state([existing]),
+			request,
+			project,
+			binding(),
+		);
+		expect(reopened.agent.conversationId).toBe(identity.conversationId);
+		expect(reopened.agent.runtimeBinding).toMatchObject({
+			conversationIdentity: identity,
+		});
+		expect(() =>
+			projectManagedRunPresentationAgent(
+				state([
+					{
+						...existing,
+						runtimeBinding: {
+							...binding(),
+							conversationIdentity: { ...identity, terminalEpoch: "stale" },
+						},
+					},
+				]),
+				request,
+				project,
+				binding(),
+			),
+		).toThrow("canonical Agent identity");
 	});
 
 	it("refuses to reuse another canonical Agent on the same runtime", () => {
@@ -767,5 +818,113 @@ describe("managed Run pane transaction", () => {
 		});
 		expect(fixture.openAgent).not.toHaveBeenCalled();
 		expect(fixture.readState().agents).toEqual([]);
+	});
+});
+
+describe("backend-owned Run successor presentation", () => {
+	const selected = {
+		state: "stable",
+		agentId: request.agentId,
+		providerId: request.providerId,
+		interactionProfile: "native_cli",
+		sessionId: request.sessionId,
+		workspaceId: request.workspaceId,
+		launchIdempotencyKey: request.launchIdempotencyKey,
+		stopFence: request.generation,
+		executionProfile: { kind: "provider_default" },
+		providerConversationRef: null,
+		launchSelection: { model: null, effort: null, permissionMode: "default" },
+		selectionRevision: 2,
+		backendProfileId: request.backendProfileId!,
+		backend: { id: "local", generation: "1" },
+		routeAuthority: testDureBackendRouteAuthority("local", "1"),
+		projectionContext: {
+			schemaVersion: 1,
+			identity: { kind: "registered" },
+			agent: {
+				agentId: request.agentId,
+				providerId: request.providerId,
+				workspaceId: "workspace-domain",
+			},
+			workspace: {
+				workspaceId: "workspace-domain",
+				projectId: project.id,
+				rootPath: project.path,
+			},
+			project: { projectId: project.id, rootPath: project.path },
+		},
+	} satisfies DureAgentRuntimeProjectionInspectResultV1;
+	function fixture() {
+		const agent = projectManagedRunPresentationAgent(
+			state(),
+			request,
+			project,
+			binding(),
+		).agent;
+		agent.sessionId = "predecessor";
+		agent.runtimeBinding = { ...binding(), sessionId: "predecessor" };
+		return {
+			readAgents: () => [agent],
+			inspect: vi.fn(
+				async () => selected as DureAgentRuntimeProjectionInspectResultV1,
+			),
+			project: vi.fn(),
+			agent,
+		};
+	}
+	it("refreshes a registered successor through the authoritative projection writer", async () => {
+		const deps = fixture();
+		await refreshManagedRunProjection(request, deps);
+		expect(deps.inspect).toHaveBeenCalledWith({
+			agentId: request.agentId,
+			backendProfileId: request.backendProfileId,
+		});
+		expect(deps.project).toHaveBeenCalledWith(request.agentId, selected);
+	});
+	it("refuses a mismatched generation or another runtime selection", async () => {
+		for (const change of [
+			{ sessionId: "another-session" },
+			{ providerId: "claude" },
+			{ stopFence: { ...request.generation, terminalEpoch: "replaced" } },
+			{
+				executionProfile: {
+					kind: "credential_reference",
+					reference_id: "other",
+					credential_generation: "1",
+				},
+			},
+			{ state: "unmanaged" },
+		]) {
+			const deps = fixture();
+			deps.inspect.mockResolvedValue({
+				...selected,
+				...change,
+			} as DureAgentRuntimeProjectionInspectResultV1);
+			await expect(refreshManagedRunProjection(request, deps)).rejects.toThrow(
+				"runtime changed",
+			);
+			expect(deps.project).not.toHaveBeenCalled();
+		}
+	});
+	it("leaves unrelated IDs to the existing identity conflict check", async () => {
+		const deps = fixture();
+		deps.agent.canonicalSpawn = {
+			...deps.agent.canonicalSpawn!,
+			operationId: "other-spawn",
+		};
+		await refreshManagedRunProjection(request, deps);
+		expect(deps.inspect).not.toHaveBeenCalled();
+		expect(deps.project).not.toHaveBeenCalled();
+	});
+	it("does not overwrite a projection changed during inspection", async () => {
+		const deps = fixture();
+		deps.inspect.mockImplementation(async () => {
+			deps.readAgents = () => [{ ...deps.agent, sessionId: "changed" }];
+			return selected;
+		});
+		await expect(refreshManagedRunProjection(request, deps)).rejects.toThrow(
+			"runtime changed",
+		);
+		expect(deps.project).not.toHaveBeenCalled();
 	});
 });

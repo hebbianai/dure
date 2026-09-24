@@ -1,3 +1,6 @@
+import { parseManagedRunProjectionInput } from "@/lib/cli/managedRunPresentationModel";
+import { presentManagedRunProjectionInBackground } from "@/lib/cli/managedRunBackgroundPresentation";
+import { resolveCliRunAccount } from "@/lib/cli/cliRunAccount";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { addAgent } from "@/lib/agents/agentRegistration";
 // Defer startup subscriptions until Tauri injects its IPC bridge.
@@ -137,6 +140,28 @@ export async function startCliServer(
         isMainWindow: () => getCurrentWebviewWindow().label === "main",
         flush: () => durableAppStorage.flush(),
       })) return;
+      if (action === "agent.run-background") {
+        if (getCurrentWebviewWindow().label !== "main" || !(await claimCliRequest(reqId))) return;
+        try {
+          const agent = await presentManagedRunProjectionInBackground(parseManagedRunProjectionInput(params));
+          await durableAppStorage.flush();
+          await completeCliRequest(reqId, {ok: true, agent: {agentId: agent.id, sessionId: agent.sessionId}}, action);
+        } catch (error) {
+          await completeCliRequest(reqId, {ok: false, error: {code: "run_background_registration_failed", message: error instanceof Error ? error.message : String(error)}}, action);
+        }
+        return;
+      }
+      if (action === "agent.launch-account") {
+        if (!(await claimCliRequest(reqId))) return;
+        try {
+          await completeCliRequest(reqId, await resolveCliRunAccount(params), action);
+        } catch (error) {
+          await completeCliRequest(reqId, { ok: false, error: {
+            code: "agent_launch_account_unavailable", message: error instanceof Error ? error.message : String(error),
+          } }, action);
+        }
+        return;
+      }
       if (await dispatchCliSettingsRequest(e.payload, {
         claim: claimCliRequest,
         complete: completeCliRequest,

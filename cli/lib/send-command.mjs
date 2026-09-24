@@ -5,10 +5,12 @@ const SEND_HELP = `dure send — Send text to an agent
 Usage: dure send <name> <text...> [options]
        dure send <name> --file PATH [options]
        dure send <name> --stdin [options]
+       dure send <session-id> --workspace <workspace-id> <text...> [options]
 
 Options:
   --file PATH            Read exact UTF-8 text from a regular file (up to 64 KiB)
   --stdin                Read exact UTF-8 text from stdin until EOF (up to 64 KiB)
+  --workspace ID         Exact local managed Session scope, independent of the app registry
   --no-enter             Insert text without submitting; edit the chat draft
   --json                 Print the delivery receipt as JSON, without prompt text
   --window-label LABEL   Select the app window for input delivery
@@ -16,7 +18,9 @@ Options:
   -h, --help             Show this help before specifying a recipient
   --                     Stop parsing options
 
-The recipient may be an agent name, project/name, or session ID.
+The recipient may be an agent name, project/name, or exact local managed Session ID.
+Unregistered Sessions are inspected through Hmux and input is fenced to that generation.
+Use --workspace to disambiguate. Remote input requires a registered Agent.
 Messages after the recipient may include literal --help or -h text.
 Choose exactly one text source. Newlines and whitespace in file/stdin are preserved.
 Enter is sent by default; use --no-enter to insert without submitting.
@@ -72,7 +76,7 @@ function printDelivery(agent, input, opts) {
 
 export async function runSendCommand(
   args,
-  { parseOptions, loadRegistry, resolveAgent, send, fail },
+  { parseOptions, loadRegistry, resolveAgent, send, sendExactSession, fail },
 ) {
   if (args[0] === "--help" || args[0] === "-h") {
     process.stdout.write(SEND_HELP);
@@ -89,8 +93,13 @@ export async function runSendCommand(
   if (source !== undefined && opts.rest.length > 1) {
     return fail("Choose exactly one input source: argv text, --file, or --stdin");
   }
+  if (remaining.includes("--workspace") && !opts.workspace) return fail("--workspace requires an ID");
+  if (opts.backendSpecified) return fail("send does not support --backend; use a registered remote Agent.");
   const registry = loadRegistry();
   const agent = resolveAgent(registry, opts.rest[0]);
+  if (typeof agent !== "string" && opts.workspace && opts.workspace !== agent.runtimeBinding?.workspaceId) {
+    return fail("--workspace does not match the selected Agent session");
+  }
   let text;
   try {
     if (source === 0 && process.stdin.isTTY) {
@@ -102,6 +111,11 @@ export async function runSendCommand(
     return fail(error.message);
   }
   if (!text) return fail("Input text must not be empty");
+  if (typeof agent === "string") {
+    const input = await sendExactSession(agent, text, opts);
+    printDelivery({ name: agent }, input, opts);
+    return;
+  }
   const input = await send(
     registry,
     agent,

@@ -5,6 +5,7 @@
 //! spawn, recovery, and rehost paths from silently drifting apart.
 
 pub mod claude_continuation;
+pub mod managed_environment;
 
 use dure_app::{
     AgentProviderLaunchPlanV1, AgentProviderPreflightPlanV1, AgentProviderPromptTargetV1,

@@ -17,6 +17,7 @@ import {
 	projectManagedRunPresentationAgent,
 	requireManagedRunPresentationGeneration,
 } from "@/lib/cli/managedRunPresentationModel";
+import { refreshManagedRunProjection } from "@/lib/cli/refreshManagedRunProjection";
 import { waitForExactHmuxPaneAttachment } from "@/lib/hmux/hmuxPaneAttachment";
 import { inspectHmuxSessionExact } from "@/lib/hmux/identity/exactHmuxSessionInspection";
 import { hmuxManagedGeneration } from "@/lib/hmux/identity/hmuxManagedGeneration";
@@ -69,6 +70,7 @@ export class ManagedRunPaneCommittedError extends CliManagedRunPresentationError
 
 export interface CliManagedRunPresentationDependencies {
 	claim(reqId: string): Promise<boolean>;
+	refreshRuntime?(request: ManagedRunProjectionInput): Promise<void>;
 	windowLabel(): string;
 	readState(): CliManagedRunPresentationState;
 	setState(
@@ -215,6 +217,7 @@ async function resolveProject(
 
 const defaultDependencies: CliManagedRunPresentationDependencies = {
 	claim: claimCliRequest,
+	refreshRuntime: refreshManagedRunProjection,
 	windowLabel: () => getCurrentWebviewWindow().label,
 	readState: () => useStore.getState(),
 	setState: (project) => useStore.setState((state) => project(state)),
@@ -291,7 +294,11 @@ async function performManagedRunPresentation(
 	const initial = dependencies.readState();
 	requireTargetSpaceWindow(request, initial, dependencies.windowLabel());
 	if (!(await authorize())) return null;
-	const binding = await dependencies.inspectBinding(request, initial);
+	await dependencies.refreshRuntime?.(request);
+	const binding = await dependencies.inspectBinding(
+		request,
+		dependencies.readState(),
+	);
 	dependencies.requestSpaceMount(request.spaceId);
 	if (!(await dependencies.waitForSpace(request.spaceId))) {
 		failCliManagedRunPresentation(
@@ -420,11 +427,7 @@ export async function handleCliManagedRunPresentation(
 		return claimed;
 	};
 	try {
-		return await performManagedRunPresentation(
-			request,
-			dependencies,
-			claim,
-		);
+		return await performManagedRunPresentation(request, dependencies, claim);
 	} catch (error) {
 		if (!(await claim())) return null;
 		if (error instanceof ManagedRunPaneCommittedError) {

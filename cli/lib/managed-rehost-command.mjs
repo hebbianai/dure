@@ -16,6 +16,7 @@ export async function collectManagedRehostCommand({
   operationId,
   confirmRestart,
   command,
+  runtime = process.env.DURE_HMUX_RUNTIME_BIN?.trim(),
   run = runBoundedCommand,
 }) {
   const failure = (code, message) => ({
@@ -36,6 +37,7 @@ export async function collectManagedRehostCommand({
       commands[action],
       ...identity.args,
       ...(confirmRestart ? ["--confirm-restart"] : []),
+      ...(runtime ? ["--runtime", runtime] : []),
       "--json",
     ],
     { timeoutMs: 45_000, maxCaptureBytes: 1024 * 1024 },

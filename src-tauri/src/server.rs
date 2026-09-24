@@ -59,6 +59,8 @@ const SERVER_CAPABILITIES: &[&str] = &[
     "browser.presentation_v1",
     "unopened_agents.visibility_v1",
     "agent.launch_preference_v1",
+    "agent.launch_account_v1",
+    "agent.run_background_v1",
 ];
 fn claimed_request_timeout(action: &str) -> Duration {
     match action {
@@ -130,6 +132,22 @@ struct FrontendRoute {
 /// 여기(또는 아래 required_scope의 직접 처리 allowlist)에 분류를 선언해야
 /// 한다 — allowlist 소스 스캔 테스트가 미분류 라우트 추가를 막는다.
 const FRONTEND_ROUTES: &[FrontendRoute] = &[
+    FrontendRoute {
+        method: Method::Post,
+        path: "/agent/run-background",
+        action: "agent.run-background",
+        waits_for_receipt: true,
+        scope: RouteScope::Control,
+        destructive: false,
+    },
+    FrontendRoute {
+        method: Method::Post,
+        path: "/agent/launch-account",
+        action: "agent.launch-account",
+        waits_for_receipt: true,
+        scope: RouteScope::Control,
+        destructive: false,
+    },
     FrontendRoute {
         method: Method::Post,
         path: "/agent/launch-preference",
@@ -2579,7 +2597,9 @@ mod tests {
                 "worktree.presentation_export_v1",
                 "browser.presentation_v1",
                 "unopened_agents.visibility_v1",
-                "agent.launch_preference_v1"
+                "agent.launch_preference_v1",
+                "agent.launch_account_v1",
+                "agent.run_background_v1"
             ])
         );
         std::fs::remove_dir_all(directory).unwrap();

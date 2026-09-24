@@ -55,6 +55,7 @@ export function parseOpts(args) {
     else if (a === "--agent-name") opts.agentName = args[++i];
     else if (a === "--from-session") opts.fromSession = args[++i];
     else if (a === "--strict-session") opts.strictSession = args[++i] ?? null;
+    else if (a === "--account") opts.account = args[++i] ?? "";
     else if (a === "--provider") opts.provider = args[++i];
     else if (a === "--model") opts.model = args[++i] ?? "";
     else if (a === "--effort") opts.effort = args[++i] ?? "";

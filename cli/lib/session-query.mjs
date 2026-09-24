@@ -153,6 +153,9 @@ function clientAgentProjection(agent, presentation) {
     id,
     name: boundedString(agent.name) ? agent.name : null,
     displayName: boundedString(agent.displayName) ? agent.displayName : null,
+    accountReference: agent.executionProfile?.kind === "provider_default" ? "provider_default" :
+      [agent.executionProfile?.reference_id, agent.credentialId, agent.accountId, agent.runtimeBinding?.credentialId]
+        .find((value) => boundedString(value)) ?? null,
     project: boundedString(agent.project) ? agent.project : null,
     pane: pane
       ? { id: pane.id, state: "observed" }
@@ -914,7 +917,7 @@ export function formatSessionQuery(report) {
   const sessions = report.kind === "dure.sessions.list" ? report.sessions : [report.session];
   if (sessions.length === 0) return "No Dure sessions.";
   const lines = [
-    "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tAGENTS\tFAILURE",
+    "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tAGENTS\tACCOUNT\tFAILURE",
   ];
   for (const session of sessions) {
     lines.push(
@@ -928,6 +931,7 @@ export function formatSessionQuery(report) {
         session.clientProjection.agents
           .map((agent) => agent.displayName ?? agent.name ?? agent.id ?? "?")
           .join(",") || "-",
+        session.clientProjection.state === "current" ? session.clientProjection.agents.map((agent) => agent.accountReference ?? "unknown").join(",") : "unknown",
         session.failure
           ? `${session.failure.code} (${session.failure.correlationId})`
           : "-",

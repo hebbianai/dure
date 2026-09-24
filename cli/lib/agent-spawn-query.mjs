@@ -1373,6 +1373,7 @@ export function formatAgentSpawnQuery(report) {
     `plan\t${receipt.plan.planToken}`,
     `state\t${receipt.state}`,
     `agent\t${receipt.plan.request.agentName}`,
+    `account\t${receipt.plan.request.executionProfile?.kind === "credential_reference" ? receipt.plan.request.executionProfile.reference_id : "provider_default"}`,
   ];
   lines.push(
     launch?.interactionProfile === "native_cli"

@@ -47,6 +47,28 @@ export async function resolveAgentRunInteractionPreference(
   return preference.interactionPreference ?? undefined;
 }
 
+/** Resolve a non-secret, generation-pinned credential before Run preview. */
+export async function resolveAgentRunAccount({ descriptor, providerId, backendProfileId, account,
+  requestClient = requestAppControl }) {
+  if (account === "default") return { kind: "provider_default" };
+  if (!descriptor?.capabilities?.includes("agent.launch_account_v1")) {
+    if (account !== undefined) throw new AppControlClientError("client_account_unavailable",
+      "Selecting an account requires a connected app with agent.launch_account_v1 support.");
+    return { kind: "provider_default" };
+  }
+  const response = await requestClient({ descriptor, path: "/agent/launch-account",
+    body: { providerId, backendProfileId, ...(account === undefined ? {} : { account }) } });
+  const profile = response?.executionProfile;
+  if (response?.ok !== true || response.schemaVersion !== 1 || !profile ||
+      (profile.kind !== "provider_default" && (profile.kind !== "credential_reference" ||
+        typeof profile.reference_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(profile.reference_id) ||
+        typeof profile.credential_generation !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(profile.credential_generation))) ||
+      (account !== undefined && profile.reference_id !== account)) {
+    throw new AppControlClientError("client_account_response_invalid", "The app did not confirm the requested Run account.");
+  }
+  return profile;
+}
+
 export async function collectAgentRun({
   projectId,
   projectPath,

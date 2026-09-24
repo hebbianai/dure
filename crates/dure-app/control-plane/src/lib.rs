@@ -3739,6 +3739,14 @@ async fn dispatch_authorized(
                     .map_err(|_| "agent_spawn_apply_request_invalid".to_string())?;
             apply_agent_spawn(state, &authority, body).await
         }
+        "agent_spawn.list" => {
+            let body: agent_spawn_api::AgentSpawnListBody =
+                serde_json::from_value(request.body.clone())
+                    .map_err(|_| "agent_spawn_list_request_invalid".to_string())?;
+            agent_spawn_api::list(&state.store, body)
+                .await
+                .map_err(Into::into)
+        }
         "agent_spawn.status" => {
             let body: agent_spawn_api::AgentSpawnStatusBody =
                 serde_json::from_value(request.body.clone())

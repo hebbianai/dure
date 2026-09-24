@@ -29,9 +29,10 @@ import {
 	isDureProviderConversationRefV1,
 } from "@/lib/ipc/dureProtocolIdentity";
 import { isRecord } from "@/lib/payloadGuards";
-import type {
-	HmuxManagedPaneBindingV1,
-	RemoteHmuxManagedPaneBindingV1,
+import {
+	type HmuxManagedPaneBindingV1,
+	normalizeTerminalPaneBindingV1,
+	type RemoteHmuxManagedPaneBindingV1,
 } from "@/lib/terminal/terminalBinding";
 import type { AppState } from "@/store";
 import type { Agent, HmuxManagedStopFenceV1, Project, Provider } from "@/types";
@@ -173,12 +174,20 @@ function windowLabel(value: unknown): string {
 	return value;
 }
 
-export function parseCliManagedRunPresentationRequest(
+export function parseManagedRunProjectionInput(
 	value: unknown,
-): CliManagedRunPresentationRequest {
+): ManagedRunProjectionInput {
 	if (
 		!isRecord(value) ||
-		!exactKeys(value, REQUEST_KEYS) ||
+		!exactKeys(
+			value,
+			new Set(
+				[...REQUEST_KEYS].filter(
+					(key) =>
+						!["spaceId", "windowLabel", "referencePanelId"].includes(key),
+				),
+			),
+		) ||
 		value.schemaVersion !== 1 ||
 		value.runtime !== "hmux_managed_v1" ||
 		(value.source !== "local" && value.source !== "ssh") ||
@@ -306,13 +315,30 @@ export function parseCliManagedRunPresentationRequest(
 			failCliManagedRunPresentation("invalid_request", "worktree is invalid"),
 		generation: value.generation,
 		permissionMode: value.permissionMode,
-		spaceId: token(value.spaceId, "spaceId"),
-		windowLabel: windowLabel(value.windowLabel),
-		...(value.referencePanelId !== undefined
-			? {
-					referencePanelId: token(value.referencePanelId, "referencePanelId"),
-				}
-			: {}),
+	};
+}
+
+export function parseCliManagedRunPresentationRequest(
+	value: unknown,
+): CliManagedRunPresentationRequest {
+	if (!isRecord(value))
+		failCliManagedRunPresentation(
+			"invalid_request",
+			"managed Run presentation request is invalid",
+		);
+	const {
+		spaceId,
+		windowLabel: label,
+		referencePanelId,
+		...projection
+	} = value;
+	return {
+		...parseManagedRunProjectionInput(projection),
+		spaceId: token(spaceId, "spaceId"),
+		windowLabel: windowLabel(label),
+		...(referencePanelId === undefined
+			? {}
+			: { referencePanelId: token(referencePanelId, "referencePanelId") }),
 	};
 }
 
@@ -421,6 +447,23 @@ export function projectManagedRunPresentationAgent(
 		);
 	}
 	if (existing) {
+		// A launch receipt can predate the first provider event or a verified
+		// continuation. Preserve the projection owned by this exact live Host.
+		const previousBinding = normalizeTerminalPaneBindingV1(
+			existing.runtimeBinding,
+		);
+		const previousIdentity =
+			previousBinding?.runtime === "hmux_managed_v1"
+				? previousBinding.conversationIdentity
+				: undefined;
+		const currentIdentity =
+			previousIdentity &&
+			binding.stopFence &&
+			previousIdentity.providerId === request.providerId &&
+			previousIdentity.conversationId === existing.conversationId &&
+			sameHmuxManagedGeneration(previousIdentity, binding.stopFence)
+				? previousIdentity
+				: undefined;
 		if (
 			existing.id !== request.agentId ||
 			existing.name !== request.agentName ||
@@ -428,8 +471,9 @@ export function projectManagedRunPresentationAgent(
 			existing.projectId !== project.id ||
 			existing.worktreePath !== worktreePath ||
 			existing.branch !== branch ||
-			(existing.conversationId ?? null) !==
-				(request.providerConversationRef ?? null) ||
+			(!currentIdentity &&
+				(existing.conversationId ?? null) !==
+					(request.providerConversationRef ?? null)) ||
 			existing.runtimeBinding?.hostId !== binding.hostId ||
 			(existing.canonicalSpawn !== undefined &&
 				!sameAgentCanonicalSpawn(existing.canonicalSpawn, canonicalSpawn))
@@ -443,10 +487,15 @@ export function projectManagedRunPresentationAgent(
 			...existing,
 			...(canonicalSpawn ? { canonicalSpawn } : {}),
 			started: true,
-			runtimeBinding: projectedBinding,
-			...(request.providerConversationRef
-				? { conversationId: request.providerConversationRef }
-				: {}),
+			runtimeBinding: {
+				...projectedBinding,
+				...(currentIdentity ? { conversationIdentity: currentIdentity } : {}),
+			},
+			...(currentIdentity
+				? { conversationId: currentIdentity.conversationId }
+				: request.providerConversationRef
+					? { conversationId: request.providerConversationRef }
+					: {}),
 			...(request.executionProfile
 				? { executionProfile: request.executionProfile }
 				: {}),

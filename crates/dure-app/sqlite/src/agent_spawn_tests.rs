@@ -799,3 +799,73 @@ async fn schema_thirty_one_migrates_agent_identity_index_from_planned_events() {
     .unwrap();
     assert_eq!(receipt_agent_columns, 0);
 }
+
+#[tokio::test]
+async fn durable_run_catalog_survives_reopen_and_pages_without_client_or_runtime() {
+    let root = tempfile::tempdir().unwrap();
+    let path = database_path(&root);
+    let store = SqliteDomainStore::open(&path).await.unwrap();
+    for index in 0..66 {
+        let id = format!("catalog-{index:03}");
+        let plan = spawn_plan(&id, &id, false);
+        for event in successful_events(&plan) {
+            store.append_agent_spawn_event(&event).await.unwrap();
+        }
+    }
+    store.close().await;
+    let store = SqliteDomainStore::open(&path).await.unwrap();
+    let first = store.list_agent_spawn_receipts(None, None).await.unwrap();
+    assert_eq!(first.len(), 65); // the service consumes one lookahead row
+    let second = store
+        .list_agent_spawn_receipts(Some(&first[63].operation_id), None)
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 2);
+    assert_eq!(second[0], first[64]);
+    assert!(
+        first
+            .iter()
+            .all(|r| r.state == AgentSpawnJournalStateV1::Succeeded)
+    );
+    let selected = store
+        .list_agent_spawn_receipts(None, Some("agent-catalog-003"))
+        .await
+        .unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0], first[3]);
+    assert_eq!(
+        store
+            .list_agent_spawn_receipts(None, Some("catalog-003"))
+            .await
+            .unwrap(),
+        selected
+    );
+    assert_eq!(
+        store
+            .list_agent_spawn_receipts(None, Some("codex-agent"))
+            .await
+            .unwrap()
+            .len(),
+        65
+    );
+    assert!(
+        store
+            .list_agent_spawn_receipts(None, Some("missing"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // Corrupt projections must not become recovery authority through the catalog.
+    sqlx::query(
+        "UPDATE agent_spawn_receipts SET state = 'failed' WHERE operation_id = 'catalog-003'",
+    )
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    assert!(
+        store
+            .list_agent_spawn_receipts(None, Some("catalog-003"))
+            .await
+            .is_err()
+    );
+}

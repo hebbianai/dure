@@ -23,6 +23,7 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
         "agent_conversation.steer_turn" => Some("agent_conversation.steer_turn"),
         "agent_spawn.apply" => Some("agent_spawn.apply"),
         "agent_spawn.preview" => Some("agent_spawn.preview.v2"),
+        "agent_spawn.list" => Some("agent_spawn.list"),
         "agent_spawn.status" => Some("agent_spawn.status"),
         "agent_runtime.inspect" => Some("agent_runtime.inspect"),
         "agent_runtime.native_rehost.reconcile" => Some("agent_runtime.native_rehost.reconcile"),

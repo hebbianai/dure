@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "currentBuildId": "dure-control-plane/v130-feedback-observation",
-  "previousBuildId": "dure-control-plane/v129-backend-account-recovery",
+  "currentBuildId": "dure-control-plane/v131-run-catalog",
+  "previousBuildId": "dure-control-plane/v130-feedback-observation",
   "identity": {
     "apiVersion": "dure.control-plane-identity/v1",
     "kind": "dure.control_plane.identity",
@@ -39,6 +39,7 @@
       "agent_runtime.transition",
       "agent_runtime.wake",
       "agent_spawn.apply",
+      "agent_spawn.list",
       "agent_spawn.presentation_project.v1",
       "agent_spawn.preview.v2",
       "agent_spawn.status",

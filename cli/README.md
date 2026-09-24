@@ -9,6 +9,7 @@ dure --help
 dure client --help
 dure read --help
 dure runtime --help
+dure runs --help
 dure send --help
 dure send-keys --help
 ```

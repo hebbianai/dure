@@ -20,12 +20,24 @@ esac
 
 dure_qa_capture_provider_start claude
 
+# Bounded, non-secret launch evidence for the durable Run smoke only.
+python3 - <<'PYENV'
+import json, os, pathlib
+root = pathlib.Path(os.environ.get("DURE_QA_CAPTURE_DIR", os.environ.get("HEBBIAN_QA_CAPTURE_DIR", "/nonexistent")))
+if (root / "enable-transcript").is_file():
+    keys = ["DURE_APP_CHANNEL", "DURE_BUILD_ID", "DURE_DEV_LAUNCH_GENERATION", "DURE_BACKEND_RUNTIME_FINGERPRINT", "HEBBIAN_HMUX_BIN", "TAURI_CONFIG", "DURE_HOME", "HMUX_DISCOVERY_ROOT"]
+    (root / (os.environ["HMUX_SESSION_ID"] + "-launch.json")).write_text(json.dumps({key: os.environ.get(key) for key in keys}))
+PYENV
+
 managed_settings=
 previous=
+export DURE_QA_FAKE_CONVERSATION_ID="${HMUX_SESSION_ID:-}"
 for argument in "$@"; do
   if [ "$previous" = "--settings" ]; then
     managed_settings=$argument
-    break
+  fi
+  if [ "$previous" = "--resume" ]; then
+    export DURE_QA_FAKE_CONVERSATION_ID="$argument"
   fi
   previous=$argument
 done
@@ -36,7 +48,7 @@ done
 run_managed_hook() { # $1 = event, $2 = prompt (optional)
   [ -n "$managed_settings" ] || return 0
   python3 - "$managed_settings" "$1" "${2:-}" <<'PYEOF' 2>/dev/null || true
-import json, os, subprocess, sys
+import json, os, pathlib, subprocess, sys
 
 settings_path, event, prompt = sys.argv[1:4]
 try:
@@ -44,8 +56,18 @@ try:
     handler = settings["hooks"][event][0]["hooks"][0]
     payload = {
         "hook_event_name": event,
-        "session_id": os.environ["HMUX_SESSION_ID"],
+        "session_id": os.environ["DURE_QA_FAKE_CONVERSATION_ID"],
     }
+    capture = pathlib.Path(os.environ.get("DURE_QA_CAPTURE_DIR", os.environ.get("HEBBIAN_QA_CAPTURE_DIR", "/nonexistent")))
+    if (capture / "enable-transcript").is_file():
+        transcripts = capture / "transcripts"
+        transcripts.mkdir(exist_ok=True)
+        transcript = transcripts / (payload["session_id"] + ".jsonl")
+        if event != "SessionStart" and not transcript.exists():
+            transcript.write_text(json.dumps({"type": "user", "sessionId": payload["session_id"]}) + "\n")
+        payload["transcript_path"] = str(transcript)
+        payload["background_tasks"] = []
+        payload["session_crons"] = []
     if event == "UserPromptSubmit":
         payload["prompt"] = prompt
     if event == "Stop":

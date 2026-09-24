@@ -1,3 +1,4 @@
+import { parseAgentExecutionProfileV1 } from "@/lib/agents/chat/agentConversationContract";
 import { invoke } from "@tauri-apps/api/core";
 import { agentDisplayName } from "@/lib/agents/agentDisplayName";
 import { normalizeAgentInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
@@ -32,6 +33,7 @@ interface RegistryAgent {
   branch: string;
   ssh: { host: string; port: number; user: string } | null;
 	runtimeBinding: ReturnType<typeof bindingForAgent>;
+	executionProfile?: ReturnType<typeof parseAgentExecutionProfileV1>;
 	credentialId: string | null;
 	conversationId: string | null;
 	interactionProfile: ReturnType<typeof normalizeAgentInteractionProfileV1>;
@@ -122,6 +124,7 @@ export function buildRegistry() {
       branch: a.branch,
       ssh: host ? { host: host.host, port: host.port, user: host.user } : null,
 			runtimeBinding: bindingForAgent(a, s.projects),
+			...(a.executionProfile ? { executionProfile: parseAgentExecutionProfileV1(a.executionProfile) } : {}),
 			credentialId: a.credentialId ?? null,
 			conversationId: a.conversationId ?? null,
 			interactionProfile: normalizeAgentInteractionProfileV1(a.interactionProfile),

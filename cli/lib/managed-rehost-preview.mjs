@@ -16,15 +16,15 @@ export function isManagedRehostNameRequest(opts) {
 }
 
 /** The client owns the name; the backend supplies the source. This does not admit an operation. */
-export async function collectManagedRehostPreview({ opts, registry, resolveBackend, requestBackend }) {
+export async function collectManagedRehostPreview({ opts, registry, agentId: durableAgentId, resolveBackend, requestBackend }) {
   const name = (opts.name || opts.rest[1]).trim();
   const base = { schemaVersion: 1, name, nativeExecution: "not_requested" };
   const failure = (error, details = {}) => ({ ...base, ok: false, error, ...details });
-  if (registry.state !== "available") {
+  if (durableAgentId === undefined && registry.state !== "available") {
     return failure({ code: "rehost_name_projection_unavailable",
       message: "The complete client name projection is unavailable. Inspect an exact Agent with dure runtime get <agent-id>." });
   }
-  const matches = matchingAgents(registry, name);
+  const matches = durableAgentId === undefined ? matchingAgents(registry, name) : [{ id: durableAgentId }];
   if (matches.length !== 1 || !isDureDomainIdV1(matches[0]?.id)) {
     return failure({ code: "rehost_name_not_unique",
       message: "Select one exact Agent name or project/name from dure ls." });

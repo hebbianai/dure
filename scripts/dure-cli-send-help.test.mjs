@@ -46,7 +46,7 @@ describe("dure send help", () => {
   });
 
   it.each(["hello", "--help", "-h"])(
-    "preserves unknown-recipient errors with message %s",
+    "reports an unknown exact recipient without writing input: %s",
     (message) => {
       const { root, marker, hmux } = fixture();
       writeRegistry(root, []);
@@ -58,7 +58,8 @@ describe("dure send help", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("missing-recipient");
       expect(result.stdout).toBe("");
-      expect(existsSync(marker)).toBe(false);
+      expect(existsSync(marker)).toBe(true);
+      expect(result.stderr).toContain("channel 'stable'");
     },
   );
 });

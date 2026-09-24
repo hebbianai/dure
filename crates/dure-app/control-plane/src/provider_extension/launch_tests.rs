@@ -370,3 +370,125 @@ fn launch_only_provider_does_not_inherit_a_recipe_from_its_id() {
     assert!(plan.launch.arguments.is_empty());
     assert!(plan.resume_arguments.is_none());
 }
+
+#[test]
+#[cfg(unix)]
+fn native_launch_and_resume_bind_channel_without_interpreting_provider_arguments() {
+    struct Channel;
+    impl ProviderRuntimeIntegrationSource for Channel {
+        fn app_channel(&self) -> Option<&str> {
+            Some("stable")
+        }
+        fn integration(
+            &self,
+            _: &ProviderIdV1,
+        ) -> Result<ProviderRuntimeIntegrationV1, ExtensionFailureCodeV1> {
+            Err(integration_unavailable())
+        }
+    }
+    let literal = "literal $HOME `false` ' quoted";
+    let mut plan = dure_app::AgentProviderSessionLaunchPlanV1 {
+        launch: AgentProviderLaunchPlanV1 {
+            executable: "/usr/bin/printenv".into(),
+            arguments: vec!["DURE_APP_CHANNEL".into()],
+        },
+        resume_arguments: Some(vec!["DURE_APP_CHANNEL".into()]),
+    };
+    super::launch::bind_session_channel(&Channel, &mut plan).unwrap();
+    dure_app::WorkflowSessionLaunchRequestV1 {
+        runtime_kind_id: dure_app::RuntimeKindIdV1::new("runtime.hmux").unwrap(),
+        launch_idempotency_key: "test-launch".into(),
+        session_id: "test-session".into(),
+        workspace_id: "test-workspace".into(),
+        provider_id: ProviderIdV1::new("claude").unwrap(),
+        provider_conversation_ref: None,
+        permission_mode: ProviderPermissionModeV1::Default,
+        provider_executable: plan.launch.executable.clone(),
+        provider_arguments: plan.launch.arguments.clone(),
+        provider_resume: None,
+        initial_prompt: Some("test".into()),
+        working_directory: "/tmp".into(),
+        prelaunch_command: None,
+    }
+    .validate()
+    .expect("channel binding must fit the existing runtime launch contract");
+    for args in [
+        &plan.launch.arguments,
+        plan.resume_arguments.as_ref().unwrap(),
+    ] {
+        let output = std::process::Command::new(&plan.launch.executable)
+            .args(args)
+            .env("DURE_APP_CHANNEL", "dev-wrong")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"stable\n");
+    }
+    let mut echo = AgentProviderLaunchPlanV1 {
+        executable: "/usr/bin/printf".into(),
+        arguments: vec!["%s".into(), literal.into()],
+    };
+    super::launch::wrap_launch_channel(&mut echo, "stable", Some(Path::new("/fixture/space path")));
+    let output = std::process::Command::new(&echo.executable)
+        .args(echo.arguments)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), literal);
+}
+
+#[test]
+#[cfg(unix)]
+fn managed_environment_removes_build_overrides_and_preserves_isolation_and_credentials() {
+    let mut plan = AgentProviderLaunchPlanV1 {
+        executable: "/usr/bin/env".into(),
+        arguments: vec![],
+    };
+    super::launch::wrap_launch_channel(&mut plan, "stable", None);
+    let mut command = std::process::Command::new(plan.executable);
+    command
+        .args(plan.arguments)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin");
+    for key in dure_provider_adapter::managed_environment::INHERITED_LAUNCH_KEYS {
+        command.env(key, "synthetic-parent");
+    }
+    for key in [
+        "HOME",
+        "DURE_HOME",
+        "HMUX_DISCOVERY_ROOT",
+        "CLAUDE_CONFIG_DIR",
+        "ANTHROPIC_API_KEY",
+        "CARGO_HOME",
+    ] {
+        command.env(key, "synthetic-preserved");
+    }
+    let output = command.output().unwrap();
+    assert!(output.status.success());
+    let values: std::collections::BTreeMap<_, _> = std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .collect();
+    for key in dure_provider_adapter::managed_environment::INHERITED_LAUNCH_KEYS {
+        assert_eq!(
+            values.get(key).copied(),
+            if *key == "DURE_APP_CHANNEL" {
+                Some("stable")
+            } else {
+                None
+            },
+            "{key}"
+        );
+    }
+    for key in [
+        "HOME",
+        "DURE_HOME",
+        "HMUX_DISCOVERY_ROOT",
+        "CLAUDE_CONFIG_DIR",
+        "ANTHROPIC_API_KEY",
+        "CARGO_HOME",
+    ] {
+        assert_eq!(values.get(key), Some(&"synthetic-preserved"));
+    }
+}

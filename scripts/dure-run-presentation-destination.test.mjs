@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   managedRunPresentationRequest,
   presentAgentRunRuntime,
+  registerAgentRunInBackground,
   structuredRunPresentationRequest,
 } from "../cli/lib/run-presentation.mjs";
 import {
@@ -176,4 +177,28 @@ it("registers a background structured Run without requesting a pane or Space", a
     fetchImpl,
   })).resolves.toMatchObject({ state: "background", agent: { agentId: receipt.plan.agentId } });
   expect(fetchImpl).toHaveBeenCalledOnce();
+});
+
+
+describe("native Run background registration", () => {
+  it("registers one exact runtime without selecting a Space or opening a pane", async () => {
+    const receipt = succeededNativeReceipt();
+    const fetchImpl = vi.fn(async (_url, init) => {
+      const body = JSON.parse(init.body);
+      expect(body).not.toHaveProperty("spaceId");
+      expect(body).not.toHaveProperty("windowLabel");
+      return new Response(JSON.stringify({ok:true,agent:{agentId:body.agentId,sessionId:body.sessionId}}));
+    });
+    const result = await registerAgentRunInBackground({report:{kind:"dure.agent_spawn.apply",receipt},
+      profile:{id:"local",transport:{kind:"local"}},projectPath:"/repo",
+      descriptor:{port:42,token:"fixture",capabilities:["agent.run_background_v1"]},fetchImpl});
+    expect(result).toMatchObject({state:"registered",agentId:receipt.plan.agentId});
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+  it("keeps headless no-client and remote launches independent of local registration", async () => {
+    const fetchImpl=vi.fn();
+    expect(await registerAgentRunInBackground({profile:{transport:{kind:"ssh"}},descriptor:{capabilities:["agent.run_background_v1"]},fetchImpl})).toBeUndefined();
+    expect(await registerAgentRunInBackground({profile:{transport:{kind:"local"}},fetchImpl})).toBeUndefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });

@@ -179,6 +179,57 @@ function presentableRunPlan(report) {
   };
 }
 
+/** A retained spawn receipt locates the Run; current backend selection supplies
+ * its runtime. Never attach the predecessor merely because its launch succeeded. */
+export function currentRunPresentationPlan(report, inspection) {
+  const projected = presentableRunPlan({ ...report, kind: "dure.agent_spawn.apply" });
+  const current = inspection?.receipt;
+  const context = inspection?.projectionContext;
+  if (inspection?.state !== "stable" || current?.agentId !== projected.plan.agentId ||
+      current.providerId !== projected.request.providerId ||
+      context?.agent?.agentId !== projected.plan.agentId ||
+      context.agent.workspaceId !== projected.plan.workspaceId ||
+      context.workspace?.projectId !== projected.plan.authority.projectId ||
+      (projected.workspace.rootPath !== undefined && context.workspace?.rootPath !== projected.workspace.rootPath) ||
+      !validProjectPath(context.project?.rootPath)) {
+    fail("client_run_runtime_unavailable", "Inspect this Run's current runtime before opening it.");
+  }
+  const selected = current.authority;
+  const request = { ...projected.request, executionProfile: current.executionProfile,
+    permissionMode: current.permissionMode };
+  if (selected?.interactionProfile !== projected.interactionProfile ||
+      !sameExecutionProfile(current.executionProfile, projected.request.executionProfile) ||
+      current.permissionMode !== projected.request.permissionMode) {
+    fail("client_run_runtime_changed", "The Run's interaction or launch profile has changed; use its current runtime controls.");
+  }
+  if (selected.interactionProfile === "structured_protocol") {
+    const binding = selected.binding;
+    if (binding?.agentId !== current.agentId || binding?.providerId !== current.providerId ||
+        !SAFE_TOKEN.test(binding?.interactionSessionId ?? "")) {
+      fail("client_run_runtime_invalid", "The current conversation binding is invalid.");
+    }
+    return { ...projected, request, binding };
+  }
+  const source = selected.authority;
+  const binding = source?.binding;
+  const sessionId = binding?.sessionId;
+  const launchIdempotencyKey = current.launchIdempotencyKey ??
+    (sessionId === projected.runtimeGeneration.sessionId ? projected.launchIdempotencyKey : undefined);
+  const runtimeGeneration = {
+    sessionId, workspaceId: source?.runtimeWorkspaceId, providerId: current.providerId,
+    ...Object.fromEntries(["runnerPrincipal", "runnerInstance", "channelEpoch", "hostInstanceId", "terminalEpoch"]
+      .map((key) => [key, source?.[key]])),
+  };
+  if (binding?.agentId !== current.agentId || binding.runtimeKindId !== "runtime.hmux" ||
+      source.runtimeWorkspaceId !== projected.plan.workspaceId ||
+      !SAFE_TOKEN.test(launchIdempotencyKey ?? "") ||
+      Object.values(runtimeGeneration).some((value) => typeof value !== "string" || !SAFE_TOKEN.test(value))) {
+    fail("client_run_runtime_invalid", "The current native runtime binding is invalid.");
+  }
+  return { ...projected, request, runtimeGeneration, launchIdempotencyKey,
+    providerConversationRef: current.providerConversationRef ?? null };
+}
+
 export function hasPresentableAgentRuntime(report) {
   try {
     presentableRunPlan(report);
@@ -192,7 +243,7 @@ function managedRunPresentationRequestFromPlan(
   projected,
   { target, profile, projectPath },
 ) {
-  if (target?.state !== "requested") {
+  if (target?.state !== "requested" && target?.state !== "background") {
     fail("client_space_target_invalid", "A Space is required to open the pane.");
   }
   const {
@@ -219,6 +270,7 @@ function managedRunPresentationRequestFromPlan(
     projectId: plan.authority.projectId,
     providerId: request.providerId,
     executionProfile: request.executionProfile,
+    ...(projected.providerConversationRef === undefined ? {} : { providerConversationRef: projected.providerConversationRef }),
     sessionId: runtimeGeneration.sessionId,
     ...(isPreparedRuntime
       ? {}
@@ -236,8 +288,7 @@ function managedRunPresentationRequestFromPlan(
       terminalEpoch: runtimeGeneration.terminalEpoch,
     },
     permissionMode: request.permissionMode,
-    spaceId: target.spaceId,
-    windowLabel: target.windowLabel,
+    ...(target.state === "background" ? {} : { spaceId: target.spaceId, windowLabel: target.windowLabel }),
     ...(target.referencePanelId
       ? { referencePanelId: target.referencePanelId }
       : {}),
@@ -352,8 +403,22 @@ function publicPane(payload, expected) {
   };
 }
 
+/** Register local native Runs for the existing durable Agent recovery lifecycle. */
+export async function registerAgentRunInBackground({report,profile,projectPath,descriptor,fetchImpl=globalThis.fetch}) {
+  if (!descriptor?.capabilities?.includes("agent.run_background_v1") || profile?.transport?.kind !== "local") return undefined;
+  const projected = presentableRunPlan(report);
+  if (projected.interactionProfile !== "native_cli") return undefined;
+  const body = managedRunPresentationRequestFromPlan(projected, {target:{state:"background"},profile,projectPath});
+  const payload = await requestAppControl({descriptor,path:"/agent/run-background",body,fetchImpl});
+  if (payload?.agent?.agentId !== body.agentId || payload.agent.sessionId !== body.sessionId) {
+    fail("client_response_invalid", "The client did not register the exact Run.");
+  }
+  return {state:"registered",agentId:body.agentId,sessionId:body.sessionId};
+}
+
 export async function presentAgentRunRuntime({
   report,
+  currentRuntime,
   target,
   profile,
   projectPath,
@@ -368,7 +433,9 @@ export async function presentAgentRunRuntime({
       reason: target.reason,
     };
   }
-  const projected = presentableRunPlan(report);
+  const projected = currentRuntime
+    ? currentRunPresentationPlan(report, currentRuntime)
+    : presentableRunPlan(report);
   const structured = projected.interactionProfile === "structured_protocol";
   const body = structured
     ? structuredRunPresentationRequestFromPlan(projected, {

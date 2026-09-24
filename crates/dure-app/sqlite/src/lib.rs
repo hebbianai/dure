@@ -129,6 +129,14 @@ impl SqliteDomainStore {
         Ok(store)
     }
 
+    pub async fn list_agent_spawn_receipts(
+        &self,
+        after: Option<&OperationIdV1>,
+        selector: Option<&str>,
+    ) -> Result<Vec<AgentSpawnJournalReceiptV1>, DomainStoreErrorV1> {
+        agent_spawn::list_receipts(&self.pool, after, selector).await
+    }
+
     pub fn database_path(&self) -> &Path {
         &self.path
     }

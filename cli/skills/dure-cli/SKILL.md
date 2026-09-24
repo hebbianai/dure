@@ -20,14 +20,14 @@ driving and waiting on a session. Parse `--json` — `dure.sessions/v1`,
 - **Agent id** (`agent-…`) — `stop` also accepts this exact identity; it is not
   the Session ID consumed by `attach` or backend session reads.
 - **Session id + workspace id** (`session_…`, `agent-workspace:…`) — the
-  registry-free pair. `attach` requires both; `wait` and `read` accept them in
+  registry-free pair. `attach` requires both; `wait`, local `send`, and `read` accept them in
   place of a name, and `read` demands them once `--backend` or
   `DURE_BACKEND_PROFILE` selects a backend. `inspect` needs only the session id.
 - **Space/pane id** (`desk-…`, `pane-…`) and **project id** — consumed by
   `dure run --space`, `dure run --project` and `dure client`, all in the `dure` skill.
 
 ```sh
-dure ls   # SESSION WORKSPACE PROVIDER PID LIVE CWD AGENTS FAILURE
+dure ls   # SESSION WORKSPACE PROVIDER PID LIVE CWD AGENTS ACCOUNT FAILURE
 dure spaces show desk-Jd7tlL   # pane id, type, title, state, workspace/session
 dure projects list             # project ids; dure spaces list gives desk ids
 ```
@@ -60,6 +60,44 @@ Omit `--idempotency-key` and the CLI invents one, printing `Retry key: …` on
 of creating a second agent. Exit 0 succeeded, 1 the receipt is not `succeeded`,
 2 the backend or pane placement failed — and success means setup and prompt
 delivery finished, never that the provider answered.
+
+## Choose a Run account
+
+A current connected app supplies the selected account for the requested provider,
+including headless Runs. Use `dure run --account ACCOUNT_ID ...` to pin an exact
+app account, or `--account default` for the provider default. A CLI without a
+connected app supporting account selection uses the provider default when the
+option is omitted; an explicit unavailable account fails before launch.
+The Run receipt's `plan.request.executionProfile` records the non-secret account
+reference and credential generation. Human output includes `account`; `dure ls`
+shows the account from a current client projection, or `unknown` when unavailable.
+
+## Find and recover an existing Run
+
+`dure ls` observes Sessions. `dure runs list --json` reads durable Run records,
+including headless Runs after an app restart. Follow `nextCursor` with `--cursor`
+until null, keeping the same backend. `launchState` records the original launch;
+it does not prove that a process is still running.
+
+```sh
+dure runs show worker --json
+dure runs open worker --space desk-id --json
+dure runs resume worker --json                 # preview only
+dure runs resume worker --confirm-restart --json
+```
+
+Use the exact Agent or operation ID when names are ambiguous. `open` places the
+current existing runtime without launching another provider. `resume` uses the
+local native recovery broker when an exact source conversation is recoverable,
+retaining the conversation and publishing the new binding. A retained Run record
+alone does not prove reboot recovery is possible. Keep its exact status/retry/publish commands if a response is uncertain;
+repeating a name-based resume proposes another operation. Then use `open` to
+place the recovered Run. Remote resume requires execution on its host.
+For headless input/output, use the Session/workspace pair from `show` with
+`read` and local `send`; an Agent name requires client registration. Direct Session
+input verifies the current Host generation without requiring an app registry.
+It does not support `--backend`, `--window-label`, or broker idempotency keys.
+For a lookup failure, check the selected channel with `dure diagnostics --json`.
 
 ## Stop and clean up an Agent
 

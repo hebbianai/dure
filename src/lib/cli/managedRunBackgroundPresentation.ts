@@ -106,19 +106,37 @@ export async function presentManagedRunInBackground(
 	},
 	dependencies: BackgroundManagedRunPresentationDependencies = defaultDependencies,
 ): Promise<Agent> {
-	const request = projectionInput(run, target.projectPath);
+	return presentManagedRunProjectionInBackground(
+		{
+			...projectionInput(run, target.projectPath),
+			...(target.presentationWorktree
+				? { presentationWorktree: target.presentationWorktree }
+				: {}),
+		},
+		dependencies,
+	);
+}
+
+export async function presentManagedRunProjectionInBackground(
+	request: ManagedRunProjectionInput,
+	dependencies: BackgroundManagedRunPresentationDependencies = defaultDependencies,
+): Promise<Agent> {
+	if (request.source !== "local" || !request.projectPath)
+		throw new Error(
+			"Background Run registration requires an exact local project path",
+		);
 	const initial = dependencies.readState();
 	const existing = exactExistingProjection(initial, request);
 	if (existing) return existing;
 	const binding = await dependencies.inspectBinding(request, initial);
-	const project = await dependencies.ensureProject(target.projectPath);
+	const project = await dependencies.ensureProject(request.projectPath);
 	const presentationWorktree =
-		target.presentationWorktree ??
+		request.presentationWorktree ??
 		snapshotAgentRunPresentationWorktree(
-			run.worktree,
+			request.worktree,
 			initial.agents,
 			project,
-			run.providerId,
+			request.providerId,
 		);
 	const projected = projectManagedRunPresentationAgent(
 		dependencies.readState(),

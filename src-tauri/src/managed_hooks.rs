@@ -481,10 +481,12 @@ pub(crate) fn inject_provider_settings(
 }
 
 fn inject_app_channel_from(command: &str, channel: &str) -> String {
-    format!(
-        "/usr/bin/env DURE_APP_CHANNEL={} {command}",
-        shell_quote(channel),
-    )
+    let prefix = dure_provider_adapter::managed_environment::unix_managed_environment_prefix(channel)
+        .iter()
+        .map(|argument| shell_quote(argument))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{prefix} {command}")
 }
 
 fn inject_dure_command_path_from(command: &str, directory: &Path) -> Result<String, String> {
@@ -776,7 +778,7 @@ mod tests {
         .into_command_template(Path::new("/bin/sh"));
         assert_eq!(
             command[2],
-            "PATH='/verified channel/bin':\"${PATH:-}\" exec /usr/bin/env DURE_APP_CHANNEL='dev-feature-a1b2c3d4' codex --resume conversation-1"
+            format!("PATH='/verified channel/bin':\"${{PATH:-}}\" exec {}", inject_app_channel_from("codex --resume conversation-1", "dev-feature-a1b2c3d4"))
         );
     }
 

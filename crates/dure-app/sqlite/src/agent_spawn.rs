@@ -88,6 +88,43 @@ pub(crate) async fn append_event(
     finish_transaction(&mut connection, "append_agent_spawn_event", result).await
 }
 
+/// Durable catalog page, independent of runtime discovery and client panes.
+/// Validate every returned receipt against its journal in one read snapshot.
+pub(crate) async fn list_receipts(
+    pool: &SqlitePool,
+    after: Option<&OperationIdV1>,
+    selector: Option<&str>,
+) -> Result<Vec<AgentSpawnJournalReceiptV1>, DomainStoreErrorV1> {
+    let mut connection = pool
+        .acquire()
+        .await
+        .map_err(|error| map_sqlx("list_agent_spawn_receipts", error))?;
+    begin_read(&mut connection, "list_agent_spawn_receipts").await?;
+    let result = async {
+        let ids: Vec<String> = sqlx::query_scalar(
+            r#"SELECT operation_id FROM agent_spawn_receipts
+               WHERE (?1 IS NULL OR operation_id > ?1)
+                 AND (?2 IS NULL OR operation_id = ?2 OR json_extract(receipt_json, '$.plan.agentId') = ?2
+                      OR json_extract(receipt_json, '$.plan.request.agentName') = ?2)
+               ORDER BY operation_id LIMIT 65"#,
+        )
+        .bind(after.map(OperationIdV1::as_str))
+        .bind(selector)
+        .fetch_all(&mut *connection).await
+        .map_err(|error| map_sqlx("list_agent_spawn_receipts", error))?;
+        let mut receipts = Vec::with_capacity(ids.len());
+        for id in ids {
+            let id = OperationIdV1::new(id)
+                .map_err(|error| corrupt_identifier("agent_spawn_receipts.operation_id", error))?;
+            let receipt = validated_receipt_by_operation(&mut connection, &id).await?
+                .ok_or_else(|| storage("missing_agent_spawn_receipt", "catalog receipt missing"))?;
+            receipts.push(receipt);
+        }
+        Ok(receipts)
+    }.await;
+    finish_transaction(&mut connection, "list_agent_spawn_receipts", result).await
+}
+
 pub(crate) async fn receipt(
     pool: &SqlitePool,
     operation_id: &OperationIdV1,

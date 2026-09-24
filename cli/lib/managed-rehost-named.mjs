@@ -5,11 +5,11 @@ import { collectManagedRehostPublication } from "./managed-rehost-publication.mj
 
 /** Compose the existing owners once; publication failure never repeats native execution. */
 export async function collectManagedRehostNamed({
-  opts, registry, resolveBackend, requestBackend, command, run,
+  opts, registry, agentId, resolveBackend, requestBackend, command, run,
 }) {
   let backend;
   const prepared = await collectManagedRehostPreview({
-    opts, registry, requestBackend,
+    opts, registry, agentId, requestBackend,
     resolveBackend: async () => {
       backend = await resolveBackend();
       return backend;

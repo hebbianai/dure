@@ -35,6 +35,10 @@ mod launch;
 mod launch_tests;
 
 trait ProviderRuntimeIntegrationSource: Send + Sync {
+    fn app_channel(&self) -> Option<&str> {
+        None
+    }
+
     fn integration(
         &self,
         provider_id: &ProviderIdV1,
@@ -133,6 +137,10 @@ impl ChannelProviderRuntimeIntegrationSource {
 }
 
 impl ProviderRuntimeIntegrationSource for ChannelProviderRuntimeIntegrationSource {
+    fn app_channel(&self) -> Option<&str> {
+        self.channel.as_deref()
+    }
+
     fn integration(
         &self,
         provider_id: &ProviderIdV1,
@@ -1148,13 +1156,20 @@ mod tests {
             claude_settings.to_string_lossy().into_owned(),
         );
 
-        let registry = provider_registry(
-            Arc::new(ChannelProviderRuntimeIntegrationSource::at(
-                channel,
-                control_dir.clone(),
-            )),
-            BTreeSet::new(),
+        let integrations: Arc<dyn ProviderRuntimeIntegrationSource> = Arc::new(
+            ChannelProviderRuntimeIntegrationSource::at(channel, control_dir.clone()),
         );
+        let fixture_executable = std::env::current_exe().unwrap();
+        let mut registry = AgentProviderRegistry::default();
+        for provider in ["codex", "claude"] {
+            register_provider(
+                &mut registry,
+                BundledAgentProvider::new(
+                    &format!("fixture.{provider}"), "Fixture provider", provider,
+                    fixture_executable.to_str().unwrap(), Arc::clone(&integrations), false,
+                ),
+            );
+        }
         let codex = registry
             .launch_plan(
                 &ProviderIdV1::new("codex").unwrap(),
@@ -1186,8 +1201,8 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            claude.arguments,
-            vec!["--settings", claude_settings.to_str().unwrap()]
+            &claude.arguments[claude.arguments.len() - 2..],
+            ["--settings", claude_settings.to_str().unwrap()]
         );
 
         fs::remove_file(&document_path).unwrap();

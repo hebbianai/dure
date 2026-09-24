@@ -31,6 +31,56 @@ pub(crate) struct AgentSpawnStatusBody {
     pub(crate) idempotency_key: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AgentSpawnListBody {
+    pub(crate) schema_version: u16,
+    pub(crate) after: Option<OperationIdV1>,
+    pub(crate) selector: Option<String>,
+}
+
+pub(crate) async fn list(
+    store: &SqliteDomainStore,
+    body: AgentSpawnListBody,
+) -> Result<serde_json::Value, String> {
+    if body.schema_version != 1
+        || body
+            .selector
+            .as_ref()
+            .is_some_and(|value| !valid_token(value))
+    {
+        return Err("agent_spawn_list_request_invalid".into());
+    }
+    let mut receipts = store
+        .list_agent_spawn_receipts(body.after.as_ref(), body.selector.as_deref())
+        .await
+        .map_err(store_error)?;
+    let more = receipts.len() > 64;
+    receipts.truncate(64);
+    let next_cursor = if more {
+        receipts.last().map(|r| r.operation_id.clone())
+    } else {
+        None
+    };
+    let runs: Vec<_> = receipts
+        .iter()
+        .map(|receipt| {
+            serde_json::json!({
+                "operationId": receipt.operation_id,
+                "agentId": receipt.plan.agent_id,
+                "name": receipt.plan.request.agent_name,
+                "providerId": receipt.plan.request.provider_id,
+                "workspaceId": receipt.plan.workspace_id,
+                "projectId": receipt.plan.authority.project_id,
+                "launchState": receipt.state,
+                "createdAtMs": receipt.created_at_ms,
+                "updatedAtMs": receipt.updated_at_ms,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({ "schemaVersion": 1, "runs": runs, "nextCursor": next_cursor }))
+}
+
 #[derive(Clone)]
 struct PlanIdentities {
     operation_id: OperationIdV1,
