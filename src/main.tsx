@@ -114,6 +114,13 @@ const renderAppRoot = () =>
 	);
 // Design Mode B단계 실기 프로브 — qa.autorun에 designmode가 있을 때만 돈다.
 if (import.meta.env.DEV) {
+	if (qaParams.has("qaFeedbackPanes")) {
+		void import("./qa/feedbackPanes").then(async (probe) => {
+			if (!(await cliServer))
+				throw new Error("Feedback QA requires CLI observers");
+			await probe.runFeedbackPaneProbe();
+		});
+	}
 	if (qaParams.has("qaPaneAppRestart")) {
 		void import("./qa/paneAppRestart").then(async (probe) => {
 			if (!(await cliServer) || !(await restartParticipant))

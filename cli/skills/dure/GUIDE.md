@@ -164,6 +164,13 @@ Discover parameters with `pane state`. Use `mobile.profile.save` then
 input; `pending` is not completion. `mobile.boot` and `mobile.install` also return
 `pending` immediately and use the same operation status.
 
+Give each new status observation a fresh idempotency key; reusing a key replays
+the original observation. After an uncertain mutation response, retain its key.
+Only an explicit `error.execution: "not_started"` refusal confirms that the
+handler did not run. For `pane_not_found`, reopen the existing pane, confirm its
+identity and actions with `pane state`, then retry with a new key. The original
+key retains its refusal. Do not change keys for pending or uncertain operations.
+
 `mobile.key` sends `enter`, `tab` or `escape` to the exact selected Android
 device through the same operation owner; iOS is currently unsupported. Enter
 submits a focused field when its app/IME handles that key. Protected screenshots
@@ -266,6 +273,7 @@ Whoever delegated the work waits with `dure wait --task … --dispatch …
 
 ```sh
 dure read <name>             # snapshot of their terminal
+dure read <name> --json      # snapshot with lines[] and sequenceThrough
 dure read <name> -f          # follow live
 
 # Read one exact local or SSH backend Session without an app registry.

@@ -35,7 +35,7 @@ const operations = {
     args: ({ paneId }) => ["pane", "state", paneId], readOnly: true,
   },
   app_pane_act: {
-    description: "Invoke the same handler as the pane UI. Discover the action with app_pane_state first. Declared actions return applied/unchanged/pending/refused/failed; legacy invoked does not prove success. Reuse the same idempotency key only for retries of the identical request in the same app generation.",
+    description: "Invoke the same handler as the pane UI. Discover the action with app_pane_state first. Declared actions return applied/unchanged/pending/refused/failed; legacy invoked does not prove success. Reuse the same idempotency key after an uncertain response. An explicit error.execution=not_started refusal allows a new key after its stated recovery and fresh pane state inspection. New status observations need fresh keys; reused keys replay earlier observations.",
     properties: {
       paneId: id, actionId: id,
       arguments: { type: "object", description: "Arguments described by this pane's actionDefinitions." },

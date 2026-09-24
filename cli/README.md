@@ -6,6 +6,8 @@ a second command catalog:
 
 ```sh
 dure --help
+dure client --help
+dure read --help
 dure runtime --help
 dure send --help
 dure send-keys --help

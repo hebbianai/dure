@@ -33,6 +33,28 @@ beforeEach(() => {
 });
 
 describe("dispatchCliPaneActionRequest", () => {
+	it("marks an unmounted action as not started and describes recovery with a new key", async () => {
+		const deps = dependencies();
+		await dispatchCliPaneActionRequest(
+			{
+				reqId: "not-mounted-action",
+				action: "pane.act",
+				params: { targetPanelId: "mobile:missing", actionId: "mobile.install" },
+			},
+			deps,
+		);
+		const [, payload] = deps.complete.mock.calls[0];
+		expect(payload).toMatchObject({
+			ok: false,
+			error: {
+				code: "pane_not_found",
+				execution: "not_started",
+				retryable: false,
+			},
+		});
+		expect(payload.error.nextAction).toContain("new idempotency key");
+		expect(payload.error.nextAction).toContain("pane state");
+	});
 	it("delivers action arguments and preserves the public domain result in the HTTP completion", async () => {
 		const applied = { outcome: "applied" as const, value: { conversationId: "original", selectionRevision: 13 } };
 		const run = vi.fn(async () => applied);

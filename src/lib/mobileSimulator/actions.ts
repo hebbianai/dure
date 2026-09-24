@@ -21,7 +21,7 @@ export function mobilePaneActions(input: {
 	capture: () => Promise<unknown>;
 	act: (action: MobileDeviceAction) => Promise<boolean>;
 	run: (profile: MobileRunProfile) => Promise<void>;
-	profiles: MobileRunProfile[];
+	profiles: () => MobileRunProfile[];
 	report: (appId: string) => Promise<unknown>;
 	controls: MobilePaneControls;
 }) {
@@ -114,12 +114,14 @@ export function mobilePaneActions(input: {
 			},
 			async (args) => {
 				if (!matches(args)) return changed();
-				const profile = input.profiles.find(
-					(profile) =>
-						profile.projectPath === args.projectPath &&
-						profile.device.id === args.deviceId &&
-						profile.device.platform === args.platform,
-				);
+				const profile = input
+					.profiles()
+					.find(
+						(profile) =>
+							profile.projectPath === args.projectPath &&
+							profile.device.id === args.deviceId &&
+							profile.device.platform === args.platform,
+					);
 				if (!profile)
 					return {
 						outcome: "refused",

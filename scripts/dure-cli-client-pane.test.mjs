@@ -130,6 +130,22 @@ function terminalSpaces(fixture, names = ["First", "Selected"]) {
   } }));
 }
 
+it("preserves proof and recovery guidance for a pane action that never started", async () => {
+  const fixture = await fixtureClient(async ({ body }) => {
+    let receipt;
+    await dispatchCliPaneActionRequest({ reqId: "absent", action: "pane.act", params: body }, {
+      claim: async () => true, isFallbackWindow: () => true, delay: async () => {},
+      complete: async (_id, result) => { receipt = result; },
+    });
+    return { status: 200, body: receipt };
+  });
+  const result = await runCli(["client", "pane", "act", "absent", "mobile.install", "--idempotency-key", "first", "--json"], fixture.environment);
+  expect(result.code).toBe(2);
+  expect(JSON.parse(result.stderr)).toMatchObject({ error: { code: "pane_not_found", execution: "not_started", retryable: false } });
+  expect(JSON.parse(result.stderr).error.nextAction).toContain("new idempotency key");
+  expect(fixture.requests).toHaveLength(1);
+});
+
 it("shows an exact Space through the same app transaction from CLI and MCP", async () => {
   const fixture = await fixtureClient((request) => ({ status: 200,
     body: { ok: true, space: { spaceId: request.body.spaceId, active: true } } }));

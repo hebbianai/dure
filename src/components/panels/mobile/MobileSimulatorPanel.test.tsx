@@ -15,6 +15,7 @@ import {
 	mobileSimulator,
 } from "@/lib/ipc/mobileSimulator";
 import type { MobileRunProfile } from "@/lib/mobileSimulator/profile";
+import { invokePaneAction } from "@/lib/workspace/pane/paneActionRegistry";
 import { MobileSimulatorPanel } from "./MobileSimulatorPanel";
 
 vi.mock("@/lib/ipc/mobileSimulator", () => ({
@@ -79,9 +80,14 @@ function fixture(
 	profiles: MobileRunProfile[] = [],
 ) {
 	let changed = () => {};
+	const params = { device, profiles };
 	const api = {
+		id: "mobile-test",
 		isVisible: visible,
-		updateParameters: vi.fn(),
+		getParameters: () => ({}),
+		updateParameters: vi.fn((update: Partial<typeof params>) =>
+			Object.assign(params, update),
+		),
 		onDidVisibilityChange: vi.fn((callback: () => void) => {
 			changed = callback;
 			return { dispose: vi.fn() };
@@ -91,7 +97,8 @@ function fixture(
 		<MobileSimulatorPanel
 			{...({
 				api,
-				params: { device, profiles },
+				containerApi: { getPanel: () => ({ api, params }) },
+				params,
 			} as unknown as IDockviewPanelProps<{
 				device?: MobileDeviceTarget;
 			}>)}
@@ -100,6 +107,7 @@ function fixture(
 	return {
 		...view,
 		api,
+		params,
 		visibility: (next: boolean) =>
 			act(() => {
 				api.isVisible = next;
@@ -115,6 +123,52 @@ beforeEach(() => {
 		height: 800,
 	});
 	vi.mocked(mobileSimulator.act).mockResolvedValue();
+});
+it("reads the saved profile and composes another save before React commits", async () => {
+	const original = {
+		projectPath: "/project",
+		buildCommand: "",
+		artifactPath: "old.app",
+		appId: "com.dure.qa",
+		url: "",
+		device: ios,
+	};
+	const sibling = { ...original, device: android, artifactPath: "android.apk" };
+	const { api, params } = fixture(ios, false, [original, sibling]);
+	await act(async () => {
+		const saved = await invokePaneAction(api.id, "mobile.profile.save", {
+			platform: ios.platform,
+			deviceId: ios.id,
+			projectPath: original.projectPath,
+			appId: original.appId,
+			artifactPath: "new.app",
+		});
+		expect(saved).toMatchObject({
+			ok: true,
+			result: { outcome: "applied", value: { artifactPath: "new.app" } },
+		});
+		const status = await invokePaneAction(api.id, "mobile.status");
+		expect(status).toMatchObject({
+			ok: true,
+			result: {
+				value: {
+					profiles: [sibling, { ...original, artifactPath: "new.app" }],
+				},
+			},
+		});
+		await invokePaneAction(api.id, "mobile.profile.save", {
+			platform: ios.platform,
+			deviceId: ios.id,
+			projectPath: "/second",
+			appId: original.appId,
+			artifactPath: "second.app",
+		});
+		expect(params.profiles).toEqual([
+			sibling,
+			{ ...original, artifactPath: "new.app" },
+			{ ...original, projectPath: "/second", artifactPath: "second.app" },
+		]);
+	});
 });
 afterEach(() => {
 	cleanup();

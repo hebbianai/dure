@@ -771,6 +771,7 @@ async function capture(reg, target, lines, signal, opts = {}) {
     sessionId: binding?.sessionId ?? target,
     workspaceId: binding?.workspaceId ?? opts.workspace,
     lines,
+    json: Boolean(opts.json),
     deadlineMs: opts.deadlineMs === undefined ? undefined : Number(opts.deadlineMs),
     signal,
     inspectCompatibility: inspectHmuxCompatibilityBounded,
@@ -1073,6 +1074,7 @@ function pad(s, n) {
 }
 
 async function cmdRead(query, opts) {
+  if (opts.json && opts.follow) fail("--json cannot be combined with --follow. Request a one-shot JSON snapshot instead.");
   const backendRequested =
     opts.backendSpecified || Boolean(process.env.DURE_BACKEND_PROFILE?.trim());
   let readScreen;
@@ -1081,7 +1083,7 @@ async function cmdRead(query, opts) {
     const sessionId = query;
     if (!sessionId || !opts.workspace) {
       fail(
-        "Usage: dure read <session-id> --workspace <workspace-id> --backend <id> [-f] [-n N]",
+        "Usage: dure read <session-id> --workspace <workspace-id> --backend <id> [-f | --json] [-n N]",
       );
     }
     const { collectSessionRead, formatSessionRead, sessionReadExitCode } =
@@ -1098,6 +1100,10 @@ async function cmdRead(query, opts) {
         signal,
         workspaceId: opts.workspace,
       });
+      if (opts.json) {
+        process.exitCode = sessionReadExitCode(report);
+        return JSON.stringify(report);
+      }
       if (sessionReadExitCode(report) !== 0) {
         throw new SessionCaptureError("failed", formatSessionRead(report));
       }
@@ -3316,7 +3322,7 @@ const HELP = `dure — command-line control for Dure agents
 
 Usage:
   dure ls                          List managed backend sessions and their liveness
-  dure read <agent-or-session> [-f] [-n N]
+  dure read <agent-or-session> [-f | --json] [-n N]
                                        Read screen (-f follow, -n visible lines)
                                        --workspace ID --deadline-ms N (default 2500, max 10000)
                                        backend read: --workspace ID --backend ID
@@ -3421,6 +3427,11 @@ Usage:
                                       Share local gh issue reads with a Dure SSH terminal
   dure quick-commands <list|put|remove> ...
                                       Manage saved prompts through the connected app; never executes them
+  dure client observe [--json]     Discover connected-client Spaces and pane IDs
+  dure client space create [--name NAME] [--json]
+                                      Create and select a Space; returns its mounted Space ID
+  dure client space show <space-id> [--json]
+                                      Select the exact Space in its owning window
   dure client pane <open|create|split|close|state|act> ...
                                       Manage panes in the connected Dure client
   dure client project add [PATH] [--space ID_OR_NAME | --space-id ID] [--host ID]
@@ -3484,6 +3495,19 @@ Usage:
 <name> is an agent name, project/name to disambiguate, or a session ID.
 Deprecated compatibility aliases: hebbian-ade, hebbian-ide (same executable)
 Legacy control/client display projection: ~/.dure/agents.json (written by the app)`;
+
+const READ_HELP = `dure read — observe a terminal screen
+
+Usage:
+  dure read <agent-or-session> [-n N] [--workspace ID] [--deadline-ms N] [--json]
+  dure read <session-id> --workspace ID --backend ID [-n N] [--json]
+  dure read <agent-or-session> --follow [-n N]
+
+--json returns one snapshot with lines (an array of strings) and sequenceThrough.
+Local reads preserve Hmux's receipt (ok, sessionName, sequenceThrough, lines).
+Backend reads return the dure.sessions.read envelope, including exact sessionId and workspaceId.
+--follow redraws text and cannot be combined with --json.
+Reads do not send input, start a session or change focus. Use --workspace to disambiguate exact session IDs.`;
 
 const WORKFLOW_HELP = `dure workflow — delegated workflow control
 
@@ -3647,6 +3671,11 @@ async function cmdProfiles(opts) {
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
+  if ((cmd === "help" && rest[0] === "read") || (cmd === "read" && rest.some((arg) => ["--help", "-h"].includes(arg)))) {
+    process.stdout.write(`${READ_HELP}\n`);
+    return;
+  }
+  if (cmd === "help" && rest[0] === "client") return cmdClient(["--help"]);
   const sessionCommands = ["ls", "list", "inspect", "sessions"];
   const optionEnd = rest.indexOf("--");
   if (

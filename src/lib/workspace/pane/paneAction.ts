@@ -6,6 +6,18 @@ export interface PaneActionRefusal {
 	readonly message: string;
 	readonly retryable: boolean;
 	readonly nextAction?: string;
+	/** Set only by the dispatcher before invoking any pane action handler. */
+	readonly execution?: "not_started";
+}
+
+export function unmountedPaneActionRefusal(paneId: string): PaneActionRefusal {
+	return {
+		code: "pane_not_found",
+		message: `pane ${paneId} is not mounted; no action handler ran`,
+		retryable: false,
+		execution: "not_started",
+		nextAction: `Open the existing pane and confirm it with \`dure client pane state ${paneId}\`. Then retry the action with a new idempotency key. The previous key retains this not-started refusal; do not use a new key for pending or uncertain operations.`,
+	};
 }
 
 interface PaneActionParameter {

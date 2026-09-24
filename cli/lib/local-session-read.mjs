@@ -22,6 +22,7 @@ export async function captureLocalScreen({
   sessionId,
   workspaceId,
   lines,
+  json = false,
   deadlineMs = DEFAULT_SESSION_READ_DEADLINE_MS,
   signal,
   inspectCompatibility,
@@ -43,6 +44,7 @@ export async function captureLocalScreen({
     "--lines", String(Math.min(MAX_SESSION_READ_LINES, Math.max(1, lines || 20))),
     "--deadline-ms", String(deadlineMs),
   );
+  if (json) argv.push("--json");
   const result = await runBoundedCommand(argv, {
     signal,
     timeoutMs: deadlineMs + READ_PROCESS_GRACE_MS,
@@ -50,7 +52,18 @@ export async function captureLocalScreen({
   if (signal?.aborted || result.kind === "aborted") {
     throw new SessionCaptureError("aborted", "Session read interrupted");
   }
-  if (result.kind === "success") return result.stdout;
+  if (result.kind === "success") {
+    if (!json) return result.stdout;
+    let receipt;
+    try { receipt = JSON.parse(result.stdout); } catch { /* Validate below. */ }
+    if (receipt?.ok !== true || typeof receipt.sessionName !== "string"
+      || typeof receipt.sequenceThrough !== "string" || !/^(0|[1-9][0-9]*)$/.test(receipt.sequenceThrough)
+      || !Array.isArray(receipt.lines) || receipt.lines.length > MAX_SESSION_READ_LINES
+      || !receipt.lines.every((line) => typeof line === "string")) {
+      throw new SessionCaptureError("invalid", "Hmux returned an invalid JSON screen receipt. Update Dure before retrying.");
+    }
+    return `${JSON.stringify(receipt)}\n`;
+  }
   if (result.kind === "timeout") {
     throw new SessionCaptureError(
       "timeout",

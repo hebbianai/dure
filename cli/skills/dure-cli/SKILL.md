@@ -63,6 +63,7 @@ delivery finished, never that the provider answered.
 
 ```sh
 dure read worker -n 80            # snapshot; -f follows until interrupted
+dure read worker -n 80 --json     # one snapshot with lines[] and sequenceThrough; not with -f
 dure send worker "run the tests"  # text plus Enter
 dure send worker --stdin --no-enter
 dure send-keys worker Escape Up Enter

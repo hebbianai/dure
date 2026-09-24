@@ -4,6 +4,7 @@ import type {
 	PaneActionHandler,
 	PaneActionRefusal,
 } from "./paneAction";
+import { unmountedPaneActionRefusal } from "./paneAction";
 
 /** One shared registry of live pane actions. A mounted pane surface registers
  * its current status plus the exact handlers its UI buttons call; UI clicks,
@@ -212,13 +213,7 @@ export async function invokePaneAction(
 	if (ordered.length === 0) {
 		return {
 			ok: false,
-			error: {
-				code: "pane_not_found",
-				message: `pane ${paneId} is not mounted in this client`,
-				retryable: false,
-				nextAction:
-					"open the pane in a window, or inspect sessions with `dure ls`",
-			},
+			error: unmountedPaneActionRefusal(paneId),
 		};
 	}
 	const handler = actionEntry(paneId, action)?.actions[action];

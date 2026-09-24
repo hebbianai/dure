@@ -1,3 +1,4 @@
+import { unmountedPaneActionRefusal } from "@/lib/workspace/pane/paneAction";
 import {
 	paneActionSnapshot,
 	preparePaneAction,
@@ -24,16 +25,18 @@ export interface CliPaneActionDependencies {
 
 const NOT_MOUNTED_GRACE_MS = 900;
 
-function notMountedPayload(paneId: string) {
+function notMountedPayload(paneId: string, mutation = false) {
 	return {
 		ok: false,
-		error: {
-			code: "pane_not_found",
-			message: `pane ${paneId} is not mounted in any window`,
-			retryable: false,
-			nextAction:
-				"open the pane in a window, or inspect sessions with `dure ls`",
-		},
+		error: mutation
+			? unmountedPaneActionRefusal(paneId)
+			: {
+					code: "pane_not_found",
+					message: `pane ${paneId} is not mounted in any window`,
+					retryable: false,
+					nextAction:
+						"open the pane in a window, or inspect sessions with `dure ls`",
+				},
 	};
 }
 
@@ -71,7 +74,11 @@ export async function dispatchCliPaneActionRequest(
 		snapshot = paneActionSnapshot(paneId);
 		if (!snapshot) {
 			if (!(await dependencies.claim(reqId))) return true;
-			await dependencies.complete(reqId, notMountedPayload(paneId), action);
+			await dependencies.complete(
+				reqId,
+				notMountedPayload(paneId, action === "pane.act"),
+				action,
+			);
 			return true;
 		}
 	}

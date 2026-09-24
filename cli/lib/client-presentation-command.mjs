@@ -65,6 +65,9 @@ An uncertain response is not permission to create again; inspect the app first.
 Use pane state/act for the mounted pane's actions (including terminal.input).
 When Chat offers resend_last_message, pane act invokes the same retained-message recovery as its button.
 Inspect pane state first; reuse the same --idempotency-key after an uncertain action response.
+Only an explicit error.execution=not_started refusal permits a new key after the stated recovery.
+For pane_not_found, reopen the existing pane and confirm pane state first; the previous key keeps its refusal.
+Use a fresh key for each new status observation; reusing a key replays the earlier observation.
 Workspace open uses the last successful target when --target is omitted.
 Without a connected app, the result is client_unavailable.`;
 
@@ -649,6 +652,7 @@ export function clientPresentationErrorReport(error, request = null) {
       ...(typeof error?.nextAction === "string" && error.nextAction
         ? { nextAction: error.nextAction }
         : {}),
+      ...(error?.execution === "not_started" ? { execution: "not_started" } : {}),
     },
   };
 }

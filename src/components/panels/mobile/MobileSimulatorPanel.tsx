@@ -54,6 +54,7 @@ import {
 	removeMobileRunProfile,
 	saveMobileRunProfile,
 } from "@/lib/mobileSimulator/profile";
+import { dockPanelParameters } from "@/lib/workspace/dock/dockPanelParameters";
 import type { PaneActionEntry } from "@/lib/workspace/pane/paneActionRegistry";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
 import { usePaneAgentChoices } from "../usePaneAgentChoices";
@@ -306,14 +307,22 @@ export function MobileSimulatorPanel(
 		});
 	}
 	function saveProfile(profile: MobileRunProfile) {
-		const next = saveMobileRunProfile(profiles, profile);
-		setProfiles(next);
+		const next = saveMobileRunProfile(readProfiles(), profile);
 		props.api.updateParameters({ profiles: next });
+		setProfiles(next);
 	}
 	function removeProfile(profile: MobileRunProfileIdentity) {
-		const next = removeMobileRunProfile(profiles, profile);
-		setProfiles(next);
+		const next = removeMobileRunProfile(readProfiles(), profile);
 		props.api.updateParameters({ profiles: next });
+		setProfiles(next);
+	}
+	function readProfiles() {
+		// Dockview parameters are updated synchronously; a CLI receipt can be
+		// followed by another action before React commits its UI projection.
+		const panel = props.containerApi.getPanel(props.api.id);
+		return readMobileRunProfiles(
+			panel ? dockPanelParameters(panel).profiles : props.params.profiles,
+		);
 	}
 	function preview(mode: MobilePreviewMode) {
 		if (isOperating()) throw new Error(t("panels.mobile.working"));
@@ -334,7 +343,7 @@ export function MobileSimulatorPanel(
 			actions: mobilePaneActions({
 				presentation: { active, spaceId, paneId: props.api.id },
 				target,
-				profiles,
+				profiles: readProfiles,
 				isBusy: isOperating,
 				status: () => ({
 					device: target,
@@ -342,7 +351,7 @@ export function MobileSimulatorPanel(
 					live,
 					error,
 					buildOutput,
-					profiles,
+					profiles: readProfiles(),
 					deviceState: selected?.state,
 					preview: {
 						viewingAngle: projection.landscape ? "landscape" : "portrait",

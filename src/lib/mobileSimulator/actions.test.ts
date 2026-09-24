@@ -71,7 +71,7 @@ function fixture() {
 			agents: vi.fn(() => []),
 		},
 		target: device,
-		profiles: [profile] as MobileRunProfile[],
+		profiles: () => [profile] as MobileRunProfile[],
 		isBusy: vi.fn(() => false),
 		status: vi.fn(() => ({ device, busy: false })),
 		act: vi.fn(async () => true),
@@ -181,11 +181,12 @@ describe("mobile pane actions", () => {
 	});
 	it("can still run the selected device after saving another device for the same project", async () => {
 		const { input, actions } = fixture();
-		input.profiles = saveMobileRunProfile([profile], {
-			...profile,
-			buildCommand: "pnpm build:other",
-			device: { ...device, id: "emulator-5556" },
-		});
+		input.profiles = () =>
+			saveMobileRunProfile([profile], {
+				...profile,
+				buildCommand: "pnpm build:other",
+				device: { ...device, id: "emulator-5556" },
+			});
 		expect(
 			(await actions["mobile.run"]({ ...args, projectPath: "/project" }))
 				.outcome,

@@ -91,6 +91,8 @@ if (args[0] === "read" || (args[0] === "--json" && args[1] === "session" && args
         },
       }))}) + "\\n");
     }, 900);
+  } else if (args.includes("--json") && process.env.DURE_READ_MODE !== "invalid-json") {
+    process.stdout.write(JSON.stringify({ ok: true, sessionName: "managed-agent", sequenceThrough: "42", lines: ["한글 terminal", "second line"] }));
   } else {
     process.stdout.write("managed screen\\n");
   }
@@ -168,6 +170,42 @@ function readCalls(path) {
 }
 
 describe("dure managed read latency", () => {
+  it.each(["managed-agent", "session-external"])("honors --json for %s without a second capture", (target) => {
+    const { callsPath, environment } = fixture("direct-session");
+    const workspace = target === "managed-agent" ? "workspace-managed" : "workspace-external";
+    const result = runRead(environment, target, ["--workspace", workspace, "-n", "30", "--json"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true, sessionName: "managed-agent", sequenceThrough: "42", lines: ["한글 terminal", "second line"] });
+    expect(calls(callsPath)).toEqual([["read", target === "managed-agent" ? "session-managed" : target,
+      "--workspace", workspace, "--lines", "30", "--deadline-ms", "2500", "--json"]]);
+  });
+
+  it("rejects a successful plain-text response to a JSON read", () => {
+    const { environment } = fixture("invalid-json");
+    const result = runRead(environment, "managed-agent", ["--json"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("invalid JSON screen receipt");
+  });
+
+  it("rejects --json with --follow before starting a reader", () => {
+    const { callsPath, environment } = fixture("direct-session");
+    const result = runRead(environment, "managed-agent", ["--follow", "--json"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("--json cannot be combined with --follow");
+    expect(existsSync(callsPath)).toBe(false);
+  });
+
+  it("documents its own JSON contract without invoking Hmux", () => {
+    const { callsPath, environment } = fixture("direct-session");
+    const result = runRead(environment, "--help");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("dure read");
+    expect(result.stdout).toContain("--json");
+    expect(result.stdout).toContain("lines");
+    expect(existsSync(callsPath)).toBe(false);
+  });
+
   it("honors the caller's read deadline instead of killing a healthy delayed read at 2500ms", () => {
     const { environment } = fixture("delayed-success");
     const result = runRead(environment, "managed-agent", ["--deadline-ms", "4000"]);

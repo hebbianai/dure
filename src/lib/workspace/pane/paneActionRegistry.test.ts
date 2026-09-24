@@ -117,7 +117,9 @@ describe("paneActionRegistry", () => {
 		if (!result.ok) {
 			expect(result.error.code).toBe("pane_not_found");
 			expect(result.error.retryable).toBe(false);
-			expect(result.error.nextAction).toContain("dure ls");
+			expect(result.error.execution).toBe("not_started");
+			expect(result.error.nextAction).toContain("dure client pane state");
+			expect(result.error.nextAction).toContain("new idempotency key");
 		}
 	});
 

@@ -725,7 +725,7 @@ describe("dure sessions list/show/read", () => {
     });
   });
 
-  it("reads an exact SSH-backed managed session without app or local Hmux state", () => {
+  it.each([false, true])("reads an exact SSH-backed managed session without app or local Hmux state (json=%s)", (json) => {
     const root = temporaryRoot();
     const hmux = installHmuxStub(root, { error: "must not execute" }, { status: 77 });
     const remote = installRemoteBackendFixture(root, [hmuxSession()]);
@@ -740,6 +740,7 @@ describe("dure sessions list/show/read", () => {
         "workspace-1",
         "--backend",
         "remote-build",
+        ...(json ? ["--json"] : []),
       ],
       {
         PATH: `${remote.bin}:${process.env.PATH}`,
@@ -750,7 +751,8 @@ describe("dure sessions list/show/read", () => {
     );
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toBe("remote managed screen\n");
+    if (json) expect(JSON.parse(result.stdout)).toMatchObject({ kind: "dure.sessions.read", sessionId: "session-1", workspaceId: "workspace-1", lines: ["remote managed screen"] });
+    else expect(result.stdout).toBe("remote managed screen\n");
     expect(existsSync(join(root, "agents.json"))).toBe(false);
     expect(existsSync(join(root, "server.json"))).toBe(false);
     const requests = readFileSync(remote.requestLog, "utf8")

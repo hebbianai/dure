@@ -65,6 +65,7 @@ function responseError(payload, status) {
   if (typeof serverError?.nextAction === "string" && serverError.nextAction) {
     error.nextAction = serverError.nextAction;
   }
+  if (serverError?.execution === "not_started") error.execution = "not_started";
   return error;
 }
 
