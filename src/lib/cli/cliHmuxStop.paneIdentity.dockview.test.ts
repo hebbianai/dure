@@ -80,6 +80,7 @@ function runtime(): CliHmuxStopRuntime {
 		reconcile: vi.fn().mockResolvedValue(undefined),
 		stop: vi.fn(async () => ({ target: { agent, binding }, receipt })),
 		finalize: vi.fn().mockResolvedValue(undefined),
+		canonical: { prepare: vi.fn(), execute: vi.fn(), finalize: vi.fn() },
 	};
 }
 

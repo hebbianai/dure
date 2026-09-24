@@ -32,6 +32,24 @@ dure ls --backend devbox --json
 client may add presentation labels for an exact generation, but `agents.json`
 is never the Session inventory or liveness source.
 
+## Stop and clean up an agent
+
+```sh
+dure stop project/worker --yes --json
+dure stop <agent-id> --yes --json
+```
+
+This stops the selected Agent through its owning runtime, then removes its
+registration and panes. Workspaces, worktrees and conversation history are
+preserved. Use the exact Agent ID for retries or `project/name` when names repeat.
+The selected Dure app must be running; its `DURE_APP_CHANNEL` chooses the client.
+The app routes each Agent to its own backend. `--backend` is not accepted here.
+`dure hmux stop --name ... --yes --json` uses the same path, including for Agents
+created by `dure run`. Do not inject `/exit` or kill a PID to bypass `dispatch.stop`.
+Read `dure stop --help` for options. Exit 0 with `ok: true` confirms cleanup;
+after an uncertain response, retry the same Agent ID to reconcile the saved stop.
+Stopping an Agent does not submit a completion report for its assigned work.
+
 ## Start another agent
 
 ```sh

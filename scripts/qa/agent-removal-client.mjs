@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { assertIsolatedCleanupBoundary } from "./lib/isolated-hmux-session-cleanup.mjs";
 import { withoutLocalGitOverrides } from "../lib/git-environment.mjs";
@@ -115,4 +116,48 @@ assert(!hmux("ls").some((session) => (session.session_id ?? session.sessionId) =
 assert(!hmux("ls").some((session) => (session.session_id ?? session.sessionId) === absent.sessionId), "Already-absent checkout left its selected session behind");
 console.log("Real Remove dialog: projection refresh removed exact session/checkout; new user retained both sessions and checkout.");
 console.log("Native CLI handler: neutral pane exact/chain cleanup replay, including stale and missing binding fences, passed without a second stop.");
+
+// Exercise the public CLI against this disposable app and a canonical native
+// Run. The fake provider is a real owned PTY process, with no provider login.
+const cli = fileURLToPath(new URL("../../cli/dure.mjs", import.meta.url));
+const runCli = (...args) => JSON.parse(execFileSync(process.execPath, [cli, ...args, "--json"], {
+	cwd: home, encoding: "utf8", timeout: 120_000, maxBuffer: 2 * 1024 * 1024,
+}));
+const space = runCli("client", "space", "create", "--name", "Canonical stop QA");
+assert(space.space?.spaceId, "The app did not create the QA Space");
+runCli("projects", "register", "qa-canonical-stop", "--path", path.join(home, "repo"));
+const created = runCli("run", "--project", "qa-canonical-stop", "--provider", "claude",
+	"--name", "canonical-stop-qa", "--worktree", "canonical-stop-qa", "--space", space.space.spaceId,
+	"--idempotency-key", `stop-cli-${result.runId}`, "ok");
+assert.equal(created.receipt?.state, "succeeded", JSON.stringify(created));
+assert.equal(created.presentation?.state, "opened", "Canonical Run did not open its Agent pane");
+const agentId = created.receipt.plan.agentId;
+const session = created.receipt.completed.find((stage) => stage.stage === "runtime_launch")?.evidence?.session;
+assert(session?.sessionId, "Canonical native Run did not publish a Session");
+const checkout = created.receipt.checkoutRegistration.instance.canonicalPath;
+assert(checkout.startsWith(path.join(home, "repo") + path.sep));
+const retainedFile = path.join(checkout, "keep-after-stop.txt");
+fs.writeFileSync(retainedFile, "uncommitted QA work\n");
+const stopped = runCli("stop", agentId, "--yes");
+assert.equal(stopped.apiVersion, "dure.agent-stop/v1");
+assert.equal(stopped.ok, true, JSON.stringify(stopped));
+assert.equal(stopped.dispatchStop.agentId, agentId);
+assert.equal(stopped.dispatchStop.status, "workspace_preserved");
+assert.equal(fs.readFileSync(retainedFile, "utf8"), "uncommitted QA work\n");
+const registryPath = path.join(path.dirname(process.env.DURE_QA_SERVER_DESCRIPTOR), "agents.json");
+const cleanupDeadline = Date.now() + 10_000;
+while (JSON.parse(fs.readFileSync(registryPath, "utf8")).agents.some((entry) => entry.id === agentId)) {
+	assert(Date.now() < cleanupDeadline, "Stopped Agent remained in the client registry");
+	await delay(100);
+}
+const observed = hmux("ls").find((entry) => (entry.session_id ?? entry.sessionId) === session.sessionId);
+assert(!observed || !["ready", "working"].includes(observed.lifecycle), "Stopped native provider remains live");
+const presentation = runCli("client", "observe").presentation;
+assert(presentation?.spaces, "The app did not return its pane observation");
+assert(!presentation.spaces.some((space) => space.panes.some((pane) => pane.id === created.presentation.pane.panelId)),
+	"Stopped Agent pane remained in the app");
+fs.writeFileSync(path.join(root, "evidence", "canonical-cli-stop.json"), JSON.stringify({
+	agentId, sessionId: session.sessionId, stopped, worktreePreserved: true, registrationRemoved: true, paneRemoved: true,
+}, null, 2), { flag: "wx", mode: 0o600 });
+console.log("Canonical dure stop: native provider stopped, registration removed, uncommitted worktree preserved.");
 // The outer runner owns generation-verified Host/provider/root retirement.

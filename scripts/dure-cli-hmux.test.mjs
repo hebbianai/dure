@@ -625,6 +625,57 @@ describe("Dure Hmux IDE CLI", () => {
     expect(result.stdout).toContain("retired, agent-old, workspace-1");
   });
 
+  it.each([["stop", "agent-canonical"], ["hmux", "stop", "--name", "agent-canonical"]].map((args) => [args]))(
+    "reports a canonical stop receipt through %j", async (args) => {
+      const requests = [];
+      const port = await startAppServer(withBody((incoming, response, body) => {
+        requests.push({ url: incoming.url, body: JSON.parse(body) });
+        respondJson(response, { ok: true, agent: { id: "agent-canonical", name: "worker" },
+          dispatchStop: { status: "workspace_preserved", operationId: "stop-1" } });
+      }));
+      const { home } = homeWithServer("dure-stop-canonical-", port, "stop-token");
+      const result = await runCli([...args, "--yes", "--json"], isolatedEnvironment({ HOME: home }));
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ apiVersion: "dure.agent-stop/v1", ok: true,
+        dispatchStop: { operationId: "stop-1", status: "workspace_preserved" } });
+      expect(requests).toEqual([{ url: "/hmux/stop", body: { name: "agent-canonical", confirm: true } }]);
+    },
+  );
+
+  it("preserves partial cleanup evidence and failure exit status as JSON", async () => {
+    const port = await startAppServer(withBody((_incoming, response) => {
+      respondJson(response, { ok: false, dispatchStop: { status: "workspace_preserved" },
+        error: { code: "agent_dispatch_stop_cleanup_failed", message: "Retry cleanup" } });
+    }));
+    const { home } = homeWithServer("dure-stop-failed-", port, "stop-token");
+    const result = await runCli(["stop", "worker", "--yes", "--json"], isolatedEnvironment({ HOME: home }));
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, dispatchStop: { status: "workspace_preserved" } });
+  });
+
+  it.each([["--backend", "remote"], ["--all"], ["another-agent"], ["--name", "second"]].map((args) => [args]))(
+    "rejects unsupported or ambiguous stop arguments %j before sending a request", async (extra) => {
+      let requested = false;
+      const port = await startAppServer((_incoming, response) => { requested = true; respondJson(response, { ok: true }); });
+      const { home } = homeWithServer("dure-stop-invalid-", port, "stop-token");
+      const result = await runCli(["stop", "worker", "--yes", ...extra], isolatedEnvironment({ HOME: home }));
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("Usage:");
+      expect(requested).toBe(false);
+    },
+  );
+
+  it("prints stop help without a running app", async () => {
+    const home = mkdtempSync(join(tmpdir(), "dure-stop-help-"));
+    temporaryRoots.push(home);
+    for (const args of [["stop", "--help"], ["hmux", "stop", "--help"]]) {
+      const result = await runCli(args, isolatedEnvironment({ HOME: home }));
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain("dure stop <agent-name-or-id>");
+      expect(result.stdout).toContain("dispatch.stop");
+    }
+  });
+
   it("adopts an exact legacy terminal without overloading an Agent name", async () => {
     let request;
     const port = await startAppServer(

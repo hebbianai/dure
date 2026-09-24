@@ -61,6 +61,7 @@ function runtime(
 		reconcile: vi.fn().mockResolvedValue(undefined),
 		stop: vi.fn().mockResolvedValue({ target, receipt: stopReceipt() }),
 		finalize: vi.fn().mockResolvedValue(undefined),
+		canonical: { prepare: vi.fn(), execute: vi.fn(), finalize: vi.fn() },
 	};
 }
 
@@ -229,11 +230,8 @@ describe("CLI stop target compatibility", () => {
 		},
 	);
 
-	it.each([
-		["agent:other", "pane_changed"],
-		["agent:agent-old", "canonical_agent_legacy_writer_refused"],
-	])(
-		"preserves pane/writer refusal precedence for %s",
+	it.each([["agent:other", "pane_changed"]])(
+		"refuses the wrong pane before selecting the canonical stop for %s",
 		async (targetPanelId, code) => {
 			useStore.setState((state) => ({
 				agents: state.agents.map((agent) => ({

@@ -15,8 +15,10 @@ driving and waiting on a session. Parse `--json` — `dure.sessions/v1`,
 ## Pick the identifier first — most failures are a mismatch, not a bad command
 
 - **Agent name** (`worker`, or `project/worker` when ambiguous) — `read`,
-  `send`, `send-keys`, `wait`, `logs`, `enter`. Resolved through the client
+  `send`, `send-keys`, `wait`, `logs`, `enter`, `stop`. Resolved through the client
   registry, so only for an agent a client has seen.
+- **Agent id** (`agent-…`) — `stop` also accepts this exact identity; it is not
+  the Session ID consumed by `attach` or backend session reads.
 - **Session id + workspace id** (`session_…`, `agent-workspace:…`) — the
   registry-free pair. `attach` requires both; `wait` and `read` accept them in
   place of a name, and `read` demands them once `--backend` or
@@ -58,6 +60,16 @@ Omit `--idempotency-key` and the CLI invents one, printing `Retry key: …` on
 of creating a second agent. Exit 0 succeeded, 1 the receipt is not `succeeded`,
 2 the backend or pane placement failed — and success means setup and prompt
 delivery finished, never that the provider answered.
+
+## Stop and clean up an Agent
+
+To stop and clean up an Agent, use `dure stop <agent-name-or-id> --yes --json`.
+The selected running Dure app routes the stop to the Agent's owning backend,
+then removes its registration and panes while preserving its workspace and
+conversation history. `dure hmux stop --name ... --yes --json` uses the same path.
+Do not substitute `/exit`, Ctrl-C or PID killing for the lifecycle command.
+On uncertain results, retry the same Agent ID; success is `ok: true` and exit 0.
+See `dure stop --help`. This client-scoped command does not accept `--backend`.
 
 ## Read a pane and send to it
 

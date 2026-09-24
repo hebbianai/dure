@@ -1,4 +1,11 @@
+import type { AgentCanonicalSpawnV1 } from "@/lib/agents/agentCanonicalSpawn";
 import { CanonicalAgentLegacyWriterRefusedError } from "@/lib/agents/agentWriterPartition";
+import type { CanonicalAgentStopReceiptV1 } from "@/lib/agents/canonicalAgentStopLifecycle";
+import {
+	applyCanonicalAgentStopPresentationV1,
+	executeCanonicalAgentStopV1,
+	prepareCanonicalAgentStopV1,
+} from "@/lib/agents/canonicalAgentStopRuntime";
 import { claimCliRequest } from "@/lib/cli/cliRequestBroker";
 import { resolveAgentByName } from "@/lib/hmux/identity/hmuxAgentTarget";
 import { cleanupExitedManagedAgentRegistration } from "@/lib/sessions/cleanup/exitedManagedAgentCleanupRuntime";
@@ -17,6 +24,7 @@ import {
 	revalidateAgentPaneSelection,
 } from "@/lib/workspace/pane/agentPaneSelection";
 import { PaneCommandError } from "@/lib/workspace/pane/paneCommandError";
+import type { Agent } from "@/types";
 
 export interface CliHmuxStopRuntime {
 	claim: typeof claimCliRequest;
@@ -26,13 +34,21 @@ export interface CliHmuxStopRuntime {
 	cleanupExited: typeof cleanupExitedManagedAgentRegistration;
 	stop: typeof stopManagedAgentProvider;
 	finalize: typeof finalizeManagedAgentRemoval;
+	canonical?: {
+		prepare: typeof prepareCanonicalAgentStopV1;
+		execute: typeof executeCanonicalAgentStopV1;
+		finalize: typeof applyCanonicalAgentStopPresentationV1;
+	};
 }
 
 /** Capture presentation separately from the runtime stop authority. */
 export function resolveCliHmuxStopTarget(
 	name: string,
 	targetPanelId?: string,
-): { target: ManagedAgentStopTarget; selection: OptionalAgentPaneSelection } {
+): { selection: OptionalAgentPaneSelection } & (
+	| { target: ManagedAgentStopTarget }
+	| { canonical: Agent & { canonicalSpawn: AgentCanonicalSpawnV1 } }
+) {
 	const agent = resolveAgentByName(name);
 	const selection: OptionalAgentPaneSelection = targetPanelId
 		? resolveOptionalAgentPaneSelection(targetPanelId)
@@ -43,8 +59,19 @@ export function resolveCliHmuxStopTarget(
 			"selected pane references a different Agent",
 		);
 	}
-	return { target: resolveManagedAgentStopTarget(agent), selection };
+	return agent.canonicalSpawn
+		? {
+				canonical: { ...agent, canonicalSpawn: agent.canonicalSpawn },
+				selection,
+			}
+		: { target: resolveManagedAgentStopTarget(agent), selection };
 }
+
+const canonicalRuntime = {
+	prepare: prepareCanonicalAgentStopV1,
+	execute: executeCanonicalAgentStopV1,
+	finalize: applyCanonicalAgentStopPresentationV1,
+};
 
 const runtime: CliHmuxStopRuntime = {
 	claim: claimCliRequest,
@@ -54,12 +81,20 @@ const runtime: CliHmuxStopRuntime = {
 	cleanupExited: cleanupExitedManagedAgentRegistration,
 	stop: stopManagedAgentProvider,
 	finalize: finalizeManagedAgentRemoval,
+	canonical: canonicalRuntime,
 };
 
-function agentReceipt({
-	target,
-	selection,
-}: ReturnType<typeof resolveCliHmuxStopTarget>) {
+function agentReceipt(selected: ReturnType<typeof resolveCliHmuxStopTarget>) {
+	const { selection } = selected;
+	if ("canonical" in selected) {
+		return {
+			id: selected.canonical.id,
+			name: selected.canonical.name,
+			sessionId: selected.canonical.sessionId,
+			...(selection.kind === "agent" ? {} : { panelId: selection.panelId }),
+		};
+	}
+	const { target } = selected;
 	return {
 		id: target.agent.id,
 		name: target.agent.name,
@@ -88,6 +123,7 @@ export async function handleCliHmuxStop(
 	let cleanup: Awaited<
 		ReturnType<typeof cleanupExitedManagedAgentRegistration>
 	>;
+	let dispatchStop: CanonicalAgentStopReceiptV1 | undefined;
 	try {
 		const name = String(params.name ?? "").trim();
 		const targetPanelId =
@@ -95,6 +131,33 @@ export async function handleCliHmuxStop(
 		selected = deps.resolve(name, targetPanelId);
 		const { selection } = selected;
 		if (!(await claim())) return null;
+		if ("canonical" in selected) {
+			const canonical = deps.canonical ?? canonicalRuntime;
+			revalidateAgentPaneSelection(selection);
+			const prepared = await canonical.prepare(selected.canonical);
+			revalidateAgentPaneSelection(selection);
+			dispatchStop = await canonical.execute({
+				...prepared,
+				client: {
+					...prepared.client,
+					apply: (receipt, authority) => {
+						revalidateAgentPaneSelection(selection);
+						if (receipt.workspaceDisposition !== "preserve") {
+							throw new Error(
+								"An existing stop removes the workspace; resume it through its original cleanup flow",
+							);
+						}
+						return prepared.client.apply(receipt, authority);
+					},
+				},
+			});
+			if (!(await canonical.finalize(prepared.provenance, dispatchStop))) {
+				throw new Error(
+					"Agent presentation changed; retry cleanup for the original Agent",
+				);
+			}
+			return { ok: true, dispatchStop, agent: agentReceipt(selected) };
+		}
 		const target = await deps.prepare(selected.target);
 		selected = { target, selection };
 
@@ -128,17 +191,23 @@ export async function handleCliHmuxStop(
 						? error.code
 						: error instanceof PaneCommandError
 							? error.code
-							: stopped || cleanup
-								? "managed_agent_cleanup_failed"
-								: "hmux_managed_stop_failed",
-				message: stopped
-					? `${error instanceof Error ? error.message : String(error)}; provider is stopped and the same command can safely retry registry cleanup`
-					: error instanceof Error
-						? error.message
-						: String(error),
+							: selected && "canonical" in selected
+								? dispatchStop
+									? "agent_dispatch_stop_cleanup_failed"
+									: "agent_dispatch_stop_failed"
+								: stopped || cleanup
+									? "managed_agent_cleanup_failed"
+									: "hmux_managed_stop_failed",
+				message:
+					stopped || dispatchStop
+						? `${error instanceof Error ? error.message : String(error)}; provider is stopped and the same command can safely retry registry cleanup`
+						: error instanceof Error
+							? error.message
+							: String(error),
 			},
 			...(stopped ? { stop: stopped.receipt } : {}),
 			...(cleanup ? { cleanup } : {}),
+			...(dispatchStop ? { dispatchStop } : {}),
 			...(selected ? { agent: agentReceipt(selected) } : {}),
 		};
 	}

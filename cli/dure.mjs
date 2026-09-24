@@ -2252,7 +2252,7 @@ async function cmdHmux(sub, opts) {
         "dure hmux rehost retry [<original-session-id> --workspace ID] --operation-id ID --confirm-restart [--json]  # resume an existing local operation\n" +
         "dure hmux rehost publish <agent-id> --from-session <original-session-id> --workspace ID --operation-id ID [--backend ID] [--json]  # publish completion; never restarts a provider\n" +
         "dure hmux convert --name <session> --target-panel-id ID --to <managed|standalone> [--agent-name NAME] [--confirm-restart]\n" +
-        "dure hmux stop --name <project/agent> [--target-panel-id ID] [--yes]\n" +
+        "dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] [--yes] [--json]  # alias for dure stop\n" +
         "dure hmux migrate ...  # adopt alias\n",
     );
     return;
@@ -2349,6 +2349,14 @@ async function cmdHmux(sub, opts) {
     body: JSON.stringify(body),
   }).catch((error) => fail(`App server request failed: ${error.message}`));
   const receipt = await res.json().catch(() => null);
+  if (action === "stop") {
+    const { agentStopReport, formatAgentStopReport } = await import("./lib/agent-stop-command.mjs");
+    const report = agentStopReport(receipt, res.ok);
+    const output = opts.json ? JSON.stringify(report) : formatAgentStopReport(report, name);
+    (opts.json || report.ok ? process.stdout : process.stderr).write(`${output}\n`);
+    if (!report.ok) process.exitCode = 1;
+    return;
+  }
   const permissionRelaunch = receipt?.permissionModeRelaunch;
   if (permissionRelaunch?.outcome === "preview") {
     if (opts.json) {
@@ -2385,22 +2393,6 @@ async function cmdHmux(sub, opts) {
           ` · provider restarted (${permissionRelaunch.sourceSessionId} → ${permissionRelaunch.targetSessionId})\n`,
       );
     }
-    return;
-  }
-  if (action === "stop") {
-    const agent = receipt.agent;
-    if (receipt.cleanup) {
-      process.stdout.write(
-        `\x1b[32m✓\x1b[0m ${agent?.name || name} exited registration cleaned` +
-          ` (${receipt.cleanup.sourceState || receipt.cleanup.reason}, ${receipt.cleanup.sessionId}, ${receipt.cleanup.workspaceId})\n`,
-      );
-      return;
-    }
-    const stop = receipt.stop;
-    process.stdout.write(
-      `\x1b[32m✓\x1b[0m ${agent?.name || name} provider stopped` +
-        ` (${stop.outcome}, ${stop.sessionId}, ${stop.workspaceId})\n`,
-    );
     return;
   }
   if (action === "convert" && receipt.preview === true) {
@@ -3405,8 +3397,10 @@ Usage:
                                        Publish native completion to the Agent binding without running recovery
   dure hmux convert --name <session> --target-panel-id <pane> --to <managed|standalone> [--agent-name <name>]
                                       Convert the Hmux session class using its exact conversation ID (preview by default)
-  dure hmux stop --name <project/agent> [--target-panel-id <pane>] [--yes]
-                                      Stop the exact managed Hmux provider and clean up its Agent
+  dure hmux stop --name <project/agent> [--target-panel-id <pane>] [--yes] [--json]
+                                      Alias for stop; supports both legacy and backend-owned Agents
+  dure stop <agent-name-or-id> [--target-panel-id <pane>] --yes [--json]
+                                      Stop and remove an Agent and its panes; preserve workspace and history
   dure hmux migrate ...             Alias for hmux adopt
   dure orchestration events-canary --session-file PATH [--backend ID] [--json]
                                       Read-only event observation for an existing exact session
@@ -3876,6 +3870,20 @@ async function main() {
     return;
   }
   if (cmd === "client") return await cmdClient(rest);
+  if (cmd === "stop" || (cmd === "hmux" && rest[0] === "stop")) {
+    const { AGENT_STOP_HELP, parseAgentStopCommand } = await import("./lib/agent-stop-command.mjs");
+    let stopOptions;
+    try {
+      stopOptions = parseAgentStopCommand(cmd === "stop" ? rest : rest.slice(1));
+    } catch (error) {
+      fail(error.message);
+    }
+    if (stopOptions.help) {
+      process.stdout.write(`${AGENT_STOP_HELP}\n`);
+      return;
+    }
+    return await cmdHmux("stop", stopOptions);
+  }
   let opts;
   opts = cmd === "workflow" ? parseWorkflowOpts(rest) : parseOpts(rest);
   if (

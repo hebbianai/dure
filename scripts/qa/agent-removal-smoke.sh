@@ -3,6 +3,9 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 export DURE_QA_REAL_GIT=$(command -v git)
 export PATH="$repo_root/scripts/qa/agent-removal-tools:$PATH"
+export DURE_QA_PROVIDER_BIN="$repo_root/scripts/qa/fake-provider"
+export HEBBIAN_QA_PROVIDER_BIN="$DURE_QA_PROVIDER_BIN"
+export PATH="$DURE_QA_PROVIDER_BIN:$PATH"
 export VITE_DURE_AGENT_REMOVAL_QA_RUN_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
 export DURE_QA_CLIENT="$repo_root/scripts/qa/agent-removal-client.mjs"
 export DURE_QA_HOME_SETUP="$repo_root/scripts/qa/agent-removal-home-setup.mjs"
