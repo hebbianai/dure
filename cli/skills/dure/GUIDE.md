@@ -240,6 +240,18 @@ writing `~/.dure/orchestration.json`. For raw protocol debugging only,
 `dure orchestration invoke <method> '<body-json>' [--backend ID] --json`
 calls the same local, SSH, or hosted authority.
 
+After Resume, use `orchestration_context_get_current` to resolve the current
+managed Session. `orchestration_session_unavailable` with `retry_same` means the
+backend could not obtain a valid live observation; it does not prove the
+Session generation is stale. Retry the same lookup after a timeout or temporary
+connection failure. For `hmux_runtime_identity_changed`, restart the Dure app
+that owns the backend and reconnect the tools before retrying. For malformed
+or inconsistent observations, run `dure diagnostics --json` and include the
+`reasonCode` in feedback if the failure persists. Keep Dispatch identity and
+cursor checkpoints; do not reset them or create another Run to bypass a refusal.
+Actual generation mismatches retain `stale_generation` (or `terminal` for an
+exact-session operation) and require resolving the current session again.
+
 ## Delegated workflows are not orchestration Dispatches
 
 ```sh

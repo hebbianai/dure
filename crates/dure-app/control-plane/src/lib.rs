@@ -87,6 +87,7 @@ mod orchestration_context_batch;
 mod orchestration_event_batch;
 mod orchestration_event_inspection;
 mod orchestration_invoke;
+mod orchestration_session_observation;
 mod pro_features;
 #[cfg(unix)]
 mod workspace_environment;
@@ -218,6 +219,7 @@ use hmux_session_inspection::{
     ExpectedHmuxSession, HmuxSessionInspection, HmuxSessionInspectionFailure,
     parse_exact_hmux_session, parse_exact_hmux_session_for_transition,
 };
+use orchestration_session_observation::verify_exact_orchestration_session;
 pub use service_lifecycle::{
     ActivateStagedOptions, ControlPlaneEndpoint, PreparedControlPlane, activate_staged,
     prepare_with_agent_conversation_runtimes, serve,
@@ -2955,38 +2957,6 @@ async fn create_existing_session_run(
         .create_run(request, context)
         .await
         .map_err(orchestration_service_error)
-}
-
-async fn verify_exact_orchestration_session(
-    state: &ServiceState,
-    session: &WorkflowSessionGenerationV1,
-) -> Result<(), BackendDispatchError> {
-    session.validate().map_err(orchestration_store_error)?;
-    let stop_fence = HmuxStopFence {
-        runner_principal: session.runner_principal.clone(),
-        runner_instance: session.runner_instance.clone(),
-        channel_epoch: session.channel_epoch.clone(),
-        host_instance_id: session.host_instance_id.clone(),
-        terminal_epoch: session.terminal_epoch.clone(),
-    };
-    let hmux = query_hmux(
-        &state.hmux_identity,
-        &session.session_id,
-        &session.workspace_id,
-        &stop_fence,
-    )
-    .await
-    .map_err(|_| {
-        BackendDispatchError::from("orchestration_generation_conflict")
-            .with_disposition(BackendFailureDispositionV1::StaleGeneration)
-    })?;
-    if hmux.provider_id != session.provider_id.as_str() {
-        return Err(
-            BackendDispatchError::from("orchestration_generation_conflict")
-                .with_disposition(BackendFailureDispositionV1::StaleGeneration),
-        );
-    }
-    Ok(())
 }
 
 fn rehost_generation_matches_session(

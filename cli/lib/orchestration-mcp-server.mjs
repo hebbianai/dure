@@ -9,7 +9,8 @@ import {
   loadCursor,
   requestOrchestration,
 } from "./orchestration-client.mjs";
-import { BackendTransportError, backendTransportErrorReport } from "./backend-transport.mjs";
+import { BackendTransportError } from "./backend-transport.mjs";
+import { orchestrationFailureDetail } from "./orchestration-failure.mjs";
 import {
   currentOrchestrationCheckpointPath,
   parseOrchestrationIntegrationReceipt,
@@ -233,7 +234,7 @@ async function withBackendRejectionDetails(action) {
       error.code === "backend_transport_remote_error" &&
       typeof error.details?.code === "string"
     ) {
-      const detail = backendTransportErrorReport(error).error;
+      const detail = orchestrationFailureDetail(error);
       const reason = detail.reasonCode ? `: ${detail.reasonCode}` : "";
       const disposition =
         detail.disposition

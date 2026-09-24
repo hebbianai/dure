@@ -25,6 +25,7 @@ export const ORCHESTRATION_PAYLOAD_NAMES = Object.freeze([
   "contracts/orchestration-envelope.mjs",
   "managed-session-enrollment-evidence.mjs",
   "orchestration-backend-transport.mjs",
+  "orchestration-failure.mjs",
   "orchestration-lifecycle.mjs",
   "orchestration-mcp-server.mjs",
   "jev-mcp-tool.mjs",

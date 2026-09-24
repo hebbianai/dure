@@ -15,6 +15,11 @@ async fn runtime_deferred_native_resume_publishes_without_a_second_wake() {
     let agent_id = AgentIdV1::new("native-idle-resume-agent").unwrap();
     let source = launch(&state, &hmux, "native-idle-resume-source").await;
     bind_source(&state, &agent_id, &source).await;
+    let mut run_body = existing_session_run_body();
+    run_body["session"] = serde_json::to_value(&source).unwrap();
+    let enrolled =
+        invoke_orchestration(&state, "resume-inbox-enroll", "run.create", run_body).await;
+    let original_context = enrolled["receipt"]["context"].clone();
     state_reporter::report(
         &hmux,
         &source,
@@ -93,6 +98,41 @@ async fn runtime_deferred_native_resume_publishes_without_a_second_wake() {
     );
     let published = published.unwrap();
     assert_eq!(publish().await.unwrap(), published);
+    let current_session = json!({
+        "sessionId": target.session_id, "workspaceId": target.workspace_id,
+        "providerId": "codex", "runnerPrincipal": target.runner_principal,
+        "runnerInstance": target.runner_instance, "channelEpoch": target.channel_epoch,
+        "hostInstanceId": target.host_instance_id, "terminalEpoch": target.terminal_epoch,
+    });
+    for method in ["dispatch.context.get", "dispatch.context.get.exact-session"] {
+        let context = invoke_orchestration(
+            &state,
+            "resume-inbox-rejoin",
+            method,
+            json!({"schemaVersion": 1, "session": current_session}),
+        )
+        .await;
+        assert_eq!(context["receipt"]["target"], original_context["target"]);
+        assert_eq!(
+            context["receipt"]["participant"],
+            original_context["participant"]
+        );
+        assert_eq!(
+            context["receipt"]["endpointFence"]["endpointRef"],
+            original_context["endpointFence"]["endpointRef"]
+        );
+    }
+    let events = invoke_orchestration(&state, "resume-inbox-read", "events.read", json!({
+        "schemaVersion": 1, "authority": original_context["target"]["authority"],
+        "target": original_context["target"], "participant": original_context["coordinatorGrant"]["participant"],
+        "deliveryCapability": original_context["coordinatorGrant"]["deliveryCapability"],
+        "after": 0, "limit": 128,
+    })).await;
+    assert!(
+        events["receipt"]["events"]
+            .as_array()
+            .is_some_and(|events| !events.is_empty())
+    );
     let observed = inspect(&state, &agent_id).await;
     assert_eq!(observed["state"], "stable");
     assert_eq!(observed["receipt"]["providerConversationRef"], CONVERSATION);

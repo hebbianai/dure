@@ -407,9 +407,10 @@ async function cmdOrchestrationInvoke(opts) {
         }),
     });
   } catch (error) {
-    const { BackendTransportError, backendTransportErrorReport } = await import(
+    const { BackendTransportError } = await import(
       "./lib/backend-transport.mjs"
     );
+    const { orchestrationFailureDetail } = await import("./lib/orchestration-failure.mjs");
     const code =
       typeof error?.code === "string"
         ? error.code
@@ -417,7 +418,7 @@ async function cmdOrchestrationInvoke(opts) {
     const message = error instanceof Error ? error.message : String(error);
     const detail =
       error instanceof BackendTransportError
-        ? backendTransportErrorReport(error).error
+        ? orchestrationFailureDetail(error)
         : { code, message };
     if (opts.json) {
       process.stderr.write(
@@ -2493,6 +2494,11 @@ const ORCH_HELP = `dure orchestration — durable interaction service client
       DURE_ORCHESTRATION_ENDPOINT selects a hosted HTTPS authority instead.
   orchestration status [--json] [--repo PATH] [--backend ID]
   orchestration health [--json] [--repo PATH] [--backend ID]
+
+Context lookup failures include reasonCode and disposition. retry_same keeps
+the current Dispatch; it does not authorize a reset or a new Run. If the reason
+is hmux_runtime_identity_changed, restart the Dure app that owns the backend
+and reconnect the tools before retrying. See 'dure skills get dure'.
 
 Legacy file-mailbox commands (send/inbox/check/ask/task/gate/reset/dispatch)
 are retired. They never read or write ~/.dure/orchestration.json.`;
