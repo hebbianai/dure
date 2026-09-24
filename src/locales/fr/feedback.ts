@@ -59,4 +59,8 @@ export const feedback: Record<string, string> = {
 	"feedback.dialog.error.attachmentTooLarge":
 		"La capture d'écran est trop volumineuse pour être envoyée.",
 	"feedback.dialog.sendWithoutScreenshot": "Envoyer sans la capture d'écran",
+	"feedback.dialog.error.rateLimitedWait":
+		"Trop de rapports depuis cet appareil ou ce réseau. Vous pourrez réessayer dans {seconds} secondes. Votre rapport est conservé.",
+	"feedback.dialog.error.rateLimitedReady":
+		"Vous pouvez réessayer maintenant. Votre rapport est conservé.",
 };

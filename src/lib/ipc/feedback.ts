@@ -85,6 +85,8 @@ export class FeedbackSubmitError extends Error {
 		 *  above any real value, so the dialog has nothing specific to
 		 *  offer there. */
 		readonly field?: string,
+		/** Minimum delay supplied by the intake for a 429, in whole seconds. */
+		readonly retryAfterSeconds?: number,
 	) {
 		super(message);
 		this.name = "FeedbackSubmitError";
@@ -101,6 +103,15 @@ interface FeedbackInvalidSubmissionResponse {
 
 interface FeedbackPayloadTooLargeResponse {
 	field?: unknown;
+}
+
+function validRetryDelay(value: unknown): value is number {
+	return (
+		typeof value === "number" &&
+		Number.isSafeInteger(value) &&
+		value >= 0 &&
+		value <= Math.floor(Number.MAX_SAFE_INTEGER / 1000)
+	);
 }
 
 /**
@@ -174,7 +185,21 @@ export async function submitFeedback(
 		);
 	}
 	if (response.status === 429) {
-		throw new FeedbackSubmitError("rate_limited", "feedback rate limited");
+		const header = response.headers.get("retry-after");
+		const headerSeconds =
+			header !== null && /^\d+$/.test(header) ? Number(header) : undefined;
+		const data = (await response.json().catch(() => null)) as {
+			retryAfterSeconds?: unknown;
+		} | null;
+		const seconds = validRetryDelay(headerSeconds)
+			? headerSeconds
+			: data?.retryAfterSeconds;
+		throw new FeedbackSubmitError(
+			"rate_limited",
+			"feedback rate limited",
+			undefined,
+			validRetryDelay(seconds) ? seconds : undefined,
+		);
 	}
 	throw new FeedbackSubmitError(
 		"temporary",

@@ -58,4 +58,8 @@ export const feedback: Record<string, string> = {
 	"feedback.dialog.error.attachmentTooLarge":
 		"A captura de tela é grande demais para ser enviada.",
 	"feedback.dialog.sendWithoutScreenshot": "Enviar sem a captura de tela",
+	"feedback.dialog.error.rateLimitedWait":
+		"Muitos relatos deste dispositivo ou rede. Você poderá tentar novamente em {seconds} segundos. Seu relato continua aqui.",
+	"feedback.dialog.error.rateLimitedReady":
+		"Você já pode tentar novamente. Seu relato continua aqui.",
 };

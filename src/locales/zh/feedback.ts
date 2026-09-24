@@ -50,4 +50,8 @@ export const feedback: Record<string, string> = {
 	"feedback.dialog.error.network": "无法连接反馈服务，请检查网络连接后重试。",
 	"feedback.dialog.error.attachmentTooLarge": "截图太大，无法发送。",
 	"feedback.dialog.sendWithoutScreenshot": "不带截图发送",
+	"feedback.dialog.error.rateLimitedWait":
+		"此设备或网络发送的请求过多。可在 {seconds} 秒后重试。已保留您填写的内容。",
+	"feedback.dialog.error.rateLimitedReady":
+		"现在可以重试。已保留您填写的内容。",
 };

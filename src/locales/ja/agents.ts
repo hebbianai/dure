@@ -330,4 +330,6 @@ export const agents: Record<string, string> = {
 	"agents.worktree.runSetupAfterCreate": "作成後に setup を実行",
 	"agents.worktree.selectExisting": "既存のワークツリーを選択してください",
 	"agents.worktree.useExisting": "この既存のワークツリーを使用",
+	"agents.account.conversationUnavailable":
+		"会話 ID を確認できないため、別のアカウントでこの会話を続けられません。このエージェントは開いたままにしてください。今すぐ続けるには、新しいエージェントを作成し、利用枠の残っているアカウントを選択してください。",
 };

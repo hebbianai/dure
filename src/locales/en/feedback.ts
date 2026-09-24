@@ -57,4 +57,8 @@ export const feedbackEnglishTranslations: Record<string, string> = {
 	"feedback.dialog.error.attachmentTooLarge":
 		"The screenshot is too large to send.",
 	"feedback.dialog.sendWithoutScreenshot": "Send without screenshot",
+	"feedback.dialog.error.rateLimitedWait":
+		"Too many reports from this device or network. You can retry in {seconds} seconds. Your report is still here.",
+	"feedback.dialog.error.rateLimitedReady":
+		"You can retry now. Your report is still here.",
 };

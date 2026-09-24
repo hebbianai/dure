@@ -9,6 +9,7 @@ import {
 import { DureLoader } from "@/components/ui/dure-loader";
 import { ToolbarControl } from "@/components/ui/toolbar-control";
 import { t } from "@/lib/i18n";
+import { credentialSwitchFailureDescription } from "@/lib/agents/credentialSwitchFailureDescription";
 import { useManagedCredentialSwitchTransition } from "@/lib/sessions/managed/managedCredentialSwitchTransition";
 import { cn } from "@/lib/utils";
 import {
@@ -78,10 +79,8 @@ export function AgentCredentialSwitcher({
 		: undefined;
 	const selectedAccountId = currentAccount?.id ?? null;
 	const remoteActionAccount = recoveryAccount ?? currentAccount;
-	const pendingError =
-		pending?.lastError === "agent_runtime_source_retained"
-			? t("agents.runtime.sourceRetained")
-			: pending?.lastError;
+	const failureDescription = credentialSwitchFailureDescription(failure);
+	const pendingError = credentialSwitchFailureDescription(pending?.lastError);
 	const switchAccount = (accountId: string | null) => {
 		if (accountId === selectedAccountId && !allowCurrentAccountReselect) return;
 		onSwitch(accountId);
@@ -95,8 +94,8 @@ export function AgentCredentialSwitcher({
 				: undefined;
 	const title = switching
 		? t("agents.account.switchInProgress")
-		: failure
-			? `${t("agents.account.switchFailed")}: ${failure}`
+		: failureDescription
+			? `${t("agents.account.switchFailed")}: ${failureDescription}`
 			: pendingError
 				? t("agents.account.scheduleSwitchFailed", { error: pendingError })
 				: pending && pendingAccountName

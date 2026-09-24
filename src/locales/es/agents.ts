@@ -329,4 +329,6 @@ export const agents: Record<string, string> = {
 	"agents.worktree.runSetupAfterCreate": "Ejecutar setup tras crear",
 	"agents.worktree.selectExisting": "Selecciona un worktree existente",
 	"agents.worktree.useExisting": "Usar este worktree existente",
+	"agents.account.conversationUnavailable":
+		"Dure no puede identificar esta conversación para continuarla con otra cuenta. Mantén abierto este agente. Para continuar ahora, crea un agente nuevo y elige una cuenta con cuota disponible.",
 };

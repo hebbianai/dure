@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+	act,
 	cleanup,
 	fireEvent,
 	render,
@@ -55,6 +56,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
+	vi.useRealTimers();
 	window.localStorage.clear();
 });
 
@@ -94,6 +96,47 @@ function expectPreviewMatchedWhatWasSent(
 }
 
 describe("FeedbackDialog", () => {
+	it("keeps the draft and waits all 730 seconds before allowing a manual retry", async () => {
+		mocks.submitFeedback.mockRejectedValueOnce(
+			new FeedbackSubmitError("rate_limited", "rate limited", undefined, 730),
+		);
+		render(<FeedbackDialog open onOpenChange={vi.fn()} capture={okCapture} />);
+		typeBody("account switch failed");
+		await waitForEnvironmentReady();
+		vi.useFakeTimers();
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+		});
+		expect(screen.getByText(/730 seconds/)).toBeTruthy();
+		const retry = () =>
+			screen.getByRole<HTMLButtonElement>("button", { name: /^retry$/i });
+		expect(retry().disabled).toBe(true);
+		typeBody("account switch failed — more details");
+		expect(retry().disabled).toBe(true);
+		await act(async () => {
+			vi.advanceTimersByTime(720_000);
+		});
+		expect(screen.getByText(/10 seconds/)).toBeTruthy();
+		fireEvent.click(retry());
+		expect(mocks.submitFeedback).toHaveBeenCalledTimes(1);
+		// A suspended WebView may resume without receiving every timer tick.
+		vi.setSystemTime(Date.now() + 60_000);
+		await act(async () => {
+			vi.advanceTimersByTime(1_000);
+		});
+		expect(retry().disabled).toBe(false);
+		expect(screen.getByText(/can retry now/i)).toBeTruthy();
+		expect(mocks.submitFeedback).toHaveBeenCalledTimes(1);
+		mocks.submitFeedback.mockResolvedValueOnce({ reference: "f-retried" });
+		await act(async () => {
+			fireEvent.click(retry());
+		});
+		expect(mocks.submitFeedback).toHaveBeenLastCalledWith(
+			expect.objectContaining({ body: "account switch failed — more details" }),
+		);
+		expect(screen.getByText(/f-retried/)).toBeTruthy();
+	});
+
 	it("previews exactly what it will send (redacted attachment bytes aside, which feedbackPreview.test.ts proves is the only difference)", async () => {
 		mocks.submitFeedback.mockResolvedValue({ reference: "ref-1" });
 		render(<FeedbackDialog open onOpenChange={vi.fn()} capture={okCapture} />);

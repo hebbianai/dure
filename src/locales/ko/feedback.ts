@@ -55,4 +55,8 @@ export const feedback: Record<string, string> = {
 	"feedback.dialog.error.attachmentTooLarge":
 		"스크린샷 용량이 너무 커서 보낼 수 없습니다.",
 	"feedback.dialog.sendWithoutScreenshot": "스크린샷 없이 보내기",
+	"feedback.dialog.error.rateLimitedWait":
+		"이 기기 또는 네트워크에서 보낸 요청이 많습니다. {seconds}초 뒤 재시도할 수 있습니다. 작성한 내용은 유지됩니다.",
+	"feedback.dialog.error.rateLimitedReady":
+		"이제 재시도할 수 있습니다. 작성한 내용은 유지됩니다.",
 };

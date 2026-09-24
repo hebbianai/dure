@@ -597,6 +597,33 @@ describe("QuickDispatchOverlay", () => {
 		expect(mocks.run).toHaveBeenCalled();
 	});
 
+	it("snapshots the active account when opened, even if the global selection later changes", async () => {
+		useStore.setState({ accounts: [claudeWork], activeAccounts: { claude: claudeWork.id } });
+		render(<QuickDispatchOverlay open onClose={vi.fn()} />);
+		expect(screen.getByRole("combobox", { name: t("agents.account.credential") }).textContent).toBe(claudeWork.name);
+		act(() => useStore.setState({ activeAccounts: {} }));
+		fireEvent.change(screen.getByRole("textbox"), { target: { value: "use selected account" } });
+		fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+		await waitFor(() => expect(mocks.begin).toHaveBeenCalled());
+		expect(mocks.begin.mock.calls[0][0]).toMatchObject({ accountId: claudeWork.id });
+	});
+
+	it("preserves an explicit default override and snapshots the next provider's active account", async () => {
+		useStore.setState({ accounts: [claudeWork, codexPersonal], activeAccounts: { claude: claudeWork.id, codex: codexPersonal.id } });
+		render(<QuickDispatchOverlay open onClose={vi.fn()} />);
+		openSelect(screen.getByRole("combobox", { name: t("agents.account.credential") }));
+		fireEvent.click(await screen.findByRole("option", { name: t("agents.account.defaultCli") }));
+		act(() => useStore.setState({ activeAccounts: { claude: claudeWork.id, codex: codexPersonal.id } }));
+		expect(screen.getByRole("combobox", { name: t("agents.account.credential") }).textContent).toBe(t("agents.quickDispatch.defaultAccount"));
+		openSelect(screen.getByRole("combobox", { name: t("agents.quickDispatch.agentLabel") }));
+		fireEvent.click(await screen.findByRole("option", { name: "Codex" }));
+		expect(screen.getByRole("combobox", { name: t("agents.account.credential") }).textContent).toBe(codexPersonal.name);
+		fireEvent.change(screen.getByRole("textbox"), { target: { value: "use codex account" } });
+		fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+		await waitFor(() => expect(mocks.begin).toHaveBeenCalled());
+		expect(mocks.begin.mock.calls[0][0]).toMatchObject({ providerId: "codex", accountId: codexPersonal.id });
+	});
+
 	it("pins a provider-scoped credential selected with the keyboard", async () => {
 		useStore.setState({
 			accounts: [claudeWork, codexPersonal],

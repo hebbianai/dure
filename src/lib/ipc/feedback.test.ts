@@ -28,10 +28,13 @@ const envelope: FeedbackEnvelope = {
 	attachments: [],
 };
 
-/** A minimal Response stand-in — only `status` and `json()` are used by
- *  submitFeedback. */
-function jsonResponse(status: number, body: unknown): Response {
-	return { status, json: async () => body } as Response;
+/** Exercise the same headers and JSON response surface used by the intake. */
+function jsonResponse(
+	status: number,
+	body: unknown,
+	headers?: HeadersInit,
+): Response {
+	return new Response(JSON.stringify(body), { status, headers });
 }
 
 beforeEach(() => {
@@ -157,6 +160,36 @@ describe("submitFeedback", () => {
 		expect((failure as FeedbackSubmitError).kind).toBe("rejected");
 		expect((failure as FeedbackSubmitError).field).toBeUndefined();
 	});
+
+	it.each([
+		["730", undefined, 730],
+		["0", undefined, 0],
+		[undefined, 730, 730],
+		["invalid", 730, 730],
+		["-1", undefined, undefined],
+		["1.5", undefined, undefined],
+		["9007199254740992", undefined, undefined],
+		[undefined, -1, undefined],
+		[undefined, "730", undefined],
+	])(
+		"preserves only valid retry delays (header %s, body %s)",
+		async (header, retryAfterSeconds, expected) => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async () =>
+					jsonResponse(
+						429,
+						{ error: "RATE_LIMITED", retryAfterSeconds },
+						header === undefined ? undefined : { "Retry-After": header },
+					),
+				),
+			);
+			await expect(submitFeedback(envelope)).rejects.toMatchObject({
+				kind: "rate_limited",
+				retryAfterSeconds: expected,
+			});
+		},
+	);
 
 	it("throws a rate_limited error on 429", async () => {
 		vi.stubGlobal(

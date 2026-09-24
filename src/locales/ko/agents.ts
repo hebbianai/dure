@@ -329,4 +329,6 @@ export const agents: Record<string, string> = {
 	"agents.worktree.runSetupAfterCreate": "생성 후 setup 실행",
 	"agents.worktree.selectExisting": "기존 워크트리를 선택하세요",
 	"agents.worktree.useExisting": "이 기존 워크트리 사용",
+	"agents.account.conversationUnavailable":
+		"대화 ID를 확인할 수 없어 다른 계정으로 이 대화를 이어갈 수 없습니다. 이 에이전트는 열어 두세요. 지금 계속하려면 새 에이전트를 만들고 한도가 남은 계정을 선택하세요.",
 };

@@ -330,4 +330,6 @@ export const agents: Record<string, string> = {
 	"agents.worktree.runSetupAfterCreate": "创建后运行 setup",
 	"agents.worktree.selectExisting": "请选择现有工作树",
 	"agents.worktree.useExisting": "使用此现有工作树",
+	"agents.account.conversationUnavailable":
+		"Dure 无法确认此对话的 ID，因此无法使用其他账号继续此对话。请保持此智能体打开。如需立即继续，请新建智能体并选择仍有可用额度的账号。",
 };

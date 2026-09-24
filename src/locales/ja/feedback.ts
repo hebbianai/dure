@@ -58,4 +58,8 @@ export const feedback: Record<string, string> = {
 	"feedback.dialog.error.attachmentTooLarge":
 		"スクリーンショットのサイズが大きすぎて送信できません。",
 	"feedback.dialog.sendWithoutScreenshot": "スクリーンショットなしで送信",
+	"feedback.dialog.error.rateLimitedWait":
+		"この端末またはネットワークからの送信が多すぎます。{seconds} 秒後に再試行できます。入力内容は保持されています。",
+	"feedback.dialog.error.rateLimitedReady":
+		"再試行できます。入力内容は保持されています。",
 };

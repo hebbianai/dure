@@ -15,6 +15,7 @@ export function useQuickDispatch() {
 	const defaultProvider = useStore((s) => s.uiPrefs.defaultProvider);
 	const sshHosts = useStore((s) => s.sshHosts);
 	const accounts = useStore((s) => s.accounts);
+	const activeAccounts = useStore((s) => s.activeAccounts);
 	const quickCommands = useStore((s) => s.uiPrefs.quickCommands);
 	const ensureProjectForPath = useStore((s) => s.ensureProjectForPath);
 	return {
@@ -24,6 +25,7 @@ export function useQuickDispatch() {
 		focusCtx,
 		defaultProvider,
 		accounts,
+		activeAccounts,
 		sshHosts,
 		quickCommands,
 		ensureProjectForPath,

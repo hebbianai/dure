@@ -45,6 +45,7 @@ import {
 	useVisibleProviders,
 } from "@/lib/agents/agentInstalls";
 import { resolveDefaultProvider } from "@/lib/agents/defaultProvider";
+import { initialAgentLaunchAccountId } from "@/lib/agents/agentLaunchCredential";
 import {
 	catalogEffortOptions,
 	catalogModelOptions,
@@ -99,7 +100,7 @@ export function QuickDispatchOverlay({
 	 *  closes — the launcher shows its confirmation pill from this. */
 	onDispatched?: () => void;
 }) {
-	const { projects, agents, focusCtx, defaultProvider, accounts, sshHosts, quickCommands, ensureProjectForPath } =
+	const { projects, agents, focusCtx, defaultProvider, accounts, activeAccounts, sshHosts, quickCommands, ensureProjectForPath } =
 		useQuickDispatch();
 	const activeSpaceId = useActiveSpaceId();
 	const availableProviders = useAvailableProviders();
@@ -133,7 +134,7 @@ export function QuickDispatchOverlay({
 	const [useWorktree, setUseWorktree] = useState(false);
 	const worktreeToggleId = useId();
 	const [selectedAccountId, setSelectedAccountId] = useState<string | null>(
-		null,
+		() => initialAgentLaunchAccountId(providerId, accounts, activeAccounts[providerId]),
 	);
 	const [typedName, setTypedName] = useState<string | null>(
 		() => prefill?.typedName ?? null,
@@ -199,7 +200,7 @@ export function QuickDispatchOverlay({
 		if (next === providerId) return;
 		setProviderId(next);
 		setPermission("inherit");
-		chooseAccount(null);
+		chooseAccount(initialAgentLaunchAccountId(next, accounts, activeAccounts[next]));
 	};
 
 	if (!visibleProviders.includes(providerId)) {

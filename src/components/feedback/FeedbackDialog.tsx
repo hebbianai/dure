@@ -66,7 +66,7 @@ type SendStatus =
 	| { kind: "idle" }
 	| { kind: "sending" }
 	| { kind: "sent"; reference: string }
-	| { kind: "failed"; error: FeedbackSubmitError };
+	| { kind: "failed"; error: FeedbackSubmitError; retryAtMs?: number };
 
 type CopyStatus = { kind: "success" | "error"; message: string };
 
@@ -86,6 +86,7 @@ export function FeedbackDialog({
 	const [contact, setContact] = useState(() => readRememberedFeedbackContact());
 	const [includeScreenshot, setIncludeScreenshot] = useState(capture.ok);
 	const [status, setStatus] = useState<SendStatus>({ kind: "idle" });
+	const [now, setNow] = useState(Date.now);
 	const [copyStatus, setCopyStatus] = useState<CopyStatus | null>(null);
 	// A 64px object-cover thumbnail is not a review surface. The notice can
 	// only honestly say "this is what gets sent" if the capture can actually
@@ -173,10 +174,24 @@ export function FeedbackDialog({
 	const preview = useMemo(() => renderFeedbackPreview(envelope), [envelope]);
 
 	const sending = status.kind === "sending";
+	const retryAtMs = status.kind === "failed" ? status.retryAtMs : undefined;
+	const retrySeconds =
+		retryAtMs === undefined
+			? 0
+			: Math.max(0, Math.ceil((retryAtMs - now) / 1000));
+	const waitingToRetry = retrySeconds > 0;
+	useEffect(() => {
+		if (!open || !waitingToRetry) return;
+		// Recompute from the deadline so sleep and throttled WebViews do not
+		// extend the server's delay by counting only delivered timer ticks.
+		const timer = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(timer);
+	}, [open, waitingToRetry]);
 	const isPermissionFailure =
 		!capture.ok && capture.reason === SCREEN_RECORDING_PERMISSION_REASON;
 
 	async function send(envelopeToSend: FeedbackEnvelope) {
+		if (sending || waitingToRetry) return;
 		setStatus({ kind: "sending" });
 		try {
 			const result = await submitFeedback(envelopeToSend);
@@ -187,7 +202,17 @@ export function FeedbackDialog({
 				error instanceof FeedbackSubmitError
 					? error
 					: new FeedbackSubmitError("network", errorMessage(error));
-			setStatus({ kind: "failed", error: failure });
+			const receivedAt = Date.now();
+			setNow(receivedAt);
+			setStatus({
+				kind: "failed",
+				error: failure,
+				retryAtMs:
+					failure.kind === "rate_limited" &&
+					failure.retryAfterSeconds !== undefined
+						? receivedAt + failure.retryAfterSeconds * 1000
+						: undefined,
+			});
 		}
 	}
 
@@ -218,10 +243,13 @@ export function FeedbackDialog({
 	// Send would do. Without this, a 413 naming `contact` — the one
 	// rejection the user can actually fix — left the verdict standing even
 	// after they shortened it. `sending` is left alone: that request is
-	// still in flight and owns the status until it settles.
+	// still in flight and owns the status until it settles. Rate limits apply
+	// to the sender, so editing the draft must not clear their retry deadline.
 	const clearSendOutcome = () => {
 		setStatus((current) =>
-			current.kind === "idle" || current.kind === "sending"
+			current.kind === "idle" ||
+			current.kind === "sending" ||
+			(current.kind === "failed" && current.error.kind === "rate_limited")
 				? current
 				: { kind: "idle" },
 		);
@@ -456,7 +484,13 @@ export function FeedbackDialog({
 											message: status.error.message,
 										})
 								: status.error.kind === "rate_limited"
-									? t("feedback.dialog.error.rateLimited")
+									? waitingToRetry
+										? t("feedback.dialog.error.rateLimitedWait", {
+												seconds: retrySeconds,
+											})
+										: retryAtMs !== undefined
+											? t("feedback.dialog.error.rateLimitedReady")
+											: t("feedback.dialog.error.rateLimited")
 									: status.error.kind === "temporary"
 										? t("feedback.dialog.error.temporary")
 										: t("feedback.dialog.error.network")}
@@ -490,6 +524,7 @@ export function FeedbackDialog({
 					<ConfirmationButton
 						disabled={
 							sending ||
+							waitingToRetry ||
 							sent ||
 							unretryable ||
 							body.trim().length === 0 ||
