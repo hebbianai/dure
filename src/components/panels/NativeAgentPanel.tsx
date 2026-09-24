@@ -47,6 +47,10 @@ import {
 } from "@/lib/sessions/credentials/deferredCredentialSwitchRuntime";
 import { recoverExitedManagedConversationPane } from "@/lib/sessions/managed/managedConversationLaunch";
 import { convergeManagedAgentRehost } from "@/lib/sessions/managed/managedAgentRehostConvergence";
+import {
+  isClosedManagedSourceLineage,
+  wakeClosedManagedLineage,
+} from "@/lib/sessions/managed/managedClosedLineageWake";
 import { resumeExactManagedAgentPane } from "@/lib/sessions/managed/managedExactConversationResume";
 import { managedAgentWorktreeRecovery } from "@/lib/sessions/managed/managedAgentWorktreeRecovery";
 import { useAgentPaneAttentionAck } from "@/components/agents/useAgentPaneAttentionAck";
@@ -359,11 +363,23 @@ export function NativeAgentPanel({
       setResuming(true);
       try {
         if (recoveryConversationId) {
-          return await resumeExactManagedAgentPane(
-            agent.id,
-            props.api.id,
-            recoveryConversationId,
-          );
+          try {
+            return await resumeExactManagedAgentPane(
+              agent.id,
+              props.api.id,
+              recoveryConversationId,
+            );
+          } catch (cause) {
+            if (!isClosedManagedSourceLineage(cause)) throw cause;
+            // An earlier failed replacement closed this source lineage; only a
+            // new backend runtime root can continue the same conversation.
+            const woken = await wakeClosedManagedLineage(
+              agent.id,
+              recoveryConversationId,
+            );
+            if (!woken) throw cause;
+            return woken;
+          }
         }
         const converged = await convergeManagedAgentRehost(
           agent.id,

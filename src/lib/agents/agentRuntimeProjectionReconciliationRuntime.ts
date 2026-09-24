@@ -135,7 +135,11 @@ function retiredLocalSourceEvidence(
 		) {
 			return undefined;
 		}
-		return JSON.stringify(["session_absent", binding.sessionId]);
+		return JSON.stringify([
+			"session_absent",
+			binding.sessionId,
+			liveWorkspaceSessionIds(binding, sessions),
+		]);
 	}
 	const generationChanged =
 		session.health === "generation_changed" ||
@@ -169,7 +173,28 @@ function retiredLocalSourceEvidence(
 					(field) => session.stopFence?.[field] ?? null,
 				)
 			: null,
+		liveWorkspaceSessionIds(binding, sessions),
 	]);
+}
+
+/** Another client (the CLI's runtime wake, a rehost elsewhere) can start the
+ * Agent on a new root in the same runtime workspace without notifying this
+ * window. A new live session there is fresh evidence to re-read the backend. */
+function liveWorkspaceSessionIds(
+	binding: { sessionId: string; workspaceId: string },
+	sessions: readonly HmuxSessionSummary[],
+): string[] {
+	return sessions
+		.filter(
+			(session) =>
+				session.workspaceId === binding.workspaceId &&
+				session.sessionId !== binding.sessionId &&
+				session.sessionClass !== "standalone" &&
+				session.lifecycle === "ready" &&
+				!isExitedHmuxSession(session),
+		)
+		.map((session) => session.sessionId)
+		.sort();
 }
 
 function assertCurrentProjectionTarget(

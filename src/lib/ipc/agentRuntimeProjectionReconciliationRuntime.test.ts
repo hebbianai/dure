@@ -414,6 +414,39 @@ it.each(["exited", "absent"])(
 	},
 );
 
+it("re-inspects a handled retired source once another live session starts in its workspace", async () => {
+	// A runtime wake from the CLI or another client starts the conversation on
+	// a new root in the same runtime workspace without notifying this window.
+	const agent = nativeAgent();
+	const woken = agentFixture({
+		id: agent.id,
+		sessionId: "session-woken",
+		runtimeBinding: managedBindingFixture({
+			sessionId: "session-woken",
+			workspaceId: "workspace-1",
+			backendProfileId: "local",
+			stopFence: stopFenceFixture({ terminalEpoch: "terminal-woken" }),
+		}),
+	});
+	setAgents([agent]);
+	const { inspect, projectRuntime, publish, runtime } = harness();
+	projectRuntime.mockImplementation(projectAgentRuntimeTransition);
+	inspect.mockResolvedValueOnce(stableNative(agent));
+
+	publish(census([summary(agent, "exited")]));
+	await vi.waitFor(() => expect(inspect).toHaveBeenCalledOnce());
+	publish(census([summary(agent, "exited")]));
+	expect(inspect).toHaveBeenCalledOnce();
+
+	inspect.mockResolvedValueOnce(stableNative(woken));
+	publish(census([summary(agent, "exited"), summary(woken)]));
+	await vi.waitFor(() =>
+		expect(useStore.getState().agents[0].sessionId).toBe("session-woken"),
+	);
+	expect(inspect).toHaveBeenCalledTimes(2);
+	runtime.stop();
+});
+
 it("projects an authoritative native launch key that differs from the local source", async () => {
 	const agent = nativeAgent();
 	setAgents([agent]);
