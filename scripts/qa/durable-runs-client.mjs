@@ -52,7 +52,13 @@ const catalog = cli("runs", "list");
 assert(catalog.runs.some((run) => run.agentId === agentId && run.name === "headless-qa"));
 const before = cli("runs", "show", "headless-qa");
 const originalSession = before.runtime.receipt.authority.authority.binding.sessionId;
-const environmentEvidence = fs.readFileSync(path.join(root, "provider-capture", `${originalSession}-launch.json`), "utf8");
+const environmentPath = path.join(root, "provider-capture", `${originalSession}-launch.json`);
+const evidenceDeadline = Date.now() + 10_000;
+while (!fs.existsSync(environmentPath)) {
+  assert(Date.now() < evidenceDeadline, "fake provider did not publish launch evidence");
+  await delay(50);
+}
+const environmentEvidence = fs.readFileSync(environmentPath, "utf8");
 const launchedEnvironment = JSON.parse(environmentEvidence);
 assert.equal(launchedEnvironment.DURE_APP_CHANNEL, environment.DURE_APP_CHANNEL);
 for (const key of ["DURE_BUILD_ID", "DURE_DEV_LAUNCH_GENERATION", "DURE_BACKEND_RUNTIME_FINGERPRINT", "HEBBIAN_HMUX_BIN", "TAURI_CONFIG"]) assert.equal(launchedEnvironment[key], null, key);

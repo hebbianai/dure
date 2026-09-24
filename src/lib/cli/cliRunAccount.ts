@@ -1,7 +1,10 @@
 import { resolveAgentLaunchCredential } from "@/lib/agents/agentLaunchCredential";
 import { providerAccountDirectoryName } from "@/lib/agents/providers";
 import { resolveSelectedDureBackendRouteAuthority } from "@/lib/ipc/dureBackend";
-import { isDureBackendProfileIdV1 } from "@/lib/ipc/dureProtocolIdentity";
+import {
+	isDureBackendProfileIdV1,
+	isDureDomainIdV1,
+} from "@/lib/ipc/dureProtocolIdentity";
 import { registerDureProviderCredentialProfile } from "@/lib/ipc/dureProviderCredentialProfile";
 import { useStore } from "@/store";
 import { type AccountProfile, PROVIDERS, type Provider } from "@/types";
@@ -18,8 +21,7 @@ export async function resolveCliRunAccount(
 	},
 ) {
 	if (
-		typeof params.providerId !== "string" ||
-		!Object.keys(PROVIDERS).includes(params.providerId) ||
+		!isDureDomainIdV1(params.providerId) ||
 		!isDureBackendProfileIdV1(params.backendProfileId) ||
 		(params.account !== undefined &&
 			(typeof params.account !== "string" || !params.account))
@@ -27,6 +29,17 @@ export async function resolveCliRunAccount(
 		throw new Error(
 			"A provider, backend profile and optional account ID are required.",
 		);
+	}
+	// Backend extensions can launch headlessly without a desktop account model.
+	// An explicit account must still be resolved by a supported provider adapter.
+	if (!Object.keys(PROVIDERS).includes(params.providerId)) {
+		if (params.account !== undefined && params.account !== "default")
+			throw new Error("Account selection is unavailable for this provider.");
+		return {
+			ok: true,
+			schemaVersion: 1,
+			executionProfile: { kind: "provider_default" },
+		};
 	}
 	const provider = params.providerId as Provider;
 	const state = dependencies.readState();

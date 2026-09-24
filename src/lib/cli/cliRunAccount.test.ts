@@ -27,6 +27,26 @@ function fixture() {
 	return { state, dependencies, route };
 }
 describe("CLI Run account selection", () => {
+	it("preserves backend provider extensions without inventing account support", async () => {
+		const f = fixture();
+		expect(
+			await resolveCliRunAccount(
+				{ providerId: "extension-provider", backendProfileId: "local" },
+				f.dependencies,
+			),
+		).toMatchObject({ executionProfile: { kind: "provider_default" } });
+		await expect(
+			resolveCliRunAccount(
+				{
+					providerId: "extension-provider",
+					backendProfileId: "local",
+					account: "work",
+				},
+				f.dependencies,
+			),
+		).rejects.toThrow("unavailable");
+		expect(f.dependencies.register).not.toHaveBeenCalled();
+	});
 	it.each([
 		{ account: undefined, expected: "work" },
 		{ account: "personal", expected: "personal" },
