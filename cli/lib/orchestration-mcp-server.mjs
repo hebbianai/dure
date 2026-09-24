@@ -11,6 +11,7 @@ import {
 } from "./orchestration-client.mjs";
 import { BackendTransportError } from "./backend-transport.mjs";
 import { orchestrationFailureDetail } from "./orchestration-failure.mjs";
+import { completionRequestSchema } from "./contracts/orchestration-completion.mjs";
 import {
   currentOrchestrationCheckpointPath,
   parseOrchestrationIntegrationReceipt,
@@ -142,14 +143,15 @@ const tools = [
   {
     name: "orchestration_dispatch_complete",
     description:
-      "Complete the exact Dispatch generation with a Markdown report. Only explicitly supplied nextWorkCandidates open a successor Decision; no tracker is queried.",
+      "Complete the exact Dispatch generation with a Markdown report. Resolve orchestration_context_get_current first and copy the context fields as described in body. Only explicitly supplied nextWorkCandidates open a successor Decision; no tracker is queried.",
     inputSchema: {
       type: "object",
       required: ["body"],
       properties: {
-        body: { type: "object" },
+        body: completionRequestSchema,
         nextWorkCandidates: nextWorkCandidatesSchema,
       },
+      additionalProperties: false,
     },
   },
   {

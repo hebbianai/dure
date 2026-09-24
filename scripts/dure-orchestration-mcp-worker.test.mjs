@@ -55,6 +55,20 @@ describe("orchestration worker metadata boundary", () => {
     expect(result.stdout).toBe("");
   });
 
+  it("rejects malformed completion over stdio with a field-level correction before runtime discovery", () => {
+    const message = { jsonrpc: "2.0", id: 7, method: "tools/call", params: {
+      name: "orchestration_dispatch_complete",
+      arguments: { body: { schemaVersion: 1, idempotencyKey: "report", participant: "worker" } },
+    } };
+    const result = run([], `${JSON.stringify(message)}\n`);
+    expect(result.status, result.stderr).toBe(0);
+    const response = JSON.parse(result.stdout);
+    expect(response).toMatchObject({ id: 7, error: {
+      code: -32000, message: expect.stringContaining("body.messageId is required"),
+    } });
+    expect(response.error.message).toContain("unchanged invalid request will not succeed");
+  });
+
   it("accepts a frozen integration receipt without reading a mutable installation", () => {
     const receipt = {
       schemaVersion: 1,

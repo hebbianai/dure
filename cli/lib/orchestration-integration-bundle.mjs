@@ -23,6 +23,7 @@ export const ORCHESTRATION_PAYLOAD_NAMES = Object.freeze([
   ...INTEGRATION_METADATA_NAMES,
   "orchestration-client.mjs",
   "contracts/orchestration-envelope.mjs",
+  "contracts/orchestration-completion.mjs",
   "managed-session-enrollment-evidence.mjs",
   "orchestration-backend-transport.mjs",
   "orchestration-failure.mjs",

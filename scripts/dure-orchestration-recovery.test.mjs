@@ -33,3 +33,18 @@ it.each([
   });
   expect(request).toHaveBeenCalledTimes(1);
 });
+
+it("corrects an older backend's invalid-request retry guidance without exposing its payload", async () => {
+  const failure = new BackendTransportError("backend_transport_remote_error", {
+    details: { code: "orchestration_request_invalid", disposition: "retry_same",
+      message: "private-report", field: "private-capability-as-field" },
+  });
+  const request = vi.fn(async () => { throw failure; });
+  await expect(handleMcpRequest({ jsonrpc: "2.0", method: "tools/call",
+    params: { name: "orchestration_interaction_get", arguments: { body: {} } },
+  }, environment, { request })).rejects.toMatchObject({
+    message: expect.stringMatching(/^orchestration_request_invalid \(terminal\): .*Correct it using the tool's input schema/),
+    cause: failure,
+  });
+  expect(request).toHaveBeenCalledTimes(1);
+});

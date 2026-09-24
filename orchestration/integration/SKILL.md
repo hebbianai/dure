@@ -120,6 +120,40 @@ keep the original receipt and use existing exact interaction/event inspection.
 
 ## Completion reports
 
+Call `orchestration_context_get_current` first. Its structured `context` supplies
+the identities, revision, fences and audience for
+`orchestration_dispatch_complete`. The tool publishes the full v1 input schema.
+Construct its arguments as below (JavaScript notation; pass the resulting object,
+not the source text). Generate `completionKey` and `completionMessageId` once for
+this report, and write `reportTitle` and `reportMarkdown` as described below:
+
+```js
+const body = {
+  schemaVersion: 1,
+  idempotencyKey: completionKey,
+  messageId: completionMessageId,
+  target: context.target,
+  expectedDispatchRevision: context.dispatchRevision,
+  completedBy: context.participant,
+  endpointFence: context.endpointFence,
+  audience: { grants: [context.coordinatorGrant] },
+  completionCapability: context.completionCapability,
+  title: reportTitle,
+  resultMarkdown: reportMarkdown,
+  completedAtMs: Date.now(),
+};
+const argumentsForCompletion = { body };
+```
+
+Copy the context values verbatim; never guess revisions or reconstruct private
+capabilities. Completion uses `messageId`, `expectedDispatchRevision`,
+`completedBy` and `resultMarkdown`, not the similarly named context or interaction
+fields. Keep the body private. After an uncertain transport result, reuse the
+exact body and idempotency key, including `completedAtMs`. A definite
+`orchestration_request_invalid` rejection requires correcting the indicated
+field against the schema; an unchanged retry cannot fix it. Only an accepted
+completion receipt proves that the report was recorded.
+
 Write for someone who did not follow the work. Before any heading or list, open
 with one short prose paragraph that identifies the product or project area and
 prior problem in ordinary terms, states the user- or operator-visible outcome,

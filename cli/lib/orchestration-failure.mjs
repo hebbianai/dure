@@ -4,6 +4,10 @@ import { backendTransportErrorReport } from "./backend-transport.mjs";
 // paths or provider output and must not be copied into CLI/MCP responses.
 export function orchestrationFailureDetail(error) {
   const detail = backendTransportErrorReport(error).error;
+  if (detail.remoteCode === "orchestration_request_invalid") {
+    return { ...detail, disposition: "terminal", message:
+      "The request body is invalid. Correct it using the tool's input schema or the dure-orchestration skill before resubmitting; retrying the unchanged body cannot succeed." };
+  }
   if (detail.remoteCode !== "orchestration_session_unavailable") return detail;
   let message;
   switch (detail.reasonCode) {

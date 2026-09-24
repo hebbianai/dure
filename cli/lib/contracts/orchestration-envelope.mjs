@@ -1,3 +1,5 @@
+import { validateCompletionRequest } from "./orchestration-completion.mjs";
+
 export const ORCHESTRATION_API_VERSION = "dure.orchestration/v1";
 
 export function createOrchestrationRequest({ method, body }) {
@@ -12,6 +14,7 @@ export function createOrchestrationRequest({ method, body }) {
   ) {
     throw new Error("orchestration request is invalid");
   }
+  if (method === "dispatch.complete") validateCompletionRequest(body);
   return Object.freeze({
     apiVersion: ORCHESTRATION_API_VERSION,
     method,

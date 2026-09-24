@@ -3441,6 +3441,11 @@ fn capability(prefix: &str) -> Result<CapabilityRef, BackendDispatchError> {
 }
 
 fn orchestration_service_error(error: ServiceError) -> BackendDispatchError {
+    let disposition = if matches!(&error, ServiceError::Invalid { .. }) {
+        BackendFailureDispositionV1::Terminal
+    } else {
+        BackendFailureDispositionV1::RetrySame
+    };
     let (code, details) = match error {
         ServiceError::Invalid { field, code } => (
             "orchestration_request_invalid",
@@ -3465,7 +3470,7 @@ fn orchestration_service_error(error: ServiceError) -> BackendDispatchError {
         code: code.into(),
         message: "orchestration service rejected the operation".into(),
         details,
-        disposition: BackendFailureDispositionV1::RetrySame,
+        disposition,
     }
 }
 

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   approvedOrchestrationIntegrationRefreshProviders,
@@ -2047,6 +2048,91 @@ describe("immutable generic orchestration integration", () => {
     expect(request.mock.calls.map((call) => call[1].method)).toEqual(["dispatch.complete"]);
     expect(result.structuredContent).toEqual(receipt);
     expect(JSON.parse(result.content[0].text)).toEqual(receipt);
+  });
+
+  it("publishes the complete v1 completion schema and accepts the skill example unchanged on retry", async () => {
+    const { environment, context, receiptPath } = currentMcpContextFixture(fixture());
+    const catalogue = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/list" });
+    const tool = catalogue.tools.find((entry) => entry.name === "orchestration_dispatch_complete");
+    const schema = tool.inputSchema.properties.body;
+    expect(schema.required).toEqual(Object.keys(completionBody(context, "shape")));
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties.target.properties.authority.required).toEqual(["workspaceId"]);
+    expect(schema.properties.endpointFence.required).toEqual(Object.keys(context.endpointFence));
+    expect(schema.properties.audience.properties.grants.items.required).toContain("deliveryCapability");
+    expect(schema.properties.expectedDispatchRevision.description).toContain("context.dispatchRevision");
+
+    const skill = fs.readFileSync(new URL("../orchestration/integration/SKILL.md", import.meta.url), "utf8");
+    const example = skill.split("## Completion reports")[1].match(/```js\n([\s\S]*?)\n```/)[1];
+    const args = runInNewContext(`${example}\nargumentsForCompletion`, {
+      context, completionKey: "complete-from-skill", completionMessageId: "report-from-skill",
+      reportTitle: "Work complete", reportMarkdown: "The requested work is verified.",
+      Date: { now: () => 1_500 },
+    });
+    const request = vi.fn(async (_endpoint, operation) => {
+      expect(operation.method).toBe("dispatch.complete");
+      expect(operation.body).toBe(args.body);
+      return { receipt: { dispatchState: "completed", idempotent: request.mock.calls.length > 1 } };
+    });
+    const message = { jsonrpc: "2.0", method: "tools/call", params: { name: tool.name, arguments: args } };
+    expect((await handleMcpRequest(message, environment, { receiptPath, request })).structuredContent.receipt.idempotent).toBe(false);
+    expect((await handleMcpRequest(message, environment, { receiptPath, request })).structuredContent.receipt.idempotent).toBe(true);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(args.body.completedAtMs).toBe(1_500);
+  });
+
+  it.each(["reportMarkdown", "descriptionMarkdown"])("explains the reported malformed completion (%s) before contacting the backend", async (reportField) => {
+    const { environment, context, receiptPath } = currentMcpContextFixture(fixture());
+    const body = {
+      schemaVersion: 1, target: context.target, participant: context.participant,
+      completionCapability: context.completionCapability, endpointFence: context.endpointFence,
+      idempotencyKey: "rejected-report", title: "Work complete", [reportField]: "Private report text",
+      ...(reportField === "reportMarkdown" ? { dispatchRevision: 1 } : {
+        expectedRevision: 1, interactionId: "report-message", completedAtMs: 1_500,
+      }),
+    };
+    const request = vi.fn();
+    await expect(handleMcpRequest(mcpToolCall("orchestration_dispatch_complete", body),
+      environment, { receiptPath, request })).rejects.toMatchObject({
+      code: "orchestration_request_invalid", disposition: "terminal", field: "body.messageId",
+      message: expect.stringContaining("body.messageId is required"),
+    });
+    expect(() => parseOrchestrationInvoke(["dispatch.complete", JSON.stringify(body)]))
+      .toThrow("body.messageId is required");
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("reports nested completion fields without exposing private values or unknown keys", () => {
+    const { context } = currentMcpContextFixture(fixture());
+    const body = completionBody(context, "nested-error");
+    delete body.endpointFence.acknowledgementCapability;
+    expect(() => createOrchestrationRequest({ method: "dispatch.complete", body }))
+      .toThrow("body.endpointFence.acknowledgementCapability is required");
+    body.endpointFence.acknowledgementCapability = "private-capability";
+    body.audience.grants[0].capabilities = ["valid", { secret: "private-value" }];
+    expect(() => createOrchestrationRequest({ method: "dispatch.complete", body }))
+      .toThrow("body.audience.grants[0].capabilities[1] must be string");
+    body.audience.grants[0].capabilities = ["valid"];
+    body["private-capability-as-key"] = "private-value";
+    try {
+      createOrchestrationRequest({ method: "dispatch.complete", body });
+      expect.fail("unknown completion fields must be rejected");
+    } catch (error) {
+      expect(error.code).toBe("orchestration_request_invalid");
+      expect(error.message).toContain("contains an unknown field");
+      expect(error.message).not.toContain("private-");
+    }
+  });
+
+  it("preserves optional v1 authority and audience fields without normalization", () => {
+    const { context } = currentMcpContextFixture(fixture());
+    const body = completionBody(context, "v1-compatible");
+    body.target.authority.tenantRef = null;
+    delete body.audience.grants[0].roles;
+    expect(createOrchestrationRequest({ method: "dispatch.complete", body }).body).toBe(body);
+    body.participant = body.completedBy;
+    expect(() => createOrchestrationRequest({ method: "dispatch.complete", body }))
+      .toThrow("uses participant; the completion field is completedBy");
   });
 
   it("completes without executing Beads or creating unsolicited successor work", async () => {
