@@ -1,4 +1,4 @@
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Plus } from "lucide-react";
 import { Popover } from "radix-ui";
 import type { ReactNode } from "react";
 import { ProviderGlyph } from "@/components/agents/ProviderLogo";
@@ -127,6 +127,7 @@ export function ProviderUsagePopoverContent({
 	accountLimit,
 	secondaryAction,
 	refresh,
+	onAddAccount,
 }: {
 	provider: Provider;
 	title: string;
@@ -136,6 +137,7 @@ export function ProviderUsagePopoverContent({
 	accountLimit?: (profile: UsagePopoverAccount) => UsageAccountLimit | null;
 	secondaryAction?: SecondaryAction;
 	refresh?: UsageRefreshAction;
+	onAddAccount: () => void;
 }) {
 	const accounts = useStore((state) => state.accounts);
 	const activeId = useStore((state) => state.activeAccounts[provider]);
@@ -208,6 +210,15 @@ export function ProviderUsagePopoverContent({
 				))}
 			</div>
 			<Divider />
+			<Popover.Close asChild>
+				<Action
+					label={t("settings.accounts.add")}
+					detail={
+						<Plus aria-hidden="true" className="size-3 text-muted-foreground" />
+					}
+					onClick={onAddAccount}
+				/>
+			</Popover.Close>
 			<Popover.Close asChild>
 				<Action
 					label={t("usage.action.statsUsage")}

@@ -6,7 +6,8 @@
 // 팝오버 본문은 설정 > 통계 및 사용량과 공유한다 → usage/ProviderUsageDetail.
 
 import { message as messageDialog } from "@tauri-apps/plugin-dialog";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { AccountsDialog } from "@/components/agents/AccountsDialog";
 import { ClaudeUsagePopover } from "@/components/usage/ClaudeUsagePopover";
 import { CodexUsagePopover } from "@/components/usage/CodexUsagePopover";
 import { useRecentUsage } from "@/components/usage/useRecentUsage";
@@ -28,6 +29,9 @@ export function UsageBadge() {
 		refresh,
 	} = useRecentUsage(accounts);
 	const [installing, setInstalling] = useState(false);
+	const [addingAccount, setAddingAccount] = useState<"claude" | "codex" | null>(null);
+	const claudeTrigger = useRef<HTMLButtonElement>(null);
+	const codexTrigger = useRef<HTMLButtonElement>(null);
 
 	const installCollector = () => {
 		setInstalling(true);
@@ -51,6 +55,9 @@ export function UsageBadge() {
 		<div className="flex items-center gap-1">
 			{showClaude && (
 				<ClaudeUsagePopover
+					triggerRef={claudeTrigger}
+					restoreFocusOnClose={addingAccount === null}
+					onAddAccount={() => setAddingAccount("claude")}
 					u5={u5}
 					u24={u24}
 					nowSec={nowSec}
@@ -67,6 +74,9 @@ export function UsageBadge() {
 			)}
 			{showCodex && (
 				<CodexUsagePopover
+					triggerRef={codexTrigger}
+					restoreFocusOnClose={addingAccount === null}
+					onAddAccount={() => setAddingAccount("codex")}
 					u5={u5}
 					u24={u24}
 					nowSec={nowSec}
@@ -76,6 +86,15 @@ export function UsageBadge() {
 						failed: refreshError === "codex",
 						onRefresh: () => void refresh("codex"),
 					}}
+				/>
+			)}
+			{addingAccount && (
+				<AccountsDialog
+					initialAddingProvider={addingAccount}
+					returnFocusRef={
+						addingAccount === "claude" ? claudeTrigger : codexTrigger
+					}
+					onClose={() => setAddingAccount(null)}
 				/>
 			)}
 		</div>

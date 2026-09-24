@@ -1,3 +1,4 @@
+import type { Ref } from "react";
 import {
 	type Report,
 	useCodexUsage,
@@ -25,11 +26,17 @@ export function CodexUsagePopover({
 	u24,
 	nowSec,
 	refresh,
+	onAddAccount,
+	triggerRef,
+	restoreFocusOnClose = true,
 }: {
 	u5: Report;
 	u24: Report | null;
 	nowSec: number;
 	refresh?: UsageRefreshAction;
+	onAddAccount: () => void;
+	triggerRef?: Ref<HTMLButtonElement>;
+	restoreFocusOnClose?: boolean;
 }) {
 	const {
 		working,
@@ -197,12 +204,15 @@ export function CodexUsagePopover({
 	return (
 		<UsageMeterPopover
 			provider="codex"
+			triggerRef={triggerRef}
+			restoreFocusOnClose={restoreFocusOnClose}
 			pct={headlinePct}
 			tip={tip}
 			dataSlot="codex-usage-popover"
 		>
 			<ProviderUsagePopoverContent
 				provider="codex"
+				onAddAccount={onAddAccount}
 				title="Codex"
 				refresh={refresh}
 				accountLimit={accountLimit}

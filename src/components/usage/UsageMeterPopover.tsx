@@ -1,5 +1,5 @@
 import { Popover } from "radix-ui";
-import { type ReactNode, useId } from "react";
+import { type ReactNode, type Ref, useId } from "react";
 import { ProviderGlyph } from "@/components/agents/ProviderLogo";
 import { Titled } from "@/components/ui/tooltip";
 import { t } from "@/lib/i18n";
@@ -91,12 +91,16 @@ export function UsageMeterPopover({
 	tip,
 	children,
 	dataSlot = "usage-provider-popover",
+	triggerRef,
+	restoreFocusOnClose = true,
 }: {
 	provider: Provider;
 	pct: number | null;
 	tip: string;
 	children: ReactNode;
 	dataSlot?: string;
+	triggerRef?: Ref<HTMLButtonElement>;
+	restoreFocusOnClose?: boolean;
 }) {
 	const descriptionId = useId();
 	const label = t("usage.meter.viewDetails", {
@@ -107,6 +111,7 @@ export function UsageMeterPopover({
 			<Titled title={tip}>
 				<Popover.Trigger asChild>
 					<button
+						ref={triggerRef}
 						type="button"
 						className="inline-flex h-6 items-center rounded-md px-0.5 outline-none transition-colors hover:bg-glass-tint-hover focus-visible:ring-1 focus-visible:ring-ring"
 						aria-label={label}
@@ -130,6 +135,9 @@ export function UsageMeterPopover({
 					// Opened by mouse, the popover takes focus itself rather than
 					// lighting up its refresh button (pointerOpenFocus.ts).
 					onOpenAutoFocus={keepPointerOpenFocusOnSurface}
+					onCloseAutoFocus={(event) => {
+						if (!restoreFocusOnClose) event.preventDefault();
+					}}
 					// 메뉴와 같은 유리 재질이다. 이 팝오버는 메뉴와 같은 층에 같은
 					// 방식으로 떠오르므로(트리거 옆, MENU_SIDE_OFFSET, shadow-menu)
 					// 불투명 pane 면이면 그 층에서 혼자 다른 재질로 읽혔다.

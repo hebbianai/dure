@@ -23,9 +23,13 @@ const collectorInstallMock = vi.fn();
 const accountLoginIdentityMock = vi.fn();
 const getDockviewMock = vi.fn();
 const openCommandTerminalOnMock = vi.fn();
+const createAccountDirMock = vi.fn();
+const accountPreflightMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ message: vi.fn() }));
-vi.mock("@/lib/ipc", () => ({
+vi.mock("@/lib/ipc", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/ipc")>()),
+	createAccountDir: (...args: unknown[]) => createAccountDirMock(...args),
 	usageRecent: (hours: number) => usageRecentMock(hours),
 	usageRefresh: (provider: string) => usageRefreshMock(provider),
 	claudeCollectorStatus: () => collectorStatusMock(),
@@ -33,6 +37,10 @@ vi.mock("@/lib/ipc", () => ({
 	codexUsageProfilesSync: () => Promise.resolve(),
 	accountLoginIdentity: (...args: unknown[]) =>
 		accountLoginIdentityMock(...args),
+}));
+vi.mock("@/lib/agents/accountProfilePreflight", () => ({
+	preflightAccountProfileCreation: (...args: unknown[]) =>
+		accountPreflightMock(...args),
 }));
 
 vi.mock("@/lib/workspace/dock/dockRegistry", async (importOriginal) => ({
@@ -139,6 +147,8 @@ function seedAccounts(
 }
 
 beforeEach(() => {
+	createAccountDirMock.mockResolvedValue("/accounts/new-work");
+	accountPreflightMock.mockResolvedValue(undefined);
 	collectorStatusMock.mockResolvedValue("not_installed");
 	accountLoginIdentityMock.mockResolvedValue({
 		status: "authenticated",
@@ -162,6 +172,82 @@ afterEach(() => {
 });
 
 describe("UsageBadge", () => {
+	it.each([
+		["claude", CLAUDE_METER],
+		["codex", CODEX_METER],
+	] as const)(
+		"adds a %s account from its usage popover",
+		async (providerId, meter) => {
+			mockUsage({});
+			const dockview = {};
+			getDockviewMock.mockReturnValue(dockview);
+			seedAccounts([{ id: "existing", provider: providerId, name: "work" }], {
+				[providerId]: "existing",
+			});
+			render(<UsageBadge />);
+			const trigger = await screen.findByRole("button", { name: meter });
+			fireEvent.click(trigger);
+			fireEvent.click(
+				screen.getByRole("button", { name: t("settings.accounts.add") }),
+			);
+			const dialog = await screen.findByRole("dialog");
+			const input = within(dialog).getByRole("textbox");
+			await waitFor(() => expect(document.activeElement).toBe(input));
+			expect(
+				document.querySelector('[data-slot="provider-usage-popover-content"]'),
+			).toBeNull();
+			expect(useStore.getState().activeAccounts[providerId]).toBe("existing");
+			expect(createAccountDirMock).not.toHaveBeenCalled();
+			fireEvent.change(input, { target: { value: "new-work" } });
+			fireEvent.click(
+				within(dialog).getByRole("button", { name: t("common.add") }),
+			);
+			await waitFor(() =>
+				expect(openCommandTerminalOnMock).toHaveBeenCalledWith(
+					dockview,
+					expect.objectContaining({
+						closeOnSuccess: true,
+						command: expect.any(String),
+					}),
+				),
+			);
+			expect(accountPreflightMock).toHaveBeenCalledWith(providerId);
+			expect(createAccountDirMock).toHaveBeenCalledWith(providerId, "new-work");
+			expect(useStore.getState().accounts).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						provider: providerId,
+						name: "new-work",
+						dir: "/accounts/new-work",
+					}),
+				]),
+			);
+			await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(document.activeElement).not.toBe(trigger);
+		},
+	);
+
+	it.each([CLAUDE_METER, CODEX_METER])(
+		"returns focus to %s when account creation is dismissed",
+		async (meter) => {
+			mockUsage({});
+			render(<UsageBadge />);
+			const trigger = await screen.findByRole("button", { name: meter });
+			fireEvent.click(trigger);
+			fireEvent.click(
+				screen.getByRole("button", { name: t("settings.accounts.add") }),
+			);
+			const dialog = await screen.findByRole("dialog");
+			fireEvent.click(
+				within(dialog).getByRole("button", { name: t("common.close") }),
+			);
+			await waitFor(() => expect(document.activeElement).toBe(trigger));
+			expect(createAccountDirMock).not.toHaveBeenCalled();
+			expect(useStore.getState().accounts).toEqual([]);
+		},
+	);
+
 	it.each([
 		["codex", CODEX_METER],
 		["claude", CLAUDE_METER],

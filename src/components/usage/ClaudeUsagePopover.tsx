@@ -1,3 +1,4 @@
+import type { Ref } from "react";
 import {
 	type Report,
 	useClaudeUsage,
@@ -41,6 +42,9 @@ export function ClaudeUsagePopover({
 	installing,
 	onInstall,
 	refresh,
+	onAddAccount,
+	triggerRef,
+	restoreFocusOnClose = true,
 }: {
 	u5: Report;
 	u24: Report | null;
@@ -49,6 +53,9 @@ export function ClaudeUsagePopover({
 	installing: boolean;
 	onInstall: () => void;
 	refresh?: UsageRefreshAction;
+	onAddAccount: () => void;
+	triggerRef?: Ref<HTMLButtonElement>;
+	restoreFocusOnClose?: boolean;
 }) {
 	const language = resolveLang(useStore((state) => state.language));
 	const { working, resolved, claude, used, meter, capturedAgo } =
@@ -160,12 +167,15 @@ export function ClaudeUsagePopover({
 	return (
 		<UsageMeterPopover
 			provider="claude"
+			triggerRef={triggerRef}
+			restoreFocusOnClose={restoreFocusOnClose}
 			pct={meter.pct}
 			tip={tip}
 			dataSlot="claude-usage-popover"
 		>
 			<ProviderUsagePopoverContent
 				provider="claude"
+				onAddAccount={onAddAccount}
 				title="Claude"
 				refresh={refresh}
 				accountLimit={accountLimit}

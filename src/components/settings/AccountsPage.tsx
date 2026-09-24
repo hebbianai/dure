@@ -300,10 +300,12 @@ export function AccountsPage({
 	onClose,
 	recovery,
 	showLoginIdentity = false,
+	initialAddingProvider,
 }: {
 	onClose: () => void;
 	recovery?: CredentialProfileRecovery;
 	showLoginIdentity?: boolean;
+	initialAddingProvider?: Provider;
 }) {
 	const {
 		accounts,
@@ -323,7 +325,10 @@ export function AccountsPage({
 	// 사라지는 경우도 없다(계정을 가질 수 있는 셋이 곧 core 셋이다).
 	const providers = useAvailableProviders();
 	const [adding, setAdding] = useState<Provider | null>(
-		recovery?.provider ?? null,
+		recovery?.provider ??
+			(initialAddingProvider && supportsAccounts(initialAddingProvider)
+				? initialAddingProvider
+				: null),
 	);
 	const [draft, setDraft] = useState(recovery?.suggestedName ?? "");
 	// 오류는 제공업체를 달고 다닌다 — 폼이 닫힌 뒤(로그인 pane 생성 실패)에도
@@ -458,6 +463,7 @@ export function AccountsPage({
 								{adding === provider && (
 									<div className="flex gap-2">
 										<Input
+											name="accountName"
 											autoFocus
 											value={draft}
 											onChange={(e) => setDraft(e.target.value)}
