@@ -27,6 +27,8 @@ fn dure_start_and_retry_preserve_one_operation_and_successor() {
         ("start", "after_source_stop", false),
         ("start", "after_replacement_create", false),
         ("start", "no_conversation", false),
+        ("start", "exited_conversation", false),
+        ("start", "exited_no_conversation", false),
     ] {
         let journaled = fault.starts_with("after_");
         if (if journaled { action } else { "admission" }) != group {
@@ -39,12 +41,23 @@ fn dure_start_and_retry_preserve_one_operation_and_successor() {
         let discovery = cwd.join("discovery");
         let marker = cwd.join("conversation");
         let mut source_request = rehostable_create_request(&cwd, &marker, &case);
-        if fault == "no_conversation" {
+        if matches!(
+            fault,
+            "no_conversation" | "exited_conversation" | "exited_no_conversation"
+        ) {
             let mut wire = serde_json::to_value(&source_request).unwrap();
             wire.as_object_mut()
                 .unwrap()
                 .remove("conversationIdentity")
                 .unwrap();
+            if fault.starts_with("exited_") {
+                wire["providerId"] = "claude".into();
+                wire["command"] = serde_json::json!([
+                    "/bin/sh",
+                    "-c",
+                    "while [ ! -f exit-provider ]; do sleep 0.05; done"
+                ]);
+            }
             source_request = serde_json::from_value(wire).unwrap();
         }
         let created = ManagedSessionCreator::new(env!("CARGO_BIN_EXE_hmux-runtime"))
@@ -52,6 +65,40 @@ fn dure_start_and_retry_preserve_one_operation_and_successor() {
             .create(source_request)
             .unwrap();
         let source = created.session().descriptor().clone();
+        if fault.starts_with("exited_") {
+            if fault == "exited_conversation" {
+                // No launch seed and no client pane. Follow a provider-reported
+                // continuation so rehost must use the final identity, not the first.
+                let initial = format!("conversation-initial-{case}");
+                publish_provider_conversation_identity(
+                    &discovery, &cwd, &source, "claude", &initial,
+                );
+                publish_provider_conversation_identity_with_predecessor(
+                    &discovery,
+                    &cwd,
+                    &source,
+                    "claude",
+                    &format!("conversation-{case}"),
+                    Some(initial),
+                );
+            }
+            fs::write(cwd.join("exit-provider"), b"exit").unwrap();
+            wait_for_exited(&discovery, &source.session_id, &source.workspace_id);
+            if fault == "exited_conversation" {
+                let stale = exact_managed_rehost_request(format!("stale-{case}"), &source, true)
+                    .with_expected_conversation_id(format!("conversation-initial-{case}"))
+                    .unwrap();
+                let error = ManagedSessionRehoster::new(env!("CARGO_BIN_EXE_hmux-runtime"), &cwd)
+                    .with_discovery_root(&discovery)
+                    .rehost(stale)
+                    .unwrap_err();
+                assert_eq!(error.code(), "hmux_managed_rehost_identity_mismatch");
+                assert!(
+                    !marker.exists(),
+                    "a stale conversation must not launch a successor"
+                );
+            }
+        }
         let operation = format!("cli-{case}");
         let request = exact_managed_rehost_request(&operation, &source, true);
         if journaled {
@@ -118,7 +165,7 @@ fn dure_start_and_retry_preserve_one_operation_and_successor() {
             }
         );
 
-        if fault == "no_conversation" {
+        if matches!(fault, "no_conversation" | "exited_no_conversation") {
             let refused = invoke("start", &operation, true);
             assert!(!refused.status.success());
             assert!(
@@ -133,7 +180,14 @@ fn dure_start_and_retry_preserve_one_operation_and_successor() {
                 ))
                 .unwrap();
             assert!(still_source.same_generation(&source));
-            assert_eq!(still_source.lifecycle, SessionLifecycle::Ready);
+            assert_eq!(
+                still_source.lifecycle,
+                if fault == "exited_no_conversation" {
+                    SessionLifecycle::Exited
+                } else {
+                    SessionLifecycle::Ready
+                }
+            );
             ManagedSessionStopper::new(env!("CARGO_BIN_EXE_hmux-runtime"), &cwd)
                 .with_discovery_root(&discovery)
                 .stop(exact_managed_stop_request(

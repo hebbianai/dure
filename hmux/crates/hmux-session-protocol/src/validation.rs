@@ -776,7 +776,7 @@ fn validate_agent_state_report(
     Ok(())
 }
 
-fn validate_provider_conversation_identity_projection(
+pub(crate) fn validate_provider_conversation_identity_projection(
     projection: &super::ProviderConversationIdentityProjection,
     fence: &SessionFence,
     maximum_sequence: u64,

@@ -242,6 +242,7 @@ pub(crate) fn retire_if_abandoned(
             let exited = ExitedManifest {
                 common: starting.common,
                 tombstone: Box::new(ExitTombstone {
+                    provider_conversation_identity: None,
                     fence: SessionFence {
                         workspace_id: identity.workspace_id().to_string(),
                         session_id: identity.session_id().to_string(),

@@ -895,12 +895,32 @@ fn exact_conversation(
             "source provider differs from its canonical create recipe",
         ));
     }
+    if let DiscoveryManifest::Exited(exited) = &found.manifest {
+        // Discovery validates this Host projection against the tombstone's full
+        // generation, provider and final output sequence. Keep explicit callers
+        // fenced to that same conversation even after the Host has gone away.
+        if let Some(identity) = &exited.tombstone.provider_conversation_identity {
+            if request
+                .expected_conversation_id()
+                .is_some_and(|expected| expected != identity.conversation_id)
+            {
+                return Err(ManagedRehostError::refused(
+                    "hmux_managed_rehost_identity_mismatch",
+                    "expected conversation differs from the exact exited source",
+                ));
+            }
+            return Ok(identity.conversation_id.clone());
+        }
+        // Older Hosts did not retain identity. Preserve their explicit recovery
+        // contract rather than inferring from a launch seed or nearby transcript.
+        return explicit_replacement_conversation(request);
+    }
     if request.expected_conversation_id().is_some() {
         return explicit_replacement_conversation(request);
     }
     let ready = match found.manifest {
         DiscoveryManifest::Ready(ready) => ready,
-        DiscoveryManifest::Exited(_) => return explicit_replacement_conversation(request),
+        DiscoveryManifest::Exited(_) => unreachable!("exited source handled above"),
         DiscoveryManifest::Starting(_) => {
             return Err(ManagedRehostError::refused(
                 "hmux_managed_rehost_source_changed",
@@ -1711,6 +1731,7 @@ fn reconcile_abandoned_starting_source_stop(
             ExitedManifest {
                 common: starting.common,
                 tombstone: Box::new(hmux_host::provider_epoch::ExitTombstone {
+                    provider_conversation_identity: None,
                     fence: SessionFence {
                         workspace_id: source.workspace_id().to_string(),
                         session_id: source.session_id().to_string(),

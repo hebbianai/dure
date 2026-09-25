@@ -43,6 +43,7 @@ fn exited_manifest(endpoint_address: String) -> DiscoveryManifest {
             retirement_policy: None,
         },
         tombstone: Box::new(ExitTombstone {
+            provider_conversation_identity: None,
             fence: fence(),
             provider_process,
             exit: Exit {

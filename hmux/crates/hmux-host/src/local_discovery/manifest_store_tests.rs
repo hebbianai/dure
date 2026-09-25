@@ -125,6 +125,7 @@ fn exited(host_instance_id: &str) -> ExitedManifest {
     ExitedManifest {
         common: ready.common,
         tombstone: Box::new(ExitTombstone {
+            provider_conversation_identity: None,
             fence: SessionFence {
                 workspace_id: "workspace".into(),
                 session_id: "session".into(),
@@ -149,6 +150,89 @@ fn exited(host_instance_id: &str) -> ExitedManifest {
         capability_token: ready.capability_token,
         exited_unix_ms: 4,
     }
+}
+
+#[test]
+fn exited_conversation_survives_discovery_reload_with_exact_identity() {
+    let temp = TempDir::new().unwrap();
+    let session = session(&temp);
+    let lock = session.acquire_lifetime_lock().unwrap();
+    session.publish_starting(&lock, starting("host-1")).unwrap();
+    session.publish_ready(&lock, ready("host-1")).unwrap();
+    let mut value = exited("host-1");
+    value.tombstone.provider_conversation_identity = Some(Box::new(
+        crate::local_protocol::ProviderConversationIdentityProjection {
+            fence: value.tombstone.fence.clone(),
+            revision: 2,
+            observed_through_output_seq: value.tombstone.exit.final_output_seq,
+            provider_id: value.common.provider_id.clone(),
+            conversation_id: "conversation-latest".into(),
+            source: crate::local_protocol::ProviderConversationIdentitySource::ProviderEvent,
+        },
+    ));
+    session.publish_exited(&lock, value.clone()).unwrap();
+    assert_eq!(
+        session.read_manifest().unwrap(),
+        DiscoveryManifest::Exited(value.clone())
+    );
+
+    for field in [
+        "session",
+        "workspace",
+        "runner",
+        "instance",
+        "channel",
+        "host",
+        "terminal",
+        "provider",
+        "sequence",
+        "revision",
+        "empty",
+        "oversized",
+        "unsafe",
+    ] {
+        let mut invalid = value.clone();
+        let identity = invalid
+            .tombstone
+            .provider_conversation_identity
+            .as_mut()
+            .unwrap();
+        match field {
+            "session" => identity.fence.session_id.push_str("-other"),
+            "workspace" => identity.fence.workspace_id.push_str("-other"),
+            "runner" => identity.fence.runner_principal.push_str("-other"),
+            "instance" => identity.fence.runner_instance.push_str("-other"),
+            "channel" => identity.fence.channel_epoch += 1,
+            "host" => identity.fence.host_instance_id.push_str("-other"),
+            "terminal" => identity.fence.terminal_epoch.push_str("-other"),
+            "provider" => identity.provider_id.push_str("-other"),
+            "sequence" => identity.observed_through_output_seq += 1,
+            "revision" => identity.revision = 0,
+            "empty" => identity.conversation_id.clear(),
+            "oversized" => identity.conversation_id = "x".repeat(257),
+            "unsafe" => identity.conversation_id = "../another-conversation".into(),
+            _ => unreachable!(),
+        }
+        assert!(
+            DiscoveryManifest::Exited(invalid)
+                .validate(&ManifestLimits::default())
+                .is_err(),
+            "{field}"
+        );
+    }
+
+    let legacy = DiscoveryManifest::Exited(exited("host-1"));
+    let encoded = serde_json::to_value(&legacy).unwrap();
+    assert!(
+        encoded["manifest"]["tombstone"]
+            .get("provider_conversation_identity")
+            .is_none()
+    );
+    assert_eq!(
+        serde_json::from_value::<DiscoveryManifest>(encoded).unwrap(),
+        legacy
+    );
+    legacy.validate(&ManifestLimits::default()).unwrap();
 }
 
 #[test]

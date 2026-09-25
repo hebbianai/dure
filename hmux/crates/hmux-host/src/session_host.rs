@@ -560,6 +560,9 @@ impl SessionHost {
         };
         let completed = CompletedProviderEpoch {
             tombstone: ExitTombstone {
+                provider_conversation_identity: final_snapshot
+                    .provider_conversation_identity
+                    .clone(),
                 fence: replay.fence().clone(),
                 provider_process,
                 exit: crate::local_protocol::Exit {
@@ -1327,6 +1330,47 @@ mod tests {
             assert_eq!(tombstone.unwrap().exit_kind, kind);
             assert!(host.provider_process().is_none());
         }
+    }
+
+    #[test]
+    fn completion_retains_the_latest_verified_conversation_without_a_client() {
+        let mut host = host();
+        let current = fence("runner-1", 1, "terminal-1");
+        let observation = |id| {
+            ProviderConversationIdentityObservation::new(
+                "claude",
+                id,
+                crate::local_protocol::ProviderConversationIdentitySource::ProviderEvent,
+            )
+        };
+        host.report_provider_conversation_identity(&current, observation("conversation-first"))
+            .unwrap();
+        let mut continuation = observation("conversation-latest");
+        continuation.previous_conversation_id = Some("conversation-first".into());
+        host.report_provider_conversation_identity(&current, continuation)
+            .unwrap();
+        let completed = host
+            .complete_provider(&current, exit_status(ProviderExitKind::Normal))
+            .unwrap();
+        let identity = completed
+            .tombstone
+            .provider_conversation_identity
+            .as_ref()
+            .unwrap();
+        assert_eq!(identity.conversation_id, "conversation-latest");
+        assert_eq!(identity.fence, current);
+        assert_eq!(
+            Some(identity),
+            completed
+                .final_snapshot
+                .provider_conversation_identity
+                .as_ref()
+        );
+        assert_eq!(
+            host.complete_provider(&current, exit_status(ProviderExitKind::Normal))
+                .unwrap(),
+            completed
+        );
     }
 
     #[test]

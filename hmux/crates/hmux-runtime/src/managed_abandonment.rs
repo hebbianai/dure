@@ -47,6 +47,7 @@ impl AbandonedReadyGeneration {
                 &self.lifetime_lock,
                 ExitedManifest {
                     tombstone: Box::new(hmux_host::provider_epoch::ExitTombstone {
+                        provider_conversation_identity: None,
                         fence: SessionFence {
                             workspace_id: self.ready.common.lifetime.workspace_id.clone(),
                             session_id: self.ready.common.lifetime.session_id.clone(),
