@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {
+	act,
 	cleanup,
 	fireEvent,
 	render,
@@ -13,6 +14,7 @@ import { useAgentPanelState } from "@/components/panels/useAgentPanelState";
 import { setLang, t } from "@/lib/i18n";
 import { DureAgentRuntimeSourceActiveError } from "@/lib/ipc/dureAgentRuntime";
 import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
+import { installDeferredCredentialSwitchWatch } from "@/lib/sessions/credentials/deferredCredentialSwitchRuntime";
 import { useStore } from "@/store";
 import {
 	agentFixture,
@@ -128,64 +130,12 @@ const edits = [
 ] as const;
 afterEach(cleanup);
 describe("runtime setting refusal through the mounted controls", () => {
-	it("keeps an active permission edit pending for the same conversation", async () => {
-		const current = useStore.getState().agents[0];
-		useStore.setState({
-			sessionAgentRuntimeState: {
-				"session-1": {
-					terminalEpoch: source.stopFence.terminalEpoch,
-					revision: "2",
-					observedThroughOutputSeq: "5",
-					lifecycle: "running",
-					activity: "working",
-					attention: "none",
-					source: "provider_event",
-					turnCompletedCount: "0",
-				},
-			},
-		});
-		mocks.inspectNative.mockResolvedValue({
-			agentId: current.id,
-			panelId: "agent:agent-1",
-			sourceBinding: current.runtimeBinding,
-			conversationId: originalConversation,
-			sourceCredentialId: null,
-			targetCredentialId: null,
-		});
-		mocks.transition.mockRejectedValue(
-			new DureAgentRuntimeSourceActiveError(
-				new DureBackendRequestError("agent_runtime_source_busy", "busy", {
-					kind: "operation",
-					disposition: "terminal",
-				}),
-				2,
-			),
-		);
-		render(<PaneControls />);
-		openSelect(
-			screen.getByRole("combobox", { name: t("agents.chat.permissionLabel") }),
-		);
-		fireEvent.click(screen.getByRole("option", { name: "Bypass approvals" }));
-		await waitFor(() =>
-			expect(
-				useStore.getState().agents[0].pendingCredentialSwitch,
-			).toMatchObject({
-				sourceSelectionRevision: 2,
-				sourceConversationId: originalConversation,
-				targetLaunchSelection: {
-					model: "gpt-6-astra",
-					effort: "high",
-					permissionMode: "skip_permissions",
-				},
-			}),
-		);
-		expect(mocks.transition).toHaveBeenCalledOnce();
-		expect(useStore.getState().agents[0].sessionId).toBe("session-1");
-		expect(screen.queryByRole("alert")).toBeNull();
-	});
-	it.each(["cancel", "apply"])(
-		"can %s an active settings change from the pending menu",
-		async (action) => {
+	it.each([
+		{ activity: "working" as const, code: "agent_runtime_source_busy" },
+		{ activity: "waiting" as const, code: "agent_runtime_source_retained" },
+	])(
+		"queues a $code permission edit until the same conversation completes a response",
+		async ({ activity, code }) => {
 			const current = useStore.getState().agents[0];
 			useStore.setState({
 				sessionAgentRuntimeState: {
@@ -194,7 +144,116 @@ describe("runtime setting refusal through the mounted controls", () => {
 						revision: "2",
 						observedThroughOutputSeq: "5",
 						lifecycle: "running",
-						activity: "working",
+						activity,
+						attention: "none",
+						source: "provider_event",
+						turnCompletedCount: "0",
+					},
+				},
+			});
+			mocks.inspectNative.mockResolvedValue({
+				agentId: current.id,
+				panelId: "agent:agent-1",
+				sourceBinding: current.runtimeBinding,
+				conversationId: originalConversation,
+				sourceCredentialId: null,
+				targetCredentialId: null,
+			});
+			mocks.transition.mockRejectedValue(
+				new DureAgentRuntimeSourceActiveError(
+					new DureBackendRequestError(code, code, {
+						kind: "operation",
+						disposition: "terminal",
+					}),
+					2,
+				),
+			);
+			render(<PaneControls />);
+			openSelect(
+				screen.getByRole("combobox", {
+					name: t("agents.chat.permissionLabel"),
+				}),
+			);
+			fireEvent.click(screen.getByRole("option", { name: "Bypass approvals" }));
+			await waitFor(() =>
+				expect(
+					useStore.getState().agents[0].pendingCredentialSwitch,
+				).toMatchObject({
+					sourceSelectionRevision: 2,
+					sourceConversationId: originalConversation,
+					targetLaunchSelection: {
+						model: "gpt-6-astra",
+						effort: "high",
+						permissionMode: "skip_permissions",
+					},
+				}),
+			);
+			expect(mocks.transition).toHaveBeenCalledOnce();
+			expect(useStore.getState().agents[0].sessionId).toBe("session-1");
+			expect(screen.queryByRole("alert")).toBeNull();
+			const unwatch = installDeferredCredentialSwitchWatch();
+			try {
+				expect(mocks.transition).toHaveBeenCalledOnce();
+				mocks.transition.mockImplementationOnce(async (request) => ({
+					...source,
+					selectionRevision: 3,
+					sessionId: "session-next",
+					launchSelection: request.targetLaunchSelection,
+				}));
+				act(() =>
+					useStore.setState((state) => ({
+						sessionAgentRuntimeState: {
+							"session-1": {
+								...state.sessionAgentRuntimeState["session-1"],
+								activity: "waiting",
+								revision: "3",
+								turnCompletedCount: "1",
+							},
+						},
+					})),
+				);
+				await waitFor(() =>
+					expect(useStore.getState().agents[0].sessionId).toBe("session-next"),
+				);
+				expect(mocks.transition).toHaveBeenLastCalledWith(
+					expect.objectContaining({
+						sourceStopPolicy: "preserve",
+						expectedSourceRevision: 2,
+						targetLaunchSelection: {
+							model: "gpt-6-astra",
+							effort: "high",
+							permissionMode: "skip_permissions",
+						},
+					}),
+				);
+				expect(useStore.getState().agents[0].conversationId).toBe(
+					originalConversation,
+				);
+				expect(
+					useStore.getState().agents[0].pendingCredentialSwitch,
+				).toBeUndefined();
+			} finally {
+				unwatch();
+			}
+		},
+	);
+	it.each([
+		["cancel", "working", "agent_runtime_source_busy"],
+		["apply", "working", "agent_runtime_source_busy"],
+		["cancel", "waiting", "agent_runtime_source_retained"],
+		["apply", "waiting", "agent_runtime_source_retained"],
+	] as const)(
+		"can %s a %s settings change from the pending menu",
+		async (action, activity, code) => {
+			const current = useStore.getState().agents[0];
+			useStore.setState({
+				sessionAgentRuntimeState: {
+					"session-1": {
+						terminalEpoch: source.stopFence.terminalEpoch,
+						revision: "2",
+						observedThroughOutputSeq: "5",
+						lifecycle: "running",
+						activity,
 						attention: "none",
 						source: "provider_event",
 						turnCompletedCount: "0",
@@ -211,7 +270,7 @@ describe("runtime setting refusal through the mounted controls", () => {
 			});
 			mocks.transition.mockRejectedValueOnce(
 				new DureAgentRuntimeSourceActiveError(
-					new DureBackendRequestError("agent_runtime_source_busy", "busy", {
+					new DureBackendRequestError(code, code, {
 						kind: "operation",
 						disposition: "terminal",
 					}),
@@ -239,6 +298,7 @@ describe("runtime setting refusal through the mounted controls", () => {
 				ctrlKey: false,
 				pointerType: "mouse",
 			});
+			await screen.findByText(t("agents.runtime.discardSourceDescription"));
 			fireEvent.click(
 				await screen.findByRole("menuitem", {
 					name: t(

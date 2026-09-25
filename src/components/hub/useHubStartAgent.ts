@@ -45,6 +45,7 @@ import {
 	artifactIdFromReceipt,
 	runSpawnSagaFromCli,
 } from "@/lib/sessions/launch/spawnSaga";
+import { ensureProviderLaunchDefaultsProjection } from "@/lib/settings/providerLaunchDefaults";
 import { paneHmuxSessionId } from "@/lib/spaces/hmuxSessionIdentity";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { isMainWindow } from "@/lib/workspace/window/windows";
@@ -184,6 +185,9 @@ async function worktreePlanFor(
 async function runStartSaga(
 	plan: StartAgentPlan,
 ): Promise<{ agentId: string }> {
+	await ensureProviderLaunchDefaultsProjection();
+	const skipPermissions =
+		useStore.getState().skipPermissions[plan.kindId as Provider];
 	const created = await spawnJournal.createSaga(
 		{
 			project: plan.projectId,
@@ -191,7 +195,7 @@ async function runStartSaga(
 			runtime: "hmux",
 			useWorktree: plan.useWorktree,
 			spaceId: plan.spaceId,
-			permissionMode: "default",
+			permissionMode: skipPermissions ? "skip-permissions" : "default",
 			...(await worktreePlanFor(plan)),
 		},
 		// The phone's name for the press. A retry lands on the same receipt and

@@ -209,6 +209,9 @@ export function AgentLaunchSelectionControls({
 						<DropdownMenuLabel>
 							{t("agents.runtime.settingsPending")}
 						</DropdownMenuLabel>
+						<p className="px-2 py-1 text-xs text-muted-foreground">
+							{t("agents.runtime.discardSourceDescription")}
+						</p>
 						{launch.pending.error && (
 							<ErrorText className="px-2 py-1" title={launch.pending.error}>
 								{t("agents.runtime.pendingSettingsFailed")}

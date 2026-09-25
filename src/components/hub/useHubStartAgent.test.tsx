@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 	isMainWindow: vi.fn(() => true),
 	listen: vi.fn(),
 	createSaga: vi.fn(),
+	defaults: vi.fn(),
 	runSaga: vi.fn(),
 	receipt: vi.fn(),
 	report: vi.fn(),
@@ -23,6 +24,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 		mocks.handlers.push(handler);
 		return mocks.listen(_name, handler);
 	},
+}));
+vi.mock("@/lib/settings/providerLaunchDefaults", () => ({
+	ensureProviderLaunchDefaultsProjection: mocks.defaults,
 }));
 vi.mock("@/lib/ipc/spawn", () => ({
 	spawnJournal: { createSaga: mocks.createSaga, receipt: mocks.receipt },
@@ -51,6 +55,7 @@ beforeEach(() => {
 	mocks.isMainWindow.mockReturnValue(true);
 	mocks.listen.mockResolvedValue(() => {});
 	mocks.createSaga.mockResolvedValue({ receiptId: "sp_1" });
+	mocks.defaults.mockResolvedValue(undefined);
 	mocks.runSaga.mockResolvedValue(undefined);
 	mocks.receipt.mockResolvedValue({ state: "succeeded", steps: [] });
 	mocks.report.mockResolvedValue(true);
@@ -67,6 +72,7 @@ beforeEach(() => {
 			},
 		] as Project[],
 		agents: [],
+		skipPermissions: {},
 		installedAgents: ["claude"],
 		sshHosts: [],
 	});
@@ -80,6 +86,43 @@ afterEach(() => {
 });
 
 describe("useHubStartAgent", () => {
+	it.each([true, false])(
+		"loads the saved provider permission default before starting: bypass=%s",
+		async (bypass) => {
+			useStore.setState({
+				installedAgents: ["codex"],
+				skipPermissions: { codex: !bypass, claude: !bypass },
+			});
+			mocks.defaults.mockImplementationOnce(async () => {
+				useStore.setState({
+					skipPermissions: { codex: bypass, claude: !bypass },
+				});
+			});
+			renderHook(() => useHubStartAgent());
+			mocks.handlers[0]?.({ payload: { ...press, kind_id: "codex" } });
+			await waitFor(() => expect(mocks.report).toHaveBeenCalled());
+			expect(mocks.defaults).toHaveBeenCalledOnce();
+			expect(mocks.createSaga).toHaveBeenCalledWith(
+				expect.objectContaining({
+					provider: "codex",
+					permissionMode: bypass ? "skip-permissions" : "default",
+				}),
+				"hub-start:act-1",
+			);
+		},
+	);
+
+	it("does not start with a guessed permission when defaults cannot be loaded", async () => {
+		mocks.defaults.mockRejectedValueOnce(
+			new Error("provider defaults unavailable"),
+		);
+		renderHook(() => useHubStartAgent());
+		mocks.handlers[0]?.({ payload: press });
+		await waitFor(() => expect(mocks.report).toHaveBeenCalled());
+		expect(mocks.createSaga).not.toHaveBeenCalled();
+		expect(mocks.report.mock.calls[0]?.[1]).toMatchObject({ started: false });
+	});
+
 	it.each(["aws", "tailscale"])(
 		"starts a provider on the exact %s host without using the Mac inventory",
 		async (hostId) => {

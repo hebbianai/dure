@@ -23,7 +23,7 @@ import {
 } from "./agentRuntimeTransitionAction";
 
 /** Settings share the existing durable account-change queue and stop boundary.
- * Busy is an enqueue result; it never grants permission to interrupt a turn. */
+ * Active work and retained input enqueue; neither permits discarding the source. */
 export function requestAgentLaunchSelectionChange(
 	{
 		agentId,
@@ -111,7 +111,6 @@ export function requestAgentLaunchSelectionChange(
 		} catch (error) {
 			if (
 				!(error instanceof DureAgentRuntimeSourceActiveError) ||
-				error.requestError.code !== "agent_runtime_source_busy" ||
 				error.expectedSourceRevision === undefined ||
 				!target ||
 				!conversationId
