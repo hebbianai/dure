@@ -262,6 +262,83 @@ describe("AgentCredentialSwitcher", () => {
 		expect(trigger.getAttribute("data-credential-state")).toBe("error");
 	});
 
+	it.each([false, true])(
+		"shows actionable conversation recovery in the menu (deferred: %s)",
+		async (deferred) => {
+			const failure = "Error: agent_runtime_provider_conversation_unavailable";
+			const current = {
+				id: "quota-exhausted",
+				provider: "claude" as const,
+				name: "Current",
+				dir: "/credentials/current",
+			};
+			const available = {
+				id: "quota-available",
+				provider: "claude" as const,
+				name: "Available",
+				dir: "/credentials/available",
+			};
+			const onSwitch = vi.fn();
+			render(
+				<AgentCredentialSwitcher
+					provider="claude"
+					accounts={[current, available]}
+					currentAccount={current}
+					followsGlobal={false}
+					accountBusy={false}
+					disabled={false}
+					disabledTitle="Pane account"
+					failure={deferred ? undefined : failure}
+					pending={
+						deferred
+							? {
+									schemaVersion: 1,
+									requestId: "retry-account",
+									targetCredentialId: available.id,
+									targetCredentialDirectory: available.dir,
+									sourceSessionId: "source-session",
+									sourceWorkspaceId: "source-workspace",
+									sourceConversationId: "source-conversation",
+									sourceCredentialId: current.id,
+									sourceCreateIdempotencyKey: null,
+									sourceCredentialGeneration: null,
+									sourceTerminalEpoch: "source-epoch",
+									baselineRuntimeRevision: "1",
+									baselineTurnCompletedCount: "0",
+									panelId: "source-pane",
+									requestedAtMs: 1,
+									lastError: failure,
+								}
+							: undefined
+					}
+					onSwitch={onSwitch}
+					onApplyNow={vi.fn()}
+					onCancel={vi.fn()}
+					onRemoteLogin={vi.fn()}
+					onCopyToHost={vi.fn()}
+					onManageAccounts={vi.fn()}
+				/>,
+			);
+			const guidance = t("agents.account.conversationUnavailable");
+			fireEvent.pointerDown(screen.getByRole("button"), {
+				button: 0,
+				ctrlKey: false,
+				pointerType: "mouse",
+			});
+			const menu = await screen.findByRole("menu");
+			expect(menu.textContent).toContain(guidance);
+			expect(menu.textContent).not.toContain(
+				"agent_runtime_provider_conversation_unavailable",
+			);
+			if (deferred)
+				expect(menu.textContent).toContain(
+					t("agents.account.switchFailedReselect"),
+				);
+			fireEvent.click(screen.getByRole("menuitem", { name: /Available/ }));
+			expect(onSwitch).toHaveBeenCalledExactlyOnceWith(available.id);
+		},
+	);
+
 	it("offers SSH recovery actions for the failed target account", async () => {
 		const current = {
 			id: "account-a",

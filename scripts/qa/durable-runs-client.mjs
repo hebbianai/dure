@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { requestAppControl } from "../../cli/lib/app-control-client.mjs";
 import { withoutLocalGitOverrides } from "../lib/git-environment.mjs";
+import { readDescriptor, requestDevLaunchRestart } from "../lib/dev-launch-client.mjs";
+import { observeRestartApp } from "./pane-app-restart-client.mjs";
 const root = fs.realpathSync(process.env.DURE_QA_STATE_ROOT);
 const home = fs.realpathSync(process.env.HOME);
 assert.equal(home, path.join(root, "home"));
@@ -22,19 +24,22 @@ const cli = (...args) => {
   return JSON.parse(result.stdout);
 };
 let descriptor;
-for (const windowLabel of ["main", "win-run-peer"]) {
-  const deadline = Date.now() + 180_000;
-  for (;;) {
-    try {
-      descriptor = JSON.parse(fs.readFileSync(process.env.DURE_QA_SERVER_DESCRIPTOR, "utf8"));
-      await requestAppControl({ descriptor, path: "/diagnostics", body: { windowLabel }, timeoutMs: 2_000 });
-      break;
-    } catch (error) {
-      if (Date.now() > deadline) throw error;
-      await delay(100);
+async function waitForWindows() {
+  for (const windowLabel of ["main", "win-run-peer"]) {
+    const deadline = Date.now() + 180_000;
+    for (;;) {
+      try {
+        descriptor = JSON.parse(fs.readFileSync(process.env.DURE_QA_SERVER_DESCRIPTOR, "utf8"));
+        await requestAppControl({ descriptor, path: "/diagnostics", body: { windowLabel }, timeoutMs: 2_000 });
+        break;
+      } catch (error) {
+        if (Date.now() > deadline) throw error;
+        await delay(100);
+      }
     }
   }
 }
+await waitForWindows();
 const repo = path.join(home, "repo");
 fs.mkdirSync(repo);
 const git = (...args) => execFileSync("git", args, { cwd: repo, env: withoutLocalGitOverrides(), encoding: "utf8" });
@@ -90,8 +95,55 @@ assert.equal(cli("runs", "list").runs.filter((run) => run.agentId === agentId).l
 // Retire the owned test Agent while its Host can publish an exited tombstone,
 // before the runner freezes the application group during cleanup.
 cli("stop", agentId, "--yes");
+// Keep another Run headless throughout provider exit and native app restart.
+// Its catalog and exact continuation must survive without a pane owning them.
+const exitedLaunch = cli("run", "--project", "durable-runs-qa", "--name", "exited-headless-qa",
+  "--worktree", "exited-headless-qa", "crash-after-ready");
+assert.equal(exitedLaunch.presentation.state, "headless");
+const exitedAgentId = exitedLaunch.receipt.plan.agentId;
+const exitedBefore = cli("runs", "show", exitedAgentId);
+const exitedSession = exitedBefore.runtime.receipt.authority.authority.binding.sessionId;
+const exitedWorkspace = exitedBefore.run.workspaceId;
+// This fixture selects its scripted scenario from terminal input, not argv.
+cli("send", exitedSession, "--workspace", exitedWorkspace, "crash-after-ready");
+const hostSessions = () => JSON.parse(execFileSync(process.env.DURE_HMUX_BIN,
+  ["--discovery-root", process.env.HMUX_DISCOVERY_ROOT, "--json", "ls"],
+  { env: environment, encoding: "utf8", timeout: 10_000 }));
+const exitDeadline = Date.now() + 30_000;
+while (!hostSessions().some((session) => session.session_id === exitedSession && session.lifecycle === "exited")) {
+  assert(Date.now() < exitDeadline, "headless provider did not publish its exited tombstone");
+  await delay(100);
+}
+const appBeforeRestart = await observeRestartApp(descriptor, { channel: environment.DURE_APP_CHANNEL, stateRoot: root });
+const worktreeRoot = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
+const { value: supervisor } = readDescriptor({ home, channel: environment.DURE_APP_CHANNEL, worktreeRoot });
+assert.equal(supervisor.state, "ready");
+const restart = await requestDevLaunchRestart({ root: worktreeRoot, home,
+  channel: environment.DURE_APP_CHANNEL, expectedAuthority: supervisor });
+await waitForWindows();
+const appAfterRestart = await observeRestartApp(descriptor, { channel: environment.DURE_APP_CHANNEL, stateRoot: root });
+assert.notEqual(appAfterRestart.processIdentity, appBeforeRestart.processIdentity);
+assert.notEqual(appAfterRestart.generation, appBeforeRestart.generation);
+assert.equal(cli("runs", "list").runs.filter((run) => run.agentId === exitedAgentId).length, 1);
+assert.equal(cli("runs", "show", exitedAgentId).runtime.receipt.authority.authority.binding.sessionId, exitedSession);
+const exitedRecovery = cli("runs", "resume", exitedAgentId, "--confirm-restart");
+assert.equal(exitedRecovery.recovery.publication, "published");
+const recoveredSession = cli("runs", "show", exitedAgentId).runtime.receipt.authority.authority.binding.sessionId;
+assert.notEqual(recoveredSession, exitedSession);
+let recoveredPane;
+try {
+  const recoveredInspection = JSON.parse(execFileSync(process.env.DURE_HMUX_BIN,
+    ["--discovery-root", process.env.HMUX_DISCOVERY_ROOT, "--json", "session", "show", recoveredSession,
+      "--workspace", exitedWorkspace], { env: environment, encoding: "utf8", timeout: 10_000 }));
+  assert.equal(recoveredInspection.providerConversationIdentity.conversation_id, exitedSession);
+  recoveredPane = cli("runs", "open", exitedAgentId, "--space", space);
+  assert.equal(recoveredPane.presentation.pane.sessionId, recoveredSession);
+} finally {
+  cli("stop", exitedAgentId, "--yes");
+}
 fs.writeFileSync(path.join(root, "evidence", "durable-runs.json"), JSON.stringify({
   catalog, launchedEnvironment, originalSession, opened, recovery, successor, reopened,
+  exitedLaunch, exitedSession, restart, appBeforeRestart, appAfterRestart, exitedRecovery, recoveredSession, recoveredPane,
   evidence: "Native macOS app with two WebViews and a disposable fake-provider PTY; no provider account used.",
 }, null, 2));
-console.log("Durable Runs: headless discovery, repeated multi-window open, native recovery and successor presentation passed.");
+console.log("Durable Runs: headless discovery, repeated multi-window open, live recovery, provider exit, native app restart and exact conversation resume passed.");
