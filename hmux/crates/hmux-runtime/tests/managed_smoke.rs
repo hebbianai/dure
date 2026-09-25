@@ -7985,6 +7985,24 @@ fn publish_provider_conversation_identity(
     provider_id: &str,
     conversation_id: &str,
 ) {
+    publish_provider_conversation_identity_with_predecessor(
+        discovery_root,
+        cwd,
+        descriptor,
+        provider_id,
+        conversation_id,
+        None,
+    );
+}
+
+fn publish_provider_conversation_identity_with_predecessor(
+    discovery_root: &std::path::Path,
+    cwd: &std::path::Path,
+    descriptor: &hmux_client::SessionDescriptor,
+    provider_id: &str,
+    conversation_id: &str,
+    previous_conversation_id: Option<String>,
+) {
     let expected_fence = SessionFence {
         workspace_id: descriptor.workspace_id.clone(),
         session_id: descriptor.session_id.clone(),
@@ -7999,17 +8017,22 @@ fn publish_provider_conversation_identity(
         .report_agent_state(
             ManagedAttachRequest::new(&descriptor.session_id, &descriptor.workspace_id).unwrap(),
             AgentStateReport {
-                identity_only: true,
+                identity_only: previous_conversation_id.is_none(),
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
                 attention: hmux_client::AgentRuntimeAttention::None,
                 turn_completed: false,
                 turn_completion_id: None,
-                causality: None,
+                causality: previous_conversation_id.as_ref().map(|_| {
+                    hmux_host::local_protocol::AgentStateReportCausality {
+                        sequence: 1,
+                        work_id: Some("continued-work".into()),
+                    }
+                }),
                 working_ttl_ms: None,
                 conversation_identity: Some(ProviderConversationIdentity {
                     provider_id: provider_id.into(),
                     conversation_id: conversation_id.into(),
-                    previous_conversation_id: None,
+                    previous_conversation_id,
                     expected_fence: Some(expected_fence),
                 }),
                 expected_observation: None,

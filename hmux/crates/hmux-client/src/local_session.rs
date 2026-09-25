@@ -460,6 +460,7 @@ mod tests {
         DiscoveryManifest::Exited(ExitedManifest {
             common: ready.common,
             tombstone: Box::new(ExitTombstone {
+                provider_conversation_identity: None,
                 fence,
                 provider_process: ready.provider_process,
                 exit: Exit {

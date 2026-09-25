@@ -171,6 +171,7 @@ fn publish_retired_with_processes(
     let exited = ExitedManifest {
         common: common.clone(),
         tombstone: Box::new(ExitTombstone {
+            provider_conversation_identity: None,
             fence: SessionFence {
                 workspace_id: "workspace".into(),
                 session_id: session_id.into(),

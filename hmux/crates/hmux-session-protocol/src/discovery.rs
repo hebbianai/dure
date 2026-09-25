@@ -541,6 +541,25 @@ fn validate_exited(
         manifest.tombstone.exit.platform_status.as_deref(),
         limits.max_context_bytes,
     )?;
+    if let Some(identity) = &manifest.tombstone.provider_conversation_identity {
+        if identity.provider_id != manifest.common.provider_id {
+            return Err(ManifestValidationError::Inconsistent {
+                field: "exit_provider_conversation_identity",
+            });
+        }
+        crate::validation::validate_provider_conversation_identity_projection(
+            identity,
+            fence,
+            manifest.tombstone.exit.final_output_seq,
+            &crate::FrameLimits {
+                max_identifier_bytes: limits.max_identifier_bytes,
+                ..crate::FrameLimits::default()
+            },
+        )
+        .map_err(|_| ManifestValidationError::Inconsistent {
+            field: "exit_provider_conversation_identity",
+        })?;
+    }
     let Some(failure) = &manifest.tombstone.failure else {
         return Ok(());
     };

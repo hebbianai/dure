@@ -117,6 +117,7 @@ fn archived_writer(root: &std::path::Path, terminal_epoch: &str) -> ManagedCreat
     let exited = ExitedManifest {
         common,
         tombstone: Box::new(ExitTombstone {
+            provider_conversation_identity: None,
             fence: SessionFence {
                 workspace_id: request.workspace_id().into(),
                 session_id: request.session_id().into(),

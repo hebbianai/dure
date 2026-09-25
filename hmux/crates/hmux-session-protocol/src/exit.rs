@@ -1,6 +1,6 @@
 //! Serialized exit observations shared by discovery and session consumers.
 
-use crate::{Exit, ProcessProof, SessionFence};
+use crate::{Exit, ProcessProof, ProviderConversationIdentityProjection, SessionFence};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -60,6 +60,10 @@ pub struct SessionFailureCapsule {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ExitTombstone {
+    /// Last Host-accepted identity, retained even when no client observed it.
+    /// Older tombstones omit it and cannot establish a conversation by inference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_conversation_identity: Option<Box<ProviderConversationIdentityProjection>>,
     pub fence: SessionFence,
     pub provider_process: ProcessProof,
     pub exit: Exit,

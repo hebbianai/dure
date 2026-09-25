@@ -972,6 +972,7 @@ fn archive_checkpointed_starting_with_reason(fixture: &CheckpointedRetryFixture,
     let exited = ExitedManifest {
         common: starting.common,
         tombstone: Box::new(ExitTombstone {
+            provider_conversation_identity: None,
             fence: SessionFence {
                 workspace_id: fixture.request.workspace_id().to_string(),
                 session_id: fixture.request.session_id().to_string(),
