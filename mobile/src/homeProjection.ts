@@ -33,7 +33,6 @@ export interface HomeGroup {
 	readonly key: string;
 	readonly label: string;
 	readonly rows: readonly HomeRow[];
-	readonly pinned?: boolean;
 }
 
 export function homeRows(
@@ -96,9 +95,7 @@ export function projectHome(
 	now: number,
 ) {
 	const universe = homeRows(model);
-	const projected = projectSpacesRows(universe.rows, options);
-	const pins = projected.filter(row => row.pinned === true);
-	const rows = projected.filter(row => row.pinned !== true);
+	const rows = projectSpacesRows(universe.rows, options);
 	const groups: HomeGroup[] = [];
 	if (options.groupBy === "space" || options.groupBy === "repository") {
 		const axis = options.groupBy;
@@ -131,12 +128,15 @@ export function projectHome(
 		);
 	}
 	return {
-		groups: [
-			...(pins.length ? [{ key: "pinned", label: t("spaces.pane.pinned"), rows: pins, pinned: true }] : []),
-			...(hasActiveSpacesFilters(options.filters)
+		groups: (hasActiveSpacesFilters(options.filters)
 			? groups.filter((group) => group.rows.length > 0)
-			: groups),
-		],
+			: groups).map(group => ({
+			...group,
+			rows: [
+				...group.rows.filter(row => row.pinned === true),
+				...group.rows.filter(row => row.pinned !== true),
+			],
+		})),
 		choices: spacesFilterChoices(universe.rows, options.filters),
 		hidden: universe.hidden,
 	};

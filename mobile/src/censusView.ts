@@ -188,9 +188,9 @@ export function renderHomeScreen(model: CensusModel, actions: CensusActions): HT
   const options = model.viewOptions ?? loadHomeViewOptions();
   const now = Date.now();
   const projected = projectHome(model, options, now);
-  const groups = projected.groups.filter(group => !group.pinned);
-  const pins = projected.groups.find(group => group.pinned)?.rows ?? [];
+  const groups = projected.groups;
   const selected = groups.find(group => group.key === model.desktop) ?? groups[0];
+  const pins = selected?.rows.filter(row => row.pinned === true) ?? [];
   screen.dataset.group = JSON.stringify([options.groupBy, selected?.key]);
   screen.append(header(actions));
   // The strip stands only when it has a tab. With none — every group hidden
@@ -207,7 +207,7 @@ export function renderHomeScreen(model: CensusModel, actions: CensusActions): HT
   fadeWhileScrollable(body, { start: "scroll-fade--start", end: "scroll-fade--end" }, "y");
   body.append(pullStrip(model, actions));
   const list = element("ul", "list home__list");
-  const rows = selected?.rows ?? [];
+  const rows = selected?.rows.filter(row => row.pinned !== true) ?? [];
   const draw = (row: HomeRow): void => {
     list.append(renderHomeSessionRow(row, options, row.row.sessionId === model.opening, now, actions));
   };

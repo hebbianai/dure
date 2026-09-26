@@ -23,12 +23,10 @@ export function renderSessionSwitcher(
 		);
 		return panel;
 	}
-	const pins = groups.find(group => group.pinned)?.rows ?? [];
-	const tabsGroups = groups.filter(group => !group.pinned);
 	let selected =
-		tabsGroups.find((group) =>
+		groups.find((group) =>
 			group.rows.some((view) => view.row.sessionId === currentId),
-		) ?? tabsGroups[0];
+		) ?? groups[0];
 	const tabs = element("div", "tabs session-switcher__tabs");
 	tabs.setAttribute("role", "tablist");
 	const list = element("ul", "list session-switcher__list tray__panel-scroll");
@@ -39,6 +37,8 @@ export function renderSessionSwitcher(
 			tab.setAttribute("aria-selected", String(active));
 		}
 		list.replaceChildren();
+		const pins = selected.rows.filter(view => view.pinned === true);
+		const rows = selected.rows.filter(view => view.pinned !== true);
 		if (pins.length) {
 			const heading = element("li", "list__heading");
 			heading.append(groupHeading(t("spaces.pane.pinned"), pins.length));
@@ -56,15 +56,15 @@ export function renderSessionSwitcher(
 			),
 		);
 		drawRows(pins);
-		if (pins.length && selected?.rows.length) {
+		if (pins.length && rows.length) {
 			const heading = element("li", "list__heading");
-			heading.append(groupHeading(selected.label, selected.rows.length));
+			heading.append(groupHeading(selected.label, rows.length));
 			list.append(heading);
 		}
-		drawRows(selected?.rows ?? []);
+		drawRows(rows);
 		list.scrollTop = 0;
 	};
-	for (const group of tabsGroups) {
+	for (const group of groups) {
 		const tab = element("button", "tab", group.label);
 		tab.type = "button";
 		tab.dataset.group = group.key;
