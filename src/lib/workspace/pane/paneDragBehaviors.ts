@@ -95,9 +95,11 @@ export function installPaneDragBehaviors(
 	};
 	const stopRecommendations = () => {
 		getContainer()?.removeAttribute("data-pane-drag-active");
+		removePreview();
 	};
 	const willDragPanel = api.onWillDragPanel((event) => {
 		paneDragPerformance.begin();
+		removePreview();
 		startRecommendations();
 		pending = api.toJSON();
 		lastDragOver = null; // 이전 드래그의 마지막 좌표가 새 드래그 판정에 새지 않게
@@ -115,6 +117,7 @@ export function installPaneDragBehaviors(
 	});
 	const willDragGroup = api.onWillDragGroup(() => {
 		paneDragPerformance.begin();
+		removePreview();
 		startRecommendations();
 		pending = api.toJSON();
 	});
@@ -217,9 +220,17 @@ export function installPaneDragBehaviors(
 	// 오프셋)에 고스트를 그린다(사용자 요청 2026-08-01: 어디에 뜰지 보이게).
 	// 전환이 일어나는 조건(원래 pane 밖 + workspace 안)에서만 보인다.
 	let preview: HTMLDivElement | null = null;
-	const hidePreview = () => {
+	const removePreview = () => {
 		preview?.remove();
 		preview = null;
+	};
+	const hidePreview = () => {
+		// Keep the same node when a split/insertion temporarily wins. Removing
+		// and rebuilding it stalls WebKit over dense terminal content.
+		// Gesture retirement owns removal through stopRecommendations.
+		if (preview && preview.style.visibility !== "hidden") {
+			preview.style.visibility = "hidden";
+		}
 	};
 	const showPreview = (x: number, y: number) => {
 		if (!preview) {
@@ -233,6 +244,9 @@ export function installPaneDragBehaviors(
 			preview.style.width = `${FLOAT_SIZE.width}px`;
 			preview.style.height = `${FLOAT_SIZE.height}px`;
 			document.body.appendChild(preview);
+		}
+		if (preview.style.visibility !== "visible") {
+			preview.style.visibility = "visible";
 		}
 		if (preview.style.left !== `${x}px`) preview.style.left = `${x}px`;
 		if (preview.style.top !== `${y}px`) preview.style.top = `${y}px`;

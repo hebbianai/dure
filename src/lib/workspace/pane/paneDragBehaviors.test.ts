@@ -147,6 +147,45 @@ function setup() {
 const flushRecommendation = () => Promise.resolve();
 
 describe("pane floating drag recommendation", () => {
+	it.each(["drop", "dragend", "Escape", "move", "dispose"])(
+		"retains one preview across target changes and removes it on %s",
+		async (retirement) => {
+			const { container, start, showDockviewOverlay, handlers, dispose } =
+				setup();
+			start();
+			window.dispatchEvent(dragEvent("dragover", 700, 500));
+			await flushRecommendation();
+			const preview = document.querySelector<HTMLElement>(
+				".pane-float-preview",
+			)!;
+			expect(preview).not.toBeNull();
+			for (let index = 0; index < 3; index++) {
+				const split = document.createElement("div");
+				split.className = "dv-drop-target-selection";
+				container.append(split);
+				window.dispatchEvent(dragEvent("dragover", 720, 520));
+				showDockviewOverlay("right", split);
+				await flushRecommendation();
+				expect(preview.isConnected).toBe(true);
+				expect(preview.style.visibility).toBe("hidden");
+				expect(split.dataset.paneDropIntent).toBe("split-right");
+				split.remove();
+				window.dispatchEvent(dragEvent("dragover", 730, 530));
+				await flushRecommendation();
+				expect(document.querySelector(".pane-float-preview")).toBe(preview);
+				expect(preview.style.visibility).toBe("visible");
+				expect(preview.style.left).toBe("690px");
+			}
+			if (retirement === "dispose") dispose();
+			else if (retirement === "move") handlers.didMovePanel({} as never);
+			else if (retirement === "Escape")
+				window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+			else window.dispatchEvent(dragEvent(retirement, 730, 530));
+			expect(preview.isConnected).toBe(false);
+			expect(document.querySelector(".pane-float-preview")).toBeNull();
+		},
+	);
+
 	it("reuses the floating preview during repeated pointer movement", async () => {
 		const { start } = setup();
 		start();
@@ -328,7 +367,9 @@ describe("pane floating drag recommendation", () => {
 					expect(event.defaultPrevented).toBe(true);
 					expect(overlay?.dataset.paneDropIntent).toBe("insert-column");
 					expect(overlay?.style.left).toBe("286px");
-					expect(document.querySelector(".pane-float-preview")).toBeNull();
+					const preview = document.querySelector(".pane-float-preview");
+					if (preview)
+						expect(window.getComputedStyle(preview).visibility).toBe("hidden");
 				}
 			}
 			window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
@@ -371,7 +412,9 @@ describe("pane floating drag recommendation", () => {
 					".pane-float-preview",
 				);
 				expect(event.defaultPrevented).toBe(visible);
-				expect(preview !== null).toBe(visible);
+				expect(preview !== null && preview.style.visibility !== "hidden").toBe(
+					visible,
+				);
 				if (visible) {
 					expect(preview?.style.left).toBe(`${Math.max(left, 660)}px`);
 					expect(preview?.style.top).toBe(`${Math.max(top, 484)}px`);
@@ -701,7 +744,10 @@ describe("pane floating drag recommendation", () => {
 			// Production insertion writes occur during the next captured hover.
 			window.dispatchEvent(dragEvent("dragover", 700, 500));
 			await flushRecommendation();
-			expect(document.querySelector(".pane-float-preview")).toBeNull();
+			expect(
+				window.getComputedStyle(document.querySelector(".pane-float-preview")!)
+					.visibility,
+			).toBe("hidden");
 		},
 	);
 
@@ -749,7 +795,10 @@ describe("float 추천과 dockview 추천의 공존 금지 (사용자 제보 202
 		container.appendChild(target);
 		window.dispatchEvent(dragEvent("dragover", 720, 520));
 		await flushRecommendation();
-		expect(document.querySelector(".pane-float-preview")).toBeNull();
+		expect(
+			window.getComputedStyle(document.querySelector(".pane-float-preview")!)
+				.visibility,
+		).toBe("hidden");
 		// 추천이 걷히면 고스트가 되살아난다.
 		target.remove();
 		window.dispatchEvent(dragEvent("dragover", 700, 500));
