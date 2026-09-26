@@ -655,10 +655,11 @@ export function openAgentPanel(
   desktopId: string,
   agent: Agent,
   position?: PanelPosition,
+  preferredPanelId?: string,
 ): string | false {
   const api = registry.get(desktopId);
   return api
-    ? openAgentPanelOnDockview({ desktopId, api, agent, position })
+    ? openAgentPanelOnDockview({ desktopId, api, agent, position, preferredPanelId })
     : false;
 }
 

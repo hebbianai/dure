@@ -75,8 +75,12 @@ applies one durable backend plan, so retries reuse the same operation instead
 of creating a second agent.
 
 Pane placement is a separate client-only result. Inside an exact Hmux pane,
-omitting `--space` opens the new Agent beside the invoking pane in the same
-Space. Outside a provable pane, the Run remains headless. If that exact Session
+omitting `--space` opens the new Agent in the same Space. The client prefers
+splitting the invoking pane right or below, targeting at least 480×300 px per
+pane. If neither split fits, it chooses another fitting pane. A full Space uses
+the best available split; this does not create another Space or rearrange the
+existing layout. Explicit split directions and drop positions are respected.
+Outside a provable pane, the Run remains headless. If that exact Session
 is visible in multiple Spaces, specify `--space`; Dure will not guess. A pane
 failure never replays or stops a successful Run. Use `dure runs open <agent-id>
 --space <space-id>` after correcting client state.

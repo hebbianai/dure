@@ -42,6 +42,7 @@ export interface StructuredRunPresentationDependencies {
 		spaceId: string,
 		agent: Agent,
 		position?: PanelPosition,
+		preferredPanelId?: string,
 	): string | false;
 }
 
@@ -322,7 +323,8 @@ export async function presentStructuredRun(
 		presentationExecutionTarget(run, target.executionTarget),
 		dependencies,
 	);
-	let position = target.position;
+	const position = target.position;
+	let preferredPanelId: string | undefined;
 	if (!position && target.referencePanelId) {
 		const reference = await dependencies.resolveReference(
 			target.referencePanelId,
@@ -333,7 +335,7 @@ export async function presentStructuredRun(
 				"structured Agent reference pane moved to another Space",
 			);
 		}
-		position = { referencePanel: reference.panelId, direction: "right" };
+		preferredPanelId = reference.panelId;
 	}
 	requireTargetWindow(target.spaceId, target.windowLabel, dependencies);
 	const projected = projectStructuredRunAgent(
@@ -353,6 +355,7 @@ export async function presentStructuredRun(
 		target.spaceId,
 		projected.agent,
 		position,
+		preferredPanelId,
 	);
 	if (!panelId) {
 		fail(

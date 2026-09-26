@@ -200,7 +200,13 @@ export function preserveSizesAfterSplit(
 	const referenceChild = before.childOfGroup.get(referenceGroupId);
 	if (!afterRow || addedChild === undefined || referenceChild === undefined)
 		return;
-	if (!sameRowPlusOne(beforeRow, afterRow, addedChild)) return;
+	// A one-pane root can change axes without changing its child identity.
+	// Never apply its old width as a height (or vice versa).
+	if (
+		beforeRow.vertical !== afterRow.vertical ||
+		!sameRowPlusOne(beforeRow, afterRow, addedChild)
+	)
+		return;
 	applyPaneRowSizes(
 		api,
 		afterRow,

@@ -602,7 +602,7 @@ describe("managed Run pane transaction", () => {
 		expect(fixture.readState().agents).toHaveLength(1);
 	});
 
-	it("projects the existing runtime and opens beside the invoking pane", async () => {
+	it("projects the existing runtime and prefers the invoking pane without forcing an axis", async () => {
 		const fixture = handlerFixture();
 		const result = await handleCliManagedRunPresentation(
 			{ ...request },
@@ -621,7 +621,8 @@ describe("managed Run pane transaction", () => {
 		expect(fixture.openAgent).toHaveBeenCalledWith(
 			request.spaceId,
 			expect.objectContaining({ id: request.agentId, started: true }),
-			{ referencePanel: request.referencePanelId, direction: "right" },
+			undefined,
+			request.referencePanelId,
 		);
 		expect(fixture.dependencies.requestSpaceMount).toHaveBeenCalledWith(
 			request.spaceId,
@@ -648,6 +649,7 @@ describe("managed Run pane transaction", () => {
 			request.spaceId,
 			expect.objectContaining({ id: request.agentId }),
 			panePosition,
+			undefined,
 		);
 		expect(fixture.dependencies.resolveReference).not.toHaveBeenCalled();
 	});

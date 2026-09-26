@@ -93,6 +93,7 @@ export interface CliManagedRunPresentationDependencies {
 		spaceId: string,
 		agent: Agent,
 		position?: PanelPosition,
+		preferredPanelId?: string,
 	): string | false;
 	waitForAttachment(identity: {
 		desktopId: string;
@@ -319,7 +320,8 @@ async function performManagedRunPresentation(
 			project,
 			request.providerId,
 		);
-	let position = request.panePosition;
+	const position = request.panePosition;
+	let preferredPanelId: string | undefined;
 	if (!position && request.referencePanelId) {
 		const reference = await dependencies.resolveReference(
 			request.referencePanelId,
@@ -330,10 +332,9 @@ async function performManagedRunPresentation(
 				"invoking pane moved to another Space before presentation",
 			);
 		}
-		position = {
-			referencePanel: reference.panelId,
-			direction: "right",
-		};
+		// Resolve the caller here, but choose an axis from the latest geometry
+		// inside the synchronous pane commit, including consecutive spawns.
+		preferredPanelId = reference.panelId;
 	}
 	requireTargetSpaceWindow(
 		request,
@@ -351,6 +352,7 @@ async function performManagedRunPresentation(
 		request.spaceId,
 		projected.agent,
 		position,
+		preferredPanelId,
 	);
 	if (!panelId) {
 		failCliManagedRunPresentation(

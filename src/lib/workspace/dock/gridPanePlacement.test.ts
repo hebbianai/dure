@@ -1,6 +1,7 @@
 import type { DockviewApi } from "dockview-react";
 import { describe, expect, it } from "vitest";
 import {
+	autoSplitPosition,
 	pickAutoSplit,
 	pickGridSplit,
 	rightRailPosition,
@@ -91,6 +92,78 @@ describe("rightRailPosition measurement boundary", () => {
 	);
 });
 
+describe("agent readability targets", () => {
+	const minimumSize = { width: 480, height: 300 };
+	it.each([
+		{ width: 800, height: 900, direction: "below" },
+		{ width: 1200, height: 450, direction: "right" },
+		{ width: 900, height: 600, direction: "below" },
+	])(
+		"tries both axes for a nearby $width x $height pane",
+		({ width, height, direction }) => {
+			expect(
+				pickAutoSplit([{ id: "parent", width, height }], "parent", minimumSize),
+			).toEqual({ referenceGroupId: "parent", direction });
+		},
+	);
+	it("chooses another fitting pane before an oversized but unreadable strip", () => {
+		expect(
+			pickAutoSplit(
+				[
+					{ id: "parent", width: 800, height: 450 },
+					{ id: "wide-strip", width: 4000, height: 200 },
+					{ id: "narrow-strip", width: 300, height: 3000 },
+					{ id: "fits", width: 800, height: 900 },
+				],
+				"parent",
+				minimumSize,
+			),
+		).toEqual({ referenceGroupId: "fits", direction: "below" });
+	});
+	it("keeps a full Space usable with the best available split instead of repeatedly splitting the caller", () => {
+		expect(
+			pickAutoSplit(
+				[
+					{ id: "parent", width: 400, height: 450 },
+					{ id: "larger", width: 800, height: 450 },
+				],
+				"parent",
+				minimumSize,
+			),
+		).toEqual({ referenceGroupId: "larger", direction: "right" });
+	});
+	it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+		"ignores invalid measurements: %s",
+		(width) => {
+			const candidates = [{ id: "invalid", width, height: 900 }];
+			expect(pickAutoSplit(candidates, "invalid", minimumSize)).toBeUndefined();
+			expect(pickGridSplit(candidates)).toBeUndefined();
+		},
+	);
+	it("excludes hidden, floating and popout groups even when they are the preferred pane", () => {
+		const group = (id: string, type = "grid", isVisible = true) => ({
+			id,
+			api: { width: 1600, height: 900, location: { type }, isVisible },
+		});
+		const hidden = group("hidden", "grid", false);
+		const visible = group("visible");
+		const api = {
+			panels: [{ id: "parent", group: hidden }],
+			activeGroup: hidden,
+			groups: [
+				hidden,
+				group("floating", "floating"),
+				group("popout", "popout"),
+				visible,
+			],
+			getPanel: () => ({ group: hidden }),
+		} as unknown as DockviewApi;
+		expect(
+			autoSplitPosition(api, { preferredPanelId: "parent", minimumSize }),
+		).toEqual({ referenceGroup: "visible", direction: "right" });
+	});
+});
+
 describe("pickGridSplit", () => {
 	it("가로로 넓은 단일 그룹은 오른쪽으로 쪼갠다 (2번째 pane → 좌우)", () => {
 		expect(pickGridSplit([{ id: "a", width: 1600, height: 900 }])).toEqual({
@@ -169,17 +242,15 @@ describe("pickAutoSplit", () => {
 
 	it("긴 축 반쪽이 하한 미달이면 다른 축을 시도한다", () => {
 		// 630×500: right는 315(<320) 탈락, below는 250(≥220) 통과.
-		expect(
-			pickAutoSplit([{ id: "a", width: 630, height: 500 }], "a"),
-		).toEqual({ referenceGroupId: "a", direction: "below" });
+		expect(pickAutoSplit([{ id: "a", width: 630, height: 500 }], "a")).toEqual({
+			referenceGroupId: "a",
+			direction: "below",
+		});
 	});
 
 	it("두 축 모두 하한 미달이면 가장 큰 그룹 규칙으로 폴백한다", () => {
 		expect(
-			pickAutoSplit(
-				[{ id: "tiny", width: 600, height: 400 }, ...grid],
-				"tiny",
-			),
+			pickAutoSplit([{ id: "tiny", width: 600, height: 400 }, ...grid], "tiny"),
 		).toEqual({ referenceGroupId: "big", direction: "below" });
 	});
 

@@ -111,13 +111,14 @@ describe("openAgentPanel", () => {
     unregisterDockview("desktop-cli", api);
   });
 
-  it("opens a new agent as a right rail matching the post-add agent mean", () => {
+  it("opens a new agent using the preferred pane's measured split", () => {
     const addPanel = vi.fn(({ id }: { id: string }) => ({ id }));
+    const parent = { id: "parent-group", api: { width: 800, height: 900, isVisible: true, location: { type: "grid" } } };
     const api = {
       width: 1_320,
       panels: openAgentColumns(),
-      groups: [],
-      getPanel: () => undefined,
+      groups: [parent],
+      getPanel: (id: string) => id === "parent-pane" ? { group: parent } : undefined,
       addPanel,
       toJSON: () => ({ panels: {} }),
       fromJSON: vi.fn(),
@@ -135,14 +136,13 @@ describe("openAgentPanel", () => {
     registerDockview("desktop-agent-rail", api);
 
     try {
-      const panelId = openAgentPanel("desktop-agent-rail", agent);
+      const panelId = openAgentPanel("desktop-agent-rail", agent, undefined, "parent-pane");
       expect(panelId).not.toBe(false);
       expect(panelId).not.toMatch(/^(agent|term|terminal|launcher):/);
       expect(addPanel).toHaveBeenCalledWith(expect.objectContaining({
         id: panelId,
         component: "agent",
-        initialWidth: 244,
-        position: { direction: "right" },
+        position: { referenceGroup: parent.id, direction: "below" },
       }));
     } finally {
       unregisterDockview("desktop-agent-rail", api);

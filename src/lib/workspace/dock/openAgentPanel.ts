@@ -3,7 +3,7 @@ import { agentDisplayName } from "@/lib/agents/agentDisplayName";
 import { track } from "@/lib/ipc/telemetry";
 import { findAgentPanel } from "@/lib/workspace/dock/dockPanelParameters";
 import { commitExplicitDockviewMutation } from "@/lib/workspace/dock/explicitDockviewCommit";
-import { rightRailPosition } from "@/lib/workspace/dock/gridPanePlacement";
+import { autoSplitPosition } from "@/lib/workspace/dock/gridPanePlacement";
 import type { AgentPaneParameters } from "@/lib/workspace/layout/agentPaneParameters";
 import {
 	clearPaneHiddenAfterRestore,
@@ -32,11 +32,13 @@ export function presentAgentPanelOnDockview({
 	api,
 	agent,
 	position,
+	preferredPanelId,
 }: {
 	readonly desktopId: string;
 	readonly api: DockviewApi;
 	readonly agent: Agent;
 	readonly position?: PanelPosition;
+	readonly preferredPanelId?: string;
 }): PanePresentation | false {
 	const existing = findAgentPanel(api, agent.id);
 	const record = useHiddenPanes.getState().hidden[agent.id];
@@ -71,7 +73,12 @@ export function presentAgentPanelOnDockview({
 					agentRef: { agentId: agent.id },
 				} satisfies AgentPaneParameters,
 				...placementOptions(
-					position ?? restoredPosition ?? rightRailPosition(api),
+					position ??
+						restoredPosition ??
+						autoSplitPosition(api, {
+							preferredPanelId,
+							minimumSize: { width: 480, height: 300 },
+						}),
 				),
 			});
 			return panel;

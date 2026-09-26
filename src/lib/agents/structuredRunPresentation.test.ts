@@ -308,46 +308,56 @@ describe("presentStructuredRun", () => {
 				branch: source.branch,
 			}),
 			undefined,
+			undefined,
 		);
 	});
 
-	it("opens at the complete in-app drop placement", async () => {
-		let current: CliManagedRunPresentationState = {
-			...state(),
-			spaces: [{ id: "space-1", name: "Build" }],
-		};
-		const openAgent = vi.fn(() => "presented-pane");
-		const resolveReference = vi.fn();
-		const dependencies: StructuredRunPresentationDependencies = {
-			windowLabel: () => "main",
-			readState: () => current,
-			setState: (producer) => {
-				current = { ...current, ...producer(current) };
-			},
-			ensureProject: vi.fn(async () => project),
-			requestSpaceMount: vi.fn(),
-			waitForSpace: vi.fn(async () => ({})),
-			resolveReference,
-			openAgent,
-		};
-		const position = { floating: { x: 40, y: 60, width: 700 } };
+	it.each([false, true])(
+		"uses adaptive caller placement unless a drop is explicit: %s",
+		async (explicitDrop) => {
+			let current: CliManagedRunPresentationState = {
+				...state(),
+				spaces: [{ id: "space-1", name: "Build" }],
+			};
+			const openAgent = vi.fn(() => "presented-pane");
+			const resolveReference = vi.fn(async () => ({
+				desktopId: "space-1",
+				panelId: "caller-pane",
+			}));
+			const dependencies: StructuredRunPresentationDependencies = {
+				windowLabel: () => "main",
+				readState: () => current,
+				setState: (producer) => {
+					current = { ...current, ...producer(current) };
+				},
+				ensureProject: vi.fn(async () => project),
+				requestSpaceMount: vi.fn(),
+				waitForSpace: vi.fn(async () => ({})),
+				resolveReference,
+				openAgent,
+			};
+			const position = { floating: { x: 40, y: 60, width: 700 } };
 
-		await presentStructuredRun(
-			run,
-			{
-				projectPath: project.path,
-				spaceId: "space-1",
-				windowLabel: "main",
-				position,
-			},
-			dependencies,
-		);
+			await presentStructuredRun(
+				run,
+				{
+					projectPath: project.path,
+					spaceId: "space-1",
+					windowLabel: "main",
+					referencePanelId: "caller-pane",
+					position: explicitDrop ? position : undefined,
+				},
+				dependencies,
+			);
 
-		expect(openAgent).toHaveBeenCalledWith(
-			"space-1",
-			expect.objectContaining({ id: run.agentId }),
-			position,
-		);
-		expect(resolveReference).not.toHaveBeenCalled();
-	});
+			expect(openAgent).toHaveBeenCalledWith(
+				"space-1",
+				expect.objectContaining({ id: run.agentId }),
+				explicitDrop ? position : undefined,
+				explicitDrop ? undefined : "caller-pane",
+			);
+			if (explicitDrop) expect(resolveReference).not.toHaveBeenCalled();
+			else expect(resolveReference).toHaveBeenCalledWith("caller-pane");
+		},
+	);
 });

@@ -39,7 +39,7 @@ function setup(width = 1200) {
 			desktopId: id,
 			api,
 			agent: agentFixture({ id: agentId, provider: "codex" }),
-			position,
+			position: position ?? rightRailPosition(api),
 		});
 		expect(panelId).not.toBe(false);
 		return api.getPanel(String(panelId))!;
@@ -56,7 +56,7 @@ afterEach(() => {
 	useStore.setState({ layouts: initialLayouts });
 });
 
-describe("ordinary right rail with installed Dockview", () => {
+describe("explicit right rail with installed Dockview", () => {
 	it.each([800, 1200, 1800])(
 		"shares a %ipx workspace between the first two Codex panes",
 		(width) => {
@@ -86,7 +86,7 @@ describe("ordinary right rail with installed Dockview", () => {
 		},
 	);
 
-	it("keeps repeated ordinary additions peer-sized without collapsing earlier panes", () => {
+	it("keeps repeated rail additions peer-sized without collapsing earlier panes", () => {
 		const { api, addAgent } = setup();
 		for (let count = 1; count <= 5; count += 1) {
 			addAgent(`agent-${count}`);
