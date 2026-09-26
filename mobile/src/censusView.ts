@@ -188,7 +188,9 @@ export function renderHomeScreen(model: CensusModel, actions: CensusActions): HT
   const options = model.viewOptions ?? loadHomeViewOptions();
   const now = Date.now();
   const projected = projectHome(model, options, now);
-  const selected = projected.groups.find(group => group.key === model.desktop) ?? projected.groups[0];
+  const groups = projected.groups;
+  const selected = groups.find(group => group.key === model.desktop) ?? groups[0];
+  const pins = selected?.rows.filter(row => row.pinned === true) ?? [];
   screen.dataset.group = JSON.stringify([options.groupBy, selected?.key]);
   screen.append(header(actions));
   // The strip stands only when it has a tab. With none — every group hidden
@@ -197,7 +199,7 @@ export function renderHomeScreen(model: CensusModel, actions: CensusActions): HT
   // another computer keeps its seat at the end of a strip that exists, and
   // its own door under 설정 › 호스트; Home is never reached with nothing paired
   // (2026-09-15 승연).
-  const tabGroups = options.groupBy === "space" && model.layout.desktop_order.length === 0 ? [] : projected.groups;
+  const tabGroups = options.groupBy === "space" && model.layout.desktop_order.length === 0 ? [] : groups;
   if (tabGroups.length) screen.append(tabs(tabGroups, selected?.key ?? "", actions));
   const body = element("div", "home__body");
   // Rows that scroll under the tab strip fade at the edge rather than being
@@ -205,10 +207,21 @@ export function renderHomeScreen(model: CensusModel, actions: CensusActions): HT
   fadeWhileScrollable(body, { start: "scroll-fade--start", end: "scroll-fade--end" }, "y");
   body.append(pullStrip(model, actions));
   const list = element("ul", "list home__list");
-  const rows = selected?.rows ?? [];
+  const rows = selected?.rows.filter(row => row.pinned !== true) ?? [];
   const draw = (row: HomeRow): void => {
     list.append(renderHomeSessionRow(row, options, row.row.sessionId === model.opening, now, actions));
   };
+  if (pins.length) {
+    const heading = element("li", "list__heading");
+    heading.append(groupHeading(t("spaces.pane.pinned"), pins.length));
+    list.append(heading);
+    for (const row of pins) draw(row);
+    if (selected && rows.some(row => !isUnattachable(row))) {
+      const group = element("li", "list__heading");
+      group.append(groupHeading(selected.label, rows.filter(row => !isUnattachable(row)).length));
+      list.append(group);
+    }
+  }
   for (const row of rows) if (!isUnattachable(row)) draw(row);
   // Sessions that cannot be attached gather at the end under one heading,
   // dimmed, with their lifecycle on the line — the heading says why, once,
@@ -221,7 +234,7 @@ export function renderHomeScreen(model: CensusModel, actions: CensusActions): HT
     for (const row of unattachable) draw(row);
   }
   body.append(list);
-  if (!selected?.rows.length) {
+  if (!pins.length && !selected?.rows.length) {
     const hidden = projected.hidden > 0 ? t("세션 {count}개가 모두 사이드바 밖에 있습니다 — 노트북 앱에서 데스크탑에 올려 둔 것이 여기 보입니다", { count: projected.hidden }) : undefined;
     const filtered = Object.values(options.filters).some(values => values.length);
     body.append(emptyBody(model, filtered ? t("spaces.empty.noMatches") : hidden));

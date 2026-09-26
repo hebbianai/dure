@@ -130,6 +130,86 @@ function titles() {
 		(node) => node.textContent,
 	);
 }
+
+function pinSession(id: string, pinned = true) {
+	const row = model.hubs[0].sessions.find(session => session.session_id === id)!;
+	row.presentation = { ...row.presentation, pinned };
+}
+
+it("keeps desktop-pinned panes first only inside their selected Space", () => {
+	pinSession("three");
+	draw();
+	expect(titles()).toEqual(["one"]);
+	expect(document.querySelector(".list__heading")).toBeNull();
+	click("Personal");
+	expect(titles()).toEqual(["three", "two"]);
+	expect(document.querySelector(".list__heading")?.textContent).toContain(t("spaces.pane.pinned"));
+	expect(document.querySelector(".session-row__meta")?.textContent).not.toContain("Personal");
+	click("Work");
+	expect(titles()).toEqual(["one"]);
+	click("Personal");
+	pinSession("three", false);
+	draw();
+	expect(titles()).toEqual(["two", "three"]);
+	expect(document.querySelector(".list__heading")).toBeNull();
+});
+
+it("applies filters before showing pins and preserves ordering within the pinned band", () => {
+	pinSession("one");
+	pinSession("three");
+	model = {
+		...model,
+		desktop: "Personal",
+		layout: {
+			...model.layout,
+			placements: { ...model.layout.placements, one: { ...model.layout.placements.one, desktop: "Personal" } },
+		},
+		viewOptions: { ...loadHomeViewOptions(), orderBy: "updated" },
+	};
+	draw();
+	expect(titles()).toEqual(["one", "three", "two"]);
+	expect(projectHome(model, model.viewOptions!, now).groups.find(group => group.key === "Personal")?.rows.map(view => view.row.sessionId)).toEqual(["one", "three", "two"]);
+	expect(document.querySelector(".home__empty")).toBeNull();
+	model = { ...model, viewOptions: {
+		...model.viewOptions!, filters: { ...model.viewOptions!.filters, source: ["provider:codex"] },
+	} };
+	draw();
+	expect(titles()).toEqual(["three", "two"]);
+});
+
+it("keeps switcher pins inside their Space and opens their original target", () => {
+	pinSession("three");
+	const options = loadHomeViewOptions();
+	const open = vi.fn();
+	const switcher = renderSessionSwitcher(projectHome(model, options, now).groups, options, "one", undefined, now, open);
+	expect([...switcher.querySelectorAll(".session-row__title")].map(row => row.textContent)).toEqual(["one"]);
+	switcher.querySelector<HTMLButtonElement>('[data-group="Personal"]')!.click();
+	expect([...switcher.querySelectorAll(".session-row__title")].map(row => row.textContent)).toEqual(["three", "two"]);
+	switcher.querySelector<HTMLButtonElement>('[data-session-id="three"]')!.click();
+	expect(open).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "three" }));
+	switcher.querySelector<HTMLButtonElement>('[data-group="Work"]')!.click();
+	expect([...switcher.querySelectorAll(".session-row__title")].map(row => row.textContent)).toEqual(["one"]);
+	const currentPinned = renderSessionSwitcher(projectHome(model, options, now).groups, options, "three", undefined, now, open);
+	expect(currentPinned.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Personal");
+});
+
+it("renders only pinned matches in the switcher and keeps unavailable pins disabled", () => {
+	pinSession("three");
+	const defaults = loadHomeViewOptions();
+	const options = { ...defaults, filters: { ...defaults.filters, environment: ["ssh"] as const } };
+	const projected = projectHome(model, options, now);
+	expect(projected.groups).toHaveLength(1);
+	expect(projected.groups[0].key).toBe("Personal");
+	expect(projected.groups[0].rows).toHaveLength(1);
+	const switcher = renderSessionSwitcher(projected.groups, options, "three", undefined, now, vi.fn());
+	expect(switcher.querySelector('[data-session-id="three"]')?.getAttribute("aria-current")).toBe("true");
+	const row = model.hubs[0].sessions.find(session => session.session_id === "three")!;
+	row.ready = false;
+	row.lifecycle = "exited";
+	model = { ...model, desktop: "Personal" };
+	draw();
+	expect(document.querySelector<HTMLButtonElement>('[data-session-id="three"]')?.disabled).toBe(true);
+});
 beforeEach(() => {
 	localStorage.clear();
 	vi.useFakeTimers();

@@ -1,5 +1,6 @@
 /** Korean translations for semantic message IDs. */
 export const ko: Record<string, string> = {
+  "spaces.pane.pinned": "고정됨",
   "pairing.scanner.failed": "카메라 스캐너를 시작할 수 없습니다. 다시 시도하거나 페어링 코드를 붙여넣으세요.",
   "notifications.push.approvalBody": "에이전트가 승인을 기다립니다.",
   "notifications.push.doneBody": "에이전트가 작업을 마쳤습니다.",
