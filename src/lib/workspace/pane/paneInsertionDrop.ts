@@ -101,11 +101,13 @@ export function installInteriorBoundaryDrop(
 
 	let overlay: HTMLDivElement | null = null;
 	let pending: InsertionTarget | null = null;
+	let pendingPanel: ReturnType<DockviewApi["getPanel"]>;
 	// 드래그 중 레이아웃은 고정이므로 그리드는 드래그 세션당 한 번만 읽는다.
 	let gridSnapshot: SerializedGrid | null = null;
 
 	const hideOverlay = () => {
 		pending = null;
+		pendingPanel = undefined;
 		if (overlay && overlay.style.display !== "none") {
 			overlay.style.display = "none";
 		}
@@ -188,6 +190,7 @@ export function installInteriorBoundaryDrop(
 			return;
 		}
 		pending = target;
+		pendingPanel = panelId ? api.getPanel(panelId) : undefined;
 		showOverlay(target);
 		event.preventDefault();
 		// dockview가 dragstart에 effectAllowed='move'를 실어주는 데 기대지 않고
@@ -202,11 +205,39 @@ export function installInteriorBoundaryDrop(
 		const newPane = !!dropNewPane && isNewPaneDrag(event);
 		const panelId = draggedPanelId();
 		const panel = panelId ? api.getPanel(panelId) : undefined;
+		const transfer = getPanelData();
+		const localPanel =
+			!!panel &&
+			transfer?.panelId === panel.id &&
+			transfer.viewId === api.id &&
+			transfer.groupId === panel.group.id;
+		const paneDrop = newPane || localPanel || isPaneDrag(event);
+		const hoveredGrid = gridSnapshot;
+		const sourceMatches = newPane
+			? !pendingPanel
+			: !!panel && panel === pendingPanel;
 		reset();
-		if (!panel && !newPane) return;
+		if (!paneDrop) return;
 		event.preventDefault();
 		// dockview의 자체 드롭 처리가 같은 드래그를 이중 소비하지 않게 차단.
 		event.stopPropagation();
+		if (!sourceMatches || !hoveredGrid) return;
+		// Layout notifications can be deferred until after this task. Validate
+		// the current grid and pointer before creating anything: the old path may
+		// now address another branch after a pane closes or the window resizes.
+		const box = readPaneDragGeometry(event, container);
+		const grid = readGrid(api, box);
+		if (!grid || JSON.stringify(grid) !== JSON.stringify(hoveredGrid)) return;
+		const currentTarget = interiorInsertionTarget(grid, {
+			x: event.clientX - box.left,
+			y: event.clientY - box.top,
+		});
+		if (
+			!currentTarget ||
+			currentTarget.orientation !== target.orientation ||
+			currentTarget.location.join(",") !== target.location.join(",")
+		)
+			return;
 		const group = surface.createGroupAtLocation([...target.location]);
 		try {
 			if (newPane) {
@@ -218,9 +249,11 @@ export function installInteriorBoundaryDrop(
 					keepEmptyGroups: false,
 				});
 		} catch (error) {
-			// private 표면의 의미 드리프트로 이동이 실패하면 빈 그룹을 남기지
-			// 않는다 — 드래그는 조용히 무효가 되고 레이아웃은 원상태다.
-			surface.removeGroup?.(group);
+			// A late failure may follow a successful relocation. Removing that
+			// populated group would delete the pane we are trying to preserve.
+			if (api.getGroup(group.id)?.panels.length === 0) {
+				surface.removeGroup?.(group);
+			}
 			throw error;
 		} finally {
 			// Invalid payloads and already-open panes do not populate the new group.

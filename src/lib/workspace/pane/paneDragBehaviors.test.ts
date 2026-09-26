@@ -147,6 +147,37 @@ function setup() {
 const flushRecommendation = () => Promise.resolve();
 
 describe("pane floating drag recommendation", () => {
+	it("reuses the floating preview during repeated pointer movement", async () => {
+		const { start } = setup();
+		start();
+		window.dispatchEvent(dragEvent("dragover", 700, 500));
+		await flushRecommendation();
+		const preview = document.querySelector<HTMLElement>(".pane-float-preview");
+		expect(preview).not.toBeNull();
+		for (let index = 0; index < 20; index++) {
+			window.dispatchEvent(dragEvent("dragover", 700 + index, 500));
+			await flushRecommendation();
+			expect(document.querySelector(".pane-float-preview")).toBe(preview);
+		}
+		expect(preview?.style.left).toBe("679px");
+		window.dispatchEvent(dragEvent("dragend", 719, 500));
+		expect(document.querySelector(".pane-float-preview")).toBeNull();
+	});
+
+	it("does not float a pane after a drop target consumes a rejected move", async () => {
+		const { start, addFloatingGroup } = setup();
+		start();
+		window.dispatchEvent(dragEvent("dragover", 700, 500));
+		await flushRecommendation();
+		const drop = dragEvent("drop", 700, 500);
+		window.dispatchEvent(drop);
+		// The target runs after the window capture listener, even when it
+		// consumes the gesture without emitting a successful Dockview move.
+		drop.preventDefault();
+		window.dispatchEvent(dragEvent("dragend", 700, 500));
+		expect(addFloatingGroup).not.toHaveBeenCalled();
+	});
+
 	it.each(["dragenter", "dragover"])(
 		"waits for the %s owner across native listener microtask checkpoints",
 		async (type) => {

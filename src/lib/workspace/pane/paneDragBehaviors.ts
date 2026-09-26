@@ -102,7 +102,7 @@ export function installPaneDragBehaviors(
 		pending = api.toJSON();
 		lastDragOver = null; // 이전 드래그의 마지막 좌표가 새 드래그 판정에 새지 않게
 		escCancelled = false;
-		dropObserved = false;
+		observedDrop = null;
 		const group = event.panel.group;
 		dragged = {
 			panelId: event.panel.id,
@@ -126,6 +126,7 @@ export function installPaneDragBehaviors(
 			pending = null;
 		}
 		dragged = null;
+		observedDrop = null;
 		// 드롭으로 소스 엘리먼트가 재부모화되면 WebKit이 dragend를 안 쏘는
 		// 경우가 있다 — dockview의 이동 확정 신호에서도 미리보기를 정리해야
 		// 이동 후 고스트가 화면에 남지 않는다 (사용자 제보 2026-08-02).
@@ -206,7 +207,7 @@ export function installPaneDragBehaviors(
 	// 자기 pane 위는 원래 위치 유지 제스처이므로 floating으로 바꾸지 않는다.
 	// ESC 취소도 제외한다.
 	let escCancelled = false;
-	let dropObserved = false;
+	let observedDrop: DragEvent | null = null;
 	// WebKit(WKWebView)은 dragend의 client 좌표를 신뢰할 수 없다(뷰포트가
 	// 아닌 좌표계로 오거나 0,0). dragover는 모든 엔진에서 뷰포트 좌표가
 	// 정확하므로 — dockview 오버레이 배치가 실제 앱에서 맞는 근거 — 드래그
@@ -229,12 +230,12 @@ export function installPaneDragBehaviors(
 			label.className = "pane-float-preview-label";
 			label.textContent = t("workspace.paneDrop.floatHint");
 			preview.appendChild(label);
+			preview.style.width = `${FLOAT_SIZE.width}px`;
+			preview.style.height = `${FLOAT_SIZE.height}px`;
 			document.body.appendChild(preview);
 		}
-		preview.style.left = `${x}px`;
-		preview.style.top = `${y}px`;
-		preview.style.width = `${FLOAT_SIZE.width}px`;
-		preview.style.height = `${FLOAT_SIZE.height}px`;
+		if (preview.style.left !== `${x}px`) preview.style.left = `${x}px`;
+		if (preview.style.top !== `${y}px`) preview.style.top = `${y}px`;
 	};
 	let recommendationEpoch = 0;
 	cancelFallbackRecommendation = () => {
@@ -278,7 +279,10 @@ export function installPaneDragBehaviors(
 		paneDragPerformance.record(event);
 		lastDragOver = { x: event.clientX, y: event.clientY };
 		dockviewPosition = null;
-		cancelFallbackRecommendation();
+		// Invalidate queued work, but retain the current float until this event's
+		// target owner decides whether to move or remove it. Recreating the preview
+		// on every native hover needlessly restarts style/layout and CSS transitions.
+		recommendationEpoch += 1;
 		const container = getContainer();
 		if (container) readPaneDragGeometry(event, container);
 	};
@@ -369,10 +373,10 @@ export function installPaneDragBehaviors(
 	};
 	// dockview가 드롭을 받으면 didMove가 정리하지만, 받지 않는 드롭에서도
 	// dragend 유실 대비로 즉시 추천을 정리한다.
-	const onDrop = () => {
+	const onDrop = (event: DragEvent) => {
 		paneDragPerformance.end();
 		stopRecommendations();
-		if (dragged) dropObserved = true;
+		if (dragged) observedDrop = event;
 		cancelFallbackRecommendation();
 		clearDockviewRecommendation();
 	};
@@ -391,12 +395,15 @@ export function installPaneDragBehaviors(
 		const candidate = dragged;
 		// Native Escape is consumed by WKWebView's drag loop before a DOM keydown.
 		// Unlike a mouse release over an accepted workspace target, it emits no drop.
-		const cancelled = escCancelled || !dropObserved;
+		// Target handlers run after our capture listener. A target may consume a
+		// stale/rejected drop without moving anything; that is not a float request.
+		const cancelled =
+			escCancelled || !observedDrop || observedDrop.defaultPrevented;
 		const over = lastDragOver;
 		dragged = null;
 		pending = null;
 		escCancelled = false;
-		dropObserved = false;
+		observedDrop = null;
 		lastDragOver = null;
 		recommendationEpoch += 1;
 		hidePreview();

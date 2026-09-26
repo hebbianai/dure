@@ -50,6 +50,7 @@ function makeFakeApi(options?: { withSurface?: boolean; panelId?: string }) {
 	const api = {
 		toJSON: () => ({ grid: threeColumnGrid }),
 		getPanel: (id: string) => (id === panelId ? panel : undefined),
+		getGroup: (id: string) => id === "new-group" ? { id, panels: [] } : undefined,
 		onWillShowOverlay: (fn: (e: { preventDefault: () => void }) => void) => {
 			overlaySubscribers.push(fn);
 			return { dispose: () => {} };
@@ -288,6 +289,15 @@ describe("installInteriorBoundaryDrop", () => {
 		const over = dragEventAt("dragover", 300, 300);
 		container.dispatchEvent(over);
 		expect(over.defaultPrevented).toBe(false);
+	});
+
+	it("does not reuse a remembered pane insertion for an unrelated file drop", () => {
+		const { container, createGroupAtLocation } = setup();
+		container.dispatchEvent(dragEventAt("dragover", 300, 300));
+		const drop = dragEventAt("drop", 300, 300, ["Files"]);
+		container.dispatchEvent(drop);
+		expect(drop.defaultPrevented).toBe(false);
+		expect(createGroupAtLocation).not.toHaveBeenCalled();
 	});
 
 	it("표면이 없으면 설치 자체를 건너뛴다 — 기본 드롭 UX 폴백", () => {
