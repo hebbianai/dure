@@ -40,7 +40,8 @@ sha2 = "0.10"
 similar = "=2.7.0"
 tempfile = "3"
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
-tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
+# 0.27 bounds partial-read initialization for large provider/history frames.
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["handshake"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

@@ -1,5 +1,71 @@
 use super::*;
 
+#[test]
+fn large_provider_messages_keep_read_work_bounded_under_partial_reads() {
+    use std::io::{self, Cursor, Read, Write};
+    use tokio_tungstenite::tungstenite::{WebSocket, protocol::Role};
+
+    struct PartialReads {
+        source: Cursor<Vec<u8>>,
+        largest_read_buffer: usize,
+        offered_bytes: usize,
+    }
+    impl Read for PartialReads {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.largest_read_buffer = self.largest_read_buffer.max(buffer.len());
+            self.offered_bytes += buffer.len();
+            let chunk = buffer.len().min(4096);
+            self.source.read(&mut buffer[..chunk])
+        }
+    }
+    impl Write for PartialReads {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // A large unmasked provider frame arrives in socket-sized chunks. Count
+    // the memory prepared for Read instead of asserting a flaky time limit.
+    let payload = vec![b'x'; 8 * 1024 * 1024];
+    let mut wire = vec![0x82, 127];
+    wire.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+    wire.extend_from_slice(&payload);
+    // The following small message must also survive the large transfer.
+    wire.extend_from_slice(&[0x81, 2, b'o', b'k']);
+    let configuration = websocket_configuration();
+    let mut socket = WebSocket::from_raw_socket(
+        PartialReads {
+            source: Cursor::new(wire),
+            largest_read_buffer: 0,
+            offered_bytes: 0,
+        },
+        Role::Client,
+        Some(configuration),
+    );
+    let started = std::time::Instant::now();
+    assert_eq!(
+        socket.read().unwrap(),
+        Message::Binary(payload.clone().into())
+    );
+    assert_eq!(socket.read().unwrap(), Message::Text("ok".into()));
+    let observed = socket.get_ref();
+    eprintln!(
+        "large provider read: payload={} offered={} largest={} elapsed_ms={}",
+        payload.len(),
+        observed.offered_bytes,
+        observed.largest_read_buffer,
+        started.elapsed().as_millis(),
+    );
+    assert!(
+        observed.largest_read_buffer <= configuration.read_buffer_size,
+        "partial reads must not repeatedly initialize the entire large message allocation: {}",
+        observed.largest_read_buffer,
+    );
+}
+
 async fn request(socket: &mut Socket, id: u64, method: &str) -> Value {
     socket
         .send(Message::Text(
