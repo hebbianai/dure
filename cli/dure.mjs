@@ -3554,6 +3554,7 @@ Usage:
 
 --json returns one snapshot with lines (an array of strings) and sequenceThrough.
 Local reads preserve Hmux's receipt (ok, sessionName, sequenceThrough, lines).
+sessionName is null for an unnamed managed session; this does not indicate a read failure.
 Backend reads return the dure.sessions.read envelope, including exact sessionId and workspaceId.
 --follow redraws text and cannot be combined with --json.
 Reads do not send input, start a session or change focus. Use --workspace to disambiguate exact session IDs.`;

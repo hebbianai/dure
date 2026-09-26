@@ -343,6 +343,10 @@ Whoever delegated the work waits with `dure wait --task … --dispatch …
 
 ## Reading another agent's screen
 
+Local JSON reads preserve Hmux's `sessionName`, which is `null` for unnamed
+managed sessions. Use `ok`, `lines` and `sequenceThrough` to inspect the result;
+the app's Agent display name is not the runtime session name.
+
 ```sh
 dure read <name>             # snapshot of their terminal
 dure read <name> --json      # snapshot with lines[] and sequenceThrough

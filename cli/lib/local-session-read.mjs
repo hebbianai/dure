@@ -56,7 +56,9 @@ export async function captureLocalScreen({
     if (!json) return result.stdout;
     let receipt;
     try { receipt = JSON.parse(result.stdout); } catch { /* Validate below. */ }
-    if (receipt?.ok !== true || typeof receipt.sessionName !== "string"
+    // Hmux names standalone sessions; managed sessions legitimately return null.
+    // Preserve that receipt instead of requiring or inventing a display name.
+    if (receipt?.ok !== true || (receipt.sessionName !== null && typeof receipt.sessionName !== "string")
       || typeof receipt.sequenceThrough !== "string" || !/^(0|[1-9][0-9]*)$/.test(receipt.sequenceThrough)
       || !Array.isArray(receipt.lines) || receipt.lines.length > MAX_SESSION_READ_LINES
       || !receipt.lines.every((line) => typeof line === "string")) {

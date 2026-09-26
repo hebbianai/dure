@@ -24,7 +24,7 @@ afterEach(() => {
   }
 });
 
-function fixture(mode) {
+function fixture(mode, jsonReceipt = { ok: true, sessionName: "managed-agent", sequenceThrough: "42", lines: ["한글 terminal", "second line"] }) {
   const root = mkdtempSync(join(tmpdir(), "dure-read-latency-"));
   temporaryRoots.push(root);
   const appRoot = join(root, "app-home");
@@ -92,7 +92,7 @@ if (args[0] === "read" || (args[0] === "--json" && args[1] === "session" && args
       }))}) + "\\n");
     }, 900);
   } else if (args.includes("--json") && process.env.DURE_READ_MODE !== "invalid-json") {
-    process.stdout.write(JSON.stringify({ ok: true, sessionName: "managed-agent", sequenceThrough: "42", lines: ["한글 terminal", "second line"] }));
+    process.stdout.write(process.env.DURE_READ_RECEIPT);
   } else {
     process.stdout.write("managed screen\\n");
   }
@@ -121,6 +121,7 @@ if (args[0] === "read" || (args[0] === "--json" && args[1] === "session" && args
       DURE_READ_CALLS: callsPath,
       DURE_READ_ACTIVE: activePath,
       DURE_READ_MODE: mode,
+      DURE_READ_RECEIPT: JSON.stringify(jsonReceipt),
       DURE_READ_OVERLAP: overlapPath,
       HOME: root,
     },
@@ -170,6 +171,25 @@ function readCalls(path) {
 }
 
 describe("dure managed read latency", () => {
+  it.each(["Dure/managed-agent", "session-external"])("reads an unnamed managed session through %s without inventing a name", (target) => {
+    const receipt = { ok: true, sessionName: null, sequenceThrough: "42", lines: ["한글 terminal", "second line"] };
+    const { environment, callsPath } = fixture("direct-session", receipt);
+    const workspace = target === "session-external" ? "workspace-external" : "workspace-managed";
+    const result = runRead(environment, target, ["--workspace", workspace, "-n", "60", "--json"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(receipt);
+    expect(calls(callsPath)).toEqual([["read", target === "session-external" ? target : "session-managed",
+      "--workspace", workspace, "--lines", "60", "--deadline-ms", "2500", "--json"]]);
+  });
+
+  it.each([undefined, 42, {}, []])("rejects a missing or malformed session name: %j", (sessionName) => {
+    const { environment } = fixture("direct-session", { ok: true, sessionName, sequenceThrough: "42", lines: ["screen"] });
+    const result = runRead(environment, "managed-agent", ["--json"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("invalid JSON screen receipt");
+  });
+
   it.each(["managed-agent", "session-external"])("honors --json for %s without a second capture", (target) => {
     const { callsPath, environment } = fixture("direct-session");
     const workspace = target === "managed-agent" ? "workspace-managed" : "workspace-external";
@@ -203,6 +223,7 @@ describe("dure managed read latency", () => {
     expect(result.stdout).toContain("dure read");
     expect(result.stdout).toContain("--json");
     expect(result.stdout).toContain("lines");
+    expect(result.stdout).toContain("sessionName is null");
     expect(existsSync(callsPath)).toBe(false);
   });
 
