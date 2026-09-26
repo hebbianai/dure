@@ -178,7 +178,16 @@ if (import.meta.env.DEV) {
 	}
 }
 
-if (
+if (import.meta.env.DEV && qaParams.has("qaAgentPanePlacement")) {
+	import("./qa/agentPanePlacement")
+		.then(({ runAgentPanePlacementFixture }) =>
+			runAgentPanePlacementFixture(
+				document.getElementById("root")!,
+				qaParams.get("qaAgentPanePlacement")!,
+			),
+		)
+		.catch((error) => renderEntryFailure(error));
+} else if (
 	import.meta.env.DEV &&
 	import.meta.env.VITE_DURE_PANE_FOCUS_HISTORY_QA === "1" &&
 	qaParams.has("qaPaneFocusHistory")
