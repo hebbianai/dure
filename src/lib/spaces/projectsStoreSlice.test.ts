@@ -14,7 +14,7 @@ vi.mock("@/lib/ipc", () => ({
 }));
 
 import { track } from "@/lib/ipc/telemetry";
-import { planProjectRegistration } from "./projectAdd";
+import { applyProjectRepositoryObservation, planProjectRegistration } from "./projectAdd";
 import { createProjectsStoreSlice } from "./projectsStoreSlice";
 
 beforeEach(() => {
@@ -37,6 +37,9 @@ function harness() {
 			);
 			host.state = { ...host.state, projects: registration.projects };
 			return registration.project;
+		},
+		async (project, isRepo) => {
+			host.state.projects = applyProjectRepositoryObservation(host.state.projects, project, isRepo);
 		},
 	);
 	const host = {

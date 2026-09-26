@@ -33,6 +33,19 @@ import { hostToOpts } from "./sessions";
 export const gitStatus = (path: string) =>
 	invoke<GitStatus>("git_status", { path });
 
+export type RepositoryStatus =
+	| { status: "repository" }
+	| { status: "not_repository" }
+	| { status: "unknown"; detail: string };
+
+/** Local-only observation; callers must never send an SSH path here. */
+export async function localRepositoryStatus(path: string): Promise<RepositoryStatus> {
+	const value = await invoke<RepositoryStatus>("local_repository_status", { path });
+	if (value?.status === "repository" || value?.status === "not_repository") return value;
+	if (value?.status === "unknown" && typeof value.detail === "string") return value;
+	throw new Error("Invalid repository status response");
+}
+
 export type GitAvailability =
   | { status: "available" }
   | { status: "missing" }

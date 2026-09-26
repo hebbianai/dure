@@ -16,7 +16,24 @@ import {
 	createLocalProject,
 	inspectLocalProject,
 	projectNameForPath,
+	applyProjectRepositoryObservation,
 } from "@/lib/spaces/projectAdd";
+import type { Project } from "@/types";
+
+describe("repository observation", () => {
+	const snapshot: Project = { id: "repo", name: "Original", path: "/repo", kind: "local", isRepo: false };
+	it("preserves a concurrent rename and only updates the observed repository flag", () => {
+		expect(applyProjectRepositoryObservation([{ ...snapshot, name: "Renamed" }], snapshot, true))
+			.toEqual([{ ...snapshot, name: "Renamed", isRepo: true }]);
+	});
+	it("does not resurrect a removed project, redirect a moved one, or replace a newer observation", () => {
+		expect(applyProjectRepositoryObservation([], snapshot, true)).toEqual([]);
+		const moved = { ...snapshot, path: "/moved" };
+		expect(applyProjectRepositoryObservation([moved], snapshot, true)).toEqual([moved]);
+		const newer = { ...snapshot, isRepo: true };
+		expect(applyProjectRepositoryObservation([newer], snapshot, false)).toEqual([newer]);
+	});
+});
 
 beforeEach(() => {
 	vi.clearAllMocks();

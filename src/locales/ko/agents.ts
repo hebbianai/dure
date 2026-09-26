@@ -317,6 +317,8 @@ export const agents: Record<string, string> = {
 	"agents.worktree.new": "새 워크트리",
 	"agents.worktree.noSetupFound": "이 폴더에서 실행할 setup을 찾지 못했습니다",
 	"agents.worktree.notGitRepo": "git 저장소가 아니어서 워크트리를 만들 수 없습니다",
+	"agents.worktree.repositoryChecking": "Git 저장소 확인 중…",
+	"agents.worktree.repositoryUnknown": "Git 저장소를 확인하지 못했습니다. 폴더와 Git 설치 상태를 확인한 뒤 다시 시도하세요.",
 	"agents.worktree.ownershipChecking": "점유 상태 확인 중…",
 	"agents.worktree.ownershipNeedsReview": "점유 상태 확인 필요",
 	"agents.worktree.ownershipRecovering": "점유 복구 중…",

@@ -317,6 +317,8 @@ export const agents: Record<string, string> = {
 	"agents.worktree.new": "Novo worktree",
 	"agents.worktree.noSetupFound": "Nenhum setup encontrado para executar nesta pasta",
 	"agents.worktree.notGitRepo": "Não é um repositório Git — não é possível criar um worktree",
+	"agents.worktree.repositoryChecking": "Verificando o repositório Git…",
+	"agents.worktree.repositoryUnknown": "Não foi possível verificar o repositório Git. Verifique a pasta e a instalação do Git e tente novamente.",
 	"agents.worktree.ownershipChecking": "Verificando a propriedade…",
 	"agents.worktree.ownershipNeedsReview": "O status de propriedade precisa de revisão",
 	"agents.worktree.ownershipRecovering": "Recuperando propriedade…",

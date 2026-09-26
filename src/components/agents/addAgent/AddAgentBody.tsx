@@ -86,9 +86,11 @@ import {
   useAddAgentBodyState,
 } from "./useAddAgentBodyState";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
-import { Switch } from "@/components/ui/switch";
+import { WorktreeIsolationToggle } from "@/components/agents/WorktreeIsolationToggle";
 import { GitAvailabilityNotice } from "@/components/scm/GitAvailabilityNotice";
 import { useGitAvailability } from "@/components/scm/useGitAvailability";
+import { useProjectRepository } from "@/components/agents/useProjectRepository";
+import { ProjectRepositoryNotice } from "@/components/agents/ProjectRepositoryNotice";
 
 interface DirectAgentCreation {
   agent: Agent;
@@ -206,6 +208,7 @@ export function AddAgentBody({
   const directCreationRef = useRef<DirectAgentCreation | null>(null);
 
   const project = form.project;
+  const repository = useProjectRepository(project);
   const git = useGitAvailability(form.hostId, Boolean(project?.isRepo));
   const gitBlocked = git.state.status === "missing" || git.state.status === "checking";
   const canSelectExisting = project?.kind === "local" && !onCreated;
@@ -335,7 +338,7 @@ export function AddAgentBody({
       (!gitBlocked && (existingMode
         ? selectedExistingWorktree !== undefined
         : view.canStart)),
-    busy,
+    busy: busy || repository.state?.status === "checking",
   });
 
   const recoverStaleOwnership = async (candidate: ExistingWorktreeCandidate) => {
@@ -703,33 +706,12 @@ export function AddAgentBody({
             }}
           />
 
+          <ProjectRepositoryNotice {...repository} />
           {project?.isRepo && (
             <div className="flex w-full flex-col gap-3">
               <GitAvailabilityNotice {...git} />
-              {/* 설명 버튼과 Switch는 형제여야 한다 — Switch를 button 안에 넣으면
-                  클릭이 onCheckedChange와 부모 onClick에 연달아 잡혀 서로 상쇄돼
-                  토글이 먹지 않는다(중첩 인터랙티브 요소는 DOM에도 어긋난다). */}
-              <div className="flex w-full items-start gap-3">
-                <button
-                  type="button"
-                  onClick={() => setUseWorktree((prev) => !prev)}
-                  className="flex min-w-0 flex-1 flex-col gap-1 text-left"
-                >
-                  <span className="text-xs leading-none font-medium text-foreground">
-                    {t("agents.worktree.isolateDedicated")}
-                  </span>
-                  <span className="text-meta leading-4 text-muted-foreground">
-                    {existingMode
-                      ? t("agents.worktree.runInSelectedExisting")
-                      : t("agents.worktree.createAndRun")}
-                  </span>
-                </button>
-                <Switch
-                  checked={useWorktree}
-                  onCheckedChange={setUseWorktree}
-                  aria-label={t("agents.worktree.isolateDedicated")}
-                />
-              </div>
+              <WorktreeIsolationToggle checked={useWorktree} onCheckedChange={setUseWorktree}
+                description={t(existingMode ? "agents.worktree.runInSelectedExisting" : "agents.worktree.createAndRun")} />
               {useWorktree && (
                 <>
                   {canSelectExisting &&

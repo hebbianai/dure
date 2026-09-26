@@ -2,6 +2,9 @@
 // same durable intent journal from both the keyboard and the primary action.
 
 import { usePromptAttachments } from "@/components/agents/usePromptAttachments";
+import { useProjectRepository } from "@/components/agents/useProjectRepository";
+import { ProjectRepositoryNotice } from "@/components/agents/ProjectRepositoryNotice";
+import { WorktreeIsolationToggle } from "@/components/agents/WorktreeIsolationToggle";
 import { Alert } from "@/components/ui/alert";
 import type { DroppedFilePayload } from "@/lib/files/externalFileDrop";
 import { ChevronDown, Folder, KeyRound, X } from "lucide-react";
@@ -17,7 +20,6 @@ import {
 	Suspense,
 	useRef,
 	useEffect,
-	useId,
 	useState,
 } from "react";
 import {
@@ -38,7 +40,6 @@ import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { ErrorText } from "@/components/ui/error-text";
 import { IconButton } from "@/components/ui/icon-button";
 import { Kbd } from "@/components/ui/kbd";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
 	useAvailableProviders,
@@ -132,7 +133,6 @@ export function QuickDispatchOverlay({
 	const [permission, setPermission] = useState<LaunchPermissionSelection>("inherit");
 	const [runSetup, setRunSetup] = useState(true);
 	const [useWorktree, setUseWorktree] = useState(false);
-	const worktreeToggleId = useId();
 	const [selectedAccountId, setSelectedAccountId] = useState<string | null>(
 		() => initialAgentLaunchAccountId(providerId, accounts, activeAccounts[providerId]),
 	);
@@ -151,6 +151,7 @@ export function QuickDispatchOverlay({
 	const launchProjects = projects.filter((project) => project.kind === "local" || sshHosts.some((host) => host.id === project.sshHostId));
 	const project =
 		launchProjects.find((candidate) => candidate.id === projectId) ?? null;
+	const repository = useProjectRepository(project, open && quickDialogOpen);
 	const worktreeOn = useWorktree && Boolean(project?.isRepo);
 	const credentialAccounts = supportsDureProviderCredentialSpawn(providerId)
 		? accounts.filter((account) => account.provider === providerId)
@@ -557,12 +558,10 @@ export function QuickDispatchOverlay({
 								{projectId === null && (
 									<p className="px-2 text-xs text-muted-foreground">{t("agents.quickDispatch.homeFolderHint")}</p>
 								)}
-								<div className="flex items-center justify-between gap-3 px-2 py-1">
-									<label htmlFor={worktreeToggleId} className="text-xs text-muted-foreground">
-										{t("agents.worktree.isolateDedicated")}
-									</label>
-									<Switch id={worktreeToggleId} checked={worktreeOn} onCheckedChange={setUseWorktree} disabled={!project?.isRepo} />
+								<div className="px-2 py-1">
+									<WorktreeIsolationToggle checked={worktreeOn} onCheckedChange={setUseWorktree} disabled={!project?.isRepo} />
 								</div>
+								<ProjectRepositoryNotice {...repository} />
 								<QuickDispatchAdvanced
 									provider={providerId}
 									summary={advancedSummary}

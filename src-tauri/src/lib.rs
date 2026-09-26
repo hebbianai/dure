@@ -38,6 +38,7 @@ mod ghx;
 mod git_checkout_instance;
 mod gitx;
 mod git_availability;
+mod git_repository;
 mod hardware_profile;
 mod hmux;
 mod hmux_exact_termination;
@@ -2379,6 +2380,7 @@ pub fn run() {
             sshconfig::ssh_config_hosts,
             git_status,
             git_availability::git_availability,
+            git_repository::local_repository_status,
             git_exec,
             git_exec_bounded,
             dure_cli_install::dure_cli_install_status,

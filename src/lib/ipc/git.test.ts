@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	captureGitCheckoutInstance,
 	locateGitCheckoutPaths,
+	localRepositoryStatus,
 	prepareRemoteGitCheckoutHelper,
 	removeGitCheckoutInstance,
 } from "@/lib/ipc/git";
@@ -21,6 +22,14 @@ const instance = {
 
 beforeEach(() => {
 	invokeMock.mockReset();
+});
+
+it("preserves explicit repository uncertainty and rejects malformed probe responses", async () => {
+	invokeMock.mockResolvedValueOnce({ status: "unknown", detail: "Git unavailable" });
+	await expect(localRepositoryStatus("/repo")).resolves.toEqual({ status: "unknown", detail: "Git unavailable" });
+	expect(invokeMock).toHaveBeenLastCalledWith("local_repository_status", { path: "/repo" });
+	invokeMock.mockResolvedValueOnce({ status: "unknown" });
+	await expect(localRepositoryStatus("/repo")).rejects.toThrow("Invalid repository status response");
 });
 
 describe("local Git checkout instance IPC", () => {

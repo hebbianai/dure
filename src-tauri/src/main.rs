@@ -26,6 +26,8 @@ mod gitx;
 #[cfg(windows)]
 mod git_availability;
 #[cfg(windows)]
+mod git_repository;
+#[cfg(windows)]
 mod hardware_profile;
 #[cfg(windows)]
 mod hmux_exact_termination;

@@ -60,6 +60,22 @@ export function planProjectRegistration(
 	};
 }
 
+/** Refresh only the inspected registration. A late check must not recreate a
+ * removed project, overwrite a rename, or change a newer observation. */
+export function applyProjectRepositoryObservation(
+	projects: Project[],
+	inspected: Project,
+	isRepo: boolean,
+): Project[] {
+	return projects.map((project) =>
+		project.id === inspected.id && project.kind === "local" &&
+		inspected.kind === "local" && project.path === inspected.path &&
+		project.isRepo === inspected.isRepo && project.isRepo !== isRepo
+			? { ...project, isRepo }
+			: project,
+	);
+}
+
 /** `git worktree list --porcelain -z`는 primary worktree를 첫 record로 준다. */
 function primaryWorktreePath(output: string): string | undefined {
 	const firstField = output.split("\0", 1)[0];

@@ -55,6 +55,16 @@ describe("project registration through the GUI durable owner", () => {
 		}
 	});
 
+	it("persists recovered repository eligibility across a new store boot without duplicating the project", async () => {
+		const receipt = await run.add("/plain");
+		const project = receipt!.registration!.project;
+		expect(project.isRepo).toBe(false);
+		await run.store.useStore.getState().observeProjectRepository(project, true);
+		await run.store.durableAppStorage.flush();
+		const next = await boot();
+		expect(next.store.useStore.getState().projects).toEqual([{ ...project, isRepo: true }]);
+	});
+
 	it.each(["/plain", "/"])(
 		"reuses the saved project on a fresh module/store boot: %s",
 		async (path) => {

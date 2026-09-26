@@ -25,6 +25,7 @@ import type { Agent, Project, SshHostConfig } from "@/types";
 
 const mocks = vi.hoisted(() => ({
 	gitAvailability: vi.fn(),
+	repositoryStatus: vi.fn(),
 	invoke: vi.fn(),
 	openAgentPanelOnDesktop: vi.fn(),
 	openCommandTerminalOn: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@/lib/ipc/git", async (original) => ({
 	...(await original<object>()),
 	gitAvailability: mocks.gitAvailability,
+	localRepositoryStatus: mocks.repositoryStatus,
 }));
 vi.mock("@/lib/agents/agentRegistration", () => ({
 	addAgent: (...args: unknown[]) => addAgent(...args),
@@ -282,6 +284,9 @@ beforeEach(() => {
 	}));
 	vi.clearAllMocks();
 	mocks.gitAvailability.mockReset().mockResolvedValue({ status: "available" });
+	mocks.repositoryStatus.mockReset().mockImplementation(async (path: string) => ({
+		status: path === homeLocation.path ? "not_repository" : "repository",
+	}));
 	invokeMock.mockReset();
 	defaultBackend = createAgentRunBackendFixture({ projectId: repo.id });
 	invokeMock.mockImplementation(async (command, arguments_) => {
@@ -509,6 +514,14 @@ afterEach(() => {
 });
 
 describe("location", () => {
+	it("recovers a stale repository flag and displays the worktree controls for the same selected project", async () => {
+		useStore.setState({ projects: [{ ...repo, isRepo: false }] });
+		renderBody();
+		await screen.findByRole("switch", { name: t("agents.worktree.isolateDedicated") });
+		expect(useStore.getState().projects[0]).toMatchObject({ id: repo.id, isRepo: true });
+		await waitForSubmitEnabled();
+		expect(mocks.runSpawnSaga).not.toHaveBeenCalled();
+	});
 	it("blocks dedicated worktrees without Git but preserves explicit project-folder use", async () => {
 		mocks.gitAvailability.mockResolvedValue({ status: "missing" });
 		renderBody();

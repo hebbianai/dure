@@ -140,9 +140,7 @@ export function useAddAgentForm(
   // 호스트를 바꾸면 이전 호스트의 프로젝트가 선택으로 남으면 안 된다.
   useEffect(() => {
     setProject((current) =>
-      current && hostProjects.some((candidate) => candidate.id === current.id)
-        ? current
-        : (hostProjects[0] ?? null),
+      hostProjects.find((candidate) => candidate.id === current?.id) ?? hostProjects[0] ?? null,
     );
   }, [hostProjects]);
 

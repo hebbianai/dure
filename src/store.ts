@@ -64,7 +64,7 @@ import {
   createProjectsStoreSlice,
   type ProjectsStoreSlice,
 } from "@/lib/spaces/projectsStoreSlice";
-import { planProjectRegistration } from "@/lib/spaces/projectAdd";
+import { applyProjectRepositoryObservation, planProjectRegistration } from "@/lib/spaces/projectAdd";
 
 /** 왼쪽 아이콘 레일에서 고를 수 있는 사이드바 패널. */
 export type { SidebarTab } from "@/lib/sidebar/sidebarTabs";
@@ -164,6 +164,16 @@ export const useStore = create<AppState>()(
         // existing cross-window storage transaction, before any UI update.
         set({ projects: registration.projects });
         return registration.project;
+      }, async (project, isRepo) => {
+        const projects = await durableAppStorage.transact(DURABLE_APP_STORE_NAME, (current) => {
+          const state = normalizePersistedState(current?.state ?? persistedSlice(get()));
+          const projects = applyProjectRepositoryObservation(state.projects, project, isRepo);
+          return {
+            value: { version: PERSIST_VERSION, state: persistedSlice({ ...state, projects }) },
+            result: projects,
+          };
+        });
+        set({ projects });
       }),
       ...createAppPrefsStoreSlice(set),
       ...createAccountProfilesStoreSlice(set, get),

@@ -317,6 +317,8 @@ export const agentsEnglishTranslations: Record<string, string> = {
 	"agents.worktree.new": "New worktree",
 	"agents.worktree.noSetupFound": "No setup command was found in this folder",
 	"agents.worktree.notGitRepo": "Not a git repository — cannot create a worktree",
+	"agents.worktree.repositoryChecking": "Checking Git repository…",
+	"agents.worktree.repositoryUnknown": "Could not verify this Git repository. Check the folder and Git installation, then retry.",
 	"agents.worktree.ownershipChecking": "Checking ownership…",
 	"agents.worktree.ownershipNeedsReview": "Ownership needs review",
 	"agents.worktree.ownershipRecovering": "Recovering ownership…",

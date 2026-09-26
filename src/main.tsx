@@ -178,7 +178,11 @@ if (import.meta.env.DEV) {
 	}
 }
 
-if (import.meta.env.DEV && qaParams.has("qaAgentPanePlacement")) {
+if (import.meta.env.DEV && qaParams.has("qaProjectRepository")) {
+	void import("./qa/projectRepository").then(({ runProjectRepositoryFixture }) =>
+		runProjectRepositoryFixture(root, qaParams.get("qaProjectRepository")!),
+	).catch(renderEntryFailure);
+} else if (import.meta.env.DEV && qaParams.has("qaAgentPanePlacement")) {
 	import("./qa/agentPanePlacement")
 		.then(({ runAgentPanePlacementFixture }) =>
 			runAgentPanePlacementFixture(

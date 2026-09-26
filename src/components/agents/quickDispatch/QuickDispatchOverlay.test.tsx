@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => {
 		ensureProject: vi.fn(),
 		catalog: vi.fn().mockResolvedValue([]),
 		paste: vi.fn(),
+		repositoryStatus: vi.fn(),
 	};
 });
 vi.mock("@/lib/files/sessionFileTransfer", () => ({ saveSessionFiles: mocks.saveRemote }));
@@ -66,6 +67,7 @@ vi.mock("@/lib/ipc/system", async (orig) => ({
 vi.mock("@/lib/ipc/git", async (orig) => ({
 	...(await orig<object>()),
 	homeDir: mocks.homeDir,
+	localRepositoryStatus: mocks.repositoryStatus,
 }));
 
 import { QuickDispatchOverlay } from "@/components/agents/quickDispatch/QuickDispatchOverlay";
@@ -103,6 +105,7 @@ const codexPersonal: AccountProfile = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mocks.repositoryStatus.mockReset().mockResolvedValue({ status: "repository" });
 	mocks.homeDir.mockReset().mockResolvedValue(homeProject.path);
 	mocks.ensureProject.mockReset().mockImplementation(async () => {
 		useStore.setState({ projects: [...useStore.getState().projects, homeProject] });
@@ -337,11 +340,38 @@ describe("QuickDispatchOverlay", () => {
 	});
 
 	it("disables worktree and setup for a non-repository folder", () => {
+		mocks.repositoryStatus.mockResolvedValue({ status: "not_repository" });
 		useStore.setState({ projects: [{ ...repo, isRepo: false }] });
 		render(<QuickDispatchOverlay open onClose={vi.fn()} />);
 		expect((screen.getByRole("switch", { name: t("agents.worktree.isolateDedicated") }) as HTMLButtonElement).disabled).toBe(true);
 		fireEvent.click(screen.getByRole("button", { name: t("common.advanced") }));
 		expect((screen.getByRole("switch", { name: t("agents.worktree.runSetupAfterCreate") }) as HTMLButtonElement).disabled).toBe(true);
+	});
+
+	it("rechecks a stale non-repository registration and journals the chosen isolation", async () => {
+		useStore.setState({ projects: [{ ...repo, isRepo: false }] });
+		render(<QuickDispatchOverlay open onClose={vi.fn()} prefill={{ projectId: repo.id, promptText: "Keep my draft", typedName: "" }} />);
+		const toggle = screen.getByRole<HTMLButtonElement>("switch", { name: t("agents.worktree.isolateDedicated") });
+		expect(toggle.disabled).toBe(true);
+		await waitFor(() => expect(toggle.disabled).toBe(false));
+		expect(mocks.repositoryStatus).toHaveBeenCalledWith(repo.path);
+		fireEvent.click(toggle);
+		fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+		await waitFor(() => expect(mocks.begin).toHaveBeenCalledWith(expect.objectContaining({
+			projectId: repo.id, promptText: "Keep my draft", useWorktree: true,
+		})));
+	});
+
+	it("offers retry after a failed check without discarding the draft or misreporting a non-repository", async () => {
+		mocks.repositoryStatus.mockRejectedValueOnce(new Error("Git unavailable"));
+		useStore.setState({ projects: [{ ...repo, isRepo: false }] });
+		render(<QuickDispatchOverlay open onClose={vi.fn()} prefill={{ projectId: repo.id, promptText: "Keep my draft", typedName: "" }} />);
+		await screen.findByText(t("agents.worktree.repositoryUnknown"));
+		expect(screen.queryByText(t("agents.worktree.notGitRepo"))).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: t("panels.git.availability.recheck") }));
+		await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("switch").disabled).toBe(false));
+		expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("Keep my draft");
+		expect(mocks.begin).not.toHaveBeenCalled();
 	});
 
 	it("resets provider-scoped permissions and does not offer unsupported modes after a provider change", async () => {

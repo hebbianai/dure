@@ -318,6 +318,8 @@ export const agents: Record<string, string> = {
 	"agents.worktree.new": "新しいワークツリー",
 	"agents.worktree.noSetupFound": "このフォルダーで実行できる setup が見つかりませんでした",
 	"agents.worktree.notGitRepo": "git リポジトリではないため、ワークツリーを作成できません",
+	"agents.worktree.repositoryChecking": "Git リポジトリを確認中…",
+	"agents.worktree.repositoryUnknown": "Git リポジトリを確認できませんでした。フォルダーと Git のインストール状態を確認してから再試行してください。",
 	"agents.worktree.ownershipChecking": "所有状態を確認中…",
 	"agents.worktree.ownershipNeedsReview": "所有状態の確認が必要",
 	"agents.worktree.ownershipRecovering": "所有権を復旧中…",

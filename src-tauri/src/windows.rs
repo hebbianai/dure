@@ -361,6 +361,7 @@ pub fn run() {
             crate::hardware_profile::system_hardware_profile,
             git_status,
             crate::git_availability::git_availability,
+            crate::git_repository::local_repository_status,
             git_exec,
             git_exec_bounded,
             create_worktree,

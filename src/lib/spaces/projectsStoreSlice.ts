@@ -27,6 +27,7 @@ export interface ProjectsStoreSlice {
 
 	/** Resolve only after the shared registration writer commits the project. */
 	addLocalProject: (path: string) => Promise<Project>;
+	observeProjectRepository: (project: Project, isRepo: boolean) => Promise<void>;
 	addRemoteProject: (hostId: string, path: string) => Promise<Project>;
 	/** 같은 (path, host)의 프로젝트가 있으면 재사용, 없으면 등록해 돌려준다.
 	 *  디렉토리 기반 에이전트 생성이 중복 프로젝트를 만들지 않게 한다. */
@@ -51,6 +52,7 @@ export function createProjectsStoreSlice(
 	set: SliceSet,
 	get: () => ProjectsHostState,
 	registerProject: (candidate: Project) => Promise<Project>,
+	observeProjectRepository: ProjectsStoreSlice["observeProjectRepository"],
 ): ProjectsStoreSlice {
 	// A registration the store already knew is a lookup, not an addition.
 	const registerNew = async (
@@ -66,6 +68,7 @@ export function createProjectsStoreSlice(
 		projects: [],
 		pinnedProjects: [],
 		detected: {},
+		observeProjectRepository,
 
 		addLocalProject: async (path) => {
 			return registerNew(await createLocalProject(path), "local");

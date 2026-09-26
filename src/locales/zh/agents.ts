@@ -318,6 +318,8 @@ export const agents: Record<string, string> = {
 	"agents.worktree.new": "新建工作树",
 	"agents.worktree.noSetupFound": "未在此文件夹中找到可运行的 setup",
 	"agents.worktree.notGitRepo": "不是 Git 仓库，无法创建 Worktree",
+	"agents.worktree.repositoryChecking": "正在检查 Git 仓库…",
+	"agents.worktree.repositoryUnknown": "无法确认 Git 仓库。请检查文件夹和 Git 安装情况后重试。",
 	"agents.worktree.ownershipChecking": "正在检查占用状态…",
 	"agents.worktree.ownershipNeedsReview": "需要检查占用状态",
 	"agents.worktree.ownershipRecovering": "正在恢复占用权…",
