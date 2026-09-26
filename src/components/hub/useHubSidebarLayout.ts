@@ -63,6 +63,7 @@ import {
 	unopenedAgentConversation,
 } from "@/lib/spaces/unopenedAgentPresentation";
 import { isMainWindow } from "@/lib/workspace/window/windows";
+import { isPanePinned, panePinKey } from "@/lib/workspace/pane/panePin";
 import { useStore } from "@/store";
 
 /** 허브에게 표를 넘기는 쪽. 시험이 진짜 IPC 없이 이 훅을 태울 수 있게 주입한다. */
@@ -76,6 +77,7 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 	const diffBadges = useDiffBadges(state => state.badges);
 	const gitStatuses = useStore((state) => state.gitStatuses);
 	const sessionTitle = useStore((state) => state.sessionTitle);
+	const pinnedPanes = useStore((state) => state.pinnedPanes);
 	const spaces = useSpaces();
 	const sessionActivity = useStore((state) => state.sessionActivity);
 	const displayStates = useAgentAttention((state) => state.displayStates);
@@ -156,8 +158,15 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 	// 브랜치는 space 자체의 값이 아니라 그 space 가 붙어 있는 에이전트의 값이라,
 	// 표를 만들기 직전에 얹는다.
 	const placed = useMemo(
-		() => spaces.map((space) => ({ ...space, branch: branchOf(space.agentId, space.cwd), presentation: sessionPresentation(space, space.agentId && diffBadges[space.agentId] ? normalizeDiffBadge(diffBadges[space.agentId]) : undefined) })),
-		[spaces, branchOf, diffBadges],
+		() => spaces.map((space) => ({
+			...space,
+			branch: branchOf(space.agentId, space.cwd),
+			presentation: sessionPresentation({
+				...space,
+				pinned: isPanePinned(pinnedPanes, panePinKey(space.desktopId, space.key)),
+			}, space.agentId && diffBadges[space.agentId] ? normalizeDiffBadge(diffBadges[space.agentId]) : undefined),
+		})),
+		[spaces, branchOf, diffBadges, pinnedPanes],
 	);
 
 	useEffect(() => {

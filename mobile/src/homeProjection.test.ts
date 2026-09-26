@@ -130,6 +130,64 @@ function titles() {
 		(node) => node.textContent,
 	);
 }
+
+function pinSession(id: string, pinned = true) {
+	const row = model.hubs[0].sessions.find(session => session.session_id === id)!;
+	row.presentation = { ...row.presentation, pinned };
+}
+
+it("keeps desktop-pinned panes above every Space without duplicating them", () => {
+	pinSession("three");
+	draw();
+	expect(titles()).toEqual(["three", "one"]);
+	expect(document.querySelector(".list__heading")?.textContent).toContain(t("spaces.pane.pinned"));
+	expect(document.querySelector(".session-row__meta")?.textContent).toContain("Personal");
+	click("Personal");
+	expect(titles()).toEqual(["three", "two"]);
+	pinSession("three", false);
+	draw();
+	expect(titles()).toEqual(["two", "three"]);
+	expect(document.querySelector(".list__heading")).toBeNull();
+});
+
+it("applies filters before showing pins and preserves ordering within the pinned band", () => {
+	pinSession("one");
+	pinSession("three");
+	model = { ...model, viewOptions: { ...loadHomeViewOptions(), orderBy: "updated" } };
+	draw();
+	expect(titles()).toEqual(["one", "three"]);
+	expect(document.querySelector(".home__empty")).toBeNull();
+	model = { ...model, viewOptions: {
+		...model.viewOptions!, filters: { ...model.viewOptions!.filters, source: ["provider:codex"] },
+	} };
+	draw();
+	expect(titles()).toEqual(["three", "two"]);
+});
+
+it("keeps pinned panes first in the session switcher and opens their original target", () => {
+	pinSession("three");
+	const options = loadHomeViewOptions();
+	const open = vi.fn();
+	const switcher = renderSessionSwitcher(projectHome(model, options, now).groups, options, "one", undefined, now, open);
+	expect([...switcher.querySelectorAll(".session-row__title")].map(row => row.textContent)).toEqual(["three", "one"]);
+	switcher.querySelector<HTMLButtonElement>('[data-session-id="three"]')!.click();
+	expect(open).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "three" }));
+});
+
+it("renders only pinned matches in the switcher and keeps unavailable pins disabled", () => {
+	pinSession("three");
+	const options = loadHomeViewOptions();
+	const projected = projectHome(model, options, now);
+	const pinned = projected.groups.find(group => group.pinned)!;
+	expect(pinned.rows).toHaveLength(1);
+	const switcher = renderSessionSwitcher([pinned], options, "three", undefined, now, vi.fn());
+	expect(switcher.querySelector('[data-session-id="three"]')?.getAttribute("aria-current")).toBe("true");
+	const row = model.hubs[0].sessions.find(session => session.session_id === "three")!;
+	row.ready = false;
+	row.lifecycle = "exited";
+	draw();
+	expect(document.querySelector<HTMLButtonElement>('[data-session-id="three"]')?.disabled).toBe(true);
+});
 beforeEach(() => {
 	localStorage.clear();
 	vi.useFakeTimers();

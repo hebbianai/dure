@@ -24,8 +24,16 @@ import { t } from "./i18n";
 
 export interface HomeRow extends SpacesFacetSource {
 	readonly row: UnifiedRow;
+	readonly pinned?: boolean;
 	readonly detail?: string;
 	readonly git?: SessionPresentation["git"];
+}
+
+export interface HomeGroup {
+	readonly key: string;
+	readonly label: string;
+	readonly rows: readonly HomeRow[];
+	readonly pinned?: boolean;
 }
 
 export function homeRows(
@@ -88,8 +96,10 @@ export function projectHome(
 	now: number,
 ) {
 	const universe = homeRows(model);
-	const rows = projectSpacesRows(universe.rows, options);
-	const groups: { key: string; label: string; rows: readonly HomeRow[] }[] = [];
+	const projected = projectSpacesRows(universe.rows, options);
+	const pins = projected.filter(row => row.pinned === true);
+	const rows = projected.filter(row => row.pinned !== true);
+	const groups: HomeGroup[] = [];
 	if (options.groupBy === "space" || options.groupBy === "repository") {
 		const axis = options.groupBy;
 		const grouped = new Map<
@@ -121,9 +131,12 @@ export function projectHome(
 		);
 	}
 	return {
-		groups: hasActiveSpacesFilters(options.filters)
+		groups: [
+			...(pins.length ? [{ key: "pinned", label: t("spaces.pane.pinned"), rows: pins, pinned: true }] : []),
+			...(hasActiveSpacesFilters(options.filters)
 			? groups.filter((group) => group.rows.length > 0)
-			: groups,
+			: groups),
+		],
 		choices: spacesFilterChoices(universe.rows, options.filters),
 		hidden: universe.hidden,
 	};

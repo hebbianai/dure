@@ -27,6 +27,7 @@ const sessions: HubProbeSession[] = Array.from({ length: 40 }, (_, index) => ({
 	box_id: "this-laptop",
 	box_label: "QA Mac",
 	presentation: {
+		pinned: index === 12 || index === 36,
 		projectId: index % 2 ? "p1" : "p2",
 		projectName: index % 2 ? "Dure" : "Website",
 		kind: "agent",

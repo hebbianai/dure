@@ -49,7 +49,7 @@ export function renderHomeSessionRow(
 	for (const field of visibleSpacesRowMetadata(
 		view,
 		options.visibleFields,
-		{ groupBy: options.groupBy, spaceHeading: options.groupBy === "space", showSpaces: options.showSpaces },
+		{ groupBy: view.pinned ? undefined : options.groupBy, spaceHeading: !view.pinned && options.groupBy === "space", showSpaces: options.showSpaces },
 	)) {
 		// The desktop's info line (SpacesRows.tsx) is words joined by a middle
 		// dot, no glyph before the branch; this row reads the same way
