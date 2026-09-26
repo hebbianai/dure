@@ -6,7 +6,7 @@ import { hmuxSession, runSessionCli } from "./lib/dure-session-test-fixture.mjs"
 
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function fixture(session = hmuxSession(), input = {}) {
+function fixture(session = hmuxSession(), input = {}, { delayMs = 0, exitCode = 0 } = {}) {
   const root = mkdtempSync(join(tmpdir(), "dure-send-session-"));
   roots.push(root);
   const calls = join(root, "calls.jsonl");
@@ -19,6 +19,8 @@ appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
 if (args.includes('capabilities')) console.log(JSON.stringify({schemaVersion:2,capabilities:['semantic_command_input_v1']}));
 else if (args.includes('show')) console.log(JSON.stringify(${JSON.stringify(session)}));
 else if (args.includes('command-input')) {
+  if (${delayMs}) await new Promise(resolve => setTimeout(resolve, ${delayMs}));
+  process.exitCode = ${exitCode};
   console.log(JSON.stringify({ok:true,receipt:{terminalEpoch:'terminal-1',text:{recordId:'1',state:'written_to_pty'},submit:args.includes('--submit')?{recordId:'2',state:'written_to_pty'}:null},...${JSON.stringify(input)}}));
 } else process.exit(72);
 `);
@@ -27,6 +29,26 @@ else if (args.includes('command-input')) {
 }
 
 describe("exact managed Session send without a client registry", () => {
+  it("allows the native ten-second deadline to report an uncertain outcome before the process watchdog", () => {
+    const f = fixture(hmuxSession(), { ok: false, error: { code: "hmux_terminal_input_outcome_unknown", message: "Native receipt deadline elapsed", deliveryState: "unknown" } }, { delayMs: 10_100, exitCode: 1 });
+    const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("hmux_terminal_input_outcome_unknown");
+    expect(result.stderr).not.toContain("spawnSync");
+    expect(result.stderr).toContain("deliveryState=unknown");
+    expect(f.calls().filter((args) => args.includes("command-input"))).toHaveLength(1);
+  });
+
+  it("reports a process watchdog as uncertain delivery without retrying", () => {
+    const f = fixture(hmuxSession(), {}, { delayMs: 16_000 });
+    const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("hmux_command_input_process_timeout");
+    expect(result.stderr).toContain("stage=process_watchdog");
+    expect(result.stderr).toContain("deliveryState=outcome_unknown");
+    expect(result.stderr).toContain("dure inspect");
+    expect(f.calls().filter((args) => args.includes("command-input"))).toHaveLength(1);
+  });
   it.each([[], ["--workspace", "workspace-1"]])("looks up the live generation and sends once: %j", (...scope) => {
     const f = fixture();
     const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello", ...scope, "--json"]);

@@ -1,3 +1,4 @@
+import { structuredTerminalAttachmentKey } from "@/lib/terminal/structuredTerminalRecordAdapter";
 import {
 	useCallback,
 	useEffect,
@@ -987,10 +988,17 @@ export function StructuredTerminalView({
 			</div>
 			<StructuredTerminalRecoveryStatus
 				paneId={paneApi?.id}
+				connectionPending={!viewportTransport.presentationIsCurrent || viewportReplica.frame === null}
 				error={terminalError}
 				errorMessageId={terminalErrorMessageId}
 				onDismiss={dismissTerminalError}
-				attachRecovery={terminalRecoveryAvailable ? attachRecovery : undefined}
+				attachRecovery={viewportTransport.reconnect ? {
+					intent: "reconnect",
+					ownerKey: structuredTerminalAttachmentKey(binding),
+					resume: viewportTransport.reconnect,
+					context: attachRecovery?.context ?? `session=${binding.sessionId}`,
+					transitioning: attachRecovery?.transitioning,
+				} : terminalRecoveryAvailable ? attachRecovery : undefined}
 				onPresentationChange={onAttachRecoveryPresentationChange}
 			/>
 			<StructuredTerminalScrollToBottom frame={paintedAttachmentIsCurrent ? presentedFrame?.frame ?? null : null} sendViewportIntent={sendViewportIntent} />

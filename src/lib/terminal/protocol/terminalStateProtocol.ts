@@ -159,13 +159,16 @@ export function decodeTerminalStateRecord(
 
 	let record: TerminalStateRecord;
 	let stagedViewport = false;
+	let stage: "record" | "record_metadata" | "viewport" = "record";
 	try {
 		const payload = bytes.subarray(TERMINAL_STATE_ENVELOPE_HEADER_BYTES);
 		const viewport = viewportFrameDecoder
 			? splitSingleViewportBody(payload)
 			: undefined;
 		if (viewport && viewportFrameDecoder) {
+			stage = "record_metadata";
 			record = fromBinary(TerminalStateRecordSchema, viewport.metadata);
+			stage = "viewport";
 			stagedViewport = true;
 			record.body = {
 				case: "viewportFrame",
@@ -174,9 +177,18 @@ export function decodeTerminalStateRecord(
 		} else {
 			record = fromBinary(TerminalStateRecordSchema, payload);
 		}
-	} catch {
+	} catch (cause) {
 		if (stagedViewport) viewportFrameDecoder?.discard();
-		fail("invalid_protobuf", "terminal state protobuf could not be decoded");
+		// Preserve bounded, content-free evidence. Decoder exception messages
+		// and payload bytes are deliberately excluded from diagnostics.
+		const causeType = cause instanceof RangeError ? "RangeError"
+			: cause instanceof TypeError ? "TypeError"
+			: cause instanceof Error ? "Error" : "unknown";
+		throw new TerminalStateProtocolError(
+			"invalid_protobuf",
+			`terminal state protobuf could not be decoded (stage=${stage}, cause=${causeType})`,
+			{ stage, causeType },
+		);
 	}
 	try {
 		validateTerminalSurfaceRecord(record);

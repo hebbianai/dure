@@ -1329,7 +1329,7 @@ describe("StructuredTerminalView resize transaction", () => {
 		// Red on the click-only tree: the user had to press resume on every
 		// dead pane by hand (2026-09-01 review).
 		mocks.attach
-			.mockRejectedValueOnce(new Error("connect to Hmux Host failed"))
+			.mockRejectedValueOnce(Object.assign(new Error("Provider has exited"), { code: "hmux_session_exited", retryDirective: "never" }))
 			.mockImplementation(() => new Promise(() => {}));
 		const resume = vi.fn(() => new Promise<void>(() => {}));
 		const view = renderTerminalView({
@@ -1389,12 +1389,12 @@ describe("StructuredTerminalView resize transaction", () => {
 		expect(paneActionSnapshot(paneId)?.actions).toEqual([]);
 	});
 
-	it("offers resume and copyable details when an attach fails with recovery wired", async () => {
+	it("offers resume and copyable details when Hmux confirms the session exited", async () => {
 		// Red before the recovery affordance existed: a dead session's pane
 		// showed only a passive error pill, and every fix path lived outside
 		// the pane (2026-09-01 socket-reap outage).
 		mocks.attach
-			.mockRejectedValueOnce(new Error("connect to Hmux Host failed"))
+			.mockRejectedValueOnce(Object.assign(new Error("Provider has exited"), { code: "hmux_session_exited", retryDirective: "never" }))
 			.mockImplementation(() => new Promise(() => {}));
 		let resolveResume: () => void = () => {};
 		const resume = vi.fn(
@@ -1420,7 +1420,7 @@ describe("StructuredTerminalView resize transaction", () => {
 		);
 		expect(onAttachRecoveryPresentationChange).toHaveBeenCalledWith(true);
 		fireEvent.click(view.getByRole("button", { name: "오류 상세 보기" }));
-		expect(view.getByText(/connect to Hmux Host failed/)).toBeTruthy();
+		expect(view.getByText(/Provider has exited/)).toBeTruthy();
 
 		fireEvent.click(view.getByRole("button", { name: "오류 상세 복사" }));
 		const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
@@ -1428,7 +1428,7 @@ describe("StructuredTerminalView resize transaction", () => {
 		const calls = vi.mocked(writeText).mock.calls;
 		const copied = calls[calls.length - 1]?.[0] ?? "";
 		expect(copied).toContain("agent=a-1 pane=p-1 session=s-1");
-		expect(copied).toContain("connect to Hmux Host failed");
+		expect(copied).toContain("Provider has exited");
 
 		fireEvent.click(view.getByRole("button", { name: "세션 이어서 재개" }));
 		expect(resume).toHaveBeenCalledTimes(1);
@@ -1443,7 +1443,7 @@ describe("StructuredTerminalView resize transaction", () => {
 
 	it("offers to recreate a missing worktree before resuming the exact conversation", async () => {
 		mocks.attach
-			.mockRejectedValueOnce(new Error("connect to Hmux Host failed"))
+			.mockRejectedValueOnce(Object.assign(new Error("Provider has exited"), { code: "hmux_session_exited", retryDirective: "never" }))
 			.mockImplementation(() => new Promise(() => {}));
 		const transitions: string[] = [];
 		const inspect = vi.fn(async () => {
@@ -1490,7 +1490,7 @@ describe("StructuredTerminalView resize transaction", () => {
 
 	it("never makes worktree inspection an admission check for manual Resume", async () => {
 		mocks.attach
-			.mockRejectedValueOnce(new Error("connect to Hmux Host failed"))
+			.mockRejectedValueOnce(Object.assign(new Error("Provider has exited"), { code: "hmux_session_exited", retryDirective: "never" }))
 			.mockImplementation(() => new Promise(() => {}));
 		const resume = vi.fn().mockResolvedValue(undefined);
 		const view = renderTerminalView({
@@ -1799,6 +1799,32 @@ describe("StructuredTerminalView resize transaction", () => {
 				"Managed provider exited before conversation identity was established.",
 			),
 		});
+	});
+
+	it("reconnects a decode failure to the same session without resuming its provider", async () => {
+		const records = installAttachMock();
+		const resume = vi.fn();
+		const view = renderTerminalView({
+			attachRecovery: { intent: "resume", ownerKey: "live-provider", resume, context: "live-provider" },
+		});
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledOnce());
+		const invalid = new TextEncoder().encode("invalid carrier");
+		await deliverRecord(records[0], invalid);
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(2));
+		await deliverRecord(records[1], invalid);
+		const reconnect = await view.findByRole("button", { name: "다시 연결" });
+		expect(view.queryByRole("button", { name: t("terminal.recovery.resume") })).toBeNull();
+		expect(view.queryByText(t("terminal.recovery.body"))).toBeNull();
+		fireEvent.click(reconnect);
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(3));
+		expect(mocks.attach.mock.calls[2][0]).toMatchObject({
+			sessionId: mocks.attach.mock.calls[0][0].sessionId,
+			workspaceId: mocks.attach.mock.calls[0][0].workspaceId,
+		});
+		await deliverViewportFrame(records[2], { texts: ["reconnected same session"] });
+		await waitFor(() => expect(visibleTerminalText(view.container)).toContain("reconnected same session"));
+		await waitFor(() => expect(view.queryByRole("button", { name: "다시 연결" })).toBeNull());
+		expect(resume).not.toHaveBeenCalled();
 	});
 
 	it("summarizes an invalid carrier record before replacing the attachment", async () => {

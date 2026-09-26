@@ -356,3 +356,14 @@ dure read <name> -f          # follow live
 dure read <session-id> --workspace <workspace-id> --backend <id>
 dure send <name> "message"    # explicit terminal control only; never an orchestration transport
 ```
+
+A terminal connection failure does not prove the session exited. If `dure client
+pane state <pane-id> --json` offers `reconnect`, invoke `dure client pane act
+<pane-id> reconnect --json` to retry the same session attachment. Its
+`pending` result with `value.state: reconnecting` acknowledges the request; observe pane state again
+to confirm attachment. It does not replay input or start a new provider.
+
+If `dure send` reports `hmux_command_input_process_timeout`, delivery is unknown.
+Use `dure read` and `dure inspect` to inspect the target before sending again.
+Native failures preserve their delivery state; a missing receipt is not proof
+that nothing reached the terminal. Direct input is never automatically retried.

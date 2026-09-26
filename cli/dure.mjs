@@ -99,7 +99,9 @@ const MINIMUM_MANAGED_READ_HMUX_VERSION = [0, 2, 2];
 const MANAGED_READ_HMUX_CAPABILITY = "bounded_screen_read_v1";
 const MANAGED_INPUT_HMUX_CAPABILITY = "semantic_command_input_v1";
 const MANAGED_INPUT_CAPABILITY_TIMEOUT_MS = 2_500;
-const MANAGED_INPUT_TIMEOUT_MS = 10_000;
+// Native command input owns a ten-second receipt deadline after attachment.
+// Leave time for discovery/handshake and for its typed outcome to reach stdout.
+const MANAGED_INPUT_TIMEOUT_MS = 15_000;
 const COMPATIBILITY_DIAGNOSTIC_TIMEOUT_MS = 750;
 const PROVIDER_TRANSCRIPT_APP_CAPABILITY = "provider_transcript.read_v1";
 const PROVIDER_TRANSCRIPT_RESPONSE_BYTES = 32 * 1024 * 1024;
@@ -689,7 +691,12 @@ function sendManagedInputDirect(binding, text, enter) {
     const code =
       typeof failure?.error?.code === "string" ? failure.error.code : null;
     const detail = code
-      ? `${code}: ${failure.error.message || "Managed Hmux input was rejected"}`
+      ? `${code}: ${failure.error.message || "Managed Hmux input was rejected"}` +
+        (typeof failure.error.deliveryState === "string" ? ` (deliveryState=${failure.error.deliveryState})` : "")
+      : result.error?.code === "ETIMEDOUT"
+        ? `hmux_command_input_process_timeout: stage=process_watchdog deadlineMs=${MANAGED_INPUT_TIMEOUT_MS} deliveryState=outcome_unknown. ` +
+          "Hmux did not return a final receipt; the message may already have reached the terminal. " +
+          "Inspect the target with dure read and dure inspect before sending again. Input was not retried."
       : result.stderr?.trim() ||
         result.error?.message ||
         `Managed Hmux input command exited with status ${result.status ?? "unknown"}`;

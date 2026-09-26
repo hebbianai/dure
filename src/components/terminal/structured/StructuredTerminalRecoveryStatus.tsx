@@ -1,9 +1,11 @@
+import { definePaneAction } from "@/lib/workspace/pane/paneAction";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Check, Copy, Info } from "lucide-react";
 import {
 	useCallback,
 	useEffect,
 	useLayoutEffect,
+	useMemo,
 	useRef,
 	useState,
 } from "react";
@@ -24,6 +26,7 @@ import type {
 
 interface StructuredTerminalRecoveryStatusProps {
 	readonly paneId?: string;
+	readonly connectionPending?: boolean;
 	readonly error?: string;
 	readonly errorMessageId?: TerminalFailureMessageId;
 	readonly onDismiss?: () => void;
@@ -46,6 +49,7 @@ const COVER_SURFACE = {
 /** Owns the user-visible recovery lifecycle without participating in transport. */
 export function StructuredTerminalRecoveryStatus({
 	paneId,
+	connectionPending = false,
 	error,
 	errorMessageId,
 	onDismiss,
@@ -71,7 +75,8 @@ export function StructuredTerminalRecoveryStatus({
 	const worktreePath = attachRecovery?.worktree?.path;
 	const worktreeBranch = attachRecovery?.worktree?.branch;
 	const startsFresh = attachRecovery?.intent === "start_fresh";
-	const primaryActionName = startsFresh ? "start_fresh" : "resume";
+	const reconnects = attachRecovery?.intent === "reconnect";
+	const primaryActionName = attachRecovery?.intent ?? "resume";
 	const rehosting = usePaneActionPending(paneId ?? "", "rehost");
 	const replacing = rehosting || attachRecovery?.transitioning === true;
 	const recoveryVisible = Boolean(!replacing && error && attachRecovery);
@@ -119,10 +124,10 @@ export function StructuredTerminalRecoveryStatus({
 		if (!attachRecovery) throw new Error("recovery unavailable");
 		setResumeState("resuming");
 		setActionFailure(undefined);
-		// Success replaces the session; the pane rebinds through the rehost
-		// event machinery, so only the failure needs a local transition back.
+		// The owning transport or runtime clears this presentation after success.
+		// A refused action keeps its details and remains available for retry.
 		try {
-			await attachRecovery.resume();
+			return await attachRecovery.resume();
 		} catch (cause) {
 			setResumeState("failed");
 			setActionFailure({
@@ -132,9 +137,16 @@ export function StructuredTerminalRecoveryStatus({
 			throw cause;
 		}
 	}, [attachRecovery]);
+	const reconnectAction = useMemo(
+		() => definePaneAction({
+			description: "Reconnect this pane to the same session without restarting its provider or replaying input.",
+			parameters: {},
+		}, async () => ({ outcome: "pending", value: await resumeAction() })),
+		[resumeAction],
+	);
 	const onRecoveryResume = useCallback(() => {
-		void resumeAction().catch(() => {});
-	}, [resumeAction]);
+		void (reconnects ? reconnectAction() : resumeAction()).catch(() => {});
+	}, [reconnects, reconnectAction, resumeAction]);
 	const recreateWorktreeAction = useCallback(async () => {
 		const worktree = attachRecovery?.worktree;
 		if (!attachRecovery || !worktree) {
@@ -173,16 +185,16 @@ export function StructuredTerminalRecoveryStatus({
 	// `dure client pane act` stay one authority with honest action semantics.
 	const worktreeMissing = worktreeStatus === "missing";
 	usePaneActions(
-		JSON.stringify([attachRecovery?.ownerKey, worktreePath, worktreeBranch]),
+		JSON.stringify([attachRecovery?.ownerKey, attachRecovery?.intent, worktreePath, worktreeBranch]),
 		paneId ? {
 			paneId,
-			status: error ? "attach_failed" : "attached",
+			status: error ? "attach_failed" : connectionPending ? "connecting" : "attached",
 			...(error ? { error } : {}),
 			...(attachRecovery?.context ? { context: attachRecovery.context } : {}),
 			actions:
 				recoveryVisible && !recovering
 					? {
-							[primaryActionName]: resumeAction,
+							[primaryActionName]: reconnects ? reconnectAction : resumeAction,
 							...(worktreeMissing
 								? { recreate_worktree: recreateWorktreeAction }
 								: {}),
@@ -266,7 +278,7 @@ export function StructuredTerminalRecoveryStatus({
 							? "terminal.recovery.recreatingWorktree"
 							: startsFresh
 								? "common.restarting"
-								: "terminal.recovery.resuming",
+								: reconnects ? "terminal.recovery.reconnecting" : "terminal.recovery.resuming",
 					)}
 				</p>
 			</PanelStatus>
@@ -292,7 +304,7 @@ export function StructuredTerminalRecoveryStatus({
 					{t(
 						worktreeMissing
 							? "terminal.recovery.worktreeMissingTitle"
-							: "terminal.recovery.title",
+							: reconnects ? "terminal.failure.connection" : "terminal.recovery.title",
 					)}
 				</p>
 				<p className="text-center text-xs leading-5 text-muted-foreground">
@@ -303,7 +315,7 @@ export function StructuredTerminalRecoveryStatus({
 						: t(
 								startsFresh
 									? "agents.conversation.sessionEnded"
-									: "terminal.recovery.body",
+									: reconnects ? "terminal.recovery.connectionBody" : "terminal.recovery.body",
 							)}
 				</p>
 				{worktreeMissing && attachRecovery.worktree && (
@@ -331,7 +343,7 @@ export function StructuredTerminalRecoveryStatus({
 								? "agents.conversation.startFresh"
 								: worktreeMissing
 									? "terminal.recovery.resumeWithoutWorktree"
-									: "terminal.recovery.resume",
+									: reconnects ? "terminal.recovery.reconnect" : "terminal.recovery.resume",
 						)}
 					</Button>
 					<IconButton
@@ -353,7 +365,7 @@ export function StructuredTerminalRecoveryStatus({
 						{t(
 							actionFailure?.operation === "recreate"
 								? "terminal.recovery.worktreeRecreateFailed"
-								: "terminal.recovery.resumeFailed",
+								: reconnects ? "terminal.recovery.reconnectFailed" : "terminal.recovery.resumeFailed",
 						)}
 					</p>
 				)}

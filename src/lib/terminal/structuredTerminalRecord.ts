@@ -1,3 +1,4 @@
+import type { TerminalDecodeDiagnostic } from "./protocol/terminalStateLimits";
 import type {
 	HmuxAgentIdentity,
 	HmuxAgentRuntimeState,
@@ -79,6 +80,7 @@ export type StructuredTerminalCarrierRecord =
 	  }
 	| {
 			readonly kind: "failure";
+			readonly decodeDiagnostic?: TerminalDecodeDiagnostic;
 			readonly reason: string;
 			readonly encodedByteLength: 0;
 	  };

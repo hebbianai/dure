@@ -20,7 +20,7 @@ export interface TerminalAttachRecovery {
 	/** Exact source and chosen recovery target, independent of display text. */
 	readonly ownerKey: string;
 	/** Selects honest presentation and the matching named pane action. */
-	readonly intent: "resume" | "start_fresh";
+	readonly intent: "resume" | "start_fresh" | "reconnect";
 	readonly resume: () => Promise<unknown>;
 	readonly context: string;
 	/** The owning pane is replacing this runtime. Keep its surface mounted,

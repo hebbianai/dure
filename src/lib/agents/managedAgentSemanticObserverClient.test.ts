@@ -129,6 +129,23 @@ beforeEach(() => {
 });
 
 describe("hmuxManagedAgentSemanticObserverClient", () => {
+	it("retains bounded decode evidence without copying terminal content into diagnostics", async () => {
+		mocks.attachStructured.mockResolvedValueOnce(structuredAttachment({ initialRecords: [{
+			kind: "failure", reason: "private terminal text must not be logged", encodedByteLength: 0,
+			decodeDiagnostic: { stage: "viewport", causeType: "RangeError" },
+		}] }));
+		await expect(hmuxManagedAgentSemanticObserverClient.connect({
+			binding: managedBindingFixture({ sessionId: "session-a", workspaceId: "workspace-a", stopFence: fence }),
+			sshHosts: [], onRuntimeState: vi.fn(), onConversationIdentity: vi.fn(), onDisconnected: vi.fn(),
+		})).rejects.toThrow("managed_agent_semantic_record_invalid");
+		expect(mocks.appendDiagnostics).toHaveBeenCalledWith([expect.objectContaining({
+			code: "managed_agent_semantic_record_invalid",
+			details: expect.objectContaining({ phase: "install_initial_state", decodeStage: "viewport", decodeCauseType: "RangeError" }),
+		})]);
+		expect(JSON.stringify(mocks.appendDiagnostics.mock.calls)).not.toContain("private terminal text");
+		expect(mocks.detachStructured).toHaveBeenCalledOnce();
+	});
+
 	it("consumes the shared structured stream with read-only authority", async () => {
 		const onRuntimeState = vi.fn();
 		const onConversationIdentity = vi.fn();

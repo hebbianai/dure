@@ -55,6 +55,7 @@ if (healthReturn) {
   assert.deepEqual(result.episodes.map(({ retryDirective, attempts, errorCleared }) => ({ retryDirective, attempts, errorCleared })), [
     { retryDirective: "unknown", attempts: 3, errorCleared: true },
     { retryDirective: "retry_after_resync", attempts: 12, errorCleared: true },
+    { retryDirective: "manual_reconnect", attempts: 3, errorCleared: true },
   ]);
 } else {
   assert.equal(fs.readFileSync(path.join(home, "provider-starts"), "utf8"), "started\n".repeat(8));

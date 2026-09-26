@@ -15,7 +15,7 @@ import { unmountedPaneActionRefusal } from "./paneAction";
 /** Closed union: it is what `dure client pane state` prints, so a new value
  * is a contract change. Terminal-family panes report attach state; structured
  * chat panes report the turn lifecycle. */
-type TerminalPaneStatus = "attached" | "attach_failed";
+type TerminalPaneStatus = "connecting" | "attached" | "attach_failed";
 export type ChatPaneStatus =
 	| "idle"
 	| "turn_active"

@@ -1,3 +1,4 @@
+import type { TerminalDecodeDiagnostic } from "@/lib/terminal/protocol/terminalStateLimits";
 import { semanticObserverFailureEvidence } from "@/lib/agents/managedAgentSemanticObserverRetry";
 import { isHmuxSessionFailureError } from "@/lib/hmux/failure/sessionFailure";
 import { sameHmuxManagedGeneration } from "@/lib/hmux/identity/hmuxManagedGeneration";
@@ -89,6 +90,12 @@ function requireExactManagedReceipt(
 	}
 }
 
+class SemanticRecordFailure extends Error {
+	constructor(readonly decodeDiagnostic?: TerminalDecodeDiagnostic) {
+		super("managed_agent_semantic_record_invalid");
+	}
+}
+
 function recordSemanticObserverFailure(
 	binding: ManagedAgentRuntimeBinding,
 	cause: unknown,
@@ -129,6 +136,10 @@ function recordSemanticObserverFailure(
 					: {
 							phase,
 							errorType,
+							...(cause instanceof SemanticRecordFailure && cause.decodeDiagnostic ? {
+								decodeStage: cause.decodeDiagnostic.stage,
+								decodeCauseType: cause.decodeDiagnostic.causeType,
+							} : {}),
 							observationScope: "background",
 							...(failureEvidence.retryDirective
 								? { retryDirective: failureEvidence.retryDirective }
@@ -181,7 +192,7 @@ async function connectHmuxManagedAgentSemanticObserver(request: {
 	): boolean => {
 		if (!active) return false;
 		if (record.kind === "failure") {
-			throw new Error("managed_agent_semantic_record_invalid");
+			throw new SemanticRecordFailure(record.decodeDiagnostic);
 		}
 		if (record.kind === "terminal") return true;
 		const semantic = record.record;

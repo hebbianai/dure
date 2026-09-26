@@ -184,6 +184,25 @@ export function useStructuredTerminalViewportTransport({
 		pendingRecoveryFailureRef,
 		upstreamSequenceRef,
 	});
+	const reconnectRequestedRef = useRef<string | undefined>(undefined);
+	const reconnect = useCallback(async () => {
+		if (
+			attachmentContextRef.current.attachmentToken !== attachmentToken ||
+			!connectionFailed
+		) {
+			throw new Error("terminal_reconnect_observation_changed");
+		}
+		if (reconnectRequestedRef.current !== attachmentToken) {
+			reconnectRequestedRef.current = attachmentToken;
+			recoveryHighWaterRef.current = { state: "armed" };
+			attachReconnectRef.current = { attachmentKey, failures: 0 };
+			pendingRecoveryFailureRef.current = null;
+			failure.clear();
+			onPaneConnectionStateRef.current?.("recovering");
+			setAttachmentGeneration((generation) => generation + 1);
+		}
+		return { state: "reconnecting", sessionId: binding.sessionId };
+	}, [attachmentToken, attachmentKey, binding.sessionId, connectionFailed, failure]);
 	const [presentationQueue] = useState(() =>
 		createTerminalPresentationQueue<
 			StructuredTerminalAttachmentIdentity,
@@ -847,6 +866,7 @@ export function useStructuredTerminalViewportTransport({
 		errorMessageId,
 		dismissError,
 		recoveryAvailable,
+		reconnect: connectionFailed ? reconnect : undefined,
 		observerIdRef,
 		attachedObserverRef,
 		sendInput,

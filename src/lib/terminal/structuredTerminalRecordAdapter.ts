@@ -284,6 +284,7 @@ function createStructuredTerminalCarrierDecoder(): {
 					return {
 						kind: "failure",
 						reason: assembly.reason,
+						...(assembly.decodeDiagnostic ? { decodeDiagnostic: assembly.decodeDiagnostic } : {}),
 						encodedByteLength: 0,
 					};
 				}

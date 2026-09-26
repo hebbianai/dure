@@ -31,6 +31,7 @@ export async function runManagedAttachmentHealthReturn(
 	home: string,
 ) {
 	const originalAttach = hmux.attachStructuredTerminal;
+	const originalNext = hmux.nextStructuredTerminalRecord;
 	const episodes: Array<Record<string, unknown>> = [];
 	let result: Record<string, unknown> = { result: "failed" };
 	let ownedSession: HmuxSessionSummary | undefined;
@@ -74,7 +75,7 @@ export async function runManagedAttachmentHealthReturn(
 			);
 			return current;
 		};
-		for (const retryDirective of ["unknown", "retry_after_resync"] as const) {
+		for (const retryDirective of ["unknown", "retry_after_resync", "manual_reconnect"] as const) {
 			const summary = await healthySummary();
 			useStore
 				.getState()
@@ -87,6 +88,7 @@ export async function runManagedAttachmentHealthReturn(
 			let accepting = false;
 			let attempts = 0;
 			let snapshots = 0;
+			let replacements = 0;
 			const failure =
 				retryDirective === "unknown"
 					? new Error("Owned QA unavailable attachment")
@@ -101,8 +103,23 @@ export async function runManagedAttachmentHealthReturn(
 					"Unowned attachment target",
 				);
 				attempts += 1;
-				if (!accepting) throw failure;
+				if (!accepting && retryDirective !== "manual_reconnect") throw failure;
 				return originalAttach(request);
+			};
+			hmux.nextStructuredTerminalRecord = async (observerId) => {
+				const record = await originalNext(observerId);
+				if (!accepting && retryDirective === "manual_reconnect") {
+					const bytes = new Uint8Array(record);
+					if (bytes[0] === 0x54 && bytes[1] === 0x53) {
+						// Keep the native envelope; truncate its protobuf varint at the
+						// delivery seam to reproduce the reported decode failure.
+						const corrupt = bytes.slice(0, 21);
+						new DataView(corrupt.buffer).setUint32(8, 1, true);
+						corrupt[20] = 0x80;
+						return corrupt.buffer;
+					}
+				}
+				return record;
 			};
 			const probe: TerminalWindowFocusProbe = {
 				connect: () => () => {},
@@ -131,6 +148,10 @@ export async function runManagedAttachmentHealthReturn(
 							undefined,
 							session.stopFence,
 						)}
+						attachRecovery={{
+							intent: "resume", ownerKey: sessionId, context: sessionId,
+							resume: async () => { replacements += 1; throw new Error("Unexpected provider replacement"); },
+						}}
 						inputDisabled
 						windowFocusProbe={probe}
 						onStructuredSurfaceRetirement={(retirement) =>
@@ -146,18 +167,27 @@ export async function runManagedAttachmentHealthReturn(
 							.exhausted ?? 0) > previousExhausted,
 					45_000,
 				);
-				const exhaustedAttempts = retryDirective === "unknown" ? 2 : 11;
+				const exhaustedAttempts = retryDirective === "retry_after_resync" ? 11 : 2;
 				check(
 					attempts === exhaustedAttempts,
 					`Unexpected retry budget: ${attempts}`,
 				);
 				const outageMs = Date.now() - started;
-				if (retryDirective !== "unknown")
+				if (retryDirective === "retry_after_resync")
 					check(outageMs >= 25_000, "Retry backoff was skipped");
 				accepting = true;
 				// No root.render(), remount or refresh action follows publication:
 				// the production Zustand subscription must wake the failed surface.
-				useStore.getState().setHmuxSessionMetadata(await healthySummary());
+				if (retryDirective === "manual_reconnect") {
+					check(!container.textContent?.includes(t("terminal.recovery.body")), "Live session was presented as exited");
+					const reconnect = Array.from(container.querySelectorAll("button")).find(
+						(button) => button.textContent === t("terminal.recovery.reconnect"),
+					);
+					check(reconnect !== undefined, "Reconnect button missing");
+					reconnect.click();
+				} else {
+					useStore.getState().setHmuxSessionMetadata(await healthySummary());
+				}
 				await waitFor(
 					"healthy Host restores a native complete frame",
 					() => snapshots > 0 && !errorVisible(),
@@ -166,17 +196,20 @@ export async function runManagedAttachmentHealthReturn(
 					attempts === exhaustedAttempts + 1,
 					`Duplicate recovery: ${attempts}`,
 				);
+				check(replacements === 0, "A live provider was replaced");
 				episodes.push({
 					retryDirective,
 					outageMs,
 					attempts,
 					snapshots,
 					errorCleared: true,
+					replacements,
 				});
 			} finally {
 				root.unmount();
 				await Promise.all(retirements);
 				hmux.attachStructuredTerminal = originalAttach;
+				hmux.nextStructuredTerminalRecord = originalNext;
 				container.remove();
 			}
 		}
@@ -186,6 +219,7 @@ export async function runManagedAttachmentHealthReturn(
 		result = { result: "failed", error: String(error), episodes };
 	} finally {
 		hmux.attachStructuredTerminal = originalAttach;
+		hmux.nextStructuredTerminalRecord = originalNext;
 		if (ownedSession?.stopFence) {
 			try {
 				const stopped = await hmux.stopManaged(

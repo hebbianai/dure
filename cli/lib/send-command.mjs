@@ -29,6 +29,8 @@ The provider owns whether Enter submits immediately or queues terminal input.
 Structured chat uses the running app and reports sent, steered, queued or drafted.
 With --no-enter, review the structured chat draft and use Send when ready.
 Errors go to stderr with non-zero exit status; uncertain delivery is not retried.
+A process watchdog timeout has deliveryState=outcome_unknown. Read and inspect the
+target before retrying; a missing receipt does not prove the message was not sent.
 `;
 
 function extractSource(args) {

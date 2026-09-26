@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { invokePaneAction, paneActionSnapshot } from "@/lib/workspace/pane/paneActionRegistry";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { StructuredTerminalRecoveryStatus } from "@/components/terminal/structured/StructuredTerminalRecoveryStatus";
@@ -94,4 +95,30 @@ it("keeps recovery available across ordinary status and handler refresh for the 
 	expect(before.resume).not.toHaveBeenCalled();
 	expect(after.resume).toHaveBeenCalledOnce();
 	expect(result).toMatchObject({ ok: true });
+});
+
+it("offers a declared reconnect action and acknowledges only pending attachment", async () => {
+	const resume = vi.fn(async () => ({ state: "reconnecting", sessionId: "same-session" }));
+	render(<StructuredTerminalRecoveryStatus paneId={paneId} error="decode failed" attachRecovery={{
+		ownerKey: "live-source", intent: "reconnect", context: "same-session", resume,
+	}} />);
+	expect(paneActionSnapshot(paneId)?.actions).toEqual(["reconnect"]);
+	expect(paneActionSnapshot(paneId)?.actionDefinitions?.reconnect).toMatchObject({ parameters: {} });
+	await act(async () => {
+		expect(await invokePaneAction(paneId, "reconnect", { wrong: true })).toMatchObject({ result: { outcome: "refused" } });
+	});
+	expect(resume).not.toHaveBeenCalled();
+	await act(async () => {
+		expect(await invokePaneAction(paneId, "reconnect")).toMatchObject({
+			ok: true, result: { outcome: "pending", value: { state: "reconnecting", sessionId: "same-session" } },
+		});
+	});
+	expect(resume).toHaveBeenCalledOnce();
+});
+
+it("reports connecting until the transport has installed a complete frame", () => {
+	const view = render(<StructuredTerminalRecoveryStatus paneId={paneId} connectionPending />);
+	expect(paneActionSnapshot(paneId)?.status).toBe("connecting");
+	view.rerender(<StructuredTerminalRecoveryStatus paneId={paneId} connectionPending={false} />);
+	expect(paneActionSnapshot(paneId)?.status).toBe("attached");
 });

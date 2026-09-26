@@ -129,6 +129,8 @@ export interface StructuredTerminalViewportTransport {
 	readonly errorMessageId: TerminalFailureMessageId | undefined;
 	readonly dismissError: (() => void) | undefined;
 	readonly recoveryAvailable: boolean;
+	/** Retry only the surface attachment; never replaces its session or replays input. */
+	readonly reconnect: (() => Promise<unknown>) | undefined;
 	readonly observerIdRef: MutableRefObject<string | undefined>;
 	readonly attachedObserverRef: MutableRefObject<string | undefined>;
 	readonly sendInput: (

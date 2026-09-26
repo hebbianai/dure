@@ -15,6 +15,11 @@ export const TERMINAL_STATE_MAX_BATCH_ID_BYTES = 64;
 // The Host rolls terminalEpoch before the revision space is exhausted.
 export const TERMINAL_STATE_MAX_REVISION = 0xffff_ffff_ffff_fffen;
 
+export interface TerminalDecodeDiagnostic {
+	readonly stage: "record" | "record_metadata" | "viewport";
+	readonly causeType: "RangeError" | "TypeError" | "Error" | "unknown";
+}
+
 export class TerminalStateProtocolError extends Error {
 	constructor(
 		readonly code:
@@ -23,6 +28,7 @@ export class TerminalStateProtocolError extends Error {
 			| "invalid_protobuf"
 			| "invalid_record",
 		message: string,
+		readonly decodeDiagnostic?: TerminalDecodeDiagnostic,
 	) {
 		super(message);
 		this.name = "TerminalStateProtocolError";

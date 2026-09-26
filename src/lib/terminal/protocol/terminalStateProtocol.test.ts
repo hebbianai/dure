@@ -71,6 +71,20 @@ function bellRecord() {
 }
 
 describe("TerminalSurface binary protocol", () => {
+	it("preserves content-free decode cause and still accepts a later valid record", () => {
+		const valid = encodeTerminalStateRecord(1n, bellRecord());
+		const corrupt = valid.slice(0, 21);
+		new DataView(corrupt.buffer).setUint32(8, 1, true);
+		corrupt[20] = 0x80;
+		try {
+			decodeTerminalStateRecord(corrupt);
+			expect.fail("Truncated protobuf was accepted");
+		} catch (cause) {
+			expect(cause).toMatchObject({ code: "invalid_protobuf", decodeDiagnostic: { stage: "record", causeType: "RangeError" } });
+		}
+		expect(decodeTerminalStateRecord(valid).record.body.case).toBe("event");
+	});
+
 	it("rejects archived snapshot records instead of downgrading", () => {
 		for (const encoded of [LEGACY_CURRENT_SNAPSHOT, LEGACY_PREVIOUS_SNAPSHOT]) {
 			expectProtocolError(

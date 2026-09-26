@@ -1,4 +1,8 @@
 import { create } from "@bufbuild/protobuf";
+import {
+	type TerminalDecodeDiagnostic,
+	TerminalStateProtocolError,
+} from "./terminalStateLimits";
 import { TerminalStateRecordSchema } from "../../../contracts/terminalStateProtocol";
 import {
 	type DecodedTerminalStateRecord,
@@ -20,7 +24,11 @@ export type TerminalViewportMultipartAssembly =
 			readonly status: "complete";
 			readonly decoded: DecodedTerminalStateRecord;
 	  }
-	| { readonly status: "resync_required"; readonly reason: string };
+	| {
+			readonly status: "resync_required";
+			readonly reason: string;
+			readonly decodeDiagnostic?: TerminalDecodeDiagnostic;
+	  };
 
 export interface TerminalViewportMultipartAssembler {
 	push(encoded: Uint8Array): TerminalViewportMultipartAssembly;
@@ -60,11 +68,12 @@ class BoundedTerminalViewportMultipartAssembler
 		try {
 			decoded = decodeTerminalStateRecord(encoded, this.viewportFrames);
 		} catch (cause) {
-			return this.resync(
-				cause instanceof Error
-					? cause.message
-					: "terminal state record could not be decoded",
-			);
+			return {
+				...this.resync(cause instanceof Error
+					? cause.message : "terminal state record could not be decoded"),
+				...(cause instanceof TerminalStateProtocolError && cause.decodeDiagnostic
+					? { decodeDiagnostic: cause.decodeDiagnostic } : {}),
+			};
 		}
 		const delivery = this.pushDecoded(decoded);
 		if (
