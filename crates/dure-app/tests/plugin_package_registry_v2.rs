@@ -239,13 +239,14 @@ fn embedded_package_binds_exact_bytes_and_resolves_only_the_declared_adapter() {
     let package = registry.package(&plugin_id).unwrap();
     let authority = package.embedded_authority().unwrap();
     assert_eq!(authority.package_file_count(), 10);
+    // Pin the exact bundled public package, including its GPL license metadata.
     assert_eq!(
         authority.sha256().as_str(),
-        "sha256:b8d8f4c0d3dca54e861ef062daa3bcae484f45d345aa7925bcb43f91814bf32d"
+        "sha256:d44c464c461bd2dc66d1912ce26ab547465539e9a814be1332c114fae3b1b132"
     );
     assert_eq!(
         authority.file_manifest_sha256().as_str(),
-        "sha256:32672c56fd43c0c068e74f84d3173cebdaadd58c8edf51341f607ac8f317c0dd"
+        "sha256:a726ba547e07f1afd85b625b75be1de138c0409bbfcf7c57fe98c262a6ff1131"
     );
     assert!(package.has_complete_embedded_authority());
     assert!(matches!(
