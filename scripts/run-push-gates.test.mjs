@@ -546,6 +546,52 @@ describe("release gate runner", () => {
     expect(fs.existsSync(fixture.isolationRoot)).toBe(false);
   });
 
+  test.runIf(process.platform !== "win32")(
+    "binds the process sampler socket inside the owned short release root",
+    () => {
+      const fixture = releaseRunnerEnvironment();
+      let runtimeDirectory;
+      const run = vi.fn((_command, _args, options) => {
+        runtimeDirectory = options.env.XDG_RUNTIME_DIR;
+        const samplerDirectory = path.join(runtimeDirectory, "hebbian");
+        const socket = path.join(samplerDirectory, "process-sampler-v4.sock");
+        fs.mkdirSync(samplerDirectory, { mode: 0o700 });
+        const bound = spawnSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            'import net from "node:net"; const server = net.createServer(); ' +
+              'server.on("error", error => { console.error(error.code); process.exitCode = 1; }); ' +
+              "server.listen(process.argv[1], () => server.close());",
+            socket,
+          ],
+          { encoding: "utf8", timeout: 5_000 },
+        );
+        expect(bound.status, bound.stderr).toBe(0);
+        expect(Buffer.byteLength(socket)).toBeLessThan(104);
+        expect(path.dirname(runtimeDirectory)).toBe(options.env.TMPDIR);
+        const metadata = fs.lstatSync(runtimeDirectory);
+        expect(metadata.mode & 0o777).toBe(0o700);
+        expect(metadata.uid).toBe(process.getuid());
+        expect(metadata.isSymbolicLink()).toBe(false);
+        expect(fs.realpathSync(runtimeDirectory)).toBe(runtimeDirectory);
+        return { status: 0 };
+      });
+
+      expect(
+        runPushGateScopes(["process"], run, {
+          environment: fixture.source,
+          releaseIsolation: true,
+          workingDirectory: fixture.workspace,
+        }),
+      ).toBe(0);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(runtimeDirectory)).toBe(false);
+      expect(fs.existsSync(fixture.isolationRoot)).toBe(false);
+    },
+  );
+
   test("replaces every mutable live authority for an isolated release gate", () => {
     const fixture = releaseRunnerEnvironment();
     for (const [name, value] of Object.entries(fixture.source)) {
@@ -618,7 +664,6 @@ describe("release gate runner", () => {
       "HOME",
       "DURE_HOME",
       "HMUX_DISCOVERY_ROOT",
-      "XDG_RUNTIME_DIR",
       "DURE_GHOSTTY_VT_CACHE_ROOT",
       "NODE_COMPILE_CACHE",
       "COREPACK_HOME",
@@ -651,6 +696,10 @@ describe("release gate runner", () => {
     }
     expect(gateEnvironment.TEMP).toBe(gateEnvironment.TMPDIR);
     expect(gateEnvironment.TMP).toBe(gateEnvironment.TMPDIR);
+    expect(path.dirname(gateEnvironment.XDG_RUNTIME_DIR)).toBe(
+      gateEnvironment.TMPDIR,
+    );
+    expect(gateEnvironment.XDG_RUNTIME_DIR).not.toContain(fixture.live);
     if (process.platform === "win32") {
       expect(gateEnvironment.TMPDIR).toMatch(
         new RegExp(`^${fixture.isolationRoot.replaceAll("/", "\\/")}\\/`),
@@ -757,6 +806,7 @@ describe("release gate runner", () => {
       "live-opencode\n",
     );
     expect(fs.existsSync(gateEnvironment.HMUX_RUNTIME_ROOT)).toBe(false);
+    expect(fs.existsSync(gateEnvironment.XDG_RUNTIME_DIR)).toBe(false);
     expect(fs.existsSync(shortTempEvidence.root)).toBe(false);
     expect(fs.existsSync(fixture.isolationRoot)).toBe(false);
   });
