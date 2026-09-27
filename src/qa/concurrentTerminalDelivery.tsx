@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { configureTextEncoding, getTextEncoding } from "@bufbuild/protobuf/wire";
 import { StructuredTerminalView } from "@/components/terminal/structured/StructuredTerminalView";
 import { type HmuxSessionSummary, hmux } from "@/lib/ipc";
 import { writeFile } from "@/lib/ipc/files";
@@ -14,14 +15,33 @@ function check(condition: boolean, message: string): asserts condition {
 }
 
 /** Actual native IPC and production cached WebView decoding, alongside a fresh
- * decoder of the same bytes. No payloads are replaced or saved. The runner owns
- * the hidden window, disposable roots and all 28 shell generations. */
+ * decoder of the same bytes. Inject a persistently failed shared text codec at
+ * initial delivery and mid-stream; only production decoding may repair it.
+ * No payloads are replaced or saved. The runner owns the hidden window,
+ * disposable roots and all 28 shell generations. */
 export async function runConcurrentTerminalDelivery(
 	proof: string,
 	home: string,
 ) {
 	const originalAttach = hmux.attachStructuredTerminal;
 	const originalNext = hmux.nextStructuredTerminalRecord;
+	const originalEncoding = getTextEncoding();
+	type DecoderFault = {
+		phase: string;
+		calls: number;
+		recovered: boolean;
+		encoding: ReturnType<typeof getTextEncoding>;
+	};
+	const decoderFaults: DecoderFault[] = [];
+	let pendingDecoderFault: string | undefined;
+	let activeDecoderFault: DecoderFault | undefined;
+	const observeDecoderRecovery = () => {
+		if (activeDecoderFault && getTextEncoding() !== activeDecoderFault.encoding) {
+			check(activeDecoderFault.calls > 0, "Injected decoder was never read");
+			activeDecoderFault.recovered = true;
+			activeDecoderFault = undefined;
+		}
+	};
 	const sessions: HmuxSessionSummary[] = [];
 	const observers = new Map<string, number>();
 	const failures: Array<{ stage: string; reason: string }> = [];
@@ -84,12 +104,15 @@ export async function runConcurrentTerminalDelivery(
 		};
 		hmux.nextStructuredTerminalRecord = async (observerId) => {
 			const raw = await originalNext(observerId);
+			observeDecoderRecovery();
 			if (Array.isArray(raw)) fallbackRecords += 1;
 			const bytes = new Uint8Array(raw);
 			totalRecords += 1;
 			totalBytes += bytes.byteLength;
 			maxRecordBytes = Math.max(maxRecordBytes, bytes.byteLength);
-			if (hasTerminalStateEnvelopeMagic(bytes)) {
+			// The independent oracle must not repair the injected fault before
+			// production sees it. Resume checking once production replaces it.
+			if (hasTerminalStateEnvelopeMagic(bytes) && !activeDecoderFault) {
 				try {
 					const { record } = decodeTerminalStateRecord(bytes);
 					const index = observers.get(observerId);
@@ -126,6 +149,22 @@ export async function runConcurrentTerminalDelivery(
 				} catch (error) {
 					noteFailure("fresh_decode", error);
 				}
+			}
+			if (pendingDecoderFault && hasTerminalStateEnvelopeMagic(bytes)) {
+				const fault: DecoderFault = {
+					phase: pendingDecoderFault, calls: 0, recovered: false,
+					encoding: {
+						...getTextEncoding(),
+						decodeUtf8: () => {
+							fault.calls += 1;
+							throw new TypeError("Owned QA failed text decoder context");
+						},
+					},
+				};
+				decoderFaults.push(fault);
+				activeDecoderFault = fault;
+				pendingDecoderFault = undefined;
+				configureTextEncoding(fault.encoding);
 			}
 			return raw;
 		};
@@ -196,11 +235,13 @@ export async function runConcurrentTerminalDelivery(
 			synchronized.clear();
 			outputSessions.clear();
 			frames.fill(0);
+			if (round === 1) pendingDecoderFault = "initial_delivery";
 			render(round);
 			await waitFor(
 				"28 complete native snapshots",
 				() => synchronized.size === 28,
 			);
+			if (round === 2) pendingDecoderFault = "live_stream";
 			if (round === 0) {
 				await Promise.all(
 					sessions.map(async (session, index) => {
@@ -222,6 +263,8 @@ export async function runConcurrentTerminalDelivery(
 					Date.now() - started >= 12_000,
 			);
 			check(failures.length === 0, "Terminal stream failed");
+			observeDecoderRecovery();
+			check(!pendingDecoderFault && !activeDecoderFault, "Decoder recovery did not finish");
 			rounds.push({
 				round,
 				durationMs: Date.now() - started,
@@ -254,6 +297,7 @@ export async function runConcurrentTerminalDelivery(
 	} catch (error) {
 		result = { result: "failed", error: String(error) };
 	} finally {
+		configureTextEncoding(originalEncoding);
 		root.unmount();
 		await Promise.allSettled(retirements);
 		hmux.attachStructuredTerminal = originalAttach;
@@ -284,6 +328,7 @@ export async function runConcurrentTerminalDelivery(
 			totalBytes,
 			maxRecordBytes,
 			fallbackRecords,
+			decoderFaults: decoderFaults.map(({ phase, calls, recovered }) => ({ phase, calls, recovered })),
 			rounds,
 			failures,
 		}),

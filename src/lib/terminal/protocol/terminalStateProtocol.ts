@@ -1,4 +1,4 @@
-import { fromBinary, toBinary } from "@bufbuild/protobuf";
+import { toBinary } from "@bufbuild/protobuf";
 import { BinaryReader, WireType } from "@bufbuild/protobuf/wire";
 import {
 	type TerminalStateRecord,
@@ -19,6 +19,7 @@ import {
 	validateTerminalInputIngress,
 	validateTerminalSurfaceRecord,
 } from "./terminalStateSemanticValidation";
+import { readTerminalProtobuf } from "./readTerminalProtobuf";
 
 export * from "./terminalStateLimits";
 export { validateTerminalInputIngress } from "./terminalStateSemanticValidation";
@@ -167,7 +168,7 @@ export function decodeTerminalStateRecord(
 			: undefined;
 		if (viewport && viewportFrameDecoder) {
 			stage = "record_metadata";
-			record = fromBinary(TerminalStateRecordSchema, viewport.metadata);
+			record = readTerminalProtobuf(TerminalStateRecordSchema, viewport.metadata);
 			stage = "viewport";
 			stagedViewport = true;
 			record.body = {
@@ -175,7 +176,7 @@ export function decodeTerminalStateRecord(
 				value: viewportFrameDecoder.decode(viewport.frame),
 			};
 		} else {
-			record = fromBinary(TerminalStateRecordSchema, payload);
+			record = readTerminalProtobuf(TerminalStateRecordSchema, payload);
 		}
 	} catch (cause) {
 		if (stagedViewport) viewportFrameDecoder?.discard();

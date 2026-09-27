@@ -58,6 +58,10 @@ if (streamStress) {
   assert.equal(result.rounds.length, 3);
   assert.ok(result.fallbackRecords > 0);
   assert.deepEqual(result.failures, []);
+  assert.deepEqual(result.decoderFaults, [
+    { phase: "initial_delivery", calls: 2, recovered: true },
+    { phase: "live_stream", calls: 2, recovered: true },
+  ]);
   for (const round of result.rounds) {
     assert.equal(round.synchronized, 28);
     assert.equal(round.outputSessions, 28);

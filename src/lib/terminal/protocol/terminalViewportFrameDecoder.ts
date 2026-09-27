@@ -1,4 +1,3 @@
-import { fromBinary } from "@bufbuild/protobuf";
 import { BinaryReader, WireType } from "@bufbuild/protobuf/wire";
 import {
 	type TerminalRow,
@@ -7,6 +6,7 @@ import {
 	ViewportFrameSchema,
 } from "../../../contracts/terminalStateProtocol";
 import type { TerminalViewportFrameBinaryDecoder } from "./terminalStateProtocol";
+import { readTerminalProtobuf } from "./readTerminalProtobuf";
 
 interface CachedTerminalRow {
 	readonly bytes: Uint8Array;
@@ -22,7 +22,7 @@ export class TerminalViewportFrameDecoder
 	decode(bytes: Uint8Array): ViewportFrame {
 		this.staged = undefined;
 		const split = splitViewportRows(bytes);
-		const frame = fromBinary(ViewportFrameSchema, split.metadata);
+		const frame = readTerminalProtobuf(ViewportFrameSchema, split.metadata);
 		const previousById = new Map(
 			this.installed.map((cached) => [cached.row.rowId, cached]),
 		);
@@ -35,7 +35,7 @@ export class TerminalViewportFrameDecoder
 			if (anchored && equalBytes(anchored.bytes, rowBytes)) return anchored;
 			return {
 				bytes: rowBytes.slice(),
-				row: fromBinary(TerminalRowSchema, rowBytes),
+				row: readTerminalProtobuf(TerminalRowSchema, rowBytes),
 			};
 		});
 		frame.rows = staged.map((cached) => cached.row);
