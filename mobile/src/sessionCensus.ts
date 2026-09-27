@@ -3,7 +3,7 @@ import { type RememberedListing, type ServerReport, rememberListings } from "./c
 import { describeError } from "./commandError";
 import { hubTitle } from "./hubs";
 import { t } from "./i18n";
-import { type HubLayout, type HubRow, ipc } from "./ipc";
+import { type HubLayout, type HubProbe, type HubRow, ipc } from "./ipc";
 
 interface CensusState {
   hubs: HubRow[];
@@ -67,15 +67,35 @@ export function createSessionCensus(options: {
     };
     const hubs = options.current().hubs;
     let revoked = false;
-    const probes = Promise.all(hubs.map(async (hub) => {
+    const probes = hubs.map(async (hub) => {
+      let probe: HubProbe | undefined;
       try {
-        return { hub, probe: await ipc.hubOpen(hub.id) };
+        probe = await ipc.hubOpen(hub.id);
       } catch (error) {
         if (typeof error === "object" && error !== null && "code" in error &&
           error.code === "hub_refused") revoked = true;
-        return { hub, probe: undefined };
       }
-    }));
+      if (!valid()) return;
+      // A completed Hub is authoritative on its own. Publish it without waiting
+      // for another Hub or the direct SSH census, merging into the latest state
+      // so a later answer cannot overwrite an earlier source's result.
+      const current = options.current();
+      let sessions = current.hubSessions;
+      let layouts = current.hubLayouts;
+      if (!probe) {
+        const remembered = sessions[hub.id];
+        if (remembered) sessions = { ...sessions, [hub.id]: { ...remembered, reachable: false } };
+      } else {
+        sessions = { ...sessions, [hub.id]: {
+          hubId: hub.id, hubLabel: hubTitle(hub), reachable: true, sessions: probe.sessions,
+        } };
+        if (probe.layout) layouts = { ...layouts, [hub.id]: probe.layout };
+      }
+      const patch = { hubSessions: sessions, hubLayouts: layouts };
+      if (full || JSON.stringify(patch) !== JSON.stringify({
+        hubSessions: current.hubSessions, hubLayouts: current.hubLayouts,
+      })) publish(patch);
+    });
     if (full) {
       try {
         const reports = await ipc.takeSessionCensus();
@@ -89,26 +109,11 @@ export function createSessionCensus(options: {
         publish({ banner: describeError(error) });
       }
     }
-    const answers = await probes;
+    // Keep the flight (and explicit refresh indicator) until every source has
+    // settled. Pairing reconciliation runs last so no late answer can restore
+    // a catalog that the native authority has revoked.
+    await Promise.all(probes);
     if (!valid()) return;
-    let sessions = options.current().hubSessions;
-    let layouts = options.current().hubLayouts;
-    for (const { hub, probe } of answers) {
-      if (!probe) {
-        const remembered = sessions[hub.id];
-        if (remembered) sessions = { ...sessions, [hub.id]: { ...remembered, reachable: false } };
-      } else {
-        sessions = { ...sessions, [hub.id]: {
-          hubId: hub.id, hubLabel: hubTitle(hub), reachable: true, sessions: probe.sessions,
-        } };
-        if (probe.layout) layouts = { ...layouts, [hub.id]: probe.layout };
-      }
-    }
-    const patch = { hubSessions: sessions, hubLayouts: layouts };
-    const current = options.current();
-    if (full || JSON.stringify(patch) !== JSON.stringify({
-      hubSessions: current.hubSessions, hubLayouts: current.hubLayouts,
-    })) publish(patch);
     if (revoked) {
       // The native refusal already revoked its paired records. Read that
       // authority again; hand-entered SSH hosts and preferences stay intact.

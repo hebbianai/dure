@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { HubProbe, HubProbeSession } from "./ipc";
+import type { ServerReport } from "./census";
 
 const native = vi.hoisted(() => ({
   hubList: vi.fn(),
@@ -61,6 +62,12 @@ function holdHub(): (sessions?: HubProbeSession[]) => void {
   native.hubOpen.mockImplementationOnce(() => new Promise<HubProbe>((resolve) => { release = resolve; }));
   return (sessions = [session("existing"), session("desktop-created")]) => release(probe(sessions));
 }
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
@@ -79,6 +86,57 @@ afterEach(() => {
   dispose = undefined;
   root.remove();
   vi.useRealTimers();
+});
+
+it("shows the initial Hub catalog while direct SSH is pending and keeps the census single-flight", async () => {
+  const ssh = deferred<ServerReport[]>();
+  native.takeSessionCensus.mockReturnValueOnce(ssh.promise);
+  await launch();
+
+  expect(button('[data-session-id="existing"]').disabled).toBe(false);
+  expect(root.querySelector(".home__pull--busy")).not.toBeNull();
+  await vi.advanceTimersByTimeAsync(25_000);
+  expect(native.hubOpen).toHaveBeenCalledTimes(1);
+  expect(native.takeSessionCensus).toHaveBeenCalledTimes(1);
+
+  ssh.resolve([]);
+  await settle();
+  expect(root.querySelector(".home__pull--busy")).toBeNull();
+  expect(button('[data-session-id="existing"]').disabled).toBe(false);
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(native.hubOpen).toHaveBeenCalledTimes(2);
+});
+
+it.each(["startup", "automatic"])("publishes each Hub independently during %s, including empty and unreachable results", async (mode) => {
+  const slowHub = { ...hub, id: "slow-hub" };
+  native.hubList.mockResolvedValue([hub, slowHub]);
+  native.hubOpen.mockImplementation(async (id) => probe([session(id)]));
+  if (mode === "automatic") await launch();
+  const slow = deferred<HubProbe>();
+  native.hubOpen.mockImplementation((id) => id === slowHub.id
+    ? slow.promise : Promise.resolve(probe([session("fast-result")])));
+  if (mode === "startup") await launch();
+  else await vi.advanceTimersByTimeAsync(2_000);
+
+  expect(button('[data-session-id="fast-result"]').disabled).toBe(false);
+  if (mode === "automatic") expect(button('[data-session-id="slow-hub"]').disabled).toBe(false);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(native.hubOpen).toHaveBeenCalledTimes(mode === "startup" ? 2 : 4);
+  slow.resolve(probe([session("slow-result")]));
+  await settle();
+  expect(button('[data-session-id="fast-result"]').disabled).toBe(false);
+  expect(button('[data-session-id="slow-result"]').disabled).toBe(false);
+  expect(root.querySelector(".home__pull--busy")).toBeNull();
+
+  const slowAgain = deferred<HubProbe>();
+  native.hubOpen.mockImplementation((id) => id === slowHub.id
+    ? slowAgain.promise : Promise.resolve(probe([])));
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(root.querySelector('[data-session-id="fast-result"]')).toBeNull();
+  expect(button('[data-session-id="slow-result"]').disabled).toBe(false);
+  slowAgain.reject(new Error("offline"));
+  await settle();
+  expect(button('[data-session-id="slow-result"]').disabled).toBe(true);
 });
 
 it("reflects working and waiting transitions within two seconds on visible Home", async () => {
