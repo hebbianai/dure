@@ -10,6 +10,9 @@ import {
 import { hmuxManagedBinding } from "@/lib/terminal/terminalBinding";
 import type { TerminalWindowFocusProbe } from "@/lib/terminal/terminalWindowFocusProbe";
 
+// Must match the fixed Hangul payload from recovery-admission-client.mjs.
+const STREAM_HANGUL = String.fromCodePoint(0xd55c, 0xae00);
+
 function check(condition: boolean, message: string): asserts condition {
 	if (!condition) throw new Error(message);
 }
@@ -140,7 +143,7 @@ export async function runConcurrentTerminalDelivery(
 						}
 						if (
 							text.includes(`STREAM_${index}:`) &&
-							text.includes("한글") &&
+							text.includes(STREAM_HANGUL) &&
 							text.includes("🙂")
 						) {
 							outputSessions.add(index);

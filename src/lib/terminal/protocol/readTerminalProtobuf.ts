@@ -23,7 +23,8 @@ const CANARY = Uint8Array.of(
 	0x99,
 	0x82,
 );
-const CANARY_TEXT = "Dure 한🙂";
+// Fixed protocol probe code points, independent of display language.
+const CANARY_TEXT = `Dure ${String.fromCodePoint(0xd55c, 0x1f642)}`;
 
 function canDecode(
 	decode: ReturnType<typeof getTextEncoding>["decodeUtf8"],
