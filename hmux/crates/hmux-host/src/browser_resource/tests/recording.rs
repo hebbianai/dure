@@ -65,11 +65,12 @@ fn recording_survives_navigation_and_handoff_but_needs_current_action_authority(
     let admitted = host.begin_action(&lease.controller_id, &start, []).unwrap();
     let recording = host.prepare_recording(&admitted, true).unwrap();
     assert_eq!(recording.recording(), &start.operation_id);
-    assert!(host
-        .recording_status(&resource(), &page.page_id)
-        .unwrap()
-        .operation_id
-        .is_none());
+    assert!(
+        host.recording_status(&resource(), &page.page_id)
+            .unwrap()
+            .operation_id
+            .is_none()
+    );
     host.document_committed(
         &page.page_id,
         BrowserDocumentId::new("next-document").unwrap(),
@@ -105,11 +106,12 @@ fn recording_survives_navigation_and_handoff_but_needs_current_action_authority(
     ));
     host.finish_action(stop, BrowserActionOutcome::Completed)
         .unwrap();
-    assert!(host
-        .recording_status(&resource(), &page.page_id)
-        .unwrap()
-        .operation_id
-        .is_none());
+    assert!(
+        host.recording_status(&resource(), &page.page_id)
+            .unwrap()
+            .operation_id
+            .is_none()
+    );
 }
 
 #[test]
@@ -161,11 +163,12 @@ fn recording_observation_cannot_cross_resource_generation_or_page() {
             BrowserDocumentId::new("other-document").unwrap(),
         )
         .unwrap();
-    assert!(host
-        .recording_status(&resource(), &other.page_id)
-        .unwrap()
-        .operation_id
-        .is_none());
+    assert!(
+        host.recording_status(&resource(), &other.page_id)
+            .unwrap()
+            .operation_id
+            .is_none()
+    );
     let mut forged = resource();
     forged.generation = BrowserResourceGeneration::new("next-generation").unwrap();
     assert_eq!(

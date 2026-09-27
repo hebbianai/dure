@@ -15,12 +15,12 @@
 pub mod attach;
 pub mod catalog;
 pub mod census;
-pub mod device_identity;
-pub mod device_key;
-pub mod device_reset;
 mod clipboard;
 #[cfg(target_os = "ios")]
 mod clipboard_ios;
+pub mod device_identity;
+pub mod device_key;
+pub mod device_reset;
 pub mod hub_client;
 pub mod hub_session_file;
 pub mod hub_store;

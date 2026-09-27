@@ -40,7 +40,9 @@ fn response(method: &str, params: &Value, thread_id: &str, active_turn: Option<&
             "account": { "type": "fixture" },
             "requiresOpenaiAuth": false,
         }),
-        "config/read" => json!({ "config": { "developer_instructions": "Preserve fixture instructions." } }),
+        "config/read" => {
+            json!({ "config": { "developer_instructions": "Preserve fixture instructions." } })
+        }
         "thread/start" | "thread/resume" => {
             let requested_thread = params
                 .get("threadId")

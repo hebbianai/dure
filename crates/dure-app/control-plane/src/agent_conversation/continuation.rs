@@ -19,7 +19,10 @@ async fn enqueue_active(
     pending: &mut BTreeSet<AgentIdV1>,
 ) -> Result<(), &'static str> {
     pending.extend(
-        state.store.agents_with_recovery().await
+        state
+            .store
+            .agents_with_recovery()
+            .await
             .map_err(|_| "agent_recovery_store_failed")?,
     );
     pending.extend(

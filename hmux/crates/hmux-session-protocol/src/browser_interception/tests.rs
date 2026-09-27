@@ -128,9 +128,11 @@ fn removal_preserves_valid_rules_and_uses_exact_pattern_spelling() {
             "effect":{"kind":"respond","body":"unchanged","status":201,"headers":{"X-Test":"yes"}}
         })
     );
-    assert!(remaining
-        .excluding_pattern(&BrowserUrlPattern::try_from("*/two".to_owned()).unwrap())
-        .is_none());
+    assert!(
+        remaining
+            .excluding_pattern(&BrowserUrlPattern::try_from("*/two".to_owned()).unwrap())
+            .is_none()
+    );
     for invalid in [
         json!({"kind":"remove"}),
         json!({"kind":"remove","pattern":""}),

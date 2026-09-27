@@ -363,7 +363,10 @@ impl AgentTimelineItemBodyV1 {
             }
             Self::Message { markdown, .. } => bounded_text("message.markdown", markdown)?,
             Self::QueuedInput { .. } => {}
-            Self::GoalContinuation { objective, goal_revision } => {
+            Self::GoalContinuation {
+                objective,
+                goal_revision,
+            } => {
                 bounded_text("goalContinuation.objective", objective)?;
                 if *goal_revision == 0 {
                     return invalid("goalContinuation.goalRevision", "must be positive");

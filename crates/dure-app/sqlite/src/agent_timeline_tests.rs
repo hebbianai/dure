@@ -22,14 +22,14 @@ use tempfile::TempDir;
 use super::SqliteDomainStore;
 use super::schema::{downgrade_workflow_launch_fixture_to_v31, writable_connect_options};
 
-#[path = "agent_goal_tests.rs"]
-mod goals;
-#[path = "agent_queue_tests.rs"]
-mod queue;
 #[path = "agent_continuation_tests.rs"]
 mod continuation;
 #[path = "agent_failure_tests.rs"]
 mod failure;
+#[path = "agent_goal_tests.rs"]
+mod goals;
+#[path = "agent_queue_tests.rs"]
+mod queue;
 #[path = "agent_recovery_tests.rs"]
 mod recovery;
 

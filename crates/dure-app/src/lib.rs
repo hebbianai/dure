@@ -7,13 +7,13 @@
 mod agent_bootstrap;
 mod agent_dispatch_stop;
 mod agent_goal;
-mod agent_queue;
-mod agent_recovery;
 mod agent_integration;
 mod agent_plugin_cli;
 mod agent_plugin_cli_invocation;
 mod agent_plugin_cli_plan;
 mod agent_provider_registry;
+mod agent_queue;
+mod agent_recovery;
 mod agent_runtime_close;
 mod agent_runtime_rehost;
 mod agent_runtime_transition;
@@ -46,9 +46,9 @@ mod plugin_views;
 mod plugin_workflows;
 mod primary_checkout_guidance;
 mod provider_credential_profile;
-mod provider_recovery;
 mod provider_execution;
 mod provider_launch_defaults;
+mod provider_recovery;
 mod provider_runtime_integration;
 mod registry;
 mod runtime_adapter_registry;
@@ -62,8 +62,6 @@ pub use agent_bootstrap::{
 };
 pub use agent_dispatch_stop::*;
 pub use agent_goal::*;
-pub use agent_queue::*;
-pub use agent_recovery::*;
 pub use agent_integration::{
     AgentEnvironmentTargetV2, AgentIntegrationEffectOwnershipV2, AgentIntegrationEffectReceiptV2,
     AgentIntegrationInstallActionV2, AgentIntegrationInstallPlanV2,
@@ -89,6 +87,8 @@ pub use agent_provider_registry::{
     AgentProviderRegistry, AgentProviderSessionLaunchPlanV1, AgentProviderStructuredSessionPlanV1,
     AgentProviderStructuredSessionRequestV1, agent_provider_launch_prompt_is_valid,
 };
+pub use agent_queue::*;
+pub use agent_recovery::*;
 pub use agent_runtime_close::*;
 pub use agent_runtime_rehost::*;
 pub use agent_runtime_transition::*;
@@ -303,7 +303,6 @@ pub use primary_checkout_guidance::{
     PRIMARY_CHECKOUT_REV_PARSE_ARGUMENTS_V1, PRIMARY_CHECKOUT_SESSION_CONTEXT_TEMPLATE_V1,
     primary_checkout_session_context_v1, session_start_additional_context_output_v1,
 };
-pub use provider_recovery::*;
 pub use provider_credential_profile::{
     PROVIDER_CREDENTIAL_PROFILE_SCHEMA_VERSION_V1, ProviderCredentialEnvironmentPolicyV1,
     ProviderCredentialProfileDirectoryNameV1, ProviderCredentialProfileRegistrationV1,
@@ -318,6 +317,7 @@ pub use provider_launch_defaults::{
     ProviderLaunchDefaultsPutRequestV1, ProviderLaunchDefaultsResolutionV1,
     ProviderLaunchDefaultsV1, ProviderLaunchPermissionModeV1, ProviderLaunchPermissionOverrideV1,
 };
+pub use provider_recovery::*;
 pub use provider_runtime_integration::{
     PROVIDER_RUNTIME_INTEGRATIONS_FILE_V1, PROVIDER_RUNTIME_INTEGRATIONS_SCHEMA_VERSION_V1,
     ProviderRuntimeIntegrationContractErrorV1, ProviderRuntimeIntegrationV1,

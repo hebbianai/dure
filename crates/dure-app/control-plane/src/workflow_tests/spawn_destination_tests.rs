@@ -23,7 +23,13 @@ async fn missing_provider_setup(native: bool) {
         &state.projects_catalog_path,
         "provider-setup-project".into(),
         "Provider setup fixture".into(),
-        repository.path().canonicalize().unwrap().to_str().unwrap().into(),
+        repository
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .into(),
     )
     .unwrap();
     let hmux = if native {
@@ -31,7 +37,10 @@ async fn missing_provider_setup(native: bool) {
     } else {
         None
     };
-    let launches = || hmux.as_ref().map_or_else(|| launcher.requests(), |runtime| runtime.requests());
+    let launches = || {
+        hmux.as_ref()
+            .map_or_else(|| launcher.requests(), |runtime| runtime.requests())
+    };
     let authority = BackendRequestAuthority {
         backend_id: state.descriptor.backend_id.clone(),
         generation: state.descriptor.generation.clone(),
@@ -46,7 +55,9 @@ async fn missing_provider_setup(native: bool) {
         "worktree": { "kind": "project_root" },
         "promptDigest": null,
     });
-    let preview = preview_agent_spawn(&state, &authority, &request).await.unwrap();
+    let preview = preview_agent_spawn(&state, &authority, &request)
+        .await
+        .unwrap();
     let planned: dure_app::AgentSpawnJournalReceiptV1 =
         serde_json::from_value(preview["receipt"].clone()).unwrap();
     let mut wire = orchestration_backend_request(&state, "missing-provider-apply", "", Value::Null);
@@ -62,21 +73,59 @@ async fn missing_provider_setup(native: bool) {
     let failure = dispatch(&state, &wire).await.unwrap_err();
     assert_eq!(failure.code, "agent_spawn_provider_unavailable");
     assert_eq!(failure.disposition, BackendFailureDispositionV1::RetrySame);
-    assert_eq!(failure.details, Some(json!({"reasonCode": "provider_executable_not_found"})));
+    assert_eq!(
+        failure.details,
+        Some(json!({"reasonCode": "provider_executable_not_found"}))
+    );
     assert!(launches().is_empty());
-    assert!(state.store.agent(&planned.plan.agent_id).await.unwrap().is_none());
-    assert!(state.store.workspace(&planned.plan.workspace_id).await.unwrap().is_none());
-    assert_eq!(preview_agent_spawn(&state, &authority, &request).await.unwrap(), preview);
-    let reopened = SqliteDomainStore::open(&state.descriptor.database_path).await.unwrap();
-    assert_eq!(reopened.agent_spawn_receipt(&planned.operation_id).await.unwrap().unwrap(), planned);
+    assert!(
+        state
+            .store
+            .agent(&planned.plan.agent_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        state
+            .store
+            .workspace(&planned.plan.workspace_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        preview_agent_spawn(&state, &authority, &request)
+            .await
+            .unwrap(),
+        preview
+    );
+    let reopened = SqliteDomainStore::open(&state.descriptor.database_path)
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened
+            .agent_spawn_receipt(&planned.operation_id)
+            .await
+            .unwrap()
+            .unwrap(),
+        planned
+    );
 
     // Repair only the owned fixture executable; neither the plan nor the request changes.
     let started = executable.with_extension("started");
-    fs::write(&executable, "#!/bin/sh\nprintf 'started\\n' >> \"$0.started\"\nexec sleep 120\n").unwrap();
+    fs::write(
+        &executable,
+        "#!/bin/sh\nprintf 'started\\n' >> \"$0.started\"\nexec sleep 120\n",
+    )
+    .unwrap();
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
     let applied = dispatch(&state, &wire).await.unwrap();
     assert_eq!(applied["receipt"]["state"], "succeeded");
-    assert_eq!(applied["receipt"]["operationId"], preview["receipt"]["operationId"]);
+    assert_eq!(
+        applied["receipt"]["operationId"],
+        preview["receipt"]["operationId"]
+    );
     assert_eq!(launches().len(), 1);
     // Replaying after losing the successful response must not create another process.
     assert_eq!(dispatch(&state, &wire).await.unwrap(), applied);
@@ -86,14 +135,17 @@ async fn missing_provider_setup(native: bool) {
             while !started.exists() {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-        }).await.expect("the repaired fixture executable must actually start");
+        })
+        .await
+        .expect("the repaired fixture executable must actually start");
         assert_eq!(fs::read_to_string(started).unwrap(), "started\n");
         let launched = hmux.requests();
         let session = hmux_client::LocalSessionCatalog::new(&hmux.discovery)
             .find(&hmux_client::SessionSelector::new(
                 &launched[0].session_id,
                 Some(launched[0].workspace_id.clone()),
-            )).unwrap();
+            ))
+            .unwrap();
         hmux.stop(&WorkflowSessionGenerationV1 {
             session_id: session.session_id,
             workspace_id: session.workspace_id,

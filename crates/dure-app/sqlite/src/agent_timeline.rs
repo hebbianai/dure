@@ -1,20 +1,18 @@
 use dure_app::{
     AgentClientMessageIdV1, AgentCompletePendingAnswerV1, AgentCompleteTurnEffectV1,
-    AgentContinueTurnRequestV1,
-    AgentHistoryHydrationAuthorityV1, AgentHistoryHydrationDispositionV1,
-    AgentHistorySnapshotReceiptV1, AgentHistorySnapshotV1, AgentInteractionBindingV1,
-    AgentInteractionRequestIdV1, AgentInteractionSessionIdV1, AgentPendingAnswerIntentV1,
-    AgentPendingAnswerReceiptV1, AgentPendingAnswerStateV1, AgentPendingRequestDraftV1,
-    AgentPendingRequestKindV1, AgentPendingRequestV1, AgentPendingSnapshotV1,
-    AgentProviderCursorV1, AgentProviderEventCommitV1, AgentProviderGapV1,
+    AgentContinueTurnRequestV1, AgentHistoryHydrationAuthorityV1,
+    AgentHistoryHydrationDispositionV1, AgentHistorySnapshotReceiptV1, AgentHistorySnapshotV1,
+    AgentInteractionBindingV1, AgentInteractionRequestIdV1, AgentInteractionSessionIdV1,
+    AgentPendingAnswerIntentV1, AgentPendingAnswerReceiptV1, AgentPendingAnswerStateV1,
+    AgentPendingRequestDraftV1, AgentPendingRequestKindV1, AgentPendingRequestV1,
+    AgentPendingSnapshotV1, AgentProviderCursorV1, AgentProviderEventCommitV1, AgentProviderGapV1,
     AgentProviderMessageIdV1, AgentProviderRuntimeFenceV1, AgentRuntimeReplacementV1,
     AgentStartTurnIntentV1, AgentTimelineActiveTurnV1, AgentTimelineCommitReceiptV1,
-    AgentTimelineCursorV1, AgentTimelineEpochV1, AgentTimelineFailureV1,
-    AgentTimelineItemBodyV1, AgentTimelineItemDraftV1,
-    AgentTimelineItemIdV1, AgentTimelineLifecycleStateV1, AgentTimelineLiveTextV1,
-    AgentTimelineMessageRoleV1, AgentTimelineMutationV1, AgentTimelinePageV1,
-    AgentTimelineReadDirectionV1, AgentTimelineReadRequestV1, AgentTimelineReadV1,
-    AgentTimelineRowV1, AgentTimelineStreamIdV1, AgentTimelineTextFragmentV1,
+    AgentTimelineCursorV1, AgentTimelineEpochV1, AgentTimelineFailureV1, AgentTimelineItemBodyV1,
+    AgentTimelineItemDraftV1, AgentTimelineItemIdV1, AgentTimelineLifecycleStateV1,
+    AgentTimelineLiveTextV1, AgentTimelineMessageRoleV1, AgentTimelineMutationV1,
+    AgentTimelinePageV1, AgentTimelineReadDirectionV1, AgentTimelineReadRequestV1,
+    AgentTimelineReadV1, AgentTimelineRowV1, AgentTimelineStreamIdV1, AgentTimelineTextFragmentV1,
     AgentTimelineTextKindV1, AgentTurnEffectReceiptV1, AgentTurnEffectStateV1, AgentTurnIdV1,
     DomainStoreErrorV1, MAX_AGENT_PENDING_REQUESTS_V1, MAX_AGENT_TIMELINE_LIVE_TEXT_HEADS_V1,
     MAX_AGENT_TIMELINE_TEXT_BYTES_V1, ProviderIdV1,
@@ -2033,7 +2031,11 @@ pub(crate) async fn prepare_continuation_with_goal_on(
         return Ok(None);
     }
     match goal {
-        Some(goal) => record_goal_turn_intent_on(connection, intent, &goal.objective, goal.revision).await.map(Some),
+        Some(goal) => {
+            record_goal_turn_intent_on(connection, intent, &goal.objective, goal.revision)
+                .await
+                .map(Some)
+        }
         None => record_turn_intent_on(connection, intent).await.map(Some),
     }
 }
@@ -2169,10 +2171,15 @@ pub(crate) async fn record_turn_intent_on(
     connection: &mut SqliteConnection,
     intent: &AgentStartTurnIntentV1,
 ) -> Result<AgentTurnEffectReceiptV1, DomainStoreErrorV1> {
-    record_turn_intent_with_body_on(connection, intent, AgentTimelineItemBodyV1::Message {
-        role: AgentTimelineMessageRoleV1::User,
-        markdown: intent.input.clone(),
-    }).await
+    record_turn_intent_with_body_on(
+        connection,
+        intent,
+        AgentTimelineItemBodyV1::Message {
+            role: AgentTimelineMessageRoleV1::User,
+            markdown: intent.input.clone(),
+        },
+    )
+    .await
 }
 
 pub(crate) async fn record_goal_turn_intent_on(
@@ -2181,9 +2188,15 @@ pub(crate) async fn record_goal_turn_intent_on(
     objective: &str,
     goal_revision: u64,
 ) -> Result<AgentTurnEffectReceiptV1, DomainStoreErrorV1> {
-    record_turn_intent_with_body_on(connection, intent, AgentTimelineItemBodyV1::GoalContinuation {
-        objective: objective.into(), goal_revision,
-    }).await
+    record_turn_intent_with_body_on(
+        connection,
+        intent,
+        AgentTimelineItemBodyV1::GoalContinuation {
+            objective: objective.into(),
+            goal_revision,
+        },
+    )
+    .await
 }
 
 async fn record_turn_intent_with_body_on(
@@ -2220,7 +2233,10 @@ async fn record_turn_intent_with_body_on(
             .await?;
     // Admission and the start row share the write transaction. An earlier
     // client snapshot cannot replace work another client already admitted.
-    if active_turn_for_session(connection, &binding).await?.is_some() {
+    if active_turn_for_session(connection, &binding)
+        .await?
+        .is_some()
+    {
         return Err(DomainStoreErrorV1::IdentityConflict {
             entity: "agent_turn",
             id: intent.turn_id.to_string(),

@@ -20,9 +20,9 @@ use dure_app::{
     ProviderRuntimeIntegrationsV1, RegistrationOutcomeV1,
 };
 use dure_provider_adapter::{
-    NativeProviderConversationReference, native_provider_launch_plan,
-    native_provider_preflight_plan, native_provider_prompt_target,
-    apply_provider_runtime_integration, reviewed_native_provider_ids,
+    NativeProviderConversationReference, apply_provider_runtime_integration,
+    native_provider_launch_plan, native_provider_preflight_plan, native_provider_prompt_target,
+    reviewed_native_provider_ids,
 };
 
 const BUNDLED_PROBE_TIMEOUT: Duration = Duration::from_millis(50);
@@ -1165,8 +1165,12 @@ mod tests {
             register_provider(
                 &mut registry,
                 BundledAgentProvider::new(
-                    &format!("fixture.{provider}"), "Fixture provider", provider,
-                    fixture_executable.to_str().unwrap(), Arc::clone(&integrations), false,
+                    &format!("fixture.{provider}"),
+                    "Fixture provider",
+                    provider,
+                    fixture_executable.to_str().unwrap(),
+                    Arc::clone(&integrations),
+                    false,
                 ),
             );
         }

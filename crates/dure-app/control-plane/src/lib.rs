@@ -9,11 +9,11 @@ mod agent_operation_lock;
 #[cfg(unix)]
 mod agent_runtime_api;
 #[cfg(unix)]
-mod agent_runtime_native_io;
-#[cfg(unix)]
 mod agent_runtime_checkout;
 #[cfg(unix)]
 mod agent_runtime_close_apply;
+#[cfg(unix)]
+mod agent_runtime_native_io;
 #[cfg(unix)]
 mod agent_runtime_native_rehost;
 #[cfg(unix)]
@@ -32,12 +32,18 @@ mod agent_spawn_api;
 mod agent_spawn_preview;
 mod agent_spawn_worktree;
 use agent_spawn_preview::preview_agent_spawn;
+#[cfg(unix)]
+mod agent_goal;
+#[cfg(unix)]
+mod agent_recovery;
 mod agent_spawn_apply;
 mod agent_spawn_records;
 #[cfg(unix)]
 mod agent_spawn_structured;
 mod agent_spawn_support;
 mod backend_runtime_root;
+#[cfg(unix)]
+mod backend_scope;
 #[cfg(unix)]
 pub mod browser_engine;
 #[cfg(unix)]
@@ -67,9 +73,9 @@ mod codex_timeline_bridge;
 mod hmux_session_inspection;
 mod interaction_wake;
 #[cfg(unix)]
-pub mod managed_claude_hook;
-#[cfg(unix)]
 mod json_rpc_socket_client;
+#[cfg(unix)]
+pub mod managed_claude_hook;
 #[cfg(all(test, unix))]
 mod managed_create_recovery_test_support;
 #[cfg(unix)]
@@ -88,17 +94,6 @@ mod orchestration_event_batch;
 mod orchestration_event_inspection;
 mod orchestration_invoke;
 mod orchestration_session_observation;
-mod pro_features;
-#[cfg(unix)]
-mod workspace_environment;
-#[cfg(unix)]
-mod backend_scope;
-#[cfg(unix)]
-mod agent_goal;
-#[cfg(unix)]
-mod agent_recovery;
-#[cfg(unix)]
-mod slack_connector;
 #[cfg(unix)]
 pub mod pi_connection_driver;
 #[cfg(unix)]
@@ -109,12 +104,17 @@ mod pi_timeline_bridge;
 mod primary_checkout;
 mod private_driver_socket;
 mod private_record;
+mod pro_features;
 mod project_catalog;
 mod provider_commands;
-#[cfg(unix)]
-mod provider_recovery_api;
 pub mod provider_credential_profile;
 mod provider_executable;
+#[cfg(unix)]
+mod provider_recovery_api;
+#[cfg(unix)]
+mod slack_connector;
+#[cfg(unix)]
+mod workspace_environment;
 use provider_executable::resolve_provider_executable;
 mod provider_model_catalog;
 mod provider_permission;
@@ -3685,7 +3685,9 @@ async fn dispatch_authorized(
     match request.operation.as_str() {
         #[cfg(unix)]
         "workspace_environment.invoke" => workspace_environment::invoke(state, &request.body).await,
-        "provider_recovery.get" | "provider_recovery.put" | "provider_recovery.observe_usage"
+        "provider_recovery.get"
+        | "provider_recovery.put"
+        | "provider_recovery.observe_usage"
         | "agent_recovery.read" => {
             provider_recovery_api::invoke(state, &request.operation, &request.body).await
         }
@@ -4203,8 +4205,7 @@ async fn dispatch(
     state: &ServiceState,
     request: &BackendRequest,
 ) -> Result<Value, BackendDispatchError> {
-    let authority =
-        validate_request(request, state).map_err(BackendDispatchError::from)?;
+    let authority = validate_request(request, state).map_err(BackendDispatchError::from)?;
     dispatch_authorized(state, authority, request).await
 }
 

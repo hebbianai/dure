@@ -1,7 +1,7 @@
 //! Trace and profiler share one browser-instance interval, independently of input.
 use crate::browser_resource::{
-    counter, BrowserControllerLease, BrowserInstanceId, BrowserOperationId, BrowserPageIdentity,
-    BrowserResourceIdentity,
+    BrowserControllerLease, BrowserInstanceId, BrowserOperationId, BrowserPageIdentity,
+    BrowserResourceIdentity, counter,
 };
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;

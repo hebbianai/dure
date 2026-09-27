@@ -691,14 +691,12 @@ async fn exact_session_context_batch_is_ordered_isolated_and_matches_scalar_prec
         .execute(&mut plan_connection)
         .await
         .unwrap();
-    sqlx::query(
-        "DELETE FROM workflow_interaction_events WHERE authority_key = ?1 AND cursor = ?2",
-    )
-    .bind(&corrupted_authority)
-    .bind(corrupted_cursor)
-    .execute(&mut plan_connection)
-    .await
-    .unwrap();
+    sqlx::query("DELETE FROM workflow_interaction_events WHERE authority_key = ?1 AND cursor = ?2")
+        .bind(&corrupted_authority)
+        .bind(corrupted_cursor)
+        .execute(&mut plan_connection)
+        .await
+        .unwrap();
     assert_eq!(
         store
             .orchestration_target_for_exact_session(&exact_session)
@@ -715,7 +713,10 @@ async fn exact_session_context_batch_is_ordered_isolated_and_matches_scalar_prec
     assert!(
         store
             .interaction_service()
-            .read_events(coordinator_event_read(&first_context, EventCursor::BEGINNING))
+            .read_events(coordinator_event_read(
+                &first_context,
+                EventCursor::BEGINNING
+            ))
             .await
             .is_err(),
         "context lookup must not fabricate the missing payload or acknowledge its delivery",

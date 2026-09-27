@@ -504,7 +504,9 @@ where
         query_binding.insert("env".into(), json!(environment));
         query_binding.insert(
             "instructions".into(),
-            json!(crate::agent_goal::tool_instructions(&attachment.binding.agent_id)),
+            json!(crate::agent_goal::tool_instructions(
+                &attachment.binding.agent_id
+            )),
         );
         query_binding.insert(
             "permissionMode".into(),
