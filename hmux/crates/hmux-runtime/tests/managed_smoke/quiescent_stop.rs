@@ -78,7 +78,7 @@ fn quiescent_managed_stop_refuses_after_a_reserved_crash_and_controller_input() 
     let waiting_revision = stale_quiescence.runtime_revision();
     let stale_request =
         exact_managed_stop_request("quiescent-stop-stale", created.session().descriptor())
-            .with_expected_quiescence(stale_quiescence)
+            .with_expected_quiescence(stale_quiescence.clone())
             .unwrap();
     run_faulted_managed_stop(&discovery_root, &cwd, &stale_request, "after_reserve");
 
@@ -171,11 +171,40 @@ fn quiescent_managed_stop_refuses_after_a_reserved_crash_and_controller_input() 
                 report_waiting(),
             )
             .unwrap(),
-        AgentStateReportOutcome::NoOp,
-        "provider acknowledgement clears submitted input without inventing new activity"
+        AgentStateReportOutcome::Applied,
+        "provider acknowledgement clears submitted input and retires the previous idle epoch"
     );
     let fresh_quiescence = observe_quiescence(false);
-    assert_eq!(fresh_quiescence.runtime_revision(), waiting_revision);
+    assert!(fresh_quiescence.runtime_revision() > waiting_revision);
+    let stale_after_acknowledgement = stopper
+        .stop(
+            exact_managed_stop_request(
+                "quiescent-stop-stale-after-ack",
+                created.session().descriptor(),
+            )
+            .with_expected_quiescence(stale_quiescence)
+            .unwrap(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        stale_after_acknowledgement.code(),
+        "hmux_managed_stop_refused"
+    );
+    assert_eq!(
+        reporter
+            .report_agent_state(
+                ManagedAttachRequest::new("quiescent-stop-target", "workspace-quiescent-stop")
+                    .unwrap(),
+                report_waiting(),
+            )
+            .unwrap(),
+        AgentStateReportOutcome::NoOp,
+        "duplicate acknowledgement must preserve the new idle epoch"
+    );
+    assert_eq!(
+        observe_quiescence(false).runtime_revision(),
+        fresh_quiescence.runtime_revision()
+    );
     let stopped = stopper
         .stop(
             exact_managed_stop_request("quiescent-stop-fresh", created.session().descriptor())

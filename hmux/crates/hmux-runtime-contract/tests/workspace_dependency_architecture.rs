@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -20,6 +20,7 @@ struct Metadata {
 #[derive(Debug, Deserialize)]
 struct Package {
     dependencies: Vec<Dependency>,
+    features: BTreeMap<String, Vec<String>>,
     id: String,
     name: String,
 }
@@ -30,6 +31,7 @@ struct Dependency {
     name: String,
     optional: bool,
     path: Option<PathBuf>,
+    target: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -83,6 +85,10 @@ fn optional_edge(from: &str, to: &str) -> LocalEdge {
 
 fn parent_edge(from: &str, to: &str) -> LocalEdge {
     LocalEdge::new(from, to, Normal, false, ParentRepository)
+}
+
+fn optional_parent_edge(from: &str, to: &str) -> LocalEdge {
+    LocalEdge::new(from, to, Normal, true, ParentRepository)
 }
 
 fn workspace_metadata() -> &'static Metadata {
@@ -173,6 +179,10 @@ fn target_edges() -> BTreeSet<LocalEdge> {
         edge("hmux-cli", "hmux-ssh-transport"),
         edge("hmux-client", "hmux-session-protocol"),
         edge("hmux-client", "hmux-local-platform"),
+        // Session-file routing reuses leaf OS services behind local-runtime.
+        // These are platform dependencies, not application-direction debt.
+        optional_parent_edge("hmux-client", "hebbian-bounded-process"),
+        optional_parent_edge("hmux-client", "hebbian-process-sampler"),
         optional_edge("hmux-client", "terminal-state-protocol"),
         edge("hmux-host", "hmux-session-protocol"),
         edge("hmux-host", "hmux-local-platform"),
@@ -284,6 +294,24 @@ fn unreviewed_edge_shapes_are_rejected() {
         (None, edge("hmux-ssh-transport", "hmux-host")),
         (None, edge("hmux-client", "hmux-release-trust")),
         (
+            None,
+            parent_edge("hmux-client", "unreviewed-platform-service"),
+        ),
+        (
+            Some(optional_parent_edge(
+                "hmux-client",
+                "hebbian-bounded-process",
+            )),
+            parent_edge("hmux-client", "hebbian-bounded-process"),
+        ),
+        (
+            Some(optional_parent_edge(
+                "hmux-client",
+                "hebbian-process-sampler",
+            )),
+            parent_edge("hmux-client", "hebbian-process-sampler"),
+        ),
+        (
             Some(dev_edge("hmux-ssh-transport", "terminal-state-protocol")),
             edge("hmux-ssh-transport", "terminal-state-protocol"),
         ),
@@ -300,6 +328,33 @@ fn unreviewed_edge_shapes_are_rejected() {
         }
         assert!(actual.insert(added.clone()));
         assert_eq!(unreviewed_edges(&actual), vec![added]);
+    }
+}
+
+#[test]
+fn session_file_process_services_are_unix_and_local_runtime_only() {
+    let client = workspace_packages(workspace_metadata())
+        .find(|package| package.name == "hmux-client")
+        .unwrap();
+    for name in ["hebbian-bounded-process", "hebbian-process-sampler"] {
+        let dependencies: Vec<_> = client
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.name == name)
+            .collect();
+        assert_eq!(dependencies.len(), 1, "one exact platform edge for {name}");
+        let dependency = dependencies[0];
+        assert!(dependency.optional);
+        assert_eq!(dependency.kind, None);
+        assert_eq!(dependency.target.as_deref(), Some("cfg(unix)"));
+        let activation = format!("dep:{name}");
+        let owners: Vec<_> = client
+            .features
+            .iter()
+            .filter(|(_, members)| members.contains(&activation))
+            .map(|(feature, _)| feature.as_str())
+            .collect();
+        assert_eq!(owners, ["local-runtime"], "feature owner for {name}");
     }
 }
 

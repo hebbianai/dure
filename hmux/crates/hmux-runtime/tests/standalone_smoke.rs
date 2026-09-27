@@ -5385,19 +5385,8 @@ fn recovery_create_reconciles_the_exact_target_after_the_broker_response_is_lost
         "retry after a transient failure must reuse the exact generation"
     );
 
-    abruptly_kill_test_session(&first_generation);
-    let recreated = creator.create(request.clone()).unwrap();
-    assert_eq!(
-        recreated.session().descriptor().session_id,
-        first_generation.session_id
-    );
-    assert_ne!(
-        recreated.session().descriptor().host_instance_id,
-        first_generation.host_instance_id,
-        "a deterministic retry after reboot must recreate the exact target as a new generation"
-    );
-
     let conflicting = request
+        .clone()
         .with_recovery_identity(
             StandaloneRecoveryCreateIdentity::new(
                 "standalone_response02",
@@ -5422,10 +5411,21 @@ fn recovery_create_reconciles_the_exact_target_after_the_broker_response_is_lost
         "same-name state must never be adopted as a different recovery target"
     );
 
-    recreated
-        .session()
-        .terminate_standalone(&catalog, Duration::from_secs(3))
-        .unwrap();
+    abruptly_kill_test_session(&first_generation);
+    for _ in 0..2 {
+        let ended = creator.create(request.clone()).unwrap_err();
+        assert_eq!(ended.code(), "hmux_standalone_recovery_target_exited");
+        let retained = catalog
+            .find(&SessionSelector::new(
+                &first_generation.session_id,
+                Some(first_generation.workspace_id.clone()),
+            ))
+            .unwrap();
+        assert!(
+            retained.same_generation(&first_generation),
+            "an exited recovery target must never be recreated under the same identity"
+        );
+    }
 }
 
 #[test]
@@ -6182,7 +6182,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
 }
 
 #[test]
-fn bounded_working_report_expires_without_terminal_text_inference() {
+fn bounded_working_report_retains_work_until_a_typed_provider_report() {
     let state = tempfile::tempdir().unwrap();
     let discovery_root = state.path().join("discovery");
     let creator = StandaloneSessionCreator::new(env!("CARGO_BIN_EXE_hmux-runtime"))
@@ -6233,16 +6233,61 @@ fn bounded_working_report_expires_without_terminal_text_inference() {
     let working = wait_for_provider_event_state(&mut observer);
     assert_eq!(working.activity, hmux_client::AgentRuntimeActivity::Working);
 
-    let expired = wait_for_provider_event_state(&mut observer);
-    assert_eq!(expired.activity, hmux_client::AgentRuntimeActivity::Waiting);
-    assert_eq!(expired.attention, hmux_client::AgentRuntimeAttention::None);
+    // Passing the 50 ms lease does not establish semantic task completion.
+    std::thread::sleep(Duration::from_millis(100));
+    let snapshot = LocalSessionObserver::connect(
+        &catalog,
+        &SessionSelector::new(
+            session.descriptor().session_id.clone(),
+            Some(session.descriptor().workspace_id.clone()),
+        ),
+        ObserverAttachOptions::default(),
+    )
+    .unwrap();
+    let retained = snapshot
+        .attachment()
+        .initial_snapshot
+        .agent_runtime_state
+        .as_ref()
+        .unwrap();
     assert_eq!(
-        expired.revision.parse::<u64>().unwrap(),
+        retained.activity,
+        hmux_client::AgentRuntimeActivity::Working
+    );
+    assert_eq!(retained.revision, working.revision);
+    assert_eq!(retained.turn_completed_count, working.turn_completed_count);
+    snapshot.detach().unwrap();
+
+    assert_eq!(
+        session
+            .report_agent_state(
+                AgentStateReport {
+                    identity_only: false,
+                    activity: hmux_client::AgentRuntimeActivity::Waiting,
+                    attention: hmux_client::AgentRuntimeAttention::None,
+                    turn_completed: false,
+                    turn_completion_id: None,
+                    causality: None,
+                    working_ttl_ms: None,
+                    conversation_identity: None,
+                    expected_observation: None,
+                },
+                None,
+            )
+            .unwrap(),
+        AgentStateReportOutcome::Applied
+    );
+    let waiting = wait_for_provider_event_state(&mut observer);
+    assert_eq!(waiting.activity, hmux_client::AgentRuntimeActivity::Waiting);
+    assert_eq!(waiting.attention, hmux_client::AgentRuntimeAttention::None);
+    assert_eq!(
+        waiting.revision.parse::<u64>().unwrap(),
         working.revision.parse::<u64>().unwrap() + 1
     );
+    assert_eq!(waiting.turn_completed_count, working.turn_completed_count);
     assert_eq!(
-        expired.observed_through_output_seq, working.observed_through_output_seq,
-        "deadline expiry is ordered Host state, not a terminal-output observation"
+        waiting.observed_through_output_seq, working.observed_through_output_seq,
+        "typed provider state is independent of terminal-output observations"
     );
 
     session

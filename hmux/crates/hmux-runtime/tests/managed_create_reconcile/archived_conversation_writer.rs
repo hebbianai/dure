@@ -184,6 +184,22 @@ fn exact_resume_releases_an_archived_legacy_conversation_writer() {
         .is_ok_and(|changed| !changed),
         "admission must checkpoint release once"
     );
+    assert!(
+        matches!(
+            reconcile_identity(
+                &root,
+                &ManagedCreateReconcileRequest::new(
+                    request.idempotency_key(),
+                    request.session_id(),
+                    request.workspace_id(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            ManagedCreateReconcileLedgerState::Completed(_)
+        ),
+        "missing current discovery must not invent source retirement"
+    );
 }
 
 #[test]
@@ -256,6 +272,14 @@ fn an_archived_writer_without_terminal_evidence_stays_reserved() {
             request.session_id()
         )
         .unwrap()
+    );
+    let error = ManagedSessionCreator::new(env!("CARGO_BIN_EXE_hmux-runtime"))
+        .with_discovery_root(&root)
+        .replace_current_and_advance(request)
+        .expect_err("missing terminal evidence must retain the writer");
+    assert_eq!(
+        error.code(),
+        hmux_runtime_contract::MANAGED_CONVERSATION_WRITER_CONFLICT_CODE
     );
 }
 
