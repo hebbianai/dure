@@ -4657,7 +4657,7 @@ fn serve_client(
             host.controller_generation()
         }
     };
-    let selected_capabilities = hello
+    let mut selected_capabilities = hello
         .requested_capabilities
         .iter()
         .filter(|requested| {
@@ -4685,6 +4685,13 @@ fn serve_client(
         })
         .cloned()
         .collect::<Vec<_>>();
+    let preferred_width =
+        hmux_runtime_contract::terminal_preferred_width_permitted(&selected_capabilities);
+    if !preferred_width {
+        selected_capabilities.retain(|capability| {
+            capability != hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY
+        });
+    }
     let agent_runtime_state = selected_capabilities
         .iter()
         .any(|capability| capability == AGENT_RUNTIME_STATE_CAPABILITY);
@@ -4979,6 +4986,7 @@ fn serve_client(
                 } else {
                     WheelPtySink::Absent
                 },
+                preferred_width,
                 viewport.active_connection,
             ) {
                 let _ = state.subscribers.remove(client_id);

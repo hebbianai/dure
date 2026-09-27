@@ -1080,6 +1080,193 @@ fn structured_surfaces_wrap_at_the_narrowest_width_without_a_controller_lease() 
 
 #[cfg(feature = "terminal-state-stream")]
 #[test]
+fn preferred_width_attachment_overrides_a_narrow_ordinary_writer() {
+    use hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY;
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create(
+        &state, "standalone-preferred-width",
+        vec!["/bin/sh".into(), "-c".into(), "stty -echo; printf WIDTH_READY; while read label; do printf '\\033[2J\\033[H%s:PTY:%s\\r\\n' \"$label\" \"$(stty size)\"; done".into()],
+    );
+    wait_for_replay_snapshot(&fixture.session, b"WIDTH_READY");
+    let selector = SessionSelector::new(
+        fixture.descriptor.session_id.clone(),
+        Some(fixture.descriptor.workspace_id.clone()),
+    );
+    let session = fixture.catalog.open(&selector).unwrap();
+    let desktop = session
+        .connect_with_options(TerminalSurfaceAttachment::connection_options(
+            TerminalSurfaceAccess::Writer,
+            None,
+        ))
+        .unwrap();
+    assert!(!desktop.supports(TERMINAL_PREFERRED_WIDTH_CAPABILITY));
+    let mut desktop = TerminalSurfaceAttachment::from_connection(desktop).unwrap();
+    desktop
+        .send_resize_confirmed(38, 31, Duration::from_secs(3))
+        .unwrap();
+    let phone = session
+        .connect_with_options(
+            TerminalSurfaceAttachment::connection_options(TerminalSurfaceAccess::Writer, None)
+                .with_terminal_preferred_width(),
+        )
+        .unwrap();
+    assert!(phone.supports(TERMINAL_PREFERRED_WIDTH_CAPABILITY));
+    let phone_writer = phone.terminal_input_writer_capability().unwrap();
+    let mut phone = TerminalSurfaceAttachment::from_connection(phone).unwrap();
+    // An opted-in attachment without a successful geometry does not affect width.
+    assert_preferred_terminal_dimensions(&fixture, 38, 31);
+    let receipt = phone
+        .send_resize_confirmed(53, 42, Duration::from_secs(3))
+        .unwrap();
+    assert!(
+        matches!(
+            receipt.outcome,
+            Some(resize_receipt::Outcome::AppliedToTerminal(
+                terminal_state_protocol::ResizeAppliedToTerminal {
+                    columns: 53,
+                    rows: 42
+                }
+            ))
+        ),
+        "preferred phone width was not selected"
+    );
+    assert_preferred_terminal_dimensions(&fixture, 53, 42);
+    fixture.session.send_input(b"PHONE\n".to_vec()).unwrap();
+    wait_for_replay_snapshot(&fixture.session, b"PHONE:PTY:42 53");
+
+    phone
+        .send_resize_confirmed(121, 20, Duration::from_secs(3))
+        .unwrap();
+    assert_preferred_terminal_dimensions(&fixture, 121, 31);
+    fixture.session.send_input(b"ROTATED\n".to_vec()).unwrap();
+    wait_for_replay_snapshot(&fixture.session, b"ROTATED:PTY:31 121");
+    let stale = encode_surface_resize(phone.current_frame(), 2, 60, 12);
+    phone_writer.send_input_envelope(&stale).unwrap();
+    let refused = wait_for_surface_resize_receipt(&mut phone, 2);
+    assert!(
+        matches!(refused.outcome, Some(resize_receipt::Outcome::Refused(value))
+        if ResizeRefusalReason::try_from(value.reason) == Ok(ResizeRefusalReason::StaleGeometryGeneration))
+    );
+    assert_preferred_terminal_dimensions(&fixture, 121, 31);
+
+    let second = session
+        .connect_with_options(
+            TerminalSurfaceAttachment::connection_options(TerminalSurfaceAccess::Writer, None)
+                .with_terminal_preferred_width(),
+        )
+        .unwrap();
+    let mut second = TerminalSurfaceAttachment::from_connection(second).unwrap();
+    second
+        .send_resize_confirmed(45, 15, Duration::from_secs(3))
+        .unwrap();
+    assert_preferred_terminal_dimensions(&fixture, 45, 31);
+    second.detach().unwrap();
+    assert_preferred_terminal_dimensions(&fixture, 121, 31);
+    // A malformed observer opt-in must neither grant input nor preferred width.
+    let reader = session
+        .connect_with_options(
+            TerminalSurfaceAttachment::connection_options(TerminalSurfaceAccess::ReadOnly, None)
+                .with_terminal_preferred_width(),
+        )
+        .unwrap();
+    assert!(!reader.supports(TERMINAL_PREFERRED_WIDTH_CAPABILITY));
+    assert!(reader.terminal_input_writer_capability().is_none());
+    let reader = TerminalSurfaceAttachment::from_connection(reader).unwrap();
+    let epoch = reader.current_frame().terminal_epoch().to_string();
+    phone.detach().unwrap();
+    assert_preferred_terminal_dimensions(&fixture, 38, 31);
+    fixture.session.send_input(b"RESTORED\n".to_vec()).unwrap();
+    wait_for_replay_snapshot(&fixture.session, b"RESTORED:PTY:31 38");
+    assert_eq!(desktop.current_frame().terminal_epoch(), epoch);
+    fixture.assert_preserved();
+    reader.detach().unwrap();
+    desktop.detach().unwrap();
+    fixture.terminate_and_verify();
+}
+
+#[cfg(feature = "terminal-state-stream")]
+fn assert_preferred_terminal_dimensions(fixture: &IdleRetirementFixture, columns: u16, rows: u16) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let screen = fixture.session.read_screen(None).unwrap();
+        if (screen.columns, screen.rows) == (columns, rows) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "canonical dimensions did not reach {columns}x{rows}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn preferred_width_failed_resize_retains_the_successful_proposal() {
+    let state = tempfile::tempdir().unwrap();
+    let (runtime, arm_marker, observed_marker) = pty_resize_liveness_fault_runtime(&state);
+    let mut fixture = IdleRetirementFixture::create_with_runtime(
+        &state,
+        "standalone-preferred-width-failed-resize",
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf WIDTH_READY; sleep 60".into(),
+        ],
+        &runtime,
+    );
+    wait_for_replay_snapshot(&fixture.session, b"WIDTH_READY");
+    let session = fixture
+        .catalog
+        .open(&SessionSelector::new(
+            fixture.descriptor.session_id.clone(),
+            Some(fixture.descriptor.workspace_id.clone()),
+        ))
+        .unwrap();
+    let desktop = session
+        .connect_with_options(TerminalSurfaceAttachment::connection_options(
+            TerminalSurfaceAccess::Writer,
+            None,
+        ))
+        .unwrap();
+    let mut desktop = TerminalSurfaceAttachment::from_connection(desktop).unwrap();
+    desktop
+        .send_resize_confirmed(38, 31, Duration::from_secs(3))
+        .unwrap();
+    let phone = session
+        .connect_with_options(
+            TerminalSurfaceAttachment::connection_options(TerminalSurfaceAccess::Writer, None)
+                .with_terminal_preferred_width(),
+        )
+        .unwrap();
+    let mut phone = TerminalSurfaceAttachment::from_connection(phone).unwrap();
+    phone
+        .send_resize_confirmed(53, 42, Duration::from_secs(3))
+        .unwrap();
+    fs::write(&arm_marker, b"armed").unwrap();
+    let failed = phone
+        .send_resize_confirmed(70, 45, Duration::from_secs(3))
+        .unwrap();
+    assert!(
+        matches!(failed.outcome, Some(resize_receipt::Outcome::Failed(value))
+        if ResizeFailureReason::try_from(value.reason) == Ok(ResizeFailureReason::PlatformResizeFailed))
+    );
+    wait_for_exact_file(&observed_marker, b"resize_lock_poisoned");
+    assert_preferred_terminal_dimensions(&fixture, 53, 42);
+    // Another writer recomputes from the retained 53x42 proposal, not failed70.
+    desktop
+        .send_resize_confirmed(37, 30, Duration::from_secs(3))
+        .unwrap();
+    assert_preferred_terminal_dimensions(&fixture, 53, 42);
+    phone.detach().unwrap();
+    assert_preferred_terminal_dimensions(&fixture, 37, 30);
+    fixture.assert_preserved();
+    desktop.detach().unwrap();
+    fixture.terminate_and_verify();
+}
+
+#[cfg(feature = "terminal-state-stream")]
+#[test]
 fn terminal_surface_attaches_scrolls_and_resizes_through_complete_frames() {
     let state = tempfile::tempdir().unwrap();
     let mut fixture = IdleRetirementFixture::create(

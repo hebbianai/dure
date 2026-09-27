@@ -22,7 +22,7 @@ mod windows_terminal;
 mod windows_terminal_encoding;
 
 #[cfg(feature = "terminal-state-stream")]
-use crate::terminal_geometry::TerminalSurfaceGeometry;
+use crate::terminal_geometry::{TerminalSurfaceGeometry, select_terminal_surface_geometry};
 
 use client_transport::{ClientTransport, SharedFrameWriter};
 use hmux_host::local_protocol::PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY;
@@ -190,6 +190,7 @@ fn advertised_capabilities() -> Vec<String> {
             TERMINAL_INPUT_INTENT_CAPABILITY,
             TERMINAL_VIEWPORT_WHEEL_CAPABILITY,
             TERMINAL_VIEWPORT_MULTIPART_CAPABILITY,
+            hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY,
         ]
         .map(str::to_string),
     );
@@ -1631,6 +1632,7 @@ struct WindowsSubscriber {
 #[derive(Clone, Copy)]
 struct WindowsTerminalSurfaceState {
     geometry: Option<TerminalSurfaceGeometry>,
+    preferred_width: bool,
     geometry_generation: u64,
     default_colors: Option<TerminalDefaultColors>,
 }
@@ -2038,19 +2040,17 @@ impl WindowsServerState {
                     return Ok((receipt, false));
                 }
                 current.geometry_generation = record_id;
-                surfaces
-                    .iter()
-                    .filter_map(|(candidate_id, state)| {
-                        if *candidate_id == client_id {
+                select_terminal_surface_geometry(surfaces.iter().filter_map(
+                    |(candidate_id, state)| {
+                        let geometry = if *candidate_id == client_id {
                             Some(TerminalSurfaceGeometry { rows, columns })
                         } else {
                             state.geometry
-                        }
-                    })
-                    .fold(
-                        TerminalSurfaceGeometry { rows, columns },
-                        TerminalSurfaceGeometry::fit_surfaces,
-                    )
+                        };
+                        geometry.map(|geometry| (geometry, state.preferred_width))
+                    },
+                ))
+                .expect("the proposed geometry is always present")
             };
             let outcome = if self.stopping.load(Ordering::Acquire) {
                 Err(OperationReceiptReason::HostExiting)
@@ -2368,10 +2368,11 @@ impl WindowsServerState {
             }
         }
         let selected_geometry = self.terminal_surfaces.lock().ok().and_then(|surfaces| {
-            surfaces
-                .values()
-                .filter_map(|surface| surface.geometry)
-                .reduce(TerminalSurfaceGeometry::fit_surfaces)
+            select_terminal_surface_geometry(surfaces.values().filter_map(|surface| {
+                surface
+                    .geometry
+                    .map(|geometry| (geometry, surface.preferred_width))
+            }))
         });
         if let Some(TerminalSurfaceGeometry { rows, columns }) = selected_geometry {
             if let Ok(mut host) = self.host.lock() {
@@ -2611,7 +2612,7 @@ fn serve_client(
         }
         lock(&state.host)?.controller_generation()
     };
-    let selected_capabilities = hello
+    let mut selected_capabilities = hello
         .requested_capabilities
         .iter()
         .filter(|requested| {
@@ -2628,6 +2629,13 @@ fn serve_client(
         })
         .cloned()
         .collect::<Vec<_>>();
+    let preferred_width =
+        hmux_runtime_contract::terminal_preferred_width_permitted(&selected_capabilities);
+    if !preferred_width {
+        selected_capabilities.retain(|capability| {
+            capability != hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY
+        });
+    }
     let shared_writer = hello.requested_mode == AttachMode::Observer
         && selected_capabilities
             .iter()
@@ -2766,6 +2774,7 @@ fn serve_client(
                 client_id,
                 WindowsTerminalSurfaceState {
                     geometry: None,
+                    preferred_width,
                     geometry_generation: 0,
                     default_colors: None,
                 },

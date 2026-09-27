@@ -3075,6 +3075,7 @@ struct RelayedTerminalSelection {
     input: bool,
     agent_prompt: RelayedAgentPromptOffer,
     default_colors: bool,
+    preferred_width: bool,
     agent_identity: bool,
     runtime_state: bool,
     identity: bool,
@@ -3119,8 +3120,15 @@ fn admit_relayed_terminal_capabilities(
         requested(LEGACY_INITIAL_AGENT_PROMPT_CAPABILITY),
     );
     let default_colors = requested(TERMINAL_DEFAULT_COLORS_CAPABILITY);
+    let preferred_width = requested(hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY);
     let runtime_state = requested(AGENT_RUNTIME_STATE_CAPABILITY);
-    if (viewport || wheel || multipart || input || agent_prompt.is_some() || default_colors)
+    if (viewport
+        || wheel
+        || multipart
+        || input
+        || agent_prompt.is_some()
+        || default_colors
+        || preferred_width)
         && !binary
     {
         return Err(GatewayRefusal::new(
@@ -3147,6 +3155,13 @@ fn admit_relayed_terminal_capabilities(
         )
         .with_required_capability(required_capability));
     }
+    if preferred_width && !input {
+        return Err(GatewayRefusal::new(
+            ErrorCode::UnsupportedCapability,
+            "preferred terminal width requires terminal input authority",
+        )
+        .with_required_capability(TERMINAL_INPUT_INTENT_CAPABILITY));
+    }
     if default_colors && !input {
         return Err(GatewayRefusal::new(
             ErrorCode::UnsupportedCapability,
@@ -3161,6 +3176,7 @@ fn admit_relayed_terminal_capabilities(
         input,
         agent_prompt,
         default_colors,
+        preferred_width,
         agent_identity: requested(AGENT_IDENTITY_PROJECTION_CAPABILITY),
         runtime_state,
         identity: requested(PROVIDER_CONVERSATION_IDENTITY_CAPABILITY),
@@ -3186,6 +3202,9 @@ fn with_relayed_terminal_selection(
     }
     if selection.default_colors {
         options = options.with_terminal_default_colors();
+    }
+    if selection.preferred_width {
+        options = options.with_terminal_preferred_width();
     }
     if legacy_agent_prompt_input_dependency {
         options = options.with_legacy_agent_prompt_fallback();
@@ -6221,11 +6240,93 @@ mod tests {
                 input: false,
                 agent_prompt: RelayedAgentPromptOffer::default(),
                 default_colors: false,
+                preferred_width: false,
                 agent_identity: true,
                 runtime_state: false,
                 identity: true,
             }
         );
+    }
+
+    #[test]
+    fn preferred_width_requires_authorized_terminal_input() {
+        for (input, ceiling, expected_code) in [
+            (
+                false,
+                GatewayRole::Controller,
+                ErrorCode::UnsupportedCapability,
+            ),
+            (true, GatewayRole::Observer, ErrorCode::AuthorizationDenied),
+        ] {
+            let mut capabilities = vec![
+                TERMINAL_STATE_BINARY_CAPABILITY,
+                TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+                hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY,
+            ];
+            if input {
+                capabilities.push(TERMINAL_INPUT_INTENT_CAPABILITY);
+            }
+            let refusal = admit_relayed_terminal_capabilities(
+                &hello(AttachMode::Observer, &capabilities),
+                ceiling,
+            )
+            .unwrap_err();
+            assert_eq!(refusal.code, expected_code);
+            assert_eq!(
+                refusal.required_capability.as_deref(),
+                Some(TERMINAL_INPUT_INTENT_CAPABILITY)
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preferred_width_is_forwarded_only_when_requested_and_host_selected() {
+        let preferred = hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY;
+        for (requested, host_supports) in [(true, true), (true, false), (false, true)] {
+            let mut capabilities = vec![
+                TERMINAL_STATE_BINARY_CAPABILITY,
+                TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+                TERMINAL_INPUT_INTENT_CAPABILITY,
+            ];
+            if requested {
+                capabilities.push(preferred);
+            }
+            let host_capabilities = if host_supports {
+                vec![preferred]
+            } else {
+                vec![]
+            };
+            let resize = resize_intent_record();
+            let (connection, observation) = attach_relayed_profile(
+                &capabilities,
+                GatewayRole::Controller,
+                &host_capabilities,
+                false,
+                Some(encode_record(7, &resize).expect("base resize encodes")),
+            );
+            assert_eq!(
+                observation
+                    .local_hello
+                    .requested_capabilities
+                    .iter()
+                    .any(|cap| cap == preferred),
+                requested
+            );
+            assert_eq!(
+                hmux_runtime_contract::terminal_preferred_width_permitted(
+                    &connection.hello_ack().selected_capabilities
+                ),
+                requested && host_supports
+            );
+            let relayed = observation
+                .input
+                .expect("resize reaches the Host in every profile");
+            assert_eq!(relayed.metadata.record_id, 7);
+            assert_eq!(relayed.record, resize);
+            assert_eq!(relayed.record.schema_minor, 4);
+            assert!(connection.terminal_input_writer_capability().is_some());
+        }
     }
 
     #[test]

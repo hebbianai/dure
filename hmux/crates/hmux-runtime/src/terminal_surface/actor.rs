@@ -9,7 +9,7 @@ use terminal_state_protocol::DecodedRecord;
 
 use crate::host_resource_budget::RetainedActiveConnection;
 use crate::input_transaction::input_operation_reason;
-use crate::terminal_geometry::TerminalSurfaceGeometry;
+use crate::terminal_geometry::{TerminalSurfaceGeometry, select_terminal_surface_geometry};
 
 use super::super::{Result, ServerState, lock};
 use super::publication::{AttachmentViewportProjection, ViewportProjectionPublication};
@@ -76,6 +76,7 @@ impl<'a> TerminalSurfaceMutation<'a> {
 
 pub(crate) struct TerminalSurfaceState {
     pub(crate) geometry: Option<TerminalSurfaceGeometry>,
+    pub(crate) preferred_width: bool,
     pub(crate) geometry_generation: u64,
     pub(crate) projection: Option<Arc<AttachmentViewportProjection>>,
     pub(crate) wheel_pty_sink: WheelPtySink,
@@ -88,6 +89,7 @@ impl Default for TerminalSurfaceState {
     fn default() -> Self {
         Self {
             geometry: None,
+            preferred_width: false,
             geometry_generation: 0,
             projection: None,
             wheel_pty_sink: WheelPtySink::Absent,
@@ -126,10 +128,11 @@ pub(crate) struct TerminalSurfaceActor {
 
 impl TerminalSurfaceActor {
     pub(crate) fn selected_geometry(&self) -> Option<TerminalSurfaceGeometry> {
-        self.surfaces
-            .values()
-            .filter_map(|surface| surface.geometry)
-            .reduce(TerminalSurfaceGeometry::fit_surfaces)
+        select_terminal_surface_geometry(self.surfaces.values().filter_map(|surface| {
+            surface
+                .geometry
+                .map(|geometry| (geometry, surface.preferred_width))
+        }))
     }
 
     pub(crate) fn selected_geometry_with(
@@ -137,14 +140,25 @@ impl TerminalSurfaceActor {
         client_id: u64,
         proposed: TerminalSurfaceGeometry,
     ) -> TerminalSurfaceGeometry {
-        self.surfaces
-            .iter()
-            .filter_map(|(candidate_id, surface)| {
-                (*candidate_id != client_id)
-                    .then_some(surface.geometry)
-                    .flatten()
-            })
-            .fold(proposed, TerminalSurfaceGeometry::fit_surfaces)
+        let preferred_width = self
+            .surfaces
+            .get(&client_id)
+            .is_some_and(|surface| surface.preferred_width);
+        select_terminal_surface_geometry(
+            self.surfaces
+                .iter()
+                .filter_map(|(candidate_id, surface)| {
+                    if *candidate_id == client_id {
+                        None
+                    } else {
+                        surface
+                            .geometry
+                            .map(|geometry| (geometry, surface.preferred_width))
+                    }
+                })
+                .chain(std::iter::once((proposed, preferred_width))),
+        )
+        .expect("the proposed geometry is always present")
     }
 }
 
@@ -282,6 +296,7 @@ impl ServerState {
         projection: ViewProjection,
         seeded_publication_generation: u64,
         wheel_pty_sink: WheelPtySink,
+        preferred_width: bool,
         active_connection: RetainedActiveConnection,
     ) -> Result<()> {
         let mut mutation =
@@ -296,6 +311,7 @@ impl ServerState {
             projection.mark_completed(seeded_publication_generation);
             surface.projection = Some(Arc::clone(&projection));
             surface.wheel_pty_sink = wheel_pty_sink;
+            surface.preferred_width = preferred_width;
             projection
         };
         if self.viewport_publication.current_generation() != Some(seeded_publication_generation) {
@@ -411,6 +427,7 @@ mod tests {
     fn surface(rows: u16, columns: u16) -> TerminalSurfaceState {
         TerminalSurfaceState {
             geometry: Some(TerminalSurfaceGeometry { rows, columns }),
+            preferred_width: false,
             geometry_generation: 0,
             projection: None,
             wheel_pty_sink: WheelPtySink::Absent,
