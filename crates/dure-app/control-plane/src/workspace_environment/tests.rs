@@ -139,9 +139,13 @@ impl Fixture {
     }
 
     async fn settled(&self, id: &str) -> Value {
+        self.settled_with_access(true, id).await
+    }
+
+    async fn settled_with_access(&self, pro: bool, id: &str) -> Value {
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let list = self.call(true, json!({"action":"list"})).unwrap();
+                let list = self.call(pro, json!({"action":"list"})).unwrap();
                 let record = list["environments"]
                     .as_array()
                     .unwrap()
@@ -155,6 +159,20 @@ impl Fixture {
                     return record;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn call_when_available(&self, pro: bool, body: Value) -> Value {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match self.call(pro, body.clone()) {
+                    Ok(result) => return result,
+                    Err("environment_busy") => tokio::time::sleep(Duration::from_millis(10)).await,
+                    Err(error) => panic!("admit fixture request: {error}"),
+                }
             }
         })
         .await
@@ -311,7 +329,7 @@ async fn changed_recipe_or_conflicting_request_never_provisions() {
     assert!(!fixture.project.path().join("unintended").exists());
     fs::write(fixture.project.path().join("create.sh"), success_script()).unwrap();
     let mut request = fixture.create_request("fenced");
-    let started = fixture.call(true, request.clone()).unwrap();
+    let started = fixture.call_when_available(true, request.clone()).await;
     request["name"] = json!("Other");
     assert_eq!(
         fixture.call(true, request),
@@ -344,8 +362,9 @@ async fn lock_prevents_recovery_of_live_operations_and_released_lock_recovers() 
         Err("environment_busy")
     );
     drop(lock);
-    let recovered =
-        fixture.call(false, json!({"action":"list"})).unwrap()["environments"][0].clone();
+    // Forked native fixtures may briefly retain the open directory descriptor.
+    // Recovery starts when the OS reports release, not when this handle drops.
+    let recovered = fixture.settled_with_access(false, id).await;
     assert_eq!(recovered["status"], "cleanup_failed");
     assert_eq!(recovered["error"], "environment_operation_interrupted");
     fixture

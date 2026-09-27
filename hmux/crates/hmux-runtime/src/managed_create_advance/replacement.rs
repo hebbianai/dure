@@ -4,6 +4,7 @@ use super::super::{
 };
 use super::*;
 use hmux_client::managed_replacement_root_request as replacement_root_request;
+use hmux_host::local_discovery::{DiscoveryError, DiscoveryRoot};
 
 #[path = "replacement/retirement.rs"]
 mod retirement;
@@ -33,8 +34,9 @@ pub(super) fn execute(source_request: ManagedCreateRequest) -> ManagedCreateAdva
                 Ok(Some(stop)) => retirement::execute(source_request, stop, Some(ready))
                     .unwrap_or_else(retirement_failure),
                 _ => {
-                    // Compatibility for an already-finalized source written
-                    // before replacement intents existed. No successor is followed.
+                    // The independently admitted target remains usable without
+                    // a current source to stop. Close only already-finalized
+                    // history; absence alone never retires it or follows an edge.
                     if let Ok(catalog) = LocalSessionCatalog::from_environment() {
                         if let Ok(identity) = ManagedCreateReconcileRequest::new(
                             source_request.idempotency_key(),
@@ -210,6 +212,18 @@ fn replacement_source_stop_request(
     #[cfg(unix)]
     let _phase = broker_timing::phase(Phase::SourceLookup);
     let catalog = LocalSessionCatalog::from_environment().map_err(|error| error.to_string())?;
+    let discovery =
+        DiscoveryRoot::open(catalog.discovery_root()).map_err(|error| error.to_string())?;
+    match discovery
+        .find_manifest_by_session(source_request.workspace_id(), source_request.session_id())
+    {
+        // A create receipt can outlive its current manifest. Absence does not
+        // authorize stopping or retiring that historical source. The caller
+        // can still return an independently admitted target that is Ready.
+        Err(DiscoveryError::SessionNotFound) => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+        Ok(_) => {}
+    }
     let source_identity = ManagedCreateReconcileRequest::new(
         source_request.idempotency_key(),
         source_request.session_id(),
