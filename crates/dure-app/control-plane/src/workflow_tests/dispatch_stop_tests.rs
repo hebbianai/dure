@@ -23,6 +23,9 @@ use dure_app::{
     create_agent_spawn_plan_v1,
 };
 use dure_git_checkout::{GitCheckoutCaptureRequestV1, capture_git_checkout_instance};
+use hmux_client::recovery_journal::managed_create_ledger::{
+    checkpoint_retirement_exact, finalize_retirement_exact,
+};
 
 mod checkout_tests;
 mod shell_checkout_tests;
@@ -623,6 +626,110 @@ fn install_runtime(
     stop_count
 }
 
+fn retain_native_runtime(state: &mut ServiceState) {
+    let runtime = &state.hmux_identity.runtime_executable_path;
+    for (suffix, response) in [
+        (
+            "reconcile",
+            ManagedStopBrokerResponse::refused(
+                "hmux_managed_stop_intent_not_found",
+                "no prior stop intent",
+            ),
+        ),
+        (
+            "stop",
+            ManagedStopBrokerResponse::refused(
+                "hmux_managed_stop_fence_mismatch",
+                "source generation retained",
+            ),
+        ),
+    ] {
+        let payload = serde_json::to_vec(&response).unwrap();
+        let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
+        frame.extend(payload);
+        fs::write(format!("{}.{}", runtime.display(), suffix), frame).unwrap();
+    }
+    fs::write(runtime, format!(
+        "#!/bin/sh\ncat >/dev/null\ncase \"$2\" in\n  {MANAGED_STOP_RECONCILE_BROKER_SUBCOMMAND}) exec cat \"$0.reconcile\" ;;\n  {MANAGED_STOP_BROKER_SUBCOMMAND}) exec cat \"$0.stop\" ;;\n  *) exit 64 ;;\nesac\n"
+    )).unwrap();
+    state.hmux_identity = resolve_hmux_toolchain_identity(
+        &state.hmux_identity.executable_path,
+        runtime,
+        &state.hmux_identity.discovery_root,
+    )
+    .unwrap();
+    make_fixture_mutation_authority(state);
+}
+
+fn retire_native_runtime(state: &ServiceState, session: &WorkflowSessionGenerationV1) {
+    let discovery = &state.hmux_identity.discovery_root;
+    let create_id = "dispatch-current-create";
+    let ManagedCreateLedgerState::Prepared(mut create) = reserve(
+        discovery,
+        &session.workspace_id,
+        &session.session_id,
+        create_id,
+        &"cd".repeat(32),
+    )
+    .unwrap() else {
+        panic!("dispatch create authority must start prepared");
+    };
+    create.checkpoint_pre_spawn_absence().unwrap();
+    create
+        .mark_spawn_reserved(ProcessDescriptor {
+            process_id: 102,
+            start_marker: "dispatch-host-process".into(),
+        })
+        .unwrap();
+    create.release_with_barrier_proof().unwrap();
+    let receipt = ManagedCreateReceipt::new(
+        create_id,
+        &session.session_id,
+        &session.workspace_id,
+        session.provider_id.as_str(),
+        HmuxPermissionMode::Default,
+        discovery,
+        ManagedCreateOutcome::Created,
+    )
+    .unwrap()
+    .with_generation_fence(
+        ManagedCreateGenerationFence::new(
+            &session.runner_principal,
+            &session.runner_instance,
+            session.channel_epoch.parse().unwrap(),
+            &session.host_instance_id,
+            &session.terminal_epoch,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    create
+        .complete(serde_json::to_string(&receipt).unwrap())
+        .unwrap();
+    let request = ManagedStopRequest::new(
+        "dispatch-current-retirement",
+        &session.session_id,
+        &session.workspace_id,
+    )
+    .unwrap()
+    .with_expected_fence(
+        &session.runner_principal,
+        &session.runner_instance,
+        session.channel_epoch.parse().unwrap(),
+        &session.host_instance_id,
+        &session.terminal_epoch,
+    )
+    .unwrap();
+    let receipt = ManagedStopReceipt::from_request(
+        &request,
+        ManagedStopOutcome::AlreadyExited,
+        "managed_provider_already_exited",
+    )
+    .unwrap();
+    checkpoint_retirement_exact(discovery, &receipt).unwrap();
+    finalize_retirement_exact(discovery, &receipt).unwrap();
+}
+
 async fn runtime_close_count(state: &ServiceState, agent_id: &AgentIdV1) -> i64 {
     let pool = sqlx::SqlitePool::connect_with(
         sqlx::sqlite::SqliteConnectOptions::new().filename(state.store.database_path()),
@@ -1158,11 +1265,12 @@ async fn dispatch_stop_closes_an_exact_repair_required_transition() {
 }
 
 #[tokio::test]
-async fn exited_native_runtime_converges_past_a_stale_active_dispatch() {
+async fn retired_native_runtime_converges_past_a_stale_active_dispatch() {
     let (root, state, _, _) = fixture(Vec::new()).await;
     let seed = seed_native_dispatch_stop(&state, &root).await;
     let spawn_session = seed.spawn_session.as_ref().unwrap();
     let current_session = seed.current_session.as_ref().unwrap();
+    retire_native_runtime(&state, current_session);
 
     create_native_run(
         &state,
@@ -1223,7 +1331,8 @@ async fn exited_native_runtime_converges_past_a_stale_active_dispatch() {
 
 #[tokio::test]
 async fn retryable_spawn_with_a_committed_runtime_can_be_stopped_without_resuming() {
-    let (root, state, _, _) = fixture(Vec::new()).await;
+    let (root, mut state, _, _) = fixture(Vec::new()).await;
+    retain_native_runtime(&mut state);
     let seed = seed_retryable_native_dispatch_stop(&state, &root).await;
     let spawn = state
         .store
@@ -1276,7 +1385,8 @@ async fn retryable_spawn_with_a_committed_runtime_can_be_stopped_without_resumin
 
 #[tokio::test]
 async fn live_runtime_without_exact_stop_receipt_is_retained_by_runtime_close() {
-    let (root, state, _, _) = fixture(Vec::new()).await;
+    let (root, mut state, _, _) = fixture(Vec::new()).await;
+    retain_native_runtime(&mut state);
     let seed = seed_native_dispatch_stop(&state, &root).await;
     let preview = preview_stop(
         &state,
@@ -1367,7 +1477,8 @@ async fn runtime_close_rejects_a_stop_planned_for_a_replaced_native_generation()
 
 #[tokio::test]
 async fn terminal_stop_exactly_replays_after_its_retained_session_becomes_active() {
-    let (root, state, _, _) = fixture(Vec::new()).await;
+    let (root, mut state, _, _) = fixture(Vec::new()).await;
+    retain_native_runtime(&mut state);
     let seed = seed_native_dispatch_stop(&state, &root).await;
     let preview = preview_stop(
         &state,
