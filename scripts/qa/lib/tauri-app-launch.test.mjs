@@ -27,7 +27,8 @@ spawn(process.execPath, [worker, "frontend", generation], { stdio: "ignore" });
 if (!fs.existsSync(path.join(root, "provider.json"))) {
   spawn(process.execPath, [worker, "provider", generation], { detached: true, stdio: "ignore" }).unref();
 }
-fs.writeFileSync(file, JSON.stringify({
+const pending = file + "." + process.pid + ".tmp";
+fs.writeFileSync(pending, JSON.stringify({
   pid: process.pid,
   generation,
   args: process.argv.slice(2),
@@ -36,6 +37,7 @@ fs.writeFileSync(file, JSON.stringify({
   discoveryRoot: process.env.HMUX_DISCOVERY_ROOT,
   channel: process.env.DURE_APP_CHANNEL,
 }));
+fs.renameSync(pending, file);
 const interval = setInterval(() => {
   if (fs.existsSync(path.join(root, "release"))) process.exit(0);
 }, 20);
@@ -49,7 +51,10 @@ const [role, generation] = process.argv.slice(2);
 const root = process.env.DURE_QA_STATE_ROOT;
 const observation = await observeProcessMembers({ kind: "point", pids: [process.pid] });
 if (observation.status !== "complete" || observation.members.length !== 1) process.exit(72);
-fs.writeFileSync(path.join(root, role === "provider" ? "provider.json" : "frontend-" + generation + ".json"), JSON.stringify(observation.members[0]));
+const file = path.join(root, role === "provider" ? "provider.json" : "frontend-" + generation + ".json");
+const pending = file + "." + process.pid + ".tmp";
+fs.writeFileSync(pending, JSON.stringify(observation.members[0]));
+fs.renameSync(pending, file);
 const interval = setInterval(() => {
   if (fs.existsSync(path.join(root, "release"))) process.exit(0);
 }, 20);
