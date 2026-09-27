@@ -14,11 +14,14 @@ final class RecordingTextView: NSTextView {
 final class Receiver: NSObject, NSApplicationDelegate, NSTextViewDelegate {
   let root: URL
   let slot: String
+  let background = ProcessInfo.processInfo.environment["DURE_COMPUTER_QA_BACKGROUND"] == "1"
   let text = RecordingTextView(frame: NSRect(x: 12, y: 12, width: 510, height: 230))
   var window: NSWindow!
   var timer: Timer?
   var reset: Int = -1
   var activations = 0
+  var receivedKeys: [[String: Any]] = []
+  var eventMonitor: Any?
   var redirected = false
   var control: [String: Any] = [:]
 
@@ -29,7 +32,9 @@ final class Receiver: NSObject, NSApplicationDelegate, NSTextViewDelegate {
       "pid": Int(ProcessInfo.processInfo.processIdentifier), "slot": slot,
       "text": text.string, "selectionLength": text.selectedRange().length,
       "active": NSApp.isActive, "activations": activations, "reset": reset,
+      "keyWindow": window?.isKeyWindow ?? false,
       "keys": text.keys,
+      "receivedKeys": receivedKeys,
     ]
     if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) {
       try? data.write(to: root.appendingPathComponent("receiver-\(slot).json"), options: .atomic)
@@ -45,6 +50,7 @@ final class Receiver: NSObject, NSApplicationDelegate, NSTextViewDelegate {
         redirected = false
         text.string = ""
         text.keys = []
+        receivedKeys = []
         text.setSelectedRange(NSRange(location: 0, length: 0))
       }
     }
@@ -59,7 +65,13 @@ final class Receiver: NSObject, NSApplicationDelegate, NSTextViewDelegate {
     text.delegate = self
     window.contentView?.addSubview(text)
     window.makeFirstResponder(text)
-    window.orderFront(nil)
+    if background {
+      window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+      window.orderBack(nil)
+      window.makeKey()
+    } else {
+      window.orderFront(nil)
+    }
     let menu = NSMenu()
     let edit = NSMenuItem()
     let editMenu = NSMenu(title: "Edit")
@@ -67,6 +79,11 @@ final class Receiver: NSObject, NSApplicationDelegate, NSTextViewDelegate {
     edit.submenu = editMenu
     menu.addItem(edit)
     NSApp.mainMenu = menu
+    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      self?.receivedKeys.append(["characters": event.characters ?? "", "keyCode": Int(event.keyCode),
+                                "flags": event.modifierFlags.rawValue])
+      return event
+    }
     readControl()
     writeState()
     timer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] _ in
@@ -106,9 +123,10 @@ guard CommandLine.arguments.count == 3 else { exit(2) }
 let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true).standardizedFileURL
 guard root.lastPathComponent.hasPrefix("dure-computer-smoke-"),
       ["A", "B", "duplicate", "exit"].contains(CommandLine.arguments[2]),
-      ProcessInfo.processInfo.environment["DURE_COMPUTER_QA_FOREGROUND"] == "1" else { exit(2) }
+      (ProcessInfo.processInfo.environment["DURE_COMPUTER_QA_FOREGROUND"] == "1" ||
+       ProcessInfo.processInfo.environment["DURE_COMPUTER_QA_BACKGROUND"] == "1") else { exit(2) }
 let app = NSApplication.shared
-app.setActivationPolicy(.regular)
+app.setActivationPolicy(ProcessInfo.processInfo.environment["DURE_COMPUTER_QA_BACKGROUND"] == "1" ? .accessory : .regular)
 let receiver = Receiver(root: root, slot: CommandLine.arguments[2])
 app.delegate = receiver
 app.run()

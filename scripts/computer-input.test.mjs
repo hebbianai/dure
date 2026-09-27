@@ -17,16 +17,56 @@ function desktop(overrides = {}) {
     ...overrides,
   };
 }
-const input = { sub: "type", app: "QA", text: "hello 한글" };
+const input = { sub: "type", app: "QA", text: "hello 한글", foreground: true };
 
 describe("computer input transaction", () => {
+  it("sends to the pinned background process without activation or focus waiting", () => {
+    const request = { sub: "type", pid: 42, text: "hello 한글" };
+    const adapter = desktop({ observe: () => ({ ...target, frontmostPid: 7 }) });
+    expect(performComputerInput(request, adapter)).toMatchObject({ ok: true, focusMode: "background" });
+    expect(adapter.calls).toEqual([["send", request]]);
+    expect(adapter.now()).toBe(0);
+  });
+
+  it("allows the user to switch other apps during background delivery", () => {
+    let observations = 0;
+    const request = { sub: "key", pid: 42, key: "return" };
+    const adapter = desktop({ observe: () => ({ ...target, frontmostPid: ++observations % 2 ? 7 : 8 }) });
+    expect(performComputerInput(request, adapter)).toMatchObject({ ok: true, focusMode: "background" });
+    expect(adapter.calls).toEqual([["send", request]]);
+  });
+
+  it("never falls back to activation when background input fails", () => {
+    const adapter = desktop({ send: (_request, _target, beforePost) => {
+      beforePost(); throw new Error("background dispatch unavailable");
+    } });
+    expect(performComputerInput({ ...input, foreground: false }, adapter)).toMatchObject({
+      ok: false, error: { code: "computer_input_unconfirmed", inputMayHaveBeenSent: true },
+    });
+    expect(adapter.calls).toEqual([]);
+  });
+
+  it("keeps generation checks between background input events", () => {
+    let generation = target.generation;
+    const adapter = desktop({
+      observe: () => ({ ...target, generation, frontmostPid: 7 }),
+      send: (_request, _target, beforePost) => {
+        beforePost(); generation = "replacement"; beforePost();
+        throw new Error("must not send to replacement");
+      },
+    });
+    expect(performComputerInput({ ...input, foreground: false }, adapter)).toMatchObject({
+      ok: false, error: { code: "computer_input_unconfirmed", inputMayHaveBeenSent: true },
+    });
+    expect(adapter.calls).toEqual([]);
+  });
   it("pins one process and checks it before activation, before and after input", () => {
     const observations = [];
     const adapter = desktop({ observe: (pid) => {
       observations.push(pid);
       return { ...target, frontmostPid: 42 };
     } });
-    expect(performComputerInput(input, adapter)).toEqual({ ok: true, pid: 42, action: "type", inputAttempted: true });
+    expect(performComputerInput(input, adapter)).toEqual({ ok: true, pid: 42, action: "type", inputAttempted: true, focusMode: "foreground" });
     expect(adapter.calls).toEqual([["activate", target], ["send", input]]);
     expect(observations).toEqual([42, 42, 42, 42, 42]);
   });
@@ -112,6 +152,7 @@ describe("macOS input receipt", () => {
     { status: 0, stdout: "not-json" },
     { status: 0, stdout: '{"ok":true,"pid":0,"action":"type"}' },
     { status: 0, stdout: '{"ok":true,"pid":42,"action":"activate"}' },
+    { status: 0, stdout: '{"ok":true,"pid":42,"action":"type","focusMode":"background"}' },
     { status: 0, stdout: '{"ok":false,"error":{"code":"computer_focus_changed","message":"Focus changed"}}' },
   ])("never converts a failure or uncertain response into success", (result) => {
     expect(() => runMacComputerInput(input, { platform: "darwin", run: () => result })).toThrow();

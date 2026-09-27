@@ -30,7 +30,7 @@ cp.spawnSync = (command, args) => {
   }
   fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ command, args }) + "\\n");
   if (args[0] === "-l") {
-    let activePid = 42;
+    let activePid = fixture.frontmostPid ?? 7;
     let postedCount = 0;
     const record = (kind, value) => fs.appendFileSync(${JSON.stringify(inputPath)}, JSON.stringify({ kind, ...value }) + "\\n");
     const events = {
@@ -41,7 +41,7 @@ cp.spawnSync = (command, args) => {
     const native = Object.assign((text) => ({ dataUsingEncoding: () => ({ bytes: text }) }), {
       NSRunningApplication: { runningApplicationWithProcessIdentifier: (pid) => ({
         isNil: () => false, terminated: false,
-        activateWithOptions: () => { record("activate", { pid }); return true; },
+        activateWithOptions: () => { activePid = pid; record("activate", { pid }); return true; },
       }) },
       NSMutableData: { dataWithLength: () => {
         const data = { subdataWithRange: () => ({ base64EncodedStringWithOptions: () => "fixture-generation" }) };
@@ -119,6 +119,7 @@ function expectInput(args, input) {
     const posted = result.inputs.filter(({ kind }) => kind === "posted");
     expect(posted.length).toBeGreaterThanOrEqual(2);
     expect(posted.every(({ pid }, index) => pid === 42 && posted[index].down === (index % 2 === 0))).toBe(true);
+    expect(result.inputs.some(({ kind }) => kind === "activate")).toBe(args.includes("--foreground"));
   }
   return result;
 }
@@ -197,7 +198,30 @@ describe("dure computer input", () => {
   it("selects a PID without resolving or launching an app by name", () => {
     const result = expectInput(["type", "--pid", "42", "hello"], { kind: "unicode", text: "hello" });
     expect(result.inputs).not.toContainEqual(expect.objectContaining({ kind: "resolve" }));
+    expect(result.inputs.some(({ kind }) => kind === "activate")).toBe(false);
+    expect(result.stdout).toContain("background");
+  });
+
+  it.each([
+    ["type", "--pid", "42", "hello", "--foreground"],
+    ["type", "--foreground", "--app", "Notes", "--text", "hello"],
+  ])("activates only for explicit foreground input: %j", (...args) => {
+    const result = expectInput(args, { kind: "unicode", text: "hello" });
     expect(result.inputs).toContainEqual({ kind: "activate", pid: 42 });
+    expect(result.stdout).toContain("foreground");
+  });
+
+  it("supports explicit foreground keys", () => {
+    expectInput(["key", "Notes", "--foreground", "cmd+s"], { kind: "keyCode", code: 1, modifiers: ["command down"] });
+  });
+
+  it("keeps targeting the same background app when foreground focus changes", () => {
+    const result = run(["computer", "type", "--pid", "42", "한글"], { frontmostPid: 8, loseFocusAfterEvents: 2 });
+    expect(result.status).toBe(0);
+    expect(result.inputs.some(({ kind }) => kind === "activate")).toBe(false);
+    expect(result.inputs.filter(({ kind, down }) => kind === "unicode" && down).map(({ pid, text }) => ({ pid, text }))).toEqual([
+      { pid: 42, text: "한" }, { pid: 42, text: "글" },
+    ]);
   });
 
   it("uses the selected layout instead of assuming US letter positions", () => {
@@ -207,7 +231,7 @@ describe("dure computer input", () => {
   });
 
   it("stops between Unicode characters when focus changes, without retrying", () => {
-    const result = run(["computer", "type", "--pid", "42", "한글"], { loseFocusAfterEvents: 2 });
+    const result = run(["computer", "type", "--pid", "42", "--foreground", "한글"], { loseFocusAfterEvents: 2 });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("computer_input_unconfirmed");
     expect(result.inputs.filter(({ kind }) => kind === "posted")).toEqual([
@@ -263,12 +287,14 @@ describe("dure computer validation before OS effects", () => {
     ["computer", "state", "--help"],
     ["computer", "apps", "-h"],
     ["computer", "type", "--app", "Notes", "--text", "--help"],
+    ["computer", "type", "--app", "Notes", "--foreground", "--help"],
   ])("help has no OS effects: %j", (...args) => {
     const result = run(args);
     expect(result).toMatchObject({ status: 0, stderr: "", calls: [] });
     expect(result.stdout).toContain("dure computer");
     expect(result.stdout).toContain("--text");
     expect(result.stdout).toContain("--key");
+    expect(result.stdout).toContain("--foreground");
   });
 
   it.each([
@@ -307,6 +333,11 @@ describe("dure computer validation before OS effects", () => {
     ["type", "--pid", "2147483648", "hello"],
     ["type", "--pid", "42", "--app", "Notes", "hello"],
     ["type", "--pid", "42", "--pid", "43", "hello"],
+    ["type", "Notes", "--foreground", "--foreground", "hello"],
+    ["key", "Notes", "--foreground=false", "return"],
+    ["activate", "Notes", "--foreground"],
+    ["state", "--foreground"],
+    ["menu", "Notes", "File", "New Note", "--foreground"],
     ["activate", "--pid", "42", "Notes"],
     ["menu", "--pid", "42", "File", "New Note"],
   ])("rejects invalid arguments without OS effects: %j", (...args) => {

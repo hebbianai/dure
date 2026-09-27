@@ -28,8 +28,8 @@ it for you.
   for Automation consent and nothing more. Run it before blaming a command;
   `state` is no substitute, exiting 1 without state output on a window-query error.
 
-Every failure exits 1 with the message on stderr. Input activation has a
-5-second deadline; the osascript subprocess has a 15-second deadline.
+Every failure exits 1 with the message on stderr. Explicit foreground activation
+has a 5-second deadline; the osascript subprocess has a 15-second deadline.
 
 ## Look before you act
 
@@ -53,33 +53,46 @@ dure computer key Notes cmd+s
 dure computer key --app Notes cmd+s
 dure computer key --app Notes --key cmd+s
 dure computer type --pid 12345 "hello world"
+dure computer type --app Notes --foreground "hello world"
+dure computer key --app Notes --foreground cmd+s
 dure computer menu Safari File "New Window"
 dure computer menu --app Safari File "New Window"
 ```
 
 `activate`, `type` and `key` require an already running app. They resolve a name
-to one PID and pin its kernel process identity before activating it. A missing
+to one PID and pin its kernel process identity before acting on it. A missing
 app is not launched. Multiple matches fail with `computer_app_ambiguous` and
 the candidate PIDs; choose one with `--pid` instead of `--app`. The PID example
 above is a placeholder, not a PID to copy without observing your own target.
 
-Activation waits for the selected process to become frontmost, up to 5 seconds.
-The process identity and focus are checked again immediately before and after
-input. Exit, replacement or focus loss before input refuses the operation.
+**`type` and `key` use background input by default.** They post only to the pinned
+PID without activating the app, moving the pointer, or changing the clipboard.
+You can keep using other apps. Avoid using the same target app concurrently:
+background input still affects its current input destination and selection.
+Some apps ignore background input or shortcuts; inspect the result. The CLI
+never activates an app as a fallback and never replays input automatically.
+An action handled by the target app can itself open windows or change focus.
+
+Use `--foreground` only when taking desktop focus is intended. This flag is
+available on `type` and `key`; `activate` always explicitly takes focus.
+Foreground activation waits for the selected process to become frontmost, up to
+5 seconds. The process identity is checked before and after input and between
+characters in both modes. Foreground mode additionally requires the target to
+retain keyboard focus. Exit, replacement, or foreground-mode focus loss before
+input refuses the operation.
 If dispatch raises an error or the target changes afterward, the command
 returns `computer_input_unconfirmed`: some or all input may already have been
 sent. Inspect the app before retrying; input commands are never retried for you.
 
-These commands take focus. Both `type` and `key` post native events to the
-pinned PID. `type` preserves Unicode, checks focus between characters and leaves
-the clipboard unchanged. `key` resolves printable keys using the current
+Both `type` and `key` post native events to the pinned PID. `type` preserves
+Unicode. `key` resolves printable keys using the current
 ASCII-capable keyboard layout without switching the input source. Characters
 unavailable in that layout fail; use `type` for Unicode text. Apps may interpret
 keyboard events differently; verify the result. Focus and process checks are
 not atomic with event dispatch. Success means the dispatch returned and the
-final process/focus check passed, not that
-the intended text or application action was verified. Use an arranged test
-window for native QA and avoid concurrent desktop interaction.
+final process check (and focus check in foreground mode) passed, not that
+the intended text or application action was verified. Use disposable native
+receivers for background QA. Foreground QA requires an arranged test window.
 
 Give the app once, either as the first positional argument or with `--app`.
 When `--app` is present, every positional argument belongs to the command's

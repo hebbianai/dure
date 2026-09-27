@@ -12,6 +12,7 @@ dure runtime --help
 dure runs --help
 dure send --help
 dure send-keys --help
+dure computer --help
 ```
 
 For this checkout, use `node cli/dure.mjs --help`. Runtime requirements and

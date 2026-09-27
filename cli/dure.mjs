@@ -3272,7 +3272,7 @@ async function cmdComputer(opts) {
     case "key": {
       const { runMacComputerInput } = await import("./lib/macos-computer-input.mjs");
       const receipt = runMacComputerInput(opts);
-      const action = sub === "activate" ? "Activated" : "Sent input to";
+      const action = sub === "activate" ? "Activated" : `Dispatched ${receipt.focusMode} input to`;
       process.stdout.write(`${action} ${app ?? "app"} (PID ${receipt.pid})\n`);
       return;
     }

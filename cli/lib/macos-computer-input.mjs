@@ -38,7 +38,7 @@ export function createMacComputerDesktop() {
     }
     throw new Error("The key is unavailable in the current keyboard layout. Use type for Unicode text.");
   }
-  function postKey(target, code, flags, character, checkFocus) {
+  function postKey(target, code, flags, character, checkTarget) {
     var source = $.CGEventSourceCreate(-1); // Private state: do not inherit held modifiers.
     var down = $.CGEventCreateKeyboardEvent(source, code, true);
     var up = $.CGEventCreateKeyboardEvent(source, code, false);
@@ -49,7 +49,7 @@ export function createMacComputerDesktop() {
       $.CGEventKeyboardSetUnicodeString(down, character.length, bytes.bytes);
       $.CGEventKeyboardSetUnicodeString(up, character.length, bytes.bytes);
     }
-    checkFocus();
+    checkTarget();
     $.CGEventPostToPid(target.pid, down);
     $.CGEventPostToPid(target.pid, up);
   }
@@ -92,7 +92,7 @@ export function createMacComputerDesktop() {
     wait: function (milliseconds) {
       $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(milliseconds / 1000));
     },
-    send: function (request, target, checkFocus) {
+    send: function (request, target, checkTarget) {
       if (!$.CGPreflightPostEventAccess()) throw new Error("Accessibility permission is required to send input.");
       if (request.sub === "type") {
         // System Events keystroke can remap non-Latin text through the current
@@ -105,7 +105,7 @@ export function createMacComputerDesktop() {
             var next = request.text.charCodeAt(index + 1);
             if (next >= 0xDC00 && next <= 0xDFFF) character += request.text[++index];
           }
-          postKey(target, 0, 0, character, checkFocus);
+          postKey(target, 0, 0, character, checkTarget);
         }
       }
       else {
@@ -113,7 +113,7 @@ export function createMacComputerDesktop() {
         var key = action.code !== undefined ? { code: action.code, flags: 0 } : keyForCharacter(action.character);
         var modifierFlags = { "command down": 1048576, "control down": 262144, "option down": 524288, "shift down": 131072 };
         action.modifiers.forEach(function (modifier) { key.flags |= modifierFlags[modifier]; });
-        postKey(target, key.code, key.flags, undefined, checkFocus);
+        postKey(target, key.code, key.flags, undefined, checkTarget);
       }
     },
   };
@@ -141,7 +141,8 @@ export function runMacComputerInput(request, { run = spawnSync, platform = proce
   if (receipt?.ok !== true) {
     throw new Error(`${receipt?.error?.code ?? "computer_native_error"}: ${receipt?.error?.message ?? "Desktop input failed."}`);
   }
-  if (!Number.isSafeInteger(receipt.pid) || receipt.pid <= 1 || receipt.action !== request.sub ||
+  const expectedFocusMode = request.sub === "activate" || request.foreground === true ? "foreground" : "background";
+  if (!Number.isSafeInteger(receipt.pid) || receipt.pid <= 1 || receipt.action !== request.sub || receipt.focusMode !== expectedFocusMode ||
       (request.pid !== undefined && request.pid !== receipt.pid)) {
     throw new Error("computer_invalid_receipt: Input status is unknown; inspect the app before retrying.");
   }

@@ -4,10 +4,12 @@ export const COMPUTER_HELP = `dure computer <sub> — macOS desktop control (osa
   apps                              List running apps
   state [--app A]                    Show the frontmost app and window titles
   activate --app A                   Bring an app to the front
-  type --app A <text...>              Type all text into an app
+  type --app A <text...>              Send text without activating the app
   type --app A --text "text"          Type an explicit text argument
-  key --app A <return|cmd+s|…>         Send a key
+  key --app A <return|cmd+s|…>         Send a key without activating the app
   key --app A --key cmd+s             Send an explicit key argument
+  type --app A --foreground <text>    Activate the app, then type
+  key --app A --foreground cmd+s      Activate the app, then send a key
   menu --app A <menu> <item>          Click a menu item
   screenshot [path]                  Capture the screen and return its path
 
@@ -18,10 +20,17 @@ An app may also be the first positional argument:
 activate, type and key require an already running app. A name must match
 exactly one process; use --pid PID instead of --app to choose an exact process:
   type --pid 12345 "hello world"
-Activation waits up to 5 seconds. Process identity and focus are checked
-before and after input. Keyboard events target the PID; focus checks are not
-atomic with dispatch. Re-observe after uncertain input before retrying.
-Success reports dispatch, not the app's resulting content.
+type and key use background input by default: they do not activate the app,
+move the pointer or change the clipboard. Use other apps while they run;
+avoid concurrent input to the same target. Some apps ignore background input
+or shortcuts. Success reports dispatch, not the app's resulting content.
+Inspect the result. There is no automatic foreground fallback or input retry.
+An action handled by the target app can itself open windows or change focus.
+Use --foreground on type/key only when taking focus is intended. activate
+always explicitly takes focus. Activation waits up to 5 seconds. Process
+identity is checked before/after input and between characters in both modes;
+foreground mode also checks focus. These checks are not atomic with dispatch.
+Re-observe after uncertain input before retrying.
 Use either positional text/key or --text/--key, not both.
 Use -- before literal arguments beginning with - (including --help):
   type --app Notes -- --help
@@ -36,14 +45,14 @@ Function keys such as F5 are not supported.
 Printable keys must exist in the current ASCII-capable keyboard layout.
 Use type for Unicode text.
 
-Accessibility and Screen Recording permissions are required.`;
+Input needs Accessibility permission; screenshot needs Screen Recording.`;
 
 const COMMAND_OPTIONS = new Map([
   ["apps", []],
   ["state", ["--app"]],
   ["activate", ["--app", "--pid"]],
-  ["type", ["--app", "--pid", "--text"]],
-  ["key", ["--app", "--pid", "--key"]],
+  ["type", ["--app", "--pid", "--text", "--foreground"]],
+  ["key", ["--app", "--pid", "--key", "--foreground"]],
   ["menu", ["--app"]],
   ["screenshot", []],
 ]);
@@ -118,6 +127,10 @@ export function parseComputerArgs(args) {
       throw new Error(`Unknown option for computer ${sub}: ${argument}. Use -- before literal arguments beginning with -.`);
     }
     if (options.has(argument)) throw new Error(`Duplicate option: ${argument}.`);
+    if (argument === "--foreground") {
+      options.set(argument, true);
+      continue;
+    }
     const value = args[++index];
     if (value === undefined || isOption(value)) {
       throw new Error(`${argument} requires a value. Use -- before literal arguments beginning with -.`);
@@ -143,6 +156,7 @@ export function parseComputerArgs(args) {
   }
   const result = { sub, app, ...(pid === undefined ? {} : { pid }) };
   if (sub === "type" || sub === "key") {
+    result.foreground = options.has("--foreground");
     const flag = sub === "type" ? "--text" : "--key";
     if (options.has(flag) && positional.length > 0) {
       throw new Error(`Use either ${flag} or positional ${sub === "type" ? "text" : "key"}, not both.`);

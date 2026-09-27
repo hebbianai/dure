@@ -2,6 +2,7 @@
 // Keep this function self-contained so fixtures exercise the exact native flow.
 export function performComputerInput(request, desktop) {
   var inputAttempted = false;
+  var foreground = request.sub === "activate" || request.foreground === true;
   function refuse(code, message) {
     var error = new Error(message);
     error.code = code;
@@ -13,9 +14,9 @@ export function performComputerInput(request, desktop) {
     }
     return observation;
   }
-  function requireFocus(target) {
+  function requireInputTarget(target) {
     var observation = requireTarget(target, desktop.observe(target.pid));
-    if (observation.frontmostPid !== target.pid) {
+    if (foreground && observation.frontmostPid !== target.pid) {
       refuse("computer_focus_changed", "The selected app no longer has keyboard focus.");
     }
   }
@@ -30,29 +31,34 @@ export function performComputerInput(request, desktop) {
     var target = candidates[0];
     if (!target.generation) refuse("computer_identity_unavailable", "The app's process identity could not be verified.");
     requireTarget(target, desktop.observe(target.pid));
-    var deadline = desktop.now() + 5000;
-    if (!desktop.activate(target)) {
-      refuse("computer_activation_failed", "macOS refused to activate the selected app.");
-    }
-    while (true) {
-      var observation = requireTarget(target, desktop.observe(target.pid));
-      if (desktop.now() >= deadline) {
-        refuse("computer_activation_timeout", "The selected app did not become active within 5 seconds.");
+    if (foreground) {
+      var deadline = desktop.now() + 5000;
+      if (!desktop.activate(target)) {
+        refuse("computer_activation_failed", "macOS refused to activate the selected app.");
       }
-      if (observation.frontmostPid === target.pid) break;
-      desktop.wait(Math.max(0, Math.min(50, deadline - desktop.now())));
+      while (true) {
+        var observation = requireTarget(target, desktop.observe(target.pid));
+        if (desktop.now() >= deadline) {
+          refuse("computer_activation_timeout", "The selected app did not become active within 5 seconds.");
+        }
+        if (observation.frontmostPid === target.pid) break;
+        desktop.wait(Math.max(0, Math.min(50, deadline - desktop.now())));
+      }
     }
-    requireFocus(target);
+    requireInputTarget(target);
     if (request.sub !== "activate") {
       // The native adapter addresses events to this PID and repeats this
-      // identity/focus check between characters. Observation is not atomic.
+      // identity check between characters. Foreground mode also fences focus;
+      // background mode lets the person continue using other apps. Never
+      // activate as a fallback or replay an uncertain input.
       desktop.send(request, target, function () {
-        requireFocus(target);
+        requireInputTarget(target);
         inputAttempted = true;
       });
-      requireFocus(target);
+      requireInputTarget(target);
     }
-    return { ok: true, pid: target.pid, action: request.sub, inputAttempted: inputAttempted };
+    return { ok: true, pid: target.pid, action: request.sub, inputAttempted: inputAttempted,
+      focusMode: foreground ? "foreground" : "background" };
   } catch (error) {
     var code = error.code || "computer_native_error";
     if (inputAttempted) code = "computer_input_unconfirmed";
