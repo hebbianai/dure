@@ -9,13 +9,12 @@ pub use dure_app_protocol::{
     GIT_CHECKOUT_SCHEMA_VERSION_V1, GIT_CHECKOUT_USE_SCHEMA_VERSION_V1,
     GitCheckoutCaptureRequestV1, GitCheckoutCreationReservationV1, GitCheckoutInstanceV1,
     GitCheckoutLocationV1, GitCheckoutPathObservationV1, GitCheckoutRegistrationV1,
-    GitCheckoutRemovalOutcomeV1,
-    GitCheckoutRemovalPermitV1, GitCheckoutRemovalPolicyV1, GitCheckoutRemovalReceiptV1,
-    GitCheckoutRemovalRequestV1, GitCheckoutUseActionV1, GitCheckoutUseClaimV1,
-    GitCheckoutUseOutcomeV1, GitCheckoutUsePhaseV1, GitCheckoutUsePhysicalRemovalRequestV1,
-    GitCheckoutUseReceiptV1, GitCheckoutUseRequestV1, GitCheckoutUseRevisionV1,
-    MAX_GIT_CHECKOUT_USE_ACTIVE_CLAIMS_V1, MAX_GIT_CHECKOUT_USE_PATH_BYTES_V1,
-    MAX_GIT_CHECKOUT_USE_REVISION_V1,
+    GitCheckoutRemovalOutcomeV1, GitCheckoutRemovalPermitV1, GitCheckoutRemovalPolicyV1,
+    GitCheckoutRemovalReceiptV1, GitCheckoutRemovalRequestV1, GitCheckoutUseActionV1,
+    GitCheckoutUseClaimV1, GitCheckoutUseOutcomeV1, GitCheckoutUsePhaseV1,
+    GitCheckoutUsePhysicalRemovalRequestV1, GitCheckoutUseReceiptV1, GitCheckoutUseRequestV1,
+    GitCheckoutUseRevisionV1, MAX_GIT_CHECKOUT_USE_ACTIVE_CLAIMS_V1,
+    MAX_GIT_CHECKOUT_USE_PATH_BYTES_V1, MAX_GIT_CHECKOUT_USE_REVISION_V1,
 };
 use fs2::FileExt as _;
 use serde::Serialize;

@@ -146,24 +146,45 @@ fn active_resume_and_reconciliation_retain_approval_attention() {
 fn working_descendant_keeps_completed_parent_working() {
     let mut projection = selected();
     projection
-        .provider(1, &event("turn/started", "parent-turn", "inProgress"), &fence())
+        .provider(
+            1,
+            &event("turn/started", "parent-turn", "inProgress"),
+            &fence(),
+        )
         .unwrap();
     projection
-        .provider(1, &json!({"method": "thread/started", "params": {"thread": {
-            "id": "child", "parentThreadId": "thread-main", "status": {"type": "active"}
-        }}}), &fence())
+        .provider(
+            1,
+            &json!({"method": "thread/started", "params": {"thread": {
+                "id": "child", "parentThreadId": "thread-main", "status": {"type": "active"}
+            }}}),
+            &fence(),
+        )
         .unwrap();
     let report = projection
-        .provider(1, &event("turn/completed", "parent-turn", "completed"), &fence())
-        .unwrap().unwrap();
-    assert_eq!(report.activity, AgentRuntimeActivity::Working,
-        "parent completion must not declare the still-working subtree idle");
+        .provider(
+            1,
+            &event("turn/completed", "parent-turn", "completed"),
+            &fence(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        report.activity,
+        AgentRuntimeActivity::Working,
+        "parent completion must not declare the still-working subtree idle"
+    );
     assert!(!report.turn_completed);
     let report = projection
-        .provider(1, &json!({"method": "thread/status/changed", "params": {
-            "threadId": "child", "status": {"type": "idle"}
-        }}), &fence())
-        .unwrap().unwrap();
+        .provider(
+            1,
+            &json!({"method": "thread/status/changed", "params": {
+                "threadId": "child", "status": {"type": "idle"}
+            }}),
+            &fence(),
+        )
+        .unwrap()
+        .unwrap();
     assert_eq!(report.activity, AgentRuntimeActivity::Waiting);
     assert_eq!(report.turn_completion_id.as_deref(), Some("parent-turn"));
 }

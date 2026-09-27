@@ -170,13 +170,15 @@ mod pointer_tests {
             (0.0, 0.0, f64::NAN, 1.0),
             (0.0, 0.0, 0.0, f64::INFINITY),
         ] {
-            assert!(BrowserPointerAction::try_from(PointerAction::Wheel {
-                x: Some(x),
-                y: Some(y),
-                delta_x,
-                delta_y
-            })
-            .is_err());
+            assert!(
+                BrowserPointerAction::try_from(PointerAction::Wheel {
+                    x: Some(x),
+                    y: Some(y),
+                    delta_x,
+                    delta_y
+                })
+                .is_err()
+            );
         }
     }
 }
@@ -205,15 +207,19 @@ mod touch_tests {
         ] {
             assert!(serde_json::from_value::<BrowserTouchAction>(value).is_err());
         }
-        assert!(BrowserTouchAction::try_from(TouchAction::Start {
-            x: f64::NAN,
-            y: 0.0
-        })
-        .is_err());
-        assert!(BrowserTouchAction::try_from(TouchAction::Move {
-            x: 0.0,
-            y: f64::INFINITY
-        })
-        .is_err());
+        assert!(
+            BrowserTouchAction::try_from(TouchAction::Start {
+                x: f64::NAN,
+                y: 0.0
+            })
+            .is_err()
+        );
+        assert!(
+            BrowserTouchAction::try_from(TouchAction::Move {
+                x: 0.0,
+                y: f64::INFINITY
+            })
+            .is_err()
+        );
     }
 }

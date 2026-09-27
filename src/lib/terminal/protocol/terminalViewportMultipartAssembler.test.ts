@@ -116,7 +116,8 @@ function multipartRecords(overrides: PartOverrides = {}): Uint8Array[] {
 							),
 							partIndex,
 							partCount: 2,
-							totalFrameBytes: overrides.totalFrameBytes ?? frameBytes.byteLength,
+							totalFrameBytes:
+								overrides.totalFrameBytes ?? frameBytes.byteLength,
 							frameChunk: chunk,
 							projectionRevision: 2n,
 						}),
@@ -152,41 +153,47 @@ describe("terminal viewport multipart assembler", () => {
 			return record.body.value.frameChunk;
 		});
 		const frameByteLength = chunks.reduce(
-			(total, chunk) => total + chunk.byteLength, 0,
+			(total, chunk) => total + chunk.byteLength,
+			0,
 		);
 		// Track copies originating in frame chunks, excluding envelope, batch ID,
 		// protobuf metadata, and decoded row storage.
 		const isChunk = (bytes: Uint8Array) =>
-			chunks.some((chunk) =>
-				chunk.buffer === bytes.buffer &&
-				chunk.byteOffset === bytes.byteOffset &&
-				chunk.byteLength === bytes.byteLength,
+			chunks.some(
+				(chunk) =>
+					chunk.buffer === bytes.buffer &&
+					chunk.byteOffset === bytes.byteOffset &&
+					chunk.byteLength === bytes.byteLength,
 			);
 		let copiedBytes = 0;
 		const originalSlice = Uint8Array.prototype.slice;
 		const originalSet = Uint8Array.prototype.set;
-		const slice = vi.spyOn(Uint8Array.prototype, "slice").mockImplementation(function (
-			this: Uint8Array,
-			start?: number,
-			end?: number,
-		) {
-			const copied = originalSlice.call(this, start, end);
-			if (isChunk(this)) {
-				copiedBytes += copied.byteLength;
-				chunks.push(copied);
-			}
-			return copied;
-		});
-		const set = vi.spyOn(Uint8Array.prototype, "set").mockImplementation(function (
-			this: Uint8Array,
-			source: ArrayLike<number>,
-			offset?: number,
-		) {
-			if (source instanceof Uint8Array && isChunk(source)) {
-				copiedBytes += source.byteLength;
-			}
-			originalSet.call(this, source, offset);
-		});
+		const slice = vi
+			.spyOn(Uint8Array.prototype, "slice")
+			.mockImplementation(function (
+				this: Uint8Array,
+				start?: number,
+				end?: number,
+			) {
+				const copied = originalSlice.call(this, start, end);
+				if (isChunk(this)) {
+					copiedBytes += copied.byteLength;
+					chunks.push(copied);
+				}
+				return copied;
+			});
+		const set = vi
+			.spyOn(Uint8Array.prototype, "set")
+			.mockImplementation(function (
+				this: Uint8Array,
+				source: ArrayLike<number>,
+				offset?: number,
+			) {
+				if (source instanceof Uint8Array && isChunk(source)) {
+					copiedBytes += source.byteLength;
+				}
+				originalSet.call(this, source, offset);
+			});
 		try {
 			const assembler = createTerminalViewportMultipartAssembler();
 			expect(records.map((record) => assembler.push(record).status)).toEqual([
@@ -213,18 +220,22 @@ describe("terminal viewport multipart assembler", () => {
 		});
 	});
 
-	it.each([-1, 1])("rejects a total-size mismatch (%i bytes) and accepts a new batch", (delta) => {
-		const assembler = createTerminalViewportMultipartAssembler();
-		const [first, second] = multipartRecords({
-			totalFrameBytes: toBinary(ViewportFrameSchema, frame).byteLength + delta,
-		});
-		expect(assembler.push(first as Uint8Array).status).toBe("pending");
-		expectResync(assembler.push(second as Uint8Array));
-		expect(assembler.hasIncomplete()).toBe(false);
-		expect(multipartRecords().map((record) => assembler.push(record).status)).toEqual([
-			"pending", "complete",
-		]);
-	});
+	it.each([-1, 1])(
+		"rejects a total-size mismatch (%i bytes) and accepts a new batch",
+		(delta) => {
+			const assembler = createTerminalViewportMultipartAssembler();
+			const [first, second] = multipartRecords({
+				totalFrameBytes:
+					toBinary(ViewportFrameSchema, frame).byteLength + delta,
+			});
+			expect(assembler.push(first as Uint8Array).status).toBe("pending");
+			expectResync(assembler.push(second as Uint8Array));
+			expect(assembler.hasIncomplete()).toBe(false);
+			expect(
+				multipartRecords().map((record) => assembler.push(record).status),
+			).toEqual(["pending", "complete"]);
+		},
+	);
 
 	it.each([0, TERMINAL_STATE_MAX_VIEWPORT_FRAME_BYTES + 1])(
 		"rejects an invalid frame allocation size (%i bytes) before assembly",

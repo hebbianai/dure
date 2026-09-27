@@ -588,20 +588,21 @@ async fn goal_observation_survives_backend_handoff_and_closed_readers_negotiate_
     for (operation, capability) in [
         ("agent_conversation.read", "agent_conversation.read.v4"),
         ("agent_conversation.read", "agent_conversation.read.v6"),
-        ("agent_conversation.subscribe", "agent_conversation.subscribe.v6"),
+        (
+            "agent_conversation.subscribe",
+            "agent_conversation.subscribe.v6",
+        ),
         ("agent_conversation.read", "agent_conversation.read.v5"),
-        ("agent_conversation.subscribe", "agent_conversation.subscribe.v5"),
+        (
+            "agent_conversation.subscribe",
+            "agent_conversation.subscribe.v5",
+        ),
     ] {
-        let old = request_over_test_connection(
-            Arc::clone(&state),
-            operation,
-            capability,
-            body.clone(),
-        )
-        .await;
+        let old =
+            request_over_test_connection(Arc::clone(&state), operation, capability, body.clone())
+                .await;
         assert_eq!(
-            old["error"]["code"],
-            "backend_expectation_mismatch",
+            old["error"]["code"], "backend_expectation_mismatch",
             "{capability}: {old}"
         );
     }

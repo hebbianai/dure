@@ -34,6 +34,7 @@ mod agent_bootstrap;
 mod agent_dispatch_stop;
 mod agent_goals;
 mod agent_queue;
+mod agent_recovery;
 mod agent_runtime_checkout;
 mod agent_runtime_close;
 mod agent_runtime_dispatch;
@@ -52,10 +53,9 @@ mod orchestration;
 mod plugin_apply;
 mod plugin_native_target_binding;
 mod provider_credential_profiles;
+mod provider_launch_defaults;
 mod provider_recovery;
 mod provider_recovery_usage;
-mod agent_recovery;
-mod provider_launch_defaults;
 mod records;
 mod schedule_occurrences;
 mod schedule_runs;
@@ -564,7 +564,9 @@ impl AgentTimelineStore for SqliteDomainStore {
         &'a self,
         request: &'a dure_app::AgentContinueTurnRequestV1,
     ) -> DomainStoreFuture<'a, Option<dure_app::AgentTurnEffectReceiptV1>> {
-        Box::pin(agent_timeline::prepare_continuation_turn(&self.pool, request))
+        Box::pin(agent_timeline::prepare_continuation_turn(
+            &self.pool, request,
+        ))
     }
 
     fn record_agent_steer_intent<'a>(
@@ -610,7 +612,10 @@ impl ProviderCredentialProfileStore for SqliteDomainStore {
         &'a self,
         provider_id: &'a dure_app::ProviderIdV1,
     ) -> DomainStoreFuture<'a, Vec<dure_app::ProviderCredentialProfileV1>> {
-        Box::pin(provider_credential_profiles::profiles(&self.pool, provider_id))
+        Box::pin(provider_credential_profiles::profiles(
+            &self.pool,
+            provider_id,
+        ))
     }
 
     fn register_provider_credential_profile<'a>(
@@ -966,9 +971,9 @@ mod migration_test_support;
 #[cfg(test)]
 mod provider_credential_profiles_tests;
 #[cfg(test)]
-mod provider_recovery_tests;
-#[cfg(test)]
 mod provider_launch_defaults_tests;
+#[cfg(test)]
+mod provider_recovery_tests;
 
 #[cfg(test)]
 mod client_view_tests;

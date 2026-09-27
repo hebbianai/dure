@@ -5,13 +5,13 @@
 //! Reviewed state is projected from the canonical provider home while auth
 //! remains private to each profile. See the credential-only switching design.
 
-pub mod transcript;
 mod claude_shared_state;
 #[cfg(test)]
 mod codex_config_tests;
 mod overlay_topology;
 #[cfg(test)]
 mod refresh_tests;
+pub mod transcript;
 
 mod app_home {
     pub const DIR_NAME: &str = ".dure";
@@ -1193,7 +1193,9 @@ fn unchanged_spawn_file(
         if count == 0 {
             break;
         }
-        if destination.read_exact(&mut destination_bytes[..count]).is_err()
+        if destination
+            .read_exact(&mut destination_bytes[..count])
+            .is_err()
             || source_bytes[..count] != destination_bytes[..count]
         {
             return Ok(false);
@@ -2264,10 +2266,9 @@ command = "/unchanged/server"
             let account = home.join(format!(".dure/accounts/codex-{name}"));
             std::fs::create_dir_all(&account).unwrap();
             prepare_codex_overlay_for_test(&home, &account, None).unwrap();
-            let actual: toml::Table = toml::from_str(
-                &std::fs::read_to_string(account.join("config.toml")).unwrap(),
-            )
-            .unwrap();
+            let actual: toml::Table =
+                toml::from_str(&std::fs::read_to_string(account.join("config.toml")).unwrap())
+                    .unwrap();
             assert_eq!(actual["mcp_servers"], expected["mcp_servers"]);
         }
         assert_eq!(

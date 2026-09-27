@@ -7,8 +7,7 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::SqliteDomainStore;
 use crate::agent_timeline::{
-    automatic_turn_ready_on, binding_for_agent_on, record_goal_turn_intent_on,
-    timeline_cursor_on,
+    automatic_turn_ready_on, binding_for_agent_on, record_goal_turn_intent_on, timeline_cursor_on,
 };
 use crate::error::{corrupt_row, map_sqlx, serialization};
 

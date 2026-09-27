@@ -318,8 +318,12 @@ impl PreparedControlPlane {
         background_tasks.spawn(crate::workflow_graph::runtime::run_loop(Arc::clone(&state)));
         background_tasks.spawn(agent_runtime_recovery::run(Arc::clone(&state)));
         background_tasks.spawn(idle::run(Arc::clone(&state)));
-        background_tasks.spawn(crate::slack_connector::restore_when_active(Arc::clone(&state)));
-        background_tasks.spawn(crate::agent_conversation::continuation::run(Arc::clone(&state)));
+        background_tasks.spawn(crate::slack_connector::restore_when_active(Arc::clone(
+            &state,
+        )));
+        background_tasks.spawn(crate::agent_conversation::continuation::run(Arc::clone(
+            &state,
+        )));
         let mut connections = JoinSet::new();
         let mut listener_error = None;
         loop {

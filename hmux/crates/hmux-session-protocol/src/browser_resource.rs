@@ -103,7 +103,7 @@ impl<'de> Deserialize<'de> for BrowserPageLabel {
 // Keep browser fences exact in JavaScript clients. Zero is never an issued
 // revision, and alternate decimal spellings do not represent another fence.
 pub(crate) mod counter {
-    use serde::{de::Error, Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
     use std::num::NonZeroU64;
 
     pub fn serialize<S: Serializer>(value: &NonZeroU64, serializer: S) -> Result<S::Ok, S::Error> {

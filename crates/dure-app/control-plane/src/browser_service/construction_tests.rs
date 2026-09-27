@@ -57,8 +57,11 @@ impl Fixture {
             .unwrap(),
         )
         .unwrap();
-        std::fs::set_permissions(&service.installation, std::fs::Permissions::from_mode(0o600))
-            .unwrap();
+        std::fs::set_permissions(
+            &service.installation,
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
         Self {
             root,
             service,

@@ -16,12 +16,13 @@ pub(super) fn list(root: &Path, team_id: &str) -> Result<Value, BackendDispatchE
 }
 
 fn project(source: &[u8], team_id: &str) -> Result<Value, BackendDispatchError> {
-    let journal: Value = serde_json::from_slice(source)
-        .map_err(|_| error("slack_tasks_unavailable"))?;
+    let journal: Value =
+        serde_json::from_slice(source).map_err(|_| error("slack_tasks_unavailable"))?;
     if journal["schemaVersion"] != 2 {
         return Err(error("slack_tasks_unavailable"));
     }
-    let threads = journal["threads"].as_object()
+    let threads = journal["threads"]
+        .as_object()
         .ok_or_else(|| error("slack_tasks_unavailable"))?;
     let mut tasks = Vec::new();
     for (key, thread) in threads {
@@ -29,14 +30,28 @@ fn project(source: &[u8], team_id: &str) -> Result<Value, BackendDispatchError> 
             return Err(error("slack_tasks_unavailable"));
         }
         // Accepted messages can precede a confirmed agent launch.
-        if !thread["agentId"].is_string() { continue; }
+        if !thread["agentId"].is_string() {
+            continue;
+        }
         // A short public thread opener labels the link; private chat history
         // and delivery state never become sidebar content.
-        let title = journal["inbox"].as_object().into_iter().flat_map(|inbox| inbox.values())
-            .find(|entry| entry["message"]["threadKey"].as_str() == Some(key.as_str())
-                && entry["message"]["messageTs"] == thread["threadTs"])
+        let title = journal["inbox"]
+            .as_object()
+            .into_iter()
+            .flat_map(|inbox| inbox.values())
+            .find(|entry| {
+                entry["message"]["threadKey"].as_str() == Some(key.as_str())
+                    && entry["message"]["messageTs"] == thread["threadTs"]
+            })
             .and_then(|entry| entry["message"]["text"].as_str())
-            .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect::<String>());
+            .map(|text| {
+                text.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .chars()
+                    .take(120)
+                    .collect::<String>()
+            });
         tasks.push(json!({
             "title": title,
             "teamId": team_id,

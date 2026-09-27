@@ -2979,15 +2979,28 @@ async fn initialize_or_migrate(pool: &SqlitePool, path: &Path) -> Result<(), Dom
                 .await?;
             }
             44 => {
-                let mut statements = if table_column_exists(pool, "agent_runtime_selections", "checkout_owner_id").await? {
-                    Vec::new()
-                } else {
-                    vec![crate::agent_runtime_checkout::ADD_CHECKOUT_OWNER]
-                };
+                let mut statements =
+                    if table_column_exists(pool, "agent_runtime_selections", "checkout_owner_id")
+                        .await?
+                    {
+                        Vec::new()
+                    } else {
+                        vec![crate::agent_runtime_checkout::ADD_CHECKOUT_OWNER]
+                    };
                 if !table_column_exists(pool, "agent_runtime_closes", "removal_json").await? {
-                    statements.push("ALTER TABLE agent_runtime_closes ADD COLUMN removal_json TEXT");
+                    statements
+                        .push("ALTER TABLE agent_runtime_closes ADD COLUMN removal_json TEXT");
                 }
-                migrate_schema(pool, path, metadata.migration, 44, 45, &statements, "migrate_v44_to_v45").await?;
+                migrate_schema(
+                    pool,
+                    path,
+                    metadata.migration,
+                    44,
+                    45,
+                    &statements,
+                    "migrate_v44_to_v45",
+                )
+                .await?;
             }
             45 => {
                 migration::migrate_agent_checkout_schema(pool, path, metadata.migration).await?;
@@ -3008,31 +3021,65 @@ async fn initialize_or_migrate(pool: &SqlitePool, path: &Path) -> Result<(), Dom
                 .await?;
             }
             47 => {
-                migrate_schema(pool, path, metadata.migration, 47, 48, &[
-                    crate::agent_goals::CREATE_GOALS,
-                    crate::agent_goals::ACTIVE_GOALS,
-                    crate::agent_goals::CREATE_MUTATIONS,
-                ], "migrate_v47_to_v48").await?;
+                migrate_schema(
+                    pool,
+                    path,
+                    metadata.migration,
+                    47,
+                    48,
+                    &[
+                        crate::agent_goals::CREATE_GOALS,
+                        crate::agent_goals::ACTIVE_GOALS,
+                        crate::agent_goals::CREATE_MUTATIONS,
+                    ],
+                    "migrate_v47_to_v48",
+                )
+                .await?;
             }
             48 => {
-                migrate_schema(pool, path, metadata.migration, 48, 49, &[
-                    crate::agent_queue::CREATE_QUEUE,
-                    crate::agent_queue::QUEUED_ORDER,
-                ], "migrate_v48_to_v49").await?;
+                migrate_schema(
+                    pool,
+                    path,
+                    metadata.migration,
+                    48,
+                    49,
+                    &[
+                        crate::agent_queue::CREATE_QUEUE,
+                        crate::agent_queue::QUEUED_ORDER,
+                    ],
+                    "migrate_v48_to_v49",
+                )
+                .await?;
             }
             49 => {
-                migrate_schema(pool, path, metadata.migration, 49, 50, &[
-                    crate::provider_recovery::CREATE_POLICIES,
-                    crate::provider_recovery::CREATE_MUTATIONS,
-                    crate::provider_recovery_usage::CREATE_USAGE,
-                    crate::agent_recovery::CREATE_RECOVERIES,
-                    crate::agent_recovery::RECOVERY_BY_AGENT,
-                ], "migrate_v49_to_v50").await?;
+                migrate_schema(
+                    pool,
+                    path,
+                    metadata.migration,
+                    49,
+                    50,
+                    &[
+                        crate::provider_recovery::CREATE_POLICIES,
+                        crate::provider_recovery::CREATE_MUTATIONS,
+                        crate::provider_recovery_usage::CREATE_USAGE,
+                        crate::agent_recovery::CREATE_RECOVERIES,
+                        crate::agent_recovery::RECOVERY_BY_AGENT,
+                    ],
+                    "migrate_v49_to_v50",
+                )
+                .await?;
             }
             50 => {
-                migrate_schema(pool, path, metadata.migration, 50, 51, &[
-                    CREATE_PROVIDER_CREDENTIAL_PROFILE_ALIASES,
-                ], "migrate_v50_to_v51").await?;
+                migrate_schema(
+                    pool,
+                    path,
+                    metadata.migration,
+                    50,
+                    51,
+                    &[CREATE_PROVIDER_CREDENTIAL_PROFILE_ALIASES],
+                    "migrate_v50_to_v51",
+                )
+                .await?;
             }
             version => {
                 return Err(DomainStoreErrorV1::Compatibility {

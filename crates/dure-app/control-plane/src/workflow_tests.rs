@@ -57,9 +57,9 @@ mod agent_conversation_recovery_tests;
 mod agent_goal_tests;
 mod agent_recovery_tests;
 mod claude_goal_smoke;
-pub(crate) mod goal_provider_smoke;
 mod dispatch_stop_tests;
 mod event_canary_tests;
+pub(crate) mod goal_provider_smoke;
 mod graph_runtime_tests;
 mod managed_create_reconcile_tests;
 mod native_default_profile_tests;
@@ -1508,7 +1508,9 @@ async fn reopen_fixture_service_state_with_prompt_observation(
     let reopened = ServiceState {
         scope_id: state.scope_id.clone(),
         slack: crate::slack_connector::SlackConnectorService::new(
-            ensure_backend_root(database_path.parent().unwrap()).unwrap().durable(),
+            ensure_backend_root(database_path.parent().unwrap())
+                .unwrap()
+                .durable(),
             database_path.parent().unwrap(),
             database_path.parent().unwrap().join("dure.mjs"),
             state.hmux_identity.clone(),

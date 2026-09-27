@@ -79,7 +79,11 @@ async fn refresh_observation_retains_preparation_phases_on_admission_error() {
         result.is_err(),
         "unavailable runtime ledger must still refuse admission"
     );
-    assert_eq!(fixture.claims(), 1, "diagnostics must not release the source");
+    assert_eq!(
+        fixture.claims(),
+        1,
+        "diagnostics must not release the source"
+    );
     fixture.store.close().await;
     assert_eq!(
         *phases.lock().unwrap(),

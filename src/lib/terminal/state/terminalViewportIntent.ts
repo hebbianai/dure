@@ -8,10 +8,10 @@ import {
 	type ViewportIntent,
 	ViewportIntentSchema,
 } from "@/contracts/terminalStateProtocol";
-import type { TerminalDefaultColors } from "./terminalDefaultColors";
-import type { TerminalInputFence } from "./terminalInputIntent";
 import { TERMINAL_STATE_DEFAULT_COLORS_PROTOCOL_MINOR } from "../protocol/terminalStateLimits";
 import { encodeTerminalStateRecord } from "../protocol/terminalStateProtocol";
+import type { TerminalDefaultColors } from "./terminalDefaultColors";
+import type { TerminalInputFence } from "./terminalInputIntent";
 import type { TerminalViewportIntentFence } from "./terminalViewportFrameReplica";
 
 export function encodeTerminalViewportRowsIntent(

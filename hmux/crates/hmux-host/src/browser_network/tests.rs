@@ -134,10 +134,12 @@ fn history_clear_preserves_pending_lifetimes_har_and_other_pages_without_resurre
     assert_eq!(drained.pending, 0);
     let captured = host.network().stop_capture(&page, &target);
     assert_eq!(captured.entries.len(), 2);
-    assert!(captured
-        .entries
-        .iter()
-        .all(|entry| entry.request.state == BrowserNetworkState::Finished));
+    assert!(
+        captured
+            .entries
+            .iter()
+            .all(|entry| entry.request.state == BrowserNetworkState::Finished)
+    );
     host.network()
         .started(
             &id("source:1"),
@@ -202,27 +204,30 @@ fn request_detail_uses_issued_sequences_and_never_reads_a_reused_native_id() {
             now,
         )
         .unwrap();
-    assert!(host
-        .network_read(&page, sequence("2"))
-        .unwrap()
-        .unwrap()
-        .body_source
-        .is_none());
-    assert!(host
-        .network_read(&page, sequence("3"))
-        .unwrap()
-        .unwrap()
-        .body_source
-        .is_none());
+    assert!(
+        host.network_read(&page, sequence("2"))
+            .unwrap()
+            .unwrap()
+            .body_source
+            .is_none()
+    );
+    assert!(
+        host.network_read(&page, sequence("3"))
+            .unwrap()
+            .unwrap()
+            .body_source
+            .is_none()
+    );
     host.network()
         .completed(&id("source:1"), &id("same"), Ok(()), now);
     host.network().detach(&id("source:1"), now);
-    assert!(host
-        .network_read(&page, sequence("3"))
-        .unwrap()
-        .unwrap()
-        .body_source
-        .is_none());
+    assert!(
+        host.network_read(&page, sequence("3"))
+            .unwrap()
+            .unwrap()
+            .body_source
+            .is_none()
+    );
     assert!(host.network_read(&page, sequence("999")).unwrap().is_none());
 }
 
@@ -257,12 +262,13 @@ fn history_metadata_and_eviction_are_bounded_and_clear_returns_only_its_pages_ca
     assert!(before.history_truncated);
     assert_eq!(before.requests.len(), 256);
     assert!(host.network_read(&page, sequence("1")).unwrap().is_none());
-    assert!(before.requests.iter().any(|entry| host
-        .network_read(&page, sequence(&entry.sequence))
-        .unwrap()
-        .unwrap()
-        .detail
-        .metadata_truncated));
+    assert!(before.requests.iter().any(|entry| {
+        host.network_read(&page, sequence(&entry.sequence))
+            .unwrap()
+            .unwrap()
+            .detail
+            .metadata_truncated
+    }));
     let permit = history_permit(&mut host, &page);
     assert_eq!(host.clear_network(&permit).unwrap(), 256);
     host.finish_action(permit, BrowserActionOutcome::Completed)

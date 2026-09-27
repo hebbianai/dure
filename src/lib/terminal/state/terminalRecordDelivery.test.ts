@@ -5,8 +5,8 @@ import {
 	inputReceiptRecord,
 	viewportFrameRecord,
 } from "@/test/terminalRecordFixtures";
-import { runTerminalRecordDelivery } from "./terminalRecordDelivery";
 import { decodeTerminalStateRecord } from "../protocol/terminalStateProtocol";
+import { runTerminalRecordDelivery } from "./terminalRecordDelivery";
 
 beforeEach(() => {
 	vi.useFakeTimers();

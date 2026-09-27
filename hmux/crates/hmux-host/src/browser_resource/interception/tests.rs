@@ -271,11 +271,12 @@ fn removing_exact_patterns_preserves_other_rules_pages_and_first_effect() {
     let permit = permit(&mut host, &page, &lease);
     host.configure_interception(&permit, &remove).unwrap();
     assert!(!host.interception_enabled(&target));
-    assert!(host
-        .interception_status(&page.resource, &page.page_id, true)
-        .unwrap()
-        .rules
-        .is_empty());
+    assert!(
+        host.interception_status(&page.resource, &page.page_id, true)
+            .unwrap()
+            .rules
+            .is_empty()
+    );
     host.finish_action(permit, BrowserActionOutcome::Completed)
         .unwrap();
 }

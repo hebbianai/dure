@@ -517,8 +517,11 @@ where
         P: AgentProviderCommands + ?Sized,
         S: dure_app::AgentRecoveryStore,
     {
-        let Some(prepared) = self.store
-            .prepare_agent_recovery_turn(attempt_id, now_ms()?).await? else {
+        let Some(prepared) = self
+            .store
+            .prepare_agent_recovery_turn(attempt_id, now_ms()?)
+            .await?
+        else {
             return Ok(None);
         };
         self.execute_prepared_start(provider, &prepared.intent.clone(), prepared)
@@ -766,7 +769,8 @@ where
         &self,
         agent_id: &dure_app::AgentIdV1,
     ) -> Result<(), AgentConversationErrorV1> {
-        self.publish_projection_change(agent_id, AgentConversationNotificationKindV1::Goal).await
+        self.publish_projection_change(agent_id, AgentConversationNotificationKindV1::Goal)
+            .await
     }
 
     pub(crate) async fn publish_projection_change(

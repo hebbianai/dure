@@ -496,8 +496,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&discovery, std::fs::Permissions::from_mode(0o700))
-                .unwrap();
+            std::fs::set_permissions(&discovery, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         let create = ManagedCreateRequest::new(
             "create",

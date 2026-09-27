@@ -309,9 +309,13 @@ where
         &self,
         agent_id: &AgentIdV1,
     ) -> Result<(), AgentConversationApiErrorV1> {
-        self.service.publish_projection_change(agent_id,
-            crate::agent_conversation::AgentConversationNotificationKindV1::Recovery)
-            .await.map_err(Into::into)
+        self.service
+            .publish_projection_change(
+                agent_id,
+                crate::agent_conversation::AgentConversationNotificationKindV1::Recovery,
+            )
+            .await
+            .map_err(Into::into)
     }
 
     pub(crate) fn notifications(&self) -> broadcast::Receiver<AgentConversationNotificationV1> {

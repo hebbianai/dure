@@ -199,9 +199,11 @@ async fn execute(command: Command) -> Result<(), dure_control_plane::ControlPlan
                 .map_err(|error| dure_control_plane::ControlPlaneError::Message(error.to_string()))
         }
         Command::CodexNativeDriver(arguments) => {
-            codex_connection_driver::native::run_from_arguments(arguments.into_iter().map(Into::into))
-                .await
-                .map_err(|error| dure_control_plane::ControlPlaneError::Message(error.to_string()))
+            codex_connection_driver::native::run_from_arguments(
+                arguments.into_iter().map(Into::into),
+            )
+            .await
+            .map_err(|error| dure_control_plane::ControlPlaneError::Message(error.to_string()))
         }
         Command::PiConnectionDriver(arguments) => {
             dure_control_plane::pi_connection_driver::run_from_arguments(
