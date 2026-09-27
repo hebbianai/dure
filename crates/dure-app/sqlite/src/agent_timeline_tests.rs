@@ -270,7 +270,7 @@ async fn tail(store: &SqliteDomainStore) -> dure_app::AgentTimelinePageV1 {
         .await
         .unwrap()
     {
-        AgentTimelineReadV1::Page { page } => page,
+        AgentTimelineReadV1::Page { page } => *page,
         AgentTimelineReadV1::Reset { .. } => panic!("tail read unexpectedly reset"),
     }
 }
@@ -292,7 +292,7 @@ async fn read_page(
         .await
         .unwrap()
     {
-        AgentTimelineReadV1::Page { page } => page,
+        AgentTimelineReadV1::Page { page } => *page,
         AgentTimelineReadV1::Reset { .. } => panic!("timeline read unexpectedly reset"),
     }
 }
@@ -1897,10 +1897,9 @@ async fn concurrent_clients_cannot_replace_the_active_turn() {
         second_client.record_agent_turn_intent(&second),
     );
     assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
-    let (winner, loser, failure) = if left.is_ok() {
-        (&first, &second, right.unwrap_err())
-    } else {
-        (&second, &first, left.unwrap_err())
+    let (winner, loser, failure) = match left {
+        Ok(_) => (&first, &second, right.unwrap_err()),
+        Err(failure) => (&second, &first, failure),
     };
     assert!(matches!(
         failure,

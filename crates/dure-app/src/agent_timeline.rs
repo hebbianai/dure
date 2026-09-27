@@ -1055,10 +1055,10 @@ pub struct AgentTimelinePageV1 {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentTimelineReadV1 {
     Page {
-        page: AgentTimelinePageV1,
+        page: Box<AgentTimelinePageV1>,
     },
     Reset {
-        binding: AgentInteractionBindingV1,
+        binding: Box<AgentInteractionBindingV1>,
         reason: String,
     },
 }

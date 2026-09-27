@@ -191,7 +191,7 @@ async fn timeline(service: &AgentConversationService<SqliteDomainStore>) -> Agen
     else {
         panic!("timeline unexpectedly reset");
     };
-    page
+    *page
 }
 
 #[tokio::test]

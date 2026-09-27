@@ -72,7 +72,7 @@ pub(super) async fn page(
     let AgentTimelineReadV1::Page { page } = read else {
         panic!("timeline reset")
     };
-    page
+    *page
 }
 
 pub(super) async fn wait_completed(

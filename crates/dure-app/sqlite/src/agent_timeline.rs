@@ -2657,7 +2657,7 @@ async fn read_on(
         && cursor.epoch != binding.timeline_epoch
     {
         return Ok(AgentTimelineReadV1::Reset {
-            binding,
+            binding: Box::new(binding),
             reason: "stale_cursor".into(),
         });
     }
@@ -2758,7 +2758,7 @@ async fn read_on(
     let queued_inputs =
         crate::agent_queue::pending_on(connection, &binding.interaction_session_id, 0).await?;
     Ok(AgentTimelineReadV1::Page {
-        page: AgentTimelinePageV1 {
+        page: Box::new(AgentTimelinePageV1 {
             binding,
             rows,
             live_text,
@@ -2770,7 +2770,7 @@ async fn read_on(
             queued_inputs,
             final_cursor,
             has_more,
-        },
+        }),
     })
 }
 
