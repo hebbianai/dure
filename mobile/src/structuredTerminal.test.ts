@@ -11,6 +11,7 @@ import {
   MouseEncoding,
   MouseTrackingMode,
   RowTermination,
+  ResizeRefusalReason,
   TerminalRowSchema,
   TerminalStateRecordSchema,
   TerminalTablesSchema,
@@ -24,6 +25,11 @@ import {
   decodeTerminalStateRecord,
   encodeTerminalStateRecord,
 } from "@/lib/terminal/protocol/terminalStateProtocol";
+import {
+  resizeAppliedReceiptRecord,
+  resizeFailureReceiptRecord,
+  resizeRefusedReceiptRecord,
+} from "@/test/terminalRecordFixtures";
 import type { AgentRuntimeState } from "./agentRuntimeState";
 import { mountStructuredTerminal } from "./structuredTerminal";
 
@@ -140,7 +146,7 @@ describe("mobile structured terminal", () => {
   ) {
     const host = document.createElement("div");
     Object.defineProperties(host, {
-      clientWidth: { value: 320 },
+      clientWidth: { value: 320, configurable: true },
       clientHeight: { value: 240 },
     });
     document.body.append(host);
@@ -287,6 +293,125 @@ describe("mobile structured terminal", () => {
     await vi.waitFor(() => expect(Number.parseFloat(rowWidth())).toBeLessThan(host.clientWidth));
     expect(grid.style.width).toBe(rowWidth());
     surface.dispose();
+  });
+
+  it("retries a transient resize refusal and stops after the Host acknowledges it", async () => {
+    const refused = resizeRefusedReceiptRecord(1n, ResizeRefusalReason.RESOURCE_LIMIT, "mobile-epoch");
+    const { host, surface, sent } = mountScripted([
+      refused.buffer as ArrayBuffer,
+      resizeAppliedReceiptRecord(2n, 38, 19, "mobile-epoch").buffer as ArrayBuffer,
+    ]);
+    try {
+      await vi.waitFor(() => expect(sent).toHaveLength(2));
+      const requests = sent.map(record => decodeTerminalStateRecord(record));
+      const resizes = requests.map(({ record }) => {
+        const body = record.body;
+        if (body.case !== "inputIntent" || body.value.intent.case !== "resize") throw new Error("Expected resize");
+        return body.value.intent.value;
+      });
+      expect(resizes[1].columns).toBe(resizes[0].columns);
+      expect(resizes[1].rows).toBe(resizes[0].rows);
+      expect(resizes[1].geometryGeneration).toBe(2n);
+      expect(requests[1].metadata.recordId).toBe(2n);
+      surface.fit();
+      await Promise.resolve();
+      expect(sent).toHaveLength(2);
+      expect(host.querySelector<HTMLElement>(".structured-terminal__notice")?.hidden).toBe(true);
+    } finally { surface.dispose(); host.remove(); }
+  });
+
+  it("bounds transient resize retries and reports a lasting failure without replaying input", async () => {
+    const { host, surface, sent, reads } = mountScripted(
+      [1n, 2n, 3n, 4n].map(id =>
+        resizeRefusedReceiptRecord(id, ResizeRefusalReason.RESOURCE_LIMIT, "mobile-epoch").buffer as ArrayBuffer),
+    );
+    try {
+      await vi.waitFor(() => expect(reads()).toBe(6));
+      surface.fit();
+      surface.sendText("once");
+      await vi.waitFor(() => expect(keyIntents(sent)).toEqual(["once"]));
+      expect(sent).toHaveLength(5);
+      expect(host.querySelector(".structured-terminal__notice")?.textContent).toContain("resource_limit");
+    } finally { surface.dispose(); host.remove(); }
+  });
+
+  it("reports a platform resize failure without retrying it", async () => {
+    const { host, surface, sent, reads } = mountScripted([
+      resizeFailureReceiptRecord(1n, "mobile-epoch").buffer as ArrayBuffer,
+    ]);
+    try {
+      await vi.waitFor(() => expect(reads()).toBe(3));
+      surface.fit();
+      expect(sent).toHaveLength(1);
+      expect(host.querySelector(".structured-terminal__notice")?.textContent).toContain("platform_resize_failed");
+    } finally { surface.dispose(); host.remove(); }
+  });
+
+  it("ignores foreign, superseded and duplicate resize receipts", async () => {
+    let deliver: ((record: ArrayBuffer) => void) | undefined;
+    let reads = 0;
+    const { host, surface, sent } = mountScripted([], {}, {
+      next: async () => ++reads === 1 ? viewportRecord().buffer as ArrayBuffer
+        : new Promise(resolve => { deliver = resolve; }),
+    });
+    const receive = async (record: Uint8Array) => {
+      const previousReads = reads;
+      deliver?.(record.buffer as ArrayBuffer);
+      await vi.waitFor(() => expect(reads).toBe(previousReads + 1));
+    };
+    try {
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      Object.defineProperty(host, "clientWidth", { value: 240, configurable: true });
+      surface.fit();
+      await vi.waitFor(() => expect(sent).toHaveLength(2));
+      await receive(resizeRefusedReceiptRecord(2n, ResizeRefusalReason.RESOURCE_LIMIT, "another-epoch"));
+      await receive(resizeRefusedReceiptRecord(1n, ResizeRefusalReason.RESOURCE_LIMIT, "mobile-epoch"));
+      await receive(resizeAppliedReceiptRecord(2n, 30, 19, "mobile-epoch"));
+      await receive(resizeRefusedReceiptRecord(2n, ResizeRefusalReason.RESOURCE_LIMIT, "mobile-epoch"));
+      surface.fit();
+      expect(sent).toHaveLength(2);
+      expect(host.querySelector<HTMLElement>(".structured-terminal__notice")?.hidden).toBe(true);
+    } finally { surface.dispose(); host.remove(); }
+  });
+
+  it("waits for a measurable surface instead of publishing a hidden 1-column terminal", async () => {
+    const { host, surface, sent, reads } = mountScripted([]);
+    Object.defineProperty(host, "clientWidth", { value: 0, configurable: true });
+    try {
+      await vi.waitFor(() => expect(reads()).toBe(2));
+      expect(sent).toHaveLength(0);
+      Object.defineProperty(host, "clientWidth", { value: 320, configurable: true });
+      surface.fit();
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+    } finally { surface.dispose(); host.remove(); }
+  });
+
+  it("refits when its container changes size and disconnects observation on disposal", async () => {
+    let resized: (() => void) | undefined;
+    const disconnect = vi.fn();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: () => void) { resized = callback; }
+      observe = vi.fn();
+      disconnect = disconnect;
+    });
+    const { host, surface, sent } = mountScripted([]);
+    try {
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      Object.defineProperty(host, "clientWidth", { value: 240, configurable: true });
+      resized?.();
+      await vi.waitFor(() => expect(sent).toHaveLength(2));
+      const columns = sent.map(bytes => {
+        const body = decodeTerminalStateRecord(bytes).record.body;
+        if (body.case !== "inputIntent" || body.value.intent.case !== "resize") throw new Error("Expected resize");
+        return body.value.intent.value.columns;
+      });
+      expect(columns[1]).toBeLessThan(columns[0]);
+      resized?.();
+      expect(sent).toHaveLength(2);
+    } finally {
+      surface.dispose(); host.remove(); vi.unstubAllGlobals();
+    }
+    expect(disconnect).toHaveBeenCalledOnce();
   });
 
   it("shows a rejected input's command error without replaying uncertain input", async () => {

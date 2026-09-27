@@ -48,6 +48,18 @@ import { createTerminalPaste, type TerminalPasteContent } from "./terminalPaste"
 import type { DroppedFilePayload } from "@/lib/files/externalFileDrop";
 import { terminalViewportSelectionText } from "@/lib/terminal/presentation/terminalViewportSelection";
 import { hasTerminalTextSelection } from "./terminalTextSelection";
+import {
+  observeTerminalResizeGeometry,
+  terminalIntentReceiptFailure,
+  terminalResizeRetryAfterFailure,
+  type TerminalResizeGeometry,
+  type TerminalResizeRetryState,
+} from "@/lib/terminal/state/terminalIntentReceiptPolicy";
+import {
+  acknowledgeTerminalIntentReceipt,
+  createTerminalIntentReceiptSequence,
+  issueTerminalIntentReceipt,
+} from "@/lib/terminal/state/terminalIntentReceiptSequence";
 
 type TerminalReceipt = AttachedSession["terminal"];
 
@@ -217,6 +229,8 @@ export function mountStructuredTerminal(
   let disposed = false;
   let focused = false;
   let lastGeometry = "";
+  let resizeRetry: TerminalResizeRetryState | undefined;
+  const receipts = createTerminalIntentReceiptSequence<TerminalResizeGeometry>();
 
   /** Transient notices expire; a retired attachment needs an explicit new attach. */
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -287,8 +301,7 @@ export function mountStructuredTerminal(
   };
   // Measured from the room the host leaves, not from the grid standing in it:
   // `terminalBox.ts` carries why the grid can only ever report growth.
-  const measure = () => {
-    const box = terminalContentBox(host);
+  const measure = (box = terminalContentBox(host)) => {
     return metrics.measure(
       box.width,
       box.height,
@@ -470,6 +483,20 @@ export function mountStructuredTerminal(
     if (reduced.status === "applied") {
       replica = reduced.replica;
       paint();
+    } else if (reduced.status === "receipt" && reduced.receipt.kind === "resize") {
+      if (reduced.terminalEpoch !== replica.terminalEpoch) return true;
+      const { inReplyToRecordId, outcome } = reduced.receipt.value;
+      const acknowledged = acknowledgeTerminalIntentReceipt(receipts, "resize", inReplyToRecordId);
+      if (acknowledged.status !== "acknowledged" || !acknowledged.resizeToken) return true;
+      const failure = terminalIntentReceiptFailure("resize", outcome);
+      if (failure) {
+        const retry = terminalResizeRetryAfterFailure(resizeRetry, acknowledged.resizeToken, outcome);
+        resizeRetry = retry.state;
+        if (retry.retry) {
+          lastGeometry = "";
+          syncGeometry();
+        } else writeNotice(failure.message);
+      } else resizeRetry = undefined;
     } else if (reduced.status === "reattach_required" || reduced.status === "invalid") {
       fail(reduced.reason ?? "structured_terminal_reattach_required");
       return false;
@@ -493,20 +520,32 @@ export function mountStructuredTerminal(
     const fence = terminalViewportInputFence(replica);
     // A covering screen keeps this reader alive but has no terminal geometry.
     if (!fence || disposed || unavailable !== undefined || !host.isConnected) return;
-    const geometry = measure();
+    const box = terminalContentBox(host);
+    // A hidden or not-yet-laid-out surface must not shrink the shared PTY to 1x1.
+    if (box.width <= 0 || box.height <= 0) return;
+    const geometry = measure(box);
     const identity = `${geometry.columns}x${geometry.rows}`;
     if (identity === lastGeometry) return;
     lastGeometry = identity;
     if (writable) {
-      send((recordId) =>
-        encodeTerminalResizeIntent(recordId, fence, geometry.columns, geometry.rows),
-      );
+      resizeRetry = observeTerminalResizeGeometry(resizeRetry, geometry);
+      send((recordId) => {
+        issueTerminalIntentReceipt(receipts, "resize", recordId, geometry);
+        return encodeTerminalResizeIntent(recordId, fence, geometry.columns, geometry.rows);
+      });
       return;
     }
     sendViewport((recordId, inputFence, viewport) =>
       encodeTerminalViewportRowsIntent(recordId, inputFence, viewport, geometry.rows),
     );
   };
+  // Container layout can settle after the window's resize/viewport event.
+  const resizeObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(() => {
+    if (disposed || unavailable !== undefined || !host.isConnected) return;
+    syncGeometry();
+    paint();
+  });
+  resizeObserver?.observe(host);
 
   const focus = () => {
     if (!writable || disposed || input.disabled || hasTerminalTextSelection(grid)) return;
@@ -573,6 +612,7 @@ export function mountStructuredTerminal(
     dispose: () => {
       disposed = true;
       keyboard.dispose();
+      resizeObserver?.disconnect();
       host.removeEventListener("copy", onCopy);
       stopTouchScroll();
       host.removeEventListener("scroll", readScrollPosition);
