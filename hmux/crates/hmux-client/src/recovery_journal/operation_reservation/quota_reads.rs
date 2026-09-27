@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn quota_capacity_proof_does_not_read_a_later_unavailable_record() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::recovery_journal::tests::private_root();
         ensure_private_directory(temp.path()).unwrap();
         let admission = acquire_admission_lock(temp.path()).unwrap();
         let mut entries = entries(MAX_GENERAL_OPERATION_RECORDS);

@@ -8,6 +8,13 @@ use hmux_runtime_contract::{
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+pub(super) fn private_root() -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    root
+}
+
 const TEST_ACTION: &str = "restore_plain_shell_with_current_build";
 
 mod maintenance_scans;
@@ -922,7 +929,7 @@ fn private_resume_checkpoint_survives_source_termination_retry() {
 
 #[test]
 fn prepared_operation_replays_every_journaled_boundary_without_a_client_hint() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_root();
     let identity = PreparedRecoveryIdentity {
         recovery_id: "managed-rehost-1".into(),
         source_session_id: "managed-source-1".into(),
@@ -1085,7 +1092,7 @@ fn request_bound_reservation_keeps_its_public_fingerprint_with_a_private_payload
 
 #[test]
 fn prepared_operation_lookup_is_read_only_and_exact() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_root();
     let identity = PreparedRecoveryIdentity {
         recovery_id: "managed-stop-lookup".into(),
         source_session_id: "managed-source-lookup".into(),
@@ -1109,7 +1116,7 @@ fn prepared_operation_lookup_is_read_only_and_exact() {
 
 #[test]
 fn prepared_operation_rejects_a_changed_canonical_payload() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_root();
     let identity = PreparedRecoveryIdentity {
         recovery_id: "managed-rehost-1".into(),
         source_session_id: "managed-source-1".into(),
@@ -1452,7 +1459,7 @@ fn managed_stop_identity(index: usize) -> PreparedRecoveryIdentity {
 
 #[test]
 fn managed_stop_and_general_recovery_capacity_are_isolated() {
-    let general_full = tempfile::tempdir().unwrap();
+    let general_full = private_root();
     for index in 0..MAX_GENERAL_OPERATION_RECORDS {
         write_reserved_record_fixture(
             general_full.path(),
@@ -1471,7 +1478,7 @@ fn managed_stop_and_general_recovery_capacity_are_isolated() {
     };
     drop(stop);
 
-    let stop_full = tempfile::tempdir().unwrap();
+    let stop_full = private_root();
     for index in 0..MAX_MANAGED_STOP_OPERATION_RECORDS {
         write_reserved_record_fixture_for_action(
             stop_full.path(),

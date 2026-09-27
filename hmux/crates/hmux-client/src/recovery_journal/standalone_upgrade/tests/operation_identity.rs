@@ -144,7 +144,7 @@ fn independent_same_id_operations_complete_and_retire_without_erasing_peer_histo
 
 #[test]
 fn an_ambiguous_imported_id_never_prevents_exact_source_or_launch_lookup() {
-    let destination = tempfile::tempdir().unwrap();
+    let destination = private_root();
     let action = SELECTED_BUILD_ACTION;
     let mut first = imported(destination.path(), action, "first");
     let mut second = imported(destination.path(), action, "second");
@@ -186,7 +186,7 @@ fn an_ambiguous_imported_id_never_prevents_exact_source_or_launch_lookup() {
 
 #[test]
 fn a_local_no_replacement_completion_is_not_absence_for_imported_id_lookup() {
-    let local = tempfile::tempdir().unwrap();
+    let local = private_root();
     let action = CURRENT_BUILD_ACTION;
     let mut peer = imported(local.path(), action, "peer");
     let id = peer.operation.recovery_id().to_string();

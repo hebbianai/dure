@@ -1,4 +1,5 @@
 use super::*;
+use crate::recovery_journal::tests::private_root;
 use crate::recovery_journal::{
     self as journal, PreparedRecoveryIdentity, RecoveryCompletion, RecoveryJournalGcPolicy,
     RecoveryReservationState, garbage_collect_completed, request_fingerprint, reserve_prepared,
@@ -313,7 +314,7 @@ fn prepared_fixture_named(
     destination: Option<&std::path::Path>,
     name: Option<&str>,
 ) -> UpgradeFixture {
-    let root = tempfile::tempdir().unwrap();
+    let root = private_root();
     let catalog = crate::LocalSessionCatalog::new(root.path());
     let context = if action == SELECTED_BUILD_ACTION {
         serde_json::json!({"runtime": "/selected/runtime"})

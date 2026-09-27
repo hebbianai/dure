@@ -5,7 +5,7 @@ use crate::LocalSessionCatalog;
 fn target_history_never_commits_the_source_operation_before_its_original_journal() {
     for action in [CURRENT_BUILD_ACTION, SELECTED_BUILD_ACTION] {
         for bound in [false, true] {
-            let destination = tempfile::tempdir().unwrap();
+            let destination = private_root();
             let mut fixture =
                 prepared_fixture_with_destination(action, bound, Some(destination.path()));
             fixture
@@ -89,7 +89,7 @@ fn target_history_never_commits_the_source_operation_before_its_original_journal
 
 #[test]
 fn busy_target_history_never_blocks_while_holding_the_source_journal() {
-    let destination = tempfile::tempdir().unwrap();
+    let destination = private_root();
     let mut fixture =
         prepared_fixture_with_destination(SELECTED_BUILD_ACTION, true, Some(destination.path()));
     fixture
