@@ -13,163 +13,6 @@ pub(super) struct TouchState {
     y: f64,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn setup() -> (
-        BrowserResourceHost,
-        BrowserControllerLease,
-        BrowserPageIdentity,
-    ) {
-        let mut host = BrowserResourceHost::new(BrowserResourceIdentity {
-            resource_id: BrowserResourceId::new("touch:test").unwrap(),
-            generation: BrowserResourceGeneration::new("generation").unwrap(),
-            workspace_id: BrowserWorkspaceId::new("workspace").unwrap(),
-        });
-        let page = host
-            .register_page(
-                BrowserInstanceId::new("instance").unwrap(),
-                BrowserTargetId::new("target").unwrap(),
-                BrowserDocumentId::new("document").unwrap(),
-            )
-            .unwrap();
-        let lease = host
-            .request_control(BrowserControllerId::new("agent").unwrap(), None)
-            .unwrap()
-            .controller
-            .unwrap();
-        (host, lease, page)
-    }
-
-    fn begin(
-        host: &mut BrowserResourceHost,
-        lease: &BrowserControllerLease,
-        page: &BrowserPageIdentity,
-    ) -> BrowserActionPermit {
-        let sequence = host.projection().next_command_sequence;
-        host.begin_action(
-            &lease.controller_id,
-            &BrowserActionAuthority {
-                lease: lease.clone(),
-                page: page.clone(),
-                command_sequence: sequence,
-                operation_id: BrowserOperationId::new(format!("touch:{sequence}")).unwrap(),
-            },
-            [],
-        )
-        .unwrap()
-    }
-
-    fn start(host: &mut BrowserResourceHost, permit: &BrowserActionPermit) {
-        let event = host
-            .prepare_touch(
-                permit,
-                TouchAction::Start { x: 200.0, y: 400.0 }
-                    .try_into()
-                    .unwrap(),
-            )
-            .unwrap();
-        assert!(host.projection().touch.is_none());
-        host.touch_applied(event).unwrap();
-    }
-
-    #[test]
-    fn touch_cancel_acknowledgement_is_required_before_queued_control_grant() {
-        let (mut host, lease, page) = setup();
-        let action = begin(&mut host, &lease, &page);
-        start(&mut host, &action);
-        host.request_control(BrowserControllerId::new("human").unwrap(), Some(&lease))
-            .unwrap();
-        assert!(host.touch_release_for_transfer().unwrap().is_none());
-        host.finish_action(action, BrowserActionOutcome::Completed)
-            .unwrap();
-        assert_eq!(host.projection().controller.as_ref(), Some(&lease));
-        let cancel = host.touch_release_for_transfer().unwrap().unwrap();
-        assert!(matches!(cancel.action(), TouchAction::Cancel {}));
-        assert_eq!(cancel.target().as_str(), "target");
-        assert!(host.projection().touch.is_some());
-        host.touch_applied(cancel).unwrap();
-        assert!(host.projection().touch.is_none());
-        assert_eq!(
-            host.projection().controller.unwrap().controller_id.as_str(),
-            "human"
-        );
-    }
-
-    #[test]
-    fn unknown_contact_delivery_fences_the_original_instance_and_transfer() {
-        for lose_start in [true, false] {
-            let (mut host, lease, page) = setup();
-            let action = begin(&mut host, &lease, &page);
-            let event = if lose_start {
-                host.prepare_touch(
-                    &action,
-                    TouchAction::Start { x: 1.0, y: 2.0 }.try_into().unwrap(),
-                )
-                .unwrap()
-            } else {
-                start(&mut host, &action);
-                host.prepare_touch(&action, TouchAction::End {}.try_into().unwrap())
-                    .unwrap()
-            };
-            host.touch_delivery_unknown(event).unwrap();
-            assert_eq!(
-                host.projection().phase,
-                BrowserResourcePhase::OutcomeUnknown
-            );
-            assert_eq!(
-                host.request_control(BrowserControllerId::new("human").unwrap(), Some(&lease)),
-                Err(BrowserAdmissionError::OutcomeUnknown)
-            );
-            host.begin_retirement(&lease.resource).unwrap();
-            host.engine_exited(&lease.resource).unwrap();
-            assert!(host.projection().touch.is_none());
-        }
-    }
-
-    #[test]
-    fn another_page_drains_the_original_touch_before_starting_its_gesture() {
-        let (mut host, lease, page) = setup();
-        let action = begin(&mut host, &lease, &page);
-        start(&mut host, &action);
-        host.finish_action(action, BrowserActionOutcome::Completed)
-            .unwrap();
-        let peer = host
-            .register_page(
-                BrowserInstanceId::new("instance").unwrap(),
-                BrowserTargetId::new("peer-target").unwrap(),
-                BrowserDocumentId::new("peer-document").unwrap(),
-            )
-            .unwrap();
-        let action = begin(&mut host, &lease, &peer);
-        let proposal = TouchAction::Start { x: 20.0, y: 30.0 }.try_into().unwrap();
-        assert!(matches!(
-            host.prepare_touch(&action, proposal),
-            Err(BrowserAdmissionError::ActionInFlight)
-        ));
-        let release = host
-            .touch_release_before_action(&action, false)
-            .unwrap()
-            .unwrap();
-        assert_eq!(release.target().as_str(), "target");
-        host.touch_applied(release).unwrap();
-        let event = host.prepare_touch(&action, proposal).unwrap();
-        assert_eq!(event.target().as_str(), "peer-target");
-        host.touch_applied(event).unwrap();
-        host.finish_action(action, BrowserActionOutcome::Completed)
-            .unwrap();
-        host.request_control(BrowserControllerId::new("human").unwrap(), Some(&lease))
-            .unwrap();
-        host.page_closed(&peer.page_id).unwrap();
-        assert!(host.projection().touch.is_none());
-        assert_eq!(
-            host.projection().controller.unwrap().controller_id.as_str(),
-            "human"
-        );
-    }
-}
-
 pub struct BrowserTouchDispatch {
     resource: BrowserResourceIdentity,
     before: Option<TouchState>,
@@ -348,5 +191,162 @@ impl BrowserResourceHost {
             self.touch = None;
         }
         self.grant_drained_input_transfer()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup() -> (
+        BrowserResourceHost,
+        BrowserControllerLease,
+        BrowserPageIdentity,
+    ) {
+        let mut host = BrowserResourceHost::new(BrowserResourceIdentity {
+            resource_id: BrowserResourceId::new("touch:test").unwrap(),
+            generation: BrowserResourceGeneration::new("generation").unwrap(),
+            workspace_id: BrowserWorkspaceId::new("workspace").unwrap(),
+        });
+        let page = host
+            .register_page(
+                BrowserInstanceId::new("instance").unwrap(),
+                BrowserTargetId::new("target").unwrap(),
+                BrowserDocumentId::new("document").unwrap(),
+            )
+            .unwrap();
+        let lease = host
+            .request_control(BrowserControllerId::new("agent").unwrap(), None)
+            .unwrap()
+            .controller
+            .unwrap();
+        (host, lease, page)
+    }
+
+    fn begin(
+        host: &mut BrowserResourceHost,
+        lease: &BrowserControllerLease,
+        page: &BrowserPageIdentity,
+    ) -> BrowserActionPermit {
+        let sequence = host.projection().next_command_sequence;
+        host.begin_action(
+            &lease.controller_id,
+            &BrowserActionAuthority {
+                lease: lease.clone(),
+                page: page.clone(),
+                command_sequence: sequence,
+                operation_id: BrowserOperationId::new(format!("touch:{sequence}")).unwrap(),
+            },
+            [],
+        )
+        .unwrap()
+    }
+
+    fn start(host: &mut BrowserResourceHost, permit: &BrowserActionPermit) {
+        let event = host
+            .prepare_touch(
+                permit,
+                TouchAction::Start { x: 200.0, y: 400.0 }
+                    .try_into()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(host.projection().touch.is_none());
+        host.touch_applied(event).unwrap();
+    }
+
+    #[test]
+    fn touch_cancel_acknowledgement_is_required_before_queued_control_grant() {
+        let (mut host, lease, page) = setup();
+        let action = begin(&mut host, &lease, &page);
+        start(&mut host, &action);
+        host.request_control(BrowserControllerId::new("human").unwrap(), Some(&lease))
+            .unwrap();
+        assert!(host.touch_release_for_transfer().unwrap().is_none());
+        host.finish_action(action, BrowserActionOutcome::Completed)
+            .unwrap();
+        assert_eq!(host.projection().controller.as_ref(), Some(&lease));
+        let cancel = host.touch_release_for_transfer().unwrap().unwrap();
+        assert!(matches!(cancel.action(), TouchAction::Cancel {}));
+        assert_eq!(cancel.target().as_str(), "target");
+        assert!(host.projection().touch.is_some());
+        host.touch_applied(cancel).unwrap();
+        assert!(host.projection().touch.is_none());
+        assert_eq!(
+            host.projection().controller.unwrap().controller_id.as_str(),
+            "human"
+        );
+    }
+
+    #[test]
+    fn unknown_contact_delivery_fences_the_original_instance_and_transfer() {
+        for lose_start in [true, false] {
+            let (mut host, lease, page) = setup();
+            let action = begin(&mut host, &lease, &page);
+            let event = if lose_start {
+                host.prepare_touch(
+                    &action,
+                    TouchAction::Start { x: 1.0, y: 2.0 }.try_into().unwrap(),
+                )
+                .unwrap()
+            } else {
+                start(&mut host, &action);
+                host.prepare_touch(&action, TouchAction::End {}.try_into().unwrap())
+                    .unwrap()
+            };
+            host.touch_delivery_unknown(event).unwrap();
+            assert_eq!(
+                host.projection().phase,
+                BrowserResourcePhase::OutcomeUnknown
+            );
+            assert_eq!(
+                host.request_control(BrowserControllerId::new("human").unwrap(), Some(&lease)),
+                Err(BrowserAdmissionError::OutcomeUnknown)
+            );
+            host.begin_retirement(&lease.resource).unwrap();
+            host.engine_exited(&lease.resource).unwrap();
+            assert!(host.projection().touch.is_none());
+        }
+    }
+
+    #[test]
+    fn another_page_drains_the_original_touch_before_starting_its_gesture() {
+        let (mut host, lease, page) = setup();
+        let action = begin(&mut host, &lease, &page);
+        start(&mut host, &action);
+        host.finish_action(action, BrowserActionOutcome::Completed)
+            .unwrap();
+        let peer = host
+            .register_page(
+                BrowserInstanceId::new("instance").unwrap(),
+                BrowserTargetId::new("peer-target").unwrap(),
+                BrowserDocumentId::new("peer-document").unwrap(),
+            )
+            .unwrap();
+        let action = begin(&mut host, &lease, &peer);
+        let proposal = TouchAction::Start { x: 20.0, y: 30.0 }.try_into().unwrap();
+        assert!(matches!(
+            host.prepare_touch(&action, proposal),
+            Err(BrowserAdmissionError::ActionInFlight)
+        ));
+        let release = host
+            .touch_release_before_action(&action, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(release.target().as_str(), "target");
+        host.touch_applied(release).unwrap();
+        let event = host.prepare_touch(&action, proposal).unwrap();
+        assert_eq!(event.target().as_str(), "peer-target");
+        host.touch_applied(event).unwrap();
+        host.finish_action(action, BrowserActionOutcome::Completed)
+            .unwrap();
+        host.request_control(BrowserControllerId::new("human").unwrap(), Some(&lease))
+            .unwrap();
+        host.page_closed(&peer.page_id).unwrap();
+        assert!(host.projection().touch.is_none());
+        assert_eq!(
+            host.projection().controller.unwrap().controller_id.as_str(),
+            "human"
+        );
     }
 }

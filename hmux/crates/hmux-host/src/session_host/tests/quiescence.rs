@@ -59,8 +59,7 @@ fn inspection_and_stop_share_pending_input_until_submission_is_acknowledged() {
     let mut host = host();
     let current = fence("runner-1", 1, "terminal-1");
     let waiting = AgentRuntimeObservation::waiting(AgentRuntimeStateSource::ProviderEvent);
-    host.observe_agent_runtime_state(&current, waiting.clone())
-        .unwrap();
+    host.observe_agent_runtime_state(&current, waiting).unwrap();
 
     let assert_protection = |host: &SessionHost, pending: bool| {
         let snapshot = host.current_snapshot(ScreenSnapshotProfile::Full).unwrap();
@@ -87,13 +86,11 @@ fn inspection_and_stop_share_pending_input_until_submission_is_acknowledged() {
     assert_protection(&host, false);
     host.record_controller_input(&current).unwrap();
     assert_protection(&host, true);
-    host.observe_agent_runtime_state(&current, waiting.clone())
-        .unwrap();
+    host.observe_agent_runtime_state(&current, waiting).unwrap();
     assert_protection(&host, true);
     host.record_controller_submit(&current).unwrap();
     assert_protection(&host, true);
-    host.observe_agent_runtime_state(&current, waiting.clone())
-        .unwrap();
+    host.observe_agent_runtime_state(&current, waiting).unwrap();
     assert_protection(&host, false);
     host.record_controller_submit(&current).unwrap();
     host.record_controller_input(&current).unwrap();
