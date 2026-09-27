@@ -60,6 +60,7 @@ pub struct HubState {
     /// 겹치면 한 질문의 답이 다른 질문에 붙는다(`roundtrip.rs`).
     pub pending_diff: Arc<PendingFileDiff>,
     pub pending_file: Arc<PendingRoundTrips<SessionFileResult>>,
+    pub terminal_widths: Arc<super::terminal_width::TerminalWidths>,
 }
 
 /// 폰이 물어본 것을 화면에게 넘기고, 화면의 답을 기다리는 쪽.
@@ -130,6 +131,14 @@ impl SessionFileSink for ScreenRoundTrip<SessionFileResult> {
 }
 
 impl HubState {
+    fn terminal_widths(&self, app: &tauri::AppHandle) -> Arc<super::terminal_width::TerminalWidths> {
+        let app = app.clone();
+        self.terminal_widths.set_publisher(Arc::new(move |snapshot| {
+            let _ = app.emit(super::terminal_width::EVENT, snapshot);
+        }));
+        Arc::clone(&self.terminal_widths)
+    }
+
     pub(super) fn registry(&self, app: &tauri::AppHandle) -> Result<Arc<DeviceRegistry>, String> {
         if let Some(existing) = self.registry.get() {
             return Ok(existing.clone());
@@ -213,6 +222,7 @@ pub fn hub_start(app: tauri::AppHandle, address: String, port: u16) -> Result<Hu
             }),
             gateway_process(&app)?,
         )
+        .observing_terminal_widths(state.terminal_widths(&app))
         .reporting_status(Arc::new(ScreenRoundTrip {
             app: app.clone(),
             pending: Arc::clone(&state.pending_status),
@@ -296,6 +306,7 @@ pub fn hub_relay_start(
             }),
             gateway_process(&app)?,
         )
+        .observing_terminal_widths(state.terminal_widths(&app))
         .reporting_status(Arc::new(ScreenRoundTrip {
             app: app.clone(),
             pending: Arc::clone(&state.pending_status),
@@ -1239,4 +1250,9 @@ impl From<hmux_ssh_transport::FileDiffDocument> for RemoteFileDiff {
 #[must_use]
 pub fn hub_sidebar_layout(state: tauri::State<'_, HubState>) -> SidebarLayout {
     state.layout.get()
+}
+
+#[tauri::command]
+pub fn hub_terminal_widths(app: tauri::AppHandle) -> super::terminal_width::Snapshot {
+    app.state::<HubState>().terminal_widths(&app).snapshot()
 }

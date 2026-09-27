@@ -2262,6 +2262,7 @@ pub fn run() {
             hub::commands::hub_resume,
             hub::commands::hub_stop,
             hub::commands::hub_status,
+            hub::commands::hub_terminal_widths,
             hub::commands::hub_devices,
             hub::commands::hub_device_register,
             hub::commands::hub_device_revoke,

@@ -5,6 +5,7 @@
 // invoke 래퍼는 이 디렉토리에만 둔다(architecture fitness 게이트가 강제).
 
 import { invoke } from "@tauri-apps/api/core";
+import type { HubTerminalWidthSnapshot } from "@/lib/hub/terminalWidthStore";
 import type { HubFileDiffReply, RemoteFileDiff } from "@/lib/hub/fileDiffBridge";
 import type { HubGitStatusReply, RemoteGitStatus } from "@/lib/hub/gitStatusBridge";
 import type { AgentKind, LaunchTarget } from "@/lib/hub/launchOfferWire";
@@ -16,6 +17,9 @@ import { createRecentUsageClient } from "@/lib/usage/recentUsageClient";
 import type { Provider } from "@/types";
 import type { ClaudeCollectorState } from "./diffReview";
 import type { SshConnectOpts } from "./sessions";
+
+export const hubTerminalWidths = () =>
+	invoke<HubTerminalWidthSnapshot>("hub_terminal_widths");
 
 export const routeSessionFiles = (request: {
 	sessionId: string;

@@ -69,6 +69,9 @@ dure-session-runtime = { path = "../crates/dure-app/session-runtime" }
 # 폰과 이 앱이 주고받는 문서의 모양. 폰 쪽(`mobile/src-tauri`)도 같은 크레이트를
 # 링크한다 — 두 벌로 두면 필드 순서 하나가 갈려도 책상에서 폰을 들고서야 드러난다.
 dure-hub-protocol = { path = "../crates/dure-hub-protocol" }
+hmux-session-protocol = { path = "../hmux/crates/hmux-session-protocol" }
+hmux-runtime-contract = { path = "../hmux/crates/hmux-runtime-contract" }
+terminal-state-protocol = { path = "../hmux/crates/terminal-state-protocol" }
 # 릴레이 등록 증명의 서명. 이미 트리에 있는 백엔드(rustls/rcgen 이 쓰는 것과
 # 같은 `ring`)이므로 새 암호 구현이 들어오지 않는다.
 ring = "0.17"

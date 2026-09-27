@@ -518,6 +518,7 @@ fn serve_relayed_phone(
             launch: service.hub.launch.as_deref(),
             diffs: service.hub.diffs.as_deref(),
             files: service.hub.files.as_deref(),
+            terminal_widths: service.hub.terminal_widths.as_ref(),
         },
         &service.connections,
     );

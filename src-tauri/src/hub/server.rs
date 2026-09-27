@@ -26,6 +26,7 @@ use super::catalog::{self, HubCatalog, HubCatalogEntry, UnreachableBox, HUB_CATA
 use super::devices::DeviceRegistry;
 use super::identity::HubCertificate;
 use super::listener;
+use super::terminal_width::{self, ConnectionObserver, Direction, TerminalWidths};
 use dure_hub_protocol::{HubFileDiffResult, HubGitStatusResult};
 use dure_hub_protocol::hello::HubRequest;
 use serde::Serialize;
@@ -102,6 +103,7 @@ pub(super) struct ServedHub<'a> {
     /// 왕복이라 따로 붙는다 — 목록만 아는 빌드가 패치를 아는 척하면 안 된다.
     pub diffs: Option<&'a dyn file_diff::FileDiffSink>,
     pub files: Option<&'a dyn super::session_file::SessionFileSink>,
+    pub terminal_widths: Option<&'a Arc<TerminalWidths>>,
 }
 
 #[derive(Clone)]
@@ -117,9 +119,15 @@ pub(super) struct HubServices {
     /// 파일 하나의 패치를 읽어 줄 수 있는 쪽.
     pub diffs: Option<Arc<dyn file_diff::FileDiffSink>>,
     pub files: Option<Arc<dyn super::session_file::SessionFileSink>>,
+    pub terminal_widths: Option<Arc<TerminalWidths>>,
 }
 
 impl HubServices {
+    pub(super) fn observing_terminal_widths(mut self, widths: Arc<TerminalWidths>) -> Self {
+        self.terminal_widths = Some(widths);
+        self
+    }
+
     pub(super) fn receiving_files(
         mut self,
         files: Arc<dyn super::session_file::SessionFileSink>,
@@ -137,6 +145,7 @@ impl HubServices {
             launch: None,
             diffs: None,
             files: None,
+            terminal_widths: None,
         }
     }
 
@@ -149,6 +158,7 @@ impl HubServices {
             launch: None,
             diffs: None,
             files: None,
+            terminal_widths: None,
         }
     }
 
@@ -740,6 +750,7 @@ fn serve_loop(
                             launch: services.launch.as_deref(),
                             diffs: services.diffs.as_deref(),
                             files: services.files.as_deref(),
+                            terminal_widths: services.terminal_widths.as_ref(),
                         },
                         &registration.authenticated,
                         Some(registration.device_id.as_ref()),
@@ -1143,10 +1154,16 @@ fn serve_one(
 
     if let HubRequest::Attach { writable, box_id } = hello.request {
         if let Some(gateway) = hub.gateway.filter(|gateway| gateway.box_id == box_id) {
-            serve_gateway(tls, gateway, writable);
+            let observer = hub.terminal_widths
+                .map(|widths| widths.connect(terminal_width::Route::local()));
+            serve_gateway(tls, gateway, writable, observer);
         } else if let Some(host) = hub.source.remote_host(&box_id) {
             match crate::remote_hmux::hub_remote_gateway_config(&host, writable) {
-                Ok(config) => serve_remote_gateway(tls, config),
+                Ok(config) => {
+                    let observer = hub.terminal_widths
+                        .map(|widths| widths.connect(terminal_width::Route::remote(host.id.clone())));
+                    serve_remote_gateway(tls, config, observer);
+                }
                 Err(error) => eprintln!("[hub] Could not open the remote Hmux gateway: {error}"),
             }
         }
@@ -1170,6 +1187,7 @@ fn serve_one(
 fn serve_remote_gateway(
     tls: rustls::StreamOwned<rustls::ServerConnection, std::net::TcpStream>,
     config: hmux_ssh_transport::SshExecConfig,
+    observer: Option<Arc<ConnectionObserver>>,
 ) {
     use hmux_client::transport::{
         DEFAULT_MAX_FRAME_BYTES, FrameWriter as _, TransportInterrupt as _,
@@ -1183,14 +1201,23 @@ fn serve_remote_gateway(
     };
     std::thread::scope(|scope| {
         let ssh_interrupt = Arc::clone(&ssh.interrupt);
+        let upstream_observer = observer.clone();
         let upstream = scope.spawn(move || {
             while let Ok(Some(frame)) = read_hmux_frame(&mut reader, DEFAULT_MAX_FRAME_BYTES) {
+                if let Some(observer) = &upstream_observer {
+                    observer.observe(Direction::Upstream, &frame);
+                }
                 if ssh.writer.write_frame(&frame).is_err() {
                     break;
                 }
             }
+            if let Some(observer) = &upstream_observer {
+                observer.close();
+            }
         });
-        let _ = std::io::copy(&mut ssh.reader, &mut writer);
+        let _ = terminal_width::copy_observed(
+            &mut ssh.reader, &mut writer, observer.as_deref(), Direction::Downstream,
+        );
         interrupt.interrupt();
         ssh_interrupt.interrupt();
         let _ = upstream.join();
@@ -1224,6 +1251,7 @@ fn serve_gateway(
     tls: rustls::StreamOwned<rustls::ServerConnection, std::net::TcpStream>,
     gateway: &GatewayProcess,
     writable: bool,
+    observer: Option<Arc<ConnectionObserver>>,
 ) {
     let Ok((mut reader, mut writer, interrupt)) = dure_hub_protocol::tls::split(tls) else {
         return;
@@ -1253,8 +1281,13 @@ fn serve_gateway(
     };
 
     std::thread::scope(|scope| {
-        let upstream = scope.spawn(move || std::io::copy(&mut reader, &mut input));
-        let _ = std::io::copy(&mut output, &mut writer);
+        let upstream_observer = observer.clone();
+        let upstream = scope.spawn(move || terminal_width::copy_observed(
+            &mut reader, &mut input, upstream_observer.as_deref(), Direction::Upstream,
+        ));
+        let _ = terminal_width::copy_observed(
+            &mut output, &mut writer, observer.as_deref(), Direction::Downstream,
+        );
         interrupt.interrupt();
         let _ = child.kill();
         let _ = upstream.join();

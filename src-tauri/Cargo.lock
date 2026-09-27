@@ -1390,6 +1390,8 @@ dependencies = [
  "hmac 0.12.1",
  "hmux-client",
  "hmux-host",
+ "hmux-runtime-contract",
+ "hmux-session-protocol",
  "hmux-ssh-transport",
  "keyring",
  "libc",
