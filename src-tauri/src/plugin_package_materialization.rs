@@ -1043,17 +1043,44 @@ mod tests {
     use super::*;
     use crate::plugin_catalog::bundled_plugin_registry;
 
-    fn owner_only_root() -> tempfile::TempDir {
+    struct FixtureRoot(tempfile::TempDir);
+
+    impl FixtureRoot {
+        fn path(&self) -> &Path {
+            self.0.path()
+        }
+    }
+
+    fn unseal_fixture_directories(path: &Path) -> std::io::Result<()> {
+        // Inspect the link itself: a fixture's adversarial symlink must never
+        // grant cleanup permission to a directory outside this owned root.
+        if !fs::symlink_metadata(path)?.is_dir() {
+            return Ok(());
+        }
+        fs::set_permissions(path, fs::Permissions::from_mode(CONTROL_DIRECTORY_MODE))?;
+        for entry in fs::read_dir(path)? {
+            unseal_fixture_directories(&entry?.path())?;
+        }
+        Ok(())
+    }
+
+    impl Drop for FixtureRoot {
+        fn drop(&mut self) {
+            unseal_fixture_directories(self.path()).expect("unseal owned materialization fixture");
+        }
+    }
+
+    fn owner_only_root() -> FixtureRoot {
         let root = tempfile::tempdir().expect("create materialization test root");
         fs::set_permissions(
             root.path(),
             fs::Permissions::from_mode(CONTROL_DIRECTORY_MODE),
         )
         .expect("protect materialization test root");
-        root
+        FixtureRoot(root)
     }
 
-    fn exact_root(root: &tempfile::TempDir) -> PathBuf {
+    fn exact_root(root: &FixtureRoot) -> PathBuf {
         fs::canonicalize(root.path()).expect("canonical materialization test root")
     }
 
@@ -1061,6 +1088,25 @@ mod tests {
         bundled_plugin_registry()
             .package(&PluginIdV2::new("dure.beads").unwrap())
             .expect("bundled package")
+    }
+
+    #[test]
+    fn sealed_fixture_cleanup_removes_its_root_without_following_directory_links() {
+        let outside = tempfile::tempdir().unwrap();
+        fs::set_permissions(outside.path(), fs::Permissions::from_mode(0o750)).unwrap();
+        let root_path;
+        {
+            let root = owner_only_root();
+            root_path = exact_root(&root);
+            let sealed = root_path.join("sealed");
+            fs::create_dir(&sealed).unwrap();
+            fs::write(sealed.join("file"), b"fixture").unwrap();
+            symlink(outside.path(), sealed.join("outside")).unwrap();
+            fs::set_permissions(&sealed, fs::Permissions::from_mode(SEALED_DIRECTORY_MODE))
+                .unwrap();
+        }
+        assert!(!root_path.exists());
+        assert_eq!(fs::metadata(outside.path()).unwrap().mode() & 0o7777, 0o750);
     }
 
     #[test]

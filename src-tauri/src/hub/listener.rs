@@ -31,7 +31,7 @@ use std::sync::Arc;
 // 것을 읽고 쓰기 때문이다. 여기 남는 것은 **자격 판단** 하나 — 그 토큰이
 // 등록된 기기의 것인가. 프로토콜 크레이트는 등록된 기기 목록을 모른다.
 pub use dure_hub_protocol::frame::MAX_HELLO_BYTES;
-pub use dure_hub_protocol::hello::{HUB_HELLO_VERSION, HubHello, HubHelloAck, encode_hello};
+pub use dure_hub_protocol::hello::{encode_hello, HubHello, HubHelloAck, HUB_HELLO_VERSION};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum HandshakeError {
@@ -74,7 +74,9 @@ impl From<HelloError> for HandshakeError {
             // 이 구별로 "거절" 과 "네트워크" 를 가르고(그쪽 `hub_client`), 이쪽
             // 로그도 같은 구별을 갖고 있어야 두 로그를 맞춰 볼 수 있다.
             HelloError::Frame(FrameError::Closed) => Self::Malformed("No handshake was received"),
-            HelloError::Frame(FrameError::TimedOut) => Self::Malformed("The handshake did not arrive in time"),
+            HelloError::Frame(FrameError::TimedOut) => {
+                Self::Malformed("The handshake did not arrive in time")
+            }
             HelloError::Frame(FrameError::Truncated(detail)) => Self::Malformed(detail),
             HelloError::Frame(FrameError::OutOfRange { .. }) => {
                 Self::Malformed("The length is out of range")
@@ -127,9 +129,9 @@ pub fn server_config(
     let chain = vec![rustls::pki_types::CertificateDer::from(
         certificate.der.clone(),
     )];
-    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(
-        rustls::pki_types::PrivatePkcs8KeyDer::from(certificate.private_key_der.clone()),
-    );
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        certificate.private_key_der.clone(),
+    ));
     let config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(chain, key)?;
@@ -230,7 +232,7 @@ mod tests {
 
         assert_eq!(
             read_hello(&mut pipe, &devices).unwrap_err(),
-            HandshakeError::Malformed("길이가 범위를 벗어났습니다")
+            HandshakeError::Malformed("The length is out of range")
         );
     }
 
@@ -241,7 +243,7 @@ mod tests {
 
         assert_eq!(
             read_hello(&mut pipe, &devices).unwrap_err(),
-            HandshakeError::Malformed("길이가 범위를 벗어났습니다")
+            HandshakeError::Malformed("The length is out of range")
         );
     }
 

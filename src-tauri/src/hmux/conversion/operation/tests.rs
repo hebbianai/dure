@@ -8,6 +8,11 @@ fn fixture() -> (
     SessionConversionRequest,
 ) {
     let root = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
     let catalog = LocalSessionCatalog::new(root.path());
     let mut request = managed_request(Some("conversation-1"));
     request.cwd = root
@@ -117,8 +122,10 @@ fn original_namespace_replays_without_initializing_the_new_primary() {
     drop(reserve(&original, request.clone(), prepare_fixture).unwrap());
     let primary = root.path().join("new-primary");
     let caller = LocalSessionCatalog::with_read_only_discovery_roots(
-        &primary, vec![original.discovery_root().to_path_buf()],
-    ).unwrap();
+        &primary,
+        vec![original.discovery_root().to_path_buf()],
+    )
+    .unwrap();
     let selected = execution_catalog(&caller, &request).unwrap();
     assert_eq!(selected.discovery_root(), original.discovery_root());
     assert!(selected.discovery_paths().any(|path| path == primary));
@@ -140,15 +147,21 @@ fn local_operation_identity_is_not_shadowed_by_compatibility_history() {
     drop(reserve(&primary, request.clone(), prepare_fixture).unwrap());
     drop(reserve(&legacy, other, prepare_fixture).unwrap());
     let caller = LocalSessionCatalog::with_read_only_discovery_roots(
-        primary.discovery_root(), vec![legacy.discovery_root().to_path_buf()],
-    ).unwrap();
+        primary.discovery_root(),
+        vec![legacy.discovery_root().to_path_buf()],
+    )
+    .unwrap();
     let selected = execution_catalog(&caller, &request).unwrap();
     assert_eq!(selected.discovery_root(), primary.discovery_root());
-    let ReservedConversion::Pending(pending) = reserve(&selected, request.clone(), no_preparation).unwrap()
+    let ReservedConversion::Pending(pending) =
+        reserve(&selected, request.clone(), no_preparation).unwrap()
     else {
         panic!("the primary operation must remain pending");
     };
-    assert_eq!(pending.0.request.source_session_id, request.source_session_id);
+    assert_eq!(
+        pending.0.request.source_session_id,
+        request.source_session_id
+    );
 }
 
 #[test]
@@ -157,8 +170,10 @@ fn changed_target_cannot_create_a_second_operation_in_a_new_namespace() {
     drop(reserve(&original, request.clone(), prepare_fixture).unwrap());
     let primary = root.path().join("new-primary");
     let caller = LocalSessionCatalog::with_read_only_discovery_roots(
-        &primary, vec![original.discovery_root().to_path_buf()],
-    ).unwrap();
+        &primary,
+        vec![original.discovery_root().to_path_buf()],
+    )
+    .unwrap();
     request.target = SessionConversionTarget::Standalone;
     assert!(execution_catalog(&caller, &request).is_err());
     assert!(!primary.exists());
@@ -170,8 +185,10 @@ fn legacy_operation_keeps_its_original_namespace() {
     drop(reserve_legacy(&original, &request));
     let primary = root.path().join("new-primary");
     let caller = LocalSessionCatalog::with_read_only_discovery_roots(
-        &primary, vec![original.discovery_root().to_path_buf()],
-    ).unwrap();
+        &primary,
+        vec![original.discovery_root().to_path_buf()],
+    )
+    .unwrap();
     let selected = execution_catalog(&caller, &request).unwrap();
     assert_eq!(selected.discovery_root(), original.discovery_root());
     drop(reserve(&selected, request, prepare_fixture).unwrap());
@@ -199,7 +216,10 @@ fn recovery_checkout_uses_the_journal_namespace_and_keeps_the_claim() {
     let source = prepared.source_checkout.as_ref().unwrap();
     let retained = prepared.recovery_checkout(&catalog).unwrap().unwrap();
     let namespace = catalog.discovery_root().canonicalize().unwrap();
-    assert_ne!(source.identity.runtime_namespace, namespace.to_str().unwrap());
+    assert_ne!(
+        source.identity.runtime_namespace,
+        namespace.to_str().unwrap()
+    );
     assert_eq!(retained.claim_id, source.claim_id);
     assert_eq!(retained.working_directory, source.working_directory);
     assert_eq!(retained.registration, source.registration);
