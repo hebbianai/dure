@@ -229,13 +229,17 @@ for (const owned of [false, true]) test.runIf(process.platform === "darwin" || p
     if (owned) {
       const descriptor = readOwnedProcessGroup(ownerPath, child.pid);
       const ledger = JSON.parse(readFileSync(`${ownerPath}.ownership-ledger.json`, "utf8"));
+      // Live admissions may still be in deltas rather than the checkpoint.
+      const providerOwnership = readOwnedProcessLedger(descriptor).find((entry) => entry.pid === provider.pid);
+      assert.ok(providerOwnership, "detached runtime has recorded ownership");
+      assert.notEqual(providerOwnership.kernelStartMarker, descriptor.leaderKernelStartMarker);
       const cases = [
         { name: "owned detached runtime", pid: provider.pid, status: 0 },
         { name: "outer group leader", pid: descriptor.leaderPid, status: 0 },
         { name: "unrelated current process", pid: process.pid, status: 1 },
         { name: "retired predecessor", pid: before.launch.pid, status: 1 },
         { name: "reused outer-group PID", pid: descriptor.leaderPid, status: 1,
-          mutate: (value) => { value.processes = value.processes.map((entry) => entry.pid === descriptor.leaderPid ? { ...entry, kernelStartMarker: ledger.processes.find((entry) => entry.pid === provider.pid).kernelStartMarker } : entry); } },
+          mutate: (value) => { value.processes = value.processes.map((entry) => entry.pid === descriptor.leaderPid ? { ...entry, kernelStartMarker: providerOwnership.kernelStartMarker } : entry); } },
         { name: "missing ownership", pid: descriptor.leaderPid, status: 1,
           mutate: (value) => { value.processes = []; } },
         { name: "unhealthy ownership", pid: descriptor.leaderPid, status: 97,
