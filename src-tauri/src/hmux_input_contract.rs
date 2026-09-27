@@ -152,11 +152,13 @@ mod tests {
 
     #[test]
     fn provider_adapter_is_the_only_fresh_prompt_target_authority() {
-        assert_eq!(
-            provider_fresh_prompt_target("codex"),
-            AgentProviderPromptTargetV1::LaunchArgument
-        );
-        for provider_id in ["claude", "kimi", "unknown"] {
+        for provider_id in ["codex", "claude"] {
+            assert_eq!(
+                provider_fresh_prompt_target(provider_id),
+                AgentProviderPromptTargetV1::LaunchArgument
+            );
+        }
+        for provider_id in ["kimi", "unknown"] {
             assert_eq!(
                 provider_fresh_prompt_target(provider_id),
                 AgentProviderPromptTargetV1::ProviderEvent

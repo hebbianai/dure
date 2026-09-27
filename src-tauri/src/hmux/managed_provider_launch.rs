@@ -193,7 +193,7 @@ mod tests {
             ),
             ("kimi", "kimi --yolo -S"),
             ("gemini", "gemini --approval-mode=yolo --resume"),
-            ("cursor", "cursor-agent --force --resume="),
+            ("cursor", "cursor-agent agent --force --resume="),
             ("copilot", "copilot --allow-all --resume="),
             ("opencode", "opencode --auto --session"),
             ("grok", "grok --always-approve --resume"),
@@ -275,12 +275,8 @@ mod tests {
 
     #[test]
     fn launch_prompt_is_one_quoted_final_codex_argument() {
-        let requested_command = exact_command(
-            "codex",
-            PermissionMode::Default,
-            "conversation-1",
-        )
-        .unwrap();
+        let requested_command =
+            exact_command("codex", PermissionMode::Default, "conversation-1").unwrap();
         let (plan, initial_prompt_accepted) = reviewed_create_plan(
             "codex",
             PermissionMode::Default,
@@ -291,19 +287,21 @@ mod tests {
         .unwrap();
         assert!(initial_prompt_accepted);
         assert_eq!(
-            &plan.arguments[plan.arguments.len() - 3..],
-            ["resume", "conversation-1", "ship 'this' safely\nnow"]
+            &plan.arguments[plan.arguments.len() - 4..],
+            ["resume", "conversation-1", "--", "ship 'this' safely\nnow"]
         );
         let claude_command = fresh_command("claude", PermissionMode::Default).unwrap();
-        assert!(!reviewed_create_plan(
-            "claude",
-            PermissionMode::Default,
-            None,
-            &claude_command,
-            Some("ship it"),
-        )
-        .unwrap()
-        .1);
+        assert!(
+            reviewed_create_plan(
+                "claude",
+                PermissionMode::Default,
+                None,
+                &claude_command,
+                Some("ship it"),
+            )
+            .unwrap()
+            .1
+        );
 
         assert!(reviewed_command_accepts_launch_prompt(
             "codex",

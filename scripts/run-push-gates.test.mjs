@@ -126,6 +126,7 @@ function releaseRunnerEnvironment({ managedCargoTarget = true } = {}) {
       PI_CODING_AGENT_DIR: path.join(live, "pi-agent"),
       PI_CODING_AGENT_SESSION_DIR: path.join(live, "pi-sessions"),
       RUSTUP_HOME: fs.realpathSync(rustupHome),
+      RUST_TEST_THREADS: "99",
       TAURI_CONFIG: '{"identifier":"dev.example.live"}',
       TMPDIR: path.join(live, "tmp"),
       VITEST_MAX_WORKERS: "99",
@@ -718,6 +719,7 @@ describe("release gate runner", () => {
     );
     expect(gateEnvironment.TAURI_CONFIG).toBeUndefined();
     expect(gateEnvironment.VITEST_MAX_WORKERS).toBe("1");
+    expect(gateEnvironment.RUST_TEST_THREADS).toBe("4");
     expect(gateEnvironment.HMUX_RUNTIME_LOG).toMatch(
       new RegExp(`^${fixture.isolationRoot.replaceAll("/", "\\/")}\/`),
     );
@@ -811,6 +813,7 @@ describe("release gate runner", () => {
     const liveHome = path.join(os.tmpdir(), "ordinary-scoped-gate-home");
     vi.stubEnv("DURE_HOME", liveHome);
     vi.stubEnv("VITEST_MAX_WORKERS", "3");
+    vi.stubEnv("RUST_TEST_THREADS", "2");
     let gateEnvironment;
     const run = vi.fn((_command, _args, options) => {
       gateEnvironment = options.env;
@@ -820,6 +823,7 @@ describe("release gate runner", () => {
     expect(runPushGateScopes(["process"], run)).toBe(0);
     expect(gateEnvironment.DURE_HOME).toBe(liveHome);
     expect(gateEnvironment.VITEST_MAX_WORKERS).toBe("3");
+    expect(gateEnvironment.RUST_TEST_THREADS).toBe("2");
   });
 
   test("removes release-owned mutable state when a gate spawn fails", () => {

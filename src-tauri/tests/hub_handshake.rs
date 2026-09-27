@@ -232,7 +232,7 @@ fn a_valid_fingerprint_with_a_wrong_token_still_gets_nothing() {
     let served = hub.handle.take().unwrap().join().unwrap();
     assert_eq!(
         served,
-        Err("이 기기는 이 허브에 등록되어 있지 않습니다".to_string())
+        Err("This device is not registered with this hub".to_string())
     );
 }
 

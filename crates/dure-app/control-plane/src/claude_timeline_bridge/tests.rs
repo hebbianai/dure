@@ -504,7 +504,7 @@ async fn tail(store: &SqliteDomainStore) -> dure_app::AgentTimelinePageV1 {
     else {
         panic!("tail unexpectedly reset");
     };
-    page
+    *page
 }
 
 #[tokio::test]

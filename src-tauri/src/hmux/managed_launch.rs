@@ -6,8 +6,8 @@ use super::managed_create_timing::ManagedCreateTiming;
 use super::{validate_identifier, HmuxManager};
 use crate::managed_create_resolution::ManagedCreateAdvanceCommandResolution;
 use hmux_client::{
-    ManagedCreateRequest, ProviderConversationIdentitySeed,
-    ProviderStateEnvironment, MANAGED_STOP_CONVERSATION_FENCE_REQUEST_VERSION,
+    ManagedCreateRequest, ProviderConversationIdentitySeed, ProviderStateEnvironment,
+    MANAGED_STOP_CONVERSATION_FENCE_REQUEST_VERSION,
 };
 use std::path::PathBuf;
 use tauri::{AppHandle, Runtime};
@@ -366,8 +366,57 @@ mod tests {
 
     #[test]
     fn exact_resume_uses_the_repository_when_its_recorded_worktree_was_removed() {
+        #[cfg(unix)]
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        #[cfg(windows)]
+        use std::os::windows::fs::symlink_file as symlink;
         let temporary = tempfile::tempdir().unwrap();
-        let repository = temporary.path().join("repo");
+        let home = temporary.path().canonicalize().unwrap();
+        let install = home.join(".local/share/hebbian-ide-cli");
+        let launcher = install.join("launcher/dure.mjs");
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(install.join("bin")).unwrap();
+        std::fs::write(&launcher, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+        symlink("../launcher/dure.mjs", install.join("bin/dure")).unwrap();
+        std::fs::write(home.join("resume-fixture-owner"), b"managed-resume-v1").unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "hmux::managed_launch::tests::exact_resume_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("DURE_QA_MANAGED_RESUME_HOME", &home)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("CFFIXED_USER_HOME", &home)
+            .env("DURE_HOME", home.join(".dure"))
+            .env("HMUX_DISCOVERY_ROOT", home.join("discovery"))
+            .env("DURE_APP_CHANNEL", "stable")
+            .env_remove("HEBBIAN_APP_CHANNEL")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "child entry point for the isolated managed resume fixture"]
+    fn exact_resume_child() {
+        let home =
+            std::path::PathBuf::from(std::env::var_os("DURE_QA_MANAGED_RESUME_HOME").unwrap());
+        assert_eq!(
+            std::fs::read(home.join("resume-fixture-owner")).unwrap(),
+            b"managed-resume-v1"
+        );
+        assert_eq!(dirs::home_dir().unwrap(), home);
+        let repository = home.join("repo");
         assert!(Command::new("git")
             .args(["init", "--quiet"])
             .arg(&repository)

@@ -78,10 +78,24 @@ pub(crate) fn claude_keychain_service(scoped_config_root: Option<&str>) -> Strin
 /// Read only the selected profile's native store for an outbound SSH transfer.
 /// The caller validates the profile directory; never substitute the default store.
 #[cfg(target_os = "macos")]
-pub(crate) fn read_claude_keychain_credential(config_root: &str) -> Result<Option<Vec<u8>>, String> {
+pub(crate) fn read_claude_keychain_credential(
+    config_root: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    read_claude_keychain_credential_from(config_root, None)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn read_claude_keychain_credential_from(
+    config_root: &str,
+    keychain: Option<&Path>,
+) -> Result<Option<Vec<u8>>, String> {
     let service = claude_keychain_service(Some(config_root));
-    let output = Command::new("/usr/bin/security")
-        .args(["find-generic-password", "-s", &service, "-w"])
+    let mut command = Command::new("/usr/bin/security");
+    command.args(["find-generic-password", "-s", &service, "-w"]);
+    if let Some(keychain) = keychain {
+        command.arg(keychain);
+    }
+    let output = command
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
@@ -101,7 +115,9 @@ pub(crate) fn read_claude_keychain_credential(config_root: &str) -> Result<Optio
         .ok()
         .is_some_and(|value| value.as_object().is_some_and(|object| !object.is_empty()));
     if !valid {
-        return Err("credential_transfer_unavailable: invalid Claude Keychain credential".to_string());
+        return Err(
+            "credential_transfer_unavailable: invalid Claude Keychain credential".to_string(),
+        );
     }
     Ok(Some(output.stdout))
 }
@@ -279,10 +295,7 @@ mod tests {
     fn file_credentials_distinguish_absent_empty_and_present() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("credential.json");
-        assert_eq!(
-            file_credential_status(&path),
-            LoginStatus::Unauthenticated,
-        );
+        assert_eq!(file_credential_status(&path), LoginStatus::Unauthenticated,);
         std::fs::write(&path, "").unwrap();
         assert_eq!(file_credential_status(&path), LoginStatus::Unknown);
         std::fs::write(&path, "credential").unwrap();
@@ -292,10 +305,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn claude_scoped_keychain_service_uses_the_exact_config_root_hash() {
-        assert_eq!(
-            claude_keychain_service(None),
-            "Claude Code-credentials",
-        );
+        assert_eq!(claude_keychain_service(None), "Claude Code-credentials",);
         assert_eq!(
             claude_keychain_service(Some("/tmp/claude-work")),
             "Claude Code-credentials-bfc1769a",

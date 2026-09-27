@@ -298,11 +298,12 @@ async fn account_recovery_worker_starts_without_any_mounted_client() {
     );
     assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
     assert_eq!(runtime.opens.load(Ordering::SeqCst), 1);
-    let inputs = runtime.commands.inputs.lock().unwrap();
-    assert_eq!(inputs.len(), 1);
-    assert_eq!(inputs[0].input, "Create the requested marketing draft");
-    assert_eq!(inputs[0].runtime.runtime_generation, "recovery-target");
-    drop(inputs);
+    {
+        let inputs = runtime.commands.inputs.lock().unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].input, "Create the requested marketing draft");
+        assert_eq!(inputs[0].runtime.runtime_generation, "recovery-target");
+    }
     assert_eq!(
         state
             .store

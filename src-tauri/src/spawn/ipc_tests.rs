@@ -28,7 +28,13 @@ fn commands_share_application_home_across_restarts() {
             String::from_utf8_lossy(&result.stderr),
         );
     }
-    assert!(!root.join(".dure").exists());
+    // Directory retention is shared by all app homes for this OS user. The
+    // application journal and database must still use only DURE_HOME.
+    assert!(root
+        .join("application/backend/application-state.sqlite3")
+        .is_file());
+    assert!(!root.join(".dure/spawn").exists());
+    assert!(!root.join(".dure/backend").exists());
 }
 
 #[test]

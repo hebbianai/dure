@@ -562,6 +562,9 @@ export function prepareReleaseVerificationEnvironment(
     environment.DURE_CLI_LOCK_WAIT_MS = "15000";
     environment.DURE_RELEASE_VERIFICATION_ROOT = root;
     environment.VITEST_MAX_WORKERS = "1";
+    // Native fixtures start their own runtimes and competing processes. Bound
+    // suite-level contention without changing those tests or their deadlines.
+    environment.RUST_TEST_THREADS = "4";
     if (shortTemp) validateShortTempState(shortTemp, markerContents);
 
     return {
