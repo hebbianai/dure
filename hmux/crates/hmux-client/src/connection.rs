@@ -248,6 +248,19 @@ impl ConnectionOptions {
         self
     }
 
+    /// Opts this writable viewport into preferred width for its attachment
+    /// lifetime if the Host supports the role. Does not grant input permission
+    /// or change resize records; older Hosts can omit the optional selection.
+    #[cfg(feature = "terminal-state-stream")]
+    #[must_use]
+    pub fn with_terminal_preferred_width(mut self) -> Self {
+        let capability = hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY;
+        if !self.optional_capabilities.contains(&capability) {
+            self.optional_capabilities.push(capability);
+        }
+        self
+    }
+
     /// Selects complete, replaceable viewport frames for this connection.
     #[cfg(feature = "terminal-state-stream")]
     #[must_use]

@@ -1968,6 +1968,59 @@ fn an_agent_prompt_attach_requires_one_selected_prompt_lane() {
 
 #[cfg(feature = "terminal-state-stream")]
 #[test]
+fn preferred_width_builder_preserves_metadata_and_is_optional() {
+    use hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY;
+    let options = crate::TerminalSurfaceAttachment::connection_options(
+        crate::TerminalSurfaceAccess::Writer,
+        None,
+    );
+    let ordinary = attach_capability_profile(&options);
+    assert!(
+        !ordinary
+            .requested
+            .iter()
+            .any(|value| value == TERMINAL_PREFERRED_WIDTH_CAPABILITY)
+    );
+    let preferred = attach_capability_profile(
+        &options
+            .with_terminal_preferred_width()
+            .with_terminal_preferred_width(),
+    );
+    assert_eq!(ordinary.required, preferred.required);
+    for capability in ordinary.requested {
+        assert!(preferred.requested.contains(&capability));
+    }
+    assert_eq!(
+        preferred
+            .requested
+            .iter()
+            .filter(|value| value.as_str() == TERMINAL_PREFERRED_WIDTH_CAPABILITY)
+            .count(),
+        1
+    );
+    assert!(
+        !preferred
+            .required
+            .contains(&TERMINAL_PREFERRED_WIDTH_CAPABILITY)
+    );
+
+    let reader = attach_capability_profile(
+        &crate::TerminalSurfaceAttachment::connection_options(
+            crate::TerminalSurfaceAccess::ReadOnly,
+            None,
+        )
+        .with_terminal_preferred_width(),
+    );
+    assert!(
+        !reader
+            .requested
+            .iter()
+            .any(|value| value == hmux_runtime_contract::TERMINAL_INPUT_INTENT_CAPABILITY)
+    );
+}
+
+#[cfg(feature = "terminal-state-stream")]
+#[test]
 fn default_color_builder_is_always_a_semantic_writer() {
     use hmux_runtime_contract::{
         TERMINAL_DEFAULT_COLORS_CAPABILITY, TERMINAL_INPUT_INTENT_CAPABILITY,
@@ -5166,12 +5219,16 @@ fn structured_semantic_staging_keeps_fences_revisions_and_identity_fail_closed()
         })
     ));
     reducer.conversation_continuations = true;
-    assert!(!reducer
-        .accept_structured_control(&identity("conversation-b", 2, 4))
-        .unwrap());
-    assert!(reducer
-        .accept_structured_control(&identity("conversation-a", 1, 4))
-        .is_err());
+    assert!(
+        !reducer
+            .accept_structured_control(&identity("conversation-b", 2, 4))
+            .unwrap()
+    );
+    assert!(
+        reducer
+            .accept_structured_control(&identity("conversation-a", 1, 4))
+            .is_err()
+    );
     reducer
         .accept_complete_terminal_viewport(&ViewportFrameProgress {
             terminal_epoch: "terminal-1".into(),

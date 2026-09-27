@@ -236,6 +236,11 @@ pub const TERMINAL_INPUT_INTENT_CAPABILITY: &str = "terminal_input_intent_v1";
 /// Allows a writable structured surface to update the terminal core defaults
 /// used for OSC 10/11 replies through the existing ordered viewport stream.
 pub const TERMINAL_DEFAULT_COLORS_CAPABILITY: &str = "terminal_default_colors_v1";
+/// Opt-in attachment role: successful width proposals from this writable
+/// viewport take precedence over ordinary writers until it detaches. Selecting
+/// this role does not resize the terminal or grant input authority by itself.
+/// Resize records and receipts remain on the existing base protocol minor.
+pub const TERMINAL_PREFERRED_WIDTH_CAPABILITY: &str = "terminal_preferred_width_v1";
 
 /// Selects exactly one prompt wire lane without reinterpreting independent
 /// terminal capabilities requested by the same attachment.
@@ -312,7 +317,8 @@ pub fn terminal_capability_request_is_consistent(requested_capabilities: &[Strin
         || process_observed_agent_prompt
         || requested(TERMINAL_VIEWPORT_WHEEL_CAPABILITY)
         || requested(TERMINAL_VIEWPORT_MULTIPART_CAPABILITY)
-        || requested(TERMINAL_DEFAULT_COLORS_CAPABILITY);
+        || requested(TERMINAL_DEFAULT_COLORS_CAPABILITY)
+        || requested(TERMINAL_PREFERRED_WIDTH_CAPABILITY);
     binary == viewport
         && (!dependent || (binary && viewport))
         && (!process_observed_agent_prompt || requested(AGENT_PROMPT_CAPABILITY))
@@ -379,6 +385,24 @@ pub fn terminal_default_colors_permitted(selected_capabilities: &[String]) -> bo
         TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
         TERMINAL_INPUT_INTENT_CAPABILITY,
         TERMINAL_DEFAULT_COLORS_CAPABILITY,
+    ]
+    .into_iter()
+    .all(|required| {
+        selected_capabilities
+            .iter()
+            .any(|selected| selected == required)
+    })
+}
+
+/// Only an explicitly opted-in, writable viewport can hold preferred width.
+/// General writer support never opts an attachment into this role.
+#[must_use]
+pub fn terminal_preferred_width_permitted(selected_capabilities: &[String]) -> bool {
+    [
+        TERMINAL_STATE_BINARY_CAPABILITY,
+        TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+        TERMINAL_INPUT_INTENT_CAPABILITY,
+        TERMINAL_PREFERRED_WIDTH_CAPABILITY,
     ]
     .into_iter()
     .all(|required| {
@@ -5831,6 +5855,32 @@ mod tests {
         let mut malformed_frame = Vec::new();
         write_json_frame(&mut malformed_frame, &malformed).unwrap();
         assert!(read_managed_agent_state_report_request(&mut malformed_frame.as_slice()).is_err());
+    }
+
+    #[test]
+    fn preferred_width_requires_an_explicit_writable_viewport_role() {
+        let complete = [
+            TERMINAL_STATE_BINARY_CAPABILITY,
+            TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+            TERMINAL_INPUT_INTENT_CAPABILITY,
+            TERMINAL_PREFERRED_WIDTH_CAPABILITY,
+        ]
+        .map(str::to_string)
+        .to_vec();
+        assert!(terminal_capability_request_is_consistent(&complete));
+        assert!(terminal_preferred_width_permitted(&complete));
+        assert_eq!(selected_terminal_base_protocol_minor(&complete), Some(4));
+        for excluded in &complete {
+            let incomplete = complete
+                .iter()
+                .filter(|value| *value != excluded)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(!terminal_preferred_width_permitted(&incomplete));
+        }
+        assert!(!terminal_capability_request_is_consistent(&[
+            TERMINAL_PREFERRED_WIDTH_CAPABILITY.to_string(),
+        ]));
     }
 
     #[test]
