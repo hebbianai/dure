@@ -10,5 +10,5 @@ export DURE_QA_ARTIFACT_NAME="recovery-admission"
 export DURE_QA_UNIQUE_APP_CHANNEL=1
 export DURE_QA_LAYER="background"
 export SHELL=/bin/zsh
-export DURE_QA_WINDOW_URL="index.html?qaWindowSmokeController=1&qaRecoveryAdmission=$DURE_QA_RECOVERY_PROOF&qaRecoveryDetail=${DURE_QA_RECOVERY_DETAIL:-0}&qaRecoveryExit=${DURE_QA_RECOVERY_EXIT:-0}&qaRecoveryHealthReturn=${DURE_QA_RECOVERY_HEALTH_RETURN:-0}"
+export DURE_QA_WINDOW_URL="index.html?qaWindowSmokeController=1&qaRecoveryAdmission=$DURE_QA_RECOVERY_PROOF&qaRecoveryDetail=${DURE_QA_RECOVERY_DETAIL:-0}&qaRecoveryExit=${DURE_QA_RECOVERY_EXIT:-0}&qaRecoveryHealthReturn=${DURE_QA_RECOVERY_HEALTH_RETURN:-0}&qaTerminalStreamStress=${DURE_QA_TERMINAL_STREAM_STRESS:-0}"
 exec sh "$repo_root/scripts/qa/lib/tauri-app-runner.sh"

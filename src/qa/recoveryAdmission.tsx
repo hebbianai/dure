@@ -48,6 +48,11 @@ export async function runRecoveryAdmissionProbe() {
 		await runManagedAttachmentHealthReturn(proof, home);
 		return;
 	}
+	if (new URLSearchParams(location.search).get("qaTerminalStreamStress") === "1") {
+		const { runConcurrentTerminalDelivery } = await import("./concurrentTerminalDelivery");
+		await runConcurrentTerminalDelivery(proof, home);
+		return;
+	}
 	const originalAttach = hmux.attachStructuredTerminal;
 	const originalNext = hmux.nextStructuredTerminalRecord;
 	const initialObservers = new Map<string, string>();

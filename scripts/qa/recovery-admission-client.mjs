@@ -10,20 +10,22 @@ const home = fs.realpathSync(process.env.HOME);
 const discovery = fs.realpathSync(process.env.HMUX_DISCOVERY_ROOT);
 const proof = process.env.DURE_QA_RECOVERY_PROOF;
 const healthReturn = process.env.DURE_QA_RECOVERY_HEALTH_RETURN === "1";
+const streamStress = process.env.DURE_QA_TERMINAL_STREAM_STRESS === "1";
+assert.ok(!(healthReturn && streamStress), "Select one recovery QA mode");
 assert.ok(proof);
 assert.equal(home, path.join(root, "home"));
 assert.equal(discovery, path.join(root, "hmux-discovery"));
 let result;
 try {
   const file = path.join(home, "recovery-result.json");
-  const deadline = Date.now() + 100_000;
+  const deadline = Date.now() + (streamStress ? 180_000 : 100_000);
   while (!fs.existsSync(file)) {
     if (Date.now() > deadline) throw new Error("Recovery QA result missing");
     await delay(100);
   }
   result = JSON.parse(fs.readFileSync(file, "utf8"));
   fs.writeFileSync(path.join(root, "evidence", "recovery-admission.json"), JSON.stringify(result, null, 2));
-  if (result.result === "passed" && !healthReturn) {
+  if (result.result === "passed" && !healthReturn && !streamStress) {
     const channel = process.env.DURE_APP_CHANNEL;
     assert.match(channel, /^qa-[a-z0-9-]+$/);
     const cli = path.join(home, ".local/share/hebbian-ide-cli/channels", channel, "bin/dure");
@@ -49,7 +51,19 @@ try {
 }
 assert.equal(result.proof, proof);
 assert.equal(result.result, "passed", JSON.stringify(result));
-if (healthReturn) {
+if (streamStress) {
+  assert.equal(fs.existsSync(path.join(home, "provider-starts")), false);
+  assert.equal(result.sameHosts, true);
+  assert.equal(result.sessionCount, 28);
+  assert.equal(result.rounds.length, 3);
+  assert.ok(result.fallbackRecords > 0);
+  assert.deepEqual(result.failures, []);
+  for (const round of result.rounds) {
+    assert.equal(round.synchronized, 28);
+    assert.equal(round.outputSessions, 28);
+    assert.ok(round.frames >= 28 * 12);
+  }
+} else if (healthReturn) {
   assert.equal(fs.existsSync(path.join(home, "provider-starts")), false);
   assert.equal(result.sameHost, true);
   assert.deepEqual(result.episodes.map(({ retryDirective, attempts, errorCleared }) => ({ retryDirective, attempts, errorCleared })), [

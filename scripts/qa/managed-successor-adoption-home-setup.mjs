@@ -32,4 +32,27 @@ for (const profile of [".zshenv", ".zprofile"]) {
   fs.writeFileSync(path.join(home, profile), `export PATH=${quote(bin)}:"$PATH"\n`, { flag: "wx", mode: 0o600 });
 }
 assert.equal(execFileSync("/bin/zsh", ["-lc", "command -v codex"], { encoding: "utf8" }).trim(), path.join(bin, "codex"));
+if (process.env.DURE_QA_TERMINAL_STREAM_STRESS === "1") {
+  fs.writeFileSync(path.join(bin, "stream-output"), `#!${process.execPath}
+const fs = require("node:fs");
+const index = Number(process.argv[2]);
+if (!Number.isInteger(index) || index < 0 || index >= 28) process.exit(2);
+let tick = 0;
+// A bounded full-screen TUI exercises repeated native viewport delivery without
+// filling the runner's discovery scan budget with unrelated cold-history files.
+fs.writeSync(1, "\\x1b[?1049h");
+const timer = setInterval(() => {
+  const rows = Array.from({ length: 24 }, (_, row) =>
+    "\\x1b[" + (31 + row % 7) + "mSTREAM_" + index + ":" + tick +
+    " 한글 界 🙂 e\\u0301 " + "x".repeat(120) + "\\x1b[0m\\n");
+  const bytes = Buffer.from("\\x1b[H" + rows.join(""));
+  // Deliberately split a UTF-8 character across writes to the real PTY.
+  const split = bytes.indexOf(Buffer.from("한")) + 1;
+  fs.writeSync(1, bytes.subarray(0, split));
+  fs.writeSync(1, bytes.subarray(split));
+  tick += 1;
+}, 150);
+setTimeout(() => { clearInterval(timer); process.exit(0); }, 150_000);
+`, { flag: "wx", mode: 0o700 });
+}
 fs.writeFileSync(path.join(root, "qa.autorun"), "", { flag: "wx", mode: 0o600 });
