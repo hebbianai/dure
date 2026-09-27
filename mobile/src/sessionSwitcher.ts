@@ -1,15 +1,11 @@
 import type { SpacesViewOptions } from "@/lib/spaces/spacesViewOptions";
 import type { UnifiedRow } from "./allSessions";
-import { element, fadeWhileScrollable } from "./dom";
-import type { HomeRow } from "./homeProjection";
+import { element, fadeWhileScrollable, groupHeading } from "./dom";
+import type { HomeGroup } from "./homeProjection";
 import { renderHomeSessionRow } from "./homeSessionRow";
 import { t } from "./i18n";
 
-export interface SessionSibling {
-	readonly key: string;
-	readonly label: string;
-	readonly rows: readonly HomeRow[];
-}
+export type SessionSibling = HomeGroup;
 
 /** The switcher uses Home's row projection and display preferences. */
 export function renderSessionSwitcher(
@@ -36,13 +32,20 @@ export function renderSessionSwitcher(
 	const list = element("ul", "list session-switcher__list tray__panel-scroll");
 	const draw = () => {
 		for (const tab of tabs.querySelectorAll<HTMLButtonElement>("button")) {
-			const active = tab.dataset.group === selected.key;
+			const active = tab.dataset.group === selected?.key;
 			tab.classList.toggle("tab--on", active);
 			tab.setAttribute("aria-selected", String(active));
 		}
-		list.replaceChildren(
-			...selected.rows.map((view) =>
-				renderHomeSessionRow(
+		list.replaceChildren();
+		const pins = selected.rows.filter(view => view.pinned === true);
+		const rows = selected.rows.filter(view => view.pinned !== true);
+		if (pins.length) {
+			const heading = element("li", "list__heading");
+			heading.append(groupHeading(t("spaces.pane.pinned"), pins.length));
+			list.append(heading);
+		}
+		const drawRows = (rows: SessionSibling["rows"]) => list.append(
+			...rows.map((view) => renderHomeSessionRow(
 					view,
 					options,
 					view.row.sessionId === opening,
@@ -52,6 +55,13 @@ export function renderSessionSwitcher(
 				),
 			),
 		);
+		drawRows(pins);
+		if (pins.length && rows.length) {
+			const heading = element("li", "list__heading");
+			heading.append(groupHeading(selected.label, rows.length));
+			list.append(heading);
+		}
+		drawRows(rows);
 		list.scrollTop = 0;
 	};
 	for (const group of groups) {

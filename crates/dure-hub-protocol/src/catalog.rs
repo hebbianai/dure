@@ -67,6 +67,10 @@ pub struct HubCatalogEntry {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionPresentation {
+    /// Optional display metadata: older catalogs omit it and older clients
+    /// ignore it without changing session identity or attach compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -229,6 +233,7 @@ mod tests {
     fn live_presentation_roundtrips_and_old_catalogs_keep_it_absent() {
         let mut current = catalog();
         current.sessions[0].presentation = Some(SessionPresentation {
+            pinned: Some(true),
             activity_at: Some(1_700_000_000_000),
             detail: Some("Working on the session list".into()),
             git: Some(SessionGitSummary {
@@ -245,6 +250,15 @@ mod tests {
         assert!(
             read(&mut old.as_slice()).unwrap().sessions[0]
                 .presentation
+                .is_none()
+        );
+        let old_presentation: SessionPresentation =
+            serde_json::from_str(r#"{"activityAt":1700000000000}"#).unwrap();
+        assert_eq!(old_presentation.pinned, None);
+        assert!(
+            serde_json::to_value(old_presentation)
+                .unwrap()
+                .get("pinned")
                 .is_none()
         );
     }

@@ -4,6 +4,7 @@ import type { SpacesFacetSource } from "@/lib/spaces/spacesViewProjection";
  * phone's durable placement cache. Missing observations stay missing. */
 export interface SessionPresentation
 	extends Omit<SpacesFacetSource, "desktopId" | "desktopName" | "branch"> {
+	readonly pinned?: boolean;
 	readonly detail?: string;
 	readonly git?: {
 		readonly ahead: number;
@@ -14,7 +15,7 @@ export interface SessionPresentation
 }
 
 export function sessionPresentation(
-	row: SpacesFacetSource & { readonly detail?: string },
+	row: SpacesFacetSource & { readonly detail?: string; readonly pinned?: boolean },
 	git?: {
 		readonly ahead: number;
 		readonly behind: number;
@@ -23,6 +24,7 @@ export function sessionPresentation(
 	},
 ): SessionPresentation {
 	return {
+		pinned: row.pinned,
 		activityAt: row.activityAt,
 		displayState: row.displayState,
 		projectId: row.projectId,

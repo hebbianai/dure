@@ -24,8 +24,15 @@ import { t } from "./i18n";
 
 export interface HomeRow extends SpacesFacetSource {
 	readonly row: UnifiedRow;
+	readonly pinned?: boolean;
 	readonly detail?: string;
 	readonly git?: SessionPresentation["git"];
+}
+
+export interface HomeGroup {
+	readonly key: string;
+	readonly label: string;
+	readonly rows: readonly HomeRow[];
 }
 
 export function homeRows(
@@ -89,7 +96,7 @@ export function projectHome(
 ) {
 	const universe = homeRows(model);
 	const rows = projectSpacesRows(universe.rows, options);
-	const groups: { key: string; label: string; rows: readonly HomeRow[] }[] = [];
+	const groups: HomeGroup[] = [];
 	if (options.groupBy === "space" || options.groupBy === "repository") {
 		const axis = options.groupBy;
 		const grouped = new Map<
@@ -121,9 +128,15 @@ export function projectHome(
 		);
 	}
 	return {
-		groups: hasActiveSpacesFilters(options.filters)
+		groups: (hasActiveSpacesFilters(options.filters)
 			? groups.filter((group) => group.rows.length > 0)
-			: groups,
+			: groups).map(group => ({
+			...group,
+			rows: [
+				...group.rows.filter(row => row.pinned === true),
+				...group.rows.filter(row => row.pinned !== true),
+			],
+		})),
 		choices: spacesFilterChoices(universe.rows, options.filters),
 		hidden: universe.hidden,
 	};

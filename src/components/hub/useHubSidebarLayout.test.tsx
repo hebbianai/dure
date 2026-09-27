@@ -4,7 +4,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderConversationRecord } from "@/lib/agents/providerConversationDiscovery";
 import { publishConversationTitle } from "@/lib/agents/chat/conversationPresentationState";
-import { UNOPENED_DESKTOP, type SidebarLayout } from "@/lib/hub/sidebarLayout";
+import { UNOPENED_DESKTOP, type LayoutSpace, type SidebarLayout } from "@/lib/hub/sidebarLayout";
 import { useStore } from "@/store";
 import { managedAgentFixture, managedBindingFixture } from "@/test/agentFixtures";
 import type { Project } from "@/types";
@@ -13,11 +13,11 @@ import { useDiffBadges } from "@/lib/scm/status/diffBadgesStore";
 
 const mocks = vi.hoisted(() => ({
 	history: { entries: [] as ProviderConversationRecord[], loadState: "ready" },
+	spaces: [] as (LayoutSpace & { key: string; kind: "term" })[],
 }));
 
-// No open panes: every agent here is an unopened one, which is the row whose
-// title the phone was getting wrong.
-vi.mock("@/components/spaces/useSpaces", () => ({ useSpaces: () => [] }));
+// Most fixtures have no open panes, so agent rows use unopened presentation.
+vi.mock("@/components/spaces/useSpaces", () => ({ useSpaces: () => mocks.spaces }));
 vi.mock("@/components/sessions/useRecentSessionHistory", () => ({
 	useRecentSessionHistory: () => mocks.history,
 }));
@@ -56,8 +56,9 @@ function lastSent(send: ReturnType<typeof vi.fn>): SidebarLayout {
 	return send.mock.calls[send.mock.calls.length - 1]?.[0] as SidebarLayout;
 }
 
-describe("useHubSidebarLayout — unopened agent titles", () => {
+describe("useHubSidebarLayout — mobile presentation", () => {
 	beforeEach(() => {
+		mocks.spaces = [];
 		mocks.history = { entries: [history], loadState: "ready" };
 		useStore.setState({
 			agents: [agent],
@@ -66,7 +67,26 @@ describe("useHubSidebarLayout — unopened agent titles", () => {
 			sshHosts: [],
 			gitStatuses: {},
 			sessionTitle: {},
+			pinnedPanes: {},
 		});
+	});
+
+	it("publishes pin and unpin changes for the exact Space and pane", () => {
+		mocks.spaces = [{
+			key: "term:one", kind: "term", desktopId: "work", projectName: "Dure",
+			title: "Pinned terminal", hmuxSessionId: "terminal-1",
+		}];
+		useStore.setState({ desktops: [{ id: "work", name: "Work" }], agents: [] });
+		const send = vi.fn();
+		renderHook(() => useHubSidebarLayout(send));
+		const presentation = () => lastSent(send).placements["terminal-1"].presentation;
+		expect(presentation()).toMatchObject({ pinned: false });
+		act(() => useStore.setState({ pinnedPanes: { "other:term:one": true } }));
+		expect(presentation()).toMatchObject({ pinned: false });
+		act(() => useStore.setState({ pinnedPanes: { "work:term:one": true } }));
+		expect(presentation()).toMatchObject({ pinned: true });
+		act(() => useStore.setState({ pinnedPanes: {} }));
+		expect(presentation()).toMatchObject({ pinned: false });
 	});
 
 	it("publishes changing Git observations without moving the session's placement", () => {

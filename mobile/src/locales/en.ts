@@ -1,5 +1,6 @@
 /** Canonical English copy. New messages use semantic IDs; legacy source keys remain supported. */
 export const en: Record<string, string> = {
+  "spaces.pane.pinned": "Pinned",
   "pairing.scanner.failed": "The camera scanner could not start. Try again or paste a pairing code.",
   "notifications.push.approvalBody": "An agent is waiting for your approval.",
   "notifications.push.doneBody": "An agent finished its turn.",
