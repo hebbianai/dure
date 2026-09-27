@@ -154,6 +154,45 @@ it("keeps desktop-pinned panes first only inside their selected Space", () => {
 	expect(document.querySelector(".list__heading")).toBeNull();
 });
 
+it.each<SpacesGrouping>([
+	"space", "repository", "environment", "location", "updated", "status",
+])("keeps pins first within the selected %s group in Home and the switcher", (groupBy) => {
+	const [one, two, three] = model.hubs[0].sessions;
+	two.presentation = { ...one.presentation, pinned: true };
+	three.presentation = {
+		...three.presentation,
+		activityAt: now - 7 * 24 * 60 * 60_000,
+		displayState: "error",
+		pinned: true,
+	};
+	model = {
+		...model,
+		layout: {
+			...model.layout,
+			placements: {
+				...model.layout.placements,
+				two: { ...model.layout.placements.one, order: 1 },
+			},
+		},
+	};
+	const options = { ...loadHomeViewOptions(), groupBy };
+	const groups = projectHome(model, options, now).groups;
+	const selected = groups.find(group => group.rows.some(view => view.row.sessionId === "one"))!;
+	expect(selected.rows.map(view => view.row.sessionId)).toEqual(["two", "one"]);
+	model = { ...model, desktop: selected.key, viewOptions: options };
+	draw();
+	const switcher = renderSessionSwitcher(groups, options, "one", undefined, now, noop);
+	for (const container of [document, switcher]) {
+		expect([...container.querySelectorAll(".session-row__title")].map(row => row.textContent))
+			.toEqual(["two", "one"]);
+		expect(container.querySelector(".list__heading")?.textContent).toContain(t("spaces.pane.pinned"));
+	}
+	pinSession("two", false);
+	draw();
+	expect(titles()).toEqual(["one", "two"]);
+	expect(document.querySelector(".list__heading")).toBeNull();
+});
+
 it("applies filters before showing pins and preserves ordering within the pinned band", () => {
 	pinSession("one");
 	pinSession("three");
