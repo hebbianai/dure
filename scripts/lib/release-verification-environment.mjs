@@ -11,7 +11,6 @@ const ISOLATED_DIRECTORIES = Object.freeze({
   HOME: "home",
   DURE_HOME: "dure-home",
   HMUX_DISCOVERY_ROOT: "hmux-discovery",
-  XDG_RUNTIME_DIR: "runtime/xdg",
   DURE_GHOSTTY_VT_CACHE_ROOT: "cache/ghostty-vt",
   NODE_COMPILE_CACHE: "cache/node-compile",
   COREPACK_HOME: "cache/corepack",
@@ -543,6 +542,10 @@ export function prepareReleaseVerificationEnvironment(
     environment.TMP = tempDirectory;
     environment.HMUX_RUNTIME_ROOT = path.join(tempDirectory, "hmux-runtime");
     ensurePrivateDirectory(environment.HMUX_RUNTIME_ROOT);
+    // The process sampler appends its own socket path. Keep it under the same
+    // short, private root as Hmux rather than the potentially long runner path.
+    environment.XDG_RUNTIME_DIR = path.join(tempDirectory, "xdg-runtime");
+    ensurePrivateDirectory(environment.XDG_RUNTIME_DIR);
     for (const [name, relative] of Object.entries(ISOLATED_FILES)) {
       const file = path.join(root, relative);
       ensurePrivateDirectory(path.dirname(file));
