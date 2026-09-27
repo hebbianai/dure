@@ -17,6 +17,7 @@ import {
 } from "@/lib/scheduling/maintenanceLaneInterval";
 import { codexUsageProfiles } from "@/lib/usage/codexUsageSnapshots";
 import type { UsageRefreshProvider } from "@/lib/usage/recentUsageClient";
+import { prepareUsageRefresh } from "@/lib/usage/usageRefreshPreparation";
 import type { AccountProfile } from "@/types";
 
 /** 5h/24h usage windows plus the Claude collector state, refreshed every
@@ -61,9 +62,8 @@ export function useRecentUsage(accounts: readonly AccountProfile[]) {
 			setRefreshing(provider);
 			setRefreshError(null);
 			try {
-				if (provider === "codex") {
-					await codexUsageProfilesSync(codexUsageProfiles(accounts));
-				}
+				const preparation = prepareUsageRefresh(provider, accounts);
+				if (preparation) await preparation;
 				if (stop) return;
 				const next = await usageRefresh(provider);
 				if (!stop) {
