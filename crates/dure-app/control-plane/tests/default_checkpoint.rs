@@ -2575,8 +2575,13 @@ fn interrupted_activation_receipt_fixture(prefix: &str) -> InterruptedActivation
         true,
     );
     let interrupted =
-        command_with_control_plane(root, &hmux, &wrapper, &["profiles", "list", "--json"]);
-    assert!(is_recovering_output(&interrupted));
+        command_with_control_plane(root, &hmux, &wrapper, &["backend", "activate", "--json"]);
+    assert!(
+        is_recovering_output(&interrupted),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&interrupted.stdout),
+        String::from_utf8_lossy(&interrupted.stderr),
+    );
     let target = read_descriptor(root);
     let intent_path = root
         .join("backend/replacement-intents")
@@ -2980,7 +2985,7 @@ fn descriptor_transition_lock_serializes_restart_and_activation_processes() {
 }
 
 #[test]
-fn a_second_client_replaces_an_ambient_discovery_root_once() {
+fn ambient_discovery_change_requires_explicit_activation() {
     let _fixture = process_fixture_lock();
     let temporary = tempfile::Builder::new()
         .prefix("dure-discovery-root-takeover-")
@@ -3024,11 +3029,30 @@ fn a_second_client_replaces_an_ambient_discovery_root_once() {
         &user_root,
         &["profiles", "list", "--json"],
     ));
+    assert_eq!(second.status.code(), Some(2));
+    let refused: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(refused["error"]["code"], "local_backend_executable_changed");
+    assert!(second.stderr.is_empty());
+    assert_eq!(read_descriptor(root).generation, qa_descriptor.generation);
+    assert!(backend_ping_available(&qa_descriptor));
     assert!(
-        second.status.success(),
+        !root
+            .join("backend/replacement-intents")
+            .join(format!("{}.json", qa_descriptor.generation))
+            .exists()
+    );
+
+    let activated = output_with_recovery(&mut cli_command_with_discovery(
+        root,
+        &hmux,
+        &user_root,
+        &["backend", "activate", "--json"],
+    ));
+    assert!(
+        activated.status.success(),
         "stdout={} stderr={}",
-        String::from_utf8_lossy(&second.stdout),
-        String::from_utf8_lossy(&second.stderr)
+        String::from_utf8_lossy(&activated.stdout),
+        String::from_utf8_lossy(&activated.stderr)
     );
     let user_descriptor = read_descriptor(root);
     assert_ne!(user_descriptor.generation, qa_descriptor.generation);

@@ -5880,6 +5880,7 @@ mod tests {
     fn command_bridge_refuses_a_symlinked_session_directory() {
         use std::os::unix::fs::symlink;
         let discovery = tempfile::tempdir().unwrap();
+        set_private_directory_permissions(discovery.path()).unwrap();
         let outside = tempfile::tempdir().unwrap();
         let root = discovery.path().join(".command-bridges-v1");
         fs::create_dir(&root).unwrap();
@@ -5959,15 +5960,31 @@ mod tests {
         ));
     }
 
-    /// The ceiling and the highest named version move together. Apart, a
-    /// version exists that nothing admits, or one is admitted that the ceiling
-    /// says is unserved.
+    /// Session resolution owns the current ceiling; older and future request
+    /// versions must not admit it.
     #[test]
-    fn the_request_version_ceiling_is_the_highest_named_version() {
+    fn session_resolution_is_admitted_only_at_the_current_ceiling() {
         assert_eq!(
             GATEWAY_REQUEST_VERSION_MAXIMUM,
-            GATEWAY_REQUEST_VERSION_SOURCE_CONTROL_DIFF
+            session_resolution::GATEWAY_REQUEST_VERSION
         );
+        for version in GATEWAY_REQUEST_VERSION_MINIMUM..=GATEWAY_REQUEST_VERSION_MAXIMUM + 1 {
+            let document = serde_json::json!({
+                "gateway_request_version": version,
+                "request": { "resolve_session": { "expected_fence": fence() } },
+            });
+            assert_eq!(
+                matches!(
+                    classify_first_document(&serde_json::to_vec(&document).unwrap()),
+                    FirstDocument::Request {
+                        request: GatewayRequest::ResolveSession(_),
+                        ..
+                    }
+                ),
+                version == session_resolution::GATEWAY_REQUEST_VERSION,
+                "session resolution admission at version {version}",
+            );
+        }
     }
 
     /// The patch request is a request of its own, admitted by a version of its
