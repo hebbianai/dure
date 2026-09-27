@@ -70,15 +70,16 @@ fn resize(
             if let Some(observer) = observer {
                 observer.observe(Direction::Downstream, &framed(&payload));
             }
-            if let Some(terminal_state_record::Body::ResizeReceipt(receipt)) =
-                decode_record(&payload).unwrap().record.body
-            {
-                if receipt.in_reply_to_record_id == id {
+            match decode_record(&payload).unwrap().record.body {
+                Some(terminal_state_record::Body::ResizeReceipt(receipt))
+                    if receipt.in_reply_to_record_id == id =>
+                {
                     return matches!(
                         receipt.outcome,
                         Some(resize_receipt::Outcome::AppliedToTerminal(_))
                     );
                 }
+                _ => {}
             }
         }
     }
