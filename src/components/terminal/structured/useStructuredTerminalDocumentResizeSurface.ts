@@ -19,8 +19,8 @@ interface StructuredTerminalDocumentResizeSurfaceOptions {
 	readonly resizeRegistrationRef: MutableRefObject<
 		TerminalDocumentResizeSurfaceRegistration | undefined
 	>;
-	/** Only the on-screen desktop may publish canonical geometry; a retained
-	 * hidden presentation measures a skipped subtree and must stay silent. */
+	/** The active desktop may measure geometry; a hidden retained writer may
+	 * only publish an explicit policy update from its last measured grid. */
 	readonly canPublishGeometry: () => boolean;
 	readonly holdResizePresentation: (transactionGeneration?: number) => void;
 	readonly finishResizePresentation: () => void;

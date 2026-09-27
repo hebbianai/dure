@@ -1309,11 +1309,9 @@ describe("StructuredTerminalView resize transaction", () => {
 			expect(input.style.top).toBe("380px");
 			expect(composition.style.left).toBe("10px");
 			expect(composition.style.top).toBe("380px");
-			expect(input.parentElement?.getAttribute("data-testid")).toBe(
-				"structured-terminal-presentation",
-			);
+			expect(input.parentElement).toBe(terminalViewport(view.container).parentElement);
 			expect(composition.parentElement).toBe(input.parentElement);
-			const layer = input.parentElement as HTMLDivElement;
+			const layer = input.closest<HTMLDivElement>('[data-testid="structured-terminal-presentation"]')!;
 			expect(layer.style.bottom).toBe("0px");
 			expect(layer.style.width).toBe("800px");
 			expect(layer.style.height).toBe("400px");

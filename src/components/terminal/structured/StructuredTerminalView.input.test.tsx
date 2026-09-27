@@ -1947,12 +1947,12 @@ describe("StructuredTerminalView resize transaction", () => {
 			"var(--terminal-cursor-cell-background)",
 		);
 		expect(
-			composition.parentElement?.style.getPropertyValue(
+			composition.closest<HTMLElement>('[data-testid="structured-terminal-presentation"]')?.style.getPropertyValue(
 				"--terminal-cursor-cell-foreground",
 			),
 		).toBe("#fafafa");
 		expect(
-			composition.parentElement?.style.getPropertyValue(
+			composition.closest<HTMLElement>('[data-testid="structured-terminal-presentation"]')?.style.getPropertyValue(
 				"--terminal-cursor-cell-background",
 			),
 		).toBe("#333333");

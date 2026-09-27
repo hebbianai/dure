@@ -18,6 +18,7 @@ import {
 import type { DroppedFilePayload } from "@/lib/files/externalFileDrop";
 import { saveSessionFiles } from "@/lib/files/sessionFileTransfer";
 import { t } from "@/lib/i18n";
+import { useHubTerminalWidth } from "@/lib/hub/useHubTerminalWidth";
 import { TerminalBoxCache } from "@/lib/terminal/geometry/terminalBoxCache";
 import { terminalDocumentResizePhase } from "@/lib/terminal/geometry/terminalDocumentResizeTransaction";
 import { terminalWindowFocusProbeForSurface } from "@/lib/terminal/qa/terminalWindowFocusProbeRegistry";
@@ -46,6 +47,7 @@ import {
 	type PaintedPresentation,
 } from "./terminalCanvasPresentation";
 import { useTerminalCanvasTheme } from "./terminalCanvasTheme";
+import { useStructuredTerminalHorizontalViewport } from "./useStructuredTerminalHorizontalViewport";
 import { useStructuredTerminalAfterPaint } from "./useStructuredTerminalAfterPaint";
 import { useStructuredTerminalAttachmentLifecycle } from "./useStructuredTerminalAttachmentLifecycle";
 import { useStructuredTerminalClipboard } from "./useStructuredTerminalClipboard";
@@ -103,6 +105,7 @@ export function StructuredTerminalView({
 		windowFocusProbe ?? terminalWindowFocusProbeForSurface(surfaceId);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const presentationLayerRef = useRef<HTMLDivElement>(null);
+	const terminalContentRef = useRef<HTMLDivElement>(null);
 	const terminalSurfaceRef = useRef<HTMLDivElement>(null);
 	const [surfaceBox] = useState(
 		() =>
@@ -128,6 +131,12 @@ export function StructuredTerminalView({
 	const canvasTheme = useTerminalCanvasTheme();
 	const resolvedFontFamily = terminalFontStack(fontFamily);
 	const focusedRef = useRef(false);
+	const isInputFocused = useCallback(() => focusedRef.current, []);
+	const horizontalViewport = useStructuredTerminalHorizontalViewport({
+		viewportRef: presentationLayerRef,
+		contentRef: terminalContentRef,
+		isFocused: isInputFocused,
+	});
 	const projectTerminalFocus = useCallback(
 		(focused: boolean) => {
 			if (focusedRef.current === focused) return;
@@ -145,14 +154,17 @@ export function StructuredTerminalView({
 	useLayoutEffect(() => {
 		presentationRoleRef.current = presentationRole;
 	}, [presentationRole]);
-	// A warm desktop retains this view while hidden. Its subtree is skipped
-	// (content-visibility) there, so canonical geometry may only be published
-	// from the active desktop; the reveal below re-measures once.
+	// A hidden retained writer can follow a verified phone width using its last
+	// measured grid. Skipped-subtree boxes must never become resize proposals.
 	const workspaceActive = useWorkspaceRuntimeActive();
 	const workspaceActiveRef = useRef(workspaceActive);
 	workspaceActiveRef.current = workspaceActive;
+	const measuredGridRef = useRef<{ columns: number; rows: number } | undefined>(
+		undefined,
+	);
+	const phoneWidthPendingRef = useRef(false);
 	const canPublishGeometry = useCallback(
-		() => workspaceActiveRef.current,
+		() => workspaceActiveRef.current || phoneWidthPendingRef.current,
 		[],
 	);
 	// A hidden desktop's pane accepts no input. The flag flips one render after
@@ -307,10 +319,20 @@ export function StructuredTerminalView({
 		observerIdRef,
 		sendInput,
 	});
+	const sendUserInput = useCallback(
+		(encode: Parameters<typeof structuredInputLatency.sendUserInput>[0]) => {
+			const recordId = structuredInputLatency.sendUserInput(encode);
+			if (recordId !== undefined) horizontalViewport.beginInput();
+			return recordId;
+		},
+		[horizontalViewport.beginInput, structuredInputLatency.sendUserInput],
+	);
+
 	inputLatencyReceiptObserverRef.current =
 		structuredInputLatency.onInputReceipt;
 	inputLatencyFrameObserverRef.current =
 		structuredInputLatency.onViewportFrameReceived;
+	const phoneColumns = useHubTerminalWidth(binding, viewportReplica.terminalEpoch);
 	const installedFrame = viewportReplica.frame;
 	const syncLargeViewReturnTarget = useStructuredTerminalLargeViewLifecycle({
 		workspaceId,
@@ -389,7 +411,7 @@ export function StructuredTerminalView({
 		terminalEpoch: viewportReplica.terminalEpoch,
 		inputReady,
 		sendInput,
-		sendMeasuredInput: structuredInputLatency.sendUserInput,
+		sendMeasuredInput: sendUserInput,
 		scrollRows: issueViewportScrollRows,
 		setFocused: projectTerminalFocus,
 	});
@@ -406,7 +428,7 @@ export function StructuredTerminalView({
 		onInputFocus: onStructuredInputFocus,
 		sendText: (text) => {
 			if (!inputReady) return;
-			return structuredInputLatency.sendUserInput((recordId, fence) =>
+			return sendUserInput((recordId, fence) =>
 				encodeTerminalTextIntent(recordId, fence, text),
 			);
 		},
@@ -421,11 +443,11 @@ export function StructuredTerminalView({
 		observerIdRef,
 		receiptObserverRef: quickCommandReceiptObserverRef,
 		readLatestCompleteFrame,
-		sendUserInput: structuredInputLatency.sendUserInput,
+		sendUserInput: sendUserInput,
 		focus: structuredTextInput.focusPaneInput,
 	});
 	const { compositionText, inputAttachmentKey } = structuredTextInput;
-	const afterPresentationPainted = useStructuredTerminalAfterPaint({
+	const reportAfterPresentationPainted = useStructuredTerminalAfterPaint({
 		presentationRoleRef,
 		recordTerminalProjection,
 		observerIdRef,
@@ -434,6 +456,13 @@ export function StructuredTerminalView({
 		onTextInputPainted: structuredTextInput.onPresentationPainted,
 		onInputLatencyPainted: structuredInputLatency.onPresentationPainted,
 	});
+	const afterPresentationPainted = useCallback(
+		(...args: Parameters<typeof reportAfterPresentationPainted>) => {
+			horizontalViewport.painted(args[0]);
+			reportAfterPresentationPainted(...args);
+		},
+		[horizontalViewport.painted, reportAfterPresentationPainted],
+	);
 	const handleFirstPaint = useCallback(() => {
 		recordFirstTerminalPaint(viewportReplica.attachmentId);
 		onFirstPaint?.();
@@ -444,20 +473,33 @@ export function StructuredTerminalView({
 		const observerId = observerIdRef.current;
 		if (!host || !observerId || attachedObserverRef.current !== observerId)
 			return false;
-		const bounds = surfaceBox.read();
-		if (bounds.width <= 0 || bounds.height <= 0) return false;
-		const metrics = canvasRenderer.measure(
-			bounds.width,
-			bounds.height,
-			resolvedFontFamily,
-			fontSize,
-			lineHeight,
-		);
+		if (!viewportTransport.writable) return false;
+		if (workspaceActiveRef.current) {
+			const bounds = surfaceBox.read();
+			if (bounds.width <= 0 || bounds.height <= 0) return false;
+			const measured = canvasRenderer.measure(
+				bounds.width,
+				bounds.height,
+				resolvedFontFamily,
+				fontSize,
+				lineHeight,
+			);
+			measuredGridRef.current = { columns: measured.columns, rows: measured.rows };
+		}
+		const measured = measuredGridRef.current;
+		if (!measured) return false;
+		// Existing Hosts still choose the narrowest writer. Lift this desktop's
+		// proposal while a verified Hub phone connection needs a wider grid.
+		const metrics = {
+			columns: Math.max(measured.columns, phoneColumns ?? measured.columns),
+			rows: measured.rows,
+		};
 		if (
 			resizePresentationRef.current.requestGeneration !== undefined &&
 			resizePresentationRef.current.finalGrid?.columns === metrics.columns &&
 			resizePresentationRef.current.finalGrid.rows === metrics.rows
 		) {
+			phoneWidthPendingRef.current = false;
 			syncLargeViewReturnTarget();
 			return true;
 		}
@@ -467,6 +509,7 @@ export function StructuredTerminalView({
 			confirmedGeometryRef.current.rows === metrics.rows
 		) {
 			finishResizePresentation();
+			phoneWidthPendingRef.current = false;
 			syncLargeViewReturnTarget();
 			return true;
 		}
@@ -529,6 +572,7 @@ export function StructuredTerminalView({
 					);
 					resizeRetryRef.current = retry.state;
 					if (!retry.retry) return false;
+					phoneWidthPendingRef.current = true;
 					scheduleGeometryCommit();
 					return true;
 				},
@@ -540,12 +584,15 @@ export function StructuredTerminalView({
 			releaseFailedResizePresentation(requestGeneration);
 			return false;
 		}
+		phoneWidthPendingRef.current = false;
 		return true;
 	}, [
 		applyResizePresentation,
 		canvasRenderer,
 		finishResizePresentation,
 		fontSize,
+		phoneColumns,
+		viewportTransport.writable,
 		installedFrame,
 		lineHeight,
 		presentationIsCurrent,
@@ -576,6 +623,19 @@ export function StructuredTerminalView({
 		finishResizePresentation,
 		onInputResizePhaseChange: structuredTextInput.onResizePhaseChange,
 	});
+
+	useLayoutEffect(() => {
+		if (!viewportTransport.writable) return;
+		phoneWidthPendingRef.current = true;
+		const observation = resizeRegistrationRef.current?.noteGeometryChanged();
+		if (observation) scheduleGeometryCommit(observation);
+	}, [
+		phoneColumns,
+		viewportTransport.writable,
+		viewportReplica.terminalEpoch,
+		resizeRegistrationRef,
+		scheduleGeometryCommit,
+	]);
 
 	// Desktop tier transitions of a retained presentation.
 	// Hidden: the input must not keep keyboard focus, or every keystroke on the
@@ -814,11 +874,11 @@ export function StructuredTerminalView({
 	const forwardPastedText = useCallback(
 		(text: string) => {
 			if (inputDisabled) return;
-			structuredInputLatency.sendUserInput((recordId, fence) =>
+			sendUserInput((recordId, fence) =>
 				encodeTerminalPasteIntent(recordId, fence, text),
 			);
 		},
-		[inputDisabled, structuredInputLatency.sendUserInput],
+		[inputDisabled, sendUserInput],
 	);
 	const preparePastedFiles = useCallback(
 		(files: DroppedFilePayload[]) => {
@@ -861,7 +921,7 @@ export function StructuredTerminalView({
 		shortcutOverrides,
 		selectedText,
 		finishCompositionHandoff: structuredTextInput.finishCompositionHandoff,
-		sendUserInput: structuredInputLatency.sendUserInput,
+		sendUserInput: sendUserInput,
 	});
 	// 외부 파일 드롭도 결국 붙여넣기다 — 준비된 경로 묶음이 같은 경로로 들어간다.
 	useStructuredTerminalFileDrop({
@@ -921,87 +981,94 @@ export function StructuredTerminalView({
 				data-terminal-row-height={
 					paintedPresentationRef.current?.paint.metrics.rowHeight
 				}
-				className="absolute inset-0 size-full"
+				className="absolute inset-0 size-full overflow-x-auto overflow-y-hidden scrollbar-none"
 			>
 				<div
-					ref={terminalSurfaceRef}
-					data-testid="structured-terminal-viewport"
-					data-selectable
-					className="absolute inset-0 size-full"
-					onPointerDown={(event) => {
-						if (!installedFrame || !paintedAttachmentIsCurrent) {
-							// Retain the explicit click until input is ready; no pointer
-							// or keyboard intent may reach an unpainted attachment.
-							if (event.button === 0) structuredTextInput.focusPaneInput();
-							event.preventDefault();
-							return;
-						}
-						const reportClick = !inputDisabled && mouseReporting && !event.shiftKey;
-						const selecting = selectionDrag.begin(
-							event.nativeEvent,
-							reportClick,
-						);
-						if (!selecting && reportClick) issuePointer(event.nativeEvent, PointerKind.DOWN);
-					}}
-					onPointerMove={(event) => {
-						if (!paintedAttachmentIsCurrent) return;
-						if (selectionDrag.ownsPointer(event.pointerId)) return;
-						if (mouseReporting)
-							issuePointer(event.nativeEvent, PointerKind.MOVE);
-					}}
-					onPointerUp={(event) => {
-						if (selectionDrag.ownsPointer(event.pointerId)) return;
-						if (
-							!inputDisabled &&
-							!event.shiftKey &&
-							paintedAttachmentIsCurrent &&
-							mouseReporting
-						) {
-							structuredTextInput.focusPaneInput();
-							issuePointer(event.nativeEvent, PointerKind.UP);
-						}
-					}}
-					onPointerCancel={(event) => {
-						selectionDrag.cancel(event.pointerId);
-					}}
-					onWheel={onWheel}
-				/>
-				<textarea
-					key={inputAttachmentKey}
-					ref={inputRef}
-					aria-label={t("terminal.input.ariaLabel")}
-					disabled={!inputReady}
-					className="absolute size-px resize-none opacity-0"
-					style={{ left: compositionLeft, top: compositionTop }}
-					autoCapitalize="off"
-					autoCorrect="off"
-					spellCheck={false}
-					onFocus={structuredTextInput.onFocus}
-					onBlur={() => {
-						structuredTextInput.clearComposition();
-						if (!paintedAttachmentIsCurrent) return;
-						onStructuredInputBlur();
-					}}
-					onKeyDown={onTerminalKeyDown}
-					onCompositionStart={structuredTextInput.onCompositionStart}
-					onCompositionUpdate={structuredTextInput.onCompositionUpdate}
-					onCompositionEnd={structuredTextInput.onCompositionEnd}
-					onInput={structuredTextInput.onInput}
-					onPaste={(event) => {
-						structuredTextInput.finishCompositionHandoff();
-						onPaste(event.nativeEvent);
-					}}
-				/>
-				{compositionText && (
-					<StructuredTerminalCompositionOverlay
-						text={compositionText}
-						left={compositionLeft}
-						top={compositionTop}
-						fontFamily={resolvedFontFamily}
-						fontSize={fontSize}
-						lineHeight={lineHeight}
+					ref={terminalContentRef}
+					className="relative h-full min-w-full"
+					onCompositionStartCapture={horizontalViewport.beginInput}
+					onBlurCapture={horizontalViewport.endInput}
+				>
+					<div
+						ref={terminalSurfaceRef}
+						data-testid="structured-terminal-viewport"
+						data-selectable
+						className="absolute inset-0 size-full"
+						onPointerDown={(event) => {
+							if (!installedFrame || !paintedAttachmentIsCurrent) {
+								// Retain the explicit click until input is ready; no pointer
+								// or keyboard intent may reach an unpainted attachment.
+								if (event.button === 0) structuredTextInput.focusPaneInput();
+								event.preventDefault();
+								return;
+							}
+							const reportClick = !inputDisabled && mouseReporting && !event.shiftKey;
+							const selecting = selectionDrag.begin(
+								event.nativeEvent,
+								reportClick,
+							);
+							if (!selecting && reportClick) issuePointer(event.nativeEvent, PointerKind.DOWN);
+						}}
+						onPointerMove={(event) => {
+							if (!paintedAttachmentIsCurrent) return;
+							if (selectionDrag.ownsPointer(event.pointerId)) return;
+							if (mouseReporting)
+								issuePointer(event.nativeEvent, PointerKind.MOVE);
+						}}
+						onPointerUp={(event) => {
+							if (selectionDrag.ownsPointer(event.pointerId)) return;
+							if (
+								!inputDisabled &&
+								!event.shiftKey &&
+								paintedAttachmentIsCurrent &&
+								mouseReporting
+							) {
+								structuredTextInput.focusPaneInput();
+								issuePointer(event.nativeEvent, PointerKind.UP);
+							}
+						}}
+						onPointerCancel={(event) => {
+							selectionDrag.cancel(event.pointerId);
+						}}
+						onWheel={onWheel}
 					/>
-				)}
+					<textarea
+						key={inputAttachmentKey}
+						ref={inputRef}
+						aria-label={t("terminal.input.ariaLabel")}
+						disabled={!inputReady}
+						className="absolute size-px resize-none opacity-0"
+						style={{ left: compositionLeft, top: compositionTop }}
+						autoCapitalize="off"
+						autoCorrect="off"
+						spellCheck={false}
+						onFocus={structuredTextInput.onFocus}
+						onBlur={() => {
+							structuredTextInput.clearComposition();
+							if (!paintedAttachmentIsCurrent) return;
+							onStructuredInputBlur();
+						}}
+						onKeyDown={onTerminalKeyDown}
+						onCompositionStart={structuredTextInput.onCompositionStart}
+						onCompositionUpdate={structuredTextInput.onCompositionUpdate}
+						onCompositionEnd={structuredTextInput.onCompositionEnd}
+						onInput={structuredTextInput.onInput}
+						onPaste={(event) => {
+							structuredTextInput.finishCompositionHandoff();
+							onPaste(event.nativeEvent);
+						}}
+					/>
+					{compositionText && (
+						<StructuredTerminalCompositionOverlay
+							text={compositionText}
+							left={compositionLeft}
+							top={compositionTop}
+							fontFamily={resolvedFontFamily}
+							fontSize={fontSize}
+							lineHeight={lineHeight}
+						/>
+					)}
+				</div>
 			</div>
 			<StructuredTerminalRecoveryStatus
 				paneId={paneApi?.id}
