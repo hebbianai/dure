@@ -156,6 +156,8 @@ jobs:
         run: sh scripts/manage-ci-cargo-target.sh prepare
       - name: Install pinned dependencies
         run: corepack pnpm install --frozen-lockfile
+      - name: Stage macOS native library
+        run: node scripts/stage-mobile-runtime.mjs
       - name: Materialize public pinned Ghostty proof
         id: ghostty
         run: |
