@@ -234,11 +234,24 @@ export function StructuredTerminalView({
 		terminalProbe,
 		onStructuredSurfaceRetirement,
 	);
+	const retainedInteractionRef = useRef<() => boolean>(() => false);
+	const hasRetainedInteraction = useCallback(() => {
+		const host = containerRef.current;
+		const selection = host?.ownerDocument.getSelection();
+		return (
+			retainedInteractionRef.current() ||
+			(!!host &&
+				!!selection &&
+				!selection.isCollapsed &&
+				(host.contains(selection.anchorNode) || host.contains(selection.focusNode)))
+		);
+	}, []);
 	const viewportTransport = useStructuredTerminalViewportTransport({
 		paneApi,
 		surfaceId,
 		binding,
 		presentationRole,
+		hasRetainedInteraction,
 		recoveryAdmission,
 		prepareAttach,
 		onAttachPhase: recordTerminalAttachPhase,
@@ -354,6 +367,7 @@ export function StructuredTerminalView({
 			? paintedPresentationIsCurrent
 			: installedFrame !== null && viewportReplica.terminalEpoch !== null);
 	const inputReady =
+		viewportTransport.writable &&
 		!inputDisabled &&
 		!inputHiddenWithDesktop &&
 		installedFrame !== null &&
@@ -431,6 +445,7 @@ export function StructuredTerminalView({
 		if (!host || !observerId || attachedObserverRef.current !== observerId)
 			return false;
 		const bounds = surfaceBox.read();
+		if (bounds.width <= 0 || bounds.height <= 0) return false;
 		const metrics = canvasRenderer.measure(
 			bounds.width,
 			bounds.height,
@@ -794,6 +809,8 @@ export function StructuredTerminalView({
 		},
 		onCommit: (text) => selectionCommitRef.current(text),
 	});
+	retainedInteractionRef.current = () =>
+		selectionDrag.hasSelection() || structuredTextInput.hasPendingComposition();
 	const forwardPastedText = useCallback(
 		(text: string) => {
 			if (inputDisabled) return;

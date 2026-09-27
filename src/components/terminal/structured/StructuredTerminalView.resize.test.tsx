@@ -973,12 +973,25 @@ describe("StructuredTerminalView resize transaction", () => {
 		// A warm desktop attaches its terminals while hidden (prewarm); the
 		// skipped subtree measures 0x0, which must never reach the Host.
 		mocks.workspaceActive = false;
-		const { onRecords, resolveAttach } = installDeferredAttachMock();
+		const { onRecords, resolveAttach } = installDeferredAttachMock(
+			1,
+			(_attach, request) => {
+				request.onRecord(
+					viewportFrameRecord({ texts: ["hello"] }).buffer as ArrayBuffer,
+				);
+				return undefined;
+			},
+		);
 		const view = renderTerminalView();
 		let width = 0;
 		let height = 0;
-		sizeStructuredHost(view, () => width, () => height);
+		sizeStructuredHost(
+			view,
+			() => width,
+			() => height,
+		);
 		await waitFor(() => expect(onRecords[0]).toBeTypeOf("function"));
+		expect(mocks.attach.mock.calls[0]?.[0].access).toBe("read_only");
 		await act(async () => {
 			onRecords[0]?.(
 				viewportFrameRecord({ texts: ["hello"] }).buffer as ArrayBuffer,
@@ -993,29 +1006,258 @@ describe("StructuredTerminalView resize transaction", () => {
 		expect(semanticResizeCalls()).toHaveLength(0);
 		expect(visibleTerminalText(view.container)).toContain("hello");
 
-		width = 800;
-		height = 400;
 		mocks.workspaceActive = true;
 		await act(async () => {
 			view.rerender(terminalElement("session-a"));
 		});
 		await flushFrames();
-		// The skipped subtree never delivered a real box: the reveal waits for
-		// the ResizeObserver instead of forcing a layout.
+		// The new writer must wait for the revealed subtree's real box before
+		// proposing geometry, even when its seed is already complete.
 		expect(semanticResizeCalls()).toHaveLength(0);
+		width = 800;
+		height = 400;
 		await act(async () => {
 			resizeObservers[0]?.callback([], {} as ResizeObserver);
 		});
 		await flushFrames();
-		expectSingleSemanticResize(80, 20);
+		expectSingleSemanticResize(80, 20, 2);
 	});
 
-	it("reconfirms an unchanged grid silently when a retained desktop reveals", async () => {
-		const { onRecords, resolveAttach } = installDeferredAttachMock();
+	it("releases an idle hidden desktop's writer and restores it on reveal without replacing the session", async () => {
+		const onRecords = installAttachMock((_attach, request) => {
+			request.onRecord(
+				viewportFrameRecord({ texts: ["same session"] }).buffer as ArrayBuffer,
+			);
+			return undefined;
+		});
+		const view = renderTerminalView();
+		sizeStructuredHost(view, 380, 400);
+		await waitFor(() =>
+			expect(visibleTerminalText(view.container)).toContain("same session"),
+		);
+		await flushFrames();
+		await settleInitialResize(onRecords[0], 38, 20, {
+			texts: ["same session"],
+			columns: 38,
+		});
+		expect(mocks.attach.mock.calls[0]?.[0].access).toBe("writer");
+
+		mocks.workspaceActive = false;
+		await act(async () => {
+			view.rerender(terminalElement("session-a"));
+		});
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(2));
+		expect(mocks.detach).toHaveBeenCalledWith(structuredObserverId(1));
+		expect(mocks.attach.mock.calls[1]?.[0]).toMatchObject({
+			sessionId: "session-a",
+			access: "read_only",
+		});
+		await flushFrames();
+		mocks.send.mockClear();
+		pressEnter(terminalInput(view));
+		await flushFrames();
+		expect(mocks.send).not.toHaveBeenCalled();
+		await deliverViewportFrame(onRecords[0], {
+			projectionRevision: 9n,
+			texts: ["retired attachment"],
+		});
+		expect(visibleTerminalText(view.container)).not.toContain(
+			"retired attachment",
+		);
+
+		mocks.workspaceActive = true;
+		await act(async () => {
+			view.rerender(terminalElement("session-a"));
+		});
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(3));
+		expect(mocks.detach).toHaveBeenCalledWith(structuredObserverId(2));
+		expect(mocks.attach.mock.calls[2]?.[0]).toMatchObject({
+			sessionId: "session-a",
+			access: "writer",
+		});
+		await flushFrames();
+		expect(semanticResizeCalls()).toContainEqual({
+			observerId: structuredObserverId(3),
+			columns: 38,
+			rows: 20,
+		});
+	});
+
+	it.each([
+		"history",
+		"selection",
+		"drag",
+		"composition",
+		"scroll",
+		"wheel",
+		"input",
+		"resize",
+	])(
+		"retains a hidden %s view instead of resetting its viewport",
+		async (kind) => {
+			const onRecords = installAttachMock((_attach, request) => {
+				request.onRecord(
+					viewportFrameRecord({
+						texts: ["retained view"],
+						followTail: kind !== "history",
+					}).buffer as ArrayBuffer,
+				);
+				return {
+					selectedCapabilities:
+						kind === "wheel" ? ["terminal_viewport_wheel_v1"] : [],
+				};
+			});
+			const view = renderTerminalView();
+			sizeStructuredHost(view, 380, 400);
+			await waitFor(() =>
+				expect(visibleTerminalText(view.container)).toContain("retained view"),
+			);
+			await flushFrames();
+			if (kind !== "resize") {
+				await settleInitialResize(onRecords[0], 38, 20, {
+					texts: ["retained view"],
+					columns: 38,
+					followTail: kind !== "history",
+				});
+			}
+			mocks.send.mockClear();
+			if (kind === "selection") {
+				const row = view.container.querySelector(".terminal-viewport-row")!;
+				const range = document.createRange();
+				range.selectNodeContents(row);
+				window.getSelection()?.addRange(range);
+			}
+			if (kind === "drag") {
+				fireEvent.pointerDown(terminalViewport(view.container), {
+					pointerId: 72,
+					button: 0,
+					buttons: 1,
+					clientX: 10,
+					clientY: 10,
+				});
+			}
+			if (kind === "composition") {
+				const input = terminalInput(view);
+				input.focus();
+				for (const { metadata } of sentRecords("inputIntent")) {
+					await deliverRecord(
+						onRecords[0],
+						inputReceiptRecord(metadata.recordId),
+					);
+				}
+				fireEvent.compositionStart(input, { data: "" });
+			}
+			if (kind === "scroll" || kind === "wheel") {
+				fireEvent.wheel(terminalViewport(view.container), { deltaY: -120 });
+				await flushFrames();
+				expect(sentRecords("viewportIntent")).toHaveLength(1);
+			}
+			if (kind === "input") {
+				pressEnter(terminalInput(view));
+				expect(sentRecords("inputIntent")).toHaveLength(1);
+			}
+			mocks.workspaceActive = false;
+			await act(async () => {
+				view.rerender(terminalElement("session-a"));
+			});
+			await flushFrames();
+			expect(mocks.attach).toHaveBeenCalledOnce();
+			expect(mocks.detach).not.toHaveBeenCalled();
+			expect(visibleTerminalText(view.container)).toContain("retained view");
+			if (kind === "selection")
+				expect(window.getSelection()?.toString()).toContain("retained view");
+			if (kind === "scroll" || kind === "wheel") {
+				await deliverViewportFrame(onRecords[0], {
+					texts: ["requested history"],
+					columns: 38,
+					followTail: false,
+					appliedIntentSeq: 1n,
+					projectionRevision: 2n,
+				});
+				expect(visibleTerminalText(view.container)).toContain(
+					"requested history",
+				);
+				expect(mocks.attach).toHaveBeenCalledOnce();
+			}
+		},
+	);
+
+	it("keeps an unseeded writer while its desktop hides", async () => {
+		installAttachMock();
+		const view = renderTerminalView();
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledOnce());
+		mocks.workspaceActive = false;
+		await act(async () => {
+			view.rerender(terminalElement("session-a"));
+		});
+		await flushFrames();
+		expect(mocks.attach).toHaveBeenCalledOnce();
+		expect(mocks.detach).not.toHaveBeenCalled();
+	});
+
+	it("retires a delayed hidden observer when the desktop reveals again", async () => {
+		const { onRecords, resolveAttach } = installDeferredAttachMock(
+			2,
+			(_attach, request) => {
+				request.onRecord(
+					viewportFrameRecord({ texts: ["current session"] })
+						.buffer as ArrayBuffer,
+				);
+				return undefined;
+			},
+		);
+		const view = renderTerminalView();
+		sizeStructuredHost(view, 380, 400);
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledOnce());
+		await flushFrames();
+		await settleInitialResize(onRecords[0], 38, 20, {
+			texts: ["current session"],
+			columns: 38,
+		});
+		mocks.workspaceActive = false;
+		await act(async () => {
+			view.rerender(terminalElement("session-a"));
+		});
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(2));
+		mocks.workspaceActive = true;
+		await act(async () => {
+			view.rerender(terminalElement("session-a"));
+		});
+		await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(3));
+		await act(async () => {
+			onRecords[1]?.(
+				viewportFrameRecord({ texts: ["obsolete hidden seed"] })
+					.buffer as ArrayBuffer,
+			);
+			resolveAttach();
+		});
+		await flushFrames();
+		expect(mocks.detach).toHaveBeenCalledWith(structuredObserverId(2));
+		expect(visibleTerminalText(view.container)).toContain("current session");
+		expect(visibleTerminalText(view.container)).not.toContain(
+			"obsolete hidden seed",
+		);
+		expect(mocks.attach.mock.calls[2]?.[0].access).toBe("writer");
+	});
+
+	it("reconfirms an unchanged grid through a new writer when a retained desktop reveals", async () => {
+		const { onRecords, resolveAttach } = installDeferredAttachMock(
+			1,
+			(_attach, request) => {
+				request.onRecord(
+					viewportFrameRecord({ texts: ["hello"] }).buffer as ArrayBuffer,
+				);
+				return undefined;
+			},
+		);
 		const view = renderTerminalView();
 		let width = 800;
 		let height = 400;
-		sizeStructuredHost(view, () => width, () => height);
+		sizeStructuredHost(
+			view,
+			() => width,
+			() => height,
+		);
 		await waitFor(() => expect(onRecords[0]).toBeTypeOf("function"));
 		await act(async () => {
 			onRecords[0]?.(viewportFrameRecord().buffer as ArrayBuffer);
@@ -1048,7 +1290,7 @@ describe("StructuredTerminalView resize transaction", () => {
 			resizeObservers[0]?.callback([], {} as ResizeObserver);
 		});
 		await flushFrames();
-		expect(semanticResizeCalls()).toHaveLength(0);
+		expectSingleSemanticResize(80, 20, 3);
 	});
 
 	it("retains the complete bitmap through drag observations and commits only the final grid", async () => {

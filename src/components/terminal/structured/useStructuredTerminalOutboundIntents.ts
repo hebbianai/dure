@@ -62,6 +62,7 @@ export interface StructuredTerminalOutboundIntents {
 }
 
 export function useStructuredTerminalOutboundIntents({
+	writable,
 	isCurrentAttachment,
 	observerIdRef,
 	reportAttachmentFailure,
@@ -70,6 +71,7 @@ export function useStructuredTerminalOutboundIntents({
 	replicaRef,
 	upstreamSequenceRef,
 }: {
+	writable: boolean;
 	isCurrentAttachment: (
 		attachment: StructuredTerminalAttachmentIdentity,
 		requireAttached?: boolean,
@@ -175,6 +177,7 @@ export function useStructuredTerminalOutboundIntents({
 			const current = replicaRef.current;
 			const fence = terminalViewportInputFence(current);
 			if (
+				!writable ||
 				!observerId ||
 				!sequence ||
 				sequence.observerId !== observerId ||
@@ -218,6 +221,7 @@ export function useStructuredTerminalOutboundIntents({
 			}
 		},
 		[
+			writable,
 			isCurrentAttachment,
 			observerIdRef,
 			replicaRef,

@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { useWorkspaceRuntimeDesktopId } from "@/components/workspace/WorkspaceRuntimeContext";
+import {
+	useWorkspaceRuntimeActive,
+	useWorkspaceRuntimeDesktopId,
+} from "@/components/workspace/WorkspaceRuntimeContext";
 import { observeStructuredPaneClose } from "@/lib/terminal/structuredPaneCloseLifetime";
 import { managedLocalRuntimeLiveness } from "@/lib/terminal/hmuxManagedAttachConcurrency";
 import type { StructuredAgentRuntimeAttachmentFence } from "@/lib/agents/structuredAgentRuntimeProjection";
-import { hmux } from "@/lib/ipc";
+import { hmux, type HmuxStructuredTerminalAccess } from "@/lib/ipc";
 import {
 	admitTerminalPresentation,
 	createTerminalPresentationQueue,
@@ -62,6 +65,7 @@ export function useStructuredTerminalViewportTransport({
 	surfaceId,
 	binding,
 	presentationRole,
+	hasRetainedInteraction,
 	recoveryAdmission,
 	prepareAttach,
 	onAttachPhase,
@@ -79,6 +83,10 @@ export function useStructuredTerminalViewportTransport({
 	onSurfaceRetirement,
 }: UseStructuredTerminalViewportTransportOptions): StructuredTerminalViewportTransport {
 	const desktopId = useWorkspaceRuntimeDesktopId();
+	const workspaceActive = useWorkspaceRuntimeActive();
+	const [access, setAccess] = useState<HmuxStructuredTerminalAccess>(
+		workspaceActive ? "writer" : "read_only",
+	);
 	const attachmentKey = structuredTerminalAttachmentKey(binding);
 	const hostHealthy = useStore((state) =>
 		managedLocalRuntimeLiveness(binding, state.hmuxSessionMetadata) === "alive",
@@ -101,8 +109,8 @@ export function useStructuredTerminalViewportTransport({
 	const pendingRecoveryFailureRef =
 		useRef<PendingAttachmentRecoveryFailure | null>(null);
 	const [attachmentGeneration, setAttachmentGeneration] = useState(0);
-	const attachmentToken = `${attachmentKey}\u001f${attachmentGeneration}`;
-	const replacementAttachmentToken = `${attachmentKey}\u001f${attachmentGeneration + 1}`;
+	const attachmentToken = `${attachmentKey}\u001f${access}\u001f${attachmentGeneration}`;
+	const replacementAttachmentToken = `${attachmentKey}\u001f${access}\u001f${attachmentGeneration + 1}`;
 	const attachmentContext = {
 		attachmentKey,
 		attachmentToken,
@@ -118,6 +126,31 @@ export function useStructuredTerminalViewportTransport({
 	const attachReconnectRef = useRef({ attachmentKey, failures: 0 });
 	const attachedSessionRef = useRef<string | null>(null);
 	const upstreamSequenceRef = useRef<UpstreamSequence | undefined>(undefined);
+	useLayoutEffect(() => {
+		if (workspaceActive) {
+			setAccess("writer");
+			return;
+		}
+		const current = replicaRef.current;
+		const sequence = upstreamSequenceRef.current;
+		if (
+			!sequence ||
+			sequence.failed ||
+			attachedObserverRef.current !== sequence.observerId ||
+			current.frame?.frame.followTail !== true ||
+			current.issuedIntentSeq !== current.appliedIntentSeq ||
+			Object.values(terminalIntentReceiptPendingKinds(sequence.receipts)).some(
+				Boolean,
+			) ||
+			hasRetainedInteraction()
+		) {
+			return;
+		}
+		// Detaching the writer releases its width proposal on existing Hosts.
+		// A replacement starts at the tail: keep pinned views and pending work
+		// on their original attachment instead of losing history or receipts.
+		setAccess("read_only");
+	}, [workspaceActive, hasRetainedInteraction]);
 	const selectedCapabilitiesRef = useRef<ReadonlySet<string>>(new Set());
 	const onAttachedRef = useRef(onAttached);
 	const onEventRef = useRef(onEvent);
@@ -272,6 +305,7 @@ export function useStructuredTerminalViewportTransport({
 	});
 	const { sendInput, sendViewportIntent, requestViewportRows } =
 		useStructuredTerminalOutboundIntents({
+			writable: access === "writer",
 			isCurrentAttachment,
 			observerIdRef,
 			reportAttachmentFailure,
@@ -707,7 +741,7 @@ export function useStructuredTerminalViewportTransport({
 			return attachStructuredTerminalRecords({
 				observerId,
 				surfaceId,
-				access: "writer",
+				access,
 				binding,
 				sshHosts: useStore.getState().sshHosts,
 				prepareAttach: prepareAttachRef.current,
@@ -840,6 +874,7 @@ export function useStructuredTerminalViewportTransport({
 			}
 		};
 	}, [
+		access,
 		desktopId,
 		paneApi,
 		attachmentKey,
@@ -858,6 +893,7 @@ export function useStructuredTerminalViewportTransport({
 	]);
 
 	return {
+		writable: access === "writer",
 		replica,
 		readLatestCompleteFrame,
 		presentationIsCurrent:

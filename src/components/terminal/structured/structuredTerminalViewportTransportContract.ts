@@ -122,6 +122,7 @@ export type AttachmentRecoveryDisposition = {
 };
 
 export interface StructuredTerminalViewportTransport {
+	readonly writable: boolean;
 	readonly replica: TerminalViewportFrameReplica<InstalledTerminalViewportFrame>;
 	readonly readLatestCompleteFrame: () => InstalledTerminalViewportFrame | null;
 	readonly presentationIsCurrent: boolean;
@@ -159,6 +160,7 @@ export interface UseStructuredTerminalViewportTransportOptions {
 	readonly surfaceId: string;
 	readonly binding: HmuxPaneBindingV1;
 	readonly presentationRole: TerminalPresentationRole;
+	readonly hasRetainedInteraction: () => boolean;
 	readonly recoveryAdmission?: StructuredTerminalRecoveryAdmission;
 	readonly prepareAttach?: () => Promise<unknown>;
 	readonly onAttachPhase?: (event: TerminalAttachTimingEvent) => void;

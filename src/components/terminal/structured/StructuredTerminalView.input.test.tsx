@@ -310,7 +310,12 @@ describe("StructuredTerminalView resize transaction", () => {
 	});
 
 	it("blurs and disables the input while its desktop is hidden, so keystrokes cannot reach the hidden session", async () => {
-		const { view } = await bootTerminalWithFrame();
+		installAttachMock((_attach, request) => {
+			request.onRecord(viewportFrameRecord().buffer as ArrayBuffer);
+			return undefined;
+		});
+		const view = renderTerminalView();
+		await waitFor(() => expect(terminalInput(view).disabled).toBe(false));
 		const input = terminalInput(view);
 		input.focus();
 		expect(document.activeElement).toBe(input);
@@ -338,7 +343,7 @@ describe("StructuredTerminalView resize transaction", () => {
 		await act(async () => {
 			view.rerender(terminalElement("session-a"));
 		});
-		expect(input.disabled).toBe(false);
+		await waitFor(() => expect(terminalInput(view).disabled).toBe(false));
 	});
 
 	it("keeps terminal input inert until the first complete viewport frame", async () => {
@@ -814,11 +819,11 @@ describe("StructuredTerminalView resize transaction", () => {
 		await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(5));
 		const records = sentRecords("inputIntent");
 		expect(records.map(({ metadata }) => metadata.recordId)).toEqual([
+			1n,
 			2n,
 			3n,
 			4n,
 			5n,
-			6n,
 		]);
 		expect(
 			records.map(({ record }) =>
@@ -860,7 +865,7 @@ describe("StructuredTerminalView resize transaction", () => {
 		expect(mocks.send).toHaveBeenCalledTimes(3);
 		expect(
 			sentRecords("inputIntent").map(({ metadata }) => metadata.recordId),
-		).toEqual([2n, 3n, 4n]);
+		).toEqual([1n, 2n, 3n]);
 		await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(2));
 		expect(mocks.attach).toHaveBeenCalledTimes(2);
 		expect(

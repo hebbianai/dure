@@ -433,7 +433,15 @@ export function useStructuredTerminalTextInput(options: {
 		],
 	);
 
+	const hasPendingComposition = useCallback(
+		() =>
+			compositionSessionRef.current !== null ||
+			compositionCommitRef.current !== null ||
+			compositionHandoffsRef.current.length > 0,
+		[],
+	);
 	return {
+		hasPendingComposition,
 		clearComposition,
 		compositionAnchor,
 		compositionText,

@@ -325,8 +325,12 @@ export function useStructuredTerminalSelectionDrag(
 		const drag = dragRef.current;
 		return drag?.crossedViewport ? drag.text : completedTextRef.current;
 	}, []);
+	const hasSelection = useCallback(
+		() => dragRef.current !== null || completedTextRef.current.length > 0,
+		[],
+	);
 
-	return { begin, cancel, ownsPointer, selectedText };
+	return { begin, cancel, ownsPointer, selectedText, hasSelection };
 }
 
 function terminalSelectionDocumentDirection(
