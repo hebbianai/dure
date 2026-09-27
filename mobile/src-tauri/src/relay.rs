@@ -801,11 +801,16 @@ pub fn open_relayed_terminal_surface(
 ) -> Result<RelayTerminalAttachment, RelayError> {
     let fence = session.fence().map_err(RelayError::Catalog)?;
     let attestation = hmux_ssh_transport::describe_attestation(transport.attestation());
+    let options = TerminalSurfaceAttachment::connection_options(access, None);
+    let options = match access {
+        TerminalSurfaceAccess::Writer => options.with_terminal_preferred_width(),
+        TerminalSurfaceAccess::ReadOnly => options,
+    };
     let connection = LocalConnection::attach_over_transport(
         transport,
         fence,
         RELAY_ATTACH_PLACEHOLDER.to_string(),
-        TerminalSurfaceAttachment::connection_options(access, None),
+        options,
     )
     .map_err(RelayError::Session)?;
     let surface =
