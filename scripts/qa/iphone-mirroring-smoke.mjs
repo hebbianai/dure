@@ -89,7 +89,13 @@ if (args.length) {
 	action = JSON.parse(readFileSync(resolve(args[2]), "utf8"));
 	// No automatic mutation replay. A returned receipt proves dispatch only;
 	// the coordinator must inspect before/after to establish device acceptance.
-	inspect({ id: before.id, action });
+	if (action.kind === "gesture")
+		assert.deepEqual(
+			[action.width, action.height],
+			[frame.width, frame.height],
+			"Refresh action dimensions first.",
+		);
+	inspect({ id: before.id, action, frameBounds: before.bounds });
 	await new Promise((resolve) => setTimeout(resolve, 500));
 }
 const after = capture(inspect({ id: before.id }), "after.png");

@@ -34,7 +34,7 @@ mobileSimulator.list = async () => ({
 			name: "iPhone (iPhone Mirroring)",
 			runtime: "iPhone Mirroring",
 			state: "ready",
-			capabilities: ["capture", "home", "recents"],
+			capabilities: ["capture", "home", "recents", "foreground_tap"],
 		},
 	],
 	unavailable: [],
@@ -44,7 +44,14 @@ mobileSimulator.capture = async () => ({
 	width: 390,
 	height: 844,
 });
-mobileSimulator.act = async () => {};
+const actions: {
+	target: Parameters<typeof mobileSimulator.act>[0];
+	action: Parameters<typeof mobileSimulator.act>[1];
+}[] = [];
+Object.assign(window, { __iphoneFixtureActions: actions });
+mobileSimulator.act = async (target, action) => {
+	actions.push({ target, action });
+};
 mobileSimulator.liveStart = async () => {
 	throw new Error("A physical phone must not use the simulator lease");
 };

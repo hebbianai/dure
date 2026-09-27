@@ -36,6 +36,7 @@ pub enum Capability {
     Install,
     Launch,
     Gesture,
+    ForegroundTap,
     Type,
     Paste,
     Key,
@@ -130,6 +131,8 @@ pub enum Action {
         end: Point,
         width: u32,
         height: u32,
+        #[serde(default)]
+        foreground: bool,
     },
 }
 
@@ -667,6 +670,7 @@ fn action_args(target: &Target, action: Action) -> Result<Vec<String>, String> {
             end,
             width,
             height,
+            ..
         } if !ios => {
             if png_dimensions(&capture(target)?)? != (width, height) {
                 return Err(

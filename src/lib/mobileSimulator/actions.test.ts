@@ -82,7 +82,7 @@ function fixture() {
 	return { input, actions: mobilePaneActions(input) };
 }
 
-it("refuses unproven physical iPhone input and dispatches only Home or App Switcher", async () => {
+it("requires explicit foreground opt-in for physical taps and refuses unproven input", async () => {
 	const { input } = fixture();
 	const target = {
 		platform: "ios",
@@ -114,6 +114,26 @@ it("refuses unproven physical iPhone input and dispatches only Home or App Switc
 		[{ kind: "button", button: "home" }],
 		[{ kind: "button", button: "recents" }],
 	]);
+	expect(
+		(
+			await actions["mobile.tap"]({
+				...args,
+				x: 0.3,
+				y: 0.2,
+				width: 700,
+				height: 1558,
+				foreground: true,
+			})
+		).outcome,
+	).toBe("applied");
+	expect(input.act).toHaveBeenLastCalledWith({
+		kind: "gesture",
+		start: { x: 0.3, y: 0.2 },
+		end: { x: 0.3, y: 0.2 },
+		width: 700,
+		height: 1558,
+		foreground: true,
+	});
 });
 
 it("refuses hidden iOS preview and gestures with exact Space recovery instructions", async () => {

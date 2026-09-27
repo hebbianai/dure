@@ -70,7 +70,7 @@ export function mobilePaneActions(input: {
 						type: "string",
 						required: true,
 						description:
-							"JSON with kind: boot/open_native (iOS), install + path, launch + appId, open_url + url, type + ASCII text, key + enter/tab/escape (Android), paste + Unicode text (iOS, 1–8192 UTF-8 bytes), rotate + landscape boolean, button + home/back/recents, gesture + start/end {x,y} normalized 0..1 and width/height from mobile.capture. iOS simulator touch/text/home/rotation requires an enabled live connection. Physical iPhone Mirroring supports capture and home/recents only; inspect mobile.status capabilities. Long operations may outlast the request; inspect mobile.status and never automatically replay.",
+							"JSON with kind: boot/open_native (iOS), install + path, launch + appId, open_url + url, type + ASCII text, key + enter/tab/escape (Android), paste + Unicode text (iOS, 1–8192 UTF-8 bytes), rotate + landscape boolean, button + home/back/recents, gesture + start/end {x,y} normalized 0..1 and width/height from mobile.capture. iOS simulator touch/text/home/rotation requires an enabled live connection. Physical iPhone Mirroring supports capture, home/recents and taps with explicit foreground:true (briefly brings Apple’s window forward). Swipes and typing are unsupported; inspect mobile.status capabilities. Long operations may outlast the request; inspect mobile.status and never automatically replay.",
 					},
 				},
 			},

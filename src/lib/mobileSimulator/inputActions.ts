@@ -49,11 +49,12 @@ export function mobileInputActions(input: {
 					!(
 						operation.kind === "button" &&
 						["home", "recents"].includes(operation.button)
-					)
+					) &&
+					!(operation.kind === "gesture" && operation.foreground === true)
 				)
 					return mobileRefusal(
 						"mobile_action_unsupported",
-						"iPhone Mirroring supports preview, Home and App Switcher only. Use Apple's window directly for touch or typing.",
+						"iPhone Mirroring taps require foreground=true and briefly bring Apple's window forward. Typing, keys and app management are unavailable.",
 					);
 				if (operation.kind === "key" && input.target.platform !== "android")
 					return mobileRefusal(
@@ -107,6 +108,7 @@ export function mobileInputActions(input: {
 		end,
 		width: Number(args.width),
 		height: Number(args.height),
+		...(args.foreground === true ? { foreground: true } : {}),
 	});
 	return {
 		"mobile.boot": command(
@@ -163,8 +165,17 @@ export function mobileInputActions(input: {
 			(args) => ({ kind: "rotate", landscape: Boolean(args.landscape) }),
 		),
 		"mobile.tap": command(
-			"Tap normalized x/y (0..1) with width/height from mobile.capture; stale orientation is refused. iOS simulators require ready live mode. Physical iPhone touch is unavailable.",
-			{ ...dimensions, x: coordinate, y: coordinate },
+			"Tap normalized x/y (0..1) with width/height from mobile.capture; stale orientation is refused. iOS simulators require ready live mode. Physical iPhone taps require explicit foreground=true, which briefly brings iPhone Mirroring forward.",
+			{
+				...dimensions,
+				x: coordinate,
+				y: coordinate,
+				foreground: {
+					type: "boolean",
+					description:
+						"Explicitly allow iPhone Mirroring to come forward for this tap, then restore previous focus unless the user switches apps.",
+				},
+			},
 			(args) => gesture(args, { x: Number(args.x), y: Number(args.y) }),
 		),
 		"mobile.swipe": command(

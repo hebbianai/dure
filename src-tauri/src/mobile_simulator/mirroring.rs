@@ -71,7 +71,12 @@ pub(super) fn devices() -> Result<Vec<Device>, String> {
             "unavailable"
         }
         .into(),
-        capabilities: vec![Capability::Capture, Capability::Home, Capability::Recents],
+        capabilities: vec![
+            Capability::Capture,
+            Capability::Home,
+            Capability::Recents,
+            Capability::ForegroundTap,
+        ],
         detail: if !observed.ready {
             Some("Connect your locked, nearby iPhone in iPhone Mirroring and finish authentication, then refresh devices.".into())
         } else {
@@ -118,10 +123,28 @@ pub(super) fn capture(target: &Target) -> Result<Vec<u8>, String> {
 }
 
 pub(super) fn act(target: &Target, action: &Action) -> Result<(), String> {
-    if !matches!(action, Action::Button { button } if button == "home" || button == "recents") {
-        return Err("iPhone Mirroring supports preview, Home and App Switcher only. Use Apple's window for touch or typing; app installation and launch are unavailable.".into());
+    let mut request = serde_json::json!({"id": target.id, "action": action});
+    match action {
+        Action::Button { button } if button == "home" || button == "recents" => {}
+        Action::Gesture { start, end, width, height, foreground } => {
+            if !foreground {
+                return Err("Physical iPhone taps require explicit foreground=true; iPhone Mirroring briefly comes forward.".into());
+            }
+            for (value, size) in [(start.x, *width), (start.y, *height), (end.x, *width), (end.y, *height)] {
+                pixel(value, size)?;
+            }
+            if (start.x - end.x).abs() + (start.y - end.y).abs() >= 0.01 {
+                return Err("Physical iPhone swipes are not supported; use a tap or Apple's window.".into());
+            }
+            let observed = invoke(serde_json::json!({"id": target.id}))?;
+            if png_dimensions(&capture(target)?)? != (*width, *height) {
+                return Err("iPhone view changed; capture a fresh screenshot before tapping".into());
+            }
+            request["frameBounds"] = serde_json::to_value(observed.bounds).map_err(|e| e.to_string())?;
+        }
+        _ => return Err("iPhone Mirroring supports preview, Home, App Switcher and explicitly enabled foreground taps. Typing, keys, app installation and launch are unavailable.".into()),
     }
-    invoke(serde_json::json!({"id": target.id, "action": action}))?;
+    invoke(request)?;
     Ok(())
 }
 

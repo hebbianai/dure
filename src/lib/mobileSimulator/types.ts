@@ -13,6 +13,7 @@ export type MobileCapability =
 	| "install"
 	| "launch"
 	| "gesture"
+	| "foreground_tap"
 	| "type"
 	| "paste"
 	| "key"
@@ -61,6 +62,7 @@ export type MobileDeviceAction =
 			end: { x: number; y: number };
 			width: number;
 			height: number;
+			foreground?: boolean;
 	  };
 
 export interface MobileDiagnosticReport {

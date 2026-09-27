@@ -51,6 +51,31 @@ try {
 			),
 			false,
 		);
+		const count = await page.evaluate(
+			() => window.__iphoneFixtureActions.length,
+		);
+		const phone = page.getByRole("img", {
+			name: "iPhone (iPhone Mirroring) screen",
+		});
+		await phone.click();
+		assert.equal(
+			await page.evaluate(() => window.__iphoneFixtureActions.length),
+			count,
+		);
+		const optIn = page.getByRole("checkbox", { name: /Enable taps/ });
+		assert.equal(await optIn.isChecked(), false);
+		await optIn.check();
+		await phone.click();
+		await page.waitForFunction(
+			() => window.__iphoneFixtureActions.at(-1)?.action.kind === "gesture",
+		);
+		const sent = await page.evaluate(() =>
+			window.__iphoneFixtureActions.at(-1),
+		);
+		assert.equal(sent.target.transport, "iphone_mirroring");
+		assert.equal(sent.action.foreground, true);
+		assert.deepEqual(sent.action.start, sent.action.end);
+		await optIn.uncheck();
 		await page.screenshot({ path: resolve(output, `${width}px.png`) });
 	}
 	assert.deepEqual(errors, []);

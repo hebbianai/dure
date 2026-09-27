@@ -110,6 +110,7 @@ export function MobileSimulatorPanel(
 		() => new MobileLiveObserver(mobileSimulator),
 	);
 	const [autoRefresh, setAutoRefresh] = useState(false);
+	const [foregroundControl, setForegroundControl] = useState(false);
 	const [revision, setRevision] = useState(0);
 	const [url, setUrl] = useState("");
 	const selection = target ? mobileDeviceKey(target) : "";
@@ -132,6 +133,9 @@ export function MobileSimulatorPanel(
 	const supports = (capability: (typeof capabilities)[number]) =>
 		capabilities.includes(capability);
 	const inputReady = ready && (!isIosSimulator(target) || live);
+	const gestureReady =
+		inputReady &&
+		(supports("gesture") || (supports("foreground_tap") && foregroundControl));
 	const currentFrame = useRef(frame);
 	currentFrame.current = frame;
 	const mounted = useRef(true);
@@ -302,6 +306,7 @@ export function MobileSimulatorPanel(
 	}
 	function chooseTarget(next: MobileDeviceTarget | null) {
 		if (isOperating()) return;
+		setForegroundControl(false);
 		setTarget(next);
 		setError(undefined);
 		setAutoRefresh(false);
@@ -363,6 +368,7 @@ export function MobileSimulatorPanel(
 					deviceState: selected?.state,
 					deviceKind: selected?.kind,
 					capabilities,
+					foregroundControl,
 					detail: selected?.detail,
 					preview: {
 						viewingAngle: projection.landscape ? "landscape" : "portrait",
@@ -422,6 +428,7 @@ export function MobileSimulatorPanel(
 			autoRefresh,
 			active,
 			selected,
+			foregroundControl,
 			agents,
 			projection,
 		],
@@ -555,6 +562,17 @@ export function MobileSimulatorPanel(
 				<p className="shrink-0 border-b px-3 py-2 text-xs text-muted-foreground">
 					{t("panels.mobile.mirroringHelp")}
 				</p>
+			)}
+			{supports("foreground_tap") && (
+				<label className="flex shrink-0 items-start gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
+					<input
+						type="checkbox"
+						checked={foregroundControl}
+						disabled={!ready || busy}
+						onChange={(event) => setForegroundControl(event.target.checked)}
+					/>
+					{t("panels.mobile.foregroundControl")}
+				</label>
 			)}
 			{selected?.detail && (
 				<p
@@ -711,16 +729,10 @@ export function MobileSimulatorPanel(
 						className="max-h-full max-w-full select-none rounded-lg object-contain"
 						draggable={false}
 						style={{
-							touchAction: inputReady && supports("gesture") ? "none" : "auto",
+							touchAction: gestureReady ? "none" : "auto",
 						}}
 						onPointerDown={(event) => {
-							if (
-								!inputReady ||
-								!supports("gesture") ||
-								busy ||
-								event.button !== 0
-							)
-								return;
+							if (!gestureReady || busy || event.button !== 0) return;
 							const start = mobileFramePoint(
 								event.currentTarget.getBoundingClientRect(),
 								event.clientX,
@@ -754,6 +766,9 @@ export function MobileSimulatorPanel(
 									end,
 									width: down.width,
 									height: down.height,
+									...(target?.transport === "iphone_mirroring"
+										? { foreground: foregroundControl }
+										: {}),
 								});
 						}}
 					/>

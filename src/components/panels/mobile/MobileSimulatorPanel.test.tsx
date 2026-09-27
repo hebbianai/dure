@@ -351,7 +351,7 @@ it("previews a physical iPhone without a simulator lease and exposes only its su
 				runtime: "iPhone Mirroring",
 				kind: "physical",
 				state: "ready",
-				capabilities: ["capture", "home", "recents"],
+				capabilities: ["capture", "home", "recents", "foreground_tap"],
 			},
 		],
 		unavailable: [],
@@ -361,6 +361,13 @@ it("previews a physical iPhone without a simulator lease and exposes only its su
 		expect(mobileSimulator.capture).toHaveBeenCalledWith(phone),
 	);
 	expect(mobileSimulator.liveStart).not.toHaveBeenCalled();
+	const control = screen.getByRole("checkbox", {
+		name: t("panels.mobile.foregroundControl"),
+	});
+	expect((control as HTMLInputElement).checked).toBe(false);
+	fireEvent.click(control);
+	expect((control as HTMLInputElement).checked).toBe(true);
+	expect(mobileSimulator.act).not.toHaveBeenCalled();
 	expect(screen.queryByText(t("panels.mobile.live"))).toBeNull();
 	expect(screen.queryByText(t("panels.mobile.rotate"))).toBeNull();
 	expect(screen.queryByText(t("panels.mobile.paste"))).toBeNull();
