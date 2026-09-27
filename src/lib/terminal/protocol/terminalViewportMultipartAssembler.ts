@@ -1,9 +1,9 @@
 import { create } from "@bufbuild/protobuf";
+import { TerminalStateRecordSchema } from "../../../contracts/terminalStateProtocol";
 import {
 	type TerminalDecodeDiagnostic,
 	TerminalStateProtocolError,
 } from "./terminalStateLimits";
-import { TerminalStateRecordSchema } from "../../../contracts/terminalStateProtocol";
 import {
 	type DecodedTerminalStateRecord,
 	decodeTerminalStateRecord,
@@ -69,10 +69,15 @@ class BoundedTerminalViewportMultipartAssembler
 			decoded = decodeTerminalStateRecord(encoded, this.viewportFrames);
 		} catch (cause) {
 			return {
-				...this.resync(cause instanceof Error
-					? cause.message : "terminal state record could not be decoded"),
-				...(cause instanceof TerminalStateProtocolError && cause.decodeDiagnostic
-					? { decodeDiagnostic: cause.decodeDiagnostic } : {}),
+				...this.resync(
+					cause instanceof Error
+						? cause.message
+						: "terminal state record could not be decoded",
+				),
+				...(cause instanceof TerminalStateProtocolError &&
+				cause.decodeDiagnostic
+					? { decodeDiagnostic: cause.decodeDiagnostic }
+					: {}),
 			};
 		}
 		const delivery = this.pushDecoded(decoded);

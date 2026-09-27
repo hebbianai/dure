@@ -5,8 +5,8 @@ import {
 	type ViewportFrame,
 	ViewportFrameSchema,
 } from "../../../contracts/terminalStateProtocol";
-import type { TerminalViewportFrameBinaryDecoder } from "./terminalStateProtocol";
 import { readTerminalProtobuf } from "./readTerminalProtobuf";
+import type { TerminalViewportFrameBinaryDecoder } from "./terminalStateProtocol";
 
 interface CachedTerminalRow {
 	readonly bytes: Uint8Array;

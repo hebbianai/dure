@@ -1,15 +1,43 @@
 import { describe, expect, it } from "vitest";
 import { decodeTerminalStateRecord } from "../protocol/terminalStateProtocol";
-import { encodeTerminalDefaultColorsIntent, encodeTerminalViewportFollowTailIntent } from "./terminalViewportIntent";
+import {
+	encodeTerminalDefaultColorsIntent,
+	encodeTerminalViewportFollowTailIntent,
+} from "./terminalViewportIntent";
 
 it("fences return-to-bottom as a viewport intent, not terminal input", () => {
-	const decoded = decodeTerminalStateRecord(encodeTerminalViewportFollowTailIntent(18n,
-		{ schemaMinor: 4, terminalEpoch: "terminal-a", throughOutputSeq: 9n, stateRevision: 11n },
-		{ attachmentId: "attachment-a", observedProjectionRevision: 13n, intentSeq: 4n },
-	));
-	expect(decoded.metadata).toMatchObject({ recordId: 18n, kind: "viewport_intent" });
-	expect(decoded.record).toMatchObject({ terminalEpoch: "terminal-a", throughOutputSeq: 9n, stateRevision: 11n,
-		body: { case: "viewportIntent", value: { observedProjectionRevision: 13n, intentSeq: 4n, intent: { case: "followTail" } } },
+	const decoded = decodeTerminalStateRecord(
+		encodeTerminalViewportFollowTailIntent(
+			18n,
+			{
+				schemaMinor: 4,
+				terminalEpoch: "terminal-a",
+				throughOutputSeq: 9n,
+				stateRevision: 11n,
+			},
+			{
+				attachmentId: "attachment-a",
+				observedProjectionRevision: 13n,
+				intentSeq: 4n,
+			},
+		),
+	);
+	expect(decoded.metadata).toMatchObject({
+		recordId: 18n,
+		kind: "viewport_intent",
+	});
+	expect(decoded.record).toMatchObject({
+		terminalEpoch: "terminal-a",
+		throughOutputSeq: 9n,
+		stateRevision: 11n,
+		body: {
+			case: "viewportIntent",
+			value: {
+				observedProjectionRevision: 13n,
+				intentSeq: 4n,
+				intent: { case: "followTail" },
+			},
+		},
 	});
 });
 

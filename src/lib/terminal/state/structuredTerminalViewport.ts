@@ -5,8 +5,8 @@ import type {
 	ViewportFrame,
 	WheelReceipt,
 } from "@/contracts/terminalStateProtocol";
-import type { TerminalInputFence } from "./terminalInputIntent";
 import type { DecodedTerminalStateRecord } from "../protocol/terminalStateProtocol";
+import type { TerminalInputFence } from "./terminalInputIntent";
 import {
 	createTerminalViewportFrameReplica,
 	reduceTerminalViewportFrame,

@@ -5,6 +5,7 @@ import {
 	TerminalStateRecordSchema,
 	type ViewportFrame,
 } from "../../../contracts/terminalStateProtocol";
+import { readTerminalProtobuf } from "./readTerminalProtobuf";
 import {
 	TERMINAL_STATE_ENVELOPE_HEADER_BYTES,
 	TERMINAL_STATE_MAX_ENVELOPE_BYTES,
@@ -19,7 +20,6 @@ import {
 	validateTerminalInputIngress,
 	validateTerminalSurfaceRecord,
 } from "./terminalStateSemanticValidation";
-import { readTerminalProtobuf } from "./readTerminalProtobuf";
 
 export * from "./terminalStateLimits";
 export { validateTerminalInputIngress } from "./terminalStateSemanticValidation";
@@ -168,7 +168,10 @@ export function decodeTerminalStateRecord(
 			: undefined;
 		if (viewport && viewportFrameDecoder) {
 			stage = "record_metadata";
-			record = readTerminalProtobuf(TerminalStateRecordSchema, viewport.metadata);
+			record = readTerminalProtobuf(
+				TerminalStateRecordSchema,
+				viewport.metadata,
+			);
 			stage = "viewport";
 			stagedViewport = true;
 			record.body = {
@@ -182,9 +185,14 @@ export function decodeTerminalStateRecord(
 		if (stagedViewport) viewportFrameDecoder?.discard();
 		// Preserve bounded, content-free evidence. Decoder exception messages
 		// and payload bytes are deliberately excluded from diagnostics.
-		const causeType = cause instanceof RangeError ? "RangeError"
-			: cause instanceof TypeError ? "TypeError"
-			: cause instanceof Error ? "Error" : "unknown";
+		const causeType =
+			cause instanceof RangeError
+				? "RangeError"
+				: cause instanceof TypeError
+					? "TypeError"
+					: cause instanceof Error
+						? "Error"
+						: "unknown";
 		throw new TerminalStateProtocolError(
 			"invalid_protobuf",
 			`terminal state protobuf could not be decoded (stage=${stage}, cause=${causeType})`,

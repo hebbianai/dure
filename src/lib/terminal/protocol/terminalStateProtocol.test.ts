@@ -80,7 +80,10 @@ describe("TerminalSurface binary protocol", () => {
 			decodeTerminalStateRecord(corrupt);
 			expect.fail("Truncated protobuf was accepted");
 		} catch (cause) {
-			expect(cause).toMatchObject({ code: "invalid_protobuf", decodeDiagnostic: { stage: "record", causeType: "RangeError" } });
+			expect(cause).toMatchObject({
+				code: "invalid_protobuf",
+				decodeDiagnostic: { stage: "record", causeType: "RangeError" },
+			});
 		}
 		expect(decodeTerminalStateRecord(valid).record.body.case).toBe("event");
 	});

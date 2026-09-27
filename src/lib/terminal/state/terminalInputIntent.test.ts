@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PointerKind } from "@/contracts/terminalStateProtocol";
+import { decodeTerminalStateRecord } from "../protocol/terminalStateProtocol";
 import {
 	encodeTerminalKeyIntent,
 	encodeTerminalPasteIntent,
@@ -8,7 +9,6 @@ import {
 	encodeTerminalViewportWheelIntent,
 	shouldSendTerminalKey,
 } from "./terminalInputIntent";
-import { decodeTerminalStateRecord } from "../protocol/terminalStateProtocol";
 
 const fence = {
 	schemaMinor: 2,
