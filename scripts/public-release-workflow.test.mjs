@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +7,55 @@ import YAML from "yaml";
 
 const workflow = YAML.parse(
   fs.readFileSync(".github/workflows/release.yml", "utf8"),
+);
+
+test.each([true, false])(
+  "full verification stages the native library before Cargo checks (input present: %s)",
+  (inputPresent) => {
+    const steps = workflow.jobs.verification.steps;
+    const stage = steps.find((step) => step.name === "Stage macOS native library");
+    expect(stage).toBeDefined();
+    expect(steps.indexOf(stage)).toBeGreaterThan(
+      steps.findIndex((step) => step.name === "Install pinned dependencies"),
+    );
+    expect(steps.indexOf(stage)).toBeLessThan(
+      steps.findIndex((step) => step.run === "corepack pnpm verify:release"),
+    );
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-release-native-"));
+    try {
+      const scripts = path.join(root, "scripts");
+      const packageRoot = path.join(root, "node_modules", "serve-sim");
+      const native = path.join(packageRoot, "dist", "native");
+      fs.mkdirSync(scripts);
+      fs.mkdirSync(native, { recursive: true });
+      fs.copyFileSync("scripts/stage-mobile-runtime.mjs", path.join(scripts, "stage-mobile-runtime.mjs"));
+      fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({
+        name: "serve-sim", type: "module", exports: { "./middleware": "./dist/middleware.mjs" },
+      }));
+      fs.writeFileSync(path.join(packageRoot, "dist", "middleware.mjs"), "");
+      const source = path.join(native, "serve-sim-native.node");
+      const bytes = Buffer.from([0, 1, 2, 127, 255]);
+      if (inputPresent) fs.writeFileSync(source, bytes, { mode: 0o444 });
+      const result = spawnSync(stage.run, {
+        cwd: root,
+        shell: true,
+        env: { HOME: root, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}` },
+        encoding: "utf8",
+      });
+      const library = path.join(root, "src-tauri", "resources", "mobile-runtime", "serve-sim-native.dylib");
+      if (inputPresent) {
+        expect(result.status, result.stderr).toBe(0);
+        expect(fs.readFileSync(library)).toEqual(bytes);
+        expect(fs.readFileSync(source)).toEqual(bytes);
+        expect(fs.statSync(library).ino).not.toBe(fs.statSync(source).ino);
+      } else {
+        expect(result.status).not.toBe(0);
+        expect(fs.existsSync(library)).toBe(false);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
 );
 
 test.each(["verification", "build"])(
