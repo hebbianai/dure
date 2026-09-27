@@ -37,11 +37,10 @@ fn prepare(root: &Path, request: &ManagedCreateRequest, completed: bool) {
         panic!("fixture must start pending")
     };
     if completed {
-        let target = crate::managed_replacement_root_request(request).unwrap();
         operation
             .complete(RecoveryCompletion {
-                target_session_id: target.session_id().into(),
-                target_workspace_id: target.workspace_id().into(),
+                target_session_id: "fixture-replacement-target".into(),
+                target_workspace_id: request.workspace_id().into(),
                 target_build_id: "fixture-build".into(),
                 action: ACTION.into(),
                 outcome: "replaced".into(),
@@ -78,6 +77,7 @@ fn pending_replay_preserves_all_inputs_but_completed_replay_keeps_only_identity(
             original.clone()
         };
         assert_eq!(resolved, expected);
+        #[cfg(feature = "local-runtime")]
         assert_eq!(
             crate::managed_replacement_root_request(&resolved)
                 .unwrap()

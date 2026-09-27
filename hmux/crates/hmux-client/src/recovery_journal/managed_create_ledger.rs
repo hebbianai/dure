@@ -12154,6 +12154,8 @@ mod tests {
                 .exists()
         );
         for _ in 0..2 {
+            assert_eq!(observe().unwrap(), expected);
+            #[cfg(feature = "local-runtime")]
             assert_eq!(
                 crate::LocalSessionCatalog::new(root.path())
                     .read_managed_session_retirement("session-1", "workspace-1")
@@ -12186,6 +12188,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "local-runtime")]
     #[test]
     fn session_retirement_observation_refuses_competing_final_and_unfinished_owners() {
         let canonical = secure_root();

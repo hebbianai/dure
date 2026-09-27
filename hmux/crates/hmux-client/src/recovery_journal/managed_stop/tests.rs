@@ -1,16 +1,7 @@
 use super::*;
 use crate::LocalSessionCatalog;
+use crate::recovery_journal::tests::private_root;
 use hmux_runtime_contract::ManagedStopOutcome;
-
-fn private_root() -> tempfile::TempDir {
-    let root = tempfile::tempdir().unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    root
-}
 
 fn request() -> ManagedStopRequest {
     ManagedStopRequest::new("stop-1", "session-1", "workspace-1")

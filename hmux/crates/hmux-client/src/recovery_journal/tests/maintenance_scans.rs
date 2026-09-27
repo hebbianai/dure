@@ -11,7 +11,7 @@ fn mixed_quota_admission_stops_when_remaining_records_cannot_fill_its_quota() {
             MAX_MANAGED_STOP_OPERATION_RECORDS,
         ),
     ] {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_root();
         for (kind, count) in [
             (TEST_ACTION, general),
             (MANAGED_STOP_RECOVERY_ACTION, stops),
@@ -84,7 +84,7 @@ fn stop_below_its_own_quota_does_not_read_historical_payloads() {
         MAX_GENERAL_OPERATION_RECORDS,
         MAX_MANAGED_STOP_OPERATION_RECORDS - 1,
     ] {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_root();
         for index in 0..count {
             write_reserved_record_fixture_for_action(
                 temp.path(),
@@ -116,7 +116,7 @@ fn stop_below_its_own_quota_does_not_read_historical_payloads() {
 
 #[test]
 fn mixed_quota_last_slot_is_serialized_across_admissions() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_root();
     for (action, count) in [
         ("another-general-action", MAX_GENERAL_OPERATION_RECORDS - 1),
         (
@@ -166,7 +166,7 @@ fn mixed_quota_last_slot_is_serialized_across_admissions() {
 #[test]
 fn quota_payload_validation_precedes_any_retirement() {
     for malformed in [true, false] {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_root();
         let directory = temp.path().join(".recovery");
         for index in 0..MAX_GENERAL_OPERATION_RECORDS - 1 {
             write_reserved_record_fixture(
@@ -244,7 +244,7 @@ fn quota_payload_validation_precedes_any_retirement() {
 #[test]
 fn quota_witness_requires_valid_content_and_path_binding_before_early_exit() {
     for malformed in [true, false] {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = private_root();
         let directory = temp.path().join(".recovery");
         for index in 0..MAX_GENERAL_OPERATION_RECORDS {
             write_reserved_record_fixture_for_action(
@@ -308,7 +308,7 @@ fn quota_witness_requires_valid_content_and_path_binding_before_early_exit() {
 
 #[test]
 fn general_pressure_admission_enumerates_once_before_retirement() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_root();
     let directory = temp.path().join(".recovery");
     for index in 0..MAX_GENERAL_OPERATION_RECORDS - 2 {
         write_reserved_record_fixture(
@@ -388,7 +388,7 @@ fn general_pressure_admission_enumerates_once_before_retirement() {
 
 #[test]
 fn stop_pressure_admission_reads_records_once_and_preserves_other_operations() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_root();
     let directory = temp.path().join(".recovery");
     write_reserved_record_fixture_for_action(
         temp.path(),
@@ -468,7 +468,7 @@ fn stop_pressure_admission_reads_records_once_and_preserves_other_operations() {
 #[cfg(feature = "local-runtime")]
 #[test]
 fn state_gc_reads_one_fresh_snapshot_per_admission() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_root();
     write_reserved_record_fixture(temp.path(), "fresh-scan", "workspace-1", "source-1");
     let scans = JOURNAL_SCAN_COUNT.get();
     let reads = RECORD_READ_COUNT.get();
@@ -489,7 +489,7 @@ fn state_gc_reads_one_fresh_snapshot_per_admission() {
 
 #[test]
 fn stop_pressure_preserves_locked_receipts_and_validates_before_retirement() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_root();
     let directory = temp.path().join(".recovery");
     for index in 0..MAX_MANAGED_STOP_OPERATION_RECORDS - 1 {
         write_reserved_record_fixture_for_action(
@@ -555,7 +555,7 @@ fn stop_pressure_preserves_locked_receipts_and_validates_before_retirement() {
 
 #[test]
 fn overflow_scan_drops_all_payloads_but_still_validates_every_record() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_root();
     for index in 0..3 {
         write_reserved_record_fixture(
             temp.path(),
@@ -630,7 +630,7 @@ fn overflow_maintenance_rescans_before_returning_authoritative_records() {
 
 #[test]
 fn action_gc_at_stop_capacity_reads_each_snapshot_once() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = private_root();
     let directory = temp.path().join(".recovery");
     let pending_id = "stop-pending";
     write_reserved_record_fixture_for_action(

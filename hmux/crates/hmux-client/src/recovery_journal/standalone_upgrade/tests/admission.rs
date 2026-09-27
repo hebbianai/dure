@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn a_bound_request_cannot_be_admitted_under_another_operation_id() {
     for action in [CURRENT_BUILD_ACTION, SELECTED_BUILD_ACTION] {
-        let root = tempfile::tempdir().unwrap();
+        let root = private_root();
         let checkpoint = checkpoint(serde_json::json!({"runtime": "/selected/runtime"}));
         let mut prepared: PreparedStandaloneUpgrade<serde_json::Value> =
             PreparedStandaloneUpgrade::read(&checkpoint).unwrap();
@@ -250,15 +250,15 @@ fn fresh_candidate(
 
 #[test]
 fn concurrent_consumers_publish_exactly_one_source_owner() {
-    let root = tempfile::tempdir().unwrap();
+    let root = private_root();
     assert_concurrent_admission(root.path(), [root.path(), root.path()]);
 }
 
 #[test]
 fn concurrent_distinct_destinations_share_the_original_source_admission() {
-    let source = tempfile::tempdir().unwrap();
-    let first = tempfile::tempdir().unwrap();
-    let second = tempfile::tempdir().unwrap();
+    let source = private_root();
+    let first = private_root();
+    let second = private_root();
     assert_concurrent_admission(source.path(), [first.path(), second.path()]);
     for target in [first.path(), second.path()] {
         assert_eq!(
@@ -323,7 +323,7 @@ fn assert_concurrent_admission(root: &std::path::Path, destinations: [&std::path
 
 #[test]
 fn already_current_observation_does_not_claim_a_replacement_source() {
-    let root = tempfile::tempdir().unwrap();
+    let root = private_root();
     let (identity, payload) = fresh_candidate(root.path(), CURRENT_BUILD_ACTION);
     let mut payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
     payload["replacement"] = serde_json::Value::Null;
