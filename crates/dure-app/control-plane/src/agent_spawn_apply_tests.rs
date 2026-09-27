@@ -1399,14 +1399,29 @@ async fn launch_argument_prompt_never_crosses_the_pty_delivery_path() {
 }
 
 #[tokio::test]
-async fn oversized_launch_argument_prompt_falls_back_to_the_pty_delivery_path() {
+async fn launch_argument_prompt_enforces_the_current_byte_boundary() {
     let root = tempfile::tempdir().unwrap();
     let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
         .await
         .unwrap();
-    let prompt = "x".repeat(4097);
+    let prompt = "x".repeat(16 * 1024);
     let planned = planned_prompt_spawn_for(&store, &prompt).await;
     let body = apply_body(&planned, &prompt);
+    let oversized_body = apply_body(&planned, &format!("{prompt}x"));
+    assert_eq!(
+        authorize(&store, "dure-local", &oversized_body)
+            .await
+            .unwrap_err(),
+        "agent_spawn_apply_request_invalid"
+    );
+    assert_eq!(
+        store
+            .agent_spawn_receipt(&planned.plan.operation_id)
+            .await
+            .unwrap()
+            .unwrap(),
+        planned
+    );
     let launcher = RecordingLauncher::default();
     let prompt_calls = Arc::new(AtomicUsize::new(0));
     let prompt_deliverer = FixturePromptDeliverer {
@@ -1430,12 +1445,15 @@ async fn oversized_launch_argument_prompt_falls_back_to_the_pty_delivery_path() 
     .unwrap();
 
     assert_eq!(succeeded.state, AgentSpawnJournalStateV1::Succeeded);
-    assert_eq!(*launcher.initial_prompts.lock().unwrap(), vec![None]);
-    assert_eq!(prompt_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *launcher.initial_prompts.lock().unwrap(),
+        vec![Some(prompt)]
+    );
+    assert_eq!(prompt_calls.load(Ordering::SeqCst), 0);
     assert!(succeeded.completed.iter().any(|stage| matches!(
         stage.evidence,
         AgentSpawnStageEvidenceV1::RuntimeLaunch {
-            initial_prompt_accepted: false,
+            initial_prompt_accepted: true,
             ..
         }
     )));
