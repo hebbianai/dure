@@ -6,6 +6,14 @@ mod resume_publication_failure_tests;
 
 use recorded_rehost_fixture::record_completion;
 
+// Keep the dispatcher future out of long scenarios' retained async state.
+fn dispatch_on_heap<'a>(
+    state: &'a ServiceState,
+    request: &'a BackendRequest,
+) -> impl std::future::Future<Output = Result<Value, BackendDispatchError>> + 'a {
+    Box::pin(super::dispatch(state, request))
+}
+
 fn runtime_transition_target_authority(
     agent_id: &AgentIdV1,
     session: &WorkflowSessionGenerationV1,
@@ -2328,7 +2336,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
     )
     .unwrap();
     final_record.replace(&wrong_launch_request, &wrong_launch_receipt);
-    let wrong_launch_error = dispatch(&state, &native_rehost_request(&state, body.clone()))
+    let wrong_launch_error = dispatch_on_heap(&state, &native_rehost_request(&state, body.clone()))
         .await
         .unwrap_err();
     assert_eq!(
@@ -2370,7 +2378,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
     .execute(&fault_pool)
     .await
     .unwrap();
-    let unavailable_error = dispatch(&state, &native_rehost_request(&state, body.clone()))
+    let unavailable_error = dispatch_on_heap(&state, &native_rehost_request(&state, body.clone()))
         .await
         .unwrap_err();
     assert_eq!(
@@ -2563,9 +2571,10 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
     .execute(&repair_fault_pool)
     .await
     .unwrap();
-    let repair_commit_error = dispatch(&state, &native_rehost_request(&state, first_body.clone()))
-        .await
-        .unwrap_err();
+    let repair_commit_error =
+        dispatch_on_heap(&state, &native_rehost_request(&state, first_body.clone()))
+            .await
+            .unwrap_err();
     assert_eq!(
         repair_commit_error.code,
         "agent_runtime_native_rehost_store_failed"
@@ -2585,7 +2594,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
         .unwrap();
     repair_fault_pool.close().await;
 
-    let first_response = dispatch(&state, &native_rehost_request(&state, first_body))
+    let first_response = dispatch_on_heap(&state, &native_rehost_request(&state, first_body))
         .await
         .unwrap();
     assert_eq!(first_response["receipt"]["selectionRevision"], 2);
@@ -2684,9 +2693,10 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
     )
     .unwrap();
     first_record.replace(&first_request, &mismatched_prefix);
-    let mismatched_prefix_error = dispatch(&state, &native_rehost_request(&state, body.clone()))
-        .await
-        .unwrap_err();
+    let mismatched_prefix_error =
+        dispatch_on_heap(&state, &native_rehost_request(&state, body.clone()))
+            .await
+            .unwrap_err();
     assert_eq!(
         mismatched_prefix_error.code,
         "agent_runtime_native_rehost_conflict"
@@ -2854,7 +2864,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
         "sourceSessionId": final_request.source().session_id(),
         "sourceWorkspaceId": final_request.source().workspace_id(),
     });
-    let error = dispatch(&state, &native_rehost_request(&state, publication))
+    let error = dispatch_on_heap(&state, &native_rehost_request(&state, publication))
         .await
         .unwrap_err();
     assert_eq!(
@@ -2894,7 +2904,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
     .execute(&lineage_fault_pool)
     .await
     .unwrap();
-    let lineage_error = dispatch(&state, &native_rehost_request(&state, body.clone()))
+    let lineage_error = dispatch_on_heap(&state, &native_rehost_request(&state, body.clone()))
         .await
         .unwrap_err();
     assert_eq!(
@@ -2941,7 +2951,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
 
     let detached_profile_directory = accounts.join("codex-account-b-detached");
     fs::rename(&profile_directory, &detached_profile_directory).unwrap();
-    let response = dispatch(&state, &native_rehost_request(&state, body.clone()))
+    let response = dispatch_on_heap(&state, &native_rehost_request(&state, body.clone()))
         .await
         .unwrap();
     assert_eq!(retire_count.load(Ordering::SeqCst), 2);
@@ -3029,7 +3039,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
     fs::rename(&runtime, &detached_runtime).unwrap();
     let detached_hmux_executable = hmux_executable.with_extension("detached");
     fs::rename(&hmux_executable, &detached_hmux_executable).unwrap();
-    let replay = dispatch(&state, &native_rehost_request(&state, body.clone()))
+    let replay = dispatch_on_heap(&state, &native_rehost_request(&state, body.clone()))
         .await
         .unwrap();
     assert_eq!(replay, response);
@@ -3056,7 +3066,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
         wrong_source,
         wrong_target,
     ] {
-        let error = dispatch(&state, &native_rehost_request(&state, conflicting))
+        let error = dispatch_on_heap(&state, &native_rehost_request(&state, conflicting))
             .await
             .unwrap_err();
         assert_eq!(error.code, "agent_runtime_native_rehost_conflict");
@@ -3081,7 +3091,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
             authority
         );
     }
-    let inspected = dispatch(
+    let inspected = dispatch_on_heap(
         &state,
         &BackendRequest {
             schema_version: 1,
@@ -3257,9 +3267,10 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
             "worker-terminal-next",
         ),
     });
-    let second_response = dispatch(&state, &native_rehost_request(&state, second_body.clone()))
-        .await
-        .unwrap();
+    let second_response =
+        dispatch_on_heap(&state, &native_rehost_request(&state, second_body.clone()))
+            .await
+            .unwrap();
     assert_eq!(second_response["receipt"]["selectionRevision"], 4);
     assert_eq!(
         second_response["receipt"]["launchIdempotencyKey"],
@@ -3316,7 +3327,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
     let mut root_replay_body = second_body.clone();
     root_replay_body["source"] = body["source"].clone();
     second_record.replace(&second_request, &cp_mismatch_receipt);
-    let cp_mismatch_error = dispatch(
+    let cp_mismatch_error = dispatch_on_heap(
         &state,
         &native_rehost_request(&state, root_replay_body.clone()),
     )
@@ -3338,7 +3349,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
     );
 
     second_record.restore();
-    let root_replay = dispatch(
+    let root_replay = dispatch_on_heap(
         &state,
         &native_rehost_request(&state, root_replay_body.clone()),
     )
@@ -3349,9 +3360,10 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
 
     let mut foreign_root_replay = root_replay_body;
     foreign_root_replay["source"]["terminalEpoch"] = json!("foreign-root-terminal");
-    let foreign_root_error = dispatch(&state, &native_rehost_request(&state, foreign_root_replay))
-        .await
-        .unwrap_err();
+    let foreign_root_error =
+        dispatch_on_heap(&state, &native_rehost_request(&state, foreign_root_replay))
+            .await
+            .unwrap_err();
     assert_eq!(
         foreign_root_error.code,
         "agent_runtime_native_rehost_conflict"
@@ -3371,11 +3383,11 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
     state.store.close().await;
     state = reopen_fixture_service_state(&state, &database_path).await.0;
     fs::remove_dir_all(&profile_directory).unwrap();
-    let second_replay = dispatch(&state, &native_rehost_request(&state, second_body))
+    let second_replay = dispatch_on_heap(&state, &native_rehost_request(&state, second_body))
         .await
         .unwrap();
     assert_eq!(second_replay, second_response);
-    let inspected_again = dispatch(
+    let inspected_again = dispatch_on_heap(
         &state,
         &BackendRequest {
             schema_version: 1,

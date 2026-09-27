@@ -1173,6 +1173,7 @@ mod tests {
 
     fn assert_folder_registration_without_git(prepare: impl FnOnce(&Path)) {
         let fixture = tempdir().unwrap();
+        fs::set_permissions(fixture.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let root = fixture.path().join("folder");
         fs::create_dir(&root).unwrap();
         let root = root.canonicalize().unwrap();
