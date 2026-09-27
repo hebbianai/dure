@@ -18,7 +18,6 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readDragTypes } from "@/lib/platform/productDragPayload";
 import { ChatDraftMoveNotice } from "@/components/workspace/ChatDraftMoveNotice";
-import { BriefToasts } from "@/components/Toaster";
 import { PaneChrome } from "@/components/workspace/PaneChrome";
 import { DesktopWatermark } from "@/components/workspace/DesktopWatermark";
 import { PaneLauncher } from "@/components/workspace/PaneLauncher";
@@ -27,10 +26,7 @@ import {
   maybeAutoOpenOnboarding,
 } from "@/lib/onboarding/onboardingEntry";
 import { syncOnboardingPaneHeaders } from "@/lib/onboarding/onboardingPaneHeader";
-import {
-  useWorkspaceRuntimeActive,
-  WorkspaceRuntimeProvider,
-} from "@/components/workspace/WorkspaceRuntimeContext";
+import { WorkspaceRuntimeProvider } from "@/components/workspace/WorkspaceRuntimeContext";
 import {
   desktopConstructionPending,
   subscribeDesktopConstruction,
@@ -119,6 +115,8 @@ import {
   getTerminalExecutionLocationRevision,
   subscribeTerminalExecutionLocations,
 } from "@/lib/terminal/terminalExecutionLocationStore";
+import { activateOnPointerDown } from "./WorkspacePaneContent";
+export { activateOnPointerDown } from "./WorkspacePaneContent";
 
 // 분할된 창 사이 간격 — 시안 2070:32418은 spacing/0-5(2px)로 가른다. 선 하나가
 // 아니라 뒤 sheet 표면이 2px 드러나는 방식이라, pane마다 테두리를 그리지 않아도
@@ -126,52 +124,6 @@ import {
 // 기본값은 그 시안 값 그대로다. 테마 객체는 값이 실제로 바뀔 때만 새로
 // 만든다 — 매 렌더 새 객체를 넘기면 dockview가 테마를 다시 적용한다.
 const DEFAULT_PANE_THEME = { ...themeAbyss, gap: DEFAULT_UI_PREFS.splitterSize };
-
-/** Activate even panes whose content cannot focus (empty selectors, failed
- * connections). Capture runs before content can stop propagation; leave an
- * already-active pane mounted so WebKit can deliver the click. */
-/** The pane's own toast column, mounted only while the pane can be seen: a
- * background tab in a group and a pane on a warm or frozen desktop stay
- * mounted while hidden, and a column there would claim the pane's toasts
- * into a place nobody is looking (landing review 2026-09-13). Unmounted, the
- * claim is released and those toasts fall back to the workspace column. */
-function PaneToastColumn({ api }: { api: IDockviewPanelProps["api"] }) {
-  const [visible, setVisible] = useState(api.isVisible);
-  useEffect(() => {
-    setVisible(api.isVisible);
-    const subscription = api.onDidVisibilityChange(({ isVisible }) =>
-      setVisible(isVisible),
-    );
-    return () => subscription.dispose();
-  }, [api]);
-  const desktopActive = useWorkspaceRuntimeActive();
-  if (!visible || !desktopActive) return null;
-  return (
-    <BriefToasts paneId={api.id} className="absolute inset-x-0 bottom-4" />
-  );
-}
-
-export function activateOnPointerDown<P extends IDockviewPanelProps>(
-  Component: React.FunctionComponent<P>,
-): React.FunctionComponent<P> {
-  const Activatable = (props: P) => (
-    <div
-      className="relative h-full min-h-0 min-w-0"
-      onPointerDownCapture={() => {
-        // The clicked pane is already visible. Reopening it detaches its DOM
-        // during pointerdown, cancelling WebKit's click and outside dismissal.
-        if (!props.api.isActive) props.api.group.api.setActive();
-      }}
-    >
-      <Component {...props} />
-      {/* The pane's own toast column: a report made in this pane lands at
-          this pane's bottom edge, not the workspace's. */}
-      <PaneToastColumn api={props.api} />
-    </div>
-  );
-  Activatable.displayName = `Activatable(${Component.displayName ?? Component.name ?? "Pane"})`;
-  return Activatable;
-}
 
 const components = {
   launcher: activateOnPointerDown(PaneLauncher),

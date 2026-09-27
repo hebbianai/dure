@@ -12,8 +12,8 @@ import {
   openAgentDiffWindow,
   openSourceControlWindow,
 } from "@/lib/workspace/window/windows";
-import { useStore } from "@/store";
 import type { Agent, Project } from "@/types";
+import { useAgentRepositoryUsable } from "./useAgentPanelState";
 
 interface AgentPanelWindowActionsProps {
   agent: Agent;
@@ -45,10 +45,7 @@ export function AgentPanelWindowActions({
       : presentation.hidden.has(id)
         ? null
         : presentation.slot(id, node);
-  const repositoryUsable = useStore((state) =>
-    !state.gitStatusErrors[agent.id] &&
-    (state.gitStatuses[agent.id]?.isRepo ?? project?.isRepo ?? false),
-  );
+  const repositoryUsable = useAgentRepositoryUsable(agent.id, project);
   const git = useGitAvailability(
     project?.kind === "ssh" ? (project.sshHostId ?? "") : null,
     Boolean(project) && repositoryUsable,

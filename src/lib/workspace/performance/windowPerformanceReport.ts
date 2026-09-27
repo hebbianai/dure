@@ -1,3 +1,8 @@
+import {
+	aggregateWindowPerformanceDiagnostics,
+	type MultiWindowPerformanceDiagnostics,
+} from "./windowPerformanceAggregation";
+export type { MultiWindowPerformanceDiagnostics } from "./windowPerformanceAggregation";
 import { emitTo } from "@tauri-apps/api/event";
 import {
 	getAllWebviewWindows,
@@ -12,10 +17,6 @@ import {
 	MAX_PANE_DRAG_SAMPLES,
 	type PaneDragPerformanceSnapshot,
 } from "./paneDragPerformance";
-import {
-	aggregateStructuredTerminalPresentationSnapshots,
-	type StructuredTerminalPresentationTotalsSnapshot,
-} from "./structuredTerminalPresentationPerformance";
 import {
 	parseWindowAnimationDiagnostics,
 	unavailableWindowAnimationDiagnostics,
@@ -39,27 +40,12 @@ import {
 	type WindowTerminalInputDiagnostics,
 } from "./windowTerminalInputDiagnostics";
 import type { WorkspacePerformanceReport } from "./workspacePerformanceReportTypes";
-import type { WorkspacePerformanceSnapshot } from "./workspacePerformanceTypes";
 
 const COLLECTION_TIMEOUT_MS = 750;
 const PRESENTATION_TOTAL_MS_RELATIVE_TOLERANCE = 1e-9;
 const MAX_INTERACTION_RECENT_SAMPLES = 24;
 
-type Totals = WorkspacePerformanceSnapshot["totals"];
-type RenderPressure = NonNullable<WorkspacePerformanceSnapshot["render"]>;
-
 export type { WindowPerformanceDiagnostics } from "./windowPerformanceDiagnostics";
-
-export interface MultiWindowPerformanceDiagnostics {
-	schemaVersion: typeof WINDOW_PERFORMANCE_SCHEMA_VERSION;
-	complete: boolean;
-	expectedWindowLabels: string[];
-	missingWindowLabels: string[];
-	totals: Totals;
-	render: Omit<RenderPressure, "perSurface"> | null;
-	terminalPresentation: StructuredTerminalPresentationTotalsSnapshot;
-	windows: WindowPerformanceDiagnostics[];
-}
 
 interface ResponsePayload {
 	requestId: string;
@@ -814,74 +800,6 @@ function parseResponse(value: unknown): ResponsePayload | undefined {
 	};
 }
 
-function aggregate(
-	expectedWindowLabels: string[],
-	samples: ReadonlyMap<string, WindowPerformanceDiagnostics>,
-): MultiWindowPerformanceDiagnostics {
-	const windows = expectedWindowLabels.flatMap((label) => {
-		const sample = samples.get(label);
-		return sample ? [sample] : [];
-	});
-	const totals = windows.reduce<Totals>(
-		(sum, window) => ({
-			mountedWorkspaces:
-				sum.mountedWorkspaces + window.totals.mountedWorkspaces,
-			terminalSurfaces: sum.terminalSurfaces + window.totals.terminalSurfaces,
-			terminalGpuViewportBytes:
-				(sum.terminalGpuViewportBytes ?? 0) +
-				(window.totals.terminalGpuViewportBytes ?? 0),
-			terminalModelBytes:
-				(sum.terminalModelBytes ?? 0) + (window.totals.terminalModelBytes ?? 0),
-			webglContexts: sum.webglContexts + window.totals.webglContexts,
-			hmuxObservers: sum.hmuxObservers + window.totals.hmuxObservers,
-		}),
-		{
-			mountedWorkspaces: 0,
-			terminalSurfaces: 0,
-			terminalGpuViewportBytes: 0,
-			terminalModelBytes: 0,
-			webglContexts: 0,
-			hmuxObservers: 0,
-		},
-	);
-	const missingWindowLabels = expectedWindowLabels.filter(
-		(label) => !samples.has(label),
-	);
-	const renderSamples = windows.flatMap((window) =>
-		window.render ? [window.render] : [],
-	);
-	return {
-		schemaVersion: WINDOW_PERFORMANCE_SCHEMA_VERSION,
-		complete: missingWindowLabels.length === 0,
-		expectedWindowLabels,
-		missingWindowLabels,
-		totals,
-		render:
-			renderSamples.length > 0 &&
-			renderSamples.length === expectedWindowLabels.length
-				? {
-						bufferedBytes: renderSamples.reduce(
-							(sum, render) => sum + render.bufferedBytes,
-							0,
-						),
-						peakBufferedBytes: renderSamples.reduce(
-							(sum, render) => sum + render.peakBufferedBytes,
-							0,
-						),
-						maxRecentWriteLatencyMs: renderSamples.reduce(
-							(maximum, render) =>
-								Math.max(maximum, render.maxRecentWriteLatencyMs),
-							0,
-						),
-					}
-				: null,
-		terminalPresentation: aggregateStructuredTerminalPresentationSnapshots(
-			windows.map((window) => window.terminalPresentation),
-		),
-		windows,
-	};
-}
-
 export async function collectWindowPerformanceDiagnostics(
 	backend: WindowPerformanceCollectorBackend = collectorBackend,
 	timeoutMs = COLLECTION_TIMEOUT_MS,
@@ -891,7 +809,7 @@ export async function collectWindowPerformanceDiagnostics(
 		parseResponse,
 		timeoutMs,
 	);
-	return aggregate(expectedWindowLabels, samples);
+	return aggregateWindowPerformanceDiagnostics(expectedWindowLabels, samples);
 }
 
 export async function collectWindowTerminalInputDiagnostics(

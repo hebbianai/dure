@@ -6,6 +6,11 @@
 import { useStore } from "@/store";
 import type { Provider } from "@/types";
 
+/** Agent identities rendered beside authoritative runtime usage observations. */
+export function useUsageAgents() {
+	return useStore((state) => state.agents);
+}
+
 /** provider별 작업 중 에이전트 수 셀렉터 — 리터럴 분기 없이 매개변수화. */
 const workingCountSelector =
 	(provider: Provider) => (s: ReturnType<typeof useStore.getState>) =>

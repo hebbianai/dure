@@ -32,7 +32,17 @@ import {
 } from "@/lib/sessions/credentials/deferredCredentialSwitchRuntime";
 import { managedConversationId } from "@/lib/sessions/managed/managedConversationIdentity";
 import { useStore } from "@/store";
-import type { Agent } from "@/types";
+import type { Agent, Project } from "@/types";
+
+export function useAgentRepositoryUsable(
+	agentId: string,
+	project: Project | undefined,
+) {
+	return useStore((state) =>
+		!state.gitStatusErrors[agentId] &&
+		(state.gitStatuses[agentId]?.isRepo ?? project?.isRepo ?? false),
+	);
+}
 
 type PanelRuntimeTransitionRequest = Omit<
 	AgentRuntimeTransitionRequest,

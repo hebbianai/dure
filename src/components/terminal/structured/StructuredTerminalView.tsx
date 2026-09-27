@@ -25,19 +25,13 @@ import { terminalWindowFocusProbeForSurface } from "@/lib/terminal/qa/terminalWi
 import { terminalFontStack } from "@/lib/terminal/renderer/terminalFont";
 import {
 	encodeTerminalPasteIntent,
-	encodeTerminalPointerIntent,
-	encodeTerminalResizeIntent,
 	encodeTerminalTextIntent,
-	encodeTerminalViewportWheelIntent,
 } from "@/lib/terminal/state/terminalInputIntent";
-import {
-	observeTerminalResizeGeometry,
-	terminalResizeRetryAfterFailure,
-} from "@/lib/terminal/state/terminalIntentReceiptPolicy";
-import { TERMINAL_VIEWPORT_WHEEL_CAPABILITY } from "@/lib/terminal/protocol/terminalStateProtocol";
 import { encodeTerminalViewportScrollRowsIntent } from "@/lib/terminal/state/terminalViewportIntent";
 import { StructuredTerminalCompositionOverlay } from "./StructuredTerminalCompositionOverlay";
 import { StructuredTerminalRecoveryStatus } from "./StructuredTerminalRecoveryStatus";
+import { useStructuredTerminalGeometryCommit } from "./useStructuredTerminalGeometryCommit";
+import { useStructuredTerminalPointerInput } from "./useStructuredTerminalPointerInput";
 import { StructuredTerminalScrollToBottom } from "./StructuredTerminalScrollToBottom";
 import type { StructuredTerminalViewProps } from "./structuredTerminalViewContract";
 import { createTerminalCanvasRenderer } from "./TerminalCanvasRenderer";
@@ -159,9 +153,6 @@ export function StructuredTerminalView({
 	const workspaceActive = useWorkspaceRuntimeActive();
 	const workspaceActiveRef = useRef(workspaceActive);
 	workspaceActiveRef.current = workspaceActive;
-	const measuredGridRef = useRef<{ columns: number; rows: number } | undefined>(
-		undefined,
-	);
 	const phoneWidthPendingRef = useRef(false);
 	const canPublishGeometry = useCallback(
 		() => workspaceActiveRef.current || phoneWidthPendingRef.current,
@@ -173,6 +164,10 @@ export function StructuredTerminalView({
 	const [inputHiddenWithDesktop, setInputHiddenWithDesktop] = useState(
 		!workspaceActive,
 	);
+	const resizeController = useTerminalResizePresentation({
+		presentationLayerRef,
+		paintedPresentationRef,
+	});
 	const {
 		presentationRef: resizePresentationRef,
 		paintRevision: resizePaintRevision,
@@ -180,32 +175,11 @@ export function StructuredTerminalView({
 		hold: holdResizePresentation,
 		holdLargeView: holdLargeViewPresentation,
 		releaseLargeView: releaseLargeViewPresentation,
-		request: requestResizePresentation,
-		applied: applyResizePresentation,
 		complete: completeResizePresentation,
 		reset: resetResizePresentation,
 		finish: finishResizePresentation,
-		releaseFailed: releaseFailedResizePresentation,
-	} = useTerminalResizePresentation({
-		presentationLayerRef,
-		paintedPresentationRef,
-	});
-	const {
-		prepareAttach,
-		onAttached,
-		onAttachmentRetired,
-		recordTerminalAttachPhase,
-		recordTerminalProjection,
-		recordFirstTerminalPaint,
-		geometryRef,
-		confirmedGeometryRef,
-		hasIssuedGeometryRef,
-		resizeRetryRef,
-		paintedRef,
-		geometryFrameRef,
-		resizeRegistrationRef,
-		scheduleGeometryCommit,
-	} = useStructuredTerminalAttachmentLifecycle({
+	} = resizeController;
+	const attachmentLifecycle = useStructuredTerminalAttachmentLifecycle({
 		surfaceId,
 		panelId: paneApi?.id,
 		ensure,
@@ -220,6 +194,20 @@ export function StructuredTerminalView({
 		holdResizePresentation,
 		resetResizePresentation,
 	});
+	const {
+		prepareAttach,
+		onAttached,
+		onAttachmentRetired,
+		recordTerminalAttachPhase,
+		recordTerminalProjection,
+		recordFirstTerminalPaint,
+		geometryRef,
+		confirmedGeometryRef,
+		paintedRef,
+		geometryFrameRef,
+		resizeRegistrationRef,
+		scheduleGeometryCommit,
+	} = attachmentLifecycle;
 	const onTerminalEvent = useStructuredTerminalEvents({
 		sessionId,
 		providerHint,
@@ -468,144 +456,24 @@ export function StructuredTerminalView({
 		onFirstPaint?.();
 	}, [onFirstPaint, recordFirstTerminalPaint, viewportReplica.attachmentId]);
 
-	const commitGeometry = useCallback((): Promise<boolean> | boolean => {
-		const host = containerRef.current;
-		const observerId = observerIdRef.current;
-		if (!host || !observerId || attachedObserverRef.current !== observerId)
-			return false;
-		if (!viewportTransport.writable) return false;
-		if (workspaceActiveRef.current) {
-			const bounds = surfaceBox.read();
-			if (bounds.width <= 0 || bounds.height <= 0) return false;
-			const measured = canvasRenderer.measure(
-				bounds.width,
-				bounds.height,
-				resolvedFontFamily,
-				fontSize,
-				lineHeight,
-			);
-			measuredGridRef.current = { columns: measured.columns, rows: measured.rows };
-		}
-		const measured = measuredGridRef.current;
-		if (!measured) return false;
-		// Existing Hosts still choose the narrowest writer. Lift this desktop's
-		// proposal while a verified Hub phone connection needs a wider grid.
-		const metrics = {
-			columns: Math.max(measured.columns, phoneColumns ?? measured.columns),
-			rows: measured.rows,
-		};
-		if (
-			resizePresentationRef.current.requestGeneration !== undefined &&
-			resizePresentationRef.current.finalGrid?.columns === metrics.columns &&
-			resizePresentationRef.current.finalGrid.rows === metrics.rows
-		) {
-			phoneWidthPendingRef.current = false;
-			syncLargeViewReturnTarget();
-			return true;
-		}
-		if (
-			resizePresentationRef.current.requestGeneration === undefined &&
-			confirmedGeometryRef.current.columns === metrics.columns &&
-			confirmedGeometryRef.current.rows === metrics.rows
-		) {
-			finishResizePresentation();
-			phoneWidthPendingRef.current = false;
-			syncLargeViewReturnTarget();
-			return true;
-		}
-		if (!presentationIsCurrent || !installedFrame) {
-			attachedGeometryPendingRef.current = observerId;
-			return false;
-		}
-		geometryRef.current = { columns: metrics.columns, rows: metrics.rows };
-		resizeRetryRef.current = observeTerminalResizeGeometry(
-			resizeRetryRef.current,
-			metrics,
-		);
-		syncLargeViewReturnTarget();
-		const requestGeneration = requestResizePresentation(
-			{ columns: metrics.columns, rows: metrics.rows },
-			hasIssuedGeometryRef.current &&
-				(installedFrame.frame.canonicalColumns !== metrics.columns ||
-					installedFrame.frame.viewportRows !== metrics.rows),
-			isCurrentTerminalCanvasPresentation(
-				paintedPresentationRef.current,
-				sessionId,
-				viewportReplica.attachmentId,
-				viewportReplica.terminalEpoch,
-			),
-		);
-		hasIssuedGeometryRef.current = true;
-		const recordId = sendInput(
-			(recordId, fence) =>
-				encodeTerminalResizeIntent(
-					recordId,
-					fence,
-					metrics.columns,
-					metrics.rows,
-				),
-			"resize",
-			{
-				onApplied: (outcome, afterProjectionRevision, recordId) => {
-					if (outcome.case !== "appliedToTerminal") return;
-					resizeRetryRef.current = undefined;
-					applyResizePresentation(
-						requestGeneration,
-						outcome.value.columns,
-						afterProjectionRevision,
-						recordId,
-					);
-				},
-				onFailure: (_failure, outcome) => {
-					if (
-						resizePresentationRef.current.requestGeneration !==
-						requestGeneration
-					)
-						return false;
-					geometryRef.current = confirmedGeometryRef.current;
-					syncLargeViewReturnTarget();
-					releaseFailedResizePresentation(requestGeneration);
-					const retry = terminalResizeRetryAfterFailure(
-						resizeRetryRef.current,
-						metrics,
-						outcome,
-					);
-					resizeRetryRef.current = retry.state;
-					if (!retry.retry) return false;
-					phoneWidthPendingRef.current = true;
-					scheduleGeometryCommit();
-					return true;
-				},
-			},
-		);
-		if (recordId === undefined) {
-			attachedGeometryPendingRef.current = observerId;
-			geometryRef.current = confirmedGeometryRef.current;
-			releaseFailedResizePresentation(requestGeneration);
-			return false;
-		}
-		phoneWidthPendingRef.current = false;
-		return true;
-	}, [
-		applyResizePresentation,
-		canvasRenderer,
-		finishResizePresentation,
-		fontSize,
-		phoneColumns,
-		viewportTransport.writable,
-		installedFrame,
-		lineHeight,
-		presentationIsCurrent,
-		resolvedFontFamily,
-		releaseFailedResizePresentation,
-		requestResizePresentation,
-		scheduleGeometryCommit,
-		sendInput,
-		sessionId,
+	const commitGeometry = useStructuredTerminalGeometryCommit({
+		containerRef,
+		viewportTransport,
+		workspaceActiveRef,
 		surfaceBox,
+		canvasRenderer,
+		resolvedFontFamily,
+		fontSize,
+		lineHeight,
+		phoneColumns,
+		phoneWidthPendingRef,
+		resizeController,
+		attachmentLifecycle,
 		syncLargeViewReturnTarget,
-		viewportReplica,
-	]);
+		attachedGeometryPendingRef,
+		paintedPresentationRef,
+		sessionId,
+	});
 	const commitGeometryRef = useRef(commitGeometry);
 	commitGeometryRef.current = commitGeometry;
 
@@ -751,89 +619,15 @@ export function StructuredTerminalView({
 		presentedFrame.frame.inputModes.mouseTracking !== MouseTrackingMode.NONE &&
 		presentedFrame.frame.inputModes.mouseTracking !==
 			MouseTrackingMode.UNSPECIFIED;
-	const issuePointer = useCallback(
-		(
-			event: MouseEvent,
-			kind:
-				| PointerKind.DOWN
-				| PointerKind.UP
-				| PointerKind.MOVE
-				| PointerKind.WHEEL,
-			wheelDeltaX = 0,
-			wheelDeltaY = 0,
-			button = event.button,
-			buttons = event.buttons,
-		) => {
-			if (!inputReady) return;
-			const terminalSurface = terminalSurfaceRef.current;
-			const metrics = paintedPresentationRef.current?.paint.metrics;
-			if (!terminalSurface || !metrics) return;
-			const bounds = terminalSurface.getBoundingClientRect();
-			const scale = Math.max(1, window.devicePixelRatio || 1);
-			const cellWidth = Math.max(1, Math.round(metrics.cellWidth * scale));
-			const cellHeight = Math.max(1, Math.round(metrics.rowHeight * scale));
-			const surfaceWidth = Math.max(1, metrics.columns * cellWidth);
-			const surfaceHeight = Math.max(1, metrics.rows * cellHeight);
-			const pixelX = Math.min(
-				surfaceWidth - 1,
-				Math.max(0, Math.floor((event.clientX - bounds.left) * scale)),
-			);
-			const pixelY = Math.min(
-				surfaceHeight - 1,
-				Math.max(0, Math.floor((event.clientY - bounds.top) * scale)),
-			);
-			const pointer = {
-				kind,
-				column: Math.floor(pixelX / cellWidth),
-				row: Math.floor(pixelY / cellHeight),
-				button:
-					kind === PointerKind.MOVE || kind === PointerKind.WHEEL ? 0 : button,
-				buttons,
-				shiftKey: event.shiftKey,
-				altKey: event.altKey,
-				ctrlKey: event.ctrlKey,
-				metaKey: event.metaKey,
-				wheelDeltaX,
-				wheelDeltaY,
-				pixelX,
-				pixelY,
-				surfaceWidth,
-				surfaceHeight,
-				cellWidth,
-				cellHeight,
-				paddingTop: 0,
-				paddingBottom: 0,
-				paddingRight: 0,
-				paddingLeft: 0,
-			};
-			if (kind === PointerKind.WHEEL) {
-				if (!supportsCapability(TERMINAL_VIEWPORT_WHEEL_CAPABILITY)) {
-					const rows = -(wheelDeltaY === 0 ? wheelDeltaX : wheelDeltaY);
-					issueViewportScrollRows(rows);
-					return;
-				}
-				sendViewportIntent(
-					(recordId, fence, viewportFence) =>
-						encodeTerminalViewportWheelIntent(recordId, fence, viewportFence, {
-							...pointer,
-							kind: PointerKind.WHEEL,
-						}),
-					"wheel",
-				);
-				return;
-			}
-			sendInput((recordId, fence) =>
-				encodeTerminalPointerIntent(recordId, fence, pointer),
-			);
-		},
-		[
-			issueViewportScrollRows,
-			inputReady,
-			sendInput,
-			sendViewportIntent,
-			supportsCapability,
-		],
-	);
+	const issuePointer = useStructuredTerminalPointerInput({
+		inputReady,
+		terminalSurfaceRef,
+		paintedPresentationRef,
+		issueViewportScrollRows,
+		sendInput,
+		sendViewportIntent,
+		supportsCapability,
+	});
 
 	const currentInputAttachmentId = useCallback(() => {
 		const attachmentId = observerIdRef.current;

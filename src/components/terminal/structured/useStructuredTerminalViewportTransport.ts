@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { useStructuredTerminalWriterRetirement } from "./useStructuredTerminalWriterRetirement";
 import {
 	useWorkspaceRuntimeActive,
 	useWorkspaceRuntimeDesktopId,
@@ -126,31 +127,14 @@ export function useStructuredTerminalViewportTransport({
 	const attachReconnectRef = useRef({ attachmentKey, failures: 0 });
 	const attachedSessionRef = useRef<string | null>(null);
 	const upstreamSequenceRef = useRef<UpstreamSequence | undefined>(undefined);
-	useLayoutEffect(() => {
-		if (workspaceActive) {
-			setAccess("writer");
-			return;
-		}
-		const current = replicaRef.current;
-		const sequence = upstreamSequenceRef.current;
-		if (
-			!sequence ||
-			sequence.failed ||
-			attachedObserverRef.current !== sequence.observerId ||
-			current.frame?.frame.followTail !== true ||
-			current.issuedIntentSeq !== current.appliedIntentSeq ||
-			Object.values(terminalIntentReceiptPendingKinds(sequence.receipts)).some(
-				Boolean,
-			) ||
-			hasRetainedInteraction()
-		) {
-			return;
-		}
-		// Detaching the writer releases its width proposal on existing Hosts.
-		// A replacement starts at the tail: keep pinned views and pending work
-		// on their original attachment instead of losing history or receipts.
-		setAccess("read_only");
-	}, [workspaceActive, hasRetainedInteraction]);
+	useStructuredTerminalWriterRetirement({
+		workspaceActive,
+		hasRetainedInteraction,
+		replicaRef,
+		upstreamSequenceRef,
+		attachedObserverRef,
+		setAccess,
+	});
 	const selectedCapabilitiesRef = useRef<ReadonlySet<string>>(new Set());
 	const onAttachedRef = useRef(onAttached);
 	const onEventRef = useRef(onEvent);

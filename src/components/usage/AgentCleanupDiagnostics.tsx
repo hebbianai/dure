@@ -20,7 +20,7 @@ import {
 	idleObservationState,
 	observedIdleDuration,
 } from "@/lib/usage/agentIdleDiagnostics";
-import { useStore } from "@/store";
+import { useUsageAgents } from "./useProviderUsageState";
 
 /** Mounted only by the Pro resource widget; a closed dialog owns no reads. */
 export function AgentCleanupDiagnostics({
@@ -53,7 +53,7 @@ type ReadState =
 function CleanupObservations() {
 	const [read, setRead] = useState<ReadState>({ kind: "loading" });
 	const [revision, setRevision] = useState(0);
-	const agents = useStore((state) => state.agents);
+	const agents = useUsageAgents();
 	useEffect(() => {
 		let alive = true;
 		setRead({ kind: "loading" });

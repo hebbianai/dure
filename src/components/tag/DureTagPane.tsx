@@ -36,7 +36,7 @@ import {
 	slackConnectionError,
 } from "@/lib/plugins/slackConnection";
 import type { SlackTask } from "@/lib/plugins/slackTask";
-import { useStore } from "@/store";
+import { useTagProjects } from "./useTagProjects";
 
 export function DureTagPane() {
 	const connection = useSlackTeamConnection();
@@ -97,7 +97,7 @@ function TagTasks({
 		new Map(),
 	);
 	const showTaskActivity = !selected;
-	const projects = useStore((state) => state.projects);
+	const projects = useTagProjects();
 	useEffect(() => {
 		let current = true;
 		const controller = new AbortController();
