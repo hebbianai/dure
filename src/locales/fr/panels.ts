@@ -1,4 +1,9 @@
 export const panels: Record<string, string> = {
+	"panels.mobile.kind.simulator": "Simulateur",
+	"panels.mobile.kind.emulator": "Émulateur",
+	"panels.mobile.kind.physical": "Appareil physique",
+	"panels.mobile.mirroringSetup": "Configurer Recopie de l’iPhone",
+	"panels.mobile.mirroringHelp": "Connectez d’abord votre iPhone verrouillé dans Recopie de l’iPhone d’Apple. Dure propose l’aperçu, l’accueil et le sélecteur d’apps pour le téléphone sélectionné par Apple. Le toucher, la saisie, l’installation et le lancement d’apps sont indisponibles ici ; utilisez la fenêtre d’Apple pour toucher ou saisir.",
 	"panels.mobile.frameUnavailable": "Impossible d’afficher l’image du simulateur. Prenez une nouvelle capture.",
 	"panels.mobile.orientationChanged": "La vue de l’appareil a changé. Prenez une nouvelle capture avant d’interagir.",
 	"panels.mobile.reportChanged": "Le rapport a changé. Préparez et vérifiez un nouveau rapport.",

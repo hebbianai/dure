@@ -1,4 +1,9 @@
 export const panelsEnglishTranslations: Record<string, string> = {
+	"panels.mobile.kind.simulator": "Simulator",
+	"panels.mobile.kind.emulator": "Emulator",
+	"panels.mobile.kind.physical": "Physical device",
+	"panels.mobile.mirroringSetup": "iPhone Mirroring setup",
+	"panels.mobile.mirroringHelp": "Connect your locked iPhone in Apple iPhone Mirroring first. Dure supports preview, Home and App Switcher for Apple’s selected phone. Touch, typing, app installation and launch are unavailable here; use Apple’s window for touch or typing.",
 	"panels.mobile.frameUnavailable": "Unable to display the simulator image. Capture a fresh screenshot.",
 	"panels.mobile.orientationChanged": "Device view changed. Capture a fresh screenshot before interacting.",
 	"panels.mobile.reportChanged": "Report changed. Prepare and review a new report.",

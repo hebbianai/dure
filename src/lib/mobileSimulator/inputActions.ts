@@ -7,6 +7,7 @@ import {
 	type PaneActionArguments,
 	type PaneActionDefinition,
 } from "@/lib/workspace/pane/paneAction";
+import { isIosSimulator } from "./capabilities";
 import {
 	type MobilePresentation,
 	mobileHiddenPresentation,
@@ -43,13 +44,24 @@ export function mobileInputActions(input: {
 						"Wait for the current operation to complete.",
 					);
 				const operation = action(args);
+				if (
+					input.target.transport === "iphone_mirroring" &&
+					!(
+						operation.kind === "button" &&
+						["home", "recents"].includes(operation.button)
+					)
+				)
+					return mobileRefusal(
+						"mobile_action_unsupported",
+						"iPhone Mirroring supports preview, Home and App Switcher only. Use Apple's window directly for touch or typing.",
+					);
 				if (operation.kind === "key" && input.target.platform !== "android")
 					return mobileRefusal(
 						"mobile_action_unsupported",
-						"Named keys currently require Android. iOS key input is unsupported.",
+						"Named keys require Android. iOS key input is unsupported.",
 					);
 				if (
-					input.target.platform === "ios" &&
+					isIosSimulator(input.target) &&
 					["gesture", "type", "paste", "button", "rotate"].includes(
 						operation.kind,
 					)
@@ -57,7 +69,7 @@ export function mobileInputActions(input: {
 					const hidden = mobileHiddenPresentation(input.presentation);
 					if (hidden) return hidden;
 				}
-				if (operation.kind === "paste" && input.target.platform !== "ios")
+				if (operation.kind === "paste" && !isIosSimulator(input.target))
 					return mobileRefusal(
 						"mobile_action_unsupported",
 						"Paste requires an iOS simulator with ready live mode.",
@@ -103,7 +115,7 @@ export function mobileInputActions(input: {
 			() => ({ kind: "boot" }),
 		),
 		"mobile.open-native": command(
-			"Open this exact iOS device in Apple Simulator.",
+			"Open this exact iOS simulator in Apple Simulator. Physical iPhone setup belongs to iPhone Mirroring.",
 			{},
 			() => ({ kind: "open_native" }),
 		),
@@ -123,7 +135,7 @@ export function mobileInputActions(input: {
 			(args) => ({ kind: "open_url", url: String(args.url) }),
 		),
 		"mobile.type": command(
-			"Type printable ASCII into the focused guest field. iOS requires ready live mode; Android excludes %.",
+			"Type printable ASCII into the focused guest field. iOS simulators require ready live mode; Android excludes %. Physical iPhone typing is unavailable.",
 			{ text },
 			(args) => ({ kind: "type", text: String(args.text) }),
 		),
@@ -138,7 +150,7 @@ export function mobileInputActions(input: {
 			(args) => ({ kind: "paste", text: String(args.text) }),
 		),
 		"mobile.button": command(
-			"Press home on iOS live mode, or home/back/recents on Android.",
+			"Press home on iOS simulator live mode, home/recents on iPhone Mirroring, or home/back/recents on Android.",
 			{ button: { ...text, values: ["home", "back", "recents"] } },
 			(args) => ({
 				kind: "button",
@@ -151,12 +163,12 @@ export function mobileInputActions(input: {
 			(args) => ({ kind: "rotate", landscape: Boolean(args.landscape) }),
 		),
 		"mobile.tap": command(
-			"Tap normalized x/y (0..1) with width/height from mobile.capture; stale orientation is refused. iOS requires ready live mode.",
+			"Tap normalized x/y (0..1) with width/height from mobile.capture; stale orientation is refused. iOS simulators require ready live mode. Physical iPhone touch is unavailable.",
 			{ ...dimensions, x: coordinate, y: coordinate },
 			(args) => gesture(args, { x: Number(args.x), y: Number(args.y) }),
 		),
 		"mobile.swipe": command(
-			"Swipe between normalized 0..1 coordinates with width/height from mobile.capture; stale orientation is refused.",
+			"Swipe between normalized 0..1 coordinates with width/height from mobile.capture; stale orientation is refused. Physical iPhone touch is unavailable.",
 			{
 				...dimensions,
 				startX: coordinate,

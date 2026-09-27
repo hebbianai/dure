@@ -32,6 +32,10 @@ import {
 } from "@/lib/ipc/mobileSimulator";
 import { saveTempImage } from "@/lib/ipc/system";
 import { mobilePaneActions } from "@/lib/mobileSimulator/actions";
+import {
+	isIosSimulator,
+	mobileCapabilities,
+} from "@/lib/mobileSimulator/capabilities";
 import type {
 	MobilePreviewMode,
 	MobileReportControls,
@@ -113,9 +117,9 @@ export function MobileSimulatorPanel(
 		() => ({
 			key: selection,
 			active,
-			landscape: target?.platform === "ios" && iosLandscape,
+			landscape: isIosSimulator(target) && iosLandscape,
 		}),
-		[selection, target?.platform, iosLandscape, active],
+		[selection, target, iosLandscape, active],
 	);
 	const currentProjection = useRef(projection);
 	currentProjection.current = projection;
@@ -124,6 +128,10 @@ export function MobileSimulatorPanel(
 		(device) => mobileDeviceKey(device) === selection,
 	);
 	const ready = selected?.state === "ready";
+	const capabilities = mobileCapabilities(selected);
+	const supports = (capability: (typeof capabilities)[number]) =>
+		capabilities.includes(capability);
+	const inputReady = ready && (!isIosSimulator(target) || live);
 	const currentFrame = useRef(frame);
 	currentFrame.current = frame;
 	const mounted = useRef(true);
@@ -232,7 +240,7 @@ export function MobileSimulatorPanel(
 		setError(undefined);
 		try {
 			let nativeAction = action;
-			if (target.platform === "ios" && action.kind === "gesture") {
+			if (isIosSimulator(target) && action.kind === "gesture") {
 				const mapped = mobileFramebufferGesture(
 					action,
 					currentFrame.current,
@@ -244,7 +252,7 @@ export function MobileSimulatorPanel(
 			await mobileSimulator.act(target, nativeAction);
 			if (
 				mounted.current &&
-				target.platform === "ios" &&
+				isIosSimulator(target) &&
 				action.kind === "rotate"
 			) {
 				setIosLandscape(action.landscape);
@@ -328,7 +336,7 @@ export function MobileSimulatorPanel(
 		if (isOperating()) throw new Error(t("panels.mobile.working"));
 		if (mode !== "snapshot" && (!ready || !active))
 			throw new Error(t("panels.mobile.previewUnavailable"));
-		if (mode === "live" && target?.platform !== "ios")
+		if (mode === "live" && !supports("live"))
 			throw new Error(t("panels.mobile.liveRequiresIos"));
 		setError(undefined);
 		setAutoRefresh(mode === "auto");
@@ -353,6 +361,9 @@ export function MobileSimulatorPanel(
 					buildOutput,
 					profiles: readProfiles(),
 					deviceState: selected?.state,
+					deviceKind: selected?.kind,
+					capabilities,
+					detail: selected?.detail,
 					preview: {
 						viewingAngle: projection.landscape ? "landscape" : "portrait",
 						mode: live ? "live" : autoRefresh ? "auto" : "snapshot",
@@ -410,7 +421,7 @@ export function MobileSimulatorPanel(
 			live,
 			autoRefresh,
 			active,
-			selected?.state,
+			selected,
 			agents,
 			projection,
 		],
@@ -421,7 +432,7 @@ export function MobileSimulatorPanel(
 		const device = catalog?.devices.find(
 			(candidate) => mobileDeviceKey(candidate) === key,
 		);
-		const next = device ? { platform: device.platform, id: device.id } : null;
+		const next = device ? readMobileDeviceTarget(device) : null;
 		chooseTarget(next);
 	}
 
@@ -444,7 +455,8 @@ export function MobileSimulatorPanel(
 							key={mobileDeviceKey(device)}
 							value={mobileDeviceKey(device)}
 						>
-							{device.name} · {device.runtime} ·{" "}
+							{device.name} · {device.runtime}
+							{device.kind && ` · ${t(`panels.mobile.kind.${device.kind}`)}`} ·{" "}
 							{t(`panels.mobile.state.${device.state}`)}
 						</SelectOption>
 					))}
@@ -461,9 +473,9 @@ export function MobileSimulatorPanel(
 					<span className="mr-auto text-xs text-muted-foreground">
 						{selected.runtime} · {t(`panels.mobile.state.${selected.state}`)}
 					</span>
-					{selected.platform === "ios" && (
+					{supports("open_native") && (
 						<>
-							{!ready && (
+							{!ready && supports("boot") && (
 								<Button
 									size="sm"
 									variant="outline"
@@ -483,7 +495,7 @@ export function MobileSimulatorPanel(
 							</IconButton>
 						</>
 					)}
-					{(selected.platform === "android" || live) &&
+					{inputReady &&
 						(
 							[
 								["back", ArrowLeft],
@@ -491,10 +503,7 @@ export function MobileSimulatorPanel(
 								["recents", Square],
 							] as const
 						)
-							.filter(
-								([button]) =>
-									selected.platform === "android" || button === "home",
-							)
+							.filter(([button]) => supports(button))
 							.map(([button, Icon]) => (
 								<IconButton
 									key={button}
@@ -516,7 +525,7 @@ export function MobileSimulatorPanel(
 						<Camera />
 					</IconButton>
 					<MobileSimulatorCaptureButton frame={frame} paneId={props.api.id} />
-					{selected.platform === "ios" && (
+					{supports("live") && (
 						<label className="flex items-center gap-1 px-1 text-xs text-muted-foreground">
 							<input
 								type="checkbox"
@@ -542,6 +551,19 @@ export function MobileSimulatorPanel(
 					</label>
 				</div>
 			)}
+			{selected?.transport === "iphone_mirroring" && (
+				<p className="shrink-0 border-b px-3 py-2 text-xs text-muted-foreground">
+					{t("panels.mobile.mirroringHelp")}
+				</p>
+			)}
+			{selected?.detail && (
+				<p
+					role="status"
+					className="shrink-0 border-b px-3 py-2 text-xs text-muted-foreground"
+				>
+					{selected.detail}
+				</p>
+			)}
 			{error && (
 				<div
 					role="alert"
@@ -551,7 +573,7 @@ export function MobileSimulatorPanel(
 				</div>
 			)}
 			<div className="max-h-[45%] shrink-0 overflow-y-auto">
-				{target && (
+				{target && (supports("run") || (!selected && !target.transport)) && (
 					<MobileSimulatorProfiles
 						profiles={profiles}
 						target={target}
@@ -572,30 +594,32 @@ export function MobileSimulatorPanel(
 				)}
 				{selected && ready && (
 					<>
-						<form
-							className="flex shrink-0 gap-1 border-b p-2"
-							onSubmit={(event) => {
-								event.preventDefault();
-								void act({ kind: "open_url", url });
-							}}
-						>
-							<Input
-								aria-label={t("panels.mobile.url")}
-								placeholder={t("panels.mobile.url")}
-								value={url}
-								onChange={(event) => setUrl(event.target.value)}
-								className="h-7 min-w-0"
-								disabled={busy}
-							/>
-							<Button
-								size="sm"
-								variant="outline"
-								disabled={busy || !url.trim()}
+						{supports("open_url") && (
+							<form
+								className="flex shrink-0 gap-1 border-b p-2"
+								onSubmit={(event) => {
+									event.preventDefault();
+									void act({ kind: "open_url", url });
+								}}
 							>
-								{t("panels.mobile.open")}
-							</Button>
-						</form>
-						{(selected.platform === "android" || live) && (
+								<Input
+									aria-label={t("panels.mobile.url")}
+									placeholder={t("panels.mobile.url")}
+									value={url}
+									onChange={(event) => setUrl(event.target.value)}
+									className="h-7 min-w-0"
+									disabled={busy}
+								/>
+								<Button
+									size="sm"
+									variant="outline"
+									disabled={busy || !url.trim()}
+								>
+									{t("panels.mobile.open")}
+								</Button>
+							</form>
+						)}
+						{inputReady && supports("type") && (
 							<form
 								className={
 									selected.platform === "ios"
@@ -626,7 +650,7 @@ export function MobileSimulatorPanel(
 										onChange={(event) => setInputText(event.target.value)}
 									/>
 								)}
-								{selected.platform === "ios" && (
+								{supports("paste") && (
 									<Button
 										type="button"
 										size="sm"
@@ -639,20 +663,22 @@ export function MobileSimulatorPanel(
 								<Button size="sm" disabled={busy || !inputText}>
 									{t("panels.mobile.type")}
 								</Button>
-								<Button
-									type="button"
-									size="sm"
-									variant="outline"
-									disabled={busy || !frame}
-									onClick={() =>
-										void act({
-											kind: "rotate",
-											landscape: Boolean(frame && frame.width < frame.height),
-										})
-									}
-								>
-									{t("panels.mobile.rotate")}
-								</Button>
+								{supports("rotate") && (
+									<Button
+										type="button"
+										size="sm"
+										variant="outline"
+										disabled={busy || !frame}
+										onClick={() =>
+											void act({
+												kind: "rotate",
+												landscape: Boolean(frame && frame.width < frame.height),
+											})
+										}
+									>
+										{t("panels.mobile.rotate")}
+									</Button>
+								)}
 							</form>
 						)}
 						<MobileSimulatorReport
@@ -663,13 +689,15 @@ export function MobileSimulatorPanel(
 							onWorkingChange={setReportBusy}
 							capture={captureDisplay}
 						/>
-						<MobileSimulatorAppForm
-							platform={selected.platform}
-							busy={busy}
-							act={async (action) => {
-								await act(action);
-							}}
-						/>
+						{supports("install") && supports("launch") && (
+							<MobileSimulatorAppForm
+								platform={selected.platform}
+								busy={busy}
+								act={async (action) => {
+									await act(action);
+								}}
+							/>
+						)}
 					</>
 				)}
 			</div>
@@ -683,12 +711,12 @@ export function MobileSimulatorPanel(
 						className="max-h-full max-w-full select-none rounded-lg object-contain"
 						draggable={false}
 						style={{
-							touchAction:
-								selected?.platform === "android" || live ? "none" : "auto",
+							touchAction: inputReady && supports("gesture") ? "none" : "auto",
 						}}
 						onPointerDown={(event) => {
 							if (
-								(selected?.platform !== "android" && !live) ||
+								!inputReady ||
+								!supports("gesture") ||
 								busy ||
 								event.button !== 0
 							)
@@ -749,21 +777,23 @@ export function MobileSimulatorPanel(
 					</PanelStatus>
 				)}
 			</div>
-			{selected?.platform === "ios" && !live && (
+			{isIosSimulator(target) && !live && (
 				<p className="shrink-0 px-3 py-2 text-xs text-muted-foreground">
 					{t("panels.mobile.iosInput")}
 				</p>
 			)}
-			{catalog?.unavailable.map(({ platform, detail }) => (
+			{catalog?.unavailable.map(({ platform, transport, detail }) => (
 				<details
-					key={platform}
+					key={`${platform}:${detail}`}
 					className="shrink-0 px-3 py-1 text-xs text-muted-foreground"
 				>
 					<summary>
 						{t(
-							platform === "ios"
-								? "panels.mobile.iosSetup"
-								: "panels.mobile.androidSetup",
+							transport === "iphone_mirroring"
+								? "panels.mobile.mirroringSetup"
+								: platform === "ios"
+									? "panels.mobile.iosSetup"
+									: "panels.mobile.androidSetup",
 						)}
 					</summary>
 					<p className="break-words py-1">{detail}</p>

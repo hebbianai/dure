@@ -1,4 +1,9 @@
 export const panels: Record<string, string> = {
+	"panels.mobile.kind.simulator": "シミュレータ",
+	"panels.mobile.kind.emulator": "エミュレータ",
+	"panels.mobile.kind.physical": "実機",
+	"panels.mobile.mirroringSetup": "iPhoneミラーリングの設定",
+	"panels.mobile.mirroringHelp": "まずAppleのiPhoneミラーリングでロック中のiPhoneを接続してください。DureではAppleで選択したiPhoneのプレビュー、ホーム、アプリスイッチャーに対応しています。タッチ、文字入力、アプリのインストールと起動は未対応です。タッチや文字入力はAppleのウインドウで行ってください。",
 	"panels.mobile.frameUnavailable": "シミュレーター画像を表示できません。新しいスクリーンショットを撮影してください。",
 	"panels.mobile.orientationChanged": "デバイスの表示方向が変わりました。新しいスクリーンショットを確認してから操作してください。",
 	"panels.mobile.reportChanged": "レポートが変更されました。新しいレポートを作成して確認してください。",

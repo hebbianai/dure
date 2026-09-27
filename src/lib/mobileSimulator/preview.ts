@@ -11,10 +11,16 @@ export function readMobileDeviceTarget(
 	if (
 		(target.platform !== "ios" && target.platform !== "android") ||
 		typeof target.id !== "string" ||
-		!target.id
+		!target.id ||
+		(target.transport !== undefined &&
+			(target.transport !== "iphone_mirroring" || target.platform !== "ios"))
 	)
 		return null;
-	return { platform: target.platform, id: target.id };
+	return {
+		platform: target.platform,
+		id: target.id,
+		...(target.transport ? { transport: target.transport } : {}),
+	};
 }
 
 export function mobileDeviceKey(target: MobileDeviceTarget): string {

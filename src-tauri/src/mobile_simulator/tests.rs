@@ -16,12 +16,14 @@ fn named_android_keys_are_bounded_and_not_supported_on_ios() {
 
 fn ios() -> Target {
     Target {
+        transport: None,
         platform: Platform::Ios,
         id: "11111111-2222-3333-4444-555555555555".into(),
     }
 }
 fn android() -> Target {
     Target {
+        transport: None,
         platform: Platform::Android,
         id: "emulator-5554".into(),
     }
@@ -51,6 +53,7 @@ fn android_discovery_preserves_offline_and_unauthorized_devices() {
 fn no_implicit_booted_or_shell_selector_is_accepted() {
     for id in ["booted", "all", "--help", "", "$(touch /tmp/no)"] {
         assert!(validate_target(&Target {
+            transport: None,
             platform: Platform::Ios,
             id: id.into()
         })
@@ -58,6 +61,7 @@ fn no_implicit_booted_or_shell_selector_is_accepted() {
     }
     for id in ["", "-d", "x;echo bad", "a b", "x\n"] {
         assert!(validate_target(&Target {
+            transport: None,
             platform: Platform::Android,
             id: id.into()
         })

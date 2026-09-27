@@ -55,9 +55,11 @@ pub async fn mobile_simulator_live_start(
     target: Target,
     webview_instance_id: String,
 ) -> Result<String, String> {
-    if !cfg!(all(target_os = "macos", target_arch = "aarch64")) || target.platform != Platform::Ios
+    if !cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        || target.platform != Platform::Ios
+        || target.transport.is_some()
     {
-        return Err("Live iOS requires an Apple Silicon Mac".into());
+        return Err("Live mode requires an iOS simulator on an Apple Silicon Mac; use auto refresh for iPhone Mirroring".into());
     }
     let binding = window
         .state::<crate::AppState>()

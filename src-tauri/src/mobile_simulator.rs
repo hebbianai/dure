@@ -11,16 +11,57 @@ pub enum Platform {
     Android,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Transport {
+    IphoneMirroring,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceKind {
+    Simulator,
+    Emulator,
+    Physical,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Capability {
+    Capture,
+    Live,
+    Boot,
+    OpenNative,
+    OpenUrl,
+    Install,
+    Launch,
+    Gesture,
+    Type,
+    Paste,
+    Key,
+    Rotate,
+    Home,
+    Back,
+    Recents,
+    Run,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Target {
     pub platform: Platform,
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<Transport>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct Device {
     #[serde(flatten)]
     target: Target,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<DeviceKind>,
+    capabilities: Vec<Capability>,
+    detail: Option<String>,
     name: String,
     runtime: String,
     state: String,
@@ -29,6 +70,8 @@ pub struct Device {
 #[derive(Serialize)]
 pub struct Unavailable {
     platform: Platform,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transport: Option<Transport>,
     detail: String,
 }
 
@@ -193,6 +236,13 @@ fn adb() -> String {
 }
 
 fn validate_target(target: &Target) -> Result<(), String> {
+    if target.transport == Some(Transport::IphoneMirroring) {
+        return if target.platform == Platform::Ios && mirroring::valid_id(&target.id) {
+            Ok(())
+        } else {
+            Err("Invalid exact iPhone Mirroring session; refresh devices".into())
+        };
+    }
     let valid = match target.platform {
         Platform::Ios => {
             target.id.len() == 36
@@ -244,10 +294,14 @@ fn ios_devices(bytes: &[u8]) -> Result<Vec<Device>, String> {
             let target = Target {
                 platform: Platform::Ios,
                 id: entry.udid,
+                transport: None,
             };
             validate_target(&target)?;
             devices.push(Device {
                 target,
+                kind: Some(DeviceKind::Simulator),
+                capabilities: simulator_capabilities(),
+                detail: None,
                 name: entry.name,
                 runtime: runtime
                     .trim_start_matches("com.apple.CoreSimulator.SimRuntime.")
@@ -285,10 +339,17 @@ fn android_devices(bytes: &[u8]) -> Result<Vec<Device>, String> {
             let target = Target {
                 platform: Platform::Android,
                 id,
+                transport: None,
             };
             validate_target(&target)?;
             Ok(Device {
+                kind: target
+                    .id
+                    .starts_with("emulator-")
+                    .then_some(DeviceKind::Emulator),
                 target,
+                capabilities: android_capabilities(),
+                detail: None,
                 name,
                 runtime: "Android".into(),
                 state: match state {
@@ -328,15 +389,32 @@ fn list() -> Catalog {
     for platform in [Platform::Ios, Platform::Android] {
         match devices(&platform) {
             Ok(devices) => catalog.devices.extend(devices),
-            Err(detail) => catalog.unavailable.push(Unavailable { platform, detail }),
+            Err(detail) => catalog.unavailable.push(Unavailable {
+                platform,
+                detail,
+                transport: None,
+            }),
         }
+    }
+    match mirroring::devices() {
+        Ok(devices) => catalog.devices.extend(devices),
+        Err(detail) => catalog.unavailable.push(Unavailable {
+            platform: Platform::Ios,
+            transport: Some(Transport::IphoneMirroring),
+            detail,
+        }),
     }
     catalog
 }
 
 fn observe_target(target: &Target) -> Result<Device, String> {
     validate_target(target)?;
-    devices(&target.platform)?
+    let devices = if target.transport == Some(Transport::IphoneMirroring) {
+        mirroring::devices()?
+    } else {
+        devices(&target.platform)?
+    };
+    devices
         .into_iter()
         .find(|device| device.target.id == target.id)
         .ok_or_else(|| "The selected device is no longer available; refresh the device list".into())
@@ -356,6 +434,9 @@ fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
 
 fn capture(target: &Target) -> Result<Vec<u8>, String> {
     validate_target(target)?;
+    if target.transport == Some(Transport::IphoneMirroring) {
+        return mirroring::capture(target);
+    }
     let limit = 24 * 1024 * 1024;
     match target.platform {
         Platform::Ios if cfg!(target_os = "macos") => execute(
@@ -659,6 +740,9 @@ fn act(target: &Target, action: Action) -> Result<(), String> {
 
 fn perform(target: &Target, action: Action) -> Result<(), String> {
     let device = observe_target(target)?;
+    if target.transport == Some(Transport::IphoneMirroring) {
+        return mirroring::act(target, &action);
+    }
     if target.platform == Platform::Ios
         && matches!(
             action,
@@ -752,7 +836,21 @@ fn verify_android_activity(output: &[u8]) -> Result<(), String> {
     Err(format!("Android activity launch failed: {}", text.trim()))
 }
 
+fn simulator_capabilities() -> Vec<Capability> {
+    use Capability::*;
+    vec![
+        Capture, Live, Boot, OpenNative, OpenUrl, Install, Launch, Gesture, Type, Paste, Rotate,
+        Home, Run,
+    ]
+}
+fn android_capabilities() -> Vec<Capability> {
+    use Capability::*;
+    vec![
+        Capture, OpenUrl, Install, Launch, Gesture, Type, Key, Rotate, Home, Back, Recents, Run,
+    ]
+}
 pub mod live;
+mod mirroring;
 pub mod workflows;
 
 #[cfg(test)]

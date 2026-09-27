@@ -1,4 +1,9 @@
 export const panels: Record<string, string> = {
+	"panels.mobile.kind.simulator": "시뮬레이터",
+	"panels.mobile.kind.emulator": "에뮬레이터",
+	"panels.mobile.kind.physical": "실제 기기",
+	"panels.mobile.mirroringSetup": "iPhone 미러링 설정",
+	"panels.mobile.mirroringHelp": "먼저 Apple iPhone 미러링에서 잠긴 iPhone을 연결하세요. Dure에서는 Apple이 선택한 iPhone의 미리보기, 홈, 앱 전환기를 지원합니다. 터치, 입력, 앱 설치와 실행은 지원하지 않습니다. 터치나 입력은 Apple 창에서 직접 하세요.",
 	"panels.mobile.frameUnavailable": "시뮬레이터 이미지를 표시할 수 없습니다. 새 스크린샷을 촬영하세요.",
 	"panels.mobile.orientationChanged": "기기 화면 방향이 변경되었습니다. 새 스크린샷을 확인한 뒤 조작하세요.",
 	"panels.mobile.reportChanged": "보고 자료가 변경되었습니다. 새 자료를 준비하고 검토하세요.",

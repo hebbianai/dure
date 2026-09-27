@@ -336,3 +336,44 @@ it("removes only the selected device profile and persists its siblings", async (
 	expect(screen.queryByRole("button", { name: t("common.remove") })).toBeNull();
 	expect(mobileSimulator.act).not.toHaveBeenCalled();
 });
+
+it("previews a physical iPhone without a simulator lease and exposes only its supported controls", async () => {
+	const phone = {
+		platform: "ios",
+		id: "mirroring:42:EKWlAAAAAAA:99",
+		transport: "iphone_mirroring",
+	} as const;
+	vi.mocked(mobileSimulator.list).mockResolvedValue({
+		devices: [
+			{
+				...phone,
+				name: "Physical iPhone",
+				runtime: "iPhone Mirroring",
+				kind: "physical",
+				state: "ready",
+				capabilities: ["capture", "home", "recents"],
+			},
+		],
+		unavailable: [],
+	});
+	fixture(phone);
+	await waitFor(() =>
+		expect(mobileSimulator.capture).toHaveBeenCalledWith(phone),
+	);
+	expect(mobileSimulator.liveStart).not.toHaveBeenCalled();
+	expect(screen.queryByText(t("panels.mobile.live"))).toBeNull();
+	expect(screen.queryByText(t("panels.mobile.rotate"))).toBeNull();
+	expect(screen.queryByText(t("panels.mobile.paste"))).toBeNull();
+	expect(screen.queryByLabelText(t("panels.mobile.pasteText"))).toBeNull();
+	expect(screen.queryByLabelText(t("panels.mobile.inputText"))).toBeNull();
+	expect(screen.getByText(t("panels.mobile.mirroringHelp"))).toBeTruthy();
+	fireEvent.click(
+		screen.getByRole("button", { name: t("panels.mobile.home") }),
+	);
+	await waitFor(() =>
+		expect(mobileSimulator.act).toHaveBeenCalledWith(phone, {
+			kind: "button",
+			button: "home",
+		}),
+	);
+});

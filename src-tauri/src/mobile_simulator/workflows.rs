@@ -140,6 +140,9 @@ fn run(target: Target, profile: RunProfile) -> Result<RunResult, String> {
     let result = (|| {
         // Observe identity before building; installation re-observes readiness.
         observe_target(&target)?;
+        if target.transport.is_some() {
+            return Err("Build/install/launch profiles are not supported by iPhone Mirroring; open the app on the phone".into());
+        }
         let build_output = build(&profile)?;
         if target.platform == Platform::Ios {
             perform(&target, Action::Boot)?;
@@ -211,6 +214,9 @@ fn report(target: Target, app_id: String) -> Result<DiagnosticReport, String> {
                 256 * 1024,
             )
         })(),
+        Platform::Ios if target.transport.is_some() => {
+            Err("iPhone Mirroring does not provide application logs".into())
+        }
         Platform::Ios => execute(
             "/usr/bin/xcrun",
             &[
@@ -255,6 +261,7 @@ mod tests {
     #[test]
     fn device_operations_exclude_other_callers_until_completion() {
         let target = Target {
+            transport: None,
             platform: Platform::Android,
             id: "qa-locked-device".into(),
         };

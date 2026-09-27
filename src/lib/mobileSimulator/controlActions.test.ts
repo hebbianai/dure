@@ -169,3 +169,44 @@ it("requires the exact selected device before removing its profile", async () =>
 		device: target,
 	});
 });
+
+it("preserves the physical transport when selecting and refuses simulator live mode", async () => {
+	const { input, controls } = fixture();
+	const target = {
+		platform: "ios",
+		id: "mirroring:42:EKWlAAAAAAA:99",
+		transport: "iphone_mirroring",
+	} as const;
+	const actions = mobileControlActions({
+		...input,
+		target,
+		controls: {
+			...controls,
+			devices: async () => ({
+				devices: [
+					{
+						...target,
+						name: "Phone",
+						runtime: "iPhone Mirroring",
+						state: "ready",
+					},
+				],
+				unavailable: [],
+			}),
+		},
+	});
+	const args = { platform: target.platform, deviceId: target.id };
+	expect((await actions["mobile.select"](args)).outcome).toBe("applied");
+	expect(controls.select).toHaveBeenCalledExactlyOnceWith(target);
+	expect(
+		await actions["mobile.preview"]({ ...args, mode: "live" }),
+	).toMatchObject({
+		outcome: "refused",
+		error: { code: "mobile_preview_unsupported" },
+	});
+	expect(controls.preview).not.toHaveBeenCalled();
+	expect(
+		(await actions["mobile.preview"]({ ...args, mode: "auto" })).outcome,
+	).toBe("pending");
+	expect(controls.preview).toHaveBeenCalledExactlyOnceWith("auto");
+});

@@ -1,18 +1,41 @@
 export interface MobileDeviceTarget {
 	readonly platform: "ios" | "android";
 	readonly id: string;
+	readonly transport?: "iphone_mirroring";
 }
 
-interface MobileDevice extends MobileDeviceTarget {
+export type MobileCapability =
+	| "capture"
+	| "live"
+	| "boot"
+	| "open_native"
+	| "open_url"
+	| "install"
+	| "launch"
+	| "gesture"
+	| "type"
+	| "paste"
+	| "key"
+	| "rotate"
+	| "home"
+	| "back"
+	| "recents"
+	| "run";
+
+export interface MobileDevice extends MobileDeviceTarget {
 	readonly name: string;
 	readonly runtime: string;
 	readonly state: string;
+	readonly kind?: "simulator" | "emulator" | "physical";
+	readonly capabilities?: readonly MobileCapability[];
+	readonly detail?: string | null;
 }
 
 export interface MobileDeviceCatalog {
 	readonly devices: MobileDevice[];
 	readonly unavailable: {
 		platform: MobileDeviceTarget["platform"];
+		transport?: MobileDeviceTarget["transport"];
 		detail: string;
 	}[];
 }

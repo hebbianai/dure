@@ -1,4 +1,9 @@
 export const panels: Record<string, string> = {
+	"panels.mobile.kind.simulator": "模拟器",
+	"panels.mobile.kind.emulator": "仿真器",
+	"panels.mobile.kind.physical": "实体设备",
+	"panels.mobile.mirroringSetup": "设置 iPhone 镜像",
+	"panels.mobile.mirroringHelp": "请先在 Apple iPhone 镜像中连接已锁定的 iPhone。Dure 支持 Apple 所选手机的预览、主屏幕和应用切换器。此处不支持触控、输入文字、安装及启动应用；请直接在 Apple 窗口中触控或输入。",
 	"panels.mobile.frameUnavailable": "无法显示模拟器图像。请重新截取屏幕截图。",
 	"panels.mobile.orientationChanged": "设备视图已更改。请先截取新屏幕截图再操作。",
 	"panels.mobile.reportChanged": "报告已更改。请准备并检查新报告。",

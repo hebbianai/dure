@@ -1,4 +1,9 @@
 export const panels: Record<string, string> = {
+	"panels.mobile.kind.simulator": "Simulador",
+	"panels.mobile.kind.emulator": "Emulador",
+	"panels.mobile.kind.physical": "Dispositivo físico",
+	"panels.mobile.mirroringSetup": "Configurar Duplicación del iPhone",
+	"panels.mobile.mirroringHelp": "Conecta primero el iPhone bloqueado en Duplicación del iPhone de Apple. Dure permite ver la pantalla, ir a Inicio y abrir el selector de apps del teléfono seleccionado por Apple. No se admiten toques, escritura, instalación ni inicio de apps aquí; usa la ventana de Apple para tocar o escribir.",
 	"panels.mobile.frameUnavailable": "No se puede mostrar la imagen del simulador. Captura una nueva imagen.",
 	"panels.mobile.orientationChanged": "La vista del dispositivo cambió. Captura una nueva imagen antes de interactuar.",
 	"panels.mobile.reportChanged": "El informe cambió. Prepara y revisa uno nuevo.",

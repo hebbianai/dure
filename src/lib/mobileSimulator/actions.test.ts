@@ -82,6 +82,40 @@ function fixture() {
 	return { input, actions: mobilePaneActions(input) };
 }
 
+it("refuses unproven physical iPhone input and dispatches only Home or App Switcher", async () => {
+	const { input } = fixture();
+	const target = {
+		platform: "ios",
+		id: "mirroring:42:EKWlAAAAAAA:99",
+		transport: "iphone_mirroring",
+	} as const;
+	const actions = mobileInputActions({ ...input, target });
+	const args = { platform: target.platform, deviceId: target.id };
+	for (const [name, extra] of [
+		["mobile.tap", { x: 0.5, y: 0.5, width: 700, height: 1558 }],
+		["mobile.type", { text: "Dure 한글" }],
+		["mobile.paste", { text: "Dure" }],
+		["mobile.key", { key: "enter" }],
+		["mobile.install", { path: "/tmp/app.app" }],
+		["mobile.button", { button: "back" }],
+	] as const) {
+		expect(await actions[name]({ ...args, ...extra })).toMatchObject({
+			outcome: "refused",
+			error: { code: "mobile_action_unsupported" },
+		});
+	}
+	expect(input.act).not.toHaveBeenCalled();
+	for (const button of ["home", "recents"]) {
+		expect((await actions["mobile.button"]({ ...args, button })).outcome).toBe(
+			"applied",
+		);
+	}
+	expect(input.act.mock.calls).toEqual([
+		[{ kind: "button", button: "home" }],
+		[{ kind: "button", button: "recents" }],
+	]);
+});
+
 it("refuses hidden iOS preview and gestures with exact Space recovery instructions", async () => {
 	const { input } = fixture();
 	const target = { platform: "ios", id: "qa-ios" } as const;

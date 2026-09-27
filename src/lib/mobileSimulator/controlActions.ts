@@ -6,6 +6,7 @@ import {
 	definePaneAction,
 	type PaneActionExecution,
 } from "@/lib/workspace/pane/paneAction";
+import { isIosSimulator } from "./capabilities";
 import {
 	type MobileRunProfile,
 	type MobileRunProfileIdentity,
@@ -129,7 +130,11 @@ export function mobileControlActions(input: {
 						"mobile_device_busy",
 						"Wait for the current operation to complete.",
 					);
-				controls.select({ platform: device.platform, id: device.id });
+				controls.select({
+					platform: device.platform,
+					id: device.id,
+					...(device.transport ? { transport: device.transport } : {}),
+				});
 				return { outcome: "applied", value: device };
 			},
 		),
@@ -148,7 +153,7 @@ export function mobileControlActions(input: {
 		"mobile.preview": definePaneAction(
 			{
 				description:
-					"Set snapshot, 1-second auto refresh, or live iOS mode. Poll mobile.status for preview readiness/errors. Live requires a running iOS device and a visible pane.",
+					"Set snapshot, 1-second auto refresh, or live iOS mode. Poll mobile.status for preview readiness/errors. Live requires a running iOS simulator and a visible pane. Physical iPhone Mirroring uses snapshot or auto refresh.",
 				parameters: {
 					...mobileTargetParameters,
 					mode: {
@@ -165,10 +170,10 @@ export function mobileControlActions(input: {
 							? mobileHiddenPresentation(input.presentation)
 							: undefined;
 					if (hidden) return hidden;
-					if (args.mode === "live" && args.platform !== "ios")
+					if (args.mode === "live" && !isIosSimulator(input.target))
 						return mobileRefusal(
 							"mobile_preview_unsupported",
-							"Live mode is available for iOS; use auto for Android.",
+							"Live mode is available for iOS simulators; use auto for physical iPhone or Android.",
 						);
 					controls.preview(args.mode as MobilePreviewMode);
 					return { outcome: "pending" };
