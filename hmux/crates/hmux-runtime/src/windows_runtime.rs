@@ -202,6 +202,7 @@ fn managed_host_capabilities(process_observed_agent_prompt: bool) -> Vec<String>
     let _ = process_observed_agent_prompt;
     let capabilities = [
         managed_starting_generation::PROVIDER_RELEASE_BARRIER_CAPABILITY,
+        hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY,
         hmux_host::local_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY,
         AGENT_RUNTIME_STATE_CAPABILITY,
         AGENT_STATE_REPORT_CAPABILITY,
@@ -363,6 +364,7 @@ fn write_build_info() -> Result<()> {
             "protocol": { "minimum": "1.0", "maximum": "1.0" },
             "capabilities": [
                 hmux_runtime_contract::MANAGED_CREATE_CAPABILITY,
+                hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY,
                 hmux_host::local_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY,
                 MANAGED_CREATE_ADVANCE_CAPABILITY,
                 MANAGED_CREATE_CHAIN_STOP_CAPABILITY,
@@ -2640,6 +2642,7 @@ fn serve_client(
         && selected_capabilities
             .iter()
             .any(|capability| capability == SHARED_TERMINAL_INPUT_CAPABILITY);
+    let agent_state_report_progress = selected_capabilities.iter().any(|v| v == hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY);
     let termination = selected_capabilities
         .iter()
         .any(|capability| capability == STANDALONE_TERMINATION_CAPABILITY);
@@ -2933,6 +2936,7 @@ fn serve_client(
                         &state.fence,
                         &state.common.provider_id,
                         agent_state_report::Permissions {
+                            progress: agent_state_report_progress,
                             report: agent_state_report,
                             completion_id: agent_state_report_completion_id,
                             causality: agent_state_report_causality,

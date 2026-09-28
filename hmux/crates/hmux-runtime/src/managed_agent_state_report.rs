@@ -77,6 +77,7 @@ fn into_client_report(
     expected_fence: &hmux_host::local_protocol::SessionFence,
 ) -> ClientReport {
     ClientReport {
+        progress: report.progress,
         identity_only: report.identity_only,
         activity: match report.activity {
             AgentRuntimeActivity::Working => ClientActivity::Working,

@@ -5980,6 +5980,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
     let blocked = session
         .report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
                 attention: hmux_client::AgentRuntimeAttention::ApprovalRequired,
@@ -6011,6 +6012,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
     let completed = session
         .report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
                 attention: hmux_client::AgentRuntimeAttention::None,
@@ -6036,6 +6038,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
     let duplicate_completion = session
         .report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
                 attention: hmux_client::AgentRuntimeAttention::None,
@@ -6055,6 +6058,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
     let repeated = session
         .report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
                 attention: hmux_client::AgentRuntimeAttention::None,
@@ -6092,6 +6096,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Working,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -6112,6 +6117,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
                     attention: hmux_client::AgentRuntimeAttention::Error,
@@ -6151,6 +6157,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
                     attention: hmux_client::AgentRuntimeAttention::Error,
@@ -6215,6 +6222,7 @@ fn bounded_working_report_retains_work_until_a_typed_provider_report() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Working,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -6262,6 +6270,7 @@ fn bounded_working_report_retains_work_until_a_typed_provider_report() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -6321,6 +6330,7 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Working,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -6357,6 +6367,7 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -7779,4 +7790,111 @@ fn shared_writer_input_is_refused_once_the_provider_epoch_ends() {
             None => panic!("shared writer disconnected before its input receipt"),
         }
     }
+}
+
+/// Exercises the production Host timer with no app, coordinator or provider activity.
+#[test]
+#[ignore = "native five-minute progress deadline; run explicitly in isolated QA"]
+fn agent_progress_native_deadline_survives_observer_reconnect() {
+    let state = tempfile::tempdir().unwrap();
+    let discovery_root = state.path().join("discovery");
+    let creator = StandaloneSessionCreator::new(env!("CARGO_BIN_EXE_hmux-runtime"))
+        .with_discovery_root(&discovery_root);
+    let created = creator
+        .create(
+            StandaloneCreateRequest::new(
+                std::env::current_dir().unwrap().canonicalize().unwrap(),
+                Some("progress-deadline-smoke".into()),
+                vec!["/bin/sleep".into(), "360".into()],
+                24,
+                80,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let session = created.session().clone();
+    let report = AgentStateReport {
+        progress: Some(hmux_client::AgentProgressReport {
+            source_id: "native-driver".into(),
+            sequence: 1,
+            phase: hmux_client::AgentProgressPhase::Thinking,
+            turn_id: Some("turn-1".into()),
+            message_turns: vec![hmux_client::AgentMessageTurn {
+                delivery_receipt_id: "receipt-1".into(),
+                turn_id: "turn-1".into(),
+            }],
+        }),
+        identity_only: false,
+        activity: hmux_client::AgentRuntimeActivity::Working,
+        attention: hmux_client::AgentRuntimeAttention::None,
+        turn_completed: false,
+        turn_completion_id: None,
+        causality: None,
+        working_ttl_ms: None,
+        conversation_identity: None,
+        expected_observation: None,
+    };
+    assert_eq!(
+        session.report_agent_state(report.clone(), None).unwrap(),
+        AgentStateReportOutcome::Applied
+    );
+    let catalog = LocalSessionCatalog::new(&discovery_root);
+    let selector = SessionSelector::new(
+        session.descriptor().session_id.clone(),
+        Some(session.descriptor().workspace_id.clone()),
+    );
+    let first =
+        LocalSessionObserver::connect(&catalog, &selector, ObserverAttachOptions::default())
+            .unwrap();
+    assert!(
+        !first
+            .attachment()
+            .initial_snapshot
+            .agent_runtime_state
+            .as_ref()
+            .unwrap()
+            .progress
+            .as_ref()
+            .unwrap()
+            .progress_unconfirmed
+    );
+    first.detach().unwrap();
+    // No observers remain. The Host must still publish the deadline itself.
+    for _ in 0..6 {
+        std::thread::sleep(Duration::from_secs(50));
+    }
+    std::thread::sleep(Duration::from_secs(2));
+    let mut second =
+        LocalSessionObserver::connect(&catalog, &selector, ObserverAttachOptions::default())
+            .unwrap();
+    let quiet = second
+        .attachment()
+        .initial_snapshot
+        .agent_runtime_state
+        .as_ref()
+        .unwrap();
+    assert!(quiet.progress.as_ref().unwrap().progress_unconfirmed);
+    assert_eq!(quiet.activity, hmux_client::AgentRuntimeActivity::Working);
+    assert_eq!(quiet.lifecycle, hmux_client::AgentRuntimeLifecycle::Running);
+    assert_eq!(quiet.turn_completed_count, "0");
+    assert_eq!(
+        quiet.progress.as_ref().unwrap().report.message_turns[0].delivery_receipt_id,
+        "receipt-1"
+    );
+    let mut resumed = report;
+    resumed.progress.as_mut().unwrap().sequence = 2;
+    assert_eq!(
+        session.report_agent_state(resumed, None).unwrap(),
+        AgentStateReportOutcome::Applied
+    );
+    assert!(
+        !wait_for_provider_event_state(&mut second)
+            .progress
+            .unwrap()
+            .progress_unconfirmed
+    );
+    second.detach().unwrap();
+    session
+        .terminate_standalone(&catalog, Duration::from_secs(3))
+        .unwrap();
 }

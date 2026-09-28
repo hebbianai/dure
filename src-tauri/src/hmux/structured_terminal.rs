@@ -1513,6 +1513,7 @@ mod tests {
 
     fn agent_runtime_state_projection(revision: u64) -> AgentRuntimeStateProjection {
         AgentRuntimeStateProjection {
+            progress: None,
             terminal_epoch: "terminal-1".into(),
             revision,
             observed_through_output_seq: 11,

@@ -1218,6 +1218,7 @@ mod tests {
         let mut host = host();
         let current = fence("runner-1", 1, "terminal-1");
         let report = AgentStateReportObservation {
+            progress: None,
             activity: AgentRuntimeActivity::Working,
             attention: AgentRuntimeAttention::None,
             turn_completed: true,

@@ -29,7 +29,21 @@ export interface HmuxAgentIdentity {
 	source: "process_inspection";
 }
 
+export interface HmuxAgentProgress {
+	report: {
+		source_id: string;
+		sequence: string;
+		phase: "thinking" | "tool_running" | "waiting";
+		turn_id: string | null;
+		message_turns: { delivery_receipt_id: string; turn_id: string }[];
+	};
+	last_activity_unix_ms: string;
+	quiet_threshold_ms: string;
+	progress_unconfirmed: boolean;
+}
+
 export interface HmuxAgentRuntimeState {
+	progress?: HmuxAgentProgress;
 	terminalEpoch: string;
 	revision: string;
 	observedThroughOutputSeq: string;

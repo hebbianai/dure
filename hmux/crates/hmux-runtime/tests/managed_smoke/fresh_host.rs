@@ -50,6 +50,7 @@ fn refused_fresh_switch_keeps_source_available_for_a_new_operation() {
         .report_agent_state(
             ManagedAttachRequest::new(&source.session_id, &source.workspace_id).unwrap(),
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
                 attention: hmux_client::AgentRuntimeAttention::None,

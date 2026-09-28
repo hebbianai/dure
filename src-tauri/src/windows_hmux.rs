@@ -682,6 +682,8 @@ pub(crate) struct WindowsAgentRuntimeState {
     #[serde(skip_serializing_if = "Option::is_none")]
     attention_id: Option<String>,
     source: &'static str,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    progress: Option<hmux_client::AgentProgressProjection>,
     turn_completed_count: String,
 }
 
@@ -755,6 +757,7 @@ fn project_agent_runtime_record(state: AgentRuntimeStateDescriptor) -> WindowsAg
             AgentRuntimeStateSource::ControllerInput => "controller_input",
             AgentRuntimeStateSource::ProcessLifecycle => "process_lifecycle",
         },
+        progress: state.progress,
         turn_completed_count: state.turn_completed_count,
     }
 }

@@ -216,6 +216,8 @@ impl fmt::Debug for ProviderConversationIdentityProjection {
 
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AgentRuntimeStateProjection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<super::AgentProgressProjection>,
     pub terminal_epoch: String,
     #[serde(with = "super::json_u64")]
     pub revision: u64,
@@ -707,6 +709,8 @@ pub const AGENT_STATE_REPORT_MAX_WORKING_TTL_MS: u64 = 86_400_000;
 /// resurrect or exit one.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AgentStateReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<super::AgentProgressReport>,
     pub request_id: String,
     /// Report only `conversation_identity` and preserve the Host-owned agent
     /// runtime projection. Capability-gated so older Hosts never receive this

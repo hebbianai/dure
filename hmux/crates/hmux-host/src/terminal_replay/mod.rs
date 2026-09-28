@@ -1,4 +1,5 @@
 mod agent_identity;
+mod agent_progress;
 mod agent_runtime;
 mod canonical_snapshot;
 mod causal_reports;
@@ -397,6 +398,7 @@ pub struct TerminalReplay {
     agent_identity: Option<AgentIdentityProjection>,
     agent_runtime_state: Option<AgentRuntimeStateProjection>,
     agent_runtime_changed_at: Option<Instant>,
+    agent_progress: agent_progress::ProgressTracker,
     working_deadline: Option<WorkingDeadline>,
     pending_turn_completion: Option<PendingTurnCompletion>,
     accepted_turn_completion_id_order: VecDeque<String>,
@@ -713,6 +715,7 @@ impl TerminalReplay {
             agent_identity: None,
             agent_runtime_state: None,
             agent_runtime_changed_at: None,
+            agent_progress: Default::default(),
             working_deadline: None,
             pending_turn_completion: None,
             accepted_turn_completion_id_order: VecDeque::new(),
@@ -755,6 +758,7 @@ impl TerminalReplay {
             agent_identity: None,
             agent_runtime_state: None,
             agent_runtime_changed_at: None,
+            agent_progress: Default::default(),
             working_deadline: None,
             pending_turn_completion: None,
             accepted_turn_completion_id_order: VecDeque::new(),
@@ -1367,12 +1371,18 @@ impl TerminalReplay {
         let completion_id = report.turn_completion_id.clone();
         let acknowledges_input =
             settle_identified_completion && report.expected_observation.is_none();
-        let projection = self.fold_agent_runtime_observation(
-            observation,
-            report.turn_completed,
-            acknowledges_input,
-            now,
-        )?;
+        let previous_progress = self.agent_progress.clone();
+        self.observe_progress(report.progress.as_ref(), now)?;
+        let projection = self
+            .fold_agent_runtime_observation(
+                observation,
+                report.turn_completed,
+                acknowledges_input,
+                now,
+            )
+            .inspect_err(|_| {
+                self.agent_progress = previous_progress;
+            })?;
         if settle_identified_completion {
             self.remember_report_causality(&report);
         }
@@ -1449,6 +1459,9 @@ impl TerminalReplay {
                 AgentStateReportFold::Applied(projection) => Ok(Some(projection)),
                 AgentStateReportFold::NoOp | AgentStateReportFold::DroppedExited => Ok(None),
             };
+        }
+        if let Some(projection) = self.expire_progress(now)? {
+            return Ok(Some(projection));
         }
         let Some(deadline) = self.working_deadline else {
             return Ok(None);
@@ -1552,6 +1565,7 @@ impl TerminalReplay {
                 false,
             ));
         }
+        let previous_progress = self.agent_progress.clone();
         let previous_agent_runtime_state = self.agent_runtime_state.clone();
         let previous_agent_runtime_changed_at = self.agent_runtime_changed_at;
         let previous_controller_input = self.pending_controller_input;
@@ -1580,6 +1594,7 @@ impl TerminalReplay {
             ))
         })();
         if result.is_err() {
+            self.agent_progress = previous_progress;
             self.agent_runtime_state = previous_agent_runtime_state;
             self.agent_runtime_changed_at = previous_agent_runtime_changed_at;
             self.pending_controller_input = previous_controller_input;
@@ -1639,11 +1654,13 @@ impl TerminalReplay {
         acknowledges_input: bool,
         now: Instant,
     ) -> Result<Option<AgentRuntimeStateProjection>, TerminalReplayError> {
+        let progress = self.agent_progress.projection(&observation);
         let unchanged = self.agent_runtime_state.as_ref().is_some_and(|current| {
             current.lifecycle == observation.lifecycle
                 && current.activity == observation.activity
                 && current.attention == observation.attention
                 && current.source == observation.source
+                && current.progress == progress
         });
         // A new input acknowledgement ends the old semantic idle epoch even
         // when activity is waiting on both sides. Advance before clearing the
@@ -1674,6 +1691,7 @@ impl TerminalReplay {
             .map_or(0, |current| current.turn_completed_count)
             .saturating_add(u64::from(turn_completed));
         let projection = AgentRuntimeStateProjection {
+            progress,
             terminal_epoch: self.fence.terminal_epoch.clone(),
             revision,
             observed_through_output_seq: self.output_seq,

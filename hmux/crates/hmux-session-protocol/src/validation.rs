@@ -607,6 +607,13 @@ fn validate_agent_runtime_state_projection(
 ) -> Result<(), FrameValidationError> {
     use super::{AgentRuntimeActivity, AgentRuntimeAttention, AgentRuntimeLifecycle};
 
+    if projection
+        .progress
+        .as_ref()
+        .is_some_and(|p| !p.report.is_valid() || p.quiet_threshold_ms == 0)
+    {
+        return Err(inconsistent("agent_runtime_state.progress"));
+    }
     bounded_text(
         "agent_runtime_state.terminal_epoch",
         &projection.terminal_epoch,
@@ -656,6 +663,11 @@ fn validate_agent_state_report(
         AGENT_STATE_REPORT_MAX_WORKING_TTL_MS, AgentRuntimeActivity, AgentRuntimeAttention,
     };
 
+    if frame.progress.as_ref().is_some_and(|p| !p.is_valid())
+        || (frame.identity_only && frame.progress.is_some())
+    {
+        return Err(inconsistent("agent_state_report.progress"));
+    }
     bounded_text(
         "agent_state_report.request_id",
         &frame.request_id,
@@ -1789,6 +1801,7 @@ mod tests {
     #[test]
     fn agent_runtime_state_is_fenced_revisioned_and_semantically_consistent() {
         let valid = AgentRuntimeStateProjection {
+            progress: None,
             terminal_epoch: "terminal-1".into(),
             revision: 2,
             observed_through_output_seq: 4,
@@ -1885,6 +1898,7 @@ mod tests {
             execution_location: None,
             agent_identity: None,
             agent_runtime_state: Some(AgentRuntimeStateProjection {
+                progress: None,
                 terminal_epoch: "terminal-1".into(),
                 revision: 3,
                 observed_through_output_seq: 4,
@@ -1948,6 +1962,7 @@ mod tests {
     #[test]
     fn conversation_continuations_require_causality_and_an_exact_fence() {
         let report = crate::AgentStateReport {
+            progress: None,
             request_id: "continuation".into(),
             identity_only: false,
             activity: AgentRuntimeActivity::Working,
@@ -2014,6 +2029,7 @@ mod tests {
 
         let codec = FrameCodec::new(FrameLimits::default());
         let valid = AgentStateReport {
+            progress: None,
             request_id: "report-1".into(),
             identity_only: false,
             activity: AgentRuntimeActivity::Working,

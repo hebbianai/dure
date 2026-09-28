@@ -738,6 +738,8 @@ pub struct ObserverAgentRuntimeState {
     pub attention: &'static str,
     pub attention_id: Option<String>,
     pub source: &'static str,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<hmux_client::AgentProgressProjection>,
     /// 완료 카운터(u64) — JS 정밀도 함정을 피해 revision과 같은 10진 문자열로 전달.
     pub turn_completed_count: String,
 }
@@ -1462,6 +1464,7 @@ impl HmuxManager {
                 .any(|capability| capability == AGENT_STATE_REPORT_COMPLETION_ID_CAPABILITY)
         });
         let report = AgentStateReport {
+            progress: None,
             identity_only: false,
             activity: match activity {
                 ReportedAgentActivity::Working => AgentRuntimeActivity::Working,
@@ -1589,6 +1592,7 @@ impl HmuxManager {
             .report_agent_state_for_fence(
                 attach_request,
                 AgentStateReport {
+                    progress: None,
                     identity_only: true,
                     // Ignored by Hosts that negotiated identity-only reports.
                     activity: AgentRuntimeActivity::Waiting,
@@ -2299,6 +2303,7 @@ fn project_agent_runtime_state(state: AgentRuntimeStateDescriptor) -> ObserverAg
             AgentRuntimeStateSource::ControllerInput => "controller_input",
             AgentRuntimeStateSource::ProcessLifecycle => "process_lifecycle",
         },
+        progress: state.progress,
         turn_completed_count: state.turn_completed_count,
     }
 }
@@ -2886,6 +2891,7 @@ mod tests {
             attention: AgentRuntimeAttention::None,
             attention_id: None,
             source: AgentRuntimeStateSource::ProviderEvent,
+            progress: None,
             turn_completed_count: "3".into(),
         });
         assert_eq!(projected.turn_completed_count, "3");

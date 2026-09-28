@@ -15,6 +15,7 @@ pub(super) fn report(
     .report_agent_state_for_fence(
         hmux_client::ManagedAttachRequest::new(&source.session_id, &source.workspace_id).unwrap(),
         hmux_client::AgentStateReport {
+            progress: None,
             identity_only: false,
             activity,
             attention,

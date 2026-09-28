@@ -15,6 +15,7 @@ use hmux_host::terminal_replay::{
 
 #[derive(Clone, Copy)]
 pub(crate) struct Permissions {
+    pub(crate) progress: bool,
     pub(crate) report: bool,
     pub(crate) completion_id: bool,
     pub(crate) causality: bool,
@@ -54,6 +55,9 @@ pub(crate) fn apply(
         broadcasts: Vec::new(),
     };
 
+    if report.progress.is_some() && !permissions.progress {
+        return error(ErrorCode::UnsupportedCapability, "agent progress was not negotiated", Some(hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY));
+    }
     if !permissions.report {
         return error(
             ErrorCode::UnsupportedCapability,
@@ -187,6 +191,7 @@ pub(crate) fn apply(
         match host.apply_agent_state_report_with_identity(
             fence,
             AgentStateReportObservation {
+                progress: report.progress,
                 activity: report.activity,
                 attention: report.attention,
                 turn_completed: report.turn_completed,

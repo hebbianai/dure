@@ -917,7 +917,7 @@ export function formatSessionQuery(report) {
   const sessions = report.kind === "dure.sessions.list" ? report.sessions : [report.session];
   if (sessions.length === 0) return "No Dure sessions.";
   const lines = [
-    "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tAGENTS\tACCOUNT\tFAILURE",
+    "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS",
   ];
   for (const session of sessions) {
     lines.push(
@@ -935,6 +935,7 @@ export function formatSessionQuery(report) {
         session.failure
           ? `${session.failure.code} (${session.failure.correlationId})`
           : "-",
+        session.runtime?.agentRuntimeState?.progress?.progress_unconfirmed ? "progress_unconfirmed" : session.runtime?.agentRuntimeState?.progress?.report.phase ?? "unknown",
       ].join("\t"),
     );
   }

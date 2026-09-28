@@ -31,6 +31,7 @@ fn fresh_observation_projects_only_the_matching_host_generation() {
                 source: crate::AgentIdentitySource::ProcessInspection,
             }),
             agent_runtime_state: Some(AgentRuntimeStateDescriptor {
+                progress: None,
                 terminal_epoch: "terminal-001".into(),
                 revision: "3".into(),
                 observed_through_output_seq: "8".into(),

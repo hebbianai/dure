@@ -94,3 +94,9 @@ receipts on stdout with exit code 2; successful evaluations exit 0.
 
 Copyright (C) 2026 Hebbian AI. The Dure CLI is licensed under
 [GNU GPL version 3 only (GPL-3.0-only)](LICENSE).
+
+Message tracking: `dure send NAME --track "message" --json` returns a private
+`receiptPath` for `dure wait --message PATH [--until observed|acknowledged|turn_started]`.
+See `dure send --help` and `dure wait --help` for evidence limits. Native Codex
+progress also appears in `dure inspect --json`, `dure ls`, and pane headers after
+five quiet minutes of thinking. This is an observation, never an automatic stop.

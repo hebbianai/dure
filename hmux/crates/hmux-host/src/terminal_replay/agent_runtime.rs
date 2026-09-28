@@ -69,6 +69,7 @@ impl AgentRuntimeObservation {
 /// its current lifecycle so a report can never resurrect an exited provider.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentStateReportObservation {
+    pub progress: Option<crate::local_protocol::AgentProgressReport>,
     pub activity: AgentRuntimeActivity,
     pub attention: AgentRuntimeAttention,
     pub turn_completed: bool,

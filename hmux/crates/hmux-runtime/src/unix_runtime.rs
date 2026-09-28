@@ -307,6 +307,7 @@ const MANAGED_AUTHORIZATION_GRANT_TTL: Duration = Duration::from_secs(15);
 const MAX_MANAGED_AUTHORIZATION_GRANTS: usize = 64;
 const PROVIDER_RUNTIME_ENVIRONMENT_CAPABILITY: &str = "provider_runtime_environment_v1";
 const HOST_CAPABILITIES: &[&str] = &[
+    hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY,
     hmux_host::local_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY,
     "screen_snapshot",
     "live_output",
@@ -439,6 +440,7 @@ fn run() -> Result<()> {
                     },
                     "capabilities": [
                         hmux_runtime_contract::MANAGED_CREATE_CAPABILITY,
+                        hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY,
                         hmux_host::local_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY,
                         hmux_runtime_contract::STANDALONE_REQUEST_BOUND_CREATE_CAPABILITY,
                         hmux_runtime_contract::STANDALONE_OPERATION_BOUND_CREATE_CAPABILITY,
@@ -4787,6 +4789,7 @@ fn serve_client(
     // for the same reason profiles are: an unnegotiated peer has not agreed to
     // a reply that omits the snapshot, and giving it one would look like a Host
     // that answered the handshake with nothing.
+    let agent_state_report_progress = selected_capabilities.iter().any(|v| v == hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY);
     let reconnect_cursor = selected_capabilities
         .iter()
         .any(|capability| capability == RECONNECT_RESUME_CAPABILITY)
@@ -5091,6 +5094,7 @@ fn serve_client(
             screen_snapshot_profile,
             agent_state_report,
             agent_state_report_completion_id,
+            agent_state_report_progress,
             agent_state_report_causality,
             agent_state_report_observation_fence,
             provider_conversation_identity,
@@ -5147,6 +5151,7 @@ struct ClientPermissions {
     screen_snapshot_profile: bool,
     agent_state_report: bool,
     agent_state_report_completion_id: bool,
+    agent_state_report_progress: bool,
     agent_state_report_causality: bool,
     agent_state_report_observation_fence: bool,
     provider_conversation_identity: bool,
@@ -5510,6 +5515,7 @@ fn client_read_loop(
                     &state.fence,
                     &state.common.provider_id,
                     agent_state_report::Permissions {
+                        progress: permissions.agent_state_report_progress,
                         report: permissions.agent_state_report,
                         completion_id: permissions.agent_state_report_completion_id,
                         causality: permissions.agent_state_report_causality,
@@ -6190,6 +6196,7 @@ mod tests {
     #[test]
     fn semantic_state_frames_require_explicit_negotiation() {
         let state = FrameBody::AgentRuntimeState(AgentRuntimeStateProjection {
+            progress: None,
             terminal_epoch: "terminal-1".into(),
             revision: 1,
             observed_through_output_seq: 0,
@@ -6234,6 +6241,7 @@ mod tests {
             execution_location: None,
             agent_identity: None,
             agent_runtime_state: Some(AgentRuntimeStateProjection {
+                progress: None,
                 terminal_epoch: "terminal-1".into(),
                 revision: 1,
                 observed_through_output_seq: 3,

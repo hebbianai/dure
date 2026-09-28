@@ -4,7 +4,12 @@
 //! sessions on disk, authorize operations, or own terminal state. Those decisions
 //! stay with the Host and its local OS adapters.
 
+mod agent_progress;
 pub mod browser_console;
+pub use agent_progress::{
+    AGENT_PROGRESS_CAPABILITY, AGENT_PROGRESS_MESSAGES_MAX, AGENT_PROGRESS_QUIET_MS,
+    AgentMessageTurn, AgentProgressPhase, AgentProgressProjection, AgentProgressReport,
+};
 pub mod browser_dialog;
 pub mod browser_interception;
 pub mod browser_keyboard;

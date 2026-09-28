@@ -1,3 +1,6 @@
+pub use hmux_session_protocol::{
+    AgentMessageTurn, AgentProgressPhase, AgentProgressProjection, AgentProgressReport,
+};
 mod catalog;
 #[cfg(feature = "local-runtime")]
 mod catalog_census;

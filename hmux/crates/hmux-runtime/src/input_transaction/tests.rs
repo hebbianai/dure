@@ -666,6 +666,7 @@ fn every_non_ready_initial_prompt_refuses_before_the_writer() {
         host.apply_agent_state_report(
             &fence(),
             AgentStateReportObservation {
+                progress: None,
                 activity: AgentRuntimeActivity::Waiting,
                 attention,
                 turn_completed: false,

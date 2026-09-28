@@ -491,6 +491,7 @@ fn managed_windows_native_runtime_is_idempotent_attachable_and_stoppable() {
     let reporter =
         ManagedAgentStateReporter::new(runtime, state.path()).with_discovery_root(&discovery_root);
     let report_waiting = || AgentStateReport {
+        progress: None,
         identity_only: false,
         activity: AgentRuntimeActivity::Waiting,
         attention: AgentRuntimeAttention::None,
@@ -788,6 +789,7 @@ impl WindowsAgentPromptFixture {
                 ManagedAttachRequest::new(&descriptor.session_id, &descriptor.workspace_id)
                     .unwrap(),
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: AgentRuntimeActivity::Waiting,
                     attention: AgentRuntimeAttention::None,

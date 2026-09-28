@@ -1,3 +1,4 @@
+import { SessionStatusBadge } from "@/components/sessions/SessionListRow";
 import {
   useEffect,
   useLayoutEffect,
@@ -602,6 +603,12 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
           title={titleTooltip}
         />
       </div>
+      {sessionAgentRuntimeState?.lifecycle === "running" &&
+        sessionAgentRuntimeState.activity === "working" &&
+        sessionAgentRuntimeState.progress?.progress_unconfirmed && (
+          <SessionStatusBadge status={t("agents.progress.unconfirmed")} tone="attention"
+            description={t("agents.progress.unconfirmedDescription")} />
+        )}
       {gitError && (
         <Titled title={t("workspace.pane.gitStatusRefreshFailed", { error: gitError })}>
           <span

@@ -1400,6 +1400,7 @@ fn state_report(
     turn_completed: bool,
 ) -> AgentStateReportObservation {
     AgentStateReportObservation {
+        progress: None,
         activity,
         attention,
         turn_completed,
@@ -2545,3 +2546,5 @@ fn unseeded_session_does_not_invent_default_colors() {
         .unwrap();
     assert_eq!(ingested.pty_replies, b"\x1b[1;1R");
 }
+
+mod agent_progress;

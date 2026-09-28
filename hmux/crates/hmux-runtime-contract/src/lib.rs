@@ -5784,6 +5784,7 @@ mod tests {
         let request = ManagedAgentStateReportRequest::new(
             fence.clone(),
             AgentStateReport {
+                progress: None,
                 request_id: "turn-0199aaaa-bbbb-7ac2".into(),
                 identity_only: false,
                 activity: hmux_session_protocol::AgentRuntimeActivity::Working,

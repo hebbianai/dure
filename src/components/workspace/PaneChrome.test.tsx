@@ -2372,3 +2372,25 @@ describe("PaneChrome", () => {
     }
   });
 });
+
+
+it("projects Host progress attention without changing lifecycle or taking focus", () => {
+  const sessionId = "progress-session";
+  const state = {
+    terminalEpoch: "epoch", revision: "2", observedThroughOutputSeq: "0",
+    lifecycle: "running" as const, activity: "working" as const, attention: "none" as const,
+    source: "provider_event" as const,
+    progress: { report: { source_id: "driver", sequence: "1", phase: "thinking" as const, turn_id: "turn", message_turns: [] }, last_activity_unix_ms: "1", quiet_threshold_ms: "300000", progress_unconfirmed: true },
+  };
+  useStore.setState({ sessionAgentRuntimeState: { [sessionId]: state } });
+  const binding = hmuxManagedBinding(sessionId, "progress-workspace");
+  const agent = makeAgent({ id: "progress-agent", branch: "agent/progress", sessionId, runtimeBinding: binding });
+  useStore.setState({ agents: [agent] });
+  renderAgentPane(agent, { binding });
+  expect(screen.getByText(t("agents.progress.unconfirmed"))).toBeTruthy();
+  const focused = document.activeElement;
+  act(() => useStore.getState().setSessionAgentRuntimeState(sessionId, { ...state, revision: "3", progress: { ...state.progress, progress_unconfirmed: false } }));
+  expect(screen.queryByText(t("agents.progress.unconfirmed"))).toBeNull();
+  expect(document.activeElement).toBe(focused);
+  expect(useStore.getState().sessionAgentRuntimeState[sessionId].activity).toBe("working");
+});

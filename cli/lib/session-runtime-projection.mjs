@@ -1,3 +1,4 @@
+import { agentProgress } from "./agent-progress.mjs";
 export const SESSION_QUERY_SCHEMA_VERSION = 1;
 export const MAX_ID_BYTES = 512;
 const MAX_PATH_BYTES = 4_096;
@@ -68,6 +69,7 @@ export function agentRuntimeState(value, generation, outputSequence) {
     attentionId: value.attention_id,
     source: value.source,
     turnCompletedCount: value.turn_completed_count,
+    ...(agentProgress(value.progress) ? { progress: agentProgress(value.progress) } : {}),
   };
 }
 

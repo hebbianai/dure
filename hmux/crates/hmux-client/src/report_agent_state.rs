@@ -33,6 +33,7 @@ const REPORT_RECEIPT_TIMEOUT: Duration = Duration::from_secs(3);
 /// and turn completion. Lifecycle is Host truth and cannot be reported.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentStateReport {
+    pub progress: Option<hmux_session_protocol::AgentProgressReport>,
     /// Preserve Host-owned runtime state and establish only the exact provider
     /// conversation identity.
     pub identity_only: bool,
@@ -187,6 +188,14 @@ impl LocalSession {
         report: AgentStateReport,
         authorization_proof_reference: Option<String>,
     ) -> Result<AgentStateReportOutcome, ClientError> {
+        if report.progress.as_ref().is_some_and(|p| !p.is_valid())
+            || (report.identity_only && report.progress.is_some())
+        {
+            return Err(ClientError::transport(
+                "hmux_invalid_agent_state_report",
+                "invalid agent progress",
+            ));
+        }
         if report.identity_only && report.expected_observation.is_some() {
             return Err(ClientError::transport(
                 "hmux_invalid_agent_state_report",
@@ -348,6 +357,7 @@ impl LocalSession {
                 MANAGED_AUTHORIZATION_GRANT_CAPABILITY,
             ]
         };
+        optional_capabilities.push(hmux_session_protocol::AGENT_PROGRESS_CAPABILITY);
         if identified_completion {
             optional_capabilities.push(AGENT_STATE_REPORT_COMPLETION_ID_CAPABILITY);
         }
@@ -423,9 +433,14 @@ impl LocalSession {
                     previous_conversation_id: identity.previous_conversation_id,
                     expected_fence: identity.expected_fence,
                 });
+        let progress = connection
+            .supports(hmux_session_protocol::AGENT_PROGRESS_CAPABILITY)
+            .then_some(report.progress)
+            .flatten();
         connection
             .writer()
             .send(FrameBody::AgentStateReport(AgentStateReportFrame {
+                progress,
                 request_id: request_id.clone(),
                 identity_only,
                 activity: match report.activity {
@@ -614,6 +629,7 @@ mod tests {
 
         let result = session.report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Working,
                 attention: AgentRuntimeAttention::None,
@@ -641,6 +657,7 @@ mod tests {
 
         let result = session.report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Waiting,
                 attention: AgentRuntimeAttention::Error,
@@ -672,6 +689,7 @@ mod tests {
 
         let result = session.report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Waiting,
                 attention: AgentRuntimeAttention::None,
@@ -698,6 +716,7 @@ mod tests {
         let session = session_with_capabilities(vec![AGENT_STATE_REPORT_CAPABILITY.to_string()]);
         let result = session.report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Working,
                 attention: AgentRuntimeAttention::None,
@@ -729,6 +748,7 @@ mod tests {
         ]);
         let result = session.report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Working,
                 attention: AgentRuntimeAttention::None,
@@ -782,6 +802,7 @@ mod tests {
 
         let result = session.report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Waiting,
                 attention: AgentRuntimeAttention::None,
@@ -817,6 +838,7 @@ mod tests {
 
         let result = session.report_agent_state(
             AgentStateReport {
+                progress: None,
                 identity_only: true,
                 activity: AgentRuntimeActivity::Waiting,
                 attention: AgentRuntimeAttention::None,

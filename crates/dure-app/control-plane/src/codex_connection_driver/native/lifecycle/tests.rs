@@ -894,3 +894,5 @@ fn submitting_a_successor_invalidates_idle_reads_before_its_start_event_arrives(
         AgentRuntimeActivity::Waiting
     );
 }
+
+mod progress;

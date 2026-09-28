@@ -3907,6 +3907,12 @@ async function main() {
       resolveAgent: resolveReadTarget,
       send: sendText,
       sendExactSession,
+      sendTracked: async (agent, text, opts) => {
+        const { sendTrackedMessage } = await import("./lib/tracked-message.mjs");
+        const binding = typeof agent === "string" ? null : agent.runtimeBinding;
+        const backend = await backendProfileQueryContext({ backendSpecified: true, backend: binding?.source === "ssh" ? binding.hostId : "local" });
+        return sendTrackedMessage({ sessionId: typeof agent === "string" ? agent : binding?.sessionId, workspaceId: opts.workspace ?? binding?.workspaceId }, text, { backend, hmuxCommand: hmuxCommand() });
+      },
       fail,
     });
   }

@@ -1,4 +1,6 @@
 export const agentsEnglishTranslations: Record<string, string> = {
+	"agents.progress.unconfirmed": "Check progress",
+	"agents.progress.unconfirmedDescription": "No provider activity has been observed for 5 minutes. The agent may still be thinking. Inspect before interrupting; messages are not resent automatically.",
 	"agents.goal.label": "Goal",
 	"agents.goal.objective": "Objective",
 	"agents.goal.hint": "What should the agent work toward?",

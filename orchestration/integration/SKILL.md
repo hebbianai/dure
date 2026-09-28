@@ -252,3 +252,24 @@ the payload into a terminal, and do not invent a neighbouring tool. Compare
 `dure integration status --json` against the installed skill, and run
 `dure integration update --global --approve-global-config` to bring the server,
 its manifest and this file back to one version.
+
+## Track a sent message
+
+Use `dure send <agent-or-session> --track "message" --json` for a durable inbox message.
+Use `--workspace ID` with an exact Session ID. This requires an observable managed
+Session and its orchestration context. The receipt contains `receiptPath`; keep that
+private local file, which holds the exact read capability but no message text.
+
+`dure wait --message <receiptPath> --json` waits for an authenticated inbox read.
+Use `--until acknowledged` for cursor acknowledgement, or `--until turn_started`
+for a supported native Codex wake turn. A wake turn does not prove inbox read,
+comprehension, or task success. Use the existing exact `--task`, `--dispatch`, and
+`--generation` wait for task completion. Do not resend after a timeout.
+
+`dure inspect <session> --workspace ID --json` and `dure ls --json` expose optional
+Host `agentRuntimeState.progress`: the last provider activity, tool/thinking phase,
+and `progress_unconfirmed` after five quiet minutes of thinking. This is attention,
+not an exit or failure. Old Hosts and unsupported providers omit this evidence.
+Read/acknowledgement remains durable; native turn history is bounded to the latest
+32 wake receipts in the current provider observation source and Host generation.
+Neither this observation nor its absence authorizes interruption.

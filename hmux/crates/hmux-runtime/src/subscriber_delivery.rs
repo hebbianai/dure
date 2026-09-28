@@ -681,6 +681,7 @@ mod tests {
             execution_location: None,
             agent_identity: None,
             agent_runtime_state: Some(AgentRuntimeStateProjection {
+                progress: None,
                 terminal_epoch: "terminal-1".into(),
                 revision: 1,
                 observed_through_output_seq: 3,
@@ -913,6 +914,7 @@ mod tests {
             source: AgentIdentitySource::ProcessInspection,
         });
         let state = FrameBody::AgentRuntimeState(AgentRuntimeStateProjection {
+            progress: None,
             terminal_epoch: "terminal-1".into(),
             revision: 1,
             observed_through_output_seq: 0,

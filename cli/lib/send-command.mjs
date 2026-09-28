@@ -12,6 +12,7 @@ Options:
   --stdin                Read exact UTF-8 text from stdin until EOF (up to 64 KiB)
   --workspace ID         Exact local managed Session scope, independent of the app registry
   --no-enter             Insert text without submitting; edit the chat draft
+  --track                Send through the durable inbox; retain a private message tracking file
   --json                 Print the delivery receipt as JSON, without prompt text
   --window-label LABEL   Select the app window for input delivery
   --idempotency-key KEY   Reuse an input key through the running app broker
@@ -24,6 +25,8 @@ Use --workspace to disambiguate. Remote input requires a registered Agent.
 Messages after the recipient may include literal --help or -h text.
 Choose exactly one text source. Newlines and whitespace in file/stdin are preserved.
 Enter is sent by default; use --no-enter to insert without submitting.
+Tracked messages require a managed Session and support 'dure wait --message <receiptPath>'.
+Tracked send cannot be combined with --no-enter or --idempotency-key.
 Terminal receipts prove bytes were written to the PTY, not provider acceptance.
 The provider owns whether Enter submits immediately or queues terminal input.
 Structured chat uses the running app and reports sent, steered, queued or drafted.
@@ -67,6 +70,10 @@ function printDelivery(agent, input, opts) {
     })}\n`);
     return;
   }
+  if (input?.receipt?.kind === "durable_message") {
+    process.stdout.write(`Message accepted: ${input.receipt.interactionId}\nTrack: dure wait --message ${JSON.stringify(input.receipt.receiptPath)} --json\n`);
+    return;
+  }
   if (input?.receipt?.kind === "structured_chat") {
     process.stdout.write(`\x1b[32m✓\x1b[0m ${agent.name} chat · ${input.receipt.delivery}\n`);
     return;
@@ -78,7 +85,7 @@ function printDelivery(agent, input, opts) {
 
 export async function runSendCommand(
   args,
-  { parseOptions, loadRegistry, resolveAgent, send, sendExactSession, fail },
+  { parseOptions, loadRegistry, resolveAgent, send, sendExactSession, sendTracked, fail },
 ) {
   if (args[0] === "--help" || args[0] === "-h") {
     process.stdout.write(SEND_HELP);
@@ -91,7 +98,10 @@ export async function runSendCommand(
     return fail(error.message);
   }
   const { source, remaining } = parsed;
-  const opts = parseOptions(remaining);
+  const terminator = remaining.indexOf("--");
+  const track = remaining.some((arg, index) => arg === "--track" && (terminator < 0 || index < terminator));
+  const opts = parseOptions(remaining.filter((arg, index) => !(arg === "--track" && (terminator < 0 || index < terminator))));
+  if (track && (!opts.enter || opts.idempotencyKey)) return fail("--track requires submission without --idempotency-key; reuse its tracking file after uncertainty.");
   if (source !== undefined && opts.rest.length > 1) {
     return fail("Choose exactly one input source: argv text, --file, or --stdin");
   }
@@ -113,6 +123,11 @@ export async function runSendCommand(
     return fail(error.message);
   }
   if (!text) return fail("Input text must not be empty");
+  if (track) {
+    const input = await sendTracked(agent, text, opts);
+    printDelivery(typeof agent === "string" ? { name: agent } : agent, input, opts);
+    return;
+  }
   if (typeof agent === "string") {
     const input = await sendExactSession(agent, text, opts);
     printDelivery({ name: agent }, input, opts);

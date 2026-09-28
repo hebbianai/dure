@@ -877,6 +877,7 @@ mod tests {
         let mut observed =
             inspection_from_probe(ready_descriptor(), Some(SessionProbeStatus::Healthy));
         observed.agent_runtime_state = Some(crate::AgentRuntimeStateDescriptor {
+            progress: None,
             terminal_epoch: "terminal-1".into(),
             revision: "3".into(),
             observed_through_output_seq: "8".into(),

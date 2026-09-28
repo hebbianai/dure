@@ -626,6 +626,7 @@ fn report_worker_state(
     .report_agent_state_for_fence(
         hmux_client::ManagedAttachRequest::new(&worker.session_id, &worker.workspace_id).unwrap(),
         hmux_client::AgentStateReport {
+            progress: None,
             identity_only: conversation.is_some(),
             activity: hmux_client::AgentRuntimeActivity::Waiting,
             attention: hmux_client::AgentRuntimeAttention::None,

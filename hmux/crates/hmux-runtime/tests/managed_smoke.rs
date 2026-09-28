@@ -4732,6 +4732,7 @@ fn quiescent_managed_stop_accepts_current_output_snapshot_after_waiting_redraw()
             .report_agent_state(
                 ManagedAttachRequest::new("redraw-stop-target", "workspace-redraw-stop").unwrap(),
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -4857,6 +4858,7 @@ fn structured_input_receipt_crosses_a_live_runtime_projection() {
             ManagedAttachRequest::new("runtime-crossing-target", "workspace-runtime-crossing")
                 .unwrap(),
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
                 attention: hmux_client::AgentRuntimeAttention::None,
@@ -4903,6 +4905,7 @@ fn structured_input_receipt_crosses_a_live_runtime_projection() {
             ManagedAttachRequest::new("runtime-crossing-target", "workspace-runtime-crossing")
                 .unwrap(),
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
                 attention: hmux_client::AgentRuntimeAttention::None,
@@ -5029,6 +5032,7 @@ impl UnixAgentPromptFixture {
                 ManagedAttachRequest::new(&descriptor.session_id, &descriptor.workspace_id)
                     .unwrap(),
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -5059,6 +5063,7 @@ impl UnixAgentPromptFixture {
                 ManagedAttachRequest::new(&descriptor.session_id, &descriptor.workspace_id)
                     .unwrap(),
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -5424,6 +5429,7 @@ fn quiescent_managed_stop_ignores_structured_focus_control_input() {
                 )
                 .unwrap(),
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -6688,6 +6694,7 @@ while IFS= read -r line; do printf '%s\n' "$line" >> "$2"; done"#
                 )
                 .unwrap(),
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -7138,6 +7145,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
         ProviderConversationIdentitySource::LaunchRequest
     );
     let report = AgentStateReport {
+        progress: None,
         identity_only: false,
         activity: hmux_client::AgentRuntimeActivity::Working,
         attention: hmux_client::AgentRuntimeAttention::None,
@@ -7195,6 +7203,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
         terminal_epoch: descriptor.terminal_epoch.clone(),
     };
     let identity_only_report = AgentStateReport {
+        progress: None,
         identity_only: true,
         // These values would demote the current working state if the Host
         // accidentally folded them as a runtime report.
@@ -7260,6 +7269,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
         ProviderConversationIdentitySource::ProviderEvent
     );
     let completed_report = |fence: SessionFence, completion_id: &str| AgentStateReport {
+        progress: None,
         identity_only: false,
         activity: hmux_client::AgentRuntimeActivity::Waiting,
         attention: hmux_client::AgentRuntimeAttention::None,
@@ -7363,6 +7373,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
             .report_agent_state(
                 ManagedAttachRequest::new("managed-report", "workspace-managed-report").unwrap(),
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Working,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -7382,6 +7393,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
             .report_agent_state(
                 ManagedAttachRequest::new("managed-report", "workspace-managed-report").unwrap(),
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
                     attention: hmux_client::AgentRuntimeAttention::Error,
@@ -7417,6 +7429,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
             .report_agent_state(
                 ManagedAttachRequest::new("managed-report", "workspace-managed-report").unwrap(),
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
                     attention: hmux_client::AgentRuntimeAttention::Error,
@@ -7455,6 +7468,7 @@ fn managed_state_reports_require_the_adapter_authorization_proof() {
         .report_agent_state(
             ManagedAttachRequest::new("managed-report", "workspace-managed-report").unwrap(),
             AgentStateReport {
+                progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
                 attention: hmux_client::AgentRuntimeAttention::None,
@@ -7567,6 +7581,7 @@ fn structured_semantics_follow_output_that_does_not_change_the_viewport() {
                 )
                 .unwrap(),
                 AgentStateReport {
+                    progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Working,
                     attention: hmux_client::AgentRuntimeAttention::None,
@@ -7678,6 +7693,7 @@ fn managed_identity_only_report_establishes_a_fresh_host_snapshot() {
         terminal_epoch: descriptor.terminal_epoch.clone(),
     };
     let report = || AgentStateReport {
+        progress: None,
         identity_only: true,
         activity: hmux_client::AgentRuntimeActivity::Waiting,
         attention: hmux_client::AgentRuntimeAttention::None,
@@ -8017,6 +8033,7 @@ fn publish_provider_conversation_identity_with_predecessor(
         .report_agent_state(
             ManagedAttachRequest::new(&descriptor.session_id, &descriptor.workspace_id).unwrap(),
             AgentStateReport {
+                progress: None,
                 identity_only: previous_conversation_id.is_none(),
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
                 attention: hmux_client::AgentRuntimeAttention::None,

@@ -1470,6 +1470,7 @@ fn terminal_surface_carries_initial_and_live_runtime_state_with_one_revision_fen
     use terminal_state_protocol::encode_record;
 
     let runtime_state = |revision| AgentRuntimeStateProjection {
+        progress: None,
         terminal_epoch: "terminal-1".into(),
         revision,
         observed_through_output_seq: if revision == 7 { 1 } else { 2 },
@@ -1574,6 +1575,7 @@ fn terminal_surface_advances_output_before_delivering_runtime_state_at_that_view
     use terminal_state_protocol::encode_record;
 
     let runtime_state = |revision, observed_through_output_seq| AgentRuntimeStateProjection {
+        progress: None,
         terminal_epoch: "terminal-1".into(),
         revision,
         observed_through_output_seq,
@@ -1663,6 +1665,7 @@ fn terminal_surface_stages_latest_semantics_until_async_viewport_catches_up() {
     use terminal_state_protocol::encode_record;
 
     let runtime_state = |revision, observed_through_output_seq| AgentRuntimeStateProjection {
+        progress: None,
         terminal_epoch: "terminal-1".into(),
         revision,
         observed_through_output_seq,
@@ -2703,6 +2706,7 @@ fn terminal_surface_delivery_counts_hidden_future_controls_against_the_pull_cap(
                     protocol_version: PROTOCOL_V1,
                     frame_id: 10 + revision,
                     body: FrameBody::AgentRuntimeState(AgentRuntimeStateProjection {
+                        progress: None,
                         terminal_epoch: fence().terminal_epoch,
                         revision,
                         observed_through_output_seq: 3,
@@ -5045,6 +5049,7 @@ fn terminal_stream_reducer_fences_agent_runtime_state_by_output_and_revision() {
 
     let state = |terminal_epoch: &str, revision: u64, output_seq: u64| {
         FrameBody::AgentRuntimeState(AgentRuntimeStateProjection {
+            progress: None,
             terminal_epoch: terminal_epoch.into(),
             revision,
             observed_through_output_seq: output_seq,
@@ -5151,6 +5156,7 @@ fn structured_semantic_staging_keeps_fences_revisions_and_identity_fail_closed()
 
     let runtime = |terminal_epoch: &str, revision: u64, output_seq: u64| {
         FrameBody::AgentRuntimeState(AgentRuntimeStateProjection {
+            progress: None,
             terminal_epoch: terminal_epoch.into(),
             revision,
             observed_through_output_seq: output_seq,

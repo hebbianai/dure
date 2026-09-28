@@ -11,7 +11,8 @@ use sha2::{Digest, Sha256};
 
 use super::{BackendDispatchError, ServiceState, now_ms, orchestration_service_error};
 
-const INBOX_WAKE_HANDOFF: &str = "A Dure inbox event is waiting. Read and acknowledge it with the installed dure-orchestration tools.";
+const INBOX_WAKE_HANDOFF: &str =
+    "Read and acknowledge it with the installed dure-orchestration tools.";
 
 pub(super) async fn wake_exact_session_delivery(
     state: &ServiceState,
@@ -166,7 +167,10 @@ async fn prepare_wake_request(
         intent: WorkflowPromptDeliveryIntentV1::ExistingConversation {
             provider_conversation_id,
         },
-        handoff: INBOX_WAKE_HANDOFF.into(),
+        handoff: format!(
+            "Dure inbox message: {}\n{INBOX_WAKE_HANDOFF}",
+            delivery.receipt_id
+        ),
     };
     Ok(request)
 }

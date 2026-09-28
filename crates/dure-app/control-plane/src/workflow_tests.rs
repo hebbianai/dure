@@ -8386,7 +8386,10 @@ async fn exact_session_decision_answer_derives_authority_after_validating_opaque
     assert_eq!(wake_requests.len(), 1);
     assert_eq!(
         wake_requests[0].handoff,
-        "A Dure inbox event is waiting. Read and acknowledge it with the installed dure-orchestration tools."
+        format!(
+            "Dure inbox message: {}\nRead and acknowledge it with the installed dure-orchestration tools.",
+            worker_delivery["receiptId"].as_str().unwrap()
+        )
     );
     let exact_replay = invoke_orchestration(
         &state,
@@ -8492,7 +8495,12 @@ async fn exact_existing_session_persists_then_wakes_once_without_replaying_messa
     );
     assert_eq!(
         wake_requests[0].handoff,
-        "A Dure inbox event is waiting. Read and acknowledge it with the installed dure-orchestration tools."
+        format!(
+            "Dure inbox message: {}\nRead and acknowledge it with the installed dure-orchestration tools.",
+            opened["receipt"]["deliveries"][0]["receiptId"]
+                .as_str()
+                .unwrap()
+        )
     );
     assert!(
         !wake_requests[0]

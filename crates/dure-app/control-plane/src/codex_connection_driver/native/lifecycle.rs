@@ -13,6 +13,7 @@ mod tests;
 
 #[derive(Default)]
 pub(super) struct Lifecycle {
+    progress: super::progress::Progress,
     descendants: super::descendants::Descendants,
     own_report: Option<AgentStateReport>,
     pending: HashMap<(u64, String), Pending>,
@@ -29,6 +30,7 @@ pub(super) struct Lifecycle {
 }
 
 struct Pending {
+    wake_message: Option<String>,
     method: String,
     thread: Option<String>,
     goal_revision: u64,
@@ -149,6 +151,9 @@ impl Lifecycle {
         self.pending.insert(
             key,
             Pending {
+                wake_message: (method == "turn/start")
+                    .then(|| super::progress::wake_message(message))
+                    .flatten(),
                 method: method.into(),
                 thread: message
                     .pointer("/params/threadId")
@@ -197,7 +202,7 @@ impl Lifecycle {
     }
 
     pub(super) fn tool_call_report(
-        &self,
+        &mut self,
         connection: u64,
         message: &Value,
         fence: &SessionFence,
@@ -206,13 +211,16 @@ impl Lifecycle {
             return None;
         }
         let key = (connection, message.get("id")?.to_string());
-        (self.pending.get(&key)?.method == "mcpServer/tool/call").then(|| {
-            self.protect_report(
-                self.own_report.clone().unwrap_or_else(|| {
-                    self.report(fence, AgentRuntimeActivity::Working, None, false)
-                }),
-            )
-        })
+        if self.pending.get(&key)?.method != "mcpServer/tool/call" {
+            return None;
+        }
+        let mut report = self.protect_report(
+            self.own_report
+                .clone()
+                .unwrap_or_else(|| self.report(fence, AgentRuntimeActivity::Working, None, false)),
+        );
+        report.progress = self.progress.take(std::time::Instant::now(), true);
+        Some(report)
     }
 
     pub(super) fn reject_unforwarded_tool(&mut self, connection: u64, message: &Value) {
@@ -256,9 +264,16 @@ impl Lifecycle {
         message: &Value,
         fence: &SessionFence,
     ) -> Result<Option<AgentStateReport>, CodexConnectionDriverError> {
+        let now = std::time::Instant::now();
+        let progress_event = self.is_selected_connection(connection)
+            && self
+                .thread
+                .as_deref()
+                .is_some_and(|thread| self.progress.observe(message, thread, now));
         // Token/output deltas are not lifecycle evidence. Keep the ancestry
         // walk off the high-volume native transport path.
         if let Some(method) = message.get("method").and_then(Value::as_str)
+            && !progress_event
             && !matches!(
                 method,
                 "thread/started"
@@ -280,8 +295,17 @@ impl Lifecycle {
         let own_report = self.selected_provider(connection, message, fence)?;
         if self.thread != previous_thread {
             self.own_report = None;
+            self.progress.reset();
         }
         if let Some(report) = &own_report {
+            if message.get("method").and_then(Value::as_str) == Some("thread/status/changed")
+                && self.is_selected_connection(connection)
+                && message.pointer("/params/threadId").and_then(Value::as_str)
+                    == self.thread.as_deref()
+            {
+                self.progress
+                    .activity(report.activity == AgentRuntimeActivity::Working);
+            }
             match &mut self.own_report {
                 Some(previous) if report.identity_only => {
                     // A picker refresh updates identity, not the ordered turn state.
@@ -293,19 +317,29 @@ impl Lifecycle {
         let working = self.resource_working();
         let report = match own_report {
             Some(report) => report,
-            None if working != previously_working => match &self.own_report {
-                Some(report) => {
-                    let mut report = report.clone();
-                    // This is an ordered resource transition, not a picker
-                    // refresh. It must settle the activity we previously held.
-                    report.identity_only = false;
-                    report
+            None if working != previously_working || self.progress.dirty() => {
+                match &self.own_report {
+                    Some(report) => {
+                        let mut report = report.clone();
+                        // This is an ordered resource transition, not a picker
+                        // refresh. It must settle the activity we previously held.
+                        report.identity_only = false;
+                        if working == previously_working {
+                            report.turn_completed = false;
+                            report.turn_completion_id = None;
+                        }
+                        report
+                    }
+                    None => return Ok(None),
                 }
-                None => return Ok(None),
-            },
+            }
             None => return Ok(None),
         };
-        Ok(Some(self.protect_report(report)))
+        let mut report = self.protect_report(report);
+        if !report.identity_only {
+            report.progress = self.progress.take(now, working);
+        }
+        Ok(Some(report))
     }
 
     fn protect_report(&self, mut report: AgentStateReport) -> AgentStateReport {
@@ -365,6 +399,18 @@ impl Lifecycle {
                 .and_then(|id| self.pending.remove(&(connection, id.to_string())))
         {
             if message.get("error").is_some() {
+                return Ok(None);
+            }
+            if pending.method == "turn/start"
+                && self.is_selected_connection(connection)
+                && pending.thread == self.thread
+            {
+                if let (Some(interaction), Some(turn)) = (
+                    pending.wake_message,
+                    message.pointer("/result/turn/id").and_then(identifier),
+                ) {
+                    self.progress.correlate(interaction, turn);
+                }
                 return Ok(None);
             }
             if matches!(
@@ -668,6 +714,7 @@ impl Lifecycle {
         identity_only: bool,
     ) -> AgentStateReport {
         AgentStateReport {
+            progress: None,
             identity_only,
             activity,
             attention: AgentRuntimeAttention::None,

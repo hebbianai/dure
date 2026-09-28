@@ -4,6 +4,7 @@
 mod descendants;
 mod diagnostics;
 mod lifecycle;
+mod progress;
 #[cfg(test)]
 mod tests;
 

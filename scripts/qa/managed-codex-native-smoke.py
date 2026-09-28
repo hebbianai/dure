@@ -90,7 +90,11 @@ def main():
     parser.add_argument('--report-outage', action='store_true', help='Require convergence after an isolated report transport outage')
     parser.add_argument('--outage-successor', action='store_true', help='Start another turn before restoring report transport')
     parser.add_argument('--picker', action='store_true', help='Exercise the native /resume picker after a completed turn')
+    parser.add_argument('--message-progress', action='store_true', help='Verify exact wake turn evidence on a real native Codex transport')
+    parser.add_argument('--without-progress', action='store_true', help='Negotiate with an isolated Host lacking agent_progress_v1')
     args = parser.parse_args()
+    assert not (args.message_progress and args.without_progress)
+    assert not args.message_progress or (args.outcome == 'completed' and not args.legacy_hooks)
     LimitModel.outcome = args.outcome
     codex = str(args.codex.resolve(strict=True))
     driver_sha = hashlib.sha256(args.driver.read_bytes()).hexdigest()
@@ -135,6 +139,8 @@ def main():
         'DURE_HOME': str(root), 'HMUX_DISCOVERY_ROOT': os.environ['HMUX_DISCOVERY_ROOT'],
         'TMPDIR': str(root),
     }
+    if args.without_progress:
+        env['HMUX_RUNTIME_TEST_HOST_OMIT_CAPABILITIES'] = 'agent_progress_v1'
     native_executable = codex
     if args.outcome == 'connection-lost':
         assert not args.legacy_hooks and not args.preserve_stop and not args.report_outage
@@ -222,7 +228,7 @@ def main():
                         'model_providers.fixture={name="fixture",base_url="http://127.0.0.1:%d/v1",wire_api="responses",requires_openai_auth=false}' % server.server_port,
                         *(hook_args if args.legacy_hooks else ['-c', 'notify=' + json.dumps([str(recorder)])]),
                         *(['resume', conversation] if conversation else []),
-                        *([] if args.outcome == 'goal' else ['Wait for the fixture response. Do not call tools.'])],
+                        *([] if args.outcome == 'goal' else ['Dure inbox message: receipt-native-smoke\nRead and acknowledge it with the installed dure-orchestration tools.' if args.message_progress else 'Wait for the fixture response. Do not call tools.'])],
             'initialRows': 40, 'initialColumns': 120,
         }
         encoded = json.dumps(request).encode()
@@ -251,6 +257,15 @@ def main():
         before = state()
         assert before['activity'] == 'working', before
         assert before['source'] == 'provider_event', before
+        if args.without_progress:
+            assert before.get('progress') is None, before
+        if args.message_progress:
+            before = wait(lambda: (observed if (observed := state()).get('progress', {}).get('report', {}).get('message_turns') else None), 10)
+            progress = before['progress']
+            assert progress['progress_unconfirmed'] is False, progress
+            assert progress['report']['phase'] == 'thinking', progress
+            assert progress['report']['message_turns'] == [{'delivery_receipt_id': 'receipt-native-smoke', 'turn_id': progress['report']['turn_id']}], progress
+
         # Each snapshot opens and detaches a real read-only Host connection.
         # A fresh observer must retain the same generation and working state.
         reattached = state()
@@ -365,6 +380,8 @@ def main():
         print(json.dumps(result_evidence), flush=True)
         assert after['activity'] == 'waiting', 'usage-limit failed turn left Host working'
         assert after['source'] == 'provider_event'
+        if args.without_progress:
+            assert after.get('progress') is None, after
         assert int(after['turn_completed_count']) == int(before['turn_completed_count']) + int(args.outcome in ('completed', 'approval'))
         if args.picker:
             picker_spec = importlib.util.spec_from_file_location('picker_fixture', Path(__file__).with_name('fixtures') / 'codex-session-picker.py')

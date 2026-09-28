@@ -262,6 +262,8 @@ pub enum AgentRuntimeStateSource {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AgentRuntimeStateDescriptor {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<hmux_session_protocol::AgentProgressProjection>,
     pub terminal_epoch: String,
     pub revision: String,
     pub observed_through_output_seq: String,
@@ -813,6 +815,7 @@ pub fn project_agent_runtime_state(
         attention_id: projection.attention_id,
         source,
         turn_completed_count: projection.turn_completed_count.to_string(),
+        progress: projection.progress,
     })
 }
 
@@ -1426,6 +1429,7 @@ mod tests {
         let fixture = fixture(&capabilities);
         let mut initial = snapshot(fixture.fence.clone(), 9, None);
         initial.agent_runtime_state = Some(AgentRuntimeStateProjection {
+            progress: None,
             terminal_epoch: fixture.fence.terminal_epoch.clone(),
             revision: 3,
             observed_through_output_seq: 8,
@@ -1476,6 +1480,7 @@ mod tests {
         let fixture = fixture(&capabilities);
         let mut initial = snapshot(fixture.fence.clone(), 9, None);
         initial.agent_runtime_state = Some(AgentRuntimeStateProjection {
+            progress: None,
             terminal_epoch: fixture.fence.terminal_epoch.clone(),
             revision: 3,
             observed_through_output_seq: 8,

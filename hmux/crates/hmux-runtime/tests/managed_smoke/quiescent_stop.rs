@@ -29,6 +29,7 @@ fn quiescent_managed_stop_refuses_after_a_reserved_crash_and_controller_input() 
     let reporter = ManagedAgentStateReporter::new(env!("CARGO_BIN_EXE_hmux-runtime"), &cwd)
         .with_discovery_root(&discovery_root);
     let report_waiting = || AgentStateReport {
+        progress: None,
         identity_only: false,
         activity: hmux_client::AgentRuntimeActivity::Waiting,
         attention: hmux_client::AgentRuntimeAttention::None,

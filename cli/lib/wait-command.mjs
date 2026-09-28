@@ -1,3 +1,4 @@
+import { queryTrackedMessage, readMessageTracking } from "./tracked-message.mjs";
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { matchingAgents } from "./client-registry.mjs";
@@ -9,6 +10,7 @@ import { readDelegatedWorkflow } from "./workflow-completion.mjs";
 export const WAIT_HELP = `dure wait — Observe one completion condition without controlling its target
 
   dure wait <agent-or-session> [--workspace ID] [--after-turn N --terminal-epoch ID]
+  dure wait --message RECEIPT_PATH [--until observed|acknowledged|turn_started]
   dure wait --operation-id ID
   dure wait --task ID --dispatch ID --generation N
 
@@ -23,6 +25,9 @@ Response end does not prove a particular prompt was accepted or a task succeeded
 
 Operation: reads the same dure run/spawn request; success means execution setup and
 prompt delivery completed, not provider response or task completion. Never retries execution.
+Message: reads the private tracking file from 'dure send --track'. Default: inbox observed.
+Turn started proves the wake prompt began a provider turn, not inbox read or comprehension.
+Unsupported or unavailable provider evidence remains unknown; no messages are resent.
 Task: reads the exact delegated task/dispatch generation completed by 'dure workflow done'.
 
 JSON is one dure.wait/v1 result with the target, observation and outcome.
@@ -41,6 +46,7 @@ export function parseWaitArguments(args) {
   const { values, positionals } = parseArgs({
     args, allowPositionals: true,
     options: {
+      message: { type: "string" }, until: { type: "string" },
       "operation-id": { type: "string" }, task: { type: "string" }, dispatch: { type: "string" },
       generation: { type: "string" }, workspace: { type: "string" }, backend: { type: "string" },
       "after-turn": { type: "string" }, "terminal-epoch": { type: "string" },
@@ -49,25 +55,28 @@ export function parseWaitArguments(args) {
     },
   });
   if (values.help) return { help: true };
-  const subject = values["operation-id"] !== undefined ? "run" : values.task !== undefined ? "task" : "response";
+  const subject = values.message !== undefined ? "message" : values["operation-id"] !== undefined ? "run" : values.task !== undefined ? "task" : "response";
   const selectedFields = {
-    run: ["operation-id"], task: ["task", "dispatch", "generation"],
+    message: ["message"], run: ["operation-id"], task: ["task", "dispatch", "generation"],
     response: ["workspace", "after-turn", "terminal-epoch"],
   };
-  const allowed = new Set([...selectedFields[subject], "backend", "timeout", "deadline-ms", "json"]);
+  const allowed = new Set([...selectedFields[subject], "backend", "timeout", "deadline-ms", "json", ...(subject === "message" ? ["until"] : [])]);
   if (Object.keys(values).some((key) => !allowed.has(key)) ||
       positionals.length !== (subject === "response" ? 1 : 0)) invalid("Choose exactly one wait target. See dure wait --help.");
-  if (subject !== "response" && selectedFields[subject].some((key) => !boundedString(values[key]))) invalid("The exact wait target is incomplete.");
+  if (subject !== "response" && subject !== "message" && selectedFields[subject].some((key) => !boundedString(values[key]))) invalid("The exact wait target is incomplete.");
   if (subject === "response" && (!boundedString(positionals[0]) ||
       ((values["after-turn"] === undefined) !== (values["terminal-epoch"] === undefined)) ||
       (values["after-turn"] !== undefined && (!decimal(values["after-turn"]) || !boundedString(values["terminal-epoch"]))) ||
       (values.workspace !== undefined && !boundedString(values.workspace)))) invalid("Use an exact target; --after-turn and --terminal-epoch must be supplied together.");
+  if (subject === "message" && (typeof values.message !== "string" || values.message.length === 0 || values.message.length > 4096)) invalid("Message receipt path is invalid");
+  if (subject === "message" && values.until !== undefined && !["observed", "acknowledged", "turn_started"].includes(values.until)) invalid("Unknown message condition");
   const timeoutMs = Number(values.timeout) * 1000;
   const deadlineMs = Number(values["deadline-ms"]);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 86400000 ||
       !Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 10000) invalid("Use a timeout up to 86400 seconds and a request deadline of 1–10000 ms.");
   if (subject === "task" && (!/^[1-9][0-9]*$/u.test(values.generation) || !Number.isSafeInteger(Number(values.generation)))) invalid("Task generation must be a positive integer.");
   return {
+    messagePath: values.message, until: values.until ?? "observed",
     subject, query: positionals[0], workspaceId: values.workspace,
     operationId: values["operation-id"], taskId: values.task, dispatchId: values.dispatch,
     generation: values.generation === undefined ? undefined : Number(values.generation),
@@ -96,12 +105,13 @@ function responseTarget(options, registry, backend) {
 /** Consume existing query contracts; no screen parsing, runtime writer or retry action. */
 export async function collectWait(options, {
   registry, backend, hmuxCommand,
+  queryMessage = queryTrackedMessage, tracking,
   querySession = collectSessionQuery, queryRun = collectAgentSpawnQuery, queryTask = readDelegatedWorkflow,
   signal, now = () => performance.now(), pause = (ms) => sleep(ms, undefined, { signal }),
 } = {}) {
   const startedAt = now();
   const { subject } = options;
-  let target = subject === "run" ? { operationId: options.operationId }
+  let target = subject === "message" ? { interactionId: tracking.query.interactionId, until: options.until } : subject === "run" ? { operationId: options.operationId }
     : subject === "task" ? { taskId: options.taskId, dispatchId: options.dispatchId, generation: options.generation }
     : { sessionId: options.query, workspaceId: options.workspaceId };
   let observation = null;
@@ -141,7 +151,7 @@ export async function collectWait(options, {
       const deadlineMs = Math.max(1, Math.min(options.deadlineMs, Math.ceil(remaining)));
       let report;
       try {
-        report = subject === "run"
+        report = subject === "message" ? await queryMessage({ tracking, backend, hmuxCommand, deadlineMs, signal }) : subject === "run"
           ? await queryRun({ action: "status", ...target, backend, deadlineMs })
           : subject === "task"
             ? await queryTask({ ...target, backend, deadlineMs })
@@ -158,7 +168,12 @@ export async function collectWait(options, {
         }
         return result("unknown", 2, lastError.code, "Completion observation is unavailable. Query the same target; no execution or prompt was retried.");
       }
-      if (subject === "run") {
+      if (subject === "message") {
+        observation = report.receipt;
+        const met = options.until === "turn_started" ? observation.wakeTurnStarted : observation[options.until];
+        if (met) return result("completed", 0);
+        if (options.until === "turn_started" && observation.runtimeObservation === "generation_changed") return result("unknown", 2, "wait_generation_changed", "Provider evidence belongs to a replaced generation; inbox facts remain queryable.");
+      } else if (subject === "run") {
         if (!report.receipt) return result("unknown", 2, "wait_operation_not_found", "No receipt was found for this exact execution request.");
         const receipt = report.receipt;
         if (BigInt(receipt.lastSequence) >= latestRevision) {
@@ -218,7 +233,12 @@ export async function runWaitCommand(args, { resolveContext, hmuxCommand, signal
   try {
     options = parseWaitArguments(args);
     if (options.help) { output(WAIT_HELP); return 0; }
-    report = await collectWait(options, { ...await resolveContext(options), hmuxCommand, signal });
+    const tracking = options.subject === "message" ? readMessageTracking(options.messagePath) : undefined;
+    if (tracking) {
+      if (options.backendSpecified && options.backend !== tracking.backendId) invalid("Receipt backend mismatch");
+      options.backend = tracking.backendId; options.backendSpecified = true;
+    }
+    report = await collectWait(options, { ...await resolveContext(options), tracking, hmuxCommand, signal });
   } catch (error) {
     report = { apiVersion: "dure.wait/v1", state: "unknown", error: { code: "wait_arguments_invalid", message: error.message }, exitCode: 2 };
   }
