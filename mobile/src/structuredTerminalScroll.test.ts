@@ -4,7 +4,7 @@ import { CursorShape, CursorStateSchema } from "@/contracts/terminalStateProtoco
 import { decodeTerminalStateRecord, encodeTerminalStateRecord } from "@/lib/terminal/protocol/terminalStateProtocol";
 import { viewportFrameRecord } from "@/test/terminalRecordFixtures";
 import { mountStructuredTerminal } from "./structuredTerminal";
-import { DRAWER_LIFT_PROPERTY, KEYBOARD_LIFT_PROPERTY } from "./transcriptLift";
+import { DRAWER_LIFT_PROPERTY } from "./transcriptLift";
 
 /** The button fades rather than hides: away is a class the stylesheet reads. */
 const away = (button: HTMLElement) => button.classList.contains("terminal__scroll-to-bottom--away");
@@ -18,7 +18,6 @@ describe("mobile structured terminal scrolling", () => {
 
   it.each([8, 80])("keeps a %spx finger scroll above the keyboard when output arrives before the native scroll event", async (distance) => {
     const host = document.createElement("div");
-    host.style.setProperty(KEYBOARD_LIFT_PROPERTY, "300px");
     Object.defineProperties(host, {
       clientWidth: { value: 360 }, clientHeight: { value: 300 }, scrollHeight: { value: 672 },
     });
@@ -209,7 +208,6 @@ describe("mobile structured terminal scrolling", () => {
     await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
     const before = sent.length;
     height = 352;
-    host.style.setProperty("--session-keyboard-height", "372px");
     surface.fit();
     const rowHeight = Number.parseFloat(host.querySelector<HTMLElement>(".structured-terminal__grid")!.style.getPropertyValue("--terminal-row-height"));
     expect(host.scrollTop).toBe(16 + 21 * rowHeight + 76 - height);
@@ -217,7 +215,7 @@ describe("mobile structured terminal scrolling", () => {
     surface.fit();
     expect(host.scrollTop).toBe(16 + 21 * rowHeight + 76 - height);
     await Promise.resolve();
-    expect(sent).toHaveLength(before);
+    await vi.waitFor(() => expect(sent).toHaveLength(before + 1));
     host.scrollTop = 0;
     host.dispatchEvent(new Event("scroll"));
     surface.fit();
@@ -238,8 +236,8 @@ describe("mobile structured terminal scrolling", () => {
       Object.defineProperties(host, {
         clientWidth: { value: 390 },
         clientHeight: { get: () => 696 - (cover === "keyboard" ? covered : 0) },
-        // The terminal keeps its 600px at-rest box; the CSS lift adds room
-        // below it. jsdom has no layout, so model native scroll clamping here.
+        // Model the last canonical frame until the Host publishes new rows.
+        // Only the overlay drawer adds scroll room.
         scrollHeight: { get: () => 96 + (cover === "drawer" ? covered : 0) + Math.max(600, 40 * rowHeight()) },
         scrollTop: {
           get: () => top,
@@ -276,7 +274,7 @@ describe("mobile structured terminal scrolling", () => {
       };
       await vi.waitFor(() => expect(host.textContent).toContain("Trust prompt 9"));
       covered = 330;
-      host.style.setProperty(cover === "drawer" ? DRAWER_LIFT_PROPERTY : KEYBOARD_LIFT_PROPERTY, `${covered}px`);
+      if (cover === "drawer") host.style.setProperty(DRAWER_LIFT_PROPERTY, `${covered}px`);
       surface.fit();
       // The whole prompt fits above the tray: its blank tail is not content.
       expect(host.scrollTop).toBe(0);
@@ -306,7 +304,7 @@ describe("mobile structured terminal scrolling", () => {
       await vi.waitFor(() => expect(host.querySelector<HTMLElement>(".structured-terminal__grid")?.dataset.projectionRevision).toBe("5"));
       expect(host.scrollTop).toBe(0);
       covered = 0;
-      host.style.removeProperty(cover === "drawer" ? DRAWER_LIFT_PROPERTY : KEYBOARD_LIFT_PROPERTY);
+      if (cover === "drawer") host.style.removeProperty(DRAWER_LIFT_PROPERTY);
       surface.fit();
       host.scrollTop = host.scrollHeight - host.clientHeight;
       host.dispatchEvent(new Event("scroll"));
@@ -318,10 +316,10 @@ describe("mobile structured terminal scrolling", () => {
       const sentAtRest = sent.length;
 
       covered = 330;
-      host.style.setProperty(cover === "drawer" ? DRAWER_LIFT_PROPERTY : KEYBOARD_LIFT_PROPERTY, `${covered}px`);
+      if (cover === "drawer") host.style.setProperty(DRAWER_LIFT_PROPERTY, `${covered}px`);
       surface.fit();
       await Promise.resolve();
-      expect(sent).toHaveLength(sentAtRest);
+      await vi.waitFor(() => expect(sent).toHaveLength(sentAtRest + (cover === "keyboard" ? 1 : 0)));
       expect(host.scrollTop).toBeLessThanOrEqual(cursorTop);
       expect(cursorTop + rowHeight()).toBeLessThanOrEqual(host.scrollTop + visibleHeight);
 

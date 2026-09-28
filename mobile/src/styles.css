@@ -387,16 +387,9 @@ body {
 
 .structured-terminal__grid {
   min-width: 100%;
-  /* A drawer or a keyboard raises this floor rather than shrinking the
-     terminal. The grid keeps the rows the session was given and gains that much
-     empty room under itself, so the transcript scrolls up clear of whatever
-     arrived and back down when it leaves — no resize, so the agent's screen is
-     never repainted for something opened for a moment. `transcriptLift.ts`
-     carries why, and `terminalBox.ts` adds the same two back when it measures
-     what to tell the session. */
-  min-height: calc(
-    100% + var(--session-drawer-height, 0px) + var(--session-keyboard-height, 0px)
-  );
+  /* Overlay drawers need scroll room. The keyboard already shrinks the
+     visible viewport and the terminal's measured row count. */
+  min-height: calc(100% + var(--session-drawer-height, 0px));
   position: relative;
 }
 
@@ -2778,9 +2771,9 @@ html[data-screen="session"] .session > .session__header {
      home indicator costs today, but never its drawer — plus this pane's 16. It
      follows the tray rather than being a constant because the tray's own inset
      is not one: with the keys up it stops clearing an indicator the keyboard
-     already covers. A drawer and the keyboard lift the grid's floor instead of
-     changing what the session was sized to. At rest the newest line sits just
-     above the pill; scrolled, earlier lines pass *behind* it, which is the
+     already covers. A drawer lifts the grid's floor; the keyboard instead
+     reduces the available viewport and the terminal's measured row count.
+     At rest the newest line sits just above the pill; scrolled, earlier lines pass *behind* it, which is the
      whole point of the glass — a floating surface with nothing moving under it
      is a slab.
      `padding` is deliberately where this lives: the TerminalSurface renderer

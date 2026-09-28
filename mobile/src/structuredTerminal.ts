@@ -273,7 +273,7 @@ export function mountStructuredTerminal(
   const tailScrollTop = () => {
     const style = host.ownerDocument.defaultView?.getComputedStyle(host);
     // The keyboard already shrinks clientHeight; only the overlay drawer
-    // needs subtracting here (unlike the at-rest terminalContentBox).
+    // needs subtracting here.
     const covered = [
       style?.paddingTop,
       style?.paddingBottom,

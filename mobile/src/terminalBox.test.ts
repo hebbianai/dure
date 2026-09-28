@@ -1,19 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import { terminalContentBox } from "./terminalBox";
-import { DRAWER_LIFT_PROPERTY, KEYBOARD_LIFT_PROPERTY } from "./transcriptLift";
+import { DRAWER_LIFT_PROPERTY } from "./transcriptLift";
 
 /** A laid-out host: jsdom resolves the styles, never the box. */
 function hostOf(
   width: number,
   height: number,
   padding: string,
-  lift: { drawer?: string; keyboard?: string } = {},
+  lift: { drawer?: string } = {},
 ): HTMLElement {
   const host = document.createElement("div");
   host.style.padding = padding;
   if (lift.drawer) host.style.setProperty(DRAWER_LIFT_PROPERTY, lift.drawer);
-  if (lift.keyboard) host.style.setProperty(KEYBOARD_LIFT_PROPERTY, lift.keyboard);
   Object.defineProperty(host, "clientWidth", { value: width });
   Object.defineProperty(host, "clientHeight", { value: height });
   document.body.append(host);
@@ -39,21 +38,20 @@ describe("terminalContentBox", () => {
     expect(open).toEqual(closed);
   });
 
-  it("reports the same box while the keyboard is up", () => {
-    // The keyboard shrinks the visible viewport, so the host really is smaller;
-    // the lift is exactly what it took.
+  it("reports the visible box while the keyboard is up", () => {
+    // The keyboard reduces the available terminal height by 336px.
     const down = terminalContentBox(hostOf(390, 800, "16px 16px 72px"));
     const up = terminalContentBox(
-      hostOf(390, 464, "16px 16px 72px", { keyboard: "336px" }),
+      hostOf(390, 464, "16px 16px 72px"),
     );
-    expect(up).toEqual(down);
+    expect(up).toEqual({ width: down.width, height: down.height - 336 });
   });
 
-  it("holds the at-rest box with a drawer open under the keyboard", () => {
+  it("keeps the smaller visible box with an overlay drawer open", () => {
     const box = terminalContentBox(
-      hostOf(390, 464, "16px 16px 72px", { drawer: "100px", keyboard: "336px" }),
+      hostOf(390, 464, "16px 16px 72px", { drawer: "100px" }),
     );
-    expect(box.height).toBe(800 - 16 - 72);
+    expect(box.height).toBe(464 - 16 - 72);
   });
 
   it("still shrinks when the screen itself does", () => {

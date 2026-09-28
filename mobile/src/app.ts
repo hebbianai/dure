@@ -1297,7 +1297,6 @@ export function startApp(root: HTMLElement): () => void {
     publishTranscriptLift(document.documentElement, {
       tray: view.querySelector(".tray"),
       drawer: view.querySelector(".tray__panel"),
-      covered: keyboardCoverage(),
       stage: view.querySelector(".session__stage"),
     });
 
@@ -4109,7 +4108,6 @@ export function startApp(root: HTMLElement): () => void {
     publishTranscriptLift(document.documentElement, {
       tray: document.querySelector(".tray"),
       drawer: document.querySelector(".tray__panel"),
-      covered,
       stage: document.querySelector(".session__stage"),
     });
   };

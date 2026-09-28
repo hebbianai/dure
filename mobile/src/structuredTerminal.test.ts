@@ -874,6 +874,68 @@ describe("mobile structured terminal", () => {
     surface.dispose();
   });
 
+  it.each([true, false])("fits keyboard height changes and restores rows (writable=%s)", async writable => {
+    const host = document.createElement("div");
+    host.style.padding = "16px 16px 72px";
+    let height = 800;
+    Object.defineProperties(host, {
+      clientWidth: { value: 390 },
+      clientHeight: { get: () => height },
+    });
+    document.body.append(host);
+    const sent: Uint8Array[] = [];
+    let first = true;
+    const surface = mountStructuredTerminal(host, {
+      attachment_id: "mobile-keyboard-fit",
+      terminal_epoch: "mobile-epoch",
+      through_output_seq: "7",
+      state_revision: "3",
+      initial_delivery_record_count: 1,
+    }, {
+      next: async () => {
+        if (!first) return new Promise<ArrayBuffer>(() => {});
+        first = false;
+        return viewportRecord().buffer as ArrayBuffer;
+      },
+      send: async bytes => { sent.push(bytes); },
+    }, { writable });
+    const geometries = () => sent.flatMap(bytes => {
+      const body = decodeTerminalStateRecord(bytes).record.body;
+      if (body.case === "inputIntent" && body.value.intent.case === "resize") {
+        expect(writable).toBe(true);
+        return [{ kind: "resize", rows: body.value.intent.value.rows, columns: body.value.intent.value.columns }];
+      }
+      if (body.case === "viewportIntent" && body.value.intent.case === "setViewportRows") {
+        expect(writable).toBe(false);
+        return [{ kind: "viewport", rows: body.value.intent.value.rows, columns: 0 }];
+      }
+      return [];
+    });
+    try {
+      await vi.waitFor(() => expect(geometries()).toHaveLength(1));
+      const resting = geometries()[0];
+      height = 464;
+      // Existing layout publication must not cancel the smaller visible box.
+      host.style.setProperty("--session-keyboard-height", "336px");
+      surface.fit();
+      await vi.waitFor(() => expect(geometries()).toHaveLength(2));
+      const keyboard = geometries()[1];
+      expect(keyboard.rows).toBeLessThan(resting.rows);
+      expect(keyboard.columns).toBe(resting.columns);
+      surface.fit();
+      await Promise.resolve();
+      expect(geometries()).toHaveLength(2);
+      height = 800;
+      host.style.removeProperty("--session-keyboard-height");
+      surface.fit();
+      await vi.waitFor(() => expect(geometries()).toHaveLength(3));
+      expect(geometries()[2]).toEqual(resting);
+    } finally {
+      surface.dispose();
+      host.remove();
+    }
+  });
+
   it("gives up the rows the box loses when the tray takes them", async () => {
     // The tray stands on the transcript through the host's bottom padding, and
     // the keyboard changes what that comes to. Measured from the grid, a box

@@ -187,7 +187,6 @@ const refit = () => {
 		tray: document.querySelector(".tray"),
 		drawer: document.querySelector(".tray__panel"),
 		stage: document.querySelector(".session__stage"),
-		covered,
 	});
 	surface.fit();
 };
