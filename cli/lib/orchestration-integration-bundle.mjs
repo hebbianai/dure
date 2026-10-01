@@ -42,6 +42,7 @@ export const ORCHESTRATION_PAYLOAD_NAMES = Object.freeze([
   "client-registry.mjs",
   "fd-verified-read.mjs",
   "session-runtime-projection.mjs",
+  "agent-progress.mjs",
   "orchestration-next-work.mjs",
   "backend-capabilities.mjs",
   "backend-capability-limit.json",
