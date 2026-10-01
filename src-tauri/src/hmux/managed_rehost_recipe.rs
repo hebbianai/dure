@@ -10,6 +10,7 @@ pub(crate) fn local_create_time_recipe(
     launch_reference: Option<String>,
     shell: &Path,
     provider_state_environment: &ProviderStateEnvironment,
+    path_supplement: Option<&str>,
 ) -> Result<Option<ManagedRehostRecipe>, String> {
     let Some(command) = crate::managed_provider_launch::exact_command(
         provider_id,
@@ -22,6 +23,7 @@ pub(crate) fn local_create_time_recipe(
         provider_id,
         &command,
         provider_state_environment,
+        path_supplement,
     )?
     .into_command_template(shell);
     ManagedRehostRecipe::new(command_template, launch_reference)

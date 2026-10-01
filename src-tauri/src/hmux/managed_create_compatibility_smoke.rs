@@ -64,6 +64,7 @@ fn native_timing_fixture_runs_provider_after_environment_probe() {
             "test-provider",
             &command,
             &Default::default(),
+            None,
         )
         .unwrap()
         .into_command_template(Path::new(shell));

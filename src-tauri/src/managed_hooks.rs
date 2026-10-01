@@ -489,12 +489,21 @@ fn inject_app_channel_from(command: &str, channel: &str) -> String {
     format!("{prefix} {command}")
 }
 
-fn inject_dure_command_path_from(command: &str, directory: &Path) -> Result<String, String> {
+fn inject_dure_command_path_from(
+    command: &str,
+    directory: &Path,
+    path_supplement: Option<&str>,
+) -> Result<String, String> {
     let directory = directory
         .to_str()
         .ok_or_else(|| "managed Dure CLI command directory is not UTF-8".to_string())?;
+    // Interactive-only entries follow the login PATH so they never shadow a
+    // command the login shell already resolves.
+    let supplement = path_supplement
+        .map(|entries| format!(":{}", shell_quote(entries)))
+        .unwrap_or_default();
     Ok(format!(
-        "PATH={}:{} {command}",
+        "PATH={}:{}{supplement} {command}",
         shell_quote(directory),
         crate::login_shell::USER_COMMAND_PATH,
     ))
@@ -526,10 +535,20 @@ fn render_managed_exec_from(
     command: &str,
     channel: &str,
     dure_command_directory: &Path,
+    path_supplement: Option<&str>,
 ) -> Result<PreparedManagedExec, String> {
     let command = inject_app_channel_from(command, channel);
     let command = format!("exec {command}");
-    inject_dure_command_path_from(&command, dure_command_directory).map(PreparedManagedExec)
+    inject_dure_command_path_from(&command, dure_command_directory, path_supplement)
+        .map(PreparedManagedExec)
+}
+
+/// PATH entries only the user's interactive shell adds, when the provider
+/// cannot otherwise be found by the login shell that starts it. Resolve once per
+/// launch and pass the same value to every command and recipe it renders.
+pub(crate) fn managed_launch_path_supplement(provider_id: &str, cwd: &Path) -> Option<String> {
+    let executable = crate::managed_provider_launch::executable(provider_id)?;
+    crate::provider_preflight::launch_path_supplement(&executable, cwd)
 }
 
 /// Pin commands launched inside a managed provider to this exact app channel.
@@ -540,6 +559,7 @@ pub(crate) fn prepare_managed_exec(
     provider_id: &str,
     command: &str,
     provider_state_environment: &ProviderStateEnvironment,
+    path_supplement: Option<&str>,
 ) -> Result<PreparedManagedExec, String> {
     let command = inject_provider_settings(provider_id, command, provider_state_environment)?;
     let channel = crate::app_channel::current()
@@ -553,7 +573,7 @@ pub(crate) fn prepare_managed_exec(
                 channel.name
             )
         })?;
-    render_managed_exec_from(&command, &channel.name, &dure.directory)
+    render_managed_exec_from(&command, &channel.name, &dure.directory, path_supplement)
 }
 
 #[cfg(test)]
@@ -774,6 +794,7 @@ mod tests {
             "codex --resume conversation-1",
             "dev-feature-a1b2c3d4",
             Path::new("/verified channel/bin"),
+            None,
         )
         .unwrap()
         .into_command_template(Path::new("/bin/sh"));
@@ -845,6 +866,7 @@ mod tests {
             "codex resume conversation-fixture",
             "dev-fixture",
             &home.join("channel/bin"),
+            None,
         )
         .unwrap()
         .into_command_template(&crate::login_shell::resolve_login_shell());
@@ -882,6 +904,7 @@ mod tests {
             "/usr/bin/printf managed-launch-ready",
             "dev-feature-a1b2c3d4",
             Path::new("/verified channel/bin"),
+            None,
         )
         .unwrap()
         .into_command_template(Path::new("/bin/sh"));
@@ -896,6 +919,60 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(output.stdout, b"managed-launch-ready");
+    }
+
+    #[test]
+    fn managed_exec_appends_interactive_only_path_after_the_login_path() {
+        let command = render_managed_exec_from(
+            "codex --resume conversation-1",
+            "dev-feature-a1b2c3d4",
+            Path::new("/verified channel/bin"),
+            Some("/Users/me/.nvm/versions/node/v22.0.0/bin:/opt/it's"),
+        )
+        .unwrap()
+        .into_command_template(Path::new("/bin/sh"));
+        assert_eq!(
+            command[2],
+            format!(
+                "PATH='/verified channel/bin':{}:'/Users/me/.nvm/versions/node/v22.0.0/bin:/opt/it'\"'\"'s' exec {}",
+                crate::login_shell::USER_COMMAND_PATH,
+                inject_app_channel_from("codex --resume conversation-1", "dev-feature-a1b2c3d4")
+            )
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_exec_runs_a_provider_found_only_on_the_interactive_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tempfile::tempdir().unwrap();
+        let tools = fixture.path().join("nvm bin");
+        std::fs::create_dir(&tools).unwrap();
+        let provider = tools.join("fixture-provider");
+        std::fs::write(&provider, "#!/bin/sh\nprintf interactive-provider-ran\n").unwrap();
+        std::fs::set_permissions(&provider, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let command = render_managed_exec_from(
+            "fixture-provider",
+            "dev-feature-a1b2c3d4",
+            Path::new("/verified channel/bin"),
+            Some(tools.to_str().unwrap()),
+        )
+        .unwrap()
+        .into_command_template(Path::new("/bin/sh"));
+
+        let output = std::process::Command::new(&command[0])
+            .args(&command[1..])
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"interactive-provider-ran");
     }
 
     #[cfg(unix)]
