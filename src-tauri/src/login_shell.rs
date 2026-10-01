@@ -7,6 +7,11 @@ const DEFAULT_LOGIN_SHELL: &str = "/bin/sh";
 #[cfg(windows)]
 const DEFAULT_LOGIN_SHELL: &str = "bash.exe";
 
+// Apply after login startup: a GUI PATH or shell profile may omit the standard
+// standalone CLI directory. Expansion happens in the child shell, preserving
+// literal HOME characters and its platform path spelling (including Git Bash).
+pub(crate) const USER_COMMAND_PATH: &str = r#""${HOME:+$HOME/.local/bin:}${PATH:-}""#;
+
 /// Resolve the user's login shell without assuming that zsh is installed.
 ///
 /// Desktop launches do not reliably inherit a provider-ready PATH, so callers
@@ -27,7 +32,10 @@ pub fn run(command: &str) -> std::io::Result<Output> {
     process.output()
 }
 
-fn login_command_path(home: Option<PathBuf>, path: Option<OsString>) -> Option<OsString> {
+pub(crate) fn login_command_path(
+    home: Option<PathBuf>,
+    path: Option<OsString>,
+) -> Option<OsString> {
     let Some(home) = home else {
         return path;
     };

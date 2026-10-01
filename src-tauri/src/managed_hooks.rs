@@ -494,8 +494,9 @@ fn inject_dure_command_path_from(command: &str, directory: &Path) -> Result<Stri
         .to_str()
         .ok_or_else(|| "managed Dure CLI command directory is not UTF-8".to_string())?;
     Ok(format!(
-        "PATH={}:\"${{PATH:-}}\" {command}",
+        "PATH={}:{} {command}",
         shell_quote(directory),
+        crate::login_shell::USER_COMMAND_PATH,
     ))
 }
 
@@ -778,7 +779,100 @@ mod tests {
         .into_command_template(Path::new("/bin/sh"));
         assert_eq!(
             command[2],
-            format!("PATH='/verified channel/bin':\"${{PATH:-}}\" exec {}", inject_app_channel_from("codex --resume conversation-1", "dev-feature-a1b2c3d4"))
+            format!("PATH='/verified channel/bin':{} exec {}", crate::login_shell::USER_COMMAND_PATH, inject_app_channel_from("codex --resume conversation-1", "dev-feature-a1b2c3d4"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn standalone_provider_is_found_and_resumed_with_a_gui_path() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let fixture = tempfile::tempdir().unwrap();
+        let home = fixture.path().join("home ' $(literal)");
+        let bin = home.join(".local/bin");
+        let release = home.join(".codex/packages/standalone/releases/fixture/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&release).unwrap();
+        let provider = release.join("codex");
+        std::fs::write(&provider, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli fixture\\n'; else printf '%s\\n' \"$@\" \"$CODEX_HOME\" \"$DURE_APP_CHANNEL\"; fi\n").unwrap();
+        std::fs::set_permissions(&provider, std::fs::Permissions::from_mode(0o700)).unwrap();
+        symlink(&provider, bin.join("codex")).unwrap();
+        // A real login startup file can replace the inherited GUI PATH.
+        std::fs::write(home.join(".zprofile"), "export PATH=/usr/bin:/bin\n").unwrap();
+        let shell = if cfg!(target_os = "macos") {
+            "/bin/zsh"
+        } else {
+            "/bin/sh"
+        };
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "managed_hooks::tests::standalone_provider_child_probe",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("HOME", &home)
+            .env("ZDOTDIR", &home)
+            .env("DURE_HOME", home.join(".dure"))
+            .env("HMUX_DISCOVERY_ROOT", fixture.path().join("discovery"))
+            .env("PATH", "/usr/bin:/bin")
+            .env("SHELL", shell)
+            .env("DURE_PROVIDER_PATH_FIXTURE", &home)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn standalone_provider_child_probe() {
+        let Some(home) = std::env::var_os("DURE_PROVIDER_PATH_FIXTURE") else {
+            return;
+        };
+        let home = PathBuf::from(home);
+        let result =
+            crate::provider_preflight::run("codex", "codex", &home, Default::default(), true)
+                .unwrap();
+        let result = serde_json::to_value(result).unwrap();
+        assert_eq!(result["ready"], true, "{result}");
+        assert_eq!(result["version"], "codex-cli fixture");
+        let command = render_managed_exec_from(
+            "codex resume conversation-fixture",
+            "dev-fixture",
+            &home.join("channel/bin"),
+        )
+        .unwrap()
+        .into_command_template(&crate::login_shell::resolve_login_shell());
+        let output = std::process::Command::new(&command[0])
+            .args(&command[1..])
+            .env("CODEX_HOME", home.join("account"))
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!(
+                "resume\nconversation-fixture\n{}\ndev-fixture\n",
+                home.join("account").display()
+            )
+        );
+        std::fs::remove_file(home.join(".local/bin/codex")).unwrap();
+        let missing =
+            crate::provider_preflight::run("codex", "codex", &home, Default::default(), false)
+                .unwrap();
+        assert_eq!(
+            serde_json::to_value(missing).unwrap()["status"],
+            "not_found"
         );
     }
 

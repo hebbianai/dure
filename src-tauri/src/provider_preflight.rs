@@ -381,6 +381,17 @@ fn capture_login_environment(
         let value = String::from_utf8_lossy(&entry[separator + 1..]).into_owned();
         environment.insert(key, value);
     }
+    // Match managed launch's user-command directory after shell startup,
+    // including profiles that replace the GUI's inherited PATH.
+    if let Some(path) = crate::login_shell::login_command_path(
+        environment
+            .get("HOME")
+            .filter(|home| !home.is_empty())
+            .map(PathBuf::from),
+        environment.get("PATH").map(std::ffi::OsString::from),
+    ) {
+        environment.insert("PATH".to_string(), path.to_string_lossy().into_owned());
+    }
     Ok(environment)
 }
 
