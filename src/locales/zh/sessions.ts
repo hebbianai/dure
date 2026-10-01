@@ -71,6 +71,7 @@ export const sessions: Record<string, string> = {
 	"sessions.launch.ownershipUnavailable": "无法验证此对话当前的实时世代，因此未创建窗格。会话和工作文件夹保持不变。请刷新“最近会话”后重试。原因：{reason}",
 	"sessions.launch.presentedInBackground":
 		"对话已启动，但无法打开窗格。该代理仍可在“未打开的代理”中使用。",
+	"sessions.launch.providerCliMissing": "未安装 {provider} 命令行工具“{command}”，或它不在 shell PATH 中，因此未创建新窗格。请安装后重试。",
 	"sessions.launch.recoveryRefused": "恢复被拒绝，因此未创建新窗格。原会话保持不变。请刷新“最近会话”后重试，或在“会话恢复”中查看诊断信息。原因：{reason}",
 	"sessions.list.searchEmpty": "未找到匹配的工作会话",
 	"sessions.list.searchPlaceholder": "搜索会话名称、ID 或文件夹",

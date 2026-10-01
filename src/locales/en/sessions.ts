@@ -71,6 +71,7 @@ export const sessionsEnglishTranslations: Record<string, string> = {
 	"sessions.launch.ownershipUnavailable": "The current live generation for this conversation could not be verified, so no pane was created. The session and working folder are unchanged. Refresh Recent Sessions and try again. Reason: {reason}",
 	"sessions.launch.presentedInBackground":
 		"The conversation started, but its pane could not open. The agent remains available under Unopened agents.",
+	"sessions.launch.providerCliMissing": "The {provider} command-line tool \"{command}\" is not installed or is not on your shell PATH, so no pane was created. Install it, then try again.",
 	"sessions.launch.recoveryRefused": "Recovery was refused, so no new pane was created. The source session is unchanged. Refresh Recent Sessions and try again, or inspect diagnostics in Session Recovery. Reason: {reason}",
 	"sessions.list.searchEmpty": "No work sessions match your search",
 	"sessions.list.searchPlaceholder": "Search session name, ID, or folder",

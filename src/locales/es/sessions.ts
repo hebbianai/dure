@@ -71,6 +71,7 @@ export const sessions: Record<string, string> = {
 	"sessions.launch.ownershipUnavailable": "No se pudo verificar la generación activa actual de esta conversación, por lo que no se creó ningún panel. La sesión y la carpeta de trabajo no cambiaron. Actualiza Sesiones recientes e inténtalo de nuevo. Motivo: {reason}",
 	"sessions.launch.presentedInBackground":
 		"La conversación se inició, pero no se pudo abrir su panel. El agente sigue disponible en Agentes sin abrir.",
+	"sessions.launch.providerCliMissing": "La herramienta de línea de comandos de {provider} «{command}» no está instalada o no está en el PATH del shell, por lo que no se creó ningún panel nuevo. Instálala e inténtalo de nuevo.",
 	"sessions.launch.recoveryRefused": "Se rechazó la recuperación segura, por lo que no se creó ningún panel nuevo. La sesión original no cambió. Actualiza Sesiones recientes e inténtalo de nuevo, o revisa los diagnósticos en Recuperación de sesiones. Motivo: {reason}",
 	"sessions.list.searchEmpty": "No hay sesiones de trabajo que coincidan con la búsqueda",
 	"sessions.list.searchPlaceholder": "Buscar por nombre de sesión, ID o carpeta",
