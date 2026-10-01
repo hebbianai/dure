@@ -263,12 +263,14 @@ fn admission_request(
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/bin/sh"));
+    let path_supplement = crate::managed_hooks::managed_launch_path_supplement(provider_id, &cwd);
     let recipe = managed_rehost_recipe::local_create_time_recipe(
         provider_id,
         permission_mode,
         credential_id.map(str::to_string),
         &shell,
         &provider_state_environment,
+        path_supplement.as_deref(),
     )
     .map_err(|_| "managed_recovery_launch_invalid")?
     .ok_or("managed_recovery_exact_resume_unsupported")?;
@@ -297,6 +299,7 @@ fn admission_request(
                 provider_id,
                 &fresh_command,
                 replacement.provider_state_environment(),
+                path_supplement.as_deref(),
             )
             .map_err(|_| "managed_recovery_launch_invalid")?;
             let replacement = replacement

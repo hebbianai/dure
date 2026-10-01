@@ -587,7 +587,9 @@ export interface ProviderPreflight {
 	message: string;
 	shell: string;
 	cwd: string;
-	environmentSource: "login_shell";
+	/** `interactive_login_shell` when the login PATH could not run the command
+	 *  and the interactive shell's PATH entries were appended after it. */
+	environmentSource: "login_shell" | "interactive_login_shell";
 	path?: string;
 	commandPath?: string;
 	resolvedPath?: string;

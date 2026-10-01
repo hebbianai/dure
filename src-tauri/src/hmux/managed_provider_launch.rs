@@ -46,6 +46,11 @@ fn command(plan: &AgentProviderLaunchPlanV1) -> String {
     command
 }
 
+/// The executable every reviewed launch of this provider starts.
+pub(crate) fn executable(provider_id: &str) -> Option<String> {
+    fresh_plan(provider_id, PermissionMode::Default).map(|plan| plan.executable)
+}
+
 pub(crate) fn fresh_plan(
     provider_id: &str,
     permission_mode: PermissionMode,

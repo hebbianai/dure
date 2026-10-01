@@ -57,11 +57,6 @@ pub(super) fn prepare_managed_create_request(
         &provider_state_environment,
         &command,
     )?;
-    let launch_command = crate::managed_hooks::prepare_managed_exec(
-        &provider_id,
-        &command,
-        &provider_state_environment,
-    )?;
     let cwd = if replace_current && conversation_id.is_some() {
         crate::working_directory::resolve_exact_resume_cwd(&cwd)
     } else {
@@ -71,6 +66,13 @@ pub(super) fn prepare_managed_create_request(
     if !cwd.is_dir() {
         return Err("managed Hmux cwd must be a directory".to_string());
     }
+    let path_supplement = crate::managed_hooks::managed_launch_path_supplement(&provider_id, &cwd);
+    let launch_command = crate::managed_hooks::prepare_managed_exec(
+        &provider_id,
+        &command,
+        &provider_state_environment,
+        path_supplement.as_deref(),
+    )?;
     let shell = std::env::var_os("SHELL")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -81,6 +83,7 @@ pub(super) fn prepare_managed_create_request(
         credential_id.clone(),
         &shell,
         &provider_state_environment,
+        path_supplement.as_deref(),
     )?;
     let create_request = |command| {
         ManagedCreateRequest::new(
