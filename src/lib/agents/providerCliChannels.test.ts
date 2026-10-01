@@ -87,24 +87,56 @@ describe("buildProviderCliUpdatePlan", () => {
 		expect(plan).toBeNull();
 	});
 
-	it("detects the codex standalone channel and invokes the exact executable", () => {
-		const plan = buildProviderCliUpdatePlan({
-			provider: "codex",
-			preflight: preflight({
+	it.each(["current", "releases/0.157.1-aarch64-apple-darwin"])(
+		"binds the Codex standalone %s updater to its installation home",
+		(layout) => {
+			const executable = `/Users/me/.codex/packages/standalone/${layout}/bin/codex`;
+			const plan = buildProviderCliUpdatePlan({
 				provider: "codex",
-				command: "codex",
-				resolvedPath:
-					"/Users/jwan/.codex/packages/standalone/current/bin/codex",
+				preflight: preflight({
+					provider: "codex",
+					command: "codex",
+					commandPath: "/Users/me/.local/bin/codex",
+					resolvedPath: executable,
+				}),
+				npmGlobalPrefix: null,
+				platform: "macos",
+			});
+			expect(plan).toEqual({
+				provider: "codex",
+				channel: "codex-standalone",
+				command: `env CODEX_HOME='/Users/me/.codex' '${executable}' update`,
+			});
+		},
+	);
+
+	it("uses a custom standalone installation home on Linux", () => {
+		const executable =
+			"/home/me/codex-data/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/bin/codex";
+		expect(
+			buildProviderCliUpdatePlan({
+				provider: "codex",
+				preflight: preflight({ resolvedPath: executable }),
+				npmGlobalPrefix: null,
+				platform: "linux",
+			})?.command,
+		).toBe(`env CODEX_HOME='/home/me/codex-data' '${executable}' update`);
+	});
+
+	it.each([
+		"/Users/me/.codex/packages/standalone/tools/codex",
+		"/Users/me/.codex/packages/standalone/current/bin/other",
+		"/Users/me/.codex/packages/standalone/releases/0.157.1/bin/codex-wrapper",
+		"relative/.codex/packages/standalone/current/bin/codex",
+	])("leaves an unsupported standalone layout unknown: %s", (resolvedPath) => {
+		expect(
+			buildProviderCliUpdatePlan({
+				provider: "codex",
+				preflight: preflight({ resolvedPath }),
+				npmGlobalPrefix: null,
+				platform: "macos",
 			}),
-			npmGlobalPrefix: null,
-			platform: "macos",
-		});
-		expect(plan).toEqual({
-			provider: "codex",
-			channel: "codex-standalone",
-			command:
-				"'/Users/jwan/.codex/packages/standalone/current/bin/codex' update",
-		});
+		).toBeNull();
 	});
 
 	it("does not apply another provider's standalone channel", () => {

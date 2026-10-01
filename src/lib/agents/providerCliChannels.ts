@@ -10,10 +10,7 @@ import {
 } from "@/lib/workspace/desktop/desktopPlatform";
 import type { Provider } from "@/types";
 
-type ProviderCliChannelKind =
-	| "brew-cask"
-	| "codex-standalone"
-	| "npm-global";
+type ProviderCliChannelKind = "brew-cask" | "codex-standalone" | "npm-global";
 
 export interface ProviderCliUpdatePlan {
 	readonly provider: Provider;
@@ -26,11 +23,6 @@ export interface ProviderCliUpdateTarget {
 	readonly npmPackage: string;
 	readonly caskTokens: readonly string[];
 	readonly docsUrl: string;
-	readonly selfUpdate?: {
-		readonly channel: "codex-standalone";
-		readonly pathSegment: string;
-		readonly arguments: readonly string[];
-	};
 }
 
 export const PROVIDER_CLI_UPDATE_TARGETS: Partial<
@@ -45,11 +37,6 @@ export const PROVIDER_CLI_UPDATE_TARGETS: Partial<
 		npmPackage: "@openai/codex",
 		caskTokens: ["codex"],
 		docsUrl: "https://developers.openai.com/codex/cli/",
-		selfUpdate: {
-			channel: "codex-standalone",
-			pathSegment: "/.codex/packages/standalone/",
-			arguments: ["update"],
-		},
 	},
 };
 
@@ -69,6 +56,8 @@ function shellQuotePath(path: string): string {
 }
 
 const CASKROOM_TOKEN = /\/Caskroom\/([^/]+)\//;
+const CODEX_STANDALONE_EXECUTABLE =
+	/^(\/.+)\/packages\/standalone\/(?:current|releases\/[^/]+)\/bin\/codex$/;
 
 export function buildProviderCliUpdatePlan(input: {
 	provider: Provider;
@@ -94,12 +83,18 @@ export function buildProviderCliUpdatePlan(input: {
 			command: `brew upgrade --cask ${token}`,
 		};
 	}
-	const selfUpdate = target.selfUpdate;
-	if (selfUpdate && path.includes(selfUpdate.pathSegment)) {
+	const codexInstallHome =
+		input.provider === "codex"
+			? CODEX_STANDALONE_EXECUTABLE.exec(path)?.[1]
+			: undefined;
+	if (codexInstallHome) {
+		// Codex detects its standalone installation relative to CODEX_HOME.
+		// A desktop launched from an agent can inherit an account-specific home;
+		// scope this override to the updater, never the account/session environment.
 		return {
 			provider: input.provider,
-			channel: selfUpdate.channel,
-			command: [shellQuotePath(path), ...selfUpdate.arguments].join(" "),
+			channel: "codex-standalone",
+			command: `env CODEX_HOME=${shellQuotePath(codexInstallHome)} ${shellQuotePath(path)} update`,
 		};
 	}
 	if (path.includes("/node_modules/")) {
