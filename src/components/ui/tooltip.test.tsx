@@ -43,6 +43,89 @@ const queryContent = () =>
   document.querySelector("[data-slot='tooltip-content']");
 
 describe("Tooltip", () => {
+  it("does not reopen for restored focus after the navigation key was released", () => {
+    render(
+      <Tooltip>
+        <TooltipTrigger>Settings</TooltipTrigger>
+        <TooltipContent>Open settings</TooltipContent>
+      </Tooltip>,
+    );
+    const trigger = document.querySelector(
+      "[data-slot='tooltip-trigger']",
+    ) as HTMLElement;
+    focusByKeyboard(trigger);
+    expect(queryContent()).not.toBeNull();
+    fireEvent.keyUp(trigger, { key: "Tab" });
+    act(() => trigger.blur());
+    act(() => trigger.focus());
+    expect(queryContent()).toBeNull();
+  });
+
+  it("does not open an ancestor tooltip when a descendant receives focus", () => {
+    render(
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div>
+            <button type="button">Child</button>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent>Parent hint</TooltipContent>
+      </Tooltip>,
+    );
+    focusByKeyboard(document.querySelector("button") as HTMLElement);
+    expect(queryContent()).toBeNull();
+  });
+
+  it("closes a focused tooltip when its window loses focus", () => {
+    render(
+      <Tooltip>
+        <TooltipTrigger>Settings</TooltipTrigger>
+        <TooltipContent>Open settings</TooltipContent>
+      </Tooltip>,
+    );
+    focusByKeyboard(
+      document.querySelector("[data-slot='tooltip-trigger']") as HTMLElement,
+    );
+    expect(queryContent()).not.toBeNull();
+    fireEvent(window, new Event("blur"));
+    expect(queryContent()).toBeNull();
+  });
+
+  it.each(["drag", "blur", "pointerdown", "dragstart"])(
+    "rejects pending hover after %s",
+    async (action) => {
+      vi.useFakeTimers();
+      try {
+        render(
+          <Tooltip>
+            <TooltipTrigger>Settings</TooltipTrigger>
+            <TooltipContent>Open settings</TooltipContent>
+          </Tooltip>,
+        );
+        const trigger = document.querySelector(
+          "[data-slot='tooltip-trigger']",
+        ) as HTMLElement;
+        const move = new Event("pointermove", {
+          bubbles: true,
+          cancelable: true,
+        });
+        Object.assign(move, {
+          pointerType: "mouse",
+          buttons: action === "drag" ? 1 : 0,
+        });
+        fireEvent(trigger, move);
+        if (action === "blur") fireEvent(window, new Event("blur"));
+        if (action === "pointerdown") fireEvent.pointerDown(document.body);
+        if (action === "dragstart") fireEvent.dragStart(document.body);
+        await act(() => vi.advanceTimersByTimeAsync(150));
+        expect(queryContent()).toBeNull();
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("opens every shared tooltip within 100ms of intentional hover", async () => {
     vi.useFakeTimers();
     try {

@@ -1,9 +1,18 @@
 import type * as React from "react";
-import { useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Tooltip as TooltipPrimitive } from "radix-ui";
 
 import { lastInputMovedFocus } from "@/lib/ui/inputModality";
 import { MENU_SIDE_OFFSET } from "@/lib/ui/menuSurface";
+import { watchTooltipDismissal } from "@/lib/ui/tooltipDismissal";
 import { cn } from "@/lib/utils";
 
 // Hover/focus tooltip primitive over Radix Tooltip, drawn to the design
@@ -46,20 +55,77 @@ function TooltipProvider({
   );
 }
 
+const TooltipInteraction = createContext<{
+  begin: (trigger: HTMLElement) => void;
+  leave: () => void;
+  dismiss: () => void;
+} | null>(null);
+
 /**
- * Self-providing root: each Tooltip wraps its own TooltipProvider so an
- * incrementally converted `title=` site never crashes on a missing ancestor
- * provider. Trade-off (deliberate, same as upstream shadcn): skip-delay
- * sharing across sibling tooltips needs a region-level TooltipProvider, which
- * this inner provider shadows. A per-tooltip `delayDuration` prop still wins —
- * Radix resolves the root prop before the provider value.
+ * Self-providing root. The inner provider keeps existing standalone callers
+ * safe; a root delayDuration still wins over its default. Interaction watches
+ * exist only during hover/focus, never once per idle toolbar button.
  */
 function Tooltip({
+  open: controlledOpen,
+  defaultOpen = false,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Root>) {
+  const [uncontrolledOpen, setOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const currentOpen = useRef(open);
+  currentOpen.current = open;
+  const notify = useRef(onOpenChange);
+  notify.current = onOpenChange;
+  const allowed = useRef(false);
+  const stopWatching = useRef<(() => void) | null>(null);
+  const retire = useCallback(() => {
+    allowed.current = false;
+    stopWatching.current?.();
+    stopWatching.current = null;
+  }, []);
+  useEffect(() => retire, [retire]);
+  const changeOpen = useCallback(
+    (next: boolean) => {
+      // Radix's hover timer can finish after pointer capture, a click or window
+      // deactivation. That old request no longer describes a current hover.
+      if (next && !allowed.current) return;
+      if (!next) retire();
+      if (currentOpen.current === next) return;
+      currentOpen.current = next;
+      setOpen(next);
+      notify.current?.(next);
+    },
+    [retire],
+  );
+  const interaction = useMemo(
+    () => ({
+      begin(trigger: HTMLElement) {
+        allowed.current = true;
+        stopWatching.current ??= watchTooltipDismissal(trigger, () =>
+          changeOpen(false),
+        );
+      },
+      leave() {
+        if (!currentOpen.current) retire();
+      },
+      dismiss() {
+        changeOpen(false);
+      },
+    }),
+    [changeOpen, retire],
+  );
   return (
     <TooltipProvider>
-      <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+      <TooltipInteraction.Provider value={interaction}>
+        <TooltipPrimitive.Root
+          data-slot="tooltip"
+          {...props}
+          open={open}
+          onOpenChange={changeOpen}
+        />
+      </TooltipInteraction.Provider>
     </TooltipProvider>
   );
 }
@@ -70,22 +136,47 @@ function Tooltip({
  * includes focus the user never moved: a dialog hands focus to its first
  * control as it opens, and hands it back to the button that opened it as it
  * closes — the hint popped each time (owner report 2026-09-18, Refresh in the
- * Connections dialog). The last input decides, not `:focus-visible`;
+ * Connections dialog). The current navigation gesture decides, not `:focus-visible`;
  * inputModality.ts says why. Radix skips its handler once the event is
  * default-prevented.
  */
 function TooltipTrigger({
   onFocus,
+  onPointerMove,
+  onPointerLeave,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
+  const interaction = useContext(TooltipInteraction);
   return (
     <TooltipPrimitive.Trigger
       data-slot="tooltip-trigger"
+      data-tooltip-trigger=""
       onFocus={(event) => {
         onFocus?.(event);
-        if (!lastInputMovedFocus(event.currentTarget.ownerDocument)) {
+        if (
+          event.target !== event.currentTarget ||
+          !lastInputMovedFocus(event.currentTarget.ownerDocument)
+        ) {
           event.preventDefault();
         }
+        if (!event.defaultPrevented) interaction?.begin(event.currentTarget);
+      }}
+      onPointerMove={(event) => {
+        onPointerMove?.(event);
+        if (
+          event.buttons > 0 ||
+          (event.target as Element).closest("[data-tooltip-trigger]") !==
+            event.currentTarget
+        ) {
+          event.preventDefault();
+          interaction?.dismiss();
+        }
+        if (!event.defaultPrevented && event.pointerType !== "touch")
+          interaction?.begin(event.currentTarget);
+      }}
+      onPointerLeave={(event) => {
+        onPointerLeave?.(event);
+        if (!event.defaultPrevented) interaction?.leave();
       }}
       {...props}
     />

@@ -45,7 +45,9 @@ describe("lastInputWasKeyboard", () => {
 	it("hears input that a handler stops from bubbling", () => {
 		const doc = freshDocument();
 		lastInputWasKeyboard(doc);
-		doc.body.addEventListener("pointerdown", (event) => event.stopPropagation());
+		doc.body.addEventListener("pointerdown", (event) =>
+			event.stopPropagation(),
+		);
 
 		pointerDown(doc);
 		expect(lastInputWasKeyboard(doc)).toBe(false);
@@ -70,6 +72,48 @@ describe("lastInputWasKeyboard", () => {
 });
 
 describe("lastInputMovedFocus", () => {
+	it.each(["keyup", "pointermove", "blur"])(
+		"retires navigation intent after %s",
+		(kind) => {
+			const doc = freshDocument();
+			lastInputMovedFocus(doc);
+			press(doc, "Tab");
+			expect(lastInputMovedFocus(doc)).toBe(true);
+			if (kind === "keyup")
+				doc.body.dispatchEvent(
+					new KeyboardEvent("keyup", { key: "Tab", bubbles: true }),
+				);
+			if (kind === "pointermove")
+				doc.body.dispatchEvent(new Event("pointermove", { bubbles: true }));
+			if (kind === "blur") doc.defaultView?.dispatchEvent(new Event("blur"));
+			expect(lastInputMovedFocus(doc)).toBe(false);
+			expect(lastInputWasKeyboard(doc)).toBe(true);
+		},
+	);
+
+	it("does not treat application/window switching shortcuts as focus navigation", () => {
+		const doc = freshDocument();
+		lastInputMovedFocus(doc);
+		for (const modifier of ["altKey", "ctrlKey", "metaKey"]) {
+			doc.body.dispatchEvent(
+				new KeyboardEvent("keydown", {
+					key: "Tab",
+					[modifier]: true,
+					bubbles: true,
+				}),
+			);
+			expect(lastInputMovedFocus(doc)).toBe(false);
+		}
+		doc.body.dispatchEvent(
+			new KeyboardEvent("keydown", {
+				key: "Tab",
+				shiftKey: true,
+				bubbles: true,
+			}),
+		);
+		expect(lastInputMovedFocus(doc)).toBe(true);
+	});
+
 	it("is true only after a key that walks focus", () => {
 		const doc = freshDocument();
 		expect(lastInputMovedFocus(doc)).toBe(false);

@@ -14,6 +14,7 @@
 
 // A key, or null for a pointer press.
 const lastInputs = new WeakMap<Document, string | null>();
+const focusInputs = new WeakMap<Document, string | null>();
 
 // Held on the way to a click (⌘-click, shift-click): not keyboard use.
 const MODIFIER_KEYS = new Set(["Alt", "AltGraph", "Control", "Meta", "Shift"]);
@@ -38,14 +39,44 @@ export function trackInputModality(doc: Document) {
 	// Nothing seen yet: assume the keyboard, which keeps focus handling as the
 	// platform defines it until a real press says otherwise.
 	lastInputs.set(doc, "");
+	focusInputs.set(doc, null);
 	doc.addEventListener(
 		"keydown",
 		(event) => {
 			if (!MODIFIER_KEYS.has(event.key)) lastInputs.set(doc, event.key);
+			focusInputs.set(
+				doc,
+				FOCUS_KEYS.has(event.key) &&
+					!event.altKey &&
+					!event.ctrlKey &&
+					!event.metaKey
+					? event.key
+					: null,
+			);
 		},
 		true,
 	);
-	doc.addEventListener("pointerdown", () => lastInputs.set(doc, null), true);
+	const clearFocusInput = () => focusInputs.set(doc, null);
+	doc.addEventListener(
+		"keyup",
+		(event) => {
+			if (event.key === focusInputs.get(doc)) clearFocusInput();
+		},
+		true,
+	);
+	doc.addEventListener(
+		"pointerdown",
+		() => {
+			lastInputs.set(doc, null);
+			clearFocusInput();
+		},
+		true,
+	);
+	doc.addEventListener("pointermove", clearFocusInput, true);
+	doc.defaultView?.addEventListener("blur", clearFocusInput);
+	doc.addEventListener("visibilitychange", () => {
+		if (doc.hidden) clearFocusInput();
+	});
 }
 
 if (typeof document !== "undefined") trackInputModality(document);
@@ -57,11 +88,13 @@ export function lastInputWasKeyboard(doc: Document): boolean {
 }
 
 /**
- * True when the user's last input was a key that moves focus. Narrower than
+ * True during a key gesture that moves focus. Narrower than
  * keyboard use on purpose: Enter that opens a dialog and Escape that closes
- * one also move focus, but the user did not walk to where it landed.
+ * one also move focus, but the user did not walk to where it landed. Releasing
+ * the key or leaving the window retires the gesture; later focus restoration
+ * must not reuse a Tab or arrow pressed in a different interaction.
  */
 export function lastInputMovedFocus(doc: Document): boolean {
 	trackInputModality(doc);
-	return FOCUS_KEYS.has(lastInputs.get(doc) ?? "");
+	return focusInputs.get(doc) != null;
 }
