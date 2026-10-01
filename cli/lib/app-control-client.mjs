@@ -1,10 +1,16 @@
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_CONFIGURED_RESPONSE_BYTES = 32 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 60_000;
+const APP_CONNECTION_ERRORS = new Set([
+  "client_unavailable", "client_descriptor_invalid", "client_request_failed",
+  "client_request_timeout", "client_response_failed", "client_response_invalid",
+]);
 
 export class AppControlClientError extends Error {
   constructor(code, message, options = {}) {
-    super(message, options);
+    super(APP_CONNECTION_ERRORS.has(code)
+      ? `${message} Run dure diagnostics --json for the selected channel and session-preserving recovery. A connection failure does not prove session exit; inspect the original delivery before resending.`
+      : message, options);
     this.name = "AppControlClientError";
     this.code = code;
   }

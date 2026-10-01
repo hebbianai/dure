@@ -436,7 +436,7 @@ export async function inspectAppRuntime({
   };
 }
 
-export function createDiagnosticReport({ cli, app, hmux, now = Date.now() }) {
+export function createDiagnosticReport({ cli, app, hmux, selectedChannel = app.channel ?? null, now = Date.now() }) {
   const issues = [];
   if (!cli.pathMatchesCurrent) issues.push("cli_path_mismatch");
   if (app.state !== "running") {
@@ -455,6 +455,21 @@ export function createDiagnosticReport({ cli, app, hmux, now = Date.now() }) {
     cli,
     app,
     hmux,
+    selectedChannel,
+    recovery: {
+      backendHealth: "not_inspected",
+      sessionState: "not_inspected",
+      checks: ["dure backend health --json", "dure runs ls --json"],
+      steps: [
+        "An unreachable app is not proof that sessions exited. Hmux compatibility checks the executable, not live session health.",
+        "Keep the same Dure executable, app channel and backend selection for these read-only checks. Inspect the affected session with dure inspect <session-id> --workspace <workspace-id> --json.",
+        ...(app.state !== "running" ? [
+          "Reopen the selected app channel if it is stopped. For a development app, use pnpm app:dev from its owning checkout. A different running channel does not repair this channel.",
+          "Managed sessions run independently of the app. Reopening the app reconnects presentation; it does not itself stop those sessions. Save unsent drafts before closing a running app; do not stop Hosts, reset data or create replacement Runs to repair app reachability.",
+        ] : []),
+        "Do not resend after an uncertain message result. Keep its receipt or idempotency key and inspect the original delivery first.",
+      ],
+    },
   };
 }
 
@@ -529,7 +544,7 @@ export function formatDiagnosticReport(report) {
     `  path_matches: ${label(report.cli.pathMatchesCurrent)}`,
     "app:",
     `  status: ${report.app.state}`,
-    `  channel: ${label(report.app.channel)}`,
+    `  channel: ${label(report.selectedChannel ?? report.app.channel)}`,
     `  version: ${label(report.app.packageVersion)}`,
     `  build: ${label(report.app.buildId)}`,
     `  source_revision: ${label(compatibility.detail?.frontendSourceRevision)}`,
@@ -544,5 +559,12 @@ export function formatDiagnosticReport(report) {
     ...(report.issues.length === 0
       ? ["  none"]
       : report.issues.map((issue) => `  - ${issue}`)),
+    ...(report.recovery ? [
+      "recovery:",
+      `  backend_health: ${report.recovery.backendHealth}`,
+      `  session_state: ${report.recovery.sessionState}`,
+      ...report.recovery.checks.map((command) => `  check: ${command}`),
+      ...report.recovery.steps.map((step) => `  - ${step}`),
+    ] : []),
   ].join("\n");
 }

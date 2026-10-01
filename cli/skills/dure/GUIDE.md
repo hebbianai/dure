@@ -174,6 +174,21 @@ dure diagnostics --check --require app,hmux,path
 `diagnostics` reports CLI path shadowing, app descriptor liveness,
 frontend/backend compatibility, and Hmux capability without exposing bearer
 tokens or terminal content. It does not poll in the background.
+Its `selectedChannel` remains available even when the app descriptor is absent.
+The `recovery` object provides read-only checks and session-preserving steps.
+Hmux executable compatibility is not live backend or session health: run
+`dure backend health --json`, `dure runs ls --json`, and then
+`dure inspect <session-id> --workspace <workspace-id> --json` for the affected
+session, keeping the same executable, channel and backend selection.
+
+`app_stale_descriptor` means this app endpoint could not be verified; it does
+not prove that any session exited. If the selected app stopped, reopen that
+channel (for development, `pnpm app:dev` in its owning checkout). Managed sessions
+run independently; reopening the app reconnects presentation. Save unsent
+drafts before closing an app that is still running. Do not stop Hosts, delete
+state, or create replacement Runs to repair app reachability. Keep the original
+message receipt/idempotency key and inspect delivery before any resend.
+
 `--check` is the opt-in automation contract: it grafts one `check` object onto
 the same receipt — read `.check.required`, `.check.failed` and `.check.passed`,
 not the top level — then exits non-zero when a selected runtime requirement is

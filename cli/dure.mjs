@@ -622,6 +622,7 @@ async function cmdDiagnostics(opts) {
   const diagnosticReport = createDiagnosticReport({
     cli: identity,
     app,
+    selectedChannel: APP_CHANNEL,
     hmux: {
       command: hmuxInspection.command,
       version: hmuxInspection.version ?? null,
@@ -945,7 +946,7 @@ async function sendText(
     const attempt = await request();
     if (attempt.error) {
       fail(
-        `App server request failed: ${attempt.error.message} (idempotency key: ${idempotencyKey})`,
+        `App server request failed: ${attempt.error.message} (idempotency key: ${idempotencyKey}). Run dure diagnostics --json for the selected channel and session-preserving recovery. Delivery is uncertain; inspect before resending.`,
       );
     }
     const { res, response } = attempt;
@@ -3544,7 +3545,8 @@ Usage:
   dure orch health [--json] [--repo PATH] [--backend ID] [--timeout-ms N] [--cache-ms N]
                                       Exit 0 healthy, 1 degraded, 2 unknown
   dure diagnostics [--json] [--check] [--require app,hmux,path]
-                                      Diagnose and verify the CLI, app, backend and Hmux in one pass
+                                      Check CLI/app compatibility; show channel and session-preserving recovery
+                                      Live backend/session health requires the reported read-only checks
   dure profiles <list|show|resolve|test> [ID] [--backend ID] [--json]
                                       Inspect, select and test backend profiles independently of the app
 

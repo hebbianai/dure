@@ -724,6 +724,8 @@ describe("Dure connected-client pane CLI", () => {
       expect(attempts).toBe(1);
       expect(error.message).not.toContain("private cause detail");
       expect(error.message).not.toContain("fixture-token");
+      expect(error.message).toContain("dure diagnostics --json");
+      expect(error.message).toContain("inspect the original delivery before resending");
       if (code === "ECONNREFUSED") {
         expect(error.message).toContain("ECONNREFUSED");
         expect(error.message).toContain("127.0.0.1:43210");

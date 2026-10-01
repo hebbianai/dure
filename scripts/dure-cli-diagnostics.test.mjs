@@ -412,6 +412,35 @@ describe("Dure runtime diagnostics", () => {
     ).toEqual(["app_version_skew"]);
   });
 
+  it.each(["stale_descriptor", "not_running", "invalid_descriptor"])("explains %s without inferring session exit", (state) => {
+    const report = createDiagnosticReport({
+      selectedChannel: "dev-fixture",
+      cli: { pathMatchesCurrent: true },
+      app: { state, compatibility: { state: "unavailable", mode: null } },
+      hmux: { compatible: true },
+    });
+    expect(report.selectedChannel).toBe("dev-fixture");
+    expect(report.recovery).toMatchObject({
+      backendHealth: "not_inspected", sessionState: "not_inspected",
+      checks: ["dure backend health --json", "dure runs ls --json"],
+    });
+    expect(report.recovery.steps.join(" ")).toContain("Reopen the selected app channel");
+    expect(report.recovery.steps.join(" ")).toContain("Do not resend");
+    expect(formatDiagnosticReport(report)).toContain("channel: dev-fixture");
+    expect(formatDiagnosticReport(report)).toContain("not proof that sessions exited");
+  });
+
+  it("does not advise reopening a healthy app or mistake an installed Hmux for session health", () => {
+    const report = createDiagnosticReport({
+      cli: { pathMatchesCurrent: true },
+      app: { state: "running", compatibility: { state: "available", mode: "current" } },
+      hmux: { compatible: true },
+    });
+    expect(report.recovery.backendHealth).toBe("not_inspected");
+    expect(report.recovery.sessionState).toBe("not_inspected");
+    expect(report.recovery.steps.join(" ")).not.toContain("Reopen");
+  });
+
   it("parses bounded requirements and evaluates only the selected domains", () => {
     expect(parseDiagnosticRequirements()).toEqual(["app", "hmux", "path"]);
     expect(parseDiagnosticRequirements("path, app,path")).toEqual([
@@ -477,7 +506,7 @@ fi
       ["cli/dure.mjs", "diagnostics", "--json"],
       {
         cwd: process.cwd(),
-        env: { ...environment, DURE_INVOKED_AS: "hebbian-ade" },
+        env: { ...environment, DURE_INVOKED_AS: "hebbian-ade", DURE_APP_CHANNEL: "dev-fixture" },
         encoding: "utf8",
       },
     );
@@ -498,6 +527,8 @@ fi
       },
       app: { state: "not_running" },
       hmux: { version: "0.1.4", compatible: true },
+      selectedChannel: "dev-fixture",
+      recovery: { backendHealth: "not_inspected", sessionState: "not_inspected" },
     });
     expect(diagnosticsReceipt).not.toHaveProperty("check");
     expect(diagnostics.stderr).toBe(

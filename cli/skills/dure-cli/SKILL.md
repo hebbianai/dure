@@ -98,6 +98,12 @@ For headless input/output, use the Session/workspace pair from `show` with
 input verifies the current Host generation without requiring an app registry.
 It does not support `--backend`, `--window-label`, or broker idempotency keys.
 For a lookup failure, check the selected channel with `dure diagnostics --json`.
+For app connection failures, read its `recovery` checks before restarting.
+App reachability and Hmux executable compatibility do not prove session health.
+Use `dure backend health --json`, `dure runs ls --json` and exact-session
+`dure inspect` in the same channel/backend. Reopen a stopped app's own channel;
+managed sessions run independently. Preserve drafts and existing message
+receipts; do not reset sessions or resend an uncertain message automatically.
 
 ## Stop and clean up an Agent
 
