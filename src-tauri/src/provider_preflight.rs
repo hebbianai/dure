@@ -23,7 +23,7 @@ const INTERACTIVE_ENVIRONMENT_BEGIN: &[u8] = b"__DURE_INTERACTIVE_ENVIRONMENT_BE
 const INTERACTIVE_ENVIRONMENT_END: &[u8] = b"__DURE_INTERACTIVE_ENVIRONMENT_END__";
 // The supplement is embedded in the managed launch argv, whose arguments are bounded.
 const MAX_PATH_SUPPLEMENT_BYTES: usize = 8 * 1024;
-const INTERACTIVE_PATH_REUSE: Duration = Duration::from_secs(30);
+const PATH_SUPPLEMENT_REUSE: Duration = Duration::from_secs(30);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_ENVIRONMENT_OUTPUT: usize = 256 * 1024;
 const MAX_VERSION_OUTPUT: usize = 8 * 1024;
@@ -116,7 +116,7 @@ fn resolve_login_command_environment_with_shell(
         &cwd,
         &terminal_environment,
         (timeout, INTERACTIVE_ENVIRONMENT_TIMEOUT),
-        InteractivePathReuse::Recent,
+        PathSupplementReuse::Recent,
     )
     .map_err(|failure| match failure {
         CommandFailure::Timeout => "login shell environment resolution timed out".to_string(),
@@ -205,7 +205,7 @@ pub fn run(
         &cwd,
         &terminal_environment,
         (ENVIRONMENT_TIMEOUT, INTERACTIVE_ENVIRONMENT_TIMEOUT),
-        InteractivePathReuse::Fresh,
+        PathSupplementReuse::Fresh,
     ) {
         Ok(spawn) => spawn,
         Err(CommandFailure::Timeout) => {
@@ -226,9 +226,7 @@ pub fn run(
             return Ok(result);
         }
     };
-    if spawn.path_supplement.is_some() {
-        result.environment_source = "interactive_login_shell";
-    }
+    result.environment_source = spawn.environment_source;
 
     let mut result = inspect_command(result, &cwd, &spawn.environment, include_version);
     if let Some(failure) = spawn.interactive_failure.filter(|_| !result.executable) {
@@ -424,31 +422,51 @@ fn capture_login_environment(
 ///
 /// `$SHELL -lc` skips interactive startup files such as `~/.zshrc`, where
 /// nvm-style installs commonly extend PATH, although Terminal and Dure shell
-/// panes read them. Only when the login PATH cannot run the command are the
-/// entries the interactive shell adds appended after it, so a command the
-/// login shell already finds resolves exactly as before.
+/// panes read them. Only when the login PATH cannot run the command is a
+/// supplement appended after it, so a command the login shell already finds
+/// resolves exactly as before.
 #[derive(Debug)]
 struct SpawnEnvironment {
     environment: BTreeMap<String, String>,
     path_supplement: Option<String>,
+    environment_source: &'static str,
     interactive_failure: Option<String>,
 }
 
-/// What the interactive shell contributes to resolving one command.
+/// What a provider launch appends after the login PATH to run one command.
 #[derive(Clone, Debug, PartialEq)]
-enum InteractivePath {
+enum PathSupplement {
     /// The login PATH already runs the command.
     Unneeded,
-    /// Entries appended after the login PATH run the command.
-    Supplement(String),
-    /// The interactive shell did not make the command runnable.
-    Unhelpful,
+    /// Entries only the interactive shell adds.
+    Interactive(String),
+    /// The directory holding the CLI a provider's desktop app ships.
+    AppBundle(String),
+    /// Nothing found makes the command runnable.
+    Unavailable,
+}
+
+impl PathSupplement {
+    fn entries(&self) -> Option<&str> {
+        match self {
+            Self::Interactive(entries) | Self::AppBundle(entries) => Some(entries),
+            Self::Unneeded | Self::Unavailable => None,
+        }
+    }
+
+    fn environment_source(&self) -> &'static str {
+        match self {
+            Self::Interactive(_) => "interactive_login_shell",
+            Self::AppBundle(_) => "provider_app_bundle",
+            Self::Unneeded | Self::Unavailable => "login_shell",
+        }
+    }
 }
 
 /// Whether a recent decision may stand in for starting the interactive shell
 /// again. A provider preflight is the user's retry path, so it always looks.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum InteractivePathReuse {
+enum PathSupplementReuse {
     Fresh,
     Recent,
 }
@@ -459,7 +477,7 @@ fn capture_spawn_environment(
     cwd: &Path,
     terminal_environment: &TerminalEnvironment,
     timeouts: (Duration, Duration),
-    reuse: InteractivePathReuse,
+    reuse: PathSupplementReuse,
 ) -> Result<SpawnEnvironment, CommandFailure> {
     let (timeout, interactive_timeout) = timeouts;
     let mut environment = capture_login_environment(shell, cwd, terminal_environment, timeout)?;
@@ -470,52 +488,98 @@ fn capture_spawn_environment(
             PathResolution::Ready { .. }
         )
     };
+    let runs_after_login =
+        |supplement: &String| runs_command(&append_path(&login_path, supplement));
     let (decision, interactive_failure) = if runs_command(&login_path) {
-        (InteractivePath::Unneeded, None)
-    } else if let Some(decision) = (reuse == InteractivePathReuse::Recent)
-        .then(|| remembered_interactive_path(shell, cwd, command_name))
+        (PathSupplement::Unneeded, None)
+    } else if let Some(decision) = (reuse == PathSupplementReuse::Recent)
+        .then(|| remembered_path_supplement(shell, cwd, command_name))
         .flatten()
     {
         (decision, None)
     } else {
-        match capture_interactive_path(shell, cwd, terminal_environment, interactive_timeout) {
-            Ok(interactive_path) => (
-                path_supplement(&login_path, &interactive_path)
-                    .filter(|supplement| runs_command(&append_path(&login_path, supplement)))
-                    .map_or(InteractivePath::Unhelpful, InteractivePath::Supplement),
-                None,
-            ),
-            Err(CommandFailure::Timeout) => (
-                InteractivePath::Unhelpful,
-                Some(format!(
-                    "the interactive shell environment did not resolve within {} ms",
-                    interactive_timeout.as_millis()
-                )),
-            ),
-            Err(CommandFailure::Failed(message)) => (
-                InteractivePath::Unhelpful,
-                Some(format!(
-                    "the interactive shell environment was unavailable: {message}"
-                )),
-            ),
-        }
+        let (interactive, interactive_failure) =
+            match capture_interactive_path(shell, cwd, terminal_environment, interactive_timeout) {
+                Ok(interactive_path) => (
+                    path_supplement(&login_path, &interactive_path).filter(runs_after_login),
+                    None,
+                ),
+                Err(CommandFailure::Timeout) => (
+                    None,
+                    Some(format!(
+                        "the interactive shell environment did not resolve within {} ms",
+                        interactive_timeout.as_millis()
+                    )),
+                ),
+                Err(CommandFailure::Failed(message)) => (
+                    None,
+                    Some(format!(
+                        "the interactive shell environment was unavailable: {message}"
+                    )),
+                ),
+            };
+        // A CLI the user installed is preferred over one an app ships.
+        let decision = match interactive {
+            Some(entries) => PathSupplement::Interactive(entries),
+            None => app_bundle_command_directories(
+                command_name,
+                environment.get("HOME").map(String::as_str),
+            )
+            .into_iter()
+            .filter_map(|directory| directory.into_os_string().into_string().ok())
+            .find(runs_after_login)
+            .map_or(PathSupplement::Unavailable, PathSupplement::AppBundle),
+        };
+        (decision, interactive_failure)
     };
-    remember_interactive_path(shell, cwd, command_name, decision.clone());
-    let path_supplement = match decision {
-        // A remembered supplement no longer applies once its command is gone.
-        InteractivePath::Supplement(supplement)
-            if runs_command(&append_path(&login_path, &supplement)) =>
-        {
-            environment.insert("PATH".to_string(), append_path(&login_path, &supplement));
-            Some(supplement)
-        }
-        _ => None,
-    };
+    remember_path_supplement(shell, cwd, command_name, decision.clone());
+    // A remembered supplement no longer applies once its command is gone.
+    let applied = decision
+        .entries()
+        .filter(|entries| runs_after_login(&entries.to_string()))
+        .map(str::to_string);
+    if let Some(entries) = applied.as_deref() {
+        environment.insert("PATH".to_string(), append_path(&login_path, entries));
+    }
     Ok(SpawnEnvironment {
         environment,
-        path_supplement,
+        environment_source: if applied.is_some() {
+            decision.environment_source()
+        } else {
+            "login_shell"
+        },
+        path_supplement: applied,
         interactive_failure,
     })
+}
+
+/// Provider desktop apps that ship their full CLI inside the bundle, relative
+/// to an Applications folder's parent.
+const APP_BUNDLED_CLIS: &[(&str, &str)] = &[("codex", "Applications/Codex.app/Contents/Resources")];
+
+/// Bundle directories that may hold `command_name`, the user's Applications
+/// folder before the system's. Conversations started in such an app can then
+/// continue in Dure without a separate CLI install.
+fn app_bundle_command_directories(command_name: &str, home: Option<&str>) -> Vec<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return Vec::new();
+    }
+    let Some((_, bundle)) = APP_BUNDLED_CLIS
+        .iter()
+        .find(|(command, _)| *command == command_name)
+    else {
+        return Vec::new();
+    };
+    let mut roots = home
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .into_iter()
+        .collect::<Vec<_>>();
+    // Tests see only fixture homes, never the apps installed on their host.
+    if cfg!(not(test)) {
+        roots.push(PathBuf::from("/"));
+    }
+    roots.into_iter().map(|root| root.join(bundle)).collect()
 }
 
 fn append_path(path: &str, supplement: &str) -> String {
@@ -584,30 +648,30 @@ fn interactive_path_from_output(stdout: &[u8]) -> Option<String> {
         .map(|path| String::from_utf8_lossy(path).into_owned())
 }
 
-struct RememberedInteractivePath {
+struct RememberedPathSupplement {
     shell: PathBuf,
     cwd: PathBuf,
     command_name: String,
-    decision: InteractivePath,
+    decision: PathSupplement,
     resolved_at: Instant,
 }
 
-static REMEMBERED_INTERACTIVE_PATHS: Mutex<Vec<RememberedInteractivePath>> = Mutex::new(Vec::new());
+static REMEMBERED_PATH_SUPPLEMENTS: Mutex<Vec<RememberedPathSupplement>> = Mutex::new(Vec::new());
 
-fn remember_interactive_path(
+fn remember_path_supplement(
     shell: &Path,
     cwd: &Path,
     command_name: &str,
-    decision: InteractivePath,
+    decision: PathSupplement,
 ) {
-    let Ok(mut remembered) = REMEMBERED_INTERACTIVE_PATHS.lock() else {
+    let Ok(mut remembered) = REMEMBERED_PATH_SUPPLEMENTS.lock() else {
         return;
     };
     remembered.retain(|entry| {
-        entry.resolved_at.elapsed() < INTERACTIVE_PATH_REUSE
+        entry.resolved_at.elapsed() < PATH_SUPPLEMENT_REUSE
             && (entry.shell != shell || entry.cwd != cwd || entry.command_name != command_name)
     });
-    remembered.push(RememberedInteractivePath {
+    remembered.push(RememberedPathSupplement {
         shell: shell.to_path_buf(),
         cwd: cwd.to_path_buf(),
         command_name: command_name.to_string(),
@@ -616,16 +680,16 @@ fn remember_interactive_path(
     });
 }
 
-fn remembered_interactive_path(
+fn remembered_path_supplement(
     shell: &Path,
     cwd: &Path,
     command_name: &str,
-) -> Option<InteractivePath> {
-    let remembered = REMEMBERED_INTERACTIVE_PATHS.lock().ok()?;
+) -> Option<PathSupplement> {
+    let remembered = REMEMBERED_PATH_SUPPLEMENTS.lock().ok()?;
     remembered
         .iter()
         .find(|entry| {
-            entry.resolved_at.elapsed() < INTERACTIVE_PATH_REUSE
+            entry.resolved_at.elapsed() < PATH_SUPPLEMENT_REUSE
                 && entry.shell == shell
                 && entry.cwd == cwd
                 && entry.command_name == command_name
@@ -647,9 +711,8 @@ fn launch_path_supplement_with_shell(
 ) -> Option<String> {
     validate_command_name(command_name).ok()?;
     let cwd = fs::canonicalize(cwd).ok()?;
-    match remembered_interactive_path(shell, &cwd, command_name) {
-        Some(InteractivePath::Supplement(supplement)) => Some(supplement),
-        Some(InteractivePath::Unneeded | InteractivePath::Unhelpful) => None,
+    match remembered_path_supplement(shell, &cwd, command_name) {
+        Some(decision) => decision.entries().map(str::to_string),
         None => {
             capture_spawn_environment(
                 command_name,
@@ -657,7 +720,7 @@ fn launch_path_supplement_with_shell(
                 &cwd,
                 &TerminalEnvironment::default(),
                 (ENVIRONMENT_TIMEOUT, INTERACTIVE_ENVIRONMENT_TIMEOUT),
-                InteractivePathReuse::Recent,
+                PathSupplementReuse::Recent,
             )
             .ok()?
             .path_supplement
@@ -1320,7 +1383,7 @@ mod tests {
             &root,
             &TerminalEnvironment::default(),
             (ENVIRONMENT_TIMEOUT, INTERACTIVE_ENVIRONMENT_TIMEOUT),
-            InteractivePathReuse::Fresh,
+            PathSupplementReuse::Fresh,
         )
         .unwrap();
 
@@ -1360,7 +1423,7 @@ mod tests {
             &root,
             &TerminalEnvironment::default(),
             (ENVIRONMENT_TIMEOUT, INTERACTIVE_ENVIRONMENT_TIMEOUT),
-            InteractivePathReuse::Fresh,
+            PathSupplementReuse::Fresh,
         )
         .unwrap();
 
@@ -1387,7 +1450,7 @@ mod tests {
             &root,
             &TerminalEnvironment::default(),
             (ENVIRONMENT_TIMEOUT, INTERACTIVE_ENVIRONMENT_TIMEOUT),
-            InteractivePathReuse::Fresh,
+            PathSupplementReuse::Fresh,
         )
         .unwrap();
 
@@ -1413,7 +1476,7 @@ mod tests {
             &root,
             &TerminalEnvironment::default(),
             (ENVIRONMENT_TIMEOUT, INTERACTIVE_ENVIRONMENT_TIMEOUT),
-            InteractivePathReuse::Fresh,
+            PathSupplementReuse::Fresh,
         )
         .unwrap();
 
@@ -1426,6 +1489,80 @@ mod tests {
             "x",
             "the launch must not start the interactive shell again"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn codex_app_cli_is_used_when_no_shell_path_runs_codex() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(fixture.path()).unwrap();
+        let bundle = root.join("home/Applications/Codex.app/Contents/Resources");
+        write_executable(&bundle.join("codex"));
+        let shell = fake_login_shell(&root, &root.join("nvm").join("bin"));
+
+        let spawn = capture_spawn_environment(
+            "codex",
+            &shell,
+            &root,
+            &TerminalEnvironment::default(),
+            (ENVIRONMENT_TIMEOUT, INTERACTIVE_ENVIRONMENT_TIMEOUT),
+            PathSupplementReuse::Fresh,
+        )
+        .unwrap();
+
+        let bundle = bundle.to_str().unwrap();
+        assert_eq!(spawn.path_supplement.as_deref(), Some(bundle));
+        assert_eq!(spawn.environment_source, "provider_app_bundle");
+        assert_eq!(
+            spawn.environment.get("PATH").map(String::as_str),
+            Some(format!("{}:{bundle}", fixture_login_path(&root)).as_str())
+        );
+        assert_eq!(
+            launch_path_supplement_with_shell("codex", &root, &shell).as_deref(),
+            Some(bundle)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_user_installed_cli_takes_precedence_over_the_codex_app() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(fixture.path()).unwrap();
+        let tools = root.join("nvm").join("bin");
+        write_executable(&tools.join("codex"));
+        write_executable(&root.join("home/Applications/Codex.app/Contents/Resources/codex"));
+        let shell = fake_login_shell(&root, &tools);
+
+        let spawn = capture_spawn_environment(
+            "codex",
+            &shell,
+            &root,
+            &TerminalEnvironment::default(),
+            (ENVIRONMENT_TIMEOUT, INTERACTIVE_ENVIRONMENT_TIMEOUT),
+            PathSupplementReuse::Fresh,
+        )
+        .unwrap();
+
+        assert_eq!(spawn.path_supplement.as_deref(), tools.to_str());
+        assert_eq!(spawn.environment_source, "interactive_login_shell");
+    }
+
+    #[test]
+    fn only_a_provider_whose_app_ships_its_cli_uses_an_app_bundle() {
+        let home = "/Users/me";
+        let candidates = app_bundle_command_directories("codex", Some(home));
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                candidates,
+                [PathBuf::from(
+                    "/Users/me/Applications/Codex.app/Contents/Resources"
+                )],
+                "tests must not depend on the apps installed on the host"
+            );
+        } else {
+            assert!(candidates.is_empty());
+        }
+        assert!(app_bundle_command_directories("claude", Some(home)).is_empty());
     }
 
     #[cfg(unix)]
@@ -1465,7 +1602,7 @@ mod tests {
             &root,
             &TerminalEnvironment::default(),
             (ENVIRONMENT_TIMEOUT, INTERACTIVE_ENVIRONMENT_TIMEOUT),
-            InteractivePathReuse::Fresh,
+            PathSupplementReuse::Fresh,
         )
         .unwrap();
         assert!(preflight.path_supplement.is_some());

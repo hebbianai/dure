@@ -71,6 +71,7 @@ export const sessions: Record<string, string> = {
 	"sessions.launch.ownershipUnavailable": "Não foi possível verificar a geração ativa atual desta conversa, portanto nenhum painel foi criado. A sessão e a pasta de trabalho permanecem inalteradas. Atualize as Sessões recentes e tente novamente. Motivo: {reason}",
 	"sessions.launch.presentedInBackground":
 		"A conversa foi iniciada, mas não foi possível abrir o painel. O agente continua disponível em Agentes não abertos.",
+	"sessions.launch.providerCliMissing": "A ferramenta de linha de comando do {provider} \"{command}\" não está instalada ou não está no PATH do shell, portanto nenhum painel novo foi criado. Instale-a e tente novamente.",
 	"sessions.launch.recoveryRefused": "A recuperação segura foi recusada, portanto nenhum painel novo foi criado. A sessão original não foi alterada. Atualize as Sessões recentes e tente novamente ou consulte os diagnósticos em Recuperação de sessão. Motivo: {reason}",
 	"sessions.list.searchEmpty": "Nenhuma sessão de trabalho corresponde à pesquisa",
 	"sessions.list.searchPlaceholder": "Buscar por nome da sessão, ID ou pasta",

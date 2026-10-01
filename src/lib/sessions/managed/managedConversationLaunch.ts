@@ -14,6 +14,7 @@ import {
 	inspectStructuredAgentRuntimeProjectionContext,
 } from "@/lib/agents/agentRuntimeProjectionRecovery";
 import { computeTextDigest } from "@/lib/agents/promptIdentity";
+import { ProviderPreflightError } from "@/lib/agents/providerPreflight";
 import {
 	ProviderExplicitResumeUnsupportedError,
 	providerSupportsExplicitResume,
@@ -38,7 +39,7 @@ import { resumeExactManagedAgentPane } from "@/lib/sessions/managed/managedExact
 import { openAgentPanel } from "@/lib/workspace/dock";
 import type { PanelPosition } from "@/lib/workspace/pane/panePlacement";
 import { useStore } from "@/store";
-import type { Agent } from "@/types";
+import { type Agent, PROVIDERS } from "@/types";
 
 export class ManagedConversationAlreadyActiveError extends Error {
 	readonly code = "conversation_already_active";
@@ -192,6 +193,15 @@ export function managedConversationLaunchFailureMessage(
 	if (error instanceof ManagedConversationOwnershipUnavailableError) {
 		return t("sessions.launch.ownershipUnavailable", {
 			reason: error.reason,
+		});
+	}
+	if (
+		error instanceof ProviderPreflightError &&
+		error.preflight.status === "not_found"
+	) {
+		return t("sessions.launch.providerCliMissing", {
+			provider: PROVIDERS[error.preflight.provider].label,
+			command: error.preflight.command,
 		});
 	}
 	if (!(error instanceof ManagedRecoveryRefusedError)) return String(error);

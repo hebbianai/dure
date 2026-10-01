@@ -71,6 +71,7 @@ export const sessions: Record<string, string> = {
 	"sessions.launch.ownershipUnavailable": "현재 대화의 live generation을 확인할 수 없어 pane을 만들지 않았습니다. 세션과 작업 폴더는 그대로 유지됩니다. 최근 세션을 새로고침한 뒤 다시 시도하세요. 사유: {reason}",
 	"sessions.launch.presentedInBackground":
 		"대화는 시작됐지만 pane을 열지 못했습니다. 에이전트는 열리지 않은 에이전트에서 계속 사용할 수 있습니다.",
+	"sessions.launch.providerCliMissing": "{provider} CLI(\"{command}\")가 설치되어 있지 않거나 셸 PATH에 없어 새 pane을 만들지 않았습니다. 설치한 뒤 다시 시도하세요.",
 	"sessions.launch.recoveryRefused": "안전한 복구가 거절되어 새 pane을 만들지 않았습니다. 원본 세션은 그대로 유지됩니다. 최근 세션을 새로고침한 뒤 다시 시도하거나 세션 복구에서 진단 정보를 확인하세요. 사유: {reason}",
 	"sessions.list.searchEmpty": "작업 세션 검색 결과가 없습니다",
 	"sessions.list.searchPlaceholder": "세션 이름·ID·폴더 검색",

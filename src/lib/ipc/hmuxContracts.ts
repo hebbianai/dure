@@ -587,9 +587,13 @@ export interface ProviderPreflight {
 	message: string;
 	shell: string;
 	cwd: string;
-	/** `interactive_login_shell` when the login PATH could not run the command
-	 *  and the interactive shell's PATH entries were appended after it. */
-	environmentSource: "login_shell" | "interactive_login_shell";
+	/** When the login PATH could not run the command, what was appended after
+	 *  it: the interactive shell's PATH entries, or the CLI directory inside the
+	 *  provider's desktop app (Codex.app). */
+	environmentSource:
+		| "login_shell"
+		| "interactive_login_shell"
+		| "provider_app_bundle";
 	path?: string;
 	commandPath?: string;
 	resolvedPath?: string;

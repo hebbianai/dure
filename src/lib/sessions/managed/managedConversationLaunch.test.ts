@@ -55,6 +55,7 @@ vi.mock("@/lib/agents/agentRuntimeProjectionRecovery", () => ({
 		mocks.inspectStructuredProjectionContext,
 }));
 
+import { ProviderPreflightError } from "@/lib/agents/providerPreflight";
 import {
 	launchManagedConversationPane,
 	launchManagedConversationTargetInSibling,
@@ -820,6 +821,30 @@ describe("managed conversation history launch", () => {
 		);
 		expect(message).toContain("exact discovery was unprobed");
 		expect(message).toMatch(/그대로|unchanged/);
+	});
+
+	it("explains a provider CLI that is not installed instead of the preflight internals", () => {
+		const message = managedConversationLaunchFailureMessage(
+			new ProviderPreflightError({
+				provider: "codex",
+				command: "codex",
+				ready: false,
+				status: "not_found",
+				message: "codex was not found in the login or interactive shell PATH",
+				shell: "/bin/zsh",
+				cwd: "/repo",
+				environmentSource: "login_shell",
+				symlinkChain: [],
+				executable: false,
+				versionTimeoutMs: 10_000,
+				recoveryRequiresUserApproval: true,
+				suggestedRecovery: [],
+			}),
+		);
+		expect(message).toContain("Codex");
+		expect(message).toContain("codex");
+		expect(message).toMatch(/PATH/);
+		expect(message).not.toContain("ProviderPreflightError");
 	});
 
 	it("explains where a background-presented conversation remains recoverable", () => {

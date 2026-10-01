@@ -71,6 +71,7 @@ export const sessions: Record<string, string> = {
 	"sessions.launch.ownershipUnavailable": "La génération active actuelle de cette conversation n’a pas pu être vérifiée ; aucun volet n’a donc été créé. La session et le dossier de travail restent inchangés. Actualisez les sessions récentes et réessayez. Motif : {reason}",
 	"sessions.launch.presentedInBackground":
 		"La conversation a démarré, mais son volet n’a pas pu s’ouvrir. L’agent reste disponible dans Agents non ouverts.",
+	"sessions.launch.providerCliMissing": "L’outil en ligne de commande {provider} « {command} » n’est pas installé ou ne figure pas dans le PATH du shell ; aucun nouveau volet n’a donc été créé. Installez-le, puis réessayez.",
 	"sessions.launch.recoveryRefused": "La récupération sûre a été refusée ; aucun nouveau volet n’a donc été créé. La session d’origine reste inchangée. Actualisez les sessions récentes et réessayez, ou consultez les diagnostics dans Récupération de session. Motif : {reason}",
 	"sessions.list.searchEmpty": "Aucune session de travail ne correspond à la recherche",
 	"sessions.list.searchPlaceholder": "Rechercher par nom, ID ou dossier de session",

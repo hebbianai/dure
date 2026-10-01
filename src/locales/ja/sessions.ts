@@ -71,6 +71,7 @@ export const sessions: Record<string, string> = {
 	"sessions.launch.ownershipUnavailable": "この会話の現在のライブ世代を確認できなかったため、ペインは作成されませんでした。セッションと作業フォルダーは変更されていません。最近のセッションを更新して再試行してください。理由: {reason}",
 	"sessions.launch.presentedInBackground":
 		"会話は開始されましたが、ペインを開けませんでした。エージェントは「未オープンのエージェント」から引き続き利用できます。",
+	"sessions.launch.providerCliMissing": "{provider} のコマンドラインツール「{command}」がインストールされていないか、シェルの PATH にないため、新しいペインは作成されませんでした。インストールしてから再試行してください。",
 	"sessions.launch.recoveryRefused": "安全な復旧が拒否されたため、新しいペインは作成されませんでした。元のセッションは変更されていません。最近のセッションを更新して再試行するか、セッション復旧で診断情報を確認してください。理由: {reason}",
 	"sessions.list.searchEmpty": "作業セッションの検索結果はありません",
 	"sessions.list.searchPlaceholder": "セッション名・ID・フォルダを検索",
