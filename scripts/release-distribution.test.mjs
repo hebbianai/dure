@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
-import { planBetaMetadataUpdate } from "./lib/beta-release-metadata.mjs";
+import { BETA_UPDATER_URL, planBetaMetadataUpdate } from "./lib/beta-release-metadata.mjs";
+
+test.each(["tauri.conf.json", "tauri.beta.conf.json"])(
+  "%s consumes the feed maintained by public release publication",
+  (filename) => {
+    const config = JSON.parse(readFileSync(new URL(`../src-tauri/${filename}`, import.meta.url), "utf8"));
+    expect(config.plugins.updater.endpoints).toEqual([BETA_UPDATER_URL]);
+  },
+);
 
 const valid = {
   channel: "beta", version: "0.2.2", pub_date: "2026-09-08T00:00:00Z",

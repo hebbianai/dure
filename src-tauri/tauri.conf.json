@@ -29,7 +29,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEyMUM5RjhGRDg0NDRDODkKUldTSlRFVFlqNThjRWdUS2lKMm5UaUUrOERvVUp0aE9Fc0JZVE9xY0hibDA3ajg2ekgyNjZBbDUK",
       "endpoints": [
-        "https://github.com/hebbianai/hebbian-releases/releases/latest/download/latest.json"
+        "https://raw.githubusercontent.com/hebbianai/hebbian-releases/main/beta/latest.json"
       ]
     }
   },
