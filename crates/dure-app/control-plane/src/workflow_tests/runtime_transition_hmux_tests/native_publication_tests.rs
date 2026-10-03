@@ -5,6 +5,7 @@ use hmux_client::{
     TerminalEnvironment,
 };
 
+mod account_switch;
 mod deferred_resume;
 
 #[tokio::test]
@@ -599,7 +600,7 @@ async fn run_cli(
             "expected": {
                 "backendId": state.descriptor.backend_id, "generation": state.descriptor.generation,
                 "protocol": { "minimum": { "major": 1, "minor": 0 }, "maximum": { "major": 1, "minor": 0 } },
-                "capabilities": ["agent_runtime.native_rehost.reconcile", "agent_runtime.projection.inspect", "agent_runtime.hibernate", "agent_runtime.wake"],
+                "capabilities": ["agent_runtime.native_rehost.reconcile", "agent_runtime.projection.inspect", "agent_runtime.hibernate", "agent_runtime.wake", "agent_runtime.transition", "account_recovery.v1", "agent_spawn.list"],
             }, "deadlineMs": 15000,
         }],
     })).unwrap()).unwrap();
@@ -633,7 +634,7 @@ async fn run_cli(
         .await
         .expect("CLI request did not complete");
     let output = output.unwrap();
-    let response = if output.status.success() {
+    let response = if !output.stdout.is_empty() {
         &output.stdout
     } else {
         &output.stderr

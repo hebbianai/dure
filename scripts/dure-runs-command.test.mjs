@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { collectRunsCommand, formatRunsCommand } from "../cli/lib/runs-command.mjs";
+import { collectRunsCommand, formatRunsCommand, parseRunsOptions } from "../cli/lib/runs-command.mjs";
 import { currentRunPresentationPlan } from "../cli/lib/run-presentation.mjs";
 import { succeededNativeReceipt } from "./fixtures/agent-spawn-receipts.mjs";
 
@@ -165,5 +165,120 @@ describe("durable Run commands", () => {
     f.runtime.receipt.launchIdempotencyKey = "rehost-successor";
     source.binding.agentId = "another-agent";
     expect(() => currentRunPresentationPlan(report, f.runtime)).toThrow();
+  });
+});
+
+describe("Run account switching", () => {
+  function accountFixture(provider = "claude", kind = "local", mode = "native_cli") {
+    const f = fixture();
+    f.entry.providerId = provider;
+    f.runtime.receipt.providerId = provider;
+    f.runtime.projectionContext.agent.providerId = provider;
+    f.runtime.receipt.providerConversationRef = "conversation-1";
+    f.runtime.receipt.authority.interactionProfile = mode;
+    f.backend.profile.transport.kind = kind;
+    const profile = { schemaVersion: 1, providerId: provider, referenceId: "work",
+      credentialGeneration: "generation-2" };
+    f.requestBackend.mockImplementation(async (_backend, request) => {
+      if (request.operation === "agent_spawn.list") return { result: f.page };
+      if (request.operation === "agent_runtime.projection.inspect") return { result: f.runtime };
+      if (request.operation === "provider_recovery.get") return { result: { schemaVersion: 1, profiles: [profile], policy: null } };
+      if (request.operation === "agent_runtime.transition") return { result: { schemaVersion: 1, receipt: {
+        ...f.runtime.receipt, selectionRevision: 2, executionProfile: request.body.targetExecutionProfile,
+      } } };
+      throw new Error(`Unexpected operation ${request.operation}`);
+    });
+    return { ...f, profile, opts: { rest: ["switch-account", f.entry.name], account: "work" } };
+  }
+
+  it.each(["claude", "codex"])("previews %s account selection with an exact replay command and no mutations", async (provider) => {
+    const f = accountFixture(provider);
+    const report = await collectRunsCommand(f);
+    expect(report).toMatchObject({ ok: true, accountSwitch: { state: "preview", account: "work",
+      providerId: provider, conversationId: "conversation-1", execution: "not_requested" } });
+    const c = report.accountSwitch.continuation;
+    expect(c.start).toEqual(["runtime", "switch", f.entry.agentId, "terminal", "--account", "work",
+      "--credential-generation", "generation-2", "--expected-revision", "1", "--idempotency-key", c.requestId,
+      "--backend", "local", "--json"]);
+    expect(c.retry).toEqual(c.start);
+    expect(c.status).toEqual(["runtime", "get", f.entry.agentId, "--backend", "local", "--json"]);
+    expect(f.requestBackend.mock.calls.map((c) => c[1].operation)).toEqual([
+      "agent_spawn.list", "agent_runtime.projection.inspect", "provider_recovery.get"]);
+    expect(formatRunsCommand(report)).toContain("Apply:");
+  });
+
+  it.each(["claude", "codex"].flatMap((provider) => ["local", "ssh"].flatMap((kind) =>
+    ["native_cli", "structured_protocol"].map((mode) => [provider, kind, mode]))))(
+    "switches %s over %s preserving %s through the existing backend transition", async (provider, kind, mode) => {
+      const f = accountFixture(provider, kind, mode);
+      const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+      expect(report).toMatchObject({ ok: true, accountSwitch: { state: "completed", execution: "completed" } });
+      const transition = f.requestBackend.mock.calls.at(-1)[1];
+      expect(transition).toEqual({ requestId: report.accountSwitch.continuation.requestId,
+        operation: "agent_runtime.transition", requiredCapabilities: ["agent_runtime.transition"],
+        body: { schemaVersion: 1, agentId: f.entry.agentId, targetInteractionProfile: mode,
+          expectedSourceRevision: 1, targetExecutionProfile: { kind: "credential_reference",
+            reference_id: "work", credential_generation: "generation-2" } } });
+      expect(f.requestBackend).toHaveBeenCalledTimes(4);
+    },
+  );
+
+  it("switches explicitly to provider default without looking up another personal account", async () => {
+    const f = accountFixture();
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, account: "default", confirmRestart: true } });
+    expect(report.ok).toBe(true);
+    expect(f.requestBackend).toHaveBeenCalledTimes(3);
+    expect(f.requestBackend.mock.calls.at(-1)[1].body.targetExecutionProfile).toEqual({ kind: "provider_default" });
+  });
+
+  it.each(["missing", "wrong_provider", "malformed", "duplicate"])("refuses %s account evidence before stopping anything", async (problem) => {
+    const f = accountFixture();
+    if (problem === "wrong_provider") f.profile.providerId = "codex";
+    if (problem === "malformed") f.profile.credentialGeneration = "";
+    if (problem === "missing") f.profile.referenceId = "another";
+    if (problem === "duplicate") {
+      const request = f.requestBackend.getMockImplementation();
+      f.requestBackend.mockImplementation(async (backend, r) => r.operation === "provider_recovery.get"
+        ? { result: { schemaVersion: 1, profiles: [f.profile, f.profile] } } : request(backend, r));
+    }
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report.ok).toBe(false);
+    expect(f.requestBackend).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["busy", "lost_response", "wrong_account", "wrong_conversation"])("retains exact retry instructions after %s without retrying", async (outcome) => {
+    const f = accountFixture();
+    const request = f.requestBackend.getMockImplementation();
+    f.requestBackend.mockImplementation(async (backend, r) => {
+      if (r.operation !== "agent_runtime.transition") return request(backend, r);
+      if (outcome === "busy" || outcome === "lost_response") throw new Error(outcome);
+      const response = await request(backend, r);
+      if (outcome === "wrong_account") response.result.receipt.executionProfile = { kind: "provider_default" };
+      else response.result.receipt.providerConversationRef = "another";
+      return response;
+    });
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report.ok).toBe(false);
+    expect(report.accountSwitch.continuation.retry).toEqual(report.accountSwitch.continuation.start);
+    expect(formatRunsCommand(report)).toContain("Retry:");
+    expect(f.requestBackend).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(["transitioning", "closed", "unmanaged"])("does not switch an unconfirmed %s runtime", async (state) => {
+    const f = accountFixture();
+    f.runtime.state = state;
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report.ok).toBe(false);
+    expect(f.requestBackend).toHaveBeenCalledTimes(2);
+  });
+
+  it("parses account selection only for switch-account", async () => {
+    expect(parseRunsOptions(["switch-account", "worker", "--account", "work", "--confirm-restart"]))
+      .toMatchObject({ rest: ["switch-account", "worker"], account: "work", confirmRestart: true });
+    const f = accountFixture();
+    for (const opts of [{ rest: ["switch-account", f.entry.name] }, { rest: ["show", f.entry.name], account: "work" }]) {
+      expect((await collectRunsCommand({ ...f, opts })).ok).toBe(false);
+    }
+    expect(f.requestBackend).not.toHaveBeenCalled();
   });
 });

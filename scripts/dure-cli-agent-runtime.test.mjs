@@ -527,3 +527,42 @@ process.stdout.write(JSON.stringify({
     );
   });
 });
+
+describe("exact runtime account switch", () => {
+  it.each([
+    { account: "work" },
+    { account: "work", expectedRevision: 1 },
+    { account: "work", expectedRevision: 0, credentialGeneration: "gen-1" },
+    { account: "work", expectedRevision: 1, credentialGeneration: "" },
+    { account: "default", expectedRevision: 1, credentialGeneration: "gen-1" },
+    { credentialGeneration: "gen-1" },
+    { args: ["get", "agent-1"], account: "default", expectedRevision: 1 },
+  ])("refuses an incomplete account/revision fence before transport: %j", async (input) => {
+    const report = await collectAgentRuntimeCommand({ args: ["switch", "agent-1", "terminal"], ...input,
+      resolveBackend: async () => { throw new Error("must not contact backend"); } });
+    expect(report).toMatchObject({ ok: false, error: { code: "runtime_command_invalid" } });
+  });
+
+  it.each(["claude", "codex"])("sends the same %s credential transition body as the UI client", async (providerId) => {
+    const targetExecutionProfile = { kind: "credential_reference", reference_id: "work", credential_generation: "gen-1" };
+    const result = { schemaVersion: 1, receipt: { ...nativeRuntimeReceipt(targetExecutionProfile, 2, "switch-1"), providerId } };
+    let cliBody;
+    const report = await collectAgentRuntimeCommand({ args: ["switch", "agent-1", "terminal"],
+      account: "work", credentialGeneration: "gen-1", expectedRevision: 1, requestId: "switch-1",
+      resolveBackend: async () => ({ profile: { id: "local" } }),
+      requestBackend: async (_profile, request) => { cliBody = request.body; return { result }; },
+    });
+    expect(report).toMatchObject({ ok: true, requestId: "switch-1", result });
+    const envelope = { ...agentRuntimeBackendEnvelope(), result };
+    let uiBody;
+    const client = createDureAgentRuntimeClient({ invokeCommand: async (_command, args) => {
+      uiBody = args.body;
+      return envelope;
+    } });
+    await client.transition({ agentId: "agent-1", targetInteractionProfile: "native_cli",
+      expectedSourceRevision: 1, targetExecutionProfile, routeAuthority: envelope.routeAuthority });
+    expect(cliBody).toEqual(uiBody);
+    expect(cliBody).toEqual({ schemaVersion: 1, agentId: "agent-1", targetInteractionProfile: "native_cli",
+      expectedSourceRevision: 1, targetExecutionProfile });
+  });
+});

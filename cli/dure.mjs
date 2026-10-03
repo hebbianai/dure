@@ -3402,6 +3402,8 @@ Usage:
   dure spawn status (--operation-id <id> | --idempotency-key <key>) [--backend ID] [--json]
                                       Read a durable spawn receipt without the app daemon
   dure runs list|show|open|resume    Discover and recover durable Runs, including headless Runs
+  dure runs switch-account <name-or-id> --account ACCOUNT_ID|default [--confirm-restart]
+                                      Preview or apply a same-conversation account switch (Claude and Codex)
   dure run [--project <id> | --path <path>] [--provider <id>] [--backend ID] <prompt>
                                       Start a backend Run; path defaults to cwd, --space ID|NAME
                                       --worktree NAME selects a dedicated checkout; otherwise use the project root
@@ -3513,6 +3515,7 @@ Usage:
   dure projects register <id> [--path PATH] [--name NAME] [--backend ID] [--json]
                                       Register cwd or the specified path on the selected backend
   dure recovery <get|put|status|observe> [--backend ID] [--json]
+                                      Discover registered accounts or configure automatic account recovery
   dure provider-defaults <get|set> [provider mode] [--backend ID] [--json]
                                       Read or change provider permission defaults on the selected backend
   dure providers capabilities [--json]
@@ -3872,6 +3875,8 @@ async function main() {
       requestId: opts.idempotencyKey,
       operationId: opts.operationId,
       conversationId: opts.conversationId,
+      account: opts.account,
+      credentialGeneration: opts.credentialGeneration,
       ...(opts.expectedRevision === undefined ? {} : { expectedRevision: Number(opts.expectedRevision) }),
       ...(opts.deadlineMs === undefined ? {} : { deadlineMs: Number(opts.deadlineMs) }),
     });

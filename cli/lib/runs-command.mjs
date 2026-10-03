@@ -7,12 +7,15 @@ import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { collectManagedRehostNamed } from "./managed-rehost-named.mjs";
 import { collectManagedRehostPreview, formatManagedRecoveryCommands } from "./managed-rehost-preview.mjs";
 import { presentAgentRunRuntime } from "./run-presentation.mjs";
+import { collectRunAccountSwitch, formatRunAccountSwitch } from "./run-account-switch.mjs";
 
 export const RUNS_HELP = `Usage:
   dure runs list [--cursor CURSOR] [--backend ID] [--json]
   dure runs show <agent-id|operation-id|name> [--backend ID] [--json]
   dure runs open <agent-id|operation-id|name> --space ID [--backend ID] [--json]
   dure runs resume <agent-id|operation-id|name> [--confirm-restart] [--backend ID] [--json]
+  dure runs switch-account <agent-id|operation-id|name> --account ACCOUNT_ID|default
+                           [--confirm-restart] [--backend ID] [--json]
 
 Lists durable Run records, including headless Runs and earlier app/Host generations.
 launchState describes the original launch, not current process liveness. List is
@@ -30,11 +33,21 @@ repeat a name-based resume. Wake retains the operation ID, journal revision and
 request key, and publishes through the backend. Run a separate publish command
 only when returned for native rehost. Use open after recovery to place the pane.
 For live Session observations use dure ls. Use the Session/workspace from show
-with dure read <session-id> --workspace ID or dure send <session-id> --workspace ID.`;
+with dure read <session-id> --workspace ID or dure send <session-id> --workspace ID.
+
+Switch-account previews by default; --confirm-restart executes the same backend
+transition as the UI account selector. It preserves the exact conversation and
+Chat/Terminal mode for Claude and Codex, on local and SSH backends, without an app.
+List registered account IDs/generations with dure recovery get claude or codex
+on the same --backend. --account default explicitly selects provider defaults.
+An unregistered account must first be prepared on that backend through Dure's
+account settings. Busy work is retained, never interrupted or silently resent.
+Keep the returned exact runtime switch command for retries after response loss.
+Automatic account recovery is separate: see dure recovery --help; it is opt-in.`;
 
 export function parseRunsOptions(args) {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true,
-    options: { backend: { type: "string" }, cursor: { type: "string" }, space: { type: "string" },
+    options: { backend: { type: "string" }, cursor: { type: "string" }, space: { type: "string" }, account: { type: "string" },
       "confirm-restart": { type: "boolean" }, json: { type: "boolean" } } });
   return { ...values, rest: positionals, confirmRestart: values["confirm-restart"],
     backendSpecified: values.backend !== undefined };
@@ -61,12 +74,13 @@ export async function collectRunsCommand({
   const [action, selector] = opts.rest;
   const base = { schemaVersion: 1, apiVersion: "dure.runs/v1", action };
   const failure = (error, details = {}) => ({ ...base, ok: false, ...details, error });
-  if (!["list", "show", "open", "resume"].includes(action) ||
+  if (!["list", "show", "open", "resume", "switch-account"].includes(action) ||
       opts.rest.length !== (action === "list" ? 1 : 2) ||
       (action !== "list" && !TOKEN.test(selector ?? "")) ||
       (opts.cursor !== undefined && (action !== "list" || !TOKEN.test(opts.cursor))) ||
       (action === "open" ? !opts.space : opts.space !== undefined) ||
-      (opts.confirmRestart && action !== "resume")) {
+      (opts.confirmRestart && !["resume", "switch-account"].includes(action)) ||
+      (action === "switch-account" ? !TOKEN.test(opts.account ?? "") : opts.account !== undefined)) {
     return failure({ code: "runs_request_invalid", message: RUNS_HELP });
   }
   let backend;
@@ -101,6 +115,12 @@ export async function collectRunsCommand({
     const runtime = await collectAgentRuntimeCommand({ args: ["get", selected.agentId],
       resolveBackend: async () => backend, requestBackend });
     if (!runtime.ok) return failure(runtime.error, { run: selected });
+    if (action === "switch-account") {
+      const accountSwitch = await collectRunAccountSwitch({ run: selected, observation: runtime.result,
+        account: opts.account, confirmRestart: opts.confirmRestart, backend, requestBackend });
+      return { ...base, ok: accountSwitch.ok, run: selected, accountSwitch,
+        ...(!accountSwitch.ok ? { error: accountSwitch.error } : {}) };
+    }
     if (action === "show") return { ...base, ok: true, run: selected, runtime: runtime.result };
     const target = await resolveTarget(opts.space);
     const report = await collectAgentSpawnQuery({ action: "status", operationId: selected.operationId,
@@ -116,6 +136,7 @@ export async function collectRunsCommand({
 }
 
 export function formatRunsCommand(report) {
+  if (report.accountSwitch) return formatRunAccountSwitch(report.accountSwitch);
   if (!report.ok) return `${report.error.remoteCode ?? report.error.code}: ${report.error.message ?? "Run request failed"}` +
     (report.recovery?.continuation ? `\n${formatRecovery(report.recovery)}` : "");
   if (report.action === "list") return [

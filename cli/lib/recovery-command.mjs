@@ -17,7 +17,10 @@ accounts is an ordered array of {profile, name}; copy exact profiles from get.
 Use revision 0 for a new policy. Only explicitly allowed accounts are used.
 Joining a workspace does not register or offer personal accounts. Unknown usage
 is eligible; optional observations contain {profile, usedPercent, observedAtMs}.
-A failed or uncertain attempt is retained. Reading status never resends work.`;
+A failed or uncertain attempt is retained. Reading status never resends work.
+For a manual same-conversation account change (Claude or Codex), use
+dure runs switch-account <name-or-id> --account ACCOUNT_ID; see dure runs --help.
+Automatic recovery is opt-in and may require Dure Pro; a manual switch does not enable it.`;
 
 export function parseRecoveryCommand(args) {
   const [action, ...rest] = args;

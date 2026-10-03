@@ -475,7 +475,7 @@ pub(crate) fn test_structured_agent_provider_registry(provider: &str) -> AgentPr
 }
 
 #[cfg(test)]
-fn test_bundled_provider_registry(
+pub(crate) fn test_bundled_provider_registry(
     provider: &str,
     executable: &str,
     structured: bool,

@@ -114,6 +114,49 @@ The Run receipt's `plan.request.executionProfile` records the non-secret account
 reference and credential generation. Human output includes `account`; `dure ls`
 shows the account from a current client projection, or `unknown` when unavailable.
 
+## Switch an existing Agent's account
+
+Claude and Codex use the same backend transition as the UI account selector.
+It preserves the conversation and current Chat/Terminal mode. It works without
+an open app, with local or SSH backends; keep the same `--backend ID` throughout.
+
+```sh
+dure recovery get claude --json   # registered account IDs/generations and policy
+dure recovery get codex --json
+dure runs switch-account worker --account ACCOUNT_ID --json  # preview only
+dure runs switch-account worker --account ACCOUNT_ID --confirm-restart --json
+```
+
+Use an exact Agent/operation ID when Run names are ambiguous. Accounts must be
+registered for that provider on the owning backend; display names are not IDs.
+An unregistered account needs preparation through Dure's account settings first.
+`--account default` explicitly selects the provider's default credentials.
+
+Preview returns `continuation.start`, `retry` and `status`: retain these exact
+commands. The apply/retry command pins the Agent, current mode, source revision,
+account generation and request key. After response loss, inspect status before
+retrying that command; do not repeat the name-based command with a new key.
+The backend protects busy turns and unsubmitted input. A switch does not resend
+failed work or enable automatic switching. For a source still working, wait for
+completion before making a new request; never force-stop it to change accounts.
+
+For an Agent without a Run record, use `dure runtime get AGENT_ID --json`, then:
+
+```sh
+dure runtime switch AGENT_ID terminal --account ACCOUNT_ID \
+  --credential-generation GENERATION --expected-revision REVISION \
+  --idempotency-key KEY --json
+```
+
+Use `chat` for a structured Chat source. Copy account/generation from `recovery
+get` on the same backend. For default credentials, pass `--account default` and
+omit `--credential-generation`.
+
+Automatic recovery is a separate opt-in backend policy. `dure recovery --help`
+describes `get`, revision-fenced `put`, and read-only `status AGENT_ID`. The policy
+uses only explicitly allowed accounts; configuring it may require Dure Pro.
+Never enable it or select additional accounts without the user's authorization.
+
 ## Find and recover an existing Run
 
 `dure ls` observes Sessions. `dure runs list --json` reads durable Run records,

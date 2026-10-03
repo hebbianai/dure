@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
-import { isDureBackendProfileIdV1 } from "./contracts/protocol-identity.mjs";
+import { isDureBackendProfileIdV1, isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 import {
   agentRuntimeHibernateBody,
   agentRuntimeIdleConfigureBody,
@@ -21,6 +21,7 @@ export const RUNTIME_HELP = `Usage:
   dure runtime get <agent-id> [--backend ID] [--json]
   dure runtime switch <agent-id> chat|terminal [--backend ID] [--json]
     [--idempotency-key KEY] [--deadline-ms MS]
+    [--account ACCOUNT_ID|default --expected-revision N [--credential-generation ID]]
   dure runtime hibernate <agent-id> --expected-revision N [--backend ID] [--json]
   dure runtime wake <agent-id> --operation-id ID --expected-revision N
     [--conversation-id ID] [--backend ID] [--json] [--idempotency-key KEY] [--deadline-ms MS]
@@ -38,6 +39,12 @@ DURE_SESSION_IDLE_AFTER_MS seeds only a missing policy; saved settings take prec
 Switch preserves the conversation and selected credential. A busy source is
 retained; this command never discards active work. Failed stopped targets are
 replaced through the same backend transition as the app.
+An explicit --account changes credentials through that same transition. A named
+account requires its exact --credential-generation; default requires none.
+Use dure runs switch-account <name-or-id> --account ACCOUNT_ID to preview a
+same-conversation switch and obtain the revision-fenced command. For an Agent
+without a Run record, get its current mode/revision and use recovery get PROVIDER
+for registered account IDs/generations. Claude and Codex use the same path.
 Hibernate stops only a quiescent, resumable runtime; wake retains its conversation.
 Wake --conversation-id checks the saved conversation before launch; it never selects another.
 Use get to obtain the selection revision for hibernate, or the operation ID and
@@ -57,6 +64,8 @@ export async function collectAgentRuntimeCommand({
   expectedRevision,
   operationId,
   conversationId,
+  account,
+  credentialGeneration,
   requestBackend = performBackendProfileRequest,
 }) {
   const [action, agentId, target] = args;
@@ -68,6 +77,11 @@ export async function collectAgentRuntimeCommand({
   const base = { schemaVersion: 1, action, ...(idle ? {} : { agentId }), requestId };
   const failure = (error) => ({ ...base, ok: false, error });
   const lifecycle = action === "hibernate" || action === "wake";
+  const accountSwitch = action === "switch" && account !== undefined;
+  const targetExecutionProfile = accountSwitch
+    ? account === "default" ? { kind: "provider_default" }
+      : { kind: "credential_reference", reference_id: account, credential_generation: credentialGeneration }
+    : undefined;
   const lifecycleBody = action === "hibernate"
     ? agentRuntimeHibernateBody({ agentId, expectedSourceRevision: expectedRevision })
     : action === "wake"
@@ -86,7 +100,11 @@ export async function collectAgentRuntimeCommand({
       (lifecycle && args.length === 2 && lifecycleBody &&
         (action !== "hibernate" || operationId === undefined))
     ) ||
-    (!lifecycle && (operationId !== undefined || (!idleConfigure && expectedRevision !== undefined))) ||
+    (!lifecycle && (operationId !== undefined || (!idleConfigure && !accountSwitch && expectedRevision !== undefined))) ||
+    (account !== undefined && !accountSwitch) ||
+    (accountSwitch && (!isDureDomainIdV1(account) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1 ||
+      (account === "default" ? credentialGeneration !== undefined : !isDureDomainIdV1(credentialGeneration)))) ||
+    (!accountSwitch && credentialGeneration !== undefined) ||
     (action !== "wake" && conversationId !== undefined) ||
     !Number.isSafeInteger(deadlineMs) ||
     deadlineMs < 1
@@ -112,6 +130,7 @@ export async function collectAgentRuntimeCommand({
           ? agentRuntimeTransitionBody({
               agentId,
               targetInteractionProfile: PROFILES[target],
+              ...(accountSwitch ? { expectedSourceRevision: expectedRevision, targetExecutionProfile } : {}),
             })
           : idleBody ?? lifecycleBody ?? (idle ? { schemaVersion: 1 } : { schemaVersion: 1, agentId }),
       },
@@ -120,7 +139,12 @@ export async function collectAgentRuntimeCommand({
     const result = idle ? parseAgentRuntimeIdleInspection(response.result) : action !== "switch"
       ? parseAgentRuntimeInspectionEnvelope(response.result, agentId)
       : parseAgentRuntimeTransitionEnvelope(response.result, agentId);
-    if (!result || (idleConfigure && (result.policyRevision !== expectedRevision + 1 ||
+    if (!result || (accountSwitch && (
+        result.receipt.authority?.interactionProfile !== PROFILES[target] ||
+        result.receipt.executionProfile?.kind !== targetExecutionProfile.kind ||
+        (account !== "default" && (result.receipt.executionProfile.reference_id !== account ||
+          result.receipt.executionProfile.credential_generation !== credentialGeneration))
+      )) || (idleConfigure && (result.policyRevision !== expectedRevision + 1 ||
         result.configuration !== (idleBody.policy.mode === "enabled" ? "enabled" : "disabled") ||
         result.afterMs !== (idleBody.policy.afterMs ?? null)))) {
       return failure({ code: "runtime_response_invalid" });
