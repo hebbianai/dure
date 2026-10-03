@@ -5,6 +5,8 @@ use hmux_client::{
     TerminalEnvironment,
 };
 
+mod deferred_resume;
+
 #[tokio::test]
 #[ignore = "requires isolated real Hmux; use scripts/qa/hmux-control-plane-smoke.mjs"]
 async fn native_rehost_publication_uses_real_hmux() {
@@ -597,7 +599,7 @@ async fn run_cli(
             "expected": {
                 "backendId": state.descriptor.backend_id, "generation": state.descriptor.generation,
                 "protocol": { "minimum": { "major": 1, "minor": 0 }, "maximum": { "major": 1, "minor": 0 } },
-                "capabilities": ["agent_runtime.native_rehost.reconcile", "agent_runtime.projection.inspect"],
+                "capabilities": ["agent_runtime.native_rehost.reconcile", "agent_runtime.projection.inspect", "agent_runtime.hibernate", "agent_runtime.wake"],
             }, "deadlineMs": 15000,
         }],
     })).unwrap()).unwrap();

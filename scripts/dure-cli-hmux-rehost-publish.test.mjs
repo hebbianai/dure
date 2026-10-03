@@ -31,7 +31,7 @@ async function fixture(respond) {
   };
   const backend = {
     id: "fixture", generation: "generation-1", protocol: { major: 1, minor: 0 },
-    capabilities: [operation, "agent_runtime.projection.inspect"], observedAtMs: Date.now(),
+    capabilities: [operation, "agent_runtime.projection.inspect", "agent_runtime.wake"], observedAtMs: Date.now(),
   };
   const server = createServer((stream) => {
     let input = "";
@@ -188,6 +188,53 @@ const projectedAgent = {
 function writeRegistry(root, agents = [projectedAgent]) {
   writeFileSync(join(root, "agents.json"), JSON.stringify({ agents }), { mode: 0o600 });
 }
+
+const dormantProjection = () => ({
+  schemaVersion: 1, state: "transitioning", agentId: "agent-1",
+  operationId: "sleep-operation", stage: "source_stopped", journalRevision: 3,
+  targetInteractionProfile: "native_cli", targetExecutionProfile: { kind: "provider_default" },
+  deferredTarget: { state: "waiting" }, projectionContext: agentRuntimeProjectionContext(),
+});
+
+it.each([false, true])("prints named dormant recovery without a native executable (confirmed: %s)", async (confirmed) => {
+  const { root, calls, runCommand, nativeCalls } = await fixture((request) => ({
+    result: request.operation === "agent_runtime.projection.inspect" ? dormantProjection() : projection(),
+  }));
+  writeRegistry(root);
+  const output = await runCommand([...previewArgs.filter((arg) => arg !== "--json"),
+    ...(confirmed ? ["--confirm-restart"] : [])]);
+  expect(output.code, output.stderr).toBe(0);
+  expect(output.stdout).toContain(confirmed ? "wake completed" : "dormant runtime");
+  expect(output.stdout).toContain("Wake: dure 'runtime' 'wake' 'agent-1'");
+  expect(output.stdout).toContain("'--expected-revision' '3'");
+  expect(output.stdout).toContain("'--idempotency-key'");
+  expect(output.stdout).toContain("Status: dure 'runtime' 'get' 'agent-1'");
+  expect(output.stdout).not.toContain("Publish:");
+  expect(calls.map((request) => request.operation)).toEqual([
+    "agent_runtime.projection.inspect", ...(confirmed ? ["agent_runtime.wake"] : []),
+  ]);
+  expect(nativeCalls()).toEqual([]);
+  expect(existsSync(join(root, "server.json"))).toBe(false);
+});
+
+it("retains the original wake request after response loss for replay from another CLI process", async () => {
+  let wakeCalls = 0;
+  const { root, calls, runCommand, nativeCalls } = await fixture((request) => {
+    if (request.operation === "agent_runtime.projection.inspect") return { result: dormantProjection() };
+    return ++wakeCalls === 1 ? { drop: true } : { result: projection() };
+  });
+  writeRegistry(root);
+  const output = await runCommand([...previewArgs, "--confirm-restart"]);
+  expect(output.code).toBe(1);
+  const report = JSON.parse(output.stderr);
+  expect(report).toMatchObject({ ok: false, state: "unknown", publication: "unconfirmed" });
+  expect(wakeCalls).toBe(1);
+  const retry = await runCommand(report.continuation.retry);
+  expect(retry.code, retry.stderr).toBe(0);
+  expect(calls[2].body).toEqual(calls[1].body);
+  expect(calls[2].requestId).toBe(calls[1].requestId);
+  expect(nativeCalls()).toEqual([]);
+});
 
 it("executes a confirmed name through native start and publishes its original source without an app", async () => {
   const { root, calls, runCommand, installNative, nativeCalls } = await fixture((request) =>

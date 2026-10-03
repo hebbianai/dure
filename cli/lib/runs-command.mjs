@@ -5,7 +5,7 @@ import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { collectAgentSpawnQuery } from "./agent-spawn-query.mjs";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { collectManagedRehostNamed } from "./managed-rehost-named.mjs";
-import { collectManagedRehostPreview, rehostCommandLine } from "./managed-rehost-preview.mjs";
+import { collectManagedRehostPreview, formatManagedRecoveryCommands } from "./managed-rehost-preview.mjs";
 import { presentAgentRunRuntime } from "./run-presentation.mjs";
 
 export const RUNS_HELP = `Usage:
@@ -18,13 +18,17 @@ Lists durable Run records, including headless Runs and earlier app/Host generati
 launchState describes the original launch, not current process liveness. List is
 bounded to 64 records; continue with nextCursor until null. Names must be unique.
 Show reads the current runtime selection. Open attaches that existing runtime and
-never launches a provider. Resume previews exact local native recovery; add
---confirm-restart to execute and publish it. The native broker validates restart
-eligibility and preserves the conversation. Remote resume is not supported here.
+never launches a provider. Resume previews exact local recovery; add
+--confirm-restart to execute and publish it. A confirmed stopped source waiting
+for a deferred target uses backend wake; an existing native source uses native
+rehost. Both preserve the conversation without an open app. Remote resume is not
+supported here.
 A retained record alone cannot recover a source whose conversation or native
 recovery metadata is unavailable after reboot.
-Retain resume's exact status/retry/publish commands after an uncertain response;
-do not repeat a name-based resume. Use open after recovery to place the pane.
+Retain resume's exact status/retry commands after an uncertain response; do not
+repeat a name-based resume. Wake retains the operation ID, journal revision and
+request key, and publishes through the backend. Run a separate publish command
+only when returned for native rehost. Use open after recovery to place the pane.
 For live Session observations use dure ls. Use the Session/workspace from show
 with dure read <session-id> --workspace ID or dure send <session-id> --workspace ID.`;
 
@@ -133,12 +137,9 @@ export function formatRunsCommand(report) {
 }
 
 function formatRecovery(recovery) {
-  const c = recovery.continuation;
   return [
-    `${recovery.agentId}: ${recovery.state} (native ${recovery.nativeExecution})`,
+    `${recovery.agentId}: ${recovery.state} (${recovery.continuation?.kind === "runtime_wake" ? `backend ${recovery.backendExecution ?? "not_requested"}` : `native ${recovery.nativeExecution}`})`,
     ...(recovery.publication ? [`Binding publication: ${recovery.publication}`] : []),
-    ...(c ? ["Retain these exact commands for this attempt:",
-      `Start: ${rehostCommandLine(c.start)}`, `Status: ${rehostCommandLine(c.status)}`,
-      `Retry: ${rehostCommandLine(c.retry)}`, `Publish: ${rehostCommandLine(c.publish)}`] : []),
+    ...formatManagedRecoveryCommands(recovery.continuation),
   ].join("\n");
 }

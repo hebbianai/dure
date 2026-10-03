@@ -29,7 +29,80 @@ function fixture() {
     resolveBackend: async () => backend, opts: { rest: ["show", entry.name] } };
 }
 
+function dormantFixture() {
+  const f = fixture();
+  const asleep = { schemaVersion: 1, state: "transitioning", agentId: f.entry.agentId,
+    projectionContext: f.runtime.projectionContext, operationId: "sleep-operation",
+    stage: "source_stopped", journalRevision: 3, targetInteractionProfile: "native_cli",
+    targetExecutionProfile: { kind: "provider_default" }, deferredTarget: { state: "waiting" } };
+  f.requestBackend.mockImplementation(async (_profile, request) => {
+    if (request.operation === "agent_spawn.list") return { result: f.page };
+    if (request.operation === "agent_runtime.projection.inspect") return { result: asleep };
+    if (request.operation === "agent_runtime.wake") return { result: f.runtime };
+    throw new Error(`Unexpected operation: ${request.operation}`);
+  });
+  return { ...f, asleep, opts: { rest: ["resume", f.entry.name] }, run: vi.fn() };
+}
+
 describe("durable Run commands", () => {
+  it("previews a stopped deferred source using the existing wake fence without mutation", async () => {
+    const f = dormantFixture();
+    const report = await collectRunsCommand(f);
+    expect(report.ok).toBe(true);
+    const c = report.recovery.continuation;
+    expect(c).toMatchObject({ kind: "runtime_wake", operationId: "sleep-operation", expectedJournalRevision: 3 });
+    expect(c.start).toEqual(["runtime", "wake", f.entry.agentId, "--operation-id", "sleep-operation",
+      "--expected-revision", "3", "--idempotency-key", c.requestId, "--backend", "local", "--json"]);
+    expect(c.retry).toEqual(c.start);
+    expect(c.status).toEqual(["runtime", "get", f.entry.agentId, "--backend", "local", "--json"]);
+    expect(c.publish).toBeUndefined();
+    expect(f.requestBackend.mock.calls.map((c) => c[1].operation)).toEqual(["agent_spawn.list", "agent_runtime.projection.inspect"]);
+    expect(f.run).not.toHaveBeenCalled();
+    expect(formatRunsCommand(report)).toContain("Wake:");
+  });
+
+  it("confirmed resume wakes and publishes through the backend once, without native rehost", async () => {
+    const f = dormantFixture();
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: true, recovery: { state: "completed", backendExecution: "completed", publication: "published", result: f.runtime } });
+    const c = report.recovery.continuation;
+    expect(f.requestBackend.mock.calls.map((c) => c[1].operation)).toEqual(["agent_spawn.list", "agent_runtime.projection.inspect", "agent_runtime.wake"]);
+    expect(f.requestBackend.mock.calls[2][1]).toMatchObject({ requestId: c.requestId,
+      requiredCapabilities: ["agent_runtime.wake"], body: { schemaVersion: 1,
+        agentId: f.entry.agentId, operationId: "sleep-operation", expectedJournalRevision: 3 } });
+    expect(f.run).not.toHaveBeenCalled();
+    expect(formatRunsCommand(report)).toContain("backend completed");
+  });
+
+  it.each(["lost_response", "pending", "closed"])("retains exact wake commands after %s without replay or success", async (outcome) => {
+    const f = dormantFixture();
+    f.requestBackend.mockImplementation(async (_profile, request) => {
+      if (request.operation === "agent_spawn.list") return { result: f.page };
+      if (request.operation === "agent_runtime.projection.inspect") return { result: f.asleep };
+      if (outcome === "lost_response") throw new Error("response lost");
+      return { result: outcome === "pending" ? { ...f.asleep, stage: "target_started" } :
+        { schemaVersion: 1, state: "closed", agentId: f.entry.agentId, operationId: "sleep-operation", stage: "closed" } };
+    });
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report.ok).toBe(false);
+    expect(report.recovery.publication).not.toBe("published");
+    expect(report.recovery.continuation.retry).toEqual(report.recovery.continuation.start);
+    expect(formatRunsCommand(report)).toContain("Status:");
+    expect(f.requestBackend).toHaveBeenCalledTimes(3);
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { deferredTarget: undefined }, { deferredTarget: { state: "future" } },
+    { journalRevision: 0 }, { stage: "repair_required" }, { operationId: "" },
+    { targetInteractionProfile: "structured_protocol" },
+  ])("refuses an incomplete or different stopped boundary: %j", async (change) => {
+    const f = dormantFixture();
+    Object.assign(f.asleep, change);
+    expect((await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } })).ok).toBe(false);
+    expect(f.requestBackend).toHaveBeenCalledTimes(2);
+    expect(f.run).not.toHaveBeenCalled();
+  });
   it("lists retained launches without consulting a client or treating success as live", async () => {
     const f = fixture();
     const report = await collectRunsCommand({ ...f, opts: { rest: ["list"] } });

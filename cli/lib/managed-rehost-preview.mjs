@@ -3,8 +3,9 @@ import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { loadSessionClientProjection, matchingAgents } from "./client-registry.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
+import { agentRuntimeWakeTarget } from "./contracts/agent-runtime.mjs";
 
-/** Initial same-launch requests share the native path; advanced modes retain their owner. */
+/** Initial same-launch requests share recovery planning; advanced modes retain their owner. */
 export function isManagedRehostNameRequest(opts) {
   return Boolean(opts.name || opts.rest[1]) && opts.rest.length <= (opts.name ? 1 : 2) &&
     !opts.fresh &&
@@ -43,6 +44,21 @@ export async function collectManagedRehostPreview({ opts, registry, agentId: dur
   });
   if (!report.ok) return failure(report.error, { agentId });
   const observation = report.result;
+  const wake = agentRuntimeWakeTarget(observation);
+  if (wake && observation.targetInteractionProfile === "native_cli") {
+    const requestId = randomUUID();
+    const start = ["runtime", "wake", agentId, "--operation-id", wake.operationId,
+      "--expected-revision", String(wake.expectedJournalRevision),
+      "--idempotency-key", requestId, "--backend", backend.profile.id, "--json"];
+    return {
+      ...base, ok: true, state: "preview", backendExecution: "not_requested",
+      agentId, backend: report.backend, observation,
+      continuation: {
+        kind: "runtime_wake", ...wake, requestId, start, retry: [...start],
+        status: ["runtime", "get", agentId, "--backend", backend.profile.id, "--json"],
+      },
+    };
+  }
   const selected = observation.receipt?.authority;
   const source = selected?.authority;
   const binding = source?.binding;
@@ -74,19 +90,29 @@ export async function collectManagedRehostPreview({ opts, registry, agentId: dur
 export const rehostCommandLine = (args) =>
   "dure " + args.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(" ");
 
+export function formatManagedRecoveryCommands(continuation) {
+  if (!continuation) return [];
+  const wake = continuation.kind === "runtime_wake";
+  return [
+    wake
+      ? "The backend owns wake and binding publication. Retain this exact operation, revision and request key."
+      : "Retain these exact commands for this attempt; another name request proposes a different operation.",
+    `${wake ? "Wake" : "Start"}: ${rehostCommandLine(continuation.start)}`,
+    `Status: ${rehostCommandLine(continuation.status)}`,
+    `Retry the original request after inspection: ${rehostCommandLine(continuation.retry)}`,
+    ...(continuation.publish ? [`Publish: ${rehostCommandLine(continuation.publish)}`] : []),
+  ];
+}
+
 export async function runManagedRehostPreview(opts, registryPath, resolveBackend) {
   const report = await collectManagedRehostPreview({
     opts, registry: loadSessionClientProjection({ registryPath }), resolveBackend,
   });
   const output = opts.json ? JSON.stringify(report) : report.ok
     ? [
-      `Preview: ${report.agentId} (${report.continuation.sourceSessionId})`,
+      `Preview: ${report.agentId} (${report.continuation.kind === "runtime_wake" ? "dormant runtime" : report.continuation.sourceSessionId})`,
       "Nothing was started or reserved. This is not proof of liveness or a recoverable conversation.",
-      "Retain these commands for this attempt; another name preview proposes a different operation.",
-      "Run native commands in this backend's local Hmux context. After successful start, publish the binding.",
-      `Start: ${rehostCommandLine(report.continuation.start)}`,
-      `Status after uncertain execution: ${rehostCommandLine(report.continuation.status)}`,
-      `Publish completion: ${rehostCommandLine(report.continuation.publish)}`,
+      ...formatManagedRecoveryCommands(report.continuation),
     ].join("\n")
     : `${report.error.remoteCode ?? report.error.code}: ${report.error.message}\nNo runtime execution was requested.`;
   (report.ok ? process.stdout : process.stderr).write(`${output}\n`);

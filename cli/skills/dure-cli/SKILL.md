@@ -87,11 +87,16 @@ dure runs resume worker --confirm-restart --json
 ```
 
 Use the exact Agent or operation ID when names are ambiguous. `open` places the
-current existing runtime without launching another provider. `resume` uses the
-local native recovery broker when an exact source conversation is recoverable,
-retaining the conversation and publishing the new binding. A retained Run record
-alone does not prove reboot recovery is possible. Keep its exact status/retry/publish commands if a response is uncertain;
-repeating a name-based resume proposes another operation. Then use `open` to
+current existing runtime without launching another provider. `resume` preserves
+the conversation: a confirmed stopped source with a waiting deferred target uses
+backend wake; an existing native source uses the local recovery broker. Both work
+without an open app and publish the new binding. A retained Run record alone does
+not prove reboot recovery is possible.
+
+Keep the returned status/retry commands if a response is uncertain. Inspect first,
+then retry the exact request instead of repeating a name-based resume. Wake must
+retain its operation ID, journal revision and idempotency key; no separate publish
+is needed. Native rehost returns a separate publish command. Then use `open` to
 place the recovered Run. Remote resume requires execution on its host.
 For headless input/output, use the Session/workspace pair from `show` with
 `read` and local `send`; an Agent name requires client registration. Direct Session

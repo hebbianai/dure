@@ -2301,7 +2301,7 @@ async function cmdHmux(sub, opts) {
         "dure hmux upgrade --name <exact-name> --target-panel-id ID --confirm-restart\n" +
         "dure hmux adopt --name <project/agent> [--target-panel-id ID] --confirm-restart\n" +
         "dure hmux adopt --from-session <legacy-session> --target-panel-id ID --provider <claude|codex> --agent-name NAME --confirm-restart\n" +
-        "dure hmux rehost --name <project/agent> [--backend ID] [--confirm-restart] [--json]  # local preview; confirmation starts native rehost and publishes its binding\n" +
+        "dure hmux rehost --name <project/agent> [--backend ID] [--confirm-restart] [--json]  # local preview; confirmation wakes a dormant runtime or rehosts its native source and publishes the binding\n" +
         "dure hmux rehost --name <project/agent> [--target-panel-id ID] [--conversation-id ID | --fresh] [--permission-mode <default|skip_permissions>] [--existing-session ID | --operation-id ID] [--confirm-restart] [--json]  # legacy app-owned execution/recovery\n" +
         "dure hmux rehost status [<original-session-id> --workspace ID] --operation-id ID [--json]  # local, read-only; no app required\n" +
         "dure hmux rehost start <original-session-id> --workspace ID --operation-id ID --confirm-restart [--json]  # local, same conversation and settings\n" +
@@ -3441,7 +3441,7 @@ Usage:
   dure hmux adopt --from-session <session> --target-panel-id <pane> --provider <claude|codex> --agent-name <name> --confirm-restart
                                       Convert a provider in a legacy terminal to a managed Agent in the same pane
   dure hmux rehost --name <project/agent> [--backend ID] [--confirm-restart] [--json]
-                                       Preview a local source; confirmation starts native rehost and publishes its binding
+                                       Preview local recovery; confirmation wakes a dormant runtime or rehosts its native source
   dure hmux rehost --name <project/agent> [--target-panel-id <pane>] [--conversation-id <id> | --fresh] [--permission-mode <default|skip_permissions>] [--existing-session <session>] [--confirm-restart] [--json]
                                       Preview or apply a managed Agent rehost or permission-mode change
   dure hmux rehost status [<original-session-id> --workspace ID] --operation-id ID [--json]
