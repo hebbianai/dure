@@ -13,11 +13,21 @@ const mocks = vi.hoisted(() => ({
 	resume: vi.fn(),
 	rehost: vi.fn(),
 	recovery: vi.fn(),
+	wake: vi.fn(),
 	error: vi.fn(),
 }));
 vi.mock("@/lib/sessions/managed/managedExactConversationResume", () => ({
 	resumeExactManagedAgentPane: mocks.resume,
 }));
+vi.mock(
+	"@/lib/sessions/managed/managedClosedLineageWake",
+	async (original) => ({
+		...(await original<
+			typeof import("@/lib/sessions/managed/managedClosedLineageWake")
+		>()),
+		wakeClosedManagedLineage: mocks.wake,
+	}),
+);
 vi.mock("@/lib/sessions/managed/managedBuildRehostWorkflow", () => ({
 	rehostManagedBuild: mocks.rehost,
 }));
@@ -43,6 +53,46 @@ afterEach(() => {
 });
 
 describe("exact Refresh recovery", () => {
+	it.each(["button", "pane_action"])(
+		"recovers a closed checkout from %s with the same conversation",
+		async (entry) => {
+			const binding = managedBindingFixture();
+			const agent = agentFixture({
+				runtimeBinding: binding,
+				conversationId: "exact-conversation",
+			});
+			mocks.resume.mockRejectedValueOnce(
+				new Error(
+					"session_checkout_closing: checkout claim admission is closed",
+				),
+			);
+			mocks.wake.mockResolvedValueOnce({ state: "stable" });
+			const { result } = renderHook(() =>
+				usePaneRehostAction({
+					agent,
+					api: { id: "agent:agent-1" } as IDockviewPanelHeaderProps["api"],
+					commitWorkspaceLayout: undefined,
+					hmuxBinding: binding,
+					paneParamsRef: { current: { binding, sessionId: binding.sessionId } },
+				}),
+			);
+			await act(async () => {
+				if (entry === "button") result.current.refreshConversation?.();
+				else
+					expect(
+						await invokePaneAction("agent:agent-1", "refresh"),
+					).toMatchObject({ ok: true, result: { outcome: "applied" } });
+			});
+			await waitFor(() =>
+				expect(mocks.wake).toHaveBeenCalledExactlyOnceWith(
+					agent.id,
+					"exact-conversation",
+				),
+			);
+			expect(mocks.error).not.toHaveBeenCalled();
+			expect(mocks.recovery).not.toHaveBeenCalled();
+		},
+	);
 	it("accepts diagnostic selection only on the requested Refresh action", async () => {
 		const createTiming = vi.spyOn(refreshTiming, "createManagedRefreshTiming");
 		const binding = managedBindingFixture();

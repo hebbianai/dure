@@ -18,11 +18,13 @@ import {
 } from "@/qa/managedAgentPaneReference";
 import { probeLateNativeRehostResponse } from "@/qa/managedNativeRehostResponse";
 import {
+	assertNativeResumeCompletion,
 	probeNativeFreshCompletion,
 	probeNativeReconciledCompletion,
 	probeNativeResumeCompletion,
 	probeNativeTransactionCompletion,
 	probeNativeUnsupportedResume,
+	runManagedResumeRecoveryProbe,
 } from "@/qa/managedNativeResumeCompletion";
 import { probePaneContextProjection } from "@/qa/paneContextProjection";
 import { DURABLE_APP_STORE_NAME, durableAppStorage, useStore } from "@/store";
@@ -67,6 +69,10 @@ export async function runManagedRehostSyncProbe(): Promise<void> {
 	const params = new URLSearchParams(location.search);
 	const proof = params.get("qaManagedRehostSync");
 	if (!import.meta.env.DEV || !proof) return;
+	if (params.get("resumeOnly") === "1") {
+		await runManagedResumeRecoveryProbe(proof);
+		return;
+	}
 	if (params.get("conversationOnly") === "1") {
 		const { runManagedConversationContinuationProbe } = await import(
 			"./managedConversationContinuation"
@@ -319,20 +325,7 @@ export async function runManagedRehostSyncProbe(): Promise<void> {
 		assertCurrent(9);
 		unsupportedResume = await probeNativeUnsupportedResume();
 		resumeCompletion = await probeNativeResumeCompletion();
-		if (
-			resumeCompletion.creates !== 1 ||
-			resumeCompletion.unavailableRoutes !== 1 ||
-			resumeCompletion.projection !== "applied" ||
-			[resumeCompletion.before, resumeCompletion.after].some(
-				(snapshot) =>
-					snapshot?.sessionId !== "session-10" ||
-					snapshot.activity !== "working" ||
-					snapshot.outputSeq !== "42",
-			)
-		)
-			throw new Error(
-				"Resume completion overwrote a newer runtime observation",
-			);
+		assertNativeResumeCompletion(resumeCompletion);
 		reconciliationCompletion = await probeNativeReconciledCompletion();
 		if (
 			reconciliationCompletion.reconciliations !== 1 ||

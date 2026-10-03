@@ -122,6 +122,12 @@ See `dure stop --help`. This client-scoped command does not accept `--backend`.
 
 ## Read a pane and send to it
 
+`dure client observe --json` lists connected app Spaces and panes.
+`dure client pane state <panel-id> --json` reports a pane's available actions.
+When `refresh` is offered, `dure client pane act <panel-id> refresh --json` uses
+the same conversation recovery as the UI Refresh and Resume session controls.
+These commands require a connected app; `dure runs resume` also works headlessly.
+
 ```sh
 dure read worker -n 80            # snapshot; -f follows until interrupted
 dure read worker -n 80 --json     # one snapshot with lines[] and sequenceThrough; not with -f

@@ -16,7 +16,7 @@ import { t } from "@/lib/i18n";
 import { managedAgentBuildRehostSource } from "@/lib/sessions/managed/managedBuildRehostAuthority";
 import { rehostManagedBuild } from "@/lib/sessions/managed/managedBuildRehostWorkflow";
 import { managedConversationId } from "@/lib/sessions/managed/managedConversationIdentity";
-import { resumeExactManagedAgentPane } from "@/lib/sessions/managed/managedExactConversationResume";
+import { recoverManagedConversationPane } from "@/lib/sessions/managed/managedConversationRecovery";
 import { hmuxPaneConversationId, type TerminalPaneBindingV1 } from "@/lib/terminal/terminalBinding";
 import { terminalRuntimePresentationOwnerKey } from "@/lib/terminal/terminalRuntimePresentationOwner";
 import { showErrorToast, showToast } from "@/lib/toast";
@@ -99,7 +99,7 @@ export function usePaneRehostAction<Params extends LocalHmuxPaneParameters>({
 							"managed exact resume launch target is unavailable",
 						);
 					}
-					await resumeExactManagedAgentPane(
+					await recoverManagedConversationPane(
 						agent.id,
 						api.id,
 						conversationId,

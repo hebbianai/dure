@@ -1207,6 +1207,7 @@ describe("NativeAgentPanel mount", () => {
 			agent.id,
 			`agent:${agent.id}`,
 			"conversation-exact",
+			undefined,
 		);
 
 		resolveRecovery();

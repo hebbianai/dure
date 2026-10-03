@@ -297,6 +297,12 @@ and become the client preference. All commands return typed JSON with `--json`.
 If no Dure client is connected, they fail with `client_unavailable` without
 treating `agents.json` as an authority.
 
+Inspect `dure client pane state <panel-id> --json` for available actions. If it
+offers `refresh`, `dure client pane act <panel-id> refresh --json` invokes the
+same conversation recovery as the UI Refresh and Resume session controls,
+including recovery after a source checkout has closed. For recovery without an
+open app, use `dure runs resume` as described above.
+
 ## Durable orchestration
 
 For dispatched work, use the separately installed `dure-orchestration` skill

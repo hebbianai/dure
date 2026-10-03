@@ -4,6 +4,7 @@ import { installAgentTracker } from "@/lib/agents/agentTracker";
 import { handleCliHmuxRehost } from "@/lib/cli/cliHmuxRehost";
 import { hmuxSessionMetadataKey } from "@/lib/hmux/identity/hmuxSessionMetadata";
 import { backendCapabilities, convertFileSrc } from "@/lib/ipc/core";
+import { qaLog } from "@/lib/qa/qaLog";
 import {
 	completeManagedAgentFreshStart,
 	type ManagedAgentFreshStartExecution,
@@ -18,7 +19,7 @@ import {
 } from "@/lib/sessions/managed/managedAgentRehostSynchronization";
 import { runManagedAgentRehostTransaction } from "@/lib/sessions/managed/managedAgentRehostTransaction";
 import { resolveManagedAgentTarget } from "@/lib/sessions/managed/managedAgentTarget";
-import { resumeExactManagedAgentPane } from "@/lib/sessions/managed/managedExactConversationResume";
+import { recoverManagedConversationPane } from "@/lib/sessions/managed/managedConversationRecovery";
 import {
 	registerDockview,
 	unregisterDockview,
@@ -29,7 +30,65 @@ import {
 	nativeResumeCreateFixture,
 	nativeResumePayloadFixture,
 } from "@/test/managedNativeRehostFixtures";
+import { managedRehostAgentFixture } from "@/test/managedRehostFixtures";
 import { managedRehostTransactionFixture } from "@/test/managedRehostTransactionFixtures";
+
+export function assertNativeResumeCompletion(
+	completion: Awaited<ReturnType<typeof probeNativeResumeCompletion>>,
+) {
+	if (
+		completion.creates !== 1 ||
+		completion.unavailableRoutes !== 1 ||
+		completion.projection !== "applied" ||
+		[completion.before, completion.after].some(
+			(snapshot) =>
+				snapshot?.sessionId !== "session-10" ||
+				snapshot.activity !== "working" ||
+				snapshot.outputSeq !== "42",
+		)
+	)
+		throw new Error("Resume completion overwrote a newer runtime observation");
+}
+
+/** Targeted entrypoint retains the same assertions as the complete smoke. */
+export async function runManagedResumeRecoveryProbe(proof: string) {
+	try {
+		await durableAppStorage.flush();
+		await useStore.persist.rehydrate();
+		useStore.setState({
+			projects: [
+				{
+					id: "project-1",
+					name: "Resume QA",
+					path: "/repo",
+					kind: "local",
+					isRepo: true,
+				},
+			],
+			agents: [managedRehostAgentFixture(9)],
+			accounts: [],
+			layouts: {},
+		});
+		await durableAppStorage.flush();
+		const unsupportedResume = await probeNativeUnsupportedResume();
+		const resumeCompletion = await probeNativeResumeCompletion();
+		assertNativeResumeCompletion(resumeCompletion);
+		qaLog("managed-rehost-sync", {
+			proof,
+			scope: "resume_only",
+			result: "passed",
+			unsupportedResume,
+			resumeCompletion,
+		});
+	} catch (error) {
+		qaLog("managed-rehost-sync", {
+			proof,
+			scope: "resume_only",
+			result: "failed",
+			error: String(error),
+		});
+	}
+}
 
 async function observeNativeCompletion<T>(
 	generation: number,
@@ -120,12 +179,22 @@ export async function probeNativeResumeCompletion() {
 	try {
 		const { completion, ...observation } = await observeNativeCompletion(
 			10,
-			() =>
-				resumeExactManagedAgentPane(
-					"agent-1",
-					"agent:agent-1",
-					"conversation-10",
-				),
+			async () => {
+				// Resume and Refresh can arrive together in one WebView. They
+				// must share native creation and the entire recovery attempt.
+				const attempts = Array.from({ length: 2 }, () =>
+					recoverManagedConversationPane(
+						"agent-1",
+						"agent:agent-1",
+						"conversation-10",
+					),
+				);
+				const [first, second] = await Promise.all(attempts);
+				if (first !== second || !("projection" in first)) {
+					throw new Error("Concurrent Resume/Refresh did not share a receipt");
+				}
+				return first;
+			},
 		);
 		return {
 			creates,
@@ -184,7 +253,7 @@ export async function probeNativeUnsupportedResume() {
 		await backendCapabilities(true);
 		let errorMessage: string | undefined;
 		try {
-			await resumeExactManagedAgentPane(
+			await recoverManagedConversationPane(
 				"agent-1",
 				"agent:agent-1",
 				"conversation-10",

@@ -3,6 +3,7 @@ import { collectManagedRehostCommand } from "./managed-rehost-command.mjs";
 import { collectManagedRehostPreview, formatManagedRecoveryCommands } from "./managed-rehost-preview.mjs";
 import { collectManagedRehostPublication } from "./managed-rehost-publication.mjs";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
+import { ManagedRuntimeRecoveryIncompleteError, wakeManagedRuntime } from "./managed-runtime-recovery.mjs";
 
 /** Compose the existing owners once; publication failure never repeats native execution. */
 export async function collectManagedRehostNamed({
@@ -20,19 +21,30 @@ export async function collectManagedRehostNamed({
   if (prepared.continuation.kind === "runtime_wake") {
     if (!opts.confirmRestart) return { ...prepared, publication: "not_requested" };
     const { operationId, expectedJournalRevision, requestId } = prepared.continuation;
-    const wake = await collectAgentRuntimeCommand({
-      args: ["wake", prepared.agentId], operationId,
-      expectedRevision: expectedJournalRevision, requestId,
-      resolveBackend: async () => backend, requestBackend,
-    });
-    if (!wake.ok) return { ...prepared, ok: false, state: "unknown",
-      backendExecution: "unknown", publication: "unconfirmed", error: wake.error };
-    const completed = wake.result.state === "stable";
-    return { ...prepared, ok: completed, state: completed ? "completed" : wake.result.state,
-      backendExecution: completed ? "completed" : "unconfirmed",
-      publication: completed ? "published" : "unconfirmed", result: wake.result,
-      ...(!completed ? { error: { code: "rehost_wake_incomplete",
-        message: "The backend has not confirmed a stable resumed runtime. Inspect with the retained status command before retrying the original wake request." } } : {}) };
+    try {
+      const result = await wakeManagedRuntime({ ...prepared.observation, state: "dormant" }, {
+        wake: async () => {
+          const report = await collectAgentRuntimeCommand({
+            args: ["wake", prepared.agentId], operationId,
+            expectedRevision: expectedJournalRevision, requestId,
+            resolveBackend: async () => backend, requestBackend,
+          });
+          if (!report.ok) throw report.error;
+          return report.result;
+        },
+      });
+      return { ...prepared, state: "completed", backendExecution: "completed",
+        publication: "published", result };
+    } catch (error) {
+      if (error instanceof ManagedRuntimeRecoveryIncompleteError) {
+        return { ...prepared, ok: false, state: error.observation.state,
+          backendExecution: "unconfirmed", publication: "unconfirmed", result: error.observation,
+          error: { code: "rehost_wake_incomplete",
+            message: "The backend has not confirmed a stable resumed runtime. Inspect with the retained status command before retrying the original wake request." } };
+      }
+      return { ...prepared, ok: false, state: "unknown", backendExecution: "unknown",
+        publication: "unconfirmed", error };
+    }
   }
   const { operationId, sourceSessionId, sourceWorkspaceId } = prepared.continuation;
   const execution = await collectManagedRehostCommand({

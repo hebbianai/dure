@@ -6,6 +6,7 @@ import {
 } from "@/lib/ipc/dureAgentRuntime";
 import type { DureAgentRuntimeObservationClient } from "@/lib/ipc/dureAgentRuntimeObservationClient";
 import { useStore } from "@/store";
+import { wakeManagedRuntime } from "../../../../cli/lib/managed-runtime-recovery.mjs";
 
 type StableRuntime = Extract<
 	DureAgentRuntimeProjectionInspectResultV1,
@@ -36,12 +37,9 @@ export function isClosedManagedSourceLineage(error: unknown): boolean {
 	return /^session_checkout_closing\b/.test(message);
 }
 
-function wakeFailure(stage: string, state: string): Error {
-	return new Error(`managed_closed_lineage_wake_${stage}_${state}`);
-}
-
 /** Start the exact conversation on a new runtime root through the backend's
- * own hibernate→wake transition, then project the committed selection.
+ * own hibernate→wake transition, or wake its already dormant source, then
+ * project the committed selection. CLI and desktop share the same workflow.
  * Returns undefined when this Agent has no backend runtime route. */
 export async function wakeClosedManagedLineage(
 	agentId: string,
@@ -57,16 +55,19 @@ export async function wakeClosedManagedLineage(
 	if (!route) return undefined;
 	const client = dependencies.client(route.backendProfileId);
 	const source = await client.inspect(agentId);
-	if (source.state !== "stable") throw wakeFailure("source", source.state);
-	const dormant = await client.hibernate({
-		agentId,
-		expectedSourceRevision: source.selectionRevision,
-		routeAuthority: source.routeAuthority,
-	});
-	if (dormant.state !== "dormant")
-		throw wakeFailure("hibernate", dormant.state);
-	const woken = await client.wake(dormant, conversationId);
-	if (woken.state !== "stable") throw wakeFailure("wake", woken.state);
+	const woken =
+		await wakeManagedRuntime<DureAgentRuntimeProjectionInspectResultV1>(
+			source,
+			{
+				hibernate: (selected) =>
+					client.hibernate({
+						agentId,
+						expectedSourceRevision: selected.selectionRevision,
+						routeAuthority: selected.routeAuthority,
+					}),
+				wake: (dormant) => client.wake(dormant, conversationId),
+			},
+		);
 	dependencies.project(agentId, woken);
 	return woken;
 }

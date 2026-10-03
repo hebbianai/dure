@@ -114,8 +114,63 @@ describe("closed managed source lineage", () => {
 
 		await expect(
 			wakeClosedManagedLineage("agent-1", "conversation-1", deps),
-		).rejects.toThrow("managed_closed_lineage_wake_source_closed");
+		).rejects.toThrow("managed_runtime_recovery_source_closed");
 		expect(client.hibernate).not.toHaveBeenCalled();
+		expect(projectRuntime).not.toHaveBeenCalled();
+	});
+
+	it("uses the retained dormant operation without hibernating again", async () => {
+		const dormant = {
+			state: "dormant",
+			stage: "source_stopped",
+			agentId: "agent-1",
+			operationId: "sleep-1",
+			journalRevision: 4,
+			routeAuthority,
+		};
+		const {
+			deps,
+			client,
+			project: projectRuntime,
+		} = dependencies({ inspect: dormant });
+		const result = await wakeClosedManagedLineage(
+			"agent-1",
+			"conversation-1",
+			deps,
+		);
+		expect(client.hibernate).not.toHaveBeenCalled();
+		expect(client.wake).toHaveBeenCalledExactlyOnceWith(
+			dormant,
+			"conversation-1",
+		);
+		expect(projectRuntime).toHaveBeenCalledExactlyOnceWith("agent-1", result);
+	});
+
+	it.each(["transitioning", "closed", "unmanaged"])(
+		"does not publish incomplete wake state %s",
+		async (state) => {
+			const {
+				deps,
+				client,
+				project: projectRuntime,
+			} = dependencies({ wake: { state } });
+			await expect(
+				wakeClosedManagedLineage("agent-1", "conversation-1", deps),
+			).rejects.toThrow(`managed_runtime_recovery_wake_${state}`);
+			expect(client.wake).toHaveBeenCalledOnce();
+			expect(projectRuntime).not.toHaveBeenCalled();
+		},
+	);
+
+	it("keeps a lost wake response uncertain without another stop or launch", async () => {
+		const { deps, client, project: projectRuntime } = dependencies();
+		const lost = new Error("response lost");
+		client.wake.mockRejectedValueOnce(lost);
+		await expect(
+			wakeClosedManagedLineage("agent-1", "conversation-1", deps),
+		).rejects.toBe(lost);
+		expect(client.hibernate).toHaveBeenCalledOnce();
+		expect(client.wake).toHaveBeenCalledOnce();
 		expect(projectRuntime).not.toHaveBeenCalled();
 	});
 
