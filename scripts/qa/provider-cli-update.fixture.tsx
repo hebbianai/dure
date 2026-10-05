@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import { ProviderCliUpdateFeedback } from "@/components/settings/ProviderCliUpdateRow";
+import { ProviderCliUpdateFeedback } from "@/components/settings/ProviderCliUpdateFeedback";
 import { setLang } from "@/lib/i18n";
 import "@/index.css";
 
