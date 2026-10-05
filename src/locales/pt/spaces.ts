@@ -1,4 +1,11 @@
 export const spaces: Record<string, string> = {
+	"spaces.projectInfo.title": "Informações do projeto",
+	"spaces.projectInfo.folderPath": "Caminho da pasta",
+	"spaces.projectInfo.copyPath": "Copiar caminho da pasta",
+	"spaces.projectInfo.type": "Tipo",
+	"spaces.projectInfo.gitRepository": "Repositório Git",
+	"spaces.projectInfo.folder": "Pasta",
+	"spaces.projectInfo.sshHost": "Host SSH",
 	"spaces.pane.details": "Detalhes",
 	"spaces.pane.gitStatus": "Status do Git",
 	"spaces.pane.nothingToShow": "Nada a mostrar",

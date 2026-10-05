@@ -14,13 +14,14 @@
 // Width-dependent quick-add buttons measure the `@container/space-open-rows`
 // container, so the head row must render inside one — both callers do.
 import { message as messageDialog } from "@tauri-apps/plugin-dialog";
-import { Folder, FolderOpen, Pin, PinOff, Trash2 } from "lucide-react";
+import { Folder, FolderOpen, Info, Pin, PinOff, Trash2 } from "lucide-react";
 import {
 	type ComponentType,
 	memo,
 	type ReactNode,
 	useCallback,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { sidebarSectionLabelTone } from "@/components/sidebar/SidebarItems";
@@ -30,6 +31,7 @@ import {
 	type SpacesGroupLevel,
 } from "@/components/spaces/SpacesGroupHeader";
 import { SpacesRepositoryActions } from "@/components/spaces/SpacesRepositoryActions";
+import { ProjectInfoDialog } from "@/components/spaces/ProjectInfoDialog";
 import {
 	readActiveDesktopId,
 	useProjectPin,
@@ -171,7 +173,7 @@ export const SpacesRepositoryHeader = memo(function SpacesRepositoryHeader({
 		onAddRepositoryAgent,
 		onAddRepositoryAgentWithOptions,
 	]);
-	// The project menu — pin, and removal from the list — belongs to a head row
+	// The project menu — info, pin, and removal from the list — belongs to a head row
 	// that stands for a registered project, in a list that offers actions (the
 	// unopened queue names repositories and offers none, the same rule as the
 	// quick-add rail). Removal confirms in a dialog (see removalDialog) with the
@@ -186,6 +188,8 @@ export const SpacesRepositoryHeader = memo(function SpacesRepositoryHeader({
 	);
 	const menuProject = quickAdd === false ? undefined : project;
 	const { pinned, togglePin } = useProjectPin(menuProject?.id);
+	const [showProjectInfo, setShowProjectInfo] = useState(false);
+	const headingButton = useRef<HTMLButtonElement>(null);
 	const [confirming, setConfirming] = useState<ProjectRemovalPlan | null>(null);
 	const [removing, setRemoving] = useState(false);
 	const removeProject = useCallback(async (plan: ProjectRemovalPlan) => {
@@ -212,6 +216,10 @@ export const SpacesRepositoryHeader = memo(function SpacesRepositoryHeader({
 	) =>
 		menuProject ? (
 			<>
+				<Item onSelect={() => setShowProjectInfo(true)}>
+					<Info className="size-3.5" />
+					<span className="text-xs">{t("spaces.projectInfo.title")}</span>
+				</Item>
 				<Item onSelect={() => togglePin(menuProject.id)}>
 					{pinned ? (
 						<PinOff className="size-3.5" />
@@ -352,6 +360,7 @@ export const SpacesRepositoryHeader = memo(function SpacesRepositoryHeader({
 				className="flex h-full min-w-0 flex-1 items-center"
 			>
 				<button
+					ref={headingButton}
 					type="button"
 					aria-label={group.label}
 					aria-describedby={`${headingId}-details`}
@@ -403,6 +412,17 @@ export const SpacesRepositoryHeader = memo(function SpacesRepositoryHeader({
 			</ContextMenuContent>
 		)}
 		{removalDialog}
+		{showProjectInfo && menuProject && (
+			<ProjectInfoDialog
+				project={menuProject}
+				sshHosts={sshHosts}
+				onOpenChange={setShowProjectInfo}
+				onCloseAutoFocus={(event) => {
+					event.preventDefault();
+					headingButton.current?.focus();
+				}}
+			/>
+		)}
 		</ContextMenu>
 	);
 });

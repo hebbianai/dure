@@ -1,4 +1,11 @@
 export const spaces: Record<string, string> = {
+	"spaces.projectInfo.title": "프로젝트 정보",
+	"spaces.projectInfo.folderPath": "폴더 경로",
+	"spaces.projectInfo.copyPath": "폴더 경로 복사",
+	"spaces.projectInfo.type": "유형",
+	"spaces.projectInfo.gitRepository": "Git 저장소",
+	"spaces.projectInfo.folder": "폴더",
+	"spaces.projectInfo.sshHost": "SSH 호스트",
 	"spaces.pane.details": "상세 정보",
 	"spaces.pane.gitStatus": "Git 상태",
 	"spaces.pane.nothingToShow": "표시할 값 없음",

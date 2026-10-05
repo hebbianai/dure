@@ -1,4 +1,11 @@
 export const spaces: Record<string, string> = {
+	"spaces.projectInfo.title": "项目信息",
+	"spaces.projectInfo.folderPath": "文件夹路径",
+	"spaces.projectInfo.copyPath": "复制文件夹路径",
+	"spaces.projectInfo.type": "类型",
+	"spaces.projectInfo.gitRepository": "Git 仓库",
+	"spaces.projectInfo.folder": "文件夹",
+	"spaces.projectInfo.sshHost": "SSH 主机",
 	"spaces.pane.details": "详情",
 	"spaces.pane.gitStatus": "Git 状态",
 	"spaces.pane.nothingToShow": "无可显示内容",
