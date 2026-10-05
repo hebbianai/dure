@@ -82,6 +82,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--driver', type=Path, required=True)
     parser.add_argument('--codex', type=Path, required=True)
+    parser.add_argument('--model', default='gpt-5.6-sol', help='Model slug for the local fixture provider; select a current slug to avoid migration onboarding')
     parser.add_argument('--legacy-hooks', action='store_true')
     parser.add_argument('--outcome', choices=('failed', 'completed', 'interrupted', 'goal', 'connection-lost', 'approval'), default='failed')
     parser.add_argument('--resume-evidence', type=Path)
@@ -223,7 +224,7 @@ def main():
             'permissionMode': 'default', 'providerCwd': str(root),
             'command': [sys.executable, str(REPO / 'scripts/qa/fixtures/native-provider-input-bridge.py'),
                         *prefix, '--no-alt-screen', '--sandbox', 'workspace-write',
-                        '--ask-for-approval', 'on-request' if args.outcome == 'approval' else 'never', '-m', 'gpt-5.6-sol',
+                        '--ask-for-approval', 'on-request' if args.outcome == 'approval' else 'never', '-m', args.model,
                         '-c', 'model_provider="fixture"', '-c',
                         'model_providers.fixture={name="fixture",base_url="http://127.0.0.1:%d/v1",wire_api="responses",requires_openai_auth=false}' % server.server_port,
                         *(hook_args if args.legacy_hooks else ['-c', 'notify=' + json.dumps([str(recorder)])]),
@@ -245,7 +246,7 @@ def main():
         if args.outcome == 'goal':
             # Empty native TUI startup is lazy: no thread exists until input.
             # This is fixture input readiness, never production activity parsing.
-            wait(lambda: (root / 'provider-output.bin').exists() and b'gpt-5.6-sol' in (root / 'provider-output.bin').read_bytes(), 30)
+            wait(lambda: (root / 'provider-output.bin').exists() and args.model.encode() in (root / 'provider-output.bin').read_bytes(), 30)
             command(['command-input', *exact, '--text',
                      '/goal Continue working until I explicitly stop you. Do not use tools.', '--submit'])
 
