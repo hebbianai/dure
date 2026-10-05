@@ -56,7 +56,7 @@ Stopping an Agent does not submit a completion report for its assigned work.
 # Uses the project containing the current directory.
 dure run "implement user authentication"
 
-# Select exactly one project by stable ID or backend-local absolute path.
+# Select a registered project by stable ID or a directory within its root.
 dure run --project project-id --provider codex "implement feature X"
 dure run --path /workspace/project "run the full test suite"
 
@@ -68,11 +68,29 @@ dure run --space Build "investigate the failing test"
 # --path defaults to the current directory and --name defaults to the stable ID.
 dure projects register project-id
 dure projects register project-id --path /workspace/project --name "Project"
+dure projects register --help
 ```
 
-`--project` and `--path` are mutually exclusive. The CLI previews and then
-applies one durable backend plan, so retries reuse the same operation instead
-of creating a second agent.
+`--project` and `--path` are mutually exclusive. Both select an existing backend
+registration. `--path` selects the deepest registered project containing that
+directory; it does not register a project or change the Run's working directory
+to a child folder. With no selector, the current directory selects the project.
+An unregistered path fails before a Run is created. Check `dure projects list`,
+register explicitly with `dure projects register`, then retry using the same
+Run idempotency key. Repeating the failed Run alone cannot add the registration.
+
+`projects register` requires a stable ID of 1–64 lowercase letters, digits,
+dots, underscores or hyphens, starting and ending with a letter or digit.
+`--path` defaults to the current directory; local relative paths are resolved
+there. SSH paths must be absolute on the selected backend and are not resolved
+against the CLI host. `--name` defaults to the ID. Use `--backend ID` (or
+`DURE_BACKEND_PROFILE`) consistently for registration and Run, `--json` for a
+structured result, and `--deadline-ms N` for a 1–10000 ms request deadline
+(default 2500). Registration creates no Run, pane or worktree. Nested help,
+including `dure projects register --help` and `-h`, works offline.
+
+The CLI previews and then applies one durable backend plan, so retries reuse
+the same operation instead of creating a second agent.
 
 Pane placement is a separate client-only result. Inside an exact Hmux pane,
 omitting `--space` opens the new Agent in the same Space. The client prefers

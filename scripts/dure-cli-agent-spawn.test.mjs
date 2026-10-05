@@ -26,6 +26,7 @@ import {
   worktree,
 } from "./fixtures/agent-spawn-receipts.mjs";
 import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
+import { collectAgentRun } from "../cli/lib/agent-run.mjs";
 import {
   agentSpawnLaunchProjection,
   agentSpawnWorkspaceProjection,
@@ -795,6 +796,35 @@ describe("agent spawn query contract", () => {
       remoteCode: "agent_spawn_idempotency_conflict",
     });
     expect(JSON.stringify(remoteFailure)).not.toContain("/private/path secret");
+  });
+
+  it.each(["retry_same", "terminal"])("explains explicit project registration for a %s backend refusal", async (disposition) => {
+    const calls = [];
+    const { report } = await collectAgentRun({
+      projectPath: "/unregistered/local-or-remote-directory",
+      providerId: "codex",
+      agentName: "unregistered-project",
+      prompt,
+      idempotencyKey: "unregistered-project-1",
+      backend: { profile: profile() },
+      requestBackend: async (_profile, request) => {
+        calls.push(request.operation);
+        throw new BackendTransportError("backend_transport_remote_error", {
+          details: { code: "agent_spawn_project_not_found", disposition, message: "/private/path secret" },
+        });
+      },
+    });
+    expect(calls).toEqual(["agent_spawn.preview"]);
+    expect(report.error).toMatchObject({
+      remoteCode: "agent_spawn_project_not_found",
+      disposition: "terminal",
+    });
+    expect(report.error.message).toContain("dure projects register <project-id> --path <absolute-path>");
+    expect(report.error.message).toContain("same --backend");
+    expect(formatAgentSpawnQuery(report)).toContain(report.error.message);
+    expect(JSON.stringify(report)).not.toContain("/private/path secret");
+    expect(JSON.stringify(report)).not.toContain("/unregistered/local-or-remote-directory");
+    expect(agentSpawnQueryExitCode(report)).toBe(2);
   });
 
   it("rejects an ambiguous selector or unapplyable prompt before transport", async () => {

@@ -408,10 +408,17 @@ const sessionId = "session-0123456789abcdef0123456789abcdef";
 const planToken = "sha256:${"a".repeat(64)}";
 const recordedAtMs = 1_700_000_000_000;
 let result;
+let error;
 if (request.operation === "projects.list") {
   result = { schemaVersion: 1, complete: true, projects };
 } else if (request.operation === "projects.register" || request.operation === "projects.show") {
   result = { schemaVersion: 1, project: projects[0] };
+} else if (request.operation === "agent_spawn.preview" && projects.length === 0) {
+  error = {
+    code: "agent_spawn_project_not_found",
+    message: "agent_spawn_project_not_found",
+    details: { disposition: "retry_same" },
+  };
 } else if (request.operation === "agent_spawn.preview") {
   const permissionOverride = request.body.permissionOverride ?? null;
   const normalizedRequest = {
@@ -541,7 +548,7 @@ if (request.operation === "projects.list") {
 process.stdout.write(JSON.stringify({
   schemaVersion: 1,
   apiVersion: "dure.backend-transport/v1",
-  kind: "dure.backend.response",
+  kind: error ? "dure.backend.error" : "dure.backend.response",
   requestId: request.requestId,
   backend: {
     id: request.expected.backendId,
@@ -550,7 +557,7 @@ process.stdout.write(JSON.stringify({
     capabilities,
     observedAtMs: Date.now(),
   },
-  result,
+  ...(error ? { error } : { result }),
 }));
 `,
   );
@@ -564,14 +571,94 @@ function runCli(root, args, environment = {}, options = {}) {
     cwd: options.cwd,
     env: {
       ...process.env,
+      HOME: root,
       DURE_APP_CHANNEL: "stable",
       DURE_HOME: root,
+      HMUX_DISCOVERY_ROOT: join(root, "discovery"),
       ...environment,
     },
   });
 }
 
 describe("dure projects CLI", () => {
+  it.each([
+    ["projects", "--help"],
+    ["projects", "-h"],
+    ["projects", "list", "--help"],
+    ["projects", "show", "--help"],
+    ["projects", "show", "example", "-h"],
+    ["projects", "register", "--help"],
+    ["projects", "register", "-h"],
+    ["projects", "register", "example", "--help"],
+    ["projects", "register", "example", "--backend", "missing", "--json", "--help"],
+    ["projects", "register", "--path", "--help"],
+    ["help", "projects"],
+    ["help", "projects", "register"],
+  ].map((args) => ({ args, command: args.join(" ") })))("prints offline help for $command", ({ args }) => {
+    const root = temporaryRoot();
+    const result = runCli(root, args, {
+      DURE_BACKEND_PROFILE: "missing-profile",
+      DURE_HMUX_BIN: join(root, "missing-hmux"),
+    });
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("dure projects register <project-id>");
+    for (const flag of ["--path", "--name", "--backend", "--json", "--deadline-ms"]) {
+      expect(result.stdout).toContain(flag);
+    }
+    expect(result.stdout).toContain("current directory");
+    expect(result.stdout).toContain("absolute path on the selected backend");
+    expect(existsSync(join(root, "backend-profiles.json"))).toBe(false);
+    expect(existsSync(join(root, "backend"))).toBe(false);
+  });
+
+  it("does not interpret a project ID after -- as help", () => {
+    const root = temporaryRoot();
+    const result = runCli(root, ["projects", "show", "--json", "--", "--help"], {
+      DURE_BACKEND_PROFILE: "missing-profile",
+    });
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stdout).error.code).toBe("backend_projects_request_invalid");
+  });
+
+  it("requires explicit registration on the same backend before retrying Run", () => {
+    const root = temporaryRoot();
+    const remote = installRemoteFixture(root);
+    const environment = {
+      DURE_PROJECT_COMMAND_LOG: remote.log,
+      DURE_PROJECT_CATALOG_STATE: remote.state,
+      DURE_AGENT_RUN_STATE: remote.runState,
+      PATH: `${remote.bin}:${process.env.PATH}`,
+    };
+    const args = ["run", "--path", "/remote/project", "--provider", "codex",
+      "--idempotency-key", "explicit-project-registration", "--backend", "remote-b", "--json", "check the project"];
+    const refused = runCli(root, args, environment);
+    expect(refused.status, refused.stderr).toBe(2);
+    expect(JSON.parse(refused.stdout).error).toMatchObject({
+      remoteCode: "agent_spawn_project_not_found",
+      disposition: "terminal",
+    });
+    expect(refused.stdout).toContain("dure projects register");
+    expect(existsSync(remote.state)).toBe(false);
+    expect(existsSync(remote.runState)).toBe(false);
+    expect(JSON.parse(readFileSync(remote.log, "utf8")).map(({ request }) => request.operation))
+      .toEqual(["agent_spawn.preview"]);
+
+    const registered = runCli(root, ["projects", "register", "dure", "--path", "/remote/project",
+      "--name", "Dure", "--backend", "remote-b", "--json"], environment);
+    expect(registered.status, registered.stderr || registered.stdout).toBe(0);
+    const retried = runCli(root, args, environment);
+    expect(retried.status, retried.stderr || retried.stdout).toBe(0);
+    expect(JSON.parse(retried.stdout).receipt.state).toBe("succeeded");
+    const requests = JSON.parse(readFileSync(remote.log, "utf8")).map(({ request }) => request);
+    expect(requests.map(({ operation }) => operation)).toEqual([
+      "agent_spawn.preview", "projects.register", "agent_spawn.preview", "agent_spawn.apply",
+    ]);
+    expect(requests.every(({ expected }) => expected.backendId === "remote-b-backend")).toBe(true);
+    expect(requests[2].body).toEqual(requests[0].body);
+    expect(requests[1].body.root).toBe("/remote/project");
+  });
+
   it("registers and queries only the selected SSH backend without app state", () => {
     const root = temporaryRoot();
     const remote = installRemoteFixture(root);

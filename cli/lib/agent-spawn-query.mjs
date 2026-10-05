@@ -1102,6 +1102,16 @@ function errorReport(action, code, observedAtMs, durationMs, details = {}) {
 function backendErrorReport(action, error, profile, startedAt, deadlineMs) {
   const observedAtMs = Date.now();
   const { code, ...detail } = backendRequestFailure(error, profile);
+  if (detail.remoteCode === "agent_spawn_project_not_found") {
+    // Older backends classified every string error as retry_same. A missing
+    // registration requires an explicit catalog or selector change first.
+    detail.disposition = "terminal";
+    detail.message =
+      "No registered project matches this selector on the selected backend. Check dure projects list. " +
+      "For an unregistered directory, run dure projects register <project-id> --path <absolute-path> explicitly, " +
+      "then retry with the same idempotency key. Keep the same --backend selection for every command. " +
+      "--path selects a containing registered project; it does not register one.";
+  }
   // Only typed executable-resolution evidence carries setup advice. Arbitrary
   // backend text stays private and an unknown lookup never implies absence.
   if (detail.remoteCode === "agent_spawn_provider_unavailable") {

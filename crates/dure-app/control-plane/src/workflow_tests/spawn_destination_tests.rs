@@ -2,6 +2,61 @@ use super::*;
 use dure_app::AgentSpawnJournalStore;
 
 #[tokio::test]
+async fn unregistered_spawn_path_requires_explicit_project_registration() {
+    let (root, state, launcher, _) = fixture(vec![]).await;
+    let project_root = root.path().join("unregistered-project");
+    fs::create_dir(&project_root).unwrap();
+    let project_root = project_root.canonicalize().unwrap();
+    let child = project_root.join("child");
+    fs::create_dir(&child).unwrap();
+    let mut wire = orchestration_backend_request(&state, "project-preview", "", Value::Null);
+    wire.operation = "agent_spawn.preview".into();
+    wire.expected.required_capabilities = vec!["agent_spawn.preview.v2".into()];
+    wire.body = json!({
+        "schemaVersion": 1,
+        "idempotencyKey": "unregistered-project",
+        "projectPath": project_root,
+        "providerId": "codex",
+        "agentName": "project-registration",
+        "interactionPreference": "native_cli",
+        "worktree": { "kind": "project_root" },
+        "promptDigest": null,
+    });
+    for _ in 0..2 {
+        let failure = dispatch(&state, &wire).await.unwrap_err();
+        assert_eq!(failure.code, "agent_spawn_project_not_found");
+        assert_eq!(failure.disposition, BackendFailureDispositionV1::Terminal);
+        assert!(
+            projects_catalog(&state)
+                .await
+                .unwrap()
+                .projections()
+                .is_empty()
+        );
+        assert!(launcher.requests().is_empty());
+    }
+    let mut registration = wire.clone();
+    registration.operation = "projects.register".into();
+    registration.expected.required_capabilities = vec!["projects.register".into()];
+    registration.body = json!({
+        "schemaVersion": 1,
+        "projectId": "registered-project",
+        "displayName": "Registered project",
+        "root": project_root,
+    });
+    dispatch(&state, &registration).await.unwrap();
+    let preview = dispatch(&state, &wire).await.unwrap();
+    assert_eq!(
+        preview["receipt"]["plan"]["request"]["projectId"],
+        "registered-project"
+    );
+    // A child directory selects the containing project and the same durable plan.
+    wire.body["projectPath"] = json!(child);
+    assert_eq!(dispatch(&state, &wire).await.unwrap(), preview);
+    assert!(launcher.requests().is_empty());
+}
+
+#[tokio::test]
 async fn missing_provider_setup_preserves_the_plan_and_retries_without_duplicate_launch() {
     missing_provider_setup(false).await;
 }

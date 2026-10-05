@@ -1558,6 +1558,29 @@ async function cmdSessions(sub, opts) {
   return emitSessionQuery(action, sessionId, opts);
 }
 
+const PROJECTS_HELP = `Usage: dure projects list [--backend ID] [--json] [--deadline-ms N]
+       dure projects show <project-id> [--backend ID] [--json] [--deadline-ms N]
+       dure projects register <project-id> [--path PATH] [--name NAME] [--backend ID] [--json] [--deadline-ms N]
+
+Register a directory explicitly in the selected backend's project catalog.
+Registration creates no Run, pane or worktree. It is separate from client project add.
+<project-id> is a stable ID: 1-64 lowercase letters, digits, dots, underscores or
+hyphens, starting and ending with a letter or digit.
+
+  --path PATH       Directory to register; defaults to the current directory.
+                    Local paths are resolved from the current directory.
+                    For SSH, use an absolute path on the selected backend.
+  --name NAME       Display name; defaults to <project-id>.
+  --backend ID      Select the backend (otherwise DURE_BACKEND_PROFILE or default).
+  --json            Print a structured result.
+  --deadline-ms N   Request deadline, 1-10000 ms (default 2500).
+  --help, -h        Print this help without contacting a backend.
+
+dure run --path PATH selects the registered project containing that directory.
+Without --project or --path, Run uses the current directory as its selector.
+Keep the same backend selection when registering and running a project.
+`;
+
 async function cmdProjects(sub, opts) {
   const action = sub;
   const projectId = opts.rest[1];
@@ -1572,11 +1595,7 @@ async function cmdProjects(sub, opts) {
         (opts.nameSpecified && !opts.name))) ||
     (!registering && (opts.pathSpecified || opts.nameSpecified))
   ) {
-    fail(
-      "Usage: dure projects list [--backend ID] [--json] [--deadline-ms N]\n" +
-        "        dure projects show <project-id> [--backend ID] [--json]\n" +
-        "        dure projects register <project-id> [--path PATH] [--name NAME] [--backend ID] [--json]",
-    );
+    fail(PROJECTS_HELP);
   }
   const {
     collectProjectCommand,
@@ -1784,6 +1803,12 @@ Usage:
              [--prompt TEXT] [--window-label LABEL]
              [--idempotency-key KEY] [--json]
 
+--project selects a registered backend project by ID. --path selects the registered
+project containing the directory; it does not register a project or change its root.
+Without either selector, the current directory selects the containing project.
+Local paths resolve from the current directory; SSH paths must be absolute on that host.
+Register explicitly with dure projects register <project-id> --path PATH first,
+keeping the same --backend selection. Use dure projects register --help for flags.
 When --space is omitted inside an exact Hmux pane, the new pane opens in the same Space.
 In a terminal or CI environment without a verified calling pane, the Run executes headlessly.
 A connected current app supplies its selected provider account, including headless Runs.
@@ -3740,6 +3765,14 @@ async function main() {
   if (cmd === "help" && rest[0] === "client") return cmdClient(["--help"]);
   const sessionCommands = ["ls", "list", "inspect", "sessions"];
   const optionEnd = rest.indexOf("--");
+  if (
+    (cmd === "help" && rest[0] === "projects") ||
+    (cmd === "projects" &&
+      (optionEnd < 0 ? rest : rest.slice(0, optionEnd)).some((arg) => arg === "--help" || arg === "-h"))
+  ) {
+    process.stdout.write(PROJECTS_HELP);
+    return;
+  }
   if (
     (cmd === "help" && sessionCommands.includes(rest[0])) ||
     (sessionCommands.includes(cmd) &&

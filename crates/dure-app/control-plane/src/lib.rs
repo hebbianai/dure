@@ -3734,7 +3734,13 @@ async fn dispatch_authorized(
         }
         "agent_spawn.preview" => preview_agent_spawn(state, &authority, &request.body)
             .await
-            .map_err(Into::into),
+            .map_err(|code| {
+                if code == "agent_spawn_project_not_found" {
+                    BackendDispatchError::terminal(&code)
+                } else {
+                    code.into()
+                }
+            }),
         "agent_spawn.apply" => {
             let body: agent_spawn_apply::AgentSpawnApplyBody =
                 serde_json::from_value(request.body.clone())
