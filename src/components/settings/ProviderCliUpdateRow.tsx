@@ -7,6 +7,7 @@ import { t } from "@/lib/i18n";
 import { type ProviderPreflight, providerPreflight } from "@/lib/ipc";
 import {
 	type ProviderCliUpdateRunResult,
+	providerCliUpdateException,
 	runProviderCliUpdate,
 } from "@/lib/updates/providerCliUpdateRun";
 import {
@@ -42,11 +43,13 @@ export function ProviderCliUpdateRow({
 	const [update, setUpdate] = useState<ProviderCliUpdate | null>(null);
 	const [running, setRunning] = useState(false);
 	const [result, setResult] = useState<ProviderCliUpdateRunResult | null>(null);
+	useEffect(() => {
+		setResult(null);
+	}, [provider]);
 
 	useEffect(() => {
 		let stale = false;
 		setUpdate(null);
-		setResult(null);
 		void evaluateProviderCliUpdate(provider, preflight).then((value) => {
 			if (!stale) setUpdate(value);
 		});
@@ -58,6 +61,7 @@ export function ProviderCliUpdateRow({
 	const run = useCallback(async () => {
 		if (!update?.plan || running) return;
 		setRunning(true);
+		setResult(null);
 		try {
 			const outcome = await runProviderCliUpdate(
 				provider,
@@ -74,6 +78,7 @@ export function ProviderCliUpdateRow({
 			}
 			const updateResolved =
 				outcome.kind === "updated" ||
+				outcome.kind === "updated_with_warning" ||
 				(outcome.kind === "plan_changed" && !outcome.fresh);
 			if (updateResolved) {
 				// Refresh both projections from their existing authorities: this page's
@@ -81,16 +86,23 @@ export function ProviderCliUpdateRow({
 				await refreshPreflight(provider);
 				await refreshProviderCliUpdateNotice();
 			}
+		} catch (error) {
+			setResult(providerCliUpdateException(error));
 		} finally {
 			setRunning(false);
 		}
 	}, [provider, update, running, refreshPreflight]);
 
-	if (!update) return null;
+	if (
+		!update &&
+		result?.kind !== "command_failed" &&
+		result?.kind !== "updated_with_warning"
+	)
+		return null;
 
 	return (
 		<div className="flex flex-col gap-1 pt-2">
-			{update.plan ? (
+			{update?.plan ? (
 				<div className="flex flex-wrap items-center gap-2">
 					<Badge size="sm" variant="secondary" className="font-mono">
 						{update.installedVersion} → {update.latestVersion}
@@ -107,7 +119,7 @@ export function ProviderCliUpdateRow({
 						{running ? t("common.updating") : t("common.update")}
 					</Button>
 				</div>
-			) : (
+			) : update ? (
 				<p className="max-w-[600px] text-xs text-muted-foreground">
 					{t("settings.providers.cliUpdate.unknownChannel", {
 						version: update.latestVersion,
@@ -127,7 +139,7 @@ export function ProviderCliUpdateRow({
 						</>
 					)}
 				</p>
-			)}
+			) : null}
 			{result?.kind === "unchanged" && (
 				<p className="max-w-[600px] text-xs text-muted-foreground">
 					{t("settings.providers.cliUpdate.unchanged", {
@@ -138,16 +150,55 @@ export function ProviderCliUpdateRow({
 					)}
 				</p>
 			)}
-			{result?.kind === "command_failed" && (
-				<p className="max-w-[600px] text-xs text-destructive">
-					{t("settings.providers.cliUpdate.failed")}{" "}
-					<code className="text-meta">{result.detail}</code>
-				</p>
-			)}
+			{result && <ProviderCliUpdateFeedback result={result} />}
 			{result?.kind === "plan_changed" && (
 				<p className="max-w-[600px] text-xs text-muted-foreground">
 					{t("settings.providers.cliUpdate.planChanged")}
 				</p>
+			)}
+		</div>
+	);
+}
+
+export function ProviderCliUpdateFeedback({
+	result,
+}: {
+	result: ProviderCliUpdateRunResult;
+}) {
+	if (
+		result.kind !== "command_failed" &&
+		result.kind !== "updated_with_warning"
+	)
+		return null;
+	const guidance =
+		result.guidance === "command_line_tools"
+			? t("settings.providers.cliUpdate.commandLineTools")
+			: result.guidance === "homebrew_pkgconf"
+				? t("settings.providers.cliUpdate.homebrewPkgconf")
+				: t("settings.providers.cliUpdate.reviewDetails");
+	return (
+		<div className="max-w-[600px] space-y-2 text-xs" role="status">
+			<p
+				className={
+					result.kind === "command_failed"
+						? "text-destructive"
+						: "text-foreground"
+				}
+			>
+				{result.kind === "updated_with_warning"
+					? t("settings.providers.cliUpdate.updatedWithWarning", {
+							version: result.toVersion,
+						})
+					: t("settings.providers.cliUpdate.failed")}
+			</p>
+			<p className="text-muted-foreground">{guidance}</p>
+			{result.detail && (
+				<details className="text-muted-foreground">
+					<summary className="cursor-pointer">{t("common.details")}</summary>
+					<pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-meta">
+						{result.detail}
+					</pre>
+				</details>
 			)}
 		</div>
 	);

@@ -89,6 +89,62 @@ afterEach(() => {
 // task adds, the same way AgentToolingPage.test.tsx asserts "업데이트"/"설치"
 // rather than the English source strings.
 describe("ProviderCliUpdateRow", () => {
+	it("keeps the package-manager warning after refreshed preflight removes the update", async () => {
+		evaluateProviderCliUpdate.mockResolvedValue(update());
+		runProviderCliUpdate.mockResolvedValue({
+			kind: "updated_with_warning",
+			fromVersion: "2.1.252",
+			toVersion: "2.1.258",
+			detail: "Homebrew failed\nInstall developer tools",
+			guidance: "command_line_tools",
+		});
+		const refreshPreflight = vi.fn(async () => {});
+		const view = render(
+			<ProviderCliUpdateRow
+				provider="claude"
+				preflight={preflight()}
+				refreshPreflight={refreshPreflight}
+			/>,
+		);
+		fireEvent.click(await screen.findByRole("button", { name: "업데이트" }));
+		expect(await screen.findByText(/CLI는 2\.1\.258/)).toBeTruthy();
+		expect(refreshPreflight).toHaveBeenCalledWith("claude");
+		evaluateProviderCliUpdate.mockResolvedValue(null);
+		view.rerender(
+			<ProviderCliUpdateRow
+				provider="claude"
+				preflight={{ ...preflight(), version: "2.1.258" }}
+				refreshPreflight={refreshPreflight}
+			/>,
+		);
+		await waitFor(() =>
+			expect(screen.queryByRole("button", { name: "업데이트" })).toBeNull(),
+		);
+		expect(screen.getByText(/CLI는 2\.1\.258/)).toBeTruthy();
+		expect(screen.getByText(/시스템 설정/)).toBeTruthy();
+		expect(view.container.querySelector("details")?.open).toBe(false);
+		expect(view.container.querySelector("pre")?.textContent).toBe(
+			"Homebrew failed\nInstall developer tools",
+		);
+	});
+
+	it("shows a rejected update attempt and enables retry", async () => {
+		evaluateProviderCliUpdate.mockResolvedValue(update());
+		runProviderCliUpdate.mockRejectedValue(new Error("runtime unavailable"));
+		render(
+			<ProviderCliUpdateRow
+				provider="claude"
+				preflight={preflight()}
+				refreshPreflight={vi.fn()}
+			/>,
+		);
+		fireEvent.click(await screen.findByRole("button", { name: "업데이트" }));
+		expect(await screen.findByText("runtime unavailable")).toBeTruthy();
+		expect(
+			(screen.getByRole("button", { name: "업데이트" }) as HTMLButtonElement)
+				.disabled,
+		).toBe(false);
+	});
 	it("renders nothing when no update is available", async () => {
 		evaluateProviderCliUpdate.mockResolvedValue(null);
 		const { container } = render(

@@ -40,6 +40,77 @@ function update(command: string | null): ProviderCliUpdate {
 }
 
 describe("runProviderCliUpdate", () => {
+	it("verifies an advanced CLI version even when Homebrew fails afterwards", async () => {
+		const versions = ["2.1.252 (Claude Code)", "2.1.258 (Claude Code)"];
+		const result = await runProviderCliUpdate("claude", COMMAND, {
+			preflight: async () => preflight(versions.shift() ?? "", CASK_PATH),
+			evaluate: async () => update(COMMAND),
+			runCommand: async () => ({
+				stdout: "CLI installed",
+				stderr:
+					"Error: Your Command Line Tools are too outdated.\nUpdate them from Software Update.",
+				code: 1,
+			}),
+		});
+		expect(result).toMatchObject({
+			kind: "updated_with_warning",
+			fromVersion: "2.1.252",
+			toVersion: "2.1.258",
+			guidance: "command_line_tools",
+		});
+	});
+
+	it("classifies the full diagnostic before truncating it", async () => {
+		const result = await runProviderCliUpdate("claude", COMMAND, {
+			preflight: async () => preflight("2.1.252 (Claude Code)", CASK_PATH),
+			evaluate: async () => update(COMMAND),
+			runCommand: async () => ({
+				stdout: "",
+				stderr: `Error: Your Command Line Tools are too outdated.\n${"more diagnostics\n".repeat(300)}`,
+				code: 1,
+			}),
+		});
+		expect(result).toMatchObject({
+			kind: "command_failed",
+			guidance: "command_line_tools",
+		});
+	});
+
+	it("retains the original failure when the follow-up version probe fails", async () => {
+		let count = 0;
+		const result = await runProviderCliUpdate("claude", COMMAND, {
+			preflight: async () => {
+				if (count++ > 0) throw new Error("probe unavailable");
+				return preflight("2.1.252", CASK_PATH);
+			},
+			evaluate: async () => update(COMMAND),
+			runCommand: async () => ({
+				stdout: "",
+				stderr: "package download failed",
+				code: 1,
+			}),
+		});
+		expect(result).toMatchObject({
+			kind: "command_failed",
+			detail: "package download failed",
+			exitCode: 1,
+		});
+	});
+
+	it("reports command transport failures without an unhandled rejection", async () => {
+		const result = await runProviderCliUpdate("claude", COMMAND, {
+			preflight: async () => preflight("2.1.252", CASK_PATH),
+			evaluate: async () => update(COMMAND),
+			runCommand: async () => {
+				throw new Error("connection lost");
+			},
+		});
+		expect(result).toMatchObject({
+			kind: "command_failed",
+			detail: "connection lost",
+			exitCode: null,
+		});
+	});
 	it("refuses to run when the fresh plan differs from the displayed one", async () => {
 		const fresh = update("npm install -g @anthropic-ai/claude-code@latest");
 		const runCommand = vi.fn();
