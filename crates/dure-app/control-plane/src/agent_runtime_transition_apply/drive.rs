@@ -78,6 +78,7 @@ pub(crate) async fn drive_locked(
                 }
             }
             AgentRuntimeTransitionStateV1::RepairRequired => {
+                native::cleanup_rejected_workspace_target(state, &transition).await?;
                 transition
                     .target_failure
                     .as_ref()
@@ -85,13 +86,27 @@ pub(crate) async fn drive_locked(
                 return Ok(TransitionDriveOutcome::RepairRequired);
             }
             AgentRuntimeTransitionStateV1::TargetStarted => {
-                advance(
+                if let Err(code) = super::project_move::preflight(state, &transition.intent).await {
+                    return reject_workspace_target(state, &transition, code).await;
+                }
+                match advance(
                     state,
                     &transition,
                     AgentRuntimeTransitionAdvanceV1::Committed,
                 )
-                .await?
+                .await
+                {
+                    Ok(committed) => committed,
+                    Err(code)
+                        if transition.intent.workspace_move.is_some()
+                            && code == "agent_runtime_transition_conflict" =>
+                    {
+                        return reject_workspace_target(state, &transition, code).await;
+                    }
+                    Err(code) => return Err(code),
+                }
             }
+
             AgentRuntimeTransitionStateV1::Committed => {
                 let selection = state
                     .store
@@ -119,6 +134,33 @@ pub(crate) async fn drive_locked(
             }
         };
     }
+}
+
+async fn reject_workspace_target(
+    state: &ServiceState,
+    transition: &AgentRuntimeTransitionRecordV1,
+    code: String,
+) -> Result<TransitionDriveOutcome, String> {
+    let rejected = advance(
+        state,
+        transition,
+        AgentRuntimeTransitionAdvanceV1::RepairRequired {
+            failure: AgentRuntimeTargetFailureV1 {
+                kind: AgentRuntimeTargetFailureKindV1::TargetInvalid,
+                provider_code: code,
+            },
+            replacement_authority: AgentRuntimeReplacementAuthorityUpdateV1::Replace {
+                authority: transition
+                    .target_authority
+                    .clone()
+                    .map(AgentRuntimeReplacementAuthorityV1)
+                    .map(Box::new),
+            },
+        },
+    )
+    .await?;
+    native::cleanup_rejected_workspace_target(state, &rejected).await?;
+    Ok(TransitionDriveOutcome::RepairRequired)
 }
 
 fn credential_failure(error: ProviderCredentialProfileErrorV1) -> TargetStartFailure {

@@ -26,6 +26,7 @@ async fn hibernated_dispatch_stop_preserves_the_journal_and_fences_wake() {
             },
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 201,
         };
         if deferred {

@@ -228,6 +228,7 @@ pub(super) async fn load_or_admit_with_activation(
         target_interaction_profile: body.target_interaction_profile,
         target_execution_profile,
         target_launch_selection,
+        workspace_move: None,
         requested_at_ms,
     };
     let admitted = match activation {
@@ -260,9 +261,10 @@ fn match_admitted_target(
                 .unwrap_or(&intent.source.permission_mode)
                 == &intent.effective_permission_mode()
     });
-    if body
-        .expected_source_revision
-        .is_some_and(|revision| revision != intent.source.revision)
+    if intent.workspace_move.is_some()
+        || body
+            .expected_source_revision
+            .is_some_and(|revision| revision != intent.source.revision)
         || body.target_interaction_profile != intent.target_interaction_profile
         || body.source_stop_policy != intent.source_stop_policy
         || body

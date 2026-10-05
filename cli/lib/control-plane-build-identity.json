@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "currentBuildId": "dure-control-plane/v131-run-catalog",
-  "previousBuildId": "dure-control-plane/v130-feedback-observation",
+  "currentBuildId": "dure-control-plane/v132-project-move",
+  "previousBuildId": "dure-control-plane/v131-run-catalog",
   "identity": {
     "apiVersion": "dure.control-plane-identity/v1",
     "kind": "dure.control_plane.identity",
@@ -36,6 +36,8 @@
       "agent_runtime.repair_intent.inspect.v1",
       "agent_runtime.stop",
       "agent_runtime.remove",
+      "agent_runtime.project_move.preview.v1",
+      "agent_runtime.project_move.apply.v1",
       "agent_runtime.transition",
       "agent_runtime.wake",
       "agent_spawn.apply",

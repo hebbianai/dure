@@ -949,6 +949,7 @@ async fn dispatch_stop_cancels_an_admitted_replacement_before_stopping_the_sourc
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 120,
         })
         .await
@@ -1037,6 +1038,7 @@ async fn dispatch_stop_terminalizes_a_source_stopped_transition_without_starting
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 120,
         })
         .await
@@ -1190,6 +1192,7 @@ async fn dispatch_stop_closes_an_exact_repair_required_transition() {
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 120,
         })
         .await

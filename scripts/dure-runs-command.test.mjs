@@ -282,3 +282,28 @@ describe("Run account switching", () => {
     expect(f.requestBackend).not.toHaveBeenCalled();
   });
 });
+
+
+it("opens a committed moved Run at its authoritative destination while retaining spawn provenance", () => {
+  const f = fixture();
+  const original = structuredClone(f.receipt);
+  const sourceAuthority = structuredClone(f.runtime.receipt.authority.authority);
+  sourceAuthority.binding.providerConversationId = "same-conversation";
+  Object.assign(f.runtime.receipt, { selectionRevision: 2, launchIdempotencyKey: "move-launch", providerConversationRef: "same-conversation" });
+  const authority = f.runtime.receipt.authority.authority;
+  authority.runtimeWorkspaceId = "move-workspace";
+  authority.binding.sessionId = "move-session";
+  Object.assign(f.runtime.projectionContext, {
+    agent: { ...f.runtime.projectionContext.agent, workspaceId: "move-workspace" },
+    workspace: { workspaceId: "move-workspace", projectId: "destination", rootPath: "/destination" },
+    project: { projectId: "destination", rootPath: "/destination" },
+    workspaceMove: { operationId: "move-operation", committedSelectionRevision: 2, sourceRootPath: "/repo", sourceAuthority },
+  });
+  const projected = currentRunPresentationPlan({ receipt: f.receipt }, f.runtime);
+  expect(projected.plan).toMatchObject({ workspaceId: "move-workspace", authority: { projectId: "destination" } });
+  expect(projected.runtimeGeneration.sessionId).toBe("move-session");
+  expect(projected.workspace).toEqual({ kind: "project_root" });
+  expect(f.receipt).toEqual(original);
+  delete f.runtime.projectionContext.workspaceMove;
+  expect(() => currentRunPresentationPlan({ receipt: f.receipt }, f.runtime)).toThrow();
+});

@@ -129,6 +129,7 @@ async fn dormant_structured_binding_rotates_only_for_the_exact_native_successor(
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 50,
         })
         .await

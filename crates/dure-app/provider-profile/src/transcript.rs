@@ -413,6 +413,29 @@ pub fn read_roots(
     transcript_from_file(&path, provider, conversation_id, parse)
 }
 
+/// Same-host project moves may reuse only a provider's global history namespace.
+/// Claude's project-scoped resume requires a separate relocation contract.
+pub fn preflight_project_move_history(
+    provider_id: &str,
+    profile_directory: Option<PathBuf>,
+    conversation: &str,
+) -> Result<(), &'static str> {
+    if provider_id != "codex" {
+        return Err("agent_project_move_provider_history_unsupported");
+    }
+    let home = profile_directory
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".codex"))
+        })
+        .ok_or("agent_project_move_history_unavailable")?;
+    if find_codex_conversation(&home.join("sessions"), conversation, 0, &mut 0).is_none() {
+        return Err("agent_project_move_history_unavailable");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "transcript_tests.rs"]
 mod tests;

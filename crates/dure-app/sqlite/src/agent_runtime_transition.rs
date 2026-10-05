@@ -22,6 +22,7 @@ use crate::schema::{begin_immediate, finish_transaction};
 
 mod admission;
 pub(crate) mod request_replay;
+mod workspace_move;
 pub(crate) use admission::admit;
 mod deferred;
 mod idle_candidates;
@@ -250,6 +251,7 @@ pub(crate) async fn advance_on(
             authority,
         )
         .await?;
+        workspace_move::commit(connection, &next).await?;
         update_selection(connection, &current.intent.source, &target).await?;
         crate::agent_runtime_dispatch::rebind_committed_transition_on(connection, &next).await?;
     }

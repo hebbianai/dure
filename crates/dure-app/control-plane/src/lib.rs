@@ -3803,7 +3803,9 @@ async fn dispatch_authorized(
             agent_dispatch_stop_apply::status(state, body).await
         }
         #[cfg(unix)]
-        "agent_runtime.transition"
+        "agent_runtime.project_move.preview.v1"
+        | "agent_runtime.project_move.apply.v1"
+        | "agent_runtime.transition"
         | "agent_runtime.repair"
         | "agent_runtime.repair_intent.inspect.v1"
         | "agent_runtime.inspect"

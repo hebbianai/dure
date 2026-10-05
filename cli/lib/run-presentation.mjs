@@ -7,6 +7,7 @@ import {
   agentSpawnLaunchProjection,
 } from "./agent-spawn-query.mjs";
 export { resolveClientSpaceTarget as resolveRunPresentationTarget } from "./space-selection.mjs";
+import { parseAgentRuntimeInspectionEnvelope } from "./contracts/agent-runtime.mjs";
 import { validProjectPath } from "./project-contract.mjs";
 import { checkoutRegistrationMatches } from "./contracts/agent-spawn-worktree.mjs";
 
@@ -182,9 +183,25 @@ function presentableRunPlan(report) {
 /** A retained spawn receipt locates the Run; current backend selection supplies
  * its runtime. Never attach the predecessor merely because its launch succeeded. */
 export function currentRunPresentationPlan(report, inspection) {
-  const projected = presentableRunPlan({ ...report, kind: "dure.agent_spawn.apply" });
+  let projected = presentableRunPlan({ ...report, kind: "dure.agent_spawn.apply" });
   const current = inspection?.receipt;
   const context = inspection?.projectionContext;
+  if (context?.workspaceMove !== undefined) {
+    if (!parseAgentRuntimeInspectionEnvelope(inspection, projected.plan.agentId) ||
+        current?.selectionRevision < context.workspaceMove.committedSelectionRevision ||
+        context.workspaceMove.sourceAuthority.binding.agentId !== projected.plan.agentId ||
+        context.agent.providerId !== projected.request.providerId ||
+        current.providerConversationRef !== context.workspaceMove.sourceAuthority.binding.providerConversationId ||
+        !validProjectPath(context.workspace.rootPath)) {
+      fail("client_run_runtime_invalid", "The committed project move could not be verified.");
+    }
+    // The retained receipt remains provenance. This action uses the shared
+    // backend projection's committed workspace, never a client project override.
+    projected = { ...projected, plan: { ...projected.plan,
+      workspaceId: context.workspace.workspaceId,
+      authority: { ...projected.plan.authority, projectId: context.project.projectId } },
+      workspace: { kind: "project_root" } };
+  }
   if (inspection?.state !== "stable" || current?.agentId !== projected.plan.agentId ||
       current.providerId !== projected.request.providerId ||
       context?.agent?.agentId !== projected.plan.agentId ||

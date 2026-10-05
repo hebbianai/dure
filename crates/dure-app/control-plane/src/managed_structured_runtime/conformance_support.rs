@@ -138,6 +138,7 @@ pub(super) async fn admit(
                 effort: next.effort.clone(),
                 permission_mode: Some(next.permission_mode.clone()),
             }),
+            workspace_move: None,
             requested_at_ms: now_ms().unwrap(),
         })
         .await

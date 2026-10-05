@@ -294,6 +294,7 @@ mod tests {
                 effort: Some(new_effort.clone()),
                 permission_mode: Some(ProviderPermissionModeV1::SkipPermissions),
             }),
+            workspace_move: None,
             requested_at_ms: 11,
         })
         .unwrap();

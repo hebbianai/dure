@@ -191,6 +191,7 @@ async fn start_native_runtime_transition(
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms,
         })
         .await
@@ -521,6 +522,7 @@ async fn native_rehost_rejects_unmanaged_structured_transitioning_and_closed_sta
                 credential_generation: Some("other-generation".into()),
             },
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 20,
         })
         .await
@@ -631,6 +633,7 @@ async fn native_resume_publishes_a_ready_target_without_retiring_repair_authorit
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 20,
         })
         .await
@@ -1972,6 +1975,7 @@ async fn native_rehost_adopts_a_verified_orphan_only_after_exact_source_stop() {
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 40,
         })
         .await
@@ -2515,6 +2519,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 20,
         })
         .await
@@ -2798,6 +2803,7 @@ async fn native_rehost_atomically_converges_the_exact_hmux_successor() {
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             target_execution_profile: failed_structured_binding.execution_profile.clone(),
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: repair_requested_at.saturating_add(1),
         })
         .await

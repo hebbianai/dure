@@ -6,6 +6,16 @@ pub(super) async fn dispatch(
     request: &BackendRequest,
 ) -> Result<serde_json::Value, BackendDispatchError> {
     match request.operation.as_str() {
+        "agent_runtime.project_move.preview.v1" => {
+            let body = serde_json::from_value(request.body.clone())
+                .map_err(|_| "agent_project_move_request_invalid".to_string())?;
+            agent_runtime_transition_apply::project_move::preview(state, body).await
+        }
+        "agent_runtime.project_move.apply.v1" => {
+            let body = serde_json::from_value(request.body.clone())
+                .map_err(|_| "agent_project_move_request_invalid".to_string())?;
+            agent_runtime_transition_apply::project_move::apply(state, body).await
+        }
         "agent_runtime.native.read" | "agent_runtime.native.input" => {
             agent_runtime_native_io::dispatch(state, request).await
         }

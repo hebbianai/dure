@@ -785,6 +785,28 @@ fn failure(code: &'static str) -> ExtensionFailureCodeV1 {
     ExtensionFailureCodeV1::new(code).expect("static provider failure code is valid")
 }
 
+/// Pin the provider's logical root as well as its process cwd when resuming in
+/// another project. Other providers need a reviewed history relocation contract.
+pub fn native_provider_project_move(
+    provider_id: &ProviderIdV1,
+    plan: &mut AgentProviderSessionLaunchPlanV1,
+    directory: &std::path::Path,
+) -> Result<(), ExtensionFailureCodeV1> {
+    if provider_id.as_str() != "codex" {
+        return Err(failure("conversation_project_move_unsupported"));
+    }
+    let directory = directory
+        .to_str()
+        .filter(|_| directory.is_absolute())
+        .ok_or_else(|| failure("conversation_project_move_path_invalid"))?;
+    let flags = || ["--cd".to_owned(), directory.to_owned()];
+    plan.launch.arguments.splice(0..0, flags());
+    if let Some(arguments) = &mut plan.resume_arguments {
+        arguments.splice(0..0, flags());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

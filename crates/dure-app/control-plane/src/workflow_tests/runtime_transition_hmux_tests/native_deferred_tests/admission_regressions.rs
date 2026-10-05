@@ -92,6 +92,7 @@ async fn runtime_idle_refusal_fresh_fence_uses_real_hmux() {
         target_interaction_profile: selection.interaction_profile,
         target_execution_profile: selection.execution_profile.clone(),
         target_launch_selection: None,
+        workspace_move: None,
         requested_at_ms: selection.updated_at_ms + 1,
     };
     state

@@ -1,4 +1,5 @@
 mod interaction_progress;
+mod project_move_tests;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
@@ -3253,6 +3254,7 @@ async fn admit_structured_to_native_transition(state: &ServiceState) -> (AgentId
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 20,
         })
         .await
@@ -3324,6 +3326,7 @@ async fn admit_structured_credential_transition(
                 credential_generation: Some(credential.credential_generation),
             },
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 20,
         })
         .await
@@ -3762,6 +3765,7 @@ async fn native_transition_refreshes_quiescence_after_an_idle_redraw_refuses_sto
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 20,
         })
         .await
@@ -3976,6 +3980,7 @@ async fn native_transition_same_quiescence_refusal_is_not_replayed() {
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 20,
         })
         .await
@@ -4074,6 +4079,7 @@ async fn native_transition_same_quiescence_refusal_is_not_replayed() {
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 21,
         })
         .await
@@ -4307,6 +4313,7 @@ async fn runtime_recovery_authority_waits_for_operations_admitted_after_startup(
         target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
         target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
         target_launch_selection: None,
+        workspace_move: None,
         requested_at_ms: 20,
     };
     let admitted = state

@@ -43,6 +43,7 @@ pub(super) fn policy_for(
         | "agent_spawn.apply"
         | "agent_runtime.native_rehost.reconcile"
         | "agent_runtime.native_resume.publish"
+        | "agent_runtime.project_move.apply.v1"
         | "agent_runtime.transition"
         | "agent_runtime.hibernate"
         | "agent_runtime.wake"
@@ -170,6 +171,7 @@ mod tests {
             "agent_spawn.apply",
             "agent_runtime.native_rehost.reconcile",
             "agent_runtime.native_resume.publish",
+            "agent_runtime.project_move.apply.v1",
             "agent_runtime.transition",
             "agent_runtime.hibernate",
             "agent_runtime.wake",

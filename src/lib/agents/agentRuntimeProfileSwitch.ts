@@ -63,6 +63,26 @@ export function withAgentRuntimeProjectionContext(
 		: result;
 }
 
+/** A project change is authorized only by the committed journal's exact source
+ * generation. Ordinary mismatched project observations still fail closed. */
+function matchesCommittedWorkspaceMove(
+	agent: Agent,
+	context: DureAgentRuntimeProjectionContextV1,
+): boolean {
+	const move = context.workspaceMove;
+	const binding = agent.runtimeBinding;
+	if (!move || binding?.runtime !== "hmux_managed_v1") return false;
+	const source = move.sourceAuthority;
+	return (
+		agent.worktreePath === move.sourceRootPath &&
+		source.binding.agentId === agent.id &&
+		agent.conversationId === source.binding.providerConversationId &&
+		binding.sessionId === source.binding.sessionId &&
+		binding.workspaceId === source.runtimeWorkspaceId &&
+		sameHmuxManagedGeneration(binding.stopFence, source)
+	);
+}
+
 export function resolveAgentRuntimeProjectionProject(
 	agent: Agent,
 	projects: readonly Project[],
@@ -79,9 +99,24 @@ export function resolveAgentRuntimeProjectionProject(
 	const assigned = projects.find(
 		(candidate) => candidate.id === agent.projectId,
 	);
-	if (assigned && assigned.id !== context.project.projectId) return assigned;
+	if (
+		assigned &&
+		assigned.id !== context.project.projectId &&
+		!matchesCommittedWorkspaceMove(agent, context)
+	)
+		return assigned;
 	const current = projects.find(
-		(candidate) => candidate.id === context.project.projectId,
+		(candidate) =>
+			candidate.id === context.project.projectId ||
+			(matchesCommittedWorkspaceMove(agent, context) &&
+				candidate.path === context.project.rootPath &&
+				(routeAuthority.target.source === "local"
+					? candidate.kind === "local"
+					: candidate.kind === "ssh" &&
+						candidate.sshHostId ===
+							resolveDureBackendSshHost(routeAuthority, sshHosts, () => {
+								throw new Error("client_agent_runtime_transition_conflict");
+							}).id)),
 	);
 	if (current) return { ...current, path: context.project.rootPath };
 	return routeAuthority.target.source === "local"
@@ -117,11 +152,14 @@ export function assertAgentRuntimeProjectionContext(
 		supportsStructuredChat(agent.provider) &&
 		projectionContext.agent.agentId === agent.id &&
 		projectionContext.agent.providerId === agent.provider &&
-		(agent.projectId === undefined || agent.projectId === project.id);
+		(agent.projectId === undefined ||
+			agent.projectId === project.id ||
+			matchesCommittedWorkspaceMove(agent, projectionContext));
 	const projectIdentityMatches =
 		projectionContext.identity.kind === "registered"
 			? (projectionContext.project.projectId === project.id ||
-					agent.projectId === project.id) &&
+					agent.projectId === project.id ||
+					matchesCommittedWorkspaceMove(agent, projectionContext)) &&
 				projectionContext.project.rootPath === project.path
 			: agent.projectId === project.id &&
 				typeof worktreePath === "string" &&
@@ -422,7 +460,22 @@ export function projectRuntimeTransition(
 		throw new Error("client_agent_runtime_transition_conflict");
 	}
 
-	const existingRoute = agentRuntimeTransitionBackendProfileId(agent, project);
+	const moving =
+		agent.projectId !== project.id &&
+		matchesCommittedWorkspaceMove(agent, projectionContext);
+	if (
+		moving &&
+		(!("selectionRevision" in transition) ||
+			typeof transition.selectionRevision !== "number" ||
+			transition.selectionRevision <
+				projectionContext.workspaceMove!.committedSelectionRevision)
+	) {
+		throw new Error("client_agent_runtime_transition_conflict");
+	}
+	const existingRoute = agentRuntimeTransitionBackendProfileId(
+		agent,
+		moving ? { ...project, id: agent.projectId! } : project,
+	);
 	if (existingRoute !== undefined) {
 		if (existingRoute !== backendProfileId) {
 			throw new Error("client_agent_runtime_transition_conflict");
@@ -433,6 +486,7 @@ export function projectRuntimeTransition(
 	const projectedAgent = {
 		...agent,
 		projectId: project.id,
+		...(moving ? { branch: "" } : {}),
 		worktreePath: projectionContext.workspace.rootPath,
 	};
 	return transition.interactionProfile === "structured_protocol"

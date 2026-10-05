@@ -16,6 +16,7 @@ pub(super) async fn admit_replacement(
     {
         return Err("agent_runtime_transition_conflict".into());
     }
+    native::cleanup_rejected_workspace_target(state, current).await?;
     let successor_intent = corrected_successor_intent(
         state,
         current,
@@ -123,6 +124,7 @@ pub(super) async fn corrected_successor_intent(
         target_interaction_profile,
         target_execution_profile,
         target_launch_selection,
+        workspace_move: None,
         requested_at_ms,
     };
     intent.validate_after_stopped_source().map_err(|_| {

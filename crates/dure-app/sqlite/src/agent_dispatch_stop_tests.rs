@@ -824,6 +824,7 @@ async fn unfenced_plan_cannot_supersede_a_transition_fenced_plan() {
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 201,
         })
         .await
@@ -1111,6 +1112,7 @@ async fn transition_convergence_commits_only_with_stop_authorization() {
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 201,
         })
         .await

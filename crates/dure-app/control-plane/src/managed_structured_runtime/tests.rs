@@ -685,6 +685,7 @@ async fn failed_chat_retirement_advances_from_the_current_binding_generation() {
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 10,
         })
         .await

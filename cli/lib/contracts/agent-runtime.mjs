@@ -190,7 +190,22 @@ function validProjectionContext(context, agentId) {
     isDureDomainIdV1(agent.providerId) &&
     isDureDomainIdV1(agent.workspaceId) && workspace.workspaceId === agent.workspaceId &&
     isDureDomainIdV1(workspace.projectId) && project.projectId === workspace.projectId &&
-    path(workspace.rootPath) && path(project.rootPath);
+    path(workspace.rootPath) && path(project.rootPath) &&
+    (context.workspaceMove === undefined || validWorkspaceMove(context.workspaceMove, agentId));
+}
+
+function validWorkspaceMove(move, agentId) {
+  if (!record(move) || !record(move.sourceAuthority)) return false;
+  const authority = move.sourceAuthority;
+  return isDureDomainIdV1(move.operationId) &&
+    Number.isSafeInteger(move.committedSelectionRevision) && move.committedSelectionRevision > 1 &&
+    typeof move.sourceRootPath === "string" && move.sourceRootPath.length > 0 &&
+    ["runtimeWorkspaceId", "runnerPrincipal", "runnerInstance", "hostInstanceId", "terminalEpoch"]
+      .every((key) => isDureDomainIdV1(authority[key])) &&
+    typeof authority.channelEpoch === "string" && /^[1-9][0-9]*$/.test(authority.channelEpoch) &&
+    record(authority.binding) && authority.binding.agentId === agentId &&
+    isDureDomainIdV1(authority.binding.sessionId) &&
+    typeof authority.binding.providerConversationId === "string" && authority.binding.providerConversationId.length > 0;
 }
 
 /** Serialize an intent, not an observation-derived recovery plan. Omitted

@@ -179,6 +179,7 @@ async fn deferred_driver_does_not_launch_on_repeated_drive_or_reopened_store() {
         target_interaction_profile: source.interaction_profile,
         target_execution_profile: source.execution_profile.clone(),
         target_launch_selection: None,
+        workspace_move: None,
         requested_at_ms: 20,
     };
     state

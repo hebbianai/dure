@@ -37,7 +37,14 @@ pub(super) fn validate(record: &AgentRuntimeTransitionRecordV1) -> Result<(), Do
             }
         }
     };
-    let lifecycle_revision = record.journal_revision - wake_revision;
+    if record.post_start_rejections > 0 && record.intent.workspace_move.is_none() {
+        return Err(invalid(
+            "postStartRejections",
+            "requires a workspace handoff",
+        ));
+    }
+    let lifecycle_revision =
+        record.journal_revision - wake_revision - i64::from(record.post_start_rejections);
     if lifecycle_revision < minimum_revision
         || (record.state == AgentRuntimeTransitionStateV1::Admitted && record.journal_revision != 1)
         || (record.state == AgentRuntimeTransitionStateV1::SourceRetained

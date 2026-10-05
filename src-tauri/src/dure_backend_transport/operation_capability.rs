@@ -35,6 +35,8 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
         }
         "agent_runtime.stop" => Some("agent_runtime.stop"),
         "agent_runtime.remove" => Some("agent_runtime.remove"),
+        "agent_runtime.project_move.preview.v1" => Some("agent_runtime.project_move.preview.v1"),
+        "agent_runtime.project_move.apply.v1" => Some("agent_runtime.project_move.apply.v1"),
         "agent_runtime.transition" => Some("agent_runtime.transition"),
         "agent_checkpoint.binding.ensure" => Some("agent_checkpoint.binding.ensure"),
         "client_view.authority.read" => Some("client_view.authority.read"),

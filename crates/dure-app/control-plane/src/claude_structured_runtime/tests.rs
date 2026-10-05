@@ -256,6 +256,7 @@ fn structured_profile_replacement_can_stop_before_starting_native_cli() {
         target_interaction_profile: AgentInteractionProfileV1::NativeCli,
         target_execution_profile: execution_profile,
         target_launch_selection: None,
+        workspace_move: None,
         requested_at_ms: 11,
     })
     .unwrap();
@@ -322,6 +323,7 @@ fn selection_only_replacement_admits_the_new_launch_selection() {
             effort: Some(new_effort.clone()),
             permission_mode: Some(ProviderPermissionModeV1::SkipPermissions),
         }),
+        workspace_move: None,
         requested_at_ms: 11,
     })
     .unwrap();
@@ -419,6 +421,7 @@ fn lazy_reopen_projects_only_the_latest_committed_structured_authority() {
         target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
         target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
         target_launch_selection: None,
+        workspace_move: None,
         requested_at_ms: 11,
     };
     let admitted = AgentRuntimeTransitionRecordV1::admitted(intent).unwrap();
@@ -571,6 +574,7 @@ fn lazy_reopen_projects_only_the_latest_committed_structured_authority() {
             effort: request.effort.clone(),
             permission_mode: Some(request.permission_mode.clone()),
         }),
+        workspace_move: None,
         requested_at_ms: 15,
     };
     let second_admitted = AgentRuntimeTransitionRecordV1::admitted(second_intent).unwrap();

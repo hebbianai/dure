@@ -8,6 +8,7 @@ mod native_deferred_tests;
 mod native_publication_tests;
 mod native_run_rehost_tests;
 mod native_stop_conversation_tests;
+mod project_move_smoke;
 mod state_reporter;
 
 const CONVERSATION: &str = "019f0000-0000-7000-8000-000000000001";

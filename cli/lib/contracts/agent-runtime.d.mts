@@ -77,6 +77,20 @@ export interface RuntimeTransitionEnvelope extends Record<string, unknown> {
 
 export interface RuntimeProjectionContextV1<ProviderId extends string = string> {
   readonly schemaVersion: 1;
+  readonly workspaceMove?: {
+    readonly operationId: string;
+    readonly committedSelectionRevision: number;
+    readonly sourceRootPath: string;
+    readonly sourceAuthority: {
+      readonly runtimeWorkspaceId: string;
+      readonly runnerPrincipal: string;
+      readonly runnerInstance: string;
+      readonly channelEpoch: string;
+      readonly hostInstanceId: string;
+      readonly terminalEpoch: string;
+      readonly binding: { readonly agentId: string; readonly sessionId: string; readonly providerConversationId: string };
+    };
+  };
   readonly identity:
     | { readonly kind: "registered" }
     | { readonly kind: "checkpoint_bootstrap"; readonly runtimeWorkspaceId: string };

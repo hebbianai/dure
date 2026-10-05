@@ -474,7 +474,22 @@ pub struct AgentRuntimeTransitionIntentV1 {
     pub target_execution_profile: AgentExecutionProfileV1,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_launch_selection: Option<AgentRuntimeLaunchSelectionV1>,
+    /// Same-host workspace handoff, committed with the selected runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_move: Option<AgentRuntimeWorkspaceMoveV1>,
     pub requested_at_ms: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentRuntimeWorkspaceMoveV1 {
+    pub source_agent: crate::AgentRecordV1,
+    pub source_workspace: crate::WorkspaceRecordV1,
+    pub target_project: crate::ProjectRecordV1,
+    pub target_workspace: crate::WorkspaceRecordV1,
+    pub registered_root_id: String,
+    pub observed_root_id: String,
+    pub registered_repository_id: String,
 }
 
 impl AgentRuntimeTransitionIntentV1 {
@@ -505,12 +520,39 @@ impl AgentRuntimeTransitionIntentV1 {
             .validate_for_transition(&self.source, &self.provider_conversation_ref)?;
         self.source_stop_policy.validate(&self.source_authority)?;
         exact_execution_profile(&self.target_execution_profile)?;
+        if let Some(movement) = &self.workspace_move {
+            movement.source_agent.validate()?;
+            movement.source_workspace.validate()?;
+            movement.target_project.validate()?;
+            movement.target_workspace.validate()?;
+            validate_token("registeredRootId", &movement.registered_root_id)?;
+            validate_token("observedRootId", &movement.observed_root_id)?;
+            validate_token("registeredRepositoryId", &movement.registered_repository_id)?;
+            if movement.source_agent.agent_id != self.source.agent_id
+                || movement.source_agent.provider_id != self.source.provider_id
+                || movement.source_agent.workspace_id != movement.source_workspace.workspace_id
+                || movement.target_workspace.project_id != movement.target_project.project_id
+                || movement.target_workspace.root_path != movement.target_project.root_path
+                || movement.source_workspace.workspace_id == movement.target_workspace.workspace_id
+                || self.source.interaction_profile != AgentInteractionProfileV1::NativeCli
+                || self.target_interaction_profile != AgentInteractionProfileV1::NativeCli
+                || self.source.execution_profile != self.target_execution_profile
+                || self.provider_conversation_ref.as_option().is_none()
+                || self.source_stop_policy != AgentRuntimeSourceStopPolicyV1::Preserve
+            {
+                return Err(invalid(
+                    "workspaceMove",
+                    "invalid native conversation workspace handoff",
+                ));
+            }
+        }
         let profile_changed = self.source.interaction_profile != self.target_interaction_profile;
         let execution_changed = self.source.execution_profile != self.target_execution_profile;
         if !source_already_stopped
             && !profile_changed
             && !execution_changed
             && !self.launch_selection_changed()
+            && self.workspace_move.is_none()
         {
             return Err(invalid(
                 "target",
@@ -710,8 +752,15 @@ pub struct AgentRuntimeTransitionRecordV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded_by_operation_id: Option<OperationIdV1>,
     pub journal_revision: i64,
+    /// Additional journal steps for a started workspace target rejected before commit.
+    #[serde(default, skip_serializing_if = "zero_rejections")]
+    pub post_start_rejections: u32,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+fn zero_rejections(value: &u32) -> bool {
+    *value == 0
 }
 
 impl AgentRuntimeTransitionRecordV1 {
@@ -737,6 +786,7 @@ impl AgentRuntimeTransitionRecordV1 {
             predecessor_operation_id: None,
             superseded_by_operation_id: None,
             journal_revision: 1,
+            post_start_rejections: 0,
             created_at_ms: requested_at_ms,
             updated_at_ms: requested_at_ms,
         };
@@ -781,6 +831,7 @@ impl AgentRuntimeTransitionRecordV1 {
             predecessor_operation_id: Some(predecessor_operation_id),
             superseded_by_operation_id: None,
             journal_revision: 1,
+            post_start_rejections: 0,
             created_at_ms: requested_at_ms,
             updated_at_ms: requested_at_ms,
         };
@@ -1297,6 +1348,7 @@ mod tests {
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             target_execution_profile: native_selection().execution_profile,
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 110,
         }
     }

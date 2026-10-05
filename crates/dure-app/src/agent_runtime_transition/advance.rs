@@ -101,6 +101,37 @@ pub fn advance_agent_runtime_transition_v1(
         }
         (
             AgentRuntimeTransitionStateV1::TargetStarted,
+            AgentRuntimeTransitionAdvanceV1::RepairRequired {
+                failure,
+                replacement_authority,
+            },
+        ) if current.intent.workspace_move.is_some() => {
+            // Retain the exact uncommitted target before attempting cleanup.
+            // A lost stop response must never hide its generation from repair.
+            let expected = current
+                .target_authority
+                .clone()
+                .map(AgentRuntimeReplacementAuthorityV1);
+            if !matches!(replacement_authority, AgentRuntimeReplacementAuthorityUpdateV1::Replace { authority }
+                if authority.as_deref() == expected.as_ref())
+            {
+                return Err(invalid(
+                    "replacementAuthority",
+                    "must retain the rejected workspace target",
+                ));
+            }
+            next.state = AgentRuntimeTransitionStateV1::RepairRequired;
+            next.target_failure = Some(failure.clone());
+            next.replacement_authority = expected;
+            next.target_authority = None;
+            next.target_launch_idempotency_key = None;
+            next.post_start_rejections = next
+                .post_start_rejections
+                .checked_add(1)
+                .ok_or_else(|| invalid("postStartRejections", "overflow"))?;
+        }
+        (
+            AgentRuntimeTransitionStateV1::TargetStarted,
             AgentRuntimeTransitionAdvanceV1::Committed,
         ) => next.state = AgentRuntimeTransitionStateV1::Committed,
         _ => {

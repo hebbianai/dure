@@ -289,6 +289,7 @@ async fn exact_recovery_queued_behind_a_credential_switch_has_zero_provider_effe
                 credential_generation: Some("credential-next".into()),
             },
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 20,
         })
         .await

@@ -30,6 +30,7 @@ import {
 	projectRuntimeTransition,
 	resolveAgentRuntimeProjectionProject,
 } from "@/lib/agents/agentRuntimeProfileSwitch";
+import { projectAgentRuntimeTransition } from "@/lib/agents/agentRuntimeStoreProjector";
 import { useStore } from "@/store";
 import {
 	agentFixture,
@@ -377,4 +378,82 @@ describe("runtime actions with separate IDE and backend project identities", () 
 			),
 		).toThrow("client_agent_runtime_transition_conflict");
 	});
+});
+
+describe("committed project moves through the shared pane projector", () => {
+	const destination = {
+		...project,
+		id: "ide-destination",
+		path: "/destination",
+	};
+	const moved = () => ({
+		...target,
+		workspaceId: "move-operation-1",
+		projectionContext: {
+			...projectionContext,
+			agent: { ...projectionContext.agent, workspaceId: "move-operation-1" },
+			project: { projectId: "backend-destination", rootPath: destination.path },
+			workspace: {
+				workspaceId: "move-operation-1",
+				projectId: "backend-destination",
+				rootPath: destination.path,
+			},
+			workspaceMove: {
+				operationId: "operation-1",
+				committedSelectionRevision: target.selectionRevision,
+				sourceRootPath: agent.worktreePath,
+				sourceAuthority: {
+					...stopFenceFixture(),
+					runtimeWorkspaceId: agent.runtimeBinding!.workspaceId,
+					binding: {
+						agentId: agent.id,
+						sessionId: agent.runtimeBinding!.sessionId,
+						providerConversationId: agent.conversationId!,
+					},
+				},
+			},
+		},
+	});
+	it("converges the existing pane's project, cwd and generation, and replays idempotently", () => {
+		useStore.setState({ projects: [project, destination] });
+		const transition = moved();
+		projectAgentRuntimeTransition(agent.id, transition);
+		expect(useStore.getState().agents[0]).toMatchObject({
+			projectId: destination.id,
+			worktreePath: destination.path,
+			conversationId: agent.conversationId,
+			runtimeBinding: {
+				sessionId: target.sessionId,
+				workspaceId: transition.workspaceId,
+			},
+		});
+		projectAgentRuntimeTransition(agent.id, transition);
+		expect(useStore.getState().agents[0].projectId).toBe(destination.id);
+	});
+	it.each(["proof", "generation", "conversation", "revision", "host"])(
+		"refuses a move with mismatched %s without changing the pane",
+		(boundary) => {
+			useStore.setState({ projects: [project, destination] });
+			const transition = moved();
+			if (boundary === "proof")
+				Reflect.deleteProperty(transition.projectionContext, "workspaceMove");
+			if (boundary === "generation")
+				transition.projectionContext.workspaceMove.sourceAuthority.terminalEpoch =
+					"other";
+			if (boundary === "conversation")
+				transition.projectionContext.workspaceMove.sourceAuthority.binding.providerConversationId =
+					"other";
+			if (boundary === "revision") transition.selectionRevision = 1;
+			if (boundary === "host")
+				transition.routeAuthority = testDureBackendRouteAuthority(
+					"other",
+					"other",
+					"remote",
+				);
+			expect(() =>
+				projectAgentRuntimeTransition(agent.id, transition),
+			).toThrow();
+			expect(useStore.getState().agents[0]).toEqual(agent);
+		},
+	);
 });

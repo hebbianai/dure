@@ -482,6 +482,15 @@ pub(crate) fn validate_project_root(project: &ProjectAuthority) -> Result<(), &'
     Ok(())
 }
 
+/// Fence a reviewed move against replacing the directory at the registered path.
+/// Contents may change; only the owning filesystem object's identity is pinned.
+pub(crate) fn observed_project_root_identity(
+    project: &ProjectAuthority,
+) -> Result<String, &'static str> {
+    validate_project_root(project)?;
+    Ok(identity("root", owner_directory_snapshot(&project.root)?))
+}
+
 fn project_catalog(source: ProjectCatalogSource) -> Result<ProjectCatalog, &'static str> {
     if ![LEGACY_CATALOG_SCHEMA_VERSION, CATALOG_SCHEMA_VERSION].contains(&source.schema_version)
         || source.kind != CATALOG_KIND

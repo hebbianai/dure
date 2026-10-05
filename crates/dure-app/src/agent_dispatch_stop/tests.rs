@@ -412,6 +412,7 @@ fn preview_rejects_a_plan_older_than_its_runtime_fence() {
         target_interaction_profile: AgentInteractionProfileV1::NativeCli,
         target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
         target_launch_selection: None,
+        workspace_move: None,
         requested_at_ms: 21,
     })
     .unwrap();

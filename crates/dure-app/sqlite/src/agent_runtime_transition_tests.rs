@@ -25,6 +25,7 @@ mod checkout_handoff;
 mod deferred;
 mod idle_candidates;
 mod request_replay;
+mod workspace_move;
 
 fn database_path(temp_dir: &TempDir) -> std::path::PathBuf {
     temp_dir.path().join("domain.sqlite")
@@ -136,6 +137,7 @@ fn intent(operation: &str, idempotency_key: &str) -> AgentRuntimeTransitionInten
         target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
         target_execution_profile: execution_profile(),
         target_launch_selection: None,
+        workspace_move: None,
         requested_at_ms: 110,
     }
 }

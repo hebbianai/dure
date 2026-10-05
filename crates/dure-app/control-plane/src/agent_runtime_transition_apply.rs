@@ -32,6 +32,7 @@ use super::{
 
 mod admission;
 mod inspection;
+pub(crate) mod project_move;
 #[cfg(test)]
 pub(crate) use inspection::AgentRuntimeInspectObservationV1;
 use inspection::inspect_projection_locked;

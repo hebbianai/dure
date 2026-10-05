@@ -1,6 +1,7 @@
 use dure_app::{
-    AGENT_RUNTIME_TRANSITION_SCHEMA_VERSION_V1, AgentIdV1, DomainStore, ProjectIdV1, ProviderIdV1,
-    WorkspaceIdV1,
+    AGENT_RUNTIME_TRANSITION_SCHEMA_VERSION_V1, AgentIdV1, AgentRuntimeBindingAuthorityV1,
+    AgentRuntimeTransitionStateV1, AgentRuntimeTransitionStore, DomainStore, OperationIdV1,
+    ProjectIdV1, ProviderIdV1, WorkspaceIdV1,
 };
 use serde::Serialize;
 
@@ -14,6 +15,17 @@ pub(crate) struct AgentRuntimeProjectionContextV1 {
     agent: AgentRuntimeProjectionAgentV1,
     workspace: AgentRuntimeProjectionWorkspaceV1,
     project: AgentRuntimeProjectionProjectV1,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_move: Option<AgentRuntimeWorkspaceMoveProjectionV1>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentRuntimeWorkspaceMoveProjectionV1 {
+    operation_id: OperationIdV1,
+    committed_selection_revision: i64,
+    source_root_path: String,
+    source_authority: dure_app::AgentCheckpointBindingAuthorityV1,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -97,9 +109,12 @@ pub(crate) async fn read_agent(
         None => AgentRuntimeProjectionIdentityV1::Registered,
     };
 
+    let workspace_move = committed_workspace_move(state, &agent.agent_id, &workspace).await?;
+
     Ok(AgentRuntimeProjectionContextV1 {
         schema_version: AGENT_RUNTIME_TRANSITION_SCHEMA_VERSION_V1,
         identity,
+        workspace_move,
         agent: AgentRuntimeProjectionAgentV1 {
             agent_id: agent.agent_id,
             workspace_id: agent.workspace_id,
@@ -115,4 +130,49 @@ pub(crate) async fn read_agent(
             root_path: project.root_path,
         },
     })
+}
+
+// Deterministic workspace names locate evidence; only an exact committed journal
+// grants a move. Pre-existing workspace names with this prefix remain readable.
+async fn committed_workspace_move(
+    state: &ServiceState,
+    agent_id: &AgentIdV1,
+    workspace: &dure_app::WorkspaceRecordV1,
+) -> Result<Option<AgentRuntimeWorkspaceMoveProjectionV1>, String> {
+    let Some(operation) = workspace
+        .workspace_id
+        .as_str()
+        .strip_prefix("move-")
+        .and_then(|id| OperationIdV1::new(id).ok())
+    else {
+        return Ok(None);
+    };
+    let Some(transition) = state
+        .store
+        .agent_runtime_transition(&operation)
+        .await
+        .map_err(|_| "agent_runtime_projection_identity_read_failed")?
+    else {
+        return Ok(None);
+    };
+    let Some(movement) = &transition.intent.workspace_move else {
+        return Ok(None);
+    };
+    let AgentRuntimeBindingAuthorityV1::NativeCli { authority } =
+        &transition.intent.source_authority
+    else {
+        return Ok(None);
+    };
+    if transition.state != AgentRuntimeTransitionStateV1::Committed
+        || transition.intent.source.agent_id != *agent_id
+        || movement.target_workspace != *workspace
+    {
+        return Ok(None);
+    }
+    Ok(Some(AgentRuntimeWorkspaceMoveProjectionV1 {
+        operation_id: operation,
+        committed_selection_revision: transition.intent.source.revision + 1,
+        source_root_path: movement.source_workspace.root_path.clone(),
+        source_authority: authority.clone(),
+    }))
 }

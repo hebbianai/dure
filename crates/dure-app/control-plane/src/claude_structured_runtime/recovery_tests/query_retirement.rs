@@ -267,6 +267,7 @@ async fn exercise_restart(finish_before_restart: bool, legacy: bool) {
             target_interaction_profile: AgentInteractionProfileV1::NativeCli,
             target_execution_profile: binding.execution_profile.clone(),
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 5,
         })
         .await

@@ -265,6 +265,7 @@ async fn park_failed_replacement(
                 effort: Some(dure_app::AgentSpawnEffortSelectionV1::parse("high").unwrap()),
                 permission_mode: None,
             }),
+            workspace_move: None,
             requested_at_ms: now_ms().unwrap(),
         })
         .await

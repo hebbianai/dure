@@ -26,11 +26,36 @@ task completion, and a timeout does not prove that an operation stopped. Inspect
 the exact target and retain the operation's idempotency key after an uncertain
 result; never replay an input batch blindly.
 
-Conversation recovery retains the original project and working folder. Moving
-an existing Claude or Codex conversation into another project is not supported
-yet. Recovery commands reject `--project`, `--path` and `--cwd` instead of silently
-restarting in the original folder. Use `dure runs resume AGENT` to preview
-same-project recovery, or `dure run --project PROJECT` for a new conversation.
+Conversation recovery retains the original project and working folder. Recovery
+commands reject `--project`, `--path` and `--cwd`. To move a stopped native Codex
+conversation, explicitly select a project registered on its owning backend:
+
+```sh
+dure runs move AGENT --project DESTINATION --json
+```
+
+Review the returned source and destination paths, conversation identity, account
+reference and source revision. Run the returned exact Apply command, which carries
+`--move-plan` and requires `--confirm-restart`. Keep its status/retry commands after
+response loss. The backend uses the runtime-transition journal, verifies the exact
+history and source generation, resumes with the same conversation ID and an
+explicit Codex working root, and commits the Agent workspace with the new runtime.
+Original Run records remain launch provenance. Runtime inspection carries committed
+move evidence so the shared pane projector and `runs open` can converge the exact
+source generation to the destination. No project files are copied or
+deleted. SSH requests run this operation on the selected backend; they do not move
+history or credentials between hosts.
+
+This first capability refuses live or unobservable sources, structured Chat,
+Claude's project-scoped history, and retained checkout claims. Use the returned
+reason to identify the unsupported boundary; do not relabel project metadata or
+force-stop an active provider. When failed target startup reports `repair_required`,
+the returned rollback command uses the existing revision-fenced runtime repair to
+resume in the source folder. An uncertain startup requires status inspection first.
+Older backends refuse the new capability before effects. Desktop menu integration,
+live idle transitions, retained-checkout handoff and Claude history relocation
+remain separate acceptance work.
+
 Moving a pane to another Space does not change its process's working directory.
 
 Agent-facing instructions are packaged in [the Dure skill](skills/dure/SKILL.md)

@@ -8,6 +8,7 @@ import { collectManagedRehostNamed } from "./managed-rehost-named.mjs";
 import { collectManagedRehostPreview, formatManagedRecoveryCommands } from "./managed-rehost-preview.mjs";
 import { presentAgentRunRuntime } from "./run-presentation.mjs";
 import { collectRunAccountSwitch, formatRunAccountSwitch } from "./run-account-switch.mjs";
+import { collectAgentProjectMove, formatAgentProjectMove } from "./agent-project-move-command.mjs";
 import { assertNoConversationProjectOptions } from "./conversation-project-options.mjs";
 
 export const RUNS_HELP = `Usage:
@@ -15,6 +16,8 @@ export const RUNS_HELP = `Usage:
   dure runs show <agent-id|operation-id|name> [--backend ID] [--json]
   dure runs open <agent-id|operation-id|name> --space ID [--backend ID] [--json]
   dure runs resume <agent-id|operation-id|name> [--confirm-restart] [--backend ID] [--json]
+  dure runs move <agent-id|operation-id|name> --project ID [--backend ID] [--json]
+  dure runs move <agent-id> --project ID --move-plan PLAN --confirm-restart [--backend ID] [--json]
   dure runs switch-account <agent-id|operation-id|name> --account ACCOUNT_ID|default
                            [--confirm-restart] [--backend ID] [--json]
 
@@ -27,9 +30,11 @@ never launches a provider. Resume previews exact local recovery; add
 for a deferred target uses backend wake; an existing native source uses native
 rehost. Both preserve the conversation without an open app. Remote resume is not
 supported here.
-Resume retains the original project and working folder. Moving an existing
-conversation to another project is not supported; --project, --path and --cwd
-are refused before recovery. Use run --project PROJECT for a new conversation.
+Resume retains the original project and working folder, and refuses --project,
+--path and --cwd. Use runs move for a stopped native Codex conversation on the
+same backend. Move previews first and returns an exact Apply command requiring
+--confirm-restart. Claude, structured Chat, live or unknown sources and retained checkout claims are explicitly unsupported in this capability.
+No project files are copied or deleted. The selected backend owns both projects.
 A retained record alone cannot recover a source whose conversation or native
 recovery metadata is unavailable after reboot.
 Retain resume's exact status/retry commands after an uncertain response; do not
@@ -53,10 +58,10 @@ export function parseRunsOptions(args) {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true,
     options: { backend: { type: "string" }, cursor: { type: "string" }, space: { type: "string" }, account: { type: "string" },
       project: { type: "string", short: "p" }, path: { type: "string" }, cwd: { type: "string" },
-      "confirm-restart": { type: "boolean" }, json: { type: "boolean" } } });
-  assertNoConversationProjectOptions({ ...values,
+      "move-plan": { type: "string" }, "confirm-restart": { type: "boolean" }, json: { type: "boolean" } } });
+  if (positionals[0] !== "move") assertNoConversationProjectOptions({ ...values,
     projectSpecified: Object.hasOwn(values, "project"), pathSpecified: Object.hasOwn(values, "path") });
-  return { ...values, rest: positionals, confirmRestart: values["confirm-restart"],
+  return { ...values, movePlan: values["move-plan"], rest: positionals, confirmRestart: values["confirm-restart"],
     backendSpecified: values.backend !== undefined };
 }
 
@@ -81,12 +86,13 @@ export async function collectRunsCommand({
   const [action, selector] = opts.rest;
   const base = { schemaVersion: 1, apiVersion: "dure.runs/v1", action };
   const failure = (error, details = {}) => ({ ...base, ok: false, ...details, error });
-  if (!["list", "show", "open", "resume", "switch-account"].includes(action) ||
+  if (!["list", "show", "open", "resume", "switch-account", "move"].includes(action) ||
       opts.rest.length !== (action === "list" ? 1 : 2) ||
       (action !== "list" && !TOKEN.test(selector ?? "")) ||
       (opts.cursor !== undefined && (action !== "list" || !TOKEN.test(opts.cursor))) ||
       (action === "open" ? !opts.space : opts.space !== undefined) ||
-      (opts.confirmRestart && !["resume", "switch-account"].includes(action)) ||
+      (opts.confirmRestart && !["resume", "switch-account", "move"].includes(action)) ||
+      (action === "move" ? (!TOKEN.test(opts.project ?? "") || opts.path !== undefined || opts.cwd !== undefined || Boolean(opts.confirmRestart) !== Boolean(opts.movePlan)) : opts.movePlan !== undefined) ||
       (action === "switch-account" ? !TOKEN.test(opts.account ?? "") : opts.account !== undefined)) {
     return failure({ code: "runs_request_invalid", message: RUNS_HELP });
   }
@@ -94,6 +100,10 @@ export async function collectRunsCommand({
   try {
     backend = await resolveBackend();
     if (!backend?.profile || backend.error) return failure(backendRequestFailure(backend?.error, backend?.profile));
+    if (action === "move" && opts.movePlan) {
+      const projectMove = await collectAgentProjectMove({ agentId: selector, projectId: opts.project, movePlan: opts.movePlan, confirmRestart: opts.confirmRestart, backend, requestBackend });
+      return { ...base, ok: projectMove.ok, projectMove, ...(!projectMove.ok ? { error: projectMove.error } : {}) };
+    }
     const response = await requestBackend(backend.profile, {
       requestId: randomUUID(), operation: "agent_spawn.list", requiredCapabilities: ["agent_spawn.list"],
       body: { schemaVersion: 1, ...(opts.cursor ? { after: opts.cursor } : {}), ...(selector ? { selector } : {}) },
@@ -112,6 +122,10 @@ export async function collectRunsCommand({
         message: "Select one exact Agent or operation ID from dure runs list." });
     }
     const selected = matches[0];
+    if (action === "move") {
+      const projectMove = await collectAgentProjectMove({ agentId: selected.agentId, projectId: opts.project, backend, requestBackend });
+      return { ...base, ok: projectMove.ok, run: selected, projectMove, ...(!projectMove.ok ? { error: projectMove.error } : {}) };
+    }
     if (action === "resume") {
       const recover = opts.confirmRestart ? collectManagedRehostNamed : collectManagedRehostPreview;
       const recovery = await recover({ opts: { rest: ["rehost", selector], confirmRestart: opts.confirmRestart },
@@ -143,6 +157,7 @@ export async function collectRunsCommand({
 }
 
 export function formatRunsCommand(report) {
+  if (report.projectMove) return formatAgentProjectMove(report.projectMove);
   if (report.accountSwitch) return formatRunAccountSwitch(report.accountSwitch);
   if (!report.ok) return `${report.error.remoteCode ?? report.error.code}: ${report.error.message ?? "Run request failed"}` +
     (report.recovery?.continuation ? `\n${formatRecovery(report.recovery)}` : "");

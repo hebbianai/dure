@@ -75,6 +75,7 @@ pub(crate) async fn admit(
             None if deferred => AgentRuntimeTransitionRecordV1::admitted_deferred(intent.clone())?,
             None => AgentRuntimeTransitionRecordV1::admitted(intent.clone())?,
         };
+        workspace_move::prepare(&mut connection, intent).await?;
         insert_transition(&mut connection, &admitted).await?;
         Ok(admitted)
     }

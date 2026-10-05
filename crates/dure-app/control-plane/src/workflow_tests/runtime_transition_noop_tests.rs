@@ -143,6 +143,7 @@ async fn commit_intervening_selection(
         },
         target_execution_profile: execution.clone(),
         target_launch_selection: None,
+        workspace_move: None,
         requested_at_ms: 20,
     };
     state

@@ -204,13 +204,20 @@ without an open app and publish the new binding. A retained Run record alone doe
 not prove reboot recovery is possible.
 
 Resume, Refresh and runtime/account switching keep the Agent's original project
-and working folder. Moving an existing Claude or Codex conversation to another
-registered project is not supported yet. `--project`, `--path` and `--cwd` are
-rejected on recovery commands before a restart can be requested. Opening the
-pane in another Space also keeps its working folder. Continue the existing Agent
-to retain the conversation, or use `dure run --project PROJECT` to start a new
-conversation in the target project. Do not edit project metadata to simulate a
-move; it cannot change a running provider's working directory.
+and working folder. Recovery still rejects `--project`, `--path` and `--cwd`.
+Use `dure runs move AGENT --project REGISTERED_ID --json` to preview moving a
+stopped native Codex conversation on its owning backend. Review the exact source,
+destination, conversation and credential reference, then use the returned Apply
+command with its `--move-plan` and `--confirm-restart`. Retain the exact plan and
+backend for retries. The shared runtime journal owns the workspace handoff; project
+files and original launch provenance are preserved. It does not migrate hosts.
+
+The initial capability refuses live/unknown sources, structured Chat, Claude
+history relocation and retained checkout claims. Do not force-stop working Agents
+or edit project metadata to simulate a move. A failed target with `repair_required`
+can use the returned rollback command to resume in its source folder through the
+same journal. Inspect status first after any uncertain response. Pane placement
+in another Space remains independent of the provider's working directory.
 
 Keep the returned status/retry commands if a response is uncertain. Inspect first,
 then retry the exact request instead of repeating a name-based resume. Wake must

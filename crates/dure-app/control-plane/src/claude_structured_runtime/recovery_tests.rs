@@ -896,6 +896,7 @@ async fn failed_published_target_parks_until_the_next_explicit_open() {
             target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
             target_execution_profile: binding.execution_profile.clone(),
             target_launch_selection: None,
+            workspace_move: None,
             requested_at_ms: 5,
         })
         .await
@@ -959,6 +960,7 @@ async fn failed_published_target_parks_until_the_next_explicit_open() {
                 effort: None,
                 permission_mode: None,
             }),
+            workspace_move: None,
             requested_at_ms: 9,
         })
         .await

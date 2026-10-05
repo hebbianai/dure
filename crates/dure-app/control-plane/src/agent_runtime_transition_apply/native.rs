@@ -142,6 +142,9 @@ pub(super) async fn stop_source(
         if inspection.is_exited_exact() {
             break;
         }
+        if transition.intent.workspace_move.is_some() {
+            return Err(SourceStopFailure::SourceRetained);
+        }
         let quiescence = inspection
             .managed_stop_quiescence_fence()
             .map_err(|_| SourceStopFailure::SourceRetained)?;
@@ -392,6 +395,43 @@ async fn cleanup_permanent_target_failure(
     preserve_prepared_replacement(failure, replacement_authority)
 }
 
+/// The journal retains the rejected target before this exact-generation cleanup.
+/// An uncertain stop remains visible and retries use the same cleanup identity.
+pub(super) async fn cleanup_rejected_workspace_target(
+    state: &ServiceState,
+    transition: &AgentRuntimeTransitionRecordV1,
+) -> Result<(), String> {
+    let Some(movement) = &transition.intent.workspace_move else {
+        return Ok(());
+    };
+    let Some(AgentRuntimeReplacementAuthorityV1(AgentRuntimeBindingAuthorityV1::NativeCli {
+        authority,
+    })) = &transition.replacement_authority
+    else {
+        return Ok(());
+    };
+    // Startup failures may retain an earlier replacement. Only this move's
+    // destination is owned by the post-start rejection boundary.
+    if authority.runtime_workspace_id != movement.target_workspace.workspace_id.as_str() {
+        return Ok(());
+    }
+    let generation = WorkflowSessionGenerationV1 {
+        session_id: authority.binding.session_id.clone(),
+        workspace_id: authority.runtime_workspace_id.clone(),
+        provider_id: transition.intent.source.provider_id.clone(),
+        runner_principal: authority.runner_principal.clone(),
+        runner_instance: authority.runner_instance.clone(),
+        channel_epoch: authority.channel_epoch.clone(),
+        host_instance_id: authority.host_instance_id.clone(),
+        terminal_epoch: authority.terminal_epoch.clone(),
+    };
+    let request = target_cleanup_request(target_attempt_operation_id(transition), &generation)
+        .map_err(|_| "agent_runtime_native_target_cleanup_failed".to_owned())?;
+    stop_managed_request(state, &state.hmux_identity.discovery_root, request)
+        .await
+        .map_err(|_| "agent_runtime_native_target_cleanup_failed".to_owned())
+}
+
 async fn sleep_until_retry(deadline: Instant) {
     let remaining = deadline.saturating_duration_since(Instant::now());
     sleep(STOP_RECONCILE_INTERVAL.min(remaining)).await;
@@ -500,7 +540,7 @@ pub(super) async fn start_target(
     let source = &transition.intent.source;
     let launch = transition.intent.effective_launch_selection();
     let permission_mode = transition.intent.effective_permission_mode();
-    let provider = state
+    let mut provider = state
         .agent_providers
         .session_launch_plan(
             &source.provider_id,
@@ -523,9 +563,32 @@ pub(super) async fn start_target(
         .to_str()
         .ok_or_else(|| TargetStartFailure::retryable("agent_runtime_native_profile_unavailable"))?
         .to_owned();
-    let (workspace_id, workspace) = runtime_workspace(state, source)
+    super::project_move::preflight(state, &transition.intent)
         .await
-        .map_err(TargetStartFailure::retryable)?;
+        .map_err(|code| native_repair(AgentRuntimeTargetFailureKindV1::TargetInvalid, code))?;
+    let (workspace_id, workspace) = if let Some(movement) = &transition.intent.workspace_move {
+        (
+            movement.target_workspace.workspace_id.to_string(),
+            std::path::PathBuf::from(&movement.target_workspace.root_path),
+        )
+    } else {
+        runtime_workspace(state, source)
+            .await
+            .map_err(TargetStartFailure::retryable)?
+    };
+    if transition.intent.workspace_move.is_some() {
+        dure_provider_adapter::native_provider_project_move(
+            &source.provider_id,
+            &mut provider,
+            &workspace,
+        )
+        .map_err(|error| {
+            native_repair(
+                AgentRuntimeTargetFailureKindV1::TargetInvalid,
+                error.as_str(),
+            )
+        })?;
+    }
     let working_directory = workspace
         .to_str()
         .ok_or_else(|| TargetStartFailure::retryable("agent_runtime_workspace_unavailable"))?
@@ -642,6 +705,26 @@ pub(super) async fn start_target(
                 .await);
             }
         };
+    if transition.intent.workspace_move.is_some()
+        && (inspection.is_exited_exact()
+            || !inspection.working_directory.as_ref().is_some_and(|cwd| {
+                cwd.path == launch.working_directory
+                    && cwd.terminal_epoch == inspection.terminal_epoch
+            }))
+    {
+        return Err(cleanup_permanent_target_failure(
+            state,
+            transition,
+            &workspace,
+            &session,
+            native_repair(
+                AgentRuntimeTargetFailureKindV1::IdentityMismatch,
+                "agent_project_move_target_not_ready",
+            ),
+            replacement_authority.as_ref(),
+        )
+        .await);
+    }
     let provider_conversation_id = match validate_target_observation(
         source,
         &transition.intent.provider_conversation_ref,

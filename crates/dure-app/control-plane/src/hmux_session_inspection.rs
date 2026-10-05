@@ -80,6 +80,8 @@ pub(crate) struct HmuxSessionInspection {
     #[serde(default)]
     pub(crate) output_seq: String,
     pub(crate) health: String,
+    #[serde(default, rename = "workingDirectory")]
+    pub(crate) working_directory: Option<hmux_session_protocol::WorkingDirectoryProjection>,
     #[serde(default)]
     capabilities: Vec<String>,
     #[serde(rename = "agentRuntimeState")]

@@ -188,6 +188,7 @@ pub(super) async fn replace_before_upgrade(
             target_interaction_profile,
             target_execution_profile: AgentExecutionProfileV1::ProviderDefault,
             target_launch_selection,
+            workspace_move: None,
             requested_at_ms: now_ms().unwrap(),
         })
         .await

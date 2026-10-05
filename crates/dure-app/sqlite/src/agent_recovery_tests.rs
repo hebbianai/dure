@@ -101,6 +101,7 @@ async fn switch(store: &SqliteDomainStore, record: &AgentRecoveryRecordV1, attem
         target_interaction_profile: AgentInteractionProfileV1::StructuredProtocol,
         target_execution_profile: record.target.as_ref().unwrap().execution_profile(),
         target_launch_selection: None,
+        workspace_move: None,
         requested_at_ms: 310,
     };
     store.admit_agent_runtime_transition(&plan).await.unwrap();
