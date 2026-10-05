@@ -38,6 +38,46 @@ const projection = {
 };
 
 describe("headless runtime command", () => {
+  it.each([
+    ["--project", "another-project"], ["-p", "another-project"],
+    ["--path", "another-project"], ["--cwd", "another-project"],
+    ["--project=another-project"], ["--path=another-project"], ["--cwd=another-project"],
+  ].map((options) => ({ options })))(
+    "refuses $options instead of silently restarting in the original project", ({ options }) => {
+      const root = mkdtempSync(join(tmpdir(), "dure-project-resume."));
+      roots.push(root);
+      const fixture = installRemoteBackendFixture(root, [], {
+        capabilities: ["agent_runtime.transition", "agent_runtime.wake"],
+        results: { "agent_runtime.transition": receipt, "agent_runtime.wake": projection },
+      });
+      for (const args of [
+        ["runtime", "switch", "agent-1", "terminal", "--backend", "remote-build"],
+        ["runtime", "wake", "agent-1", "--operation-id", "sleep-1", "--expected-revision", "2", "--backend", "remote-build"],
+        ["runs", "resume", "agent-1", "--confirm-restart", "--backend", "remote-build"],
+        ["hmux", "rehost", "--name", "worker", "--confirm-restart"],
+        ["hmux", "rehost", "start", "source", "--workspace", "workspace", "--operation-id", "move-1", "--confirm-restart"],
+        ["hmux", "rehost", "retry", "source", "--workspace", "workspace", "--operation-id", "move-1", "--confirm-restart"],
+      ]) {
+        const run = spawnSync(process.execPath, [cliPath, ...args,
+          ...options, "--json"], {
+          encoding: "utf8", timeout: 15_000,
+          env: { ...process.env, HOME: root, DURE_HOME: root,
+            HMUX_DISCOVERY_ROOT: join(root, "discovery"), DURE_APP_CHANNEL: "stable",
+            DURE_HMUX_BIN: join(root, "must-not-start-hmux"),
+            DURE_SESSION_REQUEST_LOG: fixture.requestLog,
+            DURE_BACKEND_SSH_REFERENCE_PROFILE: "remote-build",
+            DURE_BACKEND_KNOWN_HOSTS_FILE: fixture.knownHostsFile,
+            PATH: `${fixture.bin}:${process.env.PATH}` },
+        });
+        expect(run.status, run.stderr || run.stdout).toBe(2);
+        expect(JSON.parse(run.stderr || run.stdout)).toMatchObject({
+          error: { code: "conversation_project_move_unsupported" },
+        });
+        expect(existsSync(fixture.requestLog)).toBe(false);
+      }
+    },
+  );
+
   it("prints journal-backed stop and wake outcomes without treating a request as cleanup", () => {
     const report = {
       ok: true, action: "idle", requestId: "outcome-observation",

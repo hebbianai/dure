@@ -93,6 +93,28 @@ function launch(conversationId = "remote-conversation") {
 	});
 }
 
+it.each(["claude", "codex"] as const)(
+	"refuses to restart an existing %s conversation in another SSH project",
+	async (provider) => {
+		const existing = { ...remoteAgent({ id: "existing" }), provider };
+		useStore.setState({ projects: [remoteProject], agents: [existing] });
+		await expect(
+			launchDiscoveredRemoteConversationPane({
+				provider,
+				conversationId: "remote-conversation",
+				cwd: "/srv/another-project",
+				workspaceRoot: "/srv/another-project",
+				hostId: "build-mac",
+				desktopId: "desktop-active",
+			}),
+		).rejects.toMatchObject({ code: "conversation_project_move_unsupported" });
+		expect(mocks.ensureRemoteRuntime).not.toHaveBeenCalled();
+		expect(mocks.openAgentPanel).not.toHaveBeenCalled();
+		expect(useStore.getState().ensureProjectForPath).not.toHaveBeenCalled();
+		expect(useStore.getState().agents).toEqual([existing]);
+	},
+);
+
 beforeEach(() => {
 	mocks.ensureRemoteRuntime.mockReset();
 	mocks.mountedDockviewEntries.mockReset();
@@ -249,6 +271,54 @@ describe("launchDiscoveredRemoteConversationPane", () => {
 		expect(ensureProjectForPath).toHaveBeenCalledOnce();
 		expect(mocks.ensureRemoteRuntime).toHaveBeenCalledOnce();
 		expect(mocks.openAgentPanel).toHaveBeenCalledOnce();
+	});
+
+	it("rejects another destination while a conversation launch is pending", async () => {
+		let register: ((project: Project) => void) | undefined;
+		const ensureProjectForPath = vi.fn(
+			() =>
+				new Promise<Project>((resolve) => {
+					register = resolve;
+				}),
+		);
+		useStore.setState({ ensureProjectForPath });
+		const first = launch();
+		try {
+			await expect(
+				launchDiscoveredRemoteConversationPane({
+					provider: "codex",
+					conversationId: "remote-conversation",
+					cwd: "/srv/another-project",
+					workspaceRoot: "/srv/another-project",
+					hostId: "build-mac",
+					desktopId: "desktop-active",
+				}),
+			).rejects.toMatchObject({
+				code: "conversation_project_move_unsupported",
+			});
+			expect(ensureProjectForPath).toHaveBeenCalledOnce();
+		} finally {
+			useStore.setState({ projects: [remoteProject] });
+			register?.(remoteProject);
+			await first;
+		}
+		expect(mocks.ensureRemoteRuntime).toHaveBeenCalledOnce();
+	});
+
+	it("checks an owner discovered during project registration before resuming", async () => {
+		const existing = remoteAgent({ id: "racing-owner" });
+		existing.worktreePath = "/srv/other-folder";
+		useStore.setState({
+			ensureProjectForPath: vi.fn(async () => {
+				useStore.setState({ projects: [remoteProject], agents: [existing] });
+				return remoteProject;
+			}),
+		});
+		await expect(launch()).rejects.toMatchObject({
+			code: "conversation_project_move_unsupported",
+		});
+		expect(mocks.ensureRemoteRuntime).not.toHaveBeenCalled();
+		expect(mocks.openAgentPanel).not.toHaveBeenCalled();
 	});
 
 	it("registers the exact host/path and opens only after remote admission", async () => {

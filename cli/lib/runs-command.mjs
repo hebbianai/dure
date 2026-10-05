@@ -8,6 +8,7 @@ import { collectManagedRehostNamed } from "./managed-rehost-named.mjs";
 import { collectManagedRehostPreview, formatManagedRecoveryCommands } from "./managed-rehost-preview.mjs";
 import { presentAgentRunRuntime } from "./run-presentation.mjs";
 import { collectRunAccountSwitch, formatRunAccountSwitch } from "./run-account-switch.mjs";
+import { assertNoConversationProjectOptions } from "./conversation-project-options.mjs";
 
 export const RUNS_HELP = `Usage:
   dure runs list [--cursor CURSOR] [--backend ID] [--json]
@@ -26,6 +27,9 @@ never launches a provider. Resume previews exact local recovery; add
 for a deferred target uses backend wake; an existing native source uses native
 rehost. Both preserve the conversation without an open app. Remote resume is not
 supported here.
+Resume retains the original project and working folder. Moving an existing
+conversation to another project is not supported; --project, --path and --cwd
+are refused before recovery. Use run --project PROJECT for a new conversation.
 A retained record alone cannot recover a source whose conversation or native
 recovery metadata is unavailable after reboot.
 Retain resume's exact status/retry commands after an uncertain response; do not
@@ -48,7 +52,10 @@ Automatic account recovery is separate: see dure recovery --help; it is opt-in.`
 export function parseRunsOptions(args) {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true,
     options: { backend: { type: "string" }, cursor: { type: "string" }, space: { type: "string" }, account: { type: "string" },
+      project: { type: "string", short: "p" }, path: { type: "string" }, cwd: { type: "string" },
       "confirm-restart": { type: "boolean" }, json: { type: "boolean" } } });
+  assertNoConversationProjectOptions({ ...values,
+    projectSpecified: Object.hasOwn(values, "project"), pathSpecified: Object.hasOwn(values, "path") });
   return { ...values, rest: positionals, confirmRestart: values["confirm-restart"],
     backendSpecified: values.backend !== undefined };
 }

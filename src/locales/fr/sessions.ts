@@ -68,6 +68,7 @@ export const sessions: Record<string, string> = {
 	"sessions.identity.providerExited": "Le provider s'est arrêté, l'identité de la conversation ne peut pas être confirmée",
 	"sessions.identity.timeout": "L'identité de la conversation n'a pas pu être confirmée à temps — envoyez un autre message, puis réessayez",
 	"sessions.identity.unknownCode": "Impossible de confirmer l'identité de la conversation ({code})",
+	"sessions.launch.projectMoveUnsupported": "Cette conversation est déjà associée à un autre dossier de travail. Dure ne peut pas encore la déplacer vers un autre projet. Ouvrez son agent existant pour continuer ou démarrez une nouvelle conversation dans le projet cible.",
 	"sessions.launch.ownershipUnavailable": "La génération active actuelle de cette conversation n’a pas pu être vérifiée ; aucun volet n’a donc été créé. La session et le dossier de travail restent inchangés. Actualisez les sessions récentes et réessayez. Motif : {reason}",
 	"sessions.launch.presentedInBackground":
 		"La conversation a démarré, mais son volet n’a pas pu s’ouvrir. L’agent reste disponible dans Agents non ouverts.",

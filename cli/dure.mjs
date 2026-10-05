@@ -20,6 +20,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { randomUUID } from "node:crypto";
 import { parseOpts } from "./lib/cli-options.mjs";
+import { assertNoConversationProjectOptions } from "./lib/conversation-project-options.mjs";
 import { appControlDirectory, appRootDirectory, loadAppControlDescriptor } from "./lib/app-control-location.mjs";
 import { agentDisplayName, matchingAgents } from "./lib/client-registry.mjs";
 import {
@@ -2288,6 +2289,12 @@ async function cmdWorkspace(opts) {
 
 async function cmdHmux(sub, opts) {
   const action = sub === "migrate" ? "adopt" : sub;
+  if (action === "rehost") {
+    try { assertNoConversationProjectOptions(opts); } catch (error) {
+      writeCliActionError(error, opts, "dure.hmux/v1", "dure.hmux.error");
+      return;
+    }
+  }
   if (action === "rehost" && opts.rest[1] === "publish") {
     const { runManagedRehostPublication } = await import("./lib/managed-rehost-publication.mjs");
     return runManagedRehostPublication(opts, () => backendProfileQueryContext(opts));
@@ -2332,6 +2339,7 @@ async function cmdHmux(sub, opts) {
         "dure hmux rehost start <original-session-id> --workspace ID --operation-id ID --confirm-restart [--json]  # local, same conversation and settings\n" +
         "dure hmux rehost retry [<original-session-id> --workspace ID] --operation-id ID --confirm-restart [--json]  # resume an existing local operation\n" +
         "dure hmux rehost publish <agent-id> --from-session <original-session-id> --workspace ID --operation-id ID [--backend ID] [--json]  # publish completion; never restarts a provider\n" +
+        "Rehost keeps the original working folder; --project, --path and --cwd are unsupported.\n" +
         "dure hmux convert --name <session> --target-panel-id ID --to <managed|standalone> [--agent-name NAME] [--confirm-restart]\n" +
         "dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] [--yes] [--json]  # alias for dure stop\n" +
         "dure hmux migrate ...  # adopt alias\n",
@@ -3469,6 +3477,7 @@ Usage:
                                       Convert a provider in a legacy terminal to a managed Agent in the same pane
   dure hmux rehost --name <project/agent> [--backend ID] [--confirm-restart] [--json]
                                        Preview local recovery; confirmation wakes a dormant runtime or rehosts its native source
+                                       Keeps the original folder; --project, --path and --cwd are unsupported
   dure hmux rehost --name <project/agent> [--target-panel-id <pane>] [--conversation-id <id> | --fresh] [--permission-mode <default|skip_permissions>] [--existing-session <session>] [--confirm-restart] [--json]
                                       Preview or apply a managed Agent rehost or permission-mode change
   dure hmux rehost status [<original-session-id> --workspace ID] --operation-id ID [--json]
@@ -3902,6 +3911,10 @@ async function main() {
       return;
     }
     const opts = parseOpts(rest);
+    try { assertNoConversationProjectOptions(opts); } catch (error) {
+      writeCliActionError(error, opts, "dure.agent-runtime/v1", "dure.agent_runtime.error");
+      return;
+    }
     const report = await collectAgentRuntimeCommand({
       args: opts.rest,
       resolveBackend: () => backendProfileQueryContext(opts),

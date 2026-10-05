@@ -26,6 +26,13 @@ task completion, and a timeout does not prove that an operation stopped. Inspect
 the exact target and retain the operation's idempotency key after an uncertain
 result; never replay an input batch blindly.
 
+Conversation recovery retains the original project and working folder. Moving
+an existing Claude or Codex conversation into another project is not supported
+yet. Recovery commands reject `--project`, `--path` and `--cwd` instead of silently
+restarting in the original folder. Use `dure runs resume AGENT` to preview
+same-project recovery, or `dure run --project PROJECT` for a new conversation.
+Moving a pane to another Space does not change its process's working directory.
+
 Agent-facing instructions are packaged in [the Dure skill](skills/dure/SKILL.md)
 and the separate [orchestration integration](../orchestration/integration/SKILL.md).
 Customer-facing guides belong to [public documentation](../docs/public/).

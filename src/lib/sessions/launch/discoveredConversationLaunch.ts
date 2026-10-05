@@ -12,6 +12,7 @@ import {
 	providerSupportsExplicitResume,
 } from "@/lib/agents/providers";
 import { normalizeSlashPath } from "@/lib/files/paths";
+import { t } from "@/lib/i18n";
 import { isDureProviderConversationRefV1 } from "@/lib/ipc/dureProtocolIdentity";
 import {
 	advanceRemoteManagedAgentRuntime,
@@ -33,11 +34,44 @@ import { useStore } from "@/store";
 import type { Agent, Project, Provider } from "@/types";
 
 const REMOTE_BOOTSTRAP_GEOMETRY = { columns: 120, rows: 30 } as const;
-const remoteLaunches = new Map<string, Promise<Agent>>();
+const remoteLaunches = new Map<
+	string,
+	{
+		cwd: string;
+		workspaceRoot: string;
+		promise: Promise<Agent>;
+	}
+>();
 
 interface RemoteConversationState {
 	agents: readonly Agent[];
 	projects: readonly Project[];
+}
+
+function projectMoveUnsupported(): Error {
+	return Object.assign(new Error(t("sessions.launch.projectMoveUnsupported")), {
+		code: "conversation_project_move_unsupported",
+	});
+}
+
+/** An existing owner may be resumed only in its registered working location.
+ * Reusing its identity does not change the provider process's working folder. */
+function assertConversationOwnerLocation(
+	agent: Agent,
+	input: { cwd: string; workspaceRoot: string; hostId?: string },
+): void {
+	const project = useStore
+		.getState()
+		.projects.find((candidate) => candidate.id === agent.projectId);
+	if (
+		!project ||
+		normalizeSlashPath(agent.worktreePath) !== input.cwd ||
+		normalizeSlashPath(project.path) !== input.workspaceRoot ||
+		(project.kind === "ssh" ? project.sshHostId : undefined) !== input.hostId ||
+		agentExecutionHost(agent, [project]) !== input.hostId
+	) {
+		throw projectMoveUnsupported();
+	}
 }
 
 function nextConversationName(
@@ -144,6 +178,9 @@ export async function launchDiscoveredLocalConversationPane(input: {
 		providerId: input.provider,
 		conversationId,
 	});
+	if (ownership.state === "active" || ownership.state === "pending") {
+		assertConversationOwnerLocation(ownership.agent, { cwd, workspaceRoot });
+	}
 	if (ownership.state === "active") {
 		if (input.existingOwner === "return") return ownership.agent;
 		throw new ManagedConversationAlreadyActiveError(ownership.agent.id);
@@ -231,7 +268,19 @@ export function launchDiscoveredRemoteConversationPane(input: {
 
 	const operationKey = `${hostId}\0${input.provider}\0${conversationId}`;
 	const existingOperation = remoteLaunches.get(operationKey);
-	if (existingOperation) return existingOperation;
+	if (existingOperation) {
+		if (
+			existingOperation.cwd !== cwd ||
+			existingOperation.workspaceRoot !== workspaceRoot
+		) {
+			return Promise.reject(projectMoveUnsupported());
+		}
+		return existingOperation.promise;
+	}
+	const resumeOwner = (agent: Agent) => {
+		assertConversationOwnerLocation(agent, { cwd, workspaceRoot, hostId });
+		return resumeRemoteConversationOwner(agent, desktopId);
+	};
 
 	const operation = (async () => {
 		const initialOwner = exactRemoteConversationOwner(useStore.getState(), {
@@ -240,7 +289,7 @@ export function launchDiscoveredRemoteConversationPane(input: {
 			hostId,
 		});
 		if (initialOwner) {
-			return resumeRemoteConversationOwner(initialOwner, desktopId);
+			return resumeOwner(initialOwner);
 		}
 
 		const project = await useStore
@@ -256,7 +305,7 @@ export function launchDiscoveredRemoteConversationPane(input: {
 			hostId,
 		});
 		if (ownerAfterProject) {
-			return resumeRemoteConversationOwner(ownerAfterProject, desktopId);
+			return resumeOwner(ownerAfterProject);
 		}
 
 		const credential = resolveAgentLaunchCredential({
@@ -309,7 +358,7 @@ export function launchDiscoveredRemoteConversationPane(input: {
 			};
 		});
 		if (racedOwner) {
-			return resumeRemoteConversationOwner(racedOwner, desktopId);
+			return resumeOwner(racedOwner);
 		}
 
 		const admission = await admitManagedCreateRegistration(
@@ -358,9 +407,9 @@ export function launchDiscoveredRemoteConversationPane(input: {
 		}));
 		return launched;
 	})();
-	remoteLaunches.set(operationKey, operation);
+	remoteLaunches.set(operationKey, { cwd, workspaceRoot, promise: operation });
 	const clearOperation = () => {
-		if (remoteLaunches.get(operationKey) === operation) {
+		if (remoteLaunches.get(operationKey)?.promise === operation) {
 			remoteLaunches.delete(operationKey);
 		}
 	};

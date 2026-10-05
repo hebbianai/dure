@@ -196,6 +196,15 @@ backend wake; an existing native source uses the local recovery broker. Both wor
 without an open app and publish the new binding. A retained Run record alone does
 not prove reboot recovery is possible.
 
+Resume, Refresh and runtime/account switching keep the Agent's original project
+and working folder. Moving an existing Claude or Codex conversation to another
+registered project is not supported yet. `--project`, `--path` and `--cwd` are
+rejected on recovery commands before a restart can be requested. Opening the
+pane in another Space also keeps its working folder. Continue the existing Agent
+to retain the conversation, or use `dure run --project PROJECT` to start a new
+conversation in the target project. Do not edit project metadata to simulate a
+move; it cannot change a running provider's working directory.
+
 Keep the returned status/retry commands if a response is uncertain. Inspect first,
 then retry the exact request instead of repeating a name-based resume. Wake must
 retain its operation ID, journal revision and idempotency key; no separate publish

@@ -68,6 +68,7 @@ export const sessions: Record<string, string> = {
 	"sessions.identity.providerExited": "provider が終了したため、会話の識別情報を確認できません",
 	"sessions.identity.timeout": "会話の識別情報を制限時間内に確認できませんでした — もう一度メッセージを送信してから再試行してください",
 	"sessions.identity.unknownCode": "会話の識別情報を確認できません（{code}）",
+	"sessions.launch.projectMoveUnsupported": "この会話はすでに別の作業フォルダーに関連付けられています。Dureではまだ会話を別のプロジェクトに移動できません。既存のエージェントを開いて続行するか、移動先のプロジェクトで新しい会話を開始してください。",
 	"sessions.launch.ownershipUnavailable": "この会話の現在のライブ世代を確認できなかったため、ペインは作成されませんでした。セッションと作業フォルダーは変更されていません。最近のセッションを更新して再試行してください。理由: {reason}",
 	"sessions.launch.presentedInBackground":
 		"会話は開始されましたが、ペインを開けませんでした。エージェントは「未オープンのエージェント」から引き続き利用できます。",

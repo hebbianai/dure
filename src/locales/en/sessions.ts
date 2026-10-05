@@ -68,6 +68,7 @@ export const sessionsEnglishTranslations: Record<string, string> = {
 	"sessions.identity.providerExited": "The provider exited, so its conversation identity cannot be confirmed",
 	"sessions.identity.timeout": "The conversation identity was not confirmed in time — send another message, then try again",
 	"sessions.identity.unknownCode": "Cannot confirm the conversation identity ({code})",
+	"sessions.launch.projectMoveUnsupported": "This conversation is already associated with a different working folder. Dure cannot move it to another project yet. Open its existing agent to continue, or start a new conversation in the target project.",
 	"sessions.launch.ownershipUnavailable": "The current live generation for this conversation could not be verified, so no pane was created. The session and working folder are unchanged. Refresh Recent Sessions and try again. Reason: {reason}",
 	"sessions.launch.presentedInBackground":
 		"The conversation started, but its pane could not open. The agent remains available under Unopened agents.",

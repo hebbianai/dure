@@ -68,6 +68,7 @@ export const sessions: Record<string, string> = {
 	"sessions.identity.providerExited": "El provider finalizó, por lo que no se puede confirmar la identidad de la conversación",
 	"sessions.identity.timeout": "No se pudo confirmar la identidad de la conversación a tiempo — envía otro mensaje y vuelve a intentarlo",
 	"sessions.identity.unknownCode": "No se puede confirmar la identidad de la conversación ({code})",
+	"sessions.launch.projectMoveUnsupported": "Esta conversación ya está asociada a otra carpeta de trabajo. Dure aún no puede moverla a otro proyecto. Abre su agente existente para continuar o inicia una conversación nueva en el proyecto de destino.",
 	"sessions.launch.ownershipUnavailable": "No se pudo verificar la generación activa actual de esta conversación, por lo que no se creó ningún panel. La sesión y la carpeta de trabajo no cambiaron. Actualiza Sesiones recientes e inténtalo de nuevo. Motivo: {reason}",
 	"sessions.launch.presentedInBackground":
 		"La conversación se inició, pero no se pudo abrir su panel. El agente sigue disponible en Agentes sin abrir.",

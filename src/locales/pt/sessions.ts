@@ -68,6 +68,7 @@ export const sessions: Record<string, string> = {
 	"sessions.identity.providerExited": "O provider foi encerrado, portanto a identidade da conversa não pode ser confirmada",
 	"sessions.identity.timeout": "A identidade da conversa não foi confirmada a tempo — envie outra mensagem e tente novamente",
 	"sessions.identity.unknownCode": "Não é possível confirmar a identidade da conversa ({code})",
+	"sessions.launch.projectMoveUnsupported": "Esta conversa já está associada a outra pasta de trabalho. O Dure ainda não pode movê-la para outro projeto. Abra o agente existente para continuar ou inicie uma nova conversa no projeto de destino.",
 	"sessions.launch.ownershipUnavailable": "Não foi possível verificar a geração ativa atual desta conversa, portanto nenhum painel foi criado. A sessão e a pasta de trabalho permanecem inalteradas. Atualize as Sessões recentes e tente novamente. Motivo: {reason}",
 	"sessions.launch.presentedInBackground":
 		"A conversa foi iniciada, mas não foi possível abrir o painel. O agente continua disponível em Agentes não abertos.",

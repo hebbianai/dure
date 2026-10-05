@@ -68,6 +68,7 @@ export const sessions: Record<string, string> = {
 	"sessions.identity.providerExited": "provider 已退出，无法确认对话身份",
 	"sessions.identity.timeout": "未能在限定时间内确认对话身份 — 请再发送一条消息后重试",
 	"sessions.identity.unknownCode": "无法确认对话身份（{code}）",
+	"sessions.launch.projectMoveUnsupported": "此对话已关联到另一个工作文件夹。Dure 暂不支持将对话移动到其他项目。请打开现有代理继续对话，或在目标项目中开始新对话。",
 	"sessions.launch.ownershipUnavailable": "无法验证此对话当前的实时世代，因此未创建窗格。会话和工作文件夹保持不变。请刷新“最近会话”后重试。原因：{reason}",
 	"sessions.launch.presentedInBackground":
 		"对话已启动，但无法打开窗格。该代理仍可在“未打开的代理”中使用。",

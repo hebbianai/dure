@@ -107,6 +107,39 @@ beforeEach(() => {
 });
 
 describe("launchDiscoveredLocalConversationPane", () => {
+	it.each(["claude", "codex"] as const)(
+		"refuses a different working folder for an existing %s conversation before resuming it",
+		async (provider) => {
+			for (const state of ["active", "pending"] as const) {
+				const existing = managedAgentFixture({
+					provider,
+					projectId: project.id,
+					worktreePath: project.path,
+					conversationId: "conversation-1",
+				});
+				useStore.setState({ projects: [project], agents: [existing] });
+				mocks.resolveOwnership.mockResolvedValue({ state, agent: existing });
+
+				await expect(
+					launchDiscoveredLocalConversationPane({
+						provider,
+						conversationId: "conversation-1",
+						cwd: "/other-project",
+						workspaceRoot: "/other-project",
+						desktopId: "desktop-active",
+						existingOwner: "return",
+					}),
+				).rejects.toMatchObject({
+					code: "conversation_project_move_unsupported",
+				});
+				expect(mocks.ensureManagedAgentRuntime).not.toHaveBeenCalled();
+				expect(mocks.openAgentPanel).not.toHaveBeenCalled();
+				expect(useStore.getState().ensureProjectForPath).not.toHaveBeenCalled();
+				expect(useStore.getState().agents).toEqual([existing]);
+			}
+		},
+	);
+
 	it.each(["working", "exited", undefined] as const)(
 		"resumes Codex app history without borrowing a same-folder Agent whose activity is %s",
 		async (activity) => {
@@ -289,6 +322,54 @@ describe("launchDiscoveredLocalConversationPane", () => {
 		expect(useStore.getState().ensureProjectForPath).not.toHaveBeenCalled();
 		expect(mocks.ensureManagedAgentRuntime).not.toHaveBeenCalled();
 		expect(mocks.openAgentPanel).not.toHaveBeenCalled();
+	});
+
+	it("rejects a different project root even when the working folder matches", async () => {
+		const existing = managedAgentFixture({
+			projectId: project.id,
+			worktreePath: project.path,
+			conversationId: "conversation-1",
+		});
+		useStore.setState({ projects: [project], agents: [existing] });
+		mocks.resolveOwnership.mockResolvedValue({
+			state: "pending",
+			agent: existing,
+		});
+		await expect(
+			launchDiscoveredLocalConversationPane({
+				provider: existing.provider,
+				conversationId: "conversation-1",
+				cwd: project.path,
+				workspaceRoot: "/another-project",
+				desktopId: "desktop-active",
+			}),
+		).rejects.toMatchObject({ code: "conversation_project_move_unsupported" });
+		expect(mocks.ensureManagedAgentRuntime).not.toHaveBeenCalled();
+	});
+
+	it("accepts equivalent Windows path separators and trailing slashes", async () => {
+		const windowsProject = { ...project, path: "C:\\repo\\" };
+		const existing = managedAgentFixture({
+			projectId: project.id,
+			worktreePath: "C:\\repo\\app\\",
+			conversationId: "conversation-1",
+		});
+		useStore.setState({ projects: [windowsProject], agents: [existing] });
+		mocks.resolveOwnership.mockResolvedValue({
+			state: "active",
+			agent: existing,
+		});
+		await expect(
+			launchDiscoveredLocalConversationPane({
+				provider: existing.provider,
+				conversationId: "conversation-1",
+				cwd: "C:/repo/app",
+				workspaceRoot: "C:/repo",
+				desktopId: "desktop-active",
+				existingOwner: "return",
+			}),
+		).resolves.toEqual(existing);
+		expect(mocks.ensureManagedAgentRuntime).not.toHaveBeenCalled();
 	});
 
 	it("rolls back the staged registration when exact create admission is refused", async () => {

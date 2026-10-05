@@ -68,6 +68,7 @@ export const sessions: Record<string, string> = {
 	"sessions.identity.providerExited": "provider가 종료돼 대화 신원을 확인할 수 없습니다",
 	"sessions.identity.timeout": "대화 신원을 제한 시간 안에 확인하지 못했습니다 — 다시 메시지를 보낸 뒤 재시도하세요",
 	"sessions.identity.unknownCode": "대화 신원을 확인할 수 없습니다 ({code})",
+	"sessions.launch.projectMoveUnsupported": "이 대화는 이미 다른 작업 폴더에 연결되어 있습니다. Dure는 아직 대화를 다른 프로젝트로 이동할 수 없습니다. 기존 에이전트를 열어 계속하거나 대상 프로젝트에서 새 대화를 시작하세요.",
 	"sessions.launch.ownershipUnavailable": "현재 대화의 live generation을 확인할 수 없어 pane을 만들지 않았습니다. 세션과 작업 폴더는 그대로 유지됩니다. 최근 세션을 새로고침한 뒤 다시 시도하세요. 사유: {reason}",
 	"sessions.launch.presentedInBackground":
 		"대화는 시작됐지만 pane을 열지 못했습니다. 에이전트는 열리지 않은 에이전트에서 계속 사용할 수 있습니다.",

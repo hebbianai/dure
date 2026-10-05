@@ -39,6 +39,10 @@ DURE_SESSION_IDLE_AFTER_MS seeds only a missing policy; saved settings take prec
 Switch preserves the conversation and selected credential. A busy source is
 retained; this command never discards active work. Failed stopped targets are
 replaced through the same backend transition as the app.
+Switch and wake retain the original project and working folder. Moving an
+existing conversation to another project is not supported. --project, --path
+and --cwd are refused before backend access. Use run --project PROJECT to start
+a new conversation in another registered project.
 An explicit --account changes credentials through that same transition. A named
 account requires its exact --credential-generation; default requires none.
 Use dure runs switch-account <name-or-id> --account ACCOUNT_ID to preview a
