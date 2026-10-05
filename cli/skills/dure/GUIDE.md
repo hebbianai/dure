@@ -32,6 +32,13 @@ dure ls --backend devbox --json
 client may add presentation labels for an exact generation, but `agents.json`
 is never the Session inventory or liveness source.
 
+`dure inspect` accepts a Session ID. Given a `pane-...` ID, use
+`dure client pane state <pane-id> --json` for the mounted pane, or
+`dure client observe --json` to find its session/workspace binding. Inspect that
+Session with its workspace and owning backend. `inspect --json` exposes
+`conversationId` and `runtime.conversationIdentity` when observed by the Host;
+it does not infer the provider's conversation log path.
+
 ## Stop and clean up an agent
 
 ```sh

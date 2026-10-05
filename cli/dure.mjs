@@ -1517,6 +1517,12 @@ const SESSION_QUERY_HELP = `Usage: dure ls [--cursor start|CURSOR] [--backend ID
        dure sessions recent [--json]
 
 List and inspect read canonical backend Sessions without requiring a running app.
+inspect accepts a Session ID, not a pane ID. For a pane use:
+  dure client pane state <pane-id> --json
+  dure client observe --json
+Observe includes each pane's session/workspace binding; keep its backend for SSH.
+inspect --json includes conversationId and runtime.conversationIdentity when the
+Host has observed them. It does not guess a provider's conversation log path.
 For durable Runs after restart, including headless Runs, use dure runs list.
 Use --cursor start for the first ordered page, then pagination.nextCursor until null.
 Pages are live observations ordered by workspace/session ID, not a frozen snapshot.

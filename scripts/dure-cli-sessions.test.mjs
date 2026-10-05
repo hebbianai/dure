@@ -56,6 +56,20 @@ function agentPresentation(paneId, agentId = "agent-1", source = "local", hostId
 }
 
 describe("dure sessions list/show/read", () => {
+  it.each([["inspect", "pane-example"], ["sessions", "show", "pane-example"]])("explains a pane ID before querying a Session: %j", (...args) => {
+    const root = temporaryRoot();
+    const markerPath = join(root, "invoked");
+    const hmux = installHmuxStub(root, [], { markerPath });
+    const result = runCli(root, hmux, [...args, "--json"]);
+    expect(result.status).toBe(2);
+    const report = JSON.parse(result.stdout);
+    expect(report.error.code).toBe("dure_session_pane_id_unsupported");
+    expect(report.error.recovery).toEqual(["dure", "client", "pane", "state", "pane-example", "--json"]);
+    expect(existsSync(markerPath)).toBe(false);
+    const human = runCli(root, hmux, args);
+    expect(human.stdout).toContain("inspect expects a Session ID");
+    expect(human.stdout).toContain("dure client pane state pane-example --json");
+  });
   it("enumerates 300 backend Sessions in bounded pages without a client registry", () => {
     const root = temporaryRoot();
     const payload = Array.from({ length: 300 }, (_, i) => hmuxSession(i + 1));

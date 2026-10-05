@@ -547,6 +547,13 @@ export async function collectSessionQuery({
   ) {
     return errorReport(action, "dure_session_query_invalid", Date.now(), 0, limits);
   }
+  if (action === "show" && sessionId.startsWith("pane-")) {
+    return errorReport(action, "dure_session_pane_id_unsupported", Date.now(), 0, limits, {
+      message: "inspect expects a Session ID, not a pane ID. Use client pane state for the mounted pane, or client observe to find its session/workspace binding. Keep the binding's backend when inspecting a remote session.",
+      recovery: ["dure", "client", "pane", "state", sessionId, "--json"],
+      discover: ["dure", "client", "observe", "--json"],
+    });
+  }
   let parsed;
   let source;
   let bindingSource = "local";
@@ -912,7 +919,11 @@ export function sessionQueryExitCode(report) {
 
 export function formatSessionQuery(report) {
   if (report.kind === "dure.sessions.error") {
-    return `Dure sessions unavailable: ${report.error.code}`;
+    return [`Dure sessions unavailable: ${report.error.code}`,
+      report.error.message,
+      Array.isArray(report.error.recovery) ? report.error.recovery.join(" ") : null,
+      Array.isArray(report.error.discover) ? report.error.discover.join(" ") : null,
+    ].filter(Boolean).join("\n");
   }
   const sessions = report.kind === "dure.sessions.list" ? report.sessions : [report.session];
   if (sessions.length === 0) return "No Dure sessions.";
