@@ -19,7 +19,7 @@ export const CLIENT_PRESENTATION_HELP = `dure client — connected Dure client p
 
 Usage:
   dure client observe [--json]
-  dure client space create [--name NAME] [--json]
+  dure client space create [--name NAME] [--select] [--json]
   dure client space show <space-id> [--json]
   dure client unopened get <agent-id> [--json]
   dure client unopened hide|restore <agent-id> --expected-episode N [--json]
@@ -34,14 +34,17 @@ Usage:
   dure client pane split <reference-session-id> [--reference-panel-id ID]
                          [--direction below|right] [--cwd PATH] [--json]
   dure client pane close <panel-id> --space-id ID --yes [--json]
+  dure client pane move <panel-id> --from-space-id SOURCE --space-id TARGET [--json]
   dure client pane state <panel-id> [--json]
   dure client pane act <panel-id> <action-id> [--args-json OBJECT]
                       [--idempotency-key KEY] [--json]
   dure client workspace open <panel-id> --space-id ID [--target TARGET] [--json]
 
 Commands call the connected app's existing presentation transactions.
-Space create adds and selects a new Space; omit --name to use the app's default name.
-It returns space.spaceId after the Space mounts. Inspect client observe before retrying an uncertain creation.
+Pane move transfers an existing pane without restarting its session or selecting another Space.
+Use exact source and destination Space IDs from client observe. Repeating the same move is a no-op.
+Space create adds a Space in the background; --select also selects it. Omit --name for the app's default name.
+It returns space.spaceId; background creation needs no mounted panes. Inspect client observe before retrying an uncertain creation.
 Space show selects that exact Space in its owning Dure window without creating panes or devices.
 Discover IDs with client observe. This changes the selected Space, not OS foreground focus.
 Unopened visibility changes only Hide from list, never sessions or worktrees.
@@ -133,7 +136,7 @@ export function clientSpaceIdentityPayload({ spaceId, desktopId }) {
   return { spaceId: identity, desktopId: identity };
 }
 
-const PANE_ACTIONS = new Set(["open", "create", "split", "close", "state", "act"]);
+const PANE_ACTIONS = new Set(["open", "create", "split", "close", "move", "state", "act"]);
 const UNOPENED_ACTIONS = new Set(["get", "hide", "restore"]);
 
 export function clientPresentationRequestedCommand(args) {
@@ -458,11 +461,11 @@ export function parseClientPresentationCommand(args) {
   }
   if (domain === "space" && action === "create") {
     const { options } = readCommandTail(tail, {
-      values: new Map([["--name", "name"]]), flags: new Map([["--json", "json"]]),
+      values: new Map([["--name", "name"]]), flags: new Map([["--json", "json"], ["--select", "select"]]),
       optionLabel: "client space create", maxTargets: 0,
     });
     return { help: false, domain, action, path: "/space/create",
-      body: options.name === undefined ? {} : { name: boundedIdentity(options.name, "Space name", MAX_SPACE_NAME_CHARACTERS) } };
+      body: { select: options.select === true, ...(options.name === undefined ? {} : { name: boundedIdentity(options.name, "Space name", MAX_SPACE_NAME_CHARACTERS) }) } };
   }
   if (domain === "space" && action === "show") {
     const { target } = readCommandTail(tail, { values: new Map(), flags: new Map([["--json", "json"]]), optionLabel: "client space show" });
@@ -473,6 +476,17 @@ export function parseClientPresentationCommand(args) {
   }
   if (domain === "pane" && (action === "split" || action === "close")) {
     return { help: false, ...parsePaneCommand(action, tail) };
+  }
+  if (domain === "pane" && action === "move") {
+    const { target, options } = readCommandTail(tail, {
+      values: new Map([["--from-space-id", "fromSpaceId"], ["--space-id", "spaceId"]]),
+      flags: new Map([["--json", "json"]]), optionLabel: "client pane move",
+    });
+    return { help: false, domain, action, path: "/pane/move", body: {
+      targetPanelId: boundedIdentity(target, "pane ID"),
+      fromSpaceId: boundedIdentity(options.fromSpaceId, "source Space ID (--from-space-id)"),
+      spaceId: boundedIdentity(options.spaceId, "destination Space ID (--space-id)"),
+    } };
   }
   if (domain === "project" && action === "add") {
     return { help: false, ...parseProjectAddCommand(tail) };
@@ -520,6 +534,14 @@ export async function runClientPresentationCommand(
   const command = parseClientPresentationCommand(args);
   if (command.help) return command;
   if (command.action === "observe") return observeApp({ directory, descriptor, fetchImpl });
+  if (descriptor && command.domain === "pane" && command.action === "move"
+    && !descriptor.capabilities?.includes("pane.move_v1")) {
+    throw new AppControlClientError("client_capability_missing", "Update the running Dure app; pane.move_v1 is required.");
+  }
+  if (descriptor && command.domain === "space" && command.action === "create" && !command.body.select
+    && !descriptor.capabilities?.includes("space.create_background_v1")) {
+    throw new AppControlClientError("client_capability_missing", "Update the running Dure app for background Space creation, or pass --select to select the new Space.");
+  }
   if (descriptor && command.domain === "host"
     && !(Array.isArray(descriptor.capabilities) && descriptor.capabilities.includes("ssh_hosts.add_v1"))) {
     throw new AppControlClientError("client_capability_missing", "Update the running Dure app; ssh_hosts.add_v1 is required.");
@@ -566,6 +588,11 @@ export async function runClientPresentationCommand(
       "Dure client presentation receipt is invalid.",
     );
   }
+  if (command.domain === "pane" && command.action === "move"
+    && (member.panelId !== command.body.targetPanelId || member.fromSpaceId !== command.body.fromSpaceId
+      || member.spaceId !== command.body.spaceId || typeof member.moved !== "boolean")) {
+    throw new AppControlClientError("client_response_invalid", "Pane move was not confirmed; inspect client observe before another move.");
+  }
   if (command.domain === "unopened") {
     if (member.schemaVersion !== 1 || member.agentId !== command.body.agentId
       || !["unopened", "placed", "hidden_pane"].includes(member.placement)
@@ -584,7 +611,7 @@ export async function runClientPresentationCommand(
       const spaceId = humanReceiptIdentity(member.spaceId);
       const name = humanReceiptIdentity(member.name);
       if (!spaceId || spaceId !== spaceId.trim() || !name || name !== name.trim()
-        || name.length > MAX_SPACE_NAME_CHARACTERS || member.mounted !== true
+        || name.length > MAX_SPACE_NAME_CHARACTERS || (command.body.select ? member.mounted !== true : typeof member.mounted !== "boolean")
         || (member.desktopId !== undefined && member.desktopId !== spaceId)
         || (command.body.name !== undefined && name !== command.body.name)) {
         throw new AppControlClientError("client_response_invalid", "Space creation was not confirmed; inspect client observe before creating again.");
@@ -725,7 +752,7 @@ export function formatClientPresentationReceipt(report) {
   );
   const panelId = humanReceiptIdentity(report.pane.panelId);
   const target = [spaceId, panelId].filter(Boolean).join("/");
-  const detail = report.action === "create" ? "created" : report.action === "split" ? "split" : "closed";
+  const detail = report.action === "create" ? "created" : report.action === "split" ? "split" : report.action === "move" ? (report.pane.moved ? "moved" : "already at destination") : "closed";
   return `✓ client pane ${detail}${target ? ` → ${target}` : ""}`;
 }
 

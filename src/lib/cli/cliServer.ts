@@ -13,6 +13,7 @@ import {
   createTerminalPaneRelativeToSession,
   openHmuxTerminalPanel,
   openAgentPanel,
+  movePaneToSpace,
   type PaneSplitDirection,
 } from "@/lib/workspace/dock";
 import { PaneCommandError } from "@/lib/workspace/pane/paneCommandError";
@@ -95,7 +96,8 @@ const cliDesktopPaneDependencies = {
   claim: claimCliRequest,
   complete: completeCliRequest,
   closePanel: closePanelById,
-  addSpace: (name?: string) => useStore.getState().addSpace({ name }),
+  movePanel: movePaneToSpace,
+  addSpace: (name?: string, select = true) => useStore.getState().addSpace({ name, activate: select }),
   waitForSpace: waitForDesktopDockview,
   removeSpace: (spaceId: string) => useStore.getState().removeSpace(spaceId),
   spaceName: (spaceId: string) =>

@@ -131,6 +131,7 @@ export const workspace: Record<string, string> = {
 	"workspace.paneMenu.pin": "固定窗格",
 	"workspace.paneMenu.unpin": "取消固定窗格",
 	"workspace.paneMenu.title": "窗格菜单",
+	"workspace.paneMenu.moveToSpace": "移动到 Space",
 	"workspace.paneMenu.hide": "隐藏窗格",
 	"workspace.paneInfo.field.paneConnection": "窗格连接",
 	"workspace.paneInfo.title": "窗格信息",

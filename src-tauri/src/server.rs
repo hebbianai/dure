@@ -52,6 +52,8 @@ const SERVER_CAPABILITIES: &[&str] = &[
     "quick_commands_v1",
     "pane_actions.arguments_results_v1",
     "terminal_pane.create_v1",
+    "space.create_background_v1",
+    "pane.move_v1",
     "mobile_pane.open_v1",
     "project_registration.add_v1",
     "ssh_hosts.add_v1",
@@ -64,9 +66,8 @@ const SERVER_CAPABILITIES: &[&str] = &[
 ];
 fn claimed_request_timeout(action: &str) -> Duration {
     match action {
-        "agent.present" | "browser.present" | "hmux.attach" | "pane.act" | "pane.open" => {
-            PANE_OPERATION_CLAIMED_REQUEST_TIMEOUT
-        }
+        "agent.present" | "browser.present" | "hmux.attach" | "pane.act" | "pane.open"
+        | "pane.move" => PANE_OPERATION_CLAIMED_REQUEST_TIMEOUT,
         "hmux.create" => HMUX_CREATE_CLAIMED_REQUEST_TIMEOUT,
         "hmux.upgrade" => HMUX_UPGRADE_CLAIMED_REQUEST_TIMEOUT,
         "hmux.adopt" => HMUX_ADOPTION_CLAIMED_REQUEST_TIMEOUT,
@@ -364,6 +365,14 @@ const FRONTEND_ROUTES: &[FrontendRoute] = &[
         waits_for_receipt: true,
         scope: RouteScope::Control,
         destructive: true,
+    },
+    FrontendRoute {
+        method: Method::Post,
+        path: "/pane/move",
+        action: "pane.move",
+        waits_for_receipt: true,
+        scope: RouteScope::Control,
+        destructive: false,
     },
     // Agent-operability surface: pane status and named pane actions resolve
     // through the exact UI handlers registered by the mounted pane.
@@ -1930,6 +1939,15 @@ mod tests {
             claimed_request_timeout("pane.act"),
             PANE_OPERATION_CLAIMED_REQUEST_TIMEOUT
         );
+        assert_eq!(
+            claimed_request_timeout("pane.move"),
+            PANE_OPERATION_CLAIMED_REQUEST_TIMEOUT
+        );
+        assert_eq!(
+            frontend_action(&Method::Post, "/pane/move"),
+            Some(("pane.move", true))
+        );
+        assert_eq!(frontend_action(&Method::Get, "/pane/move"), None);
     }
 
     #[test]

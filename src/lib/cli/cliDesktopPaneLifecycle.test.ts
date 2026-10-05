@@ -12,6 +12,12 @@ function dependencies(
 		claim: vi.fn(async () => true),
 		complete: vi.fn(async () => undefined),
 		closePanel: vi.fn(async () => null),
+		movePanel: vi.fn(async (panelId, fromSpaceId, spaceId) => ({
+			panelId,
+			fromSpaceId,
+			spaceId,
+			moved: true,
+		})),
 		openMobile: vi.fn(async () => ({ panelId: "mobile-pane", reused: true })),
 		addSpace: vi.fn(() => "desktop-new"),
 		waitForSpace: vi.fn(async () => ({})),
@@ -22,6 +28,79 @@ function dependencies(
 }
 
 describe("dispatchCliDesktopPaneRequest", () => {
+	it("preserves the selected Space for explicit background creation", async () => {
+		let selected = "working";
+		const deps = dependencies({
+			addSpace: (_name, select) => {
+				if (select !== false) selected = "desktop-new";
+				return "desktop-new";
+			},
+		});
+		await dispatchCliDesktopPaneRequest(
+			{
+				reqId: "background",
+				action: "space.create",
+				params: { select: false },
+			},
+			deps,
+		);
+		expect(selected).toBe("working");
+		expect(deps.waitForSpace).not.toHaveBeenCalled();
+	});
+	it("routes moves before claiming and passes exact source and destination identities", async () => {
+		const request = {
+			reqId: "move",
+			action: "pane.move",
+			params: {
+				targetPanelId: " pane ",
+				fromSpaceId: " source ",
+				spaceId: " target ",
+			},
+		};
+		const forwarded = dependencies({
+			routeToSpaceOwner: vi.fn(async () => ({ kind: "forwarded" as const })),
+		});
+		await dispatchCliDesktopPaneRequest(request, forwarded);
+		expect(forwarded.claim).not.toHaveBeenCalled();
+		expect(forwarded.movePanel).not.toHaveBeenCalled();
+		const owner = dependencies();
+		await dispatchCliDesktopPaneRequest(request, owner);
+		expect(owner.movePanel).toHaveBeenCalledWith("pane", "source", "target");
+		expect(owner.complete).toHaveBeenCalledWith(
+			"move",
+			{
+				ok: true,
+				pane: {
+					panelId: "pane",
+					fromSpaceId: "source",
+					spaceId: "target",
+					desktopId: "target",
+					moved: true,
+				},
+			},
+			"pane.move",
+		);
+	});
+	it.each([
+		{},
+		{ targetPanelId: "pane", spaceId: "target" },
+		{ targetPanelId: "pane", fromSpaceId: "source" },
+	])(
+		"refuses incomplete move identities before mutation: %o",
+		async (params) => {
+			const deps = dependencies();
+			await dispatchCliDesktopPaneRequest(
+				{ reqId: "invalid", action: "pane.move", params },
+				deps,
+			);
+			expect(deps.movePanel).not.toHaveBeenCalled();
+			expect(deps.complete).toHaveBeenCalledWith(
+				"invalid",
+				expect.objectContaining({ ok: false }),
+				"pane.move",
+			);
+		},
+	);
 	it("leaves a routed close unclaimed instead of closing a persisted projection", async () => {
 		const deps = dependencies({
 			routeToSpaceOwner: vi.fn(async () => ({ kind: "forwarded" as const })),
@@ -162,7 +241,7 @@ describe("dispatchCliDesktopPaneRequest", () => {
 			deps,
 		);
 
-		expect(deps.addSpace).toHaveBeenCalledWith("Build");
+		expect(deps.addSpace).toHaveBeenCalledWith("Build", true);
 		expect(deps.removeSpace).toHaveBeenCalledWith("desktop-new");
 		expect(deps.complete).toHaveBeenCalledWith(
 			"request-create",

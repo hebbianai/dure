@@ -38,7 +38,7 @@ import { providerForkInheritsConversation } from "@/lib/agents/providerForkCapab
 import type { FileTarget } from "@/lib/files/fileTarget";
 import { t } from "@/lib/i18n";
 import { shareFileAtPointer } from "@/lib/platform/share";
-import { openAgentPanel } from "@/lib/workspace/dock";
+import { movePaneToSpace, openAgentPanel } from "@/lib/workspace/dock";
 import { balanceActiveSpacePanes } from "@/lib/workspace/pane/paneShortcuts";
 import { isMacPlatform } from "@/lib/workspace/desktop/desktopPlatform";
 import { popOutPanels, returnPopoutPanels } from "@/lib/workspace/window/popout";
@@ -82,6 +82,7 @@ export function buildPaneActionMenuSections({
   delegateTask,
   desktopId,
   desktopKind,
+  spaces = [],
   externalOpenTargets = [],
   hide,
   history,
@@ -127,6 +128,7 @@ export function buildPaneActionMenuSections({
   delegateTask: (() => void) | undefined;
   desktopId: string | undefined;
   desktopKind: Space["kind"] | undefined;
+  spaces?: readonly Space[];
   externalOpenTargets?: readonly ExternalOpenTarget[];
   hide: (() => void) | undefined;
   history: (() => void) | undefined;
@@ -370,6 +372,21 @@ export function buildPaneActionMenuSections({
   sections.push({ id: "pane", items: paneActions });
 
   const placementActions: PaneActionMenuSection["items"] = [];
+  const moveTargets = spaces.filter((space) => space.id !== desktopId && space.kind !== "popout");
+  if (desktopId && moveTargets.length > 0) {
+    placementActions.push({
+      id: "move-to-space",
+      label: t("workspace.paneMenu.moveToSpace"),
+      icon: <ArrowLeftRight />,
+      groups: [{ id: "spaces", items: moveTargets.map((space) => ({
+        id: space.id,
+        label: space.name,
+        deferUntilClosed: true,
+        onSelect: () => void movePaneToSpace(panelId, desktopId, space.id).catch((error: unknown) =>
+          messageDialog(String(error), { title: t("workspace.paneMenu.moveToSpace"), kind: "error" })),
+      })) }],
+    });
+  }
   if (desktopId && openExternalWorkspace && externalOpenTargets.length > 0) {
     placementActions.push({
       id: "open-external-workspace",

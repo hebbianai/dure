@@ -131,6 +131,7 @@ export const workspace: Record<string, string> = {
 	"workspace.paneMenu.pin": "Fijar panel",
 	"workspace.paneMenu.unpin": "Desfijar panel",
 	"workspace.paneMenu.title": "Menú del panel",
+	"workspace.paneMenu.moveToSpace": "Mover a Space",
 	"workspace.paneMenu.hide": "Ocultar panel",
 	"workspace.paneInfo.field.paneConnection": "Conexión del panel",
 	"workspace.paneInfo.title": "Información del panel",

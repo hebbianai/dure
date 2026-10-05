@@ -416,23 +416,36 @@ async function createLocalTerminalForReceipt(
 async function executePanelMove(
   items: readonly DesktopPaneMoveItem[],
   targetDesktopId: string,
+  options: { preserveSelection?: boolean; validate?: () => void } = {},
 ): Promise<MovePanelsToDesktopReceipt> {
   return withAgentChatDraftMoves(items, targetDesktopId, () => {
-  const snapshot = snapshotAffectedLayouts(
-    useStore.getState().layouts,
-    items,
-    targetDesktopId,
-    registry,
-  );
-  if ("errorDesktopId" in snapshot) {
-    return moveFailure("layout_snapshot_failed", snapshot.errorDesktopId);
-  }
-  const plan = planDesktopPaneMove(
-    snapshot.layouts,
-    items,
-    targetDesktopId,
-  );
-  return commitDesktopPaneMove(plan, targetDesktopId);
+    // Draft transfer can await another window. Recheck explicit command targets
+    // at the synchronous layout boundary before removing anything from source.
+    options.validate?.();
+    const snapshot = snapshotAffectedLayouts(
+      useStore.getState().layouts,
+      items,
+      targetDesktopId,
+      registry,
+    );
+    if ("errorDesktopId" in snapshot) {
+      return moveFailure("layout_snapshot_failed", snapshot.errorDesktopId);
+    }
+    const plan = planDesktopPaneMove(snapshot.layouts, items, targetDesktopId);
+    if (options.preserveSelection) {
+      const original = snapshot.layouts[targetDesktopId] as { activeGroup?: string } | undefined;
+      const updated = plan.updates[targetDesktopId] as { activeGroup?: string } | undefined;
+      if (original?.activeGroup && updated) updated.activeGroup = original.activeGroup;
+    }
+    const focused = options.preserveSelection ? document.activeElement : null;
+    const receipt = commitDesktopPaneMove(plan, targetDesktopId);
+    // Dockview reparents reused panel content while projecting the layout. That
+    // clears DOM focus even when the focused pane was not moved. Restore only
+    // the same surviving element, synchronously; never focus a replacement pane.
+    if (focused && focused instanceof HTMLElement && focused.isConnected && document.activeElement !== focused) {
+      focused.focus({ preventScroll: true });
+    }
+    return receipt;
   });
 }
 
@@ -524,6 +537,54 @@ export function movePanelsToDesktop(
       console.error(`[pane move:${targetDesktopId}]`, error);
       return moveFailure("move_execution_failed", targetDesktopId);
     });
+}
+
+/** Explicit UI/CLI move: validate identities inside the same serialized move
+ * transaction as drag. No process or session lifecycle operation is involved. */
+export function movePaneToSpace(
+  panelId: string,
+  fromSpaceId: string,
+  spaceId: string,
+) {
+  return enqueuePaneMove(async () => {
+    const validate = () => {
+      for (const id of [fromSpaceId, spaceId]) {
+        if (!useStore.getState().spaces.some((space) => space.id === id)) {
+          throw new PaneCommandError("space_not_found", `Space ${id} was not found`);
+        }
+      }
+    };
+    validate();
+    const state = useStore.getState();
+    const source = registry.get(fromSpaceId)?.toJSON() ?? state.layouts[fromSpaceId];
+    const target = registry.get(spaceId)?.toJSON() ?? state.layouts[spaceId];
+    const atSource = panelsFromLayout(source).some((pane) => pane.id === panelId);
+    const atTarget = panelsFromLayout(target).some((pane) => pane.id === panelId);
+    if (!atSource && !atTarget) {
+      throw new PaneCommandError("pane_not_found", `pane ${panelId} was not found in Space ${fromSpaceId}`);
+    }
+    if (fromSpaceId === spaceId || !atSource) {
+      return { panelId, fromSpaceId, spaceId, moved: false };
+    }
+    const receipt = await executePanelMove(
+      [{ panelId, fromDesktopId: fromSpaceId }],
+      spaceId,
+      { preserveSelection: true, validate },
+    );
+    if (receipt.error) {
+      throw new PaneCommandError("pane_move_failed", receipt.error.code);
+    }
+    if (receipt.missingPanelIds.includes(panelId)) {
+      throw new PaneCommandError("pane_changed", `pane ${panelId} changed before the move`);
+    }
+    return {
+      panelId,
+      fromSpaceId,
+      spaceId,
+      moved: receipt.movedPanelIds.includes(panelId),
+      projectionPending: receipt.projectionFailedDesktopIds.length > 0,
+    };
+  });
 }
 
 import type { PanelPosition } from "@/lib/workspace/pane/panePlacement";

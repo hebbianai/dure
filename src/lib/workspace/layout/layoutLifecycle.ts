@@ -267,8 +267,9 @@ export function removePanelIdsFromLayout(
   }
 
   if (typeof next.activeGroup === "string") {
-    const stillPresent = panelsFromLayout(next).some((panel) => panel.id === next.activeGroup);
-    if (!stillPresent) delete next.activeGroup;
+    const groups = new Set<string>();
+    groupIdsIn(next, groups);
+    if (!groups.has(next.activeGroup)) delete next.activeGroup;
   }
   return next;
 }

@@ -3,6 +3,8 @@ export type PaneCommandErrorCode =
 	| "pane_not_found"
 	| "pane_ambiguous"
 	| "pane_changed"
+	| "space_not_found"
+	| "pane_move_failed"
 	| "agent_identity_conflict"
 	| "agent_name_conflict"
 	| "project_not_found"

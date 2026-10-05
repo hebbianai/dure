@@ -18,9 +18,10 @@ import {
 } from "@/lib/workspace/layout/agentPaneParameters";
 import type { LocalHmuxPaneParameters } from "@/lib/workspace/pane/paneHmuxRehostAction";
 import { useStore } from "@/store";
-import type { Agent } from "@/types";
+import type { Agent, Space } from "@/types";
 
 const CLOSED_PANE_MENU_AGENTS: readonly Agent[] = [];
+const CLOSED_PANE_MENU_SPACES: readonly Space[] = [];
 
 export interface PaneParams extends LocalHmuxPaneParameters {
 	agentRef?: AgentPaneParameters["agentRef"];
@@ -66,6 +67,9 @@ export function usePaneChromeState({
 	// 좌표를 기록해 두고 복원 시 다시 연다(hiddenFilePanesStore).
 	const projects = useStore((s) => s.projects);
 	const sshHosts = useStore((s) => s.sshHosts);
+	const spaces = useStore((s) =>
+		includeSwitchCandidates ? s.spaces : CLOSED_PANE_MENU_SPACES,
+	);
 	const desktopKind = useStore((s) =>
 		desktopId
 			? s.spaces.find((desktop) => desktop.id === desktopId)?.kind
@@ -123,6 +127,7 @@ export function usePaneChromeState({
 		includeSwitchCandidates ? s.agents : CLOSED_PANE_MENU_AGENTS,
 	);
 	return {
+		spaces,
 		agent,
 		sessionId,
 		hmuxBinding,

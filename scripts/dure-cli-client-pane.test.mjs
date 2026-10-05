@@ -186,11 +186,11 @@ describe("Dure Space creation CLI", () => {
         spaceName: (id) => spaces.find((space) => space.spaceId === id)?.name,
       });
       return { status: 200, body: receipt };
-    }, []);
+    }, ["space.create_background_v1"]);
     const named = await runCli(["client", "space", "create", "--name", "  빌드 QA  ", "--json"], fixture.environment);
     expect(named.code, named.stderr).toBe(0);
     expect(JSON.parse(named.stdout)).toMatchObject({ kind: "dure.client_space.create", action: "create",
-      space: { spaceId: "space-0", name: "빌드 QA", mounted: true } });
+      space: { spaceId: "space-0", name: "빌드 QA", mounted: false } });
     const unnamed = await runCli(["client", "space", "create"], fixture.environment);
     expect(unnamed.code, unnamed.stderr).toBe(0);
     expect(unnamed.stdout).toContain("Space created");
@@ -201,9 +201,9 @@ describe("Dure Space creation CLI", () => {
     expect(mcp.structuredContent).toMatchObject({ kind: "dure.client_space.create",
       space: { spaceId: "space-2", name: "Review", mounted: true } });
     expect(fixture.requests.map(({ url, body }) => ({ url, body }))).toEqual([
-      { url: "/space/create", body: { name: "빌드 QA" } },
-      { url: "/space/create", body: {} },
-      { url: "/space/create", body: { name: "Review" } },
+      { url: "/space/create", body: { name: "빌드 QA", select: false } },
+      { url: "/space/create", body: { select: false } },
+      { url: "/space/create", body: { name: "Review", select: true } },
     ]);
   });
 
@@ -211,12 +211,12 @@ describe("Dure Space creation CLI", () => {
     { spaceId: "", name: "Review", mounted: true },
     { spaceId: "  ", name: "Review", mounted: true },
     { spaceId: "space\nwrong", name: "Review", mounted: true },
-    { spaceId: "space-new", name: "Review", mounted: false },
+    { spaceId: "space-new", name: "Review" },
     { spaceId: "space-new", name: "Other", mounted: true },
     { spaceId: "space-new", mounted: true },
     { spaceId: "space-new", desktopId: "other", name: "Review", mounted: true },
   ])("refuses an unconfirmed creation receipt without retrying (%j)", async (space) => {
-    const fixture = await fixtureClient(() => ({ status: 200, body: { ok: true, space } }), []);
+    const fixture = await fixtureClient(() => ({ status: 200, body: { ok: true, space } }), ["space.create_background_v1"]);
     const result = await runCli(["client", "space", "create", "--name", "Review", "--json"], fixture.environment);
     expect(result.code).toBe(2);
     expect(JSON.parse(result.stderr)).toMatchObject({ kind: "dure.client_space.error", action: "create",
@@ -226,7 +226,7 @@ describe("Dure Space creation CLI", () => {
 
   it("preserves an app refusal and does not silently retry Space creation", async () => {
     const fixture = await fixtureClient(() => ({ status: 200, body: { ok: false,
-      error: { code: "space_mount_timeout", message: "Space did not mount" } } }), []);
+      error: { code: "space_mount_timeout", message: "Space did not mount" } } }), ["space.create_background_v1"]);
     const result = await runCli(["client", "space", "create", "--json"], fixture.environment);
     expect(result.code).toBe(2);
     expect(JSON.parse(result.stderr)).toMatchObject({ kind: "dure.client_space.error", action: "create",
@@ -1126,4 +1126,33 @@ describe("mobile pane opening through the shared client transport", () => {
   expect(result.code).toBe(2); expect(JSON.parse(result.stderr).error.code).toBe("client_capability_missing");
   expect(fixture.requests.filter((request) => request.method === "POST")).toEqual([]);
  });
+});
+
+it("refuses background creation on older apps before mutation and keeps explicit selection compatible", async () => {
+  const fixture = await fixtureClient(() => ({ status: 200, body: { ok: true, space: { spaceId: "new", name: "Workspace", mounted: true } } }), []);
+  const background = await runCli(["client", "space", "create", "--json"], fixture.environment);
+  expect(background.code).toBe(2);
+  expect(JSON.parse(background.stderr).error.code).toBe("client_capability_missing");
+  expect(fixture.requests).toHaveLength(0);
+  const selected = await runCli(["client", "space", "create", "--select", "--json"], fixture.environment);
+  expect(selected.code, selected.stderr).toBe(0);
+  expect(fixture.requests[0].body).toEqual({ select: true });
+});
+
+it("moves an exact existing pane through the connected client and retains source/destination in the receipt", async () => {
+  const fixture = await fixtureClient(({ body }) => ({ status: 200, body: { ok: true, pane: {
+    panelId: body.targetPanelId, fromSpaceId: body.fromSpaceId, spaceId: body.spaceId, moved: true,
+  } } }), ["pane.move_v1"]);
+  const result = await runCli(["client", "pane", "move", "pane-running", "--from-space-id", "source", "--space-id", "target", "--json"], fixture.environment);
+  expect(result.code, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ kind: "dure.client_pane.move", pane: { panelId: "pane-running", fromSpaceId: "source", spaceId: "target", moved: true } });
+  expect(fixture.requests.map(({ url, body }) => ({ url, body }))).toEqual([{ url: "/pane/move", body: { targetPanelId: "pane-running", fromSpaceId: "source", spaceId: "target" } }]);
+});
+
+it("refuses pane movement on an older app without sending a mutation", async () => {
+  const fixture = await fixtureClient(undefined, []);
+  const result = await runCli(["client", "pane", "move", "pane", "--from-space-id", "source", "--space-id", "target", "--json"], fixture.environment);
+  expect(result.code).toBe(2);
+  expect(JSON.parse(result.stderr).error.code).toBe("client_capability_missing");
+  expect(fixture.requests).toHaveLength(0);
 });

@@ -131,6 +131,7 @@ export const workspace: Record<string, string> = {
 	"workspace.paneMenu.pin": "Épingler le volet",
 	"workspace.paneMenu.unpin": "Désépingler le volet",
 	"workspace.paneMenu.title": "Menu du volet",
+	"workspace.paneMenu.moveToSpace": "Déplacer vers un Space",
 	"workspace.paneMenu.hide": "Masquer le volet",
 	"workspace.paneInfo.field.paneConnection": "Connexion du panneau",
 	"workspace.paneInfo.title": "Informations sur le panneau",

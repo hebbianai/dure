@@ -131,6 +131,7 @@ export const workspace: Record<string, string> = {
 	"workspace.paneMenu.pin": "Fixar painel",
 	"workspace.paneMenu.unpin": "Desafixar painel",
 	"workspace.paneMenu.title": "Menu do painel",
+	"workspace.paneMenu.moveToSpace": "Mover para Space",
 	"workspace.paneMenu.hide": "Ocultar painel",
 	"workspace.paneInfo.field.paneConnection": "Conexão do painel",
 	"workspace.paneInfo.title": "Informações do painel",

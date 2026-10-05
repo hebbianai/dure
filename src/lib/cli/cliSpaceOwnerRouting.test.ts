@@ -16,6 +16,30 @@ function observation(
 }
 
 describe("presentation Space owner routing", () => {
+	it("routes a move to its source owner without replacing its destination", async () => {
+		const resolveOwner = vi.fn(async () => "win-100-2");
+		const forward = vi.fn(async () => undefined);
+		const request = {
+			reqId: "move",
+			action: "pane.move",
+			params: {
+				targetPanelId: "pane",
+				fromSpaceId: "source",
+				spaceId: "target",
+			},
+		};
+		await routeCliRequestToSpaceOwner(request, {
+			currentWindowLabel: () => "main",
+			activeSpaceId: () => "unrelated",
+			resolveOwner,
+			forward,
+		});
+		expect(resolveOwner).toHaveBeenCalledWith("source");
+		expect(forward).toHaveBeenCalledWith("win-100-2", {
+			...request,
+			params: { ...request.params, windowLabel: "win-100-2" },
+		});
+	});
 	it("routes an omitted Space to the active Space's mounted owner", async () => {
 		const forward = vi.fn(async () => undefined);
 		const dependencies = {

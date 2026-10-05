@@ -131,6 +131,7 @@ export const workspace: Record<string, string> = {
 	"workspace.paneMenu.pin": "ペインを固定",
 	"workspace.paneMenu.unpin": "ペインの固定を解除",
 	"workspace.paneMenu.title": "ペインメニュー",
+	"workspace.paneMenu.moveToSpace": "Space に移動",
 	"workspace.paneMenu.hide": "ペインを非表示",
 	"workspace.paneInfo.field.paneConnection": "ペインの接続",
 	"workspace.paneInfo.title": "ペイン情報",

@@ -21,7 +21,12 @@ export interface CliDesktopPaneDependencies {
 		action: string,
 	): Promise<unknown>;
 	closePanel(panelId: string, spaceId?: string): Promise<object | null>;
-	addSpace(name?: string): string;
+	movePanel(
+		panelId: string,
+		fromSpaceId: string,
+		spaceId: string,
+	): Promise<object>;
+	addSpace(name?: string, select?: boolean): string;
 	waitForSpace(spaceId: string): Promise<unknown | undefined>;
 	removeSpace(spaceId: string): void;
 	spaceName(spaceId: string): string | undefined;
@@ -98,14 +103,64 @@ async function handlePaneClose(
 	}
 }
 
+async function handlePaneMove(
+	request: CliDesktopPaneRequest,
+	dependencies: CliDesktopPaneDependencies,
+) {
+	let claimed = false;
+	try {
+		const panelId =
+			typeof request.params.targetPanelId === "string"
+				? request.params.targetPanelId.trim()
+				: "";
+		const fromSpaceId =
+			typeof request.params.fromSpaceId === "string"
+				? request.params.fromSpaceId.trim()
+				: "";
+		const spaceId = resolveCliSpaceId(request.params, { required: true });
+		if (!panelId || !fromSpaceId || !spaceId)
+			throw new Error(
+				"pane move requires targetPanelId, fromSpaceId and spaceId",
+			);
+		if ((await dependencies.routeToSpaceOwner(request)).kind === "forwarded")
+			return null;
+		claimed = await dependencies.claim(request.reqId);
+		if (!claimed) return null;
+		return {
+			ok: true,
+			pane: await dependencies.movePanel(panelId, fromSpaceId, spaceId),
+		};
+	} catch (error) {
+		if (!claimed && !(await dependencies.claim(request.reqId))) return null;
+		return {
+			ok: false,
+			error: errorPayload(
+				error,
+				claimed ? "pane_move_failed" : "invalid_request",
+			),
+		};
+	}
+}
+
 async function handleSpaceCreate(
 	request: CliDesktopPaneRequest,
 	dependencies: CliDesktopPaneDependencies,
 ) {
 	if (!(await dependencies.claim(request.reqId))) return null;
+	if (
+		request.params.select !== undefined &&
+		typeof request.params.select !== "boolean"
+	) {
+		return {
+			ok: false,
+			error: { code: "invalid_request", message: "select must be a boolean" },
+		};
+	}
+	// Omitted selection preserves older CLI/MCP clients and desktop.create.
+	const select = request.params.select !== false;
 	const name = String(request.params.name ?? "").trim() || undefined;
-	const spaceId = dependencies.addSpace(name);
-	if (!(await dependencies.waitForSpace(spaceId))) {
+	const spaceId = dependencies.addSpace(name, select);
+	if (select && !(await dependencies.waitForSpace(spaceId))) {
 		dependencies.removeSpace(spaceId);
 		const legacyAction = request.action === "desktop.create";
 		return {
@@ -120,7 +175,8 @@ async function handleSpaceCreate(
 		spaceId,
 		desktopId: spaceId,
 		name: dependencies.spaceName(spaceId),
-		mounted: true,
+		// A background Space needs no Dockview or terminal to exist.
+		mounted: select,
 	};
 	return {
 		ok: true,
@@ -165,6 +221,8 @@ export async function dispatchCliDesktopPaneRequest(
 	let result: Record<string, unknown> | null;
 	if (request.action === "pane.close") {
 		result = await handlePaneClose(request, dependencies);
+	} else if (request.action === "pane.move") {
+		result = await handlePaneMove(request, dependencies);
 	} else if (request.action === "pane.open") {
 		result = await handlePaneOpen(request, dependencies);
 	} else if (

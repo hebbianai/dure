@@ -26,6 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import { movePanelToDesktop } from "@/lib/workspace/dock";
 import { getDragState } from "@/lib/workspace/pane/paneDragState";
+import { canDropPaneOnSpace } from "@/lib/spaces/spacesPaneTabDrop";
 import type { Desktop } from "@/types";
 
 export interface SpacesDesktopSectionProps {
@@ -119,12 +120,7 @@ export function SpacesDesktopSection({
 			)}
 			data-space-desktop-section={desktop.id}
 			onDragOver={(event) => {
-				const rowItems = currentSpacesRowDrag();
-				const paneDrag = rowItems ? null : getDragState();
-				const acceptable = rowItems
-					? rowItems.some((item) => item.fromDesktopId !== desktop.id)
-					: paneDrag !== null && paneDrag.fromDesktopId !== desktop.id;
-				if (!acceptable) return;
+				if (!canDropPaneOnSpace(desktop.id)) return;
 				event.preventDefault();
 				event.dataTransfer.dropEffect = "move";
 				onDragEnterSection(sectionKey);

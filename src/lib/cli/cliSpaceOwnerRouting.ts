@@ -199,7 +199,10 @@ export async function routeCliRequestToSpaceOwner(
 	dependencies: CliSpaceOwnerRoutingDependencies = routingDependencies,
 ): Promise<CliSpaceOwnerRoute> {
 	const spaceId =
-		resolveCliSpaceId(request.params) ??
+		(request.action === "pane.move" &&
+		typeof request.params.fromSpaceId === "string"
+			? request.params.fromSpaceId.trim()
+			: resolveCliSpaceId(request.params)) ??
 		(request.action === "hmux.create"
 			? dependencies.activeSpaceId()
 			: undefined);
@@ -214,7 +217,11 @@ export async function routeCliRequestToSpaceOwner(
 	await dependencies.forward(owner, {
 		reqId: request.reqId,
 		action: request.action,
-		params: { ...request.params, spaceId, windowLabel: owner },
+		params: {
+			...request.params,
+			...(request.action === "pane.move" ? {} : { spaceId }),
+			windowLabel: owner,
+		},
 	});
 	return { kind: "forwarded" };
 }

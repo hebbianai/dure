@@ -271,18 +271,23 @@ not current. Without `--check`, degraded diagnostics still exit zero.
 
 ## Connected-client Space and pane control
 
-Create a Space and select it through the connected app:
+Create a Space in the background through the connected app:
 
 ```sh
 dure client space create --name "Review" --json
 dure client space create --json
+dure client space create --name "Review" --select --json
 dure client space show <space-id> --json
 ```
 
 Omitting `--name` uses the app's next default name. Creation returns
-`space.spaceId` after the new Space mounts; use that ID for `space show` or
+`space.spaceId` without changing the selected Space. Pass `--select` to select
+and mount it. Use that ID for `space show` or
 `pane create --space-id`. The MCP equivalent is `app_space_create` with an
-optional `name`. If the response is uncertain, inspect `client observe` /
+optional `name`; it retains its existing create-and-select behavior. Older CLI
+clients also retain selection. Background creation requires an app advertising
+`space.create_background_v1`; a newer CLI refuses an older app before creating.
+If the response is uncertain, inspect `client observe` /
 `app_observe` before creating again.
 
 Pane placement belongs to a connected Dure client, not to Hmux or the detached
@@ -292,6 +297,7 @@ split or close transaction as the app:
 ```sh
 dure client pane split <reference-session-id> \
   --reference-panel-id <pane-id> --direction right
+dure client pane move <pane-id> --from-space-id <source-space-id> --space-id <target-space-id>
 dure client pane close <pane-id> --space-id <space-id> --yes
 dure client workspace open <pane-id> --space-id <space-id> --target cursor
 dure client project add /repo --space <space-id-or-name>
@@ -358,6 +364,11 @@ returns the canonical `registration.host.id` for `client pane create --host ID`.
 Repeated identical key/automatic registrations reuse the saved Host. The first
 terminal creation provisions a missing remote Hmux before requesting a session;
 installation errors are returned without creating a pane.
+`pane move` uses the same transaction as the pane menu’s **Move to Space** and
+Space drag. It preserves the pane ID, running session and selected Space. The
+source pane is removed and one destination pane remains. Repeating the same
+source/pane/destination is a no-op; inspect `client observe` after an uncertain
+response before requesting a different move. It requires `pane.move_v1`.
 `close` requires the exact Space and pane identity plus explicit confirmation;
 it never selects a pane by focus or display name. `workspace open` resolves that
 same exact pane generation and opens its local project or Agent worktree through

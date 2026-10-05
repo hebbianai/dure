@@ -3521,11 +3521,11 @@ Usage:
   dure quick-commands <list|put|remove> ...
                                       Manage saved prompts through the connected app; never executes them
   dure client observe [--json]     Discover connected-client Spaces and pane IDs
-  dure client space create [--name NAME] [--json]
-                                      Create and select a Space; returns its mounted Space ID
+  dure client space create [--name NAME] [--select] [--json]
+                                      Create a Space in the background; --select selects it
   dure client space show <space-id> [--json]
                                       Select the exact Space in its owning window
-  dure client pane <open|create|split|close|state|act> ...
+  dure client pane <open|create|split|close|move|state|act> ...
                                       Manage panes in the connected Dure client
   dure client project add [PATH] [--space ID_OR_NAME | --space-id ID] [--host ID]
                                       Add a shared app working location; no pane or worktree creation

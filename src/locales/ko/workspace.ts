@@ -40,6 +40,7 @@ export const workspace: Record<string, string> = {
 	"workspace.paneMenu.pin": "Pane 고정",
 	"workspace.paneMenu.unpin": "Pane 고정 해제",
 	"workspace.paneMenu.title": "Pane 메뉴",
+	"workspace.paneMenu.moveToSpace": "Space로 이동",
 	"workspace.paneMenu.hide": "Pane 숨기기",
 	"workspace.paneInfo.field.paneConnection": "Pane 연결",
 	"workspace.paneInfo.title": "Pane 정보",

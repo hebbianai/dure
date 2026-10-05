@@ -145,6 +145,7 @@ export const workspaceEnglishTranslations = {
 	"workspace.paneMenu.pin": "Pin pane",
 	"workspace.paneMenu.unpin": "Unpin pane",
 	"workspace.paneMenu.title": "Pane menu",
+	"workspace.paneMenu.moveToSpace": "Move to Space",
 	"workspace.paneMenu.hide": "Hide pane",
 	"workspace.paneInfo.field.paneConnection": "Pane connection",
 	"workspace.paneInfo.title": "Pane information",
