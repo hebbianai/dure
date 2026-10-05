@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/components/usage/ResourceMonitor", () => ({
@@ -16,6 +16,7 @@ vi.mock("@/lib/workspace/dock", async (importOriginal) => {
 import { DesktopBar } from "@/components/workspace/DesktopBar";
 import { markDesktopStartsEmpty } from "@/lib/workspace/dock";
 import { setLang } from "@/lib/i18n";
+import { beginSpacesRowDrag, endSpacesRowDrag, spacesDragPayload } from "@/lib/spaces/spacesDrag";
 import {
 	DEFAULT_TERMINAL_FONT_SIZE,
 } from "@/lib/terminal/renderer/terminalFont";
@@ -219,6 +220,7 @@ describe("DesktopBar tab menu", () => {
 		useStore.setState({ shortcutOverrides: {} });
 	});
 	afterEach(() => {
+		endSpacesRowDrag();
 		for (const dispose of disposers.splice(0)) dispose();
 		useStore.setState(previous);
 	});
@@ -237,6 +239,38 @@ describe("DesktopBar tab menu", () => {
 		});
 		return row;
 	}
+
+	it("moves all selected sidebar panes on a Space tab using the surviving drop payload", async () => {
+		const source = space("drag-source");
+		const target = space("drag-target");
+		useStore.setState({
+			spaces: [{ id: "drag-source", name: "Source" }, { id: "drag-target", name: "Target" }],
+			activeSpaceId: "drag-source",
+			layouts: {},
+		});
+		render(<DesktopBar />);
+		const items = source.api.panels.map((pane) => ({ panelId: pane.id, fromDesktopId: "drag-source" }));
+		beginSpacesRowDrag(items);
+		const payload = spacesDragPayload(items);
+		// Native capture cleanup may already have spent the module hint.
+		endSpacesRowDrag();
+		fireEvent.drop(stripTabs()[1], { dataTransfer: { getData: () => payload } });
+		await waitFor(() => expect(source.api.panels).toHaveLength(0));
+		expect(target.api.panels.map((pane) => pane.id).sort()).toEqual([
+			"drag-source-a", "drag-source-b", "drag-target-a", "drag-target-b",
+		]);
+		expect(useStore.getState().activeSpaceId).toBe("drag-target");
+	});
+
+	it("ignores unrelated text dropped on a Space tab without switching Spaces", () => {
+		useStore.setState({
+			spaces: [{ id: "drop-first", name: "First" }, { id: "drop-second", name: "Second" }],
+			activeSpaceId: "drop-first",
+		});
+		render(<DesktopBar />);
+		fireEvent.drop(stripTabs()[1], { dataTransfer: { getData: () => "unrelated text" } });
+		expect(useStore.getState().activeSpaceId).toBe("drop-first");
+	});
 
 	it("balances the active Space's panes on ⌘⇧B", () => {
 		const first = space("chord-first");

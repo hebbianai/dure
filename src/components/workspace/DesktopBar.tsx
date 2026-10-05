@@ -20,8 +20,9 @@ import {
   useDesktopBarState,
   useFontSizeControlState,
 } from "@/components/workspace/useDesktopBarState";
-import { markDesktopStartsEmpty, movePanelToDesktop } from "@/lib/workspace/dock";
-import { getDragState, setDragState } from "@/lib/workspace/pane/paneDragState";
+import { markDesktopStartsEmpty } from "@/lib/workspace/dock";
+import { canDropPaneOnSpace, dropPanesOnSpace } from "@/lib/spaces/spacesPaneTabDrop";
+import { setDragState } from "@/lib/workspace/pane/paneDragState";
 import { requestDesktopPrewarm } from "@/lib/workspace/desktop/desktopPrewarm";
 import { allowsManualReorder, orderDesktopTabs } from "@/lib/workspace/desktop/desktopTabOrder";
 import { matchesChord, shortcutChord } from "@/lib/settings/shortcutBindings";
@@ -416,8 +417,9 @@ export function DesktopBar() {
               }}
               onDragOver={(e) => {
                 if (draggingDesktop.current) return;
-                if (getDragState()) {
+                if (canDropPaneOnSpace(d.id)) {
                   e.preventDefault(); // 드롭 허용
+                  e.dataTransfer.dropEffect = "move";
                   if (dropTarget !== d.id) setDropTarget(d.id);
                 }
               }}
@@ -429,8 +431,9 @@ export function DesktopBar() {
                 e.preventDefault();
                 e.stopPropagation();
                 setDropTarget(null);
-                movePanelToDesktop(d.id);
-                setActiveSpace(d.id);
+                void dropPanesOnSpace(e.dataTransfer, d.id).then((moved) => {
+                  if (moved) setActiveSpace(d.id);
+                });
               }}
               onDoubleClick={(e) => {
                 e.preventDefault();
