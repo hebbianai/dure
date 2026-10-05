@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ message: vi.fn() }));
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn() }));
 vi.mock("@/lib/agents/agentInstalls", () => ({
 	useAvailableProviders: () => ["claude"],
 	useQuickStartProviders: () => ({ available: ["claude"], quick: ["claude"] }),
@@ -19,12 +27,23 @@ vi.mock("@/lib/agents/resourceLifecycle", () => ({
 }));
 
 import { SpacesRepositoryHeader } from "@/components/spaces/SpacesRepositoryHeader";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useStore } from "@/store";
-import type { Project } from "@/types";
+import type { Project, SshHostConfig } from "@/types";
 
-const PROJECT = { id: "p1", name: "Dure", path: "/repo" } as Project;
+const PROJECT: Project = {
+	id: "p1",
+	name: "Dure",
+	path: "/repo",
+	kind: "local",
+	isRepo: true,
+};
 
-function renderHeader(projectId: string | undefined) {
+function renderHeader(
+	projectId: string | undefined,
+	project = PROJECT,
+	sshHosts: SshHostConfig[] = [],
+) {
 	render(
 		<SpacesRepositoryHeader
 			group={{ key: "p1", label: "Dure", projectId, spaces: [] }}
@@ -32,8 +51,8 @@ function renderHeader(projectId: string | undefined) {
 			level="group"
 			collapsed={false}
 			onToggleCollapsed={vi.fn()}
-			projects={[PROJECT]}
-			sshHosts={[]}
+			projects={project.id === PROJECT.id ? [project] : [PROJECT, project]}
+			sshHosts={sshHosts}
 			onAddRepositoryTerminal={vi.fn()}
 			onAddRepositoryAgent={vi.fn(async () => {})}
 			onAddRepositoryAgentWithOptions={vi.fn()}
@@ -110,6 +129,88 @@ describe("SpacesRepositoryHeader disclosure", () => {
 });
 
 describe("SpacesRepositoryHeader project menu", () => {
+	it("opens the selected project's info, copies its complete path, and restores focus on close", async () => {
+		const project: Project = {
+			id: "windows-project",
+			name: "Windows workspace",
+			path: "C:\\Users\\Developer\\Projects\\a very long project folder",
+			kind: "local",
+			isRepo: true,
+		};
+		vi.mocked(writeText).mockResolvedValue();
+		renderHeader(project.id, project);
+		const heading = screen.getByRole("button", { name: "Dure" });
+		fireEvent.contextMenu(heading);
+		fireEvent.click(
+			await screen.findByRole("menuitem", { name: "프로젝트 정보" }),
+		);
+		const dialog = await screen.findByRole("dialog", { name: "프로젝트 정보" });
+		expect(within(dialog).getByText(project.name)).toBeTruthy();
+		expect(within(dialog).getByText(project.path)).toBeTruthy();
+		expect(within(dialog).getByText("Git 저장소")).toBeTruthy();
+		expect(within(dialog).queryByText("SSH 호스트")).toBeNull();
+		fireEvent.click(
+			within(dialog).getByRole("button", { name: "폴더 경로 복사" }),
+		);
+		await waitFor(() => expect(writeText).toHaveBeenCalledWith(project.path));
+		expect((await within(dialog).findByRole("status")).textContent).toContain(
+			"클립보드",
+		);
+		fireEvent.click(within(dialog).getByRole("button", { name: "닫기" }));
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		await waitFor(() => expect(document.activeElement).toBe(heading));
+		expect(heading.getAttribute("aria-expanded")).toBe("true");
+		expect(removal.plan).not.toHaveBeenCalled();
+		expect(removal.execute).not.toHaveBeenCalled();
+	});
+
+	it.each([true, false])(
+		"shows SSH location with a registered host: %s",
+		async (registered) => {
+			const host: SshHostConfig = {
+				id: "remote-host",
+				name: "Build server",
+				host: "example.test",
+				port: 22,
+				user: "developer",
+				auth: "auto",
+			};
+			renderHeader(
+				"p1",
+				{ ...PROJECT, kind: "ssh", sshHostId: host.id, isRepo: false },
+				registered ? [host] : [],
+			);
+			fireEvent.contextMenu(screen.getByRole("button", { name: "Dure" }));
+			fireEvent.click(
+				await screen.findByRole("menuitem", { name: "프로젝트 정보" }),
+			);
+			const dialog = await screen.findByRole("dialog");
+			expect(within(dialog).getByText("SSH")).toBeTruthy();
+			expect(within(dialog).getByText("폴더")).toBeTruthy();
+			expect(
+				within(dialog).getByText(
+					registered ? host.name : "SSH 호스트를 찾을 수 없습니다",
+				),
+			).toBeTruthy();
+		},
+	);
+
+	it("reports a failed path copy inline", async () => {
+		vi.mocked(writeText).mockRejectedValue(new Error("clipboard unavailable"));
+		renderHeader("p1");
+		fireEvent.contextMenu(screen.getByRole("button", { name: "Dure" }));
+		fireEvent.click(
+			await screen.findByRole("menuitem", { name: "프로젝트 정보" }),
+		);
+		const dialog = await screen.findByRole("dialog");
+		fireEvent.click(
+			within(dialog).getByRole("button", { name: "폴더 경로 복사" }),
+		);
+		expect((await within(dialog).findByRole("status")).textContent).toContain(
+			"복사하지 못했습니다",
+		);
+	});
+
 	it("removes a registered project from the list after confirming in the row", async () => {
 		const plan = {
 			projectId: "p1",
@@ -122,14 +223,18 @@ describe("SpacesRepositoryHeader project menu", () => {
 		renderHeader("p1");
 
 		fireEvent.contextMenu(screen.getByText("Dure"));
-		const remove = await screen.findByRole("menuitem", { name: /프로젝트 제거/ });
+		const remove = await screen.findByRole("menuitem", {
+			name: /프로젝트 제거/,
+		});
 		fireEvent.click(remove);
 
 		// The question opens as a dialog — the effect spans surfaces (SOUL §6) —
 		// with the consequence in its description, so the agents warning is not
 		// lost. Nothing is removed until the dialog's confirm.
 		const confirm = await screen.findByRole("dialog");
-		expect(confirm.textContent).toContain("'Dure' 프로젝트를 목록에서 제거할까요?");
+		expect(confirm.textContent).toContain(
+			"'Dure' 프로젝트를 목록에서 제거할까요?",
+		);
 		expect(confirm.textContent).toContain("연결된 에이전트 2개");
 		expect(confirm.textContent).toContain("디스크에서 삭제하지 않습니다");
 		expect(removal.plan).toHaveBeenCalledWith("p1");
@@ -148,7 +253,9 @@ describe("SpacesRepositoryHeader project menu", () => {
 		});
 		renderHeader("p1");
 		fireEvent.contextMenu(screen.getByText("Dure"));
-		fireEvent.click(await screen.findByRole("menuitem", { name: /프로젝트 제거/ }));
+		fireEvent.click(
+			await screen.findByRole("menuitem", { name: /프로젝트 제거/ }),
+		);
 		await screen.findByRole("dialog");
 
 		fireEvent.click(screen.getByRole("button", { name: "취소" }));
@@ -165,7 +272,9 @@ describe("SpacesRepositoryHeader project menu", () => {
 			expect(useStore.getState().pinnedProjects).toContain("p1"),
 		);
 		fireEvent.contextMenu(screen.getByText("Dure"));
-		expect(await screen.findByRole("menuitem", { name: /핀 해제/ })).toBeTruthy();
+		expect(
+			await screen.findByRole("menuitem", { name: /핀 해제/ }),
+		).toBeTruthy();
 	});
 
 	it("a registered project in the unopened queue (quickAdd off) has no menu", () => {
