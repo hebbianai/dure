@@ -30,6 +30,7 @@ def wait(predicate, timeout=10):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--driver', required=True, type=Path)
+    parser.add_argument('--session-cli', action='store_true', help='Compare source Dure list/inspect with the same Host observation')
     args = parser.parse_args()
     driver = args.driver.resolve(strict=True)
     state_root = Path(os.environ['DURE_HMUX_TEST_STATE_ROOT']).resolve(strict=True)
@@ -59,6 +60,37 @@ def main():
 
     def state():
         return command('session', 'snapshot', 'progress-fixture', '--workspace', 'progress-workspace')['agentRuntimeState']
+
+    cli_observations = []
+
+    def verify_cli_progress():
+        if not args.session_cli:
+            return
+        targets = json.dumps([{'sessionId': 'progress-fixture', 'workspaceId': 'progress-workspace'}])
+        observed = command('session', 'show', 'progress-fixture', '--workspace', 'progress-workspace')
+        expected = observed['agentRuntimeState']['progress']
+        batch = command('session', 'probe-batch', '--targets-json', targets, '--include-runtime-state')['results'][0]
+        assert batch['agentRuntimeState']['progress'] == expected, batch
+        assert batch['terminalEpoch'] == observed['terminal_epoch'], batch
+        assert 'agentRuntimeState' not in command('session', 'probe-batch', '--targets-json', targets)['results'][0]
+        skipped = command('session', 'probe-batch', '--targets-json', targets, '--include-runtime-state', '--probe-budget-ms', '0')['results'][0]
+        assert skipped['liveness'] == 'unknown' and 'agentRuntimeState' not in skipped, skipped
+
+        def dure(*arguments):
+            result = subprocess.run([node, str(REPO / 'cli/dure.mjs'), *arguments], cwd=root,
+                                    env={**env, 'DURE_HMUX_BIN': cli, 'DURE_APP_CHANNEL': 'stable'},
+                                    capture_output=True, text=True, timeout=10)
+            assert result.returncode == 0, result.stdout + result.stderr
+            return result.stdout
+
+        listed = json.loads(dure('ls', '--json'))['sessions']
+        shown = json.loads(dure('inspect', 'progress-fixture', '--workspace', 'progress-workspace', '--json'))['session']
+        assert len(listed) == 1, listed
+        for projection in (listed[0], shown):
+            assert projection['runtime']['agentRuntimeState']['progress'] == expected, projection
+            assert projection['runtime']['generation']['terminalEpoch'] == observed['terminal_epoch'], projection
+        assert expected['report']['phase'] in dure('ls')
+        cli_observations.append({'progress': expected, 'terminalEpoch': observed['terminal_epoch']})
 
     revision = 0
 
@@ -97,6 +129,7 @@ def main():
         wait(lambda: (state() or {}).get('source') == 'provider_event')
         send('turn/started', turn={'id': 'turn-progress', 'status': 'inProgress'})
         before = wait(lambda: (value if (value := state()).get('progress') else None))
+        verify_cli_progress()
         source = before['progress']['report']['source_id']
         for method, extra in [
             ('item/fileChange/patchUpdated', {'changes': [{'path': 'example.rs', 'kind': {'type': 'update'}, 'diff': '+first'}]}),
@@ -128,12 +161,13 @@ def main():
         send('turn/completed', turn={'id': 'turn-progress', 'status': 'completed'})
         completed = wait(lambda: (value if (value := state())['activity'] == 'waiting' else None))
         assert int(completed['turn_completed_count']) == int(before['turn_completed_count']) + 1
+        verify_cli_progress()
         time.sleep(2.1)
         send('item/plan/delta', delta='late')
         assert state()['progress']['report'] == completed['progress']['report']
         result = {'ok': True, 'realCredentialsUsed': False, 'provider': 'protocol-fixture',
                   'driverSha256': hashlib.sha256(driver.read_bytes()).hexdigest(),
-                  'observations': observations, 'completed': completed}
+                  'observations': observations, 'completed': completed, 'cliObservations': cli_observations}
         (evidence / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps({'ok': True, 'signals': len(observations), 'evidence': str(evidence)}), flush=True)
     finally:
