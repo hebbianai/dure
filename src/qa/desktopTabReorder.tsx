@@ -5,8 +5,8 @@ import { qaLog } from "@/lib/qa/qaLog";
 import { DEFAULT_UI_PREFS, useStore } from "@/store";
 
 const proof = new URLSearchParams(location.search).get("qaDesktopTabReorder");
-const frame = () =>
-	new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+// Background WebViews may suspend animation frames; React still commits DOM.
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 50));
 
 /** Background WKWebView evidence with actual DOM geometry and event propagation. */
 export function DesktopTabReorderQaRoot() {
@@ -28,8 +28,7 @@ export function DesktopTabReorderQaRoot() {
 					activeSpaceId: "first",
 					uiPrefs: { ...DEFAULT_UI_PREFS, tabOrder: "manual" },
 				});
-				await frame();
-				await frame();
+				await settle();
 				const strip = document.querySelector<HTMLElement>('[role="tablist"]')!;
 				const tabs = [...strip.querySelectorAll<HTMLElement>('[role="tab"]')];
 				if (tabs.length !== 3)
@@ -61,11 +60,11 @@ export function DesktopTabReorderQaRoot() {
 					"dragover",
 					scenario === "release-position" ? third.left + 2 : x,
 				);
-				await frame();
+				await settle();
 				drag(target, "drop", x);
 				transfer.dropEffect = "move";
 				drag(tabs[0], "dragend", x);
-				await frame();
+				await settle();
 				const expected =
 					scenario === "tab-gap" ? "second,first,third" : "second,third,first";
 				const actual = useStore
