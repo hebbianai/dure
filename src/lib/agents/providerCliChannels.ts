@@ -23,6 +23,11 @@ export interface ProviderCliUpdateTarget {
 	readonly npmPackage: string;
 	readonly caskTokens: readonly string[];
 	readonly docsUrl: string;
+	readonly standalone?: {
+		readonly channel: ProviderCliChannelKind;
+		readonly homePattern: RegExp;
+		readonly homeEnvironmentVariable: string;
+	};
 }
 
 export const PROVIDER_CLI_UPDATE_TARGETS: Partial<
@@ -37,6 +42,12 @@ export const PROVIDER_CLI_UPDATE_TARGETS: Partial<
 		npmPackage: "@openai/codex",
 		caskTokens: ["codex"],
 		docsUrl: "https://developers.openai.com/codex/cli/",
+		standalone: {
+			channel: "codex-standalone",
+			homePattern:
+				/^(\/.+)\/packages\/standalone\/(?:current|releases\/[^/]+)\/bin\/codex$/,
+			homeEnvironmentVariable: "CODEX_HOME",
+		},
 	},
 };
 
@@ -56,8 +67,6 @@ function shellQuotePath(path: string): string {
 }
 
 const CASKROOM_TOKEN = /\/Caskroom\/([^/]+)\//;
-const CODEX_STANDALONE_EXECUTABLE =
-	/^(\/.+)\/packages\/standalone\/(?:current|releases\/[^/]+)\/bin\/codex$/;
 
 export function buildProviderCliUpdatePlan(input: {
 	provider: Provider;
@@ -83,18 +92,16 @@ export function buildProviderCliUpdatePlan(input: {
 			command: `brew upgrade --cask ${token}`,
 		};
 	}
-	const codexInstallHome =
-		input.provider === "codex"
-			? CODEX_STANDALONE_EXECUTABLE.exec(path)?.[1]
-			: undefined;
-	if (codexInstallHome) {
-		// Codex detects its standalone installation relative to CODEX_HOME.
+	const standalone = target.standalone;
+	const installHome = standalone?.homePattern.exec(path)?.[1];
+	if (standalone && installHome) {
+		// Standalone installers locate their release through their home variable.
 		// A desktop launched from an agent can inherit an account-specific home;
 		// scope this override to the updater, never the account/session environment.
 		return {
 			provider: input.provider,
-			channel: "codex-standalone",
-			command: `env CODEX_HOME=${shellQuotePath(codexInstallHome)} ${shellQuotePath(path)} update`,
+			channel: standalone.channel,
+			command: `env ${standalone.homeEnvironmentVariable}=${shellQuotePath(installHome)} ${shellQuotePath(path)} update`,
 		};
 	}
 	if (path.includes("/node_modules/")) {
