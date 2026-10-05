@@ -1,6 +1,6 @@
 export const agents: Record<string, string> = {
-	"agents.progress.unconfirmed": "请检查进度",
-	"agents.progress.unconfirmedDescription": "5分钟内未观察到提供方活动。智能体可能仍在思考。中断前请检查状态；消息不会自动重发。",
+	"agents.progress.unconfirmed": "进度未确认",
+	"agents.progress.unconfirmedDescription": "已连续5分钟未收到新的活动信号。智能体可能仍在思考或生成较长的工具调用，这不代表它已停滞。请先检查输出再决定是否中断。",
 	"agents.goal.label": "目标",
 	"agents.goal.objective": "目标内容",
 	"agents.goal.hint": "希望智能体朝什么目标工作？",

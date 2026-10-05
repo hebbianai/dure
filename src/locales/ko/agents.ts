@@ -1,6 +1,6 @@
 export const agents: Record<string, string> = {
-	"agents.progress.unconfirmed": "진행 확인 필요",
-	"agents.progress.unconfirmedDescription": "5분 동안 provider 활동이 관찰되지 않았습니다. 에이전트가 계속 생각 중일 수 있습니다. 중단 전에 상태를 확인하세요. 메시지는 자동 재전송되지 않습니다.",
+	"agents.progress.unconfirmed": "진행 상태 미확인",
+	"agents.progress.unconfirmedDescription": "5분 동안 새 활동 신호를 받지 못했습니다. 에이전트가 계속 생각하거나 긴 도구 호출을 생성 중일 수 있으며, 멈췄다는 뜻은 아닙니다. 중단을 결정하기 전에 출력을 확인하세요.",
 	"agents.goal.label": "목표",
 	"agents.goal.objective": "목표 내용",
 	"agents.goal.hint": "에이전트가 어떤 목표를 향해 작업할까요?",

@@ -1,6 +1,6 @@
 export const agents: Record<string, string> = {
-	"agents.progress.unconfirmed": "Revisar progreso",
-	"agents.progress.unconfirmedDescription": "No se ha observado actividad del proveedor durante 5 minutos. El agente podría seguir pensando. Comprueba el estado antes de interrumpir; los mensajes no se reenvían automáticamente.",
+	"agents.progress.unconfirmed": "Progreso sin confirmar",
+	"agents.progress.unconfirmedDescription": "No se han recibido nuevas señales de actividad en 5 minutos. El agente puede seguir pensando o generando una llamada larga a una herramienta. Esto no confirma que esté bloqueado. Revisa su salida antes de interrumpirlo.",
 	"agents.goal.label": "Objetivo",
 	"agents.goal.objective": "Descripción del objetivo",
 	"agents.goal.hint": "¿Hacia qué objetivo debe trabajar el agente?",
