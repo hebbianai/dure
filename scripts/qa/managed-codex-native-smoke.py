@@ -86,6 +86,7 @@ def main():
     parser.add_argument('--legacy-hooks', action='store_true')
     parser.add_argument('--outcome', choices=('failed', 'completed', 'interrupted', 'goal', 'connection-lost', 'approval'), default='failed')
     parser.add_argument('--resume-evidence', type=Path)
+    parser.add_argument('--resume-in-cwd', action='store_true', help='Resume retained fixture history with an explicit new working root')
     parser.add_argument('--preserve-stop', action='store_true')
     parser.add_argument('--draft', action='store_true', help='Retain an unsubmitted draft and require stop refusal')
     parser.add_argument('--report-outage', action='store_true', help='Require convergence after an isolated report transport outage')
@@ -94,6 +95,7 @@ def main():
     parser.add_argument('--message-progress', action='store_true', help='Verify exact wake turn evidence on a real native Codex transport')
     parser.add_argument('--without-progress', action='store_true', help='Negotiate with an isolated Host lacking agent_progress_v1')
     args = parser.parse_args()
+    assert not args.resume_in_cwd or (args.resume_evidence and args.outcome == 'completed')
     assert not (args.message_progress and args.without_progress)
     assert not args.message_progress or (args.outcome == 'completed' and not args.legacy_hooks)
     LimitModel.outcome = args.outcome
@@ -108,9 +110,12 @@ def main():
     root = Path(os.environ['DURE_HMUX_TEST_STATE_ROOT']) / 'usage-limit'
     root.mkdir(mode=0o700)
     conversation = None
+    retained_history = {}
     if args.resume_evidence:
         previous = json.loads((args.resume_evidence / 'native-result.json').read_text())
         assert previous['realCredentialsUsed'] is False
+        if args.resume_in_cwd:
+            assert Path(previous['root']) != root
         profile = Path(previous['profile']).resolve(strict=True)
         assert profile.parent == args.resume_evidence.resolve(strict=True)
         assert profile.parent.parent == evidence.parent
@@ -119,6 +124,8 @@ def main():
                       for line in path.read_text().splitlines() if json.loads(line).get('type') == 'session_meta'}
         assert len(identities) == 1, identities
         conversation = next(iter(identities))
+        if args.resume_in_cwd:
+            retained_history = {path: path.read_bytes() for path in profile.glob('sessions/**/*.jsonl')}
     else:
         profile = Path(tempfile.mkdtemp(prefix='codex-profile-', dir=evidence))
     cli = Path(os.environ['DURE_QA_HMUX_BIN']).resolve(strict=True)
@@ -223,7 +230,8 @@ def main():
             'workspaceId': 'codex-usage-limit-workspace', 'providerId': 'codex',
             'permissionMode': 'default', 'providerCwd': str(root),
             'command': [sys.executable, str(REPO / 'scripts/qa/fixtures/native-provider-input-bridge.py'),
-                        *prefix, '--no-alt-screen', '--sandbox', 'workspace-write',
+                        *prefix, *(['--cd', str(root)] if args.resume_in_cwd else []),
+                        '--no-alt-screen', '--sandbox', 'workspace-write',
                         '--ask-for-approval', 'on-request' if args.outcome == 'approval' else 'never', '-m', args.model,
                         '-c', 'model_provider="fixture"', '-c',
                         'model_providers.fixture={name="fixture",base_url="http://127.0.0.1:%d/v1",wire_api="responses",requires_openai_auth=false}' % server.server_port,
@@ -365,10 +373,25 @@ def main():
             after = state()
         delivery = [json.loads(line) for line in recorded.read_text().splitlines()] if recorded.exists() else []
         delivery = delivery[prior_notifications:]
+        moved_history = None
+        if args.resume_in_cwd:
+            records = [json.loads(line) for path in profile.glob('sessions/**/*.jsonl')
+                       for line in path.read_text().splitlines()]
+            identities = {record['payload']['id'] for record in records if record.get('type') == 'session_meta'}
+            assert identities == {conversation}, identities
+            contexts = [record['payload'] for record in records if record.get('type') == 'turn_context'
+                        and record['payload'].get('turn_id') == completed['turn_id']]
+            assert contexts and all(context.get('cwd') == str(root) for context in contexts), contexts
+            assert previous_turns <= {event.get('turn_id') for event in events()}, 'resume lost prior turn history'
+            assert all(path.read_bytes().startswith(content) for path, content in retained_history.items()), 'resume rewrote retained conversation history'
+            moved_history = {'conversationId': conversation, 'cwd': str(root),
+                             'priorTurnsRetained': len(previous_turns), 'retainedHistoryBytes': sum(map(len, retained_history.values())),
+                             'turnId': completed['turn_id']}
         result_evidence = {'source': subprocess.check_output(['git', '-C', str(REPO), 'rev-parse', 'HEAD'], text=True).strip(),
                     'codex': subprocess.check_output([codex, '--version'], text=True).strip(),
                     'runtime': str(runtime), 'root': str(root), 'profile': str(profile),
                     'resumedConversation': conversation,
+                    'resumedWorkingRoot': moved_history,
                     'reportOutage': args.report_outage,
                     'outageSuccessor': args.outage_successor,
                     'driverSha256': driver_sha,
