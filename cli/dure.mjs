@@ -3441,6 +3441,8 @@ Usage:
   dure spawn status (--operation-id <id> | --idempotency-key <key>) [--backend ID] [--json]
                                       Read a durable spawn receipt without the app daemon
   dure runs list|show|open|resume    Discover and recover durable Runs, including headless Runs
+  dure runs move <name-or-id> --project ID
+                                   Preview moving a stopped Codex conversation to another project
   dure runs switch-account <name-or-id> --account ACCOUNT_ID|default [--confirm-restart]
                                       Preview or apply a same-conversation account switch (Claude and Codex)
   dure run [--project <id> | --path <path>] [--provider <id>] [--backend ID] <prompt>
