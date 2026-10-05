@@ -6,6 +6,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod evidence;
+#[cfg(test)]
+mod tests;
+
 pub(super) const WAKE_PREFIX: &str = "Dure inbox message: ";
 
 pub(super) fn wake_message(message: &Value) -> Option<String> {
@@ -32,6 +36,8 @@ pub(super) struct Progress {
     source: String,
     sequence: u64,
     turn: Option<String>,
+    turn_completed: bool,
+    evidence: evidence::Evidence,
     phase: AgentProgressPhase,
     tools: HashSet<String>,
     messages: Vec<AgentMessageTurn>,
@@ -54,6 +60,8 @@ impl Default for Progress {
             ),
             sequence: 0,
             turn: None,
+            turn_completed: false,
+            evidence: evidence::Evidence::default(),
             phase: AgentProgressPhase::Waiting,
             tools: HashSet::new(),
             messages: Vec::new(),
@@ -106,16 +114,19 @@ impl Progress {
                 return false;
             }
             self.turn = Some(turn.into());
+            self.turn_completed = false;
+            self.evidence = evidence::Evidence::default();
             self.tools.clear();
             self.phase = AgentProgressPhase::Thinking;
             self.advance();
             return true;
         }
-        if turn != self.turn.as_deref() || self.turn.is_none() {
+        if turn != self.turn.as_deref() || self.turn.is_none() || self.turn_completed {
             return false;
         }
         match method {
             "turn/completed" => {
+                self.turn_completed = true;
                 if self.phase == AgentProgressPhase::Waiting {
                     return false;
                 }
@@ -163,23 +174,36 @@ impl Progress {
             "item/agentMessage/delta"
             | "item/reasoning/textDelta"
             | "item/reasoning/summaryTextDelta"
-            | "item/commandExecution/outputDelta" => {
-                // A report at most every two seconds; polls/redraws never enter this path.
+            | "item/commandExecution/outputDelta"
+            | "item/fileChange/outputDelta"
+            | "item/plan/delta" => {
                 if message
                     .pointer("/params/delta")
                     .and_then(Value::as_str)
                     .is_none_or(str::is_empty)
-                    || self.published.is_some_and(|at| {
-                        now.saturating_duration_since(at) < Duration::from_secs(2)
-                    })
                 {
                     return false;
                 }
-                self.advance();
-                true
+                self.publish_activity(now)
             }
-            _ => false,
+            _ => {
+                // Record even throttled snapshots so a later replay cannot
+                // masquerade as fresh provider work.
+                self.evidence.observe(method, message) && self.publish_activity(now)
+            }
         }
+    }
+
+    fn publish_activity(&mut self, now: Instant) -> bool {
+        // A report at most every two seconds; polls/redraws never enter this path.
+        if self
+            .published
+            .is_some_and(|at| now.saturating_duration_since(at) < Duration::from_secs(2))
+        {
+            return false;
+        }
+        self.advance();
+        true
     }
     pub(super) fn take(
         &mut self,
