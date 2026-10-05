@@ -107,7 +107,7 @@ test("prepared execution repeats the named case without Cargo or build admission
 test("prepared execution keeps one guardian per existing case group", async () => {
   expect(await invoke("run", receipt)).toEqual({ status: 0 });
   expect(adapters.launch.mock.calls.map(([command]) => command[3]))
-    .toEqual(["admission", "start", "retry", "named", "wait"]);
+    .toEqual(["admission", "start", "retry", "named", "wait", "progress"]);
   expect(adapters.storage).not.toHaveBeenCalled();
 });
 

@@ -18,19 +18,21 @@ const filters = {
   retry: "rehost_cli::dure_start_and_retry_preserve_one_operation_and_successor",
   named: "rehost_cli::named::confirmed_name_pins_execution_and_publication",
   wait: "dure_wait_observes_host_completion_without_an_app_server",
+  progress: "progress_cli::list_and_inspect_preserve_the_same_host_progress",
 };
 const usage = `Rehost CLI QA — real native broker, Host and PTY; fixture provider/backend metadata.
 
   pnpm test:hmux-rehost-cli                         Prepare once, then run all groups
   pnpm test:hmux-rehost-cli named                   Prepare once, then run one group
   pnpm test:hmux-rehost-cli prepare /tmp/rehost.json Build only; retain exact artifact paths/hashes
-  pnpm test:hmux-rehost-cli run /tmp/rehost.json [admission|start|retry|named|wait]
+  pnpm test:hmux-rehost-cli run /tmp/rehost.json [admission|start|retry|named|wait|progress]
 
 Run never invokes Cargo or falls back to a build. Each group owns fresh isolated state.
 Prepare again after native/test changes. A run checks prepared binaries, not current-source freshness.
 The Rust fixture uses this checkout's current source Dure CLI; this is not installed/live proof.
 The wait group runs inspect → send → wait through the native PTY, including a lost
 input receipt, fast completion, duplicate completion and observer restart without resending.
+The progress group compares list, inspect, and bounded native batch/catalog observations.
 Each result includes retained timing receipts and separate runner startup, build/verification,
 and guardian cleanup durations. Verification includes the native fixture's own Host setup/stop.
 Missing timing evidence stays unavailable and never overrides the command's exit status.`;

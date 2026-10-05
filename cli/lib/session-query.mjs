@@ -34,6 +34,7 @@ const BOUNDED_BACKEND_SESSION_CATALOG_CAPABILITY =
   "sessions.list.bounded_catalog_v1";
 const BOUNDED_HMUX_SESSION_CATALOG_CAPABILITY =
   "bounded_session_catalog_query_v1";
+const HMUX_PROBE_RUNTIME_STATE_CAPABILITY = "exact_session_probe_runtime_state_v1";
 const HMUX_CAPABILITY_OUTPUT_BYTES = 64 * 1024;
 const LOCAL_HMUX_PROBE_PROCESS_GRACE_MS = 100;
 const MAX_SESSION_QUERY_TRANSPORT_BYTES =
@@ -347,7 +348,7 @@ const PROBE_STATUSES_WITH_GENERATION = new Set([
   "generation_changed",
 ]);
 
-function parseProbeBatchPayload(result, targets) {
+function parseProbeBatchPayload(result, targets, includeRuntimeState) {
   let payload;
   try {
     payload = JSON.parse(result.stdout || "");
@@ -369,6 +370,7 @@ function parseProbeBatchPayload(result, targets) {
     "liveness",
     "status",
     "errorCode",
+    ...(includeRuntimeState ? ["outputSequence", "agentRuntimeState"] : []),
     ...GENERATION_FIELDS.map(([field]) => field),
   ]);
   for (let index = 0; index < payload.results.length; index += 1) {
@@ -385,6 +387,14 @@ function parseProbeBatchPayload(result, targets) {
       return null;
     }
     const withGeneration = PROBE_STATUSES_WITH_GENERATION.has(receipt.status);
+    if (
+      (receipt.outputSequence !== undefined &&
+        (receipt.status !== "healthy" || !decimal(receipt.outputSequence))) ||
+      (receipt.agentRuntimeState !== undefined &&
+        (receipt.status !== "healthy" || !decimal(receipt.outputSequence)))
+    ) {
+      return null;
+    }
     if (
       GENERATION_FIELDS.some(
         ([field]) =>
@@ -431,7 +441,17 @@ function applyProbeReceipt(session, receipt) {
         : health === "incompatible_protocol"
           ? "incompatible"
           : health;
-  return { ...session, effectiveLifecycle, health };
+  return {
+    ...session,
+    effectiveLifecycle,
+    health,
+    // Runtime facts and their output fence must come from the same exact Host
+    // observation, never from the earlier no-probe catalog snapshot.
+    agentRuntimeState: health === "healthy" ? receipt.agentRuntimeState ?? null : null,
+    ...(health === "healthy" && receipt.outputSequence !== undefined
+      ? { output_seq: receipt.outputSequence }
+      : {}),
+  };
 }
 
 function parseBackendPayload(result, action) {
@@ -558,6 +578,7 @@ export async function collectSessionQuery({
   let source;
   let bindingSource = "local";
   let bindingHostId = "local";
+  let includeRuntimeState = false;
   if (backend) {
     const profile = backend.profile;
     if (backend.error || !profile) {
@@ -675,6 +696,7 @@ export async function collectSessionQuery({
         return errorReport(action, "dure_session_hmux_incompatible", capabilityObservedAtMs,
           capabilityDurationMs, limits, { capability: HMUX_SESSION_PAGINATION_CAPABILITY });
       }
+      includeRuntimeState = supportsHmuxCapability(manifest, HMUX_PROBE_RUNTIME_STATE_CAPABILITY);
     }
     const argv =
       action === "list"
@@ -765,6 +787,7 @@ export async function collectSessionQuery({
               JSON.stringify(targets),
               "--probe-budget-ms",
               String(probeWindowMs),
+              ...(includeRuntimeState ? ["--include-runtime-state"] : []),
             ],
             {
               timeoutMs: Math.max(1, remainingMs),
@@ -774,7 +797,7 @@ export async function collectSessionQuery({
           if (batchResult.kind !== "success") {
             parsed = { ...parsed, sessions: prioritized };
           } else {
-            const receipts = parseProbeBatchPayload(batchResult, targets);
+            const receipts = parseProbeBatchPayload(batchResult, targets, includeRuntimeState);
             if (!receipts) {
               parsed = { ...parsed, sessions: prioritized };
             } else {

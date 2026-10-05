@@ -112,6 +112,7 @@ const CLI_CAPABILITIES: &[&str] = &[
     hmux_client::SESSION_FILE_ROUTE_CAPABILITY,
     "session_probe_status_v1",
     "exact_session_probe_batch_v1",
+    exact_probe_batch::RUNTIME_STATE_CAPABILITY,
     "session_retirement_v1",
     "exited_session_cleanup_v1",
     "process_generation_probe_v1",
@@ -144,6 +145,7 @@ const CLI_CAPABILITIES: &[&str] = &[
     "session_inspection_v1",
     "session_probe_status_v1",
     "exact_session_probe_batch_v1",
+    exact_probe_batch::RUNTIME_STATE_CAPABILITY,
     "session_retirement_v1",
     runtime_status::RUNTIME_STATUS_CAPABILITY,
 ];
@@ -1505,7 +1507,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 SESSION_INSPECTION_WORKERS,
                 Duration::from_millis(args.probe_budget_ms),
             )?;
-            cli_print!("{}", exact_probe_batch::render(results, cli.json)?)?;
+            cli_print!(
+                "{}",
+                exact_probe_batch::render(results, cli.json, args.include_runtime_state)?
+            )?;
         }
         Command::Session {
             command:
@@ -4033,6 +4038,67 @@ mod tests {
     }
 
     #[test]
+    fn exact_probe_runtime_state_is_opt_in_and_fenced_by_health() {
+        let mut inspection = SessionInspection::unprobed(descriptor());
+        inspection.health = SessionHealth::Healthy;
+        inspection.agent_runtime_state = Some(
+            serde_json::from_value(serde_json::json!({
+                "terminal_epoch": "terminal-1", "revision": "3",
+                "observed_through_output_seq": "8", "lifecycle": "running",
+                "activity": "working", "attention": "none", "attention_id": null,
+                "source": "provider_event", "turn_completed_count": "0",
+                "progress": {
+                    "report": { "source_id": "native", "sequence": "1", "phase": "thinking",
+                        "turn_id": "turn-1", "message_turns": [] },
+                    "last_activity_unix_ms": "1000", "quiet_threshold_ms": "300000",
+                    "progress_unconfirmed": false,
+                },
+            }))
+            .unwrap(),
+        );
+        let render = |inspection: SessionInspection, include| {
+            serde_json::from_str::<serde_json::Value>(
+                &exact_probe_batch::render(
+                    vec![hmux_client::ExactSessionProbeResult::Inspection(Box::new(
+                        inspection,
+                    ))],
+                    true,
+                    include,
+                )
+                .unwrap(),
+            )
+            .unwrap()["results"][0]
+                .clone()
+        };
+        let current = render(inspection.clone(), true);
+        assert_eq!(current["outputSequence"], "8");
+        assert_eq!(
+            current["agentRuntimeState"]["progress"]["report"]["phase"],
+            "thinking"
+        );
+        let legacy = render(inspection.clone(), false);
+        assert!(legacy.get("agentRuntimeState").is_none());
+        assert!(legacy.get("outputSequence").is_none());
+        assert_eq!(legacy["liveness"], "alive");
+        for health in [
+            SessionHealth::GenerationChanged,
+            SessionHealth::Unprobed,
+            SessionHealth::StaleTransport,
+            SessionHealth::IncompatibleProtocol,
+            SessionHealth::Exited,
+        ] {
+            inspection.health = health;
+            let unavailable = render(inspection.clone(), true);
+            assert!(unavailable.get("agentRuntimeState").is_none());
+            assert!(unavailable.get("outputSequence").is_none());
+            if health == SessionHealth::Unprobed {
+                assert!(unavailable.get("terminalEpoch").is_none());
+                assert_eq!(unavailable["status"], "unprobed");
+            }
+        }
+    }
+
+    #[test]
     fn parses_machine_readable_cli_capability_probe() {
         let cli = Cli::try_parse_from(["hmux", "capabilities", "--json"]).unwrap();
         assert!(cli.json);
@@ -4040,6 +4106,7 @@ mod tests {
         assert!(CLI_CAPABILITIES.contains(&"session_inspection_v1"));
         assert!(CLI_CAPABILITIES.contains(&"session_probe_status_v1"));
         assert!(CLI_CAPABILITIES.contains(&"exact_session_probe_batch_v1"));
+        assert!(CLI_CAPABILITIES.contains(&exact_probe_batch::RUNTIME_STATE_CAPABILITY));
         assert!(CLI_CAPABILITIES.contains(&"generation_fenced_kill_v1"));
         assert!(CLI_CAPABILITIES.contains(&"managed_generation_fenced_kill_v1"));
         assert!(CLI_CAPABILITIES.contains(&"managed_rehost_exact_fence_v1"));

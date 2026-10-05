@@ -6,8 +6,11 @@
 use crate::CliError;
 use clap::Args;
 use hmux_client::{
-    ExactSessionProbeResult, MAX_EXACT_SESSION_PROBE_TARGETS, SessionHealth, SessionSelector,
+    AgentRuntimeStateDescriptor, ExactSessionProbeResult, MAX_EXACT_SESSION_PROBE_TARGETS,
+    SessionHealth, SessionSelector,
 };
+
+pub(crate) const RUNTIME_STATE_CAPABILITY: &str = "exact_session_probe_runtime_state_v1";
 
 #[derive(Args, Debug)]
 pub(crate) struct SessionProbeBatchArgs {
@@ -22,6 +25,11 @@ pub(crate) struct SessionProbeBatchArgs {
     /// Targets not reached inside it remain unknown, never dead.
     #[arg(long, default_value_t = 1_000, value_parser = clap::value_parser!(u64).range(0..=60_000))]
     pub(crate) probe_budget_ms: u64,
+
+    /// Include Host runtime state and its observed output sequence for healthy
+    /// exact generations. Requires exact_session_probe_runtime_state_v1.
+    #[arg(long)]
+    pub(crate) include_runtime_state: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -55,8 +63,9 @@ pub(crate) fn parse_selectors(
 pub(crate) fn render(
     results: Vec<ExactSessionProbeResult>,
     json: bool,
+    include_runtime_state: bool,
 ) -> Result<String, serde_json::Error> {
-    let receipt = batch_receipt(results);
+    let receipt = batch_receipt(results, include_runtime_state);
     if json {
         return serde_json::to_string_pretty(&receipt).map(|payload| format!("{payload}\n"));
     }
@@ -103,14 +112,37 @@ struct ExactSessionProbeReceipt {
     host_instance_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     terminal_epoch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_sequence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_runtime_state: Option<AgentRuntimeStateDescriptor>,
 }
 
-fn batch_receipt(results: Vec<ExactSessionProbeResult>) -> ExactSessionProbeBatchReceipt {
+fn batch_receipt(
+    results: Vec<ExactSessionProbeResult>,
+    include_runtime_state: bool,
+) -> ExactSessionProbeBatchReceipt {
     let results = results
         .into_iter()
         .map(|result| match result {
             ExactSessionProbeResult::Inspection(inspection) => {
                 let (liveness, status) = probe_health(inspection.health);
+                // A discovered descriptor whose handshake exhausted the budget
+                // is still unobserved. Keep the same receipt as an unreached
+                // target so one slow Host does not invalidate the whole batch.
+                if inspection.health == SessionHealth::Unprobed {
+                    return receipt_without_generation(
+                        SessionSelector::new(
+                            inspection.session_id.clone(),
+                            Some(inspection.workspace_id.clone()),
+                        ),
+                        liveness,
+                        status,
+                        None,
+                    );
+                }
+                let include_observation =
+                    include_runtime_state && inspection.health == SessionHealth::Healthy;
                 ExactSessionProbeReceipt {
                     session_id: inspection.session_id.clone(),
                     workspace_id: inspection.workspace_id.clone(),
@@ -122,6 +154,10 @@ fn batch_receipt(results: Vec<ExactSessionProbeResult>) -> ExactSessionProbeBatc
                     channel_epoch: Some(inspection.channel_epoch.clone()),
                     host_instance_id: Some(inspection.host_instance_id.clone()),
                     terminal_epoch: Some(inspection.terminal_epoch.clone()),
+                    output_sequence: include_observation.then(|| inspection.output_seq.clone()),
+                    agent_runtime_state: include_observation
+                        .then(|| inspection.agent_runtime_state.clone())
+                        .flatten(),
                 }
             }
             ExactSessionProbeResult::NotFound(selector) => {
@@ -160,6 +196,8 @@ fn receipt_without_generation(
         channel_epoch: None,
         host_instance_id: None,
         terminal_epoch: None,
+        output_sequence: None,
+        agent_runtime_state: None,
     }
 }
 

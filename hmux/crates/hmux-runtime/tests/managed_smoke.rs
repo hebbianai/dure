@@ -3,6 +3,9 @@
 #[path = "managed_smoke/rehost_cli.rs"]
 mod rehost_cli;
 
+#[path = "managed_smoke/progress_cli.rs"]
+mod progress_cli;
+
 #[path = "managed_smoke/quiescent_stop.rs"]
 mod quiescent_stop;
 
