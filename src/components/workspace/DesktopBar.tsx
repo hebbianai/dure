@@ -42,7 +42,7 @@ import {
 } from "@/lib/persistence/persistenceStatus";
 import { confirmAndCloseDesktop } from "@/lib/workspace/desktop/desktopClose";
 import { balanceActiveSpacePanes } from "@/lib/workspace/pane/paneShortcuts";
-import type { DesktopDropPosition } from "@/lib/workspace/desktop/desktopOrder";
+import { desktopDropTargetAt, type DesktopDropTarget } from "@/lib/workspace/desktop/desktopOrder";
 import { ResourceMonitor } from "@/components/usage/ResourceMonitor";
 import { UsageBadge } from "@/components/usage/UsageBadge";
 import { DURE_DESKTOP_DRAG_TYPE } from "@/lib/platform/productDragPayload";
@@ -151,10 +151,7 @@ export function DesktopBar() {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   // hover-intent prewarm dwell 타이머 — 탭 하나만 유효(스트립 통과 시 갱신).
   const prewarmTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const [desktopDropTarget, setDesktopDropTarget] = useState<{
-    id: string;
-    position: DesktopDropPosition;
-  } | null>(null);
+  const [desktopDropTarget, setDesktopDropTarget] = useState<DesktopDropTarget | null>(null);
   const [closingDesktopId, setClosingDesktopId] = useState<string | null>(null);
   const draggingDesktop = useRef<string | null>(null);
   // Rename chosen from a tab's menu mounts the name input inside that tab —
@@ -174,6 +171,15 @@ export function DesktopBar() {
   // four — most of a tab — so what fades is a tab, and it is seen to be one
   // (forty still read narrow, owner call after seeing it).
   const stripRef = useRef<HTMLDivElement>(null);
+  const desktopTargetAt = (clientX: number) => desktopDropTargetAt(
+    visibleDesktops.flatMap(({ id }) => {
+      const tab = document.getElementById(`desktop-tab-${id}`);
+      if (!tab || !stripRef.current?.contains(tab)) return [];
+      const { left, width } = tab.getBoundingClientRect();
+      return [{ id, left, width }];
+    }),
+    clientX,
+  );
   const [stripEdges, setStripEdges] = useState({ left: false, right: false });
   const syncStripEdges = useCallback(() => {
     const el = stripRef.current;
@@ -303,6 +309,31 @@ export function DesktopBar() {
         style={{ maskImage: stripMask, WebkitMaskImage: stripMask }}
         onScroll={syncStripEdges}
         onWheel={onStripWheel}
+        onDragOver={(event) => {
+          if (!draggingDesktop.current || !manualReorder) return;
+          event.preventDefault();
+          event.stopPropagation();
+          event.dataTransfer.dropEffect = "move";
+          const target = desktopTargetAt(event.clientX);
+          setDesktopDropTarget((previous) =>
+            previous?.id === target?.id && previous?.position === target?.position
+              ? previous : target,
+          );
+        }}
+        onDragLeave={(event) => {
+          if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+          setDesktopDropTarget(null);
+        }}
+        onDrop={(event) => {
+          const sourceId = draggingDesktop.current;
+          if (!sourceId || !manualReorder) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const target = desktopTargetAt(event.clientX);
+          draggingDesktop.current = null;
+          setDesktopDropTarget(null);
+          if (target) reorderSpace(sourceId, target.id, target.position);
+        }}
         role="tablist"
         aria-label={t("workspace.desktopBar.desktops")}
       >
@@ -384,20 +415,7 @@ export function DesktopBar() {
                 setDesktopDropTarget(null);
               }}
               onDragOver={(e) => {
-                if (draggingDesktop.current) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const position =
-                    e.clientX < rect.left + rect.width / 2 ? "before" : "after";
-                  if (
-                    desktopDropTarget?.id !== d.id ||
-                    desktopDropTarget.position !== position
-                  ) {
-                    setDesktopDropTarget({ id: d.id, position });
-                  }
-                  return;
-                }
+                if (draggingDesktop.current) return;
                 if (getDragState()) {
                   e.preventDefault(); // 드롭 허용
                   if (dropTarget !== d.id) setDropTarget(d.id);
@@ -405,27 +423,11 @@ export function DesktopBar() {
               }}
               onDragLeave={() => {
                 setDropTarget((target) => (target === d.id ? null : target));
-                setDesktopDropTarget((target) =>
-                  target?.id === d.id ? null : target,
-                );
               }}
               onDrop={(e) => {
+                if (draggingDesktop.current) return;
                 e.preventDefault();
                 e.stopPropagation();
-                const sourceId = draggingDesktop.current;
-                if (sourceId) {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const position =
-                    desktopDropTarget?.id === d.id
-                      ? desktopDropTarget.position
-                      : e.clientX < rect.left + rect.width / 2
-                        ? "before"
-                        : "after";
-                  draggingDesktop.current = null;
-                  setDesktopDropTarget(null);
-                  reorderSpace(sourceId, d.id, position);
-                  return;
-                }
                 setDropTarget(null);
                 movePanelToDesktop(d.id);
                 setActiveSpace(d.id);

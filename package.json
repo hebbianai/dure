@@ -109,6 +109,7 @@
     "test:webview-storage": "sh scripts/qa/webview-storage-smoke.sh",
     "test:hmux-webview-recovery": "sh scripts/qa/hmux-webview-recovery-smoke.sh",
     "test:spaces-pane-drag": "node scripts/qa/spaces-pane-drag-smoke.mjs",
+    "test:desktop-tab-reorder": "sh scripts/qa/desktop-tab-reorder-smoke.sh",
     "test:hmux-spaces-pane-move": "sh scripts/qa/spaces-pane-move-smoke.sh",
     "test:hmux-pane-app-restart": "sh scripts/qa/pane-app-restart-smoke.sh",
     "test:hmux-managed-rehost-sync": "sh scripts/qa/managed-rehost-sync-smoke.sh",

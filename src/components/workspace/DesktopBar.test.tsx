@@ -155,6 +155,62 @@ describe("DesktopBar tab strip scrolling", () => {
 	});
 });
 
+describe("DesktopBar tab reordering", () => {
+	function dragAt(target: HTMLElement, type: string, clientX: number, dataTransfer: unknown) {
+		const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX });
+		Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+		fireEvent(target, event);
+	}
+	let previous: ReturnType<typeof useStore.getState>;
+	beforeEach(() => {
+		previous = useStore.getState();
+		useStore.setState({
+			spaces: ["first", "second", "third"].map((id) => ({ id, name: id })),
+			activeSpaceId: "first",
+			uiPrefs: { ...DEFAULT_UI_PREFS, tabOrder: "manual" },
+		});
+	});
+	afterEach(() => useStore.setState(previous));
+
+	function setupDrag() {
+		render(<DesktopBar />);
+		const strip = screen.getByRole("tablist");
+		const tabs = within(strip).getAllByRole("tab");
+		tabs.forEach((tab, index) => {
+			vi.spyOn(tab, "getBoundingClientRect").mockReturnValue({
+				left: index * 110, right: index * 110 + 100, width: 100,
+				top: 0, bottom: 24, height: 24, x: index * 110, y: 0, toJSON: () => ({}),
+			});
+		});
+		const dataTransfer = { setData: vi.fn(), effectAllowed: "none", dropEffect: "none" };
+		fireEvent.dragStart(tabs[0], { dataTransfer });
+		return { strip, tabs, dataTransfer };
+	}
+
+	it("uses the release position even when it crosses the last hover midpoint", () => {
+		const { tabs, dataTransfer } = setupDrag();
+		dragAt(tabs[2], "dragover", 225, dataTransfer);
+		dragAt(tabs[2], "drop", 315, dataTransfer);
+		expect(useStore.getState().spaces.map(({ id }) => id)).toEqual(["second", "third", "first"]);
+		expect(useStore.getState().activeSpaceId).toBe("first");
+	});
+
+	it("accepts dropping in the gap between tabs", () => {
+		const { strip, dataTransfer } = setupDrag();
+		dragAt(strip, "dragover", 215, dataTransfer);
+		dragAt(strip, "drop", 215, dataTransfer);
+		expect(useStore.getState().spaces.map(({ id }) => id)).toEqual(["second", "first", "third"]);
+	});
+
+	it("accepts the empty end of the strip and does not change the active Space", () => {
+		const { strip, dataTransfer } = setupDrag();
+		dragAt(strip, "dragover", 400, dataTransfer);
+		dragAt(strip, "drop", 400, dataTransfer);
+		expect(useStore.getState().spaces.map(({ id }) => id)).toEqual(["second", "third", "first"]);
+		expect(useStore.getState().activeSpaceId).toBe("first");
+	});
+});
+
 describe("DesktopBar tab menu", () => {
 	const disposers: (() => void)[] = [];
 	let previous: ReturnType<typeof useStore.getState>;

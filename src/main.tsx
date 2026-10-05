@@ -253,6 +253,10 @@ if (import.meta.env.DEV && qaParams.has("qaProjectRepository")) {
 	import("./qa/webviewRealm")
 		.then(({ WebviewRealmQaRoot }) => root.render(<WebviewRealmQaRoot />))
 		.catch((error) => renderEntryFailure(error));
+} else if (import.meta.env.DEV && qaParams.has("qaDesktopTabReorder")) {
+	import("./qa/desktopTabReorder")
+		.then(({ DesktopTabReorderQaRoot }) => root.render(<DesktopTabReorderQaRoot />))
+		.catch((error) => renderEntryFailure(error));
 } else if (import.meta.env.DEV && qaParams.has("qaSpacesPaneMove")) {
 	import("./qa/spacesPaneMove")
 		.then(({ SpacesPaneMoveQaRoot }) => root.render(<SpacesPaneMoveQaRoot />))
