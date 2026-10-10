@@ -178,9 +178,13 @@ export function ActivityRail({
 		// 그림자가 맡는다 — 접힌 시안(2104:15791)의 레일 오른쪽 끝에 선이 없는
 		// 이유다. 남겨 두면 카드 그림자 바로 옆에 세로줄이 하나 더 생겨 레일이
 		// 셸에서 떨어진 별개 패널처럼 보인다.
+		//
+		// pt-0.5 is room for the count badges, which sit 2px outside their item
+		// (-top-0.5). The Sidebar wrapper clips overflow, so with no top padding
+		// the first item's badge lost its top edge (owner report 2026-10-10).
 		<div
 			className={cn(
-				"flex shrink-0 flex-col items-center gap-1 pb-2.5",
+				"flex shrink-0 flex-col items-center gap-1 pt-0.5 pb-2.5",
 				sidebarOpen && "border-r border-glass-hairline",
 			)}
 			style={{ width: SIDEBAR_RAIL_WIDTH }}
