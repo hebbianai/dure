@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-whoami-"));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "dure-whoami-")));
   temporaryRoots.push(root);
   const appRoot = path.join(root, "app-home");
   fs.mkdirSync(appRoot, { recursive: true });
@@ -61,10 +61,11 @@ function sessionScrubbedEnvironment(overrides) {
   return environment;
 }
 
-function run(args, environment) {
+function run(args, environment, cwd) {
   return spawnSync(process.execPath, [cliPath, ...args], {
     encoding: "utf8",
     env: environment,
+    cwd,
   });
 }
 
@@ -96,8 +97,71 @@ describe("dure whoami", () => {
       sessionId: "session-1",
       worktree: "/worktrees/codex-1",
       branch: "agent/codex-1",
+      source: "session",
     });
   });
+
+  it.each(["claude", "codex"])("refuses an unregistered %s session despite matching cwd and agent hints", (provider) => {
+    const { agent, agentsPath, root, environment } = fixture();
+    fs.writeFileSync(agentsPath, JSON.stringify({ agents: [{ ...agent, provider, worktree: root }] }));
+    const result = run(["whoami", "--json", "--agent", "codex-1"], {
+      ...environment, HMUX_SESSION_ID: "session-unregistered", HEBBIAN_AGENT: "codex-1",
+    }, root);
+    expect(strictFailure(result).code).toBe("dure_whoami_session_unregistered");
+    expect(result.stdout).toBe("");
+  });
+
+  it("refuses duplicate automatic session matches", () => {
+    const { agent, agentsPath, environment } = fixture();
+    fs.writeFileSync(agentsPath, JSON.stringify({ agents: [agent, { ...agent, id: "agent-2" }] }));
+    expect(strictFailure(run(["whoami", "--json"], environment)).code)
+      .toBe("dure_whoami_session_ambiguous");
+  });
+
+  it("refuses conflicting managed and legacy session markers", () => {
+    const { environment } = fixture();
+    expect(strictFailure(run(["whoami", "--json"], {
+      ...environment, HEBBIAN_SESSION: "different-session",
+    })).code).toBe("dure_whoami_session_conflict");
+  });
+
+  it("refuses multiple agents sharing the nearest worktree", () => {
+    const { agent, agentsPath, root, environment } = fixture();
+    fs.writeFileSync(agentsPath, JSON.stringify({ agents: [
+      { ...agent, worktree: root },
+      { ...agent, id: "agent-2", name: "codex-2", sessionId: "session-2", worktree: root },
+    ] }));
+    delete environment.HMUX_SESSION_ID;
+    expect(strictFailure(run(["whoami", "--json"], environment, root)).code)
+      .toBe("dure_whoami_worktree_ambiguous");
+    const explicit = run(["whoami", "--json", "--agent", "codex-1"], environment, root);
+    expect(explicit.status, explicit.stderr).toBe(0);
+    expect(JSON.parse(explicit.stdout)).toMatchObject({ id: "agent-1", source: "explicit_agent" });
+  });
+
+  it("keeps an unambiguous nearest worktree fallback outside a managed session", () => {
+    const { agent, agentsPath, root, environment } = fixture();
+    const nested = path.join(root, "nested");
+    fs.mkdirSync(nested);
+    fs.writeFileSync(agentsPath, JSON.stringify({ agents: [
+      { ...agent, worktree: root },
+      { ...agent, id: "agent-2", worktree: nested, sessionId: "session-2" },
+    ] }));
+    delete environment.HMUX_SESSION_ID;
+    const result = run(["whoami", "--json"], environment, nested);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ id: "agent-2", source: "worktree" });
+  });
+
+  it.each([["logs", "--help"], ["logs", "-h"], ["help", "logs"]])(
+    "shows offline logs help for %j", (...args) => {
+      const { root, environment } = fixture();
+      fs.rmSync(path.join(root, "app-home", "agents.json"));
+      const result = run(args, environment);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("dure logs <name>");
+    },
+  );
 
   it("returns one exact local identity in strict session mode", () => {
     const { environment } = fixture();

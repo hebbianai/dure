@@ -14,7 +14,7 @@ import {
   mkdirSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, dirname, resolve as resolvePath } from "node:path";
+import { basename, join, dirname, isAbsolute, relative, sep, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
@@ -980,41 +980,43 @@ async function sendText(
 
 // ---------- 명령 ----------
 
-/** 세션 안에서 자기 세션 id: legacy 호스트는 HEBBIAN_SESSION을, 관리형 hmux
- *  runtime은 중립 이름 HMUX_SESSION_ID(=같은 sessionId)를 심는다. hmux는
- *  provider/앱 중립이라 HEBBIAN_SESSION을 안 심으므로 여기서 폴백한다 (UC-16). */
-function selfSessionId() {
-  return process.env.HEBBIAN_SESSION || process.env.HMUX_SESSION_ID || undefined;
-}
-
-/** 자기 에이전트 해석: HEBBIAN_SESSION/HEBBIAN_AGENT(세션 안) →
- *  --agent <이름> → cwd가 속한 워크트리(최장 접두사). */
+/** A managed Session is authoritative; hints cannot replace an unknown owner. */
 function resolveSelf(reg, opts) {
-  const sess = selfSessionId();
-  if (sess) {
-    const a = reg.agents.find((x) => x.sessionId === sess || x.remoteTmux === sess);
-    if (a) return a;
+  const managed = process.env.HMUX_SESSION_ID;
+  const legacy = process.env.HEBBIAN_SESSION;
+  if (managed && legacy && managed !== legacy) {
+    failWhoami("dure_whoami_session_conflict", "Managed and legacy session identities disagree. Inspect the current session; no agent was selected.", opts.json);
   }
+  const sess = managed || legacy;
+  const unique = (matches, source) => {
+    if (matches.length !== 1) {
+      failWhoami(`dure_whoami_${source}_${matches.length === 0 ? "unregistered" : "ambiguous"}`,
+        `Could not identify one agent from ${source}. Check dure diagnostics --json and dure ls; no other identity was substituted.`, opts.json);
+    }
+    return { agent: matches[0], source };
+  };
+  if (sess) {
+    return unique(reg.agents.filter((x) => x.sessionId === sess || x.remoteTmux === sess), "session");
+  }
+  if (opts.agent) return unique(matchingAgents(reg, opts.agent), "explicit_agent");
   if (process.env.HEBBIAN_AGENT) {
-    const a = reg.agents.find(
+    return unique(reg.agents.filter(
       (x) =>
         x.name === process.env.HEBBIAN_AGENT ||
         agentDisplayName(x) === process.env.HEBBIAN_AGENT,
-    );
-    if (a) return a;
+    ), "legacy_agent");
   }
-  if (opts.agent) return resolve(reg, opts.agent);
   const cwd = process.cwd();
-  const byCwd = reg.agents
-    .filter((a) => cwd === a.worktree || cwd.startsWith(a.worktree + "/"))
-    .sort((a, b) => b.worktree.length - a.worktree.length)[0];
-  if (byCwd) return byCwd;
-  fail(
-    "Could not identify the target agent. Run inside an agent session or worktree, or specify --agent <name>.",
-  );
+  const candidates = reg.agents.filter((agent) => {
+    if (typeof agent.worktree !== "string" || !isAbsolute(agent.worktree)) return false;
+    const child = relative(agent.worktree, cwd);
+    return child === "" || (!isAbsolute(child) && child !== ".." && !child.startsWith(`..${sep}`));
+  });
+  const depth = Math.max(...candidates.map((agent) => resolvePath(agent.worktree).length));
+  return unique(candidates.filter((agent) => resolvePath(agent.worktree).length === depth), "worktree");
 }
 
-function failStrictWhoami(code, message, json) {
+function failWhoami(code, message, json) {
   if (json) {
     process.stderr.write(
       `${JSON.stringify({ schemaVersion: 1, code, message })}\n`,
@@ -1033,7 +1035,7 @@ function resolveStrictSessionIdentity(reg, sessionId, json) {
     /[\u0000-\u001f\u007f]/.test(sessionId) ||
     !Array.isArray(reg?.agents)
   ) {
-    failStrictWhoami(
+    failWhoami(
       "dure_whoami_strict_session_invalid",
       "strict whoami requires one canonical session ID and a valid registry",
       json,
@@ -1044,14 +1046,14 @@ function resolveStrictSessionIdentity(reg, sessionId, json) {
   // or a terminal the user opened. That is a different answer from "more than
   // one agent claims this session", and only the latter is unsafe to resolve.
   if (matches.length === 0) {
-    failStrictWhoami(
+    failWhoami(
       "dure_whoami_strict_session_unregistered",
       `no registry agent owns this session: ${sessionId}`,
       json,
     );
   }
   if (matches.length !== 1) {
-    failStrictWhoami(
+    failWhoami(
       "dure_whoami_strict_session_ambiguous",
       `strict whoami requires exactly one registry session: ${sessionId}`,
       json,
@@ -1059,7 +1061,7 @@ function resolveStrictSessionIdentity(reg, sessionId, json) {
   }
   const agent = matches[0];
   if (agent.kind !== "pty") {
-    failStrictWhoami(
+    failWhoami(
       "dure_whoami_strict_transport_unsupported",
       "strict whoami only accepts a local pty agent identity",
       json,
@@ -1070,7 +1072,7 @@ function resolveStrictSessionIdentity(reg, sessionId, json) {
     !/^agent-[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(agent.id) ||
     reg.agents.filter((candidate) => candidate?.id === agent.id).length !== 1
   ) {
-    failStrictWhoami(
+    failWhoami(
       "dure_whoami_strict_agent_id_invalid",
       "strict whoami requires one unique canonical stable agent ID",
       json,
@@ -1081,8 +1083,8 @@ function resolveStrictSessionIdentity(reg, sessionId, json) {
 
 function cmdWhoami(reg, opts) {
   const strict = opts.strictSession !== undefined;
-  const agent = strict
-    ? resolveStrictSessionIdentity(reg, opts.strictSession, opts.json)
+  const { agent, source } = strict
+    ? { agent: resolveStrictSessionIdentity(reg, opts.strictSession, opts.json), source: "strict_session" }
     : resolveSelf(reg, opts);
   const displayName = agentDisplayName(agent);
   if (opts.json) {
@@ -1097,6 +1099,7 @@ function cmdWhoami(reg, opts) {
           sessionId: agent.sessionId,
           worktree: agent.worktree,
           branch: agent.branch,
+          source,
           ...(strict ? { kind: agent.kind } : {}),
         },
         null,
@@ -3589,7 +3592,7 @@ Usage:
                                       Read combined CI and host status independently of the app
   dure orch health [--json] [--repo PATH] [--backend ID] [--timeout-ms N] [--cache-ms N]
                                       Exit 0 healthy, 1 degraded, 2 unknown
-  dure diagnostics [--json] [--check] [--require app,hmux,path]
+  dure diagnostics [--json] [--check] [--require app,hmux,path,cli]
                                       Check CLI/app compatibility; show channel and session-preserving recovery
                                       Live backend/session health requires the reported read-only checks
   dure profiles <list|show|resolve|test> [ID] [--backend ID] [--json]
@@ -3634,10 +3637,34 @@ Usage:
                            Require one unique local registry session and stable ID
 
 The command identifies the current agent by HMUX_SESSION_ID (or the legacy
-HEBBIAN_SESSION), then reads the latest Dure registry. Renaming changes only the
+HEBBIAN_SESSION), then reads the latest Dure registry. A missing or ambiguous
+session owner fails; it never substitutes an agent from the working directory.
+Outside a session, --agent, a unique legacy name or the unique nearest worktree
+can identify an agent. JSON includes source: session, strict_session,
+explicit_agent, legacy_agent or worktree. Renaming changes only the
 display name. It does not move the worktree, rename the branch, restart the
 provider, or change the session ID. HMUX_SESSION_NAME remains the launch-time
 value because a running process environment cannot be rewritten.`;
+
+const LOGS_HELP = `dure logs — dump an agent's terminal scrollback
+
+Usage:
+  dure logs <name> [-n N]
+
+Use an agent name or project/name from the selected app registry.
+The default limit is 2000 lines. For backend Session IDs and JSON snapshots,
+use dure read <session-id> --workspace <workspace-id> --json instead.`;
+
+const DIAGNOSTICS_HELP = `dure diagnostics — inspect the selected CLI and app channel
+
+Usage:
+  dure diagnostics [--json]
+  dure diagnostics --check [--require app,hmux,path,cli] [--json]
+
+The default check requires app,hmux,path. Add cli to require a known CLI package
+at least as new as the running app. CLI freshness and the app's frontend/backend
+compatibility are separate observations. No provider or app is restarted.
+Without --check, diagnostic findings do not change the exit status.`;
 
 /** 유지보수 커맨드 — 레지스트리 불필요(앱이 안 돌았어도 동작해야 한다). */
 async function cmdDoctor(opts) {
@@ -3976,6 +4003,16 @@ async function main() {
       },
       fail,
     });
+  }
+  if ((cmd === "help" && rest[0] === "logs") ||
+      (cmd === "logs" && rest.some((arg) => arg === "--help" || arg === "-h"))) {
+    process.stdout.write(`${LOGS_HELP}\n`);
+    return;
+  }
+  if ((cmd === "help" && rest[0] === "diagnostics") ||
+      (cmd === "diagnostics" && rest.some((arg) => arg === "--help" || arg === "-h"))) {
+    process.stdout.write(`${DIAGNOSTICS_HELP}\n`);
+    return;
   }
   if (cmd === "help" && rest[0] === "whoami") {
     process.stdout.write(WHOAMI_HELP + "\n");

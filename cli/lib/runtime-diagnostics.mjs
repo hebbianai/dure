@@ -34,7 +34,7 @@ const APP_COMPATIBILITY_BASES = new Set([
 ]);
 const FRONTEND_WORKTREE_OVERLAYS = new Set(["clean", "present", "unknown"]);
 const DEFAULT_DIAGNOSTIC_REQUIREMENTS = ["app", "hmux", "path"];
-const DIAGNOSTIC_REQUIREMENTS = new Set(DEFAULT_DIAGNOSTIC_REQUIREMENTS);
+const DIAGNOSTIC_REQUIREMENTS = new Set([...DEFAULT_DIAGNOSTIC_REQUIREMENTS, "cli"]);
 
 export function supportsHmuxCapability(manifest, capability) {
   return (
@@ -150,6 +150,20 @@ function identityMetadata(resolvedScriptPath) {
   );
 }
 
+function inspectChannelLauncher(scriptPath, installation, environment) {
+  if (installation !== "immutable") return null;
+  const versions = dirname(dirname(dirname(scriptPath)));
+  if (basename(versions) !== "versions") return null;
+  const launcherPath = join(dirname(versions), "launcher", "dure.mjs");
+  try {
+    const selected = resolveChannelCommand({ launcherPath, environment });
+    return { path: launcherPath, channel: selected.channel,
+      packageVersion: selected.metadata.packageVersion, buildId: selected.metadata.buildId };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The running CLI's own version, resolved exactly the way `dure --version`
  * resolves it — both layouts, not just the source checkout.
@@ -192,6 +206,7 @@ export function inspectCliIdentity({
     pathCommand: discovered?.path ?? null,
     pathResolvedPath: discovered?.resolvedPath ?? null,
     pathMatchesCurrent: pathSelectsCli(discovered, resolvedPath, environment),
+    channelLauncher: inspectChannelLauncher(resolvedPath, metadata.installation, environment),
   };
 }
 
@@ -436,8 +451,39 @@ export async function inspectAppRuntime({
   };
 }
 
+/** Package freshness is independent of the app's frontend/backend protocol check. */
+function cliFreshness(cli, app) {
+  const parse = (value) => {
+    if (typeof value !== "string" || value.length > 128) return null;
+    const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*))?(?:\+[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)?$/.exec(value);
+    if (!match) return null;
+    const prerelease = match[4]?.split(".") ?? [];
+    if (prerelease.some((part) => /^\d+$/.test(part) && part.length > 1 && part[0] === "0")) return null;
+    return { core: match.slice(1, 4).map(BigInt), prerelease };
+  };
+  const left = parse(cli.packageVersion);
+  const right = app.state === "running" ? parse(app.packageVersion) : null;
+  if (!left || !right) return { state: "unknown", comparedTo: right ? app.packageVersion : null };
+  const compare = (a, b) => a === b ? 0 : a < b ? -1 : 1;
+  let order = 0;
+  for (let i = 0; i < 3 && order === 0; i++) order = compare(left.core[i], right.core[i]);
+  const a = left.prerelease;
+  const b = right.prerelease;
+  if (order === 0 && (a.length === 0 || b.length === 0)) order = compare(a.length === 0, b.length === 0);
+  for (let i = 0; order === 0 && i < Math.max(a.length, b.length); i++) {
+    if (a[i] === undefined || b[i] === undefined) { order = compare(a.length, b.length); break; }
+    const numericA = /^\d+$/.test(a[i]);
+    const numericB = /^\d+$/.test(b[i]);
+    order = numericA && numericB ? compare(BigInt(a[i]), BigInt(b[i]))
+      : numericA !== numericB ? (numericA ? -1 : 1) : compare(a[i], b[i]);
+  }
+  return { state: order < 0 ? "older" : order > 0 ? "newer" : "current", comparedTo: app.packageVersion };
+}
+
 export function createDiagnosticReport({ cli, app, hmux, selectedChannel = app.channel ?? null, now = Date.now() }) {
   const issues = [];
+  const freshness = cliFreshness(cli, app);
+  if (freshness.state === "older") issues.push("cli_older_than_app");
   if (!cli.pathMatchesCurrent) issues.push("cli_path_mismatch");
   if (app.state !== "running") {
     issues.push(`app_${app.state}`);
@@ -452,7 +498,7 @@ export function createDiagnosticReport({ cli, app, hmux, selectedChannel = app.c
     generatedAtMs: now,
     status: issues.length === 0 ? "ok" : "degraded",
     issues,
-    cli,
+    cli: { ...cli, freshness },
     app,
     hmux,
     selectedChannel,
@@ -461,6 +507,13 @@ export function createDiagnosticReport({ cli, app, hmux, selectedChannel = app.c
       sessionState: "not_inspected",
       checks: ["dure backend health --json", "dure runs ls --json"],
       steps: [
+        ...(freshness.state === "older" ? [
+          "This session is using an older Dure CLI and bundled agent guides than the running app. App compatibility describes the frontend/backend pair, not this CLI's freshness.",
+          "Use the selected app channel's stable channel launcher for subsequent commands, or open a new terminal in that same app to get its current tool PATH. Existing agents can keep running without restarting. Check dure version, dure diagnostics --json and dure skills get dure through that launcher; do not change the app channel or replay pending operations.",
+          ...(cli.channelLauncher && cli.channelLauncher.channel === selectedChannel
+            ? [`Verified channel launcher: ${cli.channelLauncher.path} (package ${cli.channelLauncher.packageVersion}).`]
+            : []),
+        ] : []),
         "An unreachable app is not proof that sessions exited. Hmux compatibility checks the executable, not live session health.",
         "Keep the same Dure executable, app channel and backend selection for these read-only checks. Inspect the affected session with dure inspect <session-id> --workspace <workspace-id> --json.",
         ...(app.state !== "running" ? [
@@ -477,14 +530,14 @@ export function parseDiagnosticRequirements(value) {
   if (value === undefined) return [...DEFAULT_DIAGNOSTIC_REQUIREMENTS];
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(
-      "--require must specify one or more comma-separated values from app,hmux,path.",
+      "--require must specify one or more comma-separated values from app,hmux,path,cli.",
     );
   }
   const requirements = [];
   for (const requirement of value.split(",").map((item) => item.trim())) {
     if (!DIAGNOSTIC_REQUIREMENTS.has(requirement)) {
       throw new Error(
-        "Unknown diagnostics requirement. Supported values: app,hmux,path",
+        "Unknown diagnostics requirement. Supported values: app,hmux,path,cli",
       );
     }
     if (!requirements.includes(requirement)) requirements.push(requirement);
@@ -494,6 +547,7 @@ export function parseDiagnosticRequirements(value) {
 
 export function evaluateDiagnosticCheck(report, required) {
   const passed = {
+    cli: ["current", "newer"].includes(report.cli?.freshness?.state),
     app:
       report.app?.state === "running" &&
       report.app.compatibility?.state === "available" &&
@@ -542,6 +596,8 @@ export function formatDiagnosticReport(report) {
     `  binary: ${label(report.cli.resolvedPath)}`,
     `  path_binary: ${label(report.cli.pathResolvedPath)}`,
     `  path_matches: ${label(report.cli.pathMatchesCurrent)}`,
+    `  freshness: ${label(report.cli.freshness?.state)}`,
+    `  compared_app_version: ${label(report.cli.freshness?.comparedTo)}`,
     "app:",
     `  status: ${report.app.state}`,
     `  channel: ${label(report.selectedChannel ?? report.app.channel)}`,

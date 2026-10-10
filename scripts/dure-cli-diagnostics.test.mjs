@@ -258,6 +258,7 @@ describe("Dure runtime diagnostics", () => {
     ).toMatchObject({
       pathResolvedPath: launcher,
       pathMatchesCurrent: true,
+      channelLauncher: { path: launcher, channel: "stable", packageVersion: "0.1.4" },
     });
 
     fs.appendFileSync(launcher, "\n// tampered launcher\n");
@@ -301,6 +302,23 @@ describe("Dure runtime diagnostics", () => {
         environment: { HOME: root, PATH: commandDirectory },
       }).pathMatchesCurrent,
     ).toBe(false);
+  });
+
+  it("finds the verified same-channel launcher even when an old payload leads PATH", () => {
+    const root = temporaryDirectory("dure-cli-stale-path-");
+    const installRoot = path.join(root, "cli");
+    const executable = path.join(root, "hmux");
+    fs.writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const old = writeLauncherVersion({ buildId: "0.1.4+old", executable, installRoot });
+    const current = writeLauncherVersion({ buildId: "0.1.4+new", executable, installRoot });
+    const selected = selectLauncherVersion({ commandDirectory: path.join(root, "bin"), installRoot, versionRoot: current.versionRoot });
+    const environment = { HOME: root, DURE_APP_CHANNEL: "stable", PATH: path.dirname(old.scriptPath) };
+    const identity = inspectCliIdentity({ scriptPath: old.scriptPath, environment });
+    expect(identity.pathMatchesCurrent).toBe(true);
+    expect(identity.channelLauncher).toMatchObject({ path: fs.realpathSync(selected.launcher), buildId: "0.1.4+new", channel: "stable" });
+    expect(inspectCliIdentity({ scriptPath: old.scriptPath, environment: { ...environment, DURE_APP_CHANNEL: "dev-other" } }).channelLauncher).toBeNull();
+    fs.appendFileSync(selected.launcher, "// tampered\n");
+    expect(inspectCliIdentity({ scriptPath: old.scriptPath, environment }).channelLauncher).toBeNull();
   });
 
   it("fences the app descriptor and never emits its bearer token", async () => {
@@ -476,6 +494,51 @@ describe("Dure runtime diagnostics", () => {
     ).toContain("required: path,app\n  passed: no\n  failed: path");
   });
 
+  it("reports a stale session CLI separately from a compatible running app", () => {
+    const report = createDiagnosticReport({
+      cli: { packageVersion: "0.2.39", pathMatchesCurrent: true },
+      app: { state: "running", packageVersion: "0.2.43", compatibility: { state: "available", mode: "current" } },
+      hmux: { compatible: true }, selectedChannel: "stable",
+    });
+    expect(report.status).toBe("degraded");
+    expect(report.issues).toContain("cli_older_than_app");
+    expect(report.cli.freshness).toEqual({ state: "older", comparedTo: "0.2.43" });
+    expect(report.app.compatibility.mode).toBe("current");
+    expect(report.recovery.steps.join(" ")).toContain("channel launcher");
+    expect(report.recovery.steps.join(" ")).toContain("without restarting");
+    expect(formatDiagnosticReport(report)).toContain("freshness: older");
+    expect(evaluateDiagnosticCheck(report, ["cli"])).toEqual({ required: ["cli"], failed: ["cli"], passed: false });
+    expect(evaluateDiagnosticCheck(report, ["app"])).toMatchObject({ passed: true });
+  });
+
+  it.each([
+    ["0.2.9", "0.2.10", "older"],
+    ["0.2.43+cli", "0.2.43+app", "current"],
+    ["0.2.44", "0.2.43", "newer"],
+    ["0.2.43-beta.2", "0.2.43-beta.10", "older"],
+    ["0.2.43-beta.10", "0.2.43", "older"],
+    ["0.2.43", "0.2.43-beta.10", "newer"],
+    ["unknown", "0.2.43", "unknown"],
+  ])("compares CLI %s with app %s as %s", (cliVersion, appVersion, state) => {
+    const report = createDiagnosticReport({
+      cli: { packageVersion: cliVersion, pathMatchesCurrent: true },
+      app: { state: "running", packageVersion: appVersion, compatibility: { state: "available", mode: "current" } },
+      hmux: { compatible: true },
+    });
+    expect(report.cli.freshness.state).toBe(state);
+    expect(report.issues.includes("cli_older_than_app")).toBe(state === "older");
+  });
+
+  it("does not use a stale app descriptor to infer CLI freshness", () => {
+    const report = createDiagnosticReport({
+      cli: { packageVersion: "0.2.39", pathMatchesCurrent: true },
+      app: { state: "stale_descriptor", packageVersion: "0.2.43", compatibility: { state: "unavailable", mode: null } },
+      hmux: { compatible: true },
+    });
+    expect(report.cli.freshness.state).toBe("unknown");
+    expect(report.issues).not.toContain("cli_older_than_app");
+  });
+
   it("supports version and offline JSON diagnostics without a registry", () => {
     const cliVersion = dureCliVersionExpectation(process.cwd());
     const home = temporaryDirectory("dure-cli-offline-");
@@ -608,6 +671,15 @@ fi
       DURE_HMUX_BIN: hmux,
       DURE_HMUX_PROBE_MARKER: marker,
     });
+
+    for (const args of [["diagnostics", "--help"], ["diagnostics", "-h"], ["help", "diagnostics"]]) {
+      const help = spawnSync(process.execPath, ["cli/dure.mjs", ...args], {
+        cwd: process.cwd(), env: environment, encoding: "utf8",
+      });
+      expect(help.status, help.stderr).toBe(0);
+      expect(help.stdout).toContain("app,hmux,path,cli");
+      expect(fs.existsSync(marker)).toBe(false);
+    }
 
     const withoutCheck = spawnSync(
       process.execPath,

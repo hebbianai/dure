@@ -23,6 +23,13 @@ Browser guide owns discovery, recovery, and returning control to the pane.
 
 ## Check who's around
 
+`dure whoami --json` returns the current registry identity and its `source`.
+An explicit managed Session must have exactly one registry owner; missing or
+ambiguous owners fail instead of selecting another agent from the same folder.
+Outside a managed Session, `--agent NAME` can select a target explicitly. The
+working-directory fallback requires one agent in the nearest matching worktree.
+`dure logs --help` explains scrollback reads and works without a running app.
+
 ```sh
 dure ls                      # canonical Sessions + exact liveness
 dure ls --backend devbox --json
@@ -263,6 +270,16 @@ dure diagnostics --check --require app,hmux,path
 `diagnostics` reports CLI path shadowing, app descriptor liveness,
 frontend/backend compatibility, and Hmux capability without exposing bearer
 tokens or terminal content. It does not poll in the background.
+`cli.freshness` separately compares this CLI's package version with the verified
+running app. `cli_older_than_app` means its commands and bundled guides may lag
+even when frontend/backend compatibility is current. Use the verified
+`cli.channelLauncher.path`, when available for the same channel, for subsequent
+commands or obtain the current PATH from a new terminal in that app. Existing
+agents can keep running. Inspect the new executable's `version`, `diagnostics`
+and `skills get dure` before continuing; do not replay uncertain operations.
+`diagnostics --check --require cli` requires a known current or newer CLI package.
+The default requirements remain `app,hmux,path`; version freshness does not claim
+wire compatibility or live Session health.
 Its `selectedChannel` remains available even when the app descriptor is absent.
 The `recovery` object provides read-only checks and session-preserving steps.
 Hmux executable compatibility is not live backend or session health: run
