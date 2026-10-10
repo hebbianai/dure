@@ -78,11 +78,7 @@ impl ManagedBackendCoordinatorHandle {
     }
 
     #[cfg(test)]
-    pub(crate) fn complete_for_test(
-        &self,
-        ticket: &RecoveryTicket,
-        authority: BackendProfile,
-    ) {
+    pub(crate) fn complete_for_test(&self, ticket: &RecoveryTicket, authority: BackendProfile) {
         self.publish(Phase::Ready(Some(authority), ticket.incident));
     }
 
@@ -225,14 +221,25 @@ impl DureBackendCoordinator {
         self.handle.clone()
     }
 
-    pub(crate) fn start(&self, resource_dir: std::path::PathBuf) -> Result<(), String> {
+    pub(crate) fn start(
+        &self,
+        resource_dir: std::path::PathBuf,
+        instance: &'static crate::app_instance::AppInstance,
+        on_ready: impl FnOnce() + Send + 'static,
+    ) -> Result<(), String> {
         let receiver = self
             .receiver
             .lock()
             .map_err(|_| "Dure backend coordinator state is unavailable".to_string())?
             .take()
             .ok_or_else(|| "Dure backend coordinator was already started".to_string())?;
-        tauri::async_runtime::spawn(run(self.handle.clone(), receiver, resource_dir));
+        tauri::async_runtime::spawn(run(
+            self.handle.clone(),
+            receiver,
+            resource_dir,
+            instance,
+            on_ready,
+        ));
         Ok(())
     }
 }
@@ -240,15 +247,12 @@ impl DureBackendCoordinator {
 async fn reconcile(
     expected: Option<BackendProfile>,
     resource_dir: std::path::PathBuf,
+    instance: &'static crate::app_instance::AppInstance,
 ) -> Result<ReconciledBackendAuthority, BackendReconcileError> {
     tauri::async_runtime::spawn_blocking(move || {
-        let channel =
-            crate::app_channel::current_name().map_err(|error| BackendReconcileError {
-                code: "backend_reconcile_channel_unavailable",
-                message: error.to_string(),
-            })?;
+        let channel = &instance.channel().name;
         if expected.is_none() {
-            crate::dure_cli_install::prepare_startup_channel(&channel, &resource_dir).map_err(
+            crate::dure_cli_install::prepare_startup_channel(channel, &resource_dir).map_err(
                 |message| BackendReconcileError {
                     code: "backend_reconcile_cli_bootstrap_failed",
                     message,
@@ -256,7 +260,7 @@ async fn reconcile(
             )?;
         }
         let reconciled = crate::dure_cli_install::reconcile_backend_from_current_channel(
-            &channel,
+            channel,
             expected.as_ref().map(BackendProfile::id),
         )?;
         Ok(reconciled)
@@ -304,17 +308,38 @@ where
     }
 }
 
+async fn prepare_and_publish_startup<F, Fut>(
+    handle: &ManagedBackendCoordinatorHandle,
+    failures: &mut u32,
+    attempt: F,
+    on_ready: impl FnOnce(),
+) where
+    F: FnMut(Option<BackendProfile>) -> Fut,
+    Fut: std::future::Future<Output = Result<ReconciledBackendAuthority, BackendReconcileError>>,
+{
+    let startup = reconcile_until(handle, None, failures, attempt).await;
+    // CLI preparation (including automatic downgrade protection) completed.
+    // Publish app descriptors/hooks only now, once, off the UI setup thread.
+    on_ready();
+    // Requests may now observe the published channel files.
+    handle.publish(Phase::Ready(startup.managed_authority, 0));
+}
+
 async fn run(
     handle: ManagedBackendCoordinatorHandle,
     mut receiver: mpsc::Receiver<RecoveryTicket>,
     resource_dir: std::path::PathBuf,
+    instance: &'static crate::app_instance::AppInstance,
+    on_ready: impl FnOnce() + Send + 'static,
 ) {
     let mut failures = 0;
-    let startup = reconcile_until(&handle, None, &mut failures, |expected| {
-        reconcile(expected, resource_dir.clone())
-    })
+    prepare_and_publish_startup(
+        &handle,
+        &mut failures,
+        |expected| reconcile(expected, resource_dir.clone(), instance),
+        on_ready,
+    )
     .await;
-    handle.publish(Phase::Ready(startup.managed_authority, 0));
     let mut ready_since = Instant::now();
     while let Some(ticket) = receiver.recv().await {
         failures = if ready_since.elapsed() >= STABLE_RESET_AFTER {
@@ -323,10 +348,11 @@ async fn run(
             failures.saturating_add(1)
         };
         tokio::time::sleep(retry_delay(failures)).await;
-        let recovered = reconcile_until(&handle, Some(ticket.authority), &mut failures, |expected| {
-            reconcile(expected, resource_dir.clone())
-        })
-        .await;
+        let recovered =
+            reconcile_until(&handle, Some(ticket.authority), &mut failures, |expected| {
+                reconcile(expected, resource_dir.clone(), instance)
+            })
+            .await;
         handle.publish(Phase::Ready(recovered.managed_authority, ticket.incident));
         ready_since = Instant::now();
     }
@@ -339,43 +365,59 @@ mod tests {
 
     #[tokio::test]
     async fn failed_startup_settles_waiters_and_a_later_success_restores_readiness() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let publications = Arc::new(AtomicUsize::new(0));
         let (handle, _requests) = coordinator_channel(Phase::Starting);
         let waiting = handle.wait_for_startup();
         tokio::pin!(waiting);
-        assert!(tokio::time::timeout(Duration::from_millis(20), &mut waiting)
-            .await
-            .is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+                .await
+                .is_err()
+        );
 
         let (failed_tx, failed_rx) = oneshot::channel();
         let (recover_tx, recover_rx) = oneshot::channel();
         let worker_handle = handle.clone();
+        let published = publications.clone();
         let worker = tokio::spawn(async move {
             let mut failed_tx = Some(failed_tx);
             let mut recover_rx = Some(recover_rx);
             let mut failures = 0;
-            let result = reconcile_until(&worker_handle, None, &mut failures, |_| {
-                let failure = failed_tx.take();
-                let recovery = if failure.is_none() {
-                    recover_rx.take()
-                } else {
-                    None
-                };
-                async move {
-                    if let Some(failed) = failure {
-                        failed.send(()).unwrap();
-                        return Err(BackendReconcileError {
-                            code: "backend_reconcile_cli_bootstrap_failed",
-                            message: "the previous CLI cannot be activated".into(),
-                        });
+            prepare_and_publish_startup(
+                &worker_handle,
+                &mut failures,
+                |_| {
+                    let failure = failed_tx.take();
+                    let recovery = if failure.is_none() {
+                        recover_rx.take()
+                    } else {
+                        None
+                    };
+                    async move {
+                        if let Some(failed) = failure {
+                            failed.send(()).unwrap();
+                            return Err(BackendReconcileError {
+                                code: "backend_reconcile_cli_bootstrap_failed",
+                                message: "the previous CLI cannot be activated".into(),
+                            });
+                        }
+                        recovery.unwrap().await.unwrap();
+                        Ok(ReconciledBackendAuthority {
+                            managed_authority: None,
+                        })
                     }
-                    recovery.unwrap().await.unwrap();
-                    Ok(ReconciledBackendAuthority {
-                        managed_authority: None,
-                    })
-                }
-            })
+                },
+                || {
+                    assert!(!matches!(
+                        &*worker_handle.0.phase.borrow(),
+                        Phase::Ready(..)
+                    ));
+                    published.fetch_add(1, Ordering::SeqCst);
+                },
+            )
             .await;
-            worker_handle.publish(Phase::Ready(result.managed_authority, 0));
             failures
         });
 
@@ -394,6 +436,11 @@ mod tests {
             retry.expect_err("startup still failed").0,
             "backend_reconcile_cli_bootstrap_failed"
         );
+        assert_eq!(
+            publications.load(Ordering::SeqCst),
+            0,
+            "failed CLI preparation must not publish hooks or descriptors"
+        );
 
         recover_tx.send(()).unwrap();
         assert_eq!(
@@ -404,5 +451,6 @@ mod tests {
             1
         );
         assert!(handle.wait_for_startup().await.is_ok());
+        assert_eq!(publications.load(Ordering::SeqCst), 1);
     }
 }

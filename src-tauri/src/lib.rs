@@ -5,6 +5,7 @@ mod resources;
 mod agent_naming;
 mod agent_registry;
 mod app_channel;
+mod app_instance;
 mod worktree_release;
 mod app_home;
 mod claude_collector;
@@ -2141,6 +2142,22 @@ pub fn run() {
             .unwrap_or_default(),
     )
     .expect("failed to launch the macOS development app from Dure.app");
+    // Claim before any migration, CLI bootstrap, coordinator, descriptor/hook
+    // publication or window construction. A duplicate launch never activates
+    // the incumbent or steals focus.
+    let app_instance = match app_channel::current_for_bundle(&context.config().identifier)
+        .and_then(app_instance::claim_startup)
+    {
+        Ok(Some(instance)) => instance,
+        Ok(None) => {
+            eprintln!("[app-startup] app_channel_in_use");
+            return;
+        }
+        Err(error) => {
+            eprintln!("[app-startup] app_channel_ownership_unavailable: {error}");
+            return;
+        }
+    };
     #[cfg(target_os = "macos")]
     migrate_legacy_app_identity_data();
     #[cfg(target_os = "macos")]
@@ -2237,11 +2254,13 @@ pub fn run() {
             let notification_click_qa = notification_click_qa::bootstrap(app.handle())?;
             #[cfg(debug_assertions)]
             qa::configure_activation_policy(app.handle())?;
+            let app_handle = app.handle().clone();
             app.state::<dure_backend_coordinator::DureBackendCoordinator>()
-                .start(app.path().resource_dir()?)?;
-            if !notification_click_qa {
-                server::start(app.handle().clone(), cli_request_broker.clone());
-            }
+                .start(app.path().resource_dir()?, app_instance, move || {
+                    if !notification_click_qa {
+                        server::start(app_handle, cli_request_broker, app_instance);
+                    }
+                })?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

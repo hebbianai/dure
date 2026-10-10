@@ -89,6 +89,7 @@ fn claimed_request_timeout(action: &str) -> Duration {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ServerDescriptor<'a> {
+    app_instance_lock_version: u8,
     schema_version: u32,
     api_version: u32,
     package_version: &'a str,
@@ -623,14 +624,12 @@ fn write_server_descriptor(
 
 /// 앱 시작 시 호출. 서버 스레드를 띄우고 현재 앱 채널의 server.json에
 /// 인증 descriptor를 기록해 같은 채널의 CLI가 찾을 수 있게 한다.
-pub fn start(app: AppHandle, broker: Arc<CliRequestBroker>) {
-    let app_channel = match crate::app_channel::current() {
-        Ok(channel) => channel,
-        Err(error) => {
-            eprintln!("could not resolve Dure app channel: {error}");
-            return;
-        }
-    };
+pub fn start(
+    app: AppHandle,
+    broker: Arc<CliRequestBroker>,
+    instance: &'static crate::app_instance::AppInstance,
+) {
+    let app_channel = instance.channel();
     let token = match gen_token() {
         Ok(token) => token,
         Err(error) => {
@@ -672,6 +671,7 @@ pub fn start(app: AppHandle, broker: Arc<CliRequestBroker>) {
     };
 
     let descriptor = ServerDescriptor {
+        app_instance_lock_version: crate::app_instance::LOCK_VERSION,
         schema_version: 1,
         api_version: CLI_API_VERSION,
         package_version: env!("CARGO_PKG_VERSION"),
@@ -712,7 +712,7 @@ pub fn start(app: AppHandle, broker: Arc<CliRequestBroker>) {
         eprintln!("could not publish managed provider runtime integrations: {error}");
     }
 
-    let channel = app_channel.name;
+    let channel = app_channel.name.clone();
     let remote_shell_waiters = Arc::new(tokio::sync::Semaphore::new(8));
     std::thread::spawn(move || {
         // Report 라우트 rate limit — 폭주한 훅이 서버 스레드와 웹뷰 이벤트를
@@ -2566,6 +2566,7 @@ mod tests {
         std::fs::create_dir(&directory).unwrap();
 
         let descriptor = ServerDescriptor {
+            app_instance_lock_version: crate::app_instance::LOCK_VERSION,
             schema_version: 1,
             api_version: CLI_API_VERSION,
             package_version: "0.1.4",

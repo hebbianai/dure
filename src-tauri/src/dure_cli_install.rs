@@ -139,11 +139,11 @@ pub(crate) async fn install_dure_cli(app: tauri::AppHandle) -> Result<(), String
         .resource_dir()
         .map_err(|error| format!("resolve Dure CLI bundle resources failed: {error}"))?;
     tauri::async_runtime::spawn_blocking(move || {
-        let channel = crate::app_channel::current_name()
-            .map_err(|error| format!("resolve Dure app channel failed: {error}"))?;
+        let instance = crate::app_instance::current()?;
+        let channel = &instance.channel().name;
         let home = dirs::home_dir()
             .ok_or_else(|| "resolve home for Dure CLI install failed".to_string())?;
-        install_for_channel(&channel, &home, &resource_dir)
+        install_for_channel(channel, &home, &resource_dir)
     })
     .await
     .map_err(|error| format!("Dure CLI install task failed: {error}"))?

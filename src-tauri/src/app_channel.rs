@@ -15,7 +15,25 @@ pub(crate) struct AppChannel {
 }
 
 pub(crate) fn current() -> io::Result<AppChannel> {
+    resolve_current(current_name()?)
+}
+
+pub(crate) fn current_for_bundle(identifier: &str) -> io::Result<AppChannel> {
     let name = current_name()?;
+    validate_bundle_channel(identifier, &name)?;
+    resolve_current(name)
+}
+
+fn validate_bundle_channel(identifier: &str, channel: &str) -> io::Result<()> {
+    if let Some(suffix) = identifier.strip_prefix("io.hebbian.ade.dev.") {
+        if !channel.starts_with("dev-") || !channel.ends_with(&format!("-{suffix}")) {
+            return Err(io::Error::other("development bundle app channel mismatch"));
+        }
+    }
+    Ok(())
+}
+
+fn resolve_current(name: String) -> io::Result<AppChannel> {
     let (app_root, _) = crate::app_home::app_root_resolution().map_err(io::Error::other)?;
     let control_dir = control_dir_for(&app_root, &name);
     ensure_control_dir(&control_dir, &name)?;
@@ -152,6 +170,15 @@ mod tests {
     use super::ensure_control_dir;
     use std::ffi::OsStr;
     use std::path::Path;
+
+    #[test]
+    fn directly_launched_dev_bundles_cannot_fall_back_to_stable() {
+        let identifier = "io.hebbian.ade.dev.a1b2c3d4e5";
+        assert!(super::validate_bundle_channel(identifier, "stable").is_err());
+        assert!(super::validate_bundle_channel(identifier, "dev-other-e5d4c3b2a1").is_err());
+        assert!(super::validate_bundle_channel(identifier, "dev-fixture-a1b2c3d4e5").is_ok());
+        assert!(super::validate_bundle_channel("io.hebbian.ade", "stable").is_ok());
+    }
 
     #[test]
     fn canonical_dure_channel_wins_over_the_legacy_input() {
