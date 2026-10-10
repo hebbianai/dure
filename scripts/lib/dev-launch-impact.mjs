@@ -52,6 +52,7 @@ export const DEV_PARENT_SOURCE_PATHS = Object.freeze([
   "scripts/lib/background-cpu-priority.mjs",
   "scripts/lib/backend-runtime-fingerprint.mjs",
   "scripts/lib/build-storage-admission.mjs",
+  "scripts/lib/build-storage-diagnostics.mjs",
   "scripts/lib/build-storage-reservation.mjs",
   "scripts/lib/corepack-install.mjs",
   "scripts/lib/daily-driver.mjs",
