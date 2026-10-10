@@ -67,7 +67,9 @@ Claude's project-scoped history, and retained checkout claims. Use the returned
 reason to identify the unsupported boundary; do not relabel project metadata or
 force-stop an active provider. When failed target startup reports `repair_required`,
 the returned rollback command uses the existing revision-fenced runtime repair to
-resume in the source folder. An uncertain startup requires status inspection first.
+resume in the source folder. Its `runtime switch --expected-revision` retains the
+source account unless an account change is explicitly requested. An uncertain
+startup requires status inspection first.
 Older backends refuse the new capability before effects. Desktop menu integration,
 live idle transitions, retained-checkout handoff and Claude history relocation
 remain separate acceptance work.

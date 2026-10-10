@@ -6,9 +6,10 @@ export function assertNoConversationProjectOptions(opts) {
   const inlineDestination = opts.rest?.some((arg) => /^--(?:project|path|cwd)=/.test(arg));
   if (!opts.projectSpecified && !opts.pathSpecified && !Object.hasOwn(opts, "cwd") && !inlineDestination) return;
   throw Object.assign(new Error(
-    "Moving an existing conversation to another project or working folder is not supported. " +
-    "Resume keeps its original workspace. No restart was requested. " +
+    "Resume keeps its original workspace and does not accept destination options. No restart was requested. " +
     "To keep this conversation, resume it without --project, --path or --cwd. " +
-    "To work in another registered project, use dure run --project PROJECT with a new conversation.",
+    "To move a stopped native Codex conversation on the same backend without retained checkout ownership, " +
+    "preview with dure runs move AGENT --project PROJECT --json and use its exact Apply command. " +
+    "Claude and live-source project moves are not supported. Use dure run --project PROJECT for a new conversation.",
   ), { code: "conversation_project_move_unsupported" });
 }

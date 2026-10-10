@@ -20,8 +20,8 @@ export const RUNTIME_HELP = `Usage:
   dure runtime idle disable --expected-revision N [--backend ID] [--json]
   dure runtime get <agent-id> [--backend ID] [--json]
   dure runtime switch <agent-id> chat|terminal [--backend ID] [--json]
-    [--idempotency-key KEY] [--deadline-ms MS]
-    [--account ACCOUNT_ID|default --expected-revision N [--credential-generation ID]]
+    [--idempotency-key KEY] [--deadline-ms MS] [--expected-revision N]
+    [--account ACCOUNT_ID|default [--credential-generation ID]]
   dure runtime hibernate <agent-id> --expected-revision N [--backend ID] [--json]
   dure runtime wake <agent-id> --operation-id ID --expected-revision N
     [--conversation-id ID] [--backend ID] [--json] [--idempotency-key KEY] [--deadline-ms MS]
@@ -39,12 +39,16 @@ DURE_SESSION_IDLE_AFTER_MS seeds only a missing policy; saved settings take prec
 Switch preserves the conversation and selected credential. A busy source is
 retained; this command never discards active work. Failed stopped targets are
 replaced through the same backend transition as the app.
-Switch and wake retain the original project and working folder. Moving an
-existing conversation to another project is not supported. --project, --path
-and --cwd are refused before backend access. Use run --project PROJECT to start
-a new conversation in another registered project.
+Switch and wake retain the original project and working folder. --project,
+--path and --cwd are refused before backend access. Use dure runs move AGENT
+--project PROJECT --json to preview moving a stopped native Codex conversation
+on the same backend without retained checkout ownership. Keep its exact Apply
+command for retries; Claude and live-source project moves are not supported.
+Switch --expected-revision fences the observed source without changing its
+account. Project-move repair commands use it to resume in the source folder.
 An explicit --account changes credentials through that same transition. A named
 account requires its exact --credential-generation; default requires none.
+Both account selections require --expected-revision.
 Use dure runs switch-account <name-or-id> --account ACCOUNT_ID to preview a
 same-conversation switch and obtain the revision-fenced command. For an Agent
 without a Run record, get its current mode/revision and use recovery get PROVIDER
@@ -104,7 +108,9 @@ export async function collectAgentRuntimeCommand({
       (lifecycle && args.length === 2 && lifecycleBody &&
         (action !== "hibernate" || operationId === undefined))
     ) ||
-    (!lifecycle && (operationId !== undefined || (!idleConfigure && !accountSwitch && expectedRevision !== undefined))) ||
+    (!lifecycle && (operationId !== undefined || (!idleConfigure && action !== "switch" && expectedRevision !== undefined))) ||
+    (action === "switch" && expectedRevision !== undefined &&
+      (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)) ||
     (account !== undefined && !accountSwitch) ||
     (accountSwitch && (!isDureDomainIdV1(account) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1 ||
       (account === "default" ? credentialGeneration !== undefined : !isDureDomainIdV1(credentialGeneration)))) ||
@@ -134,7 +140,8 @@ export async function collectAgentRuntimeCommand({
           ? agentRuntimeTransitionBody({
               agentId,
               targetInteractionProfile: PROFILES[target],
-              ...(accountSwitch ? { expectedSourceRevision: expectedRevision, targetExecutionProfile } : {}),
+              expectedSourceRevision: expectedRevision,
+              ...(accountSwitch ? { targetExecutionProfile } : {}),
             })
           : idleBody ?? lifecycleBody ?? (idle ? { schemaVersion: 1 } : { schemaVersion: 1, agentId }),
       },
