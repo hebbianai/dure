@@ -50,6 +50,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("@tauri-apps/api/webviewWindow", async (original) => ({
+	...(await original<typeof import("@tauri-apps/api/webviewWindow")>()),
+	getCurrentWebviewWindow: () => ({ label: "main" }),
+}));
 vi.mock("@/lib/ipc/git", async (original) => ({
 	...(await original<object>()),
 	gitAvailability: mocks.gitAvailability,

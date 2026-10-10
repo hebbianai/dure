@@ -10,6 +10,7 @@
 // repository group must not re-render because an account or host record moved.
 
 import { useCallback, useRef } from "react";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
 	ensureProjectForPath,
 	readAccounts,
@@ -45,7 +46,7 @@ import {
 } from "@/lib/workspace/dock";
 import { agentSpawnInteractionPreference } from "@/lib/workspace/pane/interfaceMode";
 import type { PanelPosition } from "@/lib/workspace/pane/panePlacement";
-import { spaceWindowLabel } from "@/lib/workspace/window/windowLabel";
+import { presentingWindowLabel } from "@/lib/workspace/window/windowLabel";
 import type { Agent, Provider } from "@/types";
 
 /** The add-agent dialog target the pane owns — quick-add fills it in for the
@@ -208,7 +209,10 @@ export function useRepositoryQuickAdd(
 								space
 									? {
 											spaceId: space.id,
-											windowLabel: spaceWindowLabel(space),
+											windowLabel: presentingWindowLabel(
+												space,
+												getCurrentWebviewWindow().label,
+											),
 											...(position ? { position } : {}),
 										}
 									: null,

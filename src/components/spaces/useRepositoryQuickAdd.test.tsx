@@ -52,7 +52,11 @@ vi.mock("@/lib/workspace/dock", () => ({
 	openAgentPanel: mocks.openAgentPanel,
 }));
 vi.mock("@/lib/workspace/window/windowLabel", () => ({
-	spaceWindowLabel: () => "main",
+	presentingWindowLabel: () => "main",
+}));
+vi.mock("@tauri-apps/api/webviewWindow", async (original) => ({
+	...(await original<typeof import("@tauri-apps/api/webviewWindow")>()),
+	getCurrentWebviewWindow: () => ({ label: "main" }),
 }));
 
 import { useRepositoryQuickAdd } from "@/components/spaces/useRepositoryQuickAdd";

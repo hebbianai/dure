@@ -5,6 +5,7 @@
 // 여기서는 배치와 생성 호출만 한다.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { CornerDownLeft, Command as CommandIcon } from "lucide-react";
 import {
   type CanonicalAddAgentPresentationResult,
@@ -29,7 +30,7 @@ import {
   withDesktopDockview,
 } from "@/lib/workspace/dock";
 import { openCommandTerminalOn } from "@/lib/workspace/dock/openCommandTerminal";
-import { spaceWindowLabel } from "@/lib/workspace/window/windowLabel";
+import { presentingWindowLabel } from "@/lib/workspace/window/windowLabel";
 import { planSetupLaunch, setupShellCommand, type SetupLaunch } from "@/lib/agents/setupRun";
 import { loadRepoBranchState } from "@/lib/agents/repoBranchLoad";
 import {
@@ -474,7 +475,10 @@ export function AddAgentBody({
               ? null
               : {
                   spaceId: targetSpaceId,
-                  windowLabel: spaceWindowLabel(targetSpace),
+                  windowLabel: presentingWindowLabel(
+                    targetSpace,
+                    getCurrentWebviewWindow().label,
+                  ),
                 },
           );
         } catch (cause) {
