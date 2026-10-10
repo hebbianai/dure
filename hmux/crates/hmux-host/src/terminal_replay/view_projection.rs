@@ -550,9 +550,14 @@ impl CapturedViewportFrame {
             state_revision: self.state_revision,
             body: Some(terminal_state_record::Body::ViewportFrame(viewport)),
         };
-        terminal_state_protocol::validate_record(&record).map_err(|_| {
+        terminal_state_protocol::validate_record(&record).map_err(|error| {
             TerminalReplayError::InvalidStructuredProjection {
-                reason: "encoded viewport record failed protocol validation",
+                // Record validation supplies a static invariant, never terminal
+                // content. Preserve it for the attachment's existing error path.
+                reason: match error {
+                    terminal_state_protocol::ProtocolError::InvalidRecord(reason) => reason,
+                    _ => "encoded viewport record failed protocol validation",
+                },
             }
         })?;
         Ok(record)
@@ -1311,6 +1316,60 @@ mod tests {
         assert!(frame(&initial).follow_tail);
         assert!(!frame(&initial).rows.is_empty());
         terminal_state_protocol::validate_record(&initial).unwrap();
+    }
+
+    #[test]
+    fn captured_viewport_validation_preserves_the_failed_invariant_without_content() {
+        let cases: [(fn(&mut CapturedViewportFrame), &str); 6] = [
+            (
+                |capture| capture.state_revision = 0,
+                "state revision must be nonzero",
+            ),
+            (
+                |capture| {
+                    capture.viewport.rows[0].logical_cell_span =
+                        u32::from(capture.geometry.columns) + 1
+                },
+                "logical cell span exceeds the grid",
+            ),
+            (
+                |capture| capture.viewport.rows[0].logical_line_id = 0,
+                "logical line id must be nonzero",
+            ),
+            (
+                |capture| capture.viewport.rows[0].cells[0].grapheme_index = u32::MAX,
+                "row table index exceeds entry cap",
+            ),
+            (
+                |capture| capture.viewport.cursor = Some((0, capture.geometry.columns)),
+                "viewport-relative cursor is invalid",
+            ),
+            (
+                |capture| capture.rows_from_tail = Some(1),
+                "viewport anchor outcome and tail position disagree",
+            ),
+        ];
+        for (invalidate, reason) in cases {
+            let mut replay = replay();
+            replay
+                .ingest_output(b"diagnostic-content-sentinel")
+                .unwrap();
+            let mut projection = replay.attach_view_projection().unwrap();
+            let mut capture = replay
+                .capture_latest_viewport_frame(&mut projection)
+                .unwrap()
+                .unwrap();
+            invalidate(&mut capture);
+
+            let error = capture.finish().unwrap_err();
+
+            assert_eq!(error.class_token(), "invalid_structured_projection");
+            assert_eq!(
+                error.to_string(),
+                format!("structured terminal projection is inconsistent: {reason}")
+            );
+            assert!(!error.to_string().contains("diagnostic-content-sentinel"));
+        }
     }
 
     #[test]
