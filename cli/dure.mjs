@@ -3664,6 +3664,8 @@ Usage:
 The default check requires app,hmux,path. Add cli to require a known CLI package
 at least as new as the running app. CLI freshness and the app's frontend/backend
 compatibility are separate observations. No provider or app is restarted.
+Desktop WebView warnings/errors appear as bounded redacted evidence in
+app.webviewDiagnostics; --json includes all retained rows. Older apps report unavailable.
 Without --check, diagnostic findings do not change the exit status.`;
 
 /** 유지보수 커맨드 — 레지스트리 불필요(앱이 안 돌았어도 동작해야 한다). */
