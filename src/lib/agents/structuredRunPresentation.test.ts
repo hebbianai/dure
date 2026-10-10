@@ -248,6 +248,46 @@ describe("projectStructuredRunAgent", () => {
 });
 
 describe("presentStructuredRun", () => {
+	it.each([
+		["win-1791187000000-0", "presented-pane"],
+		["win-popout-space-1", null],
+	])(
+		"presents a normal Space only from a full desktop window: %s",
+		async (windowLabel, panelId) => {
+			let current: CliManagedRunPresentationState = {
+				...state(),
+				spaces: [{ id: "space-1", name: "Build" }],
+			};
+			const openAgent = vi.fn(() => "presented-pane");
+			const dependencies: StructuredRunPresentationDependencies = {
+				windowLabel: () => windowLabel,
+				readState: () => current,
+				setState: (producer) => {
+					current = { ...current, ...producer(current) };
+				},
+				ensureProject: vi.fn(async () => project),
+				requestSpaceMount: vi.fn(),
+				waitForSpace: vi.fn(async () => ({})),
+				resolveReference: vi.fn(),
+				openAgent,
+			};
+			const presentation = presentStructuredRun(
+				run,
+				{ projectPath: project.path, spaceId: "space-1", windowLabel },
+				dependencies,
+			);
+
+			if (panelId) {
+				expect((await presentation).pane.panelId).toBe(panelId);
+			} else {
+				await expect(presentation).rejects.toThrow(
+					"structured Agent target Space moved before presentation",
+				);
+				expect(openAgent).not.toHaveBeenCalled();
+			}
+		},
+	);
+
 	it("keeps the resumed workspace snapshot when the source is removed while the Space mounts", async () => {
 		const source = {
 			...projectStructuredRunAgent(state(), run, project).agent,

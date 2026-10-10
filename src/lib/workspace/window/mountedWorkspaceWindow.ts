@@ -18,7 +18,7 @@ import {
 	mountedWindowIdentifier,
 	parseMountedWorkspaceWindow,
 } from "./mountedWindowIdentity";
-import { spaceWindowLabel } from "./windowLabel";
+import { presentingWindowLabel } from "./windowLabel";
 import {
 	collectWindowSamples,
 	type WindowSampleRequest,
@@ -245,10 +245,7 @@ export async function resolveReadyWorkspaceWindow(
 			.spaces.find((candidate) => candidate.id === desktopId);
 		if (!space || space.kind === "popout") throw error;
 		const current = getCurrentWebviewWindow().label;
-		const label =
-			current === "main" || /^win-\d+-\d+$/.test(current)
-				? current
-				: spaceWindowLabel(space);
+		const label = presentingWindowLabel(space, current);
 		if (label === current) requestDesktopPrewarm(desktopId);
 		else
 			await emitTo(

@@ -19,7 +19,7 @@ import { requestDesktopPrewarm } from "@/lib/workspace/desktop/desktopPrewarm";
 import { openAgentPanel, resolvePaneById } from "@/lib/workspace/dock";
 import { waitForDesktopDockview } from "@/lib/workspace/dock/dockRegistry";
 import type { PanelPosition } from "@/lib/workspace/pane/panePlacement";
-import { spaceWindowLabel } from "@/lib/workspace/window/windowLabel";
+import { spaceWindowAccepts } from "@/lib/workspace/window/windowLabel";
 import { useStore } from "@/store";
 import type { Agent, Project } from "@/types";
 
@@ -289,7 +289,7 @@ function requireTargetWindow(
 		.spaces.find((candidate) => candidate.id === spaceId);
 	if (
 		!space ||
-		spaceWindowLabel(space) !== expectedWindowLabel ||
+		!spaceWindowAccepts(space, expectedWindowLabel) ||
 		dependencies.windowLabel() !== expectedWindowLabel
 	) {
 		fail(

@@ -31,7 +31,7 @@ import { requestDesktopPrewarm } from "@/lib/workspace/desktop/desktopPrewarm";
 import { openAgentPanel, resolvePaneById } from "@/lib/workspace/dock";
 import { waitForDesktopDockview } from "@/lib/workspace/dock/dockRegistry";
 import type { PanelPosition } from "@/lib/workspace/pane/panePlacement";
-import { spaceWindowLabel } from "@/lib/workspace/window/windowLabel";
+import { spaceWindowAccepts } from "@/lib/workspace/window/windowLabel";
 import { useStore } from "@/store";
 import type { Agent, Project } from "@/types";
 
@@ -267,19 +267,16 @@ function requireTargetSpaceWindow(
 			`Space ${request.spaceId} was not found`,
 		);
 	}
-	let expectedWindowLabel: string;
+	let accepted: boolean;
 	try {
-		expectedWindowLabel = spaceWindowLabel(targetSpace);
+		accepted = spaceWindowAccepts(targetSpace, request.windowLabel);
 	} catch {
 		failCliManagedRunPresentation(
 			"client_space_window_changed",
 			`Space ${request.spaceId} no longer has a valid window address`,
 		);
 	}
-	if (
-		request.windowLabel !== expectedWindowLabel ||
-		windowLabel !== expectedWindowLabel
-	) {
+	if (!accepted || windowLabel !== request.windowLabel) {
 		failCliManagedRunPresentation(
 			"client_space_window_changed",
 			`Space ${request.spaceId} moved to another window before presentation`,

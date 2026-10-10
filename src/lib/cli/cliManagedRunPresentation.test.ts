@@ -602,6 +602,19 @@ describe("managed Run pane transaction", () => {
 		expect(fixture.readState().agents).toHaveLength(1);
 	});
 
+	it("presents a normal Space from the full desktop window it was torn out into", async () => {
+		const fixture = handlerFixture();
+		fixture.dependencies.windowLabel = () => "win-1791187000000-0";
+
+		await expect(
+			presentManagedRun(
+				{ ...request, windowLabel: "win-1791187000000-0" },
+				fixture.dependencies,
+			),
+		).resolves.toMatchObject({ ok: true });
+		expect(fixture.openAgent).toHaveBeenCalledTimes(1);
+	});
+
 	it("projects the existing runtime and prefers the invoking pane without forcing an axis", async () => {
 		const fixture = handlerFixture();
 		const result = await handleCliManagedRunPresentation(

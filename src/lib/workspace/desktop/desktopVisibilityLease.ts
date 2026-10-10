@@ -1,3 +1,5 @@
+import { isFullDesktopWindowLabel } from "@/lib/workspace/window/windowLabel";
+
 export const DESKTOP_VISIBILITY_LEASE_TTL_MS = 7_000;
 const DESKTOP_VISIBILITY_LEASE_PREFIX =
 	"agent-ide:desktop-visibility-lease:v1:";
@@ -36,11 +38,7 @@ function validIdentity(value: unknown): value is string {
 /** The main/full desktop and popout roots render workspace panes. Diff and
  * source-control utility windows do not own a visible desktop. */
 export function isDesktopWorkspaceWindowLabel(label: string): boolean {
-	return (
-		label === "main" ||
-		/^win-\d+-\d+$/.test(label) ||
-		label.startsWith("win-popout-")
-	);
+	return isFullDesktopWindowLabel(label) || label.startsWith("win-popout-");
 }
 
 export function desktopVisibilityLeaseStorageKey(windowLabel: string): string {

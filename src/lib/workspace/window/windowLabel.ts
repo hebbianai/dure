@@ -14,10 +14,39 @@ export function popoutWindowLabel(desktopId: string): string {
 	return label;
 }
 
+/** A full workspace window: main, or one openDesktopWindow minted
+ *  (`win-<time>-<n>`) when a desktop tab was torn out. */
+export function isFullDesktopWindowLabel(label: string): boolean {
+	return label === MAIN_WINDOW_LABEL || /^win-\d+-\d+$/.test(label);
+}
+
 export function spaceWindowLabel(
 	space: Pick<Space, "id" | "kind">,
 ): string {
 	return space.kind === "popout"
 		? popoutWindowLabel(space.id)
 		: MAIN_WINDOW_LABEL;
+}
+
+/** Whether `label` may present panes into `space`. Every full workspace
+ *  window can show any normal Space; a popout Space lives only in its own
+ *  popout window. */
+export function spaceWindowAccepts(
+	space: Pick<Space, "id" | "kind">,
+	label: string,
+): boolean {
+	return space.kind === "popout"
+		? label === popoutWindowLabel(space.id)
+		: isFullDesktopWindowLabel(label);
+}
+
+/** The window a WebView names when it presents into `space` itself: its own
+ *  label when it can host the Space, otherwise the Space's canonical window. */
+export function presentingWindowLabel(
+	space: Pick<Space, "id" | "kind">,
+	currentLabel: string,
+): string {
+	return spaceWindowAccepts(space, currentLabel)
+		? currentLabel
+		: spaceWindowLabel(space);
 }

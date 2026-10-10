@@ -6,6 +6,7 @@
 // same intent pending; terminal failures are journaled without rejecting the
 // caller.
 
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
 	type CanonicalAddAgentPresentationResult,
 	type CanonicalAddAgentRunPolicy,
@@ -58,7 +59,7 @@ import {
 	worktreeDirName,
 } from "@/lib/scm/worktrees/worktreePlan";
 import { agentSpawnInteractionPreference } from "@/lib/workspace/pane/interfaceMode";
-import { spaceWindowLabel } from "@/lib/workspace/window/windowLabel";
+import { presentingWindowLabel } from "@/lib/workspace/window/windowLabel";
 import { useStore } from "@/store";
 import type { AccountProfile, Agent, Project, SshHostConfig } from "@/types";
 
@@ -157,14 +158,22 @@ async function resolveBaseRefShaBounded(
 
 /** The pane target for a fresh dispatch is whatever space is active when the
  *  spawn completes; `null` when no space is resolvable (the presenting runner
- *  then projects into the store only). */
+ *  then projects into the store only). The window is this one when it shows
+ *  the space — a desktop torn out into its own window presents there, not in
+ *  main, or the presentation guard refuses it and the pane never opens. */
 function resolveActiveSpacePaneTarget(): CanonicalRunPaneTarget | null {
 	const state = useStore.getState();
 	const space = state.spaces.find(
 		(candidate) => candidate.id === state.activeSpaceId,
 	);
 	return space
-		? { spaceId: space.id, windowLabel: spaceWindowLabel(space) }
+		? {
+				spaceId: space.id,
+				windowLabel: presentingWindowLabel(
+					space,
+					getCurrentWebviewWindow().label,
+				),
+			}
 		: null;
 }
 
