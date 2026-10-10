@@ -708,6 +708,8 @@ export function createClaudeAgentSdkQueryFactory({
 										typeof model.displayName === "string"
 											? model.displayName
 											: value,
+									// `default` is the model a launch without a model gets.
+									...(value === "default" ? { isDefault: true } : {}),
 									supportsEffort: model.supportsEffort === true,
 									supportedEffortLevels: Array.isArray(
 										model.supportedEffortLevels,

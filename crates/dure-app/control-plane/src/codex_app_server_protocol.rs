@@ -40,12 +40,16 @@ pub(super) fn provider_catalog_from_model_list(response: &Value) -> Option<Value
                         .filter(|value| !value.is_empty())
                 })
                 .collect::<Vec<_>>();
-            Some(json!({
+            let mut model = json!({
                 "value": value,
                 "displayName": display_name,
                 "supportsEffort": !supported_effort_levels.is_empty(),
                 "supportedEffortLevels": supported_effort_levels,
-            }))
+            });
+            if entry.get("isDefault").and_then(Value::as_bool) == Some(true) {
+                model["isDefault"] = Value::Bool(true);
+            }
+            Some(model)
         })
         .collect::<Vec<_>>();
     (!models.is_empty()).then(|| json!({ "models": models }))
@@ -194,6 +198,7 @@ mod tests {
                         "displayName": "GPT Next",
                         "supportsEffort": true,
                         "supportedEffortLevels": ["low", "ultra"],
+                        "isDefault": true,
                     },
                     {
                         "value": "legacy-model",

@@ -237,7 +237,7 @@ async fn discover(
             }
             return response["response"]["response"]["models"]
                 .as_array()
-                .cloned()
+                .map(|models| models.iter().cloned().map(claude_catalog_model).collect())
                 .ok_or("provider_catalog_unavailable");
         }
         if response["id"] == 1 {
@@ -271,6 +271,16 @@ async fn discover(
             }
         }
     }
+}
+
+/// Claude's `default` alias is the model a launch without `--model` gets.
+fn claude_catalog_model(mut model: Value) -> Value {
+    if model["value"] == "default"
+        && let Some(entry) = model.as_object_mut()
+    {
+        entry.insert("isDefault".into(), Value::Bool(true));
+    }
+    model
 }
 
 #[cfg(test)]
@@ -324,9 +334,11 @@ mod tests {
         let result = fixture("claude", r#"
             read -r request
             case "$request" in *initialize*) ;; *) exit 1;; esac
-            printf '%s\n' '{"type":"control_response","response":{"request_id":"catalog","response":{"models":[{"value":"next[1m]","displayName":"Next","supportsEffort":true,"supportedEffortLevels":["deep"]}]}}}'
+            printf '%s\n' '{"type":"control_response","response":{"request_id":"catalog","response":{"models":[{"value":"default","displayName":"Default","supportsEffort":true,"supportedEffortLevels":["deep"]},{"value":"next[1m]","displayName":"Next","supportsEffort":true,"supportedEffortLevels":["deep"]}]}}}'
         "#).await.unwrap();
-        assert_eq!(result[0]["value"], "next[1m]");
+        assert_eq!(result[0]["isDefault"], true);
+        assert_eq!(result[1]["value"], "next[1m]");
+        assert!(result[1].get("isDefault").is_none());
     }
 
     #[tokio::test]

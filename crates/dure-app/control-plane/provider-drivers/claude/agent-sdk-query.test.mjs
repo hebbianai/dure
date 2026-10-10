@@ -655,6 +655,13 @@ test("the provider catalog reaches the timeline as durable evidence", async () =
 		scriptedQuery(observed, {
 			supportedModels: [
 				{
+					value: "default",
+					resolvedModel: "claude-fable-5",
+					displayName: "Default",
+					supportsEffort: true,
+					supportedEffortLevels: ["low", "high"],
+				},
+				{
 					value: "fable",
 					resolvedModel: "claude-fable-5",
 					displayName: "Fable",
@@ -671,6 +678,14 @@ test("the provider catalog reaches the timeline as durable evidence", async () =
 	const catalog = observed.events.find(({ kind }) => kind === "provider_catalog");
 	assert.deepEqual(catalog.payload, {
 		models: [
+			{
+				value: "default",
+				resolvedModel: "claude-fable-5",
+				displayName: "Default",
+				isDefault: true,
+				supportsEffort: true,
+				supportedEffortLevels: ["low", "high"],
+			},
 			{
 				value: "fable",
 				resolvedModel: "claude-fable-5",

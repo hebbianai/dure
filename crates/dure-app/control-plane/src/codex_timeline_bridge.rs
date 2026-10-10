@@ -848,6 +848,7 @@ mod tests {
                             "displayName": "GPT Fixture",
                             "supportsEffort": true,
                             "supportedEffortLevels": ["low", "ultra"],
+                            "isDefault": true,
                         }],
                     }),
                 }

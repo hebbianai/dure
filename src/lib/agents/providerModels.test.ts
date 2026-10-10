@@ -64,6 +64,25 @@ describe("observed catalog options", () => {
 			catalogEffortOptions("codex", models, null).map((option) => option.value),
 		).toEqual([]);
 	});
+
+	it("offers the provider default model's efforts for Auto", () => {
+		const withDefault = [
+			{
+				value: "default",
+				resolvedModel: "claude-fable-5",
+				displayName: "Default",
+				isDefault: true,
+				supportsEffort: true,
+				supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+			},
+			...models,
+		];
+		expect(
+			catalogEffortOptions("claude", withDefault, null).map(
+				(option) => option.value,
+			),
+		).toEqual(["low", "medium", "high", "xhigh", "max", "ultracode"]);
+	});
 });
 
 describe("parseProviderModels", () => {
@@ -84,5 +103,14 @@ describe("parseProviderModels", () => {
 		).toEqual([{ value: "deeper", label: "Deeper" }]);
 		expect(parseProviderModels([])).toEqual([]);
 		expect(parseProviderModels(null)).toBeNull();
+	});
+
+	it("keeps the provider's default marker", () => {
+		expect(
+			parseProviderModels([
+				{ value: "default", isDefault: true },
+				{ value: "other", isDefault: "true" },
+			])?.map((model) => model.isDefault),
+		).toEqual([true, undefined]);
 	});
 });

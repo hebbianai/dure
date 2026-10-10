@@ -20,6 +20,7 @@ export function parseProviderModels(
 					typeof model.displayName === "string" && model.displayName
 						? model.displayName
 						: model.value,
+				...(model.isDefault === true ? { isDefault: true } : {}),
 				supportsEffort: model.supportsEffort === true,
 				supportedEffortLevels: Array.isArray(model.supportedEffortLevels)
 					? model.supportedEffortLevels.filter(
@@ -75,6 +76,8 @@ export interface ObservedProviderModelV1 {
 	readonly value: string;
 	readonly resolvedModel?: string;
 	readonly displayName: string;
+	/** The model a launch without an explicit model gets. */
+	readonly isDefault?: boolean;
 	readonly supportsEffort: boolean;
 	readonly supportedEffortLevels: readonly string[];
 }
@@ -117,8 +120,9 @@ const SESSION_EFFORT_EXTENSIONS: Partial<
 
 /** Effort choices from the observed catalog for the selected (or reported)
  * model — matching either the alias value or the canonical id it resolves
- * to. With Auto and no observed model, only efforts common to every entry are
- * selectable. An unknown explicit model supplies no effort claims. */
+ * to. Auto offers the provider default model's efforts; without a reported
+ * default, only efforts common to every entry are selectable. An unknown
+ * explicit model supplies no effort claims. */
 export function catalogEffortOptions(
 	provider: Provider,
 	models: readonly ObservedProviderModelV1[],
@@ -126,7 +130,7 @@ export function catalogEffortOptions(
 ): readonly ProviderEffortOption[] {
 	const entry =
 		model === null
-			? undefined
+			? models.find((candidate) => candidate.isDefault)
 			: models.find(
 					(candidate) =>
 						candidate.value === model || candidate.resolvedModel === model,
