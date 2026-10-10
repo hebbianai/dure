@@ -3,6 +3,7 @@ mod deletion;
 mod init_scripts;
 mod personal;
 mod profiles;
+mod recovery;
 use dure_app::{ProjectIdV1, ProjectRecordV1, WorkspaceIdV1, WorkspaceRecordV1};
 use std::os::unix::fs::PermissionsExt;
 

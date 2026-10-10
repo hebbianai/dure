@@ -33,6 +33,13 @@ pub(super) enum BrowserRequest {
         label: Option<BrowserPageLabel>,
     },
     ProfileList,
+    ProfileRecoveryStatus {
+        profile_id: BrowserProfileIdV1,
+    },
+    ProfileRecover {
+        operation_id: OperationIdV1,
+        profile_id: BrowserProfileIdV1,
+    },
     ProfileDelete {
         operation_id: OperationIdV1,
         profile_id: BrowserProfileIdV1,
@@ -189,6 +196,7 @@ impl BrowserRequest {
             | Self::SelectResource { operation_id, .. }
             | Self::ProfileCreate { operation_id, .. }
             | Self::ProfileDelete { operation_id, .. }
+            | Self::ProfileRecover { operation_id, .. }
             | Self::Control { operation_id, .. }
             | Self::Capture { operation_id, .. }
             | Self::CaptureDiff { operation_id, .. }

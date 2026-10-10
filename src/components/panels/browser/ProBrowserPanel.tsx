@@ -26,6 +26,7 @@ import { t } from "@/lib/i18n";
 import {
 	browserRequestFailureMessage,
 	canInstallBrowserRuntime,
+	canRecoverBrowserProfile,
 } from "@/lib/ipc/dureBrowser";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
 
@@ -339,6 +340,14 @@ export function ProBrowserPanel(
 			{failure && (
 				<div className="border-b px-3 py-2">
 					<ErrorText>{browserRequestFailureMessage(failure)}</ErrorText>
+					{!pane.session && canRecoverBrowserProfile(failure) && (
+						<Button
+							disabled={pane.busy || !pane.connected}
+							onClick={() => void pane.recoverProfile()}
+						>
+							{t("panels.browser.recoverProfile")}
+						</Button>
+					)}
 					{canInstallBrowserRuntime(failure) && (
 						<Button
 							disabled={pane.busy || !pane.connected}

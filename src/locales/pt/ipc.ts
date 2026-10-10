@@ -40,4 +40,8 @@ export const ipc: Record<string, string> = {
 	"ipc.dureRun.requestFailed": "A solicitação de Run ao backend do Dure falhou.",
 	"ipc.browser.installationFailed": "A instalação do navegador não foi concluída. Verifique a conexão e tente novamente.",
 	"ipc.browser.platformUnavailable": "Browser está disponível atualmente em Macs com Apple Silicon.",
+	"ipc.browser.profileNeedsRecovery": "Este perfil aguarda o encerramento do navegador anterior. Recupere o perfil para verificar quem o utiliza e manter os acessos salvos.",
+	"ipc.browser.profileRestartRequired": "Salve seu trabalho e reinicie o computador que executa este servidor. Depois, recupere o perfil novamente. Reiniciar apenas o Dure não basta. Seus acessos salvos serão preservados.",
+	"ipc.browser.profileOwnerLive": "Este perfil ainda tem um proprietário ativo ou uma recuperação em andamento. Feche o navegador pelo servidor responsável e tente recuperar novamente.",
+	"ipc.browser.profileRecoveryUnconfirmed": "O Dure não conseguiu verificar os processos que gravam no perfil. Mantenha o perfil intacto e consulte o diagnóstico do servidor.",
 };

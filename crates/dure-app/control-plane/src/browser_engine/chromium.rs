@@ -3,6 +3,7 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::Duration;
@@ -127,7 +128,21 @@ impl OwnedChromium {
                 .and_then(|_|fs::set_permissions(&preferences, fs::Permissions::from_mode(0o600)))
                 .map_err(|_|BrowserEngineError::before("browser_chromium_profile_unavailable"))?;
         }
-        let child = Command::new(executable)
+        if let Some(claim) = &mut claim {
+            claim.prepare_launch()?;
+        }
+        let mut command = Command::new(executable);
+        // SAFETY: setsid is async-signal-safe. Every ordinary Chromium writer
+        // inherits this separate session, which the native adapter reconciles.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = command
             .current_dir(&root)
             .env_clear()
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
@@ -154,10 +169,21 @@ impl OwnedChromium {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| BrowserEngineError::before("browser_chromium_spawn_failed"))?;
-        if let Some(claim) = &mut claim {
-            claim.started();
+            .spawn();
+        let child = match child {
+            Ok(child) => child,
+            Err(_) => {
+                // std::process confirms the failed spawn has no child handle.
+                if let Some(claim) = &mut claim {
+                    claim.release_after_exit()?;
+                }
+                return Err(BrowserEngineError::before("browser_chromium_spawn_failed"));
+            }
+        };
+        if let Some(claim) = &claim {
+            // Failure retains the launch intent. The exact child remains owned
+            // below; missing identity publication never permits storage reuse.
+            let _ = claim.record_writer(&child);
         }
         let browser = Self {
             child: Some(child),
@@ -304,19 +330,21 @@ impl OwnedChromium {
             output.close().await;
         }
         if let Some(claim) = &mut self.profile {
-            if !self.exit_status.is_some_and(|status| status.success()) {
-                // Keep the process owner's actual result in backend diagnostics.
-                // It explains the refusal; it never authorizes profile reuse.
-                eprintln!(
-                    "browser profile retirement remains unconfirmed: profile={} instance={} child={} status={:?}",
-                    claim.id.as_str(),
-                    self.connection.instance().as_str(),
-                    self.child.as_ref().expect("owned child").id(),
-                    self.exit_status
-                );
+            if self.exit_status.is_none() {
                 return Err(BrowserEngineError::after(
                     "browser_profile_exit_unconfirmed",
                 ));
+            }
+            // Chromium's storage utility processes can finish just after the
+            // browser leader. Wait for native proof, never reinterpret the
+            // parent's exit code as permission to reuse storage.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                match claim.confirm_writer_retirement() {
+                    Ok(()) => break,
+                    Err(error) if Instant::now() >= deadline => return Err(error),
+                    Err(_) => sleep(Duration::from_millis(25)).await,
+                }
             }
             claim.release_after_exit()?;
         }
@@ -332,9 +360,9 @@ impl Drop for OwnedChromium {
         let mut claim = self.profile.take();
         self.output.take();
         let status = self.exit_status.or_else(|| child.try_wait().ok().flatten());
-        if let Some(status) = status {
-            if status.success()
-                && let Some(claim) = &mut claim
+        if status.is_some() {
+            if let Some(claim) = &mut claim
+                && claim.confirm_writer_retirement().is_ok()
             {
                 let _ = claim.release_after_exit();
             }
@@ -347,8 +375,12 @@ impl Drop for OwnedChromium {
             .spawn(move || {
                 let _ = child.kill();
                 let _ = child.wait();
-                // A forced parent exit does not prove every Chromium storage
-                // writer retired normally. Keep the durable claim unavailable.
+                if let Some(claim) = &mut claim
+                    && claim.confirm_writer_retirement().is_ok()
+                {
+                    let _ = claim.release_after_exit();
+                }
+                // Surviving or unknown writers keep the durable claim.
                 drop(claim);
             });
     }

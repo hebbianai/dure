@@ -31,6 +31,7 @@ import {
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import { isDureDomainIdV1 } from "@/lib/ipc/dureProtocolIdentity";
 import { asRecord } from "@/lib/payloadGuards";
+import { browserProfileRecoveryAction } from "../../../cli/lib/contracts/browser-profile-recovery.mjs";
 import {
 	browserWorkspaceSelectionResult,
 	parseBrowserWorkspaceCatalogTarget,
@@ -43,6 +44,16 @@ export function browserRequestFailureMessage(error: unknown): string {
 	)
 		return t("ipc.browser.unavailable");
 	if (error instanceof DureBackendRequestError) {
+		const recovery = browserProfileRecoveryAction(error.code);
+		if (recovery)
+			return t(
+				{
+					recover: "ipc.browser.profileNeedsRecovery",
+					restart: "ipc.browser.profileRestartRequired",
+					wait: "ipc.browser.profileOwnerLive",
+					inspect: "ipc.browser.profileRecoveryUnconfirmed",
+				}[recovery],
+			);
 		switch (error.code) {
 			case "backend_transport_authority_changed":
 			case "browser_backend_changed":
@@ -51,6 +62,7 @@ export function browserRequestFailureMessage(error: unknown): string {
 				return t("ipc.browser.unavailable");
 			case "browser_desktop_response_invalid":
 				return t("ipc.browser.invalidResponse");
+			case "browser_profile_recovery_unavailable":
 			case "browser_pro_development_only":
 				return t("ipc.browser.developmentRequired");
 			case "browser_engine_not_installed":
@@ -63,6 +75,15 @@ export function browserRequestFailureMessage(error: unknown): string {
 			return t("ipc.browser.installationFailed");
 	}
 	return t("ipc.browser.requestFailed");
+}
+
+export function canRecoverBrowserProfile(error: unknown): boolean {
+	return (
+		error instanceof DureBackendRequestError &&
+		["recover", "restart", "wait"].includes(
+			browserProfileRecoveryAction(error.code) ?? "",
+		)
+	);
 }
 
 const runtimeConfigurationFailures = new Set([
@@ -298,6 +319,32 @@ export function createDureBrowserClient(
 			)
 				invalid();
 			return result.deleted;
+		},
+		async recoverProfile(profileId: string, operationId: string) {
+			if (!isDureDomainIdV1(profileId) || !isDureDomainIdV1(operationId))
+				invalid();
+			let result: Record<string, unknown>;
+			try {
+				result = await payload({
+					kind: "profile_recover",
+					profile_id: profileId,
+					operation_id: operationId,
+				});
+			} catch (error) {
+				if (
+					error instanceof DureBackendRequestError &&
+					error.code === "browser_request_invalid"
+				) {
+					throw new DureBackendRequestError(
+						"browser_profile_recovery_unavailable",
+						t("ipc.browser.developmentRequired"),
+						{ kind: "operation", disposition: "terminal" },
+					);
+				}
+				throw error;
+			}
+			if (result.profile_id !== profileId || result.recovered !== true)
+				invalid();
 		},
 		async profiles() {
 			const result = parseBrowserProfiles(

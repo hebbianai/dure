@@ -1,10 +1,10 @@
 const allowedOptions = new Set(["positional", "backend", "operationId", "label", "scope", "noUaSpoof"]);
 
 export function browserProfiles(values, options, operationId) {
-  if (values[0] === "delete") {
+  if (["delete", "status", "recover"].includes(values[0])) {
     const allowed = new Set(["positional", "backend", "operationId", "profileId"]);
     if (values.length !== 1 || !options.profileId?.trim() || Object.keys(options).some((key) => !allowed.has(key))) throw new Error("browser_command_invalid");
-    return { kind: "profile_delete", profile_id: options.profileId, operation_id: operationId };
+    return { kind: values[0] === "delete" ? "profile_delete" : values[0] === "status" ? "profile_recovery_status" : "profile_recover", profile_id: options.profileId, ...(values[0] === "status" ? {} : { operation_id: operationId }) };
   }
   if (["set", "clone", "use-default", "show"].includes(values[0])) {
     const selectsProfile = values[0] === "set" || values[0] === "clone";

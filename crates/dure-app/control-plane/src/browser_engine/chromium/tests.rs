@@ -71,7 +71,7 @@ fn profile_claim_requires_confirmed_retirement_and_preserves_preferences() {
         .err()
         .unwrap();
     assert_eq!(duplicate.code, "browser_profile_exit_unconfirmed");
-    claim.started();
+    claim.prepare_launch().unwrap();
     claim.release_after_exit().unwrap();
     drop(claim);
     let mut reopened = profile::ProfileClaim::acquire(root.path(), &id, &instance).unwrap();
@@ -79,7 +79,7 @@ fn profile_claim_requires_confirmed_retirement_and_preserves_preferences() {
         serde_json::from_slice::<serde_json::Value>(&fs::read(&preferences).unwrap()).unwrap(),
         value
     );
-    reopened.started();
+    reopened.prepare_launch().unwrap();
     drop(reopened);
     // A dropped running claim is uncertain, not permission to adopt or relaunch.
     assert_eq!(
@@ -92,7 +92,7 @@ fn profile_claim_requires_confirmed_retirement_and_preserves_preferences() {
 }
 
 #[tokio::test]
-async fn profile_forced_startup_retirement_preserves_its_unconfirmed_storage_claim() {
+async fn profile_forced_startup_retirement_is_recoverable_after_writer_exit() {
     let root = tempfile::tempdir().unwrap();
     let executable = root.path().join("child");
     fs::write(&executable,b"#!/bin/sh\nprintf 'DevTools listening on ws://example.invalid:80/devtools/browser/foreign\\n' >&2\nexec /bin/sleep 30\n").unwrap();
@@ -104,16 +104,16 @@ async fn profile_forced_startup_retirement_preserves_its_unconfirmed_storage_cla
         .unwrap()
         .code;
     assert_eq!(code, "browser_chromium_endpoint_invalid");
-    assert_eq!(
+    // The failed launch retained its exact process witness; Drop either
+    // released it after the full census or explicit recovery can now do so.
+    profile::recover_storage(root.path(), &id).unwrap();
+    assert!(
         profile::ProfileClaim::acquire(
             root.path(),
             &id,
             &BrowserInstanceId::new("retry-instance").unwrap()
         )
-        .err()
-        .unwrap()
-        .code,
-        "browser_profile_exit_unconfirmed"
+        .is_ok()
     );
 }
 
@@ -127,7 +127,7 @@ fn profile_retirement_cannot_remove_a_replaced_claim() {
         &BrowserInstanceId::new("instance-one").unwrap(),
     )
     .unwrap();
-    claim.started();
+    claim.prepare_launch().unwrap();
     let path = claim.profile.parent().unwrap().join("native-claim.json");
     fs::rename(&path, path.with_extension("retained")).unwrap();
     fs::write(&path, b"replacement claimant").unwrap();
@@ -138,7 +138,7 @@ fn profile_retirement_cannot_remove_a_replaced_claim() {
 }
 
 #[tokio::test]
-async fn profile_abnormal_exit_keeps_its_claim_after_close_and_drop() {
+async fn profile_abnormal_exit_releases_only_after_all_writers_retire() {
     use std::os::unix::process::ExitStatusExt;
 
     for (termination, code, signal) in [
@@ -168,30 +168,28 @@ while [ ! -f "$profile/stop" ]; do /bin/sleep 0.01; done
             .unwrap();
         let profile = browser.profile.as_ref().unwrap().profile.clone();
         let claim = profile.parent().unwrap().join("native-claim.json");
-        let before = fs::read(&claim).unwrap();
         fs::write(profile.join("stop"), b"stop").unwrap();
         let exited = browser.wait_for_exit().await;
         let retired = browser.close().await;
         let status = browser.exit_status;
         drop(browser);
         assert!(exited.is_ok(), "{exited:?}");
-        let error = retired.unwrap_err();
-        assert_eq!(error.code, "browser_profile_exit_unconfirmed");
-        assert!(error.outcome_unknown);
+        retired.unwrap();
         let status = status.expect("exact owned child was reaped");
         assert_eq!(status.code(), code);
         assert_eq!(status.signal(), signal);
-        assert_eq!(fs::read(&claim).unwrap(), before);
-        assert_eq!(
+        assert!(!claim.exists());
+        assert!(
             profile::ProfileClaim::acquire(
                 root.path(),
                 &id,
                 &BrowserInstanceId::new("next-instance").unwrap(),
             )
-            .err()
-            .unwrap()
-            .code,
-            "browser_profile_exit_unconfirmed"
+            .is_ok()
         );
     }
 }
+
+mod recovery_native;
+
+mod recovery;

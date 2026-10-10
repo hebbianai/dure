@@ -209,4 +209,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.savedWithExclusions": "Enregistré comme thème — certains tokens ont été exclus : {names}",
 	"panels.browser.installRuntime": "Installer le navigateur",
 	"panels.browser.installingRuntime": "Téléchargement et installation du navigateur…",
+	"panels.browser.recoverProfile": "Récupérer le profil",
+	"panels.browser.profileRecovered": "Profil récupéré. Vous pouvez à nouveau ouvrir un navigateur avec ce profil.",
 };

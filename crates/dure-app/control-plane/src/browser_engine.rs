@@ -17,7 +17,10 @@ use tokio::time::{Instant, sleep, timeout};
 
 mod cdp;
 mod chromium;
-pub(crate) use chromium::profile::retire_storage as retire_profile_storage;
+pub(crate) use chromium::profile::{
+    recover_storage as recover_profile_storage, recovery_status as profile_recovery_status,
+    retire_storage as retire_profile_storage,
+};
 pub mod runtime;
 #[cfg(test)]
 mod tests;

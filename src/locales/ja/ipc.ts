@@ -40,4 +40,8 @@ export const ipc: Record<string, string> = {
 	"ipc.dureRun.requestFailed": "DureバックエンドへのRunリクエストに失敗しました。",
 	"ipc.browser.installationFailed": "ブラウザーのインストールが完了しませんでした。接続を確認して、もう一度インストールしてください。",
 	"ipc.browser.platformUnavailable": "Browserは現在Apple Silicon Macで利用できます。",
+	"ipc.browser.profileNeedsRecovery": "以前のブラウザーの終了確認を待っています。プロファイルを復旧して所有状態を確認し、保存済みのログイン情報を保持します。",
+	"ipc.browser.profileRestartRequired": "作業を保存し、このサーバーを実行しているコンピューターを再起動してから、プロファイルをもう一度復旧してください。Dureだけの再起動では不十分です。保存済みのログイン情報は保持されます。",
+	"ipc.browser.profileOwnerLive": "このプロファイルには実行中の所有者がいるか、復旧が進行中です。所有元のサーバーでブラウザーを閉じてから、もう一度復旧してください。",
+	"ipc.browser.profileRecoveryUnconfirmed": "プロファイルへの書き込みプロセスを確認できませんでした。プロファイルをそのまま保持し、サーバーの診断を確認してください。",
 };

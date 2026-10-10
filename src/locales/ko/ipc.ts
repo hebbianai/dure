@@ -40,4 +40,8 @@ export const ipc: Record<string, string> = {
 	"ipc.dureRun.requestFailed": "Dure 백엔드 Run 요청에 실패했습니다.",
 	"ipc.browser.installationFailed": "브라우저 설치를 완료하지 못했습니다. 연결을 확인한 뒤 다시 설치하세요.",
 	"ipc.browser.platformUnavailable": "Browser는 현재 Apple Silicon Mac에서 사용할 수 있습니다.",
+	"ipc.browser.profileNeedsRecovery": "이전 브라우저의 종료 확인을 기다리고 있습니다. 프로필을 복구하여 소유 상태를 확인하고 저장된 로그인 정보를 유지하세요.",
+	"ipc.browser.profileRestartRequired": "작업을 저장하고 이 서버가 실행 중인 컴퓨터를 재시작한 뒤 프로필을 다시 복구하세요. Dure만 재시작해서는 충분하지 않습니다. 저장된 로그인 정보는 유지됩니다.",
+	"ipc.browser.profileOwnerLive": "이 프로필의 소유자가 아직 실행 중이거나 복구가 진행 중입니다. 해당 서버에서 브라우저를 닫은 뒤 다시 복구하세요.",
+	"ipc.browser.profileRecoveryUnconfirmed": "프로필에 쓰는 프로세스를 확인할 수 없습니다. 프로필을 그대로 두고 서버 진단을 확인하세요.",
 };

@@ -132,3 +132,49 @@ async fn desktop_envelopes_preserve_created_replayed_and_recovered_payloads() {
         assert_eq!(response["schemaVersion"], 1, "{name}: {response}");
     }
 }
+
+#[tokio::test]
+async fn profile_recovery_uses_the_durable_journal_and_survives_service_recreation() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("domain.sqlite3"))
+        .await
+        .unwrap();
+    let backend = crate::backend_runtime_root::ensure(root.path()).unwrap();
+    let service = BrowserService::new(backend.clone(), "generation:profile-recovery", root.path());
+    let created = service.dispatch(&store, &json!({"kind":"profile_create","operation_id":"recovery:create","label":"Recovery fixture"})).await.unwrap();
+    let id = created["result"]["profile"]["profile"]["profileId"].clone();
+    let body = json!({"kind":"profile_recover","operation_id":"recovery:once","profile_id":id});
+    let result = service.dispatch(&store, &body).await.unwrap();
+    assert_eq!(result["result"], json!({"profile_id":id,"recovered":true}));
+    let replayed = service.dispatch(&store, &body).await.unwrap();
+    assert_eq!(replayed["result"], result["result"]);
+    assert_eq!(replayed["replayed"], true);
+    service.shutdown().await.unwrap();
+    let replacement = BrowserService::new(backend, "generation:profile-recovery-next", root.path());
+    let replayed = replacement.dispatch(&store, &body).await.unwrap();
+    assert_eq!(replayed["result"], result["result"]);
+    assert_eq!(replayed["replayed"], true);
+    let status = replacement
+        .dispatch(
+            &store,
+            &json!({"kind":"profile_recovery_status","profile_id":id}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        status["result"],
+        json!({"profile_id":id,"state":"available"})
+    );
+    let mut changed = body;
+    changed["profile_id"] = "default".into();
+    assert_eq!(
+        replacement
+            .dispatch(&store, &changed)
+            .await
+            .unwrap_err()
+            .code,
+        "browser_operation_conflict"
+    );
+    replacement.shutdown().await.unwrap();
+    store.close().await;
+}

@@ -40,4 +40,8 @@ export const ipcEnglishTranslations: Record<string, string> = {
 	"ipc.dureRun.requestFailed": "The Dure backend Run request failed.",
 	"ipc.browser.installationFailed": "Browser installation did not finish. Check the connection and try installing again.",
 	"ipc.browser.platformUnavailable": "Browser is currently available on Apple Silicon Macs.",
+	"ipc.browser.profileNeedsRecovery": "This profile is waiting for its previous Browser to retire. Recover the profile to check ownership and keep your saved sign-ins.",
+	"ipc.browser.profileRestartRequired": "Save your work and restart the computer running this server, then recover the profile again. Restarting only Dure is insufficient. Your saved sign-ins are preserved.",
+	"ipc.browser.profileOwnerLive": "This profile still has an active owner or recovery in progress. Close its Browser through the owning server, then try recovery again.",
+	"ipc.browser.profileRecoveryUnconfirmed": "Dure could not verify the profile’s writers. Keep the profile intact and inspect the server diagnostics.",
 };

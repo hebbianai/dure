@@ -1105,3 +1105,43 @@ it("keeps an uncertain Create on its exact route when a mounted browser connecti
 		pane.unmount();
 	}
 });
+
+it("recovers a blocked default profile on its exact backend and creates with a fresh operation only on request", async () => {
+	let recovered = false;
+	const f = fixture({ url: "about:blank" }, async (body) => {
+		if (body.kind === "list") return { resources: [] };
+		if (body.kind === "create") {
+			if (!recovered)
+				throw {
+					code: "browser_profile_exit_unconfirmed",
+					message: "unconfirmed",
+					details: { disposition: "terminal" },
+				};
+			return { control };
+		}
+		if (body.kind === "profile_recover") {
+			recovered = true;
+			return { profile_id: "default", recovered: true };
+		}
+		throw Error(`Unexpected request ${body.kind}`);
+	});
+	const pane = f.mount();
+	try {
+		await waitFor(() => expect(pane.result.current.connected).toBe(true));
+		await act(() => pane.result.current.create());
+		expect(pane.result.current.error).toBeDefined();
+		const first = f.requests("create")[0].body.operation_id;
+		await act(() => pane.result.current.recoverProfile());
+		expect(pane.result.current.error).toBeUndefined();
+		expect(f.requests("create")).toHaveLength(1);
+		expect(f.requests("profile_recover")[0]).toMatchObject({
+			route: { authority: route },
+			body: { profile_id: "default" },
+		});
+		await act(() => pane.result.current.create());
+		expect(f.requests("create")[1].body.operation_id).not.toBe(first);
+		expect(pane.result.current.session?.resource).toEqual(resource);
+	} finally {
+		pane.unmount();
+	}
+});

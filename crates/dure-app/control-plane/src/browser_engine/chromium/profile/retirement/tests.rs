@@ -19,13 +19,13 @@ fn native_claim_blocks_deletion_until_exact_owner_confirms_exit() {
     let id = selected();
     let instance = BrowserInstanceId::new("owner").unwrap();
     let mut native = ProfileClaim::acquire(directory.path(), &id, &instance).unwrap();
-    native.started();
+    native.prepare_launch().unwrap();
     let root = storage_root(directory.path(), &id).unwrap();
     let data = payload(&root);
     let original = fs::read(&native.path).unwrap();
     assert_eq!(
         retire_storage(directory.path(), &id).unwrap_err().code,
-        "browser_profile_exit_unconfirmed"
+        "browser_profile_deletion_in_progress"
     );
     assert_eq!(fs::read_to_string(&data).unwrap(), "보존할 데이터");
     assert_eq!(fs::read(&native.path).unwrap(), original);

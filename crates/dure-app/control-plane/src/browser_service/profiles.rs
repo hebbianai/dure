@@ -16,6 +16,7 @@ use hmux_session_protocol::browser_resource::{
 use std::collections::BTreeMap;
 
 mod deletion;
+mod recovery;
 
 pub(super) async fn source(
     resources: &BTreeMap<BrowserResourceId, ManagedBrowser>,

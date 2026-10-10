@@ -37,6 +37,7 @@ import {
 	sameDureBackendRouteTarget,
 } from "@/lib/ipc/dureBackendRoute";
 import {
+	canRecoverBrowserProfile,
 	createDureBrowserClient,
 	isUnstartedBrowserCreation,
 } from "@/lib/ipc/dureBrowser";
@@ -495,6 +496,18 @@ export function useProBrowserPane(
 		binding: savedBinding.current,
 		busy,
 		installing,
+		recoverProfile: () =>
+			run(async (current) => {
+				if (!connection || session || !canRecoverBrowserProfile(error)) return;
+				await connection.client.recoverProfile("default", crypto.randomUUID());
+				if (!current()) return;
+				// Recovery is an explicit new operation. The old failed Create
+				// remains in its journal; future creation gets a new operation id.
+				creation.current = undefined;
+				persist(savedBinding.current);
+				const rows = await connection.client.list();
+				if (current()) setResources(rows);
+			}),
 		installRuntime: () =>
 			run(async (current) => {
 				if (!connection) return;

@@ -38,4 +38,8 @@ export const ipc: Record<string, string> = {
 	"ipc.dureRun.requestFailed": "对 Dure 后端的 Run 请求失败。",
 	"ipc.browser.installationFailed": "浏览器安装未完成。请检查连接并重试。",
 	"ipc.browser.platformUnavailable": "Browser目前支持Apple Silicon Mac。",
+	"ipc.browser.profileNeedsRecovery": "正在等待确认之前的浏览器已退出。恢复配置文件可检查所有权并保留已保存的登录信息。",
+	"ipc.browser.profileRestartRequired": "请保存工作并重启运行此服务器的计算机，然后再次恢复配置文件。仅重启 Dure 不够。已保存的登录信息会保留。",
+	"ipc.browser.profileOwnerLive": "此配置文件仍有活动所有者，或正在恢复。请通过所属服务器关闭其浏览器，然后再次尝试恢复。",
+	"ipc.browser.profileRecoveryUnconfirmed": "无法确认配置文件的写入进程。请保留配置文件并检查服务器诊断信息。",
 };

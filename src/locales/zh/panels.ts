@@ -208,4 +208,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.savedWithExclusions": "已保存为主题 — 部分令牌被排除：{names}",
 	"panels.browser.installRuntime": "安装浏览器",
 	"panels.browser.installingRuntime": "正在下载并安装浏览器…",
+	"panels.browser.recoverProfile": "恢复配置文件",
+	"panels.browser.profileRecovered": "配置文件已恢复。可以再次使用它打开浏览器。",
 };

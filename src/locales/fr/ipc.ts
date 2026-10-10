@@ -40,4 +40,8 @@ export const ipc: Record<string, string> = {
 	"ipc.dureRun.requestFailed": "La requête Run au backend Dure a échoué.",
 	"ipc.browser.installationFailed": "L’installation du navigateur n’a pas abouti. Vérifiez la connexion, puis réessayez.",
 	"ipc.browser.platformUnavailable": "Browser est actuellement disponible sur les Mac Apple Silicon.",
+	"ipc.browser.profileNeedsRecovery": "Ce profil attend la fin de son navigateur précédent. Récupérez le profil pour vérifier qui l’utilise et conserver vos connexions enregistrées.",
+	"ipc.browser.profileRestartRequired": "Enregistrez votre travail et redémarrez l’ordinateur qui exécute ce serveur, puis récupérez à nouveau le profil. Redémarrer Dure seul ne suffit pas. Vos connexions enregistrées sont conservées.",
+	"ipc.browser.profileOwnerLive": "Ce profil a encore un propriétaire actif ou une récupération en cours. Fermez son navigateur depuis le serveur concerné, puis réessayez.",
+	"ipc.browser.profileRecoveryUnconfirmed": "Dure n’a pas pu vérifier les processus qui écrivent dans le profil. Conservez le profil et consultez le diagnostic du serveur.",
 };

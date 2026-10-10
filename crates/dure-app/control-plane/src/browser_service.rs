@@ -273,6 +273,12 @@ impl BrowserService {
                 .await
             }
             BrowserRequest::ProfileList => profiles::list(store).await,
+            BrowserRequest::ProfileRecoveryStatus { profile_id } => {
+                self.profile_recovery(store, profile_id, false).await
+            }
+            BrowserRequest::ProfileRecover { profile_id, .. } => {
+                self.profile_recovery(store, profile_id, true).await
+            }
             BrowserRequest::ProfileDelete { profile_id, .. } => {
                 self.delete_profile(store, profile_id).await
             }

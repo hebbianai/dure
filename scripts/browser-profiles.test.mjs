@@ -155,3 +155,32 @@ test("profile show projects the requested page without requesting action authori
   assert.deepEqual(result.result, pages[1]);
   assert.deepEqual(requests, [{ kind: "observe", resource_id: "r" }]);
 });
+
+test("profile recovery and inspection retain backend scope, capability and request identity", async () => {
+  for (const [command, kind] of [["status", "profile_recovery_status"], ["recover", "profile_recover"]]) {
+    const requests = [];
+    const result = await collectBrowserCommand({
+      args: ["tab", "profile", command, "--profile", "default", "--backend", "saved-server", "--idempotency-key", "recovery-once"],
+      resolveBackend: async (selection) => {
+        assert.equal(selection.backend, "saved-server");
+        return { profile: { id: "saved-server" } };
+      },
+      requestBackend: async (_profile, request) => {
+        requests.push(request);
+        return { result: { result: { profile_id: "default", recovered: true } } };
+      },
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(requests.map(r => r.body), [{kind, profile_id:"default", ...(command === "recover" ? {operation_id:"recovery-once"} : {})}]);
+    assert.deepEqual(requests[0].requiredCapabilities, ["browser.resource.v1", "browser.profile_recovery.v1"]);
+  }
+});
+
+test("profile recovery refuses missing, ambiguous and unrelated selectors before contacting a backend", async () => {
+  for (const args of [["recover"], ["status"], ["recover", "--profile", ""], ["recover", "--profile", "one", "--profile", "two"], ["recover", "--profile", "one", "--controller", "agent"]]) {
+    let contacts = 0;
+    const result = await collectBrowserCommand({args:["tab", "profile", ...args], resolveBackend:async()=>{contacts++;throw Error("unexpected");}});
+    assert.equal(result.ok, false);
+    assert.equal(contacts, 0);
+  }
+});

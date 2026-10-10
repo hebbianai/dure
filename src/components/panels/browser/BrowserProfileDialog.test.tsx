@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-import { chooseSelectValue, openSelect } from "@/test/select";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { BrowserPaneSession } from "@/lib/browser/browserPaneSession";
 import { createDureBrowserClient } from "@/lib/ipc/dureBrowser";
+import { chooseSelectValue, openSelect } from "@/test/select";
 import { BrowserProfileDialog } from "./BrowserProfileDialog";
 
 vi.mock("@/lib/i18n", () => ({ t: (key: string) => key }));
@@ -91,7 +91,10 @@ async function fixture(
 				viewport: { width: 400, height: 600, pixel_ratio: 1 },
 			};
 		else if (body.kind === "profile_list") result = { profiles: catalog };
-		else if (body.kind === "profile_create") {
+		else if (body.kind === "profile_recover") {
+			actions.push(body);
+			result = { profile_id: body.profile_id, recovered: true };
+		} else if (body.kind === "profile_create") {
 			actions.push(body);
 			const record = {
 				profile: {
@@ -171,7 +174,9 @@ async function fixture(
 	fireEvent.click(
 		screen.getByRole("button", { name: "panels.browser.profiles" }),
 	);
-	await waitFor(() => expect(screen.getByRole("combobox").hasAttribute("disabled")).toBe(false));
+	await waitFor(() =>
+		expect(screen.getByRole("combobox").hasAttribute("disabled")).toBe(false),
+	);
 	openSelect(screen.getByRole("combobox"));
 	await screen.findByRole("option", { name: "개인 작업" });
 	expect(screen.queryByRole("option", { name: "Deleted" })).toBeNull();
@@ -195,9 +200,12 @@ it.each(["profileSwitch", "profileClone"] as const)(
 		const state = await fixture();
 		try {
 			expect(state.actions).toEqual([]);
-			chooseSelectValue(screen.getByRole("combobox", {
+			chooseSelectValue(
+				screen.getByRole("combobox", {
 					name: "panels.browser.profileDestination",
-				}), "profile:next");
+				}),
+				"profile:next",
+			);
 			expect(state.actions).toEqual([]);
 			fireEvent.click(
 				screen.getByRole("button", { name: `panels.browser.${button}` }),
@@ -224,9 +232,12 @@ it.each(["profileSwitch", "profileClone"] as const)(
 it("lets an observer read profiles without requesting control or changing the page", async () => {
 	const state = await fixture(false);
 	try {
-		chooseSelectValue(screen.getByRole("combobox", {
+		chooseSelectValue(
+			screen.getByRole("combobox", {
 				name: "panels.browser.profileDestination",
-			}), "profile:next");
+			}),
+			"profile:next",
+		);
 		for (const key of [
 			"profileSwitch",
 			"profileClone",
@@ -252,9 +263,12 @@ it("lets an observer read profiles without requesting control or changing the pa
 it("rejects an old confirmation after the session observes a new controller", async () => {
 	const state = await fixture();
 	try {
-		chooseSelectValue(screen.getByRole("combobox", {
+		chooseSelectValue(
+			screen.getByRole("combobox", {
 				name: "panels.browser.profileDestination",
-			}), "profile:next");
+			}),
+			"profile:next",
+		);
 		state.changeController();
 		await state.session.refresh();
 		fireEvent.click(
@@ -312,9 +326,12 @@ it("protects default and deletes the exact selected profile only after confirmat
 		expect(
 			screen.getByRole("button", { name: "panels.browser.deleteProfile" }),
 		).toHaveProperty("disabled", true);
-		chooseSelectValue(screen.getByRole("combobox", {
+		chooseSelectValue(
+			screen.getByRole("combobox", {
 				name: "panels.browser.profileDestination",
-			}), "profile:next");
+			}),
+			"profile:next",
+		);
 		fireEvent.click(
 			screen.getByRole("button", { name: "panels.browser.deleteProfile" }),
 		);
@@ -336,8 +353,12 @@ it("protects default and deletes the exact selected profile only after confirmat
 			operation_id: expect.any(String),
 		});
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-		fireEvent.click(screen.getByRole("button", { name: "panels.browser.profiles" }));
-		await waitFor(() => expect(screen.getByRole("combobox").hasAttribute("disabled")).toBe(false));
+		fireEvent.click(
+			screen.getByRole("button", { name: "panels.browser.profiles" }),
+		);
+		await waitFor(() =>
+			expect(screen.getByRole("combobox").hasAttribute("disabled")).toBe(false),
+		);
 		openSelect(screen.getByRole("combobox"));
 		expect(screen.queryByRole("option", { name: "개인 작업" })).toBeNull();
 		fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
@@ -411,7 +432,9 @@ it("keeps interrupted retirement manageable while refusing it as a page destinat
 		fireEvent.click(
 			screen.getByRole("button", { name: "panels.browser.profiles" }),
 		);
-		await waitFor(() => expect(screen.getByRole("combobox").hasAttribute("disabled")).toBe(false));
+		await waitFor(() =>
+			expect(screen.getByRole("combobox").hasAttribute("disabled")).toBe(false),
+		);
 		openSelect(screen.getByRole("combobox"));
 		await screen.findByRole("option", {
 			name: "panels.browser.profileRetiring",
@@ -464,5 +487,33 @@ it("does not switch a newly saved profile after the controller changed while cre
 		release();
 		state.mounted.unmount();
 		await state.session.dispose(false);
+	}
+});
+
+it("recovers the selected profile without switching or deleting it", async () => {
+	const state = await fixture();
+	try {
+		await waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: "panels.browser.recoverProfile" }),
+			).toBeDefined(),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "panels.browser.recoverProfile" }),
+		);
+		await waitFor(() =>
+			expect(screen.getByRole("status").textContent).toContain(
+				"panels.browser.profileRecovered",
+			),
+		);
+		expect(state.actions).toEqual([
+			expect.objectContaining({
+				kind: "profile_recover",
+				profile_id: "default",
+			}),
+		]);
+	} finally {
+		state.mounted.unmount();
+		await state.session.dispose();
 	}
 });

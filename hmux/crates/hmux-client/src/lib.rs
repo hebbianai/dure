@@ -225,8 +225,13 @@ pub use hmux_session_protocol::{
 pub use host_socket_owner::local_host_socket_owner_absent;
 #[cfg(all(unix, feature = "local-runtime"))]
 pub use legacy_terminate::{
-    LocalProcessGenerationStatus, exact_local_process_generation, probe_local_process_generation,
+    LocalProcessGenerationStatus, exact_local_process_generation,
+    local_process_session_is_stably_empty, probe_local_process_generation,
 };
+#[cfg(all(unix, feature = "local-runtime"))]
+mod boot_identity;
+#[cfg(all(unix, feature = "local-runtime"))]
+pub use boot_identity::local_boot_identity;
 pub use local_session::LocalSession;
 #[cfg(feature = "local-runtime")]
 pub use managed_attach::ManagedSessionAttacher;

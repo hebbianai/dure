@@ -858,3 +858,64 @@ describe("Browser saved profile catalog mutations", () => {
 		expect(invoke).toHaveBeenCalledTimes(2);
 	});
 });
+
+it("recovers the exact saved profile through the bound backend without creating a Browser", async () => {
+	const invoke = vi
+		.fn()
+		.mockResolvedValue(
+			envelope({
+				schemaVersion: 1,
+				operation_id: "recover:once",
+				result: { profile_id: "default", recovered: true },
+			}),
+		);
+	await createDureBrowserClient(route, invoke).recoverProfile(
+		"default",
+		"recover:once",
+	);
+	expect(invoke).toHaveBeenCalledTimes(1);
+	expect(invoke.mock.calls[0][1]).toMatchObject({
+		route: { kind: "exact", authority: route },
+		operation: "browser.resource",
+		body: {
+			kind: "profile_recover",
+			profile_id: "default",
+			operation_id: "recover:once",
+		},
+	});
+});
+
+it("rejects a recovery result for another profile", async () => {
+	const invoke = vi
+		.fn()
+		.mockResolvedValue(
+			envelope({
+				schemaVersion: 1,
+				operation_id: "recover:once",
+				result: { profile_id: "other", recovered: true },
+			}),
+		);
+	await expect(
+		createDureBrowserClient(route, invoke).recoverProfile(
+			"default",
+			"recover:once",
+		),
+	).rejects.toMatchObject({ code: "browser_desktop_response_invalid" });
+});
+
+it("requires updating an older backend that lacks profile recovery", async () => {
+	const invoke = vi
+		.fn()
+		.mockRejectedValue({
+			code: "browser_request_invalid",
+			message: "unknown kind",
+			details: { disposition: "terminal" },
+		});
+	await expect(
+		createDureBrowserClient(route, invoke).recoverProfile(
+			"default",
+			"recover:once",
+		),
+	).rejects.toMatchObject({ code: "browser_profile_recovery_unavailable" });
+	expect(invoke).toHaveBeenCalledTimes(1);
+});

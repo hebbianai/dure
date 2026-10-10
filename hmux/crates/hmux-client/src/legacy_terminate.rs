@@ -1137,6 +1137,50 @@ pub(crate) fn provider_process_session_is_stably_empty(
     Ok(true)
 }
 
+/// Read-only retirement proof for a process launched as a POSIX session leader.
+/// macOS additionally checks kernel parent generations, refusing descendants
+/// that escaped the session. This never signals or adopts a numeric PID.
+/// Errors and surviving members must retain the caller's storage claim.
+pub fn local_process_session_is_stably_empty(
+    process: &ProcessDescriptor,
+) -> Result<bool, ClientError> {
+    #[cfg(target_os = "macos")]
+    {
+        let leader = checked_process_id(process.process_id)?;
+        let unique_id = match parse_start_marker(&process.start_marker) {
+            Ok(ProcessStartMarker::MacOsUnique { unique_id, .. })
+            | Ok(ProcessStartMarker::MacOsUniqueV2 { unique_id, .. }) => unique_id,
+            _ => {
+                return Err(verification_refused(
+                    "process tree",
+                    io::Error::other("exact kernel generation required"),
+                ));
+            }
+        };
+        let known = BTreeSet::from([MacProcessGeneration {
+            process_id: process.process_id,
+            unique_id,
+        }]);
+        for snapshot in 0..REQUIRED_EMPTY_SNAPSHOTS {
+            if probe_local_process_generation(process)? != LocalProcessGenerationStatus::Absent {
+                return Ok(false);
+            }
+            if !macos_provider_generations(leader, unique_id, &known, false)
+                .map_err(|error| verification_refused("process tree", error))?
+                .is_empty()
+            {
+                return Ok(false);
+            }
+            if snapshot + 1 < REQUIRED_EMPTY_SNAPSHOTS {
+                thread::sleep(PROCESS_STATE_POLL_INTERVAL);
+            }
+        }
+        Ok(true)
+    }
+    #[cfg(not(target_os = "macos"))]
+    provider_process_session_is_stably_empty(process)
+}
+
 fn probe_local_process_generation_with(
     process: &ProcessDescriptor,
     preflight: impl FnOnce(u32, ProcessStartMarker) -> io::Result<Option<ProcessGenerationPreflight>>,

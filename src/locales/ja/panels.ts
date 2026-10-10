@@ -208,4 +208,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.savedWithExclusions": "テーマとして保存しました — 一部のトークンは除外：{names}",
 	"panels.browser.installRuntime": "ブラウザーをインストール",
 	"panels.browser.installingRuntime": "ブラウザーをダウンロードしてインストールしています…",
+	"panels.browser.recoverProfile": "プロファイルを復旧",
+	"panels.browser.profileRecovered": "プロファイルを復旧しました。このプロファイルでブラウザーを再び開けます。",
 };

@@ -22,6 +22,7 @@ import {
 } from "@/lib/browser/browserProfileContract";
 import { sameBrowserPage } from "@/lib/browser/browserResourceContract";
 import { t } from "@/lib/i18n";
+import { browserRequestFailureMessage } from "@/lib/ipc/dureBrowser";
 
 /** The parent keys this dialog by its exact page and controller generation. */
 export function BrowserProfileDialog({
@@ -40,6 +41,7 @@ export function BrowserProfileDialog({
 	const [selected, setSelected] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<"request" | "created">();
+	const [recoveryResult, setRecoveryResult] = useState<string>();
 	const [mode, setMode] = useState<"choose" | "create" | "delete">("choose");
 	const [name, setName] = useState("");
 	const [nativeUserAgent, setNativeUserAgent] = useState(false);
@@ -63,6 +65,7 @@ export function BrowserProfileDialog({
 		let current = true;
 		setProfiles(undefined);
 		setFailure(undefined);
+		setRecoveryResult(undefined);
 		void session.client.profiles().then(
 			(rows) => {
 				if (!current) return;
@@ -152,6 +155,26 @@ export function BrowserProfileDialog({
 			if (mounted.current) setBusy(false);
 		}
 	};
+	const recover = async () => {
+		if (busy || !selectedProfile || selectedProfile.state !== "active") return;
+		setBusy(true);
+		setRecoveryResult(undefined);
+		try {
+			await session.client.recoverProfile(
+				selectedProfile.profile.profileId,
+				crypto.randomUUID(),
+			);
+			if (mounted.current) {
+				setFailure(undefined);
+				setRecoveryResult(t("panels.browser.profileRecovered"));
+			}
+		} catch (error) {
+			if (mounted.current)
+				setRecoveryResult(browserRequestFailureMessage(error));
+		} finally {
+			if (mounted.current) setBusy(false);
+		}
+	};
 	const remove = async () => {
 		if (
 			busy ||
@@ -231,6 +254,11 @@ export function BrowserProfileDialog({
 							: t("panels.browser.profileSwitchHint")}
 					</DialogDescription>
 				</DialogHeader>
+				{recoveryResult && (
+					<p role="status" className="text-sm">
+						{recoveryResult}
+					</p>
+				)}
 				{failure && (
 					<ErrorText>
 						{t(
@@ -329,15 +357,23 @@ export function BrowserProfileDialog({
 							aria-label={t("panels.browser.profileDestination")}
 							value={selected}
 							disabled={busy || !profiles}
-							onValueChange={(nextValue) => setSelected(nextValue)}
+							onValueChange={(nextValue) => {
+								setSelected(nextValue);
+								setRecoveryResult(undefined);
+							}}
 						>
 							<SelectOption value="">
-								{t(profiles ? "panels.browser.chooseProfile" : "common.loading")}
+								{t(
+									profiles ? "panels.browser.chooseProfile" : "common.loading",
+								)}
 							</SelectOption>
 							{profiles
 								?.filter((row) => row.state !== "deleted")
 								.map(({ profile, state }) => (
-									<SelectOption key={profile.profileId} value={profile.profileId}>
+									<SelectOption
+										key={profile.profileId}
+										value={profile.profileId}
+									>
 										{state === "retiring"
 											? t("panels.browser.profileRetiring", {
 													name: profile.label,
@@ -346,6 +382,15 @@ export function BrowserProfileDialog({
 									</SelectOption>
 								))}
 						</SelectField>
+						{selectedProfile?.state === "active" && (
+							<Button
+								variant="glass"
+								disabled={busy}
+								onClick={() => void recover()}
+							>
+								{t("panels.browser.recoverProfile")}
+							</Button>
+						)}
 						<div className="flex justify-between gap-2">
 							<Button
 								variant="ghost"

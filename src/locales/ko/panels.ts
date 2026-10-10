@@ -208,4 +208,6 @@ export const panels: Record<string, string> = {
 	"panels.tokens.theme.savedWithExclusions": "테마로 저장했습니다 — 일부 토큰은 제외됨: {names}",
 	"panels.browser.installRuntime": "브라우저 설치",
 	"panels.browser.installingRuntime": "브라우저를 다운로드하고 설치하는 중…",
+	"panels.browser.recoverProfile": "프로필 복구",
+	"panels.browser.profileRecovered": "프로필을 복구했습니다. 이 프로필로 브라우저를 다시 열 수 있습니다.",
 };

@@ -19,6 +19,7 @@ import { browserData } from "./browser-data.mjs";
 import { browserClipboard } from "./browser-clipboard.mjs";
 import { browserEnvironment } from "./browser-environment.mjs";
 import { browserMouse } from "./browser-mouse.mjs";
+import { profileRecoveryFailure } from "./browser-profile-recovery.mjs";
 import { browserProfiles } from "./browser-profiles.mjs";
 import { browserTabRows, allBrowserTabs, browserTabsWithProfiles, browserTabLabel, browserTabWithLabel } from "./browser-tabs.mjs";
 import { browserConsole, performBrowserConsole } from "./browser-console.mjs";
@@ -50,6 +51,8 @@ Usage:
   dure browser tab profile set RESOURCE --profile ID --page ID --controller ID --epoch EPOCH [--idempotency-key KEY]
   dure browser tab profile use-default RESOURCE --page ID --controller ID --epoch EPOCH [--idempotency-key KEY]
   dure browser tab profile clone RESOURCE --profile ID --page ID --controller ID --epoch EPOCH [--idempotency-key KEY]
+  dure browser tab profile status --profile ID
+  dure browser tab profile recover --profile ID [--idempotency-key KEY]
   dure browser tab profile delete --profile ID [--idempotency-key KEY]
   dure browser show RESOURCE
   dure browser tab list [RESOURCE] [--all] [--show-profile]
@@ -424,6 +427,11 @@ storage. The original tab stays open; its document state is not copied.
 Profile delete closes that profile's tabs across resources and removes its stored
 data. Default is protected. An interrupted deletion can be retried with a new
 idempotency key.
+Profile status inspects native ownership. Profile recover preserves profile data
+and clears a stopped owner's claim only after native verification. Live or unknown
+writers remain refused. Legacy claims first record a restart witness; save work,
+restart the computer running the backend, then recover with a new key. Restarting
+only Dure is insufficient. Never remove Chromium lock files to force recovery.
 Saved User-Agent policies are still in progress.
 Exec accepts quoted native browser command strings and uses the same typed
 operations, page identity, control and receipts as direct commands. It never runs
@@ -592,7 +600,7 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
     const profileChange = profileNewPage ?? (["profile_set", "profile_clone"].includes(profiles?.kind) ? profiles : undefined);
     const profileShow = profiles?.kind === "profile_show" ? profiles : undefined;
     let resourceId = profileChange?.resource_id ?? profileShow?.resource_id ?? requestedResourceId;
-    if (options.profileId !== undefined && ((command !== "create" && !profileChange && profiles?.kind !== "profile_delete") || !options.profileId.trim())) throw new Error("browser_command_invalid");
+    if (options.profileId !== undefined && ((command !== "create" && !profileChange && !["profile_delete", "profile_recover", "profile_recovery_status"].includes(profiles?.kind)) || !options.profileId.trim())) throw new Error("browser_command_invalid");
     if (!profiles && ((options.scope !== undefined && !tracing) || options.noUaSpoof !== undefined || options.label !== undefined && tabLabel === undefined)) throw new Error("browser_command_invalid");
     if (command !== "set" && (options.user !== undefined || options.pass !== undefined)) throw new Error("browser_command_invalid");
     if (command !== "clipboard" && options.text !== undefined) throw new Error("browser_command_invalid");
@@ -715,7 +723,7 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
       if (remainingMs <= 0) throw new Error("browser_tab_list_timeout");
       const response = await requestBackend(
         { ...backend.profile, deadlineMs: remainingMs },
-        { requestId: randomUUID(), operation: "browser.resource", requiredCapabilities: ["browser.resource.v1", ...(uploading || downloading || stateLoading || diff ? ["browser.files.v1"] : []), ...(exportsFile ? ["browser.capture.v1"] : []), ...(tracing ? ["browser.tracing.v1"] : []), ...(query || console ? ["browser.query.v1"] : []), ...(finding ? ["browser.find.v1"] : []), ...(waiting ? ["browser.wait.v1"] : []), ...(command === "network" || networkCapture || interception ? ["browser.network.v1"] : [])], body },
+        { requestId: randomUUID(), operation: "browser.resource", requiredCapabilities: ["browser.resource.v1", ...(["profile_recover", "profile_recovery_status"].includes(body.kind) ? ["browser.profile_recovery.v1"] : []), ...(uploading || downloading || stateLoading || diff ? ["browser.files.v1"] : []), ...(exportsFile ? ["browser.capture.v1"] : []), ...(tracing ? ["browser.tracing.v1"] : []), ...(query || console ? ["browser.query.v1"] : []), ...(finding ? ["browser.find.v1"] : []), ...(waiting ? ["browser.wait.v1"] : []), ...(command === "network" || networkCapture || interception ? ["browser.network.v1"] : [])], body },
         { ...backend.transportOptions, deadlineMs: remainingMs, maxResponseBytes: 2 * 1024 * 1024 },
       );
       assertBrowserResource(selectedResource, body.kind, response.result);
@@ -858,15 +866,15 @@ export async function collectBrowserCommand({ args, resolveBackend, requestBacke
         }
       }
     }
-    return { ok: !result?.error && result?.result?.response?.success !== false && (!result?.replayed || result.receipt?.state === "succeeded"), operation_id: operationId, ...result, ...(sessionController ? { session_controller: sessionController } : {}) };
+    return { ok: !result?.error && result?.result?.response?.success !== false && (!result?.replayed || result.receipt?.state === "succeeded"), operation_id: operationId, ...result, ...(result?.error ? { error: profileRecoveryFailure(result.error) } : {}), ...(sessionController ? { session_controller: sessionController } : {}) };
   } catch (error) {
     return {
       ok: false, operation_id: operationId,
       ...(sessionController ? { session_controller: sessionController } : {}),
-      error: error instanceof BrowserCommandError ? error.diagnostic
+      error: profileRecoveryFailure(error instanceof BrowserCommandError ? error.diagnostic
         : error?.name === "Error" && error.message.startsWith("browser_")
         ? { code: error.message }
-        : backendRequestFailure(error, backend?.profile),
+        : backendRequestFailure(error, backend?.profile)),
     };
   }
 }

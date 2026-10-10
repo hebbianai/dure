@@ -108,6 +108,7 @@ function fixture(
 		selectResource: vi.fn(),
 		runtimeInstallation: vi.fn(),
 		profiles: vi.fn(),
+		recoverProfile: vi.fn(),
 		createProfile: vi.fn(),
 		deleteProfile: vi.fn(),
 		screenshot: vi.fn(),
