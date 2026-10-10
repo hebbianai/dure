@@ -65,6 +65,7 @@ vi.mock("@/lib/workspace/dock", () => ({
 	createTerminalPaneRelativeToSession: vi.fn(),
 	openHmuxTerminalPanel: vi.fn(),
 	openAgentPanel: mocks.openAgentPanel,
+	movePaneToSpace: vi.fn(),
 	resolvePaneById: vi.fn(),
 	resolvePaneReference: mocks.resolvePaneReference,
 }));

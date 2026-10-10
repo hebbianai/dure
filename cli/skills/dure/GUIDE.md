@@ -295,6 +295,14 @@ and `skills get dure` before continuing; do not replay uncertain operations.
 `diagnostics --check --require cli` requires a known current or newer CLI package.
 The default requirements remain `app,hmux,path`; version freshness does not claim
 wire compatibility or live Session health.
+`app.webviewDiagnostics` retains bounded desktop warning/error evidence across
+window closure and app restart. Each row has the native window label, severity,
+source, known failure code, first/last timestamps and recurrence count. Unknown
+content is `redacted`; messages, stacks and console arguments are never included.
+Text output shows the last eight rows; `--json` includes up to 256 retained rows.
+Older apps report `unavailable`. Capture is rate limited and abrupt crashes can
+lose pending observations; absence of a row is not proof that no error occurred.
+
 Its `selectedChannel` remains available even when the app descriptor is absent.
 The `recovery` object provides read-only checks and session-preserving steps.
 Hmux executable compatibility is not live backend or session health: run

@@ -1,13 +1,10 @@
 import type { WebviewDiagnosticInput } from "@/lib/ipc/webviewDiagnostics";
 
-const FAILURE_CODES = new Set<WebviewDiagnosticInput["code"]>([
-	"client_space_window_changed",
-	"client_space_not_found",
-	"client_space_mount_timeout",
-	"client_source_pane_changed",
-	"client_space_changed",
-	"client_presentation_not_authorized",
-]);
+import { WEBVIEW_DIAGNOSTIC_CODES } from "../../../cli/lib/contracts/webview-diagnostics.mjs";
+
+const FAILURE_CODES = new Set<WebviewDiagnosticInput["code"]>(
+	WEBVIEW_DIAGNOSTIC_CODES,
+);
 const BOUNDARIES = new Set([
 	"[boundary:app]",
 	"[boundary:diff-window]",
