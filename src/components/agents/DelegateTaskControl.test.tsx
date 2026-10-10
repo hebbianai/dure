@@ -92,7 +92,13 @@ beforeEach(() => {
 	});
 });
 
-afterEach(() => cleanup());
+afterEach(async () => {
+	cleanup();
+	// Radix restores focus on a timer; finish it before jsdom disposes this realm.
+	await act(async () => {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	});
+});
 
 describe("DelegateTaskControl", () => {
 	it("does not commit while closed for unrelated Agent updates and opens with current targets", () => {

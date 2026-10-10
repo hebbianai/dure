@@ -38,6 +38,8 @@ export const ORCHESTRATION_PAYLOAD_NAMES = Object.freeze([
   "app-observation.mjs",
   "client-presentation-command.mjs",
   "client-presentation-state.mjs",
+  "client-project-backend.mjs",
+  "project-contract.mjs",
   "space-selection.mjs",
   "client-registry.mjs",
   "fd-verified-read.mjs",
