@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "currentBuildId": "dure-control-plane/v132-project-move",
-  "previousBuildId": "dure-control-plane/v131-run-catalog",
+  "currentBuildId": "dure-control-plane/v133-feedback-recovery",
+  "previousBuildId": "dure-control-plane/v132-project-move",
   "identity": {
     "apiVersion": "dure.control-plane-identity/v1",
     "kind": "dure.control_plane.identity",
@@ -53,6 +53,7 @@
       "browser.network.v1",
       "browser.query.v1",
       "browser.resource.v1",
+      "browser.profile_recovery.v1",
       "browser.tracing.v1",
       "browser.wait.v1",
       "client_view.authority.read",

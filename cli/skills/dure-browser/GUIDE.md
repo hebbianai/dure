@@ -132,6 +132,25 @@ can appear small with empty space below in a narrow pane. Do not resize it from
 screenshot dimensions or invent a view controller ID to hand it back. Stop
 issuing input if the user takes control during your work.
 
+## Recover a blocked persistent profile
+
+If creation reports `browser_profile_exit_unconfirmed`, inspect and recover the
+same profile on its owning backend. Creation uses `default` unless `--profile`
+selects another profile:
+
+```sh
+dure browser tab profile status --profile default
+dure browser tab profile recover --profile default --idempotency-key recovery-1
+```
+
+Recovery preserves cookies and local storage and refuses a live or unverifiable
+writer. Older claims may require restarting the computer hosting that backend;
+restarting Dure alone does not satisfy that requirement. Follow the returned
+guidance, keep all profile and lock files intact, and use a new key after a
+terminal refusal and a changed condition. Reuse the same key after an uncertain
+transport result. After successful recovery, retry creation with a new operation
+key. The Browser pane and Profiles dialog use the same recovery service.
+
 ## Recover an uncertain command
 
 Keep the operation ID returned by a mutation. If its response or later panel

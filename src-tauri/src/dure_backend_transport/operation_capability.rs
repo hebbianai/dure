@@ -2,7 +2,14 @@ pub(super) fn operation_body_capability(
     operation: &str,
     body: &serde_json::Value,
 ) -> Option<&'static str> {
-    if operation == "schedule.put"
+    if operation == "browser.resource"
+        && matches!(
+            body.get("kind").and_then(serde_json::Value::as_str),
+            Some("profile_recover" | "profile_recovery_status")
+        )
+    {
+        Some("browser.profile_recovery.v1")
+    } else if operation == "schedule.put"
         && body
             .pointer("/runTemplate/worktree/kind")
             .and_then(serde_json::Value::as_str)
@@ -89,6 +96,26 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::operation_capability;
+
+    #[test]
+    fn profile_recovery_requires_capability_without_changing_existing_browser_requests() {
+        for kind in ["profile_recover", "profile_recovery_status"] {
+            assert_eq!(
+                super::operation_body_capability(
+                    "browser.resource",
+                    &serde_json::json!({"kind":kind})
+                ),
+                Some("browser.profile_recovery.v1")
+            );
+        }
+        assert_eq!(
+            super::operation_body_capability(
+                "browser.resource",
+                &serde_json::json!({"kind":"profile_list"})
+            ),
+            Some("browser.resource.v1")
+        );
+    }
 
     #[test]
     fn project_root_schedules_require_new_capability_but_omission_stays_compatible() {

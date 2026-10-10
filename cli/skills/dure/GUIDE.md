@@ -106,6 +106,10 @@ including `dure projects register --help` and `-h`, works offline.
 The CLI previews and then applies one durable backend plan, so retries reuse
 the same operation instead of creating a second agent.
 
+Generated worktrees inside a checkout are excluded through Git's local
+`info/exclude`, shared by interactive and scheduled Runs. This preserves tracked
+ignore files and the index; files already tracked before the fix stay tracked.
+
 Pane placement is a separate client-only result. Inside an exact Hmux pane,
 omitting `--space` opens the new Agent in the same Space. The client prefers
 splitting the invoking pane right or below, targeting at least 480×300 px per
