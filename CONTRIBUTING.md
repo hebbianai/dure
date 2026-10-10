@@ -127,7 +127,15 @@ The build checks free disk space and concurrent reservations before it starts.
 The current local full-build requirement is 110 GiB free, plus other active build
 reservations. Follow the actual refusal message and inspect `pnpm disk:status`
 instead of bypassing admission. The build budgets are defined in
-[disk-space.mjs](scripts/lib/disk-space.mjs).
+[disk-space.mjs](scripts/lib/disk-space.mjs). Refusals and `pnpm disk:status`
+show up to eight reservation holders, including PID, worktree, build class,
+reserved size, elapsed age and observed liveness. `pnpm disk:status --json`
+provides the same bounded snapshot. Status inspection does not delete caches.
+Older reservations may identify only the main checkout or an unknown class.
+Age is not a completion estimate: live reservations remain held until their
+owner releases them or exits; an unknown process observation is not proof of
+exit. Coordinate with the listed build owner and retry after capacity or
+reservations change, rather than repeatedly rerunning the refused command.
 
 For frontend-only work, `pnpm build:frontend` builds the web UI. It does not
 produce the native desktop app.

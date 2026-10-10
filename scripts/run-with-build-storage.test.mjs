@@ -196,6 +196,7 @@ process.stdout.write(JSON.stringify({
     expect(admit).toHaveBeenCalledWith({
       cwd: "/fixture",
       label: "frontend build",
+      buildClass: "frontend",
       requestedBytes: buildStorageBudget("frontend"),
     });
     expect(run.mock.calls[0][2].env).toMatchObject({
@@ -220,6 +221,7 @@ process.stdout.write(JSON.stringify({
       floorBytes: 0,
       goalBytes: 0,
       label: "full build",
+      buildClass: "full",
       requestedBytes: buildStorageBudget("full"),
     });
   });

@@ -40,6 +40,7 @@ export function runWithBuildStorage(
     cwd,
     ...disposableRunnerPolicy,
     label: `${command.kind} build`,
+    buildClass: command.kind,
     requestedBytes: buildStorageBudget(command.kind),
   });
   if (!headroom.ok) throw new Error(headroom.message);

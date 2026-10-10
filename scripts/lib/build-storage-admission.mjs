@@ -1,3 +1,4 @@
+import { formatBuildStorageReservationDiagnostics } from "./build-storage-diagnostics.mjs";
 import {
   adoptBuildStorageReservation,
   BUILD_STORAGE_RESERVATION_ENV,
@@ -16,11 +17,21 @@ import {
   reclaimNeed,
 } from "./disk-space.mjs";
 
+function capacityUnavailableMessage(label, available, requested, admission) {
+  return [
+    `${label} was not started — storage admission could not establish authoritative capacity (${admission.reason}).`,
+    `physical ${formatBytes(available)}, request ${formatBytes(requested)}.`,
+    formatBuildStorageReservationDiagnostics(admission.diagnostics),
+    "Inspect without deleting caches: pnpm disk:status",
+  ].join("\n");
+}
+
 /** One admission boundary for build growth: adopt an inherited capability or
  * publish a host-wide reservation, run only safe reclaim when capacity is
  * insufficient, then retry once against a fresh physical observation. */
 export function ensureHeadroom({
   cwd = process.cwd(),
+  buildClass,
   floorBytes = DEFAULT_FLOOR_BYTES,
   goalBytes = DEFAULT_GOAL_BYTES,
   label = "build",
@@ -88,6 +99,8 @@ export function ensureHeadroom({
         ...reservationOptions,
         availableBytes: before,
         cwd: root,
+        ownerCwd: cwd,
+        buildClass,
         floorBytes,
         label,
         requestedBytes,
@@ -114,11 +127,7 @@ export function ensureHeadroom({
     if (admission.reason !== "insufficient_unreserved_space") {
       return {
         ok: false,
-        message: [
-          `${label} was not started — storage admission could not establish authoritative capacity (${admission.reason}).`,
-          `physical ${formatBytes(before)}, request ${formatBytes(requestedBytes)}.`,
-          "Inspect active reservations and reclaimable outputs with: pnpm disk:status",
-        ].join("\n"),
+        message: capacityUnavailableMessage(label, before, requestedBytes, admission),
         report: null,
         availableBytes: before,
         reservation: null,
@@ -152,6 +161,8 @@ export function ensureHeadroom({
         ...reservationOptions,
         availableBytes: after,
         cwd: root,
+        ownerCwd: cwd,
+        buildClass,
         floorBytes,
         label,
         requestedBytes,
@@ -179,6 +190,15 @@ export function ensureHeadroom({
         reservation: retried.reservation,
       };
     }
+    if (retried.reason !== "insufficient_unreserved_space") {
+      return {
+        ok: false,
+        availableBytes: after,
+        report,
+        reservation: null,
+        message: capacityUnavailableMessage(label, after, requestedBytes, retried),
+      };
+    }
     const retriedReservedBytes = Math.max(0, retried.reservedBytes ?? 0);
     return {
       ok: false,
@@ -192,7 +212,9 @@ export function ensureHeadroom({
         `Requirement: ${formatBytes(floorBytes)} floor + ${formatBytes(requestedBytes)} for this build + ` +
           `${formatBytes(retriedReservedBytes)} reserved by other builds.`,
         `Safe reclaim removed ${report.removed.length} outputs (${formatBytes(report.removedBytes)}).`,
-        "Starting anyway could exhaust the shared volume. Inspect: pnpm disk:status",
+        formatBuildStorageReservationDiagnostics(retried.diagnostics),
+        "Starting anyway could exhaust the shared volume. Inspect without deleting caches: pnpm disk:status",
+        "Retry after capacity or the listed reservations change; repeated retries do not release live reservations.",
       ].join("\n"),
     };
   }

@@ -9,6 +9,8 @@ import {
 } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, join, parse as parsePath, resolve } from "node:path";
+import { buildStorageReservationDiagnostics } from "./build-storage-diagnostics.mjs";
+import { BUILD_STORAGE_BUDGETS } from "./disk-space.mjs";
 import { appRootUnder } from "./dure-home.mjs";
 import { writeExclusiveFile } from "./durable-file.mjs";
 import {
@@ -34,6 +36,13 @@ function requiredString(value, field, maximum = 4_096) {
     throw new Error(`invalid build storage reservation ${field}`);
   }
   return value;
+}
+
+function optionalBuildClass(value) {
+  // Advisory metadata must not invalidate an otherwise compatible lease.
+  return typeof value === "string" && Object.hasOwn(BUILD_STORAGE_BUDGETS, value)
+    ? { buildClass: value }
+    : {};
 }
 
 function positiveInteger(value, field) {
@@ -135,6 +144,7 @@ export function parseBuildStorageReservation(source) {
     expiresAtUnixMs: positiveInteger(value.expiresAtUnixMs, "expiry time"),
     volumeId: requiredString(value.volumeId, "volume identity", 256),
     label: requiredString(value.label, "label", 256),
+    ...optionalBuildClass(value.buildClass),
     cwd: requiredString(value.cwd, "working directory"),
   });
 }
@@ -314,6 +324,7 @@ export function inspectBuildStorageReservations({
 }
 
 function freshReservation({
+  buildClass,
   cwd,
   label,
   nowMs,
@@ -334,6 +345,7 @@ function freshReservation({
     expiresAtUnixMs: nowMs + ttlMs,
     volumeId,
     label,
+    ...optionalBuildClass(buildClass),
     cwd: resolve(cwd),
   });
 }
@@ -461,10 +473,13 @@ export function exposeBuildStorageReservation(
 
 export function reserveBuildStorage({
   availableBytes,
+  buildClass,
   cwd = process.cwd(),
   floorBytes,
   requestedBytes,
   label = "build",
+  // Diagnostic origin only; cwd still selects the existing admission volume.
+  ownerCwd = cwd,
   reservationRoot = buildStorageReservationRoot(),
   nowMs = Date.now(),
   pid = process.pid,
@@ -494,7 +509,8 @@ export function reserveBuildStorage({
   const directory = volumeDirectory(reservationRoot, volumeId);
   assertOwnerOnlyDirectory(directory);
   const record = freshReservation({
-    cwd,
+    buildClass,
+    cwd: ownerCwd,
     label,
     nowMs,
     ownerIdentity,
@@ -549,12 +565,14 @@ export function reserveBuildStorage({
       Atomics.wait(CONTENTION_WAIT, 0, 0, delayMs);
       return reserveBuildStorage({
         availableBytes,
+        buildClass,
         contentionAttempt: contentionAttempt + 1,
         cwd,
         floorBytes,
         label,
         nowMs: nowMs + delayMs,
         observeProcesses,
+        ownerCwd,
         ownerIdentity,
         pid,
         requestedBytes,
@@ -572,6 +590,16 @@ export function reserveBuildStorage({
       reservation: null,
       reservedBytes: observed.reservedBytes - (current ? requestedBytes : 0),
       remainingBytes,
+      diagnostics: buildStorageReservationDiagnostics(
+        {
+          ...observed,
+          active: observed.active.filter(
+            (entry) => !sameReservation(entry.record, record),
+          ),
+          reservedBytes: observed.reservedBytes - (current ? requestedBytes : 0),
+        },
+        { nowMs },
+      ),
       invalid: observed.invalid,
       reclaimed: observed.reclaimed,
     };

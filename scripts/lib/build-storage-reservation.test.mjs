@@ -8,6 +8,7 @@ import {
   adoptBuildStorageReservation,
   buildStorageReservationRoot,
   inspectBuildStorageReservations,
+  parseBuildStorageReservation,
   reserveBuildStorage,
   storageVolumeId,
 } from "./build-storage-reservation.mjs";
@@ -228,7 +229,17 @@ describe("build storage reservation", () => {
     expect(second).toMatchObject({
       ok: false,
       reason: "insufficient_unreserved_space",
+      diagnostics: {
+        activeCount: 1,
+        active: [{ pid: 41, cwd, requestedBytes: 50, liveness: "active" }],
+      },
     });
+    expect(JSON.stringify(second.diagnostics)).not.toContain(first.reservation.record.token);
+    // Class metadata is additive: future classes must not invalidate leases
+    // for independently running older tooling on the same host.
+    expect(parseBuildStorageReservation(JSON.stringify({
+      ...first.reservation.record, buildClass: "future-class",
+    })).requestedBytes).toBe(50);
     expect(first.reservation.release()).toBe(true);
   });
 

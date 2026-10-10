@@ -16,6 +16,10 @@
 
 import { fileURLToPath } from "node:url";
 import { enterBackgroundCpuPriority } from "./lib/background-cpu-priority.mjs";
+import {
+  buildStorageReservationDiagnostics,
+  formatBuildStorageReservationDiagnostics,
+} from "./lib/build-storage-diagnostics.mjs";
 import { inspectBuildStorageReservations } from "./lib/build-storage-reservation.mjs";
 import { reclaimCargoCaches } from "./lib/cargo-cache-reclaim.mjs";
 import {
@@ -88,23 +92,6 @@ export function publicDiskGcReport(report, reservations = null) {
   };
 }
 
-function publicReservations(report) {
-  if (!report) return null;
-  return {
-    reservedBytes: report.reservedBytes,
-    invalidCount: report.invalid.length,
-    observationStatus: report.observationStatus,
-    active: report.active.map(({ record, liveness }) => ({
-      acquiredAtUnixMs: record.acquiredAtUnixMs,
-      cwd: record.cwd,
-      label: record.label,
-      liveness,
-      pid: record.pid,
-      requestedBytes: record.requestedBytes,
-    })),
-  };
-}
-
 export function diskGcExitCode(report) {
   return report.applied &&
     (!report.satisfied || report.refused.length > 0)
@@ -155,7 +142,7 @@ export function main(arguments_ = process.argv.slice(2)) {
   }
   let reservations;
   try {
-    reservations = publicReservations(
+    reservations = buildStorageReservationDiagnostics(
       inspectBuildStorageReservations({ cwd: report.mainRoot }),
     );
   } catch (error) {
@@ -198,12 +185,7 @@ export function main(arguments_ = process.argv.slice(2)) {
     `회수 가능         ${report.candidateCount}개 target, ` +
       `${formatBytes(report.plan.selected.reduce((sum, entry) => sum + entry.bytes, 0))}`,
   );
-  console.log(
-    `빌드 예약         ${reservations.active.length}개, ${formatBytes(reservations.reservedBytes)}` +
-      (reservations.invalidCount > 0
-        ? ` (invalid ${reservations.invalidCount})`
-        : ""),
-  );
+  console.log(formatBuildStorageReservationDiagnostics(reservations));
   if (reasons.size > 0) {
     console.log(
       `건너뜀            ${[...reasons]
