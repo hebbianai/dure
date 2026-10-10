@@ -254,8 +254,40 @@ export function AutomationFlow({
 									</SelectOption>
 								</SelectField>
 							</FormField>
+							<FormField label={t("automations.workspace")}>
+								<SelectField
+									value={draft.runTemplate.worktree?.kind ?? "dedicated"}
+									onValueChange={(kind) => {
+										if (
+											kind === (draft.runTemplate.worktree?.kind ?? "dedicated")
+										)
+											return;
+										setDraft({
+											...draft,
+											runTemplate: {
+												...draft.runTemplate,
+												worktree:
+													kind === "project_root"
+														? { kind: "project_root" }
+														: undefined,
+											},
+										});
+									}}
+								>
+									<SelectOption value="dedicated">
+										{t("automations.isolatedWorktree")}
+									</SelectOption>
+									<SelectOption value="project_root">
+										{t("automations.noWorktree")}
+									</SelectOption>
+								</SelectField>
+							</FormField>
 							<p className="text-xs leading-5 text-muted-foreground">
-								{t("automations.worktreeHelp")}
+								{t(
+									draft.runTemplate.worktree?.kind === "project_root"
+										? "automations.noWorktreeHelp"
+										: "automations.worktreeHelp",
+								)}
 							</p>
 						</>
 					)}

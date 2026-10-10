@@ -423,3 +423,42 @@ describe("dure schedule", () => {
     expect(existsSync(join(fixture.root, "automation-runs.json"))).toBe(false);
   });
 });
+
+describe("schedule workspace policy", () => {
+  it("sends explicit project-root policy only to a capable backend", () => {
+    const fixture = installRemoteFixture();
+    const profilePath = join(fixture.root, "backend-profiles.json");
+    const catalog = JSON.parse(readFileSync(profilePath, "utf8"));
+    catalog.profiles[0].expected.capabilities.push("schedule.worktree_project_root_v1");
+    writeFileSync(profilePath, JSON.stringify(catalog));
+    const ssh = join(fixture.bin, "ssh");
+    writeFileSync(ssh, readFileSync(ssh, "utf8").replace('capabilities: ["schedule.delete"', 'capabilities: ["schedule.worktree_project_root_v1", "schedule.delete"'));
+    const result = spawnSync(process.execPath, [cliPath, "schedule", "create", "--id", "operations", "--project", "dure", "--cron", "0 9 * * *", "--no-worktree", "--backend", "remote", "--json", "--", "Review operations"], {
+      encoding: "utf8", env: { ...process.env, DURE_HOME: fixture.root, DURE_APP_CHANNEL: "stable", DURE_SCHEDULE_REQUEST_LOG: fixture.requestLog, PATH: `${fixture.bin}:${process.env.PATH}` },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).schedule.runTemplate.worktree).toEqual({ kind: "project_root" });
+    expect(JSON.parse(readFileSync(fixture.requestLog, "utf8"))).toMatchObject({
+      expected: { requiredCapabilities: ["schedule.put", "schedule.worktree_project_root_v1"] },
+      body: { runTemplate: { worktree: { kind: "project_root" } } },
+    });
+  });
+
+  it.each([["--base-commit", "a".repeat(40)], ["--branch", "task"], ["--setup-command", "echo setup"]])("rejects Git options with --no-worktree: %j", (...extra) => {
+    const fixture = installRemoteFixture();
+    const result = spawnSync(process.execPath, [cliPath, "schedule", "create", "--project", "dure", "--cron", "0 9 * * *", "--no-worktree", ...extra, "--backend", "remote", "--", "Review operations"], {
+      encoding: "utf8", env: { ...process.env, DURE_HOME: fixture.root, DURE_APP_CHANNEL: "stable", DURE_SCHEDULE_REQUEST_LOG: fixture.requestLog, PATH: `${fixture.bin}:${process.env.PATH}` },
+    });
+    expect(result.status).not.toBe(0);
+    expect(existsSync(fixture.requestLog)).toBe(false);
+  });
+
+  it("does not silently ignore --no-worktree on an older backend", () => {
+    const fixture = installRemoteFixture();
+    const result = spawnSync(process.execPath, [cliPath, "schedule", "create", "--id", "operations", "--project", "dure", "--cron", "0 9 * * *", "--no-worktree", "--backend", "remote", "--json", "--", "Review operations"], {
+      encoding: "utf8", env: { ...process.env, DURE_HOME: fixture.root, DURE_APP_CHANNEL: "stable", DURE_SCHEDULE_REQUEST_LOG: fixture.requestLog, PATH: `${fixture.bin}:${process.env.PATH}` },
+    });
+    expect(result.status).not.toBe(0);
+    expect(existsSync(fixture.requestLog)).toBe(false);
+  });
+});

@@ -134,6 +134,38 @@ describe("AutomationEditor", () => {
 		setLang("ko");
 	});
 
+	it("saves an explicit no-worktree choice and preserves it on later edits", async () => {
+		const { client, invokeCommand } = fixture();
+		const onSaved = vi.fn();
+		render(
+			<AutomationEditor
+				client={client}
+				authority={authority}
+				schedule={existing}
+				pro
+				onSaved={onSaved}
+				onClose={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: /Agent/ }));
+		chooseSelectValue(
+			screen.getByLabelText(t("automations.workspace")),
+			"project_root",
+		);
+		expect(screen.getByText(t("automations.noWorktreeHelp"))).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "Save" }));
+		await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+		const put = invokeCommand.mock.calls.find(
+			([, args]) => args.operation === "schedule.put",
+		)?.[1];
+		expect(put?.body).toMatchObject({
+			runTemplate: { worktree: { kind: "project_root" } },
+		});
+		expect(put?.body).toHaveProperty("runTemplate.worktree", {
+			kind: "project_root",
+		});
+	});
+
 	it("creates a paused schedule, tests the saved configuration, and shows the retained report", async () => {
 		const { client, invokeCommand } = fixture();
 		const onSaved = vi.fn();

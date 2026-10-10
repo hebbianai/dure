@@ -114,3 +114,26 @@ describe("schedule contracts", () => {
 		).toThrow();
 	});
 });
+
+it("preserves explicit project-root schedules and rejects Git options on that policy", () => {
+	const plain = {
+		...schedule,
+		runTemplate: {
+			...schedule.runTemplate,
+			worktree: { kind: "project_root" },
+		},
+	};
+	expect(scheduleDraft(parseSchedule(plain)).runTemplate.worktree).toEqual({
+		kind: "project_root",
+	});
+	expect(newScheduleDraft().runTemplate.worktree).toBeUndefined();
+	expect(() =>
+		parseSchedule({
+			...plain,
+			runTemplate: {
+				...plain.runTemplate,
+				worktree: { kind: "project_root", baseCommitSha: "a".repeat(40) },
+			},
+		}),
+	).toThrow();
+});

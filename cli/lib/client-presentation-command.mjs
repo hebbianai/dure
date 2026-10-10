@@ -1,3 +1,4 @@
+import { clientProjectBackendGuidance, formatClientProjectBackendGuidance } from "./client-project-backend.mjs";
 import {
   AppControlClientError,
   publicAppControlIdentity,
@@ -53,7 +54,8 @@ After an uncertain response, get its current visibility before requesting anothe
 Project add registers a shared app location; Space is request context, not ownership.
 It creates no pane/session/worktree. Local PATH defaults to CLI cwd; SSH PATH is required.
 Existing GUI folder inspection, canonical repository identity and trust behavior apply.
-This is separate from backend-only dure projects register.
+The receipt includes the canonical local backend project ID or a projects register command.
+For SSH projects, run the printed registration command on the owning host.
 Host add uses the app's durable SSH registration; the returned host.id works with --host.
 An alias imports ~/.ssh/config. Explicit destinations use a key file or normal SSH authentication.
 Registration creates no session. The first terminal open installs Hmux if it is missing.
@@ -627,6 +629,7 @@ export async function runClientPresentationCommand(
       schemaVersion: 1, apiVersion: PRESENTATION_API_VERSION,
       kind: "dure.client_project.add", action: command.action,
       client: clientIdentity(descriptor), registration: member,
+      backendProject: await clientProjectBackendGuidance(member, { environment }),
     };
   }
   if (command.domain === "host") {
@@ -707,7 +710,7 @@ export function formatClientPresentationReceipt(report) {
   }
   if (report.registration) {
     const projectId = humanReceiptIdentity(report.registration.project?.id);
-    return `✓ app project registered${projectId ? ` → ${projectId}` : ""}`;
+    return `✓ app project registered${projectId ? ` → ${projectId}` : ""}${formatClientProjectBackendGuidance(report.backendProject)}`;
   }
   if (report.kind === "dure.client_observation") {
     return JSON.stringify(report, null, 2);

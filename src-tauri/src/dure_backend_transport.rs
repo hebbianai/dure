@@ -9,7 +9,9 @@ mod route_authority;
 mod ssh_references;
 pub(crate) mod subscription;
 
+#[cfg(test)]
 use operation_capability::operation_capability;
+use operation_capability::operation_body_capability;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
@@ -801,8 +803,8 @@ struct SupportedOperation<'a> {
 }
 
 impl<'a> SupportedOperation<'a> {
-    fn parse(name: &'a str) -> Result<Self, DureBackendTransportError> {
-        let capability = operation_capability(name).ok_or_else(|| {
+    fn parse(name: &'a str, body: &Value) -> Result<Self, DureBackendTransportError> {
+        let capability = operation_body_capability(name, body).ok_or_else(|| {
             DureBackendTransportError::new(
                 "backend_transport_operation_unsupported",
                 "the requested backend operation is unsupported",
@@ -1461,7 +1463,7 @@ impl DureBackendTransportState {
         operation: &str,
         body: Value,
     ) -> Result<DureBackendTransportResult, DureBackendTransportError> {
-        let operation = SupportedOperation::parse(operation)?;
+        let operation = SupportedOperation::parse(operation, &body)?;
         if !body.is_object() {
             return Err(DureBackendTransportError::new(
                 "backend_transport_invalid_request",

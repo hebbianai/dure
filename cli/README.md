@@ -132,3 +132,19 @@ Message tracking: `dure send NAME --track "message" --json` returns a private
 See `dure send --help` and `dure wait --help` for evidence limits. Native Codex
 progress also appears in `dure inspect --json`, `dure ls`, and pane headers after
 five quiet minutes of thinking. This is an observation, never an automatic stop.
+
+### Scheduled operational tasks
+
+Schedules retain isolated Git worktrees by default. Use `dure schedule create
+--no-worktree --project ID --cron "0 9 * * *" -- "review operational status"`
+for a registered project folder, including a non-Git directory. Runs then share
+that folder. The selected backend must advertise `schedule.worktree_project_root_v1`;
+older backends refuse the opt-in before a schedule is changed. Git-specific
+`--base-commit`, `--branch` and `--setup-command` options cannot accompany it.
+
+`dure client project add PATH` returns the app registration plus `backendProject`:
+the canonical local backend ID and schedule arguments, or an exact quoted
+`dure projects register ... --path PATH --backend local` command. Failed discovery
+is reported as unchecked. SSH guidance is executed on the owning SSH host, since
+app host IDs are not backend profile IDs. Keep registration and schedule commands
+on the same backend; app project IDs alone do not register backend projects.

@@ -33,6 +33,10 @@ export const automations: Record<string, string> = {
 	"automations.defaultPermissions": "제공자 기본값",
 	"automations.requireApprovals": "승인 요청",
 	"automations.skipPermissions": "권한 확인 건너뛰기",
+	"automations.isolatedWorktree": "격리된 Git 워크트리 (기본값)",
+	"automations.noWorktree": "프로젝트 폴더 (워크트리 없음)",
+	"automations.noWorktreeHelp":
+		"실행은 등록된 프로젝트 폴더를 공유합니다. Git은 필요하지 않으며 실행 간 파일이 격리되지 않습니다. 최신 백엔드가 필요합니다.",
 	"automations.worktreeHelp":
 		"각 실행은 별도 Git worktree를 사용합니다. 에이전트에 설정된 인증 정보를 사용합니다.",
 	"automations.resultHelp":

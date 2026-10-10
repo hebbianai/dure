@@ -1,3 +1,19 @@
+pub(super) fn operation_body_capability(
+    operation: &str,
+    body: &serde_json::Value,
+) -> Option<&'static str> {
+    if operation == "schedule.put"
+        && body
+            .pointer("/runTemplate/worktree/kind")
+            .and_then(serde_json::Value::as_str)
+            == Some("project_root")
+    {
+        Some("schedule.worktree_project_root_v1")
+    } else {
+        operation_capability(operation)
+    }
+}
+
 pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
     match operation {
         "agent_runtime.native.read" => Some("agent_runtime.native.read"),
@@ -5,7 +21,9 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
         "backend.scope" => Some("backend.scope.v1"),
         "workspace_environment.invoke" => Some("workspace_environment.v1"),
         "agent_goal.get" | "agent_goal.put" => Some("agent_goal.v1"),
-        "provider_recovery.get" | "provider_recovery.put" | "provider_recovery.observe_usage"
+        "provider_recovery.get"
+        | "provider_recovery.put"
+        | "provider_recovery.observe_usage"
         | "agent_recovery.read" => Some("account_recovery.v1"),
         "browser.resource" => Some("browser.resource.v1"),
         "slack.connector" => Some("slack.connector.v1"),
@@ -30,9 +48,7 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
         "agent_runtime.native_resume.publish" => Some("agent_runtime.native_resume.publish"),
         "agent_runtime.projection.inspect" => Some("agent_runtime.projection.inspect"),
         "agent_runtime.repair" => Some("agent_runtime.repair"),
-        "agent_runtime.repair_intent.inspect.v1" => {
-            Some("agent_runtime.repair_intent.inspect.v1")
-        }
+        "agent_runtime.repair_intent.inspect.v1" => Some("agent_runtime.repair_intent.inspect.v1"),
         "agent_runtime.stop" => Some("agent_runtime.stop"),
         "agent_runtime.remove" => Some("agent_runtime.remove"),
         "agent_runtime.project_move.preview.v1" => Some("agent_runtime.project_move.preview.v1"),
@@ -75,16 +91,47 @@ mod tests {
     use super::operation_capability;
 
     #[test]
+    fn project_root_schedules_require_new_capability_but_omission_stays_compatible() {
+        use super::operation_body_capability;
+        assert_eq!(
+            operation_body_capability(
+                "schedule.put",
+                &serde_json::json!({"runTemplate": {"worktree": {"kind": "project_root"}}})
+            ),
+            Some("schedule.worktree_project_root_v1")
+        );
+        assert_eq!(
+            operation_body_capability("schedule.put", &serde_json::json!({"runTemplate": {}})),
+            Some("schedule.put")
+        );
+        assert_eq!(
+            operation_body_capability(
+                "schedule.put",
+                &serde_json::json!({"runTemplate": {"worktree": {"kind": "dedicated"}}})
+            ),
+            Some("schedule.put")
+        );
+    }
+
+    #[test]
     fn browser_resources_negotiate_the_existing_domain_capability() {
-        assert_eq!(operation_capability("browser.resource"), Some("browser.resource.v1"));
+        assert_eq!(
+            operation_capability("browser.resource"),
+            Some("browser.resource.v1")
+        );
         assert_eq!(operation_capability("browser.force"), None);
     }
 
     #[test]
     fn schedule_operations_negotiate_exact_capabilities() {
         for operation in [
-            "schedule.list", "schedule.show", "schedule.put", "schedule.delete",
-            "schedule.run_once", "schedule.occurrences", "schedule.inspect",
+            "schedule.list",
+            "schedule.show",
+            "schedule.put",
+            "schedule.delete",
+            "schedule.run_once",
+            "schedule.occurrences",
+            "schedule.inspect",
         ] {
             assert_eq!(operation_capability(operation), Some(operation));
         }

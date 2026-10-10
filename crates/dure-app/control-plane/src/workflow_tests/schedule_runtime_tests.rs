@@ -53,14 +53,29 @@ async fn schedule_permission_defaults_are_inherited_only_without_an_override() {
 #[tokio::test]
 #[ignore = "requires DURE_QA_HMUX_BIN and DURE_QA_HMUX_RUNTIME; run pnpm test:hmux-schedule"]
 async fn schedule_run_uses_real_hmux() {
+    assert_schedule_run_uses_real_hmux(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DURE_QA_HMUX_BIN and DURE_QA_HMUX_RUNTIME; run pnpm test:hmux-schedule"]
+async fn project_root_schedule_run_uses_real_hmux() {
+    assert_schedule_run_uses_real_hmux(true).await;
+}
+
+async fn assert_schedule_run_uses_real_hmux(project_root: bool) {
     let (root, mut state, _, _) = fixture(vec![]).await;
-    prepare_schedule(&root, &state).await;
+    if project_root {
+        prepare_plain_schedule(&root, &state).await;
+    } else {
+        prepare_schedule(&root, &state).await;
+    }
     let hmux = real_hmux::RealHmux::install(root, &mut state);
     let marker = hmux.root.join("provider-start.txt");
     let marker_quoted = format!("'{}'", marker.to_str().unwrap().replace('\'', "'\\''"));
+    // Publish the complete startup evidence atomically, not a partially written argv.
     fs::write(
         hmux.root.join("codex-fixture"),
-        format!("#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > {marker_quoted}\nexec sleep 60\n"),
+        format!("#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > {marker_quoted}.tmp\nmv {marker_quoted}.tmp {marker_quoted}\nexec sleep 60\n"),
     )
     .unwrap();
     schedule_runtime::tick(&state, 120_000).await.unwrap();
@@ -127,9 +142,18 @@ async fn schedule_run_uses_real_hmux() {
     .await
     .unwrap();
     let cwd = PathBuf::from(started.lines().next().unwrap());
-    assert_ne!(cwd, hmux.root.canonicalize().unwrap());
-    assert!(cwd.join(".git").is_file());
-    assert_eq!(started.matches("Run the scheduled task").count(), 1);
+    if project_root {
+        assert_eq!(cwd, hmux.root.canonicalize().unwrap());
+        assert!(!cwd.join(".git").exists());
+    } else {
+        assert_ne!(cwd, hmux.root.canonicalize().unwrap());
+        assert!(cwd.join(".git").is_file());
+    }
+    assert_eq!(
+        started.matches("Run the scheduled task").count(),
+        1,
+        "{started}"
+    );
     assert!(
         started.lines().any(|line| line == "gpt-6-astra"),
         "{started}"
@@ -481,4 +505,135 @@ async fn schedule_launch_replay_survives_a_new_backend_generation_and_head() {
     );
     assert_eq!(occurrences[0].operation_id, pending[0].0.operation_id);
     assert_eq!(launcher.requests().len(), 1);
+}
+
+async fn prepare_plain_schedule(root: &TempDir, state: &ServiceState) {
+    register_project(
+        &state.projects_catalog_path,
+        "project-1".into(),
+        "Operations".into(),
+        root.path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .unwrap();
+    let body = json!({
+        "schemaVersion": 1, "scheduleId": "plain", "expectedRevision": 0,
+        "idempotencyKey": "plain-create", "name": "Operations", "enabled": true,
+        "expression": "* * * * *", "timezone": "UTC",
+        "runTemplate": { "projectId": "project-1", "providerId": "codex", "prompt": "Run the scheduled task", "model": "gpt-6-astra", "effort": "xhigh", "worktree": { "kind": "project_root" } }
+    });
+    let created = schedule_runtime::invoke(state, "schedule.put", &body)
+        .await
+        .unwrap();
+    assert_eq!(
+        created["schedule"]["runTemplate"]["worktree"]["kind"],
+        "project_root"
+    );
+    assert_eq!(
+        schedule_runtime::invoke(state, "schedule.put", &body)
+            .await
+            .unwrap(),
+        created
+    );
+}
+
+#[tokio::test]
+async fn plain_directory_schedule_reuses_launch_after_restart_and_response_loss() {
+    let (root, mut state, launcher, _) = fixture(vec![LaunchOutcome::Succeed]).await;
+    prepare_plain_schedule(&root, &state).await;
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new().filename(root.path().join("domain.sqlite")),
+    )
+    .await
+    .unwrap();
+    sqlx::query("CREATE TRIGGER lose_plain_finish BEFORE UPDATE OF state ON schedule_occurrences WHEN NEW.state = 'started' BEGIN SELECT RAISE(ABORT, 'lost finish'); END").execute(&pool).await.unwrap();
+    schedule_runtime::tick(&state, 120_000).await.unwrap();
+    assert_eq!(launcher.requests().len(), 1);
+    assert_eq!(
+        Path::new(&launcher.requests()[0].working_directory),
+        root.path().canonicalize().unwrap()
+    );
+    assert!(!root.path().join(".git").exists());
+    let pending = state.store.pending_schedule_occurrences(10).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert!(pending[0].0.operation_id.is_some());
+    sqlx::query("DROP TRIGGER lose_plain_finish")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    state.store.close().await;
+    state.store = Arc::new(
+        SqliteDomainStore::open(root.path().join("domain.sqlite"))
+            .await
+            .unwrap(),
+    );
+    state.descriptor.generation = "plain-restarted-generation".into();
+    schedule_runtime::tick(&state, 120_000).await.unwrap();
+    schedule_runtime::tick(&state, 120_000).await.unwrap();
+    let occurrences = state.store.schedule_occurrences(None, 10).await.unwrap();
+    assert_eq!(occurrences.len(), 1);
+    assert_eq!(
+        occurrences[0].launch_state,
+        dure_app::ScheduleLaunchStateV1::Started
+    );
+    assert_eq!(launcher.requests().len(), 1);
+    assert!(!root.path().join(".git").exists());
+}
+
+#[tokio::test]
+async fn project_resolve_uses_the_run_catalog_without_registering_an_app_identity() {
+    let (root, state, _, _) = fixture(vec![]).await;
+    let path = root.path().canonicalize().unwrap();
+    fs::create_dir(path.join("child")).unwrap();
+    // The canonical catalog treats a fresh backend as empty, without writing a file.
+    let empty = project_resolve::resolve(&state, &json!({ "schemaVersion": 1, "path": path }))
+        .await
+        .unwrap();
+    assert!(empty["project"].is_null());
+    assert!(!state.projects_catalog_path.exists());
+    // A corrupt catalog is unavailable, never an unregistered result.
+    fs::write(&state.projects_catalog_path, "invalid").unwrap();
+    fs::set_permissions(
+        &state.projects_catalog_path,
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    assert!(
+        project_resolve::resolve(&state, &json!({ "schemaVersion": 1, "path": path }))
+            .await
+            .is_err()
+    );
+    fs::remove_file(&state.projects_catalog_path).unwrap();
+    register_project(
+        &state.projects_catalog_path,
+        "operations".into(),
+        "Operations".into(),
+        path.to_string_lossy().into_owned(),
+    )
+    .unwrap();
+    let catalog_before = fs::read(&state.projects_catalog_path).unwrap();
+    let found = project_resolve::resolve(
+        &state,
+        &json!({ "schemaVersion": 1, "path": path.join("child") }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(found["project"]["id"], "operations");
+    assert_eq!(found["root"], json!(path));
+    assert_eq!(
+        fs::read(&state.projects_catalog_path).unwrap(),
+        catalog_before
+    );
+    let unregistered = tempfile::tempdir().unwrap();
+    let absent = project_resolve::resolve(
+        &state,
+        &json!({ "schemaVersion": 1, "path": unregistered.path() }),
+    )
+    .await
+    .unwrap();
+    assert!(absent["project"].is_null());
 }

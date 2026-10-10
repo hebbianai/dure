@@ -252,6 +252,21 @@ dure schedule delete <schedule-id> --expected-revision <revision> \
 ```
 
 With no `--project` or `--path`, the backend resolves the current directory.
+Schedules use an isolated Git worktree by default. For operational tasks, pass
+`--no-worktree` to run in the registered project root, including a non-Git folder:
+
+```sh
+dure projects register operations --path /workspace/operations --backend local
+dure schedule create --project operations --backend local --no-worktree \
+  --cron "0 9 * * *" --timezone UTC -- "review operational status"
+```
+
+Project-root runs share files; they provide no per-run Git isolation. Do not
+combine `--no-worktree` with `--base-commit`, `--branch` or `--setup-command`.
+This opt-in requires `schedule.worktree_project_root_v1` on the selected backend;
+an older backend is refused before mutation. Existing schedules with no worktree
+field retain isolated mode. Use the same backend for registration and schedules.
+
 Schedules survive app and client disconnects; they invoke the same durable
 Run saga as `dure run` and never require a WebView timer. Reuse mutation
 idempotency keys after uncertain responses and use the exact observed revision
@@ -385,9 +400,13 @@ recipient, accepts edited/redacted text, and never submits the draft.
 
 `project add` registers a shared working location in the connected app and
 creates no pane, session or worktree; it is the client-side counterpart of the
-backend-only `dure projects register` above, and neither substitutes for the
-other. `split` creates the pane through the app's existing correlated
-transaction.
+backend-only `dure projects register` above. Its `backendProject` receipt reports
+the canonical local backend project ID and schedule arguments when registered.
+Otherwise it prints a quoted `projects register ... --backend local` command.
+An unavailable/older backend is reported as unchecked, not unregistered. For an
+SSH app project, run the printed command on its owning host; an app host ID is
+not a backend profile ID. The app project ID is never a schedule project selector.
+`split` creates the pane through the app's existing correlated transaction.
 
 `host add` imports an SSH config alias or registers explicit connection fields
 through the same durable Host transaction as the GUI. It creates no session and

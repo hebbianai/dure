@@ -6,7 +6,7 @@ Usage:
   dure schedule create [--id ID] [--name NAME] [--project ID | --path PATH]
                        [--provider ID] --cron "M H D M W" [--timezone IANA]
                        [--model MODEL] [--effort EFFORT]
-                       [--base-commit SHA] [--credential-reference ID --credential-generation GENERATION]
+                       [--no-worktree | --base-commit SHA] [--credential-reference ID --credential-generation GENERATION]
                        [--expected-revision N] [--disabled] [--idempotency-key KEY] <prompt>
   dure schedule list
   dure schedule show <id>
@@ -15,7 +15,9 @@ Usage:
   dure schedule runs [id]
   dure schedule inspect <run-key>
 
-All commands support --backend ID and --json. Runs use an isolated Git worktree.
+All commands support --backend ID and --json. Runs use an isolated Git worktree by default.
+--no-worktree runs in the registered project root, including non-Git directories.
+It requires backend capability schedule.worktree_project_root_v1; shared files are not isolated.
 The local or SSH control plane must be running; the IDE can be closed.
 Run-once queues a test without changing the schedule. Inspect reads the retained report.`;
 
@@ -48,6 +50,8 @@ export async function runScheduleCli(sub, opts, { backendProfileQueryContext, ba
     !["put", "list", "show", "delete", "occurrences", "run_once", "inspect"].includes(action) ||
     (action === "put" &&
       ((Boolean(opts.prompt) && Boolean(positionalPrompt)) ||
+        (opts.worktreeSpecified && opts.worktree !== false) ||
+        (opts.worktree === false && Boolean(opts.baseCommit || opts.branch || opts.setupCommand)) ||
         !opts.cron ||
         !prompt ||
         (opts.projectSpecified && opts.pathSpecified) ||
@@ -101,6 +105,7 @@ export async function runScheduleCli(sub, opts, { backendProfileQueryContext, ba
       action === "put" && opts.skipPermissions
         ? "skip_permissions"
         : undefined,
+    ...(action === "put" && opts.worktree === false ? { worktree: { kind: "project_root" } } : {}),
     ...(action === "put" && opts.baseCommit ? { worktree: { kind: "dedicated", baseCommitSha: opts.baseCommit } } : {}),
     ...(action === "put" && opts.credentialReference ? { executionProfile: {
       kind: "credential_reference", reference_id: opts.credentialReference, credential_generation: opts.credentialGeneration,

@@ -34,6 +34,10 @@ export const automationsEnglishTranslations: Record<string, string> = {
 	"automations.defaultPermissions": "Provider defaults",
 	"automations.requireApprovals": "Require approvals",
 	"automations.skipPermissions": "Skip permission prompts",
+	"automations.isolatedWorktree": "Isolated Git worktree (default)",
+	"automations.noWorktree": "Project folder (no worktree)",
+	"automations.noWorktreeHelp":
+		"Runs share the registered project folder. Git is not required; files are not isolated between runs. Requires an updated backend.",
 	"automations.worktreeHelp":
 		"Each run uses a separate Git worktree. The agent uses its configured credentials.",
 	"automations.resultHelp":

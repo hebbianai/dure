@@ -33,6 +33,10 @@ export const automations: Record<string, string> = {
 	"automations.defaultPermissions": "提供方默认设置",
 	"automations.requireApprovals": "请求批准",
 	"automations.skipPermissions": "跳过权限确认",
+	"automations.isolatedWorktree": "独立 Git 工作树（默认）",
+	"automations.noWorktree": "项目文件夹（无工作树）",
+	"automations.noWorktreeHelp":
+		"各次运行共享已注册的项目文件夹。无需 Git，运行之间的文件不会隔离。需要更新后的后端。",
 	"automations.worktreeHelp":
 		"每次运行使用独立的 Git worktree 和智能体已配置的凭据。",
 	"automations.resultHelp":

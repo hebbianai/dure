@@ -389,11 +389,17 @@ pub(super) async fn execute_occurrence(
         .permission_mode
         .as_ref()
         .map(ProviderLaunchPermissionOverrideV1::from_concrete);
-    let ScheduleWorkspacePolicyV1::Dedicated { base_commit_sha } = &template.worktree;
-    let mut worktree = json!({ "kind": "dedicated", "branch": format!("automation-{digest:x}") });
-    if let Some(sha) = base_commit_sha {
-        worktree["baseCommitSha"] = json!(sha);
-    }
+    let worktree = match &template.worktree {
+        ScheduleWorkspacePolicyV1::ProjectRoot {} => json!({ "kind": "project_root" }),
+        ScheduleWorkspacePolicyV1::Dedicated { base_commit_sha } => {
+            let mut worktree =
+                json!({ "kind": "dedicated", "branch": format!("automation-{digest:x}") });
+            if let Some(sha) = base_commit_sha {
+                worktree["baseCommitSha"] = json!(sha);
+            }
+            worktree
+        }
+    };
     let preview_body = json!({
         "schemaVersion": AGENT_SPAWN_SCHEMA_VERSION_V1,
         "idempotencyKey": occurrence.idempotency_key,

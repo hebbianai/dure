@@ -106,6 +106,7 @@ mod private_driver_socket;
 mod private_record;
 mod pro_features;
 mod project_catalog;
+mod project_resolve;
 mod provider_commands;
 pub mod provider_credential_profile;
 mod provider_executable;
@@ -4045,6 +4046,7 @@ async fn dispatch_authorized(
                 .await
                 .map_err(Into::into)
         }
+        "projects.resolve" => project_resolve::resolve(state, &request.body).await,
         "projects.show" => {
             let body: ProjectsShowBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "backend_projects_request_invalid".to_string())?;

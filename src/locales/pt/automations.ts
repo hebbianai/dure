@@ -35,6 +35,10 @@ export const automations: Record<string, string> = {
 	"automations.defaultPermissions": "Padrões do provedor",
 	"automations.requireApprovals": "Solicitar aprovação",
 	"automations.skipPermissions": "Ignorar confirmações de permissão",
+	"automations.isolatedWorktree": "Worktree Git isolado (padrão)",
+	"automations.noWorktree": "Pasta do projeto (sem worktree)",
+	"automations.noWorktreeHelp":
+		"As execuções compartilham a pasta registrada do projeto. Git não é necessário; os arquivos não são isolados entre execuções. Requer um backend atualizado.",
 	"automations.worktreeHelp":
 		"Cada execução usa um worktree Git separado e as credenciais configuradas do agente.",
 	"automations.resultHelp":

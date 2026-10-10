@@ -97,6 +97,7 @@ fn is_default_execution_profile(value: &AgentExecutionProfileV1) -> bool {
     deny_unknown_fields
 )]
 pub enum ScheduleWorkspacePolicyV1 {
+    ProjectRoot {},
     Dedicated {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         base_commit_sha: Option<String>,
@@ -125,10 +126,11 @@ impl ScheduleRunTemplateV1 {
                 field: "runTemplate.executionProfile",
                 code: "invalid_reference",
             })?;
-        let ScheduleWorkspacePolicyV1::Dedicated { base_commit_sha } = &self.worktree;
-        if base_commit_sha.as_ref().is_some_and(|sha| {
-            !matches!(sha.len(), 40 | 64) || !sha.bytes().all(|byte| byte.is_ascii_hexdigit())
-        }) {
+        if let ScheduleWorkspacePolicyV1::Dedicated {
+            base_commit_sha: Some(sha),
+        } = &self.worktree
+            && (!matches!(sha.len(), 40 | 64) || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
             return Err(ScheduleMutationErrorV1::Invalid {
                 field: "runTemplate.worktree.baseCommitSha",
                 code: "invalid_commit",
@@ -488,6 +490,24 @@ mod tests {
                 worktree: ScheduleWorkspacePolicyV1::default(),
             },
         }
+    }
+
+    #[test]
+    fn workspace_policy_preserves_legacy_default_and_explicit_project_root() {
+        let legacy = serde_json::to_value(request()).unwrap();
+        assert!(legacy["runTemplate"].get("worktree").is_none());
+        let parsed: SchedulePutRequestV1 = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(
+            parsed.run_template.worktree,
+            ScheduleWorkspacePolicyV1::default()
+        );
+        let mut explicit = legacy;
+        explicit["runTemplate"]["worktree"] = serde_json::json!({ "kind": "project_root" });
+        let parsed: SchedulePutRequestV1 = serde_json::from_value(explicit.clone()).unwrap();
+        assert_eq!(parsed.validate(), Ok(()));
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), explicit);
+        explicit["runTemplate"]["worktree"]["baseCommitSha"] = serde_json::json!("a".repeat(40));
+        assert!(serde_json::from_value::<SchedulePutRequestV1>(explicit).is_err());
     }
 
     #[test]

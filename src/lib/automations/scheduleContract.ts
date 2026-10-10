@@ -18,7 +18,9 @@ interface ScheduleTemplate {
 	effort?: string;
 	permissionMode?: "default" | "skip_permissions";
 	executionProfile?: AgentExecutionProfileV1;
-	worktree?: { kind: "dedicated"; baseCommitSha?: string };
+	worktree?:
+		| { kind: "project_root" }
+		| { kind: "dedicated"; baseCommitSha?: string };
 }
 
 export interface AutomationSchedule {
@@ -111,12 +113,20 @@ export function parseSchedule(value: unknown): AutomationSchedule {
 		(template.executionProfile !== undefined &&
 			!parseAgentExecutionProfileV1(template.executionProfile)) ||
 		(template.worktree !== undefined &&
-			(worktree?.kind !== "dedicated" ||
-				(worktree.baseCommitSha !== undefined &&
-					(typeof worktree.baseCommitSha !== "string" ||
-						!/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/.test(
+			!(
+				worktree?.kind === "project_root" && Object.keys(worktree).length === 1
+			) &&
+			!(
+				worktree?.kind === "dedicated" &&
+				Object.keys(worktree).every((key) =>
+					["kind", "baseCommitSha"].includes(key),
+				) &&
+				(worktree.baseCommitSha === undefined ||
+					(typeof worktree.baseCommitSha === "string" &&
+						/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/.test(
 							worktree.baseCommitSha,
-						)))))
+						)))
+			))
 	)
 		scheduleContractError();
 	// Preserve optional execution identity and worktree fields on every edit.

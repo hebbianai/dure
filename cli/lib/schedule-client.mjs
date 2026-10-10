@@ -105,7 +105,7 @@ function validSchedule(value, scheduleId) {
 }
 
 function validWorkspacePolicy(value) {
-  return value === undefined || (
+  return value === undefined || (onlyKeys(value, ["kind"]) && value.kind === "project_root") || (
     onlyKeys(value, ["kind", ...(value?.baseCommitSha === undefined ? [] : ["baseCommitSha"])]) &&
     value.kind === "dedicated" && (value.baseCommitSha === undefined || /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value.baseCommitSha))
   );
@@ -373,7 +373,9 @@ export async function collectScheduleCommand(options = {}) {
       {
         body: requestBody(normalized),
         operation: `schedule.${normalized.action}`,
-        requiredCapabilities: [`schedule.${normalized.action}`],
+        requiredCapabilities: [`schedule.${normalized.action}`,
+          ...(normalized.action === "put" && normalized.worktree?.kind === "project_root"
+            ? ["schedule.worktree_project_root_v1"] : [])],
       },
       {
         ...normalized.backend.transportOptions,
@@ -479,7 +481,7 @@ export function formatScheduleCommand(report) {
   const schedules = report.kind === "dure.schedules.list" ? report.schedules : [report.schedule];
   if (schedules.length === 0) return "No Dure schedules.";
   return [
-    "SCHEDULE\tREVISION\tSTATE\tCRON\tTIMEZONE\tPROJECT\tPROVIDER\tNAME",
+    "SCHEDULE\tREVISION\tSTATE\tCRON\tTIMEZONE\tPROJECT\tPROVIDER\tWORKSPACE\tNAME",
     ...schedules.map((item) =>
       [
         item.scheduleId,
@@ -489,6 +491,7 @@ export function formatScheduleCommand(report) {
         item.timezone,
         item.runTemplate.projectId,
         item.runTemplate.providerId,
+        item.runTemplate.worktree?.kind === "project_root" ? "project-root (no worktree)" : "isolated worktree",
         item.name,
       ].join("\t"),
     ),
