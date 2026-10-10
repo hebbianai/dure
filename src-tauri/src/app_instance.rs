@@ -447,6 +447,9 @@ mod tests {
                         Err(error) => panic!("legacy probe did not connect: {error}"),
                     }
                 };
+                // macOS may inherit the listener's nonblocking flag. Header
+                // reads need to wait for bytes under the existing timeout.
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
