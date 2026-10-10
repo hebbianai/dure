@@ -239,7 +239,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					E78B6F680F81C0FE93CC1DBC = {
-						DevelopmentTeam = VQDN4QL534;
+						DevelopmentTeam = 8L5WFHS4F9;
 					};
 				};
 			};
@@ -322,7 +322,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "dure-mobile_iOS/dure-mobile_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = VQDN4QL534;
+				DEVELOPMENT_TEAM = "8L5WFHS4F9";
 				DURE_APNS_ENVIRONMENT = development;
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
@@ -418,7 +418,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = "dure-mobile_iOS/dure-mobile_iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = VQDN4QL534;
+				DEVELOPMENT_TEAM = "8L5WFHS4F9";
 				DURE_APNS_ENVIRONMENT = production;
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;

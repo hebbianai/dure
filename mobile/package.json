@@ -15,6 +15,7 @@
     "tauri": "tauri",
     "ios:init": "tauri ios init",
     "ios:dev": "node ../scripts/ios-device-dev.mjs",
+    "ios:build:app-store": "node ../scripts/run-with-build-storage.mjs mobile -- tauri ios build --export-method app-store-connect",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev"
   },

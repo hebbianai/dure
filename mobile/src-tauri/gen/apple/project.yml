@@ -67,7 +67,7 @@ targets:
         RUST_LOG: info
     settings:
       base:
-        DEVELOPMENT_TEAM: VQDN4QL534
+        DEVELOPMENT_TEAM: 8L5WFHS4F9
         ENABLE_BITCODE: false
         ARCHS: [arm64]
         VALID_ARCHS: arm64
