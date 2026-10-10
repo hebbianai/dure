@@ -1,7 +1,7 @@
 {
   "name": "dure-cli",
   "license": "Apache-2.0",
-  "version": "0.2.42",
+  "version": "0.2.43",
   "description": "Command-line control for Dure agents",
   "type": "module",
   "bin": {
