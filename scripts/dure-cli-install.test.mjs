@@ -264,6 +264,60 @@ describe("Dure CLI installation", () => {
     }).status).toBe("current");
   });
 
+  it.each(["package", "control-plane", "prerelease"])("refuses automatic CLI downgrade by %s and preserves the active installation", (kind) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-cli-downgrade-"));
+    temporaryDirectories.push(root);
+    const repository = copyInstallerFixture(root);
+    const preparedRoot = path.join(root, "prepared");
+    const controlPlane = path.join(root, "dure-control-plane");
+    writeControlPlaneFixture(controlPlane);
+    const packageFile = path.join(repository, "cli", "package.json");
+    const manifest = JSON.parse(fs.readFileSync(packageFile, "utf8"));
+    manifest.version = kind === "prerelease" ? "0.2.43-beta.1" : "0.2.42";
+    fs.writeFileSync(packageFile, JSON.stringify(manifest));
+    execFileSync(process.execPath, ["scripts/install-dure-cli.mjs"], {
+      cwd: repository,
+      env: dureCliInstallerFixtureEnvironment(repository, {
+        ...fixtureEnvironment, HOME: root, DURE_HOME: path.join(root, ".dure"),
+        HMUX_DISCOVERY_ROOT: path.join(root, "discovery"), DURE_APP_CHANNEL: "stable",
+        DURE_CLI_INSTALL_ROOT: preparedRoot, DURE_CLI_INSTALL_DIR: path.join(root, "prepared-bin"),
+        DURE_CONTROL_PLANE_BIN: controlPlane, DURE_HMUX_BIN: controlPlane,
+        DURE_HMUX_RUNTIME_BIN: controlPlane, DURE_HMUX_BUILD_ID: "hmux-test-v1",
+      }), stdio: "pipe",
+    });
+    const incoming = fs.realpathSync(path.join(preparedRoot, "current"));
+    const installRoot = path.join(root, "installed");
+    const commandDirectory = path.join(installRoot, "bin");
+    const current = prepareMockVersion(incoming, installRoot, "newer-fixture", "newer");
+    const metadataPath = path.join(current, "install.json");
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+    metadata.packageVersion = kind === "control-plane" ? "0.2.42" : "0.2.43";
+    if (kind === "control-plane") {
+      const binary = path.join(current, "bin", "dure-control-plane");
+      metadata.bundle.controlPlane.buildId = controlPlaneFixtureBuildId(1, "newer-fixture");
+      writeControlPlaneFixture(binary, metadata.bundle.controlPlane.buildId);
+      metadata.bundle.controlPlane.digest = crypto.createHash("sha256").update(fs.readFileSync(binary)).digest("hex");
+      metadata.bundle.artifactDigest = artifactDigest(current);
+    }
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata));
+    fs.symlinkSync("versions/newer-fixture", path.join(installRoot, "current"));
+    const launcher = path.join(installRoot, "launcher", "dure.mjs");
+    fs.mkdirSync(path.dirname(launcher));
+    fs.copyFileSync(path.join(current, "bin", "lib", "dure-cli-channel-launcher.mjs"), launcher);
+    fs.mkdirSync(commandDirectory);
+    fs.symlinkSync(launcher, path.join(commandDirectory, "dure"));
+    const before = { metadata: fs.readFileSync(metadataPath), launcher: fs.readFileSync(launcher), versions: fs.readdirSync(path.join(installRoot, "versions")) };
+    expect(() => promoteDureCli({ sourceVersionDirectory: incoming, installRoot, commandDirectory, reconcileManaged: true }))
+      .toThrow("automatic Dure CLI downgrade refused");
+    expect(fs.readlinkSync(path.join(installRoot, "current"))).toBe("versions/newer-fixture");
+    expect(fs.readFileSync(metadataPath)).toEqual(before.metadata);
+    expect(fs.readFileSync(launcher)).toEqual(before.launcher);
+    expect(fs.readdirSync(path.join(installRoot, "versions"))).toEqual(before.versions);
+    // Explicit user installation retains its existing rollback semantics.
+    expect(promoteDureCli({ sourceVersionDirectory: incoming, installRoot, commandDirectory }).buildId)
+      .toBe(path.basename(incoming));
+  });
+
   it.each(["standalone", "bundled"])("upgrades a schema-2 %s CLI without executing or changing it", (layout) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-cli-schema-two-"));
     temporaryDirectories.push(root);

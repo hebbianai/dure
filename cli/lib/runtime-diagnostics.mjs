@@ -13,6 +13,7 @@ import {
   join,
   resolve,
 } from "node:path";
+import { comparePackageVersions } from "./package-version.mjs";
 import { resolveChannelCommand } from "./dure-cli-channel-launcher.mjs";
 import { parseWebviewDiagnostics } from "./contracts/webview-diagnostics.mjs";
 
@@ -458,30 +459,10 @@ export async function inspectAppRuntime({
 
 /** Package freshness is independent of the app's frontend/backend protocol check. */
 function cliFreshness(cli, app) {
-  const parse = (value) => {
-    if (typeof value !== "string" || value.length > 128) return null;
-    const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*))?(?:\+[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)?$/.exec(value);
-    if (!match) return null;
-    const prerelease = match[4]?.split(".") ?? [];
-    if (prerelease.some((part) => /^\d+$/.test(part) && part.length > 1 && part[0] === "0")) return null;
-    return { core: match.slice(1, 4).map(BigInt), prerelease };
-  };
-  const left = parse(cli.packageVersion);
-  const right = app.state === "running" ? parse(app.packageVersion) : null;
-  if (!left || !right) return { state: "unknown", comparedTo: right ? app.packageVersion : null };
-  const compare = (a, b) => a === b ? 0 : a < b ? -1 : 1;
-  let order = 0;
-  for (let i = 0; i < 3 && order === 0; i++) order = compare(left.core[i], right.core[i]);
-  const a = left.prerelease;
-  const b = right.prerelease;
-  if (order === 0 && (a.length === 0 || b.length === 0)) order = compare(a.length === 0, b.length === 0);
-  for (let i = 0; order === 0 && i < Math.max(a.length, b.length); i++) {
-    if (a[i] === undefined || b[i] === undefined) { order = compare(a.length, b.length); break; }
-    const numericA = /^\d+$/.test(a[i]);
-    const numericB = /^\d+$/.test(b[i]);
-    order = numericA && numericB ? compare(BigInt(a[i]), BigInt(b[i]))
-      : numericA !== numericB ? (numericA ? -1 : 1) : compare(a[i], b[i]);
-  }
+  const comparedTo = app.state === "running" &&
+    comparePackageVersions(app.packageVersion, app.packageVersion) === 0 ? app.packageVersion : null;
+  const order = comparePackageVersions(cli.packageVersion, comparedTo);
+  if (order === null) return { state: "unknown", comparedTo };
   return { state: order < 0 ? "older" : order > 0 ? "newer" : "current", comparedTo: app.packageVersion };
 }
 

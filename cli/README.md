@@ -20,6 +20,11 @@ packaged files are declared in [package.json](package.json). Install through
 `pnpm dure:install` or the installed CLI's `install --global` flow; do not copy
 an individual script out of the immutable bundle.
 
+Automatic stable-app startup refuses to replace a newer managed CLI package or
+backend build with an older one. Open the current Dure app if it reports
+`automatic Dure CLI downgrade refused`. Explicit CLI installation retains its
+existing replacement behavior. Already shipped older apps may predate this guard.
+
 Read-only inspection, runtime mutation and connected-client presentation have
 different effects. A delivery receipt does not prove provider acceptance or
 task completion, and a timeout does not prove that an operation stopped. Inspect

@@ -56,6 +56,7 @@
   "scripts/lib/windows-process-identity.mjs",
   "scripts/lib/windows-process-job.mjs",
   "scripts/lib/build-storage-admission.mjs",
+  "scripts/lib/build-storage-diagnostics.mjs",
   "scripts/lib/build-storage-reservation.mjs",
   "scripts/lib/disk-space.mjs",
   "scripts/lib/disk-reclaim.mjs",
@@ -86,5 +87,7 @@
   "cli/lib/dure-cli-channel-launcher.mjs",
   "cli/lib/local-backend-executable-identity.mjs",
   "cli/lib/runtime-diagnostics.mjs",
+  "cli/lib/package-version.mjs",
+  "cli/lib/contracts/webview-diagnostics.mjs",
   "cli/lib/app-control-location.mjs"
 ]

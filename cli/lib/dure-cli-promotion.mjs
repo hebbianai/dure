@@ -18,7 +18,8 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { validateControlPlaneBundleIdentity } from "./control-plane-contract.mjs";
-import { parseMetadata } from "./dure-cli-channel-launcher.mjs";
+import { buildSequence, parseMetadata } from "./dure-cli-channel-launcher.mjs";
+import { comparePackageVersions } from "./package-version.mjs";
 import { validateOrchestrationPayloadIdentity } from "./orchestration-integration.mjs";
 import {
   acquireDureCliMutationLock,
@@ -348,8 +349,21 @@ export function promoteDureCli({
           throw new Error("Dure CLI current pointer escaped immutable versions");
         }
         const installed = schemaTwoVersionOwnedByDure(source)
-          ? { source, metadata: null }
+          ? { source, metadata: JSON.parse(readFileSync(join(source, "install.json"), "utf8")) }
           : validateOwnedVersion(source);
+        // Startup reconciliation is automatic. A backup app must not roll
+        // the shared command and launcher back to an older release or backend.
+        // Compare under the same mutation lock that protects promotion.
+        const order = comparePackageVersions(prepared.metadata.packageVersion, installed.metadata.packageVersion);
+        const incomingSequence = buildSequence(prepared.metadata.bundle.controlPlane?.buildId);
+        const installedSequence = buildSequence(installed.metadata.bundle?.controlPlane?.buildId);
+        if (order === null) {
+          throw new Error("automatic Dure CLI update refused: package versions cannot be compared");
+        }
+        if (order < 0 || (installedSequence !== null &&
+            (incomingSequence === null || incomingSequence < installedSequence))) {
+          throw new Error("automatic Dure CLI downgrade refused: open the current Dure app instead of an older copy");
+        }
         const launcher = join(canonicalInstallRoot, "launcher", "dure.mjs");
         const sourceLauncher = join(prepared.source, "bin", "lib", "dure-cli-channel-launcher.mjs");
         if (

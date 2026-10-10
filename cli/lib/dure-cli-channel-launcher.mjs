@@ -307,4 +307,4 @@ if (
   await launch();
 }
 
-export { artifactDigest, parseMetadata, resolveChannelCommand };
+export { artifactDigest, buildSequence, parseMetadata, resolveChannelCommand };
