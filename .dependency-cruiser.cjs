@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 
 // 의존 경계 게이트 (dependency-cruiser) — 2026-08-01 폴더 정리와 함께 도입.
 //

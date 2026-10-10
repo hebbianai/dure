@@ -134,9 +134,9 @@ Esto prepara el entorno de ejecución y la CLI e inicia la aplicación de desarr
 
 ## Alcance del código abierto
 
-Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).
+Copyright (C) 2026 [Hebbian AI](../../NOTICE).
 
-El código propio de escritorio, móvil, entorno de ejecución (incluido Hmux), CLI y servicios publicado aquí está disponible bajo [GNU GPL solo versión 3 (GPL-3.0-only)](../../LICENSE); los componentes de terceros conservan sus licencias y avisos. Puedes usar, modificar y redistribuir el código conforme a esas licencias. Al distribuir binarios cubiertos por GPL, debes proporcionar el código fuente correspondiente (Corresponding Source) según GPLv3. Las versiones publicadas anteriormente bajo MIT siguen disponibles bajo esos términos.
+El código propio de escritorio, móvil, entorno de ejecución (incluido Hmux), CLI y servicios publicado aquí está disponible bajo la [Licencia Apache, versión 2.0 (Apache-2.0)](../../LICENSE); los componentes de terceros conservan sus licencias y avisos. Puedes usar, modificar y redistribuir el código conforme a esas licencias. Al redistribuirlo, debes conservar la licencia, los avisos de copyright y el archivo [NOTICE](../../NOTICE), como exige Apache-2.0. Las versiones publicadas anteriormente bajo MIT o GPL-3.0-only siguen disponibles bajo esos términos.
 
 [TRADEMARK.md](../../TRADEMARK.md) explica el uso del nombre, logotipo e iconos de Dure, y la distinción entre las compilaciones comunitarias y las oficiales de Hebbian AI.
 

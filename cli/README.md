@@ -124,8 +124,8 @@ receipts on stdout with exit code 2; successful evaluations exit 0.
 
 ## Licensing
 
-Copyright (C) 2026 Hebbian AI. The Dure CLI is licensed under
-[GNU GPL version 3 only (GPL-3.0-only)](LICENSE).
+Copyright (C) 2026 Hebbian AI. The Dure CLI is licensed under the
+[Apache License, Version 2.0 (Apache-2.0)](LICENSE).
 
 Message tracking: `dure send NAME --track "message" --json` returns a private
 `receiptPath` for `dure wait --message PATH [--until observed|acknowledged|turn_started]`.

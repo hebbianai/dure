@@ -134,9 +134,9 @@ Ces commandes préparent le moteur d’exécution et la CLI, puis lancent l’ap
 
 ## Périmètre open source
 
-Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).
+Copyright (C) 2026 [Hebbian AI](../../NOTICE).
 
-Le code propre au projet publié ici pour le bureau, le mobile, le moteur d’exécution (dont Hmux), la CLI et les services est sous [GNU GPL version 3 uniquement (GPL-3.0-only)](../../LICENSE) ; les composants tiers conservent leurs licences et mentions. Vous pouvez utiliser, modifier et redistribuer le code selon ces licences. La distribution de binaires couverts par la GPL exige de fournir le code source correspondant (Corresponding Source) selon les modalités de la GPLv3. Les versions précédemment publiées sous MIT restent disponibles selon ces conditions.
+Le code propre au projet publié ici pour le bureau, le mobile, le moteur d’exécution (dont Hmux), la CLI et les services est sous [licence Apache, version 2.0 (Apache-2.0)](../../LICENSE) ; les composants tiers conservent leurs licences et mentions. Vous pouvez utiliser, modifier et redistribuer le code selon ces licences. Toute redistribution doit conserver la licence, les mentions de droit d’auteur et le fichier [NOTICE](../../NOTICE), comme l’exige l’Apache-2.0. Les versions précédemment publiées sous MIT ou GPL-3.0-only restent disponibles selon ces conditions.
 
 [TRADEMARK.md](../../TRADEMARK.md) décrit l'utilisation du nom, du logo et des icônes de Dure, ainsi que la distinction entre les versions communautaires et les versions officielles de Hebbian AI.
 

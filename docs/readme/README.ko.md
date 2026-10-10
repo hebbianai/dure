@@ -132,9 +132,9 @@ pnpm app:dev
 
 ## 오픈소스 공개 범위
 
-Copyright (C) 2026 [Hebbian AI](../../COPYRIGHT).
+Copyright (C) 2026 [Hebbian AI](../../NOTICE).
 
-이 저장소에 공개된 데스크톱·모바일·런타임(Hmux 포함)·CLI·서비스 자체 코드는 [GNU GPL 버전 3 전용(GPL-3.0-only)](../../LICENSE)으로 제공되며, 외부 구성 요소의 라이선스와 고지는 유지됩니다. 해당 라이선스에 따라 사용·수정·재배포할 수 있습니다. GPL 적용 바이너리를 배포할 때는 GPLv3가 정한 방식으로 해당 소스 코드(Corresponding Source)를 제공해야 합니다. 이전에 MIT로 공개된 버전에는 기존 MIT 조건이 계속 적용됩니다.
+이 저장소에 공개된 데스크톱·모바일·런타임(Hmux 포함)·CLI·서비스 자체 코드는 [Apache License 버전 2.0(Apache-2.0)](../../LICENSE)으로 제공되며, 외부 구성 요소의 라이선스와 고지는 유지됩니다. 해당 라이선스에 따라 사용·수정·재배포할 수 있습니다. 재배포할 때는 Apache-2.0에 따라 라이선스, 저작권 고지, [NOTICE](../../NOTICE) 파일을 함께 유지해야 합니다. 이전에 MIT나 GPL-3.0-only로 공개된 버전에는 기존 조건이 계속 적용됩니다.
 
 Dure 이름·로고·앱 아이콘의 사용과 커뮤니티 빌드·Hebbian AI 공식 빌드의 구분은 [TRADEMARK.md](../../TRADEMARK.md)에 안내되어 있습니다.
 

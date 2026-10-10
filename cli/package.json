@@ -1,6 +1,6 @@
 {
   "name": "dure-cli",
-  "license": "GPL-3.0-only",
+  "license": "Apache-2.0",
   "version": "0.2.42",
   "description": "Command-line control for Dure agents",
   "type": "module",

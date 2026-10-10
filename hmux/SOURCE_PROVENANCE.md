@@ -105,3 +105,16 @@ it does not describe the current license file. The earlier MIT text and
 attribution remain in Git history. Copies previously released under MIT retain
 those terms. Third-party licenses, attribution and fixture provenance are
 unchanged by this first-party licensing transition.
+
+## 2026-10-10 Apache-2.0 transition
+
+At the copyright holder's direction, the licensing transition tracked in
+[hebbianai/dure#199](https://github.com/hebbianai/dure/issues/199) changes the
+current Hmux source and workspace metadata from `GPL-3.0-only` to the Apache
+License, Version 2.0 (`Apache-2.0`). [`LICENSE`](./LICENSE) now contains the
+`Copyright 2026 Hebbian AI` notice and the complete Apache-2.0 text.
+
+The 2026-09-18 entry above records the license as it stood then. Copies
+previously released under MIT or `GPL-3.0-only` retain those terms. Third-party
+licenses, attribution and fixture provenance are unchanged by this first-party
+licensing transition.

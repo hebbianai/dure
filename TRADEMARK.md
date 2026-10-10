@@ -2,7 +2,7 @@
 
 Hebbian AI uses the Dure name, logo and app icons to identify the Dure project
 and its official distributions. This policy covers their use as project and
-product branding. It does not change the [GPL-3.0-only license](LICENSE), revoke
+product branding. It does not change the [Apache-2.0 license](LICENSE), revoke
 existing copyright permissions, or restrict the rights to use, modify, build, sign,
 redistribute or sell the software under its applicable licenses. Third-party
 names and marks belong to their respective owners.

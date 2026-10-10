@@ -1,6 +1,6 @@
 [package]
 name = "dure"
-license = "GPL-3.0-only"
+license = "Apache-2.0"
 version = "0.2.42"
 description = "Multi-agent AI workspace IDE"
 authors = ["kattpish"]

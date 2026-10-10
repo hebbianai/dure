@@ -6,8 +6,8 @@ documentation improvements and translations. Please follow our
 
 ## Source and development
 
-Dure's first-party source, including Hmux, is available under
-[GNU GPL version 3 only (GPL-3.0-only)](LICENSE). Third-party components keep
+Dure's first-party source, including Hmux, is available under the
+[Apache License, Version 2.0 (Apache-2.0)](LICENSE). Third-party components keep
 their existing licenses and copyright notices.
 
 ## Development installation
@@ -383,15 +383,17 @@ accepting a change.
 ## Licensing
 
 Submit only work you have the right to contribute under the project's
-[GNU GPL version 3 only (GPL-3.0-only) license](LICENSE). Contributions are
-accepted under those terms. Preserve third-party licenses and identify the
-source and license of any material you add.
+[Apache License, Version 2.0 (Apache-2.0)](LICENSE). Contributions are accepted
+under those terms, as section 5 of the license describes. Preserve third-party
+licenses and identify the source and license of any material you add.
 
 The first-party license changed from MIT to GPL-3.0-only in
-[the licensing transition](https://github.com/hebbianai/dure/issues/27). Earlier
-versions released under MIT retain their original terms; this change does not
-relicense copies already provided under MIT. When distributing covered binaries,
-provide Corresponding Source as required by GPLv3.
+[the first licensing transition](https://github.com/hebbianai/dure/issues/27)
+and from GPL-3.0-only to Apache-2.0 in
+[the second](https://github.com/hebbianai/dure/issues/199). Copies already
+released under MIT or GPL-3.0-only retain their original terms. When
+redistributing, keep the license text, copyright notices and [NOTICE](NOTICE)
+as Apache-2.0 requires.
 
 See the [open-source boundary](README.md#open-source-boundary) for the scope of
 this repository and [TRADEMARK.md](TRADEMARK.md) for project branding and official
