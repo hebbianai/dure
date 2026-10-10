@@ -26,6 +26,17 @@ task completion, and a timeout does not prove that an operation stopped. Inspect
 the exact target and retain the operation's idempotency key after an uncertain
 result; never replay an input batch blindly.
 
+Headless managed Runs accept local text and semantic keys by their exact Session
+and workspace IDs, without opening a pane or registering a client Agent:
+
+```sh
+dure send SESSION "continue" --workspace WORKSPACE --json
+dure send-keys SESSION Down Enter --workspace WORKSPACE --json
+```
+
+Both resolve and fence the current live Host generation. Inspect an interactive
+prompt before selecting keys and read the Session afterward to verify its result.
+
 Conversation recovery retains the original project and working folder. Recovery
 commands reject `--project`, `--path` and `--cwd`. To move a stopped native Codex
 conversation, explicitly select a project registered on its owning backend:

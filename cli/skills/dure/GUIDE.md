@@ -236,10 +236,20 @@ retain its operation ID, journal revision and idempotency key; no separate publi
 is needed. Native rehost returns a separate publish command. Then use `open` to
 place the recovered Run. Remote resume requires execution on its host.
 For headless input/output, use the Session/workspace pair from `show` with
-`read` and local `send`; an Agent name requires client registration. Direct Session
+`read`, local `send`, and `send-keys`; an Agent name requires client registration. Direct Session
 input verifies the current Host generation without requiring an app registry.
 It does not support `--backend`, `--window-label`, or broker idempotency keys.
 For a lookup failure, check the selected channel with `dure diagnostics --json`.
+
+For an interactive terminal prompt in a headless Run, send semantic keys using
+the exact IDs, without first opening a pane:
+
+```sh
+dure send-keys SESSION Down Enter --workspace WORKSPACE --json
+```
+
+Inspect the prompt before choosing keys. The receipt proves PTY delivery, not
+that the provider accepted a choice; read the Session again to verify it.
 
 ## Schedule durable runs
 

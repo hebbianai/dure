@@ -239,7 +239,7 @@ export function writeRegistry(root, agents, clientPresentation) {
 /** Functional process fixtures keep product defaults covered by pure tests and
  * use an explicit deadline so unrelated full-suite children cannot consume it. */
 export function runSessionCli(root, hmux, args, extraEnvironment = {}) {
-  const boundedArgs = args.includes("--deadline-ms")
+  const boundedArgs = args[0] === "send-keys" || args.includes("--deadline-ms")
     ? args
     : [...args, "--deadline-ms", String(FUNCTIONAL_DEADLINE_MS)];
   return spawnSync(process.execPath, [cliPath, ...boundedArgs], {

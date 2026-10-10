@@ -825,20 +825,15 @@ async function sendExactSession(sessionId, text, opts) {
   if (opts.idempotencyKey !== undefined || opts.windowLabel !== undefined) {
     fail("--idempotency-key and --window-label require a registered Agent and the app broker.");
   }
-  const { collectSessionQuery } = await import("./lib/session-query.mjs");
-  const report = await collectSessionQuery({
-    action: "show", hmuxCommand: hmuxCommand(), sessionId, workspaceId: opts.workspace,
-    ...(opts.deadlineMs === undefined ? {} : { deadlineMs: Number(opts.deadlineMs) }),
-  });
-  const session = report.session;
-  if (report.kind !== "dure.sessions.show" || !session?.liveness.exactGeneration ||
-    session.liveness.state !== "alive" || session.runtime.sessionClass !== "managed") {
-    fail(`No live managed Session '${sessionId}' was verified in channel '${APP_CHANNEL}' ` +
-      `(${report.error?.code ?? session?.liveness.health ?? "unavailable"}). ` +
-      "Use dure inspect <session-id> --workspace <workspace-id> --json and dure diagnostics --json to check the target. Input was not sent.");
-  }
-  const binding = { runtime: "hmux_managed_v1", sessionId: session.sessionId,
-    workspaceId: session.workspaceId, stopFence: session.runtime.generation };
+  const { resolveLocalManagedInputBinding } = await import("./lib/exact-session-input.mjs");
+  let binding;
+  try {
+    binding = await resolveLocalManagedInputBinding({
+      hmuxCommand: hmuxCommand(), sessionId, workspaceId: opts.workspace,
+      channel: APP_CHANNEL,
+      ...(opts.deadlineMs === undefined ? {} : { deadlineMs: Number(opts.deadlineMs) }),
+    });
+  } catch (error) { fail(error.message); }
   if (!inspectManagedInputCompatibility().managedInputCompatible) {
     fail(`Exact Session input requires the ${MANAGED_INPUT_HMUX_CAPABILITY} capability. Update the selected Hmux runtime.`);
   }
@@ -3431,6 +3426,7 @@ Usage:
                                       Uncertain app-independent delivery is not retried automatically
   dure enter <name>                Send Enter to submit the current prompt
   dure send-keys <name> <key...> [--json]
+  dure send-keys <session-id> <key...> --workspace ID [--json]
                                       Semantic keys (C-c, Up, Enter); local managed terminals
   dure logs <name> [-n N]          Dump scrollback (default 2000 lines)
   dure attach <session-id> --workspace <workspace-id> [--backend ID]
@@ -3970,7 +3966,7 @@ async function main() {
   if (cmd === "send-keys" || (cmd === "help" && rest[0] === "send-keys")) {
     const { runSendKeysCommand } = await import("./lib/send-keys-command.mjs");
     return await runSendKeysCommand(cmd === "help" ? ["--help"] : rest, {
-      loadRegistry: loadRegistryOptional, hmuxCommand,
+      loadRegistry: loadRegistryOptional, hmuxCommand, channel: APP_CHANNEL,
     });
   }
   if (cmd === "wait" || (cmd === "help" && rest[0] === "wait")) {

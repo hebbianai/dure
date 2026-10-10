@@ -20,7 +20,7 @@ driving and waiting on a session. Parse `--json` — `dure.sessions/v1`,
 - **Agent id** (`agent-…`) — `stop` also accepts this exact identity; it is not
   the Session ID consumed by `attach` or backend session reads.
 - **Session id + workspace id** (`session_…`, `agent-workspace:…`) — the
-  registry-free pair. `attach` requires both; `wait`, local `send`, and `read` accept them in
+  registry-free pair. `attach` requires both; `wait`, local `send`, `send-keys`, and `read` accept them in
   place of a name, and `read` demands them once `--backend` or
   `DURE_BACKEND_PROFILE` selects a backend. `inspect` needs only the session id.
 - **Space/pane id** (`desk-…`, `pane-…`) and **project id** — consumed by
@@ -142,7 +142,7 @@ retain its operation ID, journal revision and idempotency key; no separate publi
 is needed. Native rehost returns a separate publish command. Then use `open` to
 place the recovered Run. Remote resume requires execution on its host.
 For headless input/output, use the Session/workspace pair from `show` with
-`read` and local `send`; an Agent name requires client registration. Direct Session
+`read`, local `send`, and `send-keys`; an Agent name requires client registration. Direct Session
 input verifies the current Host generation without requiring an app registry.
 It does not support `--backend`, `--window-label`, or broker idempotency keys.
 For a lookup failure, check the selected channel with `dure diagnostics --json`.
@@ -177,6 +177,7 @@ dure read worker -n 80 --json     # one snapshot with lines[] and sequenceThroug
 dure send worker "run the tests"  # text plus Enter
 dure send worker --stdin --no-enter
 dure send-keys worker Escape Up Enter
+dure send-keys SESSION Down Enter --workspace WORKSPACE --json  # headless, no pane required
 ```
 
 A `send` receipt proves bytes reached the PTY, not that the provider accepted
