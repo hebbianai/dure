@@ -2,7 +2,9 @@
 
 [toolchain]
 channel = "1.97.1"
-components = ["clippy", "rustfmt"]
+# llvm-tools: swift-rs promotes Swift @_cdecl exports that Xcode 27 SwiftPM
+# internalizes, so iOS release builds link.
+components = ["clippy", "llvm-tools", "rustfmt"]
 profile = "minimal"
 targets = [
   "aarch64-apple-ios",

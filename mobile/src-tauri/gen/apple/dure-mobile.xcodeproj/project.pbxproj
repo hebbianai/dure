@@ -17,7 +17,6 @@
 		B567B0F48982867CAC0A24FD /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 81E90D66BAE642732022E316 /* WebKit.framework */; };
 		CCA2C015D8273D0EE70A54CD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FBE4AFB9266BD073776CE310 /* Assets.xcassets */; };
 		D55C4FE2C308D1FCF202C722 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 713FE02827E9CD010603D096 /* CoreGraphics.framework */; };
-		E4C4D0E9717A6DC3EA726B54 /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = A75C7223F501505CE7F3A534 /* libapp.a */; };
 		EF82998519A6B287C18575CB /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 206A94E45BCC2D3B7856CB42 /* LaunchScreen.storyboard */; };
 		FC09222A79D586ED000EF3AE /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D2CB731F913D3F783EE6E60B /* Security.framework */; };
 /* End PBXBuildFile section */
@@ -41,7 +40,6 @@
 		81E90D66BAE642732022E316 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		9D4927AB730873F5CEF7A221 /* dure-mobile_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "dure-mobile_iOS.entitlements"; sourceTree = "<group>"; };
 		9E11EA2A17FD39F9A236123F /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
-		A75C7223F501505CE7F3A534 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		B2B19ADAA7160B7716B94CCF /* census.rs */ = {isa = PBXFileReference; path = census.rs; sourceTree = "<group>"; };
 		B9F0A99E434B28F68EA98001 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
 		BF062799C87B88D2744DFD1A /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
@@ -119,14 +117,6 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		484AC61ABB6DBFDF86722A37 /* debug */ = {
-			isa = PBXGroup;
-			children = (
-				A75C7223F501505CE7F3A534 /* libapp.a */,
-			);
-			path = debug;
-			sourceTree = "<group>";
-		};
 		5171EFB49D685D6A29AF0161 /* Externals */ = {
 			isa = PBXGroup;
 			children = (
@@ -146,7 +136,6 @@
 		77D93929CACD82EAEB0D48BF /* arm64 */ = {
 			isa = PBXGroup;
 			children = (
-				484AC61ABB6DBFDF86722A37 /* debug */,
 			);
 			path = arm64;
 			sourceTree = "<group>";
@@ -270,7 +259,6 @@
 				CCA2C015D8273D0EE70A54CD /* Assets.xcassets in Resources */,
 				EF82998519A6B287C18575CB /* LaunchScreen.storyboard in Resources */,
 				38FDB883C831236E037F063E /* assets in Resources */,
-				E4C4D0E9717A6DC3EA726B54 /* libapp.a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -396,7 +384,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -486,7 +474,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
