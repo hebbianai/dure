@@ -247,7 +247,7 @@ function DetailArea({ target, onClose }: { target: DetailTarget; onClose: () => 
   const heading =
     target.kind === "file" ? target.ref : `${t("common.commit")} ${target.ref.slice(0, 12)}`;
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-t">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
       <div className="flex h-8 shrink-0 items-center gap-2 border-b px-3">
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
           {heading}
@@ -387,10 +387,12 @@ export function SourceControlWindowRoot() {
         </IconButton>
       </header>
       {/* 상세는 오른쪽 컬럼(사용자 요청) — pane은 좌측 고정 폭으로 접힌다.
-          pane 래퍼는 flex 컨테이너여야 높이 체인이 살아 스크롤이 된다. */}
+          pane 래퍼는 flex 컨테이너여야 높이 체인이 살아 스크롤이 된다.
+          min-w-0: 없으면 긴 커밋 제목(nowrap)의 폭만큼 컬럼이 창보다 넓어져
+          메시지 입력·Commit 버튼의 오른쪽이 잘린다. */}
       <div className="flex min-h-0 flex-1">
         <div
-          className={cn("flex min-h-0 flex-col", detail ? "shrink-0" : "flex-1")}
+          className={cn("flex min-h-0 min-w-0 flex-col", detail ? "shrink-0" : "flex-1")}
           style={detail ? { width: paneWidth } : undefined}
         >
           {/* 가장 활발한 브랜치 요약/피드 (l36t) — 커밋 클릭은 상세 재사용 */}

@@ -426,8 +426,13 @@ export function CommitGraph({
 
       {/* viewportClassName px-1.5: 행의 hover 알약이 패널 양 끝에 닿지 않게
           6px을 비운다. 행이 자기 padding에서 그만큼 덜어가므로 글리프·제목의
-          가로 위치는 그대로다 — 레인 선이 행마다 어긋나면 안 된다. */}
-      <SidebarScrollArea edgeFade className="min-h-0 flex-1" viewportClassName="snap-y snap-proximity px-1.5">
+          가로 위치는 그대로다 — 레인 선이 행마다 어긋나면 안 된다.
+          [&>div]:block!: Radix's content wrapper is display:table, which grows
+          to the longest subject, so every row got that wide and the author
+          column sat past the right edge. As a block it keeps the viewport's
+          width and the subject truncates. */}
+      <SidebarScrollArea edgeFade className="min-h-0 flex-1"
+        viewportClassName="snap-y snap-proximity px-1.5 [&>div]:block! [&>div]:min-w-0">
         {commits === null && (
           <div className="px-4 py-2 text-xs text-muted-foreground">{t("common.loading")}</div>
         )}

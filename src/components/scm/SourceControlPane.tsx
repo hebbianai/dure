@@ -582,6 +582,10 @@ export function SourceControlPane({
             edgeFade
             ref={changesRef}
             className="min-h-16 shrink"
+            // Block, not Radix's display:table: a long changed path would
+            // otherwise widen the table and push the message box and Commit
+            // button past the right edge.
+            viewportClassName="[&>div]:block! [&>div]:min-w-0"
             style={changesH !== null ? { height: changesH } : undefined}
           >
             {/* 변경 내용 — 시안 2397:49776의 "Folder label": 라벨 한 줄뿐이다.
