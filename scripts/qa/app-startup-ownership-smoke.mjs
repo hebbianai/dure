@@ -30,12 +30,16 @@ try {
   const home = join(root, "home");
   mkdirSync(home);
   const lock = readFileSync(join(repo, "src-tauri/Cargo.lock"), "utf8");
-  const version = (name) => {
-    const entry = lock.split("[[package]]").find((entry) =>
-      entry.includes(`\nname = "${name}"\n`));
-    const pinned = entry?.match(/\nversion = "([^"]+)"/)?.[1];
-    if (!pinned) throw new Error(`Missing pinned dependency: ${name}`);
-    return `=${pinned}`;
+  const windowsVersion = readFileSync(join(repo, "src-tauri/Cargo.toml"), "utf8")
+    .match(/^windows = \{ version = "([0-9]+\.[0-9]+\.[0-9]+)"/m)?.[1];
+  if (!windowsVersion) throw new Error("Missing exact Windows dependency in app manifest");
+  const version = (name, expected) => {
+    const candidates = lock.split("[[package]]")
+      .filter((entry) => entry.includes(`\nname = "${name}"\n`))
+      .map((entry) => entry.match(/\nversion = "([^"]+)"/)?.[1])
+      .filter((value) => value && (expected === undefined || value === expected));
+    if (candidates.length !== 1) throw new Error(`Missing or ambiguous pinned dependency: ${name}`);
+    return `=${candidates[0]}`;
   };
   const dependency = (name) => `${name} = ${JSON.stringify(version(name))}`;
   writeFileSync(join(root, "Cargo.toml"), `[package]
@@ -50,7 +54,7 @@ ${["fs2", "libc", "serde_json", "tempfile"].map(dependency).join("\n")}
 tokio = { version = "${version("tokio")}", features = ["macros", "rt-multi-thread", "sync", "time"] }
 reqwest = { version = "${version("reqwest")}", default-features = false, features = ["blocking"] }
 [target.'cfg(windows)'.dependencies]
-windows = { version = "${version("windows")}", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows = { version = "${version("windows", windowsVersion)}", features = ["Win32_Foundation", "Win32_System_Threading"] }
 `);
   // Reuse repository-pinned transitive dependencies; Cargo only adjusts the
   // disposable fixture's package entry. No repository lockfile is rewritten.
