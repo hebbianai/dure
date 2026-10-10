@@ -1,5 +1,6 @@
 use super::*;
 use dure_app::AgentSpawnJournalStore;
+mod claude;
 
 #[tokio::test]
 async fn schedule_permission_defaults_are_inherited_only_without_an_override() {

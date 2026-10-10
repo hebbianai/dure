@@ -48,6 +48,7 @@ export const automations: Record<string, string> = {
 	"automations.scheduled": "定期",
 	"automations.runRevision": "設定バージョン {revision}",
 	"automations.noReport": "この実行のレポートはまだ届いていません。",
+	"automations.session": "セッション",
 	"automations.workspace": "ワークスペース",
 	"automations.saveFirst": "実行前に設定を保存してください。",
 	"automations.name": "名前",
@@ -184,4 +185,16 @@ export const automations: Record<string, string> = {
 	"automations.graph.issues.revisionConflict":
 		"ワークフローが別の場所で変更されました。開き直して最新版を読み込んでください。",
 	"automations.graph.issues.invalid": "設定を確認してください（{code}）。",
+	"automations.runtimeUnavailable": "実行状態を取得できません・レポート待ち",
+	"automations.exitedWithoutReport": "プロバイダー終了・レポート未受信",
+	"automations.inputRequired": "入力待ち・レポート待ち",
+	"automations.approvalRequired": "承認待ち・レポート待ち",
+	"automations.providerError": "プロバイダーの確認が必要・レポート待ち",
+	"automations.providerStarting":
+		"プロバイダー起動中・セッションの起動プロンプトを確認",
+	"automations.providerWorking": "作業中・レポート待ち",
+	"automations.providerWaiting":
+		"プロバイダー待機中・セッションを確認・レポート待ち",
+	"automations.projectTrustRequired":
+		"起動をブロック: Claudeで登録済みプロジェクトフォルダーを確認して信頼した後、再実行してください",
 };

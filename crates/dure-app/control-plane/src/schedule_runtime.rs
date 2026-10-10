@@ -25,6 +25,7 @@ use crate::{
 const MAX_SCHEDULE_ITEMS: usize = 128;
 const MAX_OCCURRENCE_ITEMS: usize = 256;
 const SCHEDULE_TICK_INTERVAL: Duration = Duration::from_secs(30);
+mod observation;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -91,6 +92,8 @@ pub(crate) struct ScheduleOccurrencesBody {
     #[serde(default)]
     schedule_id: Option<ScheduleIdV1>,
     max_items: usize,
+    #[serde(default)]
+    include_runtime: bool,
 }
 
 pub(crate) async fn invoke(
@@ -254,7 +257,11 @@ pub(crate) async fn occurrences(
         .schedule_occurrences(body.schedule_id.as_ref(), body.max_items)
         .await
         .map_err(schedule_store_error)?;
-    Ok(json!({ "schemaVersion": 1, "occurrences": occurrences }))
+    let mut payload = json!({ "schemaVersion": 1, "occurrences": occurrences });
+    if body.include_runtime {
+        payload["occurrences"] = observation::occurrences(state, &occurrences).await;
+    }
+    Ok(payload)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -271,6 +278,8 @@ pub(crate) struct ScheduleRunOnceBody {
 pub(crate) struct ScheduleInspectBody {
     schema_version: u16,
     idempotency_key: String,
+    #[serde(default)]
+    include_runtime: bool,
 }
 
 pub(crate) async fn run_once(
@@ -311,7 +320,12 @@ pub(crate) async fn inspect(
         .await
         .map_err(schedule_store_error)?
         .ok_or_else(|| BackendDispatchError::from("schedule_occurrence_not_found"))?;
-    Ok(json!({ "schemaVersion": 1, "occurrence": occurrence, "resultMarkdown": result_markdown }))
+    let mut payload =
+        json!({ "schemaVersion": 1, "occurrence": occurrence, "resultMarkdown": result_markdown });
+    if body.include_runtime {
+        payload["occurrence"] = observation::occurrences(state, &[occurrence]).await[0].clone();
+    }
+    Ok(payload)
 }
 
 pub(crate) async fn run_loop(state: Arc<ServiceState>) {
@@ -462,6 +476,37 @@ async fn spawn_occurrence(
     )
     .map_err(|_| (None, "schedule_run_receipt_invalid".to_string()))?;
     let operation_id = receipt.operation_id.clone();
+    // An unattended launch must not sit at an unseen folder-trust dialog.
+    // Reuse the selected profile's existing decisions; never write an approval.
+    // A replay of an already launched occurrence retains its original evidence.
+    if receipt.plan.request.provider_id.as_str() == "claude"
+        && !receipt.completed.iter().any(|stage| {
+            matches!(
+                stage.evidence,
+                dure_app::AgentSpawnStageEvidenceV1::RuntimeLaunch { .. }
+            )
+        })
+    {
+        let catalog = projects_catalog(state)
+            .await
+            .map_err(|error| (Some(operation_id.clone()), error))?;
+        let project = catalog
+            .project(receipt.plan.request.project_id.as_str())
+            .ok_or_else(|| {
+                (
+                    Some(operation_id.clone()),
+                    "schedule_project_not_found".into(),
+                )
+            })?;
+        state
+            .credential_profiles
+            .check_unattended_claude_workspace(
+                &receipt.plan.request.execution_profile,
+                project.root(),
+            )
+            .await
+            .map_err(|error| (Some(operation_id.clone()), error))?;
+    }
     state
         .store
         .bind_schedule_spawn(&receipt.plan.request.idempotency_key, operation_id.as_str())

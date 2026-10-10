@@ -47,6 +47,61 @@ const occurrence = {
 };
 
 describe("schedule contracts", () => {
+	it("projects live attention separately from launch and retained completion", () => {
+		const session = {
+			sessionId: "s1",
+			workspaceId: "w1",
+			providerId: "claude",
+			runnerPrincipal: "p1",
+			runnerInstance: "r1",
+			channelEpoch: "1",
+			hostInstanceId: "h1",
+			terminalEpoch: "t1",
+		};
+		const runtime = {
+			state: "observed",
+			observedAtMs: 3,
+			session,
+			lifecycle: "running",
+			activity: "waiting",
+			attention: "input_required",
+		};
+		expect(occurrenceStatus(parseOccurrence({ ...occurrence, runtime }))).toBe(
+			t("automations.inputRequired"),
+		);
+		expect(
+			occurrenceStatus(
+				parseOccurrence({
+					...occurrence,
+					runtime: { ...runtime, attention: "approval_required" },
+				}),
+			),
+		).toBe(t("automations.approvalRequired"));
+		expect(
+			occurrenceStatus(
+				parseOccurrence({
+					...occurrence,
+					runtime: {
+						state: "unavailable",
+						observedAtMs: 3,
+						errorCode: "hmux_descriptor_unavailable",
+					},
+				}),
+			),
+		).toBe(t("automations.runtimeUnavailable"));
+		expect(() =>
+			parseOccurrence({
+				...occurrence,
+				runtime: { ...runtime, session: undefined },
+			}),
+		).toThrow();
+		expect(() =>
+			parseOccurrence({
+				...occurrence,
+				runtime: { ...runtime, attention: "done" },
+			}),
+		).toThrow();
+	});
 	it("leaves new schedules on provider permission defaults and preserves explicit overrides", () => {
 		const draft = newScheduleDraft();
 		expect(draft.runTemplate.permissionMode).toBeUndefined();

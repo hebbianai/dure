@@ -1,4 +1,42 @@
 use super::*;
+
+#[test]
+fn unattended_workspace_trust_reads_prior_decisions_without_writing() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("project");
+    let child = workspace.join("child");
+    std::fs::create_dir_all(&child).unwrap();
+    let workspace = workspace.canonicalize().unwrap();
+    let config = root.path().join(".claude.json");
+    assert!(!workspace_trusted(&config, &child).unwrap());
+    assert!(!config.exists());
+    let mut document = serde_json::json!({"projects": {
+        workspace.to_str().unwrap(): {"hasTrustDialogAccepted": true}
+    }, "oauthAccount": "private-fixture"});
+    std::fs::write(&config, serde_json::to_vec(&document).unwrap()).unwrap();
+    let before = std::fs::read(&config).unwrap();
+    assert!(workspace_trusted(&config, &child).unwrap());
+    assert_eq!(std::fs::read(&config).unwrap(), before);
+    document["projects"][child.canonicalize().unwrap().to_str().unwrap()] =
+        serde_json::json!({"hasTrustDialogAccepted": false});
+    std::fs::write(&config, serde_json::to_vec(&document).unwrap()).unwrap();
+    assert!(!workspace_trusted(&config, &child).unwrap());
+    let sibling = root.path().join("project-sibling");
+    std::fs::create_dir(&sibling).unwrap();
+    assert!(!workspace_trusted(&config, &sibling).unwrap());
+    std::fs::write(&config, b"invalid").unwrap();
+    assert!(workspace_trusted(&config, &child).is_err());
+}
+
+#[test]
+fn unattended_workspace_trust_rejects_symlinked_config() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::write(&source, b"{}").unwrap();
+    let config = root.path().join(".claude.json");
+    std::os::unix::fs::symlink(&source, &config).unwrap();
+    assert!(workspace_trusted(&config, root.path()).is_err());
+}
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;

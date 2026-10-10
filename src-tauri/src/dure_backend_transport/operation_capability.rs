@@ -16,6 +16,13 @@ pub(super) fn operation_body_capability(
             == Some("project_root")
     {
         Some("schedule.worktree_project_root_v1")
+    } else if matches!(operation, "schedule.occurrences" | "schedule.inspect")
+        && body
+            .get("includeRuntime")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+    {
+        Some("schedule.runtime_observation_v1")
     } else {
         operation_capability(operation)
     }
@@ -95,6 +102,22 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn schedule_runtime_observation_requires_explicit_compatible_read() {
+        for operation in ["schedule.occurrences", "schedule.inspect"] {
+            assert_eq!(
+                super::operation_body_capability(
+                    operation,
+                    &serde_json::json!({"includeRuntime": true})
+                ),
+                Some("schedule.runtime_observation_v1")
+            );
+            assert_eq!(
+                super::operation_body_capability(operation, &serde_json::json!({})),
+                Some(operation)
+            );
+        }
+    }
     use super::operation_capability;
 
     #[test]

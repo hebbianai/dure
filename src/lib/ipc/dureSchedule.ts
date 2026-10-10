@@ -7,6 +7,7 @@ import {
 } from "@/lib/automations/scheduleContract";
 import {
 	createDureBackendRequester,
+	DureBackendRequestError,
 	type DureBackendInvoke,
 } from "@/lib/ipc/dureBackend";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
@@ -43,6 +44,32 @@ export function createScheduleClient(
 		kind: "exact" as const,
 		authority,
 	});
+	const observe = async (
+		operation: string,
+		body: Record<string, unknown>,
+		authority: DureBackendRouteAuthorityV1,
+	) => {
+		try {
+			return await request(
+				operation,
+				{ ...body, includeRuntime: true },
+				exact(authority),
+			);
+		} catch (error) {
+			// This is a read-only extension. Older backends keep their original
+			// report contract; transport/authority failures are never hidden.
+			if (
+				!(error instanceof DureBackendRequestError) ||
+				![
+					"backend_transport_capability_missing",
+					"backend_transport_profile_capability_missing",
+				].includes(error.code) ||
+				error.details?.capability !== "schedule.runtime_observation_v1"
+			)
+				throw error;
+			return request(operation, body, exact(authority));
+		}
+	};
 	return {
 		async list(): Promise<ScheduleSnapshot> {
 			const { result, routeAuthority } = await request(
@@ -117,10 +144,10 @@ export function createScheduleClient(
 			scheduleId: string,
 			authority: DureBackendRouteAuthorityV1,
 		) {
-			const { result } = await request(
+			const { result } = await observe(
 				"schedule.occurrences",
 				{ schemaVersion: 1, scheduleId, maxItems: 128 },
-				exact(authority),
+				authority,
 			);
 			if (!Array.isArray(result.occurrences)) scheduleContractError();
 			const occurrences = result.occurrences.map(parseOccurrence);
@@ -132,10 +159,10 @@ export function createScheduleClient(
 			idempotencyKey: string,
 			authority: DureBackendRouteAuthorityV1,
 		) {
-			const { result } = await request(
+			const { result } = await observe(
 				"schedule.inspect",
 				{ schemaVersion: 1, idempotencyKey },
-				exact(authority),
+				authority,
 			);
 			const occurrence = parseOccurrence(result.occurrence);
 			if (

@@ -48,6 +48,7 @@ export const automations: Record<string, string> = {
 	"automations.scheduled": "定时",
 	"automations.runRevision": "配置版本 {revision}",
 	"automations.noReport": "尚未收到此运行的报告。",
+	"automations.session": "会话",
 	"automations.workspace": "工作区",
 	"automations.saveFirst": "请先保存配置再运行。",
 	"automations.name": "名称",
@@ -175,4 +176,14 @@ export const automations: Record<string, string> = {
 	"automations.graph.issues.revisionConflict":
 		"工作流已在别处更改。请重新打开以加载最新版本。",
 	"automations.graph.issues.invalid": "请检查此设置（{code}）。",
+	"automations.runtimeUnavailable": "无法获取运行状态 · 等待报告",
+	"automations.exitedWithoutReport": "提供方已退出 · 未收到报告",
+	"automations.inputRequired": "等待输入 · 等待报告",
+	"automations.approvalRequired": "等待批准 · 等待报告",
+	"automations.providerError": "提供方需要处理 · 等待报告",
+	"automations.providerStarting": "提供方正在启动 · 请检查会话中的启动提示",
+	"automations.providerWorking": "工作中 · 等待报告",
+	"automations.providerWaiting": "提供方正在等待 · 请检查会话 · 等待报告",
+	"automations.projectTrustRequired":
+		"启动已阻止：请在 Claude 中检查并信任已注册的项目文件夹，然后重新运行",
 };

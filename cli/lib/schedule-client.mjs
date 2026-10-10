@@ -3,6 +3,7 @@ import { isProviderEffortSelection, isProviderModelSelection } from "./contracts
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { validProjectId, validProjectPath } from "./project-contract.mjs";
+import { isScheduleRuntime, scheduleRuntimeStatus, SCHEDULE_RUNTIME_CAPABILITY } from "./contracts/schedule-runtime.mjs";
 
 export const SCHEDULE_CLIENT_SCHEMA_VERSION = 1;
 export const DEFAULT_SCHEDULE_COMMAND_DEADLINE_MS = 2_500;
@@ -127,7 +128,8 @@ function validOccurrence(value, scheduleId) {
     onlyKeys(value, ["schemaVersion", "scheduleId", "scheduleRevision", "trigger", "idempotencyKey", "launchState",
       ...(value?.operationId === undefined ? [] : ["operationId"]),
       ...(value?.errorCode === undefined ? [] : ["errorCode"]),
-      ...(value?.run === undefined ? [] : ["run"]), "createdAtMs", "updatedAtMs"]) &&
+      ...(value?.run === undefined ? [] : ["run"]),
+      ...(value?.runtime === undefined ? [] : ["runtime"]), "createdAtMs", "updatedAtMs"]) &&
     value.schemaVersion === 2 && TOKEN.test(value.scheduleId ?? "") &&
     (scheduleId === undefined || value.scheduleId === scheduleId) &&
     Number.isSafeInteger(value.scheduleRevision) && value.scheduleRevision > 0 &&
@@ -139,7 +141,7 @@ function validOccurrence(value, scheduleId) {
     (value.errorCode === undefined || TOKEN.test(value.errorCode)) &&
     (value.launchState === "pending" ? value.errorCode === undefined : value.launchState === "started"
       ? value.operationId !== undefined && value.errorCode === undefined : value.errorCode !== undefined) &&
-    validRun(value.run) && nonNegativeInteger(value.createdAtMs) &&
+    validRun(value.run) && (value.runtime === undefined || isScheduleRuntime(value.runtime)) && nonNegativeInteger(value.createdAtMs) &&
     nonNegativeInteger(value.updatedAtMs) && value.updatedAtMs >= value.createdAtMs
   );
 }
@@ -367,13 +369,16 @@ export async function collectScheduleCommand(options = {}) {
     );
   }
   let response;
+  const includeRuntime = ["occurrences", "inspect"].includes(normalized.action) &&
+    profile.expected?.capabilities?.includes(SCHEDULE_RUNTIME_CAPABILITY);
   try {
     response = await (normalized.requestBackend ?? performBackendProfileRequest)(
       profile,
       {
-        body: requestBody(normalized),
+        body: { ...requestBody(normalized), ...(includeRuntime ? { includeRuntime: true } : {}) },
         operation: `schedule.${normalized.action}`,
         requiredCapabilities: [`schedule.${normalized.action}`,
+          ...(includeRuntime ? [SCHEDULE_RUNTIME_CAPABILITY] : []),
           ...(normalized.action === "put" && normalized.worktree?.kind === "project_root"
             ? ["schedule.worktree_project_root_v1"] : [])],
       },
@@ -461,12 +466,13 @@ export function formatScheduleCommand(report) {
   }
   if (["dure.schedules.run_once", "dure.schedules.inspect"].includes(report.kind)) {
     const occurrence = report.occurrence;
-    return `${occurrence.idempotencyKey} — ${occurrenceStatus(occurrence)}${report.resultMarkdown == null ? "" : `\n\n${report.resultMarkdown}`}`;
+    const session = occurrence.runtime?.session;
+    return `${occurrence.idempotencyKey} — ${occurrenceStatus(occurrence)}${session ? `\nSession: ${session.sessionId}\nWorkspace: ${session.workspaceId}` : ""}${report.resultMarkdown == null ? "" : `\n\n${report.resultMarkdown}`}`;
   }
   if (report.kind === "dure.schedules.occurrences") {
     if (report.occurrences.length === 0) return "No Dure schedule occurrences.";
     return [
-      "SCHEDULE\tTRIGGER\tWHEN\tSTATUS\tRUN KEY",
+      "SCHEDULE\tTRIGGER\tWHEN\tSTATUS\tRUN KEY\tSESSION\tWORKSPACE",
       ...report.occurrences.map((item) =>
         [
           item.scheduleId,
@@ -474,6 +480,8 @@ export function formatScheduleCommand(report) {
           new Date(item.trigger.scheduledForMs ?? item.createdAtMs).toISOString(),
           occurrenceStatus(item),
           item.idempotencyKey,
+          item.runtime?.session?.sessionId ?? "-",
+          item.runtime?.session?.workspaceId ?? "-",
         ].join("\t"),
       ),
     ].join("\n");
@@ -501,7 +509,21 @@ export function formatScheduleCommand(report) {
 function occurrenceStatus(occurrence) {
   if (occurrence.run?.completed) return "Report received";
   if (occurrence.run?.blockedBy) return "Awaiting decision";
-  if (occurrence.launchState === "failed") return `Start failed: ${occurrence.errorCode}`;
+  if (occurrence.launchState === "failed") {
+    if (occurrence.errorCode === "schedule_claude_project_trust_required") return "Start blocked: review and trust the registered project folder in Claude, then run again";
+    return `Start failed: ${occurrence.errorCode}`;
+  }
   if (occurrence.launchState === "pending") return "Queued";
+  const runtimeStatus = scheduleRuntimeStatus(occurrence.runtime);
+  if (runtimeStatus) return {
+    runtimeUnavailable: "Runtime status unavailable; awaiting report",
+    exitedWithoutReport: "Provider exited; no report received",
+    inputRequired: "Waiting for input; awaiting report",
+    approvalRequired: "Waiting for approval; awaiting report",
+    providerError: "Provider needs attention; awaiting report",
+    providerStarting: "Provider starting; inspect session for startup prompts",
+    providerWorking: "Working; awaiting report",
+    providerWaiting: "Provider waiting; inspect session; awaiting report",
+  }[runtimeStatus];
   return occurrence.run ? "Awaiting report" : "Started; awaiting report";
 }

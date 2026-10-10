@@ -1,5 +1,5 @@
 use hmux_client::ManagedStopQuiescenceFence;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -159,7 +159,7 @@ impl HmuxSessionInspection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AgentRuntimeLifecycle {
     Starting,
@@ -167,14 +167,14 @@ pub(crate) enum AgentRuntimeLifecycle {
     Exited,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AgentRuntimeActivity {
     Working,
     Waiting,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AgentRuntimeAttention {
     None,
@@ -190,9 +190,9 @@ pub(crate) struct AgentRuntimeState {
     observed_through_output_seq: String,
     #[serde(default = "zero_u64_string")]
     turn_completed_count: String,
-    lifecycle: AgentRuntimeLifecycle,
-    activity: AgentRuntimeActivity,
-    attention: AgentRuntimeAttention,
+    pub(crate) lifecycle: AgentRuntimeLifecycle,
+    pub(crate) activity: AgentRuntimeActivity,
+    pub(crate) attention: AgentRuntimeAttention,
     attention_id: Option<String>,
 }
 

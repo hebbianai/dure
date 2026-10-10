@@ -153,6 +153,20 @@ that folder. The selected backend must advertise `schedule.worktree_project_root
 older backends refuse the opt-in before a schedule is changed. Git-specific
 `--base-commit`, `--branch` and `--setup-command` options cannot accompany it.
 
+Scheduled Claude runs require an existing trust decision for the registered
+project folder (or its parent) in the selected Claude account. Review the folder
+and complete Claude's interactive startup in that account first. An untrusted
+folder fails visibly with `schedule_claude_project_trust_required`; Dure does not
+accept trust dialogs or turn bypass approvals into folder trust. After resolving
+startup prompts, use a new run-once key or wait for the next occurrence.
+
+`dure schedule runs` and `inspect` distinguish launch acceptance, current provider
+attention, and the retained completion report. Backends advertising
+`schedule.runtime_observation_v1` provide bounded, read-only runtime observations
+and exact session/workspace IDs. Older backends retain their launch/report view.
+Waiting or unavailable observation is not evidence of completion or exit;
+inspect the session for startup prompts. Only the durable report marks completion.
+
 `dure client project add PATH` returns the app registration plus `backendProject`:
 the canonical local backend ID and schedule arguments, or an exact quoted
 `dure projects register ... --path PATH --backend local` command. Failed discovery

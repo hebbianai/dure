@@ -281,6 +281,20 @@ This opt-in requires `schedule.worktree_project_root_v1` on the selected backend
 an older backend is refused before mutation. Existing schedules with no worktree
 field retain isolated mode. Use the same backend for registration and schedules.
 
+Before scheduling Claude, review and trust the registered project folder in the
+same Claude account, completing its interactive startup prompts. A missing trust
+decision fails with `schedule_claude_project_trust_required`; bypass approvals
+does not grant folder trust. Never automatically answer a trust or arbitrary
+startup prompt. After the user resolves it, use a new run-once key or the next
+scheduled occurrence.
+
+`schedule runs` and `schedule inspect` include current runtime attention and exact
+session/workspace IDs when the backend supports `schedule.runtime_observation_v1`.
+Input/approval attention calls for inspection; waiting can include a startup
+dialog. Unavailable observation proves neither exit nor task completion. Old
+backends keep the launch/report view. `launchState: started` is launch acceptance;
+only the retained Dispatch completion report proves the task reported completion.
+
 Schedules survive app and client disconnects; they invoke the same durable
 Run saga as `dure run` and never require a WebView timer. Reuse mutation
 idempotency keys after uncertain responses and use the exact observed revision

@@ -9,6 +9,11 @@ import {
 	isProviderEffortSelection,
 	isProviderModelSelection,
 } from "../../../cli/lib/contracts/provider-launch-selection.mjs";
+import {
+	isScheduleRuntime,
+	scheduleRuntimeStatus,
+	type ScheduleRuntime,
+} from "../../../cli/lib/contracts/schedule-runtime.mjs";
 
 interface ScheduleTemplate {
 	projectId: string;
@@ -43,6 +48,7 @@ export type ScheduleDraft = Pick<
 >;
 
 export interface ScheduleOccurrence {
+	runtime?: ScheduleRuntime;
 	schemaVersion: 2;
 	scheduleId: string;
 	scheduleRevision: number;
@@ -144,6 +150,7 @@ export function parseOccurrence(value: unknown): ScheduleOccurrence {
 		!text(record.idempotencyKey) ||
 		!integer(record.createdAtMs) ||
 		!integer(record.updatedAtMs) ||
+		(record.runtime !== undefined && !isScheduleRuntime(record.runtime)) ||
 		!trigger ||
 		!(
 			trigger.kind === "manual" ||
@@ -173,8 +180,15 @@ export function parseOccurrence(value: unknown): ScheduleOccurrence {
 export function occurrenceStatus(occurrence: ScheduleOccurrence): string {
 	if (occurrence.run?.completed) return t("automations.reportReceived");
 	if (occurrence.run?.blockedBy) return t("automations.awaitingDecision");
-	if (occurrence.launchState === "failed") return t("automations.startFailed");
+	if (occurrence.launchState === "failed")
+		return t(
+			occurrence.errorCode === "schedule_claude_project_trust_required"
+				? "automations.projectTrustRequired"
+				: "automations.startFailed",
+		);
 	if (occurrence.launchState === "pending") return t("automations.queued");
+	const status = scheduleRuntimeStatus(occurrence.runtime);
+	if (status) return t(`automations.${status}`);
 	return t("automations.awaitingReport");
 }
 

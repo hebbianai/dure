@@ -205,6 +205,57 @@ afterEach(() => {
 	setLang("ko");
 });
 
+it("shows headless schedule attention and its exact session before a report exists", async () => {
+	const f = fixture("schedule");
+	const occurrence = {
+		schemaVersion: 2,
+		scheduleId: "daily",
+		scheduleRevision: 1,
+		idempotencyKey: "first",
+		launchState: "started",
+		operationId: "operation-first",
+		trigger: { kind: "manual" },
+		createdAtMs: 1,
+		updatedAtMs: 1,
+		runtime: {
+			state: "observed",
+			observedAtMs: 2,
+			lifecycle: "running",
+			activity: "waiting",
+			attention: "input_required",
+			session: {
+				sessionId: "headless-session",
+				workspaceId: "headless-workspace",
+				providerId: "claude",
+				runnerPrincipal: "p1",
+				runnerInstance: "r1",
+				channelEpoch: "1",
+				hostInstanceId: "h1",
+				terminalEpoch: "t1",
+			},
+		},
+	};
+	f.invokeCommand.mockImplementation(async (_command, args) => ({
+		schemaVersion: 1,
+		routeAuthority: local,
+		backendId: local.backend.id,
+		backendGeneration: local.backend.generation,
+		result: {
+			schemaVersion: 1,
+			...(args.operation === "schedule.inspect"
+				? { occurrence, resultMarkdown: null }
+				: { occurrences: [occurrence] }),
+		},
+	}));
+	render(f.view());
+	await screen.findByRole("heading", {
+		name: "Waiting for input · awaiting report",
+	});
+	expect(screen.getByText("headless-session")).toBeTruthy();
+	expect(screen.getByText("headless-workspace")).toBeTruthy();
+	expect(screen.queryByText("Report received")).toBeNull();
+});
+
 describe.each(["graph", "schedule"] as const)("%s run observation", (kind) => {
 	it("reads and inspects the initial selection once", async () => {
 		const f = fixture(kind);

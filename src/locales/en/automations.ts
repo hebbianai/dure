@@ -49,6 +49,7 @@ export const automationsEnglishTranslations: Record<string, string> = {
 	"automations.scheduled": "Scheduled",
 	"automations.runRevision": "Configuration revision {revision}",
 	"automations.noReport": "No report has been received for this run yet.",
+	"automations.session": "Session",
 	"automations.workspace": "Workspace",
 	"automations.saveFirst": "Save the configuration before running.",
 	"automations.name": "Name",
@@ -186,4 +187,17 @@ export const automationsEnglishTranslations: Record<string, string> = {
 	"automations.graph.issues.revisionConflict":
 		"The workflow changed elsewhere. Reopen it to load the latest version.",
 	"automations.graph.issues.invalid": "Check this setting ({code}).",
+	"automations.runtimeUnavailable":
+		"Runtime status unavailable · awaiting report",
+	"automations.exitedWithoutReport": "Provider exited · no report received",
+	"automations.inputRequired": "Waiting for input · awaiting report",
+	"automations.approvalRequired": "Waiting for approval · awaiting report",
+	"automations.providerError": "Provider needs attention · awaiting report",
+	"automations.providerStarting":
+		"Provider starting · inspect session for startup prompts",
+	"automations.providerWorking": "Working · awaiting report",
+	"automations.providerWaiting":
+		"Provider waiting · inspect session · awaiting report",
+	"automations.projectTrustRequired":
+		"Start blocked: review and trust the registered project folder in Claude, then run again",
 };

@@ -50,6 +50,7 @@ export const automations: Record<string, string> = {
 	"automations.scheduled": "Planifiée",
 	"automations.runRevision": "Version de configuration {revision}",
 	"automations.noReport": "Aucun rapport reçu pour cette exécution.",
+	"automations.session": "Session",
 	"automations.workspace": "Espace de travail",
 	"automations.saveFirst": "Enregistrez la configuration avant de l’exécuter.",
 	"automations.name": "Nom",
@@ -191,4 +192,18 @@ export const automations: Record<string, string> = {
 	"automations.graph.issues.revisionConflict":
 		"Le workflow a été modifié ailleurs. Rouvrez-le pour charger la dernière version.",
 	"automations.graph.issues.invalid": "Vérifiez ce réglage ({code}).",
+	"automations.runtimeUnavailable":
+		"État d’exécution indisponible · rapport attendu",
+	"automations.exitedWithoutReport": "Fournisseur arrêté · aucun rapport reçu",
+	"automations.inputRequired": "Saisie attendue · rapport attendu",
+	"automations.approvalRequired": "Approbation attendue · rapport attendu",
+	"automations.providerError":
+		"Le fournisseur nécessite une intervention · rapport attendu",
+	"automations.providerStarting":
+		"Démarrage du fournisseur · vérifiez les invites de la session",
+	"automations.providerWorking": "Travail en cours · rapport attendu",
+	"automations.providerWaiting":
+		"Fournisseur en attente · vérifiez la session · rapport attendu",
+	"automations.projectTrustRequired":
+		"Démarrage bloqué : examinez et approuvez le dossier du projet enregistré dans Claude, puis relancez",
 };

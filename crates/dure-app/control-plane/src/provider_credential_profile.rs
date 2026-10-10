@@ -53,6 +53,14 @@ impl PreparedProviderCredentialLaunchV1 {
 }
 
 pub(crate) trait ProviderCredentialProfileLaunchPreparer: Send + Sync {
+    fn check_unattended_claude_workspace(
+        &self,
+        _directory: Option<&Path>,
+        _workspace: &Path,
+    ) -> Result<(), &'static str> {
+        Err("schedule_claude_trust_unavailable")
+    }
+
     fn prepare(
         &self,
         provider_id: &ProviderIdV1,
@@ -85,6 +93,22 @@ impl NativeProviderCredentialProfileLaunchPreparer {
 }
 
 impl ProviderCredentialProfileLaunchPreparer for NativeProviderCredentialProfileLaunchPreparer {
+    fn check_unattended_claude_workspace(
+        &self,
+        directory: Option<&Path>,
+        workspace: &Path,
+    ) -> Result<(), &'static str> {
+        let root = directory
+            .or(self.platform_home.as_deref())
+            .ok_or("schedule_claude_trust_unavailable")?;
+        match dure_provider_profile::claude_workspace_trusted(&root.join(".claude.json"), workspace)
+        {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("schedule_claude_project_trust_required"),
+            Err(_) => Err("schedule_claude_trust_unavailable"),
+        }
+    }
+
     fn prepare(
         &self,
         provider_id: &ProviderIdV1,
@@ -578,6 +602,24 @@ where
         }))
     }
 
+    /// Reuse managed profile preparation before reading its existing trust.
+    pub(crate) async fn check_unattended_claude_workspace(
+        &self,
+        execution_profile: &AgentExecutionProfileV1,
+        workspace: &Path,
+    ) -> Result<(), String> {
+        let prepared = self
+            .prepare_for_launch(&ProviderIdV1::new("claude").unwrap(), execution_profile)
+            .await
+            .map_err(|error| error.code().to_string())?;
+        self.launch_preparer
+            .check_unattended_claude_workspace(
+                prepared.resolved().map(|profile| profile.directory()),
+                workspace,
+            )
+            .map_err(str::to_string)
+    }
+
     /// Prepare one generation-fenced profile at the last boundary before exec.
     pub(crate) async fn prepare_for_launch(
         &self,
@@ -731,6 +773,42 @@ fn map_store_error(error: DomainStoreErrorV1) -> ProviderCredentialProfileErrorV
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unattended_claude_trust_uses_the_selected_config_and_never_creates_one() {
+        use super::*;
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("project");
+        let selected = root.path().join("selected");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::create_dir(&selected).unwrap();
+        let workspace = workspace.canonicalize().unwrap();
+        std::fs::write(
+            selected.join(".claude.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "projects": {workspace.to_str().unwrap(): {"hasTrustDialogAccepted": true}}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let preparer = NativeProviderCredentialProfileLaunchPreparer::new(
+            root.path().join("dure"),
+            Some(root.path().into()),
+        );
+        assert_eq!(
+            preparer.check_unattended_claude_workspace(None, &workspace),
+            Err("schedule_claude_project_trust_required")
+        );
+        assert!(!root.path().join(".claude.json").exists());
+        assert_eq!(
+            preparer.check_unattended_claude_workspace(Some(&selected), &workspace),
+            Ok(())
+        );
+        std::fs::write(selected.join(".claude.json"), b"broken").unwrap();
+        assert_eq!(
+            preparer.check_unattended_claude_workspace(Some(&selected), &workspace),
+            Err("schedule_claude_trust_unavailable")
+        );
+    }
     use super::*;
     use dure_app_sqlite::SqliteDomainStore;
     use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};

@@ -36,6 +36,38 @@ function envelope(result: Record<string, unknown>) {
 	};
 }
 describe("schedule IPC", () => {
+	it("falls back only for an older backend missing runtime observation", async () => {
+		const invokeCommand = vi
+			.fn()
+			.mockRejectedValueOnce({
+				code: "backend_transport_capability_missing",
+				details: { capability: "schedule.runtime_observation_v1" },
+			})
+			.mockResolvedValueOnce(envelope({ occurrences: [] }));
+		expect(
+			await createScheduleClient({ invokeCommand }).occurrences(
+				"daily",
+				authority,
+			),
+		).toEqual([]);
+		expect(invokeCommand.mock.calls[0][1].body).toHaveProperty(
+			"includeRuntime",
+			true,
+		);
+		expect(invokeCommand.mock.calls[1][1].body).not.toHaveProperty(
+			"includeRuntime",
+		);
+		const unavailable = vi
+			.fn()
+			.mockRejectedValue({ code: "backend_transport_unavailable" });
+		await expect(
+			createScheduleClient({ invokeCommand: unavailable }).occurrences(
+				"daily",
+				authority,
+			),
+		).rejects.toMatchObject({ code: "backend_transport_unavailable" });
+		expect(unavailable).toHaveBeenCalledTimes(1);
+	});
 	it("binds effects to the route and revision that supplied the schedule", async () => {
 		const invokeCommand = vi
 			.fn()

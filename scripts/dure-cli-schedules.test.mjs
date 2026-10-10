@@ -164,6 +164,35 @@ process.stdout.write(JSON.stringify({
 }
 
 describe("dure schedule", () => {
+  it.each([false, true])("negotiates optional runtime observation without changing older requests (%s)", async (capable) => {
+    let request;
+    const report = await collectScheduleCommand({
+      action: "occurrences",
+      backend: { profile: { id: "local", transport: { kind: "local" }, expected: {
+        capabilities: capable ? ["schedule.runtime_observation_v1"] : [],
+      } } },
+      requestBackend: async (_profile, body) => {
+        request = body;
+        return { backend: { id: "local" }, result: { schemaVersion: 1, occurrences: [{
+          schemaVersion: 2, scheduleId: "daily", scheduleRevision: 1, trigger: { kind: "manual" },
+          idempotencyKey: "run", launchState: "started", operationId: "spawn", createdAtMs: 1, updatedAtMs: 1,
+          ...(capable ? { runtime: { state: "unavailable", observedAtMs: 2, errorCode: "hmux_descriptor_unavailable" } } : {}),
+        }] } };
+      },
+    });
+    expect(report.kind).toBe("dure.schedules.occurrences");
+    expect(request.body.includeRuntime).toBe(capable ? true : undefined);
+    expect(request.requiredCapabilities.includes("schedule.runtime_observation_v1")).toBe(capable);
+    expect(formatScheduleCommand(report)).toContain(capable ? "Runtime status unavailable" : "Started; awaiting report");
+  });
+
+  it("shows provider input and approval attention without claiming completion", () => {
+    for (const [attention, text] of [["input_required", "Waiting for input"], ["approval_required", "Waiting for approval"]]) {
+      const occurrence = { idempotencyKey: "run", launchState: "started", runtime: { state: "observed", lifecycle: "running", activity: "waiting", attention } };
+      expect(formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence })).toContain(text);
+      expect(formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence: { ...occurrence, run: { completed: true } } })).toContain("Report received");
+    }
+  });
   it("requires exactly one project selector at the client boundary", async () => {
     const report = await collectScheduleCommand({
       action: "put",

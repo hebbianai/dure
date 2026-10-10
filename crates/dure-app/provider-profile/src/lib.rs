@@ -6,6 +6,12 @@
 //! remains private to each profile. See the credential-only switching design.
 
 mod claude_shared_state;
+
+/// Read Claude's existing project trust using the same bounded, owned-file
+/// reader as managed profile preparation. This never accepts a trust prompt.
+pub fn claude_workspace_trusted(config: &Path, workspace: &Path) -> Result<bool, String> {
+    claude_shared_state::workspace_trusted(config, workspace)
+}
 #[cfg(test)]
 mod codex_config_tests;
 mod overlay_topology;

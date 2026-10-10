@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { Alert } from "@/components/ui/alert";
 import { SafeMarkdown } from "@/components/common/SafeMarkdown";
-import {
-	EmptyHint, LoadingRow} from "@/components/common/StatusBlocks";
+import { EmptyHint, LoadingRow } from "@/components/common/StatusBlocks";
 import { RefreshButton } from "@/components/ui/refresh-button";
 import { observeRunHistory } from "@/lib/automations/observeRunHistory";
 import {
@@ -127,11 +126,20 @@ export function AutomationRuns({
 								{t("automations.noReport")}
 							</p>
 						)}
-						{report.occurrence.run && (
+						{(report.occurrence.run || report.occurrence.runtime?.session) && (
 							<dl className="grid min-w-0 gap-1 border-t border-border pt-3 text-[11px] text-muted-foreground">
+								{report.occurrence.runtime?.session && (
+									<>
+										<dt>{t("automations.session")}</dt>
+										<dd className="break-all font-mono" data-selectable>
+											{report.occurrence.runtime.session.sessionId}
+										</dd>
+									</>
+								)}
 								<dt>{t("automations.workspace")}</dt>
 								<dd className="break-all font-mono" data-selectable>
-									{report.occurrence.run.workspaceId}
+									{report.occurrence.runtime?.session?.workspaceId ??
+										report.occurrence.run?.workspaceId}
 								</dd>
 							</dl>
 						)}

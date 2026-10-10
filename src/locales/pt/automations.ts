@@ -50,6 +50,7 @@ export const automations: Record<string, string> = {
 	"automations.scheduled": "Agendada",
 	"automations.runRevision": "Versão da configuração {revision}",
 	"automations.noReport": "Nenhum relatório recebido para esta execução.",
+	"automations.session": "Sessão",
 	"automations.workspace": "Espaço de trabalho",
 	"automations.saveFirst": "Salve a configuração antes de executar.",
 	"automations.name": "Nome",
@@ -188,4 +189,19 @@ export const automations: Record<string, string> = {
 	"automations.graph.issues.revisionConflict":
 		"O fluxo foi alterado em outro lugar. Reabra para carregar a versão mais recente.",
 	"automations.graph.issues.invalid": "Verifique esta configuração ({code}).",
+	"automations.runtimeUnavailable":
+		"Estado de execução indisponível · aguardando relatório",
+	"automations.exitedWithoutReport":
+		"Provedor encerrado · nenhum relatório recebido",
+	"automations.inputRequired": "Aguardando entrada · aguardando relatório",
+	"automations.approvalRequired": "Aguardando aprovação · aguardando relatório",
+	"automations.providerError":
+		"O provedor precisa de atenção · aguardando relatório",
+	"automations.providerStarting":
+		"Provedor iniciando · confira os avisos de início da sessão",
+	"automations.providerWorking": "Trabalhando · aguardando relatório",
+	"automations.providerWaiting":
+		"Provedor aguardando · confira a sessão · aguardando relatório",
+	"automations.projectTrustRequired":
+		"Início bloqueado: revise e confie na pasta do projeto registrado no Claude e execute novamente",
 };

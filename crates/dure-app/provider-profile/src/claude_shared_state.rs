@@ -20,6 +20,30 @@ const STATE_FILE: &str = ".claude.json";
 const MANIFEST_FILE: &str = ".claude-shared-state-v1.json";
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_ATTEMPTS: usize = 3;
+
+/// Observe a prior user decision without granting trust or rewriting provider state.
+/// Claude accepts trusted ancestors; a nearer explicit refusal remains a refusal.
+pub(crate) fn workspace_trusted(config: &Path, workspace: &Path) -> Result<bool, String> {
+    let source = read_source("unattended-launch".into(), config.to_path_buf())?;
+    let workspace = workspace.canonicalize().map_err(|_| {
+        error(
+            "credential_shared_state_source_invalid",
+            "workspace is unavailable",
+        )
+    })?;
+    for path in workspace.ancestors() {
+        let Some(path) = path.to_str() else {
+            return Ok(false);
+        };
+        if let Some(value) = source.state.get(&SharedKey::ProjectField(
+            path.into(),
+            "hasTrustDialogAccepted".into(),
+        )) {
+            return Ok(value == &Value::Bool(true));
+        }
+    }
+    Ok(false)
+}
 const PROJECT_FIELDS: &[&str] = &[
     "disabledMcpjsonServers",
     "enabledMcpjsonServers",

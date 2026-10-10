@@ -48,6 +48,7 @@ export const automations: Record<string, string> = {
 	"automations.scheduled": "예약",
 	"automations.runRevision": "설정 버전 {revision}",
 	"automations.noReport": "아직 이 실행의 보고서를 받지 못했습니다.",
+	"automations.session": "세션",
 	"automations.workspace": "작업 공간",
 	"automations.saveFirst": "실행 전에 설정을 저장하세요.",
 	"automations.name": "이름",
@@ -185,4 +186,14 @@ export const automations: Record<string, string> = {
 	"automations.graph.issues.revisionConflict":
 		"다른 곳에서 워크플로가 변경되었습니다. 다시 열어 최신 버전을 불러오세요.",
 	"automations.graph.issues.invalid": "설정을 확인하세요({code}).",
+	"automations.runtimeUnavailable": "런타임 상태 확인 불가 · 보고서 대기",
+	"automations.exitedWithoutReport": "제공자 종료 · 보고서 없음",
+	"automations.inputRequired": "입력 대기 · 보고서 대기",
+	"automations.approvalRequired": "승인 대기 · 보고서 대기",
+	"automations.providerError": "제공자 확인 필요 · 보고서 대기",
+	"automations.providerStarting": "제공자 시작 중 · 세션의 시작 프롬프트 확인",
+	"automations.providerWorking": "작업 중 · 보고서 대기",
+	"automations.providerWaiting": "제공자 대기 중 · 세션 확인 · 보고서 대기",
+	"automations.projectTrustRequired":
+		"시작 차단: Claude에서 등록된 프로젝트 폴더를 검토하고 신뢰한 후 다시 실행하세요",
 };

@@ -19,7 +19,11 @@ All commands support --backend ID and --json. Runs use an isolated Git worktree 
 --no-worktree runs in the registered project root, including non-Git directories.
 It requires backend capability schedule.worktree_project_root_v1; shared files are not isolated.
 The local or SSH control plane must be running; the IDE can be closed.
-Run-once queues a test without changing the schedule. Inspect reads the retained report.`;
+Run-once queues a test without changing the schedule. Inspect reads the retained report.
+Scheduled Claude requires prior trust of the registered project folder in the selected account.
+Review that folder and complete Claude's interactive startup before scheduling; bypass approvals does not grant folder trust.
+Runs/inspect show live provider attention when supported. Started means launch accepted, not task completed.
+Unavailable runtime status does not prove exit. A retained completion report remains authoritative.`;
 
 export async function runScheduleCli(sub, opts, { backendProfileQueryContext, backendProjectPathSelector, fail }) {
   if ([undefined, "help", "-h", "--help"].includes(sub)) {
