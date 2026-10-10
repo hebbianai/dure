@@ -5,8 +5,7 @@ const MAX_EVENTS: usize = 512;
 const MAX_INCIDENTS: usize = 64;
 const MAX_EVENT_BYTES: usize = 16 * 1024;
 const MAX_BATCH_EVENTS: usize = 64;
-const MAX_JOURNAL_BYTES: u64 =
-    ((MAX_EVENTS + MAX_INCIDENTS) * MAX_EVENT_BYTES + 64 * 1024) as u64;
+const MAX_JOURNAL_BYTES: u64 = ((MAX_EVENTS + MAX_INCIDENTS) * MAX_EVENT_BYTES + 256 * 1024) as u64;
 static PROCESS_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
 
 /// Persist one bounded Hmux connection event. A process mutex serializes
@@ -40,20 +39,37 @@ fn append_diagnostics(events: Vec<serde_json::Value>) -> Result<(), String> {
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_owned();
+    with_journal(|raw| Ok(((), Some(append_events_json(raw, events, &timestamp)?))))
+}
+
+/// All diagnostic producers share this lock and atomic journal replacement.
+/// A read uses the same owner, without creating a second persistence path.
+pub(crate) fn with_journal<T>(
+    operation: impl FnOnce(&str) -> Result<(T, Option<String>), String>,
+) -> Result<T, String> {
+    with_journal_at(&crate::hebbian_file(FILE_NAME)?, operation)
+}
+
+fn with_journal_at<T>(
+    path: &Path,
+    operation: impl FnOnce(&str) -> Result<(T, Option<String>), String>,
+) -> Result<T, String> {
     let process_lock = PROCESS_LOCK.get_or_init(Default::default);
     let _process_guard = process_lock
         .lock()
         .map_err(|_| "Hmux connection diagnostics lock poisoned".to_string())?;
-    let path = crate::hebbian_file(FILE_NAME)?;
     let directory = path
         .parent()
         .ok_or_else(|| "Hmux connection diagnostics parent is unavailable".to_string())?;
     secure_directory(directory)?;
     let file_lock = open_file_lock(directory)?;
     file_lock.lock().map_err(|error| error.to_string())?;
-    let raw = read_journal(&path)?;
-    let content = append_events_json(&raw, events, &timestamp)?;
-    persist_journal(&path, &content)
+    let raw = read_journal(path)?;
+    let (result, content) = operation(&raw)?;
+    if let Some(content) = content {
+        persist_journal(path, &content)?;
+    }
+    Ok(result)
 }
 
 fn validate_event(event: &serde_json::Value) -> Result<(), String> {
@@ -144,6 +160,9 @@ fn read_journal(path: &Path) -> Result<String, String> {
 }
 
 fn persist_journal(path: &Path, content: &str) -> Result<(), String> {
+    if content.len() as u64 > MAX_JOURNAL_BYTES {
+        return Err("Diagnostic journal exceeds the size limit".into());
+    }
     let directory = path
         .parent()
         .ok_or_else(|| "Hmux connection diagnostics parent is unavailable".to_string())?;
@@ -262,6 +281,7 @@ fn append_events_json(
         "updatedAt": timestamp,
         "events": events,
         "incidents": incidents,
+        "webviewEvents": crate::webview_diagnostics::retained_events(journal.as_ref()),
     }))
     .map(|content| format!("{content}\n"))
     .map_err(|error| error.to_string())
@@ -349,6 +369,50 @@ fn is_incident(event: &serde_json::Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_disk_journal_preserves_webview_records_across_hmux_writes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(FILE_NAME);
+        let seed = serde_json::json!({
+            "schemaVersion": 2, "events": [], "incidents": [],
+            "webviewEvents": [{
+                "windowLabel": "win-195-1", "level": "error", "source": "console",
+                "code": "client_space_window_changed", "firstSeenMs": 1,
+                "lastSeenMs": 2, "count": 2,
+            }],
+        })
+        .to_string();
+        with_journal_at(&path, |_| Ok(((), Some(seed)))).unwrap();
+        with_journal_at(&path, |raw| {
+            Ok((
+                (),
+                Some(append_events_json(
+                    raw,
+                    vec![serde_json::json!({ "code": "hmux_transport_closed" })],
+                    "now",
+                )?),
+            ))
+        })
+        .unwrap();
+        let journal: serde_json::Value =
+            serde_json::from_str(&read_journal(&path).unwrap()).unwrap();
+        assert_eq!(journal["webviewEvents"][0]["count"], 2);
+        assert_eq!(journal["events"][0]["code"], "hmux_transport_closed");
+        assert!(directory.path().read_dir().unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp")));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
 
     #[test]
     fn recovers_invalid_content_and_preserves_cause() {
@@ -521,13 +585,9 @@ mod tests {
 
         assert_eq!(journal["schemaVersion"], 2);
         assert!(journal["events"].as_array().unwrap().iter().all(|event| {
-            event.get("code").and_then(serde_json::Value::as_str)
-                != Some("hmux_transport_closed")
+            event.get("code").and_then(serde_json::Value::as_str) != Some("hmux_transport_closed")
         }));
-        assert_eq!(
-            journal["incidents"][0]["code"],
-            "hmux_transport_closed"
-        );
+        assert_eq!(journal["incidents"][0]["code"], "hmux_transport_closed");
     }
 
     #[test]

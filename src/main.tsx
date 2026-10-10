@@ -1,3 +1,4 @@
+import "@/lib/platform/installNativeWebviewDiagnostics";
 import React from "react";
 import ReactDOM from "@/lib/platform/reactDomClient";
 import App from "./App";
@@ -248,6 +249,10 @@ if (import.meta.env.DEV && qaParams.has("qaProjectRepository")) {
 		.then(({ SlackConnectionsQaRoot }) =>
 			root.render(<SlackConnectionsQaRoot />),
 		)
+		.catch((error) => renderEntryFailure(error));
+} else if (import.meta.env.DEV && qaParams.has("qaWebviewDiagnostics")) {
+	import("./qa/webviewDiagnostics")
+		.then(({ WebviewDiagnosticsQaRoot }) => root.render(<WebviewDiagnosticsQaRoot />))
 		.catch((error) => renderEntryFailure(error));
 } else if (import.meta.env.DEV && qaParams.has("qaWebviewRealm")) {
 	import("./qa/webviewRealm")

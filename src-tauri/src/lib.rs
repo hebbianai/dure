@@ -47,6 +47,7 @@ mod hmux_input_contract;
 // 인증서가 rustls 가 받는 모양인지, 프레임이 TLS 레코드 경계를 넘는지 알 수 없다.
 pub mod hub;
 mod hmux_diagnostics;
+mod webview_diagnostics;
 mod login_shell;
 mod login_identity;
 #[cfg(target_os = "macos")]
@@ -2491,6 +2492,8 @@ pub fn run() {
             hebbian_write,
             hmux_diagnostics::append_hmux_connection_diagnostic,
             hmux_diagnostics::append_hmux_connection_diagnostics,
+            webview_diagnostics::append_webview_diagnostics,
+            webview_diagnostics::read_webview_diagnostics,
             error_report::save_error_report_bundle,
             agent_pull_request,
             agent_pull_request_create,

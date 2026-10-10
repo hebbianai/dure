@@ -33,6 +33,37 @@ describe("CLI diagnostics receipt", () => {
     });
   });
 
+  it("includes the bounded native WebView journal in the claimed receipt", async () => {
+    const webviewDiagnostics = {
+      schemaVersion: 1 as const,
+      state: "available" as const,
+      events: [
+        {
+          level: "error" as const,
+          source: "console" as const,
+          code: "client_space_window_changed" as const,
+          windowLabel: "win-195-1",
+          firstSeenMs: 1,
+          lastSeenMs: 2,
+          count: 2,
+        },
+      ],
+    };
+    const read = vi.fn().mockResolvedValue(webviewDiagnostics);
+    const receipt = await handleCliDiagnostics(
+      "request-1",
+      vi.fn().mockResolvedValue(true),
+      async () => compatibility,
+      () => 123,
+      read,
+    );
+    expect(receipt).toEqual({
+      ...buildCliDiagnosticsReceipt(compatibility, 123),
+      webviewDiagnostics,
+    });
+    expect(read).toHaveBeenCalledOnce();
+  });
+
   it("claims once before inspecting and returns a typed failure", async () => {
     const claim = vi.fn().mockResolvedValue(true);
     const inspect = vi.fn().mockRejectedValue(new Error("backend unavailable"));
