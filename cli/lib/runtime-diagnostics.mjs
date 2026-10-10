@@ -14,9 +14,11 @@ import {
   resolve,
 } from "node:path";
 import { resolveChannelCommand } from "./dure-cli-channel-launcher.mjs";
+import { parseWebviewDiagnostics } from "./contracts/webview-diagnostics.mjs";
 
 const DEPRECATED_COMMANDS = new Set(["hebbian-ade", "hebbian-ide"]);
 const MAX_JSON_BYTES = 64 * 1024;
+const MAX_DIAGNOSTIC_RESPONSE_BYTES = 128 * 1024;
 const SAFE_BUILD_ID = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 const SAFE_PACKAGE_VERSION =
   /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?$/;
@@ -271,7 +273,7 @@ async function requestJson(fetchImpl, url, init, timeoutMs) {
     const response = await fetchImpl(url, { ...init, signal: controller.signal });
     const text = await response.text();
     let body = null;
-    if (text.length <= MAX_JSON_BYTES) {
+    if (Buffer.byteLength(text, "utf8") <= MAX_DIAGNOSTIC_RESPONSE_BYTES) {
       try {
         body = JSON.parse(text);
       } catch {}
@@ -443,6 +445,9 @@ export async function inspectAppRuntime({
   return {
     state: "running",
     ...descriptor.public,
+    webviewDiagnostics: parseWebviewDiagnostics(diagnostics.body.webviewDiagnostics) ?? {
+      schemaVersion: 1, state: "unavailable", events: [],
+    },
     compatibility: {
       state: "available",
       mode: compatibility.mode,
@@ -578,6 +583,7 @@ export function formatVersion(identity) {
 
 export function formatDiagnosticReport(report) {
   const compatibility = report.app.compatibility;
+  const webview = report.app.webviewDiagnostics;
   const checkLines = report.check
     ? [
         "check:",
@@ -606,6 +612,11 @@ export function formatDiagnosticReport(report) {
     `  source_revision: ${label(compatibility.detail?.frontendSourceRevision)}`,
     `  worktree_overlay: ${label(compatibility.detail?.frontendWorktreeOverlay)}`,
     `  compatibility: ${compatibility.mode ?? compatibility.state}`,
+    "webview:",
+    `  state: ${webview?.state ?? "unavailable"}`,
+    `  retained_events: ${webview?.events.length ?? 0}`,
+    ...(webview?.events.slice(-8).map((event) =>
+      `  - ${event.windowLabel}: ${event.level} ${event.code} (${event.source}, count ${event.count})`) ?? []),
     "hmux:",
     `  command: ${label(report.hmux.command)}`,
     `  version: ${label(report.hmux.version)}`,

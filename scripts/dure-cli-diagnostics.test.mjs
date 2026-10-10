@@ -338,6 +338,11 @@ describe("Dure runtime diagnostics", () => {
         ok: true,
         schemaVersion: 1,
         compatibility: currentCompatibility(),
+        webviewDiagnostics: { schemaVersion: 1, state: "available", events: [{
+          windowLabel: "win-195-1", level: "error", source: "console",
+          code: "client_space_window_changed", firstSeenMs: 1, lastSeenMs: 2, count: 3,
+          message: "private console content",
+        }] },
       });
     });
 
@@ -358,6 +363,8 @@ describe("Dure runtime diagnostics", () => {
       },
     });
     expect(JSON.stringify(app)).not.toContain("secret-control-token");
+    expect(JSON.stringify(app)).not.toContain("private console content");
+    expect(app.webviewDiagnostics).toMatchObject({ state: "available", events: [{ code: "client_space_window_changed", count: 3 }] });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
@@ -382,6 +389,20 @@ describe("Dure runtime diagnostics", () => {
     });
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
+
+  it.each([undefined, null, { schemaVersion: 2 }, { schemaVersion: 1, state: "available", events: [{ message: "private" }] }])(
+    "keeps compatibility available when optional WebView diagnostics are missing or invalid: %j", async (webviewDiagnostics) => {
+      const root = temporaryDirectory("dure-webview-compat-");
+      const descriptorPath = path.join(root, "server.json");
+      fs.writeFileSync(descriptorPath, JSON.stringify(serverDescriptor()));
+      const fetchImpl = async (url) => response(String(url).endsWith("/ping")
+        ? { ok: true, channel: "stable", generation: "generation-1", processId: 42 }
+        : { ok: true, schemaVersion: 1, compatibility: currentCompatibility(), webviewDiagnostics });
+      const app = await inspectAppRuntime({ descriptorPath, fetchImpl });
+      expect(app.compatibility.mode).toBe("current");
+      expect(app.webviewDiagnostics).toEqual({ schemaVersion: 1, state: "unavailable", events: [] });
+    },
+  );
 
   it("degrades safely when an old app has no diagnostics endpoint", async () => {
     const root = temporaryDirectory("dure-old-app-diagnostics-");
