@@ -652,6 +652,11 @@ fn validate_agent_runtime_state_projection(
     {
         return Err(inconsistent("agent_runtime_state.exited"));
     }
+    if projection.program_status.as_ref().is_some_and(|status| {
+        projection.lifecycle != AgentRuntimeLifecycle::Running || !status.is_valid()
+    }) {
+        return Err(inconsistent("agent_runtime_state.program_status"));
+    }
     Ok(())
 }
 
@@ -1811,6 +1816,7 @@ mod tests {
             attention_id: Some("attention-2".into()),
             source: AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 0,
+            program_status: None,
         };
         let state = frame(FrameBody::AgentRuntimeState(valid.clone()));
         assert!(state.validate(&FrameLimits::default()).is_ok());
@@ -1908,6 +1914,7 @@ mod tests {
                 attention_id: None,
                 source: AgentRuntimeStateSource::ProviderEvent,
                 turn_completed_count: 1,
+                program_status: None,
             }),
             provider_conversation_identity: None,
             recovered_presentation: None,

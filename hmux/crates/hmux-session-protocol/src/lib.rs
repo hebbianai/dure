@@ -11,6 +11,12 @@ pub use agent_progress::{
     AgentMessageTurn, AgentProgressPhase, AgentProgressProjection, AgentProgressReport,
 };
 pub mod browser_dialog;
+mod program_status;
+pub use program_status::{
+    PROGRAM_STATUS_APP_MAX_BYTES, PROGRAM_STATUS_MESSAGE_MAX_BYTES, ProgramStatusBlockedKind,
+    ProgramStatusProjection, ProgramStatusState, is_program_status_app,
+    is_program_status_control_char, is_program_status_format_char,
+};
 pub mod browser_interception;
 pub mod browser_keyboard;
 pub mod browser_network;

@@ -272,6 +272,78 @@ describe("structured terminal record carrier", () => {
 		]);
 	});
 
+	it("keeps a program's valid status and drops a malformed one without rejecting Host state", async () => {
+		const runtimeState = (revision: string, programStatus: unknown) =>
+			new TextEncoder().encode(
+				JSON.stringify({
+					kind: "agent_runtime_state",
+					state: {
+						terminalEpoch: "terminal-1",
+						revision,
+						observedThroughOutputSeq: "1",
+						lifecycle: "running",
+						activity: "waiting",
+						attention: "none",
+						source: "process_lifecycle",
+						turnCompletedCount: "0",
+						programStatus,
+					},
+				}),
+			);
+		mocks.attachLocal.mockImplementation(
+			(request: { onRecord(record: ArrayBuffer): void }) => {
+				for (const record of [
+					runtimeState("7", {
+						state: "blocked",
+						blocked_kind: "permission",
+						app: "claude-code",
+						message: "Allow Bash(cargo test)?",
+					}),
+					runtimeState("8", { state: "done", blocked_kind: "auth" }),
+				]) {
+					request.onRecord(record.buffer as ArrayBuffer);
+				}
+				return Promise.resolve({ ...receipt, initialDeliveryRecordCount: 2 });
+			},
+		);
+
+		const attached = await attachStructuredTerminalRecords({
+			observerId: "observer-a",
+			surfaceId: "surface-a",
+			binding: hmuxStandaloneBinding("session-a", "workspace-a"),
+			sshHosts: [],
+		});
+
+		const delivered = attached.startDelivery();
+		expect(delivered).toMatchObject([
+			{
+				kind: "adapter",
+				record: {
+					kind: "agent_runtime_state",
+					state: {
+						revision: "7",
+						programStatus: {
+							state: "blocked",
+							blocked_kind: "permission",
+							app: "claude-code",
+							message: "Allow Bash(cargo test)?",
+						},
+					},
+				},
+			},
+			{
+				kind: "adapter",
+				record: { kind: "agent_runtime_state", state: { revision: "8" } },
+			},
+		]);
+		const malformed = delivered[1];
+		expect(
+			malformed.kind === "adapter" &&
+				malformed.record.kind === "agent_runtime_state" &&
+				"programStatus" in malformed.record.state,
+		).toBe(false);
+	});
+
 	it("carries generic agent identity transitions in the ordered pull stream", async () => {
 		mocks.attachLocal.mockImplementation(
 			(request: { onRecord(record: ArrayBuffer): void }) => {

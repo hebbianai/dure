@@ -1404,6 +1404,7 @@ name = "hmux-host"
 version = "0.2.44"
 dependencies = [
  "alacritty_terminal",
+ "base64",
  "fs2",
  "hmux-local-platform",
  "hmux-session-protocol",

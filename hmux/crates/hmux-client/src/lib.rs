@@ -1,5 +1,6 @@
 pub use hmux_session_protocol::{
     AgentMessageTurn, AgentProgressPhase, AgentProgressProjection, AgentProgressReport,
+    ProgramStatusBlockedKind, ProgramStatusProjection, ProgramStatusState,
 };
 mod catalog;
 #[cfg(feature = "local-runtime")]

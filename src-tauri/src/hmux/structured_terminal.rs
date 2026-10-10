@@ -1523,6 +1523,7 @@ mod tests {
             attention_id: None,
             source: AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 3,
+            program_status: None,
         }
     }
 

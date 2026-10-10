@@ -236,6 +236,12 @@ pub struct AgentRuntimeStateProjection {
     // frames deserialize to zero, so older peers stay compatible.
     #[serde(default, with = "super::json_u64", skip_serializing_if = "u64_is_zero")]
     pub turn_completed_count: u64,
+    /// What the running program reported about itself through OSC 7501.
+    /// Additive and presentation-only: it never feeds the semantic fields
+    /// above, and it is present only while the agent is running. Boxed so
+    /// snapshot frames carrying this projection stay compact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_status: Option<Box<super::ProgramStatusProjection>>,
 }
 
 fn u64_is_zero(value: &u64) -> bool {
@@ -274,6 +280,7 @@ impl fmt::Debug for AgentRuntimeStateProjection {
             .field("has_attention_id", &self.attention_id.is_some())
             .field("source", &self.source)
             .field("turn_completed_count", &self.turn_completed_count)
+            .field("program_status", &self.program_status)
             .finish()
     }
 }

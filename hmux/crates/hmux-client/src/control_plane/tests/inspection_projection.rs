@@ -41,6 +41,7 @@ fn fresh_observation_projects_only_the_matching_host_generation() {
                 attention_id: None,
                 source: crate::AgentRuntimeStateSource::ProviderEvent,
                 turn_completed_count: "1".into(),
+                program_status: None,
             }),
             provider_conversation_identity: Some(Box::new(
                 ProviderConversationIdentityDescriptor {

@@ -26,7 +26,7 @@ default = ["local-runtime"]
 # cannot fail on the one regression this split exists to prevent. Verified
 # 2026-07-29 by re-leaking `mod runtime_broker;`: check → exit 0, clippy →
 # exit 101.
-local-runtime = ["dep:alacritty_terminal"]
+local-runtime = ["dep:alacritty_terminal", "dep:base64"]
 # The Ghostty terminal core against an externally built exact-pin libghostty-vt
 # receipt. Despite the name this is the shipping core: hmux-runtime's
 # `terminal-state-stream` feature enables it, and the staged product binary
@@ -43,6 +43,7 @@ ghostty-core-proof = [
 
 [dependencies]
 alacritty_terminal = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
 fs2.workspace = true
 hmux-local-platform = { path = "../hmux-local-platform" }
 hmux-session-protocol = { path = "../hmux-session-protocol" }

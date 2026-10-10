@@ -6206,6 +6206,7 @@ mod tests {
             attention_id: None,
             source: AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 0,
+            program_status: None,
         });
         let ordinary = FrameBody::Detach(Detach { reason: None });
 
@@ -6251,6 +6252,7 @@ mod tests {
                 attention_id: None,
                 source: AgentRuntimeStateSource::ProviderEvent,
                 turn_completed_count: 0,
+                program_status: None,
             }),
             provider_conversation_identity: Some(Box::new(
                 hmux_host::local_protocol::ProviderConversationIdentityProjection {

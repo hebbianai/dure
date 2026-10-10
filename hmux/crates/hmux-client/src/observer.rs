@@ -273,6 +273,9 @@ pub struct AgentRuntimeStateDescriptor {
     pub attention_id: Option<String>,
     pub source: AgentRuntimeStateSource,
     pub turn_completed_count: String,
+    /// The running program's own OSC 7501 report; presentation only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_status: Option<Box<hmux_session_protocol::ProgramStatusProjection>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -816,6 +819,7 @@ pub fn project_agent_runtime_state(
         source,
         turn_completed_count: projection.turn_completed_count.to_string(),
         progress: projection.progress,
+        program_status: projection.program_status,
     })
 }
 
@@ -1439,6 +1443,7 @@ mod tests {
             attention_id: None,
             source: HostAgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 1,
+            program_status: None,
         });
         let hello = serve(
             fixture.socket_path.clone(),
@@ -1490,6 +1495,7 @@ mod tests {
             attention_id: Some("inferred-input".into()),
             source: HostAgentRuntimeStateSource::TerminalInference,
             turn_completed_count: 0,
+            program_status: None,
         });
         let _hello = serve(
             fixture.socket_path.clone(),

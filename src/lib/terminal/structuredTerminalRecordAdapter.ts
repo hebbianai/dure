@@ -1,4 +1,5 @@
 import { parseAgentProgress } from "@/lib/agents/agentProgress";
+import { parseProgramStatus } from "@/lib/agents/programStatus";
 import { PROVIDER_IDS } from "@/lib/agents/providers";
 import { isRetryDirective } from "@/lib/hmux/failure/structuredTerminalAttachFailure";
 import {
@@ -534,6 +535,7 @@ function validateAgentRuntimeState(value: unknown): HmuxAgentRuntimeState {
 		throw new Error("agent runtime exited state is invalid");
 	}
 	const progress = parseAgentProgress(value.progress);
+	const programStatus = parseProgramStatus(value.programStatus);
 	return {
 		terminalEpoch: value.terminalEpoch,
 		revision: value.revision,
@@ -546,6 +548,7 @@ function validateAgentRuntimeState(value: unknown): HmuxAgentRuntimeState {
 			: {}),
 		source: value.source,
 		...(progress ? { progress } : {}),
+		...(programStatus ? { programStatus } : {}),
 		...(typeof value.turnCompletedCount === "string"
 			? { turnCompletedCount: value.turnCompletedCount }
 			: {}),

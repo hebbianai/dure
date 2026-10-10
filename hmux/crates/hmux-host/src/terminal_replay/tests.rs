@@ -2548,3 +2548,4 @@ fn unseeded_session_does_not_invent_default_colors() {
 }
 
 mod agent_progress;
+mod program_status;

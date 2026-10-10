@@ -742,6 +742,9 @@ pub struct ObserverAgentRuntimeState {
     pub progress: Option<hmux_client::AgentProgressProjection>,
     /// 완료 카운터(u64) — JS 정밀도 함정을 피해 revision과 같은 10진 문자열로 전달.
     pub turn_completed_count: String,
+    /// Program-reported OSC 7501 status; presentation beside Host semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_status: Option<Box<hmux_client::ProgramStatusProjection>>,
 }
 
 #[derive(Clone, Eq, PartialEq, Serialize)]
@@ -2305,6 +2308,7 @@ fn project_agent_runtime_state(state: AgentRuntimeStateDescriptor) -> ObserverAg
         },
         progress: state.progress,
         turn_completed_count: state.turn_completed_count,
+        program_status: state.program_status,
     }
 }
 
@@ -2893,6 +2897,7 @@ mod tests {
             source: AgentRuntimeStateSource::ProviderEvent,
             progress: None,
             turn_completed_count: "3".into(),
+            program_status: None,
         });
         assert_eq!(projected.turn_completed_count, "3");
         assert_eq!(projected.activity, "waiting");

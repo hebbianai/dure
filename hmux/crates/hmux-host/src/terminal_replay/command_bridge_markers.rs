@@ -2,116 +2,52 @@
 // emulation. Observe it at the serialized PTY boundary; Ghostty still owns
 // every screen, mode and standard terminal effect. Never replay a handoff
 // while restoring a terminal checkpoint.
+use super::osc_scanner::{OscFilter, OscScanEvent, OscScanner};
+
 const PREFIX: &[u8] = b"778;dure-hmux-command-bridge-v1;";
 const MAX_OSC_BYTES: usize = 4 + 4096; // The typed event label's wire limit.
 const MAX_MARKERS_PER_WRITE: usize = 32;
+const FILTERS: &[OscFilter] = &[OscFilter {
+    prefix: PREFIX,
+    max_payload_bytes: MAX_OSC_BYTES,
+}];
 
-#[derive(Default)]
-enum State {
-    #[default]
-    Ground,
-    Escape,
-    Osc,
-    OscEscape,
-    String,
-    StringEscape,
+pub(super) struct CommandBridgeMarkers {
+    scanner: OscScanner,
 }
 
-#[derive(Default)]
-pub(super) struct CommandBridgeMarkers {
-    state: State,
-    pending: Vec<u8>,
-    rejected: bool,
+impl Default for CommandBridgeMarkers {
+    fn default() -> Self {
+        Self {
+            scanner: OscScanner::new(FILTERS),
+        }
+    }
 }
 
 impl CommandBridgeMarkers {
     pub(super) fn ingest(&mut self, bytes: &[u8]) -> (Vec<String>, bool) {
         let mut markers = Vec::new();
         let mut overflow = false;
-        for &byte in bytes {
-            if matches!(byte, 0x18 | 0x1a) {
-                self.state = State::Ground;
-                self.pending.clear();
-                continue;
+        self.scanner.ingest(bytes, |event| {
+            let OscScanEvent::Osc { payload, .. } = event else {
+                return;
+            };
+            let label = &payload[PREFIX.len()..];
+            if label.is_empty()
+                || !label
+                    .iter()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(byte))
+            {
+                return;
             }
-            match self.state {
-                State::Ground => {
-                    if byte == 0x1b {
-                        self.state = State::Escape;
-                    }
-                }
-                State::Escape => self.escape(byte),
-                State::Osc => match byte {
-                    0x07 => self.finish(&mut markers, &mut overflow),
-                    0x1b => self.state = State::OscEscape,
-                    _ => {
-                        let index = self.pending.len();
-                        if self.rejected {
-                            continue;
-                        }
-                        if index >= MAX_OSC_BYTES
-                            || (index < PREFIX.len() && byte != PREFIX[index])
-                            || (index >= PREFIX.len()
-                                && !byte.is_ascii_alphanumeric()
-                                && !b"_-".contains(&byte))
-                        {
-                            self.rejected = true;
-                            self.pending.clear();
-                        } else {
-                            self.pending.push(byte);
-                        }
-                    }
-                },
-                State::OscEscape => {
-                    if byte == b'\\' {
-                        self.finish(&mut markers, &mut overflow);
-                    } else {
-                        self.pending.clear();
-                        self.escape(byte);
-                    }
-                }
-                // Do not interpret marker-looking text inside DCS/SOS/PM/APC.
-                State::String => {
-                    if byte == 0x1b {
-                        self.state = State::StringEscape;
-                    }
-                }
-                State::StringEscape => {
-                    self.state = match byte {
-                        b'\\' => State::Ground,
-                        0x1b => State::StringEscape,
-                        _ => State::String,
-                    };
-                }
-            }
-        }
-        (markers, overflow)
-    }
-
-    fn escape(&mut self, byte: u8) {
-        self.state = match byte {
-            b']' => {
-                self.pending.clear();
-                self.rejected = false;
-                State::Osc
-            }
-            b'P' | b'X' | b'^' | b'_' => State::String,
-            0x1b => State::Escape,
-            _ => State::Ground,
-        };
-    }
-
-    fn finish(&mut self, markers: &mut Vec<String>, overflow: &mut bool) {
-        if !self.rejected && self.pending.len() > PREFIX.len() {
             if markers.len() < MAX_MARKERS_PER_WRITE {
                 // All accepted bytes are ASCII; strip only the OSC number.
-                markers.push(String::from_utf8_lossy(&self.pending[4..]).into_owned());
+                markers.push(String::from_utf8_lossy(&payload[4..]).into_owned());
             } else {
-                *overflow = true;
+                overflow = true;
             }
-        }
-        self.pending.clear();
-        self.state = State::Ground;
+        });
+        (markers, overflow)
     }
 }
 
@@ -154,7 +90,7 @@ mod tests {
             .concat(),
         ] {
             assert!(scanner.ingest(&bytes).0.is_empty());
-            assert!(scanner.pending.len() <= MAX_OSC_BYTES);
+            assert!(scanner.scanner.buffered_len() <= MAX_OSC_BYTES);
         }
         assert_eq!(scanner.ingest(MARKER).0.len(), 1);
     }

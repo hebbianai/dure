@@ -887,6 +887,7 @@ mod tests {
             attention_id: None,
             source: crate::AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: "1".into(),
+            program_status: None,
         });
 
         let result = finalize_lookup(

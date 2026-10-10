@@ -17,6 +17,8 @@ mod execution_location;
 mod ghostty_core_proof;
 #[cfg(feature = "ghostty-core-proof")]
 mod ghostty_state_projection;
+mod osc_scanner;
+mod program_status;
 mod terminal_core;
 #[cfg(feature = "ghostty-core-proof")]
 mod terminal_history_transfer;
@@ -298,6 +300,9 @@ pub struct IngestedTerminalOutput {
     pub projection_changed: bool,
     pub presentation_degradation: Option<TerminalPresentationDegradation>,
     pub history_degradation: Option<TerminalReplayError>,
+    /// Republished when the running program reported a new status in this
+    /// read. Broadcast after `delta`, which it observes.
+    pub agent_runtime_state: Option<AgentRuntimeStateProjection>,
 }
 
 impl fmt::Debug for IngestedTerminalOutput {
@@ -315,6 +320,7 @@ impl fmt::Debug for IngestedTerminalOutput {
             .field("projection_changed", &self.projection_changed)
             .field("presentation_degradation", &self.presentation_degradation)
             .field("history_degradation", &self.history_degradation)
+            .field("agent_runtime_state", &self.agent_runtime_state)
             .finish()
     }
 }
@@ -399,6 +405,7 @@ pub struct TerminalReplay {
     agent_runtime_state: Option<AgentRuntimeStateProjection>,
     agent_runtime_changed_at: Option<Instant>,
     agent_progress: agent_progress::ProgressTracker,
+    program_status: program_status::ProgramStatus,
     working_deadline: Option<WorkingDeadline>,
     pending_turn_completion: Option<PendingTurnCompletion>,
     accepted_turn_completion_id_order: VecDeque<String>,
@@ -716,6 +723,7 @@ impl TerminalReplay {
             agent_runtime_state: None,
             agent_runtime_changed_at: None,
             agent_progress: Default::default(),
+            program_status: Default::default(),
             working_deadline: None,
             pending_turn_completion: None,
             accepted_turn_completion_id_order: VecDeque::new(),
@@ -759,6 +767,7 @@ impl TerminalReplay {
             agent_runtime_state: None,
             agent_runtime_changed_at: None,
             agent_progress: Default::default(),
+            program_status: Default::default(),
             working_deadline: None,
             pending_turn_completion: None,
             accepted_turn_completion_id_order: VecDeque::new(),
@@ -890,6 +899,7 @@ impl TerminalReplay {
                 label,
             })
         }));
+        let program_status = self.program_status.ingest(bytes);
         #[cfg(feature = "ghostty-core-proof")]
         let state_changed = presentation_changed || !terminal_events.is_empty();
         #[cfg(not(feature = "ghostty-core-proof"))]
@@ -910,6 +920,11 @@ impl TerminalReplay {
         self.pending_output_geometry = None;
         self.output_seq = output_seq;
         self.retained.push(delta.clone());
+        let agent_runtime_state = if program_status.records_changed {
+            self.republish_program_status()?
+        } else {
+            None
+        };
         #[cfg(feature = "ghostty-core-proof")]
         let terminal_records = terminal_events
             .into_iter()
@@ -930,9 +945,14 @@ impl TerminalReplay {
                 })
             })
             .collect::<Result<Vec<_>, TerminalReplayError>>()?;
+        // The engine's replies for this whole read follow the support reply.
+        // A program sends its device-attributes query after the probe, so the
+        // probe is answered first even when both arrive in one read.
+        let mut pty_replies = program_status.probe_reply;
+        pty_replies.extend_from_slice(&core_write.pty_replies);
         Ok(IngestedTerminalOutput {
             delta,
-            pty_replies: core_write.pty_replies,
+            pty_replies,
             pty_reply_overflow: core_write.pty_reply_overflow,
             #[cfg(feature = "ghostty-core-proof")]
             terminal_records,
@@ -941,6 +961,7 @@ impl TerminalReplay {
             projection_changed: presentation_changed,
             presentation_degradation: core_write.presentation_degradation,
             history_degradation,
+            agent_runtime_state,
         })
     }
 
@@ -1690,6 +1711,17 @@ impl TerminalReplay {
             .as_ref()
             .map_or(0, |current| current.turn_completed_count)
             .saturating_add(u64::from(turn_completed));
+        let agent_started = observation.lifecycle == AgentRuntimeLifecycle::Running
+            && self
+                .agent_runtime_state
+                .as_ref()
+                .is_none_or(|current| current.lifecycle != AgentRuntimeLifecycle::Running);
+        if agent_started || observation.lifecycle == AgentRuntimeLifecycle::Exited {
+            // A program's status describes the agent that reported it: one
+            // that exited took its status along, and a starting agent has not
+            // reported yet (an earlier command in this terminal may have).
+            self.program_status.clear();
+        }
         let projection = AgentRuntimeStateProjection {
             progress,
             terminal_epoch: self.fence.terminal_epoch.clone(),
@@ -1701,6 +1733,7 @@ impl TerminalReplay {
             attention_id,
             source: observation.source,
             turn_completed_count,
+            program_status: self.program_status_projection(observation.lifecycle),
         };
         self.agent_runtime_state = Some(projection.clone());
         self.agent_runtime_changed_at = Some(now);

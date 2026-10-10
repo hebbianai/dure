@@ -42,8 +42,18 @@ export interface HmuxAgentProgress {
 	progress_unconfirmed: boolean;
 }
 
+/** What the running program reported about itself through OSC 7501.
+ * Presentation beside Host semantics, never a semantic fact. */
+export interface HmuxProgramStatus {
+	state: "idle" | "working" | "blocked" | "done" | "error";
+	blocked_kind?: "permission" | "question" | "auth";
+	app?: string;
+	message?: string;
+}
+
 export interface HmuxAgentRuntimeState {
 	progress?: HmuxAgentProgress;
+	programStatus?: HmuxProgramStatus;
 	terminalEpoch: string;
 	revision: string;
 	observedThroughOutputSeq: string;

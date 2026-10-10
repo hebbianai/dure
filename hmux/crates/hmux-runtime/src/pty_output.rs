@@ -102,11 +102,20 @@ pub(super) fn output_loop(
                 let terminal_records = ingested.terminal_records;
                 #[cfg(feature = "terminal-state-stream")]
                 let terminal_event_overflow = ingested.terminal_event_overflow;
-                let broadcasts = [FrameBody::OutputDelta(ingested.delta)];
+                // A republished agent state observes this delta, so it follows it.
+                let broadcasts = std::iter::once(FrameBody::OutputDelta(ingested.delta))
+                    .chain(ingested.agent_runtime_state.map(FrameBody::AgentRuntimeState))
+                    .collect::<Vec<_>>();
                 #[cfg(feature = "terminal-state-stream")]
                 let presentation_degradation = ingested.presentation_degradation;
                 #[cfg(feature = "terminal-state-stream")]
                 let history_degradation = ingested.history_degradation;
+                // Order this read's frames before the Host admits any later
+                // state, as every other publisher does: a republished agent
+                // state must not reach clients behind a newer revision.
+                let Ok(_publish_order) = state.publish_order.lock() else {
+                    break;
+                };
                 drop(host);
 
                 if ingested.pty_reply_overflow || !pty_writer.enqueue_replies(&ingested.pty_replies)
@@ -125,9 +134,6 @@ pub(super) fn output_loop(
                         "hmux-runtime: terminal event budget exhausted; dropped the oversized event"
                     );
                 }
-                let Ok(_publish_order) = state.publish_order.lock() else {
-                    break;
-                };
                 for body in broadcasts {
                     state.broadcast_ordered(body);
                 }

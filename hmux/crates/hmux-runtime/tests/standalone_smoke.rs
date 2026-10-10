@@ -52,6 +52,7 @@ use terminal_state_protocol::{
 const SEMANTIC_AGENT_SESSION_NAME: &str = "semantic-state-canary";
 const TERMINAL_TEXT_AUTHORITY_SESSION_NAME: &str = "terminal-text-authority-canary";
 const OSC7_CWD_AUTHORITY_SESSION_NAME: &str = "osc7-cwd-authority-canary";
+const PROGRAM_STATUS_SESSION_NAME: &str = "program-status-canary";
 #[cfg(feature = "terminal-state-stream")]
 const COALESCED_INPUT_FIRST: &str = "첫 번째 입력";
 #[cfg(feature = "terminal-state-stream")]
@@ -5738,6 +5739,136 @@ fn terminal_text_never_mutates_agent_runtime_state() {
 }
 
 #[test]
+fn program_status_reaches_observers_beside_unchanged_agent_semantics() {
+    let state = tempfile::tempdir().unwrap();
+    let fake_agent = state.path().join("codex-program-status-canary");
+    std::os::unix::fs::symlink(std::env::current_exe().unwrap(), &fake_agent).unwrap();
+    let discovery_root = state.path().join("discovery");
+    let creator = StandaloneSessionCreator::new(env!("CARGO_BIN_EXE_hmux-runtime"))
+        .with_discovery_root(&discovery_root);
+    let created = creator
+        .create(
+            StandaloneCreateRequest::new(
+                std::env::current_dir().unwrap().canonicalize().unwrap(),
+                Some(PROGRAM_STATUS_SESSION_NAME.into()),
+                vec![
+                    fake_agent.to_string_lossy().into_owned(),
+                    "--ignored".into(),
+                    "--exact".into(),
+                    "program_status_fixture_provider".into(),
+                    "--nocapture".into(),
+                ],
+                24,
+                80,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let session = created.session().clone();
+    let descriptor = session.descriptor().clone();
+    let mut fixture = IdleRetirementFixture {
+        session,
+        catalog: LocalSessionCatalog::new(discovery_root),
+        descriptor,
+        tracked_process_groups: Vec::new(),
+        cleaned: false,
+    };
+    let selector = SessionSelector::new(
+        fixture.descriptor.session_id.clone(),
+        Some(fixture.descriptor.workspace_id.clone()),
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut observer = loop {
+        let observer = LocalSessionObserver::connect(
+            &fixture.catalog,
+            &selector,
+            ObserverAttachOptions::default(),
+        )
+        .unwrap();
+        if observer
+            .attachment()
+            .initial_snapshot
+            .agent_runtime_state
+            .as_ref()
+            .is_some_and(|runtime| {
+                runtime.source == hmux_client::AgentRuntimeStateSource::ProcessLifecycle
+            })
+        {
+            break observer;
+        }
+        observer.detach().unwrap();
+        assert!(
+            Instant::now() < deadline,
+            "provider process lifecycle did not establish runtime state"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+
+    let receipt = fixture.session.send_input(b"emit\r".to_vec()).unwrap();
+    assert_eq!(receipt.state, InputReceiptState::WrittenToPty);
+    let mut semantic = None;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let reported = loop {
+        assert!(
+            Instant::now() < deadline,
+            "observer did not receive the program status"
+        );
+        match observer.read_event().unwrap() {
+            Some(ObserverEvent::AgentRuntimeState(runtime)) => {
+                if runtime.program_status.is_some() {
+                    break runtime;
+                }
+                semantic = Some(runtime);
+            }
+            Some(_) => {}
+            None => panic!("observer disconnected before the program status"),
+        }
+    };
+    observer.detach().unwrap();
+    let screen = wait_for_replay_snapshot(&fixture.session, b"PROGRAM_STATUS_COMPLETE");
+    fixture.terminate_and_verify();
+
+    assert!(
+        screen
+            .repaint_bytes
+            .windows(b"PROBE_ANSWERED_FIRST".len())
+            .any(|window| window == b"PROBE_ANSWERED_FIRST"),
+        "the support reply must reach the program ahead of its DA1 reply"
+    );
+    let semantic = semantic.expect("controller input precedes the program's report");
+    assert_eq!(
+        reported.revision.parse::<u64>().unwrap(),
+        semantic.revision.parse::<u64>().unwrap() + 1
+    );
+    assert_eq!(
+        (
+            reported.lifecycle,
+            reported.activity,
+            reported.attention,
+            reported.source,
+            &reported.turn_completed_count,
+        ),
+        (
+            semantic.lifecycle,
+            semantic.activity,
+            semantic.attention,
+            semantic.source,
+            &semantic.turn_completed_count,
+        ),
+        "the program's report must not change Host-owned agent semantics"
+    );
+    let status = reported.program_status.unwrap();
+    assert_eq!(status.state, hmux_client::ProgramStatusState::Blocked);
+    assert_eq!(
+        status.blocked_kind,
+        Some(hmux_client::ProgramStatusBlockedKind::Question)
+    );
+    assert_eq!(status.app.as_deref(), Some("fixture"));
+    assert_eq!(status.message.as_deref(), Some("Which branch?"));
+}
+
+#[test]
 fn terminal_output_never_mutates_host_working_directory() {
     let state = tempfile::tempdir().unwrap();
     let provider_cwd = state.path().join("actual-cwd");
@@ -5910,6 +6041,48 @@ fn terminal_text_authority_fixture_provider() {
     std::thread::sleep(Duration::from_millis(100));
     println!("PTY_TEXT_COMPLETE");
     std::io::stdout().flush().unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+#[test]
+#[ignore = "launched as the deterministic provider child by the program status smoke"]
+fn program_status_fixture_provider() {
+    if std::env::var("HMUX_SESSION_NAME").as_deref() != Ok(PROGRAM_STATUS_SESSION_NAME) {
+        return;
+    }
+    let mut submitted = String::new();
+    std::io::stdin().read_line(&mut submitted).unwrap();
+    assert_eq!(submitted.trim(), "emit");
+    // Terminal replies carry no newline; read them byte by byte.
+    let raw = std::process::Command::new("stty")
+        .args(["raw", "-echo"])
+        .stdin(std::process::Stdio::inherit())
+        .status()
+        .unwrap();
+    assert!(raw.success());
+    let mut stdout = std::io::stdout();
+    // A program probes, then sends DA1 so a silent terminal still answers.
+    stdout.write_all(b"\x1b]7501;?\x1b\\\x1b[c").unwrap();
+    stdout.flush().unwrap();
+    let mut replies = Vec::new();
+    let mut byte = [0_u8; 1];
+    while !replies.starts_with(b"\x1b[?") || !replies.ends_with(b"c") {
+        std::io::stdin().read_exact(&mut byte).unwrap();
+        replies.push(byte[0]);
+        if replies.starts_with(b"\x1b]7501;?\x1b\\") {
+            replies.clear();
+            stdout.write_all(b"PROBE_ANSWERED_FIRST\r\n").unwrap();
+        }
+    }
+    stdout
+        .write_all(
+            b"\x1b]7501;state=blocked:kind=question:app=fixture:msg=V2hpY2ggYnJhbmNoPw==\x07",
+        )
+        .unwrap();
+    stdout.write_all(b"PROGRAM_STATUS_COMPLETE\r\n").unwrap();
+    stdout.flush().unwrap();
     loop {
         std::thread::park();
     }

@@ -3170,6 +3170,10 @@ fn output_loop(mut output: std::fs::File, state: Arc<WindowsServerState>) -> Res
         let _publication = lock(&state.structured_publication)?;
         let ingested = lock(&state.host)?.ingest_output(&state.fence, &buffer[..read])?;
         state.broadcast_classic_output(FrameBody::OutputDelta(ingested.delta));
+        // A republished agent state observes this delta, so it follows it.
+        if let Some(runtime_state) = ingested.agent_runtime_state {
+            state.broadcast_control(FrameBody::AgentRuntimeState(runtime_state));
+        }
         #[cfg(feature = "terminal-state-stream")]
         state.publish_structured_viewports_locked()?;
         if !ingested.pty_replies.is_empty() {
