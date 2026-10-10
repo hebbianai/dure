@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "currentBuildId": "dure-control-plane/v133-feedback-recovery",
-  "previousBuildId": "dure-control-plane/v132-project-move",
+  "currentBuildId": "dure-control-plane/v134-schedule-observation",
+  "previousBuildId": "dure-control-plane/v133-feedback-recovery",
   "identity": {
     "apiVersion": "dure.control-plane-identity/v1",
     "kind": "dure.control_plane.identity",
