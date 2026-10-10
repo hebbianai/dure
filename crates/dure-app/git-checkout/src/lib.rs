@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod git_process;
+mod local_exclude;
+pub use local_exclude::exclude_worktree_directory;
 #[cfg(test)]
 use git_process::scrub_git_environment;
 use git_process::{checkout_is_clean_for_plain_remove, git_output};

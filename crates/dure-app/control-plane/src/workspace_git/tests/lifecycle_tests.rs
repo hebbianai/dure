@@ -24,6 +24,10 @@ async fn creates_and_reopens_one_owned_worktree() {
     );
     assert!(first.root.is_dir());
     assert_eq!(list_worktrees(root.path()).await.unwrap().len(), 2);
+    std::fs::write(root.path().join("ordinary.txt"), "user change").unwrap();
+    assert!(git_output(root.path(), ["add", "-A"], None).await.unwrap().status.success());
+    let staged = git_output(root.path(), ["diff", "--cached", "--name-only"], None).await.unwrap();
+    assert_eq!(String::from_utf8(staged.stdout).unwrap().trim(), "ordinary.txt");
 }
 
 #[tokio::test]

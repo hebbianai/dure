@@ -281,6 +281,18 @@ async fn acquire_owned_checkout(
     if checkout_path.is_none() {
         ensure_worktree_root(&request.project_root)?;
     }
+    let repository = request.project_root.clone();
+    let excluded = if checkout_path.is_none() {
+        target.parent().expect("dedicated worktree parent").to_path_buf()
+    } else {
+        target.to_path_buf()
+    };
+    tokio::task::spawn_blocking(move || {
+        dure_git_checkout::exclude_worktree_directory(&repository, &excluded)
+    })
+    .await
+    .map_err(|_| WorkspaceFailure::new("workspace_exclude_unavailable"))?
+    .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
     let target_text = target
         .to_str()
         .ok_or_else(|| WorkspaceFailure::new("workspace_path_invalid"))?;

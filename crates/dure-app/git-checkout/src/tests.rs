@@ -13,7 +13,7 @@ struct Fixture {
     linked: PathBuf,
 }
 
-fn git(repository: &Path, args: &[&str]) -> String {
+pub(super) fn git(repository: &Path, args: &[&str]) -> String {
     let mut command = Command::new("git");
     command.arg("-C").arg(repository).args(args);
     scrub_git_environment(&mut command);

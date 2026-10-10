@@ -375,40 +375,12 @@ pub struct WorktreeProvisionPlan {
     pub worktree_root: Option<String>,
 }
 
-/// 워크트리 루트 스캐폴드 + .git/info/exclude 등록(best-effort).
-///
-/// 루트가 레포 밖(`../`)이면 exclude 등록은 하지 않는다 — 레포가 추적하지 않는
-/// 경로라 무시 규칙을 넣을 대상이 아니다. 디렉터리 생성은 양쪽 다 한다.
-fn ensure_worktrees_scaffold(repo: &str, worktree_root: Option<&str>) {
-    let root = normalize_worktree_root(worktree_root);
-    let _ = std::fs::create_dir_all(local_worktree_root(repo, Some(&root)));
-    if !root_is_inside_repo(&root) {
-        return;
-    }
-    let entry = format!("{}/", root.trim_end_matches('/'));
-    if let Ok(rel) = run_git(repo, &["rev-parse", "--git-path", "info/exclude"]) {
-        let rel = rel.trim();
-        if rel.is_empty() {
-            return;
-        }
-        let p = if Path::new(rel).is_absolute() {
-            PathBuf::from(rel)
-        } else {
-            PathBuf::from(repo).join(rel)
-        };
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let has = std::fs::read_to_string(&p)
-            .map(|c| c.lines().any(|l| l == entry))
-            .unwrap_or(false);
-        if !has {
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
-                let _ = writeln!(f, "{entry}");
-            }
-        }
-    }
+/// Create the worktree root and exclude it through the shared Git service.
+fn ensure_worktrees_scaffold(repo: &str, worktree_root: Option<&str>) -> Result<(), String> {
+    let root = local_worktree_root(repo, worktree_root);
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    dure_git_checkout::exclude_worktree_directory(Path::new(repo), &root)
+        .map_err(|error| error.to_string())
 }
 
 /// adopt 대상이 실제로 등록된 워크트리인지 확인(C2/H2: 아무 폴더나 재사용 금지).
@@ -433,7 +405,7 @@ pub fn provision_worktree(plan: &WorktreeProvisionPlan) -> Result<WorktreeInfo, 
     match plan.action {
         WorktreeAction::CreateNewBranch => {
             let wt = derived_local_worktree_path(repo, &plan.branch, plan.worktree_root.as_deref());
-            ensure_worktrees_scaffold(repo, plan.worktree_root.as_deref());
+            ensure_worktrees_scaffold(repo, plan.worktree_root.as_deref())?;
             let _ = run_git(repo, &["worktree", "prune"]);
             let base = plan.base_ref.as_deref().map(str::trim).filter(|s| !s.is_empty());
             if let Some(b) = base {
@@ -450,7 +422,7 @@ pub fn provision_worktree(plan: &WorktreeProvisionPlan) -> Result<WorktreeInfo, 
         }
         WorktreeAction::CheckoutExistingBranch => {
             let wt = derived_local_worktree_path(repo, &plan.branch, plan.worktree_root.as_deref());
-            ensure_worktrees_scaffold(repo, plan.worktree_root.as_deref());
+            ensure_worktrees_scaffold(repo, plan.worktree_root.as_deref())?;
             let _ = run_git(repo, &["worktree", "prune"]);
             run_git(repo, &["worktree", "add", wt.as_str(), plan.branch.as_str()])?;
             Ok(WorktreeInfo { branch: worktree_actual_branch(&wt), path: wt })
@@ -557,7 +529,7 @@ pub fn create_worktree(repo: &str, name: &str, from: Option<&str>) -> Result<Wor
     let safe = sanitize_segment(name);
     let branch = format!("agent/{safe}");
     let wt_path = derived_local_worktree_path(repo, &branch, None);
-    ensure_worktrees_scaffold(repo, None);
+    ensure_worktrees_scaffold(repo, None)?;
     let _ = run_git(repo, &["worktree", "prune"]);
     if Path::new(&wt_path).is_dir() {
         validate_registered_worktree(repo, &wt_path)?;
@@ -835,7 +807,7 @@ mod tests {
         assert!(!repo.join(".worktrees").join("feature").exists());
         // 고른 루트가 info/exclude에 등록된다(.worktrees/가 아니라).
         let excl = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap_or_default();
-        assert!(excl.lines().any(|l| l == ".claude/worktrees/"), "{excl}");
+        assert!(excl.lines().any(|l| l == "/.claude/worktrees/"), "{excl}");
 
         let _ = std::fs::remove_dir_all(&repo);
     }
