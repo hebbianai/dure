@@ -1949,6 +1949,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairRequired.agentId,
 			expectedSourceRevision: repairRequired.sourceSelectionRevision,
+			expectedOperationId: repairRequired.operationId,
 			routeAuthority: repairRequired.routeAuthority,
 			targetInteractionProfile: repairRequired.targetInteractionProfile,
 			targetLaunchSelection: repairRequired.targetLaunchSelection,
@@ -2015,6 +2016,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairRequired.agentId,
 			expectedSourceRevision: repairRequired.sourceSelectionRevision,
+			expectedOperationId: repairRequired.operationId,
 			routeAuthority: repairRequired.routeAuthority,
 			targetInteractionProfile: "structured_protocol",
 			targetExecutionProfile: preparedExecutionProfile,
@@ -2104,6 +2106,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairRequired.agentId,
 			expectedSourceRevision: repairRequired.sourceSelectionRevision,
+			expectedOperationId: repairRequired.operationId,
 			routeAuthority: repairRequired.routeAuthority,
 			targetInteractionProfile: "native_cli",
 			targetExecutionProfile: { kind: "provider_default" },
@@ -2152,6 +2155,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairRequired.agentId,
 			expectedSourceRevision: repairRequired.sourceSelectionRevision,
+			expectedOperationId: repairRequired.operationId,
 			routeAuthority: repairRequired.routeAuthority,
 			targetInteractionProfile: "native_cli",
 			targetExecutionProfile: preparedExecutionProfile,
@@ -2320,6 +2324,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairRequired.agentId,
 			expectedSourceRevision: repairRequired.sourceSelectionRevision,
+			expectedOperationId: repairRequired.operationId,
 			routeAuthority: repairRequired.routeAuthority,
 			targetInteractionProfile: repairRequired.targetInteractionProfile,
 			targetLaunchSelection: repairRequired.targetLaunchSelection,
@@ -2381,6 +2386,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairRequired.agentId,
 			expectedSourceRevision: repairRequired.sourceSelectionRevision,
+			expectedOperationId: repairRequired.operationId,
 			routeAuthority: repairRequired.routeAuthority,
 			targetInteractionProfile: repairRequired.targetInteractionProfile,
 			targetLaunchSelection: repairRequired.targetLaunchSelection,
@@ -2464,6 +2470,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairRequired.agentId,
 			expectedSourceRevision: repairRequired.sourceSelectionRevision,
+			expectedOperationId: repairRequired.operationId,
 			routeAuthority: repairRequired.routeAuthority,
 			targetInteractionProfile: repairRequired.targetInteractionProfile,
 			targetLaunchSelection: repairRequired.targetLaunchSelection,
@@ -2498,6 +2505,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairRequired.agentId,
 			expectedSourceRevision: repairRequired.sourceSelectionRevision,
+			expectedOperationId: repairRequired.operationId,
 			routeAuthority: repairRequired.routeAuthority,
 			targetInteractionProfile: repairRequired.targetInteractionProfile,
 			targetExecutionProfile: repairRequired.targetExecutionProfile,
@@ -2699,6 +2707,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairRequired.agentId,
 			expectedSourceRevision: repairRequired.sourceSelectionRevision,
+			expectedOperationId: repairRequired.operationId,
 			routeAuthority: repairRequired.routeAuthority,
 			targetInteractionProfile: "native_cli",
 			targetExecutionProfile: sourceExecutionProfile,
@@ -2770,6 +2779,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairRequired.agentId,
 			expectedSourceRevision: repairRequired.sourceSelectionRevision,
+			expectedOperationId: repairRequired.operationId,
 			routeAuthority: repairRequired.routeAuthority,
 			targetInteractionProfile: repairRequired.targetInteractionProfile,
 			targetExecutionProfile: repairRequired.targetExecutionProfile,
@@ -2801,6 +2811,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: repairIntent.agentId,
 			expectedSourceRevision: repairIntent.sourceSelectionRevision,
+			expectedOperationId: repairIntent.operationId,
 			routeAuthority: repairIntent.routeAuthority,
 			targetInteractionProfile: repairIntent.targetInteractionProfile,
 			targetExecutionProfile: repairIntent.targetExecutionProfile,
@@ -3035,6 +3046,7 @@ describe("useAgentPanelState", () => {
 		expect(mocks.transition).toHaveBeenCalledWith({
 			agentId: staleRepair.agentId,
 			expectedSourceRevision: staleRepair.sourceSelectionRevision,
+			expectedOperationId: staleRepair.operationId,
 			routeAuthority: staleRepair.routeAuthority,
 			targetInteractionProfile: staleRepair.targetInteractionProfile,
 			targetLaunchSelection: staleRepair.targetLaunchSelection,
