@@ -18,7 +18,7 @@ import { convergeManagedAgentRehost } from "@/lib/sessions/managed/managedAgentR
 import { useStore } from "@/store";
 
 /** A local refusal is known not to have submitted the reviewed operation. */
-export class AgentProjectMovePreparationError extends Error {
+class AgentProjectMovePreparationError extends Error {
 	readonly submitted = false;
 	constructor(readonly code: string) {
 		super(code);
