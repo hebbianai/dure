@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { isAgentProjectMovePlan, isAgentProjectMoveReceipt } from "../cli/lib/contracts/agent-project-move.mjs";
 import { collectAgentProjectMove } from "../cli/lib/agent-project-move-command.mjs";
