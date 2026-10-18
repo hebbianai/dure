@@ -7,6 +7,11 @@ import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
+import {
+  DEADLINE_SENSITIVE_PROCESS_TEST_PATHS,
+  NODE_TEST_PATHS,
+  PROCESS_FIXTURE_TEST_PATHS,
+} from "./lib/script-test-projects.mjs";
 import { lookupActorPermission, planPublicCi } from "./public-ci.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -418,12 +423,12 @@ describe("script test CI coverage", () => {
     const extractFiles = (jobName) => {
       const job = workflow.jobs[jobName];
       if (!job?.strategy?.matrix?.include) return [];
-      return job.strategy.matrix.include.flatMap(group => 
+      return job.strategy.matrix.include.flatMap(group =>
         (group.files || "").split(/\s+/).filter(Boolean)
       );
     };
 
-    const vitestFiles = allScriptTests.filter(path => 
+    const vitestFiles = allScriptTests.filter(path =>
       !NODE_TEST_PATHS.includes(path) &&
       !DEADLINE_SENSITIVE_PROCESS_TEST_PATHS.includes(path) &&
       !PROCESS_FIXTURE_TEST_PATHS.includes(path)
