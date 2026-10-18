@@ -113,6 +113,31 @@ describe("codexMeter", () => {
     );
     expect(m).toEqual({ pct: 2, window: "5h", resetLabel: "1h" });
   });
+  it("shows an exhausted weekly window instead of an unused 5h window", () => {
+    const m = codexMeter(
+      usage({ usedPercent: 0, resetsAt: now + 5 * 3600, usedPercentWeekly: 100, weeklyResetsAt: now + 86400 }),
+      now,
+    );
+    expect(m).toEqual({ pct: 100, window: "weekly", resetLabel: "1d" });
+  });
+  it("shows a weekly window in the danger band when it is the tighter limit", () => {
+    expect(
+      codexMeter(usage({ usedPercent: 8, resetsAt: now + 3600, usedPercentWeekly: 99, weeklyResetsAt: now + 2 * 86400 }), now),
+    ).toEqual({ pct: 99, window: "weekly", resetLabel: "2d" });
+    expect(
+      codexMeter(usage({ usedPercent: 30, resetsAt: now + 3600, usedPercentWeekly: 84, weeklyResetsAt: now + 86400 }), now).window,
+    ).toBe("5h");
+    expect(
+      codexMeter(usage({ usedPercent: 97, resetsAt: now + 3600, usedPercentWeekly: 95, weeklyResetsAt: now + 86400 }), now).window,
+    ).toBe("5h");
+  });
+  it("ignores a weekly reading whose window has already reset", () => {
+    const m = codexMeter(
+      usage({ usedPercent: 4, resetsAt: now + 3600, usedPercentWeekly: 100, weeklyResetsAt: now - 60 }),
+      now,
+    );
+    expect(m).toEqual({ pct: 4, window: "5h", resetLabel: "1h" });
+  });
   it("falls back to weekly when only weekly is reported", () => {
     const m = codexMeter(usage({ usedPercentWeekly: 38, weeklyResetsAt: now + 2 * 86400 }), now);
     expect(m).toEqual({ pct: 38, window: "weekly", resetLabel: "2d" });
