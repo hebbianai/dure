@@ -283,7 +283,10 @@ async fn acquire_owned_checkout(
     }
     let repository = request.project_root.clone();
     let excluded = if checkout_path.is_none() {
-        target.parent().expect("dedicated worktree parent").to_path_buf()
+        target
+            .parent()
+            .expect("dedicated worktree parent")
+            .to_path_buf()
     } else {
         target.to_path_buf()
     };
