@@ -447,10 +447,7 @@ function applyProbeReceipt(session, receipt) {
     health,
     // Runtime facts and their output fence must come from the same exact Host
     // observation, never from the earlier no-probe catalog snapshot.
-    // Only override if the probe actually provided new data
-    ...(health === "healthy" && receipt.agentRuntimeState !== undefined
-      ? { agentRuntimeState: receipt.agentRuntimeState }
-      : {}),
+    agentRuntimeState: health === "healthy" ? receipt.agentRuntimeState ?? null : null,
     ...(health === "healthy" && receipt.workingDirectory !== undefined
       ? { workingDirectory: receipt.workingDirectory }
       : {}),
