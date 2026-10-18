@@ -339,6 +339,38 @@ test.each([
   expect(value.state().release.draft).toBe(true);
 });
 
+test("keeps downloaded copies after a failed comparison and only the receipt after success", () => {
+  const value = fixture();
+  success(stage(value));
+  const evidence = (result) =>
+    result.stdout.match(/^Release evidence: (.+)$/m)[1];
+  value.change({ tamperDownload: true });
+  const failed = value.run(script, "publish", "v0.2.29");
+  expect(failed.stderr).toContain("release_updater_signature_invalid");
+  expect(fs.readdirSync(evidence(failed)).sort()).toEqual([
+    "downloaded",
+    "original",
+    "selection",
+  ]);
+  value.change({ tamperDownload: false });
+  const published = value.run(script, "publish", "v0.2.29");
+  success(published);
+  const directory = evidence(published);
+  expect(fs.readdirSync(directory).sort()).toEqual(["receipt.json", "selection"]);
+  expect(
+    JSON.parse(fs.readFileSync(path.join(directory, "receipt.json"))).assets,
+  ).toEqual(
+    fs.readdirSync(value.original).sort().map((name) => {
+      const bytes = fs.readFileSync(path.join(value.original, name));
+      return {
+        name,
+        size: bytes.length,
+        digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+      };
+    }),
+  );
+});
+
 test("publishes nonlatest beta, independently downloads it, and conditionally migrates the existing feed", () => {
   const value = fixture();
   success(stage(value));

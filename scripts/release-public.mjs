@@ -794,7 +794,8 @@ function promote() {
     run("git", ["show", `${proof.tagSha}:src-tauri/tauri.conf.json`]),
   ).plugins.updater.pubkey;
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "dure-public-release-"));
-  // Retained on failure for reconciliation; no updater or user app is invoked.
+  // Retained for reconciliation; no updater or user app is invoked. Only the
+  // downloaded asset copies are removed, and only after a successful receipt.
   console.log(`Release evidence: ${work}`);
   const selection = path.join(work, "selection");
   download(
@@ -814,7 +815,8 @@ function promote() {
     "release_selection_mismatch",
   );
   const original = path.join(work, "original"),
-    downloaded = path.join(work, "downloaded");
+    downloaded = path.join(work, "downloaded"),
+    publicDirectory = path.join(work, "anonymous");
   download(
     `release-assets-${tag} artifact`,
     () => gh(
@@ -897,7 +899,6 @@ function promote() {
   if (current.draft === false) {
     checkDraftIdentity(current, tag, proof);
     missingReleaseAssets(expected.assets, current.assets, { complete: true });
-    const publicDirectory = path.join(work, "anonymous");
     fs.mkdirSync(publicDirectory);
     for (const asset of expected.assets) {
       const file = path.join(publicDirectory, asset.name);
@@ -933,6 +934,16 @@ function promote() {
     JSON.stringify(receipt, null, 2),
     { flag: "wx", mode: 0o600 },
   );
+  // Each copy matched and the receipt keeps every asset's size and digest, so
+  // drop the roughly 1 GB of downloads. Any failure above has already thrown
+  // and left them in place.
+  for (const copy of [original, downloaded, publicDirectory]) {
+    try {
+      fs.rmSync(copy, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`Downloaded release copies remain at ${copy}: ${error.message}`);
+    }
+  }
   console.log(JSON.stringify(receipt));
 }
 

@@ -117,12 +117,19 @@ Each download (workflow artifacts, release assets and the anonymous files)
 gets up to three attempts with backoff when the failure is a transport error
 such as a timeout, reset or HTTP 5xx. A retry starts from an empty destination,
 and any other error, or a third transport failure, still stops the command.
+Each command prints its `Release evidence:` directory. After every comparison
+passes it writes `receipt.json`, which records each asset's size and SHA-256,
+and then deletes the downloaded copies (`original/`, `downloaded/` and
+`anonymous/`, about 1 GB). The selection record and receipt stay. A command that
+fails keeps every downloaded copy for reconciliation.
 
-Before publishing, inspect the unchanged signed DMG and mode-preserved archive;
-compare full file/type/mode/symlink manifests. Observe Finder first-open/reopen,
-fresh stable-channel packaged CLI bootstrap and a healthy same-terminal pair of
-commands in an empty disposable home. Use unique discovery/install/runtime
-roots, the existing run-observed ownership supervisor and exact exit proof.
+Before publishing, inspect the unchanged signed DMG and mode-preserved archive:
+download them into a separate disposable directory, check them against the
+receipt's digests and compare full file/type/mode/symlink manifests. Observe
+Finder first-open/reopen, fresh stable-channel packaged CLI bootstrap and a
+healthy same-terminal pair of commands in an empty disposable home. Use unique
+discovery/install/runtime roots, the existing run-observed ownership supervisor
+and exact exit proof.
 Protect installed/development apps, their data, existing mounts and other work.
 Retain the source/run/file hashes and actual UI/process/cleanup receipts.
 
