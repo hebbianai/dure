@@ -196,6 +196,17 @@ test("full verification and owned target cleanup precede the independently valid
   );
 });
 
+test("keeps the selection and signed assets for the promotion and recovery window", () => {
+  const upload = (job, prefix) =>
+    workflow.jobs[job].steps.find(
+      (step) =>
+        step.uses?.startsWith("actions/upload-artifact@") &&
+        step.with.name.startsWith(prefix),
+    );
+  expect(upload("source", "release-selection").with["retention-days"]).toBe(90);
+  expect(upload("build", "release-assets-").with["retention-days"]).toBe(90);
+});
+
 test("the build removes only its own release checkout outputs after uploading", () => {
   const steps = workflow.jobs.build.steps;
   const cleanup = steps.at(-1);

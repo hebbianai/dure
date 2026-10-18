@@ -162,6 +162,10 @@ first cutover; do not claim the website changed because the manifest changed.
 
 ## Resume without replacing assets
 
+The workflow keeps the `release-selection` and `release-assets-vX.Y.Z`
+artifacts for 90 days. `verify`, `publish`, `metadata-only` and `recover-draft`
+all download them, so finish or recover a release within that window.
+
 Draft staging uploads only absent names. Existing names must already match the
 original size/digest; a partial upload or mismatch stops the operation. A lost
 response is reobserved before another write. Never delete or overwrite a

@@ -65,7 +65,7 @@ jobs:
           name: release-selection
           path: ${{ runner.temp }}/selection.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
   candidate:
     needs: source
@@ -333,7 +333,7 @@ jobs:
           name: release-assets-${{ needs.version.outputs.tag }}
           path: ${{ runner.temp }}/release-assets
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
       # The signed files are uploaded from runner temp above. Remove the about
       # 8 GiB of Cargo targets, staged runtimes, dependencies and bundles this
       # job left in its own release checkout, and nothing outside it.
