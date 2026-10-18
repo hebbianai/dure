@@ -54,6 +54,186 @@ describe("dure ls canonical session projection", () => {
     });
   });
 
+  it("shows CWD in table output when working directory is available", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, {
+        workingDirectory: {
+          terminal_epoch: "terminal-1",
+          observed_through_output_seq: "11",
+          path: "/home/user/project",
+          source: "process_inspection",
+        },
+      }),
+    ]);
+
+    const result = runSessionCli(root, hmux, ["ls"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("/home/user/project");
+  });
+
+  it("shows CWD in JSON output when working directory is available", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, {
+        workingDirectory: {
+          terminal_epoch: "terminal-1",
+          observed_through_output_seq: "11",
+          path: "/home/user/project",
+          source: "process_inspection",
+        },
+      }),
+    ]);
+
+    const result = runSessionCli(root, hmux, ["ls", "--json"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.sessions[0].cwd).toBe("/home/user/project");
+  });
+
+  it("shows dash for CWD in table output when working directory is unavailable", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, { workingDirectory: undefined }),
+    ]);
+
+    const result = runSessionCli(root, hmux, ["ls"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const lines = result.stdout.trim().split("\n");
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    const dataLine = lines[1];
+    const columns = dataLine.split("\t");
+    const cwdIndex = lines[0].split("\t").indexOf("CWD");
+    expect(cwdIndex).toBeGreaterThan(-1);
+    expect(columns[cwdIndex]).toBe("-");
+  });
+
+  it("shows activity state in table output when agent runtime state is available", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, {
+        agentRuntimeState: {
+          terminal_epoch: "terminal-1",
+          revision: "3",
+          observed_through_output_seq: "11",
+          lifecycle: "running",
+          activity: "working",
+          attention: "none",
+          attention_id: null,
+          source: "provider_event",
+          turn_completed_count: "0",
+        },
+      }),
+    ]);
+
+    const result = runSessionCli(root, hmux, ["ls"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("working");
+  });
+
+  it("shows activity state in JSON output when agent runtime state is available", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, {
+        agentRuntimeState: {
+          terminal_epoch: "terminal-1",
+          revision: "3",
+          observed_through_output_seq: "11",
+          lifecycle: "running",
+          activity: "waiting",
+          attention: "none",
+          attention_id: null,
+          source: "provider_event",
+          turn_completed_count: "1",
+        },
+      }),
+    ]);
+
+    const result = runSessionCli(root, hmux, ["ls", "--json"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.sessions[0].runtime.agentRuntimeState.activity).toBe("waiting");
+  });
+
+  it("filters sessions with --alive to show only live sessions", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, { lifecycle: "ready", health: "healthy" }),
+      hmuxSession(2, { lifecycle: "exited", health: "exited", exit: { kind: "normal", exit_code: 0 } }),
+    ]);
+
+    const result = runSessionCli(root, hmux, ["ls", "--alive", "--json"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.sessions).toHaveLength(1);
+    expect(parsed.sessions[0].sessionId).toBe("session-1");
+  });
+
+  it("filters sessions with --hide-provider to exclude specific providers", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, { provider_id: "codex" }),
+      hmuxSession(2, { provider_id: "local-shell" }),
+      hmuxSession(3, { provider_id: "claude" }),
+    ]);
+
+    const result = runSessionCli(root, hmux, ["ls", "--hide-provider", "local-shell", "--json"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.sessions).toHaveLength(2);
+    expect(parsed.sessions[0].sessionId).toBe("session-1");
+    expect(parsed.sessions[1].sessionId).toBe("session-3");
+  });
+
+  it("supports multiple --hide-provider flags", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, { provider_id: "codex" }),
+      hmuxSession(2, { provider_id: "local-shell" }),
+      hmuxSession(3, { provider_id: "claude" }),
+      hmuxSession(4, { provider_id: "cursor" }),
+    ]);
+
+    const result = runSessionCli(
+      root,
+      hmux,
+      ["ls", "--hide-provider", "local-shell", "--hide-provider", "cursor", "--json"]
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.sessions).toHaveLength(2);
+    expect(parsed.sessions[0].provider.id).toBe("codex");
+    expect(parsed.sessions[1].provider.id).toBe("claude");
+  });
+
+  it("combines --alive and --hide-provider filters", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, { lifecycle: "ready", health: "healthy", provider_id: "codex" }),
+      hmuxSession(2, { lifecycle: "exited", health: "exited", provider_id: "codex", exit: { kind: "normal", exit_code: 0 } }),
+      hmuxSession(3, { lifecycle: "ready", health: "healthy", provider_id: "local-shell" }),
+    ]);
+
+    const result = runSessionCli(
+      root,
+      hmux,
+      ["ls", "--alive", "--hide-provider", "local-shell", "--json"]
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.sessions).toHaveLength(1);
+    expect(parsed.sessions[0].sessionId).toBe("session-1");
+  });
+
   it("uses sessions.list through the selected backend profile", () => {
     const root = temporaryRoot();
     const hmux = installHmuxStub(root, { error: "must not execute" }, { status: 77 });
