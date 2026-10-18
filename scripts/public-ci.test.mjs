@@ -21,6 +21,7 @@ const workflow = parse(
 const codeResults = [
   "FRONTEND_RESULT",
   "SCRIPTS_VITEST_RESULT",
+  "SCRIPTS_NODE_RESULT",
   "SCRIPTS_DEADLINE_RESULT",
   "SCRIPTS_PROCESS_RESULT",
   "MOBILE_WEB_RESULT",
@@ -422,10 +423,17 @@ describe("script test CI coverage", () => {
     // Extract matrix file lists from workflow
     const extractFiles = (jobName) => {
       const job = workflow.jobs[jobName];
-      if (!job?.strategy?.matrix?.include) return [];
-      return job.strategy.matrix.include.flatMap(group =>
-        (group.files || "").split(/\s+/).filter(Boolean)
-      );
+      if (!job?.strategy?.matrix) return [];
+      // Handle both `file` (single file per matrix item) and `files` (space-separated list)
+      if (job.strategy.matrix.file) {
+        return job.strategy.matrix.file;
+      }
+      if (job.strategy.matrix.include) {
+        return job.strategy.matrix.include.flatMap(group =>
+          (group.files || "").split(/\s+/).filter(Boolean)
+        );
+      }
+      return [];
     };
 
     const vitestFiles = allScriptTests.filter(path =>
@@ -433,12 +441,18 @@ describe("script test CI coverage", () => {
       !DEADLINE_SENSITIVE_PROCESS_TEST_PATHS.includes(path) &&
       !PROCESS_FIXTURE_TEST_PATHS.includes(path)
     );
+    const nodeFiles = extractFiles("scripts-node");
     const deadlineFiles = extractFiles("scripts-deadline");
     const processFiles = extractFiles("scripts-process");
 
     // Build coverage map
     const coverage = new Map();
     for (const file of vitestFiles) coverage.set(file, ["scripts-vitest"]);
+    for (const file of nodeFiles) {
+      const jobs = coverage.get(file) || [];
+      jobs.push("scripts-node");
+      coverage.set(file, jobs);
+    }
     for (const file of deadlineFiles) {
       const jobs = coverage.get(file) || [];
       jobs.push("scripts-deadline");
@@ -455,11 +469,6 @@ describe("script test CI coverage", () => {
     const duplicates = [];
 
     for (const test of allScriptTests) {
-      // NODE_TEST_PATHS use a different runner (node vs vitest) and are
-      // intentionally excluded from CI matrix jobs (they require special
-      // environment setup). Skip them in coverage check.
-      if (NODE_TEST_PATHS.includes(test)) continue;
-
       const jobs = coverage.get(test) || [];
       if (jobs.length === 0) {
         uncovered.push(test);
@@ -483,9 +492,7 @@ describe("script test CI coverage", () => {
     }
 
     // Success - report coverage for visibility
-    const allCovered = new Set([...vitestFiles, ...deadlineFiles, ...processFiles]);
-    // NODE_TEST_PATHS are intentionally excluded, so covered count should equal
-    // total tests minus NODE_TEST_PATHS
-    expect(allCovered.size).toBe(allScriptTests.length - NODE_TEST_PATHS.length);
+    const allCovered = new Set([...vitestFiles, ...nodeFiles, ...deadlineFiles, ...processFiles]);
+    expect(allCovered.size).toBe(allScriptTests.length);
   });
 });
