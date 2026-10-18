@@ -85,3 +85,14 @@ if (typeof window !== "undefined") {
 import { ensureLangLoaded } from "@/lib/i18n";
 
 await ensureLangLoaded("ko");
+
+// Flush pending Radix FocusScope timers after each test to prevent unhandled
+// dispatchEvent errors when focus restoration runs after cleanup.
+import { afterEach, vi } from "vitest";
+
+afterEach(async () => {
+	// Flush any pending timers (e.g. Radix FocusScope's 0ms setTimeout).
+	await vi.runAllTimersAsync().catch(() => {
+		// Ignore errors from already-cleaned-up DOM elements.
+	});
+});
