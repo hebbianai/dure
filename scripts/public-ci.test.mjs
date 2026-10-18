@@ -455,6 +455,11 @@ describe("script test CI coverage", () => {
     const duplicates = [];
 
     for (const test of allScriptTests) {
+      // NODE_TEST_PATHS use a different runner (node vs vitest) and are
+      // intentionally excluded from CI matrix jobs (they require special
+      // environment setup). Skip them in coverage check.
+      if (NODE_TEST_PATHS.includes(test)) continue;
+
       const jobs = coverage.get(test) || [];
       if (jobs.length === 0) {
         uncovered.push(test);
