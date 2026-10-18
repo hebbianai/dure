@@ -27,7 +27,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -116,60 +116,6 @@ jobs:
       - name: Build frontend
         if: matrix.shard == 1
         run: pnpm build:frontend
-
-  scripts-setup:
-    name: Prepare script test user
-    needs: plan
-    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-          package-manager-cache: false
-      - name: Enable the pinned package manager
-        run: corepack enable
-      - name: Install zsh for test fixtures
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zsh
-      - name: Prepare isolated script test user
-        run: |
-          sudo useradd --create-home --shell /bin/bash dure-source-checks
-          sudo cp -a "$GITHUB_WORKSPACE" /home/dure-source-checks/source
-          sudo chown -R dure-source-checks:dure-source-checks /home/dure-source-checks/source
-          sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
-          sudo mkdir -p /home/dure-source-checks/node
-          sudo cp -a "$(dirname "$(dirname "$(command -v node)")")"/* /home/dure-source-checks/node/
-          sudo chown -R dure-source-checks:dure-source-checks /home/dure-source-checks/node
-      - name: Setup Rust toolchain in test user home
-        run: |
-          sudo --user=dure-source-checks --set-home env PATH="$PATH" bash -c '
-            cd "$HOME/source"
-            export CARGO_HOME="$HOME/.cargo"
-            export RUSTUP_HOME="$HOME/.rustup"
-            "$HOME/rustup-init" -y --no-modify-path --default-toolchain none
-            export PATH="$CARGO_HOME/bin:$PATH"
-            rustc -vV
-          '
-      - name: Install pnpm dependencies
-        run: |
-          sudo --user=dure-source-checks --set-home bash -c '
-            cd "$HOME/source"
-            export PATH="$HOME/node/bin:$PATH"
-            corepack enable
-            pnpm install --frozen-lockfile
-          '
-      - name: Archive prepared test user
-        run: sudo tar -czf /tmp/dure-test-user.tar.gz -C /home dure-source-checks
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dure-test-user-${{ github.sha }}
-          path: /tmp/dure-test-user.tar.gz
-          retention-days: 1
 
   scripts-vitest:
     name: Script checks (vitest)
@@ -336,7 +282,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -406,7 +352,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
