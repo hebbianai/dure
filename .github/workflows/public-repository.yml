@@ -161,7 +161,7 @@ jobs:
           '
       - name: Archive prepared test user
         run: sudo tar -czf /tmp/dure-test-user.tar.gz -C /home dure-source-checks
-      - uses: actions/upload-artifact@f0f86c37e8c9c29e3ef6861d1c37e0af13e87d27 # v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dure-test-user-${{ github.sha }}
           path: /tmp/dure-test-user.tar.gz
@@ -178,7 +178,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@1acd5f43d61a28b8e9d05b214cf4969b888b8f13 # v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dure-test-user-${{ github.sha }}
           path: /tmp
@@ -207,7 +207,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@1acd5f43d61a28b8e9d05b214cf4969b888b8f13 # v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dure-test-user-${{ github.sha }}
           path: /tmp
@@ -236,7 +236,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@1acd5f43d61a28b8e9d05b214cf4969b888b8f13 # v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dure-test-user-${{ github.sha }}
           path: /tmp
