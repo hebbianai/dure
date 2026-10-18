@@ -255,6 +255,20 @@ describe("release gate runner", () => {
     );
   });
 
+  test("stages the macOS bundle library before compiling the desktop app", () => {
+    const { scripts } = JSON.parse(
+      fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
+    );
+
+    // tauri-build refuses a macOS build whose bundle.macOS.frameworks
+    // entry, the gitignored serve-sim dylib, has not been staged.
+    for (const name of ["clippy", "verify:push:desktop"]) {
+      expect(scripts[name], name).toMatch(
+        /^node scripts\/stage-mobile-runtime\.mjs && /,
+      );
+    }
+  });
+
   test("runs protocol drift rejection without unrelated product gates", () => {
     const { scripts } = JSON.parse(
       fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
