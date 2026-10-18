@@ -86,13 +86,13 @@ import { ensureLangLoaded } from "@/lib/i18n";
 
 await ensureLangLoaded("ko");
 
-// Flush pending Radix FocusScope timers after each test to prevent unhandled
-// dispatchEvent errors when focus restoration runs after cleanup.
-import { afterEach, vi } from "vitest";
+// Flush pending microtasks and macrotasks after each test cleanup to let
+// Radix FocusScope's deferred focus restoration complete before tearing down
+// the test environment. This prevents unhandled "parameter 1 is not of type Event"
+// errors when FocusScope's setTimeout(0) fires after jsdom cleanup.
+import { afterEach } from "vitest";
 
 afterEach(async () => {
-	// Flush any pending timers (e.g. Radix FocusScope's 0ms setTimeout).
-	await vi.runAllTimersAsync().catch(() => {
-		// Ignore errors from already-cleaned-up DOM elements.
-	});
+	// Wait one event loop turn for any pending 0ms timers.
+	await new Promise((resolve) => setTimeout(resolve, 0));
 });
