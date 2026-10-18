@@ -190,14 +190,23 @@ jobs:
         run: |
           ls -lah /tmp/
           if [ -f /tmp/dure-test-user.tar.gz ]; then
+            echo "Listing contents of tar.gz:"
+            tar -tzf /tmp/dure-test-user.tar.gz | head -20
+            echo "Extracting tar.gz..."
             sudo tar -xzf /tmp/dure-test-user.tar.gz -C /home
           elif [ -f /tmp/dure-test-user-${{ github.sha }}.tar.gz ]; then
+            echo "Listing contents of SHA-named tar.gz:"
+            tar -tzf /tmp/dure-test-user-${{ github.sha }}.tar.gz | head -20
+            echo "Extracting SHA-named tar.gz..."
             sudo tar -xzf /tmp/dure-test-user-${{ github.sha }}.tar.gz -C /home
           else
             echo "Error: artifact tar.gz not found in /tmp"
             exit 1
           fi
+          echo "Checking if user exists:"
           id dure-source-checks || echo "User not found after extraction!"
+          echo "Checking /home directory:"
+          ls -la /home/
       - name: Run vitest script tests
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
@@ -240,14 +249,23 @@ jobs:
         run: |
           ls -lah /tmp/
           if [ -f /tmp/dure-test-user.tar.gz ]; then
+            echo "Listing contents of tar.gz:"
+            tar -tzf /tmp/dure-test-user.tar.gz | head -20
+            echo "Extracting tar.gz..."
             sudo tar -xzf /tmp/dure-test-user.tar.gz -C /home
           elif [ -f /tmp/dure-test-user-${{ github.sha }}.tar.gz ]; then
+            echo "Listing contents of SHA-named tar.gz:"
+            tar -tzf /tmp/dure-test-user-${{ github.sha }}.tar.gz | head -20
+            echo "Extracting SHA-named tar.gz..."
             sudo tar -xzf /tmp/dure-test-user-${{ github.sha }}.tar.gz -C /home
           else
             echo "Error: artifact tar.gz not found in /tmp"
             exit 1
           fi
+          echo "Checking if user exists:"
           id dure-source-checks || echo "User not found after extraction!"
+          echo "Checking /home directory:"
+          ls -la /home/
       - name: Run deadline-sensitive script tests (group ${{ matrix.group }})
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
@@ -296,14 +314,23 @@ jobs:
         run: |
           ls -lah /tmp/
           if [ -f /tmp/dure-test-user.tar.gz ]; then
+            echo "Listing contents of tar.gz:"
+            tar -tzf /tmp/dure-test-user.tar.gz | head -20
+            echo "Extracting tar.gz..."
             sudo tar -xzf /tmp/dure-test-user.tar.gz -C /home
           elif [ -f /tmp/dure-test-user-${{ github.sha }}.tar.gz ]; then
+            echo "Listing contents of SHA-named tar.gz:"
+            tar -tzf /tmp/dure-test-user-${{ github.sha }}.tar.gz | head -20
+            echo "Extracting SHA-named tar.gz..."
             sudo tar -xzf /tmp/dure-test-user-${{ github.sha }}.tar.gz -C /home
           else
             echo "Error: artifact tar.gz not found in /tmp"
             exit 1
           fi
+          echo "Checking if user exists:"
           id dure-source-checks || echo "User not found after extraction!"
+          echo "Checking /home directory:"
+          ls -la /home/
       - name: Run process fixture script tests (${{ matrix.group }})
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
