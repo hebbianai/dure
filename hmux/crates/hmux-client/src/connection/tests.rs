@@ -3118,7 +3118,7 @@ fn transport_loss_after_possible_semantic_input_is_outcome_unknown_and_not_retri
     let host_task = thread::spawn(move || {
         let hello = host.read_frame(&codec()).unwrap().unwrap();
         assert!(matches!(hello.frame().body, FrameBody::Hello(_)));
-        let encoded = host.read_payload(&codec()).unwrap().unwrap();
+        let encoded = read_next_client_payload(&mut host, "semantic text");
         let decoded = terminal_state_protocol::decode_record(&encoded).unwrap();
         let Some(terminal_state_record::Body::InputIntent(intent)) = decoded.record.body else {
             panic!("surface did not send semantic input");
@@ -3132,7 +3132,9 @@ fn transport_loss_after_possible_semantic_input_is_outcome_unknown_and_not_retri
         1_usize
     });
 
-    let error = match surface.send_text_confirmed("안녕".into(), Duration::from_secs(1)) {
+    // The Host closes after reading the text; the budget only absorbs a slow
+    // scheduler, since an expired one would report a write that never started.
+    let error = match surface.send_text_confirmed("안녕".into(), Duration::from_secs(10)) {
         Ok(_) => panic!("transport loss must not report a known input outcome"),
         Err(error) => error,
     };
@@ -3232,6 +3234,25 @@ fn read_agent_prompt_payload(host: &mut PeerNotifyingEndpoint) -> Vec<u8> {
             "agent prompt surface did not send its input envelope"
         );
         std::thread::yield_now();
+    }
+}
+
+/// Waits for the next complete payload from the client. A memory read never
+/// blocks, so a Host thread can otherwise read before the test thread has
+/// made the client write. The deadline only stops a client that never writes
+/// from hanging the test.
+#[cfg(feature = "terminal-state-stream")]
+fn read_next_client_payload(
+    host: &mut impl hmux_session_protocol::transport::FrameReader,
+    what: &str,
+) -> Vec<u8> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(payload) = host.try_read_complete_payload(&codec()).unwrap() {
+            return payload;
+        }
+        assert!(Instant::now() < deadline, "{what} did not reach the Host");
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -4224,7 +4245,7 @@ fn command_input_preserves_body_delivery_when_submit_outcome_is_unknown() {
     let host_task = thread::spawn(move || {
         let hello = host.read_frame(&codec()).unwrap().unwrap();
         assert!(matches!(hello.frame().body, FrameBody::Hello(_)));
-        let text = host.read_payload(&codec()).unwrap().unwrap();
+        let text = read_next_client_payload(&mut host, "command body");
         let decoded = terminal_state_protocol::decode_record(&text).unwrap();
         assert_eq!(decoded.metadata.record_id, 1);
         let Some(terminal_state_record::Body::InputIntent(intent)) = decoded.record.body else {
@@ -4235,16 +4256,7 @@ fn command_input_preserves_body_delivery_when_submit_outcome_is_unknown() {
             Some(input_intent::Intent::Paste(_))
         ));
 
-        let submit_deadline = Instant::now() + Duration::from_secs(1);
-        let submit = loop {
-            match host.read_payload(&codec()) {
-                Ok(Some(payload)) => break payload,
-                Ok(None) | Err(_) if Instant::now() < submit_deadline => {
-                    thread::sleep(Duration::from_millis(1));
-                }
-                result => panic!("semantic submit did not reach the Host: {result:?}"),
-            }
-        };
+        let submit = read_next_client_payload(&mut host, "semantic submit");
         let decoded = terminal_state_protocol::decode_record(&submit).unwrap();
         assert_eq!(decoded.metadata.record_id, 2);
         let Some(terminal_state_record::Body::InputIntent(intent)) = decoded.record.body else {
@@ -4254,8 +4266,10 @@ fn command_input_preserves_body_delivery_when_submit_outcome_is_unknown() {
         host.close_write().unwrap();
     });
 
+    // The Host closes after reading the submit; the budget only absorbs a slow
+    // scheduler, since an expired one would report a submit never written.
     let error = surface
-        .send_command_input_confirmed("status".into(), true, Duration::from_secs(1))
+        .send_command_input_confirmed("status".into(), true, Duration::from_secs(10))
         .expect_err("submit transport loss must not erase the written body fact");
     assert_eq!(error.code(), "hmux_terminal_input_outcome_unknown");
     assert!(error.body_delivered());
