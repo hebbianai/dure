@@ -155,7 +155,7 @@ jobs:
           sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
       - name: Run vitest script tests
         run: |
-          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
+          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail -c '
             cd "$HOME/source"
             export CARGO_HOME="$HOME/.cargo"
             export RUSTUP_HOME="$HOME/.rustup"
@@ -166,6 +166,9 @@ jobs:
             rustc -vV
             corepack enable
             pnpm install --frozen-lockfile
+            # The split script jobs run test files directly, so parse every
+            # script module here, including those no test imports.
+            node scripts/run-changed-script-tests.mjs --syntax-only
             corepack pnpm exec vitest run --project scripts
           '
 
@@ -207,7 +210,7 @@ jobs:
           sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
       - name: Run node test (${{ matrix.file }})
         run: |
-          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
+          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail -c '
             cd "$HOME/source"
             export CARGO_HOME="$HOME/.cargo"
             export RUSTUP_HOME="$HOME/.rustup"
@@ -267,7 +270,7 @@ jobs:
           sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
       - name: Run deadline-sensitive script test (${{ matrix.file }})
         run: |
-          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
+          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail -c '
             cd "$HOME/source"
             export CARGO_HOME="$HOME/.cargo"
             export RUSTUP_HOME="$HOME/.rustup"
@@ -329,7 +332,7 @@ jobs:
           sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
       - name: Run process fixture script test (${{ matrix.file }})
         run: |
-          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
+          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail -c '
             cd "$HOME/source"
             export CARGO_HOME="$HOME/.cargo"
             export RUSTUP_HOME="$HOME/.rustup"

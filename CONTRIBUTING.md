@@ -336,9 +336,11 @@ pnpm app:verify
 
 `verify:frontend` checks the dependency installation, architecture fitness,
 design token coverage, types, lint, dependency graph and unused code, runs
-frontend tests and builds the web UI. `test:scripts`
-runs the script and CLI fixture suites with the repository's existing project
-boundaries. `verify:push:hmux-core` formats, tests and lints the Hmux workspace,
+frontend tests and builds the web UI; CI splits the frontend tests across three
+shards. `test:scripts` parses every script module and runs the script and CLI
+fixture suites with the repository's existing project boundaries; CI runs the
+same projects as separate jobs, one job per file where a project requires its
+own invocation. `verify:push:hmux-core` formats, tests and lints the Hmux workspace,
 including the exact-pin Ghostty terminal core, and `app:verify` checks the
 generated extension contracts and formats, tests and lints the `crates/dure-app`
 workspace and its provider driver. None of these commands proves a native app or

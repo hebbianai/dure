@@ -273,7 +273,7 @@ export function affectedScriptTests({
   return { paths: [...selected].sort(), unresolved };
 }
 
-function validateScriptSyntax(paths, readSource) {
+export function validateScriptSyntax(paths, readSource) {
   for (const sourcePath of paths.filter(isScriptTestModulePath)) {
     scriptModuleReferences(sourcePath, readSource(sourcePath));
   }
@@ -425,9 +425,17 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   try {
-    process.exitCode = runSelectedScriptTests({
-      all: process.argv.slice(2).includes("--all"),
-    });
+    const args = process.argv.slice(2);
+    if (args.includes("--syntax-only")) {
+      // Public CI runs each script test in its own job, so the full gate's
+      // up-front parse of every script module needs its own entry point.
+      const paths = listScriptTestGraphPaths();
+      validateScriptSyntax(paths, (sourcePath) => fs.readFileSync(sourcePath, "utf8"));
+      console.log(`script syntax: ${paths.length} modules parsed`);
+      process.exitCode = 0;
+    } else {
+      process.exitCode = runSelectedScriptTests({ all: args.includes("--all") });
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 2;
