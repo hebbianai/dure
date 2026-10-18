@@ -113,6 +113,10 @@ draft's exact four files with the successful workflow artifact, check the
 single-parent version commit, verify the updater archive
 against the exact-tag public key, and check beta/version/immutable URLs.
 It is integrity evidence, **not native acceptance**.
+Each download (workflow artifacts, release assets and the anonymous files)
+gets up to three attempts with backoff when the failure is a transport error
+such as a timeout, reset or HTTP 5xx. A retry starts from an empty destination,
+and any other error, or a third transport failure, still stops the command.
 
 Before publishing, inspect the unchanged signed DMG and mode-preserved archive;
 compare full file/type/mode/symlink manifests. Observe Finder first-open/reopen,

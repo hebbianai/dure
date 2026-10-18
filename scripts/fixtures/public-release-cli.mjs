@@ -19,6 +19,7 @@ const answer=value=>{save();console.log(JSON.stringify(value));};
 const fail=(status,message='fixture API refusal')=>{save();console.log(JSON.stringify({status:String(status),message}));console.error('HTTP '+status);process.exit(1);};
 fs.appendFileSync(process.env.RELEASE_TEST_CALLS,JSON.stringify(argv)+'\n');
 const arg=name=>argv[argv.indexOf(name)+1];
+const timeout=key=>{if(!(state.flakyDownloads?.[key]>0))return;state.flakyDownloads[key]--;fs.writeFileSync(path.join(arg('--dir'),'partial-download'),'');save();console.error('read tcp 10.0.0.2:50000->140.82.112.6:443: read: operation timed out');process.exit(1);};
 const sha=bytes=>crypto.createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex');
 const previous=bytes=>({type:'file',path:'beta/latest.json',encoding:'base64',sha:sha(bytes),content:bytes.toString('base64')});
 if(argv[0]==='api'){
@@ -66,6 +67,8 @@ if(argv[0]==='api'){
   if(arg('--workflow')!=='public-repository.yml')fail(404,'wrong workflow');
   answer([{headSha:arg('--commit'),status:'completed',conclusion:state.ciConclusions?.[arg('--commit')]??state.ciConclusion??'success'}]);
 }else if(argv[0]==='run'&&argv[1]==='download'){
+  timeout(arg('--name'));
+  if(state.expiredArtifacts){save();console.error('no valid artifacts found to download');process.exit(1);}
   if(arg('--name')==='release-selection'){
     fs.writeFileSync(path.join(arg('--dir'),'selection.json'),JSON.stringify(state.selection??{schemaVersion:1,runId:'239',sourceRef:'main',workflowSha:state.workflowSha??state.sourceSha,sourceSha:state.sourceSha,tag:'v0.2.29',verification:'full'}));
   }else for(const name of fs.readdirSync(state.original))fs.copyFileSync(path.join(state.original,name),path.join(arg('--dir'),name));
@@ -84,6 +87,7 @@ if(argv[0]==='api'){
   if(state.lostUpload===name)fail(500,'response lost after upload');
   answer(asset);
 }else if(argv[0]==='release'&&argv[1]==='download'){
+  timeout('release-download');
   for(const asset of state.release.assets){
     const dest=path.join(arg('--dir'),asset.name);
     fs.copyFileSync(path.join(state.original,asset.name),dest);
@@ -107,7 +111,13 @@ const fs=require('node:fs'),path=require('node:path');
 const argv=process.argv.slice(2),state=JSON.parse(fs.readFileSync(process.env.RELEASE_TEST_STATE));
 fs.appendFileSync(process.env.RELEASE_TEST_CURL,JSON.stringify(argv)+'\n');
 if(argv[0]!=='--disable'||argv.some(arg=>/authorization/i.test(arg)))process.exit(2);
-if(argv.includes('--output'))fs.copyFileSync(path.join(state.original,path.basename(argv.at(-1))),argv[argv.indexOf('--output')+1]);
+const output=argv.includes('--output')?argv[argv.indexOf('--output')+1]:null,key=output?path.basename(argv.at(-1)):'feed';
+if(state.flakyDownloads?.[key]>0){
+  state.flakyDownloads[key]--;fs.writeFileSync(process.env.RELEASE_TEST_STATE,JSON.stringify(state));
+  if(output)fs.writeFileSync(output,'partial');
+  console.error('curl: (28) Operation timed out after 30000 milliseconds with 0 bytes received');process.exit(28);
+}
+if(output)fs.copyFileSync(path.join(state.original,key),output);
 else process.stdout.write(Buffer.from((state.staleReadback?state.originalPrevious:state.previous).content,'base64'));
 `;
 
@@ -299,6 +309,7 @@ export function createPublicReleaseFixture({ remoteVersion = true } = {}) {
     RELEASE_VERIFICATION: "full",
     GH_TOKEN: "fixture-token",
     GITHUB_OUTPUT: path.join(root, "github-output"),
+    DURE_RELEASE_DOWNLOAD_RETRY_MS: "1",
   };
   const state = () => JSON.parse(fs.readFileSync(statePath));
   const change = (values) =>

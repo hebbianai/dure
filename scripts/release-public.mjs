@@ -43,6 +43,49 @@ const run = (bin, argv, options = {}) =>
   });
 const git = (...argv) => run("git", argv).trim();
 const gh = (...argv) => run("gh", argv);
+const sleep = (milliseconds) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+// Waits are configurable only so fixtures need not spend real time on them.
+function duration(name, fallback) {
+  const source = process.env[name];
+  if (source === undefined || source === "") return fallback;
+  const value = Number(source);
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new Error(`${name} must be a nonnegative integer`);
+  return value;
+}
+
+const DOWNLOAD_ATTEMPTS = 3;
+// gh reports Go network errors and HTTP status lines; curl reports exit codes.
+const TRANSPORT_FAILURE =
+  /operation timed out|i\/o timeout|TLS handshake timeout|connection (?:reset|refused)|broken pipe|unexpected EOF|context deadline exceeded|Client\.Timeout|no such host|stream error|GOAWAY|HTTP (?:429|5\d\d)\b|returned error:? (?:429|5\d\d)\b/i;
+const CURL_TRANSPORT_EXIT = new Set([5, 6, 7, 16, 18, 28, 35, 52, 55, 56, 92]);
+
+/** Repeat a read-only download after a transport failure only. `reset`
+ * restores an empty destination first, so each attempt yields complete files
+ * for the unchanged comparison that follows. */
+function download(label, fetch, { reset = () => {}, curl = false } = {}) {
+  const delay = duration("DURE_RELEASE_DOWNLOAD_RETRY_MS", 5_000);
+  for (let attempt = 1; ; attempt++) {
+    reset();
+    try {
+      return fetch();
+    } catch (error) {
+      const transport =
+        (curl && CURL_TRANSPORT_EXIT.has(error.status)) ||
+        TRANSPORT_FAILURE.test(String(error.stderr ?? ""));
+      if (!transport || attempt === DOWNLOAD_ATTEMPTS) throw error;
+      console.warn(
+        `${label}: transport failure on attempt ${attempt} of ${DOWNLOAD_ATTEMPTS}; retrying`,
+      );
+      sleep(delay * 2 ** (attempt - 1));
+    }
+  }
+}
+const emptyDirectory = (directory) => () => {
+  fs.rmSync(directory, { recursive: true, force: true });
+  fs.mkdirSync(directory);
+};
 function api(route, { absent = false, input, compatibility = false } = {}) {
   try {
     const env =
@@ -590,7 +633,7 @@ function createdRelease(tag) {
   for (let attempt = 0; attempt < 10; attempt++) {
     const current = release(tag);
     if (current) return current;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3_000);
+    sleep(3_000);
   }
   throw new Error("release_draft_not_observed");
 }
@@ -635,7 +678,12 @@ function updateMetadata(tag, files) {
     }
   }
   if (plan(read()) !== null) throw new Error("beta_metadata_readback_mismatch");
-  if (!anonymous(BETA_UPDATER_URL).equals(files.bytes))
+  const served = download(
+    "anonymous compatibility feed",
+    () => anonymous(BETA_UPDATER_URL),
+    { curl: true },
+  );
+  if (!served.equals(files.bytes))
     throw new Error(
       "beta_metadata_anonymous_readback_mismatch: resume metadata-only; do not recreate assets",
     );
@@ -736,10 +784,13 @@ function promote() {
   // Retained on failure for reconciliation; no updater or user app is invoked.
   console.log(`Release evidence: ${work}`);
   const selection = path.join(work, "selection");
-  fs.mkdirSync(selection);
-  gh(
-    "run", "download", proof.runId, "--repo", RELEASE_REPOSITORY,
-    "--name", "release-selection", "--dir", selection,
+  download(
+    "release-selection artifact",
+    () => gh(
+      "run", "download", proof.runId, "--repo", RELEASE_REPOSITORY,
+      "--name", "release-selection", "--dir", selection,
+    ),
+    { reset: emptyDirectory(selection) },
   );
   assert.deepEqual(
     fs.readdirSync(selection), ["selection.json"], "release_selection_mismatch",
@@ -751,31 +802,37 @@ function promote() {
   );
   const original = path.join(work, "original"),
     downloaded = path.join(work, "downloaded");
-  fs.mkdirSync(original);
-  fs.mkdirSync(downloaded);
-  gh(
-    "run",
-    "download",
-    proof.runId,
-    "--repo",
-    RELEASE_REPOSITORY,
-    "--name",
-    `release-assets-${tag}`,
-    "--dir",
-    original,
+  download(
+    `release-assets-${tag} artifact`,
+    () => gh(
+      "run",
+      "download",
+      proof.runId,
+      "--repo",
+      RELEASE_REPOSITORY,
+      "--name",
+      `release-assets-${tag}`,
+      "--dir",
+      original,
+    ),
+    { reset: emptyDirectory(original) },
   );
   const expected = inspectReleaseFiles(original, tag, publicKey);
   if (recovery) assert.deepEqual(recovery.assets, expected.assets, "release_recovery_asset_mismatch");
   if (recovering) current = completeDraft(tag, original, expected.assets, proof, current);
   else missingReleaseAssets(expected.assets, current.assets, { complete: true });
-  gh(
-    "release",
-    "download",
-    tag,
-    "--repo",
-    RELEASE_REPOSITORY,
-    "--dir",
-    downloaded,
+  download(
+    `${tag} release assets`,
+    () => gh(
+      "release",
+      "download",
+      tag,
+      "--repo",
+      RELEASE_REPOSITORY,
+      "--dir",
+      downloaded,
+    ),
+    { reset: emptyDirectory(downloaded) },
   );
   const files = inspectReleaseFiles(downloaded, tag, publicKey);
   assert.deepEqual(
@@ -829,11 +886,17 @@ function promote() {
     missingReleaseAssets(expected.assets, current.assets, { complete: true });
     const publicDirectory = path.join(work, "anonymous");
     fs.mkdirSync(publicDirectory);
-    for (const asset of expected.assets)
-      anonymous(
-        `https://github.com/${RELEASE_REPOSITORY}/releases/download/${tag}/${asset.name}`,
-        path.join(publicDirectory, asset.name),
+    for (const asset of expected.assets) {
+      const file = path.join(publicDirectory, asset.name);
+      download(
+        `anonymous ${asset.name}`,
+        () => anonymous(
+          `https://github.com/${RELEASE_REPOSITORY}/releases/download/${tag}/${asset.name}`,
+          file,
+        ),
+        { reset: () => fs.rmSync(file, { force: true }), curl: true },
       );
+    }
     assert.deepEqual(
       inspectReleaseFiles(publicDirectory, tag, publicKey).assets,
       expected.assets,

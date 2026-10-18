@@ -253,6 +253,76 @@ test("read-only verification compares the successful run bytes and does not publ
   expect(value.state().release.draft).toBe(true);
 });
 
+const runDownloads = (value) =>
+  value
+    .calls()
+    .filter((args) => args[0] === "run" && args[1] === "download")
+    .map((args) => args[args.indexOf("--name") + 1]);
+const curls = (value) =>
+  fs.existsSync(value.env.RELEASE_TEST_CURL)
+    ? fs
+        .readFileSync(value.env.RELEASE_TEST_CURL, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    : [];
+
+test("retries transient download timeouts and still compares complete files", () => {
+  const value = fixture();
+  success(stage(value));
+  value.change({
+    flakyDownloads: {
+      "release-selection": 1,
+      "release-assets-v0.2.29": 2,
+      "release-download": 1,
+      "Dure.app.tar.gz": 2,
+      feed: 1,
+    },
+  });
+  const result = value.run(script, "publish", "v0.2.29");
+  success(result);
+  expect(result.stderr).toContain("transport failure on attempt 2 of 3; retrying");
+  expect(Object.values(value.state().flakyDownloads)).toEqual([0, 0, 0, 0, 0]);
+  expect(runDownloads(value)).toEqual([
+    "release-selection",
+    "release-selection",
+    "release-assets-v0.2.29",
+    "release-assets-v0.2.29",
+    "release-assets-v0.2.29",
+  ]);
+  expect(
+    value.calls().filter((args) => args[0] === "release" && args[1] === "download"),
+  ).toHaveLength(2);
+  expect(
+    curls(value).filter((args) => args.at(-1).endsWith("/Dure.app.tar.gz")),
+  ).toHaveLength(3);
+  expect(curls(value).filter((args) => !args.includes("--output"))).toHaveLength(2);
+  expect(value.state().release.draft).toBe(false);
+});
+
+test("a download that keeps timing out stays nongreen, and an absent artifact is not retried", () => {
+  const value = fixture();
+  success(stage(value));
+  const before = writes(value).length;
+  value.change({ flakyDownloads: { "release-assets-v0.2.29": 3 } });
+  const timedOut = value.run(script, "publish", "v0.2.29");
+  expect(timedOut.status).toBe(1);
+  expect(timedOut.stderr).toContain("read: operation timed out");
+  expect(runDownloads(value)).toEqual([
+    "release-selection",
+    "release-assets-v0.2.29",
+    "release-assets-v0.2.29",
+    "release-assets-v0.2.29",
+  ]);
+  value.change({ flakyDownloads: {}, expiredArtifacts: true });
+  expect(value.run(script, "publish", "v0.2.29").stderr).toContain(
+    "no valid artifacts found to download",
+  );
+  expect(runDownloads(value)).toHaveLength(5);
+  expect(writes(value)).toHaveLength(before);
+  expect(value.state().release.draft).toBe(true);
+});
+
 test.each([
   { runConclusion: "failure" },
   { ciConclusion: "failure" },
