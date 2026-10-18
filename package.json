@@ -60,7 +60,7 @@
     "verify:push:mobile-rust:implementation": "cargo fmt --manifest-path mobile/src-tauri/Cargo.toml --all --check && cargo test --locked --manifest-path mobile/src-tauri/Cargo.toml --all-targets && cargo clippy --locked --manifest-path mobile/src-tauri/Cargo.toml --all-targets -- -D warnings",
     "gate:scope": "node scripts/gate-scope.mjs",
     "verify:frontend": "node scripts/run-with-build-storage.mjs frontend -- corepack pnpm verify:frontend:implementation",
-    "verify:frontend:implementation": "pnpm verify:dependencies && pnpm typecheck && pnpm lint && pnpm depcruise && pnpm knip && pnpm test:src && pnpm test:frontend-contracts && pnpm build:frontend",
+    "verify:frontend:implementation": "pnpm verify:dependencies && pnpm architecture:check && pnpm design:coverage:check && pnpm design:coverage:test && pnpm typecheck && pnpm lint && pnpm depcruise && pnpm knip && pnpm test:src && pnpm test:frontend-contracts && pnpm build:frontend",
     "hooks:install": "git config core.hooksPath .githooks && git config worktree.useRelativePaths true",
     "worktree:sync": "node scripts/sync-worktree.mjs",
     "worktree:wip": "node scripts/worktree-wip.mjs",

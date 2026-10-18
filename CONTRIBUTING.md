@@ -332,8 +332,9 @@ pnpm verify:push:mobile-web
 pnpm hub-protocol:verify
 ```
 
-`verify:frontend` checks the dependency installation, types, lint, dependency
-graph and unused code, runs frontend tests and builds the web UI. `test:scripts`
+`verify:frontend` checks the dependency installation, architecture fitness,
+design token coverage, types, lint, dependency graph and unused code, runs
+frontend tests and builds the web UI. `test:scripts`
 runs the script and CLI fixture suites with the repository's existing project
 boundaries. Neither command proves a native app or live provider workflow works.
 For Rust, terminal or process-lifecycle changes, also include the relevant crate

@@ -229,6 +229,23 @@ describe("public CI required result", () => {
   });
 });
 
+describe("public CI frontend checks", () => {
+  it("runs every frontend push-gate check and the design coverage gate", () => {
+    const { scripts } = JSON.parse(readFileSync(resolve(repositoryRoot, "package.json"), "utf8"));
+    const checks = (name) =>
+      scripts[name].split("&&").map((step) => step.trim().replace(/^(?:corepack )?pnpm /, ""));
+    expect(workflow.jobs.frontend.steps.at(-1).run).toBe("pnpm verify:frontend");
+    expect(scripts["verify:frontend"]).toContain("pnpm verify:frontend:implementation");
+    expect(checks("verify:frontend:implementation")).toEqual(
+      expect.arrayContaining([
+        ...checks("verify:push:frontend:implementation"),
+        "design:coverage:check",
+        "design:coverage:test",
+      ]),
+    );
+  });
+});
+
 describe("public CI change planning", () => {
   it("skips code suites for documentation and README media, including newline filenames", () => {
     const fixture = repositoryFixture();
