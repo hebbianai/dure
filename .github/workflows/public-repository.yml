@@ -142,6 +142,9 @@ jobs:
           sudo cp -a "$GITHUB_WORKSPACE" /home/dure-source-checks/source
           sudo chown -R dure-source-checks:dure-source-checks /home/dure-source-checks/source
           sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
+          sudo mkdir -p /home/dure-source-checks/node
+          sudo cp -a "$(dirname "$(dirname "$(command -v node)")")"/* /home/dure-source-checks/node/
+          sudo chown -R dure-source-checks:dure-source-checks /home/dure-source-checks/node
       - name: Setup Rust toolchain in test user home
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" bash -c '
@@ -156,6 +159,7 @@ jobs:
         run: |
           sudo --user=dure-source-checks --set-home bash -c '
             cd "$HOME/source"
+            export PATH="$HOME/node/bin:$PATH"
             corepack enable
             pnpm install --frozen-lockfile
           '
@@ -188,6 +192,7 @@ jobs:
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
             cd "$HOME/source"
+            export PATH="$HOME/node/bin:$PATH"
             export CARGO_HOME="$HOME/.cargo"
             export RUSTUP_HOME="$HOME/.rustup"
             export PATH="$CARGO_HOME/bin:$PATH"
@@ -217,6 +222,7 @@ jobs:
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
             cd "$HOME/source"
+            export PATH="$HOME/node/bin:$PATH"
             export CARGO_HOME="$HOME/.cargo"
             export RUSTUP_HOME="$HOME/.rustup"
             export PATH="$CARGO_HOME/bin:$PATH"
@@ -246,6 +252,7 @@ jobs:
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
             cd "$HOME/source"
+            export PATH="$HOME/node/bin:$PATH"
             export CARGO_HOME="$HOME/.cargo"
             export RUSTUP_HOME="$HOME/.rustup"
             export PATH="$CARGO_HOME/bin:$PATH"
