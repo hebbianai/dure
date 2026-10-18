@@ -60,7 +60,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release-public.mjs preflight "$RUNNER_TEMP/selection.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-selection
           path: ${{ runner.temp }}/selection.json
@@ -97,7 +97,7 @@ jobs:
           toolchain: 1.97.1
       - name: Prepare version-only candidate
         run: node ../scripts/prepare-release-candidate.mjs "$RELEASE_BUMP" "$RELEASE_SOURCE_SHA" "$RUNNER_TEMP/release-candidate"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-candidate-${{ github.sha }}
           path: ${{ runner.temp }}/release-candidate
@@ -328,7 +328,7 @@ jobs:
           node ../scripts/build-latest-json.mjs "${TAG#v}" "$SIGNATURE" Dure.app.tar.gz hebbianai/dure beta
           mkdir "$RUNNER_TEMP/release-assets"
           cp "$DMG" "$ARCHIVE" "$SIGNATURE" latest.json "$RUNNER_TEMP/release-assets/"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets-${{ needs.version.outputs.tag }}
           path: ${{ runner.temp }}/release-assets
