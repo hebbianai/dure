@@ -59,7 +59,8 @@ if(argv[0]==='api'){
   }else if(route.includes('/git/ref/')){
     if(route.startsWith('repos/hebbianai/dure/')&&state.hasRemoteTag)answer({object:{type:'commit',sha:state.tagSha}});else fail(404);
   }else if(route.includes('/actions/runs/')&&route.includes('/jobs?')){
-    answer({total_count:6,jobs:['source','candidate','version','build','draft','verification'].map(name=>({name,conclusion:state.jobConclusions?.[name]??(name==='verification'?(state.actualVerification??'success'):'success')}))});
+    const verification=state.actualVerification??'success',preflight=verification==='success'?'skipped':'success';
+    answer({total_count:7,jobs:['source','candidate','verification','host-preflight','version','build','draft'].map(name=>({name,conclusion:state.jobConclusions?.[name]??(name==='verification'?verification:name==='host-preflight'?preflight:'success')}))});
   }else if(route.includes('/actions/runs/')){
     answer({repository:{full_name:'hebbianai/dure'},path:'.github/workflows/release.yml',event:'workflow_dispatch',head_branch:state.headBranch??'main',head_sha:state.workflowSha??state.sourceSha,status:'completed',conclusion:state.runConclusion??'success'});
   }else fail(400,'unmodeled API '+route);

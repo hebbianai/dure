@@ -755,7 +755,7 @@ function promote() {
   assert.equal(draftJobs[0].conclusion, failedDraft ? "failure" : "success",
     "release_job_not_successful: draft");
   if (failedDraft) {
-    assert.deepEqual(jobs.jobs.filter((job) => !["source", "candidate", "version", "build", "draft", "verification"].includes(job.name)),
+    assert.deepEqual(jobs.jobs.filter((job) => !["source", "candidate", "verification", "host-preflight", "version", "build", "draft"].includes(job.name)),
       [], "release_recovery_unexpected_job");
     if (recovery) reviewedRecoveryTooling(recovery.toolingSha, recovery.operator);
   }

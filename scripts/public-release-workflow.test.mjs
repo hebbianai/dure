@@ -157,7 +157,7 @@ test("public PR checks remain on hosted runners with no signing secrets", () => 
     expect(JSON.stringify(job["runs-on"])).not.toContain("self-hosted");
     expect(JSON.stringify(job)).not.toContain("secrets.");
   }
-  for (const name of ["verification", "build"]) {
+  for (const name of ["verification", "host-preflight", "build"]) {
     expect(workflow.jobs[name]["runs-on"]).toEqual({
       group: "dure-release",
       labels: ["self-hosted", "macOS", "ARM64", "dure-release"],
@@ -178,7 +178,12 @@ test("full verification and owned target cleanup precede the independently valid
     if: "always()",
     run: "sh scripts/manage-ci-cargo-target.sh release",
   });
-  expect(workflow.jobs.version.needs).toEqual(["source", "candidate", "verification"]);
+  expect(workflow.jobs.version.needs).toEqual([
+    "source",
+    "candidate",
+    "verification",
+    "host-preflight",
+  ]);
   expect(workflow.jobs.version.if).toContain(
     "needs.candidate.result == 'success'",
   );
@@ -194,6 +199,52 @@ test("full verification and owned target cleanup precede the independently valid
   expect(workflow.jobs.version.steps.at(-1).run).toContain(
     "public-repository.yml --repo hebbianai/dure --ref",
   );
+});
+
+test("an emergency release approves and admits the signing host before any version ref exists", () => {
+  const preflight = workflow.jobs["host-preflight"];
+  expect(preflight.if).toBe("inputs.verification == 'emergency-0.2'");
+  expect(preflight.needs).toEqual(["source", "candidate"]);
+  expect(preflight["runs-on"]).toEqual(workflow.jobs.build["runs-on"]);
+  expect(preflight.environment).toBe(workflow.jobs.build.environment);
+  const runs = preflight.steps.map((step) => step.run ?? "");
+  expect(runs).toContain("node scripts/run-with-build-storage.mjs full -- true");
+  expect(runs.join("\n")).not.toMatch(/tauri|cargo|pnpm|release-public/);
+  expect(JSON.stringify(preflight)).not.toMatch(/secrets\.|GH_TOKEN|github\.token/);
+  const build = workflow.jobs.build.steps.find(
+    (step) => step.name === "Build signed and notarized beta",
+  ).run;
+  for (const check of preflight.steps
+    .find((step) => step.name === "Check the signing host session")
+    .run.trim()
+    .split("\n"))
+    expect(build).toContain(check);
+  expect(workflow.jobs.version.needs).toContain("host-preflight");
+  const admitted = (verification, verified, prepared) =>
+    new Function(
+      "needs",
+      "inputs",
+      "always",
+      "cancelled",
+      `return (${workflow.jobs.version.if.replaceAll("needs.host-preflight", 'needs["host-preflight"]')});`,
+    )(
+      {
+        source: { result: "success" },
+        candidate: { result: "success" },
+        verification: { result: verified },
+        "host-preflight": { result: prepared },
+      },
+      { verification },
+      () => true,
+      () => false,
+    );
+  expect(admitted("emergency-0.2", "skipped", "success")).toBe(true);
+  for (const result of ["failure", "cancelled", "skipped"])
+    expect(admitted("emergency-0.2", "skipped", result)).toBe(false);
+  expect(admitted("full", "success", "skipped")).toBe(true);
+  expect(admitted("full", "skipped", "success")).toBe(false);
+  for (const result of ["failure", "cancelled"])
+    expect(admitted("full", result, "skipped")).toBe(false);
 });
 
 test("keeps the selection and signed assets for the promotion and recovery window", () => {
@@ -350,6 +401,8 @@ test("separates protected workflow helpers from the immutable selected applicati
     }
   }
   expect(checks("verification")[0].with.ref).toBe("${{ needs.source.outputs.source_sha }}");
+  expect(checks("host-preflight")).toHaveLength(1);
+  expect(checks("host-preflight")[0].with.ref).toBe("${{ github.sha }}");
   expect(workflow.jobs.candidate.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");
   expect(workflow.jobs.version.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");
   expect(workflow.jobs.draft.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");

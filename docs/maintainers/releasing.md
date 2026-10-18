@@ -123,6 +123,20 @@ artifact integrity, packaged acceptance or cleanup, and cannot admit `0.3.x`.
 Each emergency run needs fresh maintainer authorization for its selected version;
 the option does not reuse a historical exception for a later release.
 
+No version ref is created before the signing host has been approved and has
+admitted the build. In full mode the verification job does this on the signing
+runner. In emergency mode a `host-preflight` job runs there instead: it waits for
+the `macos-release` approval, checks the arm64 host and its Finder session, and
+runs the full build's storage admission without building
+(`run-with-build-storage.mjs full -- true`). It receives no publisher
+credentials or signing secrets. A rejected or cancelled approval, or a storage
+refusal, stops the run before `release/vX.Y.Z` and `vX.Y.Z` exist, so the version
+stays unused; fix the host, then re-run the failed jobs or start a new
+dispatch. The build job uses the same environment after the tag exists, so every
+run asks for `macos-release` approval twice. The preflight is a point-in-time
+check: the build admits its storage again, and a volume that fills up in between
+still stops the build after tagging.
+
 The independent hosted version writer treats the candidate patch as data. It
 reconstructs every allowed manifest/lock byte from the frozen source, commits
 only that version inventory, and atomically publishes `release/vX.Y.Z` and
