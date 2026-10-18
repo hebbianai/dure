@@ -152,6 +152,12 @@ if (args.includes("probe-batch")) {
         hostInstanceId: session.host_instance_id,
         terminalEpoch: session.terminal_epoch,
       });
+      if (session.workingDirectory) {
+        result.workingDirectory = session.workingDirectory;
+      }
+      if (session.agentRuntimeState) {
+        result.agentRuntimeState = session.agentRuntimeState;
+      }
     }
     return result;
   });
