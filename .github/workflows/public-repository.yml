@@ -96,6 +96,15 @@ jobs:
       - name: Run dependency checks
         if: matrix.shard == 1
         run: pnpm verify:dependencies
+      - name: Check architecture fitness
+        if: matrix.shard == 1
+        run: pnpm architecture:check
+      - name: Check design token coverage
+        if: matrix.shard == 1
+        run: pnpm design:coverage:check
+      - name: Test design coverage engine
+        if: matrix.shard == 1
+        run: pnpm design:coverage:test
       - name: Typecheck
         if: matrix.shard == 1
         run: pnpm typecheck

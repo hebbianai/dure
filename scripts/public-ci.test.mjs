@@ -320,11 +320,11 @@ describe("public CI required result", () => {
 });
 
 describe("public CI frontend checks", () => {
-  it("runs every frontend push-gate check and the design coverage gate", () => {
-    const { scripts } = JSON.parse(readFileSync(resolve(repositoryRoot, "package.json"), "utf8"));
-    const checks = (name) =>
-      scripts[name].split("&&").map((step) => step.trim().replace(/^(?:corepack )?pnpm /, ""));
-    expect(workflow.jobs.frontend.steps.at(-1).run).toBe("pnpm verify:frontend");
+  const { scripts } = JSON.parse(readFileSync(resolve(repositoryRoot, "package.json"), "utf8"));
+  const checks = (name) =>
+    scripts[name].split("&&").map((step) => step.trim().replace(/^(?:corepack )?pnpm /, ""));
+
+  it("runs every frontend push-gate check and the design coverage gate locally", () => {
     expect(scripts["verify:frontend"]).toContain("pnpm verify:frontend:implementation");
     expect(checks("verify:frontend:implementation")).toEqual(
       expect.arrayContaining([
@@ -333,6 +333,23 @@ describe("public CI frontend checks", () => {
         "design:coverage:test",
       ]),
     );
+  });
+
+  it("runs the same checks as verify:frontend across the shards, sharding only source tests", () => {
+    const job = workflow.jobs.frontend;
+    const shards = job.strategy.matrix.shard;
+    expect(shards).toEqual(shards.map((_, index) => index + 1));
+    const gates = job.steps.filter(
+      (step) => step.run?.startsWith("pnpm ") && step.run !== "pnpm install --frozen-lockfile",
+    );
+    const sourceTests = `pnpm test:src --shard=\${{ matrix.shard }}/${shards.length}`;
+    for (const step of gates) {
+      // Every shard runs its slice of the source tests; shard 1 runs the rest.
+      expect(step.if, step.run).toBe(step.run === sourceTests ? undefined : "matrix.shard == 1");
+    }
+    expect(
+      gates.map((step) => (step.run === sourceTests ? "test:src" : step.run.replace(/^pnpm /, ""))),
+    ).toEqual(checks("verify:frontend:implementation"));
   });
 });
 
