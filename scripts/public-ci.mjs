@@ -18,7 +18,6 @@ const CODE_RESULTS = [
   "SCRIPTS_PROCESS_RESULT",
   "MOBILE_WEB_RESULT",
   "SHARED_PROTOCOL_RESULT",
-  "HMUX_CLI_RESULT",
 ];
 
 export function planPublicCi({
