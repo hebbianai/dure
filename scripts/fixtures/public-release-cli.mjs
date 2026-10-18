@@ -10,6 +10,25 @@ import {
   replaceReleaseCargoLock,
 } from "../lib/release-candidate.mjs";
 
+// Jobs of a full public-repository.yml run. The frontend and script suites
+// run as matrix jobs whose names carry a shard or test-file suffix.
+export const PUBLIC_CI_JOB_NAMES = Object.freeze([
+  "Select public checks",
+  "Documentation checks",
+  "Frontend checks (shard 1)",
+  "Frontend checks (shard 2)",
+  "Frontend checks (shard 3)",
+  "Script checks (vitest)",
+  "Script checks (node cli/lib/provider-launch-selection.test.mjs)",
+  "Script checks (deadline scripts/dure-cli-wait.test.mjs)",
+  "Script checks (process scripts/run-dev-app.test.mjs)",
+  "Mobile web checks",
+  "Shared protocol (ubuntu-24.04)",
+  "Hmux checks",
+  "App core checks",
+  "Public repository checks",
+]);
+
 const fakeGh = String.raw`#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const argv=process.argv.slice(2), stateFile=process.env.RELEASE_TEST_STATE;
@@ -24,7 +43,7 @@ const sha=bytes=>crypto.createHash('sha1').update('blob '+bytes.length+'\0').upd
 const previous=bytes=>({type:'file',path:'beta/latest.json',encoding:'base64',sha:sha(bytes),content:bytes.toString('base64')});
 // Public CI: one completed run per commit unless state.ciRuns lists several.
 // Run ids are registered on listing and stay clear of the release run id.
-const ciJobNames=['Select public checks','Documentation checks','Frontend checks','Script checks','Mobile web checks','Shared protocol (ubuntu-24.04)','Public repository checks'];
+const ciJobNames=${JSON.stringify(PUBLIC_CI_JOB_NAMES)};
 const ciRuns=commit=>(state.ciRuns?.[commit]??[{}]).map((run,index)=>{
   const key=commit+'/'+index;
   state.ciRunIds??={};

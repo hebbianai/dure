@@ -2,7 +2,10 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { createPublicReleaseFixture } from "./fixtures/public-release-cli.mjs";
+import {
+  createPublicReleaseFixture,
+  PUBLIC_CI_JOB_NAMES,
+} from "./fixtures/public-release-cli.mjs";
 
 const script = path.resolve("scripts/release-public.mjs"),
   roots = [];
@@ -25,6 +28,12 @@ function stage(value) {
     "full",
   );
 }
+// A successful public run whose plan skipped every frontend and script job.
+const skippedCodeJobs = Object.fromEntries(
+  PUBLIC_CI_JOB_NAMES.filter((name) => /^(?:Frontend|Script) checks/.test(name)).map(
+    (name) => [name, "skipped"],
+  ),
+);
 function success(result) {
   expect(result.status, result.stdout + result.stderr).toBe(0);
 }
@@ -159,7 +168,7 @@ test.each([
   { permissions: { "release-admin": "write" } },
   { toolingComparison: "diverged" },
   { ciConclusion: "failure" },
-  { ciJobs: { "Script checks": "skipped" } },
+  { ciJobs: { "Script checks (vitest)": "skipped" } },
 ])("recovery refuses missing build, authority, review or CI evidence before writing: %j", (failure) => {
   const value = fixture();
   failedDraft(value);
@@ -327,7 +336,7 @@ test("a download that keeps timing out stays nongreen, and an absent artifact is
 test.each([
   { runConclusion: "failure" },
   { ciConclusion: "failure" },
-  { ciJobs: { "Frontend checks": "skipped", "Script checks": "skipped" } },
+  { ciJobs: skippedCodeJobs },
   { actualVerification: "skipped" },
   { tamperDownload: true },
   { headBranch: "topic" },
@@ -547,13 +556,12 @@ test("preflight requires an unused next version and exact public source CI", () 
   expect(writes(value)).toEqual([]);
 });
 
-const skippedCodeJobs = { "Frontend checks": "skipped", "Script checks": "skipped" };
-
 test.each([
   { ciJobs: skippedCodeJobs },
-  { ciJobs: { "Script checks": "skipped" } },
+  { ciJobs: { "Frontend checks (shard 2)": "skipped" } },
+  { ciJobs: { "Script checks (process scripts/run-dev-app.test.mjs)": "skipped" } },
   { ciJobs: { "Public repository checks": "skipped" } },
-])("preflight refuses successful exact CI that did not run the code suites: %j", (gap) => {
+])("preflight refuses successful exact CI that did not run every code suite job: %j", (gap) => {
   const value = fixture({ remoteVersion: false });
   value.change(gap);
   const result = value.run(script, "preflight");

@@ -118,12 +118,13 @@ gh workflow run release.yml --repo hebbianai/dure --ref main \
 
 The selected source and protected workflow commits each need public CI evidence:
 a successful `public-repository.yml` run for that exact commit in which
-`Public repository checks`, `Frontend checks` and `Script checks` all succeeded.
-A run that skipped its code jobs, such as a documentation-only push, also concludes
-success but is not evidence, and a newer push to `main` cancels the run of an
-older commit. Without such a run the source job refuses with
-`release_exact_ci_required`. Run the workflow on a ref at that commit, wait for
-it to succeed, then dispatch Release again:
+`Public repository checks` succeeded and the frontend and script suites ran:
+at least one `Frontend checks` shard and one `Script checks` job, with every job
+of both suites succeeding and none skipped. A run that skipped its code jobs,
+such as a documentation-only push, also concludes success but is not evidence.
+Without such a run the source job refuses with `release_exact_ci_required`. Run
+the workflow on a ref at that commit, wait for it to succeed, then dispatch
+Release again:
 
 ```sh
 gh workflow run public-repository.yml --repo hebbianai/dure --ref main
