@@ -370,7 +370,7 @@ function parseProbeBatchPayload(result, targets, includeRuntimeState) {
     "liveness",
     "status",
     "errorCode",
-    ...(includeRuntimeState ? ["outputSequence", "agentRuntimeState"] : []),
+    ...(includeRuntimeState ? ["outputSequence", "agentRuntimeState", "workingDirectory"] : []),
     ...GENERATION_FIELDS.map(([field]) => field),
   ]);
   for (let index = 0; index < payload.results.length; index += 1) {
@@ -448,6 +448,9 @@ function applyProbeReceipt(session, receipt) {
     // Runtime facts and their output fence must come from the same exact Host
     // observation, never from the earlier no-probe catalog snapshot.
     agentRuntimeState: health === "healthy" ? receipt.agentRuntimeState ?? null : null,
+    ...(health === "healthy" && receipt.workingDirectory !== undefined
+      ? { workingDirectory: receipt.workingDirectory }
+      : {}),
     ...(health === "healthy" && receipt.outputSequence !== undefined
       ? { output_seq: receipt.outputSequence }
       : {}),
@@ -951,7 +954,7 @@ export function formatSessionQuery(report) {
   const sessions = report.kind === "dure.sessions.list" ? report.sessions : [report.session];
   if (sessions.length === 0) return "No Dure sessions.";
   const lines = [
-    "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS",
+    "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS",
   ];
   for (const session of sessions) {
     lines.push(
@@ -962,6 +965,7 @@ export function formatSessionQuery(report) {
         session.provider.pid,
         session.liveness.state,
         session.cwd ?? "-",
+        session.runtime?.agentRuntimeState?.activity ?? "-",
         session.clientProjection.agents
           .map((agent) => agent.displayName ?? agent.name ?? agent.id ?? "?")
           .join(",") || "-",

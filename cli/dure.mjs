@@ -1606,6 +1606,25 @@ async function emitSessionQuery(action, sessionId, opts) {
       opts.probeBudgetMs === undefined ? undefined : Number(opts.probeBudgetMs),
     backend,
   });
+
+  // Apply client-side filtering for ls command
+  if (action === "list" && report.kind === "dure.sessions.list") {
+    let filtered = report.sessions;
+
+    // Filter by --alive (only show alive sessions)
+    if (opts.alive) {
+      filtered = filtered.filter((session) => session.liveness.state === "alive");
+    }
+
+    // Filter by --hide-provider (can be repeated)
+    if (opts.hideProvider && opts.hideProvider.length > 0) {
+      const hiddenProviders = Array.isArray(opts.hideProvider) ? opts.hideProvider : [opts.hideProvider];
+      filtered = filtered.filter((session) => !hiddenProviders.includes(session.provider.id));
+    }
+
+    report.sessions = filtered;
+  }
+
   process.stdout.write(
     (opts.json ? JSON.stringify(report) : formatSessionQuery(report)) + "\n",
   );
@@ -1615,13 +1634,13 @@ async function emitSessionQuery(action, sessionId, opts) {
 async function cmdLs(opts) {
   if (opts.rest.length !== 0 || opts.workspace !== undefined) {
     fail(
-      "Usage: dure ls [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]",
+      "Usage: dure ls [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N] [--alive] [--hide-provider ID...]",
     );
   }
   return emitSessionQuery("list", undefined, opts);
 }
 
-const SESSION_QUERY_HELP = `Usage: dure ls [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]
+const SESSION_QUERY_HELP = `Usage: dure ls [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N] [--alive] [--hide-provider ID...]
        dure sessions list [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]
        dure inspect <session-id> [--workspace ID] [--backend ID] [--json]
        dure sessions show <session-id> [--workspace ID] [--backend ID] [--json]
@@ -1640,6 +1659,11 @@ Pages are live observations ordered by workspace/session ID, not a frozen snapsh
 complete means the census succeeded; inventoryComplete means no more rows remain
 after this page, and observationComplete means every returned row was probed.
 Recent lists provider history through the connected app.
+
+Filtering options (dure ls only):
+  --alive                   Show only alive sessions (exclude exited and unknown)
+  --hide-provider ID        Hide sessions from the specified provider ID (can be repeated)
+
 Use --help or -h to show this help without contacting a backend.
 `;
 

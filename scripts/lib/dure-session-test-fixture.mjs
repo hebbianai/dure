@@ -123,6 +123,7 @@ if (args.includes("probe-batch")) {
   const targetsIndex = args.indexOf("--targets-json");
   const targets = JSON.parse(args[targetsIndex + 1]);
   const overrides = ${JSON.stringify(probeStatuses)};
+  const supportsRuntimeState = ${JSON.stringify(capabilities)}.includes("exact_session_probe_runtime_state_v1");
   const results = targets.map((target) => {
     const session = Array.isArray(payload)
       ? payload.find(
@@ -152,6 +153,17 @@ if (args.includes("probe-batch")) {
         hostInstanceId: session.host_instance_id,
         terminalEpoch: session.terminal_epoch,
       });
+      if (supportsRuntimeState) {
+        if (session.workingDirectory) {
+          result.workingDirectory = session.workingDirectory;
+        }
+        if (session.agentRuntimeState) {
+          result.agentRuntimeState = session.agentRuntimeState;
+        }
+        if (session.output_seq) {
+          result.outputSequence = session.output_seq;
+        }
+      }
     }
     return result;
   });
