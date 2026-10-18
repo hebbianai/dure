@@ -687,6 +687,13 @@ mod tests {
     use std::os::unix::ffi::OsStringExt;
     use std::os::unix::net::UnixStream;
 
+    /// The POSIX shell as the exact regular file the supervisor accepts as its
+    /// interpreter. Debian and Ubuntu ship `/bin/sh` as a symlink to `dash`,
+    /// and the supervisor rejects a symlinked interpreter by contract.
+    fn exact_shell() -> PathBuf {
+        fs::canonicalize("/bin/sh").unwrap()
+    }
+
     struct SupervisorGuard {
         generation: String,
         supervisor: ClaudeSdkHostSupervisor,
@@ -838,7 +845,7 @@ mod tests {
         fs::write(&entrypoint, "printf '%s ' \"$@\" 1>&2\nexit 7\n").unwrap();
         fs::set_permissions(&entrypoint, fs::Permissions::from_mode(0o600)).unwrap();
         let configuration = ClaudeSdkHostSupervisorConfiguration::new_with_address_root(
-            Path::new("/bin/sh"),
+            exact_shell(),
             &entrypoint,
             state_root.path(),
             &address_root,
@@ -879,7 +886,7 @@ mod tests {
         fs::write(&entrypoint, "echo 'boom from host' 1>&2\nexit 7\n").unwrap();
         fs::set_permissions(&entrypoint, fs::Permissions::from_mode(0o600)).unwrap();
         let configuration = ClaudeSdkHostSupervisorConfiguration::new(
-            Path::new("/bin/sh"),
+            exact_shell(),
             &entrypoint,
             state_root.path(),
             runtime_root.path(),
