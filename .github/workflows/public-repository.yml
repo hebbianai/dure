@@ -187,7 +187,17 @@ jobs:
           name: dure-test-user-${{ github.sha }}
           path: /tmp
       - name: Restore test user
-        run: sudo tar -xzf /tmp/dure-test-user.tar.gz -C /home
+        run: |
+          ls -lah /tmp/
+          if [ -f /tmp/dure-test-user.tar.gz ]; then
+            sudo tar -xzf /tmp/dure-test-user.tar.gz -C /home
+          elif [ -f /tmp/dure-test-user-${{ github.sha }}.tar.gz ]; then
+            sudo tar -xzf /tmp/dure-test-user-${{ github.sha }}.tar.gz -C /home
+          else
+            echo "Error: artifact tar.gz not found in /tmp"
+            exit 1
+          fi
+          id dure-source-checks || echo "User not found after extraction!"
       - name: Run vitest script tests
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
@@ -227,7 +237,17 @@ jobs:
           name: dure-test-user-${{ github.sha }}
           path: /tmp
       - name: Restore test user
-        run: sudo tar -xzf /tmp/dure-test-user.tar.gz -C /home
+        run: |
+          ls -lah /tmp/
+          if [ -f /tmp/dure-test-user.tar.gz ]; then
+            sudo tar -xzf /tmp/dure-test-user.tar.gz -C /home
+          elif [ -f /tmp/dure-test-user-${{ github.sha }}.tar.gz ]; then
+            sudo tar -xzf /tmp/dure-test-user-${{ github.sha }}.tar.gz -C /home
+          else
+            echo "Error: artifact tar.gz not found in /tmp"
+            exit 1
+          fi
+          id dure-source-checks || echo "User not found after extraction!"
       - name: Run deadline-sensitive script tests (group ${{ matrix.group }})
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
@@ -273,7 +293,17 @@ jobs:
           name: dure-test-user-${{ github.sha }}
           path: /tmp
       - name: Restore test user
-        run: sudo tar -xzf /tmp/dure-test-user.tar.gz -C /home
+        run: |
+          ls -lah /tmp/
+          if [ -f /tmp/dure-test-user.tar.gz ]; then
+            sudo tar -xzf /tmp/dure-test-user.tar.gz -C /home
+          elif [ -f /tmp/dure-test-user-${{ github.sha }}.tar.gz ]; then
+            sudo tar -xzf /tmp/dure-test-user-${{ github.sha }}.tar.gz -C /home
+          else
+            echo "Error: artifact tar.gz not found in /tmp"
+            exit 1
+          fi
+          id dure-source-checks || echo "User not found after extraction!"
       - name: Run process fixture script tests (${{ matrix.group }})
         run: |
           sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -c '
