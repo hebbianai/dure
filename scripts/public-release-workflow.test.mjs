@@ -196,6 +196,70 @@ test("full verification and owned target cleanup precede the independently valid
   );
 });
 
+test("the build removes only its own release checkout outputs after uploading", () => {
+  const steps = workflow.jobs.build.steps;
+  const cleanup = steps.at(-1);
+  expect(cleanup).toMatchObject({
+    if: "always()",
+    "working-directory": "${{ github.workspace }}",
+    env: { RELEASE_SHA: "${{ needs.version.outputs.release_sha }}" },
+  });
+  expect(steps.indexOf(cleanup)).toBeGreaterThan(
+    steps.findIndex((step) => step.uses?.startsWith("actions/upload-artifact@")),
+  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-release-cleanup-"));
+  try {
+    const workspace = path.join(root, "work", "dure", "dure");
+    const source = path.join(workspace, "source");
+    const lease = path.join(root, "work", "_hebbian-ci-targets-v1", "verify");
+    const write = (file, body = "output") => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, body);
+    };
+    const env = { PATH: "/usr/bin:/bin", HOME: root };
+    const git = (...args) =>
+      execFileSync(
+        "git",
+        ["-C", source, "-c", "core.hooksPath=/dev/null", ...args],
+        { env, encoding: "utf8" },
+      ).trim();
+    write(path.join(source, "package.json"), "{}\n");
+    write(path.join(source, ".gitignore"), "target/\nnode_modules/\n");
+    git("init", "-q");
+    git("add", ".");
+    git(
+      "-c", "user.name=Release fixture", "-c", "user.email=release@example.test",
+      "-c", "commit.gpgsign=false", "commit", "-qm", "release",
+    );
+    const outputs = [
+      path.join(source, "src-tauri", "target", "release", "dure"),
+      path.join(source, "hmux", "target", "release", "hmux"),
+      path.join(source, "node_modules", ".modules.yaml"),
+      path.join(source, "latest.json"),
+    ];
+    const outside = [
+      path.join(workspace, "workflow-helper.mjs"),
+      path.join(lease, "0123456789abcdef", "target", "release", "dure"),
+    ];
+    for (const file of [...outputs, ...outside]) write(file);
+    const clean = (releaseSha) =>
+      execFileSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", cleanup.run],
+        { cwd: workspace, env: { ...env, RELEASE_SHA: releaseSha }, encoding: "utf8" },
+      );
+    expect(clean("0".repeat(40))).toContain("No release checkout from this job");
+    expect(outputs.every((file) => fs.existsSync(file))).toBe(true);
+    clean(git("rev-parse", "HEAD"));
+    expect(outputs.filter((file) => fs.existsSync(file))).toEqual([]);
+    expect(outside.filter((file) => !fs.existsSync(file))).toEqual([]);
+    expect(fs.readFileSync(path.join(source, "package.json"), "utf8")).toBe("{}\n");
+    expect(git("status", "--porcelain", "--ignored")).toBe("");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("only the protected build step receives signing credentials and offers the Beta interface", () => {
   const build = workflow.jobs.build.steps.find(
     (step) => step.name === "Build signed and notarized beta",

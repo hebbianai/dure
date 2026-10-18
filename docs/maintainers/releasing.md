@@ -46,6 +46,10 @@ a narrowly scoped organization secret policy.
 Set environment variable `DURE_TELEMETRY_KEY` to the existing public telemetry
 project token. The build refuses an empty value and checks the compiled binary.
 Normal storage admission and isolated Cargo/process ownership are unchanged.
+After uploading the signed files, the build job removes the outputs it left in
+its own release checkout (`git clean -ffdx` in `source/`, about 8 GiB), even when
+an earlier step failed. It does not touch the runner-owned Cargo target
+generations under `_hebbian-ci-targets-v1` or anything else outside that checkout.
 The hosted version job uses its scoped `GITHUB_TOKEN` to create only the release
 branch/tag and request exact-tag CI; it does not need a private-repository deploy
 key or a main-branch protection bypass.

@@ -334,6 +334,20 @@ jobs:
           path: ${{ runner.temp }}/release-assets
           if-no-files-found: error
           retention-days: 30
+      # The signed files are uploaded from runner temp above. Remove the about
+      # 8 GiB of Cargo targets, staged runtimes, dependencies and bundles this
+      # job left in its own release checkout, and nothing outside it.
+      - name: Remove this job's build outputs
+        if: always()
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_SHA: ${{ needs.version.outputs.release_sha }}
+        run: |
+          if [ -d source/.git ] && [ "$(git -C source rev-parse HEAD)" = "$RELEASE_SHA" ]; then
+            git -C source clean -ffdxq
+          else
+            echo 'No release checkout from this job to clean'
+          fi
 
   draft:
     needs: [source, version, build]
