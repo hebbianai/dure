@@ -1,3 +1,5 @@
+import { afterEach, vi } from "vitest";
+
 /** 스토어 persist가 localStorage를 직접 만진다 — node 환경(vitest)용 최소 스텁.
  *  setupFiles라 테스트 파일이 @/store를 import하기 전에 깔린다. */
 const persisted = new Map<string, string>();
@@ -76,6 +78,18 @@ if (typeof window !== "undefined") {
         dispatchEvent: () => false,
       }) as MediaQueryList;
   }
+}
+
+// Radix FocusScope restores focus on a 0 ms timer when cleanup() unmounts a
+// dialog, menu or select. Run it before jsdom disposes this realm, or it throws
+// an uncaught TypeError from dispatchEvent. Setup hooks run after the test
+// file's own afterEach, so this follows its cleanup(). Fake timers would never
+// fire this flush; their tests own their timers.
+if (typeof window !== "undefined") {
+	afterEach(async () => {
+		if (vi.isFakeTimers()) return;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	});
 }
 
 // 테스트 기본 언어는 모듈 기본값 ko다. legacy 한국어-문장 키는 통과 반환이라
