@@ -65,7 +65,9 @@ describe("dure ls canonical session projection", () => {
           source: "process_inspection",
         },
       }),
-    ]);
+    ], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+    });
 
     const result = runSessionCli(root, hmux, ["ls"]);
 
@@ -84,7 +86,9 @@ describe("dure ls canonical session projection", () => {
           source: "process_inspection",
         },
       }),
-    ]);
+    ], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+    });
 
     const result = runSessionCli(root, hmux, ["ls", "--json"]);
 
@@ -127,7 +131,9 @@ describe("dure ls canonical session projection", () => {
           turn_completed_count: "0",
         },
       }),
-    ]);
+    ], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+    });
 
     const result = runSessionCli(root, hmux, ["ls"]);
 
@@ -151,7 +157,9 @@ describe("dure ls canonical session projection", () => {
           turn_completed_count: "1",
         },
       }),
-    ]);
+    ], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+    });
 
     const result = runSessionCli(root, hmux, ["ls", "--json"]);
 
