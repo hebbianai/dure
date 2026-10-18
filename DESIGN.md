@@ -68,6 +68,8 @@ verification inputs. Design decisions and measurement receipts belong in Issues.
 | Inline badge line height | `--text-2xs--line-height` | `1rem` | same value |
 | Card radius | `--glass-radius-pane` | `12px` | `12px` |
 | Pane inner radius | `--glass-radius-pane-inner` | `0px` | `0px` |
+| Window shell radius | `--shell-corner-radius` | `12px` | — |
+| Window shell radius utility | `--radius-shell` | `var(--shell-corner-radius)` | same alias |
 | Loader stretch | `--dl-kx` | `1.45` | — |
 | Loader cycle | `--dl-dur` | `2s` | — |
 | Usage popover width | `--spacing-usage-popover-width` | `20.25rem` | — |
