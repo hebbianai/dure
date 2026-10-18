@@ -369,12 +369,16 @@ jobs:
       # job left in its own release checkout, and nothing outside it.
       - name: Remove this job's build outputs
         if: always()
+        # The signed assets are already uploaded; a cleanup failure must not
+        # fail the build after its version tag exists.
+        continue-on-error: true
         working-directory: ${{ github.workspace }}
         env:
           RELEASE_SHA: ${{ needs.version.outputs.release_sha }}
         run: |
           if [ -d source/.git ] && [ "$(git -C source rev-parse HEAD)" = "$RELEASE_SHA" ]; then
-            git -C source clean -ffdxq
+            git -C source clean -ffdxq ||
+              echo '::warning::Some build outputs could not be removed from the release checkout'
           else
             echo 'No release checkout from this job to clean'
           fi

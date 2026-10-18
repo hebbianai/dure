@@ -263,6 +263,7 @@ test("the build removes only its own release checkout outputs after uploading", 
   const cleanup = steps.at(-1);
   expect(cleanup).toMatchObject({
     if: "always()",
+    "continue-on-error": true,
     "working-directory": "${{ github.workspace }}",
     env: { RELEASE_SHA: "${{ needs.version.outputs.release_sha }}" },
   });
