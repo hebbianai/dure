@@ -54,14 +54,40 @@ The hosted version job uses its scoped `GITHUB_TOKEN` to create only the release
 branch/tag and request exact-tag CI; it does not need a private-repository deploy
 key or a main-branch protection bypass.
 
-## Select the source and version
+## Reconcile versions after each release
 
-Reconcile development's nine version inventory files with all previously
-reserved desktop versions before dispatch. This transition reserves versions
-through `0.2.28`; the first new public-source release must be `0.2.29` or later.
-The initial public snapshot still says `0.2.26`, so that bookkeeping needs a
-separately reviewed update before the first run. Never copy historical product
+A release never changes `main`. The version job commits the nine version
+inventory files (`package.json`, `cli/package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml`, `hmux/Cargo.toml` and the `Cargo.lock` files of
+`src-tauri`, `hmux`, `crates/dure-app` and `mobile/src-tauri`) only to
+`release/vX.Y.Z` and its tag. Once a version tag exists, reconcile `main` through
+it before the next dispatch, whether that release was published, left as a draft
+or stopped after tagging. Otherwise the next run selects the same version and
+preflight refuses it as already reserved.
+
+From a clean checkout of current `main`:
+
+```sh
+corepack pnpm release:bookkeeping v0.2.53           # dry run, writes nothing
+corepack pnpm release:bookkeeping v0.2.53 --apply
+git diff --stat                                     # the nine files, version lines only
+git commit -am "chore(release): reconcile versions through v0.2.53"
+```
+
+The command reads the tag's commit from `hebbianai/dure` and fetches the tag by
+exact name when it is missing locally; a local tag that differs is refused. The
+tag must be a single-parent commit that changes only the nine files' version
+fields. Only those fields are projected onto current `main`; the tag's file
+snapshot is never copied, so newer product changes in the same files survive.
+A downgrade, a dirty checkout or one that changed after planning is refused.
+With `--apply`, Cargo then regenerates each lockfile with
+`cargo metadata --offline` and accepts it with `--locked`; the command stops if
+Cargo would change any projected byte. Land the commit on `main` like any other
+change. When several versions were reserved, reconcile through the highest one;
+the skipped versions need no separate commit. Never copy historical product
 files over current main or rewrite existing tags/assets.
+
+## Select the source and version
 
 Run Release only on `main`, with `patch` or `minor` as `bump`. Leave `source_ref`
 empty or set it to `main` to use GitHub's dispatch commit, without manually

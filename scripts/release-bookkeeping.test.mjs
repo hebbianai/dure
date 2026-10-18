@@ -1,8 +1,10 @@
 import { execFileSync } from "node:child_process";
 import {
+	appendFileSync,
 	mkdtempSync,
 	mkdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -14,8 +16,12 @@ import {
 	applyReleaseBookkeeping,
 	planReleaseBookkeeping,
 } from "./lib/release-bookkeeping.mjs";
-import { RELEASE_CARGO_WORKSPACES } from "./lib/release-candidate.mjs";
+import {
+	RELEASE_CANDIDATE_FILES,
+	RELEASE_CARGO_WORKSPACES,
+} from "./lib/release-candidate.mjs";
 import { VERSION_FILES, writeVersion } from "./lib/release-version.mjs";
+import { runReleaseBookkeeping } from "./release-bookkeeping.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -131,4 +137,130 @@ test("does not overwrite WIP added after planning", () => {
 	expect(
 		JSON.parse(readFileSync(join(input.root, "package.json"), "utf8")).version,
 	).toBe("0.2.4");
+});
+
+/** A bare repository standing in for the canonical one: it holds only the
+ * reserved tag, so the CLI must not trust a local-only ref. */
+function reserve(input) {
+	const remote = mkdtempSync(join(tmpdir(), "bookkeeping-remote-"));
+	roots.push(remote);
+	git(remote, "init", "--bare");
+	git(input.root, "push", remote, `refs/tags/${input.tag}`);
+	return remote;
+}
+const quiet = (input, remote, options = {}) => ({
+	cwd: input.root,
+	remote,
+	regenerateLocks: () => {
+		throw new Error("Cargo must not run");
+	},
+	log: () => {},
+	...options,
+});
+
+test("the CLI dry run reports the reserved transition without writing", () => {
+	const input = fixture();
+	const lines = [];
+	const description = runReleaseBookkeeping(
+		[input.tag],
+		quiet(input, reserve(input), { log: (line) => lines.push(line) }),
+	);
+	expect(description).toMatchObject({
+		tag: "v0.2.5",
+		tagSha: input.tagSha,
+		currentVersion: "0.2.4",
+		version: "0.2.5",
+	});
+	expect(description.files.map((file) => file.path).sort()).toEqual(
+		[...RELEASE_CANDIDATE_FILES].sort(),
+	);
+	expect(lines[0]).toContain(`Reconcile 0.2.4 -> 0.2.5 from v0.2.5 (${input.tagSha})`);
+	expect(lines).toContain("  src-tauri/Cargo.lock: 8 version line(s)");
+	expect(lines.at(-1)).toContain("Dry run; no files changed");
+	expect(git(input.root, "status", "--porcelain")).toBe("");
+});
+
+test("the CLI applies the nine files after Cargo accepts them unchanged, then has nothing left", () => {
+	const input = fixture();
+	const remote = reserve(input);
+	const regenerated = [];
+	runReleaseBookkeeping(
+		[input.tag, "--apply"],
+		quiet(input, remote, { regenerateLocks: (root) => regenerated.push(root) }),
+	);
+	expect(regenerated).toEqual([realpathSync(input.root)]);
+	expect(git(input.root, "diff", "--name-only").split("\n").sort()).toEqual(
+		[...RELEASE_CANDIDATE_FILES].sort(),
+	);
+	expect(
+		JSON.parse(readFileSync(join(input.root, "package.json"), "utf8")),
+	).toEqual({ version: "0.2.5", name: "NEWER MAIN" });
+	git(input.root, "commit", "-am", "chore(release): reconcile versions through v0.2.5");
+	const lines = [];
+	expect(
+		runReleaseBookkeeping(
+			[input.tag, "--apply"],
+			quiet(input, remote, { log: (line) => lines.push(line) }),
+		).files,
+	).toEqual([]);
+	expect(lines).toEqual([
+		"The version inventory already matches v0.2.5; nothing to reconcile.",
+	]);
+});
+
+test("the CLI fetches a reserved tag missing locally and refuses unreserved or forged tags", () => {
+	const input = fixture();
+	const remote = reserve(input);
+	git(input.root, "tag", "-d", input.tag);
+	runReleaseBookkeeping([input.tag], quiet(input, remote));
+	expect(git(input.root, "rev-parse", `refs/tags/${input.tag}`)).toBe(
+		input.tagSha,
+	);
+	const empty = mkdtempSync(join(tmpdir(), "bookkeeping-empty-"));
+	roots.push(empty);
+	git(empty, "init", "--bare");
+	expect(() => runReleaseBookkeeping([input.tag], quiet(input, empty))).toThrow(
+		"release_bookkeeping_tag_unreserved",
+	);
+	git(input.root, "tag", "-f", input.tag, "HEAD");
+	expect(() => runReleaseBookkeeping([input.tag], quiet(input, remote))).toThrow(
+		"release_bookkeeping_tag_mismatch",
+	);
+	expect(git(input.root, "status", "--porcelain")).toBe("");
+});
+
+test("the CLI stops when Cargo rejects or rewrites a projected lockfile", () => {
+	const rejected = fixture();
+	expect(() =>
+		runReleaseBookkeeping(
+			[rejected.tag, "--apply"],
+			quiet(rejected, reserve(rejected), {
+				regenerateLocks: () => {
+					throw new Error("lock file needs to be updated but --locked was passed");
+				},
+			}),
+		),
+	).toThrow("release_bookkeeping_cargo_validation_failed");
+	const rewritten = fixture();
+	expect(() =>
+		runReleaseBookkeeping(
+			[rewritten.tag, "--apply"],
+			quiet(rewritten, reserve(rewritten), {
+				regenerateLocks: (root) =>
+					appendFileSync(join(root, "hmux/Cargo.lock"), "\n"),
+			}),
+		),
+	).toThrow("release_bookkeeping_cargo_regeneration_changed: hmux/Cargo.lock");
+});
+
+test.each([
+	[[]],
+	[["0.2.5"]],
+	[["v0.2.5", "v0.2.6"]],
+	[["v0.2.5", "--apply", "--apply"]],
+	[["v0.2.5", "--force"]],
+])("the CLI refuses arguments %j before reading the repository", (argv) => {
+	expect(() =>
+		runReleaseBookkeeping(argv, { cwd: tmpdir(), log: () => {} }),
+	).toThrow("usage: release-bookkeeping.mjs vX.Y.Z [--apply]");
 });

@@ -226,6 +226,7 @@
     "sampler:verify": "pnpm sampler:fmt && pnpm sampler:test && pnpm sampler:clippy",
     "depcruise": "depcruise src --config .dependency-cruiser.cjs",
     "knip": "knip",
+    "release:bookkeeping": "node scripts/release-bookkeeping.mjs",
     "verify:release": "node scripts/run-push-gates.mjs --all"
   },
   "dependencies": {
