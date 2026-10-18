@@ -4,29 +4,33 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
+import { PUSH_GATE_SCOPES } from "./lib/push-gate-scope.mjs";
 import {
   DEADLINE_SENSITIVE_PROCESS_TEST_PATHS,
   NODE_TEST_PATHS,
   PROCESS_FIXTURE_TEST_PATHS,
 } from "./lib/script-test-projects.mjs";
-import { lookupActorPermission, planPublicCi } from "./public-ci.mjs";
+import { planPublicCi, RUST_JOB_SCOPES } from "./public-ci.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = parse(
   readFileSync(resolve(repositoryRoot, ".github/workflows/public-repository.yml"), "utf8"),
 );
-const codeResults = [
-  "FRONTEND_RESULT",
-  "SCRIPTS_VITEST_RESULT",
-  "SCRIPTS_NODE_RESULT",
-  "SCRIPTS_DEADLINE_RESULT",
-  "SCRIPTS_PROCESS_RESULT",
-  "MOBILE_WEB_RESULT",
-  "SHARED_PROTOCOL_RESULT",
-];
+// Code job result -> the plan output that selects that job.
+const codeResults = {
+  FRONTEND_RESULT: "RUN_CODE_CHECKS",
+  SCRIPTS_VITEST_RESULT: "RUN_CODE_CHECKS",
+  SCRIPTS_NODE_RESULT: "RUN_CODE_CHECKS",
+  SCRIPTS_DEADLINE_RESULT: "RUN_CODE_CHECKS",
+  SCRIPTS_PROCESS_RESULT: "RUN_CODE_CHECKS",
+  MOBILE_WEB_RESULT: "RUN_CODE_CHECKS",
+  SHARED_PROTOCOL_RESULT: "RUN_CODE_CHECKS",
+  HMUX_RESULT: "RUN_HMUX_CHECKS",
+  APP_RESULT: "RUN_APP_CHECKS",
+};
 const fixtures = [];
 
 afterEach(() => {
@@ -74,12 +78,15 @@ function repositoryFixture() {
   return { cwd, git, write, commit, base };
 }
 
-function results(runCodeChecks) {
+function results(runCodeChecks, { hmux = runCodeChecks, app = runCodeChecks } = {}) {
+  const plans = { RUN_CODE_CHECKS: runCodeChecks, RUN_HMUX_CHECKS: hmux, RUN_APP_CHECKS: app };
   return {
     PLAN_RESULT: "success",
-    RUN_CODE_CHECKS: String(runCodeChecks),
     DOCUMENTATION_RESULT: "success",
-    ...Object.fromEntries(codeResults.map((key) => [key, runCodeChecks ? "success" : "skipped"])),
+    ...Object.fromEntries(Object.entries(plans).map(([key, value]) => [key, String(value)])),
+    ...Object.fromEntries(
+      Object.entries(codeResults).map(([key, plan]) => [key, plans[plan] ? "success" : "skipped"]),
+    ),
   };
 }
 
@@ -95,90 +102,159 @@ function runRequiredCheck(environment) {
   );
 }
 
-describe("public CI maintainer push exemption", () => {
-  const push = { eventName: "push", ref: "refs/heads/main" };
-  const lookup = { ...push, actor: "kattpish", repository: "hebbianai/dure", token: "fixture-token" };
+describe("public CI main pushes", () => {
+  it("gives the planner no actor identity, ref or credentials to exempt a push with", () => {
+    const plan = workflow.jobs.plan.steps.find((step) => step.id === "plan");
+    expect(Object.keys(plan.env).sort()).toEqual(["CI_BASE_SHA", "CI_EVENT_NAME", "CI_HEAD_SHA"]);
+    expect(JSON.stringify(workflow.jobs.plan)).not.toMatch(/github\.(?:actor|token)|secrets\./);
+  });
 
-  it.each([
-    { permission: "write", role_name: "maintain" },
-    { permission: "admin", role_name: "admin" },
-    { permission: "write", role_name: "custom-role", user: { permissions: { maintain: true } } },
-  ])("skips checks for a main push with permission %j", (actorPermission) => {
-    expect(planPublicCi({ ...push, actorPermission })).toMatchObject({
-      runChecks: false, runCodeChecks: false, reason: "maintainer-main-push",
+  it("plans a push to main from its complete change", () => {
+    const fixture = repositoryFixture();
+    const push = { cwd: fixture.cwd, eventName: "push" };
+    fixture.write("README.md");
+    const documentation = fixture.commit();
+    expect(planPublicCi({ ...push, base: fixture.base, head: documentation })).toMatchObject({
+      runCodeChecks: false,
+      reason: "documentation-only",
+    });
+    fixture.write("src/app.ts");
+    const code = fixture.commit();
+    expect(planPublicCi({ ...push, base: documentation, head: code })).toMatchObject({
+      runCodeChecks: true,
+      reason: "code-or-shared-inputs",
     });
   });
 
-  it.each([
-    { permission: "write", role_name: "write", user: { permissions: { push: true, maintain: false } } },
-    { permission: "read", role_name: "triage" },
-    { permission: "read", role_name: "read" },
-    { permission: "none" },
-    { user: { permissions: { maintain: "true" } } },
-    null,
-  ])("retains checks for lower or unknown permission %j", (actorPermission) => {
-    expect(planPublicCi({ ...push, actorPermission }).runChecks).toBe(true);
+  it("never lets the plan skip documentation checks", () => {
+    expect(workflow.jobs.documentation.if).toBeUndefined();
   });
+});
 
-  it.each([
-    ["pull_request", "refs/pull/49/merge"],
-    ["workflow_dispatch", "refs/heads/main"],
-    ["push", "refs/heads/topic"],
-  ])("retains checks and avoids permission lookup for %s on %s", async (eventName, ref) => {
-    const fetchImpl = vi.fn();
-    expect(await lookupActorPermission({ ...lookup, eventName, ref, fetchImpl })).toBeNull();
-    expect(fetchImpl).not.toHaveBeenCalled();
-    expect(planPublicCi({ eventName, ref, actorPermission: { role_name: "admin" } }).runChecks).toBe(true);
-  });
+describe("public CI required result admission", () => {
+  const admitted = (name, outputs, { eventName = "push", cancelled = false } = {}) =>
+    runInNewContext(workflow.jobs[name].if.replace(/^\$\{\{\s*|\s*\}\}$/g, ""), {
+      github: { event_name: eventName },
+      needs: { plan: { outputs } },
+      always: () => true,
+      cancelled: () => cancelled,
+    });
 
-  it("uses the authenticated repository permission for the push actor", async () => {
-    const permission = { role_name: "maintain", user: { login: "kattpish" } };
-    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => permission });
-    expect(await lookupActorPermission({ ...lookup, fetchImpl })).toEqual(permission);
-    expect(fetchImpl).toHaveBeenCalledWith(
-      "https://api.github.com/repos/hebbianai/dure/collaborators/kattpish/permission",
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer fixture-token" }),
-        redirect: "error", signal: expect.any(AbortSignal),
-      }),
-    );
-  });
-
-  it.each([
-    { ok: false },
-    { ok: true, json: async () => ({ role_name: "admin", user: { login: "someone-else" } }) },
-    { ok: true, json: async () => { throw new Error("invalid JSON"); } },
-  ])("retains checks when permission cannot be established", async (response) => {
-    const actorPermission = await lookupActorPermission({ ...lookup, fetchImpl: vi.fn().mockResolvedValue(response) });
-    expect(actorPermission).toBeNull();
-    expect(planPublicCi({ ...push, actorPermission }).runChecks).toBe(true);
-  });
-
-  it("retains checks when the permission request fails or credentials are missing", async () => {
-    const fetchImpl = vi.fn().mockRejectedValue(new Error("network unavailable"));
-    expect(await lookupActorPermission({ ...lookup, fetchImpl })).toBeNull();
-    fetchImpl.mockClear();
-    expect(await lookupActorPermission({ ...lookup, token: undefined, fetchImpl })).toBeNull();
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
-  const admitted = (name, outputs) => runInNewContext(
-    workflow.jobs[name].if.replace(/^\$\{\{\s*|\s*\}\}$/g, ""),
-    { needs: { plan: { outputs } }, always: () => true },
-  );
-
-  it("skips every check job after the explicit maintainer plan", () => {
-    for (const [name, job] of Object.entries(workflow.jobs)) {
-      if (name === "plan") continue;
-      expect([job.needs].flat()).toContain("plan");
-      expect(admitted(name, { run_checks: "false", run_code_checks: "false" }), name).toBe(false);
+  it("still runs the required result when the plan fails or its output is missing", () => {
+    // A status function opts out of GitHub's implicit success() over needs.
+    expect(workflow.jobs["public-repository"].if).toMatch(/\b(?:always|cancelled)\(\)/);
+    for (const eventName of ["pull_request", "push", "workflow_dispatch"]) {
+      expect(admitted("public-repository", {}, { eventName }), eventName).toBe(true);
+      expect(admitted("public-repository", { run_code_checks: "true" }, { eventName }), eventName).toBe(true);
     }
   });
 
-  it("still runs the required result when the plan fails or its output is missing", () => {
-    expect(workflow.jobs["public-repository"].if).toContain("always()");
-    expect(admitted("public-repository", {})).toBe(true);
-    expect(admitted("public-repository", { run_checks: "true" })).toBe(true);
+  it("fails a cancelled pull request but leaves a cancelled push or dispatch run cancelled", () => {
+    expect(admitted("public-repository", {}, { eventName: "pull_request", cancelled: true })).toBe(true);
+    for (const eventName of ["push", "workflow_dispatch"]) {
+      expect(admitted("public-repository", {}, { eventName, cancelled: true }), eventName).toBe(false);
+    }
+  });
+});
+
+describe("public CI concurrency", () => {
+  const evaluate = (source, github) =>
+    runInNewContext(String(source).replace(/^\$\{\{\s*|\s*\}\}$/g, ""), { github });
+  // GitHub expressions read the absent pull_request of other events as null.
+  const run = (eventName, runId, pullRequest = {}) => {
+    const github = {
+      event_name: eventName,
+      ref: pullRequest.number ? `refs/pull/${pullRequest.number}/merge` : "refs/heads/main",
+      run_id: runId,
+      event: { pull_request: pullRequest },
+    };
+    return {
+      group: workflow.concurrency.group.replace(/\$\{\{(.*?)\}\}/g, (_, source) =>
+        String(evaluate(source.trim(), github)),
+      ),
+      cancelInProgress: evaluate(workflow.concurrency["cancel-in-progress"], github),
+    };
+  };
+
+  it("never lets a main push or a later dispatch cancel a manual dispatch", () => {
+    const dispatch = run("workflow_dispatch", "35325609914");
+    expect(dispatch.cancelInProgress).toBe(false);
+    expect(run("push", "35326566538").group).not.toBe(dispatch.group);
+    expect(run("workflow_dispatch", "35326600000").group).not.toBe(dispatch.group);
+  });
+
+  it("keeps superseding older runs of the same pull request", () => {
+    const pullRequest = run("pull_request", "1", { number: 49 });
+    expect(run("pull_request", "2", { number: 49 })).toEqual(pullRequest);
+    expect(pullRequest.cancelInProgress).toBe(true);
+    expect(run("pull_request", "3", { number: 50 }).group).not.toBe(pullRequest.group);
+  });
+
+  it("never cancels a main push run, so every pushed range is checked", () => {
+    const push = run("push", "4");
+    expect(push.cancelInProgress).toBe(false);
+    expect(run("push", "5").group).not.toBe(push.group);
+  });
+});
+
+describe("public CI workflow wiring", () => {
+  const jobs = Object.entries(workflow.jobs);
+  const steps = jobs.flatMap(([, job]) => job.steps);
+  const summary = workflow.jobs["public-repository"];
+  const summaryEnvironment = summary.steps.at(-1).env;
+  const packageScripts = JSON.parse(readFileSync(resolve(repositoryRoot, "package.json"), "utf8"))
+    .scripts;
+
+  it("pins every action to a full commit and never persists checkout credentials", () => {
+    for (const step of steps.filter((step) => step.uses)) {
+      expect(step.uses).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+      if (step.uses.startsWith("actions/checkout@")) {
+        expect(step.with["persist-credentials"], step.uses).toBe(false);
+      }
+    }
+    for (const [name, job] of jobs) expect(job["timeout-minutes"], name).toBeGreaterThan(0);
+  });
+
+  it("requires every other job, and its plan output, in the summary result", () => {
+    expect([...summary.needs].sort()).toEqual(
+      Object.keys(workflow.jobs).filter((name) => name !== "public-repository").sort(),
+    );
+    for (const name of summary.needs) {
+      const key = `${name.toUpperCase().replaceAll("-", "_")}_RESULT`;
+      expect(summaryEnvironment[key], name).toBe(`\${{ needs.${name}.result }}`);
+    }
+    for (const plan of new Set(Object.values(codeResults))) {
+      const output = plan.toLowerCase();
+      expect(workflow.jobs.plan.outputs[output]).toBe(`\${{ steps.plan.outputs.${output} }}`);
+      expect(summaryEnvironment[plan]).toBe(`\${{ needs.plan.outputs.${output} }}`);
+    }
+  });
+
+  it.each([
+    ["hmux", "run_hmux_checks", "verify:push:hmux-core", "hmux -> target"],
+    ["app", "run_app_checks", "app:verify", "crates/dure-app -> target"],
+  ])("runs the existing %s workspace gate when its plan output selects it", (name, output, gate, workspace) => {
+    const job = workflow.jobs[name];
+    expect(job.needs).toBe("plan");
+    expect(job.if).toBe(`\${{ needs.plan.outputs.${output} == 'true' }}`);
+    expect(job.steps.at(-1).run).toBe(`pnpm ${gate}`);
+    expect(packageScripts[gate]).toBeTypeOf("string");
+    const cache = job.steps.find((step) => step.uses?.startsWith("Swatinem/rust-cache@"));
+    expect(cache.with.workspaces).toBe(workspace);
+    // The cache derives its key from the toolchain, so it follows the pinned install.
+    const toolchain = job.steps.findIndex((step) => step.run === "rustup show active-toolchain");
+    expect(toolchain).toBeGreaterThan(-1);
+    expect(toolchain).toBeLessThan(job.steps.indexOf(cache));
+  });
+
+  it("prepares the pinned Ghostty proof on the only host that can build it", () => {
+    const job = workflow.jobs.hmux;
+    expect(job["runs-on"]).toBe("macos-15");
+    const proof = job.steps.findIndex((step) => step.run?.includes("ensure-ghostty-vt-proof.mjs"));
+    expect(job.steps[proof].run).toContain("--target aarch64-apple-darwin");
+    expect(job.steps[proof].run).toContain("HMUX_GHOSTTY_VT_PROOF_PREFIX=");
+    expect(proof).toBeLessThan(job.steps.length - 1);
+    expect(workflow.jobs.app["runs-on"]).toBe("ubuntu-24.04");
   });
 });
 
@@ -207,7 +283,7 @@ describe("public CI required result", () => {
     },
   );
 
-  it.each(codeResults)("never accepts a failed, cancelled or missing %s", (key) => {
+  it.each(Object.keys(codeResults))("never accepts a failed, cancelled or missing %s", (key) => {
     for (const runCodeChecks of [true, false]) {
       for (const status of ["failure", "cancelled", ""]) {
         expect(
@@ -218,13 +294,27 @@ describe("public CI required result", () => {
     }
   });
 
-  it.each(codeResults)("rejects unexpectedly skipped %s in a code change", (key) => {
+  it.each(Object.keys(codeResults))("rejects unexpectedly skipped %s in a code change", (key) => {
     expect(runRequiredCheck({ ...results(true), [key]: "skipped" }).status).toBe(1);
   });
 
   it("does not treat a missing or malformed plan output as a documentation-only change", () => {
-    for (const value of ["", "False", "0", "null", "true\nfalse"]) {
-      expect(runRequiredCheck({ ...results(false), RUN_CODE_CHECKS: value }).status).toBe(1);
+    for (const plan of new Set(Object.values(codeResults))) {
+      for (const value of ["", "False", "0", "null", "true\nfalse"]) {
+        expect(runRequiredCheck({ ...results(false), [plan]: value }).status, plan).toBe(1);
+      }
+    }
+  });
+
+  it("holds each Rust workspace job to its own plan output", () => {
+    for (const plan of [{ hmux: false, app: false }, { hmux: true, app: false }, { hmux: false, app: true }]) {
+      const environment = results(true, plan);
+      const result = runRequiredCheck(environment);
+      expect(result.status, `${JSON.stringify(plan)}: ${result.stderr}`).toBe(0);
+      for (const key of ["HMUX_RESULT", "APP_RESULT"]) {
+        const swapped = environment[key] === "success" ? "skipped" : "success";
+        expect(runRequiredCheck({ ...environment, [key]: swapped }).status, key).toBe(1);
+      }
     }
   });
 });
@@ -258,6 +348,8 @@ describe("public CI change planning", () => {
     const plan = planPublicCi({ ...fixture, head, eventName: "push" });
     expect(plan).toMatchObject({
       runCodeChecks: false,
+      runHmuxChecks: false,
+      runAppChecks: false,
       changedPathCount: 5,
       scopes: [],
     });
@@ -274,6 +366,7 @@ describe("public CI change planning", () => {
     ".github/workflows/public-repository.yml",
     "scripts/public-ci.mjs",
     "docs/examples/run.mjs",
+    "docs/public/docs.json",
     "unrecognized/input.bin",
   ])("keeps full code checks when %s is mixed with documentation", (path) => {
     const fixture = repositoryFixture();
@@ -281,6 +374,38 @@ describe("public CI change planning", () => {
     fixture.write(path);
     const head = fixture.commit();
     expect(planPublicCi({ ...fixture, head, eventName: "push" }).runCodeChecks).toBe(true);
+  });
+
+  it.each([
+    ["hmux/crates/hmux-host/src/lib.rs", { runHmuxChecks: true, runAppChecks: true }],
+    ["hmux/crates/hmux-client/src/lib.rs", { runHmuxChecks: true, runAppChecks: true }],
+    ["hmux/crates/hmux-ssh-transport/src/lib.rs", { runHmuxChecks: true, runAppChecks: false }],
+    ["hmux/xtask/terminal-state-protocol-codegen/src/main.rs", { runHmuxChecks: true, runAppChecks: false }],
+    ["src/contracts/terminalStateProtocol.ts", { runHmuxChecks: true, runAppChecks: false }],
+    ["crates/hebbian-process-sampler/src/lib.rs", { runHmuxChecks: true, runAppChecks: false }],
+    ["crates/dure-app/src/lib.rs", { runHmuxChecks: false, runAppChecks: true }],
+    ["src/contracts/generated/extensionContracts.ts", { runHmuxChecks: false, runAppChecks: true }],
+    ["cli/lib/control-plane-build-identity.json", { runHmuxChecks: false, runAppChecks: true }],
+    ["src/app.ts", { runHmuxChecks: false, runAppChecks: false }],
+    ["crates/dure-hub-protocol/src/lib.rs", { runHmuxChecks: false, runAppChecks: false }],
+    ["mobile/src/App.tsx", { runHmuxChecks: false, runAppChecks: false }],
+    [".github/workflows/public-repository.yml", { runHmuxChecks: true, runAppChecks: true }],
+    ["unrecognized/input.bin", { runHmuxChecks: true, runAppChecks: true }],
+  ])("selects the Rust workspace jobs that verify %s", (path, rust) => {
+    const fixture = repositoryFixture();
+    fixture.write(path);
+    const head = fixture.commit();
+    expect(planPublicCi({ ...fixture, head, eventName: "pull_request" })).toMatchObject({
+      runCodeChecks: true,
+      ...rust,
+    });
+  });
+
+  it("names only scopes the classifier can produce for the Rust workspace jobs", () => {
+    for (const scopes of Object.values(RUST_JOB_SCOPES)) {
+      expect(scopes.length).toBeGreaterThan(0);
+      for (const scope of scopes) expect(PUSH_GATE_SCOPES).toContain(scope);
+    }
   });
 
   it("includes code changes in earlier commits of the same push", () => {
@@ -350,9 +475,11 @@ describe("public CI change planning", () => {
       { head: fixture.base },
       { head: undefined },
     ]) {
-      expect(planPublicCi({ ...normal, ...override }).runCodeChecks, JSON.stringify(override)).toBe(
-        true,
-      );
+      expect(planPublicCi({ ...normal, ...override }), JSON.stringify(override)).toMatchObject({
+        runCodeChecks: true,
+        runHmuxChecks: true,
+        runAppChecks: true,
+      });
     }
   });
 
@@ -402,7 +529,9 @@ describe("public CI change planning", () => {
       { cwd: fixture.cwd, env: environment, encoding: "utf8" },
     );
     expect(JSON.parse(stdout).runCodeChecks).toBe(false);
-    expect(readFileSync(output, "utf8")).toBe("run_checks=true\nrun_code_checks=false\n");
+    expect(readFileSync(output, "utf8")).toBe(
+      "run_code_checks=false\nrun_hmux_checks=false\nrun_app_checks=false\n",
+    );
     execFileSync(process.execPath, [join(fixture.cwd, "scripts/public-ci.mjs"), "check"], {
       cwd: fixture.cwd,
       env: { ...environment, ...results(false) },
@@ -435,7 +564,15 @@ describe("script test CI coverage", () => {
       return results;
     }
 
-    const allScriptTests = findTestFiles("scripts");
+    // Tests outside scripts/ run only when a script test project lists them.
+    const allScriptTests = [
+      ...new Set([
+        ...findTestFiles("scripts"),
+        ...NODE_TEST_PATHS,
+        ...DEADLINE_SENSITIVE_PROCESS_TEST_PATHS,
+        ...PROCESS_FIXTURE_TEST_PATHS,
+      ]),
+    ];
 
     // Extract matrix file lists from workflow
     const extractFiles = (jobName) => {
@@ -511,5 +648,14 @@ describe("script test CI coverage", () => {
     // Success - report coverage for visibility
     const allCovered = new Set([...vitestFiles, ...nodeFiles, ...deadlineFiles, ...processFiles]);
     expect(allCovered.size).toBe(allScriptTests.length);
+  });
+
+  it.each([
+    ["scripts-node", NODE_TEST_PATHS],
+    ["scripts-deadline", DEADLINE_SENSITIVE_PROCESS_TEST_PATHS],
+    ["scripts-process", PROCESS_FIXTURE_TEST_PATHS],
+  ])("gives each %s test its own invocation", (name, paths) => {
+    // These projects set separateInvocations, so each matrix item is one file.
+    expect([...workflow.jobs[name].strategy.matrix.file].sort()).toEqual([...paths].sort());
   });
 });

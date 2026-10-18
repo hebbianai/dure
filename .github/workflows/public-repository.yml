@@ -11,8 +11,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: public-repository-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A newer PR update supersedes the older run of that PR. Every push to main
+  # and every manual dispatch has its own group: each push is planned only from
+  # its own before..after range, so a cancelled push run would leave that range
+  # unchecked, and a dispatch must keep the full checks it requested.
+  group: public-repository-${{ github.event_name }}-${{ github.event_name != 'pull_request' && github.run_id || github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:
@@ -20,14 +24,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      run_checks: ${{ steps.plan.outputs.run_checks }}
       run_code_checks: ${{ steps.plan.outputs.run_code_checks }}
+      run_hmux_checks: ${{ steps.plan.outputs.run_hmux_checks }}
+      run_app_checks: ${{ steps.plan.outputs.run_app_checks }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -35,17 +40,12 @@ jobs:
         id: plan
         env:
           CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REF: ${{ github.ref }}
-          CI_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ github.token }}
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD_SHA: ${{ github.sha }}
         run: node scripts/public-ci.mjs plan
 
   documentation:
     name: Documentation checks
-    needs: plan
-    if: ${{ needs.plan.outputs.run_checks == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -128,7 +128,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -168,6 +168,7 @@ jobs:
       fail-fast: false
       matrix:
         file:
+          - cli/lib/provider-launch-selection.test.mjs
           - scripts/qa/managed-gemini-hooks.test.mjs
           - scripts/qa/managed-qwen-hooks.test.mjs
           - scripts/qa/mobile-live.test.mjs
@@ -179,7 +180,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -239,7 +240,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -301,7 +302,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -343,7 +344,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -370,7 +371,7 @@ jobs:
           persist-credentials: false
       - name: Prepare repository-pinned Rust
         run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: crates/dure-hub-protocol
           shared-key: hub-protocol-${{ matrix.os }}
@@ -381,39 +382,93 @@ jobs:
       - name: Lint shared protocol
         run: cargo clippy --locked --manifest-path crates/dure-hub-protocol/Cargo.toml --all-targets -- -D warnings
 
-  hmux-cli:
-    name: Hmux CLI checks (informational)
+  hmux:
+    name: Hmux checks
     needs: plan
-    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    continue-on-error: true
+    if: ${{ needs.plan.outputs.run_hmux_checks == 'true' }}
+    # The terminal-state tests and lints link the exact-pin Ghostty core, whose
+    # pinned build inputs carry a macOS ARM64 Zig. Linux cannot prepare it.
+    runs-on: macos-15
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Prepare repository-pinned Rust
         run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          workspaces: hmux
-          shared-key: hmux-cli
-      - name: Build hmux-cli
-        run: cargo build --locked --manifest-path hmux/Cargo.toml -p hmux-cli
-      - name: Test hmux-cli (excluding known failures)
-        run: cargo test --locked --manifest-path hmux/Cargo.toml -p hmux-cli -- --skip attach_recovery
+          workspaces: hmux -> target
+          # Pull requests restore main's cache without evicting it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Prepare the pinned Ghostty VT proof
+        # The proof builder compiles with its reviewed Rust baseline.
+        env:
+          DURE_GHOSTTY_VT_CACHE_ROOT: ${{ runner.temp }}/dure-ghostty-vt
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          proof="$(node scripts/ensure-ghostty-vt-proof.mjs --target aarch64-apple-darwin)"
+          test -d "$proof"
+          printf 'HMUX_GHOSTTY_VT_PROOF_PREFIX=%s\n' "$proof" >> "$GITHUB_ENV"
+      - name: Verify Hmux
+        run: pnpm verify:push:hmux-core
+
+  app:
+    name: App core checks
+    needs: plan
+    if: ${{ needs.plan.outputs.run_app_checks == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: crates/dure-app -> target
+          # Pull requests restore main's cache without evicting it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Verify app core
+        run: pnpm app:verify
 
   public-repository:
     name: Public repository checks
-    needs: [plan, documentation, frontend, scripts-vitest, scripts-node, scripts-deadline, scripts-process, mobile-web, shared-protocol]
-    if: ${{ always() && needs.plan.outputs.run_checks != 'false' }}
+    needs:
+      - plan
+      - documentation
+      - frontend
+      - scripts-vitest
+      - scripts-node
+      - scripts-deadline
+      - scripts-process
+      - mobile-web
+      - shared-protocol
+      - hmux
+      - app
+    # A cancelled pull request run still fails this required check. A cancelled
+    # push or dispatch run stays cancelled instead of reporting a failure.
+    if: ${{ github.event_name == 'pull_request' || !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -421,6 +476,8 @@ jobs:
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
           RUN_CODE_CHECKS: ${{ needs.plan.outputs.run_code_checks }}
+          RUN_HMUX_CHECKS: ${{ needs.plan.outputs.run_hmux_checks }}
+          RUN_APP_CHECKS: ${{ needs.plan.outputs.run_app_checks }}
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           SCRIPTS_VITEST_RESULT: ${{ needs.scripts-vitest.result }}
@@ -429,4 +486,6 @@ jobs:
           SCRIPTS_PROCESS_RESULT: ${{ needs.scripts-process.result }}
           MOBILE_WEB_RESULT: ${{ needs.mobile-web.result }}
           SHARED_PROTOCOL_RESULT: ${{ needs.shared-protocol.result }}
+          HMUX_RESULT: ${{ needs.hmux.result }}
+          APP_RESULT: ${{ needs.app.result }}
         run: node scripts/public-ci.mjs check

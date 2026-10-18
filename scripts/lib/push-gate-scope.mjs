@@ -89,7 +89,10 @@ const SCRIPT_TEST_SUFFIX = ".test.mjs";
 const SCRIPT_MODULE_SUFFIXES = [".mjs", ".js"];
 // The deploy executor consumes this manifest as source for its staged script
 // closure. Its behavioral and content-address contracts live in script tests.
+// The public docs site config is read by the download delivery script test,
+// so it is a test input although it lives in the documentation tree.
 const SCRIPT_TEST_RESOURCE_PATHS = new Set([
+  "docs/public/docs.json",
   "scripts/dev-deploy-executor-files.json",
 ]);
 const FRONTEND_ARCHITECTURE_PATHS = new Set([
@@ -208,6 +211,14 @@ const ROOT_SHARED_INPUTS = new Set([
   "vitest.config.ts",
 ]);
 
+// The control plane and session runtime in crates/dure-app link these Hmux
+// crates by path, so their changes also need the app core gate.
+const DURE_APP_HMUX_PREFIXES = [
+  "hmux/crates/hmux-client/",
+  "hmux/crates/hmux-host/",
+  "hmux/crates/hmux-runtime-contract/",
+  "hmux/crates/hmux-session-protocol/",
+];
 const HMUX_MOBILE_COMPAT_PREFIXES = [
   "hmux/crates/hmux-client/",
   "hmux/crates/hmux-host/",
@@ -289,6 +300,7 @@ function isEmptyScopePath(path) {
 }
 
 function scopesForKnownPath(path) {
+  if (SCRIPT_TEST_RESOURCE_PATHS.has(path)) return ["script-tests"];
   if (isEmptyScopePath(path)) return [];
   if (path.startsWith(MARKETING_LAB_PREFIX)) return null;
   if (DOCUMENT_PREFIXES.some((prefix) => path.startsWith(prefix))) return null;
@@ -347,7 +359,6 @@ function scopesForKnownPath(path) {
   ) {
     return ["script-tests"];
   }
-  if (SCRIPT_TEST_RESOURCE_PATHS.has(path)) return ["script-tests"];
   if (QA_TOOLING_PATHS.has(path)) return ["qa-tooling"];
   if (QA_TOOLING_PREFIXES.some((prefix) => path.startsWith(prefix))) {
     return isScriptTestOpaqueResourcePath(path)
@@ -450,6 +461,9 @@ function scopesForKnownPath(path) {
     if (isHmuxTestOnlyPath(path)) {
       return scopes;
     }
+    if (DURE_APP_HMUX_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+      scopes.push("app-core");
+    }
     if (isHmuxLocalRuntimeOnlyPath(path)) {
       scopes.push("desktop");
     } else if (HMUX_MOBILE_COMPAT_PREFIXES.some((prefix) => path.startsWith(prefix))) {
@@ -460,6 +474,8 @@ function scopesForKnownPath(path) {
     } else if (path === "hmux/Cargo.toml" || path === "hmux/Cargo.lock") {
       // The mobile negative build shares the Hmux workspace dependency graph.
       scopes.push("desktop", "hmux-mobile-compat", "mobile-rust");
+      // Linked Hmux crates inherit workspace package settings from here.
+      if (path === "hmux/Cargo.toml") scopes.push("app-core");
     }
     return scopes;
   }

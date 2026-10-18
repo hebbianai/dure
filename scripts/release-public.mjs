@@ -13,7 +13,8 @@ import {
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
 import { RELEASE_CANDIDATE_FILES } from "./lib/release-candidate.mjs";
 import {
-  findExactSuccessfulCiRun,
+  ciEvidenceGaps,
+  exactSuccessfulCiRuns,
   normalizeFullCommitSha,
 } from "./lib/release-gate.mjs";
 import {
@@ -221,8 +222,28 @@ function exactCi(sha) {
       "headSha,status,conclusion,databaseId",
     ),
   );
-  if (!findExactSuccessfulCiRun(sha, runs))
-    throw new Error(`release_exact_ci_required: ${sha}`);
+  // Any successful exact run may carry the evidence; a documentation-only
+  // push run for the same commit concludes success with its code jobs skipped.
+  const observed = [];
+  for (const candidate of exactSuccessfulCiRuns(sha, runs)) {
+    assert(
+      Number.isSafeInteger(candidate.databaseId) && candidate.databaseId > 0,
+      "release_exact_ci_run_id_invalid",
+    );
+    const gaps = ciEvidenceGaps(
+      api(
+        `repos/${RELEASE_REPOSITORY}/actions/runs/${candidate.databaseId}/jobs?filter=latest&per_page=100`,
+      ),
+    );
+    if (gaps.length === 0) return;
+    observed.push(`run ${candidate.databaseId}: ${gaps.join(", ")}`);
+  }
+  throw new Error(
+    `release_exact_ci_required: ${sha} (${observed.join("; ") || "no successful run"}); ` +
+      "run public-repository.yml on a ref at this commit and wait for it to succeed, " +
+      `for example \`gh workflow run public-repository.yml --repo ${RELEASE_REPOSITORY} --ref main\` ` +
+      "while main points at it",
+  );
 }
 
 function checkVersionCommit(tagSha, sourceSha, tag) {

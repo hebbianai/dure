@@ -32,7 +32,9 @@ export const PROCESS_FIXTURE_TEST_PATHS = Object.freeze([
   "scripts/run-dev-launch-child.test.mjs",
 ]);
 
+// node:test suites. Tests outside scripts/ run only when a project lists them.
 export const NODE_TEST_PATHS = Object.freeze([
+  "cli/lib/provider-launch-selection.test.mjs",
   "scripts/qa/managed-gemini-hooks.test.mjs",
   "scripts/qa/managed-qwen-hooks.test.mjs",
   "scripts/qa/mobile-live.test.mjs",

@@ -22,6 +22,15 @@ const arg=name=>argv[argv.indexOf(name)+1];
 const timeout=key=>{if(!(state.flakyDownloads?.[key]>0))return;state.flakyDownloads[key]--;fs.writeFileSync(path.join(arg('--dir'),'partial-download'),'');save();console.error('read tcp 10.0.0.2:50000->140.82.112.6:443: read: operation timed out');process.exit(1);};
 const sha=bytes=>crypto.createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex');
 const previous=bytes=>({type:'file',path:'beta/latest.json',encoding:'base64',sha:sha(bytes),content:bytes.toString('base64')});
+// Public CI: one completed run per commit unless state.ciRuns lists several.
+// Run ids are registered on listing and stay clear of the release run id.
+const ciJobNames=['Select public checks','Documentation checks','Frontend checks','Script checks','Mobile web checks','Shared protocol (ubuntu-24.04)','Public repository checks'];
+const ciRuns=commit=>(state.ciRuns?.[commit]??[{}]).map((run,index)=>{
+  const key=commit+'/'+index;
+  state.ciRunIds??={};
+  state.ciRunIds[key]??=1000+Object.keys(state.ciRunIds).length;
+  return {id:state.ciRunIds[key],conclusion:run.conclusion??state.ciConclusions?.[commit]??state.ciConclusion??'success',jobs:{...state.ciJobs,...run.jobs}};
+});
 if(argv[0]==='api'){
   const route=argv[1];
   if(route==='user'){
@@ -59,14 +68,22 @@ if(argv[0]==='api'){
   }else if(route.includes('/git/ref/')){
     if(route.startsWith('repos/hebbianai/dure/')&&state.hasRemoteTag)answer({object:{type:'commit',sha:state.tagSha}});else fail(404);
   }else if(route.includes('/actions/runs/')&&route.includes('/jobs?')){
-    const verification=state.actualVerification??'success',preflight=verification==='success'?'skipped':'success';
-    answer({total_count:7,jobs:['source','candidate','verification','host-preflight','version','build','draft'].map(name=>({name,conclusion:state.jobConclusions?.[name]??(name==='verification'?verification:name==='host-preflight'?preflight:'success')}))});
+    const runId=Number(route.split('/actions/runs/')[1].split('/')[0]);
+    const ciKey=Object.keys(state.ciRunIds??{}).find(key=>state.ciRunIds[key]===runId);
+    if(ciKey){
+      const [commit,index]=ciKey.split('/'),run=ciRuns(commit)[Number(index)];
+      answer({total_count:ciJobNames.length,jobs:ciJobNames.map(name=>({name,status:'completed',conclusion:run.jobs[name]??'success'}))});
+    }else{
+      const verification=state.actualVerification??'success',preflight=verification==='success'?'skipped':'success';
+      answer({total_count:7,jobs:['source','candidate','verification','host-preflight','version','build','draft'].map(name=>({name,conclusion:state.jobConclusions?.[name]??(name==='verification'?verification:name==='host-preflight'?preflight:'success')}))});
+    }
   }else if(route.includes('/actions/runs/')){
     answer({repository:{full_name:'hebbianai/dure'},path:'.github/workflows/release.yml',event:'workflow_dispatch',head_branch:state.headBranch??'main',head_sha:state.workflowSha??state.sourceSha,status:'completed',conclusion:state.runConclusion??'success'});
   }else fail(400,'unmodeled API '+route);
 }else if(argv[0]==='run'&&argv[1]==='list'){
   if(arg('--workflow')!=='public-repository.yml')fail(404,'wrong workflow');
-  answer([{headSha:arg('--commit'),status:'completed',conclusion:state.ciConclusions?.[arg('--commit')]??state.ciConclusion??'success'}]);
+  const commit=arg('--commit');
+  answer(ciRuns(commit).map(run=>({databaseId:run.id,headSha:commit,status:'completed',conclusion:run.conclusion})));
 }else if(argv[0]==='run'&&argv[1]==='download'){
   timeout(arg('--name'));
   if(state.expiredArtifacts){save();console.error('no valid artifacts found to download');process.exit(1);}

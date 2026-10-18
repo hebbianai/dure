@@ -2,7 +2,9 @@ import { describe, expect, test } from "vitest";
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
 import {
   assertPinnedCheckout,
+  ciEvidenceGaps,
   describeExactCiRuns,
+  exactSuccessfulCiRuns,
   findExactSuccessfulCiRun,
   isV02ReleaseVersion,
   normalizeFullCommitSha,
@@ -87,5 +89,73 @@ describe("release exact-base gate", () => {
     expect(findExactSuccessfulCiRun(BASE, runs)).toBeNull();
     expect(describeExactCiRuns(BASE, runs)).toBe("completed/cancelled");
     expect(describeExactCiRuns(BASE, [])).toBe("missing");
+  });
+
+  test("keeps every successful exact run as a candidate for job evidence", () => {
+    const run = (databaseId, overrides = {}) => ({
+      databaseId,
+      headSha: BASE,
+      status: "completed",
+      conclusion: "success",
+      ...overrides,
+    });
+    const runs = [run(1), run(2, { headSha: OTHER }), run(3, { conclusion: "failure" }), run(4)];
+    expect(exactSuccessfulCiRuns(BASE, runs).map(({ databaseId }) => databaseId)).toEqual([1, 4]);
+    expect(findExactSuccessfulCiRun(BASE, runs)).toBe(runs[0]);
+  });
+});
+
+describe("release CI job evidence", () => {
+  const listing = (conclusions = {}) => {
+    const jobs = [
+      "Select public checks",
+      "Documentation checks",
+      "Frontend checks",
+      "Script checks",
+      "Mobile web checks",
+      "Public repository checks",
+    ].map((name) => ({
+      name,
+      status: "completed",
+      conclusion: Object.hasOwn(conclusions, name) ? conclusions[name] : "success",
+    }));
+    return { total_count: jobs.length, jobs };
+  };
+
+  test("accepts a run whose required result and code suites succeeded", () => {
+    expect(ciEvidenceGaps(listing())).toEqual([]);
+    // Mobile web is not release evidence on its own and may be absent.
+    expect(ciEvidenceGaps(listing({ "Mobile web checks": "skipped" }))).toEqual([]);
+  });
+
+  test("refuses a successful run whose plan skipped the code suites", () => {
+    expect(
+      ciEvidenceGaps(listing({ "Frontend checks": "skipped", "Script checks": "skipped" })),
+    ).toEqual(["Frontend checks skipped", "Script checks skipped"]);
+    expect(ciEvidenceGaps(listing({ "Public repository checks": "skipped" }))).toEqual([
+      "Public repository checks skipped",
+    ]);
+    expect(ciEvidenceGaps(listing({ "Script checks": null }))).toEqual([
+      "Script checks unfinished",
+    ]);
+  });
+
+  test("refuses missing, duplicated or incompletely listed jobs", () => {
+    const complete = listing();
+    const without = complete.jobs.filter(({ name }) => name !== "Frontend checks");
+    expect(ciEvidenceGaps({ total_count: without.length, jobs: without })).toEqual([
+      "Frontend checks missing",
+    ]);
+    const duplicated = [...complete.jobs, { name: "Script checks", conclusion: "success" }];
+    expect(ciEvidenceGaps({ total_count: duplicated.length, jobs: duplicated })).toEqual([
+      "Script checks ambiguous",
+    ]);
+    for (const incomplete of [
+      { ...complete, total_count: complete.jobs.length + 1 },
+      { total_count: 0 },
+      null,
+    ]) {
+      expect(ciEvidenceGaps(incomplete)).toEqual(["job listing incomplete"]);
+    }
   });
 });

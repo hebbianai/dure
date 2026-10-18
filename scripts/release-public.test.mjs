@@ -159,6 +159,7 @@ test.each([
   { permissions: { "release-admin": "write" } },
   { toolingComparison: "diverged" },
   { ciConclusion: "failure" },
+  { ciJobs: { "Script checks": "skipped" } },
 ])("recovery refuses missing build, authority, review or CI evidence before writing: %j", (failure) => {
   const value = fixture();
   failedDraft(value);
@@ -326,6 +327,7 @@ test("a download that keeps timing out stays nongreen, and an absent artifact is
 test.each([
   { runConclusion: "failure" },
   { ciConclusion: "failure" },
+  { ciJobs: { "Frontend checks": "skipped", "Script checks": "skipped" } },
   { actualVerification: "skipped" },
   { tamperDownload: true },
   { headBranch: "topic" },
@@ -543,6 +545,39 @@ test("preflight requires an unused next version and exact public source CI", () 
     "release_version_already_reserved",
   );
   expect(writes(value)).toEqual([]);
+});
+
+const skippedCodeJobs = { "Frontend checks": "skipped", "Script checks": "skipped" };
+
+test.each([
+  { ciJobs: skippedCodeJobs },
+  { ciJobs: { "Script checks": "skipped" } },
+  { ciJobs: { "Public repository checks": "skipped" } },
+])("preflight refuses successful exact CI that did not run the code suites: %j", (gap) => {
+  const value = fixture({ remoteVersion: false });
+  value.change(gap);
+  const result = value.run(script, "preflight");
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain(`release_exact_ci_required: ${value.sourceSha} (run 1000: `);
+  expect(result.stderr).toContain(`${Object.keys(gap.ciJobs).at(-1)} skipped`);
+  expect(result.stderr).toContain(
+    "gh workflow run public-repository.yml --repo hebbianai/dure --ref main",
+  );
+  expect(writes(value)).toEqual([]);
+});
+
+test("preflight accepts a full exact run beside a documentation-only run", () => {
+  const value = fixture({ remoteVersion: false });
+  value.change({ ciRuns: { [value.sourceSha]: [{ jobs: skippedCodeJobs }, {}] } });
+  success(value.run(script, "preflight"));
+  const jobRoutes = value
+    .calls()
+    .filter((args) => args[0] === "api" && args[1].includes("/jobs?"))
+    .map((args) => args[1]);
+  expect(jobRoutes).toEqual([
+    "repos/hebbianai/dure/actions/runs/1000/jobs?filter=latest&per_page=100",
+    "repos/hebbianai/dure/actions/runs/1001/jobs?filter=latest&per_page=100",
+  ]);
 });
 
 test("freezes default main without a manually copied source SHA", () => {

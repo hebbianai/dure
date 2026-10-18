@@ -22,7 +22,6 @@ import {
   scriptTestOpaqueResourceSuffix,
 } from "./lib/script-test-graph-paths.mjs";
 
-const SCRIPT_TEST_PREFIX = "scripts/";
 const SCRIPT_TEST_SUFFIX = ".test.mjs";
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 
@@ -207,10 +206,9 @@ export function affectedScriptTests({
   scriptPaths = listScriptTestGraphPaths(),
 }) {
   const available = new Set(scriptPaths);
-  const tests = scriptPaths.filter(
-    (sourcePath) =>
-      sourcePath.startsWith(SCRIPT_TEST_PREFIX) &&
-      sourcePath.endsWith(SCRIPT_TEST_SUFFIX),
+  // CLI package tests consume the same graph as scripts/ tests.
+  const tests = scriptPaths.filter((sourcePath) =>
+    sourcePath.endsWith(SCRIPT_TEST_SUFFIX),
   );
   const selected = new Set();
   const graphChangedPaths = [];

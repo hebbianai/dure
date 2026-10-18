@@ -102,19 +102,31 @@ permission; approval of the protected signing environment remains separate.
 The hosted source job resolves the input once and records the immutable source
 SHA, protected workflow SHA, requested ref, version and verification profile in
 `release-selection`. Its summary shows both SHAs before protected jobs start.
-`Public repository checks` must be green for both exact commits. Later branch
-movement never changes candidate preparation, verification or the tag parent.
-The privileged version writer and draft publisher execute helpers from the
-protected workflow commit, not from the chosen application branch. The signed
-app is built from the version-only tag commit. Source selection is a trusted
-administrator operation: approving arbitrary unreviewed code for a signing
-host is unsafe, even when the workflow definition is protected.
+Later branch movement never changes candidate preparation, verification or the
+tag parent. The privileged version writer and draft publisher execute helpers
+from the protected workflow commit, not from the chosen application branch. The
+signed app is built from the version-only tag commit. Source selection is a
+trusted administrator operation: approving arbitrary unreviewed code for a
+signing host is unsafe, even when the workflow definition is protected.
 
 For example, after the workflow is on main:
 
 ```sh
 gh workflow run release.yml --repo hebbianai/dure --ref main \
   -f source_ref=main -f bump=patch -f verification=full
+```
+
+The selected source and protected workflow commits each need public CI evidence:
+a successful `public-repository.yml` run for that exact commit in which
+`Public repository checks`, `Frontend checks` and `Script checks` all succeeded.
+A run that skipped its code jobs, such as a documentation-only push, also concludes
+success but is not evidence, and a newer push to `main` cancels the run of an
+older commit. Without such a run the source job refuses with
+`release_exact_ci_required`. Run the workflow on a ref at that commit, wait for
+it to succeed, then dispatch Release again:
+
+```sh
+gh workflow run public-repository.yml --repo hebbianai/dure --ref main
 ```
 
 `verification=full` is the default and requires remote `pnpm verify:release`.
@@ -146,7 +158,8 @@ only that version inventory, and atomically publishes `release/vX.Y.Z` and
 
 ## Accept and publish
 
-After the Release workflow and exact-tag Public repository CI succeed:
+After the Release workflow and the exact-tag Public repository run it requests
+succeed (the CI evidence rule above also applies to the tag commit):
 
 ```sh
 node scripts/release-public.mjs verify v0.2.29

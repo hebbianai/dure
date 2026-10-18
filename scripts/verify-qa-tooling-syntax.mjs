@@ -15,9 +15,23 @@ function filesBelow(directory) {
     .sort();
 }
 
-function syntaxCommand(file) {
+// Linux sh is often dash, which rejects bash syntax, so a script's shebang
+// selects the shell that parses it.
+function shellForScript(source) {
+  const [interpreter = "", ...args] =
+    source.match(/^#!(.*)/)?.[1].trim().split(/\s+/) ?? [];
+  const program =
+    path.posix.basename(interpreter) === "env"
+      ? args.find((arg) => !arg.startsWith("-") && !arg.includes("="))
+      : interpreter;
+  return path.posix.basename(program ?? "") === "bash" ? "bash" : "sh";
+}
+
+export function syntaxCommand(file) {
   if (/\.[cm]?js$/.test(file)) return [process.execPath, ["--check", file]];
-  if (file.endsWith(".sh")) return ["sh", ["-n", file]];
+  if (file.endsWith(".sh")) {
+    return [shellForScript(fs.readFileSync(file, "utf8")), ["-n", file]];
+  }
   if (file.endsWith(".py")) {
     return [
       "python3",
@@ -31,10 +45,12 @@ function syntaxCommand(file) {
   return undefined;
 }
 
-for (const file of filesBelow(QA_ROOT)) {
-  const command = syntaxCommand(file);
-  if (!command) continue;
-  const result = spawnSync(command[0], command[1], { stdio: "inherit" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+if (import.meta.main) {
+  for (const file of filesBelow(QA_ROOT)) {
+    const command = syntaxCommand(file);
+    if (!command) continue;
+    const result = spawnSync(command[0], command[1], { stdio: "inherit" });
+    if (result.error) throw result.error;
+    if (result.status !== 0) process.exit(result.status ?? 1);
+  }
 }
