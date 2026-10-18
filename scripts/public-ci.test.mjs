@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,11 @@ import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
+import {
+  DEADLINE_SENSITIVE_PROCESS_TEST_PATHS,
+  NODE_TEST_PATHS,
+  PROCESS_FIXTURE_TEST_PATHS,
+} from "./lib/script-test-projects.mjs";
 import { lookupActorPermission, planPublicCi } from "./public-ci.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,7 +20,10 @@ const workflow = parse(
 );
 const codeResults = [
   "FRONTEND_RESULT",
-  "SCRIPTS_RESULT",
+  "SCRIPTS_VITEST_RESULT",
+  "SCRIPTS_NODE_RESULT",
+  "SCRIPTS_DEADLINE_RESULT",
+  "SCRIPTS_PROCESS_RESULT",
   "MOBILE_WEB_RESULT",
   "SHARED_PROTOCOL_RESULT",
 ];
@@ -383,5 +391,108 @@ describe("public CI change planning", () => {
       env: { ...environment, ...results(false) },
       stdio: "pipe",
     });
+  });
+});
+
+describe("script test CI coverage", () => {
+  it("covers every script test file in exactly one matrix job", () => {
+    // Find all script test files
+    function findTestFiles(dir) {
+      const results = [];
+      const fullDir = join(repositoryRoot, dir);
+      try {
+        const entries = readdirSync(fullDir);
+        for (const entry of entries) {
+          const fullPath = join(fullDir, entry);
+          const relativePath = join(dir, entry);
+          try {
+            const stat = statSync(fullPath);
+            if (stat.isDirectory()) {
+              results.push(...findTestFiles(relativePath));
+            } else if (entry.endsWith(".test.mjs")) {
+              results.push(relativePath);
+            }
+          } catch {}
+        }
+      } catch {}
+      return results;
+    }
+
+    const allScriptTests = findTestFiles("scripts");
+
+    // Extract matrix file lists from workflow
+    const extractFiles = (jobName) => {
+      const job = workflow.jobs[jobName];
+      if (!job?.strategy?.matrix) return [];
+      // Handle both `file` (single file per matrix item) and `files` (space-separated list)
+      if (job.strategy.matrix.file) {
+        return job.strategy.matrix.file;
+      }
+      if (job.strategy.matrix.include) {
+        return job.strategy.matrix.include.flatMap(group =>
+          (group.files || "").split(/\s+/).filter(Boolean)
+        );
+      }
+      return [];
+    };
+
+    const vitestFiles = allScriptTests.filter(path =>
+      !NODE_TEST_PATHS.includes(path) &&
+      !DEADLINE_SENSITIVE_PROCESS_TEST_PATHS.includes(path) &&
+      !PROCESS_FIXTURE_TEST_PATHS.includes(path)
+    );
+    const nodeFiles = extractFiles("scripts-node");
+    const deadlineFiles = extractFiles("scripts-deadline");
+    const processFiles = extractFiles("scripts-process");
+
+    // Build coverage map
+    const coverage = new Map();
+    for (const file of vitestFiles) coverage.set(file, ["scripts-vitest"]);
+    for (const file of nodeFiles) {
+      const jobs = coverage.get(file) || [];
+      jobs.push("scripts-node");
+      coverage.set(file, jobs);
+    }
+    for (const file of deadlineFiles) {
+      const jobs = coverage.get(file) || [];
+      jobs.push("scripts-deadline");
+      coverage.set(file, jobs);
+    }
+    for (const file of processFiles) {
+      const jobs = coverage.get(file) || [];
+      jobs.push("scripts-process");
+      coverage.set(file, jobs);
+    }
+
+    // Check for gaps and duplicates
+    const uncovered = [];
+    const duplicates = [];
+
+    for (const test of allScriptTests) {
+      const jobs = coverage.get(test) || [];
+      if (jobs.length === 0) {
+        uncovered.push(test);
+      } else if (jobs.length > 1) {
+        duplicates.push({ file: test, jobs });
+      }
+    }
+
+    // Assert no gaps or duplicates
+    if (uncovered.length > 0) {
+      throw new Error(
+        `Script tests NOT covered by any CI job:\n${uncovered.map(f => `  - ${f}`).join("\n")}\n` +
+        `Update .github/workflows/public-repository.yml matrix or scripts/lib/script-test-projects.mjs`
+      );
+    }
+    if (duplicates.length > 0) {
+      throw new Error(
+        `Script tests covered by MULTIPLE CI jobs:\n${duplicates.map(({file, jobs}) => `  - ${file}: ${jobs.join(", ")}`).join("\n")}\n` +
+        `Update .github/workflows/public-repository.yml matrix or scripts/lib/script-test-projects.mjs`
+      );
+    }
+
+    // Success - report coverage for visibility
+    const allCovered = new Set([...vitestFiles, ...nodeFiles, ...deadlineFiles, ...processFiles]);
+    expect(allCovered.size).toBe(allScriptTests.length);
   });
 });
