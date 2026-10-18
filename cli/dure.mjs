@@ -1579,25 +1579,25 @@ async function emitSessionQuery(action, sessionId, opts) {
       opts.probeBudgetMs === undefined ? undefined : Number(opts.probeBudgetMs),
     backend,
   });
-  
+
   // Apply client-side filtering for ls command
   if (action === "list" && report.kind === "dure.sessions.list") {
     let filtered = report.sessions;
-    
+
     // Filter by --alive (only show alive sessions)
     if (opts.alive) {
       filtered = filtered.filter((session) => session.liveness.state === "alive");
     }
-    
+
     // Filter by --hide-provider (can be repeated)
     if (opts.hideProvider && opts.hideProvider.length > 0) {
       const hiddenProviders = Array.isArray(opts.hideProvider) ? opts.hideProvider : [opts.hideProvider];
       filtered = filtered.filter((session) => !hiddenProviders.includes(session.provider.id));
     }
-    
+
     report.sessions = filtered;
   }
-  
+
   process.stdout.write(
     (opts.json ? JSON.stringify(report) : formatSessionQuery(report)) + "\n",
   );
