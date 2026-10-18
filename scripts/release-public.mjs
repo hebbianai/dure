@@ -678,15 +678,28 @@ function updateMetadata(tag, files) {
     }
   }
   if (plan(read()) !== null) throw new Error("beta_metadata_readback_mismatch");
-  const served = download(
-    "anonymous compatibility feed",
-    () => anonymous(BETA_UPDATER_URL),
-    { curl: true },
+  // raw.githubusercontent.com caches the feed for up to five minutes. Poll the
+  // exact client URL for a bounded time; disagreement after that stays red.
+  const interval = duration("DURE_RELEASE_FEED_POLL_MS", 20_000);
+  const polls = Math.floor(
+    duration("DURE_RELEASE_FEED_WAIT_MS", 360_000) / Math.max(interval, 1),
   );
-  if (!served.equals(files.bytes))
-    throw new Error(
-      "beta_metadata_anonymous_readback_mismatch: resume metadata-only; do not recreate assets",
+  for (let poll = 0; ; poll++) {
+    const served = download(
+      "anonymous compatibility feed",
+      () => anonymous(BETA_UPDATER_URL),
+      { curl: true },
     );
+    if (served.equals(files.bytes)) return;
+    if (poll >= polls)
+      throw new Error(
+        "beta_metadata_anonymous_readback_mismatch: resume metadata-only; do not recreate assets",
+      );
+    console.warn(
+      `Anonymous compatibility feed still serves other bytes; checking again (${poll + 1} of ${polls})`,
+    );
+    sleep(interval);
+  }
 }
 
 function promote() {

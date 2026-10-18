@@ -118,7 +118,12 @@ if(state.flakyDownloads?.[key]>0){
   console.error('curl: (28) Operation timed out after 30000 milliseconds with 0 bytes received');process.exit(28);
 }
 if(output)fs.copyFileSync(path.join(state.original,key),output);
-else process.stdout.write(Buffer.from((state.staleReadback?state.originalPrevious:state.previous).content,'base64'));
+else{
+  // true keeps the raw cache stale; a number goes stale for that many reads.
+  const stale=state.staleReadback===true||state.staleReadback>0;
+  if(typeof state.staleReadback==='number'&&stale){state.staleReadback--;fs.writeFileSync(process.env.RELEASE_TEST_STATE,JSON.stringify(state));}
+  process.stdout.write(Buffer.from((stale?state.originalPrevious:state.previous).content,'base64'));
+}
 `;
 
 const fakeGit = `#!/usr/bin/env node
@@ -310,6 +315,8 @@ export function createPublicReleaseFixture({ remoteVersion = true } = {}) {
     GH_TOKEN: "fixture-token",
     GITHUB_OUTPUT: path.join(root, "github-output"),
     DURE_RELEASE_DOWNLOAD_RETRY_MS: "1",
+    DURE_RELEASE_FEED_POLL_MS: "1",
+    DURE_RELEASE_FEED_WAIT_MS: "20",
   };
   const state = () => JSON.parse(fs.readFileSync(statePath));
   const change = (values) =>

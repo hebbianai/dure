@@ -137,6 +137,9 @@ The command publishes a prerelease/nonlatest release, downloads all four files
 anonymously, rechecks hashes/signature, then conditionally updates the existing
 `hebbianai/hebbian-releases:main/beta/latest.json`. Its URL stays unchanged for
 installed clients; the new manifest points to the immutable archive in `dure`.
+`raw.githubusercontent.com` caches that URL for up to five minutes, so the
+anonymous readback checks it every 20 seconds for up to six minutes before
+failing with `beta_metadata_anonymous_readback_mismatch`.
 An optional `DURE_BETA_FEED_TOKEN` is used only for that compatibility repository;
 the new repository's `GITHUB_TOKEN` alone cannot write a different repository.
 
@@ -187,7 +190,8 @@ node scripts/release-public.mjs metadata-only v0.2.29
 
 This rechecks the same source/run/public files without changing release assets.
 The compatibility writer uses the previous Git blob SHA, rejects downgrades and
-same-version divergence, and requires exact anonymous raw-byte readback. A
-response/cache failure remains a failure until those bytes can be observed.
+same-version divergence, and requires exact anonymous raw-byte readback within
+the same bounded wait. A response/cache failure remains a failure until those
+bytes can be observed.
 Retain failed receipts and evidence directories; successful integrity checks do
 not resolve unrelated historical runtime or verification incidents.

@@ -373,13 +373,29 @@ test("recovers lost publish and feed responses from exact committed readback", (
   expect(writes(value).filter((args) => args.includes("PUT"))).toHaveLength(1);
 });
 
-test("raw-cache disagreement stays nongreen; metadata-only resumes without touching assets", () => {
+const feedReads = (value) =>
+  curls(value).filter((args) => !args.includes("--output")).length;
+
+test("publish waits for the raw cache to serve the new feed within its bound", () => {
+  const value = fixture();
+  success(stage(value));
+  value.change({ staleReadback: 2 });
+  const result = value.run(script, "publish", "v0.2.29");
+  success(result);
+  expect(result.stderr).toContain("feed still serves other bytes");
+  expect(feedReads(value)).toBe(3);
+  expect(value.state().release.draft).toBe(false);
+});
+
+test("raw-cache disagreement past the bound stays nongreen; metadata-only resumes without touching assets", () => {
   const value = fixture();
   success(stage(value));
   value.change({ staleReadback: true });
+  value.env.DURE_RELEASE_FEED_WAIT_MS = "3";
   expect(value.run(script, "publish", "v0.2.29").stderr).toContain(
     "beta_metadata_anonymous_readback_mismatch",
   );
+  expect(feedReads(value)).toBe(4);
   const assets = value.state().release.assets,
     count = writes(value).length;
   value.change({ staleReadback: false });
