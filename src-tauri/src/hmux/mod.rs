@@ -236,7 +236,7 @@ pub enum ExactSessionInspectionResult {
     Found {
         session: Box<SessionSummary>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        agent_runtime_state: Option<ObserverAgentRuntimeState>,
+        agent_runtime_state: Option<Box<ObserverAgentRuntimeState>>,
     },
     NotFound {
         session_id: String,
@@ -1675,7 +1675,7 @@ fn project_snapshot(snapshot: ScreenSnapshotDescriptor) -> ObserverSnapshot {
         agent_identity: snapshot.agent_identity.map(project_agent_identity),
         agent_runtime_state: snapshot
             .agent_runtime_state
-            .map(project_agent_runtime_state),
+            .map(|state| project_agent_runtime_state(*state)),
         provider_conversation_identity: snapshot
             .provider_conversation_identity
             .map(|identity| project_provider_conversation_identity(*identity)),
@@ -1868,7 +1868,8 @@ fn project_exact_session_inspection(
             };
             let agent_runtime_state = inspection
                 .agent_runtime_state
-                .map(project_agent_runtime_state);
+                .map(project_agent_runtime_state)
+                .map(Box::new);
             ExactSessionInspectionResult::Found {
                 session: Box::new(project_session_with_health(
                     inspection.descriptor,

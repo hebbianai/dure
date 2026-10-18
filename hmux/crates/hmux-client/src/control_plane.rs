@@ -289,7 +289,11 @@ fn try_probe_local_session_observation_until(
             let working_directory = attachment.initial_snapshot.working_directory.clone();
             let execution_location = attachment.initial_snapshot.execution_location.clone();
             let agent_identity = attachment.initial_snapshot.agent_identity.clone();
-            let agent_runtime_state = attachment.initial_snapshot.agent_runtime_state.clone();
+            let agent_runtime_state = attachment
+                .initial_snapshot
+                .agent_runtime_state
+                .as_deref()
+                .cloned();
             let controller_input_pending = attachment.initial_snapshot.controller_input_pending;
             let semantic_idle_ms = attachment.initial_snapshot.semantic_idle_ms.clone();
             let provider_conversation_identity = attachment

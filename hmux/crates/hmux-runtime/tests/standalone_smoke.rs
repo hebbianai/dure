@@ -5713,7 +5713,7 @@ fn repository_runtime_projects_detected_agent_state_without_terminal_history_rep
         let mut observer = observer;
         let observed_runtime =
             if let Some(initial) = &observer.attachment().initial_snapshot.agent_runtime_state {
-                Ok(initial.clone())
+                Ok((**initial).clone())
             } else {
                 loop {
                     match observer.read_event() {
@@ -5722,7 +5722,7 @@ fn repository_runtime_projects_detected_agent_state_without_terminal_history_rep
                             let Some(runtime) = snapshot.agent_runtime_state else {
                                 continue;
                             };
-                            break Ok(runtime);
+                            break Ok(*runtime);
                         }
                         Ok(Some(ObserverEvent::Exit(exit))) => {
                             break Err(format!(

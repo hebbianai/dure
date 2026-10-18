@@ -64,7 +64,7 @@ pub enum ExactDiscoveryLookupResponse {
         descriptor: Box<SessionDescriptor>,
         probe_status: Option<SessionProbeStatus>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        agent_runtime_state: Option<crate::AgentRuntimeStateDescriptor>,
+        agent_runtime_state: Option<Box<crate::AgentRuntimeStateDescriptor>>,
     },
     NotFound {
         schema_version: u8,
@@ -175,7 +175,7 @@ fn probe_result_to_response(result: ExactSessionProbeResult) -> ExactDiscoveryLo
             ExactDiscoveryLookupResponse::Found {
                 schema_version: EXACT_SCHEMA_VERSION,
                 probe_status,
-                agent_runtime_state: inspection.agent_runtime_state,
+                agent_runtime_state: inspection.agent_runtime_state.map(Box::new),
                 descriptor: Box::new(inspection.descriptor),
             }
         }
@@ -513,7 +513,7 @@ fn finalize_lookup(
             }
             let mut inspection = inspection_from_probe(*descriptor, probe_status);
             if probe_status == Some(SessionProbeStatus::Healthy) {
-                inspection.agent_runtime_state = agent_runtime_state;
+                inspection.agent_runtime_state = agent_runtime_state.map(|state| *state);
             }
             ExactSessionProbeResult::Inspection(Box::new(inspection))
         }

@@ -324,7 +324,7 @@ pub struct ScreenSnapshotDescriptor {
     pub working_directory: Option<WorkingDirectoryDescriptor>,
     pub execution_location: Option<ExecutionLocationDescriptor>,
     pub agent_identity: Option<AgentIdentityDescriptor>,
-    pub agent_runtime_state: Option<AgentRuntimeStateDescriptor>,
+    pub agent_runtime_state: Option<Box<AgentRuntimeStateDescriptor>>,
     pub controller_input_pending: Option<bool>,
     pub semantic_idle_ms: Option<String>,
     pub provider_conversation_identity: Option<Box<ProviderConversationIdentityDescriptor>>,
@@ -724,7 +724,8 @@ pub(crate) fn project_snapshot(
             .then_some(snapshot.agent_runtime_state)
             .flatten()
             .map(project_agent_runtime_state)
-            .transpose()?,
+            .transpose()?
+            .map(Box::new),
         controller_input_pending: snapshot.controller_input_pending,
         semantic_idle_ms: agent_runtime_state_projection
             .then_some(snapshot.semantic_idle_ms)
