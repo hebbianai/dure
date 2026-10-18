@@ -1344,7 +1344,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-cli"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "argon2 0.5.3",
  "base64",
@@ -1376,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-client"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "argon2 0.5.3",
  "base64",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-host"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "alacritty_terminal",
  "base64",
@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-local-platform"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "hmux-session-protocol",
  "libc",
@@ -1432,7 +1432,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-release-candidate"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "auditable-serde",
  "clap",
@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-release-trust"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -1471,7 +1471,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-runtime"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "fs2",
  "hebbian-process-sampler",
@@ -1496,7 +1496,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-runtime-contract"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "hmux-session-protocol",
  "serde",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-session-protocol"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "base64",
  "serde",
@@ -1514,7 +1514,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-ssh-transport"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "hmux-client",
  "hmux-runtime-contract",
@@ -3606,7 +3606,7 @@ dependencies = [
 
 [[package]]
 name = "terminal-core-ghostty-proof"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "cc",
  "flate2",
@@ -3618,14 +3618,14 @@ dependencies = [
 
 [[package]]
 name = "terminal-state-protocol"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "prost",
 ]
 
 [[package]]
 name = "terminal-state-protocol-codegen"
-version = "0.2.51"
+version = "0.2.52"
 dependencies = [
  "prost-build",
  "protoc-bin-vendored",
