@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { handleMcpRequest } from "../cli/lib/orchestration-mcp-server.mjs";
+import { writeRegistry } from "./lib/dure-session-test-fixture.mjs";
 
 const cliPath = fileURLToPath(new URL("../cli/dure.mjs", import.meta.url));
 const temporaryRoots = [];
@@ -183,5 +184,211 @@ describe("dure transcript", () => {
         },
       },
     ]);
+  });
+
+  it("shows help text with --help flag", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dure-transcript-help-"));
+    temporaryRoots.push(root);
+    const environment = { ...process.env, DURE_HOME: root };
+    delete environment.DURE_APP_CHANNEL;
+    delete environment.HEBBIAN_APP_CHANNEL;
+
+    const result = await runCli(["transcript", "--help"], environment);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("dure transcript — copy-ready canonical conversation transcript");
+    expect(result.stdout).toContain("Usage:");
+    expect(result.stdout).toContain("--workspace ID");
+    expect(result.stderr).toBe("");
+  });
+
+  it("shows help text with help transcript", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dure-transcript-help-"));
+    temporaryRoots.push(root);
+    const environment = { ...process.env, DURE_HOME: root };
+    delete environment.DURE_APP_CHANNEL;
+    delete environment.HEBBIAN_APP_CHANNEL;
+
+    const result = await runCli(["help", "transcript"], environment);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("dure transcript — copy-ready canonical conversation transcript");
+    expect(result.stdout).toContain("Usage:");
+  });
+
+  it("does not treat --help after -- as help request", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dure-transcript-help-"));
+    temporaryRoots.push(root);
+    const environment = { ...process.env, DURE_HOME: root };
+    delete environment.DURE_APP_CHANNEL;
+    delete environment.HEBBIAN_APP_CHANNEL;
+
+    const result = await runCli(["transcript", "agent-name", "--", "--help"], environment);
+
+    // Should not show help text (the full help output); instead shows usage validation error
+    // because extra arguments after -- trigger validation failure
+    expect(result.code).not.toBe(0);
+    expect(result.stdout).not.toContain("dure transcript — copy-ready canonical conversation transcript");
+    expect(result.stderr).toContain("Usage: dure transcript");
+  });
+
+  it("reports ambiguous agent names with workspace information", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dure-transcript-ambiguous-"));
+    temporaryRoots.push(root);
+    mkdirSync(root, { recursive: true });
+    writeRegistry(root, [
+      {
+        id: "agent-1",
+        name: "claude-1",
+        displayName: "claude-1",
+        project: "my-project",
+        provider: "claude",
+        sessionId: "session-1",
+        runtimeBinding: {
+          runtime: "hmux_managed_v1",
+          source: "local",
+          hostId: "local",
+          sessionId: "session-1",
+          workspaceId: "workspace-alpha",
+        },
+        interactionProfile: {
+          kind: "structured_protocol",
+          backendProfileId: "local",
+          interactionSessionId: "interaction-1",
+        },
+      },
+      {
+        id: "agent-2",
+        name: "claude-1",
+        displayName: "claude-1",
+        project: "my-project",
+        provider: "claude",
+        sessionId: "session-2",
+        runtimeBinding: {
+          runtime: "hmux_managed_v1",
+          source: "local",
+          hostId: "local",
+          sessionId: "session-2",
+          workspaceId: "workspace-beta",
+        },
+        interactionProfile: {
+          kind: "structured_protocol",
+          backendProfileId: "local",
+          interactionSessionId: "interaction-2",
+        },
+      },
+    ]);
+    const environment = { ...process.env, DURE_HOME: root };
+    delete environment.DURE_APP_CHANNEL;
+    delete environment.HEBBIAN_APP_CHANNEL;
+
+    const result = await runCli(["transcript", "claude-1"], environment);
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("'claude-1' matches multiple Agents");
+    expect(result.stderr).toContain("workspace=workspace-alpha");
+    expect(result.stderr).toContain("workspace=workspace-beta");
+    expect(result.stderr).toContain("--workspace ID");
+  });
+
+  it("disambiguates agents with --workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dure-transcript-workspace-"));
+    temporaryRoots.push(root);
+    mkdirSync(root, { recursive: true });
+    writeRegistry(root, [
+      {
+        id: "agent-1",
+        name: "claude-1",
+        displayName: "claude-1",
+        project: "my-project",
+        provider: "claude",
+        sessionId: "session-1",
+        runtimeBinding: {
+          runtime: "hmux_managed_v1",
+          source: "local",
+          hostId: "local",
+          sessionId: "session-1",
+          workspaceId: "workspace-alpha",
+        },
+        interactionProfile: {
+          kind: "structured_protocol",
+          backendProfileId: "local",
+          interactionSessionId: "interaction-1",
+        },
+      },
+      {
+        id: "agent-2",
+        name: "claude-1",
+        displayName: "claude-1",
+        project: "my-project",
+        provider: "claude",
+        sessionId: "session-2",
+        runtimeBinding: {
+          runtime: "hmux_managed_v1",
+          source: "local",
+          hostId: "local",
+          sessionId: "session-2",
+          workspaceId: "workspace-beta",
+        },
+        interactionProfile: {
+          kind: "structured_protocol",
+          backendProfileId: "local",
+          interactionSessionId: "interaction-2",
+        },
+      },
+    ]);
+    const environment = { ...process.env, DURE_HOME: root };
+    delete environment.DURE_APP_CHANNEL;
+    delete environment.HEBBIAN_APP_CHANNEL;
+
+    const result = await runCli(
+      ["transcript", "claude-1", "--workspace", "workspace-alpha"],
+      environment,
+    );
+
+    // Should not complain about ambiguity, will fail with backend error instead
+    expect(result.stderr).not.toContain("matches multiple Agents");
+  });
+
+  it("shows clear error when --workspace filters to zero matches", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dure-transcript-no-match-"));
+    temporaryRoots.push(root);
+    mkdirSync(root, { recursive: true });
+    writeRegistry(root, [
+      {
+        id: "agent-1",
+        name: "claude-1",
+        displayName: "claude-1",
+        project: "my-project",
+        provider: "claude",
+        sessionId: "session-1",
+        runtimeBinding: {
+          runtime: "hmux_managed_v1",
+          source: "local",
+          hostId: "local",
+          sessionId: "session-1",
+          workspaceId: "workspace-alpha",
+        },
+        interactionProfile: {
+          kind: "structured_protocol",
+          backendProfileId: "local",
+          interactionSessionId: "interaction-1",
+        },
+      },
+    ]);
+    const environment = { ...process.env, DURE_HOME: root };
+    delete environment.DURE_APP_CHANNEL;
+    delete environment.HEBBIAN_APP_CHANNEL;
+
+    const result = await runCli(
+      ["transcript", "claude-1", "--workspace", "workspace-wrong"],
+      environment,
+    );
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("No agent 'claude-1' found in workspace 'workspace-wrong'");
+    expect(result.stderr).toContain("Found 1 agent(s) with that name in other workspaces");
+    expect(result.stderr).toContain("workspace=workspace-alpha");
+    expect(result.stderr).not.toContain("invalid");
   });
 });
