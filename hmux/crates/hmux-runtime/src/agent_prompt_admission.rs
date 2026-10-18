@@ -114,6 +114,7 @@ impl AgentPromptAdmissionSignal {
                 .lock()
                 .map_err(|_| "agent prompt admission signal lock poisoned")?
                 .revision;
+            let observation_started = Instant::now();
             match observe()? {
                 AgentPromptAdmission::Eligible => {
                     return Ok(AgentPromptWaitOutcome::Ready);
@@ -124,10 +125,12 @@ impl AgentPromptAdmissionSignal {
                 AgentPromptAdmission::Pending => {}
             }
 
-            let now = Instant::now();
-            if now >= deadline {
+            // Only an observation that began at or after the deadline may end
+            // the wait; one the deadline overtook earns another Host check.
+            if observation_started >= deadline {
                 return Ok(AgentPromptWaitOutcome::TimedOut);
             }
+            let now = Instant::now();
             let revision = self
                 .state
                 .lock()
@@ -201,10 +204,13 @@ mod tests {
 
         let signal = AgentPromptAdmissionSignal::default();
         let observations = AtomicUsize::new(0);
+        let timeout = Duration::from_millis(100);
         assert_eq!(
             signal
-                .wait(Duration::from_millis(1), || {
+                .wait(timeout, || {
                     Ok(if observations.fetch_add(1, Ordering::AcqRel) == 0 {
+                        // The deadline passes while this observation runs.
+                        thread::sleep(timeout);
                         AgentPromptAdmission::Pending
                     } else {
                         AgentPromptAdmission::Eligible
@@ -213,7 +219,7 @@ mod tests {
                 .unwrap(),
             AgentPromptWaitOutcome::Ready
         );
-        assert!(observations.load(Ordering::Acquire) >= 2);
+        assert_eq!(observations.load(Ordering::Acquire), 2);
     }
 
     #[test]
