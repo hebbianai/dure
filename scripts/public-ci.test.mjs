@@ -484,6 +484,8 @@ describe("script test CI coverage", () => {
 
     // Success - report coverage for visibility
     const allCovered = new Set([...vitestFiles, ...deadlineFiles, ...processFiles]);
-    expect(allCovered.size).toBe(allScriptTests.length);
+    // NODE_TEST_PATHS are intentionally excluded, so covered count should equal
+    // total tests minus NODE_TEST_PATHS
+    expect(allCovered.size).toBe(allScriptTests.length - NODE_TEST_PATHS.length);
   });
 });
