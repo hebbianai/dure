@@ -279,6 +279,19 @@ describe("release gate runner", () => {
     const provision = scripts["terminal-state-protocol:provision"];
     expect(provision).toContain("pnpm install --frozen-lockfile");
     expect(provision).toContain("rustup toolchain install 1.85.0");
+    // A bare `+1.85` selects rustup's 1.85 channel (1.85.1), not the
+    // toolchain provisioned above.
+    for (const name of [
+      "terminal-state-protocol:generate",
+      "terminal-state-protocol:check",
+      "verify:push:terminal-state-protocol",
+    ]) {
+      const toolchains = [...scripts[name].matchAll(/cargo \+(\S+)/g)].map(
+        ([, toolchain]) => toolchain,
+      );
+      expect(toolchains.length, name).toBeGreaterThan(0);
+      expect(new Set(toolchains), name).toEqual(new Set(["1.85.0"]));
+    }
     expect(scripts["verify:push:terminal-state-protocol"]).toContain(
       "terminal-state-protocol:provision",
     );
