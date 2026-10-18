@@ -1300,10 +1300,16 @@ async function cmdRead(query, opts) {
   if (interruption.interrupted()) process.stdout.write("\n");
 }
 
-function matchingTranscriptAgents(reg, query) {
+function matchingTranscriptAgents(reg, query, workspaceId = undefined) {
   const matches = matchingAgents(reg, query);
   for (const agent of Array.isArray(reg?.agents) ? reg.agents : []) {
     if (agent?.id === query && !matches.includes(agent)) matches.push(agent);
+  }
+  if (workspaceId !== undefined) {
+    return matches.filter((agent) => {
+      const binding = agent.runtimeBinding;
+      return binding?.workspaceId === workspaceId;
+    });
   }
   return matches;
 }
@@ -1370,18 +1376,39 @@ async function cmdTranscript(query, opts) {
     (opts.linesSpecified && (!Number.isSafeInteger(opts.lines) || opts.lines < 1))
   ) {
     fail(
-      "Usage: dure transcript <agent-or-id> [-n N | --all] [--backend ID] [--json]",
+      "Usage: dure transcript <agent-or-id> [-n N | --all] [--workspace ID] [--backend ID] [--json]",
     );
   }
   const registry = loadRegistryOptional() ?? { agents: [] };
-  const matches = matchingTranscriptAgents(registry, query);
+  const matches = matchingTranscriptAgents(registry, query, opts.workspace);
+  if (matches.length === 0 && opts.workspace) {
+    const allMatches = matchingTranscriptAgents(registry, query);
+    if (allMatches.length > 0) {
+      fail(
+        `No agent '${query}' found in workspace '${opts.workspace}'.\n` +
+          `Found ${allMatches.length} agent(s) with that name in other workspaces:\n` +
+          allMatches
+            .map(
+              (agent) => {
+                const workspace = agent.runtimeBinding?.workspaceId;
+                const workspaceInfo = workspace ? ` workspace=${workspace}` : "";
+                return `  ${agent.project}/${agentDisplayName(agent)} (${agent.id}${workspaceInfo})`;
+              },
+            )
+            .join("\n"),
+      );
+    }
+  }
   if (matches.length > 1) {
     fail(
-      `'${query}' matches multiple Agents; use project/name or an Agent ID:\n` +
+      `'${query}' matches multiple Agents; use project/name, an Agent ID, or --workspace ID:\n` +
         matches
           .map(
-            (agent) =>
-              `  ${agent.project}/${agentDisplayName(agent)} (${agent.id})`,
+            (agent) => {
+              const workspace = agent.runtimeBinding?.workspaceId;
+              const workspaceInfo = workspace ? ` workspace=${workspace}` : "";
+              return `  ${agent.project}/${agentDisplayName(agent)} (${agent.id}${workspaceInfo})`;
+            },
           )
           .join("\n"),
     );
@@ -3730,6 +3757,22 @@ Backend reads return the dure.sessions.read envelope, including exact sessionId 
 --follow redraws text and cannot be combined with --json.
 Reads do not send input, start a session or change focus. Use --workspace to disambiguate exact session IDs.`;
 
+const TRANSCRIPT_HELP = `dure transcript — copy-ready canonical conversation transcript
+
+Usage:
+  dure transcript <agent-or-id> [-n N | --all] [--workspace ID] [--backend ID] [--json]
+
+Options:
+  -n N              Show the last N messages (default 20)
+  --all             Show the complete conversation history
+  --workspace ID    Select an agent by workspace ID when multiple agents share the same name
+  --backend ID      Use a specific backend profile
+  --json            Output structured JSON instead of formatted text
+
+The transcript includes conversation turns, agent responses, and tool calls.
+--workspace helps disambiguate when multiple alive sessions use the same agent name.
+Backend transcripts use the agent's backend profile unless --backend is specified.`;
+
 const WORKFLOW_HELP = `dure workflow — delegated workflow control
 
 Usage:
@@ -3918,13 +3961,17 @@ async function cmdProfiles(opts) {
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
-  if ((cmd === "help" && rest[0] === "read") || (cmd === "read" && rest.some((arg) => ["--help", "-h"].includes(arg)))) {
+  const optionEnd = rest.indexOf("--");
+  if ((cmd === "help" && rest[0] === "read") || (cmd === "read" && (optionEnd < 0 ? rest : rest.slice(0, optionEnd)).some((arg) => arg === "--help" || arg === "-h"))) {
     process.stdout.write(`${READ_HELP}\n`);
+    return;
+  }
+  if ((cmd === "help" && rest[0] === "transcript") || (cmd === "transcript" && (optionEnd < 0 ? rest : rest.slice(0, optionEnd)).some((arg) => arg === "--help" || arg === "-h"))) {
+    process.stdout.write(`${TRANSCRIPT_HELP}\n`);
     return;
   }
   if (cmd === "help" && rest[0] === "client") return cmdClient(["--help"]);
   const sessionCommands = ["ls", "list", "inspect", "sessions"];
-  const optionEnd = rest.indexOf("--");
   if (
     (cmd === "help" && rest[0] === "projects") ||
     (cmd === "projects" &&
