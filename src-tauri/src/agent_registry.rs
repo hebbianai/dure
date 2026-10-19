@@ -136,7 +136,7 @@ pub(crate) fn publish_guarded(
             if let Ok(existing_value) = serde_json::from_str::<serde_json::Value>(&existing) {
                 if is_empty(&parsed) && !is_empty(&existing_value) {
                     // Save the rejected empty registry for inspection
-                    if let Ok(backup_path) = destination.parent() {
+                    if let Some(backup_path) = destination.parent() {
                         let _ = std::fs::write(
                             backup_path.join(".agents.json.rejected-empty"),
                             json
