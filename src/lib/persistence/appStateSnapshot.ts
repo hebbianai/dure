@@ -8,7 +8,7 @@ const MIN_SNAPSHOT_INTERVAL_MS = 600_000; // 10 minutes
  * Take a rolling snapshot of the agent-ide localStorage value.
  * Throttled to ≤1 per 10 minutes, with automatic rotation keeping last ~20.
  */
-export async function snapshotAppState(): Promise<void> {
+async function snapshotAppState(): Promise<void> {
 	const now = Date.now();
 	if (now - lastSnapshotTime < MIN_SNAPSHOT_INTERVAL_MS) {
 		return;
