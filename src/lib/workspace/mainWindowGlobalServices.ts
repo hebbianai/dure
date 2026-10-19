@@ -98,10 +98,12 @@ export function startMainWindowGlobalServices(
 		// Take initial snapshot on startup
 		snapshotAppStateOnStartup();
 
-		// Take snapshot on quit (beforeunload)
-		const beforeUnloadHandler = () => void snapshotAppStateOnQuit();
-		window.addEventListener("beforeunload", beforeUnloadHandler);
-		cleanups.push(() => window.removeEventListener("beforeunload", beforeUnloadHandler));
+		// Take snapshot on quit (beforeunload) - only in browser environment
+		if (typeof window !== "undefined") {
+			const beforeUnloadHandler = () => void snapshotAppStateOnQuit();
+			window.addEventListener("beforeunload", beforeUnloadHandler);
+			cleanups.push(() => window.removeEventListener("beforeunload", beforeUnloadHandler));
+		}
 	} catch (error) {
 		retire();
 		throw error;
