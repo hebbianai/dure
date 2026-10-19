@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { isEmptyPersistedState, hasUserData } from "./emptyStateGuard";
 import type { PersistedAppState } from "./persistedAppState";
 import { DEFAULT_SPACE } from "@/lib/workspace/desktop/desktopNames";
 import { DEFAULT_UI_PREFS } from "@/lib/settings/uiPrefs";
 import { DEFAULT_NOTIFY_PREFS } from "@/lib/settings/notifyPrefs";
+import { DEFAULT_TERMINAL_PREFS } from "@/lib/terminal/terminalPrefs";
 
 // Mock the Tauri window API for testing secondary window detection
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
@@ -18,7 +19,7 @@ const minimalEmptyState: PersistedAppState = {
 	layouts: {},
 	fileTreeSelected: {},
 	terminalFontSize: 14,
-	terminalPrefs: {},
+	terminalPrefs: DEFAULT_TERMINAL_PREFS,
 	uiPrefs: DEFAULT_UI_PREFS,
 	notifyPrefs: DEFAULT_NOTIFY_PREFS,
 	stats: { agentsStarted: 0, prsCreated: 0, activeMs: 0, since: Date.now() },
@@ -41,19 +42,18 @@ describe("emptyStateGuard", () => {
 		it("identifies non-empty state with agents", () => {
 			const stateWithAgents: PersistedAppState = {
 				...minimalEmptyState,
-				agents: [
-					{
-						id: "test-agent",
-						name: "test",
-						provider: "local",
-						projectId: "test-project",
-						sessionId: "test-session",
-						sessionKind: "pty",
-						worktreePath: "/test",
-						branch: "main",
-						createdAt: Date.now(),
-					},
-				],
+			agents: [
+			{
+				id: "test-agent",
+				name: "test",
+				provider: "claude",
+				projectId: "test-project",
+				sessionId: "test-session",
+					sessionKind: "pty",
+					worktreePath: "/test",
+					branch: "main",
+				},
+			],
 			};
 			expect(isEmptyPersistedState(stateWithAgents)).toBe(false);
 		});
@@ -61,14 +61,14 @@ describe("emptyStateGuard", () => {
 		it("identifies non-empty state with accounts", () => {
 			const stateWithAccounts: PersistedAppState = {
 				...minimalEmptyState,
-				accounts: [
-					{
-						id: "test-account",
-						provider: "local",
-						name: "Test Account",
-						directory: "/test",
-					},
-				],
+			accounts: [
+				{
+					id: "test-account",
+					provider: "claude",
+					name: "Test Account",
+					dir: "/test",
+				},
+			],
 			};
 			expect(isEmptyPersistedState(stateWithAccounts)).toBe(false);
 		});
@@ -102,19 +102,18 @@ describe("emptyStateGuard", () => {
 		it("identifies non-empty state with multiple data types", () => {
 			const stateWithMultiple: PersistedAppState = {
 				...minimalEmptyState,
-				agents: [
-					{
-						id: "test-agent",
-						name: "test",
-						provider: "local",
-						projectId: "test-project",
-						sessionId: "test-session",
-						sessionKind: "pty",
-						worktreePath: "/test",
-						branch: "main",
-						createdAt: Date.now(),
-					},
-				],
+			agents: [
+			{
+				id: "test-agent",
+				name: "test",
+				provider: "claude",
+				projectId: "test-project",
+				sessionId: "test-session",
+					sessionKind: "pty",
+					worktreePath: "/test",
+					branch: "main",
+				},
+			],
 				projects: [
 					{
 						id: "test-project",
@@ -137,19 +136,18 @@ describe("emptyStateGuard", () => {
 		it("returns true for state with user data", () => {
 			const stateWithData: PersistedAppState = {
 				...minimalEmptyState,
-				agents: [
-					{
-						id: "test-agent",
-						name: "test",
-						provider: "local",
-						projectId: "test-project",
-						sessionId: "test-session",
-						sessionKind: "pty",
-						worktreePath: "/test",
-						branch: "main",
-						createdAt: Date.now(),
-					},
-				],
+			agents: [
+			{
+				id: "test-agent",
+				name: "test",
+				provider: "claude",
+				projectId: "test-project",
+				sessionId: "test-session",
+					sessionKind: "pty",
+					worktreePath: "/test",
+					branch: "main",
+				},
+			],
 			};
 			expect(hasUserData(stateWithData)).toBe(true);
 		});
@@ -165,27 +163,26 @@ describe("emptyStateGuard", () => {
 			
 			const populatedState: PersistedAppState = {
 				...minimalEmptyState,
-				agents: [
-					{
-						id: "agent-before-loss",
-						name: "production-agent",
-						provider: "local",
-						projectId: "prod-project",
-						sessionId: "prod-session",
-						sessionKind: "pty",
-						worktreePath: "/prod",
-						branch: "main",
-						createdAt: Date.now(),
-					},
-				],
-				accounts: [
-					{
-						id: "account-1",
-						provider: "local",
-						name: "Production Account",
-						directory: "/accounts/prod",
-					},
-				],
+			agents: [
+				{
+					id: "agent-before-loss",
+					name: "production-agent",
+					provider: "claude",
+					projectId: "prod-project",
+					sessionId: "prod-session",
+					sessionKind: "pty",
+					worktreePath: "/prod",
+					branch: "main",
+				},
+			],
+			accounts: [
+				{
+					id: "account-1",
+					provider: "claude",
+					name: "Production Account",
+					dir: "/accounts/prod",
+				},
+			],
 				projects: [
 					{
 						id: "prod-project",

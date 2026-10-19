@@ -1,4 +1,5 @@
 import { t } from "@/lib/i18n";
+import type { PersistStorage, StorageValue } from "zustand/middleware";
 import {
 	convergePersistedStorageValues,
 	type DurableStateConvergence,
@@ -201,13 +202,13 @@ export function createReferenceAwareLocalStorage<
 		// sync propagating empty state to main. Secondary windows MUST NEVER be able to write
 		// a destructive empty-over-non-empty projection.
 		if (
-			!userClearFlag() &&
-			serialized !== remote.serialized &&
-			committed &&
-			remote.value
-		) {
-			const candidateState = committed.state as PersistedAppState;
-			const remoteState = remote.value.state as PersistedAppState;
+		!userClearFlag() &&
+		serialized !== remote.serialized &&
+		committed &&
+		remote.value
+	) {
+		const candidateState = committed.state as unknown as PersistedAppState;
+		const remoteState = remote.value.state as unknown as PersistedAppState;
 			
 			// Check if we're trying to write empty-over-non-empty
 			const wouldOverwriteUserData = 
@@ -240,15 +241,17 @@ export function createReferenceAwareLocalStorage<
 					}),
 				);
 				
-				// Save the rejected empty candidate for inspection
-				try {
+			// Save the rejected empty candidate for inspection
+			try {
+				if (serialized !== null) {
 					storage.setItem(`${name}:rejected-empty`, serialized);
-					if (isSecondary) {
-						// Also save with timestamp for forensic analysis
-						const timestamp = new Date().toISOString();
-						storage.setItem(
-							`${name}:rejected-empty:secondary:${timestamp}`,
-							JSON.stringify({
+				}
+				if (isSecondary) {
+					// Also save with timestamp for forensic analysis
+					const timestamp = new Date().toISOString();
+					storage.setItem(
+						`${name}:rejected-empty:secondary:${timestamp}`,
+						JSON.stringify({
 								windowLabel: typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 									? (() => {
 										try {
