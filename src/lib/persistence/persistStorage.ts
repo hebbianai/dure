@@ -223,9 +223,16 @@ export function createReferenceAwareLocalStorage<
 						if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
 							return false;
 						}
-						// Import isSecondaryWindow only if we're in Tauri context
-						const { isSecondaryWindow } = require("@/lib/workspace/window/windows");
-						return isSecondaryWindow();
+						// Check if this is a secondary window by URL params
+						// Secondary windows have ?desktop / ?diff / ?popout / ?panel / ?sessionWindow
+						const search = new URLSearchParams(location.search);
+						return !!(
+							search.get("desktop") ||
+							search.get("diff") ||
+							search.get("popout") ||
+							search.get("panel") ||
+							search.get("sessionWindow")
+						);
 					} catch {
 						return false;
 					}
