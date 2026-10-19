@@ -20,7 +20,7 @@ export const RUST_JOB_SCOPES = Object.freeze({
   runAppChecks: Object.freeze(["app-core"]),
 });
 // Each code job must succeed when its plan output selects it and be skipped
-// otherwise.
+// otherwise. Informational jobs (continue-on-error) are not enforced here.
 const CODE_RESULTS = Object.freeze({
   FRONTEND_RESULT: "RUN_CODE_CHECKS",
   SCRIPTS_VITEST_RESULT: "RUN_CODE_CHECKS",
