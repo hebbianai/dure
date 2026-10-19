@@ -113,6 +113,13 @@ export function isMainWindow(): boolean {
   );
 }
 
+/** Whether this window is a secondary window (popout, session, etc), not main.
+ * Used by persistence guards to prevent secondary windows from writing destructive
+ * empty-over-non-empty projections to shared state. */
+export function isSecondaryWindow(): boolean {
+	return !isMainWindow();
+}
+
 let counter = 0;
 
 /**

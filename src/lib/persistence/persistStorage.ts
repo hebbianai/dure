@@ -193,7 +193,13 @@ export function createReferenceAwareLocalStorage<
 		}
 
 		// Empty-over-non-empty guard: refuse to overwrite populated state with empty state
-		// unless an explicit user-clear flag is set
+		// unless an explicit user-clear flag is set.
+		//
+		// FORENSIC NOTE (2026-10-19): macOS v0.2.52 data loss incident traced to secondary
+		// window (window-fea75937... at 16:07:34 KST, window-f29ba8b4... at 16:10:18 KST)
+		// failing hydration and writing empty defaults to shared agent-ide key, then window
+		// sync propagating empty state to main. Secondary windows MUST NEVER be able to write
+		// a destructive empty-over-non-empty projection.
 		if (
 			!userClearFlag() &&
 			serialized !== remote.serialized &&
@@ -202,22 +208,68 @@ export function createReferenceAwareLocalStorage<
 		) {
 			const candidateState = committed.state as PersistedAppState;
 			const remoteState = remote.value.state as PersistedAppState;
-			if (isEmptyPersistedState(candidateState) && hasUserData(remoteState)) {
+			
+			// Check if we're trying to write empty-over-non-empty
+			const wouldOverwriteUserData = 
+				isEmptyPersistedState(candidateState) && hasUserData(remoteState);
+			
+			if (wouldOverwriteUserData) {
+				// For secondary windows, this is NEVER allowed - they cannot be the authority
+				// for destructive writes to the shared state
+				const isSecondary = (() => {
+					try {
+						// Safely check if we're in a browser environment with Tauri
+						if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+							return false;
+						}
+						// Import isSecondaryWindow only if we're in Tauri context
+						const { isSecondaryWindow } = require("@/lib/workspace/window/windows");
+						return isSecondaryWindow();
+					} catch {
+						return false;
+					}
+				})();
+
 				reportPersistenceStatus(
 					"error",
 					t("persistence.guard.emptyOverNonEmpty", {
 						name,
-						defaultValue:
-							"Blocked: refusing to overwrite populated state with empty state",
+						defaultValue: isSecondary
+							? "BLOCKED: Secondary window cannot overwrite populated state with empty state"
+							: "Blocked: refusing to overwrite populated state with empty state",
 					}),
 				);
+				
 				// Save the rejected empty candidate for inspection
 				try {
 					storage.setItem(`${name}:rejected-empty`, serialized);
+					if (isSecondary) {
+						// Also save with timestamp for forensic analysis
+						const timestamp = new Date().toISOString();
+						storage.setItem(
+							`${name}:rejected-empty:secondary:${timestamp}`,
+							JSON.stringify({
+								windowLabel: typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
+									? (() => {
+										try {
+											const { getCurrentWebviewWindow } = require("@tauri-apps/api/webviewWindow");
+											return getCurrentWebviewWindow().label;
+										} catch {
+											return "unknown";
+										}
+									})()
+									: "non-tauri",
+								timestamp,
+								candidateState,
+								remoteState,
+							})
+						);
+					}
 				} catch {
 					// Best effort
 				}
-				// Keep the remote (populated) value
+				
+				// Keep the remote (populated) value - secondary windows never override main state
 				confirmedValue = remote.value;
 				confirmedSerialized = remote.serialized;
 				confirmedKnown = true;

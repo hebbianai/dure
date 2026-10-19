@@ -1,9 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { isEmptyPersistedState, hasUserData } from "./emptyStateGuard";
 import type { PersistedAppState } from "./persistedAppState";
 import { DEFAULT_SPACE } from "@/lib/workspace/desktop/desktopNames";
 import { DEFAULT_UI_PREFS } from "@/lib/settings/uiPrefs";
 import { DEFAULT_NOTIFY_PREFS } from "@/lib/settings/notifyPrefs";
+
+// Mock the Tauri window API for testing secondary window detection
+vi.mock("@tauri-apps/api/webviewWindow", () => ({
+	getCurrentWebviewWindow: vi.fn(),
+}));
 
 const minimalEmptyState: PersistedAppState = {
 	spaces: [DEFAULT_SPACE],
@@ -147,6 +152,68 @@ describe("emptyStateGuard", () => {
 				],
 			};
 			expect(hasUserData(stateWithData)).toBe(true);
+		});
+	});
+
+	describe("multi-window data loss scenario (2026-10-19 forensic)", () => {
+		it("simulates secondary window hydration failure writing empty state", () => {
+			// Simulates the forensic scenario:
+			// - Secondary window (window-fea75937) fails hydration at 16:07:34
+			// - Writes empty default state to shared agent-ide localStorage
+			// - Main window rehydrates from the now-empty shared storage
+			// - agents.json updated with empty state at 16:18:26
+			
+			const populatedState: PersistedAppState = {
+				...minimalEmptyState,
+				agents: [
+					{
+						id: "agent-before-loss",
+						name: "production-agent",
+						provider: "local",
+						projectId: "prod-project",
+						sessionId: "prod-session",
+						sessionKind: "pty",
+						worktreePath: "/prod",
+						branch: "main",
+						createdAt: Date.now(),
+					},
+				],
+				accounts: [
+					{
+						id: "account-1",
+						provider: "local",
+						name: "Production Account",
+						directory: "/accounts/prod",
+					},
+				],
+				projects: [
+					{
+						id: "prod-project",
+						name: "Production",
+						path: "/prod",
+						kind: "local",
+						isRepo: true,
+					},
+				],
+				layouts: {
+					"space-1": { panes: [] },
+				},
+			};
+
+			const emptyStateFromFailedSecondaryWindow: PersistedAppState = {
+				...minimalEmptyState,
+			};
+
+			// Before the incident: populated state
+			expect(hasUserData(populatedState)).toBe(true);
+			expect(isEmptyPersistedState(populatedState)).toBe(false);
+
+			// After secondary window hydration failure: empty state
+			expect(hasUserData(emptyStateFromFailedSecondaryWindow)).toBe(false);
+			expect(isEmptyPersistedState(emptyStateFromFailedSecondaryWindow)).toBe(true);
+
+			// The guard should detect this as empty-over-non-empty
+			// and prevent the write from the secondary window
 		});
 	});
 });
