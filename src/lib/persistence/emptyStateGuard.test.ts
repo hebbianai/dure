@@ -160,7 +160,7 @@ describe("emptyStateGuard", () => {
 			// - Writes empty default state to shared agent-ide localStorage
 			// - Main window rehydrates from the now-empty shared storage
 			// - agents.json updated with empty state at 16:18:26
-			
+
 			const populatedState: PersistedAppState = {
 				...minimalEmptyState,
 			agents: [

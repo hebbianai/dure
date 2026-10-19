@@ -3,7 +3,7 @@ import type { PersistedAppState } from "@/lib/persistence/persistedAppState";
 /**
  * Checks whether a persisted state value is "empty" in the sense that it lost
  * all meaningful user data — agents, accounts, projects, and layout panes.
- * 
+ *
  * This guard prevents catastrophic data loss from hydration failures where
  * an empty/default state overwrites a populated localStorage.
  */

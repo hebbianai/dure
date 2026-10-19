@@ -209,11 +209,11 @@ export function createReferenceAwareLocalStorage<
 	) {
 		const candidateState = committed.state as unknown as PersistedAppState;
 		const remoteState = remote.value.state as unknown as PersistedAppState;
-			
+
 			// Check if we're trying to write empty-over-non-empty
-			const wouldOverwriteUserData = 
+			const wouldOverwriteUserData =
 				isEmptyPersistedState(candidateState) && hasUserData(remoteState);
-			
+
 			if (wouldOverwriteUserData) {
 				// For secondary windows, this is NEVER allowed - they cannot be the authority
 				// for destructive writes to the shared state
@@ -240,7 +240,7 @@ export function createReferenceAwareLocalStorage<
 							: "Blocked: refusing to overwrite populated state with empty state",
 					}),
 				);
-				
+
 			// Save the rejected empty candidate for inspection
 			try {
 				if (serialized !== null) {
@@ -271,7 +271,7 @@ export function createReferenceAwareLocalStorage<
 				} catch {
 					// Best effort
 				}
-				
+
 				// Keep the remote (populated) value - secondary windows never override main state
 				confirmedValue = remote.value;
 				confirmedSerialized = remote.serialized;

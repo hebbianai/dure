@@ -124,7 +124,7 @@ pub(crate) fn publish_guarded(
             let has_ssh_hosts = obj.get("sshHosts")
                 .and_then(|s| s.as_array())
                 .map_or(false, |s| !s.is_empty());
-            
+
             !has_agents && !has_projects && !has_ssh_hosts
         } else {
             true
@@ -235,16 +235,16 @@ mod tests {
     fn refuses_empty_registry_over_non_empty() {
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("agents.json");
-        
+
         let non_empty = r#"{"version":3,"agents":[{"id":"test"}],"projects":[],"sshHosts":[]}"#;
         publish(&destination, non_empty).unwrap();
-        
+
         let empty = r#"{"version":3,"agents":[],"projects":[],"sshHosts":[]}"#;
         let result = publish(&destination, empty);
-        
+
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Refusing to overwrite populated agent registry"));
-        
+
         // Verify the original content is preserved
         let content = std::fs::read_to_string(&destination).unwrap();
         assert_eq!(content, non_empty);
