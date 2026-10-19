@@ -220,7 +220,7 @@ export function createReferenceAwareLocalStorage<
 				const isSecondary = (() => {
 					try {
 						// Safely check if we're in a browser environment with Tauri
-						if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+						if (typeof window === "undefined" || typeof location === "undefined" || !("__TAURI_INTERNALS__" in window)) {
 							return false;
 						}
 						// Check if this is a secondary window by URL params
