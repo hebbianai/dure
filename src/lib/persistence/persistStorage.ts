@@ -50,6 +50,13 @@ export interface ReferenceAwarePersistStorage<S extends Record<string, unknown>>
 	flush(): Promise<void>;
 	reconcile(name: string): Promise<void>;
 	freezeProjectionAncestor(): () => void;
+	/**
+	 * Called when the store could not adopt the stored value (a migrate or
+	 * merge threw). The store then holds its defaults, and zustand would write
+	 * them over the saved data on the next update. Keep a copy of the stored
+	 * value and refuse this realm's projection writes from then on.
+	 */
+	quarantineHydrationFailure(name: string, error: unknown): void;
 	read<R>(
 		name: string,
 		reader: (current: StorageValue<S> | null) => R,
@@ -149,6 +156,7 @@ export function createReferenceAwareLocalStorage<
 	let frozenAncestorValue: StorageValue<S> | null = null;
 	let frozenAncestorSerialized: string | null = null;
 	let frozenAncestorKnown = false;
+	let hydrationQuarantined = false;
 
 	const readStoredValue = (
 		name: string,
@@ -322,6 +330,7 @@ export function createReferenceAwareLocalStorage<
 			return parsed.value;
 		},
 		setItem: (name, value) => {
+			if (hydrationQuarantined) return;
 			if (
 				dirtyProjectionStatus !== "failed" &&
 				lastObservedValue?.version === value.version &&
@@ -354,6 +363,7 @@ export function createReferenceAwareLocalStorage<
 			void enqueueProjection(name, localProjection).catch(() => undefined);
 		},
 		removeItem: (name) => {
+			if (hydrationQuarantined) return;
 			const localProjection = projectionFrom(null, null);
 			dirtyProjection = localProjection;
 			dirtyProjectionStatus = "pending";
@@ -390,6 +400,24 @@ export function createReferenceAwareLocalStorage<
 				},
 			);
 			await coordinator.flush(failureScope);
+		},
+		quarantineHydrationFailure: (name, error) => {
+			hydrationQuarantined = true;
+			dirtyProjection = null;
+			dirtyProjectionStatus = null;
+			try {
+				const raw = storage.getItem(name);
+				if (raw) storage.setItem(`${name}:hydration-failed-backup`, raw);
+			} catch {
+				// The stored value itself is left untouched, so a failed copy loses nothing.
+			}
+			reportPersistenceStatus(
+				"error",
+				t("persistence.recovery.hydrationFailed", {
+					name,
+					error: String(error),
+				}),
+			);
 		},
 		freezeProjectionAncestor: () => {
 			if (projectionAncestorHolds === 0) {
