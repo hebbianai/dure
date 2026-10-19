@@ -20,6 +20,7 @@ import type { Space } from "@/types";
 import { createReferenceAwareLocalStorage } from "@/lib/persistence/persistStorage";
 import { convergePersistedAppState } from "@/lib/persistence/persistedAppStateConvergence";
 import { publishDurableStoreChanged } from "@/lib/workspace/window/durableStoreBroadcast";
+import { reportPersistenceStatus } from "@/lib/persistence/persistenceStatus";
 import {
   DEFAULT_SPACE,
   nextSpaceName,
@@ -126,6 +127,10 @@ export interface AppState
 //    canonical Space schema로 옮긴다.
 import { DURABLE_APP_STORE_NAME, PERSIST_VERSION } from "@/lib/persistence/durableAppStoreName";
 export { DURABLE_APP_STORE_NAME, PERSIST_VERSION };
+
+let hydrationCompleted = false;
+let hydrationFailed = false;
+
 export const durableAppStorage =
   createReferenceAwareLocalStorage<PersistedAppState>({
     convergeState: convergePersistedAppState,
@@ -152,6 +157,19 @@ export const useStore = create<AppState>()(
       ...createAgentRegistryStoreSlice(set),
       ...createAgentChatDraftStoreSlice(set),
       ...createProjectsStoreSlice(set, get, async (candidate) => {
+        // Refuse writes during failed or incomplete hydration
+        if (hydrationFailed) {
+          console.error("[store] Refusing project registration: hydration failed");
+          throw new Error("Cannot modify store: initial hydration failed");
+        }
+        if (!hydrationCompleted) {
+          console.warn("[store] Deferring project registration: hydration incomplete");
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          if (!hydrationCompleted) {
+            throw new Error("Cannot modify store: initial hydration not complete");
+          }
+        }
+
         const registration = await durableAppStorage.transact(DURABLE_APP_STORE_NAME, (current) => {
           const state = normalizePersistedState(current?.state ?? persistedSlice(get()));
           const registered = planProjectRegistration(state.projects, candidate);
@@ -165,6 +183,17 @@ export const useStore = create<AppState>()(
         set({ projects: registration.projects });
         return registration.project;
       }, async (project, isRepo) => {
+        // Refuse writes during failed or incomplete hydration
+        if (hydrationFailed) {
+          console.error("[store] Refusing project observation: hydration failed");
+          return;
+        }
+        if (!hydrationCompleted) {
+          console.warn("[store] Deferring project observation: hydration incomplete");
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          if (!hydrationCompleted) return;
+        }
+
         const projects = await durableAppStorage.transact(DURABLE_APP_STORE_NAME, (current) => {
           const state = normalizePersistedState(current?.state ?? persistedSlice(get()));
           const projects = applyProjectRepositoryObservation(state.projects, project, isRepo);
@@ -326,6 +355,26 @@ export const useStore = create<AppState>()(
               legacySkipPermissions: undefined,
             }),
       }),
+      onRehydrateStorage: () => {
+        return (state, error) => {
+          if (error) {
+            hydrationFailed = true;
+            hydrationCompleted = true;
+            console.error("[store] Hydration failed:", error);
+            reportPersistenceStatus(
+              "error",
+              `Failed to restore app state: ${String(error)}`,
+            );
+          } else {
+            hydrationCompleted = true;
+            if (!state) {
+              console.warn("[store] Hydration returned null state");
+            } else {
+              console.log("[store] Hydration completed successfully");
+            }
+          }
+        };
+      },
     },
   )),
 );

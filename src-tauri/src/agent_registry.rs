@@ -111,6 +111,43 @@ pub(crate) fn publish_guarded(
     if !parsed.is_object() {
         return Err("agent registry JSON must be an object".to_string());
     }
+
+    // Empty-over-non-empty guard: refuse to overwrite a populated registry with an empty one
+    let is_empty = |value: &serde_json::Value| -> bool {
+        if let Some(obj) = value.as_object() {
+            let has_agents = obj.get("agents")
+                .and_then(|a| a.as_array())
+                .map_or(false, |a| !a.is_empty());
+            let has_projects = obj.get("projects")
+                .and_then(|p| p.as_array())
+                .map_or(false, |p| !p.is_empty());
+            let has_ssh_hosts = obj.get("sshHosts")
+                .and_then(|s| s.as_array())
+                .map_or(false, |s| !s.is_empty());
+            
+            !has_agents && !has_projects && !has_ssh_hosts
+        } else {
+            true
+        }
+    };
+
+    if destination.exists() {
+        if let Ok(existing) = std::fs::read_to_string(destination) {
+            if let Ok(existing_value) = serde_json::from_str::<serde_json::Value>(&existing) {
+                if is_empty(&parsed) && !is_empty(&existing_value) {
+                    // Save the rejected empty registry for inspection
+                    if let Ok(backup_path) = destination.parent() {
+                        let _ = std::fs::write(
+                            backup_path.join(".agents.json.rejected-empty"),
+                            json
+                        );
+                    }
+                    return Err("Refusing to overwrite populated agent registry with empty registry".to_string());
+                }
+            }
+        }
+    }
+
     let paths = publication_paths(destination)?;
     #[cfg(unix)]
     let parent = destination
@@ -192,6 +229,25 @@ mod tests {
         assert!(error.contains("fault_before_replace"));
         assert_eq!(std::fs::read_to_string(&destination).unwrap(), OLD);
         assert!(!publication_paths(&destination).unwrap().temporary.exists());
+    }
+
+    #[test]
+    fn refuses_empty_registry_over_non_empty() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("agents.json");
+        
+        let non_empty = r#"{"version":3,"agents":[{"id":"test"}],"projects":[],"sshHosts":[]}"#;
+        publish(&destination, non_empty).unwrap();
+        
+        let empty = r#"{"version":3,"agents":[],"projects":[],"sshHosts":[]}"#;
+        let result = publish(&destination, empty);
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Refusing to overwrite populated agent registry"));
+        
+        // Verify the original content is preserved
+        let content = std::fs::read_to_string(&destination).unwrap();
+        assert_eq!(content, non_empty);
     }
 
     #[test]

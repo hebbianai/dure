@@ -1,4 +1,3 @@
-import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { t } from "@/lib/i18n";
 import {
 	convergePersistedStorageValues,
@@ -7,6 +6,8 @@ import {
 	durableWriteCoordinator,
 } from "@/lib/persistence/durableWriteCoordinator";
 import { reportPersistenceStatus } from "@/lib/persistence/persistenceStatus";
+import { isEmptyPersistedState, hasUserData } from "@/lib/persistence/emptyStateGuard";
+import type { PersistedAppState } from "@/lib/persistence/persistedAppState";
 
 const RETIRED_INTERACTION_INBOX_PROJECTION_KEY =
 	"dure-interaction-inbox-projection-v1";
@@ -67,6 +68,7 @@ interface ReferenceAwareLocalStorageOptions<S extends Record<string, unknown>> {
 	readonly storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
 	readonly convergeState?: DurableStateConvergence<S>;
 	readonly onCommitted?: (name: string) => void;
+	readonly userClearFlag?: () => boolean;
 }
 
 interface ParsedStoredValue<S> {
@@ -126,6 +128,7 @@ export function createReferenceAwareLocalStorage<
 	const coordinator = options.coordinator ?? durableWriteCoordinator;
 	const storage = options.storage ?? localStorage;
 	const convergeState = options.convergeState;
+	const userClearFlag = options.userClearFlag ?? (() => false);
 	const notifyCommitted = (name: string): void => {
 		try {
 			options.onCommitted?.(name);
@@ -188,6 +191,40 @@ export function createReferenceAwareLocalStorage<
 			);
 			serialized = committed ? JSON.stringify(committed) : null;
 		}
+
+		// Empty-over-non-empty guard: refuse to overwrite populated state with empty state
+		// unless an explicit user-clear flag is set
+		if (
+			!userClearFlag() &&
+			serialized !== remote.serialized &&
+			committed &&
+			remote.value
+		) {
+			const candidateState = committed.state as PersistedAppState;
+			const remoteState = remote.value.state as PersistedAppState;
+			if (isEmptyPersistedState(candidateState) && hasUserData(remoteState)) {
+				reportPersistenceStatus(
+					"error",
+					t("persistence.guard.emptyOverNonEmpty", {
+						name,
+						defaultValue:
+							"Blocked: refusing to overwrite populated state with empty state",
+					}),
+				);
+				// Save the rejected empty candidate for inspection
+				try {
+					storage.setItem(`${name}:rejected-empty`, serialized);
+				} catch {
+					// Best effort
+				}
+				// Keep the remote (populated) value
+				confirmedValue = remote.value;
+				confirmedSerialized = remote.serialized;
+				confirmedKnown = true;
+				return;
+			}
+		}
+
 		if (serialized !== remote.serialized) {
 			if (serialized === null) storage.removeItem(name);
 			else storage.setItem(name, serialized);
