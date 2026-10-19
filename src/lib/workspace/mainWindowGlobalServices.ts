@@ -15,6 +15,10 @@ import {
 	installDiscoveryStateGcService,
 } from "@/lib/maintenance/discoveryStateGcService";
 import { startRegistrySync } from "@/lib/persistence/registry";
+import {
+	snapshotAppStateOnStartup,
+	snapshotAppStateOnQuit,
+} from "@/lib/persistence/appStateSnapshot";
 import { qaLog } from "@/lib/qa/qaLog";
 import { installNotificationActivationHandler } from "@/lib/settings/notificationActivation";
 import { reconcilePersistedLocalProjects } from "@/lib/spaces/localProjectReconciliation";
@@ -90,6 +94,16 @@ export function startMainWindowGlobalServices(
 		void services.reconcileProjects();
 		cleanups.push(services.startRegistry());
 		void services.reconcileCanonicalStops();
+
+		// Take initial snapshot on startup
+		snapshotAppStateOnStartup();
+
+		// Take snapshot on quit (beforeunload) - only in browser environment
+		if (typeof window !== "undefined") {
+			const beforeUnloadHandler = () => void snapshotAppStateOnQuit();
+			window.addEventListener("beforeunload", beforeUnloadHandler);
+			cleanups.push(() => window.removeEventListener("beforeunload", beforeUnloadHandler));
+		}
 	} catch (error) {
 		retire();
 		throw error;

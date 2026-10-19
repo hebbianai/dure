@@ -2385,3 +2385,80 @@ describe("reference-aware durable storage", () => {
 		]);
 	});
 });
+
+describe("empty-over-non-empty guard during early writes", () => {
+	it("prevents writes before hydration from overwriting non-empty stored state via convergence", async () => {
+		const store = new MemoryStorage();
+		const storage = createReferenceAwareLocalStorage<PersistedAppState>({
+			storage: store,
+			convergeState: convergePersistedAppState,
+		});
+
+		// Simulate stored state with user data (a registered agent)
+		const existingState: StorageValue<PersistedAppState> = {
+			state: normalizePersistedState({
+				version: 2,
+				agents: [managedAgentFixture({ id: "agent-1", name: "Existing Agent" })],
+				projects: [{ id: "proj-1", path: "/work/repo", kind: "local", name: "repo", isRepo: true }],
+			}),
+			version: 2,
+		};
+		store.values.set("agent-ide", JSON.stringify(existingState));
+
+		// Simulate an early write before hydration completes (empty default state)
+		// This mimics what happens when the persist middleware writes empty state
+		// before it has finished reading from storage
+		const emptyState: StorageValue<PersistedAppState> = {
+			state: normalizePersistedState({
+				version: 2,
+				agents: [],
+				projects: [],
+				layouts: {}, // Explicitly empty layouts
+			}),
+			version: 2,
+		};
+
+		// Attempt to write empty state
+		await storage.setItem("agent-ide", emptyState);
+		await storage.flush();
+
+		// Convergence should have preserved the remote (existing) data
+		const finalValue = store.values.get("agent-ide");
+		expect(finalValue).not.toBeUndefined();
+		const finalState = JSON.parse(finalValue!) as StorageValue<PersistedAppState>;
+
+		// The existing agent and project should still be there (preserved by convergence)
+		expect(finalState.state.agents).toHaveLength(1);
+		expect(finalState.state.agents[0].id).toBe("agent-1");
+		expect(finalState.state.projects).toHaveLength(1);
+		expect(finalState.state.projects[0].id).toBe("proj-1");
+	});
+
+	it("allows writes after hydration when state is genuinely empty", async () => {
+		const store = new MemoryStorage();
+		const storage = createReferenceAwareLocalStorage<PersistedAppState>({
+			storage: store,
+			convergeState: convergePersistedAppState,
+		});
+
+		// No stored state initially
+		expect(store.values.get("agent-ide")).toBeUndefined();
+
+		// Write empty state (first-time user)
+		const emptyState: StorageValue<PersistedAppState> = {
+			state: normalizePersistedState({
+				version: 2,
+				agents: [],
+				projects: [],
+			}),
+			version: 2,
+		};
+
+		await storage.setItem("agent-ide", emptyState);
+		await storage.flush();
+
+		// Empty-over-null should be allowed (first-time user)
+		const finalValue = store.values.get("agent-ide");
+		expect(finalValue).toBe(JSON.stringify(emptyState));
+	});
+});

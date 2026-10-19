@@ -1,5 +1,5 @@
-import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { t } from "@/lib/i18n";
+import type { PersistStorage, StorageValue } from "zustand/middleware";
 import {
 	convergePersistedStorageValues,
 	type DurableStateConvergence,
@@ -7,6 +7,8 @@ import {
 	durableWriteCoordinator,
 } from "@/lib/persistence/durableWriteCoordinator";
 import { reportPersistenceStatus } from "@/lib/persistence/persistenceStatus";
+import { isEmptyPersistedState, hasUserData } from "@/lib/persistence/emptyStateGuard";
+import type { PersistedAppState } from "@/lib/persistence/persistedAppState";
 
 const RETIRED_INTERACTION_INBOX_PROJECTION_KEY =
 	"dure-interaction-inbox-projection-v1";
@@ -67,6 +69,7 @@ interface ReferenceAwareLocalStorageOptions<S extends Record<string, unknown>> {
 	readonly storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
 	readonly convergeState?: DurableStateConvergence<S>;
 	readonly onCommitted?: (name: string) => void;
+	readonly userClearFlag?: () => boolean;
 }
 
 interface ParsedStoredValue<S> {
@@ -126,6 +129,7 @@ export function createReferenceAwareLocalStorage<
 	const coordinator = options.coordinator ?? durableWriteCoordinator;
 	const storage = options.storage ?? localStorage;
 	const convergeState = options.convergeState;
+	const userClearFlag = options.userClearFlag ?? (() => false);
 	const notifyCommitted = (name: string): void => {
 		try {
 			options.onCommitted?.(name);
@@ -188,6 +192,111 @@ export function createReferenceAwareLocalStorage<
 			);
 			serialized = committed ? JSON.stringify(committed) : null;
 		}
+
+		// Empty-over-non-empty guard: refuse to overwrite populated state with empty state
+		// unless an explicit user-clear flag is set.
+		//
+		// FORENSIC NOTE (2026-10-19): macOS v0.2.52 data loss incident traced to secondary
+		// window (window-fea75937... at 16:07:34 KST, window-f29ba8b4... at 16:10:18 KST)
+		// failing hydration and writing empty defaults to shared agent-ide key, then window
+		// sync propagating empty state to main. Secondary windows MUST NEVER be able to write
+		// a destructive empty-over-non-empty projection.
+		//
+		// This guard only applies to the main "agent-ide" store, not to other stores.
+		// Only block writes from secondary windows - main window writes are allowed with a warning.
+		if (
+		name === "agent-ide" &&
+		!userClearFlag() &&
+		serialized !== remote.serialized &&
+		committed &&
+		remote.value
+	) {
+		const candidateState = committed.state as unknown as PersistedAppState;
+		const remoteState = remote.value.state as unknown as PersistedAppState;
+
+			// Check if we're trying to write empty-over-non-empty
+			const wouldOverwriteUserData =
+				isEmptyPersistedState(candidateState) && hasUserData(remoteState);
+
+			if (wouldOverwriteUserData) {
+				// Check if this is a secondary window
+				const isSecondary = (() => {
+					try {
+						// Safely check if we're in a browser environment with Tauri
+						if (typeof window === "undefined" || typeof location === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+							return false;
+						}
+						// Check if this is a secondary window by URL params
+						// Secondary windows have ?desktop / ?diff / ?popout / ?panel / ?sessionWindow
+						const search = new URLSearchParams(location.search);
+						return !!(
+							search.get("desktop") ||
+							search.get("diff") ||
+							search.get("popout") ||
+							search.get("panel") ||
+							search.get("sessionWindow")
+						);
+					} catch {
+						return false;
+					}
+				})();
+
+				// For secondary windows, BLOCK the write - they cannot be the authority
+				// For main windows, ALLOW the write but log a warning (could be legitimate rollback)
+				if (isSecondary) {
+					reportPersistenceStatus(
+						"error",
+						t("persistence.guard.emptyOverNonEmpty", {
+							name,
+							defaultValue: "BLOCKED: Secondary window cannot overwrite populated state with empty state",
+						}),
+					);
+
+			// Save the rejected empty candidate for inspection
+			try {
+				if (serialized !== null) {
+					storage.setItem(`${name}:rejected-empty`, serialized);
+				}
+					// Also save with timestamp for forensic analysis
+					const timestamp = new Date().toISOString();
+					storage.setItem(
+						`${name}:rejected-empty:secondary:${timestamp}`,
+						JSON.stringify({
+								windowLabel: typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
+									? (() => {
+										try {
+											const { getCurrentWebviewWindow } = require("@tauri-apps/api/webviewWindow");
+											return getCurrentWebviewWindow().label;
+										} catch {
+											return "unknown";
+										}
+									})()
+									: "non-tauri",
+								timestamp,
+								candidateState,
+								remoteState,
+							})
+						);
+				} catch {
+					// Best effort
+				}
+
+				// Keep the remote (populated) value - secondary windows never override main state
+				confirmedValue = remote.value;
+				confirmedSerialized = remote.serialized;
+				confirmedKnown = true;
+				return;
+				} else {
+					// Main window: allow but warn
+					console.warn(
+						`[persistStorage] Writing empty state over populated state in main window (${name}). ` +
+						`This could be a legitimate rollback or a hydration issue.`,
+						{ candidateState, remoteState }
+					);
+				}
+			}
+		}
+
 		if (serialized !== remote.serialized) {
 			if (serialized === null) storage.removeItem(name);
 			else storage.setItem(name, serialized);

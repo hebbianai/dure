@@ -62,6 +62,10 @@ const props = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// Clear localStorage to prevent hydration from previous tests
+	if (typeof localStorage !== "undefined") {
+		localStorage.clear();
+	}
 	vi.mocked(invoke).mockImplementation(async (command, args) => {
 		if (command === "inspect_local_directory")
 			return (args as { path: string }).path;

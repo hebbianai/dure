@@ -20,6 +20,7 @@ import type { Space } from "@/types";
 import { createReferenceAwareLocalStorage } from "@/lib/persistence/persistStorage";
 import { convergePersistedAppState } from "@/lib/persistence/persistedAppStateConvergence";
 import { publishDurableStoreChanged } from "@/lib/workspace/window/durableStoreBroadcast";
+import { reportPersistenceStatus } from "@/lib/persistence/persistenceStatus";
 import {
   DEFAULT_SPACE,
   nextSpaceName,
@@ -126,6 +127,7 @@ export interface AppState
 //    canonical Space schema로 옮긴다.
 import { DURABLE_APP_STORE_NAME, PERSIST_VERSION } from "@/lib/persistence/durableAppStoreName";
 export { DURABLE_APP_STORE_NAME, PERSIST_VERSION };
+
 export const durableAppStorage =
   createReferenceAwareLocalStorage<PersistedAppState>({
     convergeState: convergePersistedAppState,
@@ -326,6 +328,23 @@ export const useStore = create<AppState>()(
               legacySkipPermissions: undefined,
             }),
       }),
+      onRehydrateStorage: () => {
+        return (state, error) => {
+          if (error) {
+            console.error("[store] Hydration failed:", error);
+            reportPersistenceStatus(
+              "error",
+              `Failed to restore app state: ${String(error)}`,
+            );
+          } else {
+            if (!state) {
+              console.warn("[store] Hydration returned null state");
+            } else {
+              console.log("[store] Hydration completed successfully");
+            }
+          }
+        };
+      },
     },
   )),
 );

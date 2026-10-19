@@ -24,6 +24,9 @@ import { useStore } from "@/store";
 const originalProjects = useStore.getState().projects;
 
 afterEach(() => {
+	if (typeof localStorage !== "undefined") {
+		localStorage.clear();
+	}
 	useStore.setState({ projects: originalProjects });
 	vi.clearAllMocks();
 });

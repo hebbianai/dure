@@ -8,6 +8,7 @@ mod app_channel;
 mod app_instance;
 mod worktree_release;
 mod app_home;
+mod app_state_snapshot;
 mod claude_collector;
 mod codex_usage_collector;
 mod codex_trust;
@@ -2067,6 +2068,13 @@ fn write_agent_registry(json: String) -> Result<(), String> {
     agent_registry::publish(&channel.control_dir.join("agents.json"), &json)
 }
 
+/// Take a rolling snapshot of the agent-ide localStorage value.
+/// Called periodically (throttled ≤1 per 10min) and on startup/quit.
+#[tauri::command(async)]
+fn snapshot_app_state(value: String) -> Result<(), String> {
+    app_state_snapshot::take_snapshot(&value)
+}
+
 /// 현재 앱 채널 제어 디렉터리 안의 파일명을 안전하게 해석(경로 탈출 방지 — basename만).
 pub(crate) fn hebbian_file(name: &str) -> Result<std::path::PathBuf, String> {
     let base = std::path::Path::new(name)
@@ -2527,6 +2535,7 @@ pub fn run() {
             ssh_list_conversations,
             ssh_provider_conversation_metadata,
             write_agent_registry,
+            snapshot_app_state,
             hebbian_read,
             worktree_release::read_worktree_presentation,
             worktree_release::complete_worktree_presentation,
