@@ -17,7 +17,6 @@
     "src/lib/hmux/hmuxConnectionDiagnostics.ts": 1,
     "src/lib/settings/notify.ts": 1,
     "src/lib/agents/providerConfig.ts": 2,
-    "src/lib/persistence/appStateSnapshot.ts": 2,
     "src/lib/persistence/registry.ts": 1,
     "src/lib/sessions/sessionLifecycle.ts": 2,
     "src/lib/platform/share.ts": 1,

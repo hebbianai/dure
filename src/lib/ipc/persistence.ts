@@ -11,3 +11,7 @@ export const readWorktreePresentation = () =>
 
 export const completeWorktreePresentation = () =>
 	invoke<void>("complete_worktree_presentation");
+
+/** Take a rolling snapshot of the agent-ide localStorage value. */
+export const snapshotAppState = (value: string) =>
+	invoke<void>("snapshot_app_state", { value });

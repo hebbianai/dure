@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { snapshotAppState as invokeSnapshotAppState } from "@/lib/ipc/persistence";
 import { DURABLE_APP_STORE_NAME } from "@/lib/persistence/durableAppStoreName";
 
 let lastSnapshotTime = 0;
@@ -18,7 +18,7 @@ export async function snapshotAppState(): Promise<void> {
 		const raw = localStorage.getItem(DURABLE_APP_STORE_NAME);
 		if (!raw) return;
 
-		await invoke("snapshot_app_state", { value: raw });
+		await invokeSnapshotAppState(raw);
 		lastSnapshotTime = now;
 	} catch (error) {
 		console.error("[app-state-snapshot] Failed to snapshot app state:", error);
@@ -40,7 +40,7 @@ export async function snapshotAppStateOnQuit(): Promise<void> {
 		const raw = localStorage.getItem(DURABLE_APP_STORE_NAME);
 		if (!raw) return;
 
-		await invoke("snapshot_app_state", { value: raw });
+		await invokeSnapshotAppState(raw);
 	} catch (error) {
 		console.error("[app-state-snapshot] Failed to snapshot app state on quit:", error);
 	}
