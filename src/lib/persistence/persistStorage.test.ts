@@ -8,7 +8,6 @@ import {
 	type ExclusiveLockAuthority,
 } from "@/lib/persistence/durableWriteCoordinator";
 import { recoverDurableProjection } from "@/lib/persistence/durableProjectionRecovery";
-import { isEmptyPersistedState, hasUserData } from "@/lib/persistence/emptyStateGuard";
 import {
 	normalizePersistedState,
 	type PersistedAppState,
@@ -2427,7 +2426,7 @@ describe("empty-over-non-empty guard during early writes", () => {
 		const finalValue = store.values.get("agent-ide");
 		expect(finalValue).not.toBeUndefined();
 		const finalState = JSON.parse(finalValue!) as StorageValue<PersistedAppState>;
-		
+
 		// The existing agent and project should still be there (preserved by convergence)
 		expect(finalState.state.agents).toHaveLength(1);
 		expect(finalState.state.agents[0].id).toBe("agent-1");
