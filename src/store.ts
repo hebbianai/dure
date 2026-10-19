@@ -314,6 +314,11 @@ export const useStore = create<AppState>()(
       partialize: (state) => persistedSlice(state),
       migrate: (persistedState, fromVersion) =>
         migratePersistedState(persistedState, fromVersion),
+      // zustand swallows a migrate/merge failure and keeps the defaults; without
+      // this the next update would write them over every saved space and pane.
+      onRehydrateStorage: () => (_state, error) => {
+        if (error) durableAppStorage.quarantineHydrationFailure(DURABLE_APP_STORE_NAME, error);
+      },
       merge: (persistedState, currentState) => ({
         ...currentState,
         ...normalizePersistedState(persistedState),
