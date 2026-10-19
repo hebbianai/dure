@@ -203,6 +203,7 @@ export function createReferenceAwareLocalStorage<
 		// a destructive empty-over-non-empty projection.
 		//
 		// This guard only applies to the main "agent-ide" store, not to other stores.
+		// Only block writes from secondary windows - main window writes are allowed with a warning.
 		if (
 		name === "agent-ide" &&
 		!userClearFlag() &&
@@ -218,8 +219,7 @@ export function createReferenceAwareLocalStorage<
 				isEmptyPersistedState(candidateState) && hasUserData(remoteState);
 
 			if (wouldOverwriteUserData) {
-				// For secondary windows, this is NEVER allowed - they cannot be the authority
-				// for destructive writes to the shared state
+				// Check if this is a secondary window
 				const isSecondary = (() => {
 					try {
 						// Safely check if we're in a browser environment with Tauri
@@ -241,22 +241,22 @@ export function createReferenceAwareLocalStorage<
 					}
 				})();
 
-				reportPersistenceStatus(
-					"error",
-					t("persistence.guard.emptyOverNonEmpty", {
-						name,
-						defaultValue: isSecondary
-							? "BLOCKED: Secondary window cannot overwrite populated state with empty state"
-							: "Blocked: refusing to overwrite populated state with empty state",
-					}),
-				);
+				// For secondary windows, BLOCK the write - they cannot be the authority
+				// For main windows, ALLOW the write but log a warning (could be legitimate rollback)
+				if (isSecondary) {
+					reportPersistenceStatus(
+						"error",
+						t("persistence.guard.emptyOverNonEmpty", {
+							name,
+							defaultValue: "BLOCKED: Secondary window cannot overwrite populated state with empty state",
+						}),
+					);
 
 			// Save the rejected empty candidate for inspection
 			try {
 				if (serialized !== null) {
 					storage.setItem(`${name}:rejected-empty`, serialized);
 				}
-				if (isSecondary) {
 					// Also save with timestamp for forensic analysis
 					const timestamp = new Date().toISOString();
 					storage.setItem(
@@ -277,7 +277,6 @@ export function createReferenceAwareLocalStorage<
 								remoteState,
 							})
 						);
-					}
 				} catch {
 					// Best effort
 				}
@@ -287,6 +286,14 @@ export function createReferenceAwareLocalStorage<
 				confirmedSerialized = remote.serialized;
 				confirmedKnown = true;
 				return;
+				} else {
+					// Main window: allow but warn
+					console.warn(
+						`[persistStorage] Writing empty state over populated state in main window (${name}). ` +
+						`This could be a legitimate rollback or a hydration issue.`,
+						{ candidateState, remoteState }
+					);
+				}
 			}
 		}
 
