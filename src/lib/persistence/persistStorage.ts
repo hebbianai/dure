@@ -201,7 +201,10 @@ export function createReferenceAwareLocalStorage<
 		// failing hydration and writing empty defaults to shared agent-ide key, then window
 		// sync propagating empty state to main. Secondary windows MUST NEVER be able to write
 		// a destructive empty-over-non-empty projection.
+		//
+		// This guard only applies to the main "agent-ide" store, not to other stores.
 		if (
+		name === "agent-ide" &&
 		!userClearFlag() &&
 		serialized !== remote.serialized &&
 		committed &&
