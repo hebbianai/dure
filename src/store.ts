@@ -128,7 +128,9 @@ export interface AppState
 import { DURABLE_APP_STORE_NAME, PERSIST_VERSION } from "@/lib/persistence/durableAppStoreName";
 export { DURABLE_APP_STORE_NAME, PERSIST_VERSION };
 
-let hydrationCompleted = false;
+// Track hydration state to gate writes that depend on persisted data
+// Start as true for test/SSR environments where persist middleware may not hydrate
+let hydrationCompleted = typeof window === "undefined" || typeof localStorage === "undefined";
 let hydrationFailed = false;
 
 export const durableAppStorage =
