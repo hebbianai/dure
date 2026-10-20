@@ -19,6 +19,16 @@ members = [
 ]
 resolver = "2"
 
+# The control plane refuses executable identities over 256 MiB, and a dev or
+# test build resolves its own executable as one. Linux otherwise links the full
+# DWARF of every crate into each executable, which put the debug control plane
+# at about 570 MB there. Keep debug info beside the objects, as macOS already
+# does by default, so both platforms stay inside that bound. This workspace's
+# control plane is Unix-only; Windows MSVC builds the shared crates through
+# src-tauri, whose own profile applies.
+[profile.dev]
+split-debuginfo = "unpacked"
+
 # Executable identity hashes must finish within normal backend startup budgets.
 # Keep SHA-256 optimized in dev/test while retaining the usual debug checks.
 [profile.dev.package.sha2]

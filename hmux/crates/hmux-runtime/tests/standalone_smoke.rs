@@ -3393,6 +3393,18 @@ fn sixteen_terminal_surfaces_progress_while_one_attachment_is_undrained() {
                         break frame.through_output_seq();
                     }
                     TerminalSurfaceEvent::Frame(_) | TerminalSurfaceEvent::Event(_) => {}
+                    // The surface subscribes to these session projections.
+                    // The Host's 750 ms process inspection replaces the
+                    // launch-fallback working directory while this test
+                    // streams, so the projection can land in any window.
+                    TerminalSurfaceEvent::Control(body)
+                        if matches!(
+                            *body,
+                            FrameBody::WorkingDirectory(_)
+                                | FrameBody::AgentIdentity(_)
+                                | FrameBody::AgentRuntimeState(_)
+                                | FrameBody::ProviderConversationIdentity(_)
+                        ) => {}
                     TerminalSurfaceEvent::Receipt(receipt) => {
                         panic!("surface {surface_index} received an unrelated receipt: {receipt:?}")
                     }

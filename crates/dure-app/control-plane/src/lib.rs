@@ -3664,6 +3664,26 @@ async fn observe_checkpoints(state: &ServiceState, body: ObserveBody) -> Result<
     Ok(json!({ "schemaVersion": 1, "records": records }))
 }
 
+/// Starts one routed backend operation on the heap for its router to await.
+///
+/// A router that awaits each operation inline keeps a separate stack slot for
+/// every route's state machine in its poll frame in unoptimized builds, so the
+/// frame grows with the sum of all routes instead of the one being run. The
+/// request and runtime routers grew to hundreds of KiB each that way, enough
+/// for one native rehost request to overflow a 2 MiB test thread, the same
+/// default stack Tokio gives its workers. Building the operation inside this
+/// call leaves that slot in a frame that has returned before the operation is
+/// polled, so each route costs its router a pointer.
+fn boxed_operation<'a, F, Fut>(
+    start: F,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Fut::Output> + Send + 'a>>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future + Send + 'a,
+{
+    Box::pin(start())
+}
+
 async fn dispatch_authorized(
     state: &ServiceState,
     authority: BackendRequestAuthority,
@@ -3671,30 +3691,37 @@ async fn dispatch_authorized(
 ) -> Result<Value, BackendDispatchError> {
     #[cfg(unix)]
     if request.operation == slack_connector::OPERATION {
-        return state.slack.dispatch(&request.body).await;
+        return boxed_operation(|| state.slack.dispatch(&request.body)).await;
     }
     #[cfg(unix)]
     if request.operation == browser_service::OPERATION {
-        return state.browser.dispatch(&state.store, &request.body).await;
+        return boxed_operation(|| state.browser.dispatch(&state.store, &request.body)).await;
     }
-    if let Some(result) = state
-        .agent_conversations
-        .dispatch(&request.operation, &request.body)
-        .await
+    if let Some(result) = boxed_operation(|| {
+        state
+            .agent_conversations
+            .dispatch(&request.operation, &request.body)
+    })
+    .await
     {
         return result.map_err(agent_conversation_api_error);
     }
     match request.operation.as_str() {
         #[cfg(unix)]
-        "workspace_environment.invoke" => workspace_environment::invoke(state, &request.body).await,
+        "workspace_environment.invoke" => {
+            boxed_operation(|| workspace_environment::invoke(state, &request.body)).await
+        }
         "provider_recovery.get"
         | "provider_recovery.put"
         | "provider_recovery.observe_usage"
         | "agent_recovery.read" => {
-            provider_recovery_api::invoke(state, &request.operation, &request.body).await
+            boxed_operation(|| {
+                provider_recovery_api::invoke(state, &request.operation, &request.body)
+            })
+            .await
         }
         "agent_goal.get" | "agent_goal.put" => {
-            agent_goal::invoke(state, &request.operation, &request.body).await
+            boxed_operation(|| agent_goal::invoke(state, &request.operation, &request.body)).await
         }
         "backend.scope" => {
             if request.body != json!({ "schemaVersion": 1 }) {
@@ -3734,26 +3761,28 @@ async fn dispatch_authorized(
             }
             Ok(json!({ "schemaVersion": 1, "status": "ready" }))
         }
-        "agent_spawn.preview" => preview_agent_spawn(state, &authority, &request.body)
-            .await
-            .map_err(|code| {
-                if code == "agent_spawn_project_not_found" {
-                    BackendDispatchError::terminal(&code)
-                } else {
-                    code.into()
-                }
-            }),
+        "agent_spawn.preview" => {
+            boxed_operation(|| preview_agent_spawn(state, &authority, &request.body))
+                .await
+                .map_err(|code| {
+                    if code == "agent_spawn_project_not_found" {
+                        BackendDispatchError::terminal(&code)
+                    } else {
+                        code.into()
+                    }
+                })
+        }
         "agent_spawn.apply" => {
             let body: agent_spawn_apply::AgentSpawnApplyBody =
                 serde_json::from_value(request.body.clone())
                     .map_err(|_| "agent_spawn_apply_request_invalid".to_string())?;
-            apply_agent_spawn(state, &authority, body).await
+            boxed_operation(|| apply_agent_spawn(state, &authority, body)).await
         }
         "agent_spawn.list" => {
             let body: agent_spawn_api::AgentSpawnListBody =
                 serde_json::from_value(request.body.clone())
                     .map_err(|_| "agent_spawn_list_request_invalid".to_string())?;
-            agent_spawn_api::list(&state.store, body)
+            boxed_operation(|| agent_spawn_api::list(&state.store, body))
                 .await
                 .map_err(Into::into)
         }
@@ -3761,12 +3790,16 @@ async fn dispatch_authorized(
             let body: agent_spawn_api::AgentSpawnStatusBody =
                 serde_json::from_value(request.body.clone())
                     .map_err(|_| "agent_spawn_status_request_invalid".to_string())?;
-            show_agent_spawn(state, body).await.map_err(Into::into)
+            boxed_operation(|| show_agent_spawn(state, body))
+                .await
+                .map_err(Into::into)
         }
         "provider_launch_defaults.get"
         | "provider_launch_defaults.put"
         | "provider_credential_profile.register"
-        | "provider_catalog.read" => provider_commands::dispatch(state, request).await,
+        | "provider_catalog.read" => {
+            boxed_operation(|| provider_commands::dispatch(state, request)).await
+        }
         #[cfg(unix)]
         agent_conversation_api::RECOVER_OPERATION => {
             let body: agent_conversation_recover::AgentConversationRecoverBodyV1 =
@@ -3775,7 +3808,7 @@ async fn dispatch_authorized(
                         agent_conversation_api::AgentConversationApiErrorV1::RequestInvalid,
                     )
                 })?;
-            let binding = agent_conversation_recover::recover(state, body)
+            let binding = boxed_operation(|| agent_conversation_recover::recover(state, body))
                 .await
                 .map_err(agent_conversation_api_error)?;
             Ok(json!({ "schemaVersion": 1, "binding": binding }))
@@ -3786,7 +3819,8 @@ async fn dispatch_authorized(
                 serde_json::from_value(request.body.clone()).map_err(|_| {
                     BackendDispatchError::terminal("agent_dispatch_stop_request_invalid")
                 })?;
-            agent_dispatch_stop_apply::preview(state, &request.request_id, body).await
+            boxed_operation(|| agent_dispatch_stop_apply::preview(state, &request.request_id, body))
+                .await
         }
         #[cfg(unix)]
         "dispatch.stop.apply" => {
@@ -3794,7 +3828,7 @@ async fn dispatch_authorized(
                 serde_json::from_value(request.body.clone()).map_err(|_| {
                     BackendDispatchError::terminal("agent_dispatch_stop_request_invalid")
                 })?;
-            agent_dispatch_stop_apply::apply(state, body).await
+            boxed_operation(|| agent_dispatch_stop_apply::apply(state, body)).await
         }
         #[cfg(unix)]
         "dispatch.stop.status" => {
@@ -3802,7 +3836,7 @@ async fn dispatch_authorized(
                 serde_json::from_value(request.body.clone()).map_err(|_| {
                     BackendDispatchError::terminal("agent_dispatch_stop_request_invalid")
                 })?;
-            agent_dispatch_stop_apply::status(state, body).await
+            boxed_operation(|| agent_dispatch_stop_apply::status(state, body)).await
         }
         #[cfg(unix)]
         "agent_runtime.project_move.preview.v1"
@@ -3821,7 +3855,9 @@ async fn dispatch_authorized(
         | "agent_runtime.hibernate"
         | "agent_runtime.idle.inspect"
         | "agent_runtime.idle.configure"
-        | "agent_runtime.wake" => agent_runtime_api::dispatch(state, request).await,
+        | "agent_runtime.wake" => {
+            boxed_operation(|| agent_runtime_api::dispatch(state, request)).await
+        }
         #[cfg(unix)]
         "claude_conversation.open" => {
             let runtime = state.claude_runtime.as_ref().ok_or_else(|| {
@@ -3926,31 +3962,35 @@ async fn dispatch_authorized(
                 .await
                 .map_err(|_| BackendDispatchError::from("claude_conversation_store_failed"))?
                 .ok_or_else(|| BackendDispatchError::terminal("claude_conversation_not_found"))?;
-            agent_runtime_close_apply::apply_observed(
-                state,
-                &request.request_id,
-                agent_runtime_close_apply::AgentRuntimeStopBodyV1 {
-                    schema_version: AGENT_RUNTIME_CLOSE_SCHEMA_VERSION_V1,
-                    agent_id: binding.agent_id,
-                },
-                Some(agent_runtime_close_apply::AgentRuntimeStopObservationV1 {
-                    interaction_session_id: body.interaction_session_id,
-                    runtime_generation: body.runtime_generation,
-                }),
-            )
+            boxed_operation(|| {
+                agent_runtime_close_apply::apply_observed(
+                    state,
+                    &request.request_id,
+                    agent_runtime_close_apply::AgentRuntimeStopBodyV1 {
+                        schema_version: AGENT_RUNTIME_CLOSE_SCHEMA_VERSION_V1,
+                        agent_id: binding.agent_id,
+                    },
+                    Some(agent_runtime_close_apply::AgentRuntimeStopObservationV1 {
+                        interaction_session_id: body.interaction_session_id,
+                        runtime_generation: body.runtime_generation,
+                    }),
+                )
+            })
             .await
         }
         "agent_checkpoint.binding.ensure" => {
             let body: BindingEnsureBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| binding_ensure_error("agent_checkpoint_binding_invalid".into()))?;
-            ensure_binding(state, body)
+            boxed_operation(|| ensure_binding(state, body))
                 .await
                 .map_err(binding_ensure_error)
         }
         "agent_checkpoint.observe" => {
             let body: ObserveBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "agent_checkpoint_observe_invalid".to_string())?;
-            observe_checkpoints(state, body).await.map_err(Into::into)
+            boxed_operation(|| observe_checkpoints(state, body))
+                .await
+                .map_err(Into::into)
         }
         "agent_checkpoint.read" => {
             #[derive(Deserialize)]
@@ -3974,7 +4014,9 @@ async fn dispatch_authorized(
         "agent_checkpoint.write" => {
             let body: AgentCheckpointWriteRequestV1 = serde_json::from_value(request.body.clone())
                 .map_err(|_| "agent_checkpoint_request_invalid".to_string())?;
-            write_checkpoint(state, body).await.map_err(Into::into)
+            boxed_operation(|| write_checkpoint(state, body))
+                .await
+                .map_err(Into::into)
         }
         "client_view.authority.read" => {
             #[derive(Deserialize)]
@@ -4038,58 +4080,70 @@ async fn dispatch_authorized(
         "projects.list" => {
             let body: ProjectsListBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "backend_projects_request_invalid".to_string())?;
-            list_projects(state, body).await.map_err(Into::into)
+            boxed_operation(|| list_projects(state, body))
+                .await
+                .map_err(Into::into)
         }
         "projects.register" => {
             let body: ProjectsRegisterBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "backend_project_registration_invalid".to_string())?;
-            register_backend_project(state, body)
+            boxed_operation(|| register_backend_project(state, body))
                 .await
                 .map_err(Into::into)
         }
-        "projects.resolve" => project_resolve::resolve(state, &request.body).await,
+        "projects.resolve" => {
+            boxed_operation(|| project_resolve::resolve(state, &request.body)).await
+        }
         "projects.show" => {
             let body: ProjectsShowBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "backend_projects_request_invalid".to_string())?;
-            show_project(state, body).await.map_err(Into::into)
+            boxed_operation(|| show_project(state, body))
+                .await
+                .map_err(Into::into)
         }
         operation if operation.starts_with("schedule.") => {
-            schedule_runtime::invoke(state, operation, &request.body).await
+            boxed_operation(|| schedule_runtime::invoke(state, operation, &request.body)).await
         }
         "sessions.list" => {
             let body: SessionsListBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "dure_session_query_invalid".to_string())?;
-            list_sessions(state, body).await.map_err(Into::into)
+            boxed_operation(|| list_sessions(state, body))
+                .await
+                .map_err(Into::into)
         }
         "sessions.read" => {
             let body: SessionsReadBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "dure_session_read_invalid".to_string())?;
-            read_session(state, body).await.map_err(Into::into)
+            boxed_operation(|| read_session(state, body))
+                .await
+                .map_err(Into::into)
         }
         "sessions.show" => {
             let body: SessionsShowBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "dure_session_query_invalid".to_string())?;
-            show_session(state, body).await.map_err(Into::into)
+            boxed_operation(|| show_session(state, body))
+                .await
+                .map_err(Into::into)
         }
         "orchestration.invoke" => {
             let body: OrchestrationInvokeBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "orchestration_request_invalid".to_string())?;
-            invoke_orchestration(state, body).await
+            boxed_operation(|| invoke_orchestration(state, body)).await
         }
         "workflow.delegate_once" => {
             let body: DelegateOnceRequestV1 = serde_json::from_value(request.body.clone())
                 .map_err(|_| "workflow_request_invalid".to_string())?;
-            delegate_once(state, body).await
+            boxed_operation(|| delegate_once(state, body)).await
         }
         "workflow.delegate_once.complete" => {
             let body: DelegateOnceCompleteBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "workflow_request_invalid".to_string())?;
-            complete_delegate_once(state, body).await
+            boxed_operation(|| complete_delegate_once(state, body)).await
         }
         "workflow.delegate_once.show" => {
             let body: DelegateOnceShowBody = serde_json::from_value(request.body.clone())
                 .map_err(|_| "workflow_request_invalid".to_string())?;
-            show_delegate_once(state, body).await
+            boxed_operation(|| show_delegate_once(state, body)).await
         }
         _ => Err("backend_operation_unsupported".into()),
     }
