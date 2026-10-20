@@ -353,6 +353,41 @@ fn write_provider_runtime_integration_fixture(root: &Path) {
         &serde_json::to_vec(&document).unwrap(),
         false,
     );
+    // Spawn admission resolves each provider executable on the control
+    // plane's PATH. Install the two providers this fixture integrates on the
+    // fixture login PATH rather than relying on the host's own installs.
+    let providers = root.join(FIXTURE_PROVIDER_DIRECTORY);
+    fs::create_dir(&providers).unwrap();
+    for provider in ["codex", "claude"] {
+        write_owner_file(
+            &providers.join(provider),
+            b"#!/bin/sh\necho 'fixture provider must not run' >&2\nexit 97\n",
+            true,
+        );
+    }
+}
+
+const FIXTURE_PROVIDER_DIRECTORY: &str = "providers";
+
+/// A new control plane takes its PATH from the CLI's `$SHELL -lc`, so the
+/// host's login profile would otherwise decide which providers a fixture can
+/// resolve. This login shell keeps the inherited PATH and puts the fixture's
+/// own provider directory first.
+fn login_shell(root: &Path) -> PathBuf {
+    let shell = root.join("login-shell");
+    if !shell.exists() {
+        write_owner_file(
+            &shell,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = -lc ] || exit 64\n\
+                 PATH=\"${{0%/*}}/{FIXTURE_PROVIDER_DIRECTORY}:$PATH\"\n\
+                 export PATH\nexec /bin/sh -c \"$2\"\n"
+            )
+            .as_bytes(),
+            true,
+        );
+    }
+    shell
 }
 
 fn write_local_backend_profile(root: &Path, generation: &str, capabilities: &[&str]) {
@@ -613,6 +648,7 @@ fn cli_command_with_discovery(
         .current_dir(repository_root())
         .env("HOME", root)
         .env("DURE_HOME", root)
+        .env("SHELL", login_shell(root))
         .env("DURE_APP_CHANNEL", "stable")
         .env_remove("DURE_BACKEND_PROFILE")
         .env_remove("DURE_CONTROL_PLANE_BIN")
