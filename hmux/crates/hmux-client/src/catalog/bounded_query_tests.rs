@@ -116,6 +116,57 @@ fn census_identity_memory_stops_at_its_fixed_budget() {
 }
 
 #[test]
+fn byte_budget_keeps_the_longest_prioritized_prefix_that_fits() {
+    let temporary = TempDir::new().unwrap();
+    let root = DiscoveryRoot::create(temporary.path().join("discovery")).unwrap();
+    let total = 12;
+    for index in 0..total {
+        publish_ready(
+            &root,
+            "workspace",
+            &format!("session-{index:02}"),
+            "synthetic-token",
+        );
+    }
+    let catalog = LocalSessionCatalog::new(root.path());
+    let priority = SessionCatalogIdentity::new("workspace", "session-07").unwrap();
+    let query = |max_output_bytes| {
+        SessionCatalogQuery::new(total, max_output_bytes, vec![priority.clone()]).unwrap()
+    };
+    let unbounded = catalog.query(&query(1024 * 1024)).unwrap();
+    assert_eq!(unbounded.sessions.len(), total);
+    // The budget counts the caller's trailing newline, as the CLI prints one.
+    let budget_for = |retained: usize| {
+        let mut snapshot = unbounded.clone();
+        snapshot.sessions.truncate(retained);
+        snapshot.truncation = SessionCatalogTruncation {
+            items: retained < total,
+            omitted_count: total - retained,
+        };
+        serde_json::to_vec(&snapshot).unwrap().len() + 1
+    };
+    for retained in 1..=total {
+        let exact = budget_for(retained);
+        let snapshot = catalog.query(&query(exact)).unwrap();
+        assert_eq!(snapshot.sessions.len(), retained, "budget={exact}");
+        assert_eq!(snapshot.sessions[0].session_id, "session-07");
+        assert_eq!(snapshot.truncation.items, retained < total);
+        assert_eq!(snapshot.truncation.omitted_count, total - retained);
+        assert_eq!(serde_json::to_vec(&snapshot).unwrap().len() + 1, exact);
+
+        let short = catalog.query(&query(exact - 1));
+        if retained == 1 {
+            assert_eq!(
+                short.unwrap_err().code(),
+                "hmux_session_catalog_priority_output_limit"
+            );
+        } else {
+            assert_eq!(short.unwrap().sessions.len(), retained - 1);
+        }
+    }
+}
+
+#[test]
 fn insufficient_byte_budget_never_silently_drops_a_requested_priority() {
     let temporary = TempDir::new().unwrap();
     let root = DiscoveryRoot::create(temporary.path().join("discovery")).unwrap();
