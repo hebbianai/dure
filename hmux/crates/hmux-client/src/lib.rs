@@ -2,6 +2,9 @@ pub use hmux_session_protocol::{
     AgentMessageTurn, AgentProgressPhase, AgentProgressProjection, AgentProgressReport,
     ProgramStatusBlockedKind, ProgramStatusProjection, ProgramStatusState,
 };
+// Shared by the census worker's catalog projection and the CLI's final bounded
+// catalog document, so both fit one byte budget with one encoding per session.
+pub mod bounded_json;
 mod catalog;
 #[cfg(feature = "local-runtime")]
 mod catalog_census;

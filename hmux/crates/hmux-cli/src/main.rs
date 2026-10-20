@@ -40,6 +40,7 @@ use base64::Engine as _;
 use clap::{Args, Parser, Subcommand};
 #[cfg(unix)]
 use doctor::{DoctorArgs, LocalDoctorReport, session_summary as doctor_session_summary};
+use hmux_client::bounded_json::{compact_json_len, longest_fitting_json_prefix};
 use hmux_client::{
     CatalogCensusError, CatalogCensusWorker, ClientError, ExactDiscoveryWorker,
     ExitedSessionRetirementCandidates, ExitedSessionRetirementCursor,
@@ -3294,45 +3295,56 @@ struct BoundedSessionCatalog<'a> {
     truncation: BoundedCatalogTruncation,
 }
 
-fn serialize_bounded_session_catalog(
-    sessions: &[SessionInspection],
+fn serialize_bounded_session_catalog<'a>(
+    sessions: &'a [SessionInspection],
     liveness: &[SessionLiveness],
     metadata: BoundedCatalogOutputMetadata,
 ) -> Result<String, CliError> {
-    let original_items = sessions.len();
-    let total_items = original_items.saturating_add(metadata.omitted_count);
-    let mut included_items = original_items;
-    loop {
-        let omitted_count = total_items.saturating_sub(included_items);
-        let document = BoundedSessionCatalog {
+    let total_items = sessions.len().saturating_add(metadata.omitted_count);
+    let document = |included: usize, sessions: Vec<SessionWithLiveness<'a>>| {
+        let omitted_count = total_items.saturating_sub(included);
+        BoundedSessionCatalog {
             schema_version: SESSION_CATALOG_QUERY_SCHEMA_VERSION,
             complete: metadata.complete,
             prioritized_items: metadata.prioritized_items,
-            sessions: sessions_with_liveness(
-                &sessions[..included_items],
-                &liveness[..included_items.min(liveness.len())],
-            ),
+            sessions,
             truncation: BoundedCatalogTruncation {
                 items: omitted_count > 0,
                 omitted_count,
             },
-        };
-        let serialized = serde_json::to_string(&document).map_err(|_| {
-            CliError("hmux_session_catalog_query_failed: serialization failed".into())
-        })?;
-        if serialized.len().saturating_add(1) <= metadata.max_output_bytes {
-            return Ok(serialized);
         }
-        if included_items <= metadata.prioritized_items {
-            let message = if metadata.prioritized_items > 0 {
-                "hmux_session_catalog_priority_output_limit: prioritized descriptors exceed the byte budget"
-            } else {
-                "hmux_session_catalog_output_limit: catalog envelope exceeds the byte budget"
-            };
-            return Err(CliError(message.into()));
-        }
-        included_items -= 1;
-    }
+    };
+    let serialization_failed =
+        |_| CliError("hmux_session_catalog_query_failed: serialization failed".into());
+    let mut rows = sessions_with_liveness(sessions, liveness);
+    // Encode each row once; dropping trailing fill rows re-encodes only the
+    // small envelope instead of the whole catalog per dropped row.
+    let row_bytes = rows
+        .iter()
+        .map(compact_json_len)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(serialization_failed)?;
+    let included = longest_fitting_json_prefix(
+        &row_bytes,
+        metadata.prioritized_items,
+        metadata.max_output_bytes,
+        |included| {
+            compact_json_len(&document(included, Vec::new())).map(|bytes| bytes.saturating_add(1))
+        },
+    )
+    .map_err(serialization_failed)?
+    .ok_or_else(|| {
+        CliError(if metadata.prioritized_items > 0 {
+            "hmux_session_catalog_priority_output_limit: prioritized descriptors exceed the byte budget".into()
+        } else {
+            "hmux_session_catalog_output_limit: catalog envelope exceeds the byte budget".into()
+        })
+    })?;
+    rows.truncate(included);
+    let serialized =
+        serde_json::to_string(&document(included, rows)).map_err(serialization_failed)?;
+    debug_assert!(serialized.len() < metadata.max_output_bytes);
+    Ok(serialized)
 }
 
 fn render_sessions(sessions: &[SessionInspection], liveness: &[SessionLiveness]) -> String {

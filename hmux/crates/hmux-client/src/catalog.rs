@@ -1,3 +1,4 @@
+use crate::bounded_json::{compact_json_len, longest_fitting_json_prefix};
 #[cfg(feature = "local-runtime")]
 use crate::discovery_roots::{
     discovery_root_plan_from_environment, validate_read_only_discovery_roots,
@@ -320,50 +321,59 @@ impl<'a> SessionCatalogAccumulator<'a> {
                 .map(|(_, session)| SessionDescriptor::from(session)),
         );
         let total_items = self.eligible_items;
-        let mut snapshot = SessionCatalogSnapshot {
+        let snapshot = |retained: usize, sessions: Vec<SessionDescriptor>| SessionCatalogSnapshot {
             schema_version: SESSION_CATALOG_QUERY_SCHEMA_VERSION,
             // Reaching this snapshot proves the filesystem census completed.
             // Projection truncation is a separate fact below.
             complete: true,
             prioritized_items,
             truncation: SessionCatalogTruncation {
-                items: sessions.len() < total_items,
-                omitted_count: total_items.saturating_sub(sessions.len()),
+                items: retained < total_items,
+                omitted_count: total_items.saturating_sub(retained),
             },
             sessions,
         };
-        while serialized_snapshot_bytes(&snapshot)? > self.query.max_output_bytes {
-            if snapshot.sessions.len() <= prioritized_items {
-                let (code, message) = if prioritized_items > 0 {
-                    (
-                        "hmux_session_catalog_priority_output_limit",
-                        "prioritized session descriptors exceed the catalog byte budget",
-                    )
-                } else {
-                    (
-                        "hmux_session_catalog_output_limit",
-                        "session catalog envelope exceeds the byte budget",
-                    )
-                };
-                return Err(ClientError::transport(code, message));
-            }
-            snapshot.sessions.pop();
-            snapshot.truncation.items = true;
-            snapshot.truncation.omitted_count = total_items.saturating_sub(snapshot.sessions.len());
-        }
-        Ok(snapshot)
+        // Each descriptor is encoded once. Dropping trailing fill rows then
+        // costs only an envelope encoding, not a full catalog re-encoding.
+        let session_bytes = sessions
+            .iter()
+            .map(compact_json_len)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| snapshot_serialization_failed())?;
+        let retained = longest_fitting_json_prefix(
+            &session_bytes,
+            prioritized_items,
+            self.query.max_output_bytes,
+            |retained| {
+                compact_json_len(&snapshot(retained, Vec::new()))
+                    .map(|bytes| bytes.saturating_add(1))
+            },
+        )
+        .map_err(|_| snapshot_serialization_failed())?;
+        let Some(retained) = retained else {
+            let (code, message) = if prioritized_items > 0 {
+                (
+                    "hmux_session_catalog_priority_output_limit",
+                    "prioritized session descriptors exceed the catalog byte budget",
+                )
+            } else {
+                (
+                    "hmux_session_catalog_output_limit",
+                    "session catalog envelope exceeds the byte budget",
+                )
+            };
+            return Err(ClientError::transport(code, message));
+        };
+        sessions.truncate(retained);
+        Ok(snapshot(retained, sessions))
     }
 }
 
-fn serialized_snapshot_bytes(snapshot: &SessionCatalogSnapshot) -> Result<usize, ClientError> {
-    serde_json::to_vec(snapshot)
-        .map(|bytes| bytes.len().saturating_add(1))
-        .map_err(|_| {
-            ClientError::transport(
-                "hmux_session_catalog_query_failed",
-                "session catalog snapshot could not be serialized",
-            )
-        })
+fn snapshot_serialization_failed() -> ClientError {
+    ClientError::transport(
+        "hmux_session_catalog_query_failed",
+        "session catalog snapshot could not be serialized",
+    )
 }
 
 #[derive(Clone, Debug)]
