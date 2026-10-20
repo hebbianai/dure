@@ -8,6 +8,13 @@ use std::process::{Command, Output};
 
 const CAPTURE_LIMIT_BYTES: usize = 1024 * 1024;
 const CATALOG_LIMIT_BYTES: usize = 960 * 1024;
+/// These tests prove projection order and byte bounds, not census latency;
+/// `discovery_census_budget.rs` owns the timeout contract. The fixture is
+/// deliberately oversized to overflow the capture limit, and this unoptimized
+/// test build reads it more than ten times slower than a release build, which
+/// can exceed the 1.5 s interactive default on a contended CI runner. Use the
+/// largest budget the control plane passes for this bounded list instead.
+const CENSUS_BUDGET_MS: &str = "10000";
 
 fn publish_ready(root: &DiscoveryRoot, index: usize) {
     let session_id = format!("session-{index:03}");
@@ -80,13 +87,17 @@ fn publish_ready(root: &DiscoveryRoot, index: usize) {
         .unwrap();
 }
 
-fn hmux(root: &DiscoveryRoot, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_hmux"))
+fn list_sessions(root: &DiscoveryRoot, catalog_query: Option<&Value>) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hmux"));
+    command
         .arg("--discovery-root")
         .arg(root.path())
-        .args(arguments)
-        .output()
-        .unwrap()
+        .args(["--json", "session", "list", "--no-probe"])
+        .args(["--probe-budget-ms", CENSUS_BUDGET_MS]);
+    if let Some(query) = catalog_query {
+        command.args(["--catalog-query-json", &query.to_string()]);
+    }
+    command.output().unwrap()
 }
 
 #[test]
@@ -97,8 +108,12 @@ fn bounded_query_serializes_client_priority_before_the_capture_limit() {
         publish_ready(&root, index);
     }
 
-    let full = hmux(&root, &["--json", "session", "list", "--no-probe"]);
-    assert!(full.status.success());
+    let full = list_sessions(&root, None);
+    assert!(
+        full.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&full.stderr)
+    );
     assert!(
         full.stdout.len() > CAPTURE_LIMIT_BYTES,
         "fixture must reproduce the downstream capture overflow"
@@ -113,17 +128,7 @@ fn bounded_query_serializes_client_priority_before_the_capture_limit() {
             "workspaceId": "workspace",
         }],
     });
-    let bounded = hmux(
-        &root,
-        &[
-            "--json",
-            "session",
-            "list",
-            "--no-probe",
-            "--catalog-query-json",
-            &query.to_string(),
-        ],
-    );
+    let bounded = list_sessions(&root, Some(&query));
     assert!(
         bounded.status.success(),
         "stderr={}",
@@ -171,17 +176,7 @@ fn ordered_pages_enumerate_every_session_without_client_priorities() {
             "schemaVersion": 1, "maxItems": 128, "maxOutputBytes": CATALOG_LIMIT_BYTES,
             "prioritized": [], "page": { "after": after },
         });
-        let output = hmux(
-            &root,
-            &[
-                "--json",
-                "session",
-                "list",
-                "--no-probe",
-                "--catalog-query-json",
-                &query.to_string(),
-            ],
-        );
+        let output = list_sessions(&root, Some(&query));
         assert!(
             output.status.success(),
             "{}",
