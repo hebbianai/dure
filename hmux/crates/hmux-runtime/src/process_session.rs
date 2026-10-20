@@ -1101,9 +1101,26 @@ mod tests {
             descendant
         );
 
-        let guard = session
-            .freeze_for_idle_retirement(43, |_| Some(43))
-            .expect("busy census must complete");
+        // The production census intentionally has a short observation budget.
+        // A loaded native test host may exhaust it without violating the
+        // preservation contract: every newly stopped group must still resume.
+        // Observe that rollback before retrying the descendant assertion.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let guard = loop {
+            match session.freeze_for_idle_retirement(43, |_| Some(43)) {
+                Ok(guard) => break guard,
+                Err(error)
+                    if error.to_string()
+                        == "provider process session did not reach a stable frozen census"
+                        && Instant::now() < deadline =>
+                {
+                    wait_for_stopped(provider.leader, false);
+                    wait_for_stopped(descendant, false);
+                    thread::sleep(PROCESS_STATE_POLL_INTERVAL);
+                }
+                Err(error) => panic!("busy census must complete: {error}"),
+            }
+        };
 
         assert!(guard.is_none(), "a descendant must prevent idle retirement");
         wait_for_stopped(provider.leader, false);

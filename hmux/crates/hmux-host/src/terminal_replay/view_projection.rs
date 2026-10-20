@@ -2650,11 +2650,25 @@ mod tests {
         );
         drop(invalid_successor);
         let root_after_invalid_restore = {
-            let storage = successor_discovery
-                .cold_history_storage(Arc::clone(&successor_lock))
-                .unwrap()
-                .bind(&cold_identity.0, &cold_identity.1)
-                .unwrap();
+            // Failed restoration abandons the isolated commit worker without
+            // blocking the terminal actor. Its lease remains exclusive until
+            // that worker exits, even after the replay itself has been dropped.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let storage = loop {
+                match successor_discovery
+                    .cold_history_storage(Arc::clone(&successor_lock))
+                    .unwrap()
+                    .bind(&cold_identity.0, &cold_identity.1)
+                {
+                    Ok(storage) => break storage,
+                    Err(crate::local_discovery::DiscoveryError::AlreadyLocked { .. })
+                        if std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    Err(error) => panic!("abandoned cold history lease did not release: {error}"),
+                }
+            };
             storage.read_root(64 * 1024).unwrap().unwrap()
         };
         assert_eq!(
