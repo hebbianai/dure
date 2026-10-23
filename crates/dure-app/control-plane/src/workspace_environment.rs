@@ -186,7 +186,12 @@ fn dispatch(
             };
             store.write(&record)?;
             let response = json!({ "schemaVersion": 1, "environment": projection(&record) });
-            tokio::spawn(process::execute(store, record, "create".into(), lock));
+            tokio::spawn(process::execute(
+                store,
+                record,
+                "create".into(),
+                lock.into_operation(),
+            ));
             Ok(response)
         }
         Action::Transition {
@@ -242,7 +247,12 @@ fn dispatch(
             record.updated_at_ms = now_ms().map_err(|_| "environment_clock_unavailable")?;
             store.write(&record)?;
             let response = json!({ "schemaVersion": 1, "environment": projection(&record) });
-            tokio::spawn(process::execute(store, record, operation, lock));
+            tokio::spawn(process::execute(
+                store,
+                record,
+                operation,
+                lock.into_operation(),
+            ));
             Ok(response)
         }
     }

@@ -9,6 +9,37 @@ use serde_json::Value;
 use super::recipe::CapturedRecipe;
 use crate::private_record;
 
+/// An exclusive `flock` on one store directory.
+///
+/// The lock belongs to the open file description, which a child forked by any
+/// backend thread shares until it execs. Closing this handle alone would leave
+/// the lock with that child, so dropping the guard releases it explicitly.
+pub struct StoreLock(Option<File>);
+
+impl StoreLock {
+    /// Hands the lock to a provider operation whose child inherits it, so it
+    /// outlives a backend crash. The operation calls [`release`] once the
+    /// child has exited.
+    pub fn into_operation(mut self) -> File {
+        self.0
+            .take()
+            .expect("a store lock is held until handed over")
+    }
+}
+
+impl Drop for StoreLock {
+    fn drop(&mut self) {
+        if let Some(file) = &self.0 {
+            release(file);
+        }
+    }
+}
+
+pub fn release(lock: &File) {
+    // SAFETY: the caller owns this open descriptor.
+    unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_UN) };
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Status {
@@ -108,7 +139,7 @@ impl Store {
 
     // The directory lock also travels into the bounded provider child. A backend
     // crash must not let its successor destroy resources while create still runs.
-    pub fn lock(&self, id: &str) -> Result<File, &'static str> {
+    pub fn lock(&self, id: &str) -> Result<StoreLock, &'static str> {
         let path = self.workdir(id)?;
         let file = OpenOptions::new()
             .read(true)
@@ -127,7 +158,7 @@ impl Store {
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return Err("environment_busy");
         }
-        Ok(file)
+        Ok(StoreLock(Some(file)))
     }
 
     pub fn read(&self, id: &str) -> Result<Option<Record>, &'static str> {
