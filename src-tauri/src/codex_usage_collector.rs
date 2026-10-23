@@ -31,6 +31,8 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_RESPONSE_LINE_BYTES: u64 = 1024 * 1024;
 const MAX_CACHE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PROFILES: usize = 64;
+const MARKETPLACE_STAGING_ABANDONED_AFTER: Duration = Duration::from_secs(60 * 60);
+const MAX_MARKETPLACE_STAGING_SWEEP: usize = 256;
 const DEFAULT_CREDENTIAL_KEY: &str = "default";
 const AMBIENT_PROVIDER_AUTH_ENVIRONMENT: [&str; 7] = [
     "OPENAI_API_KEY",
@@ -266,6 +268,12 @@ impl CodexUsageCollector {
         for (index, profile) in profiles.iter().enumerate() {
             if index > 0 {
                 tokio::time::sleep(INACTIVE_PROBE_STAGGER).await;
+            }
+            if let Some(codex_home) = profile.codex_home.clone() {
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    sweep_abandoned_marketplace_staging(&codex_home, SystemTime::now())
+                })
+                .await;
             }
             let attempted_at = now_secs();
             let result = if profile.codex_home.is_some() {
@@ -589,6 +597,47 @@ fn parse_rate_limit(value: &serde_json::Value, fallback_id: &str) -> Option<Code
         .then_some(limit)
 }
 
+/// Probes before `features.plugins=false` stopped App Server during its
+/// marketplace upgrade and left one staging clone per poll in CODEX_HOME.
+/// Codex removes a copy it finishes with, so a copy untouched for an hour is
+/// abandoned. Each poll removes a bounded batch and never follows a link out
+/// of the profile's CODEX_HOME.
+fn sweep_abandoned_marketplace_staging(codex_home: &Path, now: SystemTime) -> usize {
+    let mut staging = codex_home.to_path_buf();
+    for component in [".tmp", "marketplaces", ".staging"] {
+        staging.push(component);
+        if !std::fs::symlink_metadata(&staging).is_ok_and(|metadata| metadata.is_dir()) {
+            return 0;
+        }
+    }
+    let Ok(entries) = std::fs::read_dir(&staging) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        if removed == MAX_MARKETPLACE_STAGING_SWEEP {
+            break;
+        }
+        let path = entry.path();
+        let upgrade_copy = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with("marketplace-upgrade-"));
+        let abandoned = std::fs::symlink_metadata(&path).is_ok_and(|metadata| {
+            metadata.is_dir()
+                && metadata
+                    .modified()
+                    .ok()
+                    .and_then(|modified| now.duration_since(modified).ok())
+                    .is_some_and(|age| age >= MARKETPLACE_STAGING_ABANDONED_AFTER)
+        });
+        if upgrade_copy && abandoned && std::fs::remove_dir_all(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 async fn stop_probe(child: &mut Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
@@ -770,6 +819,51 @@ printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":21,"rese
         assert_eq!(limits.rate_limits[0].used_percent, Some(21.0));
         assert_eq!(limits.rate_limits[0].used_percent_weekly, Some(34.0));
         assert_eq!(limits.rate_limit_resets_available, Some(3));
+    }
+
+    #[test]
+    fn sweeps_only_abandoned_marketplace_upgrade_copies() {
+        let directory = tempfile::tempdir().unwrap();
+        let codex_home = directory.path().join("codex-home");
+        let staging = codex_home.join(".tmp/marketplaces/.staging");
+        std::fs::create_dir_all(staging.join("marketplace-upgrade-a/.git")).unwrap();
+        std::fs::write(staging.join("marketplace-upgrade-a/.git/HEAD"), b"ref\n").unwrap();
+        std::fs::create_dir(staging.join("unrelated")).unwrap();
+        std::fs::write(staging.join("marketplace-upgrade-file"), b"").unwrap();
+        let outside = directory.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("keep"), b"").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, staging.join("marketplace-upgrade-link")).unwrap();
+
+        // A copy that may still be in use stays.
+        assert_eq!(
+            sweep_abandoned_marketplace_staging(&codex_home, SystemTime::now()),
+            0
+        );
+        assert!(staging.join("marketplace-upgrade-a").exists());
+
+        let later = SystemTime::now() + 2 * MARKETPLACE_STAGING_ABANDONED_AFTER;
+        assert_eq!(sweep_abandoned_marketplace_staging(&codex_home, later), 1);
+        assert!(!staging.join("marketplace-upgrade-a").exists());
+        assert!(staging.join("unrelated").exists());
+        assert!(staging.join("marketplace-upgrade-file").exists());
+        assert!(outside.join("keep").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_sweep_does_not_follow_a_linked_staging_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let codex_home = directory.path().join("codex-home");
+        std::fs::create_dir_all(codex_home.join(".tmp/marketplaces")).unwrap();
+        let outside = directory.path().join("outside");
+        std::fs::create_dir_all(outside.join("marketplace-upgrade-a")).unwrap();
+        std::os::unix::fs::symlink(&outside, codex_home.join(".tmp/marketplaces/.staging"))
+            .unwrap();
+        let later = SystemTime::now() + 2 * MARKETPLACE_STAGING_ABANDONED_AFTER;
+        assert_eq!(sweep_abandoned_marketplace_staging(&codex_home, later), 0);
+        assert!(outside.join("marketplace-upgrade-a").exists());
     }
 
     #[test]
