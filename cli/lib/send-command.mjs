@@ -1,3 +1,4 @@
+import { agentDisplayName } from "./client-registry.mjs";
 import { readUtf8Input, readUtf8Stdin } from "./text-input.mjs";
 
 const SEND_HELP = `dure send — Send text to an agent
@@ -151,6 +152,28 @@ function printDelivery(agent, input, opts) {
   process.stdout.write(`\x1b[32m✓\x1b[0m ${agent.name} · written to PTY${opts.enter ? " + Enter" : ""}${guarded}${receipt} · provider acceptance unconfirmed\n`);
 }
 
+function nameWords(name) {
+  return String(name).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 1);
+}
+
+/** Tracked-send failures are expected outcomes, so they print without a stack.
+ * Names suggest where to resend; they do not prove the suggested Agent is alive. */
+export function trackedSendFailureMessage(error, registry, agent) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error?.code !== "dure_send_session_exited") return message;
+  const name = typeof agent === "string" ? agent : agentDisplayName(agent);
+  const words = new Set(nameWords(name));
+  const similar = (registry?.agents ?? []).filter((candidate) =>
+    candidate !== agent && candidate.sessionId !== error.sessionId &&
+    nameWords(agentDisplayName(candidate)).some((word) => words.has(word)))
+    .slice(0, 5).map((candidate) => `${candidate.project}/${agentDisplayName(candidate)}`);
+  return [
+    `${name} has exited (Session ${error.sessionId}). Nothing was sent.`,
+    ...(similar.length ? [`Agents with similar names: ${similar.join(", ")}`] : []),
+    "Find a live Agent with: dure ls --alive",
+  ].join("\n");
+}
+
 export async function runSendCommand(
   args,
   { parseOptions, loadRegistry, resolveAgent, send, sendExactSession, sendTracked, fail },
@@ -197,7 +220,12 @@ export async function runSendCommand(
   }
   if (!text) return fail("Input text must not be empty");
   if (track) {
-    const input = await sendTracked(agent, text, opts);
+    let input;
+    try {
+      input = await sendTracked(agent, text, opts);
+    } catch (error) {
+      return fail(trackedSendFailureMessage(error, registry, agent));
+    }
     printDelivery(typeof agent === "string" ? { name: agent } : agent, input, opts);
     return;
   }

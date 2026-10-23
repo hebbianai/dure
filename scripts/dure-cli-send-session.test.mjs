@@ -122,6 +122,13 @@ describe("exact managed Session send without a client registry", () => {
     expect(result.status).not.toBe(0);
     expect(f.calls().some((args) => args.includes("command-input"))).toBe(false);
   });
+  it("reports an unavailable tracked target without a stack trace", () => {
+    const f = fixture(hmuxSession(1, { health: "unprobed" }));
+    const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello", "--track"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Nothing was sent");
+    expect(result.stderr).not.toMatch(/^\s+at /m);
+  });
   it.each([["--backend", "remote"], ["--idempotency-key", "request-1"], ["--window-label", "peer"]])("refuses unsupported routing before input: %j", (...options) => {
     const f = fixture();
     const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello", ...options]);

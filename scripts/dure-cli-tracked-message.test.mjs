@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { sendTrackedMessage, readMessageTracking, queryTrackedMessage } from "../cli/lib/tracked-message.mjs";
 import { collectWait, parseWaitArguments } from "../cli/lib/wait-command.mjs";
+import { trackedSendFailureMessage } from "../cli/lib/send-command.mjs";
+import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 const generation = { runnerPrincipal: "owner", runnerInstance: "runner", channelEpoch: "1", hostInstanceId: "host", terminalEpoch: "epoch" };
@@ -49,4 +51,38 @@ test("message waits select one condition, time out without replay and never coun
   const result = await collectWait(options, { backend, tracking: { query: { interactionId: "message" } }, now: () => time, pause: async ms => { time += ms; }, queryMessage: async () => ({ receipt: { observed: false, wakeTurnStarted: true } }) });
   expect(result.exitCode).toBe(124);
   expect(() => parseWaitArguments(["--message", "receipt", "--task", "task"])).toThrow();
+});
+
+test("an exited Session is refused before any backend request", async () => {
+  const options = fixture();
+  options.querySession = vi.fn(async () => ({ session: { ...live.session, liveness: { state: "exited", exactGeneration: true } } }));
+  const request = vi.fn();
+  const error = await sendTrackedMessage({ sessionId: "session", workspaceId: "workspace" }, "hello", { ...options, request }).catch((caught) => caught);
+  expect(error).toMatchObject({ code: "dure_send_session_exited", sessionId: "session" });
+  expect(error.message).toContain("Nothing was sent");
+  expect(request).not.toHaveBeenCalled();
+  expect(fs.existsSync(path.join(options.environment.DURE_HOME, "message-receipts"))).toBe(false);
+});
+
+test("a context lookup failure reports typed codes as unsent, without backend text", async () => {
+  const options = fixture();
+  const request = vi.fn(async () => { throw new BackendTransportError("backend_transport_remote_error", { details: { code: "orchestration_session_unavailable", reasonCode: "hmux_descriptor_unavailable", disposition: "retry_same" } }); });
+  const error = await sendTrackedMessage({ sessionId: "session", workspaceId: "workspace" }, "hello", { ...options, request }).catch((caught) => caught);
+  expect(error.code).toBe("dure_send_context_unavailable");
+  expect(error.message).toContain("orchestration_session_unavailable: hmux_descriptor_unavailable");
+  expect(error.message).toContain("Nothing was sent");
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test("an exited target names Agents with similar names and the live listing", () => {
+  const agent = (id, name, sessionId) => ({ id, name, project: "app", sessionId });
+  const target = agent("1", "android-release", "session-1");
+  const registry = { agents: [target, agent("2", "android-release-2", "session-2"), agent("3", "docs", "session-3"), agent("4", "ios-release", "session-4")] };
+  const error = Object.assign(new Error("exited"), { code: "dure_send_session_exited", sessionId: "session-1" });
+  const message = trackedSendFailureMessage(error, registry, target);
+  expect(message).toContain("android-release has exited (Session session-1). Nothing was sent.");
+  expect(message).toContain("app/android-release-2, app/ios-release");
+  expect(message).not.toContain("docs");
+  expect(message).toContain("dure ls --alive");
+  expect(trackedSendFailureMessage(new Error("other failure"), registry, target)).toBe("other failure");
 });
