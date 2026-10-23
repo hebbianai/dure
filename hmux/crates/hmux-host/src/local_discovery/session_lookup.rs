@@ -192,9 +192,24 @@ pub(super) fn list_sessions_named(
     root: &DiscoveryRoot,
     name: &str,
 ) -> Result<Vec<DiscoveredSession>, DiscoveryError> {
+    list_sessions_named_with_starting(root, name, false)
+}
+
+pub(super) fn list_sessions_named_including_starting(
+    root: &DiscoveryRoot,
+    name: &str,
+) -> Result<Vec<DiscoveredSession>, DiscoveryError> {
+    list_sessions_named_with_starting(root, name, true)
+}
+
+fn list_sessions_named_with_starting(
+    root: &DiscoveryRoot,
+    name: &str,
+    include_starting: bool,
+) -> Result<Vec<DiscoveredSession>, DiscoveryError> {
     let mut sessions = Vec::new();
     let maximum = root.limits().max_session_lookup_candidates;
-    scan_listed_sessions(root, |session| {
+    scan_sessions_with_starting(root, include_starting, |session| {
         if session.manifest.common().session_name.as_deref() != Some(name) {
             return Ok(());
         }
@@ -254,6 +269,14 @@ pub(super) fn list_exited_sessions(
 
 fn scan_listed_sessions(
     root: &DiscoveryRoot,
+    observe: impl FnMut(DiscoveredSession) -> Result<(), DiscoveryError>,
+) -> Result<(), DiscoveryError> {
+    scan_sessions_with_starting(root, false, observe)
+}
+
+fn scan_sessions_with_starting(
+    root: &DiscoveryRoot,
+    include_starting: bool,
     mut observe: impl FnMut(DiscoveredSession) -> Result<(), DiscoveryError>,
 ) -> Result<(), DiscoveryError> {
     let root_path = root.path();
@@ -306,10 +329,11 @@ fn scan_listed_sessions(
             if !has_component_prefix(&session_path, "s_") {
                 continue;
             }
-            // A stale, starting, missing, or per-entry insecure session is
-            // tolerated (skipped) so the census stays truthful about the
-            // sessions that are actually attachable.
-            if let Ok(Some(session)) = read_listed_session(root, &session_path) {
+            // A stale, missing, or per-entry insecure session is tolerated
+            // (skipped) so the census stays truthful about the sessions that
+            // are actually attachable. Only name-ownership lookups include
+            // Starting sessions; general listings keep the original meaning.
+            if let Ok(Some(session)) = read_listed_session(root, &session_path, include_starting) {
                 observe(session)?;
             }
         }
@@ -339,6 +363,7 @@ fn compare_session_to_key(session: &DiscoveredSession, key: &DiscoveryKey) -> st
 fn read_listed_session(
     root: &DiscoveryRoot,
     session_path: &Path,
+    include_starting: bool,
 ) -> Result<Option<DiscoveredSession>, DiscoveryError> {
     // Same ancestor validation find_unique performs before trusting the path.
     validate_lookup_ancestors(root.path(), session_path)?;
@@ -354,7 +379,7 @@ fn read_listed_session(
         // census context, not a hard failure.
         Err(_) => return Ok(None),
     };
-    if matches!(manifest, DiscoveryManifest::Starting(_)) {
+    if !include_starting && matches!(manifest, DiscoveryManifest::Starting(_)) {
         return Ok(None);
     }
     // Path-identity fence: the manifest's own lifetime must resolve back to this

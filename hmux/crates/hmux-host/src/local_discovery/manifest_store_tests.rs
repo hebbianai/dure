@@ -917,6 +917,73 @@ fn presentation_checkpoint_symlink_is_refused() {
 }
 
 #[test]
+fn named_census_including_starting_preserves_ordinary_listing_and_name_filter() {
+    let temp = TempDir::new().unwrap();
+    let root = DiscoveryRoot::create_with_limits(
+        temp.path().join("hmux"),
+        ManifestLimits {
+            max_session_lookup_candidates: 1,
+            ..ManifestLimits::default()
+        },
+    )
+    .unwrap();
+    let session = root
+        .session(DiscoveryKey::new("workspace", "session_starting", "runner-1", 4).unwrap())
+        .unwrap();
+    let mut manifest = standalone_starting("host-starting");
+    manifest.common.lifetime.session_id = "session_starting".into();
+    let lock = session.acquire_lifetime_lock().unwrap();
+    session.publish_starting(&lock, manifest).unwrap();
+    publish_named_session(
+        &root,
+        "session_unrelated",
+        "host-unrelated",
+        NamedSessionLifecycle::Ready {
+            session_name: Some("unrelated"),
+            session_class: SessionClass::Standalone,
+        },
+    );
+
+    assert!(root.list_sessions_named("dev").unwrap().is_empty());
+    let named = root.list_sessions_named_including_starting("dev").unwrap();
+    assert_eq!(named.len(), 1);
+    assert_eq!(named[0].key.session_id(), "session_starting");
+    assert!(matches!(named[0].manifest, DiscoveryManifest::Starting(_)));
+    assert_eq!(root.list_sessions().unwrap().len(), 1);
+    assert!(
+        root.list_sessions_named_including_starting("missing")
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn named_census_including_starting_enforces_candidate_bound() {
+    let temp = TempDir::new().unwrap();
+    let root = DiscoveryRoot::create_with_limits(
+        temp.path().join("hmux"),
+        ManifestLimits {
+            max_session_lookup_candidates: 1,
+            ..ManifestLimits::default()
+        },
+    )
+    .unwrap();
+    for session_id in ["starting_one", "starting_two"] {
+        let session = root
+            .session(DiscoveryKey::new("workspace", session_id, "runner-1", 4).unwrap())
+            .unwrap();
+        let mut manifest = standalone_starting(session_id);
+        manifest.common.lifetime.session_id = session_id.into();
+        let lock = session.acquire_lifetime_lock().unwrap();
+        session.publish_starting(&lock, manifest).unwrap();
+    }
+    assert!(matches!(
+        root.list_sessions_named_including_starting("dev"),
+        Err(DiscoveryError::LookupLimitExceeded { maximum: 1 })
+    ));
+}
+
+#[test]
 fn list_sessions_reports_ready_and_exited_and_skips_starting_and_carries_class() {
     let temp = TempDir::new().unwrap();
     let root = DiscoveryRoot::create(temp.path().join("hmux")).unwrap();
