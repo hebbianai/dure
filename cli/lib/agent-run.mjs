@@ -5,6 +5,8 @@ import {
   collectAgentSpawnQuery,
   formatAgentSpawnQuery,
 } from "./agent-spawn-query.mjs";
+import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { readRegisteredAccountProfiles, registeredAccountUnavailableMessage } from "./registered-account-profiles.mjs";
 
 export function defaultAgentRunName(providerId, idempotencyKey) {
   const suffix = createHash("sha256")
@@ -48,14 +50,39 @@ export async function resolveAgentRunInteractionPreference(
 }
 
 /** Resolve a non-secret, generation-pinned credential before Run preview. */
-export async function resolveAgentRunAccount({ descriptor, providerId, backendProfileId, account,
-  requestClient = requestAppControl }) {
+export async function resolveAgentRunAccount({ descriptor, providerId, backendProfileId, account, backend,
+  requestBackend = performBackendProfileRequest, requestClient = requestAppControl }) {
   if (account === "default") return { kind: "provider_default" };
-  if (!descriptor?.capabilities?.includes("agent.launch_account_v1")) {
-    if (account !== undefined) throw new AppControlClientError("client_account_unavailable",
-      "Selecting an account requires a connected app with agent.launch_account_v1 support.");
-    return { kind: "provider_default" };
+  let appError = new AppControlClientError("client_account_unavailable",
+    "Selecting an account requires a connected app with agent.launch_account_v1 support.");
+  if (descriptor?.capabilities?.includes("agent.launch_account_v1")) {
+    try {
+      return await resolveAppRunAccount({ descriptor, providerId, backendProfileId, account, requestClient });
+    } catch (error) {
+      if (account === undefined || error?.code !== "agent_launch_account_unavailable") throw error;
+      appError = error;
+    }
+  } else if (account === undefined) return { kind: "provider_default" };
+  // runs switch-account launches any account registered on the backend, so a
+  // Run accepts the same IDs even when the app lists the account under another.
+  if (!backend?.profile) throw appError;
+  let profiles;
+  try {
+    profiles = await readRegisteredAccountProfiles({ providerId, backend, requestBackend });
+  } catch {
+    throw appError;
   }
+  if (!profiles) throw new AppControlClientError("agent_launch_account_profiles_invalid",
+    "The backend returned invalid credential profile handles.");
+  const matches = profiles.filter((profile) => profile.referenceId === account);
+  if (matches.length === 1) {
+    return { kind: "credential_reference", reference_id: account, credential_generation: matches[0].credentialGeneration };
+  }
+  throw new AppControlClientError("agent_launch_account_unavailable", registeredAccountUnavailableMessage({
+    providerId, account, profiles, backendId: backend.profile.id }));
+}
+
+async function resolveAppRunAccount({ descriptor, providerId, backendProfileId, account, requestClient }) {
   const response = await requestClient({ descriptor, path: "/agent/launch-account",
     body: { providerId, backendProfileId, ...(account === undefined ? {} : { account }) } });
   const profile = response?.executionProfile;

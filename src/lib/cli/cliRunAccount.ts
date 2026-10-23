@@ -1,4 +1,7 @@
-import { resolveAgentLaunchCredential } from "@/lib/agents/agentLaunchCredential";
+import {
+	AgentLaunchCredentialUnavailableError,
+	resolveAgentLaunchCredential,
+} from "@/lib/agents/agentLaunchCredential";
 import { providerAccountDirectoryName } from "@/lib/agents/providers";
 import { resolveSelectedDureBackendRouteAuthority } from "@/lib/ipc/dureBackend";
 import {
@@ -43,15 +46,30 @@ export async function resolveCliRunAccount(
 	}
 	const provider = params.providerId as Provider;
 	const state = dependencies.readState();
-	const selected = resolveAgentLaunchCredential({
-		provider,
-		accounts: state.accounts,
-		activeAccountId: state.activeAccounts[provider],
-		requestedAccountId:
-			params.account === "default"
-				? null
-				: (params.account as string | undefined),
-	});
+	let selected: ReturnType<typeof resolveAgentLaunchCredential>;
+	try {
+		selected = resolveAgentLaunchCredential({
+			provider,
+			accounts: state.accounts,
+			activeAccountId: state.activeAccounts[provider],
+			requestedAccountId:
+				params.account === "default"
+					? null
+					: (params.account as string | undefined),
+		});
+	} catch (error) {
+		if (!(error instanceof AgentLaunchCredentialUnavailableError)) throw error;
+		const choices = state.accounts
+			.filter((account) => account.provider === provider)
+			.map((account) =>
+				account.name && account.name !== account.id
+					? `${account.id} (${account.name})`
+					: account.id,
+			);
+		throw new Error(
+			`${error.message}. Account IDs in this app: ${choices.join(", ") || "none"}.`,
+		);
+	}
 	if (!selected.account)
 		return {
 			ok: true,

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
-import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 import { rehostCommandLine } from "./managed-rehost-preview.mjs";
+import { readRegisteredAccountProfiles, registeredAccountUnavailableMessage } from "./registered-account-profiles.mjs";
 
 /** Prepare an exact invocation of the existing UI/backend transition. This
  * adapter owns no credential registry, process replacement, or retry policy. */
@@ -19,20 +19,14 @@ export async function collectRunAccountSwitch({ run, observation, account, confi
   }
   let credentialGeneration;
   if (account !== "default") {
-    const { result } = await requestBackend(backend.profile, {
-      operation: "provider_recovery.get", requiredCapabilities: ["account_recovery.v1"],
-      body: { schemaVersion: 1, providerId: run.providerId },
-    }, backend.transportOptions);
-    const profiles = result?.profiles;
-    if (result?.schemaVersion !== 1 || !Array.isArray(profiles) || profiles.some((profile) =>
-      profile?.schemaVersion !== 1 || profile.providerId !== run.providerId ||
-      !isDureDomainIdV1(profile.referenceId) || !isDureDomainIdV1(profile.credentialGeneration))) {
+    const profiles = await readRegisteredAccountProfiles({ providerId: run.providerId, backend, requestBackend });
+    if (!profiles) {
       return failure("account_switch_profiles_invalid", "The backend returned invalid credential profile handles.");
     }
     const matches = profiles.filter((profile) => profile.referenceId === account);
     if (matches.length !== 1) {
-      return failure("account_switch_account_unavailable",
-        `Select one registered ${run.providerId} account from dure recovery get ${run.providerId} on this backend. Account IDs are not display names.`);
+      return failure("account_switch_account_unavailable", registeredAccountUnavailableMessage({
+        providerId: run.providerId, account, profiles, backendId: backend.profile.id }));
     }
     credentialGeneration = matches[0].credentialGeneration;
   }

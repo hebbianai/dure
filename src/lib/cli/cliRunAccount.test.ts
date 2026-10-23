@@ -100,6 +100,16 @@ describe("CLI Run account selection", () => {
 		).rejects.toThrow("unavailable");
 		expect(f.dependencies.register).not.toHaveBeenCalled();
 	});
+	it("lists the app's account IDs when the requested account is unknown", async () => {
+		const f = fixture();
+		await expect(
+			resolveCliRunAccount(
+				{ providerId: "claude", backendProfileId: "local", account: "other" },
+				f.dependencies,
+			),
+		).rejects.toThrow("Account IDs in this app: work, personal.");
+		expect(f.dependencies.register).not.toHaveBeenCalled();
+	});
 	it("snapshots the account before backend resolution yields", async () => {
 		const f = fixture();
 		f.dependencies.resolveRoute.mockImplementation(async () => {

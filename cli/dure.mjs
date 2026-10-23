@@ -1955,6 +1955,8 @@ When --space is omitted inside an exact Hmux pane, the new pane opens in the sam
 In a terminal or CI environment without a verified calling pane, the Run executes headlessly.
 A connected current app supplies its selected provider account, including headless Runs.
 --account selects an exact account ID; --account default uses the provider default.
+It accepts app account IDs and the IDs registered on the backend, the same IDs
+runs switch-account accepts; dure recovery get PROVIDER lists registered IDs.
 Without account-selection support, omitted --account uses the provider default.
 The Run receipt executionProfile identifies the credential reference and generation.
 spawn --reuse reuses an existing Agent without creating a new provider.`;
@@ -2172,7 +2174,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
   let interactionPreference;
   let executionProfile;
   try {
-    executionProfile = await resolveAgentRunAccount({ descriptor: loadServer(), providerId, backendProfileId: backend.profile?.id ?? "local", account: opts.account });
+    executionProfile = await resolveAgentRunAccount({ descriptor: loadServer(), providerId, backendProfileId: backend.profile?.id ?? "local", account: opts.account, backend });
     interactionPreference = await resolveAgentRunInteractionPreference(
       presentationTarget.state === "requested" ? loadServer() : undefined,
     );

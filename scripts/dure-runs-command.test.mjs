@@ -231,6 +231,14 @@ describe("Run account switching", () => {
     expect(f.requestBackend.mock.calls.at(-1)[1].body.targetExecutionProfile).toEqual({ kind: "provider_default" });
   });
 
+  it("names the usable registered accounts when the requested one is missing", async () => {
+    const f = accountFixture("codex");
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, account: "display-name" } });
+    expect(report.accountSwitch.error).toMatchObject({ code: "account_switch_account_unavailable" });
+    expect(report.accountSwitch.error.message).toContain("Usable account IDs: work.");
+    expect(report.accountSwitch.error.message).toContain("dure recovery get codex --backend local");
+  });
+
   it.each(["missing", "wrong_provider", "malformed", "duplicate"])("refuses %s account evidence before stopping anything", async (problem) => {
     const f = accountFixture();
     if (problem === "wrong_provider") f.profile.providerId = "codex";
