@@ -7,10 +7,11 @@ use crate::CliError;
 use clap::Args;
 use hmux_client::{
     AgentRuntimeStateDescriptor, ExactSessionProbeResult, MAX_EXACT_SESSION_PROBE_TARGETS,
-    SessionHealth, SessionSelector,
+    SessionHealth, SessionSelector, WorkingDirectoryDescriptor,
 };
 
 pub(crate) const RUNTIME_STATE_CAPABILITY: &str = "exact_session_probe_runtime_state_v1";
+pub(crate) const WORKING_DIRECTORY_CAPABILITY: &str = "exact_session_probe_working_directory_v1";
 
 #[derive(Args, Debug)]
 pub(crate) struct SessionProbeBatchArgs {
@@ -30,6 +31,29 @@ pub(crate) struct SessionProbeBatchArgs {
     /// exact generations. Requires exact_session_probe_runtime_state_v1.
     #[arg(long)]
     pub(crate) include_runtime_state: bool,
+
+    /// Include the Host working directory and its observed output sequence
+    /// for healthy exact generations. Requires
+    /// exact_session_probe_working_directory_v1. A separate flag, because
+    /// older receipt readers refuse keys they did not request.
+    #[arg(long)]
+    pub(crate) include_working_directory: bool,
+}
+
+/// Optional Host observations a probe batch receipt carries.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ReceiptProjections {
+    pub(crate) runtime_state: bool,
+    pub(crate) working_directory: bool,
+}
+
+impl From<&SessionProbeBatchArgs> for ReceiptProjections {
+    fn from(args: &SessionProbeBatchArgs) -> Self {
+        Self {
+            runtime_state: args.include_runtime_state,
+            working_directory: args.include_working_directory,
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -63,9 +87,9 @@ pub(crate) fn parse_selectors(
 pub(crate) fn render(
     results: Vec<ExactSessionProbeResult>,
     json: bool,
-    include_runtime_state: bool,
+    projections: ReceiptProjections,
 ) -> Result<String, serde_json::Error> {
-    let receipt = batch_receipt(results, include_runtime_state);
+    let receipt = batch_receipt(results, projections);
     if json {
         return serde_json::to_string_pretty(&receipt).map(|payload| format!("{payload}\n"));
     }
@@ -116,11 +140,13 @@ struct ExactSessionProbeReceipt {
     output_sequence: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     agent_runtime_state: Option<AgentRuntimeStateDescriptor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    working_directory: Option<WorkingDirectoryDescriptor>,
 }
 
 fn batch_receipt(
     results: Vec<ExactSessionProbeResult>,
-    include_runtime_state: bool,
+    projections: ReceiptProjections,
 ) -> ExactSessionProbeBatchReceipt {
     let results = results
         .into_iter()
@@ -141,8 +167,11 @@ fn batch_receipt(
                         None,
                     );
                 }
-                let include_observation =
-                    include_runtime_state && inspection.health == SessionHealth::Healthy;
+                // Each projection is fenced by the output sequence of the
+                // same exact Host observation, so either one carries it.
+                let healthy = inspection.health == SessionHealth::Healthy;
+                let include_runtime_state = projections.runtime_state && healthy;
+                let include_working_directory = projections.working_directory && healthy;
                 ExactSessionProbeReceipt {
                     session_id: inspection.session_id.clone(),
                     workspace_id: inspection.workspace_id.clone(),
@@ -154,9 +183,13 @@ fn batch_receipt(
                     channel_epoch: Some(inspection.channel_epoch.clone()),
                     host_instance_id: Some(inspection.host_instance_id.clone()),
                     terminal_epoch: Some(inspection.terminal_epoch.clone()),
-                    output_sequence: include_observation.then(|| inspection.output_seq.clone()),
-                    agent_runtime_state: include_observation
+                    output_sequence: (include_runtime_state || include_working_directory)
+                        .then(|| inspection.output_seq.clone()),
+                    agent_runtime_state: include_runtime_state
                         .then(|| inspection.agent_runtime_state.clone())
+                        .flatten(),
+                    working_directory: include_working_directory
+                        .then(|| inspection.working_directory.clone())
                         .flatten(),
                 }
             }
@@ -198,6 +231,7 @@ fn receipt_without_generation(
         terminal_epoch: None,
         output_sequence: None,
         agent_runtime_state: None,
+        working_directory: None,
     }
 }
 

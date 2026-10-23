@@ -114,6 +114,7 @@ const CLI_CAPABILITIES: &[&str] = &[
     "session_probe_status_v1",
     "exact_session_probe_batch_v1",
     exact_probe_batch::RUNTIME_STATE_CAPABILITY,
+    exact_probe_batch::WORKING_DIRECTORY_CAPABILITY,
     "session_retirement_v1",
     "exited_session_cleanup_v1",
     "process_generation_probe_v1",
@@ -148,6 +149,7 @@ const CLI_CAPABILITIES: &[&str] = &[
     "session_probe_status_v1",
     "exact_session_probe_batch_v1",
     exact_probe_batch::RUNTIME_STATE_CAPABILITY,
+    exact_probe_batch::WORKING_DIRECTORY_CAPABILITY,
     "session_retirement_v1",
     runtime_status::RUNTIME_STATUS_CAPABILITY,
 ];
@@ -1511,7 +1513,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             )?;
             cli_print!(
                 "{}",
-                exact_probe_batch::render(results, cli.json, args.include_runtime_state)?
+                exact_probe_batch::render(results, cli.json, (&args).into())?
             )?;
         }
         Command::Session {
@@ -4072,7 +4074,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_probe_runtime_state_is_opt_in_and_fenced_by_health() {
+    fn exact_probe_projections_are_opt_in_and_fenced_by_health() {
         let mut inspection = SessionInspection::unprobed(descriptor());
         inspection.health = SessionHealth::Healthy;
         inspection.agent_runtime_state = Some(
@@ -4090,6 +4092,17 @@ mod tests {
             }))
             .unwrap(),
         );
+        inspection.working_directory = Some(hmux_client::WorkingDirectoryDescriptor {
+            terminal_epoch: "terminal-1".into(),
+            observed_through_output_seq: "8".into(),
+            path: "/repo/worktree".into(),
+            source: hmux_client::WorkingDirectorySource::ProcessInspection,
+        });
+        let projections =
+            |runtime_state, working_directory| exact_probe_batch::ReceiptProjections {
+                runtime_state,
+                working_directory,
+            };
         let render = |inspection: SessionInspection, include| {
             serde_json::from_str::<serde_json::Value>(
                 &exact_probe_batch::render(
@@ -4104,15 +4117,32 @@ mod tests {
             .unwrap()["results"][0]
                 .clone()
         };
-        let current = render(inspection.clone(), true);
+        let current = render(inspection.clone(), projections(true, false));
         assert_eq!(current["outputSequence"], "8");
         assert_eq!(
             current["agentRuntimeState"]["progress"]["report"]["phase"],
             "thinking"
         );
-        let legacy = render(inspection.clone(), false);
+        // Readers through 0.2.52 refuse unrequested keys, so the runtime
+        // state flag alone never adds the working directory.
+        assert!(current.get("workingDirectory").is_none());
+        let directory = render(inspection.clone(), projections(false, true));
+        assert_eq!(directory["outputSequence"], "8");
+        assert_eq!(
+            directory["workingDirectory"],
+            serde_json::json!({
+                "terminal_epoch": "terminal-1", "observed_through_output_seq": "8",
+                "path": "/repo/worktree", "source": "process_inspection",
+            })
+        );
+        assert!(directory.get("agentRuntimeState").is_none());
+        let both = render(inspection.clone(), projections(true, true));
+        assert_eq!(both["workingDirectory"]["path"], "/repo/worktree");
+        assert_eq!(both["agentRuntimeState"]["activity"], "working");
+        let legacy = render(inspection.clone(), projections(false, false));
         assert!(legacy.get("agentRuntimeState").is_none());
         assert!(legacy.get("outputSequence").is_none());
+        assert!(legacy.get("workingDirectory").is_none());
         assert_eq!(legacy["liveness"], "alive");
         for health in [
             SessionHealth::GenerationChanged,
@@ -4122,8 +4152,9 @@ mod tests {
             SessionHealth::Exited,
         ] {
             inspection.health = health;
-            let unavailable = render(inspection.clone(), true);
+            let unavailable = render(inspection.clone(), projections(true, true));
             assert!(unavailable.get("agentRuntimeState").is_none());
+            assert!(unavailable.get("workingDirectory").is_none());
             assert!(unavailable.get("outputSequence").is_none());
             if health == SessionHealth::Unprobed {
                 assert!(unavailable.get("terminalEpoch").is_none());
@@ -4141,6 +4172,7 @@ mod tests {
         assert!(CLI_CAPABILITIES.contains(&"session_probe_status_v1"));
         assert!(CLI_CAPABILITIES.contains(&"exact_session_probe_batch_v1"));
         assert!(CLI_CAPABILITIES.contains(&exact_probe_batch::RUNTIME_STATE_CAPABILITY));
+        assert!(CLI_CAPABILITIES.contains(&exact_probe_batch::WORKING_DIRECTORY_CAPABILITY));
         assert!(CLI_CAPABILITIES.contains(&"generation_fenced_kill_v1"));
         assert!(CLI_CAPABILITIES.contains(&"managed_generation_fenced_kill_v1"));
         assert!(CLI_CAPABILITIES.contains(&"managed_rehost_exact_fence_v1"));

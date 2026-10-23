@@ -66,13 +66,31 @@ describe("dure ls canonical session projection", () => {
         },
       }),
     ], {
-      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+      capabilities: [
+        "bounded_session_catalog_query_v1",
+        "exact_session_probe_runtime_state_v1",
+        "exact_session_probe_working_directory_v1",
+      ],
     });
 
     const result = runSessionCli(root, hmux, ["ls"]);
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain("/home/user/project");
+  });
+
+  it("leaves CWD empty when Hmux predates the working directory probe", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [hmuxSession(1)], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+    });
+
+    const result = runSessionCli(root, hmux, ["ls", "--json"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const [session] = JSON.parse(result.stdout).sessions;
+    expect(session.liveness.state).toBe("alive");
+    expect(session.cwd).toBeNull();
   });
 
   it("shows CWD in JSON output when working directory is available", () => {
@@ -87,7 +105,10 @@ describe("dure ls canonical session projection", () => {
         },
       }),
     ], {
-      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+      capabilities: [
+        "bounded_session_catalog_query_v1",
+        "exact_session_probe_working_directory_v1",
+      ],
     });
 
     const result = runSessionCli(root, hmux, ["ls", "--json"]);

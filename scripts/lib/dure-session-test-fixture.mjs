@@ -123,7 +123,15 @@ if (args.includes("probe-batch")) {
   const targetsIndex = args.indexOf("--targets-json");
   const targets = JSON.parse(args[targetsIndex + 1]);
   const overrides = ${JSON.stringify(probeStatuses)};
-  const supportsRuntimeState = ${JSON.stringify(capabilities)}.includes("exact_session_probe_runtime_state_v1");
+  const capabilities = ${JSON.stringify(capabilities)};
+  const runtimeState = args.includes("--include-runtime-state");
+  const workingDirectory = args.includes("--include-working-directory");
+  // Like real Hmux: a predating binary refuses the flag, and each projection
+  // follows only its own requested flag.
+  if (
+    (runtimeState && !capabilities.includes("exact_session_probe_runtime_state_v1")) ||
+    (workingDirectory && !capabilities.includes("exact_session_probe_working_directory_v1"))
+  ) process.exit(2);
   const results = targets.map((target) => {
     const session = Array.isArray(payload)
       ? payload.find(
@@ -153,14 +161,14 @@ if (args.includes("probe-batch")) {
         hostInstanceId: session.host_instance_id,
         terminalEpoch: session.terminal_epoch,
       });
-      if (supportsRuntimeState) {
-        if (session.workingDirectory) {
+      if (probeStatus === "healthy") {
+        if (workingDirectory && session.workingDirectory) {
           result.workingDirectory = session.workingDirectory;
         }
-        if (session.agentRuntimeState) {
+        if (runtimeState && session.agentRuntimeState) {
           result.agentRuntimeState = session.agentRuntimeState;
         }
-        if (session.output_seq) {
+        if ((runtimeState || workingDirectory) && session.output_seq) {
           result.outputSequence = session.output_seq;
         }
       }
@@ -206,12 +214,15 @@ if (args.includes("probe-batch")) {
       identity(left) < identity(right) ? -1 : identity(left) > identity(right) ? 1 : 0,
     );
   const selected = [...prioritized, ...remaining].slice(0, query.maxItems);
+  // Real Hmux observes no working directory without a probe.
+  const unprobed = (session) =>
+    args.includes("--no-probe") ? { ...session, workingDirectory: null } : session;
   const serialize = () =>
     JSON.stringify({
       schemaVersion: 1,
       complete: true,
       prioritizedItems: prioritized.length,
-      sessions: selected,
+      sessions: selected.map(unprobed),
       truncation: {
         items: selected.length < eligible.length,
         omittedCount: eligible.length - selected.length,

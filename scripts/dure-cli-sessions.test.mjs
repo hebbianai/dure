@@ -138,7 +138,9 @@ describe("dure sessions list/show/read", () => {
 
   it("reads fenced runtime facts without app server.json and separates client projection", () => {
     const root = temporaryRoot();
-    const hmux = installHmuxStub(root, [hmuxSession()]);
+    const hmux = installHmuxStub(root, [hmuxSession()], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_working_directory_v1"],
+    });
     writeRegistry(root, [
       {
         id: "agent-1",

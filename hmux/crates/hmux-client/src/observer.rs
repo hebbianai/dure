@@ -100,7 +100,7 @@ impl ObserverAttachOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectorySource {
     LaunchFallback,
@@ -110,7 +110,7 @@ pub enum WorkingDirectorySource {
     ProcessInspection,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkingDirectoryDescriptor {
     pub terminal_epoch: String,
     pub observed_through_output_seq: String,

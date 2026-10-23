@@ -35,6 +35,7 @@ const BOUNDED_BACKEND_SESSION_CATALOG_CAPABILITY =
 const BOUNDED_HMUX_SESSION_CATALOG_CAPABILITY =
   "bounded_session_catalog_query_v1";
 const HMUX_PROBE_RUNTIME_STATE_CAPABILITY = "exact_session_probe_runtime_state_v1";
+const HMUX_PROBE_WORKING_DIRECTORY_CAPABILITY = "exact_session_probe_working_directory_v1";
 const HMUX_CAPABILITY_OUTPUT_BYTES = 64 * 1024;
 const LOCAL_HMUX_PROBE_PROCESS_GRACE_MS = 100;
 const MAX_SESSION_QUERY_TRANSPORT_BYTES =
@@ -348,7 +349,8 @@ const PROBE_STATUSES_WITH_GENERATION = new Set([
   "generation_changed",
 ]);
 
-function parseProbeBatchPayload(result, targets, includeRuntimeState) {
+/** Optional receipt keys exist only when their flag was requested; any other key is refused. */
+function parseProbeBatchPayload(result, targets, projections) {
   let payload;
   try {
     payload = JSON.parse(result.stdout || "");
@@ -370,7 +372,9 @@ function parseProbeBatchPayload(result, targets, includeRuntimeState) {
     "liveness",
     "status",
     "errorCode",
-    ...(includeRuntimeState ? ["outputSequence", "agentRuntimeState", "workingDirectory"] : []),
+    ...(projections.runtimeState || projections.workingDirectory ? ["outputSequence"] : []),
+    ...(projections.runtimeState ? ["agentRuntimeState"] : []),
+    ...(projections.workingDirectory ? ["workingDirectory"] : []),
     ...GENERATION_FIELDS.map(([field]) => field),
   ]);
   for (let index = 0; index < payload.results.length; index += 1) {
@@ -391,6 +395,8 @@ function parseProbeBatchPayload(result, targets, includeRuntimeState) {
       (receipt.outputSequence !== undefined &&
         (receipt.status !== "healthy" || !decimal(receipt.outputSequence))) ||
       (receipt.agentRuntimeState !== undefined &&
+        (receipt.status !== "healthy" || !decimal(receipt.outputSequence))) ||
+      (receipt.workingDirectory !== undefined &&
         (receipt.status !== "healthy" || !decimal(receipt.outputSequence)))
     ) {
       return null;
@@ -582,6 +588,7 @@ export async function collectSessionQuery({
   let bindingSource = "local";
   let bindingHostId = "local";
   let includeRuntimeState = false;
+  let includeWorkingDirectory = false;
   if (backend) {
     const profile = backend.profile;
     if (backend.error || !profile) {
@@ -700,6 +707,7 @@ export async function collectSessionQuery({
           capabilityDurationMs, limits, { capability: HMUX_SESSION_PAGINATION_CAPABILITY });
       }
       includeRuntimeState = supportsHmuxCapability(manifest, HMUX_PROBE_RUNTIME_STATE_CAPABILITY);
+      includeWorkingDirectory = supportsHmuxCapability(manifest, HMUX_PROBE_WORKING_DIRECTORY_CAPABILITY);
     }
     const argv =
       action === "list"
@@ -791,6 +799,7 @@ export async function collectSessionQuery({
               "--probe-budget-ms",
               String(probeWindowMs),
               ...(includeRuntimeState ? ["--include-runtime-state"] : []),
+              ...(includeWorkingDirectory ? ["--include-working-directory"] : []),
             ],
             {
               timeoutMs: Math.max(1, remainingMs),
@@ -800,7 +809,10 @@ export async function collectSessionQuery({
           if (batchResult.kind !== "success") {
             parsed = { ...parsed, sessions: prioritized };
           } else {
-            const receipts = parseProbeBatchPayload(batchResult, targets, includeRuntimeState);
+            const receipts = parseProbeBatchPayload(batchResult, targets, {
+              runtimeState: includeRuntimeState,
+              workingDirectory: includeWorkingDirectory,
+            });
             if (!receipts) {
               parsed = { ...parsed, sessions: prioritized };
             } else {
