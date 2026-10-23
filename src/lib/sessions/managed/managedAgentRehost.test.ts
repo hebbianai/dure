@@ -3209,4 +3209,27 @@ describe("managed Agent one-shot rehost", () => {
 			inspectManagedAgentCredentialSwitch("agent-managed", null),
 		).rejects.toThrow("credential_selection_unchanged");
 	});
+
+	it("lets a queued settings change keep the current credential", async () => {
+		seedAgentWithAccounts(
+			{
+				accountId: "account-crispy",
+				credentialId: "account-crispy",
+				runtimeBinding: credentialBinding("account-crispy"),
+			},
+			[codexAccount("crispy")],
+		);
+
+		await expect(
+			inspectManagedAgentCredentialSwitch(
+				"agent-managed",
+				"account-crispy",
+				undefined,
+				{ allowUnchangedCredential: true },
+			),
+		).resolves.toMatchObject({
+			sourceCredentialId: "account-crispy",
+			targetCredentialId: "account-crispy",
+		});
+	});
 });

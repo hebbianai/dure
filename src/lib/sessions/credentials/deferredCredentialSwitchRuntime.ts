@@ -330,10 +330,12 @@ export async function scheduleBusyAgentCredentialSwitch(
 			targetCredentialId = previous.targetCredentialId;
 		}
 	}
+	// A settings change queued behind a busy turn keeps the current account.
 	const inspection = await inspectManagedAgentCredentialSwitch(
 		agentId,
 		targetCredentialId,
 		panelId,
+		launch ? { allowUnchangedCredential: true } : undefined,
 	);
 	if (launch && inspection.conversationId !== launch.conversationId)
 		return null;

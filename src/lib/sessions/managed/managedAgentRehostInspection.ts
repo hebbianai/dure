@@ -342,16 +342,25 @@ export async function inspectDisconnectedManagedAgentRecovery(
 
 /** Compatibility name for callers that already selected an exited conversation. */
 
+export interface ManagedAgentCredentialSwitchInspectionOptions {
+	/** A queued launch-settings change keeps the current credential. */
+	readonly allowUnchangedCredential?: boolean;
+}
+
 async function inspectManagedAgentCredentialReplacement(
 	name: string,
 	targetCredentialId: string | null,
 	requestedPanelId?: string,
+	options: ManagedAgentCredentialSwitchInspectionOptions = {},
 ): Promise<ManagedAgentCredentialSwitchInspection> {
 	const { target, state, projectId, conversationId } =
 		await inspectManagedAgentSourceWhenReady(name);
 	const sourceCredentialId =
 		target.binding.credentialId ?? target.agent.credentialId;
-	if ((sourceCredentialId ?? null) === targetCredentialId) {
+	if (
+		!options.allowUnchangedCredential &&
+		(sourceCredentialId ?? null) === targetCredentialId
+	) {
 		throw new PaneCommandError(
 			"invalid_request",
 			"credential_selection_unchanged",
@@ -396,16 +405,19 @@ async function inspectManagedAgentCredentialReplacement(
 	};
 }
 
-/** Inspect a healthy managed source for an explicit credential change. */
+/** Inspect a healthy managed source for an explicit credential change, or
+ * for queued launch settings that keep the current credential. */
 export function inspectManagedAgentCredentialSwitch(
 	name: string,
 	targetCredentialId: string | null,
 	requestedPanelId?: string,
+	options?: ManagedAgentCredentialSwitchInspectionOptions,
 ): Promise<ManagedAgentCredentialSwitchInspection> {
 	return inspectManagedAgentCredentialReplacement(
 		name,
 		targetCredentialId,
 		requestedPanelId,
+		options,
 	);
 }
 
