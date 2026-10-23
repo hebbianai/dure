@@ -1,3 +1,4 @@
+import { deferredWake } from "./deferred-wake.mjs";
 import { queryTrackedMessage, readMessageTracking } from "./tracked-message.mjs";
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -172,6 +173,7 @@ export async function collectWait(options, {
         observation = report.receipt;
         const met = options.until === "turn_started" ? observation.wakeTurnStarted : observation[options.until];
         if (met) return result("completed", 0);
+        diagnostic = deferredWake(observation.deliveries) ?? undefined;
         if (options.until === "turn_started" && observation.runtimeObservation === "generation_changed") return result("unknown", 2, "wait_generation_changed", "Provider evidence belongs to a replaced generation; inbox facts remain queryable.");
       } else if (subject === "run") {
         if (!report.receipt) return result("unknown", 2, "wait_operation_not_found", "No receipt was found for this exact execution request.");
@@ -243,6 +245,6 @@ export async function runWaitCommand(args, { resolveContext, hmuxCommand, signal
     report = { apiVersion: "dure.wait/v1", state: "unknown", error: { code: "wait_arguments_invalid", message: error.message }, exitCode: 2 };
   }
   output(options?.json || args.includes("--json") ? `${JSON.stringify(report)}\n`
-    : `${report.subject ?? "wait"}: ${report.state}${report.error ? ` — ${report.error.code}: ${report.error.message}` : " (selected condition only; other completion states are not implied)"}\n`);
+    : `${report.subject ?? "wait"}: ${report.state}${report.error ? ` — ${report.error.code}: ${report.error.message}` : " (selected condition only; other completion states are not implied)"}\n${report.diagnostic?.message ? `${report.diagnostic.message}\n` : ""}`);
   return report.exitCode;
 }

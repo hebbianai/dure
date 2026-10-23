@@ -13,6 +13,30 @@ pub(crate) enum AgentPromptWaitOutcome {
     TimedOut,
 }
 
+/// An unsubmitted draft refuses a prompt to an existing conversation. Name
+/// it, so the sender learns the agent reads its inbox once that input is
+/// submitted, rather than that the provider runtime changed. A fresh prompt
+/// keeps its own reason: any earlier write has used its one-shot authority.
+#[cfg(feature = "terminal-state-stream")]
+pub(crate) fn agent_prompt_refusal(
+    host: &hmux_host::session_host::SessionHost,
+    fence: &hmux_host::local_protocol::SessionFence,
+    target: &hmux_host::terminal_replay::AgentPromptTarget,
+    reason: OperationReceiptReason,
+) -> OperationReceiptReason {
+    if reason == OperationReceiptReason::AgentRuntimeChanged
+        && matches!(
+            target,
+            hmux_host::terminal_replay::AgentPromptTarget::ExistingConversation { .. }
+        )
+        && matches!(host.has_unsubmitted_controller_draft(fence), Ok(true))
+    {
+        OperationReceiptReason::UnsubmittedDraft
+    } else {
+        reason
+    }
+}
+
 impl AgentPromptWaitOutcome {
     pub(crate) fn not_written_reason(self, host_exiting: bool) -> Option<OperationReceiptReason> {
         match self {

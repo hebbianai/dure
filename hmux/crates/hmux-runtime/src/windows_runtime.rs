@@ -1985,6 +1985,15 @@ impl WindowsServerState {
             wait.not_written_reason(
                 self.stopping.load(Ordering::Acquire) || exact_host_exiting,
             )
+            .map(|reason| match admission.agent_prompt() {
+                Some((target, _)) => crate::agent_prompt_admission::agent_prompt_refusal(
+                    &host,
+                    &self.fence,
+                    target,
+                    reason,
+                ),
+                None => reason,
+            })
         }) {
             let receipt = windows_terminal::terminal_record(
                 &host,

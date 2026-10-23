@@ -92,8 +92,14 @@ impl<'a> PreparedInput<'a> {
                     .prepare_agent_prompt(fence, target)
                     .map_err(InputTransactionFailure::before_write)?
                 else {
+                    let reason = crate::agent_prompt_admission::agent_prompt_refusal(
+                        host,
+                        fence,
+                        target,
+                        OperationReceiptReason::AgentRuntimeChanged,
+                    );
                     return Ok(InputStep::Complete(InputTransaction {
-                        outcome: self.failure(OperationReceiptReason::AgentRuntimeChanged),
+                        outcome: self.failure(reason),
                         runtime_state: None,
                         admitted_agent_runtime_revision: None,
                     }));

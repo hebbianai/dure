@@ -5388,6 +5388,46 @@ fn existing_conversation_agent_prompt_requires_exact_idle_identity_and_rearms() 
     fixture.stop("existing-conversation");
 }
 
+/// An idle agent's wake prompt must never merge into a person's half-typed
+/// line. The refusal names that draft, so the sender knows the agent reads
+/// its inbox once the person submits, not that the provider runtime changed.
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn existing_conversation_agent_prompt_names_an_unsubmitted_person_draft() {
+    let fixture = UnixAgentPromptFixture::new("existing-draft");
+    let conversation_id = "conversation-draft";
+    fixture.report_waiting(conversation_id);
+    let connection = fixture
+        .created
+        .session()
+        .connect_with_options(TerminalSurfaceAttachment::connection_options(
+            TerminalSurfaceAccess::Writer,
+            None,
+        ))
+        .unwrap();
+    let mut person = TerminalSurfaceAttachment::from_connection(connection).unwrap();
+    person
+        .send_text_confirmed("half a thought".into(), Duration::from_secs(3))
+        .unwrap();
+
+    let expected = ProviderConversationIdentitySeed::new("codex", conversation_id).unwrap();
+    let mut agent = fixture.surface();
+    let error = agent
+        .send_existing_idle_agent_prompt_confirmed(
+            "must not merge".into(),
+            &expected,
+            Duration::from_secs(3),
+        )
+        .expect_err("a person's unsubmitted draft must refuse the agent prompt");
+    assert_eq!(error.code(), "hmux_input_draft_pending");
+    assert_eq!(error.delivery_state(), "not_written");
+    agent.detach().unwrap();
+    person.detach().unwrap();
+    assert!(!fixture.received_prompt.exists());
+
+    fixture.stop("existing-draft");
+}
+
 #[cfg(feature = "terminal-state-stream")]
 #[test]
 fn quiescent_managed_stop_ignores_structured_focus_control_input() {

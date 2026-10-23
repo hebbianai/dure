@@ -86,3 +86,21 @@ test("an exited target names Agents with similar names and the live listing", ()
   expect(message).toContain("dure ls --alive");
   expect(trackedSendFailureMessage(new Error("other failure"), registry, target)).toBe("other failure");
 });
+
+test("a deferred wake explains why no prompt was written, without implying a resend", async () => {
+  const { deferredWake } = await import("../cli/lib/deferred-wake.mjs");
+  const queued = (reasonCode) => [{ wake: { state: "queued_until_next_turn", reasonCode } }];
+  expect(deferredWake(queued("hmux_input_draft_pending"))).toMatchObject({ reason: "wake_deferred", wakeReasonCode: "hmux_input_draft_pending", message: expect.stringContaining("unsubmitted input at its prompt") });
+  expect(deferredWake(queued("hmux_agent_prompt_runtime_changed")).message).toContain("not idle at its prompt");
+  expect(deferredWake([{ wake: { state: "triggered", effectRef: "effect" } }])).toBeNull();
+  expect(deferredWake(undefined)).toBeNull();
+});
+
+test("a message wait names a draft-deferred wake when it times out", async () => {
+  const options = parseWaitArguments(["--message", "/private/receipt.json", "--timeout", "1"]);
+  let time = 0;
+  const deliveries = [{ wake: { state: "queued_until_next_turn", reasonCode: "hmux_input_draft_pending" } }];
+  const result = await collectWait(options, { backend, tracking: { query: { interactionId: "message" } }, now: () => time, pause: async ms => { time += ms; }, queryMessage: async () => ({ receipt: { observed: false, wakeTurnStarted: false, deliveries } }) });
+  expect(result.exitCode).toBe(124);
+  expect(result.diagnostic).toMatchObject({ reason: "wake_deferred", wakeReasonCode: "hmux_input_draft_pending" });
+});

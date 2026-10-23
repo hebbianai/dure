@@ -1979,6 +1979,14 @@ fn require_written_agent_prompt(
                 "the Host refused the agent prompt because the provider runtime changed",
             ))
         }
+        Some(input_receipt::Outcome::Refused(refused))
+            if refused.reason == InputRefusalReason::UnsubmittedDraft as i32 =>
+        {
+            Err(ClientError::transport(
+                "hmux_input_draft_pending",
+                "the target terminal has unsubmitted input from its user; nothing was written",
+            ))
+        }
         Some(input_receipt::Outcome::Refused(refused)) => Err(ClientError::transport(
             "hmux_agent_prompt_refused",
             format!(

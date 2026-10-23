@@ -1,5 +1,6 @@
 import { agentDisplayName } from "./client-registry.mjs";
 import { readUtf8Input, readUtf8Stdin } from "./text-input.mjs";
+import { deferredWake } from "./deferred-wake.mjs";
 
 const SEND_HELP = `dure send — Send text to an agent
 
@@ -139,7 +140,8 @@ function printDelivery(agent, input, opts) {
     return;
   }
   if (input?.receipt?.kind === "durable_message") {
-    process.stdout.write(`Message accepted: ${input.receipt.interactionId}\nTrack: dure wait --message ${JSON.stringify(input.receipt.receiptPath)} --json\n`);
+    const deferred = deferredWake(input.receipt.deliveries);
+    process.stdout.write(`Message accepted: ${input.receipt.interactionId}\n${deferred ? `${deferred.message}\n` : ""}Track: dure wait --message ${JSON.stringify(input.receipt.receiptPath)} --json\n`);
     return;
   }
   if (input?.receipt?.kind === "structured_chat") {
