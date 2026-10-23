@@ -33,7 +33,8 @@ const interactionReadSchema = {
   properties: {
     schemaVersion: { type: "integer", const: 1 },
     authority: { type: "object", required: ["workspaceId"], properties: { workspaceId: identitySchema, tenantRef: identitySchema }, additionalProperties: false },
-    interactionId: identitySchema, participant: identitySchema, readCapability: identitySchema,
+    interactionId: identitySchema, participant: identitySchema,
+    readCapability: { ...identitySchema, description: "As the worker, copy context deliveryCapability with the endpointFence; as the author, the Dispatch interactionCapability." },
     endpointFence: {
       type: "object", additionalProperties: false,
       description: "Copy the exact worker endpointFence from dispatch context when reading as that worker; omit when reading as author.",

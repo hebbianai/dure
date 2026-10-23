@@ -9,24 +9,8 @@ impl StoreState {
         &self,
         request: &GetInteractionRequest,
     ) -> Option<InteractionProgressReceipt> {
-        // Readers use existing grants/fences. An author can also inspect their
-        // own message with the exact dispatch's existing interaction authority.
-        let interaction = self.interaction(request).or_else(|| {
-            self.interactions
-                .iter()
-                .find(|interaction| {
-                    let common = interaction.common();
-                    request.endpoint_fence.is_none()
-                        && common.id == request.interaction_id
-                        && common.target.authority == request.authority
-                        && common.author == request.participant
-                        && self.dispatches.iter().any(|dispatch| {
-                            dispatch.target == common.target
-                                && dispatch.interaction_capability == request.read_capability
-                        })
-                })
-                .cloned()
-        })?;
+        // Progress uses the same reader authority as the exact interaction read.
+        let interaction = self.interaction(request)?;
         let common = interaction.common();
         let dispatch = self
             .dispatches

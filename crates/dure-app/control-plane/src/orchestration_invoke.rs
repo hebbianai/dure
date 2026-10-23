@@ -160,7 +160,7 @@ pub(crate) async fn invoke_orchestration(
                     .interaction_service()
                     .get(request)
                     .await
-                    .map_err(orchestration_service_error)?,
+                    .map_err(interaction_read_error)?,
             )
             .map_err(|_| BackendDispatchError::from("orchestration_receipt_invalid"))?
         }
@@ -173,7 +173,7 @@ pub(crate) async fn invoke_orchestration(
                     .interaction_service()
                     .progress(request)
                     .await
-                    .map_err(orchestration_service_error)?,
+                    .map_err(interaction_read_error)?,
             )
             .map_err(|_| BackendDispatchError::from("orchestration_receipt_invalid"))?
         }

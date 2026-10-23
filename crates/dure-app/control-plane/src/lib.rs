@@ -3557,6 +3557,18 @@ fn exact_message_error(error: ServiceError) -> BackendDispatchError {
     orchestration_service_error(error).with_disposition(disposition)
 }
 
+/// An interaction commits with its Event, so one this reader cannot see now
+/// will not appear by repeating the same read.
+fn interaction_read_error(error: ServiceError) -> BackendDispatchError {
+    let not_found = matches!(error, ServiceError::NotFound { .. });
+    let error = orchestration_service_error(error);
+    if not_found {
+        error.with_disposition(BackendFailureDispositionV1::Terminal)
+    } else {
+        error
+    }
+}
+
 fn exact_decision_error(error: ServiceError) -> BackendDispatchError {
     let disposition = match &error {
         ServiceError::Invalid { .. } => BackendFailureDispositionV1::Terminal,

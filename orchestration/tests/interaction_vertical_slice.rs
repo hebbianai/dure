@@ -1163,6 +1163,98 @@ async fn completed_dispatch_accepts_only_informational_updates_without_changing_
 }
 
 #[tokio::test]
+async fn a_fenced_worker_reads_a_post_completion_update_with_its_dispatch_context() {
+    let target = target();
+    let mut completed = dispatch(&target);
+    completed.state = DispatchState::Completed;
+    completed.revision = Revision::new(2).unwrap();
+    let service = InteractionService::new(in_memory_store(vec![completed]).unwrap());
+    // Exact-session updates address only the worker, with its inbox capability.
+    let mut update = decision_request(&target);
+    update.idempotency_key = "exact-session-update".into();
+    update.expected_dispatch_revision = Revision::new(2).unwrap();
+    let mut common = update.interaction.common().clone();
+    common.author = participant("participant.coordinator");
+    common.audience = audience(vec![(
+        "participant.worker.reviewer",
+        "capability.inbox.worker",
+        vec!["capability.inbox.worker"],
+    )]);
+    update.interaction = InteractionDraft::Message {
+        common,
+        purpose: MessagePurpose::Update,
+    };
+    service.open(update).await.unwrap();
+    let inbox = service.read_events(worker_read(&target)).await.unwrap();
+    assert_eq!(inbox.events.len(), 1);
+
+    let read = |read_capability: &str, endpoint_fence: Option<WorkerEndpointFence>| {
+        GetInteractionRequest {
+            schema_version: INTERACTION_SCHEMA_VERSION,
+            authority: target.authority.clone(),
+            interaction_id: reference("decision-1", InteractionId::new),
+            participant: participant("participant.worker.reviewer"),
+            read_capability: capability(read_capability),
+            endpoint_fence,
+        }
+    };
+    for read_capability in ["capability.inbox.worker", "capability.open.interaction"] {
+        let message = service
+            .get(read(read_capability, Some(endpoint_fence(&target))))
+            .await
+            .unwrap();
+        assert!(matches!(
+            message,
+            InteractionRecord::Message {
+                purpose: MessagePurpose::Update,
+                ..
+            }
+        ));
+    }
+    let not_found = Err(ServiceError::NotFound {
+        resource: "interaction",
+    });
+    assert_eq!(
+        service
+            .get(read("capability.other", Some(endpoint_fence(&target))))
+            .await,
+        not_found
+    );
+    // The Dispatch capability alone does not stand in for the worker fence.
+    assert_eq!(
+        service.get(read("capability.open.interaction", None)).await,
+        not_found
+    );
+    let mut wrong_fence = endpoint_fence(&target);
+    wrong_fence.acknowledgement_capability = capability("capability.ack.other");
+    assert_eq!(
+        service
+            .get(read("capability.open.interaction", Some(wrong_fence)))
+            .await,
+        not_found
+    );
+
+    let mut author = read("capability.open.interaction", None);
+    author.participant = participant("participant.coordinator");
+    assert!(service.get(author.clone()).await.is_ok());
+    assert!(service.progress(author).await.is_ok());
+}
+
+fn worker_read(target: &InteractionTarget) -> ReadEventsRequest {
+    ReadEventsRequest {
+        schema_version: INTERACTION_SCHEMA_VERSION,
+        authority: target.authority.clone(),
+        target: Some(target.clone()),
+        participant: participant("participant.worker.reviewer"),
+        delivery_capability: capability("capability.inbox.worker"),
+        endpoint_fence: Some(endpoint_fence(target)),
+        after: EventCursor::BEGINNING,
+        acknowledgement: None,
+        limit: 10,
+    }
+}
+
+#[tokio::test]
 async fn completion_rejects_a_replaced_endpoint_session_before_any_state_change() {
     let target = target();
     let service = InteractionService::new(in_memory_store(vec![dispatch(&target)]).unwrap());

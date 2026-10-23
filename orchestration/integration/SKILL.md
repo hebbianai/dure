@@ -83,9 +83,15 @@ destination context resolved above, not the sender's current context:
 }
 ```
 
-For a worker reader, instead copy its audience readCapability and participant,
-and include its complete observed endpointFence. Never put capabilities in logs
-or feedback reports.
+For a worker reader, use its context participant, its complete observed
+endpointFence, and its context deliveryCapability as readCapability. This also
+reads updates opened after completion; current backends also accept the worker's
+interactionCapability there. Never put capabilities in logs or feedback reports.
+
+Do not repeat a get or progress read that returned
+`orchestration_record_not_found`: an interaction commits with its Event, so the
+same read cannot find it later. Check the participant, readCapability and
+endpointFence instead.
 
 The result separates acceptance, each delivery's queued/read/acknowledged state,
 the wake receipt, and Dispatch completion. `observed` means an authenticated

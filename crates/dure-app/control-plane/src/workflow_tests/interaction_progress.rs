@@ -126,3 +126,87 @@ async fn progress_tracks_runtime_change_read_ack_and_completion_across_sqlite_re
     );
     assert_eq!(deliverer.requests().len(), 1);
 }
+
+#[tokio::test]
+async fn a_worker_reads_a_post_completion_message_with_its_dispatch_context() {
+    let (_root, state, _launcher, _deliverer) = fixture_with_delivery(
+        Vec::new(),
+        vec![DeliveryOutcome::Succeed, DeliveryOutcome::Succeed],
+    )
+    .await;
+    let (context, body) = prepare_exact_session_message(&state).await;
+    invoke_orchestration(&state, "post-completion-complete", "dispatch.complete", json!({
+        "schemaVersion": 1, "idempotencyKey": "post-completion-complete", "messageId": "post-completion-report",
+        "target": context["target"], "expectedDispatchRevision": context["dispatchRevision"],
+        "completedBy": context["participant"], "endpointFence": context["endpointFence"],
+        "audience": { "grants": [context["coordinatorGrant"]] },
+        "completionCapability": context["completionCapability"], "title": "Completed",
+        "resultMarkdown": "Verified the work.", "completedAtMs": 1_050
+    })).await;
+    let opened = invoke_orchestration(
+        &state,
+        "post-completion-open",
+        "interaction.message.open.exact-session",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(opened["receipt"]["dispatchState"], "completed");
+    let read = |participant: &Value, read_capability: &Value, endpoint_fence: Option<&Value>| {
+        let mut query = json!({
+            "schemaVersion": 1, "authority": context["target"]["authority"],
+            "interactionId": body["interactionId"], "participant": participant,
+            "readCapability": read_capability
+        });
+        if let Some(fence) = endpoint_fence {
+            query["endpointFence"] = fence.clone();
+        }
+        query
+    };
+    for (request_id, query) in [
+        (
+            "worker-inbox-read",
+            read(
+                &context["participant"],
+                &context["deliveryCapability"],
+                Some(&context["endpointFence"]),
+            ),
+        ),
+        (
+            "worker-dispatch-read",
+            read(
+                &context["participant"],
+                &context["interactionCapability"],
+                Some(&context["endpointFence"]),
+            ),
+        ),
+        (
+            "author-read",
+            read(
+                &context["coordinatorGrant"]["participant"],
+                &context["interactionCapability"],
+                None,
+            ),
+        ),
+    ] {
+        let message = invoke_orchestration(&state, request_id, "interaction.get", query).await;
+        assert_eq!(message["receipt"]["kind"], "message");
+        assert_eq!(message["receipt"]["common"]["id"], body["interactionId"]);
+    }
+    let error = dispatch(
+        &state,
+        &orchestration_backend_request(
+            &state,
+            "worker-unknown-read",
+            "interaction.get",
+            read(
+                &context["participant"],
+                &json!("capability-unknown"),
+                Some(&context["endpointFence"]),
+            ),
+        ),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "orchestration_record_not_found");
+    assert_eq!(error.disposition, BackendFailureDispositionV1::Terminal);
+}
