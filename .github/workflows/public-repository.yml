@@ -394,6 +394,28 @@ jobs:
       - name: Lint shared protocol
         run: cargo clippy --locked --manifest-path crates/dure-hub-protocol/Cargo.toml --all-targets -- -D warnings
 
+  hmux-cli:
+    name: Hmux CLI checks (informational)
+    needs: plan
+    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: hmux
+          shared-key: hmux-cli-ubuntu
+      - name: Build hmux-cli and hmux-runtime
+        run: cargo build --locked --manifest-path hmux/Cargo.toml --package hmux-cli --package hmux-runtime
+      - name: Test hmux-cli
+        run: cargo test --locked --manifest-path hmux/Cargo.toml --package hmux-cli
+
   hmux:
     name: Hmux checks
     needs: plan
@@ -469,11 +491,13 @@ jobs:
       - scripts-process
       - mobile-web
       - shared-protocol
+      - hmux-cli
       - hmux
       - app
     # A cancelled pull request run still fails this required check. A cancelled
     # push or dispatch run stays cancelled instead of reporting a failure.
-    if: ${{ github.event_name == 'pull_request' || !cancelled() }}
+    # always() is needed to run even when informational jobs (hmux-cli) fail.
+    if: ${{ always() && (github.event_name == 'pull_request' || !cancelled()) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -498,6 +522,7 @@ jobs:
           SCRIPTS_PROCESS_RESULT: ${{ needs.scripts-process.result }}
           MOBILE_WEB_RESULT: ${{ needs.mobile-web.result }}
           SHARED_PROTOCOL_RESULT: ${{ needs.shared-protocol.result }}
+          HMUX_CLI_RESULT: ${{ needs.hmux-cli.result }}
           HMUX_RESULT: ${{ needs.hmux.result }}
           APP_RESULT: ${{ needs.app.result }}
         run: node scripts/public-ci.mjs check
