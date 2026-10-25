@@ -6,6 +6,10 @@ import {
 	type ExclusiveLockAuthority,
 } from "@/lib/persistence/durableWriteCoordinator";
 import { createReferenceAwareLocalStorage } from "@/lib/persistence/persistStorage";
+import {
+	persistenceStatus,
+	reportPersistenceStatus,
+} from "@/lib/persistence/persistenceStatus";
 
 type TestState = {
 	spaces: Array<{ id: string; name: string }>;
@@ -107,5 +111,71 @@ describe("durable hydration failure", () => {
 			{ id: "space-a", name: "Renamed" },
 		]);
 		expect(storage.values.has("agent-ide:hydration-failed-backup")).toBe(false);
+	});
+
+	it("reports each refused change again after another store's save cleared the error", async () => {
+		const storage = new MemoryStorage();
+		storage.values.set("agent-ide", SAVED);
+		const { store, durable } = createHydratingStore(storage, () => {
+			throw new TypeError("unreadable");
+		});
+		expect(persistenceStatus().phase).toBe("error");
+
+		// Another durable store finishing a save replaces the shared status.
+		reportPersistenceStatus("saved");
+		store.getState().setInstalledAgents(["claude"]);
+		store.getState().setInstalledAgents(["claude", "codex"]);
+		await durable.flush();
+		expect(persistenceStatus().phase).toBe("error");
+
+		reportPersistenceStatus("saved");
+		// Runtime-only updates after that leave the durable slice unchanged.
+		store.getState().setInstalledAgents([]);
+		expect(persistenceStatus().phase).toBe("saved");
+
+		store.setState({ spaces: [{ id: "new", name: "New" }] });
+		await durable.flush();
+		expect(persistenceStatus()).toMatchObject({
+			phase: "error",
+			message: expect.stringContaining("agent-ide:hydration-failed-backup"),
+		});
+		expect(storage.values.get("agent-ide")).toBe(SAVED);
+	});
+
+	it("lifts the quarantine when a later hydration succeeds", async () => {
+		const storage = new MemoryStorage();
+		storage.values.set("agent-ide", SAVED);
+		let readable = false;
+		const { store, durable } = createHydratingStore(storage, (value) => {
+			if (!readable) throw new TypeError("unreadable");
+			return value;
+		});
+		store.setState({ spaces: [{ id: "lost", name: "Unsaved" }] });
+		await durable.flush();
+		expect(storage.values.get("agent-ide")).toBe(SAVED);
+
+		readable = true;
+		await store.persist.rehydrate();
+		expect(store.getState().spaces.map((space) => space.id)).toEqual(["space-a", "space-b"]);
+		store.setState({ spaces: [{ id: "space-a", name: "Renamed" }] });
+		await durable.flush();
+
+		expect(JSON.parse(storage.values.get("agent-ide") ?? "null").state.spaces).toEqual([
+			{ id: "space-a", name: "Renamed" },
+		]);
+	});
+
+	it("keeps the first backup when a later hydration fails again", async () => {
+		const storage = new MemoryStorage();
+		storage.values.set("agent-ide", SAVED);
+		const { store } = createHydratingStore(storage, () => {
+			throw new TypeError("unreadable");
+		});
+		const rewritten = JSON.stringify({ version: 1, state: { spaces: [], layouts: {} } });
+		storage.values.set("agent-ide", rewritten);
+		await store.persist.rehydrate();
+
+		expect(storage.values.get("agent-ide")).toBe(rewritten);
+		expect(storage.values.get("agent-ide:hydration-failed-backup")).toBe(SAVED);
 	});
 });
