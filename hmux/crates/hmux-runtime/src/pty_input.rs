@@ -212,7 +212,7 @@ pub(crate) fn apply_pty_input(
             .map(|_| host.current_output_seq());
         #[cfg(feature = "terminal-state-stream")]
         if let Some(baseline) = input_baseline_output_sequence
-            .filter(|_| input_effect.retains_pending_draft() && prepared.bytes_written() > 0)
+            .filter(|_| input_effect.awaits_echo() && prepared.bytes_written() > 0)
         {
             state.viewport_publication.arm_next_output_after_input(
                 baseline,
