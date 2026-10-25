@@ -5,11 +5,14 @@ import {
 	DurableWriteCoordinator,
 	type ExclusiveLockAuthority,
 } from "@/lib/persistence/durableWriteCoordinator";
-import { createReferenceAwareLocalStorage } from "@/lib/persistence/persistStorage";
 import {
 	persistenceStatus,
 	reportPersistenceStatus,
 } from "@/lib/persistence/persistenceStatus";
+import {
+	createReferenceAwareLocalStorage,
+	recordRejectedEmptyWrite,
+} from "@/lib/persistence/persistStorage";
 
 type TestState = {
 	spaces: Array<{ id: string; name: string }>;
@@ -43,7 +46,10 @@ const immediateAuthority: ExclusiveLockAuthority = {
 const SAVED = JSON.stringify({
 	version: 1,
 	state: {
-		spaces: [{ id: "space-a", name: "Saved" }, { id: "space-b", name: "Other" }],
+		spaces: [
+			{ id: "space-a", name: "Saved" },
+			{ id: "space-b", name: "Other" },
+		],
 		layouts: {},
 	},
 });
@@ -52,7 +58,9 @@ function createHydratingStore(
 	storage: MemoryStorage,
 	migrate: (value: unknown, fromVersion: number) => unknown,
 ) {
-	const durable = createReferenceAwareLocalStorage<Pick<TestState, "spaces" | "layouts">>({
+	const durable = createReferenceAwareLocalStorage<
+		Pick<TestState, "spaces" | "layouts">
+	>({
 		coordinator: new DurableWriteCoordinator(immediateAuthority),
 		storage,
 	});
@@ -68,7 +76,10 @@ function createHydratingStore(
 				name: "agent-ide",
 				version: 2,
 				storage: durable,
-				partialize: (state) => ({ spaces: state.spaces, layouts: state.layouts }),
+				partialize: (state) => ({
+					spaces: state.spaces,
+					layouts: state.layouts,
+				}),
 				migrate: migrate as never,
 				onRehydrateStorage: () => (_state, error) => {
 					if (error) durable.quarantineHydrationFailure("agent-ide", error);
@@ -88,7 +99,9 @@ describe("durable hydration failure", () => {
 		});
 
 		// The store could not adopt the saved state, so it still holds defaults.
-		expect(store.getState().spaces).toEqual([{ id: "default", name: "Space 1" }]);
+		expect(store.getState().spaces).toEqual([
+			{ id: "default", name: "Space 1" },
+		]);
 		// A runtime-only update at startup must not write those defaults over it.
 		store.getState().setInstalledAgents(["claude"]);
 		store.setState({ spaces: [{ id: "new", name: "New" }] });
@@ -103,13 +116,16 @@ describe("durable hydration failure", () => {
 		storage.values.set("agent-ide", SAVED);
 		const { store, durable } = createHydratingStore(storage, (value) => value);
 
-		expect(store.getState().spaces.map((space) => space.id)).toEqual(["space-a", "space-b"]);
+		expect(store.getState().spaces.map((space) => space.id)).toEqual([
+			"space-a",
+			"space-b",
+		]);
 		store.setState({ spaces: [{ id: "space-a", name: "Renamed" }] });
 		await durable.flush();
 
-		expect(JSON.parse(storage.values.get("agent-ide") ?? "null").state.spaces).toEqual([
-			{ id: "space-a", name: "Renamed" },
-		]);
+		expect(
+			JSON.parse(storage.values.get("agent-ide") ?? "null").state.spaces,
+		).toEqual([{ id: "space-a", name: "Renamed" }]);
 		expect(storage.values.has("agent-ide:hydration-failed-backup")).toBe(false);
 	});
 
@@ -156,13 +172,16 @@ describe("durable hydration failure", () => {
 
 		readable = true;
 		await store.persist.rehydrate();
-		expect(store.getState().spaces.map((space) => space.id)).toEqual(["space-a", "space-b"]);
+		expect(store.getState().spaces.map((space) => space.id)).toEqual([
+			"space-a",
+			"space-b",
+		]);
 		store.setState({ spaces: [{ id: "space-a", name: "Renamed" }] });
 		await durable.flush();
 
-		expect(JSON.parse(storage.values.get("agent-ide") ?? "null").state.spaces).toEqual([
-			{ id: "space-a", name: "Renamed" },
-		]);
+		expect(
+			JSON.parse(storage.values.get("agent-ide") ?? "null").state.spaces,
+		).toEqual([{ id: "space-a", name: "Renamed" }]);
 	});
 
 	it("keeps the first backup when a later hydration fails again", async () => {
@@ -171,11 +190,64 @@ describe("durable hydration failure", () => {
 		const { store } = createHydratingStore(storage, () => {
 			throw new TypeError("unreadable");
 		});
-		const rewritten = JSON.stringify({ version: 1, state: { spaces: [], layouts: {} } });
+		const rewritten = JSON.stringify({
+			version: 1,
+			state: { spaces: [], layouts: {} },
+		});
 		storage.values.set("agent-ide", rewritten);
 		await store.persist.rehydrate();
 
 		expect(storage.values.get("agent-ide")).toBe(rewritten);
 		expect(storage.values.get("agent-ide:hydration-failed-backup")).toBe(SAVED);
+	});
+
+	it("refuses writes after a storage read error until a later read succeeds", async () => {
+		const storage = new MemoryStorage();
+		storage.values.set("agent-ide", SAVED);
+		const read = storage.getItem.bind(storage);
+		let readable = false;
+		storage.getItem = (key) => {
+			if (!readable && key === "agent-ide")
+				throw new Error("storage unavailable");
+			return read(key);
+		};
+		const { store, durable } = createHydratingStore(storage, (value) => value);
+
+		expect(store.getState().spaces).toEqual([
+			{ id: "default", name: "Space 1" },
+		]);
+		store.setState({ spaces: [{ id: "new", name: "New" }] });
+		await durable.flush();
+		expect(storage.values.get("agent-ide")).toBe(SAVED);
+		expect(persistenceStatus()).toMatchObject({
+			phase: "error",
+			message: expect.stringContaining("storage unavailable"),
+		});
+
+		readable = true;
+		await store.persist.rehydrate();
+		expect(store.getState().spaces.map((space) => space.id)).toEqual([
+			"space-a",
+			"space-b",
+		]);
+	});
+});
+
+describe("rejected empty writes", () => {
+	it("keep a bounded ring of copies", () => {
+		const storage = new MemoryStorage();
+		for (let index = 0; index < 10; index += 1) {
+			recordRejectedEmptyWrite(storage, "agent-ide", { index });
+		}
+
+		const copies = [...storage.values.keys()].filter((key) =>
+			/^agent-ide:rejected-empty:secondary:\d$/.test(key),
+		);
+		expect(copies).toHaveLength(4);
+		expect(
+			copies
+				.map((key) => JSON.parse(storage.values.get(key) ?? "null").index)
+				.sort(),
+		).toEqual([6, 7, 8, 9]);
 	});
 });

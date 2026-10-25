@@ -1,14 +1,18 @@
-import { t } from "@/lib/i18n";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
+import { t } from "@/lib/i18n";
 import {
 	convergePersistedStorageValues,
 	type DurableStateConvergence,
 	type DurableWriteCoordinator,
 	durableWriteCoordinator,
 } from "@/lib/persistence/durableWriteCoordinator";
-import { reportPersistenceStatus } from "@/lib/persistence/persistenceStatus";
-import { isEmptyPersistedState, hasUserData } from "@/lib/persistence/emptyStateGuard";
+import {
+	hasUserData,
+	isEmptyPersistedState,
+} from "@/lib/persistence/emptyStateGuard";
 import type { PersistedAppState } from "@/lib/persistence/persistedAppState";
+import { reportPersistenceStatus } from "@/lib/persistence/persistenceStatus";
 
 const RETIRED_INTERACTION_INBOX_PROJECTION_KEY =
 	"dure-interaction-inbox-projection-v1";
@@ -129,6 +133,55 @@ function recoverCorruptStoredValue(
 	}
 }
 
+function currentWindowLabel(): string {
+	if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+		return "non-tauri";
+	}
+	try {
+		return getCurrentWebviewWindow().label;
+	} catch {
+		return "unknown";
+	}
+}
+
+const REJECTED_EMPTY_COPIES = 4;
+
+/** Keeps the newest rejected empty writes for inspection in a fixed ring of
+ * slots. Each copy holds two full states, so an unbounded history could fill
+ * the storage every durable write depends on. */
+export function recordRejectedEmptyWrite(
+	storage: Pick<Storage, "getItem" | "setItem" | "removeItem">,
+	name: string,
+	record: Record<string, unknown>,
+): void {
+	const prefix = `${name}:rejected-empty:secondary:`;
+	const next = Number(storage.getItem(`${prefix}next`));
+	const slot =
+		Number.isSafeInteger(next) && next >= 0 ? next % REJECTED_EMPTY_COPIES : 0;
+	storage.setItem(`${prefix}${slot}`, JSON.stringify(record));
+	storage.setItem(`${prefix}next`, String((slot + 1) % REJECTED_EMPTY_COPIES));
+	pruneTimestampedRejectedEmptyCopies(storage, prefix);
+}
+
+/** Earlier builds wrote one key per rejected write, named by its timestamp. */
+function pruneTimestampedRejectedEmptyCopies(
+	storage: Pick<Storage, "removeItem">,
+	prefix: string,
+): void {
+	if (typeof localStorage === "undefined" || storage !== localStorage) return;
+	const timestamped: string[] = [];
+	for (let index = 0; index < localStorage.length; index += 1) {
+		const key = localStorage.key(index);
+		if (
+			key?.startsWith(prefix) &&
+			/\d{4}-\d\d-\d\dT/.test(key.slice(prefix.length))
+		) {
+			timestamped.push(key);
+		}
+	}
+	for (const key of timestamped) storage.removeItem(key);
+}
+
 export function createReferenceAwareLocalStorage<
 	S extends Record<string, unknown>,
 >(
@@ -215,14 +268,14 @@ export function createReferenceAwareLocalStorage<
 		// This guard only applies to the main "agent-ide" store, not to other stores.
 		// Only block writes from secondary windows - main window writes are allowed with a warning.
 		if (
-		name === "agent-ide" &&
-		!userClearFlag() &&
-		serialized !== remote.serialized &&
-		committed &&
-		remote.value
-	) {
-		const candidateState = committed.state as unknown as PersistedAppState;
-		const remoteState = remote.value.state as unknown as PersistedAppState;
+			name === "agent-ide" &&
+			!userClearFlag() &&
+			serialized !== remote.serialized &&
+			committed &&
+			remote.value
+		) {
+			const candidateState = committed.state as unknown as PersistedAppState;
+			const remoteState = remote.value.state as unknown as PersistedAppState;
 
 			// Check if we're trying to write empty-over-non-empty
 			const wouldOverwriteUserData =
@@ -233,7 +286,11 @@ export function createReferenceAwareLocalStorage<
 				const isSecondary = (() => {
 					try {
 						// Safely check if we're in a browser environment with Tauri
-						if (typeof window === "undefined" || typeof location === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+						if (
+							typeof window === "undefined" ||
+							typeof location === "undefined" ||
+							!("__TAURI_INTERNALS__" in window)
+						) {
 							return false;
 						}
 						// Check if this is a secondary window by URL params
@@ -258,50 +315,37 @@ export function createReferenceAwareLocalStorage<
 						"error",
 						t("persistence.guard.emptyOverNonEmpty", {
 							name,
-							defaultValue: "BLOCKED: Secondary window cannot overwrite populated state with empty state",
+							defaultValue:
+								"BLOCKED: Secondary window cannot overwrite populated state with empty state",
 						}),
 					);
 
-			// Save the rejected empty candidate for inspection
-			try {
-				if (serialized !== null) {
-					storage.setItem(`${name}:rejected-empty`, serialized);
-				}
-					// Also save with timestamp for forensic analysis
-					const timestamp = new Date().toISOString();
-					storage.setItem(
-						`${name}:rejected-empty:secondary:${timestamp}`,
-						JSON.stringify({
-								windowLabel: typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
-									? (() => {
-										try {
-											const { getCurrentWebviewWindow } = require("@tauri-apps/api/webviewWindow");
-											return getCurrentWebviewWindow().label;
-										} catch {
-											return "unknown";
-										}
-									})()
-									: "non-tauri",
-								timestamp,
-								candidateState,
-								remoteState,
-							})
-						);
-				} catch {
-					// Best effort
-				}
+					// Save the rejected empty candidate for inspection
+					try {
+						if (serialized !== null) {
+							storage.setItem(`${name}:rejected-empty`, serialized);
+						}
+						recordRejectedEmptyWrite(storage, name, {
+							windowLabel: currentWindowLabel(),
+							timestamp: new Date().toISOString(),
+							candidateState,
+							remoteState,
+						});
+					} catch {
+						// Best effort
+					}
 
-				// Keep the remote (populated) value - secondary windows never override main state
-				confirmedValue = remote.value;
-				confirmedSerialized = remote.serialized;
-				confirmedKnown = true;
-				return;
+					// Keep the remote (populated) value - secondary windows never override main state
+					confirmedValue = remote.value;
+					confirmedSerialized = remote.serialized;
+					confirmedKnown = true;
+					return;
 				} else {
 					// Main window: allow but warn
 					console.warn(
 						`[persistStorage] Writing empty state over populated state in main window (${name}). ` +
-						`This could be a legitimate rollback or a hydration issue.`,
-						{ candidateState, remoteState }
+							`This could be a legitimate rollback or a hydration issue.`,
+						{ candidateState, remoteState },
 					);
 				}
 			}
@@ -394,7 +438,11 @@ export function createReferenceAwareLocalStorage<
 			try {
 				raw = storage.getItem(name);
 			} catch (error) {
-				reportPersistenceStatus("error", String(error));
+				// The store adopts its defaults when nothing can be read; refuse
+				// its writes like a failed hydration until a later read succeeds.
+				hydrationQuarantined = true;
+				hydrationQuarantineMessage = String(error);
+				reportPersistenceStatus("error", hydrationQuarantineMessage);
 				return null;
 			}
 			// Every hydration starts with this read and reaches onRehydrateStorage
@@ -571,11 +619,10 @@ export function createReferenceAwareLocalStorage<
 			};
 		},
 		read: async (name, reader) =>
-			coordinator.run(
-				name,
-				() => reader(readStoredValue(name).value),
-				{ failureScope, failureDomain: "read" },
-			),
+			coordinator.run(name, () => reader(readStoredValue(name).value), {
+				failureScope,
+				failureDomain: "read",
+			}),
 		transact: async (name, mutation) => {
 			return coordinator.run(
 				name,

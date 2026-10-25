@@ -9,9 +9,15 @@ import type { PersistedAppState } from "@/lib/persistence/persistedAppState";
  */
 export function isEmptyPersistedState(state: PersistedAppState): boolean {
 	const hasAgents = Array.isArray(state.agents) && state.agents.length > 0;
-	const hasAccounts = Array.isArray(state.accounts) && state.accounts.length > 0;
-	const hasProjects = Array.isArray(state.projects) && state.projects.length > 0;
-	const hasLayouts = Object.keys(state.layouts).length > 0;
+	const hasAccounts =
+		Array.isArray(state.accounts) && state.accounts.length > 0;
+	const hasProjects =
+		Array.isArray(state.projects) && state.projects.length > 0;
+	// Older or partial values may lack a collection; missing means empty.
+	const hasLayouts =
+		typeof state.layouts === "object" &&
+		state.layouts !== null &&
+		Object.keys(state.layouts).length > 0;
 
 	return !hasAgents && !hasAccounts && !hasProjects && !hasLayouts;
 }

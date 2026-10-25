@@ -1,10 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
-import { isEmptyPersistedState, hasUserData } from "./emptyStateGuard";
-import type { PersistedAppState } from "./persistedAppState";
-import { DEFAULT_SPACE } from "@/lib/workspace/desktop/desktopNames";
-import { DEFAULT_UI_PREFS } from "@/lib/settings/uiPrefs";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_NOTIFY_PREFS } from "@/lib/settings/notifyPrefs";
+import { DEFAULT_UI_PREFS } from "@/lib/settings/uiPrefs";
 import { DEFAULT_TERMINAL_PREFS } from "@/lib/terminal/terminalPrefs";
+import { DEFAULT_SPACE } from "@/lib/workspace/desktop/desktopNames";
+import { hasUserData, isEmptyPersistedState } from "./emptyStateGuard";
+import type { PersistedAppState } from "./persistedAppState";
 
 // Mock the Tauri window API for testing secondary window detection
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
@@ -39,21 +39,28 @@ describe("emptyStateGuard", () => {
 			expect(isEmptyPersistedState(minimalEmptyState)).toBe(true);
 		});
 
+		it("treats a value without layouts as having none", () => {
+			const { layouts: _layouts, ...withoutLayouts } = minimalEmptyState;
+			expect(isEmptyPersistedState(withoutLayouts as PersistedAppState)).toBe(
+				true,
+			);
+		});
+
 		it("identifies non-empty state with agents", () => {
 			const stateWithAgents: PersistedAppState = {
 				...minimalEmptyState,
-			agents: [
-			{
-				id: "test-agent",
-				name: "test",
-				provider: "claude",
-				projectId: "test-project",
-				sessionId: "test-session",
-					sessionKind: "pty",
-					worktreePath: "/test",
-					branch: "main",
-				},
-			],
+				agents: [
+					{
+						id: "test-agent",
+						name: "test",
+						provider: "claude",
+						projectId: "test-project",
+						sessionId: "test-session",
+						sessionKind: "pty",
+						worktreePath: "/test",
+						branch: "main",
+					},
+				],
 			};
 			expect(isEmptyPersistedState(stateWithAgents)).toBe(false);
 		});
@@ -61,14 +68,14 @@ describe("emptyStateGuard", () => {
 		it("identifies non-empty state with accounts", () => {
 			const stateWithAccounts: PersistedAppState = {
 				...minimalEmptyState,
-			accounts: [
-				{
-					id: "test-account",
-					provider: "claude",
-					name: "Test Account",
-					dir: "/test",
-				},
-			],
+				accounts: [
+					{
+						id: "test-account",
+						provider: "claude",
+						name: "Test Account",
+						dir: "/test",
+					},
+				],
 			};
 			expect(isEmptyPersistedState(stateWithAccounts)).toBe(false);
 		});
@@ -102,18 +109,18 @@ describe("emptyStateGuard", () => {
 		it("identifies non-empty state with multiple data types", () => {
 			const stateWithMultiple: PersistedAppState = {
 				...minimalEmptyState,
-			agents: [
-			{
-				id: "test-agent",
-				name: "test",
-				provider: "claude",
-				projectId: "test-project",
-				sessionId: "test-session",
-					sessionKind: "pty",
-					worktreePath: "/test",
-					branch: "main",
-				},
-			],
+				agents: [
+					{
+						id: "test-agent",
+						name: "test",
+						provider: "claude",
+						projectId: "test-project",
+						sessionId: "test-session",
+						sessionKind: "pty",
+						worktreePath: "/test",
+						branch: "main",
+					},
+				],
 				projects: [
 					{
 						id: "test-project",
@@ -136,18 +143,18 @@ describe("emptyStateGuard", () => {
 		it("returns true for state with user data", () => {
 			const stateWithData: PersistedAppState = {
 				...minimalEmptyState,
-			agents: [
-			{
-				id: "test-agent",
-				name: "test",
-				provider: "claude",
-				projectId: "test-project",
-				sessionId: "test-session",
-					sessionKind: "pty",
-					worktreePath: "/test",
-					branch: "main",
-				},
-			],
+				agents: [
+					{
+						id: "test-agent",
+						name: "test",
+						provider: "claude",
+						projectId: "test-project",
+						sessionId: "test-session",
+						sessionKind: "pty",
+						worktreePath: "/test",
+						branch: "main",
+					},
+				],
 			};
 			expect(hasUserData(stateWithData)).toBe(true);
 		});
@@ -163,26 +170,26 @@ describe("emptyStateGuard", () => {
 
 			const populatedState: PersistedAppState = {
 				...minimalEmptyState,
-			agents: [
-				{
-					id: "agent-before-loss",
-					name: "production-agent",
-					provider: "claude",
-					projectId: "prod-project",
-					sessionId: "prod-session",
-					sessionKind: "pty",
-					worktreePath: "/prod",
-					branch: "main",
-				},
-			],
-			accounts: [
-				{
-					id: "account-1",
-					provider: "claude",
-					name: "Production Account",
-					dir: "/accounts/prod",
-				},
-			],
+				agents: [
+					{
+						id: "agent-before-loss",
+						name: "production-agent",
+						provider: "claude",
+						projectId: "prod-project",
+						sessionId: "prod-session",
+						sessionKind: "pty",
+						worktreePath: "/prod",
+						branch: "main",
+					},
+				],
+				accounts: [
+					{
+						id: "account-1",
+						provider: "claude",
+						name: "Production Account",
+						dir: "/accounts/prod",
+					},
+				],
 				projects: [
 					{
 						id: "prod-project",
@@ -207,7 +214,9 @@ describe("emptyStateGuard", () => {
 
 			// After secondary window hydration failure: empty state
 			expect(hasUserData(emptyStateFromFailedSecondaryWindow)).toBe(false);
-			expect(isEmptyPersistedState(emptyStateFromFailedSecondaryWindow)).toBe(true);
+			expect(isEmptyPersistedState(emptyStateFromFailedSecondaryWindow)).toBe(
+				true,
+			);
 
 			// The guard should detect this as empty-over-non-empty
 			// and prevent the write from the secondary window
