@@ -35,6 +35,7 @@ fn list_and_inspect_preserve_the_same_host_progress() {
         working_ttl_ms: None,
         conversation_identity: None,
         expected_observation: None,
+        background_work: false,
     };
     let reporter = ManagedAgentStateReporter::new(env!("CARGO_BIN_EXE_hmux-runtime"), state.path())
         .with_discovery_root(&discovery);

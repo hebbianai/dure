@@ -1226,6 +1226,7 @@ mod tests {
             causality: None,
             working_ttl_ms: None,
             expected_observation: None,
+            background_work: false,
         };
         assert!(matches!(
             host.apply_agent_state_report(&current, report.clone())

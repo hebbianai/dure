@@ -15,6 +15,9 @@ pub struct AgentRuntimeObservation {
     pub activity: AgentRuntimeActivity,
     pub attention: AgentRuntimeAttention,
     pub source: AgentRuntimeStateSource,
+    /// Working only because of background work after the provider's turn
+    /// ended; its prompt accepts input.
+    pub background_work: bool,
 }
 
 impl AgentRuntimeObservation {
@@ -30,6 +33,22 @@ impl AgentRuntimeObservation {
             activity,
             attention,
             source,
+            background_work: false,
+        }
+    }
+
+    /// The same observation of an existing projection, so a republish keeps
+    /// every Host fact it does not change.
+    #[must_use]
+    pub(super) fn of(current: &AgentRuntimeStateProjection) -> Self {
+        Self {
+            background_work: current.background_work,
+            ..Self::new(
+                current.lifecycle,
+                current.activity,
+                current.attention,
+                current.source,
+            )
         }
     }
 
@@ -77,6 +96,21 @@ pub struct AgentStateReportObservation {
     pub causality: Option<crate::local_protocol::AgentStateReportCausality>,
     pub working_ttl_ms: Option<u64>,
     pub expected_observation: Option<AgentStateReportObservationFence>,
+    /// Background work the provider started is in flight; see
+    /// `AgentStateReport::background_work`.
+    pub background_work: bool,
+}
+
+impl AgentStateReportObservation {
+    /// Background work keeps the session busy whatever the foreground does,
+    /// so the Host folds every background report as working.
+    pub(super) fn projected_activity(&self) -> AgentRuntimeActivity {
+        if self.background_work {
+            AgentRuntimeActivity::Working
+        } else {
+            self.activity
+        }
+    }
 }
 
 /// Fold outcome for one agent state report. `Applied` carries the projection

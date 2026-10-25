@@ -139,6 +139,12 @@ fn bounded_body(raw: Vec<u8>) -> Result<Input, HookFailure> {
     }
     let input: Value = serde_json::from_slice(&raw).map_err(|_| HookFailure::InvalidInput)?;
     let object = input.as_object().ok_or(HookFailure::InvalidInput)?;
+    // A subagent's tool calls are background work. Coalesce them apart so they
+    // never suppress the parent's own tool call, which starts foreground work.
+    let subagent = object
+        .get("agent_id")
+        .and_then(Value::as_str)
+        .is_some_and(|agent| !agent.is_empty());
     let pre_tool_conversation = (object.get("hook_event_name").and_then(Value::as_str)
         == Some("PreToolUse"))
     .then(|| {
@@ -146,7 +152,13 @@ fn bounded_body(raw: Vec<u8>) -> Result<Input, HookFailure> {
             .get("session_id")
             .and_then(Value::as_str)
             .filter(|value| identifier(value))
-            .map(str::to_owned)
+            .map(|conversation| {
+                if subagent {
+                    format!("{conversation}/subagent")
+                } else {
+                    conversation.to_owned()
+                }
+            })
     })
     .flatten();
     if raw.len() <= MAX_BODY_BYTES {
@@ -163,6 +175,7 @@ fn bounded_body(raw: Vec<u8>) -> Result<Input, HookFailure> {
         "notification_type",
         "tool_name",
         "transcript_path",
+        "agent_id",
     ] {
         if let Some(value) = object.get(field).and_then(Value::as_str) {
             minimal.insert(field.into(), Value::String(value.into()));

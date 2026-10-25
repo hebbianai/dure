@@ -276,6 +276,10 @@ pub struct AgentRuntimeStateDescriptor {
     /// The running program's own OSC 7501 report; presentation only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub program_status: Option<Box<hmux_session_protocol::ProgramStatusProjection>>,
+    /// Working only on background work after the provider's turn ended; its
+    /// prompt accepts input. Omitted while false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub background_work: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -821,6 +825,7 @@ pub fn project_agent_runtime_state(
         turn_completed_count: projection.turn_completed_count.to_string(),
         progress: projection.progress,
         program_status: projection.program_status,
+        background_work: projection.background_work,
     })
 }
 
@@ -1445,6 +1450,7 @@ mod tests {
             source: HostAgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 1,
             program_status: None,
+            background_work: false,
         });
         let hello = serve(
             fixture.socket_path.clone(),
@@ -1497,6 +1503,7 @@ mod tests {
             source: HostAgentRuntimeStateSource::TerminalInference,
             turn_completed_count: 0,
             program_status: None,
+            background_work: false,
         });
         let _hello = serve(
             fixture.socket_path.clone(),
