@@ -715,6 +715,7 @@ impl StoreState {
             &request.endpoint_fence,
             request.wake_capability.as_ref(),
         )?;
+        let unread = self.deliveries[delivery_index].receipt.state == DeliveryState::Queued;
         let current = self.deliveries[delivery_index].receipt.wake.as_ref();
         let replacement = match request.transition {
             DeliveryWakeTransition::Request if current.is_none() => Some(
@@ -736,8 +737,13 @@ impl StoreState {
                     },
                 ),
             ),
+            // A queued wake proved that nothing was written, so an unread
+            // delivery may claim it again once its target can take a prompt.
             DeliveryWakeTransition::Claim
-                if current.is_some_and(|wake| wake.state == DeliveryWakeState::Pending) =>
+                if current.is_some_and(|wake| {
+                    wake.state == DeliveryWakeState::Pending
+                        || (unread && wake.state == DeliveryWakeState::QueuedUntilNextTurn)
+                }) =>
             {
                 Some(DeliveryWakeReceipt {
                     state: DeliveryWakeState::Uncertain,

@@ -22,8 +22,8 @@ use agent_orchestration::domain::{
     MembershipRef, MessagePurpose, OptionId, ParticipantRef, ProviderRef, ResponseSpec, Revision,
     RoleRef, RunId, RunTaskSpec, RunnerInstanceRef, RunnerPrincipalRef, RuntimeRef,
     SessionIdentityRef, SessionRef, Sha256Digest, TargetReferenceRef, TaskId, TerminalEpochRef,
-    WakeEffectRef, WorkerEndpoint, WorkerEndpointFence, WorkerEndpointRef, WorkerSessionGeneration,
-    WorkflowKindRef, WorkspaceId,
+    WakeEffectRef, WakeReasonCode, WorkerEndpoint, WorkerEndpointFence, WorkerEndpointRef,
+    WorkerSessionGeneration, WorkflowKindRef, WorkspaceId,
 };
 use agent_orchestration::ports::{
     ReadEventsStoreRequest, ReadEventsStoreResult, Store, StoreError, StoreFuture, StoreHandle,
@@ -1549,6 +1549,111 @@ async fn provider_wake_is_a_separate_fenced_and_idempotent_delivery_transition()
     assert_eq!(
         replay.deliveries[0].wake.as_ref().unwrap().state,
         DeliveryWakeState::Triggered
+    );
+}
+
+#[tokio::test]
+async fn a_queued_wake_is_claimed_again_only_while_its_delivery_is_unread() {
+    let target = target();
+    let wake_capability = capability("capability.wake.worker");
+    let mut request = decision_request(&target);
+    request.idempotency_key = "open-requeued-wake-message".into();
+    request.interaction = InteractionDraft::Message {
+        common: InteractionDraftCommon {
+            id: reference("requeued-wake-message", InteractionId::new),
+            target: target.clone(),
+            author: participant("participant.human.coordinator"),
+            audience: audience(vec![(
+                "participant.worker.reviewer",
+                "capability.inbox.worker",
+                vec!["capability.inbox.worker"],
+            )]),
+            title: "Wake the worker once it is idle".into(),
+            description_markdown: "The first wake found the worker busy.".into(),
+        },
+        purpose: MessagePurpose::Update,
+    };
+    let mut dispatch = dispatch(&target);
+    dispatch.worker_endpoint.wake_capability = Some(wake_capability.clone());
+    let service = InteractionService::new(in_memory_store(vec![dispatch]).unwrap());
+    let opened = service.open(request).await.unwrap();
+    let receipt_id = opened.deliveries[0].receipt_id.clone();
+    let transition = |transition, transitioned_at_ms| TransitionDeliveryWakeRequest {
+        schema_version: INTERACTION_SCHEMA_VERSION,
+        authority: target.authority.clone(),
+        receipt_id: receipt_id.clone(),
+        endpoint_fence: endpoint_fence(&target),
+        wake_capability: Some(wake_capability.clone()),
+        transition,
+        transitioned_at_ms,
+    };
+    let busy = || DeliveryWakeTransition::QueuedUntilNextTurn {
+        reason_code: reference("hmux_agent_prompt_runtime_changed", WakeReasonCode::new),
+    };
+    for (step, at) in [
+        (DeliveryWakeTransition::Request, 1_100),
+        (DeliveryWakeTransition::Claim, 1_200),
+        (busy(), 1_300),
+    ] {
+        assert!(
+            service
+                .transition_delivery_wake(transition(step, at))
+                .await
+                .unwrap()
+                .applied
+        );
+    }
+
+    let reclaimed = service
+        .transition_delivery_wake(transition(DeliveryWakeTransition::Claim, 1_400))
+        .await
+        .unwrap();
+    assert!(reclaimed.applied);
+    assert_eq!(
+        reclaimed.delivery.wake.unwrap().state,
+        DeliveryWakeState::Uncertain
+    );
+    assert!(
+        !service
+            .transition_delivery_wake(transition(DeliveryWakeTransition::Claim, 1_401))
+            .await
+            .unwrap()
+            .applied,
+        "an uncertain wake may already have written and is never claimed twice"
+    );
+    assert!(
+        service
+            .transition_delivery_wake(transition(busy(), 1_500))
+            .await
+            .unwrap()
+            .applied
+    );
+
+    service
+        .read_events(ReadEventsRequest {
+            schema_version: INTERACTION_SCHEMA_VERSION,
+            authority: target.authority.clone(),
+            target: Some(target.clone()),
+            participant: participant("participant.worker.reviewer"),
+            delivery_capability: capability("capability.inbox.worker"),
+            endpoint_fence: Some(endpoint_fence(&target)),
+            after: EventCursor::BEGINNING,
+            acknowledgement: None,
+            limit: 10,
+        })
+        .await
+        .unwrap();
+    let observed = service
+        .transition_delivery_wake(transition(DeliveryWakeTransition::Claim, 1_600))
+        .await
+        .unwrap();
+    assert!(
+        !observed.applied,
+        "a delivery the worker read needs no wake"
+    );
+    assert_eq!(
+        observed.delivery.wake.unwrap().state,
+        DeliveryWakeState::QueuedUntilNextTurn
     );
 }
 

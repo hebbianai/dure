@@ -92,6 +92,7 @@ test("a deferred wake explains why no prompt was written, without implying a res
   const queued = (reasonCode) => [{ wake: { state: "queued_until_next_turn", reasonCode } }];
   expect(deferredWake(queued("hmux_input_draft_pending"))).toMatchObject({ reason: "wake_deferred", wakeReasonCode: "hmux_input_draft_pending", message: expect.stringContaining("unsubmitted input at its prompt") });
   expect(deferredWake(queued("hmux_agent_prompt_runtime_changed")).message).toContain("not idle at its prompt");
+  expect(deferredWake(queued("hmux_agent_prompt_runtime_changed")).message).toContain("retries the wake");
   expect(deferredWake([{ wake: { state: "triggered", effectRef: "effect" } }])).toBeNull();
   expect(deferredWake(undefined)).toBeNull();
 });

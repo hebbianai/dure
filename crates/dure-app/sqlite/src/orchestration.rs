@@ -1,5 +1,6 @@
 mod create_run;
 pub(crate) mod deadlines;
+pub(crate) mod wake_retries;
 
 use std::collections::BTreeMap;
 

@@ -8607,6 +8607,73 @@ async fn exact_existing_session_persists_then_wakes_once_without_replaying_messa
 }
 
 #[tokio::test]
+async fn a_wake_refused_by_a_busy_worker_is_delivered_once_the_worker_can_take_it() {
+    let (_root, state, _launcher, prompt_deliverer) = fixture_with_delivery(
+        Vec::new(),
+        vec![
+            DeliveryOutcome::Fail("hmux_agent_prompt_runtime_changed", false),
+            DeliveryOutcome::Fail("hmux_agent_prompt_runtime_changed", false),
+            DeliveryOutcome::Succeed,
+        ],
+    )
+    .await;
+    let (_context, mut body) = prepare_exact_session_message(&state).await;
+    let opened_at = crate::now_ms().unwrap();
+    body["openedAtMs"] = json!(opened_at);
+    let opened = invoke_orchestration(
+        &state,
+        "open-while-worker-busy",
+        "interaction.message.open.exact-session",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(
+        opened["receipt"]["deliveries"][0]["wake"]["state"],
+        "queued_until_next_turn"
+    );
+    let wake_state = |label: &'static str| {
+        let state = &state;
+        let body = body.clone();
+        async move {
+            invoke_orchestration(state, label, "interaction.message.open.exact-session", body).await
+                ["receipt"]["deliveries"][0]["wake"]["state"]
+                .clone()
+        }
+    };
+
+    let mut attempted = std::collections::HashMap::new();
+    crate::interaction_wake::retry_queued_wakes(&state, opened_at + 1_000, &mut attempted).await;
+    assert_eq!(
+        prompt_deliverer.requests().len(),
+        1,
+        "a just-queued wake waits for its retry interval"
+    );
+
+    let later = opened_at + 60 * 60_000;
+    crate::interaction_wake::retry_queued_wakes(&state, later, &mut attempted).await;
+    assert_eq!(prompt_deliverer.requests().len(), 2);
+    assert_eq!(
+        wake_state("replay-still-busy").await,
+        "queued_until_next_turn"
+    );
+    crate::interaction_wake::retry_queued_wakes(&state, later + 1_000, &mut attempted).await;
+    assert_eq!(
+        prompt_deliverer.requests().len(),
+        2,
+        "a refused retry waits for the next interval"
+    );
+
+    let idle = later + 2 * 60 * 60_000;
+    crate::interaction_wake::retry_queued_wakes(&state, idle, &mut attempted).await;
+    let requests = prompt_deliverer.requests();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[2].handoff, requests[0].handoff);
+    assert_eq!(wake_state("replay-woken").await, "triggered");
+    crate::interaction_wake::retry_queued_wakes(&state, idle + 60 * 60_000, &mut attempted).await;
+    assert_eq!(prompt_deliverer.requests().len(), 3);
+}
+
+#[tokio::test]
 async fn completed_exact_session_receives_updates_without_reopening_its_dispatch() {
     let (root, state, launcher, prompt_deliverer) = fixture_with_delivery(
         Vec::new(),

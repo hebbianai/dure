@@ -76,7 +76,7 @@ pub use orchestration::{
     OrchestrationDispatchContextResolutionV1, OrchestrationDispatchGenerationV1,
     OrchestrationDispatchSessionInspectionReceiptV1, OrchestrationDispatchSessionRebindReceiptV1,
     OrchestrationDispatchSessionRebindRequestV1, OrchestrationManagedCreateKeyStateV1,
-    session_identity as orchestration_session_identity,
+    session_identity as orchestration_session_identity, wake_retries::QueuedOrchestrationWakeV1,
 };
 
 /// A bounded SQLite pool implementing the durable domain-store port.
@@ -219,6 +219,23 @@ impl SqliteDomainStore {
         now_ms: i64,
     ) -> Result<usize, agent_orchestration::ports::StoreError> {
         orchestration::deadlines::expire(&self.pool, now_ms).await
+    }
+
+    pub async fn queued_orchestration_wakes(
+        &self,
+        reason_codes: &[&str],
+        queued_before_ms: i64,
+        opened_after_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<QueuedOrchestrationWakeV1>, DomainStoreErrorV1> {
+        orchestration::wake_retries::queued(
+            &self.pool,
+            reason_codes,
+            queued_before_ms,
+            opened_after_ms,
+            limit,
+        )
+        .await
     }
 
     pub fn interaction_service(&self) -> agent_orchestration::service::InteractionService {
