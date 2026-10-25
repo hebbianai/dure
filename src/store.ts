@@ -20,7 +20,6 @@ import type { Space } from "@/types";
 import { createReferenceAwareLocalStorage } from "@/lib/persistence/persistStorage";
 import { convergePersistedAppState } from "@/lib/persistence/persistedAppStateConvergence";
 import { publishDurableStoreChanged } from "@/lib/workspace/window/durableStoreBroadcast";
-import { reportPersistenceStatus } from "@/lib/persistence/persistenceStatus";
 import {
   DEFAULT_SPACE,
   nextSpaceName,
@@ -332,9 +331,12 @@ export const useStore = create<AppState>()(
         return (state, error) => {
           if (error) {
             console.error("[store] Hydration failed:", error);
-            reportPersistenceStatus(
-              "error",
-              `Failed to restore app state: ${String(error)}`,
+            // zustand swallows a migrate/merge failure and keeps the defaults;
+            // without the quarantine the next update would write them over
+            // every saved space and pane. It also reports the localized error.
+            durableAppStorage.quarantineHydrationFailure(
+              DURABLE_APP_STORE_NAME,
+              error,
             );
           } else {
             if (!state) {

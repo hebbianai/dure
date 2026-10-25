@@ -52,6 +52,14 @@ export interface ReferenceAwarePersistStorage<S extends Record<string, unknown>>
 	flush(): Promise<void>;
 	reconcile(name: string): Promise<void>;
 	freezeProjectionAncestor(): () => void;
+	/**
+	 * Called when the store could not adopt the stored value (a migrate or
+	 * merge threw). The store then holds its defaults, and zustand would write
+	 * them over the saved data on the next update. Keep a copy of the stored
+	 * value and refuse this realm's projection writes until a later hydration
+	 * succeeds.
+	 */
+	quarantineHydrationFailure(name: string, error: unknown): void;
 	read<R>(
 		name: string,
 		reader: (current: StorageValue<S> | null) => R,
@@ -153,6 +161,8 @@ export function createReferenceAwareLocalStorage<
 	let frozenAncestorValue: StorageValue<S> | null = null;
 	let frozenAncestorSerialized: string | null = null;
 	let frozenAncestorKnown = false;
+	let hydrationQuarantined = false;
+	let hydrationQuarantineMessage = "";
 
 	const readStoredValue = (
 		name: string,
@@ -387,6 +397,10 @@ export function createReferenceAwareLocalStorage<
 				reportPersistenceStatus("error", String(error));
 				return null;
 			}
+			// Every hydration starts with this read and reaches onRehydrateStorage
+			// in the same synchronous chain, so a repeated failure quarantines
+			// again before any write runs, and a successful one lifts it.
+			hydrationQuarantined = false;
 			confirmedKnown = true;
 			if (!raw) {
 				lastObservedValue = null;
@@ -441,6 +455,14 @@ export function createReferenceAwareLocalStorage<
 			) {
 				return;
 			}
+			if (hydrationQuarantined) {
+				// Other stores' saves replace the shared status, so report each
+				// refused durable change again rather than dropping it unseen.
+				lastObservedValue = value;
+				lastObservedSerialized = null;
+				reportPersistenceStatus("error", hydrationQuarantineMessage);
+				return;
+			}
 			let serialized: string;
 			try {
 				serialized = JSON.stringify(value);
@@ -463,6 +485,10 @@ export function createReferenceAwareLocalStorage<
 			void enqueueProjection(name, localProjection).catch(() => undefined);
 		},
 		removeItem: (name) => {
+			if (hydrationQuarantined) {
+				reportPersistenceStatus("error", hydrationQuarantineMessage);
+				return;
+			}
 			const localProjection = projectionFrom(null, null);
 			dirtyProjection = localProjection;
 			dirtyProjectionStatus = "pending";
@@ -499,6 +525,27 @@ export function createReferenceAwareLocalStorage<
 				},
 			);
 			await coordinator.flush(failureScope);
+		},
+		quarantineHydrationFailure: (name, error) => {
+			hydrationQuarantined = true;
+			dirtyProjection = null;
+			dirtyProjectionStatus = null;
+			hydrationQuarantineMessage = t("persistence.recovery.hydrationFailed", {
+				name,
+				error: String(error),
+			});
+			try {
+				const backupName = `${name}:hydration-failed-backup`;
+				const raw = storage.getItem(name);
+				// Keep the first copy. A transaction may rewrite the stored value
+				// between failures, and a later copy must not replace the original.
+				if (raw && storage.getItem(backupName) === null) {
+					storage.setItem(backupName, raw);
+				}
+			} catch {
+				// The stored value itself is left untouched, so a failed copy loses nothing.
+			}
+			reportPersistenceStatus("error", hydrationQuarantineMessage);
 		},
 		freezeProjectionAncestor: () => {
 			if (projectionAncestorHolds === 0) {
