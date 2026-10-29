@@ -134,7 +134,7 @@ pub(crate) async fn invoke_orchestration(
         }
         "interaction.open" => {
             let request: OpenInteractionRequest = serde_json::from_value(envelope.body)
-                .map_err(|_| BackendDispatchError::from("orchestration_request_invalid"))?;
+                .map_err(|_| BackendDispatchError::terminal("orchestration_request_invalid"))?;
             serde_json::to_value(
                 state
                     .store

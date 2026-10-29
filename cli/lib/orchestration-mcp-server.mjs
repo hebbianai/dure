@@ -12,6 +12,7 @@ import {
 import { BackendTransportError } from "./backend-transport.mjs";
 import { orchestrationFailureDetail } from "./orchestration-failure.mjs";
 import { completionRequestSchema } from "./contracts/orchestration-completion.mjs";
+import { interactionOpenRequestSchema } from "./contracts/orchestration-interaction.mjs";
 import {
   currentOrchestrationCheckpointPath,
   parseOrchestrationIntegrationReceipt,
@@ -65,13 +66,14 @@ const tools = [
   {
     name: "orchestration_interaction_open",
     description:
-      "Open one nonblocking Markdown Message or one blocking Text/Select Decision for an explicit dispatch audience. Copying your coordinator grant targets your own coordinator, not another session. For a message to a discovered managed session use orchestration_message_open_exact_session.",
+      "Open one nonblocking Markdown Message or one blocking Text/Select Decision for an explicit dispatch audience. Resolve orchestration_context_get_current first and copy the context fields as described in body; draft fields belong in body.interaction.common. Copying your coordinator grant targets your own coordinator, not another session. For a message to a discovered managed session use orchestration_message_open_exact_session.",
     inputSchema: {
       type: "object",
       required: ["body"],
       properties: {
-        body: { type: "object" },
+        body: interactionOpenRequestSchema,
       },
+      additionalProperties: false,
     },
   },
   {
