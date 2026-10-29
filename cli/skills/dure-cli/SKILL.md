@@ -85,7 +85,11 @@ dure runs switch-account worker --account ACCOUNT_ID --json  # preview only
 dure runs switch-account worker --account ACCOUNT_ID --confirm-restart --json
 ```
 
-Use an exact Agent/operation ID when Run names are ambiguous. Accounts must be
+Agents launched, resumed or imported by the app have no Run record; select them
+by Agent ID, or by name or Session ID from `dure ls`. A closed, stopped Agent
+restarts with the selected account and its retained conversation. An ambiguous
+name is refused with each candidate's exact retry command; use the Agent ID.
+Accounts must be
 registered for that provider on the owning backend; display names are not IDs.
 An unregistered account needs preparation through Dure's account settings first.
 `--account default` explicitly selects the provider's default credentials.
@@ -98,7 +102,7 @@ The backend protects busy turns and unsubmitted input. A switch does not resend
 failed work or enable automatic switching. For a source still working, wait for
 completion before making a new request; never force-stop it to change accounts.
 
-For an Agent without a Run record, use `dure runtime get AGENT_ID --json`, then:
+The lower-level equivalent is `dure runtime get AGENT_ID --json`, then:
 
 ```sh
 dure runtime switch AGENT_ID terminal --account ACCOUNT_ID \

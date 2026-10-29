@@ -55,9 +55,9 @@ An explicit --account changes credentials through that same transition. A named
 account requires its exact --credential-generation; default requires none.
 Both account selections require --expected-revision.
 Use dure runs switch-account <name-or-id> --account ACCOUNT_ID to preview a
-same-conversation switch and obtain the revision-fenced command. For an Agent
-without a Run record, get its current mode/revision and use recovery get PROVIDER
-for registered account IDs/generations. Claude and Codex use the same path.
+same-conversation switch and obtain the revision-fenced command, including for
+an Agent without a Run record. recovery get PROVIDER lists registered account
+IDs/generations. Claude and Codex use the same path.
 Hibernate stops only a quiescent, resumable runtime; wake retains its conversation.
 Wake --conversation-id checks the saved conversation before launch; it never selects another.
 Use get to obtain the selection revision for hibernate, or the operation ID and
