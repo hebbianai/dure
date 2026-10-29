@@ -157,8 +157,8 @@ It preserves the conversation and current Chat/Terminal mode. It works without
 an open app, with local or SSH backends; keep the same `--backend ID` throughout.
 
 ```sh
-dure recovery get claude --json   # registered account IDs/generations and policy
-dure recovery get codex --json
+dure recovery get claude          # each login once: IDs, profile name, usage
+dure recovery get codex --json    # adds policy, generations and registeredAccounts
 dure runs switch-account worker --account ACCOUNT_ID --json  # preview only
 dure runs switch-account worker --account ACCOUNT_ID --confirm-restart --json
 ```
