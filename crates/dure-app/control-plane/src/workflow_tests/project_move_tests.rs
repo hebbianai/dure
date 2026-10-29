@@ -841,4 +841,5 @@ async fn installed_launch_wrappers_keep_the_project_move_in_the_provider_argv() 
     }
 }
 
+mod source_busy;
 mod structured;

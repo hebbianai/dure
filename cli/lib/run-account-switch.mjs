@@ -3,6 +3,7 @@ import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { rehostCommandLine } from "./managed-rehost-preview.mjs";
 import { readRegisteredAccountProfiles, registeredAccountUnavailableMessage } from "./registered-account-profiles.mjs";
 import { agentRuntimeRestartableClosedSource, agentRuntimeSourceUnavailableReason } from "./contracts/agent-runtime.mjs";
+import { isSourceBusyRefusal, refusalLabel, withSourceBusyGuidance } from "./runtime-source-busy.mjs";
 
 /** Prepare an exact invocation of the existing UI/backend transition. This
  * adapter owns no credential registry, process replacement, or retry policy. */
@@ -54,6 +55,12 @@ export async function collectRunAccountSwitch({ run, observation, account, confi
     expectedRevision: sourceRevision, requestId,
     resolveBackend: async () => backend, requestBackend,
   });
+  // Busy is refused before admission: nothing changed, and the same retry
+  // command remains valid once the session is idle.
+  if (isSourceBusyRefusal(report.error)) {
+    return { ...prepared, ok: false, state: "refused", execution: "refused",
+      error: withSourceBusyGuidance(report.error, run.providerId) };
+  }
   if (!report.ok) return { ...prepared, ok: false, state: "unconfirmed", execution: "unconfirmed", error: report.error };
   const receipt = report.result.receipt;
   // The backend binds a stopped source's successor to that source's
@@ -74,11 +81,13 @@ export function formatRunAccountSwitch(report) {
     ...(report.source === "stopped" && report.state === "preview"
       ? ["This Agent is stopped. Apply restarts it with this account and its retained conversation."] : []),
     ...(report.state === "completed" && report.conversationId ? [`Conversation: ${report.conversationId}`] : []),
-    ...(report.error ? [`${report.error.remoteCode ?? report.error.code}: ${report.error.message ?? "Account switch failed"}`] : []),
+    ...(report.error ? [`${refusalLabel(report.error)}: ${report.error.message ?? "Account switch failed"}`] : []),
     ...(report.continuation ? [
       `${report.state === "preview" ? "Apply" : "Retry"}: ${rehostCommandLine(report.continuation.start)}`,
       `Status: ${rehostCommandLine(report.continuation.status)}`,
-      "After an uncertain response, inspect status and retain the exact retry command; do not repeat a name-based switch.",
+      report.state === "refused"
+        ? "Retry this exact command once the session is idle; do not repeat a name-based switch."
+        : "After an uncertain response, inspect status and retain the exact retry command; do not repeat a name-based switch.",
     ] : []),
   ].join("\n");
 }

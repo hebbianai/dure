@@ -13,6 +13,7 @@ import {
   parseRuntimeReclamation,
   parseAgentRuntimeTransitionEnvelope,
 } from "./contracts/agent-runtime.mjs";
+import { refusalLabel, withSourceBusyGuidance } from "./runtime-source-busy.mjs";
 
 export const RUNTIME_HELP = `Usage:
   dure runtime idle [--backend ID] [--json]
@@ -176,15 +177,14 @@ export async function collectAgentRuntimeCommand({
     }
     return { ...base, ok: true, backend: response.backend, result };
   } catch (error) {
-    return failure(backendRequestFailure(error, backend.profile));
+    return failure(withSourceBusyGuidance(backendRequestFailure(error, backend.profile)));
   }
 }
 
 export function formatAgentRuntimeCommand(report) {
   const backendOption = report.backendProfileId ? ` --backend ${report.backendProfileId}` : "";
   if (!report.ok) {
-    const code = report.error.remoteCode ?? report.error.code;
-    return `${code}: ${report.error.message ?? "Runtime request failed"}\nRequest: ${report.requestId}\nInspect: dure runtime ${report.action === "idle" ? "idle" : `get ${report.agentId}`}${backendOption}`;
+    return `${refusalLabel(report.error)}: ${report.error.message ?? "Runtime request failed"}\nRequest: ${report.requestId}\nInspect: dure runtime ${report.action === "idle" ? "idle" : `get ${report.agentId}`}${backendOption}`;
   }
   if (report.action === "idle") {
     const status = report.result;
