@@ -1197,6 +1197,24 @@ function pad(s, n) {
   return s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length);
 }
 
+// A blank screen is a successful read, but empty output alone cannot be told
+// apart from an unreadable session. Hmux names the blank screen's geometry;
+// keep a generic note for readers that do not (older Hmux, backend reads).
+const BLANK_SCREEN_NOTICE = "screen is blank: the session's terminal shows no text";
+
+function screenRead({ text, notice }, json) {
+  const blank = !json && text.trim() === "";
+  return {
+    text: blank ? "" : text,
+    notice: notice || (blank ? BLANK_SCREEN_NOTICE : ""),
+  };
+}
+
+function writeScreenRead({ text, notice }) {
+  if (text) process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
+  if (notice) process.stderr.write(`${notice}\n`);
+}
+
 async function cmdRead(query, opts) {
   if (opts.json && opts.follow) fail("--json cannot be combined with --follow. Request a one-shot JSON snapshot instead.");
   const backendRequested =
@@ -1226,12 +1244,12 @@ async function cmdRead(query, opts) {
       });
       if (opts.json) {
         process.exitCode = sessionReadExitCode(report);
-        return JSON.stringify(report);
+        return { text: JSON.stringify(report), notice: "" };
       }
       if (sessionReadExitCode(report) !== 0) {
         throw new SessionCaptureError("failed", formatSessionRead(report));
       }
-      return formatSessionRead(report);
+      return { text: formatSessionRead(report), notice: "" };
     };
   } else {
     const reg = loadRegistryOptional() ?? { agents: [] };
@@ -1242,9 +1260,7 @@ async function cmdRead(query, opts) {
   const interruption = captureInterruption();
   if (!opts.follow) {
     try {
-      const out = await readScreen(interruption.signal);
-      process.stdout.write(out);
-      if (!out.endsWith("\n")) process.stdout.write("\n");
+      writeScreenRead(screenRead(await readScreen(interruption.signal), opts.json));
     } catch (error) {
       if (error?.kind === "aborted") {
         process.exitCode = 130;
@@ -1263,7 +1279,8 @@ async function cmdRead(query, opts) {
     while (!interruption.interrupted()) {
       let out;
       try {
-        out = await readScreen(interruption.signal);
+        const { text, notice } = screenRead(await readScreen(interruption.signal), false);
+        out = notice ? `${text}\x1b[90m[${notice}]\x1b[0m\n` : text;
         reportedDelay = false;
       } catch (error) {
         if (error?.kind === "aborted") break;
@@ -1472,8 +1489,7 @@ async function cmdTranscript(query, opts) {
 async function cmdLogs(reg, agent, lines) {
   const interruption = captureInterruption();
   try {
-    const out = await capture(reg, agent, lines, interruption.signal);
-    process.stdout.write(out);
+    writeScreenRead(screenRead(await capture(reg, agent, lines, interruption.signal), false));
   } catch (error) {
     if (error?.kind === "aborted") {
       process.exitCode = 130;
@@ -3777,8 +3793,11 @@ Usage:
   dure read <agent-or-session> --follow [-n N]
 
 --json returns one snapshot with lines (an array of strings) and sequenceThrough.
-Local reads preserve Hmux's receipt (ok, sessionName, sequenceThrough, lines).
+Local reads preserve Hmux's receipt (ok, sessionName, sequenceThrough, lines), and
+current Hmux adds the screen's rows, columns and alternateScreen.
 sessionName is null for an unnamed managed session; this does not indicate a read failure.
+A blank screen prints nothing on stdout and a note on stderr. Full-screen agents such
+as Codex can draw nothing while their pane is very short.
 Backend reads return the dure.sessions.read envelope, including exact sessionId and workspaceId.
 --follow redraws text and cannot be combined with --json.
 Reads do not send input, start a session or change focus. Use --workspace to disambiguate exact session IDs.`;

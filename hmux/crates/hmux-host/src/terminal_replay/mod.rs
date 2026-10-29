@@ -19,6 +19,7 @@ mod ghostty_core_proof;
 mod ghostty_state_projection;
 mod osc_scanner;
 mod program_status;
+mod tab_stop_repaint;
 mod terminal_core;
 #[cfg(feature = "ghostty-core-proof")]
 mod terminal_history_transfer;
@@ -47,6 +48,7 @@ pub use agent_runtime::{
 pub use canonical_snapshot::TerminalProjections;
 pub use execution_location::ExecutionLocationObservation;
 use std::time::{Duration, Instant};
+pub use tab_stop_repaint::home_column_after_tab_stops;
 
 const DEFAULT_WORKING_TTL_MS: u64 = 30_000;
 /// A source-issued completion identity makes delivery retry-safe, so the Host

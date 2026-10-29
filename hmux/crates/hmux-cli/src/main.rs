@@ -71,6 +71,7 @@ use hmux_host::local_discovery::workspace_id_for_path;
 #[cfg(unix)]
 use hmux_host::local_discovery::{DiscoveryGcMode, DiscoveryGcSelection};
 use hmux_host::local_protocol::{FrameBody, SessionFence};
+use hmux_host::terminal_replay::home_column_after_tab_stops;
 use managed_rehost_execution::{ManagedRehostArgs, ManagedRehostOperationArgs};
 use managed_rehost_observation::ManagedRehostResolveArgs;
 use screen_read::ReadArgs;
@@ -2285,8 +2286,12 @@ fn recent_visible_lines(
     columns: u16,
     maximum: u16,
 ) -> Vec<String> {
+    // Hosts started before the producer fix still send repaints whose
+    // tab-stop restoration displaces the first row; read them faithfully too.
+    let mut repaint = repaint_bytes.to_vec();
+    home_column_after_tab_stops(&mut repaint);
     let mut parser = vt100::Parser::new(rows.max(1), columns.max(1), 0);
-    parser.process(repaint_bytes);
+    parser.process(&repaint);
     let contents = parser.screen().contents();
     let mut lines = contents
         .lines()
@@ -4878,5 +4883,24 @@ mod tests {
     fn recent_lines_are_plain_bounded_terminal_rows() {
         let lines = recent_visible_lines(b"\x1b[H\x1b[Jone\r\ntwo\r\nthree", 4, 20, 2);
         assert_eq!(lines, vec!["two", "three"]);
+    }
+
+    #[test]
+    fn recent_lines_keep_the_first_row_after_restored_tab_stops() {
+        // Shape of a Ghostty-core repaint from a Host without the producer
+        // fix: restoring the default tab stops leaves the cursor at column 33,
+        // then the first row of a full alternate screen is painted from there.
+        let repaint = "\x1b[?1049h\x1b[3g\x1b[9G\x1bH\x1b[17G\x1bH\x1b[25G\x1bH\x1b[33G\x1bH\
+            \x1b[0m• Working (1m 05s • esc to interrupt)\r\n\r\n\
+            › Ask Codex to do anything\r\n  ? for shortcuts\x1b[3;3H";
+        assert_eq!(
+            recent_visible_lines(repaint.as_bytes(), 4, 40, 12),
+            vec![
+                "• Working (1m 05s • esc to interrupt)",
+                "",
+                "› Ask Codex to do anything",
+                "  ? for shortcuts",
+            ]
+        );
     }
 }

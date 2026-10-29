@@ -593,6 +593,11 @@ Local JSON reads preserve Hmux's `sessionName`, which is `null` for unnamed
 managed sessions. Use `ok`, `lines` and `sequenceThrough` to inspect the result;
 the app's Agent display name is not the runtime session name.
 
+A blank screen prints nothing on stdout and a note with its size on stderr;
+JSON reads report `rows`, `columns` and `alternateScreen`. Codex and other
+full-screen agents draw nothing while their pane is very short, so a blank read
+does not mean the agent is idle: enlarge the pane or use `dure transcript <name>`.
+
 ```sh
 dure read <name>             # snapshot of their terminal
 dure read <name> --json      # snapshot with lines[] and sequenceThrough

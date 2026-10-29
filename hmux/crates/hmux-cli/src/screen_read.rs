@@ -104,12 +104,9 @@ pub(crate) fn run(
         })?;
     let snapshot = connection.require_initial_snapshot()?;
     let sequence_through = snapshot.sequence_through;
-    let lines = recent_visible_lines(
-        &snapshot.repaint_bytes,
-        snapshot.rows,
-        snapshot.columns,
-        args.lines,
-    );
+    let (rows, columns, alternate_screen) =
+        (snapshot.rows, snapshot.columns, snapshot.alternate_screen);
+    let lines = recent_visible_lines(&snapshot.repaint_bytes, rows, columns, args.lines);
     // A passive one-shot observer needs no additional unbounded Detach write.
     // Closing the transport releases the Host subscription without changing the session.
     drop(connection);
@@ -126,11 +123,33 @@ pub(crate) fn run(
                 "ok": true,
                 "sessionName": session.descriptor().session_name,
                 "sequenceThrough": sequence_through.to_string(),
+                "rows": rows,
+                "columns": columns,
+                "alternateScreen": alternate_screen,
                 "lines": lines,
             }))?
         ))?;
-    } else if !lines.is_empty() {
+    } else if lines.is_empty() {
+        // Silent success would look like an unreadable session. Full-screen
+        // programs can draw nothing at all in a very short pane.
+        eprintln!(
+            "hmux: note: {}",
+            blank_screen_note(rows, columns, alternate_screen)
+        );
+    } else {
         output::writeln(format_args!("{}", lines.join("\n")))?;
     }
     Ok(())
+}
+
+fn blank_screen_note(rows: u16, columns: u16, alternate_screen: bool) -> String {
+    let screen = if alternate_screen {
+        "alternate"
+    } else {
+        "main"
+    };
+    format!(
+        "screen is blank ({rows} rows x {columns} columns, {screen} screen); \
+         the program has drawn no text at this size"
+    )
 }

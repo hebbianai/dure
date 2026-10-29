@@ -180,6 +180,10 @@ dure send-keys worker Escape Up Enter
 dure send-keys SESSION Down Enter --workspace WORKSPACE --json  # headless, no pane required
 ```
 
+A blank screen prints nothing and a note with its size on stderr. A full-screen
+agent such as Codex draws nothing while its pane is very short, so a blank read
+is not proof that it is idle.
+
 A `send` receipt proves bytes reached the PTY, not that the provider accepted
 them. `--no-enter` differs by surface: structured chat leaves an unsubmitted
 draft for a human to Send, while a native PTY agent gets the bytes at once — so
