@@ -7,6 +7,7 @@ enum ObservationFault {
     RuntimeChanged,
     Malformed,
     StaleSession,
+    Exited,
 }
 
 async fn assert_context_observation(fault: ObservationFault) {
@@ -65,6 +66,40 @@ async fn assert_context_observation(fault: ObservationFault) {
                     "orchestration_session_unavailable",
                     "hmux_descriptor_malformed",
                     BackendFailureDispositionV1::RetrySame,
+                )
+            }
+            ObservationFault::Exited => {
+                // The exact generation's retained tombstone: a process started
+                // before a restart or account switch still carries this fence.
+                let session = &body["session"];
+                fs::write(
+                    &descriptor,
+                    serde_json::to_vec(&json!({
+                        "schema_version": 1,
+                        "session_id": session["sessionId"],
+                        "workspace_id": session["workspaceId"],
+                        "session_class": "managed",
+                        "lifecycle": "exited",
+                        "provider_id": session["providerId"],
+                        "runner_principal": session["runnerPrincipal"],
+                        "runner_instance": session["runnerInstance"],
+                        "channel_epoch": session["channelEpoch"],
+                        "host_instance_id": session["hostInstanceId"],
+                        "terminal_epoch": session["terminalEpoch"],
+                        "output_seq": "7",
+                        "health": "exited",
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+                (
+                    "orchestration_generation_conflict",
+                    "hmux_session_exited",
+                    if method.ends_with("exact-session") {
+                        BackendFailureDispositionV1::Terminal
+                    } else {
+                        BackendFailureDispositionV1::StaleGeneration
+                    },
                 )
             }
             ObservationFault::StaleSession => {
@@ -175,6 +210,11 @@ async fn orchestration_observation_runtime_change_is_not_a_stale_session() {
 #[tokio::test]
 async fn orchestration_observation_malformed_is_not_a_stale_session() {
     assert_context_observation(ObservationFault::Malformed).await;
+}
+
+#[tokio::test]
+async fn orchestration_observation_of_an_exited_generation_is_stale_not_retryable() {
+    assert_context_observation(ObservationFault::Exited).await;
 }
 
 #[tokio::test]
