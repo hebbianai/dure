@@ -1,5 +1,14 @@
 import type { SpacesFacetSource } from "@/lib/spaces/spacesViewProjection";
 
+/** The catalog's account line. Mirrors `SessionAccountSummary` in the hub
+ * protocol; the phone reads this type too, so it stays free of desktop state. */
+export interface SessionAccountSummary {
+	/** Absent: the provider's default account, which the phone names itself. */
+	readonly label?: string;
+	/** A switch queued behind the running turn. */
+	readonly pending?: { readonly label?: string };
+}
+
 /** Desktop-owned row presentation carried by the live catalog, never the
  * phone's durable placement cache. Missing observations stay missing. */
 export interface SessionPresentation
@@ -12,6 +21,8 @@ export interface SessionPresentation
 		readonly committed: number;
 		readonly worktree: number;
 	};
+	/** Present only when the phone may read and switch this session's account. */
+	readonly account?: SessionAccountSummary;
 }
 
 export function sessionPresentation(
@@ -22,6 +33,7 @@ export function sessionPresentation(
 		readonly committed: { readonly files: number };
 		readonly worktree: { readonly files: number };
 	},
+	account?: SessionAccountSummary,
 ): SessionPresentation {
 	return {
 		pinned: row.pinned,
@@ -45,5 +57,6 @@ export function sessionPresentation(
 					},
 				}
 			: {}),
+		...(account ? { account } : {}),
 	};
 }

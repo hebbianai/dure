@@ -42,6 +42,7 @@ import { useDiffBadges } from "@/lib/scm/status/diffBadgesStore";
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useRecentSessionHistory } from "@/components/sessions/useRecentSessionHistory";
 import { useSpaces } from "@/components/spaces/useSpaces";
+import { sessionAccountSummary } from "@/lib/hub/sessionAccount";
 import { sessionPresentation } from "@/lib/hub/sessionPresentation";
 import { presentedAgentDisplayState } from "@/lib/agents/agentStateModel";
 import { buildSidebarLayout } from "@/lib/hub/sidebarLayout";
@@ -72,6 +73,7 @@ export type LayoutSink = (layout: ReturnType<typeof buildSidebarLayout>) => void
 export function useHubSidebarLayout(send: LayoutSink): void {
 	const desktops = useStore((state) => state.desktops);
 	const agents = useStore((state) => state.agents);
+	const accounts = useStore((state) => state.accounts);
 	const projects = useStore((state) => state.projects);
 	const sshHosts = useStore((state) => state.sshHosts);
 	const diffBadges = useDiffBadges(state => state.badges);
@@ -148,25 +150,32 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 					displayState: presentedAgentDisplayState(displayStates[agent.id], activity[agent.id]),
 					activityAt: agentRowActivityAt(sessionActivity[agent.sessionId], conversationActivityAt(agent.id, managedConversationId(agent))),
 					detail: sessionActivity[agent.sessionId]?.text || conversationPrompt(agent.id, managedConversationId(agent)),
-				}, diffBadges[agent.id] ? normalizeDiffBadge(diffBadges[agent.id]) : undefined),
+				}, diffBadges[agent.id] ? normalizeDiffBadge(diffBadges[agent.id]) : undefined,
+				sessionAccountSummary(agent, accounts)),
 			};
 		});
 		// `titleRevision` is not read; it is what makes a newly published live
 		// title re-run this and reach the phone.
-	}, [agents, projects, spaces, branchOf, sessionTitle, conversationIndex, titleRevision, sshHosts, displayStates, activity, sessionActivity, diffBadges]);
+	}, [agents, accounts, projects, spaces, branchOf, sessionTitle, conversationIndex, titleRevision, sshHosts, displayStates, activity, sessionActivity, diffBadges]);
 
 	// 브랜치는 space 자체의 값이 아니라 그 space 가 붙어 있는 에이전트의 값이라,
 	// 표를 만들기 직전에 얹는다.
 	const placed = useMemo(
-		() => spaces.map((space) => ({
-			...space,
-			branch: branchOf(space.agentId, space.cwd),
-			presentation: sessionPresentation({
+		() => spaces.map((space) => {
+			const agent = space.agentId === undefined
+				? undefined
+				: agents.find((candidate) => candidate.id === space.agentId);
+			return {
 				...space,
-				pinned: isPanePinned(pinnedPanes, panePinKey(space.desktopId, space.key)),
-			}, space.agentId && diffBadges[space.agentId] ? normalizeDiffBadge(diffBadges[space.agentId]) : undefined),
-		})),
-		[spaces, branchOf, diffBadges, pinnedPanes],
+				branch: branchOf(space.agentId, space.cwd),
+				presentation: sessionPresentation({
+					...space,
+					pinned: isPanePinned(pinnedPanes, panePinKey(space.desktopId, space.key)),
+				}, space.agentId && diffBadges[space.agentId] ? normalizeDiffBadge(diffBadges[space.agentId]) : undefined,
+				agent && sessionAccountSummary(agent, accounts)),
+			};
+		}),
+		[spaces, agents, accounts, branchOf, diffBadges, pinnedPanes],
 	);
 
 	useEffect(() => {

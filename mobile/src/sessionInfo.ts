@@ -16,6 +16,7 @@
  * `HubPlacement.branch` already states.
  */
 
+import { accountSummaryText } from "./accountSwitch";
 import type { HubSessions, UnifiedRow } from "./allSessions";
 import { t } from "./i18n";
 import type { HubPlacement, HubProbeSession } from "./ipc";
@@ -50,6 +51,7 @@ export function withoutAttachFailure(failures: AttachFailures, sessionId: string
 export type SessionInfoFactId =
   | "status"
   | "provider"
+  | "account"
   | "program"
   | "name"
   | "space"
@@ -101,6 +103,9 @@ export function sessionInfoFacts(input: SessionInfoInput): SessionInfoFact[] {
     value: folded && lifecycle !== "" ? `${state} · ${lifecycle}` : state,
   });
   add({ id: "provider", label: t("sessionInfo.provider"), value: session.provider_id });
+  // Only when the computer reported one: a session without an account line is
+  // not "on the default account", it is one the phone was told nothing about.
+  add({ id: "account", label: t("sessionInfo.account"), value: listed ? (accountSummaryText(listed) ?? "") : "" });
   const program = session.launch_program?.trim() ?? "";
   if (program !== session.provider_id.trim()) {
     add({ id: "program", label: t("sessionInfo.program"), value: program });

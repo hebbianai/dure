@@ -9,6 +9,7 @@ import type { HubTerminalWidthSnapshot } from "@/lib/hub/terminalWidthStore";
 import type { HubFileDiffReply, RemoteFileDiff } from "@/lib/hub/fileDiffBridge";
 import type { HubGitStatusReply, RemoteGitStatus } from "@/lib/hub/gitStatusBridge";
 import type { AgentKind, LaunchTarget } from "@/lib/hub/launchOfferWire";
+import type { HubSessionAccountReply } from "@/lib/hub/sessionAccountWire";
 import type { HubSessionFileReply } from "@/lib/hub/sessionFileBridge";
 import type { SidebarLayout } from "@/lib/hub/sidebarLayout";
 import type { HubStartAgentReply } from "@/lib/hub/startAgentBridge";
@@ -550,6 +551,16 @@ export const hubPublishLaunchOffer = (targets: LaunchTarget[], kinds: AgentKind[
  */
 export const hubStartAgentResult = (requestId: string, result: HubStartAgentReply) =>
 	invoke<boolean>("hub_start_agent_result", { requestId, result });
+
+/**
+ * The answer to a phone's account read or switch, for the round trip waiting
+ * on it. An unknown `requestId` returns false: the trip passed its deadline,
+ * and the phone has already told the person to check the session.
+ */
+export const hubSessionAccountResult = (
+	requestId: string,
+	result: HubSessionAccountReply,
+) => invoke<boolean>("hub_session_account_result", { requestId, result });
 
 /**
  * 폰이 물은 "이 세션이 뭘 바꿨나" 에 대한 답.
