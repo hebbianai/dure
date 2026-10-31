@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { resolveBackendProfilesPath } from "./backend-profiles.mjs";
-import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { backendTransportErrorReport, performBackendProfileRequest } from "./backend-transport.mjs";
 import { createOrchestrationRequest, isOrchestrationResponse } from "./contracts/orchestration-envelope.mjs";
 import { collectSessionQuery } from "./session-query.mjs";
 import { sameGeneration } from "./session-runtime-projection.mjs";
@@ -31,9 +31,20 @@ export function readMessageTracking(file) {
 export async function sendTrackedMessage(target, text, { backend, hmuxCommand, environment = process.env, querySession = collectSessionQuery, request = invoke } = {}) {
   const report = await querySession({ action: "show", ...target, backend, hmuxCommand });
   const live = report.session;
+  // An exited Session keeps its exact generation but can no longer resolve a message context.
+  if (!report.error && live?.liveness?.state === "exited") throw Object.assign(new Error(`Session ${live.sessionId} has exited. Nothing was sent.`), { code: "dure_send_session_exited", sessionId: live.sessionId });
   if (report.error || !live?.liveness?.exactGeneration || live.runtime?.sessionClass !== "managed") throw new Error("Tracked send requires an observable exact managed Session. Nothing was sent.");
   const session = { sessionId: live.sessionId, workspaceId: live.workspaceId, providerId: live.provider.id, ...live.runtime.generation };
-  const context = await request(backend, "dispatch.context.get.exact-session", { schemaVersion: 1, session });
+  let context;
+  try {
+    context = await request(backend, "dispatch.context.get.exact-session", { schemaVersion: 1, session });
+  } catch (error) {
+    // Nothing is opened before the context resolves. Report typed codes only;
+    // backend messages may carry private paths.
+    const detail = backendTransportErrorReport(error).error;
+    const reason = [detail.remoteCode ?? detail.code, detail.reasonCode].filter(Boolean).join(": ");
+    throw Object.assign(new Error(`The Session's message context is unavailable (${reason}). Nothing was sent; check the target with dure ls --alive.`), { code: "dure_send_context_unavailable", cause: error });
+  }
   const interactionId = `message.${randomUUID()}`;
   const query = { schemaVersion: 1, authority: context.target.authority, interactionId,
     participant: context.coordinatorGrant.participant, readCapability: context.interactionCapability };

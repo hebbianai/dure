@@ -309,6 +309,7 @@ const PROVIDER_RUNTIME_ENVIRONMENT_CAPABILITY: &str = "provider_runtime_environm
 const HOST_CAPABILITIES: &[&str] = &[
     hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY,
     hmux_host::local_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY,
+    hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY,
     "screen_snapshot",
     "live_output",
     "terminal_input",
@@ -4807,6 +4808,9 @@ fn serve_client(
     // a reply that omits the snapshot, and giving it one would look like a Host
     // that answered the handshake with nothing.
     let agent_state_report_progress = selected_capabilities.iter().any(|v| v == hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY);
+    let agent_state_report_background_work = selected_capabilities.iter().any(|v| {
+        v == hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY
+    });
     let reconnect_cursor = selected_capabilities
         .iter()
         .any(|capability| capability == RECONNECT_RESUME_CAPABILITY)
@@ -5112,6 +5116,7 @@ fn serve_client(
             agent_state_report,
             agent_state_report_completion_id,
             agent_state_report_progress,
+            agent_state_report_background_work,
             agent_state_report_causality,
             agent_state_report_observation_fence,
             provider_conversation_identity,
@@ -5171,6 +5176,7 @@ struct ClientPermissions {
     agent_state_report: bool,
     agent_state_report_completion_id: bool,
     agent_state_report_progress: bool,
+    agent_state_report_background_work: bool,
     agent_state_report_causality: bool,
     agent_state_report_observation_fence: bool,
     provider_conversation_identity: bool,
@@ -5548,6 +5554,7 @@ fn client_read_loop(
                         identity_only_conversation: permissions
                             .provider_conversation_identity_only_report,
                         conversation_continuation: permissions.provider_conversation_continuation,
+                        background_work: permissions.agent_state_report_background_work,
                     },
                     report,
                 );
@@ -6229,6 +6236,7 @@ mod tests {
             source: AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 0,
             program_status: None,
+            background_work: false,
         });
         let ordinary = FrameBody::Detach(Detach { reason: None });
 
@@ -6275,6 +6283,7 @@ mod tests {
                 source: AgentRuntimeStateSource::ProviderEvent,
                 turn_completed_count: 0,
                 program_status: None,
+                background_work: false,
             }),
             provider_conversation_identity: Some(Box::new(
                 hmux_host::local_protocol::ProviderConversationIdentityProjection {

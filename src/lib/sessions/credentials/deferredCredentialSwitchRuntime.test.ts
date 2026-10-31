@@ -336,6 +336,59 @@ describe("deferred managed credential switch runtime", () => {
 		expect(mocks.changeSettings).toHaveBeenCalledOnce();
 		expect(mocks.switchRuntime).not.toHaveBeenCalled();
 	});
+	it("queues settings that keep the Default account and applies them without a credential change", async () => {
+		const selection = {
+			model: null,
+			effort: "xhigh",
+			permissionMode: "skip_permissions" as const,
+		};
+		const defaultBinding = managedBindingFixture({ sessionId: "session-old" });
+		useStore.setState({
+			agents: [
+				{ ...agent(), credentialId: undefined, runtimeBinding: defaultBinding },
+			],
+		});
+		mocks.inspect.mockResolvedValue({
+			...inspection,
+			sourceBinding: defaultBinding,
+			sourceCredentialId: null,
+			targetCredentialId: null,
+			targetAccount: undefined,
+		});
+		await scheduleBusyAgentCredentialSwitch(
+			"agent-managed",
+			null,
+			"agent:agent-managed",
+			7,
+			{ selection, conversationId: "conversation-1" },
+		);
+		expect(mocks.inspect).toHaveBeenCalledWith(
+			"agent-managed",
+			null,
+			"agent:agent-managed",
+			{ allowUnchangedCredential: true },
+		);
+		expect(pendingSwitch()).toMatchObject({
+			sourceCredentialId: null,
+			targetCredentialId: null,
+			targetLaunchSelection: selection,
+		});
+		installWatch();
+		mocks.changeSettings.mockResolvedValue({});
+		pushSessionRuntime(turnCompletedIdle("14"));
+		await vi.waitFor(() => expect(mocks.changeSettings).toHaveBeenCalledOnce());
+		expect(mocks.changeSettings).toHaveBeenCalledWith(
+			expect.objectContaining({
+				expectedSourceRevision: 7,
+				targetLaunchSelection: selection,
+			}),
+		);
+		expect(mocks.changeSettings.mock.calls[0][0]).not.toHaveProperty(
+			"credentialAction",
+		);
+		expect(mocks.switchRuntime).not.toHaveBeenCalled();
+	});
+
 	it("requires an exact pending request to interrupt and apply settings", async () => {
 		const selection = {
 			model: "gpt-6-astra",

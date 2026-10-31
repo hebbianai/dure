@@ -1,11 +1,6 @@
-// Wire shape of agent_orchestration::CompleteDispatchRequest (schemaVersion 1).
-// The service remains authoritative for capabilities, revisions and byte limits.
-const identity = { type: "string", minLength: 1 };
-const revision = { type: "integer", minimum: 1 };
-const object = (properties, required = Object.keys(properties)) => ({
-  type: "object", properties, required, additionalProperties: false,
-});
+import { identity, object, revision, validateOrchestrationRequest } from "./orchestration-request-schema.mjs";
 
+// Wire shape of agent_orchestration::CompleteDispatchRequest (schemaVersion 1).
 export const completionRequestSchema = object({
   schemaVersion: { type: "integer", const: 1 },
   idempotencyKey: { ...identity, description: "Keep this key and the complete body unchanged after an uncertain response." },
@@ -42,42 +37,9 @@ const renamedFields = {
   reportMarkdown: "resultMarkdown", descriptionMarkdown: "resultMarkdown",
 };
 
-function invalid(path, reason) {
-  throw Object.assign(new Error(
-    `dispatch.complete: ${path} ${reason}. Correct the body using orchestration_dispatch_complete's input schema or the dure-orchestration skill; an unchanged invalid request will not succeed.`,
-  ), { code: "orchestration_request_invalid", field: path, disposition: "terminal" });
-}
-
-// Walk only the published schema. Error paths come from schema keys, never from
-// caller-supplied values or unknown keys that could contain private material.
-function validate(value, schema, path) {
-  const type = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
-  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
-  if (!types.some((expected) => expected === "integer" ? Number.isSafeInteger(value) : expected === type)) {
-    invalid(path, `must be ${types.join(" or ")}`);
-  }
-  if (schema.const !== undefined && value !== schema.const) invalid(path, `must be ${schema.const}`);
-  if (schema.minimum !== undefined && value < schema.minimum) invalid(path, `must be at least ${schema.minimum}`);
-  if (type === "string" && schema.minLength && !value.length) invalid(path, "must not be empty");
-  if (type === "array") {
-    if (value.length < (schema.minItems ?? 0)) invalid(path, `must contain at least ${schema.minItems} item`);
-    value.forEach((item, index) => validate(item, schema.items, `${path}[${index}]`));
-  } else if (type === "object") {
-    for (const key of schema.required) {
-      if (!Object.hasOwn(value, key)) invalid(`${path}.${key}`, "is required");
-    }
-    for (const key of Object.keys(value)) {
-      if (!Object.hasOwn(schema.properties, key)) {
-        const replacement = path === "body" && Object.hasOwn(renamedFields, key) ? renamedFields[key] : null;
-        invalid(path, replacement
-          ? `uses ${key}; the completion field is ${replacement}`
-          : `contains an unknown field (allowed: ${Object.keys(schema.properties).join(", ")})`);
-      }
-      validate(value[key], schema.properties[key], `${path}.${key}`);
-    }
-  }
-}
-
 export function validateCompletionRequest(body) {
-  validate(body, completionRequestSchema, "body");
+  validateOrchestrationRequest(body, completionRequestSchema, {
+    method: "dispatch.complete", tool: "orchestration_dispatch_complete",
+    subject: "completion", renamedFields: { body: renamedFields },
+  });
 }

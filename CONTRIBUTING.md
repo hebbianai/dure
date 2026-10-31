@@ -330,16 +330,24 @@ pnpm verify:frontend
 pnpm test:scripts
 pnpm verify:push:mobile-web
 pnpm hub-protocol:verify
+pnpm verify:push:hmux-core
+pnpm app:verify
 ```
 
-`verify:frontend` checks the dependency installation, types, lint, dependency
-graph and unused code, runs frontend tests and builds the web UI. `test:scripts`
-runs the script and CLI fixture suites with the repository's existing project
-boundaries. Neither command proves a native app or live provider workflow works.
-For Rust, terminal or process-lifecycle changes, also include the relevant crate
-checks and native smoke evidence. Runtime QA must use disposable HOME, DURE_HOME
-and a unique HMUX_DISCOVERY_ROOT through the existing QA runners. A separate
-app channel alone does not isolate runtime data.
+`verify:frontend` checks the dependency installation, architecture fitness,
+design token coverage, types, lint, dependency graph and unused code, runs
+frontend tests and builds the web UI; CI splits the frontend tests across three
+shards. `test:scripts` parses every script module and runs the script and CLI
+fixture suites with the repository's existing project boundaries; CI runs the
+same projects as separate jobs, one job per file where a project requires its
+own invocation. `verify:push:hmux-core` formats, tests and lints the Hmux workspace,
+including the exact-pin Ghostty terminal core, and `app:verify` checks the
+generated extension contracts and formats, tests and lints the `crates/dure-app`
+workspace and its provider driver. None of these commands proves a native app or
+live provider workflow works. For Rust, terminal or process-lifecycle changes,
+also include the relevant crate checks and native smoke evidence. Runtime QA
+must use disposable HOME, DURE_HOME and a unique HMUX_DISCOVERY_ROOT through the
+existing QA runners. A separate app channel alone does not isolate runtime data.
 
 Behavior changes need tests that exercise the actual behavior. For a visible UI
 change, include before/after images or a short video and describe the interaction
@@ -357,18 +365,25 @@ The workflow pins its action versions in
 pushes to `main`, pull requests targeting `main`, and manual dispatches.
 Documentation-only changes run change classification and documentation checks;
 code suites are skipped. Code, dependency and CI changes, uncertain comparisons,
-and manual dispatches run the complete public checks. The existing
+and manual dispatches run the complete public checks, except that the Hmux job
+runs only when Hmux or the terminal-state protocol is affected and the app core
+job only when the app core is affected. Shared inputs, CI changes, uncertain
+comparisons and manual dispatches select both. The existing
 [scope classifier](scripts/lib/push-gate-scope.mjs) owns path classification.
 
-Except for the maintainer push exemption below, the required
-`Public repository checks` result always runs. It requires successful
-classification and documentation checks, plus every selected frontend, script,
-mobile web and shared-protocol check. A failed classification or an unexpectedly
-skipped, failed or cancelled required job cannot pass this result. Mobile web checks
-run on Linux, and the shared desktop/mobile protocol is formatted, tested and
-linted on Linux, Windows and macOS. These jobs use hosted runners with read-only
-repository permissions; they do not use publisher credentials or maintainer
-machines. Platform-native
+The required `Public repository checks` result runs for every pull request, push
+and manual dispatch. It requires successful classification and documentation
+checks, plus every selected frontend, script, mobile web, shared-protocol, Hmux
+and app core check. A failed classification or an unexpectedly skipped, failed or
+cancelled required job cannot pass this result. A newer update to the same pull
+request cancels its older run, and that cancelled run fails this result. Pushes
+to `main` and manual dispatches are never cancelled, because each push is checked
+only over its own pushed range. Mobile web and app core
+checks run on Linux, and the shared desktop/mobile protocol is formatted, tested
+and linted on Linux, Windows and macOS. Hmux checks run on macOS ARM64, the only
+host on which the pinned Ghostty build inputs can prepare the terminal core they
+link. These jobs use hosted runners with read-only repository permissions; they do
+not use publisher credentials or maintainer machines. Platform-native
 desktop/mobile packaging and device acceptance remain separate checks.
 
 Contributors submit changes to `main` through pull requests. Merging requires
@@ -386,12 +401,12 @@ and status-check requirements; force-push, deletion and linear-history rules
 remain in the separate branch-protection ruleset. The existing administrator
 `komojini` retains the previously configured full ruleset bypass.
 
-For `push` events to `main`, the planning job looks up the push actor's current
-repository permissions. It skips the remaining public CI jobs for `maintain` and
-`admin`, including pushes produced by merging a pull request. Permission lookup
-failures retain the normal checks. Pull-request checks and manual workflow
-dispatches still run for everyone. Contributors with lower access remain subject
-to the required checks and pull-request workflow above.
+Every push to `main`, including a maintainer's direct push and the push produced
+by merging a pull request, runs the same checks as any other push, selected from
+the complete pushed range. These runs do not block the push and nobody needs to
+wait for them; they record exact-commit evidence, which official releases require
+(see the [release guide](docs/maintainers/releasing.md)). Contributors with lower
+access remain subject to the required checks and pull-request workflow above.
 
 Contributors remain responsible for everything they submit, including work
 prepared with AI tools. Check the diff, verify claims, and describe any testing

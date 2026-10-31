@@ -5,6 +5,7 @@
 //! process liveness, or any other live Hmux runtime fact.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use dure_app::{
     AgentCheckpointBindingAuthorityV1, AgentCheckpointIdentityV1, AgentCheckpointObservationV1,
@@ -76,7 +77,7 @@ pub use orchestration::{
     OrchestrationDispatchContextResolutionV1, OrchestrationDispatchGenerationV1,
     OrchestrationDispatchSessionInspectionReceiptV1, OrchestrationDispatchSessionRebindReceiptV1,
     OrchestrationDispatchSessionRebindRequestV1, OrchestrationManagedCreateKeyStateV1,
-    session_identity as orchestration_session_identity,
+    session_identity as orchestration_session_identity, wake_retries::QueuedOrchestrationWakeV1,
 };
 
 /// A bounded SQLite pool implementing the durable domain-store port.
@@ -85,6 +86,9 @@ pub struct SqliteDomainStore {
     pool: SqlitePool,
     path: PathBuf,
     schema_info: StoreSchemaInfoV1,
+    /// Waits between `BEGIN IMMEDIATE` attempts that found the write lock held
+    /// past the pool's busy timeout; see `session_checkout`.
+    busy_retry_delays: &'static [Duration],
 }
 
 impl SqliteDomainStore {
@@ -105,6 +109,7 @@ impl SqliteDomainStore {
             pool,
             path,
             schema_info,
+            busy_retry_delays: session_checkout::BEGIN_IMMEDIATE_RETRY_DELAYS,
         };
         if let Err(error) = operations::rebuild_receipts(&store.pool).await {
             store.pool.close().await;
@@ -219,6 +224,23 @@ impl SqliteDomainStore {
         now_ms: i64,
     ) -> Result<usize, agent_orchestration::ports::StoreError> {
         orchestration::deadlines::expire(&self.pool, now_ms).await
+    }
+
+    pub async fn queued_orchestration_wakes(
+        &self,
+        reason_codes: &[&str],
+        queued_before_ms: i64,
+        opened_after_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<QueuedOrchestrationWakeV1>, DomainStoreErrorV1> {
+        orchestration::wake_retries::queued(
+            &self.pool,
+            reason_codes,
+            queued_before_ms,
+            opened_after_ms,
+            limit,
+        )
+        .await
     }
 
     pub fn interaction_service(&self) -> agent_orchestration::service::InteractionService {

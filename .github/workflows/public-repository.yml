@@ -11,8 +11,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: public-repository-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A newer PR update supersedes the older run of that PR. Every push to main
+  # and every manual dispatch has its own group: each push is planned only from
+  # its own before..after range, so a cancelled push run would leave that range
+  # unchecked, and a dispatch must keep the full checks it requested.
+  group: public-repository-${{ github.event_name }}-${{ github.event_name != 'pull_request' && github.run_id || github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:
@@ -20,14 +24,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      run_checks: ${{ steps.plan.outputs.run_checks }}
       run_code_checks: ${{ steps.plan.outputs.run_code_checks }}
+      run_hmux_checks: ${{ steps.plan.outputs.run_hmux_checks }}
+      run_app_checks: ${{ steps.plan.outputs.run_app_checks }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -35,17 +40,12 @@ jobs:
         id: plan
         env:
           CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REF: ${{ github.ref }}
-          CI_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ github.token }}
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD_SHA: ${{ github.sha }}
         run: node scripts/public-ci.mjs plan
 
   documentation:
     name: Documentation checks
-    needs: plan
-    if: ${{ needs.plan.outputs.run_checks == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -72,16 +72,20 @@ jobs:
           output: ${{ runner.temp }}/lychee-report.md
 
   frontend:
-    name: Frontend checks
+    name: Frontend checks (shard ${{ matrix.shard }})
     needs: plan
     if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -89,49 +93,258 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Verify frontend
-        run: pnpm verify:frontend
+      - name: Run dependency checks
+        if: matrix.shard == 1
+        run: pnpm verify:dependencies
+      - name: Check architecture fitness
+        if: matrix.shard == 1
+        run: pnpm architecture:check
+      - name: Check design token coverage
+        if: matrix.shard == 1
+        run: pnpm design:coverage:check
+      - name: Test design coverage engine
+        if: matrix.shard == 1
+        run: pnpm design:coverage:test
+      - name: Typecheck
+        if: matrix.shard == 1
+        run: pnpm typecheck
+      - name: Lint
+        if: matrix.shard == 1
+        run: pnpm lint
+      - name: Dependency cruiser
+        if: matrix.shard == 1
+        run: pnpm depcruise
+      - name: Knip unused exports
+        if: matrix.shard == 1
+        run: pnpm knip
+      - name: Test frontend source (shard ${{ matrix.shard }}/3)
+        run: pnpm test:src --shard=${{ matrix.shard }}/3
+      - name: Test frontend contracts
+        if: matrix.shard == 1
+        run: pnpm test:frontend-contracts
+      - name: Build frontend
+        if: matrix.shard == 1
+        run: pnpm build:frontend
 
-  scripts:
-    name: Script checks
-    needs: plan
+  scripts-vitest:
+    name: Script checks (vitest)
+    needs: [plan]
     if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
       - name: Enable the pinned package manager
         run: corepack enable
+      - name: Install zsh for test fixtures
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zsh
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
       - name: Prepare isolated script test user
-        # A dedicated UID keeps host system services outside the test census.
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes zsh
           sudo useradd --create-home --shell /bin/bash dure-source-checks
           sudo cp -a "$GITHUB_WORKSPACE" /home/dure-source-checks/source
           sudo chown -R dure-source-checks:dure-source-checks /home/dure-source-checks/source
           sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
-      - name: Verify scripts
+      - name: Run vitest script tests
         run: |
-          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail <<'SCRIPT'
-          cd "$HOME/source"
-          export CARGO_HOME="$HOME/.cargo"
-          export RUSTUP_HOME="$HOME/.rustup"
-          "$HOME/rustup-init" -y --no-modify-path --default-toolchain none
-          export PATH="$CARGO_HOME/bin:$PATH"
-          # Fixtures use disposable homes but share this prepared, pinned compiler.
-          RUSTUP_TOOLCHAIN="$(rustup show active-toolchain | awk '{print $1}')"
-          export RUSTUP_TOOLCHAIN
-          rustc -vV
-          pnpm install --frozen-lockfile
-          pnpm test:scripts
-          SCRIPT
+          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail -c '
+            cd "$HOME/source"
+            export CARGO_HOME="$HOME/.cargo"
+            export RUSTUP_HOME="$HOME/.rustup"
+            "$HOME/rustup-init" -y --no-modify-path --default-toolchain none
+            export PATH="$CARGO_HOME/bin:$PATH"
+            RUSTUP_TOOLCHAIN="$(rustup show active-toolchain | awk '"'"'{print $1}'"'"')"
+            export RUSTUP_TOOLCHAIN
+            rustc -vV
+            corepack enable
+            pnpm install --frozen-lockfile
+            # The split script jobs run test files directly, so parse every
+            # script module here, including those no test imports.
+            node scripts/run-changed-script-tests.mjs --syntax-only
+            corepack pnpm exec vitest run --project scripts
+          '
+
+  scripts-node:
+    name: Script checks (node ${{ matrix.file }})
+    needs: [plan]
+    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        file:
+          - cli/lib/provider-launch-selection.test.mjs
+          - scripts/qa/managed-gemini-hooks.test.mjs
+          - scripts/qa/managed-qwen-hooks.test.mjs
+          - scripts/qa/mobile-live.test.mjs
+          - scripts/qa/workspace-native-focus-client.test.mjs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Install zsh for test fixtures
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zsh
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - name: Prepare isolated script test user
+        run: |
+          sudo useradd --create-home --shell /bin/bash dure-source-checks
+          sudo cp -a "$GITHUB_WORKSPACE" /home/dure-source-checks/source
+          sudo chown -R dure-source-checks:dure-source-checks /home/dure-source-checks/source
+          sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
+      - name: Run node test (${{ matrix.file }})
+        run: |
+          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail -c '
+            cd "$HOME/source"
+            export CARGO_HOME="$HOME/.cargo"
+            export RUSTUP_HOME="$HOME/.rustup"
+            "$HOME/rustup-init" -y --no-modify-path --default-toolchain none
+            export PATH="$CARGO_HOME/bin:$PATH"
+            RUSTUP_TOOLCHAIN="$(rustup show active-toolchain | awk '"'"'{print $1}'"'"')"
+            export RUSTUP_TOOLCHAIN
+            rustc -vV
+            corepack enable
+            pnpm install --frozen-lockfile
+            node --test ${{ matrix.file }}
+          '
+
+  scripts-deadline:
+    name: Script checks (deadline ${{ matrix.file }})
+    needs: [plan]
+    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        file:
+          - scripts/dure-cli-hmux.test.mjs
+          - scripts/dure-cli-ls.test.mjs
+          - scripts/dure-cli-orchestration-status.test.mjs
+          - scripts/dure-cli-read-latency.test.mjs
+          - scripts/dure-cli-wait.test.mjs
+          - scripts/lib/dev-hmux-tool.test.mjs
+          - scripts/lib/process-identity-relations.test.mjs
+          - scripts/qa/hmux-remote-soak.test.mjs
+          - scripts/qa/lib/bounded-owned-process-group.test.mjs
+          - scripts/qa/lib/owned-process-group.test.mjs
+          - scripts/qa/spawn-prompt-ssh-receipt-loss-smoke.test.mjs
+          - scripts/run-hmux-tests.preparation.test.mjs
+          - scripts/run-hmux-tests.test.mjs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Install zsh for test fixtures
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zsh
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - name: Prepare isolated script test user
+        run: |
+          sudo useradd --create-home --shell /bin/bash dure-source-checks
+          sudo cp -a "$GITHUB_WORKSPACE" /home/dure-source-checks/source
+          sudo chown -R dure-source-checks:dure-source-checks /home/dure-source-checks/source
+          sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
+      - name: Run deadline-sensitive script test (${{ matrix.file }})
+        run: |
+          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail -c '
+            cd "$HOME/source"
+            export CARGO_HOME="$HOME/.cargo"
+            export RUSTUP_HOME="$HOME/.rustup"
+            "$HOME/rustup-init" -y --no-modify-path --default-toolchain none
+            export PATH="$CARGO_HOME/bin:$PATH"
+            RUSTUP_TOOLCHAIN="$(rustup show active-toolchain | awk '"'"'{print $1}'"'"')"
+            export RUSTUP_TOOLCHAIN
+            rustc -vV
+            corepack enable
+            pnpm install --frozen-lockfile
+            corepack pnpm exec vitest run ${{ matrix.file }}
+          '
+
+  scripts-process:
+    name: Script checks (process ${{ matrix.file }})
+    needs: [plan]
+    if: ${{ needs.plan.outputs.run_code_checks == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        file:
+          - scripts/dure-cli-diagnostics.test.mjs
+          - scripts/dure-cli-install.test.mjs
+          - scripts/dure-cli-mutation-lock.test.mjs
+          - scripts/lib/dev-launch-supervisor.test.mjs
+          - scripts/lib/dev-launch-supervisor.retirement-failure.test.mjs
+          - scripts/lib/process-group-witness.test.mjs
+          - scripts/provision-hmux-remote.test.mjs
+          - scripts/queue-dev-app-deploy.test.mjs
+          - scripts/qa/lib/tauri-app-launch.test.mjs
+          - scripts/qa/lib/tauri-app-runner.test.mjs
+          - scripts/qa/pane-app-restart-app.test.mjs
+          - scripts/run-dev-app.frontend-authority.test.mjs
+          - scripts/run-dev-app.test.mjs
+          - scripts/run-dev-frontend.test.mjs
+          - scripts/run-dev-launch-child.test.mjs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Install zsh for test fixtures
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zsh
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - name: Prepare isolated script test user
+        run: |
+          sudo useradd --create-home --shell /bin/bash dure-source-checks
+          sudo cp -a "$GITHUB_WORKSPACE" /home/dure-source-checks/source
+          sudo chown -R dure-source-checks:dure-source-checks /home/dure-source-checks/source
+          sudo install --owner=dure-source-checks --group=dure-source-checks --mode=0755 "$(command -v rustup)" /home/dure-source-checks/rustup-init
+      - name: Run process fixture script test (${{ matrix.file }})
+        run: |
+          sudo --user=dure-source-checks --set-home env PATH="$PATH" CI=true bash -euo pipefail -c '
+            cd "$HOME/source"
+            export CARGO_HOME="$HOME/.cargo"
+            export RUSTUP_HOME="$HOME/.rustup"
+            "$HOME/rustup-init" -y --no-modify-path --default-toolchain none
+            export PATH="$CARGO_HOME/bin:$PATH"
+            RUSTUP_TOOLCHAIN="$(rustup show active-toolchain | awk '"'"'{print $1}'"'"')"
+            export RUSTUP_TOOLCHAIN
+            rustc -vV
+            corepack enable
+            pnpm install --frozen-lockfile
+            corepack pnpm exec vitest run ${{ matrix.file }}
+          '
 
   mobile-web:
     name: Mobile web checks
@@ -143,7 +356,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -170,6 +383,10 @@ jobs:
           persist-credentials: false
       - name: Prepare repository-pinned Rust
         run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: crates/dure-hub-protocol
+          shared-key: hub-protocol-${{ matrix.os }}
       - name: Check shared protocol formatting
         run: cargo fmt --manifest-path crates/dure-hub-protocol/Cargo.toml --all --check
       - name: Test desktop and mobile wire format
@@ -177,17 +394,93 @@ jobs:
       - name: Lint shared protocol
         run: cargo clippy --locked --manifest-path crates/dure-hub-protocol/Cargo.toml --all-targets -- -D warnings
 
+  hmux:
+    name: Hmux checks
+    needs: plan
+    if: ${{ needs.plan.outputs.run_hmux_checks == 'true' }}
+    # The terminal-state tests and lints link the exact-pin Ghostty core, whose
+    # pinned build inputs carry a macOS ARM64 Zig. Linux cannot prepare it.
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: hmux -> target
+          # Pull requests restore main's cache without evicting it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Prepare the pinned Ghostty VT proof
+        # The proof builder compiles with its reviewed Rust baseline.
+        env:
+          DURE_GHOSTTY_VT_CACHE_ROOT: ${{ runner.temp }}/dure-ghostty-vt
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          proof="$(node scripts/ensure-ghostty-vt-proof.mjs --target aarch64-apple-darwin)"
+          test -d "$proof"
+          printf 'HMUX_GHOSTTY_VT_PROOF_PREFIX=%s\n' "$proof" >> "$GITHUB_ENV"
+      - name: Verify Hmux
+        run: pnpm verify:push:hmux-core
+
+  app:
+    name: App core checks
+    needs: plan
+    if: ${{ needs.plan.outputs.run_app_checks == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: crates/dure-app -> target
+          # Pull requests restore main's cache without evicting it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Verify app core
+        run: pnpm app:verify
+
   public-repository:
     name: Public repository checks
-    needs: [plan, documentation, frontend, scripts, mobile-web, shared-protocol]
-    if: ${{ always() && needs.plan.outputs.run_checks != 'false' }}
+    needs:
+      - plan
+      - documentation
+      - frontend
+      - scripts-vitest
+      - scripts-node
+      - scripts-deadline
+      - scripts-process
+      - mobile-web
+      - shared-protocol
+      - hmux
+      - app
+    # A cancelled pull request run still fails this required check. A cancelled
+    # push or dispatch run stays cancelled instead of reporting a failure.
+    if: ${{ github.event_name == 'pull_request' || !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -195,9 +488,16 @@ jobs:
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
           RUN_CODE_CHECKS: ${{ needs.plan.outputs.run_code_checks }}
+          RUN_HMUX_CHECKS: ${{ needs.plan.outputs.run_hmux_checks }}
+          RUN_APP_CHECKS: ${{ needs.plan.outputs.run_app_checks }}
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
-          SCRIPTS_RESULT: ${{ needs.scripts.result }}
+          SCRIPTS_VITEST_RESULT: ${{ needs.scripts-vitest.result }}
+          SCRIPTS_NODE_RESULT: ${{ needs.scripts-node.result }}
+          SCRIPTS_DEADLINE_RESULT: ${{ needs.scripts-deadline.result }}
+          SCRIPTS_PROCESS_RESULT: ${{ needs.scripts-process.result }}
           MOBILE_WEB_RESULT: ${{ needs.mobile-web.result }}
           SHARED_PROTOCOL_RESULT: ${{ needs.shared-protocol.result }}
+          HMUX_RESULT: ${{ needs.hmux.result }}
+          APP_RESULT: ${{ needs.app.result }}
         run: node scripts/public-ci.mjs check

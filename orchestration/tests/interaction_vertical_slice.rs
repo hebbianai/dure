@@ -22,8 +22,8 @@ use agent_orchestration::domain::{
     MembershipRef, MessagePurpose, OptionId, ParticipantRef, ProviderRef, ResponseSpec, Revision,
     RoleRef, RunId, RunTaskSpec, RunnerInstanceRef, RunnerPrincipalRef, RuntimeRef,
     SessionIdentityRef, SessionRef, Sha256Digest, TargetReferenceRef, TaskId, TerminalEpochRef,
-    WakeEffectRef, WorkerEndpoint, WorkerEndpointFence, WorkerEndpointRef, WorkerSessionGeneration,
-    WorkflowKindRef, WorkspaceId,
+    WakeEffectRef, WakeReasonCode, WorkerEndpoint, WorkerEndpointFence, WorkerEndpointRef,
+    WorkerSessionGeneration, WorkflowKindRef, WorkspaceId,
 };
 use agent_orchestration::ports::{
     ReadEventsStoreRequest, ReadEventsStoreResult, Store, StoreError, StoreFuture, StoreHandle,
@@ -1163,6 +1163,98 @@ async fn completed_dispatch_accepts_only_informational_updates_without_changing_
 }
 
 #[tokio::test]
+async fn a_fenced_worker_reads_a_post_completion_update_with_its_dispatch_context() {
+    let target = target();
+    let mut completed = dispatch(&target);
+    completed.state = DispatchState::Completed;
+    completed.revision = Revision::new(2).unwrap();
+    let service = InteractionService::new(in_memory_store(vec![completed]).unwrap());
+    // Exact-session updates address only the worker, with its inbox capability.
+    let mut update = decision_request(&target);
+    update.idempotency_key = "exact-session-update".into();
+    update.expected_dispatch_revision = Revision::new(2).unwrap();
+    let mut common = update.interaction.common().clone();
+    common.author = participant("participant.coordinator");
+    common.audience = audience(vec![(
+        "participant.worker.reviewer",
+        "capability.inbox.worker",
+        vec!["capability.inbox.worker"],
+    )]);
+    update.interaction = InteractionDraft::Message {
+        common,
+        purpose: MessagePurpose::Update,
+    };
+    service.open(update).await.unwrap();
+    let inbox = service.read_events(worker_read(&target)).await.unwrap();
+    assert_eq!(inbox.events.len(), 1);
+
+    let read = |read_capability: &str, endpoint_fence: Option<WorkerEndpointFence>| {
+        GetInteractionRequest {
+            schema_version: INTERACTION_SCHEMA_VERSION,
+            authority: target.authority.clone(),
+            interaction_id: reference("decision-1", InteractionId::new),
+            participant: participant("participant.worker.reviewer"),
+            read_capability: capability(read_capability),
+            endpoint_fence,
+        }
+    };
+    for read_capability in ["capability.inbox.worker", "capability.open.interaction"] {
+        let message = service
+            .get(read(read_capability, Some(endpoint_fence(&target))))
+            .await
+            .unwrap();
+        assert!(matches!(
+            message,
+            InteractionRecord::Message {
+                purpose: MessagePurpose::Update,
+                ..
+            }
+        ));
+    }
+    let not_found = Err(ServiceError::NotFound {
+        resource: "interaction",
+    });
+    assert_eq!(
+        service
+            .get(read("capability.other", Some(endpoint_fence(&target))))
+            .await,
+        not_found
+    );
+    // The Dispatch capability alone does not stand in for the worker fence.
+    assert_eq!(
+        service.get(read("capability.open.interaction", None)).await,
+        not_found
+    );
+    let mut wrong_fence = endpoint_fence(&target);
+    wrong_fence.acknowledgement_capability = capability("capability.ack.other");
+    assert_eq!(
+        service
+            .get(read("capability.open.interaction", Some(wrong_fence)))
+            .await,
+        not_found
+    );
+
+    let mut author = read("capability.open.interaction", None);
+    author.participant = participant("participant.coordinator");
+    assert!(service.get(author.clone()).await.is_ok());
+    assert!(service.progress(author).await.is_ok());
+}
+
+fn worker_read(target: &InteractionTarget) -> ReadEventsRequest {
+    ReadEventsRequest {
+        schema_version: INTERACTION_SCHEMA_VERSION,
+        authority: target.authority.clone(),
+        target: Some(target.clone()),
+        participant: participant("participant.worker.reviewer"),
+        delivery_capability: capability("capability.inbox.worker"),
+        endpoint_fence: Some(endpoint_fence(target)),
+        after: EventCursor::BEGINNING,
+        acknowledgement: None,
+        limit: 10,
+    }
+}
+
+#[tokio::test]
 async fn completion_rejects_a_replaced_endpoint_session_before_any_state_change() {
     let target = target();
     let service = InteractionService::new(in_memory_store(vec![dispatch(&target)]).unwrap());
@@ -1457,6 +1549,111 @@ async fn provider_wake_is_a_separate_fenced_and_idempotent_delivery_transition()
     assert_eq!(
         replay.deliveries[0].wake.as_ref().unwrap().state,
         DeliveryWakeState::Triggered
+    );
+}
+
+#[tokio::test]
+async fn a_queued_wake_is_claimed_again_only_while_its_delivery_is_unread() {
+    let target = target();
+    let wake_capability = capability("capability.wake.worker");
+    let mut request = decision_request(&target);
+    request.idempotency_key = "open-requeued-wake-message".into();
+    request.interaction = InteractionDraft::Message {
+        common: InteractionDraftCommon {
+            id: reference("requeued-wake-message", InteractionId::new),
+            target: target.clone(),
+            author: participant("participant.human.coordinator"),
+            audience: audience(vec![(
+                "participant.worker.reviewer",
+                "capability.inbox.worker",
+                vec!["capability.inbox.worker"],
+            )]),
+            title: "Wake the worker once it is idle".into(),
+            description_markdown: "The first wake found the worker busy.".into(),
+        },
+        purpose: MessagePurpose::Update,
+    };
+    let mut dispatch = dispatch(&target);
+    dispatch.worker_endpoint.wake_capability = Some(wake_capability.clone());
+    let service = InteractionService::new(in_memory_store(vec![dispatch]).unwrap());
+    let opened = service.open(request).await.unwrap();
+    let receipt_id = opened.deliveries[0].receipt_id.clone();
+    let transition = |transition, transitioned_at_ms| TransitionDeliveryWakeRequest {
+        schema_version: INTERACTION_SCHEMA_VERSION,
+        authority: target.authority.clone(),
+        receipt_id: receipt_id.clone(),
+        endpoint_fence: endpoint_fence(&target),
+        wake_capability: Some(wake_capability.clone()),
+        transition,
+        transitioned_at_ms,
+    };
+    let busy = || DeliveryWakeTransition::QueuedUntilNextTurn {
+        reason_code: reference("hmux_agent_prompt_runtime_changed", WakeReasonCode::new),
+    };
+    for (step, at) in [
+        (DeliveryWakeTransition::Request, 1_100),
+        (DeliveryWakeTransition::Claim, 1_200),
+        (busy(), 1_300),
+    ] {
+        assert!(
+            service
+                .transition_delivery_wake(transition(step, at))
+                .await
+                .unwrap()
+                .applied
+        );
+    }
+
+    let reclaimed = service
+        .transition_delivery_wake(transition(DeliveryWakeTransition::Claim, 1_400))
+        .await
+        .unwrap();
+    assert!(reclaimed.applied);
+    assert_eq!(
+        reclaimed.delivery.wake.unwrap().state,
+        DeliveryWakeState::Uncertain
+    );
+    assert!(
+        !service
+            .transition_delivery_wake(transition(DeliveryWakeTransition::Claim, 1_401))
+            .await
+            .unwrap()
+            .applied,
+        "an uncertain wake may already have written and is never claimed twice"
+    );
+    assert!(
+        service
+            .transition_delivery_wake(transition(busy(), 1_500))
+            .await
+            .unwrap()
+            .applied
+    );
+
+    service
+        .read_events(ReadEventsRequest {
+            schema_version: INTERACTION_SCHEMA_VERSION,
+            authority: target.authority.clone(),
+            target: Some(target.clone()),
+            participant: participant("participant.worker.reviewer"),
+            delivery_capability: capability("capability.inbox.worker"),
+            endpoint_fence: Some(endpoint_fence(&target)),
+            after: EventCursor::BEGINNING,
+            acknowledgement: None,
+            limit: 10,
+        })
+        .await
+        .unwrap();
+    let observed = service
+        .transition_delivery_wake(transition(DeliveryWakeTransition::Claim, 1_600))
+        .await
+        .unwrap();
+    assert!(
+        !observed.applied,
+        "a delivery the worker read needs no wake"
+    );
+    assert_eq!(
+        observed.delivery.wake.unwrap().state,
+        DeliveryWakeState::QueuedUntilNextTurn
     );
 }
 

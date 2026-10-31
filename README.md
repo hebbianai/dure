@@ -144,7 +144,7 @@ Source licensing does not include access to operated services. Signing keys, dep
 
 Read the [contribution guide](CONTRIBUTING.md), follow our [Code of Conduct](CODE_OF_CONDUCT.md), or [report a bug or propose a feature](https://github.com/hebbianai/dure/issues/new/choose). For vulnerabilities, use the private channel in our [security policy](SECURITY.md).
 
-- **Release notes:** [GitHub Releases](https://github.com/hebbianai/hebbian-releases/releases)
+- **Release notes:** [GitHub Releases](https://github.com/hebbianai/dure/releases)
 - **Privacy and telemetry:** [Privacy and telemetry](https://docs.dureai.dev/en/privacy-and-telemetry)
 - **Community:** [Discord](https://discord.gg/aTuRV6DXhb)
 - **Updates:** [X · @hebbianai_](https://x.com/hebbianai_)

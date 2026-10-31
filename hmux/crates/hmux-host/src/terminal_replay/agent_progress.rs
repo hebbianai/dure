@@ -88,12 +88,7 @@ impl TerminalReplay {
             .revision
             .checked_add(1)
             .ok_or(TerminalReplayError::StateRevisionExhausted)?;
-        let observation = AgentRuntimeObservation::new(
-            current.lifecycle,
-            current.activity,
-            current.attention,
-            current.source,
-        );
+        let observation = AgentRuntimeObservation::of(current);
         self.agent_progress
             .projection
             .as_mut()

@@ -344,6 +344,64 @@ describe("structured terminal record carrier", () => {
 		).toBe(false);
 	});
 
+	it("carries the Host's background work fact only beside working activity", async () => {
+		const runtimeState = (
+			revision: string,
+			activity: string,
+			backgroundWork: unknown,
+		) =>
+			new TextEncoder().encode(
+				JSON.stringify({
+					kind: "agent_runtime_state",
+					state: {
+						terminalEpoch: "terminal-1",
+						revision,
+						observedThroughOutputSeq: "1",
+						lifecycle: "running",
+						activity,
+						attention: "none",
+						source: "provider_event",
+						turnCompletedCount: "0",
+						backgroundWork,
+					},
+				}),
+			);
+		mocks.attachLocal.mockImplementation(
+			(request: { onRecord(record: ArrayBuffer): void }) => {
+				for (const record of [
+					runtimeState("7", "working", true),
+					runtimeState("8", "waiting", true),
+					runtimeState("9", "working", "yes"),
+				]) {
+					request.onRecord(record.buffer as ArrayBuffer);
+				}
+				return Promise.resolve({ ...receipt, initialDeliveryRecordCount: 3 });
+			},
+		);
+
+		const attached = await attachStructuredTerminalRecords({
+			observerId: "observer-a",
+			surfaceId: "surface-a",
+			binding: hmuxStandaloneBinding("session-a", "workspace-a"),
+			sshHosts: [],
+		});
+
+		const states = attached
+			.startDelivery()
+			.map((delivered) =>
+				delivered.kind === "adapter" &&
+				delivered.record.kind === "agent_runtime_state"
+					? delivered.record.state
+					: undefined,
+			);
+		expect(states.map((state) => state?.revision)).toEqual(["7", "8", "9"]);
+		expect(states.map((state) => state?.backgroundWork)).toEqual([
+			true,
+			undefined,
+			undefined,
+		]);
+	});
+
 	it("carries generic agent identity transitions in the ordered pull stream", async () => {
 		mocks.attachLocal.mockImplementation(
 			(request: { onRecord(record: ArrayBuffer): void }) => {

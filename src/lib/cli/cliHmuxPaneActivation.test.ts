@@ -181,8 +181,26 @@ describe("CLI Hmux pane activation", () => {
 			),
 		).rejects.toMatchObject({
 			code: "invalid_request",
-			message:
-				"Hmux session managed-a is managed and cannot use standalone attach",
+			message: expect.stringContaining(
+				"Hmux session managed-a is managed and cannot use standalone attach. A managed Agent opens without a restart through dure runs open",
+			),
+		});
+	});
+
+	it("points a missing name at the managed Run path", async () => {
+		await expect(
+			resolveCliStandaloneHmuxSession(
+				{ name: "agent-a" },
+				{
+					resolveNamedSession: vi.fn(async () => undefined),
+					inspectSession: vi.fn(),
+				},
+			),
+		).rejects.toMatchObject({
+			code: "pane_not_found",
+			message: expect.stringContaining(
+				"Hmux session named agent-a was not found. A managed Agent opens without a restart through dure runs open <agent-id> --space <space-id>",
+			),
 		});
 	});
 

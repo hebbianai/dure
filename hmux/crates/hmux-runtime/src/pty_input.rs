@@ -66,9 +66,14 @@ pub(crate) fn apply_pty_input(
                     Err(hmux_host::session_host::SessionHostError::SessionExited
                         | hmux_host::session_host::SessionHostError::FenceMismatch)
                 );
-            let reason = waited
-                .not_written_reason(host_exiting)
-                .expect("a non-ready wait must have a refusal reason");
+            let reason = crate::agent_prompt_admission::agent_prompt_refusal(
+                &host,
+                &state.fence,
+                target,
+                waited
+                    .not_written_reason(host_exiting)
+                    .expect("a non-ready wait must have a refusal reason"),
+            );
             let controller_generation = host.controller_generation();
             return Ok(InputApplication {
                 controller_generation,
@@ -207,7 +212,7 @@ pub(crate) fn apply_pty_input(
             .map(|_| host.current_output_seq());
         #[cfg(feature = "terminal-state-stream")]
         if let Some(baseline) = input_baseline_output_sequence
-            .filter(|_| input_effect.retains_pending_draft() && prepared.bytes_written() > 0)
+            .filter(|_| input_effect.awaits_echo() && prepared.bytes_written() > 0)
         {
             state.viewport_publication.arm_next_output_after_input(
                 baseline,

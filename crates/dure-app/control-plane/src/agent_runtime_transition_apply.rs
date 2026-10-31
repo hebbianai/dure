@@ -18,7 +18,9 @@ use sha2::{Digest, Sha256};
 
 use crate::agent_runtime_projection::AgentRuntimeSourceSnapshotV1;
 use crate::agent_runtime_stop_boundary::{SOURCE_RETAINED_CODE, SourceStopFailure};
-use crate::hmux_session_inspection::{HmuxSessionInspection, HmuxSessionInspectionFailure};
+use crate::hmux_session_inspection::{
+    AgentBusyReason, HmuxSessionInspection, HmuxSessionInspectionFailure,
+};
 use crate::provider_credential_profile::{
     PreparedProviderCredentialLaunchV1, ProviderCredentialProfileErrorV1,
 };
@@ -46,6 +48,7 @@ mod request_replay;
 pub(super) use request_replay::{apply, apply_locked};
 pub(super) mod native;
 mod replacement;
+mod session_settings;
 use admission::{load_or_admit, validate_replay};
 use replacement::corrected_successor_intent;
 
@@ -1161,6 +1164,21 @@ fn repair_store_error(error: DomainStoreErrorV1) -> super::BackendDispatchError 
             super::BackendDispatchError::terminal("agent_runtime_repair_transition_unavailable")
         }
         _ => super::BackendDispatchError::from("agent_runtime_repair_store_failed"),
+    }
+}
+
+/// An idle-only stop refused before admission: nothing was stopped, switched
+/// or recorded, so the same request may be retried once the source is idle.
+/// The reason code names the Host evidence; clients own the guidance.
+fn source_busy(reason: AgentBusyReason) -> super::BackendDispatchError {
+    super::BackendDispatchError {
+        code: "agent_runtime_source_busy".into(),
+        message: format!(
+            "The current session is not idle ({}). Nothing was stopped or changed; retry the same request once it is idle.",
+            reason.code()
+        ),
+        details: Some(serde_json::json!({ "reasonCode": reason.code() })),
+        disposition: super::BackendFailureDispositionV1::RetrySame,
     }
 }
 

@@ -21,6 +21,16 @@ impl Drop for Server {
 }
 
 async fn server(ping: Value, post_status: u16) -> Server {
+    server_replying(ping, post_status, Duration::ZERO, "{}").await
+}
+
+/// Like the app server, a POST reply can wait for the Host before it answers.
+async fn server_replying(
+    ping: Value,
+    post_status: u16,
+    post_delay: Duration,
+    post_body: &'static str,
+) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let posts = Arc::new(Mutex::new(Vec::new()));
@@ -56,7 +66,8 @@ async fn server(ping: Value, post_status: u16) -> Server {
             stream.read_exact(&mut body).await.unwrap();
             let (status, response) = if headers.starts_with("POST /hooks/claude ") {
                 received.lock().unwrap().push((headers, body));
-                (post_status, "{}".into())
+                tokio::time::sleep(post_delay).await;
+                (post_status, post_body.to_string())
             } else {
                 (200, ping.to_string())
             };
@@ -199,5 +210,63 @@ async fn authenticates_the_selected_generation_and_capability_before_posting() {
             Err(HookFailure::Unavailable)
         );
         assert!(server.posts.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn waits_for_the_app_servers_accepted_reply_after_a_slow_host_report() {
+    // The app answers 202 once its Host report has not finished within 1.5 s
+    // (`dispatch_claude_hook_request`). A hook that stops waiting at that same
+    // instant reports a delivered prompt as unavailable.
+    let server = server_replying(
+        ping(),
+        202,
+        Duration::from_millis(1_700),
+        r#"{"ok":true,"accepted":true}"#,
+    )
+    .await;
+    let root = tempfile::tempdir().unwrap();
+    publish(root.path(), server.port);
+    assert_eq!(
+        send(root.path(), "UserPromptSubmit", "epoch-1", true).await,
+        Ok(())
+    );
+    assert_eq!(server.posts.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_report_the_app_never_answers_still_ends_within_the_hook_budget() {
+    let server = server_replying(ping(), 202, Duration::from_secs(30), "{}").await;
+    let root = tempfile::tempdir().unwrap();
+    publish(root.path(), server.port);
+    let started = Instant::now();
+    let delivered = tokio::time::timeout_at(
+        tokio::time::Instant::from_std(started + TOTAL_TIMEOUT),
+        send(root.path(), "UserPromptSubmit", "epoch-1", true),
+    )
+    .await;
+    assert!(
+        matches!(
+            delivered,
+            Err(_) | Ok(Err(HookFailure::Unavailable | HookFailure::Timeout))
+        ),
+        "{delivered:?}"
+    );
+    assert!(started.elapsed() < TOTAL_TIMEOUT + Duration::from_millis(250));
+}
+
+#[test]
+fn names_only_an_identifier_reason_from_a_refused_report() {
+    assert_eq!(
+        rejection_code(br#"{"ok":false,"error":{"code":"hmux_runtime_unavailable","message":"/private/path"}}"#),
+        Some("hmux_runtime_unavailable".into())
+    );
+    for body in [
+        &br#"{"ok":false,"error":{"code":"has spaces /private/path"}}"#[..],
+        br#"{"ok":false,"error":{"message":"no code"}}"#,
+        br#"{"ok":false,"error":"flat"}"#,
+        b"not json",
+    ] {
+        assert_eq!(rejection_code(body), None);
     }
 }

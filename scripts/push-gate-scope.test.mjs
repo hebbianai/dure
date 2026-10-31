@@ -326,7 +326,9 @@ describe("push-gate-scope", () => {
       "hmux/crates/hmux-host/src/local_protocol/wire_frame.rs",
       "hmux/crates/hmux-runtime-contract/src/lib.rs",
     ]) {
+      // crates/dure-app links these crates, so app core is gated too.
       expect(classifyChangedPaths([path])).toEqual([
+        "app-core",
         "desktop",
         "hmux-core",
         "hmux-mobile-compat",
@@ -357,6 +359,7 @@ describe("push-gate-scope", () => {
         "hmux/crates/hmux-client/src/recovery_journal.rs",
       ]),
     ).toEqual([
+      "app-core",
       "desktop",
       "hmux-core",
       "hmux-mobile-compat",
@@ -372,6 +375,7 @@ describe("push-gate-scope", () => {
       "hmux/crates/hmux-client/src/transport/unix_socket.rs",
     ]) {
       expect(classifyChangedPaths([path]), path).toEqual([
+        "app-core",
         "desktop",
         "hmux-core",
       ]);
@@ -397,7 +401,6 @@ describe("push-gate-scope", () => {
       classifyChangedPaths([
         "docs/architecture/session.md",
         "docs/public/.mintignore",
-        "docs/public/docs.json",
         "docs/public/images/workspace-overview.png",
         "docs/public/videos/workspace-overview.webm",
         "hmux/docs/protocol-v1.md",
@@ -481,6 +484,10 @@ describe("push-gate-scope", () => {
     expect(
       classifyChangedPaths(["scripts/dev-deploy-executor-files.json"]),
     ).toEqual(["script-tests"]);
+    // check-public-docs-downloads.test.mjs reads the published site config.
+    expect(classifyChangedPaths(["docs/public/docs.json"])).toEqual([
+      "script-tests",
+    ]);
     expect(
       classifyChangedPaths([
         "scripts/architecture-fitness-base.test.mjs",

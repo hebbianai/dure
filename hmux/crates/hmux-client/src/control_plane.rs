@@ -289,7 +289,11 @@ fn try_probe_local_session_observation_until(
             let working_directory = attachment.initial_snapshot.working_directory.clone();
             let execution_location = attachment.initial_snapshot.execution_location.clone();
             let agent_identity = attachment.initial_snapshot.agent_identity.clone();
-            let agent_runtime_state = attachment.initial_snapshot.agent_runtime_state.clone();
+            let agent_runtime_state = attachment
+                .initial_snapshot
+                .agent_runtime_state
+                .as_deref()
+                .cloned();
             let controller_input_pending = attachment.initial_snapshot.controller_input_pending;
             let semantic_idle_ms = attachment.initial_snapshot.semantic_idle_ms.clone();
             let provider_conversation_identity = attachment
@@ -1163,22 +1167,60 @@ mod tests {
 
     #[test]
     fn exact_batch_deadline_bounds_a_stalled_exact_lookup() {
+        // Only a batch that waits for the lookup ever reaches this; it then
+        // fails below instead of hanging.
+        const STALL_LIMIT: Duration = Duration::from_secs(10);
         let selector = SessionSelector::new("session-1", Some("workspace".into()));
+        // Long enough for a loaded host to start the worker, which skips the
+        // lookup once the deadline has passed.
+        let budget = Duration::from_secs(1);
+        // The lookup stays stalled until the test releases it, so the batch can
+        // return only by cutting it off at the deadline. A wall-clock ceiling
+        // would instead measure how late a loaded host wakes the timed wait.
+        let (release, released) = mpsc::channel::<()>();
+        let released = Mutex::new(released);
+        let lookup_finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let lookup_finished_by_worker = Arc::clone(&lookup_finished);
+        let (probe_started_by_worker, probe_started) = mpsc::channel::<()>();
         let started = Instant::now();
         let results = inspect_local_sessions_exact_with_probe(
             vec![selector.clone()],
             1,
-            Duration::from_millis(20),
+            budget,
             move |_selector| {
-                std::thread::sleep(Duration::from_millis(200));
+                let _ = released.lock().unwrap().recv_timeout(STALL_LIMIT);
+                lookup_finished_by_worker.store(true, Ordering::SeqCst);
                 Ok(ready_descriptor(1))
             },
-            |_descriptor, _deadline| panic!("late discovery must not start a probe"),
+            move |_descriptor, _deadline| {
+                let _ = probe_started_by_worker.send(());
+                None
+            },
         )
         .unwrap();
+        let elapsed = started.elapsed();
 
-        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(
+            !lookup_finished.load(Ordering::SeqCst),
+            "the batch waited for the stalled lookup ({elapsed:?})"
+        );
+        assert!(
+            elapsed >= budget,
+            "the batch returned before its deadline ({elapsed:?})"
+        );
         assert_eq!(results, vec![ExactSessionProbeResult::Unprobed(selector)]);
+
+        // The worker drops the probe, and with it the only sender, when it exits.
+        let _ = release.send(());
+        assert_eq!(
+            probe_started.recv_timeout(STALL_LIMIT),
+            Err(mpsc::RecvTimeoutError::Disconnected),
+            "late discovery must not start a probe"
+        );
+        assert!(
+            lookup_finished.load(Ordering::SeqCst),
+            "the worker never reached the lookup, so nothing was stalled"
+        );
     }
 
     #[test]

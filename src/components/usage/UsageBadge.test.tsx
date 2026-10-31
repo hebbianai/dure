@@ -777,8 +777,9 @@ describe("UsageBadge", () => {
 		const otherRow = screen.getByRole("menuitemradio", {
 			name: "Claude Code b@example.com",
 		});
-		expect(otherRow.textContent).toContain("81%");
-		expect(otherRow.textContent).toContain("30분 후 재설정");
+		// Weekly 90% is in the danger band and tighter than 5h 81%.
+		expect(otherRow.textContent).toContain("90%");
+		expect(otherRow.textContent).toContain("12시간 후 재설정");
 		expect(
 			screen.getByRole("menuitemradio", { name: "Claude Code 기본" })
 				.textContent,
@@ -908,8 +909,9 @@ describe("UsageBadge", () => {
 		const retained = screen.getByRole("menuitemradio", {
 			name: "Codex codex-b",
 		});
-		expect(retained.textContent).toContain("81%");
-		expect(retained.textContent).toContain("30분 후 재설정");
+		// Weekly 90% is in the danger band and tighter than 5h 81%.
+		expect(retained.textContent).toContain("90%");
+		expect(retained.textContent).toContain("12시간 후 재설정");
 	});
 
 	it("'기본' 행의 접근성 이름은 provider로 한정된다", async () => {

@@ -715,6 +715,7 @@ impl StoreState {
             &request.endpoint_fence,
             request.wake_capability.as_ref(),
         )?;
+        let unread = self.deliveries[delivery_index].receipt.state == DeliveryState::Queued;
         let current = self.deliveries[delivery_index].receipt.wake.as_ref();
         let replacement = match request.transition {
             DeliveryWakeTransition::Request if current.is_none() => Some(
@@ -736,8 +737,13 @@ impl StoreState {
                     },
                 ),
             ),
+            // A queued wake proved that nothing was written, so an unread
+            // delivery may claim it again once its target can take a prompt.
             DeliveryWakeTransition::Claim
-                if current.is_some_and(|wake| wake.state == DeliveryWakeState::Pending) =>
+                if current.is_some_and(|wake| {
+                    wake.state == DeliveryWakeState::Pending
+                        || (unread && wake.state == DeliveryWakeState::QueuedUntilNextTurn)
+                }) =>
             {
                 Some(DeliveryWakeReceipt {
                     state: DeliveryWakeState::Uncertain,
@@ -881,30 +887,42 @@ impl StoreState {
         self.interactions
             .iter()
             .find(|interaction| {
-                interaction.common().id == request.interaction_id
-                    && interaction.common().target.authority == request.authority
+                let common = interaction.common();
+                common.id == request.interaction_id
+                    && common.target.authority == request.authority
                     && request.endpoint_fence.as_ref().map_or_else(
                         || {
-                            interaction
-                                .common()
+                            common
                                 .audience
                                 .grant_for(&request.participant)
                                 .is_some_and(|grant| grant.grants(&request.read_capability))
+                                // An author reads their own interaction with the
+                                // exact Dispatch's interaction authority.
+                                || (common.author == request.participant
+                                    && self.dispatches.iter().any(|dispatch| {
+                                        dispatch.target == common.target
+                                            && dispatch.interaction_capability
+                                                == request.read_capability
+                                    }))
                         },
                         |fence| {
                             self.dispatches.iter().any(|dispatch| {
-                                dispatch.target == interaction.common().target
-                                    && dispatch.worker_endpoint.participant == request.participant
-                                    && dispatch.worker_endpoint.delivery_capability
-                                        == request.read_capability
-                                    && fence.matches(&dispatch.worker_endpoint)
-                                    && (interaction.common().author == request.participant
-                                        || interaction
-                                            .common()
+                                let worker = &dispatch.worker_endpoint;
+                                dispatch.target == common.target
+                                    && worker.participant == request.participant
+                                    && fence.matches(worker)
+                                    // The matching fence already proves the inbox
+                                    // capability, so the worker may present either
+                                    // capability its Dispatch context carries.
+                                    && (worker.delivery_capability == request.read_capability
+                                        || dispatch.interaction_capability
+                                            == request.read_capability)
+                                    && (common.author == request.participant
+                                        || common
                                             .audience
                                             .grant_for(&request.participant)
                                             .is_some_and(|grant| {
-                                                grant.grants(&request.read_capability)
+                                                grant.grants(&worker.delivery_capability)
                                             }))
                             })
                         },

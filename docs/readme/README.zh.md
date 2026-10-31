@@ -144,7 +144,7 @@ Dure 名称、标志、应用图标以及社区构建与 Hebbian AI 官方构建
 
 请阅读[贡献指南](../../CONTRIBUTING.md)和[行为准则](../../CODE_OF_CONDUCT.md)，或[报告问题、提出功能建议](https://github.com/hebbianai/dure/issues/new/choose)。安全漏洞请通过[安全政策](../../SECURITY.md)中的私密渠道报告。贡献与社区文档目前以英语提供。
 
-- **发行说明:** [GitHub Releases](https://github.com/hebbianai/hebbian-releases/releases)
+- **发行说明:** [GitHub Releases](https://github.com/hebbianai/dure/releases)
 - **隐私与遥测:** [隐私与遥测](https://docs.dureai.dev/cn/privacy-and-telemetry)
 - **社区:** [Discord](https://discord.gg/aTuRV6DXhb)
 - **动态:** [X · @hebbianai_](https://x.com/hebbianai_)

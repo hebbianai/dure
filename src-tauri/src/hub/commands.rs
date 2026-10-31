@@ -15,6 +15,11 @@ use super::start_agent::{
     LaunchOfferState, PendingStartAgent, StartAgentRequest, StartAgentSink,
 };
 use super::roundtrip::{PendingRoundTrips, RoundTrip};
+use super::session_account::{PendingSessionAccount, SessionAccountRequest, SessionAccountSink};
+use dure_hub_protocol::session_account::{
+    AccountUsage, HubSessionAccountResult, SessionAccountChoice, SessionAccountOutcome,
+    UsageWindow,
+};
 use dure_hub_protocol::git_status::BranchFacts;
 use dure_hub_protocol::{
     GitBranch, GitCommit, GitFileChange, GitReview, GitReviewer, HubFileDiffResult,
@@ -60,6 +65,9 @@ pub struct HubState {
     /// 겹치면 한 질문의 답이 다른 질문에 붙는다(`roundtrip.rs`).
     pub pending_diff: Arc<PendingFileDiff>,
     pub pending_file: Arc<PendingRoundTrips<SessionFileResult>>,
+    /// Account reads and switches waiting for the screen. Their own namespace,
+    /// like every other kind (`roundtrip.rs`).
+    pub pending_account: Arc<PendingSessionAccount>,
     pub terminal_widths: Arc<super::terminal_width::TerminalWidths>,
 }
 
@@ -126,6 +134,12 @@ impl FileDiffSink for ScreenRoundTrip<HubFileDiffResult> {
 
 impl SessionFileSink for ScreenRoundTrip<SessionFileResult> {
     fn deliver(&self, request: SessionFileRequest) -> SessionFileResult {
+        self.ask(request)
+    }
+}
+
+impl SessionAccountSink for ScreenRoundTrip<HubSessionAccountResult> {
+    fn deliver(&self, request: SessionAccountRequest) -> HubSessionAccountResult {
         self.ask(request)
     }
 }
@@ -241,6 +255,10 @@ pub fn hub_start(app: tauri::AppHandle, address: String, port: u16) -> Result<Hu
         .receiving_files(Arc::new(ScreenRoundTrip {
             app: app.clone(),
             pending: Arc::clone(&state.pending_file),
+        }))
+        .switching_accounts(Arc::new(ScreenRoundTrip {
+            app: app.clone(),
+            pending: Arc::clone(&state.pending_account),
         })),
     )?;
     status.device_count = device_count;
@@ -325,6 +343,10 @@ pub fn hub_relay_start(
         .receiving_files(Arc::new(ScreenRoundTrip {
             app: app.clone(),
             pending: Arc::clone(&state.pending_file),
+        }))
+        .switching_accounts(Arc::new(ScreenRoundTrip {
+            app: app.clone(),
+            pending: Arc::clone(&state.pending_account),
         })),
     );
     if let Err(error) = super::autostart::remember_relay(&root, &recorded_endpoint) {
@@ -609,6 +631,52 @@ mod tests {
     #[test]
     fn this_box_always_has_a_name() {
         assert!(!this_box_label().is_empty());
+    }
+
+    /// The screen's reply crosses the window boundary as the TypeScript bridge
+    /// writes it, and a reading outside 0–100 is clamped rather than wrapped.
+    #[test]
+    fn the_account_reply_survives_the_window_boundary() {
+        let reply: HubSessionAccountReply = serde_json::from_value(serde_json::json!({
+            "outcome": "scheduled",
+            "accounts": [
+                { "accountId": null, "current": false, "pending": false },
+                {
+                    "accountId": "account-work", "label": "Work", "current": true, "pending": false,
+                    "usage": { "usedPercent": 104.2, "window": "weekly", "resetsIn": "2d 4h" },
+                },
+                {
+                    "accountId": "account-spare", "label": "Spare", "current": false, "pending": true,
+                    "usage": { "usedPercent": 11.6, "window": "five_hour", "resetsIn": " " },
+                },
+            ],
+        }))
+        .expect("the bridge's reply deserializes");
+        let result = reply.into_result();
+        assert_eq!(result.outcome, SessionAccountOutcome::Scheduled);
+        assert_eq!(result.accounts[0].account_id, None);
+        let work = result.accounts[1].usage.as_ref().expect("usage");
+        assert_eq!(work.used_percent, 100);
+        assert_eq!(work.window, UsageWindow::Weekly);
+        let spare = result.accounts[2].usage.as_ref().expect("usage");
+        assert_eq!(spare.used_percent, 12);
+        assert_eq!(spare.resets_in, None);
+        assert!(result.accounts[2].pending);
+    }
+
+    #[test]
+    fn an_account_refusal_keeps_its_code_and_drops_any_accounts() {
+        let reply: HubSessionAccountReply = serde_json::from_value(serde_json::json!({
+            "outcome": "refused",
+            "accounts": [{ "accountId": "account-work", "label": "Work" }],
+            "detail": "That account is no longer registered on this computer.",
+            "code": "account_missing",
+        }))
+        .expect("reads");
+        let result = reply.into_result();
+        assert_eq!(result.outcome, SessionAccountOutcome::Refused);
+        assert_eq!(result.code.as_deref(), Some("account_missing"));
+        assert!(result.accounts.is_empty());
     }
 
     #[test]
@@ -1074,6 +1142,98 @@ impl HubStartAgentReply {
                 .unwrap_or_else(|| "The desktop did not provide a reason".to_string()),
             self.code.unwrap_or_else(|| "failed".to_string()),
         )
+    }
+}
+
+/// The screen's answer to a phone's account read or switch.
+///
+/// An unknown `request_id` returns false: a round trip past its deadline
+/// normally ends that way, and that is not the screen's fault.
+#[tauri::command]
+pub fn hub_session_account_result(
+    state: tauri::State<'_, HubState>,
+    request_id: String,
+    result: HubSessionAccountReply,
+) -> bool {
+    state
+        .pending_account
+        .settle(&request_id, result.into_result())
+}
+
+/// What the screen sends back.
+///
+/// Not the protocol type, for the reason [`HubStartAgentReply`] gives: the
+/// promise and the screen move separately, and the version is this side's to
+/// fill. Percentages arrive as the screen's numbers and are clamped here, so a
+/// reading outside 0–100 never reaches the phone as a different claim.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubSessionAccountReply {
+    outcome: SessionAccountOutcome,
+    #[serde(default)]
+    accounts: Vec<HubSessionAccountChoiceReply>,
+    #[serde(default)]
+    detail: Option<String>,
+    #[serde(default)]
+    code: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HubSessionAccountChoiceReply {
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    current: bool,
+    #[serde(default)]
+    pending: bool,
+    #[serde(default)]
+    usage: Option<HubAccountUsageReply>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HubAccountUsageReply {
+    used_percent: f64,
+    window: UsageWindow,
+    #[serde(default)]
+    resets_in: Option<String>,
+}
+
+impl HubSessionAccountReply {
+    fn into_result(self) -> HubSessionAccountResult {
+        if self.outcome == SessionAccountOutcome::Refused {
+            return HubSessionAccountResult::refused(
+                self.detail
+                    .unwrap_or_else(|| "The desktop did not provide a reason".to_string()),
+                self.code.unwrap_or_else(|| "failed".to_string()),
+            );
+        }
+        let accounts = self
+            .accounts
+            .into_iter()
+            .map(|choice| SessionAccountChoice {
+                account_id: choice.account_id,
+                label: choice.label,
+                current: choice.current,
+                pending: choice.pending,
+                usage: choice.usage.and_then(|usage| {
+                    usage.used_percent.is_finite().then(|| AccountUsage {
+                        // Clamped first, so the cast cannot wrap or saturate
+                        // into a different claim.
+                        used_percent: usage.used_percent.clamp(0.0, 100.0).round() as u8,
+                        window: usage.window,
+                        resets_in: usage.resets_in.filter(|value| !value.trim().is_empty()),
+                    })
+                }),
+            })
+            .collect();
+        let mut result = HubSessionAccountResult::answered(self.outcome, accounts);
+        result.detail = self.detail;
+        result.code = self.code;
+        result
     }
 }
 

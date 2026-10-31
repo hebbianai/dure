@@ -64,7 +64,9 @@ pub enum ExactDiscoveryLookupResponse {
         descriptor: Box<SessionDescriptor>,
         probe_status: Option<SessionProbeStatus>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        agent_runtime_state: Option<crate::AgentRuntimeStateDescriptor>,
+        agent_runtime_state: Option<Box<crate::AgentRuntimeStateDescriptor>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        working_directory: Option<Box<crate::WorkingDirectoryDescriptor>>,
     },
     NotFound {
         schema_version: u8,
@@ -175,7 +177,8 @@ fn probe_result_to_response(result: ExactSessionProbeResult) -> ExactDiscoveryLo
             ExactDiscoveryLookupResponse::Found {
                 schema_version: EXACT_SCHEMA_VERSION,
                 probe_status,
-                agent_runtime_state: inspection.agent_runtime_state,
+                agent_runtime_state: inspection.agent_runtime_state.map(Box::new),
+                working_directory: inspection.working_directory.map(Box::new),
                 descriptor: Box::new(inspection.descriptor),
             }
         }
@@ -498,6 +501,7 @@ fn finalize_lookup(
             descriptor,
             mut probe_status,
             mut agent_runtime_state,
+            mut working_directory,
         } if descriptor.session_id == selector.session_id
             && selector.workspace_id.as_deref() == Some(descriptor.workspace_id.as_str()) =>
         {
@@ -510,10 +514,12 @@ fn finalize_lookup(
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 probe_status = None;
                 agent_runtime_state = None;
+                working_directory = None;
             }
             let mut inspection = inspection_from_probe(*descriptor, probe_status);
             if probe_status == Some(SessionProbeStatus::Healthy) {
-                inspection.agent_runtime_state = agent_runtime_state;
+                inspection.agent_runtime_state = agent_runtime_state.map(|state| *state);
+                inspection.working_directory = working_directory.map(|directory| *directory);
             }
             ExactSessionProbeResult::Inspection(Box::new(inspection))
         }
@@ -861,6 +867,7 @@ mod tests {
                 descriptor: Box::new(ready_descriptor()),
                 probe_status: Some(SessionProbeStatus::Healthy),
                 agent_runtime_state: None,
+                working_directory: None,
             },
             Some(Instant::now()),
         );
@@ -888,6 +895,13 @@ mod tests {
             source: crate::AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: "1".into(),
             program_status: None,
+            background_work: false,
+        });
+        observed.working_directory = Some(crate::WorkingDirectoryDescriptor {
+            terminal_epoch: "terminal-1".into(),
+            observed_through_output_seq: "8".into(),
+            path: "/repo/worktree".into(),
+            source: crate::WorkingDirectorySource::ProcessInspection,
         });
 
         let result = finalize_lookup(
@@ -905,6 +919,13 @@ mod tests {
                 .as_ref()
                 .map(|state| (&state.activity, state.turn_completed_count.as_str())),
             Some((&crate::AgentRuntimeActivity::Waiting, "1")),
+        );
+        assert_eq!(
+            inspection
+                .working_directory
+                .as_ref()
+                .map(|directory| directory.path.as_str()),
+            Some("/repo/worktree"),
         );
     }
 

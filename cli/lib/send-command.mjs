@@ -1,4 +1,6 @@
+import { agentDisplayName } from "./client-registry.mjs";
 import { readUtf8Input, readUtf8Stdin } from "./text-input.mjs";
+import { deferredWake } from "./deferred-wake.mjs";
 
 const SEND_HELP = `dure send — Send text to an agent
 
@@ -29,9 +31,10 @@ Choose exactly one text source. Newlines and whitespace in file/stdin are preser
 Enter is sent by default; use --no-enter to insert without submitting.
 Terminal input never merges into text the user has typed but not submitted: text and
 Enter are one Host transaction, written only while the target has no such draft. A send
-waits up to --draft-wait for the user to submit; if the draft remains it fails with
-hmux_input_draft_pending and nothing written. The draft clears only when the user submits
-it; erasing the text without Enter does not. Retry later, use --track, or --ignore-draft
+waits up to --draft-wait for the draft to clear; if it remains the send fails with
+hmux_input_draft_pending and nothing written. The draft clears when the user submits it or
+erases every typed character with Backspace; input Dure cannot count (completion, history
+recall, a word erase) stays a draft until Enter. Retry later, use --track, or --ignore-draft
 to write anyway. A session started before the guard existed receives ordinary input, with
 a warning on stderr; restart that session to guard it.
 Tracked messages require a managed Session and support 'dure wait --message <receiptPath>'.
@@ -138,7 +141,8 @@ function printDelivery(agent, input, opts) {
     return;
   }
   if (input?.receipt?.kind === "durable_message") {
-    process.stdout.write(`Message accepted: ${input.receipt.interactionId}\nTrack: dure wait --message ${JSON.stringify(input.receipt.receiptPath)} --json\n`);
+    const deferred = deferredWake(input.receipt.deliveries);
+    process.stdout.write(`Message accepted: ${input.receipt.interactionId}\n${deferred ? `${deferred.message}\n` : ""}Track: dure wait --message ${JSON.stringify(input.receipt.receiptPath)} --json\n`);
     return;
   }
   if (input?.receipt?.kind === "structured_chat") {
@@ -149,6 +153,28 @@ function printDelivery(agent, input, opts) {
   const receipt = recordId ? ` · receipt ${recordId}` : "";
   const guarded = input?.receipt?.atomic === true ? " (one draft-guarded write)" : "";
   process.stdout.write(`\x1b[32m✓\x1b[0m ${agent.name} · written to PTY${opts.enter ? " + Enter" : ""}${guarded}${receipt} · provider acceptance unconfirmed\n`);
+}
+
+function nameWords(name) {
+  return String(name).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 1);
+}
+
+/** Tracked-send failures are expected outcomes, so they print without a stack.
+ * Names suggest where to resend; they do not prove the suggested Agent is alive. */
+export function trackedSendFailureMessage(error, registry, agent) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error?.code !== "dure_send_session_exited") return message;
+  const name = typeof agent === "string" ? agent : agentDisplayName(agent);
+  const words = new Set(nameWords(name));
+  const similar = (registry?.agents ?? []).filter((candidate) =>
+    candidate !== agent && candidate.sessionId !== error.sessionId &&
+    nameWords(agentDisplayName(candidate)).some((word) => words.has(word)))
+    .slice(0, 5).map((candidate) => `${candidate.project}/${agentDisplayName(candidate)}`);
+  return [
+    `${name} has exited (Session ${error.sessionId}). Nothing was sent.`,
+    ...(similar.length ? [`Agents with similar names: ${similar.join(", ")}`] : []),
+    "Find a live Agent with: dure ls --alive",
+  ].join("\n");
 }
 
 export async function runSendCommand(
@@ -197,7 +223,12 @@ export async function runSendCommand(
   }
   if (!text) return fail("Input text must not be empty");
   if (track) {
-    const input = await sendTracked(agent, text, opts);
+    let input;
+    try {
+      input = await sendTracked(agent, text, opts);
+    } catch (error) {
+      return fail(trackedSendFailureMessage(error, registry, agent));
+    }
     printDelivery(typeof agent === "string" ? { name: agent } : agent, input, opts);
     return;
   }

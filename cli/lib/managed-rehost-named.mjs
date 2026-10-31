@@ -1,6 +1,6 @@
 import { loadSessionClientProjection } from "./client-registry.mjs";
 import { collectManagedRehostCommand } from "./managed-rehost-command.mjs";
-import { collectManagedRehostPreview, formatManagedRecoveryCommands } from "./managed-rehost-preview.mjs";
+import { collectManagedRehostPreview, formatManagedRecoveryCommands, formatNameCandidates } from "./managed-rehost-preview.mjs";
 import { collectManagedRehostPublication } from "./managed-rehost-publication.mjs";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { ManagedRuntimeRecoveryIncompleteError, wakeManagedRuntime } from "./managed-runtime-recovery.mjs";
@@ -18,6 +18,25 @@ export async function collectManagedRehostNamed({
     },
   });
   if (!prepared.ok) return { ...prepared, publication: "not_requested" };
+  if (prepared.continuation.kind === "runtime_restart") {
+    if (!opts.confirmRestart) return { ...prepared, publication: "not_requested" };
+    const { targetInteractionProfile, expectedSourceRevision, requestId } = prepared.continuation;
+    const report = await collectAgentRuntimeCommand({
+      args: ["switch", prepared.agentId, targetInteractionProfile === "native_cli" ? "terminal" : "chat"],
+      expectedRevision: expectedSourceRevision, requestId,
+      resolveBackend: async () => backend, requestBackend,
+    });
+    const receipt = report.ok ? report.result.receipt : undefined;
+    if (!receipt || receipt.authority?.interactionProfile !== targetInteractionProfile ||
+        receipt.selectionRevision <= expectedSourceRevision) {
+      return { ...prepared, ok: false, state: "unknown", backendExecution: "unconfirmed", publication: "unconfirmed",
+        error: report.ok ? { code: "rehost_restart_unconfirmed",
+          message: "The backend did not confirm the restarted runtime. Inspect with the retained status command before retrying the original request." }
+          : report.error };
+    }
+    return { ...prepared, state: "completed", backendExecution: "completed", publication: "published",
+      conversationId: receipt.providerConversationRef ?? null, result: report.result };
+  }
   if (prepared.continuation.kind === "runtime_wake") {
     if (!opts.confirmRestart) return { ...prepared, publication: "not_requested" };
     const { operationId, expectedJournalRevision, requestId } = prepared.continuation;
@@ -77,11 +96,13 @@ export async function runManagedRehostNamed(opts, registryPath, resolveBackend, 
   });
   const output = opts.json ? JSON.stringify(report) : [
     report.ok
-      ? report.continuation?.kind === "runtime_wake"
-        ? `${report.agentId}: wake ${report.state}`
+      ? report.continuation?.kind?.startsWith("runtime_")
+        ? `${report.agentId}: ${report.continuation.kind === "runtime_wake" ? "wake" : "restart"} ${report.state}` +
+          (report.conversationId ? ` (conversation ${report.conversationId})` : "")
         : `${report.agentId}: rehost completed (${report.receipt.sourceStopReceipt.sessionId} -> ${report.receipt.replacementReceipt.sessionId})`
-      : `${report.error.remoteCode ?? report.error.code}: ${report.error.message}`,
-    `${report.continuation?.kind === "runtime_wake" ? `Backend execution: ${report.backendExecution ?? "not_requested"}` : `Native execution: ${report.nativeExecution}`}. Binding publication: ${report.publication}.`,
+      : [`${report.error.remoteCode ?? report.error.code}: ${report.error.message}`,
+        ...formatNameCandidates(report.error.candidates)].join("\n"),
+    `${report.continuation?.kind?.startsWith("runtime_") ? `Backend execution: ${report.backendExecution ?? "not_requested"}` : `Native execution: ${report.nativeExecution}`}. Binding publication: ${report.publication}.`,
     ...(report.publicationError
       ? [`Publication is unconfirmed: ${report.publicationError.remoteCode ?? report.publicationError.code}. Retry publication only; the native rehost already completed.`]
       : []),

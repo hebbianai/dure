@@ -147,3 +147,108 @@ fn project_move_claude_refuses_ambiguous_history_and_non_regular_transcripts() {
         Err("agent_project_move_history_unavailable")
     );
 }
+
+#[test]
+fn claude_session_settings_follow_the_latest_main_thread_turn() {
+    let root = tempfile::tempdir().unwrap();
+    let id = "019f0000-0000-7000-8000-000000000287";
+    let project = root.path().join("projects/project");
+    fs::create_dir_all(&project).unwrap();
+    let turn = |model: &str, effort: &str| {
+        serde_json::json!({"type":"assistant","requestedModel":model,"effort":effort,
+            "message":{"model":"claude-opus-5-5","content":"ok"}})
+    };
+    let lines = [
+        turn("claude-opus-5-5[1m]", "xhigh"),
+        // An in-session `/model` and `/effort` change is recorded on later turns.
+        turn("claude-sonnet-5-5", "low"),
+        serde_json::json!({"type":"user","message":{"content":"next"}}),
+        serde_json::json!({"type":"assistant","isSidechain":true,"requestedModel":"claude-haiku-5-5",
+            "effort":"medium","message":{"model":"claude-haiku-5-5","content":"subagent"}}),
+        serde_json::json!({"type":"assistant","isApiErrorMessage":true,"effort":"max",
+            "message":{"model":"<synthetic>","content":"rate limited"}}),
+    ];
+    let mut content = lines.map(|line| format!("{line}\n")).concat();
+    // A record still being appended is not a turn yet.
+    content.push_str("{\"type\":\"assistant\",\"requestedModel\":\"partial");
+    fs::write(project.join(format!("{id}.jsonl")), content).unwrap();
+    let empty = root.path().join("sessions");
+    assert_eq!(
+        read_session_settings_roots(&root.path().join("projects"), &empty, "claude", id),
+        Ok(ProviderSessionSettings {
+            model: Some("claude-sonnet-5-5".into()),
+            effort: Some("low".into()),
+        })
+    );
+
+    // A turn on a model without effort, or from a CLI that predates
+    // `requestedModel`, records nothing to carry for that setting.
+    fs::write(
+        project.join(format!("{id}.jsonl")),
+        format!(
+            "{}\n{}\n",
+            turn("claude-opus-5-5[1m]", "xhigh"),
+            serde_json::json!({"type":"assistant","message":{"model":"claude-opus-5","content":"ok"}})
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        read_session_settings_roots(&root.path().join("projects"), &empty, "claude", id),
+        Ok(ProviderSessionSettings::default())
+    );
+    assert!(
+        read_session_settings_roots(&root.path().join("projects"), &empty, "claude", "missing")
+            .is_err()
+    );
+}
+
+#[test]
+fn codex_session_settings_follow_the_latest_default_mode_turn() {
+    let root = tempfile::tempdir().unwrap();
+    let id = "019f0000-0000-7000-8000-000000000288";
+    let day = root.path().join("sessions/2026/10/30");
+    fs::create_dir_all(&day).unwrap();
+    let context = |model: &str, effort: &str, mode: &str| {
+        serde_json::json!({"type":"turn_context","payload":{"model":model,"effort":effort,
+            "collaboration_mode":{"mode":mode}}})
+    };
+    let lines = [
+        serde_json::json!({"type":"session_meta","payload":{"id":id}}),
+        context("gpt-6-astra", "xhigh", "default"),
+        context("gpt-6-astra", "low", "default"),
+        // Plan mode runs at its own effort setting.
+        context("gpt-6-astra", "high", "plan"),
+    ];
+    fs::write(
+        day.join(format!("rollout-2026-10-30T00-00-00-{id}.jsonl")),
+        lines.map(|line| format!("{line}\n")).concat(),
+    )
+    .unwrap();
+    assert_eq!(
+        read_session_settings_roots(
+            &root.path().join("projects"),
+            &root.path().join("sessions"),
+            "codex",
+            id
+        ),
+        Ok(ProviderSessionSettings {
+            model: Some("gpt-6-astra".into()),
+            effort: Some("low".into()),
+        })
+    );
+}
+
+#[test]
+fn session_settings_read_only_a_bounded_suffix() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    let latest = format!(
+        "{}\n",
+        serde_json::json!({"type":"assistant","requestedModel":"claude-opus-5-5","effort":"high",
+            "message":{"model":"claude-opus-5-5","content":"ok"}})
+    );
+    write!(file, "{}{}", record("old"), latest).unwrap();
+    for extra in [0, 4] {
+        let suffix = bounded_suffix(file.path(), latest.len() as u64 + extra).unwrap();
+        assert_eq!(suffix, latest);
+    }
+}

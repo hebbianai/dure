@@ -13,7 +13,8 @@ import {
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
 import { RELEASE_CANDIDATE_FILES } from "./lib/release-candidate.mjs";
 import {
-  findExactSuccessfulCiRun,
+  ciEvidenceGaps,
+  exactSuccessfulCiRuns,
   normalizeFullCommitSha,
 } from "./lib/release-gate.mjs";
 import {
@@ -43,6 +44,49 @@ const run = (bin, argv, options = {}) =>
   });
 const git = (...argv) => run("git", argv).trim();
 const gh = (...argv) => run("gh", argv);
+const sleep = (milliseconds) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+// Waits are configurable only so fixtures need not spend real time on them.
+function duration(name, fallback) {
+  const source = process.env[name];
+  if (source === undefined || source === "") return fallback;
+  const value = Number(source);
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new Error(`${name} must be a nonnegative integer`);
+  return value;
+}
+
+const DOWNLOAD_ATTEMPTS = 3;
+// gh reports Go network errors and HTTP status lines; curl reports exit codes.
+const TRANSPORT_FAILURE =
+  /operation timed out|i\/o timeout|TLS handshake timeout|connection (?:reset|refused)|broken pipe|unexpected EOF|context deadline exceeded|Client\.Timeout|no such host|stream error|GOAWAY|HTTP (?:429|5\d\d)\b|returned error:? (?:429|5\d\d)\b/i;
+const CURL_TRANSPORT_EXIT = new Set([5, 6, 7, 16, 18, 28, 35, 52, 55, 56, 92]);
+
+/** Repeat a read-only download after a transport failure only. `reset`
+ * restores an empty destination first, so each attempt yields complete files
+ * for the unchanged comparison that follows. */
+function download(label, fetch, { reset = () => {}, curl = false } = {}) {
+  const delay = duration("DURE_RELEASE_DOWNLOAD_RETRY_MS", 5_000);
+  for (let attempt = 1; ; attempt++) {
+    reset();
+    try {
+      return fetch();
+    } catch (error) {
+      const transport =
+        (curl && CURL_TRANSPORT_EXIT.has(error.status)) ||
+        TRANSPORT_FAILURE.test(String(error.stderr ?? ""));
+      if (!transport || attempt === DOWNLOAD_ATTEMPTS) throw error;
+      console.warn(
+        `${label}: transport failure on attempt ${attempt} of ${DOWNLOAD_ATTEMPTS}; retrying`,
+      );
+      sleep(delay * 2 ** (attempt - 1));
+    }
+  }
+}
+const emptyDirectory = (directory) => () => {
+  fs.rmSync(directory, { recursive: true, force: true });
+  fs.mkdirSync(directory);
+};
 function api(route, { absent = false, input, compatibility = false } = {}) {
   try {
     const env =
@@ -178,8 +222,28 @@ function exactCi(sha) {
       "headSha,status,conclusion,databaseId",
     ),
   );
-  if (!findExactSuccessfulCiRun(sha, runs))
-    throw new Error(`release_exact_ci_required: ${sha}`);
+  // Any successful exact run may carry the evidence; a documentation-only
+  // push run for the same commit concludes success with its code jobs skipped.
+  const observed = [];
+  for (const candidate of exactSuccessfulCiRuns(sha, runs)) {
+    assert(
+      Number.isSafeInteger(candidate.databaseId) && candidate.databaseId > 0,
+      "release_exact_ci_run_id_invalid",
+    );
+    const gaps = ciEvidenceGaps(
+      api(
+        `repos/${RELEASE_REPOSITORY}/actions/runs/${candidate.databaseId}/jobs?filter=latest&per_page=100`,
+      ),
+    );
+    if (gaps.length === 0) return;
+    observed.push(`run ${candidate.databaseId}: ${gaps.join(", ")}`);
+  }
+  throw new Error(
+    `release_exact_ci_required: ${sha} (${observed.join("; ") || "no successful run"}); ` +
+      "run public-repository.yml on a ref at this commit and wait for it to succeed, " +
+      `for example \`gh workflow run public-repository.yml --repo ${RELEASE_REPOSITORY} --ref main\` ` +
+      "while main points at it",
+  );
 }
 
 function checkVersionCommit(tagSha, sourceSha, tag) {
@@ -590,7 +654,7 @@ function createdRelease(tag) {
   for (let attempt = 0; attempt < 10; attempt++) {
     const current = release(tag);
     if (current) return current;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3_000);
+    sleep(3_000);
   }
   throw new Error("release_draft_not_observed");
 }
@@ -635,10 +699,28 @@ function updateMetadata(tag, files) {
     }
   }
   if (plan(read()) !== null) throw new Error("beta_metadata_readback_mismatch");
-  if (!anonymous(BETA_UPDATER_URL).equals(files.bytes))
-    throw new Error(
-      "beta_metadata_anonymous_readback_mismatch: resume metadata-only; do not recreate assets",
+  // raw.githubusercontent.com caches the feed for up to five minutes. Poll the
+  // exact client URL for a bounded time; disagreement after that stays red.
+  const interval = duration("DURE_RELEASE_FEED_POLL_MS", 20_000);
+  const polls = Math.floor(
+    duration("DURE_RELEASE_FEED_WAIT_MS", 360_000) / Math.max(interval, 1),
+  );
+  for (let poll = 0; ; poll++) {
+    const served = download(
+      "anonymous compatibility feed",
+      () => anonymous(BETA_UPDATER_URL),
+      { curl: true },
     );
+    if (served.equals(files.bytes)) return;
+    if (poll >= polls)
+      throw new Error(
+        "beta_metadata_anonymous_readback_mismatch: resume metadata-only; do not recreate assets",
+      );
+    console.warn(
+      `Anonymous compatibility feed still serves other bytes; checking again (${poll + 1} of ${polls})`,
+    );
+    sleep(interval);
+  }
 }
 
 function promote() {
@@ -694,7 +776,7 @@ function promote() {
   assert.equal(draftJobs[0].conclusion, failedDraft ? "failure" : "success",
     "release_job_not_successful: draft");
   if (failedDraft) {
-    assert.deepEqual(jobs.jobs.filter((job) => !["source", "candidate", "version", "build", "draft", "verification"].includes(job.name)),
+    assert.deepEqual(jobs.jobs.filter((job) => !["source", "candidate", "verification", "host-preflight", "version", "build", "draft"].includes(job.name)),
       [], "release_recovery_unexpected_job");
     if (recovery) reviewedRecoveryTooling(recovery.toolingSha, recovery.operator);
   }
@@ -733,13 +815,17 @@ function promote() {
     run("git", ["show", `${proof.tagSha}:src-tauri/tauri.conf.json`]),
   ).plugins.updater.pubkey;
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "dure-public-release-"));
-  // Retained on failure for reconciliation; no updater or user app is invoked.
+  // Retained for reconciliation; no updater or user app is invoked. Only the
+  // downloaded asset copies are removed, and only after a successful receipt.
   console.log(`Release evidence: ${work}`);
   const selection = path.join(work, "selection");
-  fs.mkdirSync(selection);
-  gh(
-    "run", "download", proof.runId, "--repo", RELEASE_REPOSITORY,
-    "--name", "release-selection", "--dir", selection,
+  download(
+    "release-selection artifact",
+    () => gh(
+      "run", "download", proof.runId, "--repo", RELEASE_REPOSITORY,
+      "--name", "release-selection", "--dir", selection,
+    ),
+    { reset: emptyDirectory(selection) },
   );
   assert.deepEqual(
     fs.readdirSync(selection), ["selection.json"], "release_selection_mismatch",
@@ -750,32 +836,39 @@ function promote() {
     "release_selection_mismatch",
   );
   const original = path.join(work, "original"),
-    downloaded = path.join(work, "downloaded");
-  fs.mkdirSync(original);
-  fs.mkdirSync(downloaded);
-  gh(
-    "run",
-    "download",
-    proof.runId,
-    "--repo",
-    RELEASE_REPOSITORY,
-    "--name",
-    `release-assets-${tag}`,
-    "--dir",
-    original,
+    downloaded = path.join(work, "downloaded"),
+    publicDirectory = path.join(work, "anonymous");
+  download(
+    `release-assets-${tag} artifact`,
+    () => gh(
+      "run",
+      "download",
+      proof.runId,
+      "--repo",
+      RELEASE_REPOSITORY,
+      "--name",
+      `release-assets-${tag}`,
+      "--dir",
+      original,
+    ),
+    { reset: emptyDirectory(original) },
   );
   const expected = inspectReleaseFiles(original, tag, publicKey);
   if (recovery) assert.deepEqual(recovery.assets, expected.assets, "release_recovery_asset_mismatch");
   if (recovering) current = completeDraft(tag, original, expected.assets, proof, current);
   else missingReleaseAssets(expected.assets, current.assets, { complete: true });
-  gh(
-    "release",
-    "download",
-    tag,
-    "--repo",
-    RELEASE_REPOSITORY,
-    "--dir",
-    downloaded,
+  download(
+    `${tag} release assets`,
+    () => gh(
+      "release",
+      "download",
+      tag,
+      "--repo",
+      RELEASE_REPOSITORY,
+      "--dir",
+      downloaded,
+    ),
+    { reset: emptyDirectory(downloaded) },
   );
   const files = inspectReleaseFiles(downloaded, tag, publicKey);
   assert.deepEqual(
@@ -827,13 +920,18 @@ function promote() {
   if (current.draft === false) {
     checkDraftIdentity(current, tag, proof);
     missingReleaseAssets(expected.assets, current.assets, { complete: true });
-    const publicDirectory = path.join(work, "anonymous");
     fs.mkdirSync(publicDirectory);
-    for (const asset of expected.assets)
-      anonymous(
-        `https://github.com/${RELEASE_REPOSITORY}/releases/download/${tag}/${asset.name}`,
-        path.join(publicDirectory, asset.name),
+    for (const asset of expected.assets) {
+      const file = path.join(publicDirectory, asset.name);
+      download(
+        `anonymous ${asset.name}`,
+        () => anonymous(
+          `https://github.com/${RELEASE_REPOSITORY}/releases/download/${tag}/${asset.name}`,
+          file,
+        ),
+        { reset: () => fs.rmSync(file, { force: true }), curl: true },
       );
+    }
     assert.deepEqual(
       inspectReleaseFiles(publicDirectory, tag, publicKey).assets,
       expected.assets,
@@ -857,6 +955,16 @@ function promote() {
     JSON.stringify(receipt, null, 2),
     { flag: "wx", mode: 0o600 },
   );
+  // Each copy matched and the receipt keeps every asset's size and digest, so
+  // drop the roughly 1 GB of downloads. Any failure above has already thrown
+  // and left them in place.
+  for (const copy of [original, downloaded, publicDirectory]) {
+    try {
+      fs.rmSync(copy, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`Downloaded release copies remain at ${copy}: ${error.message}`);
+    }
+  }
   console.log(JSON.stringify(receipt));
 }
 

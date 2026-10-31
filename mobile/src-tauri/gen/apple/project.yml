@@ -62,8 +62,8 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 0.1.4
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: 0.1.5
+        CFBundleVersion: "5"
     entitlements:
       path: dure-mobile_iOS/dure-mobile_iOS.entitlements
     scheme:

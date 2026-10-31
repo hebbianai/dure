@@ -23,8 +23,47 @@ client and canonical service as Dure desktop, CLI, SDK, and remote workers.
 
 `interaction.open` uses the audience in its payload. Your current context's
 coordinator grant addresses your own coordinator; it does not discover another
-agent or the user-facing orchestrator. For a message to another managed Session,
-discover that exact destination with `dure inspect ... --json`, then resolve
+agent or the user-facing orchestrator.
+
+To update your own coordinator, call `orchestration_context_get_current`, then
+`orchestration_interaction_open`, which publishes the full v1 input schema.
+Construct its arguments as below (JavaScript notation; pass the resulting
+object). Generate `updateKey` and `updateId` once for this Message:
+
+```js
+const body = {
+  schemaVersion: 1,
+  idempotencyKey: updateKey,
+  writeCapability: context.interactionCapability,
+  expectedDispatchRevision: context.dispatchRevision,
+  openedAtMs: Date.now(),
+  interaction: {
+    kind: "message",
+    common: {
+      id: updateId,
+      target: context.target,
+      author: context.participant,
+      audience: { grants: [context.coordinatorGrant] },
+      title: updateTitle,
+      descriptionMarkdown: updateMarkdown,
+    },
+    purpose: "update",
+  },
+};
+const argumentsForUpdate = { body };
+```
+
+The draft fields belong under `interaction.common`, not at the top level. A
+blocking Decision uses `kind: "decision"` with `response` (`{ kind: "text",
+minBytes, maxBytes }` or `{ kind: "select", options: [{ id, label }],
+minSelections, maxSelections }`) and `replyCapability:
+context.coordinatorReplyCapability` instead of `purpose`; it revises the
+Dispatch, so refresh context before later writes. The CLI fallback is
+`dure orchestration invoke interaction.open '<body-json>' --json`. An
+`orchestration_request_invalid` rejection names each failing field path.
+
+For a message to another managed Session, discover that exact destination with
+`dure inspect ... --json`, then resolve
 `dispatch.context.get.exact-session` with `{ "schemaVersion": 1, "session": ... }`.
 Copy the complete Session generation (sessionId, workspaceId, providerId,
 runnerPrincipal, runnerInstance, channelEpoch, hostInstanceId, terminalEpoch)
@@ -83,9 +122,22 @@ destination context resolved above, not the sender's current context:
 }
 ```
 
-For a worker reader, instead copy its audience readCapability and participant,
-and include its complete observed endpointFence. Never put capabilities in logs
-or feedback reports.
+For a worker reader, use its context participant, its complete observed
+endpointFence, and its context deliveryCapability as readCapability. This also
+reads updates opened after completion; current backends also accept the worker's
+interactionCapability there. Never put capabilities in logs or feedback reports.
+The fence's `sessionIdentity` changes after every restart or account switch, so
+do not copy it into scheduled prompts or notes. Through the MCP tools, omit it to
+use this Session's current identity; a copied identity that is no longer current
+is replaced with this Session's own current one and reported in the result. If a
+read reports `hmux_session_exited`, the calling process belongs to a Session
+generation that has ended (for example a background process that outlived a
+restart): stop acting from it and continue in the Agent's current Session.
+
+Do not repeat a get or progress read that returned
+`orchestration_record_not_found`: an interaction commits with its Event, so the
+same read cannot find it later. Check the participant, readCapability and
+endpointFence instead.
 
 The result separates acceptance, each delivery's queued/read/acknowledged state,
 the wake receipt, and Dispatch completion. `observed` means an authenticated

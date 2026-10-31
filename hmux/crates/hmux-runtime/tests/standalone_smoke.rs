@@ -956,6 +956,178 @@ fn draft_guarded_command_input_never_merges_into_an_unsubmitted_draft() {
     fixture.terminate_and_verify();
 }
 
+/// Keys that cannot insert text, such as Claude Code's Shift+Tab mode toggle
+/// or cursor movement on an empty prompt, leave no draft. An automated report
+/// is written at once instead of waiting for an Enter that never comes.
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn draft_guarded_command_input_passes_keys_that_cannot_insert_text() {
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create(
+        &state,
+        "standalone-draft-guard-keys",
+        vec![
+            std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            "--ignored".into(),
+            "--exact".into(),
+            "standalone_draft_guard_fixture_provider".into(),
+            "--nocapture".into(),
+        ],
+    );
+    wait_for_replay_snapshot(&fixture.session, b"DRAFT_GUARD_READY");
+    let writer = |session: &LocalSession| {
+        let connection = session
+            .connect_with_options(TerminalSurfaceAttachment::connection_options(
+                TerminalSurfaceAccess::Writer,
+                None,
+            ))
+            .unwrap();
+        TerminalSurfaceAttachment::from_connection(connection).unwrap()
+    };
+    let mut person = writer(&fixture.session);
+    let mut agent = writer(&fixture.session);
+
+    for (key, code, modifiers) in [("Tab", "Tab", 1), ("ArrowLeft", "ArrowLeft", 0)] {
+        let receipt = person
+            .send_key_confirmed(
+                key.into(),
+                code.into(),
+                modifiers,
+                false,
+                Duration::from_secs(2),
+            )
+            .unwrap();
+        assert!(matches!(
+            receipt.outcome,
+            Some(terminal_state_protocol::input_receipt::Outcome::WrittenToPty(_))
+        ));
+    }
+    wait_for_replay_snapshot(&fixture.session, br"INPUT[\e[Z\e[D]");
+
+    let delivered = agent
+        .send_draft_guarded_command_input_confirmed(
+            "lane report".into(),
+            true,
+            Duration::ZERO,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+    assert!(delivered.draft_guarded());
+    wait_for_replay_snapshot(
+        &fixture.session,
+        br"INPUT[\e[Z\e[D\e[200~lane report\e[201~\r]",
+    );
+
+    let _ = person.detach();
+    let _ = agent.detach();
+    fixture.terminate_and_verify();
+}
+
+/// A person types a line and erases it again without Enter. The Host counts
+/// the typed characters and the Backspaces, so the emptied prompt admits an
+/// automated report at once instead of refusing it until the next submit,
+/// while one character left standing still refuses it.
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn draft_guarded_command_input_passes_a_draft_typed_and_erased_again() {
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create(
+        &state,
+        "standalone-draft-guard-erased",
+        vec![
+            std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            "--ignored".into(),
+            "--exact".into(),
+            "standalone_draft_guard_fixture_provider".into(),
+            "--nocapture".into(),
+        ],
+    );
+    wait_for_replay_snapshot(&fixture.session, b"DRAFT_GUARD_READY");
+    let writer = |session: &LocalSession| {
+        let connection = session
+            .connect_with_options(TerminalSurfaceAttachment::connection_options(
+                TerminalSurfaceAccess::Writer,
+                None,
+            ))
+            .unwrap();
+        TerminalSurfaceAttachment::from_connection(connection).unwrap()
+    };
+    let mut person = writer(&fixture.session);
+    let mut agent = writer(&fixture.session);
+
+    person
+        .send_text_confirmed("draft".into(), Duration::from_secs(2))
+        .unwrap();
+    wait_for_replay_snapshot(&fixture.session, b"INPUT[draft]");
+    for _ in 0..4 {
+        let receipt = person
+            .send_key_confirmed(
+                "Backspace".into(),
+                "Backspace".into(),
+                0,
+                false,
+                Duration::from_secs(2),
+            )
+            .unwrap();
+        assert!(matches!(
+            receipt.outcome,
+            Some(terminal_state_protocol::input_receipt::Outcome::WrittenToPty(_))
+        ));
+    }
+    wait_for_replay_snapshot(&fixture.session, br"INPUT[draft\x7f\x7f\x7f\x7f]");
+
+    // One character is still standing.
+    let refused = agent
+        .send_draft_guarded_command_input_confirmed(
+            "lane report".into(),
+            true,
+            Duration::ZERO,
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+    assert_eq!(refused.code(), "hmux_input_draft_pending");
+    assert_eq!(refused.delivery_state(), "not_written");
+
+    let receipt = person
+        .send_key_confirmed(
+            "Backspace".into(),
+            "Backspace".into(),
+            0,
+            false,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+    assert!(matches!(
+        receipt.outcome,
+        Some(terminal_state_protocol::input_receipt::Outcome::WrittenToPty(_))
+    ));
+    wait_for_replay_snapshot(&fixture.session, br"INPUT[draft\x7f\x7f\x7f\x7f\x7f]");
+
+    let delivered = agent
+        .send_draft_guarded_command_input_confirmed(
+            "lane report".into(),
+            true,
+            Duration::ZERO,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+    assert!(delivered.draft_guarded());
+    wait_for_replay_snapshot(
+        &fixture.session,
+        br"INPUT[draft\x7f\x7f\x7f\x7f\x7f\e[200~lane report\e[201~\r]",
+    );
+
+    let _ = person.detach();
+    let _ = agent.detach();
+    fixture.terminate_and_verify();
+}
+
 #[cfg(feature = "terminal-state-stream")]
 #[test]
 fn structured_surface_delivers_host_parsed_osc52_clipboard_writes() {
@@ -3394,6 +3566,18 @@ fn sixteen_terminal_surfaces_progress_while_one_attachment_is_undrained() {
                         break frame.through_output_seq();
                     }
                     TerminalSurfaceEvent::Frame(_) | TerminalSurfaceEvent::Event(_) => {}
+                    // The surface subscribes to these session projections.
+                    // The Host's 750 ms process inspection replaces the
+                    // launch-fallback working directory while this test
+                    // streams, so the projection can land in any window.
+                    TerminalSurfaceEvent::Control(body)
+                        if matches!(
+                            *body,
+                            FrameBody::WorkingDirectory(_)
+                                | FrameBody::AgentIdentity(_)
+                                | FrameBody::AgentRuntimeState(_)
+                                | FrameBody::ProviderConversationIdentity(_)
+                        ) => {}
                     TerminalSurfaceEvent::Receipt(receipt) => {
                         panic!("surface {surface_index} received an unrelated receipt: {receipt:?}")
                     }
@@ -4106,6 +4290,8 @@ fn standalone_draft_guard_fixture_provider() {
         for byte in &buffer[..count] {
             match byte {
                 0x1b => transcript.push_str("\\e"),
+                0x7f => transcript.push_str("\\x7f"),
+                0x08 => transcript.push_str("\\b"),
                 b'\r' => transcript.push_str("\\r"),
                 b'\n' => transcript.push_str("\\n"),
                 byte => transcript.push(char::from(*byte)),
@@ -6534,7 +6720,7 @@ fn repository_runtime_projects_detected_agent_state_without_terminal_history_rep
         let mut observer = observer;
         let observed_runtime =
             if let Some(initial) = &observer.attachment().initial_snapshot.agent_runtime_state {
-                Ok(initial.clone())
+                Ok((**initial).clone())
             } else {
                 loop {
                     match observer.read_event() {
@@ -6543,7 +6729,7 @@ fn repository_runtime_projects_detected_agent_state_without_terminal_history_rep
                             let Some(runtime) = snapshot.agent_runtime_state else {
                                 continue;
                             };
-                            break Ok(runtime);
+                            break Ok(*runtime);
                         }
                         Ok(Some(ObserverEvent::Exit(exit))) => {
                             break Err(format!(
@@ -7129,6 +7315,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         )
@@ -7161,6 +7348,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         )
@@ -7187,6 +7375,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         )
@@ -7207,6 +7396,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         )
@@ -7245,6 +7435,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                     working_ttl_ms: None,
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
                 None,
             )
@@ -7266,6 +7457,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                     working_ttl_ms: None,
                     conversation_identity: None,
                     expected_observation: Some(stale_boundary),
+                    background_work: false,
                 },
                 None,
             )
@@ -7310,6 +7502,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                         runtime_revision: current_runtime.revision.parse().unwrap(),
                         output_sequence: current_snapshot.sequence_through.parse().unwrap(),
                     }),
+                    background_work: false,
                 },
                 None,
             )
@@ -7371,6 +7564,7 @@ fn bounded_working_report_retains_work_until_a_typed_provider_report() {
                     working_ttl_ms: Some(50),
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
                 None,
             )
@@ -7419,6 +7613,7 @@ fn bounded_working_report_retains_work_until_a_typed_provider_report() {
                     working_ttl_ms: None,
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
                 None,
             )
@@ -7479,6 +7674,7 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
                     working_ttl_ms: Some(10_000),
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
                 None,
             )
@@ -7516,6 +7712,7 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
                     working_ttl_ms: None,
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
                 None,
             )
@@ -8972,6 +9169,7 @@ fn agent_progress_native_deadline_survives_observer_reconnect() {
         working_ttl_ms: None,
         conversation_identity: None,
         expected_observation: None,
+        background_work: false,
     };
     assert_eq!(
         session.report_agent_state(report.clone(), None).unwrap(),

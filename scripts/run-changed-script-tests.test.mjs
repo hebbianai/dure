@@ -6,6 +6,7 @@ import { describe, expect, test, vi } from "vitest";
 import { scriptTestEnvironment } from "./lib/script-test-environment.mjs";
 import {
   affectedScriptTests,
+  listScriptTestGraphPaths,
   runSelectedScriptTests,
   scriptModuleReferences,
   selectChangedScriptTests,
@@ -16,6 +17,7 @@ import {
   DEADLINE_SENSITIVE_PROCESS_TEST_PATHS,
   PROCESS_FIXTURE_TEST_PATHS,
   NODE_TEST_PATHS,
+  SCRIPT_TEST_PROJECTS,
   scriptTestProjectForPath,
 } from "./lib/script-test-projects.mjs";
 
@@ -124,6 +126,45 @@ describe("changed script test selection", () => {
     });
     expect(publicOnly.mode).toBe("changed");
     expect(publicOnly.paths).toEqual(["scripts/public.test.mjs"]);
+  });
+
+  test("selects CLI package tests that consume a changed CLI module", () => {
+    const sources = new Map([
+      ["cli/lib/selection.test.mjs", 'import "./contracts/selection.mjs";'],
+      ["cli/lib/contracts/selection.mjs", "export const value = 1;"],
+      ["scripts/cli.test.mjs", 'import "../cli/lib/contracts/selection.mjs";'],
+    ]);
+    expect(
+      selectChangedScriptTests({
+        base,
+        git: gitFixture(Buffer.from("cli/lib/contracts/selection.mjs\0")),
+        pathExists: (name) => sources.has(name),
+        readSource: (name) => sources.get(name),
+        scriptPaths: [...sources.keys()],
+      }),
+    ).toEqual({
+      mode: "changed",
+      paths: ["cli/lib/selection.test.mjs", "scripts/cli.test.mjs"],
+      reason: null,
+    });
+  });
+
+  test("collects every test in the script graph in a project", () => {
+    // The Vitest scripts project collects scripts/**; other tests run only
+    // when a project lists them.
+    const listed = new Set(
+      SCRIPT_TEST_PROJECTS.flatMap((project) => project.paths ?? []),
+    );
+    const tests = listScriptTestGraphPaths().filter((path) =>
+      path.endsWith(".test.mjs"),
+    );
+    expect(tests).toContain("cli/lib/provider-launch-selection.test.mjs");
+    expect(
+      tests.filter((path) => !path.startsWith("scripts/") && !listed.has(path)),
+    ).toEqual([]);
+    expect(
+      scriptTestProjectForPath("cli/lib/provider-launch-selection.test.mjs"),
+    ).toBe("scripts-node");
   });
 
   test("fails closed to the full suite without an exact base", () => {

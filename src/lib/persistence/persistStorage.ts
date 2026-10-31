@@ -1,3 +1,4 @@
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { t } from "@/lib/i18n";
 import {
@@ -6,6 +7,11 @@ import {
 	type DurableWriteCoordinator,
 	durableWriteCoordinator,
 } from "@/lib/persistence/durableWriteCoordinator";
+import {
+	hasUserData,
+	isEmptyPersistedState,
+} from "@/lib/persistence/emptyStateGuard";
+import type { PersistedAppState } from "@/lib/persistence/persistedAppState";
 import { reportPersistenceStatus } from "@/lib/persistence/persistenceStatus";
 
 const RETIRED_INTERACTION_INBOX_PROJECTION_KEY =
@@ -50,6 +56,14 @@ export interface ReferenceAwarePersistStorage<S extends Record<string, unknown>>
 	flush(): Promise<void>;
 	reconcile(name: string): Promise<void>;
 	freezeProjectionAncestor(): () => void;
+	/**
+	 * Called when the store could not adopt the stored value (a migrate or
+	 * merge threw). The store then holds its defaults, and zustand would write
+	 * them over the saved data on the next update. Keep a copy of the stored
+	 * value and refuse this realm's projection writes until a later hydration
+	 * succeeds.
+	 */
+	quarantineHydrationFailure(name: string, error: unknown): void;
 	read<R>(
 		name: string,
 		reader: (current: StorageValue<S> | null) => R,
@@ -67,6 +81,7 @@ interface ReferenceAwareLocalStorageOptions<S extends Record<string, unknown>> {
 	readonly storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
 	readonly convergeState?: DurableStateConvergence<S>;
 	readonly onCommitted?: (name: string) => void;
+	readonly userClearFlag?: () => boolean;
 }
 
 interface ParsedStoredValue<S> {
@@ -118,6 +133,55 @@ function recoverCorruptStoredValue(
 	}
 }
 
+function currentWindowLabel(): string {
+	if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+		return "non-tauri";
+	}
+	try {
+		return getCurrentWebviewWindow().label;
+	} catch {
+		return "unknown";
+	}
+}
+
+const REJECTED_EMPTY_COPIES = 4;
+
+/** Keeps the newest rejected empty writes for inspection in a fixed ring of
+ * slots. Each copy holds two full states, so an unbounded history could fill
+ * the storage every durable write depends on. */
+export function recordRejectedEmptyWrite(
+	storage: Pick<Storage, "getItem" | "setItem" | "removeItem">,
+	name: string,
+	record: Record<string, unknown>,
+): void {
+	const prefix = `${name}:rejected-empty:secondary:`;
+	const next = Number(storage.getItem(`${prefix}next`));
+	const slot =
+		Number.isSafeInteger(next) && next >= 0 ? next % REJECTED_EMPTY_COPIES : 0;
+	storage.setItem(`${prefix}${slot}`, JSON.stringify(record));
+	storage.setItem(`${prefix}next`, String((slot + 1) % REJECTED_EMPTY_COPIES));
+	pruneTimestampedRejectedEmptyCopies(storage, prefix);
+}
+
+/** Earlier builds wrote one key per rejected write, named by its timestamp. */
+function pruneTimestampedRejectedEmptyCopies(
+	storage: Pick<Storage, "removeItem">,
+	prefix: string,
+): void {
+	if (typeof localStorage === "undefined" || storage !== localStorage) return;
+	const timestamped: string[] = [];
+	for (let index = 0; index < localStorage.length; index += 1) {
+		const key = localStorage.key(index);
+		if (
+			key?.startsWith(prefix) &&
+			/\d{4}-\d\d-\d\dT/.test(key.slice(prefix.length))
+		) {
+			timestamped.push(key);
+		}
+	}
+	for (const key of timestamped) storage.removeItem(key);
+}
+
 export function createReferenceAwareLocalStorage<
 	S extends Record<string, unknown>,
 >(
@@ -126,6 +190,7 @@ export function createReferenceAwareLocalStorage<
 	const coordinator = options.coordinator ?? durableWriteCoordinator;
 	const storage = options.storage ?? localStorage;
 	const convergeState = options.convergeState;
+	const userClearFlag = options.userClearFlag ?? (() => false);
 	const notifyCommitted = (name: string): void => {
 		try {
 			options.onCommitted?.(name);
@@ -149,6 +214,8 @@ export function createReferenceAwareLocalStorage<
 	let frozenAncestorValue: StorageValue<S> | null = null;
 	let frozenAncestorSerialized: string | null = null;
 	let frozenAncestorKnown = false;
+	let hydrationQuarantined = false;
+	let hydrationQuarantineMessage = "";
 
 	const readStoredValue = (
 		name: string,
@@ -188,6 +255,102 @@ export function createReferenceAwareLocalStorage<
 			);
 			serialized = committed ? JSON.stringify(committed) : null;
 		}
+
+		// Empty-over-non-empty guard: refuse to overwrite populated state with empty state
+		// unless an explicit user-clear flag is set.
+		//
+		// FORENSIC NOTE (2026-10-19): macOS v0.2.52 data loss incident traced to secondary
+		// window (window-fea75937... at 16:07:34 KST, window-f29ba8b4... at 16:10:18 KST)
+		// failing hydration and writing empty defaults to shared agent-ide key, then window
+		// sync propagating empty state to main. Secondary windows MUST NEVER be able to write
+		// a destructive empty-over-non-empty projection.
+		//
+		// This guard only applies to the main "agent-ide" store, not to other stores.
+		// Only block writes from secondary windows - main window writes are allowed with a warning.
+		if (
+			name === "agent-ide" &&
+			!userClearFlag() &&
+			serialized !== remote.serialized &&
+			committed &&
+			remote.value
+		) {
+			const candidateState = committed.state as unknown as PersistedAppState;
+			const remoteState = remote.value.state as unknown as PersistedAppState;
+
+			// Check if we're trying to write empty-over-non-empty
+			const wouldOverwriteUserData =
+				isEmptyPersistedState(candidateState) && hasUserData(remoteState);
+
+			if (wouldOverwriteUserData) {
+				// Check if this is a secondary window
+				const isSecondary = (() => {
+					try {
+						// Safely check if we're in a browser environment with Tauri
+						if (
+							typeof window === "undefined" ||
+							typeof location === "undefined" ||
+							!("__TAURI_INTERNALS__" in window)
+						) {
+							return false;
+						}
+						// Check if this is a secondary window by URL params
+						// Secondary windows have ?desktop / ?diff / ?popout / ?panel / ?sessionWindow
+						const search = new URLSearchParams(location.search);
+						return !!(
+							search.get("desktop") ||
+							search.get("diff") ||
+							search.get("popout") ||
+							search.get("panel") ||
+							search.get("sessionWindow")
+						);
+					} catch {
+						return false;
+					}
+				})();
+
+				// For secondary windows, BLOCK the write - they cannot be the authority
+				// For main windows, ALLOW the write but log a warning (could be legitimate rollback)
+				if (isSecondary) {
+					reportPersistenceStatus(
+						"error",
+						t("persistence.guard.emptyOverNonEmpty", {
+							name,
+							defaultValue:
+								"BLOCKED: Secondary window cannot overwrite populated state with empty state",
+						}),
+					);
+
+					// Save the rejected empty candidate for inspection
+					try {
+						if (serialized !== null) {
+							storage.setItem(`${name}:rejected-empty`, serialized);
+						}
+						recordRejectedEmptyWrite(storage, name, {
+							windowLabel: currentWindowLabel(),
+							timestamp: new Date().toISOString(),
+							candidateState,
+							remoteState,
+						});
+					} catch {
+						// Best effort
+					}
+
+					// Keep the remote (populated) value - secondary windows never override main state
+					confirmedValue = remote.value;
+					confirmedSerialized = remote.serialized;
+					confirmedKnown = true;
+					return;
+				} else {
+					// Main window: allow but warn
+					console.warn(
+						`[persistStorage] Writing empty state over populated state in main window (${name}). ` +
+							`This could be a legitimate rollback or a hydration issue.`,
+						{ candidateState, remoteState },
+					);
+				}
+			}
+		}
+
 		if (serialized !== remote.serialized) {
 			if (serialized === null) storage.removeItem(name);
 			else storage.setItem(name, serialized);
@@ -275,9 +438,17 @@ export function createReferenceAwareLocalStorage<
 			try {
 				raw = storage.getItem(name);
 			} catch (error) {
-				reportPersistenceStatus("error", String(error));
+				// The store adopts its defaults when nothing can be read; refuse
+				// its writes like a failed hydration until a later read succeeds.
+				hydrationQuarantined = true;
+				hydrationQuarantineMessage = String(error);
+				reportPersistenceStatus("error", hydrationQuarantineMessage);
 				return null;
 			}
+			// Every hydration starts with this read and reaches onRehydrateStorage
+			// in the same synchronous chain, so a repeated failure quarantines
+			// again before any write runs, and a successful one lifts it.
+			hydrationQuarantined = false;
 			confirmedKnown = true;
 			if (!raw) {
 				lastObservedValue = null;
@@ -332,6 +503,14 @@ export function createReferenceAwareLocalStorage<
 			) {
 				return;
 			}
+			if (hydrationQuarantined) {
+				// Other stores' saves replace the shared status, so report each
+				// refused durable change again rather than dropping it unseen.
+				lastObservedValue = value;
+				lastObservedSerialized = null;
+				reportPersistenceStatus("error", hydrationQuarantineMessage);
+				return;
+			}
 			let serialized: string;
 			try {
 				serialized = JSON.stringify(value);
@@ -354,6 +533,10 @@ export function createReferenceAwareLocalStorage<
 			void enqueueProjection(name, localProjection).catch(() => undefined);
 		},
 		removeItem: (name) => {
+			if (hydrationQuarantined) {
+				reportPersistenceStatus("error", hydrationQuarantineMessage);
+				return;
+			}
 			const localProjection = projectionFrom(null, null);
 			dirtyProjection = localProjection;
 			dirtyProjectionStatus = "pending";
@@ -391,6 +574,27 @@ export function createReferenceAwareLocalStorage<
 			);
 			await coordinator.flush(failureScope);
 		},
+		quarantineHydrationFailure: (name, error) => {
+			hydrationQuarantined = true;
+			dirtyProjection = null;
+			dirtyProjectionStatus = null;
+			hydrationQuarantineMessage = t("persistence.recovery.hydrationFailed", {
+				name,
+				error: String(error),
+			});
+			try {
+				const backupName = `${name}:hydration-failed-backup`;
+				const raw = storage.getItem(name);
+				// Keep the first copy. A transaction may rewrite the stored value
+				// between failures, and a later copy must not replace the original.
+				if (raw && storage.getItem(backupName) === null) {
+					storage.setItem(backupName, raw);
+				}
+			} catch {
+				// The stored value itself is left untouched, so a failed copy loses nothing.
+			}
+			reportPersistenceStatus("error", hydrationQuarantineMessage);
+		},
 		freezeProjectionAncestor: () => {
 			if (projectionAncestorHolds === 0) {
 				frozenAncestorValue = localAncestorKnown
@@ -415,11 +619,10 @@ export function createReferenceAwareLocalStorage<
 			};
 		},
 		read: async (name, reader) =>
-			coordinator.run(
-				name,
-				() => reader(readStoredValue(name).value),
-				{ failureScope, failureDomain: "read" },
-			),
+			coordinator.run(name, () => reader(readStoredValue(name).value), {
+				failureScope,
+				failureDomain: "read",
+			}),
 		transact: async (name, mutation) => {
 			return coordinator.run(
 				name,

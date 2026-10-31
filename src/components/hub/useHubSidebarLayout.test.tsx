@@ -108,6 +108,33 @@ describe("useHubSidebarLayout — mobile presentation", () => {
 		expect(lastSent(send).placements["hmux-1"].presentation?.git).toBeUndefined();
 	});
 
+	/** #287: the account line is what lets a phone offer the switch, and it
+	 * follows the selector's state — including a switch queued behind a turn. */
+	it("publishes the session's account line and its queued switch", () => {
+		useStore.setState({
+			accounts: [
+				{ id: "acct-work", provider: "claude", name: "Work", dir: "/profiles/work" },
+				{ id: "acct-spare", provider: "claude", name: "Spare", dir: "/profiles/spare" },
+			],
+			agents: [{
+				...agent,
+				runtimeBinding: managedBindingFixture({ sessionId: "hmux-1", credentialId: "acct-work" }),
+			}],
+		});
+		const send = vi.fn();
+		renderHook(() => useHubSidebarLayout(send));
+		const account = () => lastSent(send).placements["hmux-1"].presentation?.account;
+		expect(account()).toEqual({ label: "Work" });
+		act(() => useStore.setState((state) => ({
+			agents: state.agents.map((one) => ({
+				...one,
+				pendingCredentialSwitch: { targetCredentialId: "acct-spare", sourceCredentialId: "acct-work" },
+			} as typeof one)),
+		})));
+		expect(account()).toEqual({ label: "Work", pending: { label: "Spare" } });
+		expect(JSON.stringify(lastSent(send))).not.toContain("/profiles/");
+	});
+
 	/**
 	 * The sidebar names this row by its conversation; the phone must get the
 	 * same name, not the worktree slug the agent is registered under.

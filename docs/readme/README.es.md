@@ -146,7 +146,7 @@ La licencia del código no incluye acceso a los servicios operados. Las claves d
 
 Consulta la [guía de contribución](../../CONTRIBUTING.md) y el [código de conducta](../../CODE_OF_CONDUCT.md), o [informa de un error o propone una función](https://github.com/hebbianai/dure/issues/new/choose). Para vulnerabilidades, utiliza el canal privado de la [política de seguridad](../../SECURITY.md). Las guías de contribución y comunidad están disponibles por ahora en inglés.
 
-- **Notas de versión:** [GitHub Releases](https://github.com/hebbianai/hebbian-releases/releases)
+- **Notas de versión:** [GitHub Releases](https://github.com/hebbianai/dure/releases)
 - **Privacidad y telemetría:** [Privacidad y telemetría](https://docs.dureai.dev/en/privacy-and-telemetry)
 - **Comunidad:** [Discord](https://discord.gg/aTuRV6DXhb)
 - **Novedades:** [X · @hebbianai_](https://x.com/hebbianai_)

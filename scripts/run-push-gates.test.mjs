@@ -255,6 +255,20 @@ describe("release gate runner", () => {
     );
   });
 
+  test("stages the macOS bundle library before compiling the desktop app", () => {
+    const { scripts } = JSON.parse(
+      fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
+    );
+
+    // tauri-build refuses a macOS build whose bundle.macOS.frameworks
+    // entry, the gitignored serve-sim dylib, has not been staged.
+    for (const name of ["clippy", "verify:push:desktop"]) {
+      expect(scripts[name], name).toMatch(
+        /^node scripts\/stage-mobile-runtime\.mjs && /,
+      );
+    }
+  });
+
   test("runs protocol drift rejection without unrelated product gates", () => {
     const { scripts } = JSON.parse(
       fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
@@ -279,6 +293,19 @@ describe("release gate runner", () => {
     const provision = scripts["terminal-state-protocol:provision"];
     expect(provision).toContain("pnpm install --frozen-lockfile");
     expect(provision).toContain("rustup toolchain install 1.85.0");
+    // A bare `+1.85` selects rustup's 1.85 channel (1.85.1), not the
+    // toolchain provisioned above.
+    for (const name of [
+      "terminal-state-protocol:generate",
+      "terminal-state-protocol:check",
+      "verify:push:terminal-state-protocol",
+    ]) {
+      const toolchains = [...scripts[name].matchAll(/cargo \+(\S+)/g)].map(
+        ([, toolchain]) => toolchain,
+      );
+      expect(toolchains.length, name).toBeGreaterThan(0);
+      expect(new Set(toolchains), name).toEqual(new Set(["1.85.0"]));
+    }
     expect(scripts["verify:push:terminal-state-protocol"]).toContain(
       "terminal-state-protocol:provision",
     );

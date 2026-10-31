@@ -21,6 +21,7 @@
 use super::file_diff;
 use super::folder_browser;
 use super::git_status;
+use super::session_account;
 use super::start_agent;
 use super::catalog::{self, HubCatalog, HubCatalogEntry, UnreachableBox, HUB_CATALOG_VERSION};
 use super::devices::DeviceRegistry;
@@ -103,6 +104,8 @@ pub(super) struct ServedHub<'a> {
     /// 왕복이라 따로 붙는다 — 목록만 아는 빌드가 패치를 아는 척하면 안 된다.
     pub diffs: Option<&'a dyn file_diff::FileDiffSink>,
     pub files: Option<&'a dyn super::session_file::SessionFileSink>,
+    /// The side that reads and switches a session's provider account.
+    pub accounts: Option<&'a dyn session_account::SessionAccountSink>,
     pub terminal_widths: Option<&'a Arc<TerminalWidths>>,
 }
 
@@ -119,6 +122,8 @@ pub(super) struct HubServices {
     /// 파일 하나의 패치를 읽어 줄 수 있는 쪽.
     pub diffs: Option<Arc<dyn file_diff::FileDiffSink>>,
     pub files: Option<Arc<dyn super::session_file::SessionFileSink>>,
+    /// The side that reads and switches a session's provider account.
+    pub accounts: Option<Arc<dyn session_account::SessionAccountSink>>,
     pub terminal_widths: Option<Arc<TerminalWidths>>,
 }
 
@@ -145,6 +150,7 @@ impl HubServices {
             launch: None,
             diffs: None,
             files: None,
+            accounts: None,
             terminal_widths: None,
         }
     }
@@ -158,6 +164,7 @@ impl HubServices {
             launch: None,
             diffs: None,
             files: None,
+            accounts: None,
             terminal_widths: None,
         }
     }
@@ -192,6 +199,17 @@ impl HubServices {
     #[must_use]
     pub(super) fn reporting_diffs(mut self, diffs: Arc<dyn file_diff::FileDiffSink>) -> Self {
         self.diffs = Some(diffs);
+        self
+    }
+
+    /// Attach the side that reads and switches session accounts. Without it,
+    /// account requests are refused with a reason.
+    #[must_use]
+    pub(super) fn switching_accounts(
+        mut self,
+        accounts: Arc<dyn session_account::SessionAccountSink>,
+    ) -> Self {
+        self.accounts = Some(accounts);
         self
     }
 }
@@ -750,6 +768,7 @@ fn serve_loop(
                             launch: services.launch.as_deref(),
                             diffs: services.diffs.as_deref(),
                             files: services.files.as_deref(),
+                            accounts: services.accounts.as_deref(),
                             terminal_widths: services.terminal_widths.as_ref(),
                         },
                         &registration.authenticated,
@@ -991,6 +1010,30 @@ fn serve_one(
         return;
     }
 
+    if let HubRequest::SessionAccountsV1 { session_id } = hello.request {
+        let result = session_account::answer_read(hub.accounts, session_id);
+        write_session_account(&mut tls, &result);
+        return;
+    }
+
+    if let HubRequest::SwitchSessionAccountV1 {
+        session_id,
+        action_id,
+        account_id,
+        confirm_restart,
+    } = hello.request
+    {
+        let result = session_account::answer_switch(
+            hub.accounts,
+            session_id,
+            action_id,
+            account_id,
+            confirm_restart,
+        );
+        write_session_account(&mut tls, &result);
+        return;
+    }
+
     if let HubRequest::GitStatus { session_id, want } = hello.request {
         // 어느 저장소인지 아는 것은 화면이다 — 폰이 보낸 것은 hmux 세션 id 이고,
         // 그것을 워크트리로 옮기는 표는 앱의 개념 위에 있다(`git_status.rs`).
@@ -1182,6 +1225,19 @@ fn serve_one(
     };
     let _ = tls.write_all(&framed);
     let _ = tls.flush();
+}
+
+fn write_session_account(
+    tls: &mut impl std::io::Write,
+    result: &dure_hub_protocol::session_account::HubSessionAccountResult,
+) {
+    match dure_hub_protocol::session_account::encode(result) {
+        Ok(framed) => {
+            let _ = tls.write_all(&framed);
+            let _ = tls.flush();
+        }
+        Err(error) => eprintln!("[hub] Could not encode the account answer in a frame: {error}"),
+    }
 }
 
 fn serve_remote_gateway(

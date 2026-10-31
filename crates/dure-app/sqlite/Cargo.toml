@@ -16,6 +16,7 @@ sha2 = "0.10"
 # SQLx 0.9 requires Rust 1.94. The lockfile also keeps url/idna_adapter on
 # Rust-1.85-compatible releases; verify dependency changes against this MSRV.
 sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
 tempfile = "3"

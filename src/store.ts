@@ -126,6 +126,7 @@ export interface AppState
 //    canonical Space schema로 옮긴다.
 import { DURABLE_APP_STORE_NAME, PERSIST_VERSION } from "@/lib/persistence/durableAppStoreName";
 export { DURABLE_APP_STORE_NAME, PERSIST_VERSION };
+
 export const durableAppStorage =
   createReferenceAwareLocalStorage<PersistedAppState>({
     convergeState: convergePersistedAppState,
@@ -326,6 +327,26 @@ export const useStore = create<AppState>()(
               legacySkipPermissions: undefined,
             }),
       }),
+      onRehydrateStorage: () => {
+        return (state, error) => {
+          if (error) {
+            console.error("[store] Hydration failed:", error);
+            // zustand swallows a migrate/merge failure and keeps the defaults;
+            // without the quarantine the next update would write them over
+            // every saved space and pane. It also reports the localized error.
+            durableAppStorage.quarantineHydrationFailure(
+              DURABLE_APP_STORE_NAME,
+              error,
+            );
+          } else {
+            if (!state) {
+              console.warn("[store] Hydration returned null state");
+            } else {
+              console.log("[store] Hydration completed successfully");
+            }
+          }
+        };
+      },
     },
   )),
 );

@@ -144,7 +144,7 @@ Dure の名称、ロゴ、アプリアイコン、およびコミュニティビ
 
 [貢献ガイド](../../CONTRIBUTING.md)と[行動規範](../../CODE_OF_CONDUCT.md)をご確認ください。[不具合の報告や機能の提案](https://github.com/hebbianai/dure/issues/new/choose)も歓迎します。脆弱性は[セキュリティポリシー](../../SECURITY.md)に記載された非公開の窓口へご報告ください。貢献・運営に関する文書は現在英語で提供しています。
 
-- **リリースノート:** [GitHub Releases](https://github.com/hebbianai/hebbian-releases/releases)
+- **リリースノート:** [GitHub Releases](https://github.com/hebbianai/dure/releases)
 - **プライバシーとテレメトリー:** [プライバシーとテレメトリー](https://docs.dureai.dev/jp/privacy-and-telemetry)
 - **コミュニティ:** [Discord](https://discord.gg/aTuRV6DXhb)
 - **最新情報:** [X · @hebbianai_](https://x.com/hebbianai_)

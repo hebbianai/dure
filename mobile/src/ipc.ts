@@ -157,6 +157,43 @@ export interface StartAgentOutcome {
   code: string | null;
 }
 
+/** The usage the paired computer's account selector shows for one account. */
+export interface SessionAccountUsage {
+  /** 0–100, rounded as the computer draws it. */
+  used_percent: number;
+  window: "five_hour" | "weekly";
+  /** The computer's compact duration, e.g. `3h 40m`. Absent when not reported. */
+  resets_in?: string | null;
+}
+
+/** One account the computer's selector offers for a session's provider. */
+export interface SessionAccountChoice {
+  /** Absent: the provider's default account. */
+  account_id?: string | null;
+  /** Absent for the default account, which the phone names itself. */
+  label?: string | null;
+  current: boolean;
+  /** A switch to this account waits for the running turn to end. */
+  pending: boolean;
+  /** Absent when nothing was observed — never drawn as 0% or 100%. */
+  usage?: SessionAccountUsage | null;
+}
+
+export type SessionAccountOutcomeKind =
+  | "listed"
+  | "switched"
+  | "scheduled"
+  | "in_progress"
+  | "refused";
+
+/** The computer's answer to an account read or switch. A refusal is a result. */
+export interface SessionAccountOutcome {
+  outcome: SessionAccountOutcomeKind;
+  accounts: SessionAccountChoice[];
+  detail: string | null;
+  code: string | null;
+}
+
 export interface FolderBrowserEntry {
   name: string;
   path: string;
@@ -677,6 +714,28 @@ export const ipc = {
         branch,
         folderPath: folderPath ?? null,
       },
+    }),
+
+  /** Which account a session runs on, and the others the computer would switch it to. */
+  hubSessionAccounts: (hubId: string, sessionId: string) =>
+    invoke<SessionAccountOutcome>("hub_session_accounts", { id: hubId, sessionId }),
+
+  /**
+   * Move a session to another account, keeping its conversation.
+   *
+   * `actionId` names this press: a retry after a lost answer must send the
+   * same value, so the computer reaches the switch already running instead of
+   * restarting the session again. `accountId` null is the default account.
+   */
+  hubSwitchSessionAccount: (
+    hubId: string,
+    sessionId: string,
+    actionId: string,
+    accountId: string | null,
+  ) =>
+    invoke<SessionAccountOutcome>("hub_switch_session_account", {
+      id: hubId,
+      input: { sessionId, actionId, accountId, confirmRestart: true },
     }),
 
   /**

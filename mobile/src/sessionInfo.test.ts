@@ -109,6 +109,16 @@ describe("sessionInfoFacts", () => {
     expect(facts.map((fact) => fact.id)).toEqual(["status", "provider", "computer", "workspace", "session"]);
   });
 
+  /** The account line comes from the computer that can switch it (#287). */
+  it("says which account the session runs on, when the computer said", () => {
+    const hubs = [laptop([hubSession("acct", {
+      presentation: { kind: "agent", account: { label: "Work", pending: { label: "Spare" } } },
+    })])];
+    const facts = sessionInfoFacts({ row: rowOf({ hubs }, "acct"), hubs, now: NOW });
+    expect(facts.map((fact) => fact.id).slice(0, 3)).toEqual(["status", "provider", "account"]);
+    expect(byId(facts).account).toBe(t("account.summaryPending", { current: "Work", next: "Spare" }));
+  });
+
   it("does not repeat the title as the session name", () => {
     const hubs = [laptop([hubSession("same", { session_name: "codex-14", hmux_session_name: "codex-14" })])];
     const facts = sessionInfoFacts({ row: rowOf({ hubs }, "same"), hubs, now: NOW });

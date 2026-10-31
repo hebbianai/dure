@@ -10,6 +10,25 @@ import {
   replaceReleaseCargoLock,
 } from "../lib/release-candidate.mjs";
 
+// Jobs of a full public-repository.yml run. The frontend and script suites
+// run as matrix jobs whose names carry a shard or test-file suffix.
+export const PUBLIC_CI_JOB_NAMES = Object.freeze([
+  "Select public checks",
+  "Documentation checks",
+  "Frontend checks (shard 1)",
+  "Frontend checks (shard 2)",
+  "Frontend checks (shard 3)",
+  "Script checks (vitest)",
+  "Script checks (node cli/lib/provider-launch-selection.test.mjs)",
+  "Script checks (deadline scripts/dure-cli-wait.test.mjs)",
+  "Script checks (process scripts/run-dev-app.test.mjs)",
+  "Mobile web checks",
+  "Shared protocol (ubuntu-24.04)",
+  "Hmux checks",
+  "App core checks",
+  "Public repository checks",
+]);
+
 const fakeGh = String.raw`#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const argv=process.argv.slice(2), stateFile=process.env.RELEASE_TEST_STATE;
@@ -19,8 +38,18 @@ const answer=value=>{save();console.log(JSON.stringify(value));};
 const fail=(status,message='fixture API refusal')=>{save();console.log(JSON.stringify({status:String(status),message}));console.error('HTTP '+status);process.exit(1);};
 fs.appendFileSync(process.env.RELEASE_TEST_CALLS,JSON.stringify(argv)+'\n');
 const arg=name=>argv[argv.indexOf(name)+1];
+const timeout=key=>{if(!(state.flakyDownloads?.[key]>0))return;state.flakyDownloads[key]--;fs.writeFileSync(path.join(arg('--dir'),'partial-download'),'');save();console.error('read tcp 10.0.0.2:50000->140.82.112.6:443: read: operation timed out');process.exit(1);};
 const sha=bytes=>crypto.createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex');
 const previous=bytes=>({type:'file',path:'beta/latest.json',encoding:'base64',sha:sha(bytes),content:bytes.toString('base64')});
+// Public CI: one completed run per commit unless state.ciRuns lists several.
+// Run ids are registered on listing and stay clear of the release run id.
+const ciJobNames=${JSON.stringify(PUBLIC_CI_JOB_NAMES)};
+const ciRuns=commit=>(state.ciRuns?.[commit]??[{}]).map((run,index)=>{
+  const key=commit+'/'+index;
+  state.ciRunIds??={};
+  state.ciRunIds[key]??=1000+Object.keys(state.ciRunIds).length;
+  return {id:state.ciRunIds[key],conclusion:run.conclusion??state.ciConclusions?.[commit]??state.ciConclusion??'success',jobs:{...state.ciJobs,...run.jobs}};
+});
 if(argv[0]==='api'){
   const route=argv[1];
   if(route==='user'){
@@ -58,14 +87,25 @@ if(argv[0]==='api'){
   }else if(route.includes('/git/ref/')){
     if(route.startsWith('repos/hebbianai/dure/')&&state.hasRemoteTag)answer({object:{type:'commit',sha:state.tagSha}});else fail(404);
   }else if(route.includes('/actions/runs/')&&route.includes('/jobs?')){
-    answer({total_count:6,jobs:['source','candidate','version','build','draft','verification'].map(name=>({name,conclusion:state.jobConclusions?.[name]??(name==='verification'?(state.actualVerification??'success'):'success')}))});
+    const runId=Number(route.split('/actions/runs/')[1].split('/')[0]);
+    const ciKey=Object.keys(state.ciRunIds??{}).find(key=>state.ciRunIds[key]===runId);
+    if(ciKey){
+      const [commit,index]=ciKey.split('/'),run=ciRuns(commit)[Number(index)];
+      answer({total_count:ciJobNames.length,jobs:ciJobNames.map(name=>({name,status:'completed',conclusion:run.jobs[name]??'success'}))});
+    }else{
+      const verification=state.actualVerification??'success',preflight=verification==='success'?'skipped':'success';
+      answer({total_count:7,jobs:['source','candidate','verification','host-preflight','version','build','draft'].map(name=>({name,conclusion:state.jobConclusions?.[name]??(name==='verification'?verification:name==='host-preflight'?preflight:'success')}))});
+    }
   }else if(route.includes('/actions/runs/')){
     answer({repository:{full_name:'hebbianai/dure'},path:'.github/workflows/release.yml',event:'workflow_dispatch',head_branch:state.headBranch??'main',head_sha:state.workflowSha??state.sourceSha,status:'completed',conclusion:state.runConclusion??'success'});
   }else fail(400,'unmodeled API '+route);
 }else if(argv[0]==='run'&&argv[1]==='list'){
   if(arg('--workflow')!=='public-repository.yml')fail(404,'wrong workflow');
-  answer([{headSha:arg('--commit'),status:'completed',conclusion:state.ciConclusions?.[arg('--commit')]??state.ciConclusion??'success'}]);
+  const commit=arg('--commit');
+  answer(ciRuns(commit).map(run=>({databaseId:run.id,headSha:commit,status:'completed',conclusion:run.conclusion})));
 }else if(argv[0]==='run'&&argv[1]==='download'){
+  timeout(arg('--name'));
+  if(state.expiredArtifacts){save();console.error('no valid artifacts found to download');process.exit(1);}
   if(arg('--name')==='release-selection'){
     fs.writeFileSync(path.join(arg('--dir'),'selection.json'),JSON.stringify(state.selection??{schemaVersion:1,runId:'239',sourceRef:'main',workflowSha:state.workflowSha??state.sourceSha,sourceSha:state.sourceSha,tag:'v0.2.29',verification:'full'}));
   }else for(const name of fs.readdirSync(state.original))fs.copyFileSync(path.join(state.original,name),path.join(arg('--dir'),name));
@@ -84,6 +124,7 @@ if(argv[0]==='api'){
   if(state.lostUpload===name)fail(500,'response lost after upload');
   answer(asset);
 }else if(argv[0]==='release'&&argv[1]==='download'){
+  timeout('release-download');
   for(const asset of state.release.assets){
     const dest=path.join(arg('--dir'),asset.name);
     fs.copyFileSync(path.join(state.original,asset.name),dest);
@@ -107,8 +148,19 @@ const fs=require('node:fs'),path=require('node:path');
 const argv=process.argv.slice(2),state=JSON.parse(fs.readFileSync(process.env.RELEASE_TEST_STATE));
 fs.appendFileSync(process.env.RELEASE_TEST_CURL,JSON.stringify(argv)+'\n');
 if(argv[0]!=='--disable'||argv.some(arg=>/authorization/i.test(arg)))process.exit(2);
-if(argv.includes('--output'))fs.copyFileSync(path.join(state.original,path.basename(argv.at(-1))),argv[argv.indexOf('--output')+1]);
-else process.stdout.write(Buffer.from((state.staleReadback?state.originalPrevious:state.previous).content,'base64'));
+const output=argv.includes('--output')?argv[argv.indexOf('--output')+1]:null,key=output?path.basename(argv.at(-1)):'feed';
+if(state.flakyDownloads?.[key]>0){
+  state.flakyDownloads[key]--;fs.writeFileSync(process.env.RELEASE_TEST_STATE,JSON.stringify(state));
+  if(output)fs.writeFileSync(output,'partial');
+  console.error('curl: (28) Operation timed out after 30000 milliseconds with 0 bytes received');process.exit(28);
+}
+if(output)fs.copyFileSync(path.join(state.original,key),output);
+else{
+  // true keeps the raw cache stale; a number goes stale for that many reads.
+  const stale=state.staleReadback===true||state.staleReadback>0;
+  if(typeof state.staleReadback==='number'&&stale){state.staleReadback--;fs.writeFileSync(process.env.RELEASE_TEST_STATE,JSON.stringify(state));}
+  process.stdout.write(Buffer.from((stale?state.originalPrevious:state.previous).content,'base64'));
+}
 `;
 
 const fakeGit = `#!/usr/bin/env node
@@ -299,6 +351,9 @@ export function createPublicReleaseFixture({ remoteVersion = true } = {}) {
     RELEASE_VERIFICATION: "full",
     GH_TOKEN: "fixture-token",
     GITHUB_OUTPUT: path.join(root, "github-output"),
+    DURE_RELEASE_DOWNLOAD_RETRY_MS: "1",
+    DURE_RELEASE_FEED_POLL_MS: "1",
+    DURE_RELEASE_FEED_WAIT_MS: "20",
   };
   const state = () => JSON.parse(fs.readFileSync(statePath));
   const change = (values) =>

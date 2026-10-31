@@ -315,6 +315,7 @@ impl PreparedControlPlane {
         let state = Arc::clone(&runtime.state);
         let mut background_tasks = JoinSet::new();
         background_tasks.spawn(crate::dispatch_deadlines::run_loop(Arc::clone(&state)));
+        background_tasks.spawn(crate::interaction_wake::retry_loop(Arc::clone(&state)));
         background_tasks.spawn(schedule_runtime::run_loop(Arc::clone(&state)));
         background_tasks.spawn(crate::workflow_graph::runtime::run_loop(Arc::clone(&state)));
         background_tasks.spawn(agent_runtime_recovery::run(Arc::clone(&state)));

@@ -900,12 +900,17 @@ async fn supersede_replay_never_authorizes_a_second_successor_effect_before_comm
 #[tokio::test]
 async fn native_failure_after_structured_retirement_moves_the_returned_tombstone_to_the_next_successor()
  {
-    let (_root, mut state, launcher, _) = fixture(vec![LaunchOutcome::Reject(
+    let (root, mut state, launcher, _) = fixture(vec![LaunchOutcome::Reject(
         "fixture_native_target_rejected",
     )])
     .await;
-    state.agent_providers =
-        Arc::new(provider_extension::test_codex_structured_agent_provider_registry());
+    // The native successor must reach the fixture launcher, so its provider
+    // executable is the fixture's, never whatever `codex` the host has on PATH.
+    state.agent_providers = Arc::new(provider_extension::test_bundled_provider_registry(
+        "codex",
+        root.path().join("codex-fixture").to_str().unwrap(),
+        true,
+    ));
     let (agent_id, provider_id, operation_id) =
         admit_structured_credential_transition(&state).await;
     let open_count = Arc::new(AtomicUsize::new(0));

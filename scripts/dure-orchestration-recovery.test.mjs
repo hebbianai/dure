@@ -34,6 +34,28 @@ it.each([
   expect(request).toHaveBeenCalledTimes(1);
 });
 
+it.each(["stale_generation", "terminal"])(
+  "tells a process whose Session generation exited to stop instead of retrying (%s)",
+  async (disposition) => {
+    const failure = new BackendTransportError("backend_transport_remote_error", {
+      details: { code: "orchestration_generation_conflict", reasonCode: "hmux_session_exited", disposition },
+    });
+    const request = vi.fn(async () => { throw failure; });
+    const call = handleMcpRequest({ jsonrpc: "2.0", method: "tools/call",
+      params: { name: "orchestration_events_read", arguments: { limit: 40 } },
+    }, environment, { request, integrationReceipt });
+    await expect(call).rejects.toMatchObject({
+      message: expect.stringMatching(new RegExp(
+        `^orchestration_generation_conflict: hmux_session_exited \\(${disposition}\\): ` +
+        "This managed Session generation has exited.*dure runs show <agent>.*cannot succeed\\.$")),
+      cause: failure,
+    });
+    await expect(call).rejects.not.toMatchObject({ message: expect.stringMatching(/Retry the same/) });
+    // A retired generation is never enrolled as a new Run.
+    expect(request).toHaveBeenCalledTimes(1);
+  },
+);
+
 it("corrects an older backend's invalid-request retry guidance without exposing its payload", async () => {
   const failure = new BackendTransportError("backend_transport_remote_error", {
     details: { code: "orchestration_request_invalid", disposition: "retry_same",

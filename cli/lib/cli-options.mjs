@@ -131,6 +131,11 @@ export function parseOpts(args) {
     else if (a === "--cursor") opts.cursor = args[++i] ?? "";
     else if (a === "--deadline-ms") opts.deadlineMs = args[++i];
     else if (a === "--probe-budget-ms") opts.probeBudgetMs = args[++i];
+    else if (a === "--alive") opts.alive = true;
+    else if (a === "--hide-provider") {
+      if (!opts.hideProvider) opts.hideProvider = [];
+      opts.hideProvider.push(args[++i]);
+    }
     else if (a === "--global" || a === "-g") opts.global = true;
     else if (a === "--remote") opts.remote = true;
     else if (a === "--approve-global-config") opts.approveGlobalConfig = true;

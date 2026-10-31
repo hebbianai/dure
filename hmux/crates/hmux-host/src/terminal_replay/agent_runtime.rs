@@ -15,6 +15,9 @@ pub struct AgentRuntimeObservation {
     pub activity: AgentRuntimeActivity,
     pub attention: AgentRuntimeAttention,
     pub source: AgentRuntimeStateSource,
+    /// Working only because of background work after the provider's turn
+    /// ended; its prompt accepts input.
+    pub background_work: bool,
 }
 
 impl AgentRuntimeObservation {
@@ -30,6 +33,22 @@ impl AgentRuntimeObservation {
             activity,
             attention,
             source,
+            background_work: false,
+        }
+    }
+
+    /// The same observation of an existing projection, so a republish keeps
+    /// every Host fact it does not change.
+    #[must_use]
+    pub(super) fn of(current: &AgentRuntimeStateProjection) -> Self {
+        Self {
+            background_work: current.background_work,
+            ..Self::new(
+                current.lifecycle,
+                current.activity,
+                current.attention,
+                current.source,
+            )
         }
     }
 
@@ -77,6 +96,21 @@ pub struct AgentStateReportObservation {
     pub causality: Option<crate::local_protocol::AgentStateReportCausality>,
     pub working_ttl_ms: Option<u64>,
     pub expected_observation: Option<AgentStateReportObservationFence>,
+    /// Background work the provider started is in flight; see
+    /// `AgentStateReport::background_work`.
+    pub background_work: bool,
+}
+
+impl AgentStateReportObservation {
+    /// Background work keeps the session busy whatever the foreground does,
+    /// so the Host folds every background report as working.
+    pub(super) fn projected_activity(&self) -> AgentRuntimeActivity {
+        if self.background_work {
+            AgentRuntimeActivity::Working
+        } else {
+            self.activity
+        }
+    }
 }
 
 /// Fold outcome for one agent state report. `Applied` carries the projection
@@ -93,8 +127,82 @@ pub enum AgentStateReportFold {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PendingControllerInput {
     None,
-    Draft,
+    /// Draft-capable input was accepted. When it followed a submit the
+    /// provider has not acknowledged yet, erasing the draft again returns to
+    /// that submit's wait instead of admitting a prompt into the new turn.
+    Draft {
+        after_unacknowledged_submit: bool,
+    },
     Submitted,
+}
+
+/// One change to the provider's unsubmitted line, derived from accepted
+/// controller input. The Host never reads the line editor: it counts the
+/// characters it wrote and the Backspaces that erase them, and stops
+/// counting at the first input it cannot follow.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControllerDraftEdit {
+    /// This many characters typed or pasted at the end of the line.
+    Inserted(usize),
+    /// Backspace erased up to this many characters before the cursor.
+    Erased(usize),
+    /// Text may have been inserted in a way the Host cannot count:
+    /// completion, history recall, a yank or an unrecognized sequence.
+    InsertedUncounted,
+    /// The cursor moved into the line or a word was erased: an existing
+    /// draft changed in a way the Host cannot count, but an empty line
+    /// stays empty.
+    EditedUncounted,
+}
+
+/// The Host's estimate of the unsubmitted text in the provider's line
+/// editor. Counting is intentionally independent of terminal output: line
+/// editors may retain or erase a draft without echoing it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ControllerDraft {
+    /// Nothing typed since the last accepted submit, or every typed
+    /// character was erased again.
+    Empty,
+    /// This many characters (never zero) stand at the end of the line, with
+    /// the cursor after them.
+    Counted(usize),
+    /// Text whose length the Host cannot follow. Only a submit clears it.
+    Uncounted,
+}
+
+impl ControllerDraft {
+    #[must_use]
+    pub(super) fn is_empty(self) -> bool {
+        self == Self::Empty
+    }
+
+    /// Folds one accepted edit. An erase counts only against characters the
+    /// Host counted, so the estimate never reports an empty line while text
+    /// the Host did not count may remain.
+    #[must_use]
+    pub(super) fn apply(self, edit: ControllerDraftEdit) -> Self {
+        match (self, edit) {
+            (_, ControllerDraftEdit::Inserted(0) | ControllerDraftEdit::Erased(0))
+            | (Self::Uncounted, _) => self,
+            (_, ControllerDraftEdit::InsertedUncounted)
+            | (Self::Counted(_), ControllerDraftEdit::EditedUncounted) => Self::Uncounted,
+            (
+                Self::Empty,
+                ControllerDraftEdit::Erased(_) | ControllerDraftEdit::EditedUncounted,
+            ) => Self::Empty,
+            (Self::Empty, ControllerDraftEdit::Inserted(count)) => Self::Counted(count),
+            (Self::Counted(current), ControllerDraftEdit::Inserted(count)) => {
+                Self::Counted(current.saturating_add(count))
+            }
+            (Self::Counted(current), ControllerDraftEdit::Erased(count)) => {
+                if current > count {
+                    Self::Counted(current - count)
+                } else {
+                    Self::Empty
+                }
+            }
+        }
+    }
 }
 
 impl TerminalReplay {
@@ -170,14 +278,46 @@ impl TerminalReplay {
         self.fresh_agent_prompt_consumed = true;
     }
 
-    /// Records draft-capable user input only after the PTY accepted it. This
-    /// is intentionally independent of terminal output sequencing: line
-    /// editors may retain a draft without echoing it, and automatic
-    /// replacement must preserve that invisible state.
+    /// Records draft-capable user input only after the PTY accepted it, when
+    /// the Host cannot count what that input put into the line.
     pub fn record_controller_input(&mut self) {
+        self.record_controller_draft_edit(ControllerDraftEdit::InsertedUncounted);
+    }
+
+    /// Records one accepted edit of the unsubmitted line. This is
+    /// intentionally independent of terminal output sequencing: line editors
+    /// may retain or erase a draft without echoing it, and automatic
+    /// replacement must preserve that invisible state. The Host therefore
+    /// counts only what it wrote. A count that returns to zero is an empty
+    /// prompt again, which releases draft-guarded automation and the
+    /// pending-input fact alike; input the Host cannot follow holds both
+    /// until the next accepted submit.
+    pub fn record_controller_draft_edit(&mut self, edit: ControllerDraftEdit) {
         self.record_controller_write();
-        self.pending_controller_input = PendingControllerInput::Draft;
-        self.unsubmitted_controller_draft = true;
+        let before = self.unsubmitted_controller_draft;
+        let after = before.apply(edit);
+        self.unsubmitted_controller_draft = after;
+        self.pending_controller_input = match (self.pending_controller_input, after.is_empty()) {
+            (PendingControllerInput::None, false) => PendingControllerInput::Draft {
+                after_unacknowledged_submit: false,
+            },
+            (PendingControllerInput::Submitted, false) => PendingControllerInput::Draft {
+                after_unacknowledged_submit: true,
+            },
+            (
+                PendingControllerInput::Draft {
+                    after_unacknowledged_submit,
+                },
+                true,
+            ) if !before.is_empty() => {
+                if after_unacknowledged_submit {
+                    PendingControllerInput::Submitted
+                } else {
+                    PendingControllerInput::None
+                }
+            }
+            (pending, _) => pending,
+        };
     }
 
     #[must_use]
@@ -185,12 +325,13 @@ impl TerminalReplay {
         self.pending_controller_input != PendingControllerInput::None
     }
 
-    /// Whether draft-capable input reached the PTY after its last submit.
-    /// Line editors may erase text without echoing it, so this conservatively
-    /// remains set until the next accepted submit.
+    /// Whether draft-capable input reached the PTY after its last submit
+    /// without every counted character being erased again. Line editors may
+    /// erase text without echoing it, so input the Host cannot count
+    /// conservatively remains pending until the next accepted submit.
     #[must_use]
     pub fn has_unsubmitted_controller_draft(&self) -> bool {
-        self.unsubmitted_controller_draft
+        !self.unsubmitted_controller_draft.is_empty()
     }
 
     pub(crate) fn is_semantically_quiescent(&self) -> bool {
@@ -217,7 +358,7 @@ impl TerminalReplay {
         self.record_controller_write();
         // The submit bytes already crossed the PTY boundary, so the draft is
         // no longer unsubmitted even if the fallible provider fold fails.
-        self.unsubmitted_controller_draft = false;
+        self.unsubmitted_controller_draft = ControllerDraft::Empty;
         if self.pending_turn_completion.is_some()
             || self.agent_runtime_state.as_ref().is_some_and(|state| {
                 matches!(
@@ -244,8 +385,14 @@ impl TerminalReplay {
     }
 
     pub(super) fn acknowledge_controller_submit(&mut self) {
-        if self.pending_controller_input == PendingControllerInput::Submitted {
-            self.pending_controller_input = PendingControllerInput::None;
-        }
+        self.pending_controller_input = match self.pending_controller_input {
+            PendingControllerInput::Submitted => PendingControllerInput::None,
+            PendingControllerInput::Draft {
+                after_unacknowledged_submit: true,
+            } => PendingControllerInput::Draft {
+                after_unacknowledged_submit: false,
+            },
+            pending => pending,
+        };
     }
 }

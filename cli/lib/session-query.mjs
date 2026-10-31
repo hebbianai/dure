@@ -35,6 +35,7 @@ const BOUNDED_BACKEND_SESSION_CATALOG_CAPABILITY =
 const BOUNDED_HMUX_SESSION_CATALOG_CAPABILITY =
   "bounded_session_catalog_query_v1";
 const HMUX_PROBE_RUNTIME_STATE_CAPABILITY = "exact_session_probe_runtime_state_v1";
+const HMUX_PROBE_WORKING_DIRECTORY_CAPABILITY = "exact_session_probe_working_directory_v1";
 const HMUX_CAPABILITY_OUTPUT_BYTES = 64 * 1024;
 const LOCAL_HMUX_PROBE_PROCESS_GRACE_MS = 100;
 const MAX_SESSION_QUERY_TRANSPORT_BYTES =
@@ -348,7 +349,8 @@ const PROBE_STATUSES_WITH_GENERATION = new Set([
   "generation_changed",
 ]);
 
-function parseProbeBatchPayload(result, targets, includeRuntimeState) {
+/** Optional receipt keys exist only when their flag was requested; any other key is refused. */
+function parseProbeBatchPayload(result, targets, projections) {
   let payload;
   try {
     payload = JSON.parse(result.stdout || "");
@@ -370,7 +372,9 @@ function parseProbeBatchPayload(result, targets, includeRuntimeState) {
     "liveness",
     "status",
     "errorCode",
-    ...(includeRuntimeState ? ["outputSequence", "agentRuntimeState"] : []),
+    ...(projections.runtimeState || projections.workingDirectory ? ["outputSequence"] : []),
+    ...(projections.runtimeState ? ["agentRuntimeState"] : []),
+    ...(projections.workingDirectory ? ["workingDirectory"] : []),
     ...GENERATION_FIELDS.map(([field]) => field),
   ]);
   for (let index = 0; index < payload.results.length; index += 1) {
@@ -391,6 +395,8 @@ function parseProbeBatchPayload(result, targets, includeRuntimeState) {
       (receipt.outputSequence !== undefined &&
         (receipt.status !== "healthy" || !decimal(receipt.outputSequence))) ||
       (receipt.agentRuntimeState !== undefined &&
+        (receipt.status !== "healthy" || !decimal(receipt.outputSequence))) ||
+      (receipt.workingDirectory !== undefined &&
         (receipt.status !== "healthy" || !decimal(receipt.outputSequence)))
     ) {
       return null;
@@ -448,6 +454,9 @@ function applyProbeReceipt(session, receipt) {
     // Runtime facts and their output fence must come from the same exact Host
     // observation, never from the earlier no-probe catalog snapshot.
     agentRuntimeState: health === "healthy" ? receipt.agentRuntimeState ?? null : null,
+    ...(health === "healthy" && receipt.workingDirectory !== undefined
+      ? { workingDirectory: receipt.workingDirectory }
+      : {}),
     ...(health === "healthy" && receipt.outputSequence !== undefined
       ? { output_seq: receipt.outputSequence }
       : {}),
@@ -579,6 +588,7 @@ export async function collectSessionQuery({
   let bindingSource = "local";
   let bindingHostId = "local";
   let includeRuntimeState = false;
+  let includeWorkingDirectory = false;
   if (backend) {
     const profile = backend.profile;
     if (backend.error || !profile) {
@@ -697,6 +707,7 @@ export async function collectSessionQuery({
           capabilityDurationMs, limits, { capability: HMUX_SESSION_PAGINATION_CAPABILITY });
       }
       includeRuntimeState = supportsHmuxCapability(manifest, HMUX_PROBE_RUNTIME_STATE_CAPABILITY);
+      includeWorkingDirectory = supportsHmuxCapability(manifest, HMUX_PROBE_WORKING_DIRECTORY_CAPABILITY);
     }
     const argv =
       action === "list"
@@ -788,6 +799,7 @@ export async function collectSessionQuery({
               "--probe-budget-ms",
               String(probeWindowMs),
               ...(includeRuntimeState ? ["--include-runtime-state"] : []),
+              ...(includeWorkingDirectory ? ["--include-working-directory"] : []),
             ],
             {
               timeoutMs: Math.max(1, remainingMs),
@@ -797,7 +809,10 @@ export async function collectSessionQuery({
           if (batchResult.kind !== "success") {
             parsed = { ...parsed, sessions: prioritized };
           } else {
-            const receipts = parseProbeBatchPayload(batchResult, targets, includeRuntimeState);
+            const receipts = parseProbeBatchPayload(batchResult, targets, {
+              runtimeState: includeRuntimeState,
+              workingDirectory: includeWorkingDirectory,
+            });
             if (!receipts) {
               parsed = { ...parsed, sessions: prioritized };
             } else {
@@ -936,6 +951,57 @@ export async function collectSessionQuery({
   return report;
 }
 
+export const MAX_ALIVE_SESSION_QUERY_PAGES = 16;
+
+/** `--alive` filters the whole census, not only its first bounded page. After
+ * a restart or account switch an exited predecessor keeps the first page's
+ * client-binding priority while its live successor can sort past the cut-off,
+ * so filtering one truncated page would hide exactly the Session to find. */
+export async function collectAliveSessionQuery(options, collect = collectSessionQuery) {
+  const first = await collect({ ...options, action: "list" });
+  const alive = (session) => session.liveness.state === "alive";
+  if (first.kind !== "dure.sessions.list") return first;
+  if (options.cursor !== undefined || first.inventoryComplete) {
+    return { ...first, sessions: first.sessions.filter(alive) };
+  }
+  const startedAt = Date.now();
+  const sessions = new Map();
+  const add = (page) => {
+    for (const session of page.sessions.filter(alive)) {
+      const key = `${session.workspaceId}\u0000${session.sessionId}`;
+      if (!sessions.has(key)) sessions.set(key, session);
+    }
+  };
+  add(first);
+  let observationComplete = first.observationComplete;
+  let cursor = "start";
+  let last = first;
+  for (let pages = 0; cursor && pages < MAX_ALIVE_SESSION_QUERY_PAGES; pages += 1) {
+    const page = await collect({ ...options, action: "list", cursor });
+    // An older Hmux or backend without pagination keeps the first page's
+    // explicit truncation instead of failing the whole listing.
+    if (page.kind !== "dure.sessions.list") break;
+    add(page);
+    observationComplete &&= page.observationComplete;
+    last = page;
+    cursor = page.pagination?.nextCursor ?? null;
+  }
+  const inventoryComplete = last !== first && cursor === null;
+  const omittedCount = inventoryComplete ? 0 : Math.max(1, last.truncation.omittedCount);
+  return {
+    ...first,
+    inventoryComplete,
+    observationComplete,
+    partial: !inventoryComplete || !observationComplete,
+    durationMs: first.durationMs + Math.max(0, Date.now() - startedAt),
+    truncation: { items: !inventoryComplete, omittedCount },
+    ...(inventoryComplete || last === first
+      ? {}
+      : { pagination: { nextCursor: cursor, consistency: "live" } }),
+    sessions: [...sessions.values()],
+  };
+}
+
 export function sessionQueryExitCode(report) {
   return report.kind === "dure.sessions.error" ? 2 : 0;
 }
@@ -949,9 +1015,9 @@ export function formatSessionQuery(report) {
     ].filter(Boolean).join("\n");
   }
   const sessions = report.kind === "dure.sessions.list" ? report.sessions : [report.session];
-  if (sessions.length === 0) return "No Dure sessions.";
-  const lines = [
-    "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS",
+  // A filtered or truncated page can be empty; keep its truncation notice.
+  const lines = sessions.length === 0 ? ["No Dure sessions."] : [
+    "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS",
   ];
   for (const session of sessions) {
     lines.push(
@@ -962,6 +1028,9 @@ export function formatSessionQuery(report) {
         session.provider.pid,
         session.liveness.state,
         session.cwd ?? "-",
+        session.runtime?.agentRuntimeState?.backgroundWork
+          ? "waiting+background"
+          : session.runtime?.agentRuntimeState?.activity ?? "-",
         session.clientProjection.agents
           .map((agent) => agent.displayName ?? agent.name ?? agent.id ?? "?")
           .join(",") || "-",

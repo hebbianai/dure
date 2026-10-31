@@ -55,6 +55,11 @@ interface CliHmuxSessionResolutionDependencies<
 	}): Promise<Session | undefined>;
 }
 
+// Managed Agent sessions carry no Hmux name. Their live runtime opens through
+// the Run presentation path, which never relaunches the provider.
+const MANAGED_RUN_OPEN_HINT =
+	"A managed Agent opens without a restart through dure runs open <agent-id> --space <space-id>; find its ID with dure runs list.";
+
 export async function resolveCliStandaloneHmuxSession<
 	Session extends HmuxSessionSummary,
 >(
@@ -74,7 +79,7 @@ export async function resolveCliStandaloneHmuxSession<
 			"pane_not_found",
 			target.kind === "exact"
 				? `Hmux session ${target.sessionId} was not found in workspace ${target.workspaceId}`
-				: `Hmux session named ${target.name} was not found`,
+				: `Hmux session named ${target.name} was not found. ${MANAGED_RUN_OPEN_HINT}`,
 		);
 	}
 	const isStandalone =
@@ -84,7 +89,7 @@ export async function resolveCliStandaloneHmuxSession<
 	if (!isStandalone) {
 		throw new CliHmuxPaneRequestError(
 			"invalid_request",
-			`Hmux session ${discovered.sessionId} is managed and cannot use standalone attach`,
+			`Hmux session ${discovered.sessionId} is managed and cannot use standalone attach. ${MANAGED_RUN_OPEN_HINT}`,
 		);
 	}
 	if (discovered.lifecycle !== "ready") {

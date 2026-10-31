@@ -97,7 +97,6 @@ describe("CI verification receipts", () => {
     ).toEqual(["desktop", "frontend"]);
     expect(
       classifyVerificationScopes([
-        "docs/public/docs.json",
         "docs/public/images/workspace-overview.png",
         "docs/public/videos/workspace-overview.webm",
       ]),

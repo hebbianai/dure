@@ -157,7 +157,7 @@ test("public PR checks remain on hosted runners with no signing secrets", () => 
     expect(JSON.stringify(job["runs-on"])).not.toContain("self-hosted");
     expect(JSON.stringify(job)).not.toContain("secrets.");
   }
-  for (const name of ["verification", "build"]) {
+  for (const name of ["verification", "host-preflight", "build"]) {
     expect(workflow.jobs[name]["runs-on"]).toEqual({
       group: "dure-release",
       labels: ["self-hosted", "macOS", "ARM64", "dure-release"],
@@ -178,7 +178,12 @@ test("full verification and owned target cleanup precede the independently valid
     if: "always()",
     run: "sh scripts/manage-ci-cargo-target.sh release",
   });
-  expect(workflow.jobs.version.needs).toEqual(["source", "candidate", "verification"]);
+  expect(workflow.jobs.version.needs).toEqual([
+    "source",
+    "candidate",
+    "verification",
+    "host-preflight",
+  ]);
   expect(workflow.jobs.version.if).toContain(
     "needs.candidate.result == 'success'",
   );
@@ -194,6 +199,128 @@ test("full verification and owned target cleanup precede the independently valid
   expect(workflow.jobs.version.steps.at(-1).run).toContain(
     "public-repository.yml --repo hebbianai/dure --ref",
   );
+});
+
+test("an emergency release approves and admits the signing host before any version ref exists", () => {
+  const preflight = workflow.jobs["host-preflight"];
+  expect(preflight.if).toBe("inputs.verification == 'emergency-0.2'");
+  expect(preflight.needs).toEqual(["source", "candidate"]);
+  expect(preflight["runs-on"]).toEqual(workflow.jobs.build["runs-on"]);
+  expect(preflight.environment).toBe(workflow.jobs.build.environment);
+  const runs = preflight.steps.map((step) => step.run ?? "");
+  expect(runs).toContain("node scripts/run-with-build-storage.mjs full -- true");
+  expect(runs.join("\n")).not.toMatch(/tauri|cargo|pnpm|release-public/);
+  expect(JSON.stringify(preflight)).not.toMatch(/secrets\.|GH_TOKEN|github\.token/);
+  const build = workflow.jobs.build.steps.find(
+    (step) => step.name === "Build signed and notarized beta",
+  ).run;
+  for (const check of preflight.steps
+    .find((step) => step.name === "Check the signing host session")
+    .run.trim()
+    .split("\n"))
+    expect(build).toContain(check);
+  expect(workflow.jobs.version.needs).toContain("host-preflight");
+  const admitted = (verification, verified, prepared) =>
+    new Function(
+      "needs",
+      "inputs",
+      "always",
+      "cancelled",
+      `return (${workflow.jobs.version.if.replaceAll("needs.host-preflight", 'needs["host-preflight"]')});`,
+    )(
+      {
+        source: { result: "success" },
+        candidate: { result: "success" },
+        verification: { result: verified },
+        "host-preflight": { result: prepared },
+      },
+      { verification },
+      () => true,
+      () => false,
+    );
+  expect(admitted("emergency-0.2", "skipped", "success")).toBe(true);
+  for (const result of ["failure", "cancelled", "skipped"])
+    expect(admitted("emergency-0.2", "skipped", result)).toBe(false);
+  expect(admitted("full", "success", "skipped")).toBe(true);
+  expect(admitted("full", "skipped", "success")).toBe(false);
+  for (const result of ["failure", "cancelled"])
+    expect(admitted("full", result, "skipped")).toBe(false);
+});
+
+test("keeps the selection and signed assets for the promotion and recovery window", () => {
+  const upload = (job, prefix) =>
+    workflow.jobs[job].steps.find(
+      (step) =>
+        step.uses?.startsWith("actions/upload-artifact@") &&
+        step.with.name.startsWith(prefix),
+    );
+  expect(upload("source", "release-selection").with["retention-days"]).toBe(90);
+  expect(upload("build", "release-assets-").with["retention-days"]).toBe(90);
+});
+
+test("the build removes only its own release checkout outputs after uploading", () => {
+  const steps = workflow.jobs.build.steps;
+  const cleanup = steps.at(-1);
+  expect(cleanup).toMatchObject({
+    if: "always()",
+    "continue-on-error": true,
+    "working-directory": "${{ github.workspace }}",
+    env: { RELEASE_SHA: "${{ needs.version.outputs.release_sha }}" },
+  });
+  expect(steps.indexOf(cleanup)).toBeGreaterThan(
+    steps.findIndex((step) => step.uses?.startsWith("actions/upload-artifact@")),
+  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-release-cleanup-"));
+  try {
+    const workspace = path.join(root, "work", "dure", "dure");
+    const source = path.join(workspace, "source");
+    const lease = path.join(root, "work", "_hebbian-ci-targets-v1", "verify");
+    const write = (file, body = "output") => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, body);
+    };
+    const env = { PATH: "/usr/bin:/bin", HOME: root };
+    const git = (...args) =>
+      execFileSync(
+        "git",
+        ["-C", source, "-c", "core.hooksPath=/dev/null", ...args],
+        { env, encoding: "utf8" },
+      ).trim();
+    write(path.join(source, "package.json"), "{}\n");
+    write(path.join(source, ".gitignore"), "target/\nnode_modules/\n");
+    git("init", "-q");
+    git("add", ".");
+    git(
+      "-c", "user.name=Release fixture", "-c", "user.email=release@example.test",
+      "-c", "commit.gpgsign=false", "commit", "-qm", "release",
+    );
+    const outputs = [
+      path.join(source, "src-tauri", "target", "release", "dure"),
+      path.join(source, "hmux", "target", "release", "hmux"),
+      path.join(source, "node_modules", ".modules.yaml"),
+      path.join(source, "latest.json"),
+    ];
+    const outside = [
+      path.join(workspace, "workflow-helper.mjs"),
+      path.join(lease, "0123456789abcdef", "target", "release", "dure"),
+    ];
+    for (const file of [...outputs, ...outside]) write(file);
+    const clean = (releaseSha) =>
+      execFileSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", cleanup.run],
+        { cwd: workspace, env: { ...env, RELEASE_SHA: releaseSha }, encoding: "utf8" },
+      );
+    expect(clean("0".repeat(40))).toContain("No release checkout from this job");
+    expect(outputs.every((file) => fs.existsSync(file))).toBe(true);
+    clean(git("rev-parse", "HEAD"));
+    expect(outputs.filter((file) => fs.existsSync(file))).toEqual([]);
+    expect(outside.filter((file) => !fs.existsSync(file))).toEqual([]);
+    expect(fs.readFileSync(path.join(source, "package.json"), "utf8")).toBe("{}\n");
+    expect(git("status", "--porcelain", "--ignored")).toBe("");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("only the protected build step receives signing credentials and offers the Beta interface", () => {
@@ -275,6 +402,8 @@ test("separates protected workflow helpers from the immutable selected applicati
     }
   }
   expect(checks("verification")[0].with.ref).toBe("${{ needs.source.outputs.source_sha }}");
+  expect(checks("host-preflight")).toHaveLength(1);
+  expect(checks("host-preflight")[0].with.ref).toBe("${{ github.sha }}");
   expect(workflow.jobs.candidate.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");
   expect(workflow.jobs.version.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");
   expect(workflow.jobs.draft.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");

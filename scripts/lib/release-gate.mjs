@@ -45,20 +45,57 @@ export function assertPinnedCheckout(baseInput, headInput) {
   return base;
 }
 
-export function findExactSuccessfulCiRun(baseInput, runs) {
+export function exactSuccessfulCiRuns(baseInput, runs) {
   const base = normalizeFullCommitSha(baseInput, "release base");
   if (!Array.isArray(runs)) {
     throw new Error("CI run response must be an array");
   }
-  return (
-    runs.find(
-      (run) =>
-        typeof run?.headSha === "string" &&
-        run.headSha.toLowerCase() === base &&
-        run.status === "completed" &&
-        run.conclusion === "success",
-    ) ?? null
+  return runs.filter(
+    (run) =>
+      typeof run?.headSha === "string" &&
+      run.headSha.toLowerCase() === base &&
+      run.status === "completed" &&
+      run.conclusion === "success",
   );
+}
+
+export function findExactSuccessfulCiRun(baseInput, runs) {
+  return exactSuccessfulCiRuns(baseInput, runs)[0] ?? null;
+}
+
+// A public-repository.yml run also concludes success when its plan skipped
+// every code suite, as for a documentation-only push. Release evidence needs
+// the required result and the code suites to have actually run and passed.
+export const RELEASE_CI_REQUIRED_JOB = "Public repository checks";
+// The frontend and script suites run as matrix jobs whose names carry a
+// shard or test-file suffix, such as "Frontend checks (shard 1)".
+export const RELEASE_CI_EVIDENCE_JOB_PREFIXES = Object.freeze([
+  "Frontend checks",
+  "Script checks",
+]);
+
+function conclusionGaps(job) {
+  return job.conclusion === "success" ? [] : [`${job.name} ${job.conclusion || "unfinished"}`];
+}
+
+/** Why a run's latest-attempt job listing is not release evidence; [] if it is. */
+export function ciEvidenceGaps(listing) {
+  const jobs = listing?.jobs;
+  if (!Array.isArray(jobs) || jobs.length !== listing.total_count) {
+    return ["job listing incomplete"];
+  }
+  const named = jobs.filter((job) => typeof job?.name === "string");
+  const required = named.filter((job) => job.name === RELEASE_CI_REQUIRED_JOB);
+  const gaps =
+    required.length === 1
+      ? conclusionGaps(required[0])
+      : [`${RELEASE_CI_REQUIRED_JOB} ${required.length === 0 ? "missing" : "ambiguous"}`];
+  for (const prefix of RELEASE_CI_EVIDENCE_JOB_PREFIXES) {
+    // Every job of the suite must have run and succeeded; none may be skipped.
+    const suite = named.filter((job) => job.name.startsWith(prefix));
+    gaps.push(...(suite.length === 0 ? [`${prefix} missing`] : suite.flatMap(conclusionGaps)));
+  }
+  return gaps;
 }
 
 export function describeExactCiRuns(baseInput, runs) {

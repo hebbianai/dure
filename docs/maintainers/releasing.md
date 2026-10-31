@@ -46,18 +46,50 @@ a narrowly scoped organization secret policy.
 Set environment variable `DURE_TELEMETRY_KEY` to the existing public telemetry
 project token. The build refuses an empty value and checks the compiled binary.
 Normal storage admission and isolated Cargo/process ownership are unchanged.
+After uploading the signed files, the build job removes the outputs it left in
+its own release checkout (`git clean -ffdx` in `source/`, about 8 GiB), even when
+an earlier step failed. It does not touch the runner-owned Cargo target
+generations under `_hebbian-ci-targets-v1` or anything else outside that checkout.
+A cleanup failure only warns; it never fails a build that already uploaded its
+signed files.
 The hosted version job uses its scoped `GITHUB_TOKEN` to create only the release
 branch/tag and request exact-tag CI; it does not need a private-repository deploy
 key or a main-branch protection bypass.
 
-## Select the source and version
+## Reconcile versions after each release
 
-Reconcile development's nine version inventory files with all previously
-reserved desktop versions before dispatch. This transition reserves versions
-through `0.2.28`; the first new public-source release must be `0.2.29` or later.
-The initial public snapshot still says `0.2.26`, so that bookkeeping needs a
-separately reviewed update before the first run. Never copy historical product
+A release never changes `main`. The version job commits the nine version
+inventory files (`package.json`, `cli/package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml`, `hmux/Cargo.toml` and the `Cargo.lock` files of
+`src-tauri`, `hmux`, `crates/dure-app` and `mobile/src-tauri`) only to
+`release/vX.Y.Z` and its tag. Once a version tag exists, reconcile `main` through
+it before the next dispatch, whether that release was published, left as a draft
+or stopped after tagging. Otherwise the next run selects the same version and
+preflight refuses it as already reserved.
+
+From a clean checkout of current `main`:
+
+```sh
+corepack pnpm release:bookkeeping v0.2.53           # dry run, writes nothing
+corepack pnpm release:bookkeeping v0.2.53 --apply
+git diff --stat                                     # the nine files, version lines only
+git commit -am "chore(release): reconcile versions through v0.2.53"
+```
+
+The command reads the tag's commit from `hebbianai/dure` and fetches the tag by
+exact name when it is missing locally; a local tag that differs is refused. The
+tag must be a single-parent commit that changes only the nine files' version
+fields. Only those fields are projected onto current `main`; the tag's file
+snapshot is never copied, so newer product changes in the same files survive.
+A downgrade, a dirty checkout or one that changed after planning is refused.
+With `--apply`, Cargo then regenerates each lockfile with
+`cargo metadata --offline` and accepts it with `--locked`; the command stops if
+Cargo would change any projected byte. Land the commit on `main` like any other
+change. When several versions were reserved, reconcile through the highest one;
+the skipped versions need no separate commit. Never copy historical product
 files over current main or rewrite existing tags/assets.
+
+## Select the source and version
 
 Run Release only on `main`, with `patch` or `minor` as `bump`. Leave `source_ref`
 empty or set it to `main` to use GitHub's dispatch commit, without manually
@@ -70,19 +102,32 @@ permission; approval of the protected signing environment remains separate.
 The hosted source job resolves the input once and records the immutable source
 SHA, protected workflow SHA, requested ref, version and verification profile in
 `release-selection`. Its summary shows both SHAs before protected jobs start.
-`Public repository checks` must be green for both exact commits. Later branch
-movement never changes candidate preparation, verification or the tag parent.
-The privileged version writer and draft publisher execute helpers from the
-protected workflow commit, not from the chosen application branch. The signed
-app is built from the version-only tag commit. Source selection is a trusted
-administrator operation: approving arbitrary unreviewed code for a signing
-host is unsafe, even when the workflow definition is protected.
+Later branch movement never changes candidate preparation, verification or the
+tag parent. The privileged version writer and draft publisher execute helpers
+from the protected workflow commit, not from the chosen application branch. The
+signed app is built from the version-only tag commit. Source selection is a
+trusted administrator operation: approving arbitrary unreviewed code for a
+signing host is unsafe, even when the workflow definition is protected.
 
 For example, after the workflow is on main:
 
 ```sh
 gh workflow run release.yml --repo hebbianai/dure --ref main \
   -f source_ref=main -f bump=patch -f verification=full
+```
+
+The selected source and protected workflow commits each need public CI evidence:
+a successful `public-repository.yml` run for that exact commit in which
+`Public repository checks` succeeded and the frontend and script suites ran:
+at least one `Frontend checks` shard and one `Script checks` job, with every job
+of both suites succeeding and none skipped. A run that skipped its code jobs,
+such as a documentation-only push, also concludes success but is not evidence.
+Without such a run the source job refuses with `release_exact_ci_required`. Run
+the workflow on a ref at that commit, wait for it to succeed, then dispatch
+Release again:
+
+```sh
+gh workflow run public-repository.yml --repo hebbianai/dure --ref main
 ```
 
 `verification=full` is the default and requires remote `pnpm verify:release`.
@@ -93,6 +138,20 @@ artifact integrity, packaged acceptance or cleanup, and cannot admit `0.3.x`.
 Each emergency run needs fresh maintainer authorization for its selected version;
 the option does not reuse a historical exception for a later release.
 
+No version ref is created before the signing host has been approved and has
+admitted the build. In full mode the verification job does this on the signing
+runner. In emergency mode a `host-preflight` job runs there instead: it waits for
+the `macos-release` approval, checks the arm64 host and its Finder session, and
+runs the full build's storage admission without building
+(`run-with-build-storage.mjs full -- true`). It receives no publisher
+credentials or signing secrets. A rejected or cancelled approval, or a storage
+refusal, stops the run before `release/vX.Y.Z` and `vX.Y.Z` exist, so the version
+stays unused; fix the host, then re-run the failed jobs or start a new
+dispatch. The build job uses the same environment after the tag exists, so every
+run asks for `macos-release` approval twice. The preflight is a point-in-time
+check: the build admits its storage again, and a volume that fills up in between
+still stops the build after tagging.
+
 The independent hosted version writer treats the candidate patch as data. It
 reconstructs every allowed manifest/lock byte from the frozen source, commits
 only that version inventory, and atomically publishes `release/vX.Y.Z` and
@@ -100,7 +159,8 @@ only that version inventory, and atomically publishes `release/vX.Y.Z` and
 
 ## Accept and publish
 
-After the Release workflow and exact-tag Public repository CI succeed:
+After the Release workflow and the exact-tag Public repository run it requests
+succeed (the CI evidence rule above also applies to the tag commit):
 
 ```sh
 node scripts/release-public.mjs verify v0.2.29
@@ -113,12 +173,23 @@ draft's exact four files with the successful workflow artifact, check the
 single-parent version commit, verify the updater archive
 against the exact-tag public key, and check beta/version/immutable URLs.
 It is integrity evidence, **not native acceptance**.
+Each download (workflow artifacts, release assets and the anonymous files)
+gets up to three attempts with backoff when the failure is a transport error
+such as a timeout, reset or HTTP 5xx. A retry starts from an empty destination,
+and any other error, or a third transport failure, still stops the command.
+Each command prints its `Release evidence:` directory. After every comparison
+passes it writes `receipt.json`, which records each asset's size and SHA-256,
+and then deletes the downloaded copies (`original/`, `downloaded/` and
+`anonymous/`, about 1 GB). The selection record and receipt stay. A command that
+fails keeps every downloaded copy for reconciliation.
 
-Before publishing, inspect the unchanged signed DMG and mode-preserved archive;
-compare full file/type/mode/symlink manifests. Observe Finder first-open/reopen,
-fresh stable-channel packaged CLI bootstrap and a healthy same-terminal pair of
-commands in an empty disposable home. Use unique discovery/install/runtime
-roots, the existing run-observed ownership supervisor and exact exit proof.
+Before publishing, inspect the unchanged signed DMG and mode-preserved archive:
+download them into a separate disposable directory, check them against the
+receipt's digests and compare full file/type/mode/symlink manifests. Observe
+Finder first-open/reopen, fresh stable-channel packaged CLI bootstrap and a
+healthy same-terminal pair of commands in an empty disposable home. Use unique
+discovery/install/runtime roots, the existing run-observed ownership supervisor
+and exact exit proof.
 Protect installed/development apps, their data, existing mounts and other work.
 Retain the source/run/file hashes and actual UI/process/cleanup receipts.
 
@@ -133,6 +204,9 @@ The command publishes a prerelease/nonlatest release, downloads all four files
 anonymously, rechecks hashes/signature, then conditionally updates the existing
 `hebbianai/hebbian-releases:main/beta/latest.json`. Its URL stays unchanged for
 installed clients; the new manifest points to the immutable archive in `dure`.
+`raw.githubusercontent.com` caches that URL for up to five minutes, so the
+anonymous readback checks it every 20 seconds for up to six minutes before
+failing with `beta_metadata_anonymous_readback_mismatch`.
 An optional `DURE_BETA_FEED_TOKEN` is used only for that compatibility repository;
 the new repository's `GITHUB_TOKEN` alone cannot write a different repository.
 
@@ -143,6 +217,10 @@ confirm its resolver accepts the new canonical `dure` release URLs before the
 first cutover; do not claim the website changed because the manifest changed.
 
 ## Resume without replacing assets
+
+The workflow keeps the `release-selection` and `release-assets-vX.Y.Z`
+artifacts for 90 days. `verify`, `publish`, `metadata-only` and `recover-draft`
+all download them, so finish or recover a release within that window.
 
 Draft staging uploads only absent names. Existing names must already match the
 original size/digest; a partial upload or mismatch stops the operation. A lost
@@ -183,7 +261,8 @@ node scripts/release-public.mjs metadata-only v0.2.29
 
 This rechecks the same source/run/public files without changing release assets.
 The compatibility writer uses the previous Git blob SHA, rejects downgrades and
-same-version divergence, and requires exact anonymous raw-byte readback. A
-response/cache failure remains a failure until those bytes can be observed.
+same-version divergence, and requires exact anonymous raw-byte readback within
+the same bounded wait. A response/cache failure remains a failure until those
+bytes can be observed.
 Retain failed receipts and evidence directories; successful integrity checks do
 not resolve unrelated historical runtime or verification incidents.

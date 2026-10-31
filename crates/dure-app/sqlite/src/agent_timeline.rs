@@ -121,7 +121,7 @@ pub(crate) async fn binding(
     interaction_session_id: &AgentInteractionSessionIdV1,
 ) -> Result<Option<AgentInteractionBindingV1>, DomainStoreErrorV1> {
     let mut connection = pool
-        .begin_with("BEGIN DEFERRED")
+        .begin()
         .await
         .map_err(|error| map_sqlx("read_agent_interaction", error))?;
     let result = binding_on(&mut connection, interaction_session_id).await?;
@@ -425,7 +425,7 @@ pub(crate) async fn provider_cursor(
 ) -> Result<AgentProviderCursorV1, DomainStoreErrorV1> {
     runtime.validate()?;
     let mut connection = pool
-        .begin_with("BEGIN DEFERRED")
+        .begin()
         .await
         .map_err(|error| map_sqlx("read_agent_provider_cursor", error))?;
     let result = async {
@@ -968,7 +968,7 @@ pub(crate) async fn history_hydration_authority(
     interaction_session_id: &AgentInteractionSessionIdV1,
 ) -> Result<AgentHistoryHydrationAuthorityV1, DomainStoreErrorV1> {
     let mut connection = pool
-        .begin_with("BEGIN DEFERRED")
+        .begin()
         .await
         .map_err(|error| map_sqlx("agent_history_hydration_authority", error))?;
     let result = history_hydration_authority_on(&mut connection, interaction_session_id).await?;
@@ -2636,8 +2636,14 @@ pub(crate) async fn read(
     request: &AgentTimelineReadRequestV1,
 ) -> Result<AgentTimelineReadV1, DomainStoreErrorV1> {
     request.validate()?;
+    // SQLite's plain BEGIN is already deferred. sqlx 0.8 confirms a custom
+    // BEGIN statement with a second worker round trip after the worker has
+    // started the transaction, and a read cancelled during that round trip
+    // returns its pooled connection inside a transaction that no guard will
+    // roll back. Plain BEGIN hands back the rollback guard as soon as the
+    // worker acknowledges it.
     let mut transaction = pool
-        .begin_with("BEGIN DEFERRED")
+        .begin()
         .await
         .map_err(|error| map_sqlx("read_agent_timeline", error))?;
     let result = read_on(&mut transaction, request).await?;

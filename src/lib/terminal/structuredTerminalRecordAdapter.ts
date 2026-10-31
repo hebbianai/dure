@@ -552,6 +552,9 @@ function validateAgentRuntimeState(value: unknown): HmuxAgentRuntimeState {
 		...(typeof value.turnCompletedCount === "string"
 			? { turnCompletedCount: value.turnCompletedCount }
 			: {}),
+		...(value.backgroundWork === true && value.activity === "working"
+			? { backgroundWork: true as const }
+			: {}),
 	};
 }
 

@@ -2,7 +2,10 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { createPublicReleaseFixture } from "./fixtures/public-release-cli.mjs";
+import {
+  createPublicReleaseFixture,
+  PUBLIC_CI_JOB_NAMES,
+} from "./fixtures/public-release-cli.mjs";
 
 const script = path.resolve("scripts/release-public.mjs"),
   roots = [];
@@ -25,6 +28,12 @@ function stage(value) {
     "full",
   );
 }
+// A successful public run whose plan skipped every frontend and script job.
+const skippedCodeJobs = Object.fromEntries(
+  PUBLIC_CI_JOB_NAMES.filter((name) => /^(?:Frontend|Script) checks/.test(name)).map(
+    (name) => [name, "skipped"],
+  ),
+);
 function success(result) {
   expect(result.status, result.stdout + result.stderr).toBe(0);
 }
@@ -159,6 +168,7 @@ test.each([
   { permissions: { "release-admin": "write" } },
   { toolingComparison: "diverged" },
   { ciConclusion: "failure" },
+  { ciJobs: { "Script checks (vitest)": "skipped" } },
 ])("recovery refuses missing build, authority, review or CI evidence before writing: %j", (failure) => {
   const value = fixture();
   failedDraft(value);
@@ -253,9 +263,80 @@ test("read-only verification compares the successful run bytes and does not publ
   expect(value.state().release.draft).toBe(true);
 });
 
+const runDownloads = (value) =>
+  value
+    .calls()
+    .filter((args) => args[0] === "run" && args[1] === "download")
+    .map((args) => args[args.indexOf("--name") + 1]);
+const curls = (value) =>
+  fs.existsSync(value.env.RELEASE_TEST_CURL)
+    ? fs
+        .readFileSync(value.env.RELEASE_TEST_CURL, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+    : [];
+
+test("retries transient download timeouts and still compares complete files", () => {
+  const value = fixture();
+  success(stage(value));
+  value.change({
+    flakyDownloads: {
+      "release-selection": 1,
+      "release-assets-v0.2.29": 2,
+      "release-download": 1,
+      "Dure.app.tar.gz": 2,
+      feed: 1,
+    },
+  });
+  const result = value.run(script, "publish", "v0.2.29");
+  success(result);
+  expect(result.stderr).toContain("transport failure on attempt 2 of 3; retrying");
+  expect(Object.values(value.state().flakyDownloads)).toEqual([0, 0, 0, 0, 0]);
+  expect(runDownloads(value)).toEqual([
+    "release-selection",
+    "release-selection",
+    "release-assets-v0.2.29",
+    "release-assets-v0.2.29",
+    "release-assets-v0.2.29",
+  ]);
+  expect(
+    value.calls().filter((args) => args[0] === "release" && args[1] === "download"),
+  ).toHaveLength(2);
+  expect(
+    curls(value).filter((args) => args.at(-1).endsWith("/Dure.app.tar.gz")),
+  ).toHaveLength(3);
+  expect(curls(value).filter((args) => !args.includes("--output"))).toHaveLength(2);
+  expect(value.state().release.draft).toBe(false);
+});
+
+test("a download that keeps timing out stays nongreen, and an absent artifact is not retried", () => {
+  const value = fixture();
+  success(stage(value));
+  const before = writes(value).length;
+  value.change({ flakyDownloads: { "release-assets-v0.2.29": 3 } });
+  const timedOut = value.run(script, "publish", "v0.2.29");
+  expect(timedOut.status).toBe(1);
+  expect(timedOut.stderr).toContain("read: operation timed out");
+  expect(runDownloads(value)).toEqual([
+    "release-selection",
+    "release-assets-v0.2.29",
+    "release-assets-v0.2.29",
+    "release-assets-v0.2.29",
+  ]);
+  value.change({ flakyDownloads: {}, expiredArtifacts: true });
+  expect(value.run(script, "publish", "v0.2.29").stderr).toContain(
+    "no valid artifacts found to download",
+  );
+  expect(runDownloads(value)).toHaveLength(5);
+  expect(writes(value)).toHaveLength(before);
+  expect(value.state().release.draft).toBe(true);
+});
+
 test.each([
   { runConclusion: "failure" },
   { ciConclusion: "failure" },
+  { ciJobs: skippedCodeJobs },
   { actualVerification: "skipped" },
   { tamperDownload: true },
   { headBranch: "topic" },
@@ -267,6 +348,38 @@ test.each([
   expect(value.run(script, "publish", "v0.2.29").status).toBe(1);
   expect(writes(value)).toHaveLength(before);
   expect(value.state().release.draft).toBe(true);
+});
+
+test("keeps downloaded copies after a failed comparison and only the receipt after success", () => {
+  const value = fixture();
+  success(stage(value));
+  const evidence = (result) =>
+    result.stdout.match(/^Release evidence: (.+)$/m)[1];
+  value.change({ tamperDownload: true });
+  const failed = value.run(script, "publish", "v0.2.29");
+  expect(failed.stderr).toContain("release_updater_signature_invalid");
+  expect(fs.readdirSync(evidence(failed)).sort()).toEqual([
+    "downloaded",
+    "original",
+    "selection",
+  ]);
+  value.change({ tamperDownload: false });
+  const published = value.run(script, "publish", "v0.2.29");
+  success(published);
+  const directory = evidence(published);
+  expect(fs.readdirSync(directory).sort()).toEqual(["receipt.json", "selection"]);
+  expect(
+    JSON.parse(fs.readFileSync(path.join(directory, "receipt.json"))).assets,
+  ).toEqual(
+    fs.readdirSync(value.original).sort().map((name) => {
+      const bytes = fs.readFileSync(path.join(value.original, name));
+      return {
+        name,
+        size: bytes.length,
+        digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+      };
+    }),
+  );
 });
 
 test("publishes nonlatest beta, independently downloads it, and conditionally migrates the existing feed", () => {
@@ -303,13 +416,29 @@ test("recovers lost publish and feed responses from exact committed readback", (
   expect(writes(value).filter((args) => args.includes("PUT"))).toHaveLength(1);
 });
 
-test("raw-cache disagreement stays nongreen; metadata-only resumes without touching assets", () => {
+const feedReads = (value) =>
+  curls(value).filter((args) => !args.includes("--output")).length;
+
+test("publish waits for the raw cache to serve the new feed within its bound", () => {
+  const value = fixture();
+  success(stage(value));
+  value.change({ staleReadback: 2 });
+  const result = value.run(script, "publish", "v0.2.29");
+  success(result);
+  expect(result.stderr).toContain("feed still serves other bytes");
+  expect(feedReads(value)).toBe(3);
+  expect(value.state().release.draft).toBe(false);
+});
+
+test("raw-cache disagreement past the bound stays nongreen; metadata-only resumes without touching assets", () => {
   const value = fixture();
   success(stage(value));
   value.change({ staleReadback: true });
+  value.env.DURE_RELEASE_FEED_WAIT_MS = "3";
   expect(value.run(script, "publish", "v0.2.29").stderr).toContain(
     "beta_metadata_anonymous_readback_mismatch",
   );
+  expect(feedReads(value)).toBe(4);
   const assets = value.state().release.assets,
     count = writes(value).length;
   value.change({ staleReadback: false });
@@ -425,6 +554,38 @@ test("preflight requires an unused next version and exact public source CI", () 
     "release_version_already_reserved",
   );
   expect(writes(value)).toEqual([]);
+});
+
+test.each([
+  { ciJobs: skippedCodeJobs },
+  { ciJobs: { "Frontend checks (shard 2)": "skipped" } },
+  { ciJobs: { "Script checks (process scripts/run-dev-app.test.mjs)": "skipped" } },
+  { ciJobs: { "Public repository checks": "skipped" } },
+])("preflight refuses successful exact CI that did not run every code suite job: %j", (gap) => {
+  const value = fixture({ remoteVersion: false });
+  value.change(gap);
+  const result = value.run(script, "preflight");
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain(`release_exact_ci_required: ${value.sourceSha} (run 1000: `);
+  expect(result.stderr).toContain(`${Object.keys(gap.ciJobs).at(-1)} skipped`);
+  expect(result.stderr).toContain(
+    "gh workflow run public-repository.yml --repo hebbianai/dure --ref main",
+  );
+  expect(writes(value)).toEqual([]);
+});
+
+test("preflight accepts a full exact run beside a documentation-only run", () => {
+  const value = fixture({ remoteVersion: false });
+  value.change({ ciRuns: { [value.sourceSha]: [{ jobs: skippedCodeJobs }, {}] } });
+  success(value.run(script, "preflight"));
+  const jobRoutes = value
+    .calls()
+    .filter((args) => args[0] === "api" && args[1].includes("/jobs?"))
+    .map((args) => args[1]);
+  expect(jobRoutes).toEqual([
+    "repos/hebbianai/dure/actions/runs/1000/jobs?filter=latest&per_page=100",
+    "repos/hebbianai/dure/actions/runs/1001/jobs?filter=latest&per_page=100",
+  ]);
 });
 
 test("freezes default main without a manually copied source SHA", () => {

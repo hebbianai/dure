@@ -362,8 +362,7 @@ async fn lock_prevents_recovery_of_live_operations_and_released_lock_recovers() 
         Err("environment_busy")
     );
     drop(lock);
-    // Forked native fixtures may briefly retain the open directory descriptor.
-    // Recovery starts when the OS reports release, not when this handle drops.
+    // Recovery waits for the OS to report the release, as a later backend would.
     let recovered = fixture.settled_with_access(false, id).await;
     assert_eq!(recovered["status"], "cleanup_failed");
     assert_eq!(recovered["error"], "environment_operation_interrupted");
@@ -408,4 +407,28 @@ async fn invalid_store_cannot_run_a_script() {
         Err("environment_store_invalid")
     );
     assert!(!fixture.project.path().join("unintended").exists());
+}
+
+#[test]
+fn released_lock_is_not_extended_by_a_child_forked_before_exec() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(root.path()).unwrap();
+    let lock = store.lock("catalog").unwrap();
+    // Any backend thread can fork while the lock is held. Until it execs, the
+    // child shares the lock's open file description.
+    let child = unsafe { libc::fork() };
+    assert!(child >= 0);
+    if child == 0 {
+        unsafe {
+            libc::sleep(30);
+            libc::_exit(0);
+        }
+    }
+    drop(lock);
+    let relocked = store.lock("catalog").map(drop);
+    unsafe {
+        libc::kill(child, libc::SIGKILL);
+        libc::waitpid(child, std::ptr::null_mut(), 0);
+    }
+    assert_eq!(relocked, Ok(()));
 }

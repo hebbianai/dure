@@ -144,7 +144,7 @@ Dure 이름·로고·앱 아이콘의 사용과 커뮤니티 빌드·Hebbian AI 
 
 [기여 가이드](../../CONTRIBUTING.md)와 [행동강령](../../CODE_OF_CONDUCT.md)을 확인하고, [버그를 제보하거나 기능을 제안](https://github.com/hebbianai/dure/issues/new/choose)해 주세요. 보안 취약점은 [보안 정책](../../SECURITY.md)에 안내된 비공개 경로로 제보해 주세요. 기여·운영 문서는 현재 영어로 제공됩니다.
 
-- **릴리스 노트:** [GitHub Releases](https://github.com/hebbianai/hebbian-releases/releases)
+- **릴리스 노트:** [GitHub Releases](https://github.com/hebbianai/dure/releases)
 - **개인정보와 사용 데이터:** [개인정보와 사용 데이터](https://docs.dureai.dev/ko/privacy-and-telemetry)
 - **커뮤니티:** [Discord](https://discord.gg/aTuRV6DXhb)
 - **소식:** [X · @hebbianai_](https://x.com/hebbianai_)

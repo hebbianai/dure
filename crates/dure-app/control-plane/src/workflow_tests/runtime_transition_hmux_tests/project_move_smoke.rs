@@ -59,8 +59,13 @@ async fn project_move_case(reject_after_start: bool, live: bool) {
         .unwrap()
         .unwrap();
     if live {
-        state_reporter::report(&hmux, &source, hmux_client::AgentRuntimeActivity::Waiting,
-            hmux_client::AgentRuntimeAttention::None, true);
+        state_reporter::report(
+            &hmux,
+            &source,
+            hmux_client::AgentRuntimeActivity::Waiting,
+            hmux_client::AgentRuntimeAttention::None,
+            true,
+        );
     }
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
@@ -71,8 +76,13 @@ async fn project_move_case(reject_after_start: bool, live: bool) {
                 &authority_stop_fence(&authority),
             )
             .await
-            .is_ok_and(|observed| if live { observed.managed_stop_quiescence_fence().is_ok() } else { observed.is_exited_exact() })
-            {
+            .is_ok_and(|observed| {
+                if live {
+                    observed.managed_stop_quiescence_fence().is_ok()
+                } else {
+                    observed.is_exited_exact()
+                }
+            }) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
@@ -84,7 +94,10 @@ async fn project_move_case(reject_after_start: bool, live: bool) {
     assert_eq!(hmux.requests().len(), 1);
     if live {
         assert!(preview["plan"]["sourceStopPolicy"]["preserve_observed"].is_object());
-        assert_eq!(hmux.session(&source).lifecycle, hmux_client::SessionLifecycle::Ready);
+        assert_eq!(
+            hmux.session(&source).lifecycle,
+            hmux_client::SessionLifecycle::Ready
+        );
     }
     let body = json!({"schemaVersion": 1, "plan": preview["plan"], "confirmRestart": true});
     if reject_after_start {

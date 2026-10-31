@@ -224,6 +224,7 @@ async fn canceling_a_waiting_goal_write_does_not_poison_the_next_goal_write() {
         pool,
         path: original.path.clone(),
         schema_info: original.schema_info.clone(),
+        busy_retry_delays: original.busy_retry_delays,
     };
     let mut writer =
         sqlx::SqliteConnection::connect_with(&crate::schema::writable_connect_options(&file))
@@ -505,6 +506,7 @@ async fn canceling_a_goal_projection_read_does_not_poison_the_next_write() {
         pool,
         path: original.path.clone(),
         schema_info: original.schema_info.clone(),
+        busy_retry_delays: original.busy_retry_delays,
     };
     let request = AgentTimelineReadRequestV1 {
         schema_version: 1,

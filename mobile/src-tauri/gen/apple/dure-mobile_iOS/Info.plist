@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.4</string>
+	<string>0.1.5</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>5</string>
 	<key>NSCameraUsageDescription</key>
 	<string>페어링 QR 코드를 읽을 때만 카메라를 씁니다. / Used only to read the pairing QR code.</string>
 	<key>NSFaceIDUsageDescription</key>

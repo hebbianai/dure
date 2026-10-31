@@ -143,7 +143,7 @@ async fn plan(
             } else {
                 let observed = inspection
                     .managed_stop_quiescence_fence()
-                    .map_err(|_| "agent_runtime_source_busy".to_string())?;
+                    .map_err(|_| source_busy(inspection.busy_reason()))?;
                 AgentRuntimeSourceStopPolicyV1::PreserveObserved {
                     runtime_revision: observed.runtime_revision(),
                     observed_through_output_seq: observed.observed_through_output_seq(),

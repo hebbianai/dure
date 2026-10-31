@@ -1,5 +1,6 @@
 use super::{ProviderEpoch, SessionHost, SessionHostError};
 use crate::local_protocol::{AgentRuntimeStateProjection, SessionFence};
+use crate::terminal_replay::ControllerDraftEdit;
 
 impl SessionHost {
     /// Consumes fresh-prompt authority after a controller-to-PTY operation may
@@ -34,6 +35,25 @@ impl SessionHost {
             .ensure_matches(replay.fence())
             .map_err(|_| SessionHostError::FenceMismatch)?;
         replay.record_controller_input();
+        Ok(())
+    }
+
+    /// Records one accepted edit of the person's unsubmitted line. Typed
+    /// characters are counted and Backspaces count against them, so a draft
+    /// that was typed and then erased again stops refusing draft-guarded
+    /// automation and inbox wakes without waiting for an Enter.
+    pub fn record_controller_draft_edit(
+        &mut self,
+        expected_fence: &SessionFence,
+        edit: ControllerDraftEdit,
+    ) -> Result<(), SessionHostError> {
+        let ProviderEpoch::Running { replay, .. } = &mut self.current else {
+            return Err(SessionHostError::SessionExited);
+        };
+        expected_fence
+            .ensure_matches(replay.fence())
+            .map_err(|_| SessionHostError::FenceMismatch)?;
+        replay.record_controller_draft_edit(edit);
         Ok(())
     }
 

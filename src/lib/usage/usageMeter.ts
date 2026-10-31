@@ -81,6 +81,9 @@ export function claudeUsedTokens(u: ProviderUsage): number {
 
 type CompactUsageLevel = "unknown" | "normal" | "warning" | "danger";
 
+/** 이 사용률부터 위험 구간이다. */
+const DANGER_USAGE_PCT = 85;
+
 export interface CompactUsageIndicator {
   /** Ring에 그릴 0..100 사용률. null은 provider 실측이 없다는 뜻이다. */
   pct: number | null;
@@ -96,13 +99,14 @@ export function compactUsageIndicator(pct: number | null): CompactUsageIndicator
     return { pct: null, level: "unknown", showLabel: false };
   }
   const clamped = Math.min(100, Math.max(0, pct));
-  if (clamped >= 85) return { pct: clamped, level: "danger", showLabel: true };
+  if (clamped >= DANGER_USAGE_PCT) return { pct: clamped, level: "danger", showLabel: true };
   if (clamped >= 60) return { pct: clamped, level: "warning", showLabel: true };
   return { pct: clamped, level: "normal", showLabel: false };
 }
 
 export interface CodexMeter {
-  /** 표시할 사용률(%) — 5h가 있으면 5h, 없으면 weekly, 둘 다 없으면 null. */
+  /** 표시할 사용률(%) — 5h가 있으면 5h, 없으면 weekly, 둘 다 없으면 null.
+   *  단 weekly가 위험 구간이면서 5h보다 높으면 weekly. */
   pct: number | null;
   /** 어느 창의 값인지 — null이면 데이터 없음. */
   window: "5h" | "weekly" | null;
@@ -117,7 +121,14 @@ function rateLimitMeter(
   weeklyResetsAt: number | null,
   nowSec: number,
 ): CodexMeter {
-  if (usedPercent != null) {
+  // 평소에는 5h 창을 보이지만, 위험 구간의 weekly 창은 5h가 얼마나 남았든
+  // 계정을 막으므로 그쪽이 더 높으면 weekly를 보인다. 이미 리셋된 weekly는 제외.
+  const weeklyBinds =
+    usedPercentWeekly != null &&
+    usedPercentWeekly >= DANGER_USAGE_PCT &&
+    (usedPercent == null || usedPercentWeekly > usedPercent) &&
+    (weeklyResetsAt == null || weeklyResetsAt > nowSec);
+  if (usedPercent != null && !weeklyBinds) {
     return { pct: usedPercent, window: "5h", resetLabel: fmtReset(resetsAt, nowSec) };
   }
   if (usedPercentWeekly != null) {

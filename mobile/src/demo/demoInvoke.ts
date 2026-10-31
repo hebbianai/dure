@@ -28,6 +28,8 @@ import type {
   ScmWriteAction,
   ServerListing,
   ServerRow,
+  SessionAccountChoice,
+  SessionAccountOutcome,
   SourceControlCommit,
   SourceControlFile,
   SourceControlOutcome,
@@ -557,6 +559,21 @@ const handlers: Record<string, Handler> = {
     }
     return outcome(sessionId, "pull_request");
   },
+  hub_session_accounts: (args): SessionAccountOutcome => {
+    hubState(str(args, "id"));
+    return { outcome: "listed", accounts: demoAccounts(str(args, "sessionId")), detail: null, code: null };
+  },
+  hub_switch_session_account: (args): SessionAccountOutcome => {
+    hubState(str(args, "id"));
+    const input = record(args, "input");
+    const sessionId = str(input, "sessionId");
+    const target = typeof input.accountId === "string" ? input.accountId : null;
+    if (input.confirmRestart !== true) {
+      return { outcome: "refused", accounts: [], detail: null, code: "confirmation_required" };
+    }
+    demoAccountOf.set(sessionId, target);
+    return { outcome: "switched", accounts: demoAccounts(sessionId), detail: null, code: null };
+  },
   hub_list: (): HubRow[] => hubs.map((state) => ({ ...state.hub.row })),
   hub_open: (args) => {
     const state = hubState(str(args, "id"));
@@ -620,6 +637,32 @@ const handlers: Record<string, Handler> = {
   hub_stage_session_file: (args): string[] => [`/tmp/dure-demo/${str(record(args, "file"), "fileName")}`],
 };
 
+/** The account each demo session was switched to; absent is the first fixture account. */
+const demoAccountOf = new Map<string, string | null>();
+
+/** Fixture accounts, as a paired computer's account selector would list them. */
+function demoAccounts(sessionId: string): SessionAccountChoice[] {
+  const current = demoAccountOf.has(sessionId) ? demoAccountOf.get(sessionId) : "demo-work";
+  const choices: SessionAccountChoice[] = [
+    { current: false, pending: false },
+    {
+      account_id: "demo-work",
+      label: "Work",
+      current: false,
+      pending: false,
+      usage: { used_percent: 100, window: "five_hour", resets_in: "1h 20m" },
+    },
+    {
+      account_id: "demo-personal",
+      label: "Personal",
+      current: false,
+      pending: false,
+      usage: { used_percent: 18, window: "weekly", resets_in: "3d 4h" },
+    },
+  ];
+  return choices.map((choice) => ({ ...choice, current: (choice.account_id ?? null) === current }));
+}
+
 /** How long each command pretends to take, so the screens' waiting states show. */
 const LATENCY_MS: Record<string, number> = {
   hub_open: 320,
@@ -639,6 +682,8 @@ const LATENCY_MS: Record<string, number> = {
   hub_browse_folder: 220,
   hub_create_folder: 300,
   hub_start_agent: 1_200,
+  hub_session_accounts: 300,
+  hub_switch_session_account: 1_000,
   attach_session: 420,
   attach_hub_session: 380,
   add_ssh_host: 900,

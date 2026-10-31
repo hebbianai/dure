@@ -209,6 +209,7 @@ fn managed_host_capabilities(process_observed_agent_prompt: bool) -> Vec<String>
         managed_starting_generation::PROVIDER_RELEASE_BARRIER_CAPABILITY,
         hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY,
         hmux_host::local_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY,
+        hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY,
         AGENT_RUNTIME_STATE_CAPABILITY,
         AGENT_STATE_REPORT_CAPABILITY,
         AGENT_STATE_REPORT_COMPLETION_ID_CAPABILITY,
@@ -1993,6 +1994,15 @@ impl WindowsServerState {
             wait.not_written_reason(
                 self.stopping.load(Ordering::Acquire) || exact_host_exiting,
             )
+            .map(|reason| match admission.agent_prompt() {
+                Some((target, _)) => crate::agent_prompt_admission::agent_prompt_refusal(
+                    &host,
+                    &self.fence,
+                    target,
+                    reason,
+                ),
+                None => reason,
+            })
         }) {
             let receipt = windows_terminal::terminal_record(
                 &host,
@@ -2661,6 +2671,9 @@ fn serve_client(
             .iter()
             .any(|capability| capability == SHARED_TERMINAL_INPUT_CAPABILITY);
     let agent_state_report_progress = selected_capabilities.iter().any(|v| v == hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY);
+    let agent_state_report_background_work = selected_capabilities.iter().any(|v| {
+        v == hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY
+    });
     let termination = selected_capabilities
         .iter()
         .any(|capability| capability == STANDALONE_TERMINATION_CAPABILITY);
@@ -2965,6 +2978,7 @@ fn serve_client(
                             identity_only_conversation:
                                 provider_conversation_identity_only_report,
                             conversation_continuation: provider_conversation_continuation,
+                            background_work: agent_state_report_background_work,
                         },
                         report,
                     );

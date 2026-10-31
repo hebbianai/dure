@@ -290,7 +290,7 @@
     "links": [
       {
         "label": "Releases",
-        "href": "https://github.com/hebbianai/hebbian-releases/releases"
+        "href": "https://github.com/hebbianai/dure/releases"
       }
     ],
     "primary": {
@@ -310,7 +310,7 @@
           },
           {
             "label": "All releases",
-            "href": "https://github.com/hebbianai/hebbian-releases/releases"
+            "href": "https://github.com/hebbianai/dure/releases"
           }
         ]
       }

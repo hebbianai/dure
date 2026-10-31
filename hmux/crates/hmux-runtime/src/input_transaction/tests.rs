@@ -682,6 +682,7 @@ fn every_non_ready_initial_prompt_refuses_before_the_writer() {
                 causality: None,
                 working_ttl_ms: None,
                 expected_observation: None,
+                background_work: false,
             },
         )
         .unwrap();
@@ -818,6 +819,44 @@ fn a_fresh_prompt_completes_once_across_write_chunks_and_output_mode_changes() {
         repeated.outcome,
         InputTransactionOutcome::NotWritten(OperationReceiptReason::AgentRuntimeChanged)
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn existing_conversation_prompt_names_a_draft_typed_before_its_first_byte() {
+    let mut host = ready_host(false);
+    let mut scanner = SubmitScanner::default();
+    let intent = existing_prompt(b"read your inbox", "conversation-1");
+    let mut input = PreparedInput::new(
+        &mut host,
+        &fence(),
+        PtyInput::Structured(&intent),
+        ControllerInputEffect::DraftCapable,
+        admission(&intent),
+    )
+    .unwrap();
+    assert!(matches!(
+        input
+            .advance(&mut host, &fence(), &mut scanner, |bytes| {
+                PtyWriteOutcome::nonblocking(bytes.len(), Err(io::ErrorKind::WouldBlock.into()))
+            })
+            .unwrap(),
+        InputStep::Pending(_)
+    ));
+    host.record_controller_input(&fence()).unwrap();
+    let InputStep::Complete(transaction) = input
+        .advance(&mut host, &fence(), &mut scanner, |_| {
+            panic!("a prompt must never merge into a person's draft")
+        })
+        .unwrap()
+    else {
+        panic!("refusal remained pending")
+    };
+    assert_eq!(
+        transaction.outcome,
+        InputTransactionOutcome::NotWritten(OperationReceiptReason::UnsubmittedDraft)
+    );
+    assert_eq!(input.bytes_written(), 0);
 }
 
 #[cfg(unix)]

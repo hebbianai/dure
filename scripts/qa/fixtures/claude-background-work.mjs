@@ -181,6 +181,8 @@ process.stdin.on("data",bytes=>child.stdin.write(bytes.toString().replaceAll("\\
     const working = snapshot();
     fs.writeFileSync(path.join(evidence, "parent-stop-snapshot.json"), JSON.stringify(working), { flag: "wx", mode: 0o600 });
     assert.equal(working.agentRuntimeState.activity, "working", "Parent Stop incorrectly published quiescence while child was active");
+    // A current Host keeps the session busy but admits prompts: the parent turn ended.
+    assert.equal(working.agentRuntimeState.background_work, true, "Parent Stop did not leave a ready prompt beside background work");
     const processReceipt = JSON.parse(fs.readFileSync(childReceipt));
     const pids = [processReceipt.pid, processReceipt.parentPid];
     const before = await observeProcessMembers({ kind: "point", pids });
@@ -226,6 +228,7 @@ process.stdin.on("data",bytes=>child.stdin.write(bytes.toString().replaceAll("\\
       assert.notEqual(newPrompt.body.prompt_id, lastStop.body.prompt_id);
       const beforeDelivery = snapshot();
       assert.equal(beforeDelivery.agentRuntimeState.activity, "working");
+      assert.equal(beforeDelivery.agentRuntimeState.background_work, undefined, "A new parent turn kept the ready prompt");
       const replayEnvironment = { ...environment, ...Object.fromEntries(Object.entries(fence)
         .map(([key, value]) => [`HMUX_${key.toUpperCase()}`, String(value)])) };
       execFileSync("/bin/sh", ["-c", hookCommand], { env: replayEnvironment, cwd: root,

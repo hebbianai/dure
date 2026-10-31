@@ -724,6 +724,7 @@ impl Lifecycle {
             working_ttl_ms: (activity == AgentRuntimeActivity::Working).then_some(86_400_000),
             conversation_identity: self.conversation_identity(fence),
             expected_observation: None,
+            background_work: false,
         }
     }
 }

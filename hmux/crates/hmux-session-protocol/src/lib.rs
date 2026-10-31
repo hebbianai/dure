@@ -212,6 +212,12 @@ pub const AGENT_STATE_REPORT_OBSERVATION_FENCE_CAPABILITY: &str =
 /// the monotonic completion counter, including across client/app reloads.
 pub const AGENT_STATE_REPORT_COMPLETION_ID_CAPABILITY: &str = "agent_state_report_completion_id_v1";
 pub const AGENT_STATE_REPORT_CAUSALITY_CAPABILITY: &str = "agent_state_report_causality_v1";
+/// Lets a reporter say that a provider turn ended while background work it
+/// started is still in flight. The Host keeps the session busy for quiescence
+/// but admits agent prompts. Reporters send the plain working report to Hosts
+/// that do not select it.
+pub const AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY: &str =
+    "agent_state_report_background_work_v1";
 /// Lets a local same-user runtime broker obtain one short-lived, single-use
 /// proof for a managed attach. It is never relayed or written to discovery.
 pub const MANAGED_AUTHORIZATION_GRANT_CAPABILITY: &str = "managed_authorization_grant_v1";

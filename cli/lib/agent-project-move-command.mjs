@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { isAgentProjectMovePlan, isAgentProjectMoveReceipt } from "./contracts/agent-project-move.mjs";
 import { rehostCommandLine } from "./managed-rehost-preview.mjs";
+import { refusalLabel, withSourceBusyGuidance } from "./runtime-source-busy.mjs";
 
 /** The backend previews and journals the move. This adapter carries the exact
  * reviewed plan on retry; neither run provenance nor pane state is rewritten. */
@@ -47,7 +48,7 @@ export async function collectAgentProjectMove({ agentId, projectId, movePlan, co
   } catch (error) {
     return { ...(prepared ?? base), ok: false, state: prepared && confirmRestart ? "unconfirmed" : "refused",
       execution: prepared && confirmRestart ? "unconfirmed" : "not_requested",
-      error: backendRequestFailure(error, backend.profile) };
+      error: withSourceBusyGuidance(backendRequestFailure(error, backend.profile)) };
   }
 }
 
@@ -58,7 +59,7 @@ export function formatAgentProjectMove(report) {
     ...(move ? [`From: ${move.sourceWorkspace.projectId} — ${move.sourceWorkspace.rootPath}`,
       `To: ${move.targetProject.projectId} — ${move.targetWorkspace.rootPath}`,
       `Conversation: ${report.plan.providerConversationRef}`, "Project files are preserved. This restarts an idle or stopped provider in the destination folder. Original checkout claims remain retained."] : []),
-    ...(report.error ? [`${report.error.remoteCode ?? report.error.code}: ${report.error.message ?? "Move refused"}`] : []),
+    ...(report.error ? [`${refusalLabel(report.error)}: ${report.error.message ?? "Move refused"}`] : []),
     ...(report.continuation ? [`Apply/retry: ${rehostCommandLine(report.continuation.apply)}`,
       `Status: ${rehostCommandLine(report.continuation.status)}`,
       `If status reports repair_required, resume in the source folder: ${rehostCommandLine(report.continuation.rollback)}`,

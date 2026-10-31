@@ -328,16 +328,27 @@ async fn dormant_replacement(move_workspace: bool) {
         corrected_request.execution_profile
     );
     let target = manager
-        .read_runtime(&corrected, &target_context.workspace_id, &target_context.cwd)
+        .read_runtime(
+            &corrected,
+            &target_context.workspace_id,
+            &target_context.cwd,
+        )
         .unwrap()
         .unwrap();
     if move_workspace {
         assert!(
-            manager.read_runtime(&corrected, workspace_id.as_str(), &workspace).is_err(),
+            manager
+                .read_runtime(&corrected, workspace_id.as_str(), &workspace)
+                .is_err(),
             "a destination journal cannot be reopened at the committed source cwd"
         );
         assert_eq!(
-            store.agent(&binding.agent_id).await.unwrap().unwrap().workspace_id,
+            store
+                .agent(&binding.agent_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .workspace_id,
             workspace_id,
             "provider preparation does not publish the Agent's destination"
         );

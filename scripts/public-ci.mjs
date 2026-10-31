@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-// Maintainer main pushes are exempt. Other events use the existing scope
-// classifier, retaining all public suites for any code change.
+// Public CI has a documentation-only fast path. Every push, including a
+// maintainer's push to main, and every pull request is planned from its
+// complete change; any code scope retains all existing public suites, and the
+// Rust workspace jobs run when a scope their gate verifies changes. This
+// adapter does not invent a second path classifier.
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
@@ -11,33 +14,38 @@ import {
 } from "./lib/push-gate-scope.mjs";
 
 const COMMIT_SHA = /^[0-9a-f]{40}$/i;
-const CODE_RESULTS = [
-  "FRONTEND_RESULT",
-  "SCRIPTS_RESULT",
-  "MOBILE_WEB_RESULT",
-  "SHARED_PROTOCOL_RESULT",
-];
+// Classifier scopes whose change selects each Rust workspace job.
+export const RUST_JOB_SCOPES = Object.freeze({
+  runHmuxChecks: Object.freeze(["hmux-core", "hmux-mobile-compat", "terminal-state-protocol"]),
+  runAppChecks: Object.freeze(["app-core"]),
+});
+// Each code job must succeed when its plan output selects it and be skipped
+// otherwise.
+const CODE_RESULTS = Object.freeze({
+  FRONTEND_RESULT: "RUN_CODE_CHECKS",
+  SCRIPTS_VITEST_RESULT: "RUN_CODE_CHECKS",
+  SCRIPTS_NODE_RESULT: "RUN_CODE_CHECKS",
+  SCRIPTS_DEADLINE_RESULT: "RUN_CODE_CHECKS",
+  SCRIPTS_PROCESS_RESULT: "RUN_CODE_CHECKS",
+  MOBILE_WEB_RESULT: "RUN_CODE_CHECKS",
+  SHARED_PROTOCOL_RESULT: "RUN_CODE_CHECKS",
+  HMUX_RESULT: "RUN_HMUX_CHECKS",
+  APP_RESULT: "RUN_APP_CHECKS",
+});
 
 export function planPublicCi({
   eventName,
-  ref,
-  actorPermission,
   base,
   head,
   cwd = process.cwd(),
   environment = process.env,
 }) {
-  const full = (reason) => ({ runChecks: true, runCodeChecks: true, reason });
-  if (
-    eventName === "push" && ref === "refs/heads/main" && (
-      ["maintain", "admin"].includes(actorPermission?.role_name) ||
-      actorPermission?.permission === "admin" ||
-      actorPermission?.user?.permissions?.maintain === true ||
-      actorPermission?.user?.permissions?.admin === true
-    )
-  ) {
-    return { runChecks: false, runCodeChecks: false, reason: "maintainer-main-push" };
-  }
+  const full = (reason) => ({
+    runCodeChecks: true,
+    runHmuxChecks: true,
+    runAppChecks: true,
+    reason,
+  });
   if (eventName !== "push" && eventName !== "pull_request") {
     return full("manual-or-unsupported-event");
   }
@@ -66,9 +74,11 @@ export function planPublicCi({
     git(["merge-base", "--is-ancestor", base, head]);
     const paths = parseNullDelimitedGitPaths(git(gitDiffNameOnlyArgs(base, head)));
     const scopes = classifyChangedPaths(paths);
+    const selects = (job) => RUST_JOB_SCOPES[job].some((scope) => scopes.includes(scope));
     return {
-      runChecks: true,
       runCodeChecks: scopes.length > 0,
+      runHmuxChecks: selects("runHmuxChecks"),
+      runAppChecks: selects("runAppChecks"),
       reason: scopes.length > 0 ? "code-or-shared-inputs" : "documentation-only",
       changedPathCount: paths.length,
       scopes,
@@ -78,71 +88,41 @@ export function planPublicCi({
   }
 }
 
-export async function lookupActorPermission({
-  eventName, ref, actor, repository, token,
-  apiUrl = "https://api.github.com", fetchImpl = fetch,
-}) {
-  if (eventName !== "push" || ref !== "refs/heads/main" || !actor || !repository || !token) return null;
-  try {
-    const response = await fetchImpl(
-      `${apiUrl}/repos/${repository}/collaborators/${encodeURIComponent(actor)}/permission`,
-      {
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${token}`,
-          "X-GitHub-Api-Version": "2026-03-10",
-        },
-        signal: AbortSignal.timeout(10_000),
-        redirect: "error",
-      },
-    );
-    if (!response.ok) return null;
-    const permission = await response.json();
-    return permission?.user?.login?.toLowerCase() === actor.toLowerCase() ? permission : null;
-  } catch {
-    // An unavailable permission lookup retains the normal public checks.
-    return null;
-  }
-}
-
 export function requirePublicCiSuccess(environment) {
   for (const key of ["PLAN_RESULT", "DOCUMENTATION_RESULT"]) {
     if (environment[key] !== "success") {
       throw new Error(`${key} must succeed; received ${environment[key] ?? "missing"}`);
     }
   }
-  if (!["true", "false"].includes(environment.RUN_CODE_CHECKS)) {
-    throw new Error("RUN_CODE_CHECKS must be an explicit true or false plan output");
+  for (const plan of new Set(Object.values(CODE_RESULTS))) {
+    if (!["true", "false"].includes(environment[plan])) {
+      throw new Error(`${plan} must be an explicit true or false plan output`);
+    }
   }
-  const expected = environment.RUN_CODE_CHECKS === "true" ? "success" : "skipped";
-  for (const key of CODE_RESULTS) {
+  for (const [key, plan] of Object.entries(CODE_RESULTS)) {
+    const expected = environment[plan] === "true" ? "success" : "skipped";
     if (environment[key] !== expected) {
       throw new Error(`${key} must be ${expected}; received ${environment[key] ?? "missing"}`);
     }
   }
 }
 
-async function main() {
+function main() {
   const [command, ...extra] = process.argv.slice(2);
   if (extra.length > 0) throw new Error("Unexpected public CI arguments");
   if (command === "plan") {
-    const actorPermission = await lookupActorPermission({
-      eventName: process.env.CI_EVENT_NAME,
-      ref: process.env.CI_REF,
-      actor: process.env.CI_ACTOR,
-      repository: process.env.GITHUB_REPOSITORY,
-      token: process.env.GITHUB_TOKEN,
-      apiUrl: process.env.GITHUB_API_URL,
-    });
     const plan = planPublicCi({
       eventName: process.env.CI_EVENT_NAME,
-      ref: process.env.CI_REF,
-      actorPermission,
       base: process.env.CI_BASE_SHA,
       head: process.env.CI_HEAD_SHA,
     });
     if (!process.env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
-    appendFileSync(process.env.GITHUB_OUTPUT, `run_checks=${plan.runChecks}\nrun_code_checks=${plan.runCodeChecks}\n`);
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `run_code_checks=${plan.runCodeChecks}\n` +
+        `run_hmux_checks=${plan.runHmuxChecks}\n` +
+        `run_app_checks=${plan.runAppChecks}\n`,
+    );
     console.log(JSON.stringify(plan));
   } else if (command === "check") {
     requirePublicCiSuccess(process.env);
@@ -153,8 +133,10 @@ async function main() {
 }
 
 if (import.meta.main) {
-  main().catch((error) => {
+  try {
+    main();
+  } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
-  });
+  }
 }

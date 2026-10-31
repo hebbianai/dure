@@ -30,6 +30,9 @@ enum EffortArgument {
     ClaudeFlag,
 }
 
+/// Claude's `ultracode` selection runs at this effort with the ultracode setting.
+const CLAUDE_ULTRACODE_EFFORT: &str = "xhigh";
+
 /// A native flag may be accepted by the parser but ignored by its resume route.
 /// Prompt and model delivery consume the same reviewed applicability rule.
 #[derive(Clone, Copy)]
@@ -629,7 +632,7 @@ pub fn native_provider_launch_plan_with_initial_prompt(
             EffortArgument::ClaudeFlag if effort.as_str() == "ultracode" => {
                 arguments.extend([
                     "--effort".to_string(),
-                    "xhigh".to_string(),
+                    CLAUDE_ULTRACODE_EFFORT.to_string(),
                     "--settings".to_string(),
                     "{\"ultracode\":true}".to_string(),
                 ]);
@@ -680,6 +683,21 @@ pub fn native_provider_launch_plan_with_initial_prompt(
         plan.arguments = command.collect();
     }
     Ok(Some(plan))
+}
+
+/// The effort level a native session runs and records for an effort
+/// selection. They differ only where the adapter maps a selection onto
+/// another level, such as Claude's `ultracode`.
+pub fn native_provider_effort_level<'a>(
+    provider_id: &ProviderIdV1,
+    effort: &'a AgentSpawnEffortSelectionV1,
+) -> &'a str {
+    match adapter(provider_id).and_then(|adapter| adapter.effort_argument) {
+        Some(EffortArgument::ClaudeFlag) if effort.as_str() == "ultracode" => {
+            CLAUDE_ULTRACODE_EFFORT
+        }
+        _ => effort.as_str(),
+    }
 }
 
 /// Render provider-native runtime integration arguments beside the native
@@ -979,6 +997,21 @@ mod tests {
                 .into(),
             }
         );
+    }
+
+    #[test]
+    fn effort_level_names_the_level_a_mapped_selection_runs_at() {
+        let level = |provider: &str, effort: &str| {
+            native_provider_effort_level(
+                &ProviderIdV1::new(provider).unwrap(),
+                &AgentSpawnEffortSelectionV1::parse(effort).unwrap(),
+            )
+            .to_owned()
+        };
+        assert_eq!(level("claude", "ultracode"), "xhigh");
+        assert_eq!(level("claude", "max"), "max");
+        assert_eq!(level("codex", "ultracode"), "ultracode");
+        assert_eq!(level("codex", "low"), "low");
     }
 
     #[test]

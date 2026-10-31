@@ -138,7 +138,9 @@ describe("dure sessions list/show/read", () => {
 
   it("reads fenced runtime facts without app server.json and separates client projection", () => {
     const root = temporaryRoot();
-    const hmux = installHmuxStub(root, [hmuxSession()]);
+    const hmux = installHmuxStub(root, [hmuxSession()], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_working_directory_v1"],
+    });
     writeRegistry(root, [
       {
         id: "agent-1",
@@ -784,6 +786,37 @@ describe("dure sessions list/show/read", () => {
         lines: 20,
       },
     });
+  });
+
+  it("explains a blank backend screen on stderr instead of printing an empty success", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, { error: "must not execute" }, { status: 77 });
+    const remote = installRemoteBackendFixture(root, [hmuxSession()], {
+      results: {
+        "sessions.read": {
+          schemaVersion: 1,
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          sequenceThrough: "12",
+          lines: [],
+        },
+      },
+    });
+
+    const result = runCli(
+      root,
+      hmux,
+      ["read", "session-1", "--workspace", "workspace-1", "--backend", "remote-build"],
+      {
+        PATH: `${remote.bin}:${process.env.PATH}`,
+        DURE_BACKEND_KNOWN_HOSTS_FILE: remote.knownHostsFile,
+        DURE_BACKEND_SSH_REFERENCE_PROFILE: "remote-build",
+      },
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("screen is blank");
   });
 
   it("does not let stale client registry aliases override an exact backend read", () => {

@@ -10,8 +10,15 @@ use serde_json::json;
 use super::recipe::label;
 use super::store::{RecipeResult, Record, Status, Store};
 
-pub(super) async fn execute(store: Store, mut record: Record, mode: String, lock: File) {
-    let outcome = command(&store, &record, &mode, &lock)
+pub(super) async fn execute(store: Store, record: Record, mode: String, lock: File) {
+    run(store, record, mode, &lock).await;
+    // The provider child has exited. Release explicitly: closing alone leaves
+    // the lock with any child another thread forked in the meantime.
+    super::store::release(&lock);
+}
+
+async fn run(store: Store, mut record: Record, mode: String, lock: &File) {
+    let outcome = command(&store, &record, &mode, lock)
         .await
         .and_then(|stdout| {
             if mode == "destroy" || mode == "suspend" {
@@ -61,7 +68,7 @@ pub(super) async fn execute(store: Store, mut record: Record, mode: String, lock
                 if store.write(&record).is_err() {
                     return;
                 }
-                record.status = match command(&store, &record, "destroy", &lock).await {
+                record.status = match command(&store, &record, "destroy", lock).await {
                     Ok(_) => Status::Destroyed,
                     Err(cleanup) => {
                         record.error = Some(format!(

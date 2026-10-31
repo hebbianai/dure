@@ -102,7 +102,9 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
                     if case["activity"] is None:
                         self.assertIsNone(result)
                         continue
+                    background = case.get("background", False)
                     self.assertEqual(result["activity"], case["activity"])
+                    self.assertEqual(result.get("background_work", False), background)
                     self.assertEqual(result["attention"], case["attention"])
                     self.assertEqual(result["turn_completed"], case["completed"])
                     self.assertEqual(
@@ -112,8 +114,24 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
                     self.assertEqual(
                         result.get("working_ttl_ms"),
                         str(hook.AGENT_STATE_REPORT_MAX_WORKING_TTL_MS)
-                        if case["activity"] == "working" else None,
+                        if case["activity"] == "working" or background else None,
                     )
+                    request = hook.claude_report(native, FENCE)
+                    self.assertEqual(request["schemaVersion"], 3 if background else 2)
+                    # An older Host or broker gets the report it has always
+                    # received: background work keeps the session working.
+                    older = hook.older_host_report(request)
+                    self.assertEqual(older["schemaVersion"], 2)
+                    self.assertNotIn("background_work", older["report"])
+                    self.assertEqual(
+                        older["report"]["activity"],
+                        case.get("olderHostActivity", case["activity"]),
+                    )
+                    if background:
+                        self.assertEqual(
+                            older["report"]["working_ttl_ms"],
+                            str(hook.AGENT_STATE_REPORT_MAX_WORKING_TTL_MS),
+                        )
 
     def test_native_work_identity_and_source_order_survive_report_normalization(self):
         for event in ("UserPromptSubmit", "PreToolUse", "Stop"):
@@ -134,8 +152,67 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
                 "prompt_id": prompt_id, "background_tasks": [], "session_crons": [],
             })
             self.assertEqual(result["activity"], "working")
+            self.assertNotIn("background_work", result)
             self.assertFalse(result["turn_completed"])
             self.assertNotIn("work_id", result["causality"])
+
+
+FAKE_RUNTIME = """#!/usr/bin/env python3
+import json, sys
+raw = sys.stdin.buffer.read()
+request = json.loads(raw[4:].decode("utf-8"))
+with open({log!r}, "a") as log:
+    log.write(json.dumps(request) + "\\n")
+if request["schemaVersion"] > {newest}:
+    response = {{"state": "refused", "payload": {{
+        "code": "hmux_managed_agent_state_report_request_invalid",
+        "message": "managed agent state report has an unsupported schema"}}}}
+else:
+    response = {{"state": "completed", "payload": "applied"}}
+body = json.dumps(response).encode("utf-8")
+sys.stdout.buffer.write(len(body).to_bytes(4, "big") + body)
+"""
+
+
+class ClaudeBackgroundWorkHostCompatibilityTest(unittest.TestCase):
+    """The broker embedded in the hook may predate background work reports."""
+
+    def deliver(self, newest_schema):
+        root = Path(tempfile.mkdtemp(prefix="claude-hook-broker-"))
+        log = root / "requests.jsonl"
+        runtime = root / "hmux-runtime"
+        runtime.write_text(FAKE_RUNTIME.format(log=str(log), newest=newest_schema))
+        runtime.chmod(0o700)
+        native = {
+            "hook_event_name": "Stop", "session_id": "fixture-conversation",
+            "prompt_id": "fixture-parent-turn",
+            "background_tasks": [{"type": "shell", "status": "running"}], "session_crons": [],
+        }
+        original = hook.HMUX_RUNTIME_EXECUTABLE
+        hook.HMUX_RUNTIME_EXECUTABLE = str(runtime)
+        try:
+            hook.report_to_hmux("claude", native, FENCE, hook.time.monotonic() + 5)
+        finally:
+            hook.HMUX_RUNTIME_EXECUTABLE = original
+        return [json.loads(line) for line in log.read_text().splitlines()]
+
+    def test_current_broker_receives_the_prompt_ready_background_report(self):
+        requests = self.deliver(newest_schema=3)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["schemaVersion"], 3)
+        self.assertEqual(requests[0]["report"]["activity"], "waiting")
+        self.assertTrue(requests[0]["report"]["background_work"])
+
+    def test_older_broker_refusal_falls_back_to_the_working_report(self):
+        requests = self.deliver(newest_schema=2)
+        self.assertEqual([request["schemaVersion"] for request in requests], [3, 2])
+        fallback = requests[1]["report"]
+        self.assertEqual(fallback["activity"], "working")
+        self.assertNotIn("background_work", fallback)
+        self.assertEqual(
+            fallback["working_ttl_ms"], str(hook.AGENT_STATE_REPORT_MAX_WORKING_TTL_MS)
+        )
+        self.assertEqual(fallback["causality"], requests[0]["report"]["causality"])
 
 
 if __name__ == "__main__":

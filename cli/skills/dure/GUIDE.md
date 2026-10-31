@@ -157,13 +157,17 @@ It preserves the conversation and current Chat/Terminal mode. It works without
 an open app, with local or SSH backends; keep the same `--backend ID` throughout.
 
 ```sh
-dure recovery get claude --json   # registered account IDs/generations and policy
-dure recovery get codex --json
+dure recovery get claude          # each login once: IDs, profile name, usage
+dure recovery get codex --json    # adds policy, generations and registeredAccounts
 dure runs switch-account worker --account ACCOUNT_ID --json  # preview only
 dure runs switch-account worker --account ACCOUNT_ID --confirm-restart --json
 ```
 
-Use an exact Agent/operation ID when Run names are ambiguous. Accounts must be
+Agents launched, resumed or imported by the app have no Run record; select them
+by Agent ID, or by name or Session ID from `dure ls`. A closed, stopped Agent
+restarts with the selected account and its retained conversation. An ambiguous
+name is refused with each candidate's exact retry command; use the Agent ID.
+Accounts must be
 registered for that provider on the owning backend; display names are not IDs.
 An unregistered account needs preparation through Dure's account settings first.
 `--account default` explicitly selects the provider's default credentials.
@@ -173,10 +177,14 @@ commands. The apply/retry command pins the Agent, current mode, source revision,
 account generation and request key. After response loss, inspect status before
 retrying that command; do not repeat the name-based command with a new key.
 The backend protects busy turns and unsubmitted input. A switch does not resend
-failed work or enable automatic switching. For a source still working, wait for
-completion before making a new request; never force-stop it to change accounts.
+failed work or enable automatic switching. A busy refusal is `refused`: nothing
+changed, and `error.reasonCode` says why (`agent_working`, `agent_background_work`,
+`agent_attention_required`, `controller_input_pending`). Wait for that work,
+then run the same retry command; never force-stop a source to change accounts.
+In Claude Code, exiting stops background tasks, and "Move to background and
+exit" keeps the conversation running without a pane on the old account.
 
-For an Agent without a Run record, use `dure runtime get AGENT_ID --json`, then:
+The lower-level equivalent is `dure runtime get AGENT_ID --json`, then:
 
 ```sh
 dure runtime switch AGENT_ID terminal --account ACCOUNT_ID \
@@ -592,6 +600,11 @@ Whoever delegated the work waits with `dure wait --task … --dispatch …
 Local JSON reads preserve Hmux's `sessionName`, which is `null` for unnamed
 managed sessions. Use `ok`, `lines` and `sequenceThrough` to inspect the result;
 the app's Agent display name is not the runtime session name.
+
+A blank screen prints nothing on stdout and a note with its size on stderr;
+JSON reads report `rows`, `columns` and `alternateScreen`. Codex and other
+full-screen agents draw nothing while their pane is very short, so a blank read
+does not mean the agent is idle: enlarge the pane or use `dure transcript <name>`.
 
 ```sh
 dure read <name>             # snapshot of their terminal

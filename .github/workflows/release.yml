@@ -51,7 +51,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -60,12 +60,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release-public.mjs preflight "$RUNNER_TEMP/selection.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-selection
           path: ${{ runner.temp }}/selection.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
   candidate:
     needs: source
@@ -88,7 +88,7 @@ jobs:
           path: source
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -97,7 +97,7 @@ jobs:
           toolchain: 1.97.1
       - name: Prepare version-only candidate
         run: node ../scripts/prepare-release-candidate.mjs "$RELEASE_BUMP" "$RELEASE_SOURCE_SHA" "$RUNNER_TEMP/release-candidate"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-candidate-${{ github.sha }}
           path: ${{ runner.temp }}/release-candidate
@@ -135,7 +135,7 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.source_sha }}
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -180,12 +180,42 @@ jobs:
         if: always()
         run: sh scripts/manage-ci-cargo-target.sh release
 
+  # Without full verification nothing reaches the signing host before the tag.
+  # Approve signing and admit the build's storage first, so a cancelled
+  # approval or a full volume does not burn a version. No credentials here.
+  host-preflight:
+    needs: [source, candidate]
+    if: inputs.verification == 'emergency-0.2'
+    runs-on:
+      group: dure-release
+      labels: [self-hosted, macOS, ARM64, dure-release]
+    environment: macos-release
+    timeout-minutes: 30
+    steps:
+      - name: Isolate release tool state
+        run: echo "NODE_COMPILE_CACHE=$RUNNER_TEMP/dure-node-cache" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Check the signing host session
+        run: |
+          test "$(uname -m)" = arm64
+          osascript -e 'tell application "Finder" to get version'
+      - name: Admit the signed build's storage without building
+        run: node scripts/run-with-build-storage.mjs full -- true
+
   version:
-    needs: [source, candidate, verification]
+    needs: [source, candidate, verification, host-preflight]
     if: >-
       always() && !cancelled() && needs.source.result == 'success' && needs.candidate.result == 'success' &&
       (needs.verification.result == 'success' ||
-       (needs.verification.result == 'skipped' && inputs.verification == 'emergency-0.2'))
+       (needs.verification.result == 'skipped' && inputs.verification == 'emergency-0.2' &&
+        needs.host-preflight.result == 'success'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -210,11 +240,11 @@ jobs:
           path: source
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-candidate-${{ github.sha }}
           path: ${{ runner.temp }}/release-candidate
@@ -257,7 +287,7 @@ jobs:
           path: source
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
@@ -328,12 +358,30 @@ jobs:
           node ../scripts/build-latest-json.mjs "${TAG#v}" "$SIGNATURE" Dure.app.tar.gz hebbianai/dure beta
           mkdir "$RUNNER_TEMP/release-assets"
           cp "$DMG" "$ARCHIVE" "$SIGNATURE" latest.json "$RUNNER_TEMP/release-assets/"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets-${{ needs.version.outputs.tag }}
           path: ${{ runner.temp }}/release-assets
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
+      # The signed files are uploaded from runner temp above. Remove the about
+      # 8 GiB of Cargo targets, staged runtimes, dependencies and bundles this
+      # job left in its own release checkout, and nothing outside it.
+      - name: Remove this job's build outputs
+        if: always()
+        # The signed assets are already uploaded; a cleanup failure must not
+        # fail the build after its version tag exists.
+        continue-on-error: true
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_SHA: ${{ needs.version.outputs.release_sha }}
+        run: |
+          if [ -d source/.git ] && [ "$(git -C source rev-parse HEAD)" = "$RELEASE_SHA" ]; then
+            git -C source clean -ffdxq ||
+              echo '::warning::Some build outputs could not be removed from the release checkout'
+          else
+            echo 'No release checkout from this job to clean'
+          fi
 
   draft:
     needs: [source, version, build]
@@ -362,11 +410,11 @@ jobs:
           path: source
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           package-manager-cache: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-assets-${{ needs.version.outputs.tag }}
           path: ${{ runner.temp }}/release-assets
