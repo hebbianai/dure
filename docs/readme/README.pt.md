@@ -96,7 +96,7 @@ Claude Code, Codex, OpenCode e Pi têm integrações de chat estruturado quando 
 | macOS · Apple Silicon | [Download oficial](https://www.dureai.dev/download/mac/) |
 | Windows | Código disponível; validação nativa de desktop e instalador público pendentes. |
 | Linux | Código disponível; validação nativa de desktop e instalador público pendentes. |
-| iOS | Código disponível; validação em dispositivos e distribuição oficial pendentes. |
+| iOS · iPhone | [Baixar na App Store](https://apps.apple.com/app/id6813029287) |
 | Android · ARM64 | [Baixar APK de prévia](https://github.com/hebbianai/hebbian-releases/releases/download/android-v0.1.4/Dure_0.1.4_android_arm64.apk) · Android 7.0 ou posterior. Testado em emulador; validação em dispositivos físicos pendente. |
 
 Para compilar a partir do código e consultar a cobertura de verificação, veja o [guia de desenvolvimento por plataforma](../../CONTRIBUTING.md#platforms).

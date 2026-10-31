@@ -46,6 +46,40 @@ export const DEFAULT_FLOOR_BYTES = 60 * GIB;
  *  not vacuum every landed worktree on the host. */
 export const DEFAULT_GOAL_BYTES = 120 * GIB;
 
+/** Local developer override for the free-space floor, in GiB.
+ *
+ *  The default floor is measured for shared build hosts that run many Dure
+ *  worktrees at once. A personal laptop with one checkout rarely has 60 GiB
+ *  free plus a build budget, so every admitted command (`pnpm app:dev`,
+ *  `pnpm verify:frontend`, `pnpm build:frontend`, ...) refused to start there.
+ *  The override only applies where a caller admits a build from its own
+ *  environment: GitHub-hosted runners pass their own policy explicitly and
+ *  release verification keeps the measured default. */
+export const BUILD_STORAGE_FLOOR_ENV = "DURE_BUILD_STORAGE_FLOOR_GIB";
+
+/**
+ * Floor and goal selected by `DURE_BUILD_STORAGE_FLOOR_GIB`, or null when the
+ * variable is unset. The goal keeps the default two-to-one ratio so a reclaim
+ * still buys headroom for a second build instead of running before every one.
+ * An unparsable value throws: a typo must not silently restore the default on
+ * the one machine that needed the override.
+ *
+ * @param {Record<string, string | undefined>} environment
+ * @returns {{floorBytes: number, goalBytes: number} | null}
+ */
+export function buildStorageFloorPolicy(environment = process.env) {
+  const raw = environment[BUILD_STORAGE_FLOOR_ENV];
+  if (raw === undefined || String(raw).trim() === "") return null;
+  const gib = Number(raw);
+  if (!Number.isFinite(gib) || gib <= 0) {
+    throw new Error(
+      `${BUILD_STORAGE_FLOOR_ENV} must be a positive number of GiB, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const floorBytes = Math.round(gib * GIB);
+  return { floorBytes, goalBytes: floorBytes * 2 };
+}
+
 /** Aggregate generated `target/` budget across local linked worktrees. This is
  * intentionally generous enough for several warm Rust workspaces while still
  * bounding monotonic growth on the 1.8TiB shared development host. Smaller

@@ -6,7 +6,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ensureHeadroom } from "./lib/build-storage-admission.mjs";
 import { exposeBuildStorageReservation } from "./lib/build-storage-reservation.mjs";
-import { buildStorageBudget } from "./lib/disk-space.mjs";
+import {
+  buildStorageBudget,
+  DEFAULT_FLOOR_BYTES,
+  DEFAULT_GOAL_BYTES,
+} from "./lib/disk-space.mjs";
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
 import {
   inspectNodeDependencyInstall,
@@ -148,9 +152,13 @@ function main() {
   // Release verification includes large Cargo builds. Reclaim space before it
   // starts, including dependency repair, so disk exhaustion is not misreported
   // as a source failure.
+  // The measured floor stays in force here: the developer override
+  // (DURE_BUILD_STORAGE_FLOOR_GIB) is for development builds, not releases.
   const headroom = ensureHeadroom({
     label: "release verification",
     requestedBytes: buildStorageBudget("full"),
+    floorBytes: DEFAULT_FLOOR_BYTES,
+    goalBytes: DEFAULT_GOAL_BYTES,
   });
   if (!headroom.ok) {
     console.error(headroom.message);

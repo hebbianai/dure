@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   BUILD_STORAGE_BUDGETS,
+  BUILD_STORAGE_FLOOR_ENV,
   buildOutputEligibility,
   buildStorageBudget,
+  buildStorageFloorPolicy,
   DEFAULT_FLOOR_BYTES,
   DEFAULT_GOAL_BYTES,
   DEFAULT_LOCAL_CACHE_BUDGET_BYTES,
@@ -100,6 +102,33 @@ describe("reclaimNeed", () => {
     expect(DEFAULT_FLOOR_BYTES + buildStorageBudget("dev")).toBeLessThan(
       100 * GIB,
     );
+  });
+});
+
+describe("buildStorageFloorPolicy", () => {
+  it("leaves the measured default in force when the override is unset or blank", () => {
+    expect(buildStorageFloorPolicy({})).toBeNull();
+    expect(buildStorageFloorPolicy({ [BUILD_STORAGE_FLOOR_ENV]: "" })).toBeNull();
+    expect(buildStorageFloorPolicy({ [BUILD_STORAGE_FLOOR_ENV]: "  " })).toBeNull();
+  });
+
+  it("lowers the floor in GiB and keeps the goal at twice the floor", () => {
+    expect(buildStorageFloorPolicy({ [BUILD_STORAGE_FLOOR_ENV]: "10" })).toEqual({
+      floorBytes: 10 * GIB,
+      goalBytes: 20 * GIB,
+    });
+    expect(buildStorageFloorPolicy({ [BUILD_STORAGE_FLOOR_ENV]: "7.5" })).toEqual({
+      floorBytes: 7.5 * GIB,
+      goalBytes: 15 * GIB,
+    });
+  });
+
+  it("names the variable and value instead of silently restoring the default", () => {
+    for (const raw of ["0", "-5", "ten", "10GiB", "NaN", "Infinity"]) {
+      expect(() => buildStorageFloorPolicy({ [BUILD_STORAGE_FLOOR_ENV]: raw })).toThrow(
+        `${BUILD_STORAGE_FLOOR_ENV} must be a positive number of GiB, got ${JSON.stringify(raw)}`,
+      );
+    }
   });
 });
 

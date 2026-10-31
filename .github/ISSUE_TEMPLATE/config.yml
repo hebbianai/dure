@@ -6,3 +6,6 @@ contact_links:
   - name: Dure documentation
     url: https://docs.dureai.dev/en/introduction
     about: Find installation instructions, provider setup and usage guides.
+  - name: Contributing quick start
+    url: https://github.com/hebbianai/dure/blob/main/CONTRIBUTING.md#quick-start
+    about: Clone, run the fast checks and open a pull request in about 15 minutes.

@@ -11,6 +11,8 @@ import {
   repositoryRoots,
 } from "./disk-reclaim.mjs";
 import {
+  BUILD_STORAGE_FLOOR_ENV,
+  buildStorageFloorPolicy,
   DEFAULT_FLOOR_BYTES,
   DEFAULT_GOAL_BYTES,
   formatBytes,
@@ -24,6 +26,16 @@ function capacityUnavailableMessage(label, available, requested, admission) {
     formatBuildStorageReservationDiagnostics(admission.diagnostics),
     "Inspect without deleting caches: pnpm disk:status",
   ].join("\n");
+}
+
+/** Only when the measured default is what refused the build: an explicit
+ * caller policy (CI, release verification) and an already lowered floor get
+ * no hint. */
+function floorOverrideHint(floorBytes) {
+  if (floorBytes !== DEFAULT_FLOOR_BYTES) return [];
+  return [
+    `On a personal development machine with no other Dure builds, lower the floor with ${BUILD_STORAGE_FLOOR_ENV}=<GiB> (see CONTRIBUTING.md, "Build storage").`,
+  ];
 }
 
 function cachePreservationRefusal(label, available, required, diagnostics) {
@@ -48,8 +60,8 @@ function cachePreservationRefusal(label, available, required, diagnostics) {
 export function ensureHeadroom({
   cwd = process.cwd(),
   buildClass,
-  floorBytes = DEFAULT_FLOOR_BYTES,
-  goalBytes = DEFAULT_GOAL_BYTES,
+  floorBytes,
+  goalBytes,
   label = "build",
   log = console.error,
   requestedBytes = 0,
@@ -60,6 +72,26 @@ export function ensureHeadroom({
   reservationOptions = {},
   reserve = reserveBuildStorage,
 } = {}) {
+  // An explicit caller policy wins; otherwise the developer override, then the
+  // measured default.
+  let floorPolicy;
+  try {
+    floorPolicy = buildStorageFloorPolicy(environment);
+  } catch (error) {
+    return {
+      ok: false,
+      message: `${label} was not started — ${error.message}`,
+      report: null,
+      availableBytes: null,
+      reservation: null,
+    };
+  }
+  if (floorBytes === undefined) {
+    floorBytes = floorPolicy?.floorBytes ?? DEFAULT_FLOOR_BYTES;
+  }
+  if (goalBytes === undefined) {
+    goalBytes = floorPolicy?.goalBytes ?? DEFAULT_GOAL_BYTES;
+  }
   let root;
   try {
     root = repositoryRoots(cwd).mainRoot;
@@ -234,6 +266,7 @@ export function ensureHeadroom({
         formatBuildStorageReservationDiagnostics(retried.diagnostics),
         "Starting anyway could exhaust the shared volume. Inspect without deleting caches: pnpm disk:status",
         "Retry after capacity or the listed reservations change; repeated retries do not release live reservations.",
+        ...floorOverrideHint(floorBytes),
       ].join("\n"),
     };
   }

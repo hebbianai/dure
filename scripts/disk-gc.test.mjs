@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import * as diskReclaim from "./lib/disk-reclaim.mjs";
 import * as storageReservations from "./lib/build-storage-reservation.mjs";
+import { GIB } from "./lib/disk-space.mjs";
 import {
   DISK_GC_HELP,
   diskGcExitCode,
@@ -20,6 +21,37 @@ const report = (overrides = {}) => ({
 });
 
 describe("disk GC CLI contract", () => {
+  it("reports the floor the developer override makes admission enforce, and lets --floor win", () => {
+    const reclaim = vi.spyOn(diskReclaim, "reclaim").mockReturnValue(report({
+      applied: false, mainRoot: "/fixture", scope: { kind: "all" },
+      availableBefore: 77, floorBytes: 10 * GIB, goalBytes: 20 * GIB,
+      totalCacheBytes: 0, cacheBudgetBytes: 600, candidateCount: 0, skipped: [],
+    }));
+    vi.spyOn(storageReservations, "inspectBuildStorageReservations").mockReturnValue({
+      reservedBytes: 0, observationStatus: "complete", invalid: [], active: [],
+    });
+    const output = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(main(["--status"], { DURE_BUILD_STORAGE_FLOOR_GIB: "10" })).toBe(0);
+      expect(reclaim).toHaveBeenLastCalledWith(expect.objectContaining({
+        floorBytes: 10 * GIB, goalBytes: 20 * GIB,
+      }));
+      expect(main(["--status", "--floor=30"], { DURE_BUILD_STORAGE_FLOOR_GIB: "10" })).toBe(0);
+      expect(reclaim).toHaveBeenLastCalledWith(expect.objectContaining({
+        floorBytes: 30 * GIB, goalBytes: 20 * GIB,
+      }));
+      expect(main(["--status"], {})).toBe(0);
+      expect(reclaim).toHaveBeenLastCalledWith(expect.objectContaining({
+        floorBytes: undefined, goalBytes: undefined,
+      }));
+      expect(main(["--status"], { DURE_BUILD_STORAGE_FLOOR_GIB: "ten" })).toBe(2);
+      expect(errors.mock.calls.at(-1)[0]).toContain("DURE_BUILD_STORAGE_FLOOR_GIB");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("uses the same bounded holder snapshot for read-only text and JSON status", () => {
     const reclaim = vi.spyOn(diskReclaim, "reclaim").mockReturnValue(report({
       applied: false,

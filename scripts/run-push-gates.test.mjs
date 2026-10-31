@@ -93,6 +93,7 @@ function releaseRunnerEnvironment({ managedCargoTarget = true } = {}) {
       DURE_CLI_INSTALL_ROOT: path.join(live, "dure-cli"),
       DURE_DEV_LIVE_WORKTREE: path.join(live, "worktree"),
       DURE_GHOSTTY_VT_CACHE_ROOT: path.join(live, "ghostty-cache"),
+      DURE_BUILD_STORAGE_FLOOR_GIB: "8",
       DURE_HOME: path.join(live, "dure-home"),
       GEMINI_CLI_HOME: path.join(live, "gemini"),
       GITHUB_ACTIONS: "true",
@@ -794,6 +795,7 @@ describe("release gate runner", () => {
       "shared-build-reservation",
     );
     expect(gateEnvironment.TAURI_CONFIG).toBeUndefined();
+    expect(gateEnvironment.DURE_BUILD_STORAGE_FLOOR_GIB).toBeUndefined();
     expect(gateEnvironment.VITEST_MAX_WORKERS).toBe("1");
     expect(gateEnvironment.RUST_TEST_THREADS).toBe("4");
     expect(gateEnvironment.HMUX_RUNTIME_LOG).toMatch(

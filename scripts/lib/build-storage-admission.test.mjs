@@ -40,6 +40,74 @@ describe("build storage admission", () => {
     expect(reserve).toHaveBeenCalledTimes(requestedBytes > 0 ? 1 : 0);
   });
 
+  it("lowers the floor and goal from DURE_BUILD_STORAGE_FLOOR_GIB on a developer machine", () => {
+    const reclaimOutputs = vi.fn(() => ({
+      availableAfter: 9 * GIB, removed: [], removedBytes: 0,
+    }));
+    let reserveCalls = 0;
+    const reserve = vi.fn(({ floorBytes, requestedBytes }) => {
+      reserveCalls += 1;
+      return reserveCalls === 1
+        ? { ok: false, reason: "insufficient_unreserved_space", reservedBytes: 0 }
+        : { ok: 9 * GIB >= floorBytes + requestedBytes, reason: "insufficient_unreserved_space", reservedBytes: 0, reservation: null };
+    });
+    const result = ensureHeadroom({
+      environment: { DURE_BUILD_STORAGE_FLOOR_GIB: "5" },
+      label: "fixture", requestedBytes: 4 * GIB,
+      observeAvailableBytes: () => 8 * GIB,
+      reclaimOutputs, reserve, log: () => {},
+    });
+    expect(result.ok).toBe(true);
+    expect(reserve).toHaveBeenCalledWith(expect.objectContaining({ floorBytes: 5 * GIB }));
+    expect(reclaimOutputs).toHaveBeenCalledWith(expect.objectContaining({
+      floorBytes: 9 * GIB, goalBytes: 14 * GIB,
+    }));
+  });
+
+  it("lets an explicit caller policy win over the developer override", () => {
+    const reserve = vi.fn(() => ({ ok: true, reservation: null }));
+    expect(ensureHeadroom({
+      environment: { DURE_BUILD_STORAGE_FLOOR_GIB: "5" },
+      floorBytes: 0, goalBytes: 0,
+      label: "fixture", requestedBytes: 4 * GIB,
+      observeAvailableBytes: () => 8 * GIB,
+      reclaimOutputs: vi.fn(), reserve, log: () => {},
+    }).ok).toBe(true);
+    expect(reserve).toHaveBeenCalledWith(expect.objectContaining({ floorBytes: 0 }));
+  });
+
+  it("refuses an unparsable override instead of silently restoring the default", () => {
+    const reserve = vi.fn();
+    const result = ensureHeadroom({
+      environment: { DURE_BUILD_STORAGE_FLOOR_GIB: "ten" },
+      label: "fixture", requestedBytes: 4 * GIB,
+      observeAvailableBytes: () => 500 * GIB,
+      reclaimOutputs: vi.fn(), reserve, log: () => {},
+    });
+    expect(result).toMatchObject({ ok: false, reservation: null });
+    expect(result.message).toContain("fixture was not started");
+    expect(result.message).toContain('DURE_BUILD_STORAGE_FLOOR_GIB must be a positive number of GiB, got "ten"');
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it("points a refused developer machine at the override only while the measured default is in force", () => {
+    const refuse = (environment) => ensureHeadroom({
+      environment, label: "fixture", requestedBytes: 4 * GIB,
+      observeAvailableBytes: () => 30 * GIB,
+      reclaimOutputs: () => ({ availableAfter: 30 * GIB, removed: [], removedBytes: 0 }),
+      reserve: () => ({ ok: false, reason: "insufficient_unreserved_space", reservedBytes: 0 }),
+      log: () => {},
+    });
+    const atDefault = refuse({});
+    expect(atDefault.ok).toBe(false);
+    expect(atDefault.message).toContain("64.0 GiB of free space");
+    expect(atDefault.message).toContain("DURE_BUILD_STORAGE_FLOOR_GIB=<GiB>");
+    const lowered = refuse({ DURE_BUILD_STORAGE_FLOOR_GIB: "40" });
+    expect(lowered.ok).toBe(false);
+    expect(lowered.message).toContain("44.0 GiB of free space");
+    expect(lowered.message).not.toContain("DURE_BUILD_STORAGE_FLOOR_GIB=<GiB>");
+  });
+
   it("keeps preservation through runner admission and admitted child builds without lowering budgets", () => {
     const environment = { DURE_BUILD_PRESERVE_CACHES: "1" };
     const reclaimOutputs = vi.fn();

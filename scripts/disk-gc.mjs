@@ -27,7 +27,7 @@ import {
   parseWorktreeScope,
 } from "./lib/disk-gc-scope.mjs";
 import { formatBytes, reclaim } from "./lib/disk-reclaim.mjs";
-import { GIB } from "./lib/disk-space.mjs";
+import { buildStorageFloorPolicy, GIB } from "./lib/disk-space.mjs";
 
 export const DISK_GC_HELP = `Usage: pnpm disk:gc [options]
 
@@ -45,7 +45,8 @@ Options:
   --cache-only                Reclaim only compiler caches under Cargo locks;
                               requires --worktree, preserves open panes and runtimes
                               may discard unpacked macOS Rust debug objects
-  --floor=<GiB>               Override the free-space floor
+  --floor=<GiB>               Override the free-space floor (default: the
+                              DURE_BUILD_STORAGE_FLOOR_GIB override, else 60)
   --goal=<GiB>                Override the free-space goal
   --json                      Emit a machine-readable report
   --status                    Show status only
@@ -110,11 +111,21 @@ function publicScopeError(error) {
   };
 }
 
-export function main(arguments_ = process.argv.slice(2)) {
+export function main(
+  arguments_ = process.argv.slice(2),
+  environment = process.env,
+) {
   const json = arguments_.includes("--json");
   if (arguments_.includes("--help")) {
     console.log(DISK_GC_HELP);
     return 0;
+  }
+  let floorPolicy;
+  try {
+    floorPolicy = buildStorageFloorPolicy(environment);
+  } catch (error) {
+    console.error(`disk:gc refused: ${error.message}`);
+    return 2;
   }
 
   const apply = arguments_.includes("--apply");
@@ -127,8 +138,8 @@ export function main(arguments_ = process.argv.slice(2)) {
       apply: apply && !statusOnly,
       aggressive: arguments_.includes("--aggressive"),
       all: arguments_.includes("--all") || statusOnly,
-      floorBytes: numberFlag(arguments_, "floor", undefined),
-      goalBytes: numberFlag(arguments_, "goal", undefined),
+      floorBytes: numberFlag(arguments_, "floor", floorPolicy?.floorBytes),
+      goalBytes: numberFlag(arguments_, "goal", floorPolicy?.goalBytes),
       worktree,
     });
   } catch (error) {

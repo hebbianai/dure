@@ -4,6 +4,52 @@ Dure is maintained by Hebbian AI. We welcome clear bug reports, focused proposal
 documentation improvements and translations. Please follow our
 [Code of Conduct](CODE_OF_CONDUCT.md).
 
+## Quick start
+
+Most contributions are a documentation fix, a frontend change under `src/`, or a
+script or CLI change under `scripts/` and `cli/`. For those, this is the whole
+loop on an ordinary laptop with Git, the Node version in
+[.node-version](.node-version), Corepack and [rustup](https://rustup.rs/)
+installed. No native app build, Dure installation or provider account is needed.
+The [complete installation](#development-installation), the
+[platform prerequisites](#platforms) and the [full check list](#checks-and-review)
+follow later in this guide.
+
+```sh
+git clone https://github.com/<your-account>/dure.git   # your fork
+cd dure
+corepack enable
+pnpm install --frozen-lockfile   # the "Ignored build scripts" warning is expected
+pnpm hooks:install
+git switch -c docs/my-change     # one short topic branch per change
+```
+
+Make one focused change, then run the checks that match it. CI runs everything
+else for you on hosted runners, so you do not need to run the complete gates
+locally:
+
+| You changed | Run before pushing |
+| --- | --- |
+| Anything | `git diff --check` |
+| Markdown | Preview it. CI checks whitespace and local links, including anchors. |
+| `src/` | `pnpm typecheck`, `pnpm lint`, then the suites you touched: `pnpm exec vitest run --project src src/<path>.test.ts`. The complete `pnpm test:src` runs the whole frontend suite, which takes well over ten minutes on a laptop; CI runs it in three shards. |
+| `scripts/`, `cli/` | `pnpm exec vitest run scripts/<path>.test.mjs` for the suites you touched, or `pnpm test:scripts` for all of them. |
+| Rust under `crates/`, `hmux/`, `src-tauri/` | The crate's `cargo fmt --check`, `cargo test --locked` and `cargo clippy` commands listed in [Checks and review](#checks-and-review). The first build downloads and compiles dependencies. |
+
+Commit, push the branch to your fork and open a pull request against
+`hebbianai/dure:main`. The pull request template asks what changed and which
+checks you ran; say what you could not run. The required `Public repository
+checks` result then runs the full public suites.
+
+Some checks need inputs that only maintainers or specific hosts have. They run
+in CI or on a maintainer's machine, not on yours: the Hmux terminal core needs
+the prepared Ghostty proof (`HMUX_GHOSTTY_VT_PROOF_PREFIX`, macOS ARM64 only),
+native smoke tests need staged runtimes and an isolated QA environment, and
+official releases need signing keys and release trust files. Commands that build
+or launch native code, including `pnpm app:dev`, `pnpm verify:frontend` and
+`pnpm build:frontend`, pass through the [build storage guard](#build-storage);
+on a laptop set `DURE_BUILD_STORAGE_FLOOR_GIB` as described there.
+
 ## Source and development
 
 Dure's first-party source, including Hmux, is available under the
@@ -126,10 +172,16 @@ credentials; the pinned native inputs are downloaded from a public release and
 verified. [Official downloads](https://www.dureai.dev/download/mac/) are available
 for users who want the distributed build.
 
-The build checks free disk space and concurrent reservations before it starts.
-The current local full-build requirement is 110 GiB free, plus other active build
-reservations. Follow the actual refusal message and inspect `pnpm disk:status`
-instead of bypassing admission. The build budgets are defined in
+For frontend-only work, `pnpm build:frontend` builds the web UI. It does not
+produce the native desktop app.
+
+#### Build storage
+
+Native builds, the frontend gates and the QA runners check free disk space and
+concurrent reservations before they start. The current local full-build
+requirement is 110 GiB free, plus other active build reservations. Follow the
+actual refusal message and inspect `pnpm disk:status` instead of bypassing
+admission. The build budgets are defined in
 [disk-space.mjs](scripts/lib/disk-space.mjs). Refusals and `pnpm disk:status`
 show up to eight reservation holders, including PID, worktree, build class,
 reserved size, elapsed age and observed liveness. `pnpm disk:status --json`
@@ -147,8 +199,15 @@ peer reservations. The setting is inherited by child build commands. For example
 on macOS/Linux: `DURE_BUILD_PRESERVE_CACHES=1 pnpm build:app`. This does not change
 explicit `pnpm disk:gc` operations; do not run those when preserving caches.
 
-For frontend-only work, `pnpm build:frontend` builds the web UI. It does not
-produce the native desktop app.
+The 60 GiB floor is sized for shared build hosts that run many Dure worktrees
+at once. On a personal development machine with one checkout and no other Dure
+builds, lower it with `DURE_BUILD_STORAGE_FLOOR_GIB`, for example
+`DURE_BUILD_STORAGE_FLOOR_GIB=10 pnpm app:dev`. Only the free-space floor
+changes: the per-build budget and peer reservations still apply, the reclaim
+goal follows at twice the floor, and `pnpm disk:status` reports the same floor.
+Keep at least the free space the admitted build class needs, as its refusal
+message states. GitHub-hosted runners and `pnpm verify:release` keep their own
+policy and ignore the variable.
 
 #### CLI during development
 
@@ -253,6 +312,8 @@ paths from screenshots and logs. Report suspected vulnerabilities through the
 private channel in [SECURITY.md](SECURITY.md).
 
 ## Your first pull request
+
+The [quick start](#quick-start) condenses these steps for the common cases.
 
 1. Fork this repository and clone your fork.
 2. Create a topic branch from the current `main`, for example
