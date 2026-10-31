@@ -153,6 +153,35 @@ export function agentRuntimeWakeTarget(value) {
     : undefined;
 }
 
+/** A stopped close retains its source selection. The backend admits it as the
+ * source of an explicit successor transition, as the app's restart does. */
+export function agentRuntimeRestartableClosedSource(value) {
+  const source = value?.source;
+  return record(value) && value.schemaVersion === 1 && value.state === "closed" &&
+    value.stage === "stopped" && record(source) &&
+    Number.isSafeInteger(source.selectionRevision) && source.selectionRevision > 0 &&
+    ["native_cli", "structured_protocol"].includes(source.interactionProfile)
+    ? { selectionRevision: source.selectionRevision, interactionProfile: source.interactionProfile }
+    : undefined;
+}
+
+/** Explain why an observation offers no actionable source, without guessing liveness. */
+export function agentRuntimeSourceUnavailableReason(value) {
+  switch (value?.state) {
+    case "unmanaged":
+      return "The backend has no managed runtime selection for this Agent.";
+    case "closed":
+      if (value.stage !== "stopped") {
+        return `Its runtime close is still in progress (operation ${value.operationId}, stage ${value.stage}). Inspect again with dure runtime get ${value.agentId}.`;
+      }
+      return "This backend did not return the stopped source selection; update the backend to restart a closed Agent.";
+    case "transitioning":
+      return `A runtime transition is in progress (operation ${value.operationId}, stage ${value.stage}). Inspect it with dure runtime get ${value.agentId} before another action.`;
+    default:
+      return "Inspect the Agent's current runtime with dure runtime get before choosing recovery.";
+  }
+}
+
 /** Parse destructive lifecycle input once, shared by CLI and desktop. Only
  * explicit journal/source fences are serialized, never observation metadata. */
 export function agentRuntimeHibernateBody({ agentId, expectedSourceRevision }) {

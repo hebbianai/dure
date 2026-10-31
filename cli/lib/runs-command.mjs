@@ -10,6 +10,7 @@ import { presentAgentRunRuntime } from "./run-presentation.mjs";
 import { collectRunAccountSwitch, formatRunAccountSwitch } from "./run-account-switch.mjs";
 import { collectAgentProjectMove, formatAgentProjectMove } from "./agent-project-move-command.mjs";
 import { assertNoConversationProjectOptions } from "./conversation-project-options.mjs";
+import { exactRunRetry, formatRunCandidates, resolveAgentWithoutRun } from "./run-agent-selection.mjs";
 
 export const RUNS_HELP = `Usage:
   dure runs list [--cursor CURSOR] [--backend ID] [--json]
@@ -23,12 +24,17 @@ export const RUNS_HELP = `Usage:
 
 Lists durable Run records, including headless Runs and earlier app/Host generations.
 launchState describes the original launch, not current process liveness. List is
-bounded to 64 records; continue with nextCursor until null. Names must be unique.
+bounded to 64 records; continue with nextCursor until null. A name shared by
+several Runs or Agents is refused with each candidate's exact retry command.
+Agents launched, resumed or imported by the app have no Run record. Show, resume,
+move and switch-account also select them by Agent ID, or by name or Session ID
+from the app's Agent list; the backend confirms each. Open needs a Run record.
 Show reads the current runtime selection. Open attaches that existing runtime and
 never launches a provider. Resume previews exact local recovery; add
 --confirm-restart to execute and publish it. A confirmed stopped source waiting
 for a deferred target uses backend wake; an existing native source uses native
-rehost. Both preserve the conversation without an open app. Remote resume is not
+rehost; a closed, stopped Agent restarts through the app's backend transition.
+All preserve the conversation without an open app. Remote resume is not
 supported here.
 Resume retains the original project and working folder, and refuses --project,
 --path and --cwd. Use runs move for an idle or stopped Claude or Codex
@@ -50,6 +56,7 @@ with dure read <session-id> --workspace ID or dure send <session-id> --workspace
 Switch-account previews by default; --confirm-restart executes the same backend
 transition as the UI account selector. It preserves the exact conversation and
 Chat/Terminal mode for Claude and Codex, on local and SSH backends, without an app.
+A closed, stopped Agent restarts with the selected account and its retained conversation.
 List registered account IDs/generations with dure recovery get claude or codex
 on the same --backend. --account default explicitly selects provider defaults.
 An unregistered account must first be prepared on that backend through Dure's
@@ -85,6 +92,7 @@ function validPage(value) {
 export async function collectRunsCommand({
   opts, resolveBackend, resolveTarget, descriptor, command,
   requestBackend = performBackendProfileRequest, run, present = presentAgentRunRuntime,
+  loadRegistry = () => ({ state: "absent", agents: [] }),
 }) {
   const [action, selector] = opts.rest;
   const base = { schemaVersion: 1, apiVersion: "dure.runs/v1", action };
@@ -120,32 +128,53 @@ export async function collectRunsCommand({
     // Exact IDs win over name collisions. A partial page cannot establish uniqueness.
     const exact = page.runs.filter((entry) => entry.agentId === selector || entry.operationId === selector);
     const matches = exact.length ? exact : page.runs;
-    if (matches.length !== 1 || page.nextCursor !== null) {
-      return failure({ code: page.runs.length ? "run_selector_ambiguous" : "run_not_found",
-        message: "Select one exact Agent or operation ID from dure runs list." });
+    if (matches.length > 1 || (matches.length === 1 && page.nextCursor !== null)) {
+      return failure({ code: "run_selector_ambiguous",
+        message: `${page.nextCursor === null ? matches.length : "More than " + matches.length} Runs match ${selector}. Retry with one exact Agent ID:`,
+        candidates: matches.map((entry) => ({ agentId: entry.agentId, name: entry.name, projectId: entry.projectId,
+          providerId: entry.providerId, operationId: entry.operationId, launchState: entry.launchState,
+          retry: exactRunRetry({ action, agentId: entry.agentId, opts, backendId: backend.profile.id }) })) });
     }
-    const selected = matches[0];
+    // App-launched, resumed and imported Agents have no spawn receipt; the
+    // backend runtime projection still owns their account and recovery.
+    let selected = matches[0];
+    let observed;
+    const owner = () => selected.operationId ? { run: selected } : { agent: selected };
+    if (!selected) {
+      const resolved = await resolveAgentWithoutRun({ selector, action, opts, registry: loadRegistry(),
+        backend, requestBackend });
+      if (resolved.error) return failure(resolved.error);
+      selected = resolved.agent;
+      observed = resolved.observation;
+    }
     if (action === "move") {
       const projectMove = await collectAgentProjectMove({ agentId: selected.agentId, projectId: opts.project, backend, requestBackend });
-      return { ...base, ok: projectMove.ok, run: selected, projectMove, ...(!projectMove.ok ? { error: projectMove.error } : {}) };
+      return { ...base, ok: projectMove.ok, ...owner(), projectMove, ...(!projectMove.ok ? { error: projectMove.error } : {}) };
     }
     if (action === "resume") {
       const recover = opts.confirmRestart ? collectManagedRehostNamed : collectManagedRehostPreview;
       const recovery = await recover({ opts: { rest: ["rehost", selector], confirmRestart: opts.confirmRestart },
         agentId: selected.agentId, resolveBackend: async () => backend, requestBackend, command, run });
-      return { ...base, ok: recovery.ok && !recovery.publicationError, run: selected, recovery,
+      return { ...base, ok: recovery.ok && !recovery.publicationError, ...owner(), recovery,
         ...(!recovery.ok || recovery.publicationError ? { error: recovery.error ?? recovery.publicationError } : {}) };
     }
-    const runtime = await collectAgentRuntimeCommand({ args: ["get", selected.agentId],
-      resolveBackend: async () => backend, requestBackend });
-    if (!runtime.ok) return failure(runtime.error, { run: selected });
+    if (action === "open" && !selected.operationId) {
+      // Pane presentation is anchored on the Run's launch receipt; the app has
+      // no receipt-free presentation contract to place this runtime.
+      return failure({ code: "run_record_required", message: `${selected.agentId} has no Run record, so runs open ` +
+        "cannot place it. Open it from the app that launched it; show, resume and switch-account work by Agent ID." },
+      owner());
+    }
+    const runtime = observed ? { ok: true, result: observed } : await collectAgentRuntimeCommand({
+      args: ["get", selected.agentId], resolveBackend: async () => backend, requestBackend });
+    if (!runtime.ok) return failure(runtime.error, owner());
     if (action === "switch-account") {
       const accountSwitch = await collectRunAccountSwitch({ run: selected, observation: runtime.result,
         account: opts.account, confirmRestart: opts.confirmRestart, backend, requestBackend });
-      return { ...base, ok: accountSwitch.ok, run: selected, accountSwitch,
+      return { ...base, ok: accountSwitch.ok, ...owner(), accountSwitch,
         ...(!accountSwitch.ok ? { error: accountSwitch.error } : {}) };
     }
-    if (action === "show") return { ...base, ok: true, run: selected, runtime: runtime.result };
+    if (action === "show") return { ...base, ok: true, ...owner(), runtime: runtime.result };
     const target = await resolveTarget(opts.space);
     const report = await collectAgentSpawnQuery({ action: "status", operationId: selected.operationId,
       backend, requestBackend });
@@ -162,8 +191,9 @@ export async function collectRunsCommand({
 export function formatRunsCommand(report) {
   if (report.projectMove) return formatAgentProjectMove(report.projectMove);
   if (report.accountSwitch) return formatRunAccountSwitch(report.accountSwitch);
-  if (!report.ok) return `${report.error.remoteCode ?? report.error.code}: ${report.error.message ?? "Run request failed"}` +
-    (report.recovery?.continuation ? `\n${formatRecovery(report.recovery)}` : "");
+  if (!report.ok) return [`${report.error.remoteCode ?? report.error.code}: ${report.error.message ?? "Run request failed"}`,
+    ...formatRunCandidates(report.error.candidates),
+    ...(report.recovery?.continuation ? [formatRecovery(report.recovery)] : [])].join("\n");
   if (report.action === "list") return [
     "AGENT ID\tNAME\tPROVIDER\tLAUNCH STATE (not liveness)",
     ...report.runs.map((entry) => `${entry.agentId}\t${entry.name}\t${entry.providerId}\t${entry.launchState}`),
@@ -172,20 +202,25 @@ export function formatRunsCommand(report) {
   if (report.action === "resume") return formatRecovery(report.recovery);
   if (report.action === "open") return `${report.run.name}: ${report.presentation.state} ${report.presentation.pane?.spaceId}/${report.presentation.pane?.panelId}`;
   const source = report.runtime.receipt?.authority?.authority;
+  const selected = report.run ?? report.agent;
   return [
-    `${report.run.name} (${report.run.agentId}): ${report.runtime.state} runtime selection`,
+    `${selected.name ?? selected.agentId} (${selected.agentId}): ${report.runtime.state} runtime selection`,
     "Selection is durable metadata, not current process liveness.",
     ...(source ? [`Session: ${source.binding.sessionId}\nWorkspace: ${source.runtimeWorkspaceId}`] : []),
-    `Operation: ${report.run.operationId}`,
-    `Open: dure runs open ${report.run.agentId} --space <space-id>`,
-    `Recover: dure runs resume ${report.run.agentId}`,
+    ...(report.run ? [
+      `Operation: ${report.run.operationId}`,
+      `Open: dure runs open ${report.run.agentId} --space <space-id>`,
+    ] : ["No Run record: launched, resumed or imported by the app. Open it from the app."]),
+    `Switch account: dure runs switch-account ${selected.agentId} --account ACCOUNT_ID`,
+    `Recover: dure runs resume ${selected.agentId}`,
   ].join("\n");
 }
 
 function formatRecovery(recovery) {
   return [
-    `${recovery.agentId}: ${recovery.state} (${recovery.continuation?.kind === "runtime_wake" ? `backend ${recovery.backendExecution ?? "not_requested"}` : `native ${recovery.nativeExecution}`})`,
+    `${recovery.agentId}: ${recovery.state} (${recovery.continuation?.kind?.startsWith("runtime_") ? `backend ${recovery.backendExecution ?? "not_requested"}` : `native ${recovery.nativeExecution}`})`,
     ...(recovery.publication ? [`Binding publication: ${recovery.publication}`] : []),
+    ...(recovery.conversationId ? [`Conversation: ${recovery.conversationId}`] : []),
     ...formatManagedRecoveryCommands(recovery.continuation),
   ].join("\n");
 }

@@ -154,6 +154,12 @@ export function agentRuntimeWakeTarget(
   value: unknown,
 ): { readonly operationId: string; readonly expectedJournalRevision: number } | undefined;
 
+export function agentRuntimeRestartableClosedSource(
+  value: unknown,
+): { readonly selectionRevision: number; readonly interactionProfile: RuntimeInteractionProfile } | undefined;
+
+export function agentRuntimeSourceUnavailableReason(value: unknown): string;
+
 export interface RuntimeHibernateIntent {
   readonly agentId: string;
   readonly expectedSourceRevision: number;

@@ -4172,10 +4172,11 @@ async function main() {
     }
     const { loadSessionClientProjection } = await import("./lib/client-registry.mjs");
     const { resolveRunPresentationTarget } = await import("./lib/run-presentation.mjs");
+    const loadRegistry = () => loadSessionClientProjection({ registryPath: REG, clientId: sessionQueryClientId() });
     const report = await collectRunsCommand({ opts,
       resolveBackend: () => backendProfileQueryContext(opts), descriptor: loadServer, command: hmuxCommand(),
-      resolveTarget: (spaceSelector) => resolveRunPresentationTarget({ spaceSelector,
-        registry: loadSessionClientProjection({ registryPath: REG, clientId: sessionQueryClientId() }) }),
+      resolveTarget: (spaceSelector) => resolveRunPresentationTarget({ spaceSelector, registry: loadRegistry() }),
+      loadRegistry,
     });
     process.stdout.write(`${opts.json ? JSON.stringify(report) : formatRunsCommand(report)}\n`);
     process.exitCode = report.ok ? 0 : 2;

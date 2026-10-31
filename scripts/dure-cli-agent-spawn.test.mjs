@@ -2312,6 +2312,26 @@ describe("dure run and spawn CLI", () => {
     }
   });
 
+  it.each([
+    ["project_not_found", "project 0123456789ab does not resolve to one Dure project", "project name from dure ls"],
+    ["agent_reuse_not_found", "agent dure/cleaner is not safely reusable", "dure runs resume <agent-id>"],
+  ])("explains a %s reuse refusal with the identity it needs and the recovery path", async (code, message, hint) => {
+    const root = temporaryRoot();
+    const client = await installClientControlFixture(root, { error: { code, message } });
+    try {
+      const result = await runCliAsync(root, ["spawn", "--reuse", "--project", "0123456789ab", "--name", "cleaner",
+        "--idempotency-key", "reuse-cleaner-2", "--json"]);
+      expect(result.status).toBe(2);
+      const error = JSON.parse(result.stderr.trim().split("\n").at(-1)).error;
+      expect(error.code).toBe(code);
+      expect(error.message).toContain(message);
+      expect(error.message).toContain(hint);
+      expect(client.requests).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("routes the legacy implicit worktree through the canonical Run writer", () => {
     const root = temporaryRoot();
     const remote = installRunRemoteFixture(root);
