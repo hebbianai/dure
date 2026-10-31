@@ -16,6 +16,34 @@ use dure_app::{
 
 const CODEX_MANAGED_STARTUP_CONFIG: &str = "check_for_update_on_startup=false";
 
+/// Codex 0.166.0 opens a full-screen model migration prompt ("Try new model /
+/// Use existing model") before the session is usable whenever the launch's
+/// resolved model carries an `upgrade` in its model catalog and the home's
+/// `[notice.model_migrations]` does not already record that pair. The prompt
+/// also appears behind `--remote`, so a managed launch or resume that selects
+/// such a model waits on a person. A model selected through Dure is explicit:
+/// pass the acknowledgement Codex itself persists for "Use existing model" as
+/// a launch-local override, leaving the user's config.toml untouched. Pairs
+/// are the `upgrade` field of Codex `model/list` (0.166.0); unknown pairs keep
+/// the provider's own prompt.
+const CODEX_SUPERSEDED_MODELS: &[(&str, &str)] = &[
+    ("gpt-5.5", "gpt-6-sol"),
+    ("gpt-5.6-luna", "gpt-6-luna"),
+    ("gpt-5.6-sol", "gpt-6-sol"),
+    ("gpt-5.6-terra", "gpt-6-sol"),
+];
+
+/// The `-c` value acknowledging Codex's migration prompt for a superseded
+/// model selection, or `None` when Codex has no upgrade to prompt about.
+pub fn codex_model_migration_acknowledgement(model: &str) -> Option<String> {
+    CODEX_SUPERSEDED_MODELS
+        .iter()
+        .find(|(superseded, _)| *superseded == model)
+        .map(|(superseded, target)| {
+            format!("notice.model_migrations={{\"{superseded}\"=\"{target}\"}}")
+        })
+}
+
 #[derive(Clone, Copy)]
 enum ResumeArgument {
     Unsupported,
@@ -614,6 +642,11 @@ pub fn native_provider_launch_plan_with_initial_prompt(
             .and_then(|flag| flag.resolve(conversation.as_option()))
             .ok_or_else(|| failure("model_selection_unsupported"))?;
         arguments.extend([flag.to_string(), model.as_str().to_string()]);
+        if adapter.provider_id == "codex"
+            && let Some(acknowledgement) = codex_model_migration_acknowledgement(model.as_str())
+        {
+            arguments.extend(["-c".to_string(), acknowledgement]);
+        }
     }
     if let Some(effort) = effort {
         match adapter
@@ -1052,6 +1085,88 @@ mod tests {
             fresh.arguments,
             ["-c", "check_for_update_on_startup=false"].map(str::to_string)
         );
+    }
+
+    #[test]
+    fn codex_launch_and_resume_acknowledge_the_migration_prompt_of_a_superseded_model() {
+        let model = AgentSpawnModelSelectionV1::parse("gpt-5.6-sol").unwrap();
+        let session = native_provider_session_launch_plan(
+            &provider("codex"),
+            &ProviderPermissionModeV1::Default,
+            Some(&model),
+            None,
+            NativeProviderConversationReference::Fresh,
+            "conversation-id",
+        )
+        .unwrap()
+        .unwrap();
+        let acknowledgement = "notice.model_migrations={\"gpt-5.6-sol\"=\"gpt-6-sol\"}";
+        assert_eq!(
+            session.launch.arguments,
+            [
+                "-c",
+                "check_for_update_on_startup=false",
+                "--model",
+                "gpt-5.6-sol",
+                "-c",
+                acknowledgement,
+            ]
+            .map(str::to_string)
+        );
+        // The retained resume recipe reapplies the selection, so an account
+        // switch or rehost must not wait on the prompt either.
+        assert_eq!(
+            session.resume_arguments.unwrap(),
+            [
+                "-c",
+                "check_for_update_on_startup=false",
+                "--model",
+                "gpt-5.6-sol",
+                "-c",
+                acknowledgement,
+                "resume",
+                "conversation-id",
+            ]
+            .map(str::to_string)
+        );
+    }
+
+    #[test]
+    fn codex_launch_keeps_the_provider_prompt_for_models_without_a_known_upgrade() {
+        for (provider_id, model) in [("codex", "gpt-6-astra"), ("codex", "gpt-6-sol"), ("claude", "opus")] {
+            let model = AgentSpawnModelSelectionV1::parse(model).unwrap();
+            let plan = native_provider_launch_plan(
+                &provider(provider_id),
+                &ProviderPermissionModeV1::Default,
+                Some(&model),
+                None,
+                NativeProviderConversationReference::Fresh,
+            )
+            .unwrap()
+            .unwrap();
+            assert!(
+                !plan
+                    .arguments
+                    .iter()
+                    .any(|argument| argument.starts_with("notice.model_migrations=")),
+                "{provider_id} {}: {:?}",
+                model.as_str(),
+                plan.arguments
+            );
+        }
+        assert_eq!(codex_model_migration_acknowledgement("gpt-6-astra"), None);
+    }
+
+    #[test]
+    fn codex_superseded_model_pairs_are_valid_launch_selections() {
+        for (superseded, target) in CODEX_SUPERSEDED_MODELS {
+            AgentSpawnModelSelectionV1::parse(superseded).unwrap();
+            AgentSpawnModelSelectionV1::parse(target).unwrap();
+            assert_ne!(superseded, target);
+            // The pair enters a TOML inline table verbatim.
+            assert!(!superseded.contains(['"', '\\', '{', '}', '=']));
+            assert!(!target.contains(['"', '\\', '{', '}', '=']));
+        }
     }
 
     #[test]
