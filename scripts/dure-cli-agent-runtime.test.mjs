@@ -462,6 +462,26 @@ describe("headless runtime command", () => {
     );
   });
 
+  it.each(["switch", "hibernate"])("names why a busy source refused runtime %s", async (action) => {
+    const report = await collectAgentRuntimeCommand({
+      args: action === "switch" ? ["switch", "agent-1", "chat"] : ["hibernate", "agent-1"],
+      expectedRevision: 3,
+      requestId: "busy-source",
+      resolveBackend: async () => ({ profile: { id: "selected" } }),
+      requestBackend: async () => {
+        throw new BackendTransportError("backend_transport_remote_error", {
+          details: { code: "agent_runtime_source_busy", reasonCode: "controller_input_pending" },
+        });
+      },
+    });
+    expect(report.error).toMatchObject({ remoteCode: "agent_runtime_source_busy",
+      reasonCode: "controller_input_pending" });
+    const output = formatAgentRuntimeCommand(report);
+    expect(output).toContain("agent_runtime_source_busy (controller_input_pending): The session has typed input that was not submitted.");
+    expect(output).toContain("Nothing was stopped or switched.");
+    expect(output).not.toContain("the backend rejected the request");
+  });
+
   it("rejects an unknown target before resolving or starting a backend", async () => {
     const report = await collectAgentRuntimeCommand({
       args: ["switch", "agent-1", "automatic"],

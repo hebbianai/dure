@@ -141,6 +141,8 @@ async fn account_switch(provider: &str) {
         busy["error"]["remoteCode"], "agent_runtime_source_busy",
         "{busy}"
     );
+    assert_eq!(busy["error"]["reasonCode"], "agent_working", "{busy}");
+    assert_eq!(busy["accountSwitch"]["state"], "refused", "{busy}");
     assert_eq!(hmux.requests().len(), 1);
     assert_eq!(
         hmux.session(&source).lifecycle,

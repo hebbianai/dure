@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
 import { collectRunsCommand, formatRunsCommand, parseRunsOptions } from "../cli/lib/runs-command.mjs";
 import { currentRunPresentationPlan } from "../cli/lib/run-presentation.mjs";
 import { succeededNativeReceipt } from "./fixtures/agent-spawn-receipts.mjs";
@@ -277,6 +278,38 @@ describe("Run account switching", () => {
     expect(report.ok).toBe(false);
     expect(report.accountSwitch.continuation.retry).toEqual(report.accountSwitch.continuation.start);
     expect(formatRunsCommand(report)).toContain("Retry:");
+    expect(f.requestBackend).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    ["claude", "agent_working", "a running turn, or background shells, subagents or scheduled wakeups", true],
+    ["claude", "agent_background_work", "turn ended, but background work it started", true],
+    ["claude", "agent_attention_required", "waiting for an approval or an answer", false],
+    ["codex", "agent_working", "a running turn, or background shells", false],
+    ["claude", undefined, "busy or has unsent input", false],
+  ])("explains a %s busy refusal (%s) as refused, with the exact retry and no uncertainty", async (provider, reasonCode, reason, claudeHint) => {
+    const f = accountFixture(provider);
+    const request = f.requestBackend.getMockImplementation();
+    f.requestBackend.mockImplementation(async (backend, r) => {
+      if (r.operation !== "agent_runtime.transition") return request(backend, r);
+      throw new BackendTransportError("backend_transport_remote_error", { details: {
+        code: "agent_runtime_source_busy", disposition: "retry_same", ...(reasonCode ? { reasonCode } : {}) } });
+    });
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: false, accountSwitch: { state: "refused", execution: "refused",
+      error: { remoteCode: "agent_runtime_source_busy", ...(reasonCode ? { reasonCode } : {}) } } });
+    const { error, continuation } = report.accountSwitch;
+    expect(error.message).toContain(reason);
+    expect(error.message).toContain("Nothing was stopped or switched.");
+    expect(error.message.includes("Move to background and exit")).toBe(claudeHint);
+    expect(continuation.retry).toEqual(continuation.start);
+    const text = formatRunsCommand(report);
+    expect(text).toContain(`(refused)`);
+    expect(text).toContain(`agent_runtime_source_busy${reasonCode ? ` (${reasonCode})` : ""}: `);
+    expect(text).toContain("Retry: dure 'runtime' 'switch'");
+    expect(text).toContain(continuation.requestId);
+    expect(text).toContain("once the session is idle");
+    expect(text).not.toContain("After an uncertain response");
     expect(f.requestBackend).toHaveBeenCalledTimes(4);
   });
 

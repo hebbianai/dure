@@ -128,7 +128,32 @@ impl HmuxSessionInspection {
                 && state.activity == AgentRuntimeActivity::Waiting
                 && state.attention == AgentRuntimeAttention::None
                 && state.attention_id.is_none()
+                && !state.background_work
         })
+    }
+
+    /// Names the Host evidence that keeps this observation from being an idle
+    /// boundary, so an idle-only refusal can say what to wait for.
+    pub(crate) fn busy_reason(&self) -> AgentBusyReason {
+        let Some(state) = self.agent_runtime_state.as_ref() else {
+            return AgentBusyReason::StateUnavailable;
+        };
+        match state.lifecycle {
+            AgentRuntimeLifecycle::Starting => return AgentBusyReason::Starting,
+            AgentRuntimeLifecycle::Exited => return AgentBusyReason::StateUnavailable,
+            AgentRuntimeLifecycle::Running => {}
+        }
+        if state.attention != AgentRuntimeAttention::None {
+            AgentBusyReason::AttentionRequired
+        } else if state.background_work {
+            AgentBusyReason::BackgroundWork
+        } else if state.activity == AgentRuntimeActivity::Working {
+            AgentBusyReason::Working
+        } else if self.controller_input_pending == Some(true) {
+            AgentBusyReason::InputPending
+        } else {
+            AgentBusyReason::StateUnavailable
+        }
     }
 
     pub(crate) fn is_exited_exact(&self) -> bool {
@@ -156,6 +181,40 @@ impl HmuxSessionInspection {
             canonical_u64(&self.output_seq).ok_or("hmux_agent_runtime_state_mismatch")?,
         )
         .map_err(|_| "hmux_agent_runtime_state_mismatch")
+    }
+}
+
+/// Why an exact observation is not idle. Codes are the `reasonCode` of an
+/// `agent_runtime_source_busy` refusal; clients own the guidance they show.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AgentBusyReason {
+    /// No usable provider report: none yet, or one that cannot fence a stop.
+    StateUnavailable,
+    Starting,
+    /// The provider reports work. Reporters without the background-work fact
+    /// also report background work that outlived a turn this way.
+    Working,
+    /// The turn ended, but background work the provider started is running.
+    BackgroundWork,
+    /// The provider waits for an approval, an answer or error handling.
+    AttentionRequired,
+    /// The Host holds typed input that was not submitted.
+    InputPending,
+    /// The source changed after the caller's exact idle observation.
+    ObservationChanged,
+}
+
+impl AgentBusyReason {
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            Self::StateUnavailable => "agent_state_unavailable",
+            Self::Starting => "agent_starting",
+            Self::Working => "agent_working",
+            Self::BackgroundWork => "agent_background_work",
+            Self::AttentionRequired => "agent_attention_required",
+            Self::InputPending => "controller_input_pending",
+            Self::ObservationChanged => "agent_observation_changed",
+        }
     }
 }
 
@@ -194,6 +253,10 @@ pub(crate) struct AgentRuntimeState {
     pub(crate) activity: AgentRuntimeActivity,
     pub(crate) attention: AgentRuntimeAttention,
     attention_id: Option<String>,
+    /// Projected beside `working` by Hosts that negotiate background work:
+    /// the turn ended while work the provider started is still running.
+    #[serde(default)]
+    background_work: bool,
 }
 
 impl AgentRuntimeState {
