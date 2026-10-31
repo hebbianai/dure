@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openSelect } from "@/test/select";
 import { AgentRuntimeProfileSwitch } from "@/components/agents/AgentRuntimeProfileSwitch";
@@ -84,6 +90,95 @@ describe("AgentRuntimeProfileSwitch", () => {
 					.hasAttribute("disabled"),
 			).toBe(false),
 		);
+	});
+
+	it("names the backend's refusal code and reason after a rejected switch", async () => {
+		const onSwitch = vi.fn().mockRejectedValue(
+			new DureBackendRequestError(
+				"agent_runtime_structured_profile_unavailable",
+				"Chat is unavailable with the current provider runtime.",
+				{ kind: "operation", disposition: "retry_same" },
+				{ reasonCode: "provider_schema_unreviewed" },
+			),
+		);
+		const rendered = render(
+			<AgentRuntimeProfileSwitch sourceRevision={1} onSwitch={onSwitch} />,
+		);
+		switchVia(rendered, t("agents.runtime.chatTarget"));
+
+		const expected = t("agents.runtime.switchToChatFailedReason", {
+			code: "agent_runtime_structured_profile_unavailable",
+			reason: "provider_schema_unreviewed",
+		});
+		expect(expected).toContain(
+			"(agent_runtime_structured_profile_unavailable: provider_schema_unreviewed)",
+		);
+		const alert = await rendered.findByRole("alert");
+		expect(alert.textContent).toBe(expected);
+		expect(alert.getAttribute("title")).toBe(expected);
+		// The toolbar trigger explains itself through its hover bubble, not a
+		// native title.
+		fireEvent.pointerEnter(
+			rendered.getByRole("combobox", { name: t("agents.runtime.viewLabel") }),
+		);
+		await waitFor(() =>
+			expect(screen.getByRole("tooltip").textContent).toBe(expected),
+		);
+	});
+
+	it("keeps the generic sentence for a rejection without a backend code", async () => {
+		const onSwitch = vi
+			.fn()
+			.mockRejectedValue(new Error("client_agent_runtime_transition_conflict"));
+		const rendered = render(
+			<AgentRuntimeProfileSwitch sourceRevision={1} onSwitch={onSwitch} />,
+		);
+		switchVia(rendered, t("agents.runtime.chatTarget"));
+
+		const generic = t("agents.runtime.switchToChatFailed");
+		const alert = await rendered.findByRole("alert");
+		expect(alert.textContent).toBe(generic);
+		expect(alert.getAttribute("title")).toBe(generic);
+		fireEvent.pointerEnter(
+			rendered.getByRole("combobox", { name: t("agents.runtime.viewLabel") }),
+		);
+		await waitFor(() =>
+			expect(screen.getByRole("tooltip").textContent).toBe(generic),
+		);
+		expect(
+			screen.queryByText(/client_agent_runtime_transition_conflict/),
+		).toBeNull();
+	});
+
+	it("names why an explicit discard was still refused inside the dialog", async () => {
+		const onSwitch = vi
+			.fn()
+			.mockRejectedValueOnce(sourceActiveError())
+			.mockRejectedValueOnce(sourceActiveError());
+		const rendered = render(
+			<AgentRuntimeProfileSwitch sourceRevision={1} onSwitch={onSwitch} />,
+		);
+
+		switchVia(rendered, t("agents.runtime.chatTarget"));
+		await rendered.findByRole("heading", {
+			name: t("agents.runtime.discardSourceTitle", {
+				target: t("agents.runtime.chatTarget"),
+			}),
+		});
+		fireEvent.click(
+			rendered.getByRole("button", {
+				name: t("agents.runtime.discardSourceAction"),
+			}),
+		);
+
+		expect((await rendered.findByRole("alert")).textContent).toBe(
+			t("agents.runtime.switchToChatFailedReason", {
+				code: "agent_runtime_source_retained",
+				reason: t("agents.runtime.sourceRetained"),
+			}),
+		);
+		expect(rendered.getByRole("dialog")).toBeTruthy();
+		expect(onSwitch).toHaveBeenNthCalledWith(2, "discard", 1);
 	});
 
 	it("names and locks the Terminal replacement independently", async () => {

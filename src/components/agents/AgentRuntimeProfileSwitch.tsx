@@ -13,8 +13,10 @@ import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { ErrorText } from "@/components/ui/error-text";
 import { t } from "@/lib/i18n";
 import {
+	agentRuntimeTransitionFailure,
 	DureAgentRuntimeSourceActiveError,
 	type DureAgentRuntimeSourceStopPolicyV1,
+	type DureAgentRuntimeTransitionFailureV1,
 } from "@/lib/ipc/dureAgentRuntime";
 
 export function AgentRuntimeProfileSwitch({
@@ -36,7 +38,8 @@ export function AgentRuntimeProfileSwitch({
 	target?: "chat" | "terminal";
 }) {
 	const [switching, setSwitching] = useState(false);
-	const [error, setError] = useState(false);
+	const [failure, setFailure] =
+		useState<DureAgentRuntimeTransitionFailureV1 | null>(null);
 	const [discardSource, setDiscardSource] = useState<{
 		expectedSourceRevision?: number;
 	} | null>(null);
@@ -49,11 +52,21 @@ export function AgentRuntimeProfileSwitch({
 				? "agents.runtime.switchingToTerminal"
 				: "agents.runtime.switchToTerminal",
 	);
-	const failed = t(
-		target === "chat"
-			? "agents.runtime.switchToChatFailed"
-			: "agents.runtime.switchToTerminalFailed",
-	);
+	// The backend's refusal code and reason tell the user whether to wait,
+	// retry or act; a rejection without them keeps the generic sentence.
+	const failed =
+		failure?.code !== undefined && failure.reason !== undefined
+			? t(
+					target === "chat"
+						? "agents.runtime.switchToChatFailedReason"
+						: "agents.runtime.switchToTerminalFailedReason",
+					{ code: failure.code, reason: failure.reason },
+				)
+			: t(
+					target === "chat"
+						? "agents.runtime.switchToChatFailed"
+						: "agents.runtime.switchToTerminalFailed",
+				);
 	const targetName = t(
 		target === "chat" ? "agents.runtime.chatTarget" : "common.terminal",
 	);
@@ -65,7 +78,7 @@ export function AgentRuntimeProfileSwitch({
 		if (switching) return;
 		setSwitching(true);
 		onSwitchingChange?.(true);
-		setError(false);
+		setFailure(null);
 		void onSwitch(sourceStopPolicy, expectedSourceRevision)
 			.then(() => setDiscardSource(null))
 			.catch((cause) => {
@@ -82,7 +95,7 @@ export function AgentRuntimeProfileSwitch({
 					);
 					return;
 				}
-				setError(true);
+				setFailure(agentRuntimeTransitionFailure(cause));
 			})
 			.finally(() => {
 				setSwitching(false);
@@ -109,7 +122,7 @@ export function AgentRuntimeProfileSwitch({
 					}}
 					disabled={disabled || switching}
 					title={
-						error
+						failure
 							? failed
 							: (disabledTitle ??
 								(switching ? label : `${viewLabel}: ${currentName}`))
@@ -131,7 +144,7 @@ export function AgentRuntimeProfileSwitch({
 				</SelectField>
 				{discardSource === null && (
 					<ErrorText className="max-w-40 truncate text-[10px]" title={failed}>
-						{error ? failed : undefined}
+						{failure ? failed : undefined}
 					</ErrorText>
 				)}
 			</div>
@@ -140,7 +153,7 @@ export function AgentRuntimeProfileSwitch({
 				onOpenChange={(open) => {
 					if (!open && !switching) {
 						setDiscardSource(null);
-						setError(false);
+						setFailure(null);
 					}
 				}}
 			>
@@ -153,11 +166,11 @@ export function AgentRuntimeProfileSwitch({
 							{t("agents.runtime.discardSourceDescription")}
 						</DialogDescription>
 					</DialogHeader>
-					{error && <ErrorText>{failed}</ErrorText>}
+					{failure && <ErrorText>{failed}</ErrorText>}
 					<DialogActionFooter
 						onCancel={() => {
 							setDiscardSource(null);
-							setError(false);
+							setFailure(null);
 						}}
 						confirmLabel={t("agents.runtime.discardSourceAction")}
 						busyLabel={t("agents.runtime.discardSourceBusy")}
