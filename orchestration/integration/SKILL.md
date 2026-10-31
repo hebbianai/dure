@@ -87,6 +87,13 @@ For a worker reader, use its context participant, its complete observed
 endpointFence, and its context deliveryCapability as readCapability. This also
 reads updates opened after completion; current backends also accept the worker's
 interactionCapability there. Never put capabilities in logs or feedback reports.
+The fence's `sessionIdentity` changes after every restart or account switch, so
+do not copy it into scheduled prompts or notes. Through the MCP tools, omit it to
+use this Session's current identity; a copied identity that is no longer current
+is replaced with this Session's own current one and reported in the result. If a
+read reports `hmux_session_exited`, the calling process belongs to a Session
+generation that has ended (for example a background process that outlived a
+restart): stop acting from it and continue in the Agent's current Session.
 
 Do not repeat a get or progress read that returned
 `orchestration_record_not_found`: an interaction commits with its Event, so the

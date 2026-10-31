@@ -1974,6 +1974,98 @@ describe("immutable generic orchestration integration", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  describe("worker interaction reads after a restart or account switch", () => {
+    const notFound = () => new BackendTransportError("backend_transport_remote_error", {
+      details: { code: "orchestration_record_not_found", disposition: "terminal" },
+    });
+    const workerBody = (context, fence) => ({
+      schemaVersion: 1, authority: context.target.authority, interactionId: "message-1",
+      participant: context.participant, readCapability: context.deliveryCapability, endpointFence: fence,
+    });
+    const call = (name, body, { environment, receiptPath }, request) => handleMcpRequest({ jsonrpc: "2.0", id: 1,
+      method: "tools/call", params: { name, arguments: { body } } }, environment, { request, receiptPath });
+
+    it.each(["orchestration_interaction_get", "orchestration_interaction_progress"])(
+      "%s replaces a superseded sessionIdentity with this Session's current one and says so",
+      async (name) => {
+        const current = currentMcpContextFixture(fixture());
+        const { context } = current;
+        const stale = { ...context.endpointFence, sessionIdentity: "session-before-switch" };
+        const receipt = { interaction: { id: "message-1" } };
+        const request = vi.fn(async (_endpoint, operation) => {
+          if (operation.method === "dispatch.context.get") return { receipt: context };
+          if (operation.body.endpointFence.sessionIdentity === stale.sessionIdentity) throw notFound();
+          expect(operation.body).toEqual(workerBody(context, context.endpointFence));
+          return { apiVersion: "dure.orchestration/v1", method: operation.method, receipt };
+        });
+        const result = await call(name, workerBody(context, stale), current, request);
+        expect(result.structuredContent.receipt).toEqual(receipt);
+        expect(JSON.parse(result.content[0].text).receipt).toEqual(receipt);
+        expect(result.content[1].text).toContain("session-before-switch is no longer current");
+        expect(result.content[1].text).toContain(context.endpointFence.sessionIdentity);
+        expect(request.mock.calls.map((entry) => entry[1].method)).toEqual([
+          name === "orchestration_interaction_get" ? "interaction.get" : "interaction.progress",
+          "dispatch.context.get",
+          name === "orchestration_interaction_get" ? "interaction.get" : "interaction.progress",
+        ]);
+      },
+    );
+
+    it("fills an omitted sessionIdentity from this Session's current context", async () => {
+      const current = currentMcpContextFixture(fixture());
+        const { context } = current;
+      const { sessionIdentity: _omitted, ...fence } = context.endpointFence;
+      const catalogue = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/list" });
+      const schema = catalogue.tools.find((tool) => tool.name === "orchestration_interaction_get")
+        .inputSchema.properties.body.properties.endpointFence;
+      expect(schema.required).not.toContain("sessionIdentity");
+      const request = vi.fn(async (_endpoint, operation) => {
+        if (operation.method === "dispatch.context.get") return { receipt: context };
+        expect(operation.body).toEqual(workerBody(context, context.endpointFence));
+        return { receipt: { interaction: { id: "message-1" } } };
+      });
+      const result = await call("orchestration_interaction_get", workerBody(context, fence), current, request);
+      expect(result.content).toHaveLength(1);
+      expect(request.mock.calls.map((entry) => entry[1].method)).toEqual(["dispatch.context.get", "interaction.get"]);
+    });
+
+    it.each([
+      ["another endpoint", { endpointRef: "endpoint-other" }],
+      ["another generation", { generation: 2 }],
+      ["another delivery capability", { deliveryCapability: "capability-other" }],
+    ])("never borrows the current identity for %s", async (_label, change) => {
+      const current = currentMcpContextFixture(fixture());
+        const { context } = current;
+      const fence = { ...context.endpointFence, sessionIdentity: "session-before-switch", ...change };
+      const failure = notFound();
+      const request = vi.fn(async (_endpoint, operation) => {
+        if (operation.method === "dispatch.context.get") return { receipt: context };
+        throw failure;
+      });
+      await expect(call("orchestration_interaction_get", workerBody(context, fence), current, request))
+        .rejects.toMatchObject({ message: expect.stringMatching(/^orchestration_record_not_found \(terminal\)/), cause: failure });
+      expect(request.mock.calls.map((entry) => entry[1].method)).toEqual(["interaction.get", "dispatch.context.get"]);
+    });
+
+    it("tells a process whose own Session exited why its copied fence no longer reads", async () => {
+      const current = currentMcpContextFixture(fixture());
+        const { context } = current;
+      const stale = { ...context.endpointFence, sessionIdentity: "session-before-switch" };
+      const exited = new BackendTransportError("backend_transport_remote_error", {
+        details: { code: "orchestration_generation_conflict", reasonCode: "hmux_session_exited", disposition: "stale_generation" },
+      });
+      const request = vi.fn(async (_endpoint, operation) => {
+        if (operation.method === "dispatch.context.get") throw exited;
+        throw notFound();
+      });
+      await expect(call("orchestration_interaction_get", workerBody(context, stale), current, request))
+        .rejects.toMatchObject({
+          message: expect.stringMatching(/^orchestration_generation_conflict: hmux_session_exited \(stale_generation\): This managed Session generation has exited/),
+          cause: exited,
+        });
+    });
+  });
+
   it("exposes explicit message destination fields and preserves the exact-session receipt", async () => {
     const catalogue = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/list" });
     const tool = catalogue.tools.find((tool) => tool.name === "orchestration_message_open_exact_session");
