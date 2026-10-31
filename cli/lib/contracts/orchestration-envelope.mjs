@@ -1,4 +1,5 @@
 import { validateCompletionRequest } from "./orchestration-completion.mjs";
+import { validateInteractionOpenRequest } from "./orchestration-interaction.mjs";
 
 export const ORCHESTRATION_API_VERSION = "dure.orchestration/v1";
 
@@ -15,6 +16,7 @@ export function createOrchestrationRequest({ method, body }) {
     throw new Error("orchestration request is invalid");
   }
   if (method === "dispatch.complete") validateCompletionRequest(body);
+  if (method === "interaction.open") validateInteractionOpenRequest(body);
   return Object.freeze({
     apiVersion: ORCHESTRATION_API_VERSION,
     method,

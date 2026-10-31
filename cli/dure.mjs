@@ -433,7 +433,12 @@ async function cmdOrchestrationInvoke(opts) {
     const detail =
       error instanceof BackendTransportError
         ? orchestrationFailureDetail(error)
-        : { code, message };
+        : {
+            code,
+            ...(typeof error?.field === "string" ? { field: error.field } : {}),
+            ...(typeof error?.disposition === "string" ? { disposition: error.disposition } : {}),
+            message,
+          };
     if (opts.json) {
       process.stderr.write(
         `${JSON.stringify({

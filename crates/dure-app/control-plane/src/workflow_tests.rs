@@ -65,6 +65,7 @@ mod graph_runtime_tests;
 mod managed_create_reconcile_tests;
 mod native_default_profile_tests;
 mod orchestration_completion_tests;
+mod orchestration_interaction_open_tests;
 mod orchestration_observation_tests;
 mod prompt_recovery_tests;
 mod real_hmux;
