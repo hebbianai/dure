@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use dure_app::{DomainStore, DomainStoreErrorV1, ProjectIdV1, ProjectRecordV1};
@@ -35,9 +37,19 @@ fn binding() -> SessionCheckoutBindingV1 {
     )
 }
 
+/// A short first wait and a generous last one: the test releases the lock
+/// while the writer waits, and the long tail keeps a slow machine from
+/// exhausting the schedule before that release is visible.
+const RETRY_UNTIL_RELEASED: &[Duration] = &[Duration::from_millis(20), Duration::from_secs(2)];
+
+/// Exhausts quickly, so a lock held past the bound surfaces as `Busy`.
+const RETRY_BRIEFLY: &[Duration] = &[Duration::from_millis(10), Duration::from_millis(10)];
+
 async fn second_writer(store: &SqliteDomainStore) -> SqliteDomainStore {
     // Zero busy timeout makes a held SQLite write lock observable as Busy,
-    // rather than inferring exclusion from a sleep or scheduling delay.
+    // rather than inferring exclusion from a sleep or scheduling delay. The
+    // fixture asserts exclusion at the moment of the call, which a retry would
+    // only postpone; the retry tests inject their own schedule.
     let options = store
         .pool
         .connect_options()
@@ -51,7 +63,27 @@ async fn second_writer(store: &SqliteDomainStore) -> SqliteDomainStore {
         .unwrap();
     SqliteDomainStore {
         pool,
+        busy_retry_delays: &[],
         ..store.clone()
+    }
+}
+
+async fn retrying_writer(
+    store: &SqliteDomainStore,
+    busy_retry_delays: &'static [Duration],
+) -> SqliteDomainStore {
+    SqliteDomainStore {
+        busy_retry_delays,
+        ..second_writer(store).await
+    }
+}
+
+/// The zero-timeout writer's single pooled connection returns to idle only
+/// after a `BEGIN IMMEDIATE` attempt failed while the lock is held. Waiting for
+/// it proves the retry path was entered before the test releases the lock.
+async fn failed_attempt_observed(writer: &SqliteDomainStore) {
+    while writer.pool.num_idle() == 0 {
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
 }
 
@@ -181,6 +213,92 @@ async fn pending_runtime_reservation_is_not_visible_to_an_independent_closer() {
             .admission,
         SessionCheckoutAdmissionV1::Closing
     );
+    other.close().await;
+    store.close().await;
+}
+
+#[tokio::test]
+async fn a_busy_transaction_start_is_retried_until_the_writer_releases_the_lock() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("domain.sqlite"))
+        .await
+        .unwrap();
+    let other = retrying_writer(&store, RETRY_UNTIL_RELEASED).await;
+    let binding = binding();
+    let lock = store.pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let reservations = Arc::new(AtomicUsize::new(0));
+    let preparation = tokio::spawn({
+        let other = other.clone();
+        let binding = binding.clone();
+        let reservations = Arc::clone(&reservations);
+        async move {
+            other
+                .prepare_session_checkout_with(&binding, || async {
+                    reservations.fetch_add(1, Ordering::SeqCst);
+                    Ok::<(), DomainStoreErrorV1>(())
+                })
+                .await
+        }
+    });
+    failed_attempt_observed(&other).await;
+    assert_eq!(reservations.load(Ordering::SeqCst), 0);
+    // Roll back explicitly: dropping the transaction releases the write lock
+    // asynchronously, after the caller has moved on.
+    lock.rollback().await.unwrap();
+    let record = preparation.await.unwrap().unwrap();
+    assert_eq!(record.binding, binding);
+    assert_eq!(record.admission, SessionCheckoutAdmissionV1::Open);
+    assert_eq!(reservations.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store.session_checkout(&binding.identity).await.unwrap(),
+        Some(record)
+    );
+
+    // Only a busy start is retried; a closed pool fails at once rather than
+    // after the two-second tail of this schedule.
+    other.close().await;
+    let closed = tokio::time::timeout(
+        Duration::from_secs(1),
+        other.prepare_session_checkout(&binding),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        closed,
+        Err(DomainStoreErrorV1::Storage { code: "sqlite", .. })
+    ));
+    store.close().await;
+}
+
+#[tokio::test]
+async fn a_lock_held_past_the_retry_bound_still_reports_busy_without_reserving() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("domain.sqlite"))
+        .await
+        .unwrap();
+    let other = retrying_writer(&store, RETRY_BRIEFLY).await;
+    let binding = binding();
+    let lock = store.pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let reservations = AtomicUsize::new(0);
+    let result = other
+        .prepare_session_checkout_with(&binding, || async {
+            reservations.fetch_add(1, Ordering::SeqCst);
+            Ok::<(), DomainStoreErrorV1>(())
+        })
+        .await;
+    assert!(matches!(
+        result,
+        Err(DomainStoreErrorV1::Busy {
+            operation: "prepare_session_checkout"
+        })
+    ));
+    assert_eq!(reservations.load(Ordering::SeqCst), 0);
+    lock.rollback().await.unwrap();
+    assert_eq!(
+        other.session_checkout(&binding.identity).await.unwrap(),
+        None
+    );
+    other.prepare_session_checkout(&binding).await.unwrap();
     other.close().await;
     store.close().await;
 }

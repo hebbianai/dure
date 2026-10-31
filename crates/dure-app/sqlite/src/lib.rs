@@ -5,6 +5,7 @@
 //! process liveness, or any other live Hmux runtime fact.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use dure_app::{
     AgentCheckpointBindingAuthorityV1, AgentCheckpointIdentityV1, AgentCheckpointObservationV1,
@@ -85,6 +86,9 @@ pub struct SqliteDomainStore {
     pool: SqlitePool,
     path: PathBuf,
     schema_info: StoreSchemaInfoV1,
+    /// Waits between `BEGIN IMMEDIATE` attempts that found the write lock held
+    /// past the pool's busy timeout; see `session_checkout`.
+    busy_retry_delays: &'static [Duration],
 }
 
 impl SqliteDomainStore {
@@ -105,6 +109,7 @@ impl SqliteDomainStore {
             pool,
             path,
             schema_info,
+            busy_retry_delays: session_checkout::BEGIN_IMMEDIATE_RETRY_DELAYS,
         };
         if let Err(error) = operations::rebuild_receipts(&store.pool).await {
             store.pool.close().await;
