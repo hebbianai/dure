@@ -2,7 +2,9 @@
 
 use crate::host::{HOST_PACKET_SCHEMA, HostLaunchPacket, HostSpawnFailure, spawn_host};
 use crate::recovery::{
-    read_optional_resurrection_recipe, remove_resurrection_recipe_exact, save_resurrection_recipe,
+    prepare_superseding_recipe, read_optional_resurrection_recipe,
+    remove_resurrection_recipe_exact, save_resurrection_recipe, supersede_request_binding,
+    supersede_request_fingerprint,
 };
 use crate::server::resolve_command;
 use crate::{DynError, Result, unix_time_ms};
@@ -95,6 +97,7 @@ fn launch(request: StandaloneCreateRequest) -> Result<StandaloneCreateReceipt> {
         .map(|identity| identity.recipe_requirement());
     let requires_existing_recipe =
         recipe_requirement == Some(StandaloneRecipeRequirement::Existing);
+    let supersede = recipe_requirement == Some(StandaloneRecipeRequirement::Supersede);
     let request_bound_recipe =
         recipe_requirement == Some(StandaloneRecipeRequirement::RequestBound);
     let session_id = request
@@ -131,8 +134,45 @@ fn launch(request: StandaloneCreateRequest) -> Result<StandaloneCreateReceipt> {
             "a general saved recipe already owns this standalone session name",
         ));
     }
-    let recipe = if let Some(canonical) = previous_recipe.as_ref() {
-        if !request_matches_recipe(&request, &request_provider_cwd, &session_name, canonical) {
+    let supersede_previous = if supersede {
+        Some(previous_recipe.as_ref().ok_or_else(|| {
+            recovery_refusal(
+                "hmux_standalone_recovery_target_unavailable",
+                "standalone supersede requires an existing recipe",
+            )
+        })?)
+    } else {
+        None
+    };
+    let bound_retry = if supersede {
+        let binding = supersede_request_binding(&discovery_root, &session_name)?;
+        match binding {
+            Some(binding)
+                if binding.idempotency_key.as_deref() == idempotency_key.as_deref() =>
+            {
+                if binding.request_sha256 != supersede_request_fingerprint(&request)? {
+                    return Err(recovery_refusal(
+                        "hmux_standalone_recipe_conflict",
+                        "supersede retry differs from the bound request",
+                    ));
+                }
+                validate_supersede_source(&discovery_root, &request, &session_name, true)?;
+                true
+            }
+            _ => {
+                validate_supersede_source(&discovery_root, &request, &session_name, false)?;
+                false
+            }
+        }
+    } else {
+        false
+    };
+    let recipe = if supersede && !bound_retry {
+        recipe_from_request(&request, &request_provider_cwd, &session_name)?
+    } else if let Some(canonical) = previous_recipe.as_ref() {
+        if !bound_retry
+            && !request_matches_recipe(&request, &request_provider_cwd, &session_name, canonical)
+        {
             return Err(recovery_refusal(
                 "hmux_standalone_recipe_conflict",
                 "standalone create request does not match the canonical saved recipe",
@@ -147,6 +187,19 @@ fn launch(request: StandaloneCreateRequest) -> Result<StandaloneCreateReceipt> {
     } else {
         recipe_from_request(&request, &request_provider_cwd, &session_name)?
     };
+    if bound_retry
+        && !supersede_recipe_matches_request(
+            &request,
+            &request_provider_cwd,
+            &session_name,
+            &recipe,
+        )
+    {
+        return Err(recovery_refusal(
+            "hmux_standalone_recipe_conflict",
+            "canonical recipe differs from the supersede request binding",
+        ));
+    }
     if deterministic_identity {
         let state = reusable_session(
             &discovery_root,
@@ -202,6 +255,18 @@ fn launch(request: StandaloneCreateRequest) -> Result<StandaloneCreateReceipt> {
     // attach boundary. Make reboot recovery durable before crossing it so a
     // recipe fault can never revoke a generation another client has already
     // observed or written to.
+    if supersede && !bound_retry {
+        let previous = supersede_previous.ok_or_else(|| {
+            recovery_refusal(
+                "hmux_standalone_recovery_target_unavailable",
+                "standalone supersede requires an existing recipe",
+            )
+        })?;
+        prepare_superseding_recipe(&discovery_root, previous, &recipe, &request)?.commit()?;
+    }
+    if supersede {
+        retire_superseded_source(&discovery_root, &request, &session_name)?;
+    }
     let published_recipe = !request_bound_recipe && previous_recipe.is_none();
     if published_recipe {
         if let Err(save_error) = save_resurrection_recipe(&discovery_root, &recipe) {
@@ -276,6 +341,156 @@ fn launch(request: StandaloneCreateRequest) -> Result<StandaloneCreateReceipt> {
         discovery_root,
         launch_owner_proof,
     )
+}
+
+fn supersede_recipe_matches_request(
+    request: &StandaloneCreateRequest,
+    cwd: &Path,
+    name: &str,
+    recipe: &StandaloneResurrectionRecipe,
+) -> bool {
+    recipe.session_name() == name
+        && recipe.provider_cwd() == cwd
+        && recipe.command() == request.command()
+        && recipe.initial_rows() == request.initial_rows()
+        && recipe.initial_columns() == request.initial_columns()
+        && recipe.terminal_environment() == request.terminal_environment()
+        && recipe.resurrection_replay_policy() == request.resurrection_replay_policy()
+        && recipe.retirement_policy() == request.retirement_policy()
+        && recipe.terminal_default_colors() == request.terminal_default_colors()
+}
+
+fn retire_superseded_source(
+    discovery_root: &Path,
+    request: &StandaloneCreateRequest,
+    session_name: &str,
+) -> Result<()> {
+    let source = request
+        .recovery_identity()
+        .and_then(|identity| identity.source_predecessor())
+        .ok_or_else(|| {
+            recovery_refusal(
+                "hmux_standalone_supersede_refused",
+                "supersede requires source predecessor",
+            )
+        })?;
+    let root = DiscoveryRoot::open(discovery_root)?;
+    for session in root.list_sessions_named_including_starting(session_name)? {
+        let common = session.manifest.common();
+        if common.lifetime.session_id != source.session_id() {
+            continue;
+        }
+        let epoch = match &session.manifest {
+            DiscoveryManifest::Ready(ready) => Some(ready.terminal_epoch.as_str()),
+            DiscoveryManifest::Exited(exited) => {
+                Some(exited.tombstone.fence.terminal_epoch.as_str())
+            }
+            DiscoveryManifest::Starting(_) => None,
+        };
+        if common.lifetime.runner_principal != source.runner_principal()
+            || common.lifetime.runner_instance != source.runner_instance()
+            || common.lifetime.channel_epoch != source.channel_epoch()
+            || common.host_instance_id != source.host_instance_id()
+            || epoch != Some(source.terminal_epoch())
+        {
+            return Err(recovery_refusal(
+                "hmux_standalone_recovery_name_conflict",
+                "supersede source changed before retirement",
+            ));
+        }
+        let descriptor = SessionDescriptor::from(session.clone());
+        if probe_local_process_generation(&descriptor.host_process)?
+            != LocalProcessGenerationStatus::Absent
+            || probe_local_process_generation(&descriptor.provider_process)?
+                != LocalProcessGenerationStatus::Absent
+        {
+            return Err(recovery_refusal(
+                "hmux_standalone_supersede_refused",
+                "supersede source became active before retirement",
+            ));
+        }
+        // Clear the previous generation's pointer only after publication.
+        let discovery = root.open_session(session.key.clone())?;
+        let lock = discovery.acquire_lifetime_lock()?;
+        discovery.cleanup_current(&lock, &session.manifest.generation())?;
+    }
+    Ok(())
+}
+
+fn validate_supersede_source(
+    discovery_root: &Path,
+    request: &StandaloneCreateRequest,
+    session_name: &str,
+    retry: bool,
+) -> Result<()> {
+    let identity = request.recovery_identity().ok_or_else(|| {
+        recovery_refusal(
+            "hmux_standalone_supersede_refused",
+            "supersede requires recovery identity",
+        )
+    })?;
+    let source = identity.source_predecessor().ok_or_else(|| {
+        recovery_refusal(
+            "hmux_standalone_supersede_refused",
+            "supersede requires an exact source predecessor",
+        )
+    })?;
+    let root = DiscoveryRoot::open(discovery_root)?;
+    let mut matched_source = false;
+    for session in root.list_sessions_named_including_starting(session_name)? {
+        let common = session.manifest.common();
+        if common.session_class != SessionClass::Standalone {
+            return Err(recovery_refusal(
+                "hmux_standalone_recovery_name_conflict",
+                "supersede name has another owner",
+            ));
+        }
+        if retry
+            && common.lifetime.session_id == identity.target_session_id()
+            && common.claim_linkage.kickoff_action_id.as_deref()
+                == Some(standalone_create_idempotency_key(identity).as_str())
+        {
+            continue;
+        }
+        let terminal_epoch = match &session.manifest {
+            DiscoveryManifest::Ready(ready) => Some(ready.terminal_epoch.as_str()),
+            DiscoveryManifest::Exited(exited) => {
+                Some(exited.tombstone.fence.terminal_epoch.as_str())
+            }
+            DiscoveryManifest::Starting(_) => None,
+        };
+        let exact_source = common.lifetime.session_id == source.session_id()
+            && common.lifetime.runner_principal == source.runner_principal()
+            && common.lifetime.runner_instance == source.runner_instance()
+            && common.lifetime.channel_epoch == source.channel_epoch()
+            && common.host_instance_id == source.host_instance_id()
+            && terminal_epoch == Some(source.terminal_epoch());
+        if !exact_source {
+            return Err(recovery_refusal(
+                "hmux_standalone_recovery_name_conflict",
+                "supersede source generation or name ownership changed",
+            ));
+        }
+        let descriptor = SessionDescriptor::from(session);
+        if probe_local_process_generation(&descriptor.host_process)?
+            != LocalProcessGenerationStatus::Absent
+            || probe_local_process_generation(&descriptor.provider_process)?
+                != LocalProcessGenerationStatus::Absent
+        {
+            return Err(recovery_refusal(
+                "hmux_standalone_supersede_refused",
+                "supersede requires both Host and provider to be absent",
+            ));
+        }
+        matched_source = true;
+    }
+    if !matched_source && !retry {
+        return Err(recovery_refusal(
+            "hmux_standalone_recovery_target_unavailable",
+            "supersede source generation is unavailable",
+        ));
+    }
+    Ok(())
 }
 
 fn refuse_read_only_name_conflict(catalog: &LocalSessionCatalog, session_name: &str) -> Result<()> {

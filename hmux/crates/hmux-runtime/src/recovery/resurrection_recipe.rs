@@ -25,6 +25,9 @@ const RESURRECTION_RECIPE_READ_FAULT_MARKER_ENV: &str =
 #[cfg(debug_assertions)]
 static RESURRECTION_RECIPE_READ_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 const MAX_RESURRECTION_RECIPE_BYTES: u64 = 256 * 1024;
+// Audit history is bounded so retained audits can never push a plain recipe
+// save past the 256 KiB storage limit.
+const MAX_SUPERSEDE_AUDIT_HISTORY: usize = 16;
 
 pub(crate) fn save_resurrection_recipe(
     discovery_root: &Path,
@@ -164,7 +167,29 @@ pub(crate) fn prepare_resurrection_recipe(
     discovery_root: &Path,
     recipe: &StandaloneResurrectionRecipe,
 ) -> Result<PreparedResurrectionRecipe> {
+    let mut payload = serde_json::to_value(recipe)?;
+    if let Some(mut audit) = read_supersede_audit(discovery_root, recipe.session_name())? {
+        // A plain save ends the previous supersede attempt: drop its request
+        // binding so a repeated supersede key is validated as a new attempt,
+        // not mistaken for a retry.
+        if let Some(record) = audit.as_object_mut() {
+            record.remove("requestBinding");
+        }
+        payload["supersedeAudit"] = audit;
+    }
+    prepare_recipe_payload(discovery_root, recipe, serde_json::to_vec(&payload)?)
+}
+
+fn prepare_recipe_payload(
+    discovery_root: &Path,
+    recipe: &StandaloneResurrectionRecipe,
+    payload: Vec<u8>,
+) -> Result<PreparedResurrectionRecipe> {
     recipe.validate()?;
+    if payload.len() as u64 > MAX_RESURRECTION_RECIPE_BYTES {
+        return Err("standalone resurrection recipe and audit exceed the storage limit".into());
+    }
+    let _: serde_json::Value = serde_json::from_slice(&payload)?;
     let directory = discovery_root.join(".resurrection");
     fs::create_dir_all(&directory)?;
     let metadata = fs::symlink_metadata(&directory)?;
@@ -190,7 +215,6 @@ pub(crate) fn prepare_resurrection_recipe(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    let payload = serde_json::to_vec(recipe)?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -217,11 +241,110 @@ pub(crate) fn prepare_resurrection_recipe(
     })
 }
 
+// Publish the audit and the retry binding in the same rename as the recipe.
+// The binding holds only the idempotency key and a request hash: the request
+// itself carries launchOwnerProof and terminal environment, which must not
+// accumulate in persisted history.
+pub(crate) fn prepare_superseding_recipe(
+    discovery_root: &Path,
+    previous: &StandaloneResurrectionRecipe,
+    recipe: &StandaloneResurrectionRecipe,
+    request: &hmux_runtime_contract::StandaloneCreateRequest,
+) -> Result<PreparedResurrectionRecipe> {
+    let mut payload = serde_json::to_value(recipe)?;
+    let mut history = Vec::new();
+    if let Some(mut previous_audit) = read_supersede_audit(discovery_root, recipe.session_name())? {
+        if let Some(entries) = previous_audit
+            .get_mut("history")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            history.append(entries);
+        }
+        if let Some(record) = previous_audit.as_object_mut() {
+            record.remove("history");
+        }
+        history.push(previous_audit);
+    }
+    if history.len() > MAX_SUPERSEDE_AUDIT_HISTORY {
+        history.drain(..history.len() - MAX_SUPERSEDE_AUDIT_HISTORY);
+    }
+    payload["supersedeAudit"] = serde_json::json!({
+        "previousRecipe": previous,
+        "history": history,
+        "supersededUnixMs": recipe.created_unix_ms(),
+        "requestBinding": {
+            "idempotencyKey": request
+                .recovery_identity()
+                .map(hmux_client::standalone_create_idempotency_key),
+            "requestSha256": supersede_request_fingerprint(request)?,
+        },
+    });
+    prepare_recipe_payload(discovery_root, recipe, serde_json::to_vec(&payload)?)
+}
+
+pub(crate) fn supersede_request_fingerprint(
+    request: &hmux_runtime_contract::StandaloneCreateRequest,
+) -> Result<String> {
+    let mut digest = Sha256::new();
+    digest.update(serde_json::to_vec(request)?);
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn read_supersede_audit(
+    discovery_root: &Path,
+    session_name: &str,
+) -> Result<Option<serde_json::Value>> {
+    match read_recipe_payload(discovery_root, session_name) {
+        Ok(payload) => {
+            let value: serde_json::Value = serde_json::from_slice(&payload)?;
+            Ok(value.get("supersedeAudit").cloned())
+        }
+        Err(error)
+            if error
+                .downcast_ref::<io::Error>()
+                .is_some_and(|error| error.kind() == io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SupersedeRequestBinding {
+    pub(crate) idempotency_key: Option<String>,
+    pub(crate) request_sha256: String,
+}
+
+pub(crate) fn supersede_request_binding(
+    discovery_root: &Path,
+    session_name: &str,
+) -> Result<Option<SupersedeRequestBinding>> {
+    let payload = read_recipe_payload(discovery_root, session_name)?;
+    let value: serde_json::Value = serde_json::from_slice(&payload)?;
+    value
+        .get("supersedeAudit")
+        .and_then(|audit| audit.get("requestBinding"))
+        .map(|binding| serde_json::from_value(binding.clone()).map_err(Into::into))
+        .transpose()
+}
+
 pub(crate) fn read_resurrection_recipe(
     discovery_root: &Path,
     session_name: &str,
 ) -> Result<StandaloneResurrectionRecipe> {
     fault_inject_resurrection_recipe_read()?;
+    let payload = read_recipe_payload(discovery_root, session_name)?;
+    let recipe: StandaloneResurrectionRecipe = serde_json::from_slice(&payload)?;
+    recipe.validate()?;
+    if recipe.session_name() != session_name {
+        return Err("standalone resurrection recipe name changed".into());
+    }
+    Ok(recipe)
+}
+
+fn read_recipe_payload(discovery_root: &Path, session_name: &str) -> Result<Vec<u8>> {
     let directory = discovery_root.join(".resurrection");
     let metadata = fs::symlink_metadata(&directory)?;
     if !metadata.is_dir()
@@ -250,12 +373,7 @@ pub(crate) fn read_resurrection_recipe(
     }
     let mut payload = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
     file.read_to_end(&mut payload)?;
-    let recipe: StandaloneResurrectionRecipe = serde_json::from_slice(&payload)?;
-    recipe.validate()?;
-    if recipe.session_name() != session_name {
-        return Err("standalone resurrection recipe name changed".into());
-    }
-    Ok(recipe)
+    Ok(payload)
 }
 
 pub(crate) fn remove_resurrection_recipe_exact(
@@ -358,3 +476,176 @@ pub(crate) fn rebuild_resurrection_recipe_with_policy(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod supersede_audit_tests {
+    use super::*;
+    use hmux_runtime_contract::{StandaloneCreateRequest, StandaloneRecoveryCreateIdentity};
+
+    #[test]
+    fn supersede_audit_is_atomic_private_and_retained_by_later_saves() {
+        let state = tempfile::tempdir().unwrap();
+        let previous =
+            StandaloneResurrectionRecipe::new("audit", "/tmp", vec!["old".into()], 24, 80, 1)
+                .unwrap();
+        let next =
+            StandaloneResurrectionRecipe::new("audit", "/tmp", vec!["new".into()], 25, 81, 2)
+                .unwrap();
+        let identity =
+            StandaloneRecoveryCreateIdentity::new("standalone_target01", "private-proof").unwrap();
+        let request =
+            StandaloneCreateRequest::new("/tmp", Some("audit".into()), vec!["new".into()], 25, 81)
+                .unwrap()
+                .with_recovery_identity(identity.clone())
+                .unwrap();
+        save_resurrection_recipe(state.path(), &previous).unwrap();
+        let prepared =
+            prepare_superseding_recipe(state.path(), &previous, &next, &request).unwrap();
+        assert_eq!(
+            read_resurrection_recipe(state.path(), "audit").unwrap(),
+            previous
+        );
+        assert!(
+            supersede_request_binding(state.path(), "audit")
+                .unwrap()
+                .is_none()
+        );
+        prepared.commit().unwrap();
+        assert_eq!(
+            read_resurrection_recipe(state.path(), "audit").unwrap(),
+            next
+        );
+        assert_eq!(
+            supersede_request_binding(state.path(), "audit").unwrap(),
+            Some(SupersedeRequestBinding {
+                idempotency_key: Some(
+                    hmux_client::standalone_create_idempotency_key(&identity)
+                ),
+                request_sha256: supersede_request_fingerprint(&request).unwrap(),
+            })
+        );
+        // The audit retains only the key and hash; the request body (owner
+        // proof, terminal environment) must never land in persisted history.
+        let audit = read_supersede_audit(state.path(), "audit")
+            .unwrap()
+            .unwrap();
+        assert!(audit.get("request").is_none());
+        assert!(!audit.to_string().contains("private-proof"));
+        save_resurrection_recipe(state.path(), &next).unwrap();
+        // A plain save ends the previous binding: a repeated supersede key is a
+        // new attempt, not a retry.
+        assert!(
+            supersede_request_binding(state.path(), "audit")
+                .unwrap()
+                .is_none()
+        );
+        let audit = read_supersede_audit(state.path(), "audit")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            audit["previousRecipe"],
+            serde_json::to_value(previous).unwrap()
+        );
+        assert_eq!(audit["supersededUnixMs"], 2);
+        let third =
+            StandaloneResurrectionRecipe::new("audit", "/tmp", vec!["third".into()], 25, 81, 3)
+                .unwrap();
+        let third_request = StandaloneCreateRequest::new(
+            "/tmp",
+            Some("audit".into()),
+            vec!["third".into()],
+            25,
+            81,
+        )
+        .unwrap();
+        prepare_superseding_recipe(state.path(), &next, &third, &third_request)
+            .unwrap()
+            .commit()
+            .unwrap();
+        let audit = read_supersede_audit(state.path(), "audit")
+            .unwrap()
+            .unwrap();
+        assert_eq!(audit["history"].as_array().unwrap().len(), 1);
+        assert!(audit["history"][0].get("history").is_none());
+        assert_eq!(audit["history"][0]["supersededUnixMs"], 2);
+        assert_eq!(audit["supersededUnixMs"], 3);
+        for entry in fs::read_dir(state.path().join(".resurrection")).unwrap() {
+            assert_eq!(
+                entry.unwrap().metadata().unwrap().permissions().mode() & 0o077,
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_audit_does_not_replace_the_canonical_recipe() {
+        let state = tempfile::tempdir().unwrap();
+        let recipe = StandaloneResurrectionRecipe::new("audit", "/tmp", vec![], 24, 80, 1).unwrap();
+        save_resurrection_recipe(state.path(), &recipe).unwrap();
+        assert!(
+            prepare_recipe_payload(
+                state.path(),
+                &recipe,
+                vec![0; MAX_RESURRECTION_RECIPE_BYTES as usize + 1]
+            )
+            .is_err()
+        );
+        assert_eq!(
+            read_resurrection_recipe(state.path(), "audit").unwrap(),
+            recipe
+        );
+    }
+    #[test]
+    fn flat_audit_remains_readable_after_150_replacements() {
+        let state = tempfile::tempdir().unwrap();
+        let mut previous =
+            StandaloneResurrectionRecipe::new("audit", "/tmp", vec![], 24, 80, 1).unwrap();
+        let request =
+            StandaloneCreateRequest::new("/tmp", Some("audit".into()), vec![], 24, 80).unwrap();
+        save_resurrection_recipe(state.path(), &previous).unwrap();
+        for index in 0..150 {
+            let next =
+                StandaloneResurrectionRecipe::new("audit", "/tmp", vec![], 24, 80, index + 2)
+                    .unwrap();
+            prepare_superseding_recipe(state.path(), &previous, &next, &request)
+                .unwrap()
+                .commit()
+                .unwrap();
+            assert_eq!(
+                read_resurrection_recipe(state.path(), "audit").unwrap(),
+                next
+            );
+            previous = next;
+        }
+        let audit = read_supersede_audit(state.path(), "audit")
+            .unwrap()
+            .unwrap();
+        let history = audit["history"].as_array().unwrap();
+        assert_eq!(history.len(), MAX_SUPERSEDE_AUDIT_HISTORY);
+        assert!(history.iter().all(|entry| entry.get("history").is_none()));
+        assert_eq!(
+            history[0]["supersededUnixMs"],
+            151 - MAX_SUPERSEDE_AUDIT_HISTORY
+        );
+        assert_eq!(audit["supersededUnixMs"], 151);
+    }
+
+    #[test]
+    fn excessive_json_depth_is_refused_before_publication() {
+        let state = tempfile::tempdir().unwrap();
+        let recipe = StandaloneResurrectionRecipe::new("audit", "/tmp", vec![], 24, 80, 1).unwrap();
+        save_resurrection_recipe(state.path(), &recipe).unwrap();
+        let payload = format!("{}0{}", "[".repeat(150), "]".repeat(150)).into_bytes();
+        assert!(prepare_recipe_payload(state.path(), &recipe, payload).is_err());
+        assert_eq!(
+            read_resurrection_recipe(state.path(), "audit").unwrap(),
+            recipe
+        );
+        assert_eq!(
+            fs::read_dir(state.path().join(".resurrection"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+}

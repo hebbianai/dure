@@ -994,6 +994,8 @@ pub enum StandaloneRecipeRequirement {
     /// The exact caller-owned request is the sole replay authority. The
     /// runtime must not read or publish a general resurrection recipe.
     RequestBound,
+    /// Replace the persisted recipe after verifying the exited predecessor.
+    Supersede,
 }
 
 impl StandaloneRecipeRequirement {
@@ -6315,6 +6317,44 @@ mod tests {
             value["retirementPolicy"] = policy;
             assert!(serde_json::from_value::<StandaloneCreateRequest>(value).is_err());
         }
+    }
+
+    #[test]
+    fn supersede_recipe_requirement_round_trips_and_rejects_ambiguous_wire() {
+        let identity =
+            StandaloneRecoveryCreateIdentity::new("standalone_target01", "private-proof")
+                .unwrap()
+                .with_recipe_requirement(StandaloneRecipeRequirement::Supersede);
+        let wire = serde_json::to_value(&identity).unwrap();
+        assert_eq!(wire["recipeRequirement"], "supersede");
+        assert_eq!(
+            serde_json::from_value::<StandaloneRecoveryCreateIdentity>(wire.clone()).unwrap(),
+            identity
+        );
+        for requirements in [
+            r#""request_bound","recipeRequirement":"supersede""#,
+            r#""supersede","recipeRequirement":"request_bound""#,
+        ] {
+            let duplicate = format!(
+                r#"{{"targetSessionId":"standalone_target01","launchOwnerProof":"private-proof","recipeRequirement":{requirements}}}"#
+            );
+            let error =
+                serde_json::from_str::<StandaloneRecoveryCreateIdentity>(&duplicate).unwrap_err();
+            assert!(error.to_string().contains("duplicate field"));
+        }
+
+        // A legacy runtime's enum decoder must reject the unknown supersede intent.
+        #[derive(Debug, Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum LegacyRecipeRequirement {
+            Existing,
+            InitializeIfAbsent,
+            RequestBound,
+        }
+        let error =
+            serde_json::from_value::<LegacyRecipeRequirement>(wire["recipeRequirement"].clone())
+                .unwrap_err();
+        assert!(error.to_string().contains("unknown variant"));
     }
 
     #[test]

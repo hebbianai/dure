@@ -16,6 +16,7 @@ use hmux_client::{
     StandaloneResurrectionRecipe, StandaloneResurrectionReplayPolicy, StandaloneSessionCreator,
     TerminalEnvironment, WorkingDirectorySource, list_local_sessions_isolated,
     probe_local_process_generation, probe_local_session, probe_local_session_exact,
+    standalone_create_idempotency_key,
 };
 #[cfg(feature = "terminal-state-stream")]
 use hmux_client::{
@@ -5492,6 +5493,560 @@ fn recovery_spawn_failure_preserves_the_canonical_recipe_and_retry_succeeds() {
 }
 
 #[test]
+fn supersede_replaces_the_final_request_and_reconciles_a_lost_response() {
+    let state = tempfile::tempdir().unwrap();
+    let discovery_root = state.path().join("discovery");
+    let runtime = env!("CARGO_BIN_EXE_hmux-runtime");
+    let creator = StandaloneSessionCreator::new(runtime).with_discovery_root(&discovery_root);
+    let source = creator
+        .create(
+            StandaloneCreateRequest::new(
+                state.path().canonicalize().unwrap(),
+                Some("supersede-final-request".into()),
+                vec!["/bin/sh".into()],
+                24,
+                80,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let source_generation = source.session().descriptor().clone();
+    abruptly_kill_test_session(&source_generation);
+    let cwd = state.path().join("replacement-cwd");
+    fs::create_dir(&cwd).unwrap();
+    let environment = TerminalEnvironment::new(BTreeMap::from([(
+        "NO_COLOR".to_string(),
+        Some("1".to_string()),
+    )]))
+    .unwrap();
+    let identity = recovery_identity_for_source(
+        &source_generation,
+        "standalone_supersede_final01",
+        "supersede-final-owner",
+    )
+    .with_recipe_requirement(StandaloneRecipeRequirement::Supersede);
+    let request = StandaloneCreateRequest::new(
+        cwd.canonicalize().unwrap(),
+        Some("supersede-final-request".into()),
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf superseded; exec /bin/sh".into(),
+        ],
+        37,
+        113,
+    )
+    .unwrap()
+    .with_terminal_environment(environment.clone())
+    .unwrap()
+    .with_recovery_identity(identity.clone())
+    .unwrap();
+
+    let mut broker = Command::new(runtime)
+        .args(["--no-autostart", STANDALONE_CREATE_BROKER_SUBCOMMAND])
+        .env(hmux_client::DISCOVERY_ROOT_ENV, &discovery_root)
+        .current_dir(state.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    write_json_frame(broker.stdin.as_mut().unwrap(), &request).unwrap();
+    drop(broker.stdin.take());
+    assert!(broker.wait().unwrap().success());
+    let restored = creator.create(request.clone()).unwrap();
+    let generation = restored.session().descriptor().clone();
+    assert_eq!(generation.session_id, "standalone_supersede_final01");
+    assert_replay_contains(restored.session(), b"superseded");
+    let canonical = read_only_resurrection_recipe(&discovery_root, "supersede-final-request");
+    let persisted: serde_json::Value = serde_json::from_slice(
+        &fs::read(resurrection_recipe_path(
+            &discovery_root,
+            "supersede-final-request",
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        persisted["supersedeAudit"]["previousRecipe"]["command"],
+        serde_json::json!(["/bin/sh"])
+    );
+    assert!(persisted["supersedeAudit"].get("request").is_none());
+    assert_eq!(
+        persisted["supersedeAudit"]["requestBinding"]["idempotencyKey"],
+        serde_json::json!(standalone_create_idempotency_key(
+            request.recovery_identity().unwrap()
+        ))
+    );
+    assert_eq!(
+        persisted["supersedeAudit"]["requestBinding"]["requestSha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+    assert_eq!(canonical.command(), request.command());
+    assert_eq!(canonical.provider_cwd(), cwd.canonicalize().unwrap());
+    assert_eq!(
+        (canonical.initial_rows(), canonical.initial_columns()),
+        (37, 113)
+    );
+    assert_eq!(canonical.terminal_environment(), &environment);
+    let retry = creator.create(request.clone()).unwrap();
+    assert_eq!(
+        retry.session().descriptor().host_instance_id,
+        generation.host_instance_id
+    );
+
+    let changed_command = StandaloneCreateRequest::new(
+        canonical.provider_cwd(),
+        Some(canonical.session_name().into()),
+        vec!["/bin/sh".into()],
+        37,
+        113,
+    )
+    .unwrap()
+    .with_terminal_environment(environment)
+    .unwrap()
+    .with_recovery_identity(identity.clone())
+    .unwrap();
+    let changed_cwd = StandaloneCreateRequest::new(
+        state.path().canonicalize().unwrap(),
+        Some(canonical.session_name().into()),
+        canonical.command().to_vec(),
+        37,
+        113,
+    )
+    .unwrap()
+    .with_terminal_environment(canonical.terminal_environment().clone())
+    .unwrap()
+    .with_recovery_identity(identity.clone())
+    .unwrap();
+    let omitted_environment = StandaloneCreateRequest::new(
+        canonical.provider_cwd(),
+        Some(canonical.session_name().into()),
+        canonical.command().to_vec(),
+        37,
+        113,
+    )
+    .unwrap()
+    .with_recovery_identity(identity)
+    .unwrap();
+    for different in [changed_command, changed_cwd, omitted_environment] {
+        assert_eq!(
+            creator.create(different).unwrap_err().code(),
+            "hmux_standalone_recipe_conflict"
+        );
+        assert_eq!(
+            read_only_resurrection_recipe(&discovery_root, canonical.session_name()),
+            canonical
+        );
+    }
+    let catalog = LocalSessionCatalog::new(&discovery_root);
+    restored
+        .session()
+        .terminate_standalone(&catalog, Duration::from_secs(3))
+        .unwrap();
+}
+
+#[test]
+fn supersede_changes_argv_or_geometry_independently() {
+    for change_argv in [true, false] {
+        let state = tempfile::tempdir().unwrap();
+        let runtime = env!("CARGO_BIN_EXE_hmux-runtime");
+        let mut fixture = IdleRetirementFixture::create_with_runtime(
+            &state,
+            "supersede-single-field",
+            vec!["/bin/sh".into()],
+            std::path::Path::new(runtime),
+        );
+        let old = read_only_resurrection_recipe(
+            fixture.catalog.discovery_root(),
+            "supersede-single-field",
+        );
+        abruptly_kill_test_session(&fixture.descriptor);
+        fixture.cleaned = true;
+        let command = if change_argv {
+            vec!["/bin/sh".into(), "-c".into(), "exec /bin/sh".into()]
+        } else {
+            old.command().to_vec()
+        };
+        let (rows, columns) = if change_argv {
+            (old.initial_rows(), old.initial_columns())
+        } else {
+            (old.initial_rows() + 1, old.initial_columns() + 1)
+        };
+        let request = StandaloneCreateRequest::new(
+            old.provider_cwd(),
+            Some(old.session_name().into()),
+            command,
+            rows,
+            columns,
+        )
+        .unwrap()
+        .with_terminal_environment(old.terminal_environment().clone())
+        .unwrap()
+        .with_resurrection_replay_policy(old.resurrection_replay_policy())
+        .unwrap()
+        .with_retirement_policy_option(old.retirement_policy())
+        .unwrap()
+        .with_recovery_identity(
+            recovery_identity_for_source(
+                &fixture.descriptor,
+                "standalone_supersede_field01",
+                "supersede-field-owner",
+            )
+            .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+        )
+        .unwrap();
+        let creator = StandaloneSessionCreator::new(runtime)
+            .with_discovery_root(fixture.catalog.discovery_root());
+        let restored = creator.create(request.clone()).unwrap();
+        let canonical =
+            read_only_resurrection_recipe(fixture.catalog.discovery_root(), old.session_name());
+        assert_eq!(canonical.command(), request.command());
+        assert_eq!(
+            (canonical.initial_rows(), canonical.initial_columns()),
+            (rows, columns)
+        );
+        assert_eq!(canonical.provider_cwd(), old.provider_cwd());
+        assert_eq!(canonical.terminal_environment(), old.terminal_environment());
+        restored
+            .session()
+            .terminate_standalone(&fixture.catalog, Duration::from_secs(3))
+            .unwrap();
+    }
+}
+
+#[test]
+fn successive_supersedes_use_the_latest_source_and_preserve_the_audit_chain() {
+    let state = tempfile::tempdir().unwrap();
+    let runtime = env!("CARGO_BIN_EXE_hmux-runtime");
+    let mut fixture = IdleRetirementFixture::create_with_runtime(
+        &state,
+        "supersede-successive",
+        vec!["/bin/sh".into()],
+        std::path::Path::new(runtime),
+    );
+    let original =
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), "supersede-successive");
+    abruptly_kill_test_session(&fixture.descriptor);
+    fixture.cleaned = true;
+    let creator = StandaloneSessionCreator::new(runtime)
+        .with_discovery_root(fixture.catalog.discovery_root());
+    let mut source = fixture.descriptor.clone();
+    let mut previous = original;
+    for index in 0..2 {
+        let request = StandaloneCreateRequest::new(
+            previous.provider_cwd(),
+            Some(previous.session_name().into()),
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                format!("printf iteration-{index}; exec /bin/sh"),
+            ],
+            24,
+            80,
+        )
+        .unwrap()
+        .with_recovery_identity(
+            recovery_identity_for_source(
+                &source,
+                &format!("standalone_supersede_repeat0{index}"),
+                &format!("supersede-repeat-owner-{index}"),
+            )
+            .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+        )
+        .unwrap();
+        let restored = creator.create(request.clone()).unwrap();
+        let canonical = read_only_resurrection_recipe(
+            fixture.catalog.discovery_root(),
+            previous.session_name(),
+        );
+        assert_eq!(canonical.command(), request.command());
+        let payload: serde_json::Value = serde_json::from_slice(
+            &fs::read(resurrection_recipe_path(
+                fixture.catalog.discovery_root(),
+                previous.session_name(),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            payload["supersedeAudit"]["previousRecipe"],
+            serde_json::to_value(&previous).unwrap()
+        );
+        if index == 1 {
+            let entry = &payload["supersedeAudit"]["history"][0];
+            assert!(entry.get("request").is_none());
+            assert!(
+                entry["requestBinding"]["idempotencyKey"]
+                    .as_str()
+                    .is_some_and(|key| !key.is_empty())
+            );
+            // The owner proof must not accumulate in audit history.
+            assert!(!entry.to_string().contains("supersede-repeat-owner-0"));
+        }
+        source = restored.session().descriptor().clone();
+        previous = canonical;
+        if index == 0 {
+            abruptly_kill_test_session(&source);
+        } else {
+            restored
+                .session()
+                .terminate_standalone(&fixture.catalog, Duration::from_secs(3))
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn supersede_requires_a_saved_recipe_including_for_a_request_bound_name() {
+    for request_bound in [false, true] {
+        let state = tempfile::tempdir().unwrap();
+        let discovery_root = state.path().join("discovery");
+        let runtime = env!("CARGO_BIN_EXE_hmux-runtime");
+        let creator = StandaloneSessionCreator::new(runtime).with_discovery_root(&discovery_root);
+        let ordinary = StandaloneCreateRequest::new(
+            state.path().canonicalize().unwrap(),
+            Some("supersede-no-recipe".into()),
+            vec!["/bin/sh".into()],
+            24,
+            80,
+        )
+        .unwrap();
+        let source = if request_bound {
+            let created = creator
+                .create(
+                    ordinary
+                        .clone()
+                        .with_recovery_identity(
+                            StandaloneRecoveryCreateIdentity::new(
+                                "standalone_supersede_bound01",
+                                "supersede-bound-owner",
+                            )
+                            .unwrap()
+                            .with_recipe_requirement(StandaloneRecipeRequirement::RequestBound),
+                        )
+                        .unwrap(),
+                )
+                .unwrap();
+            let descriptor = created.session().descriptor().clone();
+            abruptly_kill_test_session(&descriptor);
+            Some(descriptor)
+        } else {
+            None
+        };
+        let identity = match source.as_ref() {
+            Some(source) => recovery_identity_for_source(
+                source,
+                "standalone_supersede_missing01",
+                "supersede-missing-owner",
+            ),
+            None => StandaloneRecoveryCreateIdentity::new(
+                "standalone_supersede_missing01",
+                "supersede-missing-owner",
+            )
+            .unwrap(),
+        }
+        .with_recipe_requirement(StandaloneRecipeRequirement::Supersede);
+        let error = creator
+            .create(ordinary.with_recovery_identity(identity).unwrap())
+            .unwrap_err();
+        assert_eq!(error.code(), "hmux_standalone_recovery_target_unavailable");
+        assert!(!resurrection_recipe_path(&discovery_root, "supersede-no-recipe").exists());
+    }
+}
+
+#[test]
+fn supersede_refuses_a_live_source_without_changing_its_recipe() {
+    let state = tempfile::tempdir().unwrap();
+    let fixture = IdleRetirementFixture::create_with_runtime(
+        &state,
+        "supersede-live-source",
+        vec!["/bin/sh".into()],
+        std::path::Path::new(env!("CARGO_BIN_EXE_hmux-runtime")),
+    );
+    let canonical =
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), "supersede-live-source");
+    let request = request_from_recipe(&canonical)
+        .with_recovery_identity(
+            recovery_identity_for_source(
+                &fixture.descriptor,
+                "standalone_supersede_live01",
+                "supersede-live-owner",
+            )
+            .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+        )
+        .unwrap();
+    let creator = StandaloneSessionCreator::new(env!("CARGO_BIN_EXE_hmux-runtime"))
+        .with_discovery_root(fixture.catalog.discovery_root());
+    assert_eq!(
+        creator.create(request).unwrap_err().code(),
+        "hmux_standalone_supersede_refused"
+    );
+    assert_eq!(
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), canonical.session_name()),
+        canonical
+    );
+    assert!(process_generation_is_live(&fixture.descriptor.host_process).unwrap());
+}
+
+#[test]
+fn supersede_host_spawn_failure_keeps_the_new_recipe_as_replay_authority() {
+    let state = tempfile::tempdir().unwrap();
+    let (runtime, marker) = host_spawn_before_start_fault_runtime(&state);
+    let mut fixture = IdleRetirementFixture::create_with_runtime(
+        &state,
+        "supersede-spawn-failure",
+        vec!["/bin/sh".into()],
+        &runtime,
+    );
+    let old =
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), "supersede-spawn-failure");
+    abruptly_kill_test_session(&fixture.descriptor);
+    fixture.cleaned = true;
+    let request = StandaloneCreateRequest::new(
+        old.provider_cwd(),
+        Some(old.session_name().into()),
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf new-authority; exec /bin/sh".into(),
+        ],
+        35,
+        109,
+    )
+    .unwrap()
+    .with_recovery_identity(
+        recovery_identity_for_source(
+            &fixture.descriptor,
+            "standalone_supersede_spawn01",
+            "supersede-spawn-owner",
+        )
+        .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+    )
+    .unwrap();
+    fs::write(&marker, b"fail").unwrap();
+    let creator = StandaloneSessionCreator::new(&runtime)
+        .with_discovery_root(fixture.catalog.discovery_root());
+    assert!(creator.create(request.clone()).is_err());
+    assert_eq!(fs::read(&marker).unwrap(), b"observed");
+    let canonical =
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), old.session_name());
+    assert_eq!(canonical.command(), request.command());
+    assert_eq!(
+        (canonical.initial_rows(), canonical.initial_columns()),
+        (35, 109)
+    );
+    assert_ne!(canonical, old);
+    fs::remove_file(&marker).unwrap();
+    let restored = creator.create(request_from_recipe(&canonical)).unwrap();
+    assert_replay_contains(restored.session(), b"new-authority");
+    restored
+        .session()
+        .terminate_standalone(&fixture.catalog, Duration::from_secs(3))
+        .unwrap();
+}
+
+#[test]
+fn supersede_refuses_a_live_provider_after_its_host_exits() {
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create_with_runtime(
+        &state,
+        "supersede-live-provider",
+        vec!["/bin/sh".into()],
+        std::path::Path::new(env!("CARGO_BIN_EXE_hmux-runtime")),
+    );
+    let canonical =
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), "supersede-live-provider");
+    let paused = pause_exact_test_group(&fixture.descriptor.provider_process, "provider");
+    let host_group = exact_owned_process_group(&fixture.descriptor.host_process, "Host");
+    signal_exact_test_group(&fixture.descriptor.host_process, host_group, "Host");
+    wait_for_process_generation_exit(&fixture.descriptor.host_process, "Host");
+    assert!(process_generation_is_live(&fixture.descriptor.provider_process).unwrap());
+    let request = request_from_recipe(&canonical)
+        .with_recovery_identity(
+            recovery_identity_for_source(
+                &fixture.descriptor,
+                "standalone_supersede_provider01",
+                "supersede-provider-owner",
+            )
+            .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+        )
+        .unwrap();
+    let creator = StandaloneSessionCreator::new(env!("CARGO_BIN_EXE_hmux-runtime"))
+        .with_discovery_root(fixture.catalog.discovery_root());
+    assert_eq!(
+        creator.create(request).unwrap_err().code(),
+        "hmux_standalone_supersede_refused"
+    );
+    assert_eq!(
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), canonical.session_name()),
+        canonical
+    );
+    assert!(process_generation_is_live(&fixture.descriptor.provider_process).unwrap());
+    let provider_group =
+        exact_owned_process_group(&fixture.descriptor.provider_process, "provider");
+    signal_exact_test_group(
+        &fixture.descriptor.provider_process,
+        provider_group,
+        "provider",
+    );
+    drop(paused);
+    wait_for_process_generation_exit(&fixture.descriptor.provider_process, "provider");
+    fixture.cleaned = true;
+}
+
+#[test]
+fn supersede_refuses_a_mismatched_source_generation_without_publication() {
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create_with_runtime(
+        &state,
+        "supersede-source-mismatch",
+        vec!["/bin/sh".into()],
+        std::path::Path::new(env!("CARGO_BIN_EXE_hmux-runtime")),
+    );
+    let canonical = read_only_resurrection_recipe(
+        fixture.catalog.discovery_root(),
+        "supersede-source-mismatch",
+    );
+    abruptly_kill_test_session(&fixture.descriptor);
+    fixture.cleaned = true;
+    let mut wrong_generation = fixture.descriptor.clone();
+    wrong_generation.channel_epoch =
+        (wrong_generation.channel_epoch.parse::<u64>().unwrap() + 1).to_string();
+    let request = request_from_recipe(&canonical)
+        .with_recovery_identity(
+            recovery_identity_for_source(
+                &wrong_generation,
+                "standalone_supersede_wrong01",
+                "supersede-wrong-owner",
+            )
+            .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+        )
+        .unwrap();
+    let creator = StandaloneSessionCreator::new(env!("CARGO_BIN_EXE_hmux-runtime"))
+        .with_discovery_root(fixture.catalog.discovery_root());
+    assert_eq!(
+        creator.create(request).unwrap_err().code(),
+        "hmux_standalone_recovery_name_conflict"
+    );
+    assert_eq!(
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), canonical.session_name()),
+        canonical
+    );
+    assert!(
+        !fixture
+            .catalog
+            .list()
+            .unwrap()
+            .iter()
+            .any(|session| session.session_id == "standalone_supersede_wrong01")
+    );
+}
+
+#[test]
 fn old_style_same_name_spawn_failure_preserves_the_prior_exact_recipe() {
     let state = tempfile::tempdir().unwrap();
     let (runtime, spawn_fault_marker) = host_spawn_before_start_fault_runtime(&state);
@@ -5525,6 +6080,272 @@ fn old_style_same_name_spawn_failure_preserves_the_prior_exact_recipe() {
         .session()
         .terminate_standalone(&fixture.catalog, Duration::from_secs(3))
         .unwrap();
+}
+
+#[test]
+fn concurrent_supersede_requests_publish_only_one_target_generation() {
+    let state = tempfile::tempdir().unwrap();
+    let runtime = env!("CARGO_BIN_EXE_hmux-runtime");
+    let mut fixture = IdleRetirementFixture::create_with_runtime(
+        &state,
+        "supersede-concurrent",
+        vec!["/bin/sh".into()],
+        std::path::Path::new(runtime),
+    );
+    let old =
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), "supersede-concurrent");
+    abruptly_kill_test_session(&fixture.descriptor);
+    fixture.cleaned = true;
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let workers = (0..2)
+        .map(|index| {
+            let request = StandaloneCreateRequest::new(
+                old.provider_cwd(),
+                Some(old.session_name().into()),
+                vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    format!("printf winner-{index}; exec /bin/sh"),
+                ],
+                24,
+                80,
+            )
+            .unwrap()
+            .with_recovery_identity(
+                recovery_identity_for_source(
+                    &fixture.descriptor,
+                    &format!("standalone_supersede_race0{index}"),
+                    &format!("supersede-race-owner-{index}"),
+                )
+                .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+            )
+            .unwrap();
+            let barrier = barrier.clone();
+            let discovery_root = fixture.catalog.discovery_root().to_path_buf();
+            std::thread::spawn(move || {
+                barrier.wait();
+                StandaloneSessionCreator::new(runtime)
+                    .with_discovery_root(discovery_root)
+                    .create(request)
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+    let results = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    let winner = results.into_iter().find_map(Result::ok).unwrap();
+    let canonical =
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), old.session_name());
+    let index = if winner.session().descriptor().session_id.ends_with("00") {
+        0
+    } else {
+        1
+    };
+    assert_eq!(
+        canonical.command()[2],
+        format!("printf winner-{index}; exec /bin/sh")
+    );
+    let ready = fixture
+        .catalog
+        .list()
+        .unwrap()
+        .into_iter()
+        .filter(|session| {
+            session.lifecycle == SessionLifecycle::Ready
+                && session.session_name.as_deref() == Some(old.session_name())
+        })
+        .count();
+    assert_eq!(ready, 1);
+    winner
+        .session()
+        .terminate_standalone(&fixture.catalog, Duration::from_secs(3))
+        .unwrap();
+}
+
+#[test]
+fn supersede_prepare_failure_preserves_the_previous_recipe() {
+    let state = tempfile::tempdir().unwrap();
+    let runtime = env!("CARGO_BIN_EXE_hmux-runtime");
+    let mut fixture = IdleRetirementFixture::create_with_runtime(
+        &state,
+        "supersede-prepare-failure",
+        vec!["/bin/sh".into()],
+        std::path::Path::new(runtime),
+    );
+    let old = read_only_resurrection_recipe(
+        fixture.catalog.discovery_root(),
+        "supersede-prepare-failure",
+    );
+    abruptly_kill_test_session(&fixture.descriptor);
+    fixture.cleaned = true;
+    let path = resurrection_recipe_path(fixture.catalog.discovery_root(), old.session_name());
+    let pending = path.with_file_name(format!(
+        ".{}.pending",
+        path.file_stem().unwrap().to_str().unwrap()
+    ));
+    fs::create_dir(&pending).unwrap();
+    let request = StandaloneCreateRequest::new(
+        old.provider_cwd(),
+        Some(old.session_name().into()),
+        vec!["/bin/sh".into(), "-c".into(), "exec /bin/sh".into()],
+        24,
+        80,
+    )
+    .unwrap()
+    .with_recovery_identity(
+        recovery_identity_for_source(
+            &fixture.descriptor,
+            "standalone_supersede_prepare01",
+            "supersede-prepare-owner",
+        )
+        .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+    )
+    .unwrap();
+    let creator = StandaloneSessionCreator::new(runtime)
+        .with_discovery_root(fixture.catalog.discovery_root());
+    assert!(creator.create(request).is_err());
+    assert_eq!(
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), old.session_name()),
+        old
+    );
+    fs::remove_dir(pending).unwrap();
+    let restored = creator.create(request_from_recipe(&old)).unwrap();
+    restored
+        .session()
+        .terminate_standalone(&fixture.catalog, Duration::from_secs(3))
+        .unwrap();
+}
+
+#[test]
+fn supersede_broker_crash_before_receipt_keeps_the_published_recipe() {
+    let state = tempfile::tempdir().unwrap();
+    let runtime = env!("CARGO_BIN_EXE_hmux-runtime");
+    let mut fixture = IdleRetirementFixture::create_with_runtime(
+        &state,
+        "supersede-crash",
+        vec!["/bin/sh".into()],
+        std::path::Path::new(runtime),
+    );
+    let old = read_only_resurrection_recipe(fixture.catalog.discovery_root(), "supersede-crash");
+    abruptly_kill_test_session(&fixture.descriptor);
+    fixture.cleaned = true;
+    let request = StandaloneCreateRequest::new(
+        old.provider_cwd(),
+        Some(old.session_name().into()),
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf crash-authority; exec /bin/sh".into(),
+        ],
+        24,
+        80,
+    )
+    .unwrap()
+    .with_recovery_identity(
+        recovery_identity_for_source(
+            &fixture.descriptor,
+            "standalone_supersede_crash01",
+            "supersede-crash-owner",
+        )
+        .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+    )
+    .unwrap();
+    let (paused_runtime, marker) = host_ready_pause_runtime(&state);
+    let mut broker = Command::new(paused_runtime)
+        .args(["--no-autostart", STANDALONE_CREATE_BROKER_SUBCOMMAND])
+        .env(
+            hmux_client::DISCOVERY_ROOT_ENV,
+            fixture.catalog.discovery_root(),
+        )
+        .current_dir(state.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    write_json_frame(broker.stdin.as_mut().unwrap(), &request).unwrap();
+    drop(broker.stdin.take());
+    wait_for_exact_file(&marker, b"host_ready_published");
+    let canonical =
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), old.session_name());
+    assert_eq!(canonical.command(), request.command());
+    let replacement = fixture
+        .catalog
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|session| session.session_id == "standalone_supersede_crash01")
+        .unwrap();
+    broker.kill().unwrap();
+    broker.wait().unwrap();
+    abruptly_kill_test_session(&replacement);
+    let creator = StandaloneSessionCreator::new(runtime)
+        .with_discovery_root(fixture.catalog.discovery_root());
+    let restored = creator.create(request_from_recipe(&canonical)).unwrap();
+    assert_replay_contains(restored.session(), b"crash-authority");
+    assert_eq!(
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), old.session_name()),
+        canonical
+    );
+    restored
+        .session()
+        .terminate_standalone(&fixture.catalog, Duration::from_secs(3))
+        .unwrap();
+}
+
+#[test]
+fn supersede_directory_sync_failure_retains_the_published_replay_authority() {
+    let state = tempfile::tempdir().unwrap();
+    let (runtime, marker) = recipe_sync_fault_runtime(&state);
+    let mut fixture = IdleRetirementFixture::create_with_runtime(
+        &state,
+        "supersede-sync-failure",
+        vec!["/bin/sh".into()],
+        &runtime,
+    );
+    let old =
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), "supersede-sync-failure");
+    abruptly_kill_test_session(&fixture.descriptor);
+    fixture.cleaned = true;
+    let request = StandaloneCreateRequest::new(
+        old.provider_cwd(),
+        Some(old.session_name().into()),
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf sync-authority; exec /bin/sh".into(),
+        ],
+        24,
+        80,
+    )
+    .unwrap()
+    .with_recovery_identity(
+        recovery_identity_for_source(
+            &fixture.descriptor,
+            "standalone_supersede_sync01",
+            "supersede-sync-owner",
+        )
+        .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+    )
+    .unwrap();
+    fs::write(&marker, b"2").unwrap();
+    let creator = StandaloneSessionCreator::new(&runtime)
+        .with_discovery_root(fixture.catalog.discovery_root());
+    assert!(creator.create(request.clone()).is_err());
+    let canonical =
+        read_only_resurrection_recipe(fixture.catalog.discovery_root(), old.session_name());
+    assert_eq!(canonical.command(), request.command());
+    fs::remove_file(&marker).unwrap();
+    let restored = creator.create(request_from_recipe(&canonical)).unwrap();
+    assert_replay_contains(restored.session(), b"sync-authority");
+    restored
+        .session()
+        .terminate_standalone(&fixture.catalog, Duration::from_secs(3))
+        .unwrap();
+    assert_no_pending_resurrection_recipe(fixture.catalog.discovery_root());
 }
 
 #[test]

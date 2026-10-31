@@ -89,7 +89,8 @@ use hmux_runtime_contract::{
     ManagedStopRequest, PROVIDER_STATE_ENVIRONMENT_CAPABILITY,
     PROVIDER_STATE_ENVIRONMENT_REMOVAL_CAPABILITY, ProviderConversationIdentitySeed,
     ProviderStateEnvironment, STANDALONE_CREATE_BROKER_SUBCOMMAND, StandaloneCreateBrokerResponse,
-    StandaloneCreateReceipt, StandaloneCreateRequest, TerminalDefaultColors, TerminalEnvironment,
+    StandaloneCreateReceipt, StandaloneCreateRequest, StandaloneRecipeRequirement,
+    TerminalDefaultColors, TerminalEnvironment,
     read_json_frame, read_managed_attach_finalization, read_managed_attach_request,
     read_managed_create_request, read_managed_stop_reconcile_request, read_managed_stop_request,
     read_standalone_create_request, write_json_frame, write_managed_attach_response,
@@ -1045,6 +1046,13 @@ fn validate_managed_stop_fence(
 
 fn launch_standalone(request: StandaloneCreateRequest) -> Result<StandaloneCreateReceipt> {
     request.validate()?;
+    if request.recovery_identity().is_some_and(|identity| {
+        identity.recipe_requirement() == StandaloneRecipeRequirement::Supersede
+    }) {
+        return Err(
+            "Windows standalone recipe supersede is not available in this runtime build".into(),
+        );
+    }
     if request.recovery_identity().is_some() {
         return Err("Windows standalone recovery is not available in this runtime build".into());
     }
@@ -3372,4 +3380,53 @@ fn lock<T>(mutex: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>> {
     mutex
         .lock()
         .map_err(|_| "hmux runtime lock was poisoned".into())
+}
+
+#[cfg(test)]
+mod standalone_recovery_tests {
+    use super::*;
+    use hmux_runtime_contract::StandaloneRecoveryCreateIdentity;
+
+    #[test]
+    fn supersede_is_refused_before_filesystem_or_process_side_effects() {
+        let request = StandaloneCreateRequest::new(
+            "C:/hmux-test-missing-supersede-cwd",
+            Some("supersede-test".into()),
+            vec!["unused-provider".into()],
+            24,
+            80,
+        )
+        .unwrap()
+        .with_recovery_identity(
+            StandaloneRecoveryCreateIdentity::new("standalone_target01", "private-proof")
+                .unwrap()
+                .with_recipe_requirement(StandaloneRecipeRequirement::Supersede),
+        )
+        .unwrap();
+        let error = launch_standalone(request).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Windows standalone recipe supersede is not available in this runtime build"
+        );
+    }
+
+    #[test]
+    fn existing_recovery_keeps_its_unsupported_refusal() {
+        let request = StandaloneCreateRequest::new(
+            "C:/hmux-test-missing-recovery-cwd",
+            Some("recovery-test".into()),
+            Vec::new(),
+            24,
+            80,
+        )
+        .unwrap()
+        .with_recovery_identity(
+            StandaloneRecoveryCreateIdentity::new("standalone_target01", "private-proof").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            launch_standalone(request).unwrap_err().to_string(),
+            "Windows standalone recovery is not available in this runtime build"
+        );
+    }
 }
