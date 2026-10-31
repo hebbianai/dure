@@ -196,6 +196,7 @@ impl StandaloneSessionCreator {
                         "hmux_standalone_read_only_name_conflict"
                     }
                     "hmux_standalone_recipe_conflict" => "hmux_standalone_recipe_conflict",
+                    "hmux_standalone_supersede_refused" => "hmux_standalone_supersede_refused",
                     _ => "hmux_standalone_create_refused",
                 };
                 return Err(ClientError::transport(
