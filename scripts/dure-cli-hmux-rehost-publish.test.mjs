@@ -31,7 +31,7 @@ async function fixture(respond) {
   };
   const backend = {
     id: "fixture", generation: "generation-1", protocol: { major: 1, minor: 0 },
-    capabilities: [operation, "agent_runtime.projection.inspect", "agent_runtime.wake"], observedAtMs: Date.now(),
+    capabilities: [operation, "agent_runtime.projection.inspect", "agent_runtime.wake", "agent_runtime.transition"], observedAtMs: Date.now(),
   };
   const server = createServer((stream) => {
     let input = "";
@@ -415,4 +415,56 @@ it("does not give local execution commands for a remote backend", async () => {
   expect(report.error.code).toBe("rehost_preview_local_only");
   expect(report.continuation).toBeUndefined();
   expect(requested).toBe(false);
+});
+
+it("names a missing Agent's recovery path and lists every same-named Agent with an exact selector", async () => {
+  const { root, calls, runCommand } = await fixture();
+  writeRegistry(root, []);
+  const missing = await runCommand(previewArgs.filter((arg) => arg !== "--json"));
+  expect(missing.code).toBe(1);
+  expect(missing.stderr).toContain("rehost_name_not_found: No Agent named project/worker");
+  expect(missing.stderr).toContain("dure runs resume <agent-id>");
+
+  writeRegistry(root, [projectedAgent, { ...projectedAgent, id: "agent-2", sessionId: "session-2" },
+    { ...projectedAgent, id: "agent-3", project: "elsewhere", sessionId: "session-3" }]);
+  const ambiguous = await runCommand(["hmux", "rehost", "--name", "worker", "--backend", "fixture", "--json"]);
+  expect(ambiguous.code).toBe(1);
+  expect(JSON.parse(ambiguous.stderr)).toMatchObject({ ok: false, error: { code: "rehost_name_not_unique", candidates: [
+    { agentId: "agent-1", project: "project", retry: ["runs", "resume", "agent-1"] },
+    { agentId: "agent-2", project: "project", retry: ["runs", "resume", "agent-2"] },
+    { agentId: "agent-3", project: "elsewhere", retry: ["hmux", "rehost", "--name", "elsewhere/Renamed worker"] },
+  ] } });
+  const text = await runCommand(["hmux", "rehost", "--name", "worker", "--backend", "fixture"]);
+  expect(text.stderr).toContain("3 Agents match worker");
+  expect(text.stderr).toContain("dure 'runs' 'resume' 'agent-2'");
+  expect(calls).toEqual([]);
+});
+
+const stoppedProjection = () => ({
+  schemaVersion: 1, state: "closed", agentId: "agent-1", operationId: "close-operation", stage: "stopped",
+  projectionContext: agentRuntimeProjectionContext(),
+  source: { selectionRevision: 4, interactionProfile: "native_cli",
+    launchSelection: { model: null, effort: null, permissionMode: "default" } },
+});
+
+it.each([false, true])("restarts a stopped Agent through the backend transition without native rehost (confirmed: %s)", async (confirmed) => {
+  const { root, calls, runCommand, nativeCalls } = await fixture((request) => ({
+    result: request.operation === "agent_runtime.projection.inspect" ? stoppedProjection()
+      : { schemaVersion: 1, receipt: { ...projection().receipt, selectionRevision: 5 } },
+  }));
+  writeRegistry(root);
+  const output = await runCommand([...previewArgs.filter((arg) => arg !== "--json"),
+    ...(confirmed ? ["--confirm-restart"] : [])]);
+  expect(output.code, output.stderr).toBe(0);
+  expect(output.stdout).toContain(confirmed ? "agent-1: restart completed" : "Preview: agent-1 (stopped runtime)");
+  expect(output.stdout).toContain("Restart: dure 'runtime' 'switch' 'agent-1' 'terminal' '--expected-revision' '4'");
+  expect(calls.map((request) => request.operation)).toEqual([
+    "agent_runtime.projection.inspect", ...(confirmed ? ["agent_runtime.transition"] : []),
+  ]);
+  if (confirmed) {
+    expect(calls[1].body).toEqual({ schemaVersion: 1, agentId: "agent-1",
+      targetInteractionProfile: "native_cli", expectedSourceRevision: 4 });
+  }
+  expect(nativeCalls()).toEqual([]);
+  expect(existsSync(join(root, "server.json"))).toBe(false);
 });

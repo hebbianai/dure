@@ -103,6 +103,9 @@ const MANAGED_ATTACH_SCHEMA_VERSION: u16 = 1;
 const MANAGED_AGENT_STATE_REPORT_SCHEMA: &str = "hmux-managed-agent-state-report-v1";
 const MANAGED_AGENT_STATE_REPORT_SCHEMA_VERSION: u16 = 1;
 const MANAGED_AGENT_STATE_REPORT_CAUSAL_SCHEMA_VERSION: u16 = 2;
+/// A broker that predates background work must refuse it rather than drop it:
+/// without the field, a turn-end report would read as idle.
+const MANAGED_AGENT_STATE_REPORT_BACKGROUND_WORK_SCHEMA_VERSION: u16 = 3;
 const MANAGED_CREATE_SCHEMA: &str = "hmux-managed-create-v1";
 const MANAGED_CREATE_SCHEMA_VERSION: u16 = 1;
 const MANAGED_CREATE_PROVIDER_STATE_SCHEMA: &str = "hmux-managed-create-v2";
@@ -2985,11 +2988,7 @@ impl ManagedAgentStateReportRequest {
     ) -> Result<Self, RuntimeContractError> {
         let request = Self {
             schema: MANAGED_AGENT_STATE_REPORT_SCHEMA.to_string(),
-            schema_version: if report.causality.is_some() {
-                MANAGED_AGENT_STATE_REPORT_CAUSAL_SCHEMA_VERSION
-            } else {
-                MANAGED_AGENT_STATE_REPORT_SCHEMA_VERSION
-            },
+            schema_version: managed_agent_state_report_schema_version(&report),
             expected_fence,
             report,
         };
@@ -3002,13 +3001,8 @@ impl ManagedAgentStateReportRequest {
     }
 
     pub fn validate(&self) -> Result<(), RuntimeContractError> {
-        let expected_version = if self.report.causality.is_some() {
-            MANAGED_AGENT_STATE_REPORT_CAUSAL_SCHEMA_VERSION
-        } else {
-            MANAGED_AGENT_STATE_REPORT_SCHEMA_VERSION
-        };
         if self.schema != MANAGED_AGENT_STATE_REPORT_SCHEMA
-            || self.schema_version != expected_version
+            || self.schema_version != managed_agent_state_report_schema_version(&self.report)
         {
             return Err(RuntimeContractError::new(
                 "managed agent state report has an unsupported schema",
@@ -3065,6 +3059,16 @@ impl ManagedAgentStateReportRequest {
         }
         .validate(&FrameLimits::default())
         .map_err(|error| RuntimeContractError::new(error.to_string()))
+    }
+}
+
+fn managed_agent_state_report_schema_version(report: &AgentStateReport) -> u16 {
+    if report.background_work {
+        MANAGED_AGENT_STATE_REPORT_BACKGROUND_WORK_SCHEMA_VERSION
+    } else if report.causality.is_some() {
+        MANAGED_AGENT_STATE_REPORT_CAUSAL_SCHEMA_VERSION
+    } else {
+        MANAGED_AGENT_STATE_REPORT_SCHEMA_VERSION
     }
 }
 
@@ -5825,6 +5829,7 @@ mod tests {
                     },
                 ),
                 expected_observation: None,
+                background_work: false,
             },
         )
         .unwrap();
@@ -5872,6 +5877,31 @@ mod tests {
         assert!(
             causal.validate().is_err(),
             "v2 requires its causal envelope"
+        );
+
+        let mut background = request.clone();
+        background.report.activity = hmux_session_protocol::AgentRuntimeActivity::Waiting;
+        background.report.background_work = true;
+        assert!(
+            background.validate().is_err(),
+            "an older broker must refuse, not erase, background work"
+        );
+        background.schema_version = MANAGED_AGENT_STATE_REPORT_BACKGROUND_WORK_SCHEMA_VERSION;
+        background.validate().unwrap();
+        assert_eq!(
+            ManagedAgentStateReportRequest::new(fence.clone(), background.report.clone()).unwrap(),
+            background
+        );
+        let mut background_frame = Vec::new();
+        write_json_frame(&mut background_frame, &background).unwrap();
+        assert_eq!(
+            read_managed_agent_state_report_request(&mut background_frame.as_slice()).unwrap(),
+            background
+        );
+        background.report.background_work = false;
+        assert!(
+            background.validate().is_err(),
+            "v3 requires its background fact"
         );
 
         let mut malformed = encoded;

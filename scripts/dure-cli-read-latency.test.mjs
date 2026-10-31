@@ -70,6 +70,8 @@ if (args[0] === "read" || (args[0] === "--json" && args[1] === "session" && args
   } else if (process.env.DURE_READ_MODE === "failed-read") {
     process.stderr.write("managed read rejected\\n");
     process.exit(2);
+  } else if (process.env.DURE_READ_MODE === "blank-screen" && !args.includes("--json")) {
+    process.stderr.write("hmux: note: screen is blank (2 rows x 50 columns, alternate screen); the program has drawn no text at this size\\n");
   } else if (process.env.DURE_READ_MODE === "slow-follow") {
     let descriptor;
     try {
@@ -198,6 +200,38 @@ describe("dure managed read latency", () => {
     expect(JSON.parse(result.stdout)).toEqual({ ok: true, sessionName: "managed-agent", sequenceThrough: "42", lines: ["한글 terminal", "second line"] });
     expect(calls(callsPath)).toEqual([["read", target === "managed-agent" ? "session-managed" : target,
       "--workspace", workspace, "--lines", "30", "--deadline-ms", "2500", "--json"]]);
+  });
+
+  it("explains a blank screen on stderr instead of printing an empty success", () => {
+    const { environment } = fixture("blank-screen");
+    const result = runRead(environment, "managed-agent", ["-n", "12"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("screen is blank (2 rows x 50 columns, alternate screen)");
+  });
+
+  it("passes a blank screen's geometry through a JSON read", () => {
+    const receipt = {
+      ok: true, sessionName: null, sequenceThrough: "42",
+      rows: 2, columns: 50, alternateScreen: true, lines: [],
+    };
+    const { environment } = fixture("blank-screen", receipt);
+    const result = runRead(environment, "managed-agent", ["-n", "12", "--json"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(receipt);
+    expect(result.stderr).toBe("");
+  });
+
+  it.each([
+    { rows: 0 }, { columns: "50" }, { alternateScreen: "yes" },
+  ])("rejects a malformed screen geometry: %j", (geometry) => {
+    const { environment } = fixture("direct-session", {
+      ok: true, sessionName: null, sequenceThrough: "42", lines: [], ...geometry,
+    });
+    const result = runRead(environment, "managed-agent", ["--json"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("invalid JSON screen receipt");
   });
 
   it("rejects a successful plain-text response to a JSON read", () => {

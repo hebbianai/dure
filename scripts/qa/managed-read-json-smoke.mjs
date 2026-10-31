@@ -39,6 +39,26 @@ const json = (result) => {
 };
 const hmux = (args) => json(run(cli, ["--json", ...args]));
 const dure = (args) => run(process.execPath, [sourceCli, ...args]);
+const waitFor = async (description, observe) => {
+  const deadline = Date.now() + 10000;
+  for (;;) {
+    const observed = observe();
+    if (observed) return observed;
+    assert(Date.now() < deadline, `Timed out waiting for ${description}`);
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+};
+// One fixture provider that paints `screen` once and idles until stopped.
+const createScreenSession = async (id, rows, columns, screen) => {
+  const created = await managedRuntimeOperation({ runtime, cwd: root, environment }, "create", {
+    schema: "hmux-managed-create-v1", schemaVersion: 1, idempotencyKey: id,
+    sessionId: id, workspaceId, providerId: "codex", permissionMode: "default", providerCwd: root,
+    initialRows: rows, initialColumns: columns,
+    command: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(screen)});setInterval(()=>{if(require('node:fs').existsSync(${JSON.stringify(stopFile)}))process.exit(0)},20)`],
+  });
+  assert.equal(created.state, "completed", JSON.stringify(created));
+  return [id, "--workspace", workspaceId];
+};
 
 try {
   const created = await managedRuntimeOperation({ runtime, cwd: root, environment }, "create", {
@@ -81,6 +101,47 @@ try {
   assert.equal(probe.status, "healthy");
   assert.equal(probe.terminalEpoch, session.runtime.generation.terminalEpoch);
   console.log("PASS: qualified Agent and exact Session JSON/text reads preserve the live managed generation");
+
+  // A Codex-shaped full alternate screen whose text starts in the top-left
+  // cell. The Host restores tab stops before the rows; the first row must not
+  // shift right, wrap and scroll off.
+  const fullScreen = [
+    "• Working (21m 05s • esc to interrupt)",
+    "  └ Tip: Use /hooks to view and manage lifecycle hooks.",
+    "",
+    "› Ask Codex to do anything",
+    "",
+    "  model xhigh · ~/project",
+    "  ? for shortcuts",
+  ];
+  const fullExact = await createScreenSession("qa-read-full-screen", 7, 69,
+    `\x1b[?1049h\x1b[2J${fullScreen.map((row, index) => `\x1b[${index + 1};1H${row}`).join("")}\x1b[4;3H`);
+  const fullRead = await waitFor("full-screen rows", () => {
+    const receipt = hmux(["read", ...fullExact, "--lines", "12"]);
+    return receipt.lines.includes("  ? for shortcuts") && receipt;
+  });
+  assert.deepEqual(fullRead.lines, fullScreen, "Hmux read must keep the first full-screen row");
+  const fullText = dure(["read", ...fullExact, "-n", "12"]);
+  assert.equal(fullText.status, 0, fullText.stderr);
+  assert.equal(fullText.stdout, `${fullScreen.join("\n")}\n`);
+  console.log("PASS: a full alternate screen reads from its first row");
+
+  // A full-screen provider in a two-row pane that draws nothing must not read
+  // as a silent empty success.
+  const blankExact = await createScreenSession("qa-read-blank-screen", 2, 50,
+    "\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l");
+  await waitFor("the blank alternate screen", () =>
+    hmux(["session", "snapshot", ...blankExact]).alternateScreen === true);
+  const blankText = dure(["read", ...blankExact, "-n", "12"]);
+  assert.equal(blankText.status, 0, blankText.stderr);
+  assert.equal(blankText.stdout, "");
+  assert.match(blankText.stderr, /screen is blank \(2 rows x 50 columns, alternate screen\)/);
+  const blankJson = json(dure(["read", ...blankExact, "-n", "12", "--json"]));
+  assert.deepEqual(
+    { rows: blankJson.rows, columns: blankJson.columns, alternateScreen: blankJson.alternateScreen, lines: blankJson.lines },
+    { rows: 2, columns: 50, alternateScreen: true, lines: [] },
+  );
+  console.log("PASS: a blank short screen reports its geometry instead of an empty success");
 } finally {
   // End only our fixture provider; the existing guardian reaps its owned Host.
   fs.writeFileSync(stopFile, "stop", { mode: 0o600 });

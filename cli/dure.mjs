@@ -433,7 +433,12 @@ async function cmdOrchestrationInvoke(opts) {
     const detail =
       error instanceof BackendTransportError
         ? orchestrationFailureDetail(error)
-        : { code, message };
+        : {
+            code,
+            ...(typeof error?.field === "string" ? { field: error.field } : {}),
+            ...(typeof error?.disposition === "string" ? { disposition: error.disposition } : {}),
+            message,
+          };
     if (opts.json) {
       process.stderr.write(
         `${JSON.stringify({
@@ -1197,6 +1202,24 @@ function pad(s, n) {
   return s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length);
 }
 
+// A blank screen is a successful read, but empty output alone cannot be told
+// apart from an unreadable session. Hmux names the blank screen's geometry;
+// keep a generic note for readers that do not (older Hmux, backend reads).
+const BLANK_SCREEN_NOTICE = "screen is blank: the session's terminal shows no text";
+
+function screenRead({ text, notice }, json) {
+  const blank = !json && text.trim() === "";
+  return {
+    text: blank ? "" : text,
+    notice: notice || (blank ? BLANK_SCREEN_NOTICE : ""),
+  };
+}
+
+function writeScreenRead({ text, notice }) {
+  if (text) process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
+  if (notice) process.stderr.write(`${notice}\n`);
+}
+
 async function cmdRead(query, opts) {
   if (opts.json && opts.follow) fail("--json cannot be combined with --follow. Request a one-shot JSON snapshot instead.");
   const backendRequested =
@@ -1226,25 +1249,53 @@ async function cmdRead(query, opts) {
       });
       if (opts.json) {
         process.exitCode = sessionReadExitCode(report);
-        return JSON.stringify(report);
+        return { text: JSON.stringify(report), notice: "" };
       }
       if (sessionReadExitCode(report) !== 0) {
         throw new SessionCaptureError("failed", formatSessionRead(report));
       }
-      return formatSessionRead(report);
+      return { text: formatSessionRead(report), notice: "" };
     };
   } else {
     const reg = loadRegistryOptional() ?? { agents: [] };
     const target = resolveReadTarget(reg, query);
     readLabel = target;
-    readScreen = (signal) => capture(reg, target, opts.lines, signal, opts);
+    const { agentScreenReader, currentAgentSessionSuccessor } = await import(
+      "./lib/agent-current-session.mjs"
+    );
+    readScreen = agentScreenReader({
+      agent: target,
+      capture: (session, signal) =>
+        session === target
+          ? capture(reg, target, opts.lines, signal, opts)
+          : capture(reg, session.sessionId, opts.lines, signal, {
+              ...opts,
+              workspace: session.workspaceId,
+            }),
+      findSuccessor: (agent) =>
+        currentAgentSessionSuccessor({
+          agent,
+          resolveBackend: () =>
+            backendProfileQueryContext(
+              typeof agent.runtimeBinding?.backendProfileId === "string"
+                ? { backendSpecified: true, backend: agent.runtimeBinding.backendProfileId }
+                : {},
+            ),
+        }),
+      onSuccessor: (session) => {
+        readLabel = session.sessionId;
+        process.stderr.write(
+          `${agentDisplayName(target)} now runs in Session ${session.sessionId} ` +
+            `(workspace ${session.workspaceId}); the app's agent registry still lists ` +
+            `${target.sessionId}. Reading the current Session.\n`,
+        );
+      },
+    });
   }
   const interruption = captureInterruption();
   if (!opts.follow) {
     try {
-      const out = await readScreen(interruption.signal);
-      process.stdout.write(out);
-      if (!out.endsWith("\n")) process.stdout.write("\n");
+      writeScreenRead(screenRead(await readScreen(interruption.signal), opts.json));
     } catch (error) {
       if (error?.kind === "aborted") {
         process.exitCode = 130;
@@ -1263,7 +1314,8 @@ async function cmdRead(query, opts) {
     while (!interruption.interrupted()) {
       let out;
       try {
-        out = await readScreen(interruption.signal);
+        const { text, notice } = screenRead(await readScreen(interruption.signal), false);
+        out = notice ? `${text}\x1b[90m[${notice}]\x1b[0m\n` : text;
         reportedDelay = false;
       } catch (error) {
         if (error?.kind === "aborted") break;
@@ -1472,8 +1524,7 @@ async function cmdTranscript(query, opts) {
 async function cmdLogs(reg, agent, lines) {
   const interruption = captureInterruption();
   try {
-    const out = await capture(reg, agent, lines, interruption.signal);
-    process.stdout.write(out);
+    writeScreenRead(screenRead(await capture(reg, agent, lines, interruption.signal), false));
   } catch (error) {
     if (error?.kind === "aborted") {
       process.exitCode = 130;
@@ -1584,6 +1635,7 @@ async function sessionQueryContext(opts, loadSessionClientProjection) {
 
 async function emitSessionQuery(action, sessionId, opts) {
   const {
+    collectAliveSessionQuery,
     collectSessionQuery,
     formatSessionQuery,
     loadSessionClientProjection,
@@ -1593,7 +1645,7 @@ async function emitSessionQuery(action, sessionId, opts) {
     opts,
     loadSessionClientProjection,
   );
-  const report = await collectSessionQuery({
+  const query = {
     action,
     hmuxCommand: hmuxCommand(),
     sessionId,
@@ -1605,16 +1657,15 @@ async function emitSessionQuery(action, sessionId, opts) {
     probeBudgetMs:
       opts.probeBudgetMs === undefined ? undefined : Number(opts.probeBudgetMs),
     backend,
-  });
+  };
+  // --alive (only alive sessions) filters every page of the census.
+  const report = action === "list" && opts.alive
+    ? await collectAliveSessionQuery(query)
+    : await collectSessionQuery(query);
 
   // Apply client-side filtering for ls command
   if (action === "list" && report.kind === "dure.sessions.list") {
     let filtered = report.sessions;
-
-    // Filter by --alive (only show alive sessions)
-    if (opts.alive) {
-      filtered = filtered.filter((session) => session.liveness.state === "alive");
-    }
 
     // Filter by --hide-provider (can be repeated)
     if (opts.hideProvider && opts.hideProvider.length > 0) {
@@ -1661,7 +1712,7 @@ after this page, and observationComplete means every returned row was probed.
 Recent lists provider history through the connected app.
 
 Filtering options (dure ls only):
-  --alive                   Show only alive sessions (exclude exited and unknown)
+  --alive                   Show only alive sessions from every census page (exclude exited and unknown)
   --hide-provider ID        Hide sessions from the specified provider ID (can be repeated)
 
 Use --help or -h to show this help without contacting a backend.
@@ -3777,8 +3828,11 @@ Usage:
   dure read <agent-or-session> --follow [-n N]
 
 --json returns one snapshot with lines (an array of strings) and sequenceThrough.
-Local reads preserve Hmux's receipt (ok, sessionName, sequenceThrough, lines).
+Local reads preserve Hmux's receipt (ok, sessionName, sequenceThrough, lines), and
+current Hmux adds the screen's rows, columns and alternateScreen.
 sessionName is null for an unnamed managed session; this does not indicate a read failure.
+A blank screen prints nothing on stdout and a note on stderr. Full-screen agents such
+as Codex can draw nothing while their pane is very short.
 Backend reads return the dure.sessions.read envelope, including exact sessionId and workspaceId.
 --follow redraws text and cannot be combined with --json.
 Reads do not send input, start a session or change focus. Use --workspace to disambiguate exact session IDs.`;
@@ -4118,10 +4172,11 @@ async function main() {
     }
     const { loadSessionClientProjection } = await import("./lib/client-registry.mjs");
     const { resolveRunPresentationTarget } = await import("./lib/run-presentation.mjs");
+    const loadRegistry = () => loadSessionClientProjection({ registryPath: REG, clientId: sessionQueryClientId() });
     const report = await collectRunsCommand({ opts,
       resolveBackend: () => backendProfileQueryContext(opts), descriptor: loadServer, command: hmuxCommand(),
-      resolveTarget: (spaceSelector) => resolveRunPresentationTarget({ spaceSelector,
-        registry: loadSessionClientProjection({ registryPath: REG, clientId: sessionQueryClientId() }) }),
+      resolveTarget: (spaceSelector) => resolveRunPresentationTarget({ spaceSelector, registry: loadRegistry() }),
+      loadRegistry,
     });
     process.stdout.write(`${opts.json ? JSON.stringify(report) : formatRunsCommand(report)}\n`);
     process.exitCode = report.ok ? 0 : 2;

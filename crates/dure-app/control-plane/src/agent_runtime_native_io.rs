@@ -153,14 +153,11 @@ async fn read(
                 .await
                 .map_err(|error| error.code())?;
             let provider = selection.provider_id.as_str().to_owned();
-            let home = resolved
-                .map(|profile| profile.directory().to_path_buf())
-                .or_else(|| {
-                    std::env::var_os("HOME")
-                        .map(PathBuf::from)
-                        .map(|home| home.join(format!(".{provider}")))
-                })
-                .ok_or("agent_runtime_native_history_unavailable")?;
+            let home = provider_credential_profile::provider_state_directory(
+                &selection.provider_id,
+                resolved.as_ref(),
+            )
+            .ok_or("agent_runtime_native_history_unavailable")?;
             let conversation = conversation.to_owned();
             final_response = tokio::task::spawn_blocking(move || {
                 transcript::read_roots(

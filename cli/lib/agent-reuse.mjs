@@ -45,6 +45,23 @@ function publicAgent(payload, expected) {
   };
 }
 
+// The app resolves its own project records and reuses only a live Agent.
+// Backend project IDs and stopped Agents belong to the runs commands.
+const REUSE_REFUSAL_GUIDANCE = {
+  project_not_found: "--project takes the app's project name from dure ls (or its app project ID); " +
+    "Run and runtime output report backend project IDs, a different namespace. " +
+    "To continue a Run or Agent by its Agent ID, preview dure runs resume <agent-id>.",
+  agent_reuse_not_found: "spawn --reuse continues only a live Agent in the app. For a closed or stopped " +
+    "Agent, preview recovery by Agent ID with dure runs resume <agent-id>; it keeps the conversation.",
+};
+
+function withReuseGuidance(error) {
+  const guidance = error instanceof AppControlClientError ? REUSE_REFUSAL_GUIDANCE[error.code] : undefined;
+  if (!guidance) return error;
+  const message = /[.!?]$/.test(error.message) ? error.message : `${error.message}.`;
+  return new AppControlClientError(error.code, `${message} ${guidance}`, { cause: error });
+}
+
 export async function reuseExistingAgent({
   descriptor,
   project,
@@ -69,6 +86,8 @@ export async function reuseExistingAgent({
     path: "/agent/reuse",
     body: request,
     fetchImpl,
+  }).catch((error) => {
+    throw withReuseGuidance(error);
   });
   return {
     schemaVersion: 1,

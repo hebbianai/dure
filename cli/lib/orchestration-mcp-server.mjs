@@ -12,6 +12,7 @@ import {
 import { BackendTransportError } from "./backend-transport.mjs";
 import { orchestrationFailureDetail } from "./orchestration-failure.mjs";
 import { completionRequestSchema } from "./contracts/orchestration-completion.mjs";
+import { interactionOpenRequestSchema } from "./contracts/orchestration-interaction.mjs";
 import {
   currentOrchestrationCheckpointPath,
   parseOrchestrationIntegrationReceipt,
@@ -37,8 +38,8 @@ const interactionReadSchema = {
     readCapability: { ...identitySchema, description: "As the worker, copy context deliveryCapability with the endpointFence; as the author, the Dispatch interactionCapability." },
     endpointFence: {
       type: "object", additionalProperties: false,
-      description: "Copy the exact worker endpointFence from dispatch context when reading as that worker; omit when reading as author.",
-      required: ["endpointRef", "sessionIdentity", "generation", "deliveryCapability", "acknowledgementCapability"],
+      description: "Copy the worker endpointFence from dispatch context when reading as that worker; omit when reading as author. sessionIdentity changes after every restart or account switch: omit it to use this Session's current identity. A copied identity that is no longer current is replaced with this Session's current one and reported in the result.",
+      required: ["endpointRef", "generation", "deliveryCapability", "acknowledgementCapability"],
       properties: { endpointRef: identitySchema, sessionIdentity: identitySchema,
         generation: { type: "integer", minimum: 1 }, deliveryCapability: identitySchema, acknowledgementCapability: identitySchema },
     },
@@ -65,13 +66,14 @@ const tools = [
   {
     name: "orchestration_interaction_open",
     description:
-      "Open one nonblocking Markdown Message or one blocking Text/Select Decision for an explicit dispatch audience. Copying your coordinator grant targets your own coordinator, not another session. For a message to a discovered managed session use orchestration_message_open_exact_session.",
+      "Open one nonblocking Markdown Message or one blocking Text/Select Decision for an explicit dispatch audience. Resolve orchestration_context_get_current first and copy the context fields as described in body; draft fields belong in body.interaction.common. Copying your coordinator grant targets your own coordinator, not another session. For a message to a discovered managed session use orchestration_message_open_exact_session.",
     inputSchema: {
       type: "object",
       required: ["body"],
       properties: {
-        body: { type: "object" },
+        body: interactionOpenRequestSchema,
       },
+      additionalProperties: false,
     },
   },
   {
@@ -279,6 +281,92 @@ async function currentDispatchContext(environment, dependencies) {
   return context;
 }
 
+const FENCED_INTERACTION_READS = new Set(["interaction.get", "interaction.progress"]);
+// Only a read that a stale fence can make fail is retried with the current one.
+const STALE_FENCE_CODES = new Set(["orchestration_record_not_found", "orchestration_capability_denied"]);
+
+function plainRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** The endpoint fence of this process's own current Dispatch context, when the
+ * copied fence names that same endpoint, generation, participant and
+ * capabilities. Only the session identity, which every restart or account
+ * switch replaces, may differ. The backend validated this context against the
+ * process's own Session, so a stale process cannot borrow another's identity. */
+async function currentWorkerFence(body, environment, dependencies) {
+  const fence = body.endpointFence;
+  const context = await currentDispatchContext(environment, dependencies);
+  const current = context.endpointFence;
+  if (
+    !plainRecord(current) ||
+    typeof current.sessionIdentity !== "string" ||
+    context.participant !== body.participant ||
+    context.target?.authority?.workspaceId !== body.authority?.workspaceId ||
+    ["endpointRef", "generation", "deliveryCapability", "acknowledgementCapability"]
+      .some((field) => current[field] !== fence[field])
+  ) {
+    return null;
+  }
+  return current;
+}
+
+async function readInteraction({ method, body, environment, dependencies, endpoint }) {
+  const send = (requestBody) =>
+    (dependencies.request ?? requestOrchestration)(
+      endpoint,
+      createOrchestrationRequest({ method, body: requestBody }),
+      { authorization: environment.DURE_ORCHESTRATION_AUTHORIZATION, environment },
+    );
+  const fence = plainRecord(body) ? body.endpointFence : undefined;
+  if (!plainRecord(fence)) return { receipt: await send(body) };
+  if (fence.sessionIdentity === undefined) {
+    const current = await currentWorkerFence(body, environment, dependencies);
+    if (!current) {
+      throw new Error(
+        "endpointFence.sessionIdentity may be omitted only for this managed Session's current endpoint; copy the endpointRef, generation, participant and capabilities from orchestration_context_get_current",
+      );
+    }
+    return { receipt: await send({ ...body, endpointFence: current }) };
+  }
+  try {
+    return { receipt: await send(body) };
+  } catch (error) {
+    if (
+      !(error instanceof BackendTransportError) ||
+      !STALE_FENCE_CODES.has(error.details?.code)
+    ) {
+      throw error;
+    }
+    let current;
+    try {
+      current = await currentWorkerFence(body, environment, dependencies);
+    } catch (contextError) {
+      // A retired generation explains the failed read better than "not found".
+      throw contextError instanceof BackendTransportError &&
+        contextError.details?.code === "orchestration_generation_conflict"
+        ? contextError
+        : error;
+    }
+    if (!current || current.sessionIdentity === fence.sessionIdentity) throw error;
+    const receipt = await send({ ...body, endpointFence: current });
+    return {
+      receipt,
+      notice:
+        `endpointFence.sessionIdentity ${fence.sessionIdentity} is no longer current for ` +
+        `endpoint ${fence.endpointRef}; this read used this Session's current identity ` +
+        `${current.sessionIdentity}. The identity changes after every restart or account ` +
+        "switch, so omit endpointFence.sessionIdentity instead of copying it into prompts or notes.",
+    };
+  }
+}
+
+function withNotice(result, notice) {
+  return notice === undefined
+    ? result
+    : { ...result, content: [...result.content, { type: "text", text: notice }] };
+}
+
 function eventReadIntent(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("orchestration Event read intent is invalid");
@@ -424,6 +512,12 @@ export async function handleMcpRequest(
     orchestration_dispatch_deadline_get: "dispatch.deadline.get",
   }[name];
   if (!method) throw new Error(`unsupported orchestration tool: ${name}`);
+  if (FENCED_INTERACTION_READS.has(method)) {
+    const { receipt, notice } = await withBackendRejectionDetails(() =>
+      readInteraction({ method, body: input.body, environment, dependencies, endpoint }),
+    );
+    return withNotice(toolResult(receipt), notice);
+  }
   const candidates =
     method === "dispatch.complete"
       ? parseNextWorkCandidates(input.nextWorkCandidates)

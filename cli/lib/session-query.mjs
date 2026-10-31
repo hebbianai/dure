@@ -951,6 +951,57 @@ export async function collectSessionQuery({
   return report;
 }
 
+export const MAX_ALIVE_SESSION_QUERY_PAGES = 16;
+
+/** `--alive` filters the whole census, not only its first bounded page. After
+ * a restart or account switch an exited predecessor keeps the first page's
+ * client-binding priority while its live successor can sort past the cut-off,
+ * so filtering one truncated page would hide exactly the Session to find. */
+export async function collectAliveSessionQuery(options, collect = collectSessionQuery) {
+  const first = await collect({ ...options, action: "list" });
+  const alive = (session) => session.liveness.state === "alive";
+  if (first.kind !== "dure.sessions.list") return first;
+  if (options.cursor !== undefined || first.inventoryComplete) {
+    return { ...first, sessions: first.sessions.filter(alive) };
+  }
+  const startedAt = Date.now();
+  const sessions = new Map();
+  const add = (page) => {
+    for (const session of page.sessions.filter(alive)) {
+      const key = `${session.workspaceId}\u0000${session.sessionId}`;
+      if (!sessions.has(key)) sessions.set(key, session);
+    }
+  };
+  add(first);
+  let observationComplete = first.observationComplete;
+  let cursor = "start";
+  let last = first;
+  for (let pages = 0; cursor && pages < MAX_ALIVE_SESSION_QUERY_PAGES; pages += 1) {
+    const page = await collect({ ...options, action: "list", cursor });
+    // An older Hmux or backend without pagination keeps the first page's
+    // explicit truncation instead of failing the whole listing.
+    if (page.kind !== "dure.sessions.list") break;
+    add(page);
+    observationComplete &&= page.observationComplete;
+    last = page;
+    cursor = page.pagination?.nextCursor ?? null;
+  }
+  const inventoryComplete = last !== first && cursor === null;
+  const omittedCount = inventoryComplete ? 0 : Math.max(1, last.truncation.omittedCount);
+  return {
+    ...first,
+    inventoryComplete,
+    observationComplete,
+    partial: !inventoryComplete || !observationComplete,
+    durationMs: first.durationMs + Math.max(0, Date.now() - startedAt),
+    truncation: { items: !inventoryComplete, omittedCount },
+    ...(inventoryComplete || last === first
+      ? {}
+      : { pagination: { nextCursor: cursor, consistency: "live" } }),
+    sessions: [...sessions.values()],
+  };
+}
+
 export function sessionQueryExitCode(report) {
   return report.kind === "dure.sessions.error" ? 2 : 0;
 }
@@ -964,8 +1015,8 @@ export function formatSessionQuery(report) {
     ].filter(Boolean).join("\n");
   }
   const sessions = report.kind === "dure.sessions.list" ? report.sessions : [report.session];
-  if (sessions.length === 0) return "No Dure sessions.";
-  const lines = [
+  // A filtered or truncated page can be empty; keep its truncation notice.
+  const lines = sessions.length === 0 ? ["No Dure sessions."] : [
     "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS",
   ];
   for (const session of sessions) {
@@ -977,7 +1028,9 @@ export function formatSessionQuery(report) {
         session.provider.pid,
         session.liveness.state,
         session.cwd ?? "-",
-        session.runtime?.agentRuntimeState?.activity ?? "-",
+        session.runtime?.agentRuntimeState?.backgroundWork
+          ? "waiting+background"
+          : session.runtime?.agentRuntimeState?.activity ?? "-",
         session.clientProjection.agents
           .map((agent) => agent.displayName ?? agent.name ?? agent.id ?? "?")
           .join(",") || "-",

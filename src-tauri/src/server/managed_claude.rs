@@ -62,6 +62,12 @@ pub(super) fn normalize_hook_report(
                     .all(|byte| byte.is_ascii_alphanumeric() || b"._:+-".contains(&byte))
         })
         .map(str::to_string);
+    let registries_empty = ["background_tasks", "session_crons"].iter().all(|field| {
+        object
+            .get(*field)
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+    });
     let state = match event {
         "SessionStart" => "waiting",
         // UserPromptSubmit opens the turn and PreToolUse re-reports it so the
@@ -74,17 +80,7 @@ pub(super) fn normalize_hook_report(
         // Parent Stop can precede background child, shell or MCP completion.
         // Only the provider's complete empty registry proves whole-session
         // quiescence. Missing fields are unknown, never an empty snapshot.
-        "Stop"
-            if (source_sequence.is_none() || work_id.is_some())
-                && ["background_tasks", "session_crons"].iter().all(|field| {
-                    object
-                        .get(*field)
-                        .and_then(Value::as_array)
-                        .is_some_and(Vec::is_empty)
-                }) =>
-        {
-            "done"
-        }
+        "Stop" if (source_sequence.is_none() || work_id.is_some()) && registries_empty => "done",
         "Stop" => "working",
         "Notification"
             if object.get("notification_type").and_then(Value::as_str)
@@ -94,6 +90,17 @@ pub(super) fn normalize_hook_report(
         }
         "Notification" => "informational",
         _ => return Err("Claude hook event is unsupported".to_string()),
+    };
+    // Background work keeps the session busy, but a Stop still ends the
+    // parent's turn, so its prompt accepts input. Claude names the subagent
+    // whose tool call fires a hook; that call is background work too.
+    let background_work = match event {
+        "Stop" => state == "working" && !registries_empty,
+        "PreToolUse" => object
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .is_some_and(|agent| !agent.is_empty()),
+        _ => false,
     };
     let turn_completion_id = if state == "done" {
         work_id.clone()
@@ -147,6 +154,12 @@ pub(super) fn normalize_hook_report(
         }
     }
     let (activity, attention, turn_completed, working_ttl_ms) = match state {
+        "working" if background_work && event == "Stop" => (
+            crate::hmux::ReportedAgentActivity::Waiting,
+            crate::hmux::ReportedAgentAttention::None,
+            false,
+            Some(hmux_client::AGENT_STATE_REPORT_MAX_WORKING_TTL_MS),
+        ),
         "working" => (
             crate::hmux::ReportedAgentActivity::Working,
             crate::hmux::ReportedAgentAttention::None,
@@ -198,6 +211,7 @@ pub(super) fn normalize_hook_report(
                 }
             }),
             expected_observation: None,
+            background_work,
         },
     }))
 }
@@ -287,11 +301,13 @@ mod tests {
                 continue;
             }
             let report = normalized.expect("activity report").host_request;
+            let background = case["background"].as_bool().unwrap_or(false);
             assert_eq!(
                 report.activity == crate::hmux::ReportedAgentActivity::Working,
                 case["activity"] == "working",
                 "{label}",
             );
+            assert_eq!(report.background_work, background, "{label}");
             assert_eq!(
                 report.attention == crate::hmux::ReportedAgentAttention::ApprovalRequired,
                 case["attention"] == "approval_required",
@@ -306,7 +322,7 @@ mod tests {
             );
             assert_eq!(
                 report.working_ttl_ms,
-                (case["activity"] == "working")
+                (case["activity"] == "working" || background)
                     .then_some(hmux_client::AGENT_STATE_REPORT_MAX_WORKING_TTL_MS),
                 "{label}",
             );

@@ -14,7 +14,7 @@ use super::viewport_source::{
 };
 use super::{
     TerminalColdHistoryCheckpoint, TerminalPresentationDegradation, TerminalReplayError,
-    ViewportCaptureRequest,
+    ViewportCaptureRequest, home_column_after_tab_stops,
 };
 use crate::local_protocol::ScreenSnapshotProfile;
 use std::sync::Arc;
@@ -1226,13 +1226,15 @@ impl TerminalCore for GhosttyProofAdapter {
         } else {
             false
         };
-        let bytes = if omit_history {
+        let mut bytes = if omit_history {
             self.core
                 .format(Format::StyledActiveVt)
                 .map_err(|error| engine_error("format active screen", error.0))?
         } else {
             self.styled_contents()
         };
+        // The formatter paints the first row from the last restored tab stop.
+        home_column_after_tab_stops(&mut bytes);
         if bytes.len() > maximum {
             return self.truncated_plain_repaint(maximum);
         }
@@ -2019,6 +2021,47 @@ fn proof_viewport_request_omits_history_and_preserves_active_screen() {
             .bytes,
         full.bytes
     );
+}
+
+#[test]
+fn full_screen_repaint_starts_the_first_row_at_column_one_after_tab_stops() {
+    // Codex-shaped alternate screen: text from the top-left cell to the last
+    // row. Restoring tab stops moves the cursor; the first row must still be
+    // replayed from column one or every row shifts and the top one scrolls off.
+    let mut adapter = GhosttyProofAdapter::new(4, 40, 256, 20_000, "proof-terminal").unwrap();
+    adapter
+        .process(
+            "\x1b[?1049h\x1b[H• Working (1m 05s • esc to interrupt)\r\n\r\n\
+             › Ask Codex to do anything\r\n  ? for shortcuts\x1b[3;3H"
+                .as_bytes(),
+        )
+        .unwrap();
+
+    for profile in [
+        ScreenSnapshotProfile::Full,
+        ScreenSnapshotProfile::ViewportOnly,
+    ] {
+        let repaint = adapter.repaint(profile, 1024 * 1024).unwrap();
+        let mut restored = vt100::Parser::new(4, 40, 0);
+        restored.process(&repaint.bytes);
+        let rows = restored
+            .screen()
+            .rows(0, 40)
+            .map(|row| row.trim_end().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows,
+            [
+                "• Working (1m 05s • esc to interrupt)",
+                "",
+                "› Ask Codex to do anything",
+                "  ? for shortcuts",
+            ],
+            "{profile:?} repaint {:?}",
+            String::from_utf8_lossy(&repaint.bytes),
+        );
+        assert_eq!(restored.screen().cursor_position(), (2, 2));
+    }
 }
 
 #[test]

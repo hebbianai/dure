@@ -203,6 +203,21 @@ impl ResolvedProviderCredentialProfileV1 {
     }
 }
 
+/// The provider's own state directory for a resolved launch: the selected
+/// account's profile, or the provider default under `HOME`.
+pub(crate) fn provider_state_directory(
+    provider_id: &ProviderIdV1,
+    resolved: Option<&ResolvedProviderCredentialProfileV1>,
+) -> Option<PathBuf> {
+    resolved
+        .map(|profile| profile.directory().to_path_buf())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(format!(".{}", provider_id.as_str())))
+        })
+}
+
 impl fmt::Debug for ResolvedProviderCredentialProfileV1 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter

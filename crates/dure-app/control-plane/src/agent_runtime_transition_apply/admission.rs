@@ -178,7 +178,7 @@ pub(super) async fn load_or_admit_with_activation(
                 && !inspection.is_exited_exact()
                 && !inspection.is_agent_quiescent()
             {
-                return Err("agent_runtime_source_busy".into());
+                return Err(source_busy(inspection.busy_reason()));
             }
             if matches!(
                 body.source_stop_policy,
@@ -189,12 +189,12 @@ pub(super) async fn load_or_admit_with_activation(
                 }
                 let observed = inspection
                     .managed_stop_quiescence_fence()
-                    .map_err(|_| "agent_runtime_source_busy".to_string())?;
+                    .map_err(|_| source_busy(inspection.busy_reason()))?;
                 if !body.source_stop_policy.accepts_observation(
                     observed.runtime_revision(),
                     observed.observed_through_output_seq(),
                 ) {
-                    return Err("agent_runtime_source_busy".into());
+                    return Err(source_busy(AgentBusyReason::ObservationChanged));
                 }
             }
             (

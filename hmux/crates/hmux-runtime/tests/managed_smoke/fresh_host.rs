@@ -60,6 +60,7 @@ fn refused_fresh_switch_keeps_source_available_for_a_new_operation() {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
         )
         .unwrap();

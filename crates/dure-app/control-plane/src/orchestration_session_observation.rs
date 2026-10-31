@@ -12,7 +12,7 @@ pub(super) async fn verify_exact_orchestration_session(
         host_instance_id: session.host_instance_id.clone(),
         terminal_epoch: session.terminal_epoch.clone(),
     };
-    let hmux = query_hmux_with_lifecycle(
+    let hmux = match query_hmux_with_lifecycle(
         &state.hmux_identity,
         &session.session_id,
         &session.workspace_id,
@@ -20,17 +20,53 @@ pub(super) async fn verify_exact_orchestration_session(
         false,
     )
     .await
-    .map_err(observation_error)?;
+    {
+        Ok(hmux) => hmux,
+        Err(HmuxSessionInspectionFailure::DescriptorUnavailable)
+            if exact_generation_exited(state, session, &stop_fence).await =>
+        {
+            return Err(stale_generation("hmux_session_exited"));
+        }
+        Err(failure) => return Err(observation_error(failure)),
+    };
     if hmux.provider_id != session.provider_id.as_str() {
         return Err(stale_generation("hmux_provider_mismatch"));
     }
     Ok(())
 }
 
+/// Hmux retains an exact tombstone for a retired generation. After a restart
+/// or account switch, a process still carrying that generation (for example a
+/// background fork of the predecessor) can never observe it as ready again, so
+/// its context lookup is stale rather than a transient observation failure.
+/// Only that exact exited tombstone qualifies; a missing or unreadable record
+/// stays retryable.
+async fn exact_generation_exited(
+    state: &ServiceState,
+    session: &WorkflowSessionGenerationV1,
+    stop_fence: &HmuxStopFence,
+) -> bool {
+    query_hmux_for_runtime_transition(
+        &state.hmux_identity,
+        &session.session_id,
+        &session.workspace_id,
+        stop_fence,
+    )
+    .await
+    .is_ok_and(|observed| {
+        observed.is_exited_exact() && observed.provider_id == session.provider_id.as_str()
+    })
+}
+
 fn stale_generation(reason: &str) -> BackendDispatchError {
+    let message = if reason == "hmux_session_exited" {
+        "The managed Session generation has exited. A process from that generation cannot use orchestration; continue in the Agent's current Session."
+    } else {
+        "The managed Session does not match the requested generation or provider. Resolve the current Session before retrying."
+    };
     BackendDispatchError {
         code: "orchestration_generation_conflict".into(),
-        message: "The managed Session does not match the requested generation or provider. Resolve the current Session before retrying.".into(),
+        message: message.into(),
         details: Some(json!({"reasonCode": reason})),
         disposition: BackendFailureDispositionV1::StaleGeneration,
     }

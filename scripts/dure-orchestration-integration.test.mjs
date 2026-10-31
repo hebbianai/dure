@@ -143,6 +143,28 @@ function completionBody(context, stem, overrides = {}) {
   };
 }
 
+function coordinatorUpdateBody(context, stem) {
+  return {
+    schemaVersion: 1,
+    idempotencyKey: stem,
+    writeCapability: context.interactionCapability,
+    expectedDispatchRevision: context.dispatchRevision,
+    openedAtMs: 1_500,
+    interaction: {
+      kind: "message",
+      common: {
+        id: `${stem}-message`,
+        target: context.target,
+        author: context.participant,
+        audience: { grants: [context.coordinatorGrant] },
+        title: "Progress update",
+        descriptionMarkdown: "Half of the requested work is verified.",
+      },
+      purpose: "update",
+    },
+  };
+}
+
 function mcpToolCall(name, body, nextWorkCandidates) {
   return {
     jsonrpc: "2.0",
@@ -1974,6 +1996,98 @@ describe("immutable generic orchestration integration", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  describe("worker interaction reads after a restart or account switch", () => {
+    const notFound = () => new BackendTransportError("backend_transport_remote_error", {
+      details: { code: "orchestration_record_not_found", disposition: "terminal" },
+    });
+    const workerBody = (context, fence) => ({
+      schemaVersion: 1, authority: context.target.authority, interactionId: "message-1",
+      participant: context.participant, readCapability: context.deliveryCapability, endpointFence: fence,
+    });
+    const call = (name, body, { environment, receiptPath }, request) => handleMcpRequest({ jsonrpc: "2.0", id: 1,
+      method: "tools/call", params: { name, arguments: { body } } }, environment, { request, receiptPath });
+
+    it.each(["orchestration_interaction_get", "orchestration_interaction_progress"])(
+      "%s replaces a superseded sessionIdentity with this Session's current one and says so",
+      async (name) => {
+        const current = currentMcpContextFixture(fixture());
+        const { context } = current;
+        const stale = { ...context.endpointFence, sessionIdentity: "session-before-switch" };
+        const receipt = { interaction: { id: "message-1" } };
+        const request = vi.fn(async (_endpoint, operation) => {
+          if (operation.method === "dispatch.context.get") return { receipt: context };
+          if (operation.body.endpointFence.sessionIdentity === stale.sessionIdentity) throw notFound();
+          expect(operation.body).toEqual(workerBody(context, context.endpointFence));
+          return { apiVersion: "dure.orchestration/v1", method: operation.method, receipt };
+        });
+        const result = await call(name, workerBody(context, stale), current, request);
+        expect(result.structuredContent.receipt).toEqual(receipt);
+        expect(JSON.parse(result.content[0].text).receipt).toEqual(receipt);
+        expect(result.content[1].text).toContain("session-before-switch is no longer current");
+        expect(result.content[1].text).toContain(context.endpointFence.sessionIdentity);
+        expect(request.mock.calls.map((entry) => entry[1].method)).toEqual([
+          name === "orchestration_interaction_get" ? "interaction.get" : "interaction.progress",
+          "dispatch.context.get",
+          name === "orchestration_interaction_get" ? "interaction.get" : "interaction.progress",
+        ]);
+      },
+    );
+
+    it("fills an omitted sessionIdentity from this Session's current context", async () => {
+      const current = currentMcpContextFixture(fixture());
+        const { context } = current;
+      const { sessionIdentity: _omitted, ...fence } = context.endpointFence;
+      const catalogue = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/list" });
+      const schema = catalogue.tools.find((tool) => tool.name === "orchestration_interaction_get")
+        .inputSchema.properties.body.properties.endpointFence;
+      expect(schema.required).not.toContain("sessionIdentity");
+      const request = vi.fn(async (_endpoint, operation) => {
+        if (operation.method === "dispatch.context.get") return { receipt: context };
+        expect(operation.body).toEqual(workerBody(context, context.endpointFence));
+        return { receipt: { interaction: { id: "message-1" } } };
+      });
+      const result = await call("orchestration_interaction_get", workerBody(context, fence), current, request);
+      expect(result.content).toHaveLength(1);
+      expect(request.mock.calls.map((entry) => entry[1].method)).toEqual(["dispatch.context.get", "interaction.get"]);
+    });
+
+    it.each([
+      ["another endpoint", { endpointRef: "endpoint-other" }],
+      ["another generation", { generation: 2 }],
+      ["another delivery capability", { deliveryCapability: "capability-other" }],
+    ])("never borrows the current identity for %s", async (_label, change) => {
+      const current = currentMcpContextFixture(fixture());
+        const { context } = current;
+      const fence = { ...context.endpointFence, sessionIdentity: "session-before-switch", ...change };
+      const failure = notFound();
+      const request = vi.fn(async (_endpoint, operation) => {
+        if (operation.method === "dispatch.context.get") return { receipt: context };
+        throw failure;
+      });
+      await expect(call("orchestration_interaction_get", workerBody(context, fence), current, request))
+        .rejects.toMatchObject({ message: expect.stringMatching(/^orchestration_record_not_found \(terminal\)/), cause: failure });
+      expect(request.mock.calls.map((entry) => entry[1].method)).toEqual(["interaction.get", "dispatch.context.get"]);
+    });
+
+    it("tells a process whose own Session exited why its copied fence no longer reads", async () => {
+      const current = currentMcpContextFixture(fixture());
+        const { context } = current;
+      const stale = { ...context.endpointFence, sessionIdentity: "session-before-switch" };
+      const exited = new BackendTransportError("backend_transport_remote_error", {
+        details: { code: "orchestration_generation_conflict", reasonCode: "hmux_session_exited", disposition: "stale_generation" },
+      });
+      const request = vi.fn(async (_endpoint, operation) => {
+        if (operation.method === "dispatch.context.get") throw exited;
+        throw notFound();
+      });
+      await expect(call("orchestration_interaction_get", workerBody(context, stale), current, request))
+        .rejects.toMatchObject({
+          message: expect.stringMatching(/^orchestration_generation_conflict: hmux_session_exited \(stale_generation\): This managed Session generation has exited/),
+          cause: exited,
+        });
+    });
+  });
+
   it("exposes explicit message destination fields and preserves the exact-session receipt", async () => {
     const catalogue = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/list" });
     const tool = catalogue.tools.find((tool) => tool.name === "orchestration_message_open_exact_session");
@@ -2156,6 +2270,140 @@ describe("immutable generic orchestration integration", () => {
     body.participant = body.completedBy;
     expect(() => createOrchestrationRequest({ method: "dispatch.complete", body }))
       .toThrow("uses participant; the completion field is completedBy");
+  });
+
+  it("publishes the v1 interaction.open schema and accepts the skill's coordinator update unchanged", async () => {
+    const { environment, context, receiptPath } = currentMcpContextFixture(fixture());
+    const catalogue = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/list" });
+    const tool = catalogue.tools.find((entry) => entry.name === "orchestration_interaction_open");
+    expect(tool.inputSchema.additionalProperties).toBe(false);
+    const schema = tool.inputSchema.properties.body;
+    const expected = coordinatorUpdateBody(context, "update-from-skill");
+    expect(schema.required).toEqual(Object.keys(expected));
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties.writeCapability.description).toContain("context.interactionCapability");
+    expect(schema.properties.expectedDispatchRevision.description).toContain("context.dispatchRevision");
+    const [message, decision] = schema.properties.interaction.oneOf;
+    expect([message, decision].map((variant) => variant.properties.kind.const)).toEqual(["message", "decision"]);
+    expect(message.required).toEqual(Object.keys(expected.interaction));
+    expect(message.properties.common.required).toEqual(Object.keys(expected.interaction.common));
+    expect(decision.properties.response.oneOf.map((variant) => variant.properties.kind.const))
+      .toEqual(["text", "select"]);
+
+    const skill = fs.readFileSync(new URL("../orchestration/integration/SKILL.md", import.meta.url), "utf8");
+    const example = skill.split("## Choose a message destination")[1].match(/```js\n([\s\S]*?)\n```/)[1];
+    const args = runInNewContext(`${example}\nargumentsForUpdate`, {
+      context, updateKey: "update-from-skill", updateId: "update-from-skill-message",
+      updateTitle: "Progress update", updateMarkdown: "Half of the requested work is verified.",
+      Date: { now: () => 1_500 },
+    });
+    expect(JSON.parse(JSON.stringify(args.body))).toEqual(expected);
+    const request = vi.fn(async (_endpoint, operation) => {
+      expect(operation.method).toBe("interaction.open");
+      expect(operation.body).toBe(args.body);
+      return { receipt: { dispatchState: "active", idempotent: false } };
+    });
+    const result = await handleMcpRequest(
+      { jsonrpc: "2.0", method: "tools/call", params: { name: tool.name, arguments: args } },
+      environment, { receiptPath, request },
+    );
+    expect(result.structuredContent.receipt.dispatchState).toBe("active");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("names each misplaced field of a flat interaction.open body before contacting the backend", async () => {
+    const { environment, context, receiptPath } = currentMcpContextFixture(fixture());
+    const body = {
+      schemaVersion: 1, idempotencyKey: "flat-update", interactionId: "flat-update-message",
+      target: context.target, author: context.participant,
+      writeCapability: context.interactionCapability,
+      audience: { grants: [context.coordinatorGrant] }, kind: "message", purpose: "update",
+      title: "Progress update", descriptionMarkdown: "Private progress text", openedAtMs: 1_500,
+    };
+    const request = vi.fn();
+    const error = await handleMcpRequest(mcpToolCall("orchestration_interaction_open", body),
+      environment, { receiptPath, request }).catch((rejection) => rejection);
+    expect(error).toMatchObject({
+      code: "orchestration_request_invalid", disposition: "terminal",
+      field: "body.expectedDispatchRevision",
+    });
+    for (const detail of [
+      "interaction.open: body.expectedDispatchRevision is required.",
+      "body.interaction is required.",
+      "body uses interactionId; the interaction.open field is interaction.common.id.",
+      "body uses audience; the interaction.open field is interaction.common.audience.",
+      "body uses kind; the interaction.open field is interaction.kind.",
+      "body uses descriptionMarkdown; the interaction.open field is interaction.common.descriptionMarkdown.",
+      "Correct the body using orchestration_interaction_open's input schema",
+    ]) expect(error.message).toContain(detail);
+    expect(error.message).not.toContain("Private progress text");
+    expect(error.message).not.toContain(context.interactionCapability);
+    expect(() => parseOrchestrationInvoke(["interaction.open", JSON.stringify(body)]))
+      .toThrow("body.interaction is required");
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("reports interaction.open variant and nested field errors by path", () => {
+    const { context } = currentMcpContextFixture(fixture());
+    const draft = (mutate) => {
+      const body = structuredClone(coordinatorUpdateBody(context, "nested-update"));
+      mutate(body);
+      return body;
+    };
+    const open = (body) => () => createOrchestrationRequest({ method: "interaction.open", body });
+    const decision = (response, extra = {}) => draft((body) => {
+      body.interaction = {
+        kind: "decision", common: body.interaction.common, response,
+        replyCapability: context.coordinatorReplyCapability, ...extra,
+      };
+    });
+    expect(open(draft((body) => { body.expectedDispatchRevision = "1"; })))
+      .toThrow("body.expectedDispatchRevision must be integer");
+    expect(open(draft((body) => { body.interaction.kind = "note"; })))
+      .toThrow('body.interaction.kind must be "message" or "decision"');
+    expect(open(draft((body) => { body.interaction.purpose = "completion_report"; })))
+      .toThrow('body.interaction.purpose must be "update"');
+    expect(open(draft((body) => { delete body.interaction.common.audience.grants[0].deliveryCapability; })))
+      .toThrow("body.interaction.common.audience.grants[0].deliveryCapability is required");
+    expect(open(decision({ kind: "choice" })))
+      .toThrow('body.interaction.response.kind must be "text" or "select"');
+    expect(open(decision({ kind: "select", options: [{ id: "a" }], minSelections: 1, maxSelections: 1 })))
+      .toThrow("body.interaction.response.options[0].label is required");
+    expect(open(decision({ kind: "text", minBytes: 1, maxBytes: 200 }, { purpose: "update" })))
+      .toThrow("body.interaction contains an unknown field (allowed: kind, common, response, replyCapability)");
+
+    const text = decision({ kind: "text", minBytes: 1, maxBytes: 200 });
+    expect(createOrchestrationRequest({ method: "interaction.open", body: text }).body).toBe(text);
+    const select = decision({
+      kind: "select", minSelections: 1, maxSelections: 1,
+      options: [{ id: "local", label: "Local" }, { id: "remote", label: "Remote", descriptionMarkdown: "**Remote**" }],
+    });
+    expect(createOrchestrationRequest({ method: "interaction.open", body: select }).body).toBe(select);
+  });
+
+  it("prints the interaction.open field path from the real orchestration CLI without contacting a backend", () => {
+    const root = fixture();
+    const { context } = currentMcpContextFixture(root);
+    const body = coordinatorUpdateBody(context, "cli-update");
+    delete body.expectedDispatchRevision;
+    const result = spawnSync(process.execPath, [
+      CLI, "orchestration", "invoke", "interaction.open", JSON.stringify(body),
+      "--backend", "qa-unconfigured", "--json",
+    ], {
+      cwd: root, encoding: "utf8",
+      env: {
+        PATH: process.env.PATH, HOME: path.join(root, "home"),
+        DURE_HOME: path.join(root, "dure-home"), HMUX_DISCOVERY_ROOT: path.join(root, "hmux-discovery"),
+      },
+    });
+    expect(result.status).toBe(2);
+    // No backend profile exists, so reaching selection would fail differently.
+    expect(JSON.parse(result.stderr).error).toEqual({
+      code: "orchestration_request_invalid",
+      field: "body.expectedDispatchRevision",
+      disposition: "terminal",
+      message: expect.stringContaining("interaction.open: body.expectedDispatchRevision is required."),
+    });
   });
 
   it("completes without executing Beads or creating unsolicited successor work", async () => {

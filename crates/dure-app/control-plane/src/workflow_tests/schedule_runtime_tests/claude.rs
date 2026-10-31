@@ -132,6 +132,7 @@ async fn claude_schedule_run_uses_real_hmux() {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             hmux_client::SessionFence {
                 workspace_id: session.workspace_id.clone(),

@@ -73,6 +73,7 @@ import { useHubResume } from "@/components/hub/useHubResume";
 import { useHubLaunchOffer } from "@/components/hub/useHubLaunchOffer";
 import { useHubSidebarLayout } from "@/components/hub/useHubSidebarLayout";
 import { useHubStartAgent } from "@/components/hub/useHubStartAgent";
+import { useHubSessionAccount } from "@/components/hub/useHubSessionAccount";
 import { hubPublishLaunchOffer, hubSetSidebarLayout } from "@/lib/ipc/system";
 
 function useBackendCompatibility() {
@@ -157,6 +158,7 @@ export default function App() {
   useHubSidebarLayout(hubSetSidebarLayout);
   useHubLaunchOffer(hubPublishLaunchOffer);
   useHubStartAgent();
+  useHubSessionAccount();
   useHubGitStatus();
   useHubFileDiff();
   useHubSessionFile();

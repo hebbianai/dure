@@ -35,6 +35,10 @@ HMUX_RUNTIME_EXECUTABLE = "__DURE_HMUX_RUNTIME_EXECUTABLE__"
 HMUX_AGENT_STATE_REPORT_SUBCOMMAND = "internal-hmux-managed-agent-state-report"
 HMUX_AGENT_STATE_REPORT_SCHEMA = "hmux-managed-agent-state-report-v1"
 HMUX_AGENT_STATE_REPORT_SCHEMA_VERSION = 1
+HMUX_AGENT_STATE_REPORT_CAUSAL_SCHEMA_VERSION = 2
+# A broker that predates background work refuses this version as an invalid
+# request; the hook then sends the working report that broker understands.
+HMUX_AGENT_STATE_REPORT_BACKGROUND_WORK_SCHEMA_VERSION = 3
 AGENT_STATE_REPORT_MAX_WORKING_TTL_MS = 86_400_000
 MAX_CANDIDATES = 32
 MAX_DESCRIPTOR_BYTES = 16 * 1024
@@ -575,6 +579,12 @@ def claude_transcript_exists(native):
     )
 
 
+def claude_subagent(native):
+    """Claude names the subagent whose tool call fired a hook."""
+    agent_id = native.get("agent_id")
+    return isinstance(agent_id, str) and agent_id != ""
+
+
 def claude_report(native, fence):
     event = native.get("hook_event_name")
     conversation_id = native.get("session_id")
@@ -591,6 +601,7 @@ def claude_report(native, fence):
         and IDENTIFIER_RE.fullmatch(prompt_id)
         else None
     )
+    background = False
     if event == "SessionStart":
         activity, attention, completed, working_ttl_ms = (
             "waiting",
@@ -601,7 +612,9 @@ def claude_report(native, fence):
     elif event in ("UserPromptSubmit", "PreToolUse"):
         # The lease is the protocol maximum, like the Codex and Pi reporters:
         # a Claude turn ends at a complete Stop snapshot, not at a timer, so a
-        # single long tool call keeps the session visibly busy.
+        # single long tool call keeps the session visibly busy. A subagent's
+        # tool call is background work: it must not start the parent's turn.
+        background = event == "PreToolUse" and claude_subagent(native)
         activity, attention, completed, working_ttl_ms = (
             "working",
             "none",
@@ -611,12 +624,15 @@ def claude_report(native, fence):
     elif event == "Stop":
         # Stop belongs to the parent, not necessarily its background work.
         # The provider registry must prove both no in-flight tasks and no
-        # scheduled wakeups; absent/malformed evidence stays protected.
-        quiescent = work_id is not None and all(
+        # scheduled wakeups; absent/malformed evidence stays protected. The
+        # parent's turn still ended, so its prompt accepts input.
+        registries_empty = all(
             native.get(field) == [] for field in ("background_tasks", "session_crons")
         )
+        quiescent = work_id is not None and registries_empty
+        background = not registries_empty
         activity, attention, completed, working_ttl_ms = (
-            "waiting" if quiescent else "working",
+            "waiting" if quiescent or background else "working",
             "none",
             quiescent,
             None if quiescent else AGENT_STATE_REPORT_MAX_WORKING_TTL_MS,
@@ -656,12 +672,31 @@ def claude_report(native, fence):
         report["working_ttl_ms"] = str(working_ttl_ms)
     if completed:
         report["turn_completion_id"] = work_id
+    if background:
+        report["background_work"] = True
     return {
         "schema": HMUX_AGENT_STATE_REPORT_SCHEMA,
-        "schemaVersion": 2,
+        "schemaVersion": (
+            HMUX_AGENT_STATE_REPORT_BACKGROUND_WORK_SCHEMA_VERSION
+            if background
+            else HMUX_AGENT_STATE_REPORT_CAUSAL_SCHEMA_VERSION
+        ),
         "expectedFence": fence,
         "report": report,
     }
+
+
+def older_host_report(request):
+    """The report a broker or Host without background work has always had."""
+    report = dict(request["report"])
+    if report.pop("background_work", False):
+        report["activity"] = "working"
+        report["working_ttl_ms"] = str(AGENT_STATE_REPORT_MAX_WORKING_TTL_MS)
+    return dict(
+        request,
+        schemaVersion=HMUX_AGENT_STATE_REPORT_CAUSAL_SCHEMA_VERSION,
+        report=report,
+    )
 
 
 def report_to_hmux(provider_id, native, fence, deadline):
@@ -674,6 +709,16 @@ def report_to_hmux(provider_id, native, fence, deadline):
         return None
     if request is None:
         return None
+    refusal = deliver_to_hmux(request, deadline)
+    if (
+        refusal == "hmux_managed_agent_state_report_request_invalid"
+        and request["schemaVersion"] == HMUX_AGENT_STATE_REPORT_BACKGROUND_WORK_SCHEMA_VERSION
+    ):
+        refusal = deliver_to_hmux(older_host_report(request), deadline)
+    return refusal
+
+
+def deliver_to_hmux(request, deadline):
     runtime = HMUX_RUNTIME_EXECUTABLE
     if not os.path.isabs(runtime):
         return None
@@ -722,6 +767,8 @@ def slim_body(native):
         # on disk; a slimmed body must keep the path or a long turn withholds
         # the identity until Stop.
         "transcript_path",
+        # A subagent's large tool call must not read as the parent's.
+        "agent_id",
     ):
         value = native.get(field)
         if isinstance(value, str):
@@ -870,10 +917,15 @@ def main():
     if codex:
         return report_to_hmux("codex", native, fence, deadline) != "hmux_identity_mismatch"
     root, writable = app_root()
+    # Subagent tool calls coalesce apart: they must never suppress the
+    # parent's own tool call, which starts foreground work.
     if (
         native.get("hook_event_name") == "PreToolUse"
         and writable
-        and pre_tool_use_coalesced(root, fence["session_id"])
+        and pre_tool_use_coalesced(
+            root,
+            fence["session_id"] + (".subagent" if claude_subagent(native) else ""),
+        )
     ):
         return
     if os.path.isabs(HMUX_RUNTIME_EXECUTABLE):

@@ -13,6 +13,7 @@ mod autostart;
 pub mod push;
 pub mod catalog;
 pub mod file_diff;
+pub mod session_account;
 pub mod session_file;
 pub mod folder_browser;
 pub mod git_status;

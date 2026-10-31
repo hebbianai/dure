@@ -19,6 +19,7 @@ mod ghostty_core_proof;
 mod ghostty_state_projection;
 mod osc_scanner;
 mod program_status;
+mod tab_stop_repaint;
 mod terminal_core;
 #[cfg(feature = "ghostty-core-proof")]
 mod terminal_history_transfer;
@@ -47,6 +48,7 @@ pub use agent_runtime::{
 pub use canonical_snapshot::TerminalProjections;
 pub use execution_location::ExecutionLocationObservation;
 use std::time::{Duration, Instant};
+pub use tab_stop_repaint::home_column_after_tab_stops;
 
 const DEFAULT_WORKING_TTL_MS: u64 = 30_000;
 /// A source-issued completion identity makes delivery retry-safe, so the Host
@@ -129,10 +131,12 @@ fn runtime_agent_prompt_admission(
     if runtime.source != required_source || runtime.lifecycle == AgentRuntimeLifecycle::Starting {
         return target.unresolved_authority();
     }
+    // Background work after an ended turn keeps the session busy for idle
+    // operations, but the provider's prompt itself accepts input.
     if runtime.lifecycle != AgentRuntimeLifecycle::Running
         || runtime.attention != AgentRuntimeAttention::None
         || runtime.attention_id.is_some()
-        || runtime.activity != AgentRuntimeActivity::Waiting
+        || (runtime.activity != AgentRuntimeActivity::Waiting && !runtime.background_work)
     {
         return AgentPromptAdmission::Refused;
     }
@@ -1288,8 +1292,10 @@ impl TerminalReplay {
         if report.turn_completion_id.is_some() && !report.turn_completed {
             return Err(TerminalReplayError::InvalidAgentRuntimeState);
         }
-        if report.attention != AgentRuntimeAttention::None
-            && report.activity != AgentRuntimeActivity::Waiting
+        if (report.attention != AgentRuntimeAttention::None
+            && report.activity != AgentRuntimeActivity::Waiting)
+            || (report.background_work
+                && (report.attention != AgentRuntimeAttention::None || report.turn_completed))
         {
             return Err(TerminalReplayError::InvalidAgentRuntimeState);
         }
@@ -1330,12 +1336,7 @@ impl TerminalReplay {
                         .clone()
                         .map(|current| {
                             self.fold_agent_runtime_observation(
-                                AgentRuntimeObservation::new(
-                                    current.lifecycle,
-                                    current.activity,
-                                    current.attention,
-                                    current.source,
-                                ),
+                                AgentRuntimeObservation::of(&current),
                                 false,
                                 true,
                                 now,
@@ -1384,22 +1385,37 @@ impl TerminalReplay {
         // attention detail must not churn or duplicate attention identities.
         // A working report legitimately ends the episode because non-none
         // attention always implies waiting.
-        let attention = match (report.activity, report.attention) {
+        let activity = report.projected_activity();
+        let attention = match (activity, report.attention) {
             (AgentRuntimeActivity::Waiting, AgentRuntimeAttention::None) => self
                 .agent_runtime_state
                 .as_ref()
                 .map_or(AgentRuntimeAttention::None, |current| current.attention),
             (_, attention) => attention,
         };
-        let observation = AgentRuntimeObservation::new(
-            lifecycle,
-            report.activity,
-            attention,
-            AgentRuntimeStateSource::ProviderEvent,
-        );
+        // An ended turn's report grants a ready prompt. Background work seen
+        // later keeps that grant but never makes one: it cannot tell whether
+        // a foreground turn started meanwhile.
+        let background_work = report.background_work
+            && (report.activity == AgentRuntimeActivity::Waiting
+                || self
+                    .agent_runtime_state
+                    .as_ref()
+                    .is_some_and(|current| current.background_work));
+        let observation = AgentRuntimeObservation {
+            background_work,
+            ..AgentRuntimeObservation::new(
+                lifecycle,
+                activity,
+                attention,
+                AgentRuntimeStateSource::ProviderEvent,
+            )
+        };
         let completion_id = report.turn_completion_id.clone();
-        let acknowledges_input =
-            settle_identified_completion && report.expected_observation.is_none();
+        // Background work is no evidence that the provider read submitted input.
+        let acknowledges_input = settle_identified_completion
+            && report.expected_observation.is_none()
+            && (!report.background_work || report.activity != AgentRuntimeActivity::Working);
         let previous_progress = self.agent_progress.clone();
         self.observe_progress(report.progress.as_ref(), now)?;
         let projection = self
@@ -1428,7 +1444,7 @@ impl TerminalReplay {
                 self.remember_turn_completion_id(completion_id);
             }
         }
-        self.working_deadline = if report.activity == AgentRuntimeActivity::Working {
+        self.working_deadline = if activity == AgentRuntimeActivity::Working {
             let ttl_ms = report
                 .working_ttl_ms
                 .unwrap_or(DEFAULT_WORKING_TTL_MS)
@@ -1689,6 +1705,7 @@ impl TerminalReplay {
                 && current.activity == observation.activity
                 && current.attention == observation.attention
                 && current.source == observation.source
+                && current.background_work == observation.background_work
                 && current.progress == progress
         });
         // A new input acknowledgement ends the old semantic idle epoch even
@@ -1742,6 +1759,7 @@ impl TerminalReplay {
             source: observation.source,
             turn_completed_count,
             program_status: self.program_status_projection(observation.lifecycle),
+            background_work: observation.background_work,
         };
         self.agent_runtime_state = Some(projection.clone());
         self.agent_runtime_changed_at = Some(now);
@@ -2374,7 +2392,10 @@ fn validate_agent_runtime_observation(
         != crate::local_protocol::AgentRuntimeLifecycle::Exited
         || (observation.activity == crate::local_protocol::AgentRuntimeActivity::Waiting
             && attention_is_none);
-    if attention_matches_activity && exit_is_consistent {
+    let background_is_busy = !observation.background_work
+        || (observation.lifecycle == crate::local_protocol::AgentRuntimeLifecycle::Running
+            && observation.activity == crate::local_protocol::AgentRuntimeActivity::Working);
+    if attention_matches_activity && exit_is_consistent && background_is_busy {
         Ok(())
     } else {
         Err(TerminalReplayError::InvalidAgentRuntimeState)

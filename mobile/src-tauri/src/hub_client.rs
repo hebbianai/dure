@@ -593,6 +593,31 @@ pub fn send_start_agent(
         .map_err(|error| HubClientError::Protocol(error.to_string()))
 }
 
+/// Read or switch one session's provider account.
+///
+/// The same round trip as the others; a switch is a write, and its
+/// `action_id` lets the desktop recognise a retry after a lost answer.
+///
+/// # Errors
+/// When the pin is unusable, the computer is unreachable, or it answers in a
+/// version this build does not read. A desktop too old to know the question
+/// closes after the greeting, which arrives here as a protocol error.
+pub fn send_session_account(
+    endpoint: &str,
+    relay: Option<(&str, &str)>,
+    pinned_fingerprint: &str,
+    token: &str,
+    request: HubRequest,
+) -> Result<dure_hub_protocol::session_account::HubSessionAccountResult, HubClientError> {
+    if !fingerprint::is_fingerprint(pinned_fingerprint) {
+        return Err(HubClientError::UnusablePin);
+    }
+    let mut tls = dial_tls(endpoint, relay, pinned_fingerprint)?;
+    let _ack = handshake_for(&mut tls, token, request)?;
+    dure_hub_protocol::session_account::read(&mut tls)
+        .map_err(|error| HubClientError::Protocol(error.to_string()))
+}
+
 pub(crate) fn dial_tls(
     endpoint: &str,
     relay: Option<(&str, &str)>,

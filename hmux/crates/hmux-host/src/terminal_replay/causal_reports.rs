@@ -12,7 +12,7 @@ impl TerminalReplay {
             // Once ordered evidence owns this epoch, unsequenced input can
             // conservatively protect work, but cannot establish quiescence.
             return Ok(self.report_causality.is_none()
-                || report.activity == AgentRuntimeActivity::Working
+                || report.projected_activity() == AgentRuntimeActivity::Working
                 || report.attention != AgentRuntimeAttention::None);
         };
         if incoming.sequence == 0
@@ -40,7 +40,7 @@ impl TerminalReplay {
                 current.work_id.is_some() && current.work_id == incoming.work_id
             }));
         }
-        if report.activity == AgentRuntimeActivity::Working
+        if report.projected_activity() == AgentRuntimeActivity::Working
             || report.attention != AgentRuntimeAttention::None
         {
             return Ok(true);
@@ -62,7 +62,7 @@ impl TerminalReplay {
     pub(super) fn remember_report_causality(&mut self, report: &AgentStateReportObservation) {
         match &report.causality {
             Some(incoming) => {
-                let work_id = if report.activity == AgentRuntimeActivity::Working {
+                let work_id = if report.projected_activity() == AgentRuntimeActivity::Working {
                     incoming.work_id.clone()
                 } else {
                     self.report_causality

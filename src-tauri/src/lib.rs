@@ -2415,6 +2415,7 @@ pub fn run() {
             hub::commands::hub_remote_git_status,
             hub::commands::hub_publish_launch_offer,
             hub::commands::hub_start_agent_result,
+            hub::commands::hub_session_account_result,
             remote_hmux::remote_hmux_pane_depart_gracefully,
             session_hmux,
             ssh_secret_set,

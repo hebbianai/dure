@@ -53,18 +53,23 @@ export async function captureLocalScreen({
     throw new SessionCaptureError("aborted", "Session read interrupted");
   }
   if (result.kind === "success") {
-    if (!json) return result.stdout;
+    // A successful text read reports a blank screen, with its geometry, on
+    // stderr; keep that note so the caller never turns it into silent output.
+    if (!json) return { text: result.stdout, notice: result.stderr.trim() };
     let receipt;
     try { receipt = JSON.parse(result.stdout); } catch { /* Validate below. */ }
     // Hmux names standalone sessions; managed sessions legitimately return null.
     // Preserve that receipt instead of requiring or inventing a display name.
+    // Geometry arrived after the first receipts, so it is optional but typed.
     if (receipt?.ok !== true || (receipt.sessionName !== null && typeof receipt.sessionName !== "string")
       || typeof receipt.sequenceThrough !== "string" || !/^(0|[1-9][0-9]*)$/.test(receipt.sequenceThrough)
       || !Array.isArray(receipt.lines) || receipt.lines.length > MAX_SESSION_READ_LINES
-      || !receipt.lines.every((line) => typeof line === "string")) {
+      || !receipt.lines.every((line) => typeof line === "string")
+      || !["rows", "columns"].every((key) => receipt[key] === undefined || (Number.isSafeInteger(receipt[key]) && receipt[key] > 0))
+      || (receipt.alternateScreen !== undefined && typeof receipt.alternateScreen !== "boolean")) {
       throw new SessionCaptureError("invalid", "Hmux returned an invalid JSON screen receipt. Update Dure before retrying.");
     }
-    return `${JSON.stringify(receipt)}\n`;
+    return { text: `${JSON.stringify(receipt)}\n`, notice: "" };
   }
   if (result.kind === "timeout") {
     throw new SessionCaptureError(

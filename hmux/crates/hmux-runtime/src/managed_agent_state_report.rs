@@ -108,6 +108,9 @@ fn into_client_report(
                 output_sequence: expected.output_sequence,
             }
         }),
+        // The reporter replaces it with the plain working report for a Host
+        // that does not negotiate background work.
+        background_work: report.background_work,
     }
 }
 
