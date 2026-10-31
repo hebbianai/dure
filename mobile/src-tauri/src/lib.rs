@@ -1587,6 +1587,112 @@ async fn hub_start_agent(
     })
 }
 
+/// One session's provider account, as the paired computer's selector sees it.
+///
+/// A refusal is a result, not an exception — `code` is what the sheet branches
+/// on. Transport failures stay errors, as for every other hub request.
+#[derive(Debug, Serialize)]
+pub struct SessionAccountOutcome {
+    pub outcome: dure_hub_protocol::session_account::SessionAccountOutcome,
+    pub accounts: Vec<dure_hub_protocol::session_account::SessionAccountChoice>,
+    pub detail: Option<String>,
+    pub code: Option<String>,
+}
+
+impl From<dure_hub_protocol::session_account::HubSessionAccountResult> for SessionAccountOutcome {
+    fn from(result: dure_hub_protocol::session_account::HubSessionAccountResult) -> Self {
+        Self {
+            outcome: result.outcome,
+            accounts: result.accounts,
+            detail: result.detail,
+            code: result.code,
+        }
+    }
+}
+
+async fn session_account_request(
+    app: AppHandle,
+    id: String,
+    request: dure_hub_protocol::hello::HubRequest,
+) -> Result<SessionAccountOutcome, CommandError> {
+    let entry = hub_target(&app, &id)?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let relay = match (&entry.relay_endpoint, &entry.server_id) {
+            (Some(endpoint), Some(server_id)) => Some((endpoint.as_str(), server_id.as_str())),
+            _ => None,
+        };
+        hub_client::send_session_account(
+            &entry.endpoint,
+            relay,
+            &entry.fingerprint,
+            &entry.token,
+            request,
+        )
+    })
+    .await
+    .map_err(|error| CommandError {
+        code: "hub_join".to_string(),
+        message: error.to_string(),
+    })?
+    .map_err(|error| CommandError {
+        code: error.code().to_string(),
+        message: error.to_string(),
+    })?;
+    Ok(result.into())
+}
+
+/// The account sheet opened: which account the session runs on, the others it
+/// could move to, and the usage the computer's selector shows for each.
+#[tauri::command]
+async fn hub_session_accounts(
+    app: AppHandle,
+    id: String,
+    session_id: String,
+) -> Result<SessionAccountOutcome, CommandError> {
+    session_account_request(
+        app,
+        id,
+        dure_hub_protocol::hello::HubRequest::SessionAccountsV1 { session_id },
+    )
+    .await
+}
+
+/// A confirmed account switch. `action_id` names the press, from the screen,
+/// so a retry after a lost answer reaches the same switch.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SwitchSessionAccountInput {
+    session_id: String,
+    action_id: String,
+    account_id: Option<String>,
+    confirm_restart: bool,
+}
+
+#[tauri::command]
+async fn hub_switch_session_account(
+    app: AppHandle,
+    id: String,
+    input: SwitchSessionAccountInput,
+) -> Result<SessionAccountOutcome, CommandError> {
+    let SwitchSessionAccountInput {
+        session_id,
+        action_id,
+        account_id,
+        confirm_restart,
+    } = input;
+    session_account_request(
+        app,
+        id,
+        dure_hub_protocol::hello::HubRequest::SwitchSessionAccountV1 {
+            session_id,
+            action_id,
+            account_id,
+            confirm_restart,
+        },
+    )
+    .await
+}
+
 /// 세션 하나가 무엇을 바꿔 놓았는지 그 상자에 직접 묻는다.
 ///
 /// [`hub_git_status`] 와 같은 질문에 대한 두 번째 답이다. 짝지은 노트북이 그
@@ -2867,6 +2973,8 @@ pub fn run() {
             hub_browse_folder,
             hub_create_folder,
             hub_start_agent,
+            hub_session_accounts,
+            hub_switch_session_account,
             hub_create_pull_request,
             ssh_git_status,
             ssh_create_session,
@@ -2919,6 +3027,62 @@ mod tests {
         let info = runtime_info();
 
         assert!(!info.limitations.is_empty());
+    }
+
+    /// The sheet reads the protocol's own shapes: the default account stays
+    /// id- and label-less, and the outcome is the word the screen branches on.
+    #[test]
+    fn an_account_answer_reaches_the_screen_in_the_protocol_shape() {
+        use dure_hub_protocol::session_account::{
+            AccountUsage, HubSessionAccountResult, SessionAccountChoice,
+            SessionAccountOutcome as Outcome, UsageWindow,
+        };
+        let outcome: SessionAccountOutcome = HubSessionAccountResult::answered(
+            Outcome::InProgress,
+            vec![
+                SessionAccountChoice {
+                    account_id: None,
+                    label: None,
+                    current: false,
+                    pending: false,
+                    usage: None,
+                },
+                SessionAccountChoice {
+                    account_id: Some("account-work".into()),
+                    label: Some("Work".into()),
+                    current: true,
+                    pending: false,
+                    usage: Some(AccountUsage {
+                        used_percent: 97,
+                        window: UsageWindow::FiveHour,
+                        resets_in: Some("1h 5m".into()),
+                    }),
+                },
+            ],
+        )
+        .into();
+        let value = serde_json::to_value(outcome).expect("serializes");
+        assert_eq!(value["outcome"], "in_progress");
+        assert_eq!(
+            value["accounts"][0],
+            serde_json::json!({ "current": false, "pending": false })
+        );
+        assert_eq!(value["accounts"][1]["usage"]["window"], "five_hour");
+        assert_eq!(value["detail"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_switch_input_reads_the_screen_s_camel_case() {
+        let input: SwitchSessionAccountInput = serde_json::from_value(serde_json::json!({
+            "sessionId": "session-1",
+            "actionId": "press-1",
+            "accountId": null,
+            "confirmRestart": true,
+        }))
+        .expect("reads");
+        assert_eq!(input.session_id, "session-1");
+        assert_eq!(input.account_id, None);
+        assert!(input.confirm_restart);
     }
 
     #[test]

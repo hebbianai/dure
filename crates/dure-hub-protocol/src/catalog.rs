@@ -93,6 +93,41 @@ pub struct SessionPresentation {
     pub detail: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git: Option<SessionGitSummary>,
+    /// The provider account this session runs on.
+    ///
+    /// Present only when this desktop answers `SessionAccountsV1` and
+    /// `SwitchSessionAccountV1` for the session, so it doubles as that
+    /// capability: an older desktop never sends it, and a phone never offers
+    /// a switch the computer cannot perform. Usage is not here — it is read
+    /// when the account sheet opens (`session_account.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<SessionAccountSummary>,
+}
+
+/// The account line the desktop draws for one session.
+///
+/// Labels are the names the desktop's selector shows. The provider's default
+/// account has no name of its own, so it travels as an absent label and the
+/// phone names it in its own language.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionAccountSummary {
+    /// The current account. Absent: the provider's default account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// An account queued to take over when the running turn ends. Absent
+    /// when no switch is waiting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<PendingAccountSummary>,
+}
+
+/// The account a queued switch will move to.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingAccountSummary {
+    /// Absent: the provider's default account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -261,6 +296,29 @@ mod tests {
                 .get("pinned")
                 .is_none()
         );
+    }
+
+    /// The account line is a capability: absent from an older desktop, and an
+    /// older phone reading a newer catalog ignores it without losing the row.
+    #[test]
+    fn the_account_line_is_optional_in_both_directions() {
+        let mut current = catalog();
+        current.sessions[0].presentation = Some(SessionPresentation {
+            account: Some(SessionAccountSummary {
+                label: Some("Work".into()),
+                pending: Some(PendingAccountSummary { label: None }),
+            }),
+            ..Default::default()
+        });
+        let encoded = encode(&current).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), current);
+        let wire = serde_json::to_value(&current.sessions[0].presentation).unwrap();
+        assert_eq!(wire["account"]["label"], "Work");
+        assert_eq!(wire["account"]["pending"], serde_json::json!({}));
+
+        let older: SessionPresentation =
+            serde_json::from_str(r#"{"activityAt":1700000000000}"#).unwrap();
+        assert_eq!(older.account, None);
     }
 
     /// 구조체 리터럴인 것이 의도다: 매니페스트에 필드가 늘면 컴파일이 깨져

@@ -42,10 +42,20 @@ import {
   actionIdFor,
   emptyForm,
   type LaunchForm,
+  newActionId,
   preselect,
   retryKeepsActionId,
   selectSpace as selectSpaceIn,
 } from "./launch";
+import {
+  accountHub,
+  accountName,
+  choiceId,
+  outcomeNotice,
+  refusalText,
+  retryKeepsPress,
+} from "./accountSwitch";
+import { type AccountSheetStage, renderAccountSheet } from "./accountSwitchView";
 import { renderLaunchScreen } from "./launchView";
 import {
   createFolderBrowserFlow,
@@ -117,6 +127,7 @@ import { renderAddSheet } from "./addSheetView";
 import iconArrowUpRight from "./assets/icon-arrow-up-right.svg";
 import iconRefreshCw from "./assets/icon-refresh-cw.svg";
 import iconInfo from "./assets/icon-info.svg";
+import iconKey from "./assets/icon-key.svg";
 import { type RowMenuItem, renderSessionRowMenu } from "./sessionRowMenu";
 import {
   type AttachFailures,
@@ -181,6 +192,22 @@ type ScmSheet =
 interface RowMenu {
   readonly sessionId: string;
   readonly anchor: MenuAnchor;
+}
+
+/** The account sheet a row menu opened (#287). See `State.accountSheet`. */
+interface AccountSheet {
+  readonly sessionId: string;
+  /** The paired computer whose catalog offered the switch. */
+  readonly hubId: string;
+  /** The row's title when the sheet opened: a switch may replace the session, and the sheet must still say what it was about. */
+  readonly title: string;
+  readonly stage: AccountSheetStage;
+  /**
+   * The last switch sent. A retry after an answer that did not say what
+   * happened sends the same name, so the computer reaches the switch already
+   * running rather than restarting the session a second time.
+   */
+  readonly press?: { readonly accountId: string | null; readonly actionId: string; readonly keep: boolean };
 }
 
 /** The info sheet a row menu opened. See `State.rowInfo`. */
@@ -498,6 +525,12 @@ interface State {
    * that left the listing takes its sheet with it.
    */
   rowInfo?: RowInfo;
+  /**
+   * The account sheet over one session row (#287). Held by session id like
+   * `rowInfo`, but it keeps its own title: the switch it sends may replace the
+   * session, and its answer must still be readable afterwards.
+   */
+  accountSheet?: AccountSheet;
   /**
    * The last refused attach per session, as this phone saw it.
    *
@@ -935,7 +968,7 @@ export function startApp(root: HTMLElement): () => void {
 
   const homeVisible = () => (state.screen.kind === "home" || state.screen.kind === "sessions" ||
     Boolean(view.querySelector(".workspace__list")?.getClientRects().length)) && !state.addSheet &&
-    !state.rowMenu && !state.rowInfo && !state.homeMenu && !state.opening &&
+    !state.rowMenu && !state.rowInfo && !state.accountSheet && !state.homeMenu && !state.opening &&
     document.visibilityState !== "hidden";
   const sessionCensus = createSessionCensus({
     root,
@@ -1359,6 +1392,10 @@ export function startApp(root: HTMLElement): () => void {
       }
       if (state.rowInfo) {
         const sheet = rowInfoSheet(state.rowInfo);
+        if (sheet) view.append(sheet);
+      }
+      if (state.accountSheet) {
+        const sheet = accountSheetView(state.accountSheet);
         if (sheet) view.append(sheet);
       }
     }
@@ -1953,6 +1990,17 @@ export function startApp(root: HTMLElement): () => void {
         },
       });
     }
+    // Only where a paired computer said it can switch this session's account
+    // (#287) — an older computer never says so, and is never asked.
+    const accounts = accountHub(row.sessionId, Object.values(state.hubSessions));
+    if (accounts) {
+      items.push({
+        id: "account",
+        label: t("account.action"),
+        icon: iconKey,
+        run: () => void openAccountSheet(row.sessionId, accounts.hubId, row.title),
+      });
+    }
     // Offered whatever the row's state: a session that will not open is the
     // one somebody most needs to identify (#227).
     items.push({
@@ -2011,6 +2059,112 @@ export function startApp(root: HTMLElement): () => void {
     } catch {
       // The values on the sheet are selectable; that is the copy that always works.
       setState({ banner: t("복사하지 못했습니다 — 길게 눌러 선택하세요") });
+    }
+  }
+
+  /**
+   * The account sheet (#287). Unlike the info sheet it does not close when
+   * the row leaves the listing: a switch can replace the session, and the
+   * person still has to read what happened. It closes when the computer is
+   * forgotten, since nothing on it could be acted on any more.
+   */
+  function accountSheetView(open: AccountSheet): HTMLElement | undefined {
+    const hub = state.hubs.find((candidate) => candidate.id === open.hubId);
+    if (!hub) {
+      queueMicrotask(() => setState({ accountSheet: undefined }));
+      return undefined;
+    }
+    const close = nativeBack.bind(() => setState({ accountSheet: undefined }));
+    const confirming = open.stage.kind === "ready" && open.stage.confirm !== undefined;
+    const cancelConfirm = () =>
+      updateAccountSheet(open.sessionId, (sheet) =>
+        sheet.stage.kind === "ready" ? { ...sheet, stage: { ...sheet.stage, confirm: undefined } } : sheet);
+    // The confirmation is on top, so the back gesture dismisses it first.
+    if (confirming) nativeBack.bind(cancelConfirm);
+    return renderAccountSheet(
+      { session: open.title, computer: hubTitle(hub), stage: open.stage },
+      {
+        dismiss: close,
+        reload: () => void loadSessionAccounts(open.sessionId, open.hubId),
+        choose: (choice) =>
+          updateAccountSheet(open.sessionId, (sheet) =>
+            sheet.stage.kind === "ready" && sheet.stage.switching === undefined
+              ? { ...sheet, stage: { ...sheet.stage, confirm: choice } }
+              : sheet),
+        cancelConfirm,
+        confirm: () => void switchSessionAccount(open.sessionId),
+      },
+    );
+  }
+
+  function updateAccountSheet(sessionId: string, next: (sheet: AccountSheet) => AccountSheet): void {
+    const sheet = state.accountSheet;
+    if (!sheet || sheet.sessionId !== sessionId) return;
+    setState({ accountSheet: next(sheet) });
+  }
+
+  /** The sheet first, then the question, so a slow computer still shows the press landed. */
+  async function openAccountSheet(sessionId: string, hubId: string, title: string): Promise<void> {
+    setState({ rowMenu: undefined, accountSheet: { sessionId, hubId, title, stage: { kind: "loading" } } });
+    await loadSessionAccounts(sessionId, hubId);
+  }
+
+  async function loadSessionAccounts(sessionId: string, hubId: string): Promise<void> {
+    updateAccountSheet(sessionId, (sheet) => ({ ...sheet, stage: { kind: "loading" } }));
+    try {
+      const answer = await ipc.hubSessionAccounts(hubId, sessionId);
+      updateAccountSheet(sessionId, (sheet) => ({
+        ...sheet,
+        stage: answer.outcome === "refused"
+          ? { kind: "failed", message: refusalText(answer.code, answer.detail) }
+          : { kind: "ready", accounts: answer.accounts },
+      }));
+    } catch (error) {
+      updateAccountSheet(sessionId, (sheet) => ({ ...sheet, stage: { kind: "failed", message: describeError(error) } }));
+    }
+  }
+
+  /**
+   * Send the confirmed switch and draw the computer's answer.
+   *
+   * The press is named and stored before it is sent. A lost answer leaves the
+   * list as it was with the error said, and pressing the same account again
+   * reaches the computer under the same name.
+   */
+  async function switchSessionAccount(sessionId: string): Promise<void> {
+    const sheet = state.accountSheet;
+    if (!sheet || sheet.sessionId !== sessionId || sheet.stage.kind !== "ready" || !sheet.stage.confirm) return;
+    const target = sheet.stage.confirm;
+    const accountId = choiceId(target);
+    const actionId = sheet.press?.keep === true && sheet.press.accountId === accountId
+      ? sheet.press.actionId
+      : newActionId();
+    const accounts = sheet.stage.accounts;
+    setState({
+      accountSheet: {
+        ...sheet,
+        press: { accountId, actionId, keep: true },
+        stage: { kind: "ready", accounts, switching: target },
+      },
+    });
+    try {
+      const answer = await ipc.hubSwitchSessionAccount(sheet.hubId, sessionId, actionId, accountId);
+      updateAccountSheet(sessionId, (current) => ({
+        ...current,
+        press: { accountId, actionId, keep: retryKeepsPress(answer) },
+        stage: {
+          kind: "ready",
+          accounts: answer.accounts.length > 0 ? answer.accounts : accounts,
+          notice: outcomeNotice(answer, accountName(target.label)),
+        },
+      }));
+      // The row's account line comes from the catalog; ask for it again.
+      if (answer.outcome !== "refused") void census();
+    } catch (error) {
+      updateAccountSheet(sessionId, (current) => ({
+        ...current,
+        stage: { kind: "ready", accounts, notice: { tone: "error", text: describeError(error) } },
+      }));
     }
   }
 

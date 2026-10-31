@@ -26,6 +26,8 @@ const offlineCalls: { scanned: string; code: string }[] = [];
 let createRefusal = false;
 let pairFromScanError: unknown;
 let rejectNextHubStart = false;
+/** Loses the next account switch's answer, as a dropped relay would. */
+let rejectNextAccountSwitch = false;
 let hubLaunchOffer: LaunchOffer | undefined;
 let hubStartedSessionId: string | null = null;
 let hubCatalogSessions: HubProbeSession[] | undefined;
@@ -548,6 +550,38 @@ vi.mock("@tauri-apps/api/core", () => ({
           detail: null,
           code: null,
         });
+      case "hub_session_accounts":
+        return Promise.resolve({
+          outcome: "listed",
+          accounts: [
+            { current: false, pending: false },
+            {
+              account_id: "acct-work",
+              label: "Work",
+              current: true,
+              pending: false,
+              usage: { used_percent: 100, window: "five_hour", resets_in: "1h 20m" },
+            },
+            { account_id: "acct-spare", label: "Spare", current: false, pending: false },
+          ],
+          detail: null,
+          code: null,
+        });
+      case "hub_switch_session_account":
+        if (rejectNextAccountSwitch) {
+          rejectNextAccountSwitch = false;
+          return Promise.reject(new Error("response lost"));
+        }
+        return Promise.resolve({
+          outcome: "scheduled",
+          accounts: [
+            { current: false, pending: false },
+            { account_id: "acct-work", label: "Work", current: true, pending: false },
+            { account_id: "acct-spare", label: "Spare", current: false, pending: true },
+          ],
+          detail: null,
+          code: null,
+        });
       case "sync_push_notifications":
         return Promise.resolve({ supported: pushSupported, outcomes: [{ id: "hub-1", error: pushFailure }] });
       case "plugin:notification|is_permission_granted":
@@ -866,6 +900,7 @@ async function openAllSessions(): Promise<HTMLElement> {
 beforeEach(() => {
   hubRows = [];
   rejectNextHubStart = false;
+  rejectNextAccountSwitch = false;
   hubLaunchOffer = undefined;
   hubStartedSessionId = null;
   hubCatalogSessions = undefined;
@@ -5596,6 +5631,82 @@ describe("세션 화면의 데스크탑 묶음", () => {
     root.querySelector<HTMLElement>(".session-info")?.click();
     await settle();
     expect(root.querySelector(".session-info")).toBeNull();
+  });
+
+  /**
+   * #287: a session at its limit is moved to another account from the phone.
+   * The computer offered it (an account line in its catalog), the restart is
+   * confirmed before anything is sent, and a retry after a lost answer is the
+   * same press.
+   */
+  it("switches a session's account from the row menu after confirming the restart", async () => {
+    pairedLaptop();
+    hubCatalogSessions = [{
+      ...remoteSession(),
+      session_id: "hub-live",
+      session_name: "배선",
+      workspace_id: "agent-ide",
+      provider_id: "claude-code",
+      launch_program: null,
+      box_id: "this-laptop",
+      box_label: "맥북",
+      presentation: { kind: "agent", account: { label: "Work" } },
+    }];
+    rejectNextAccountSwitch = true;
+    const root = await openAllSessions();
+    const liveRow = () =>
+      [...root.querySelectorAll<HTMLButtonElement>(".list__open")].find((node) =>
+        node.textContent?.includes("배선"),
+      );
+
+    await holdRow(liveRow());
+    await settle();
+    expect([...root.querySelectorAll(".row-menu__label")].map((node) => node.textContent))
+      .toEqual([t("세션 열기"), t("account.action"), t("sessionInfo.action")]);
+    [...root.querySelectorAll<HTMLButtonElement>(".row-menu__item")]
+      .find((item) => item.textContent === t("account.action"))?.click();
+    await settle();
+
+    expect(root.querySelector(".row-menu")).toBeNull();
+    const sheet = () => root.querySelector<HTMLElement>(".account-sheet");
+    expect(invocations.find((entry) => entry.command === "hub_session_accounts")?.args)
+      .toMatchObject({ sessionId: "hub-live" });
+    expect(sheet()?.querySelector('[data-account="acct-work"] .account-sheet__detail')?.textContent)
+      .toBe("100% of the 5-hour limit used · resets in 1h 20m");
+
+    const choose = async () => {
+      sheet()?.querySelector<HTMLButtonElement>('[data-account="acct-spare"]')?.click();
+      await settle();
+      [...(sheet()?.querySelectorAll<HTMLButtonElement>(".confirm-dialog button") ?? [])]
+        .find((button) => button.textContent === t("account.confirm.action"))?.click();
+      await settle();
+    };
+    const switches = () =>
+      invocations.filter((entry) => entry.command === "hub_switch_session_account").map((entry) => entry.args);
+
+    // Choosing alone sends nothing; the restart has to be confirmed.
+    sheet()?.querySelector<HTMLButtonElement>('[data-account="acct-spare"]')?.click();
+    await settle();
+    expect(sheet()?.querySelector(".confirm-dialog")).not.toBeNull();
+    expect(switches()).toEqual([]);
+    [...(sheet()?.querySelectorAll<HTMLButtonElement>(".confirm-dialog button") ?? [])]
+      .find((button) => button.textContent === t("취소"))?.click();
+    await settle();
+    expect(sheet()?.querySelector(".confirm-dialog")).toBeNull();
+
+    await choose();
+    expect(sheet()?.querySelector(".account-sheet__notice--error")?.textContent).toContain("response lost");
+    await choose();
+
+    const [first, second] = switches() as { input: { actionId: string } }[];
+    expect(first).toMatchObject({
+      input: { sessionId: "hub-live", accountId: "acct-spare", confirmRestart: true },
+    });
+    expect(second.input.actionId).toBe(first.input.actionId);
+    expect(sheet()?.querySelector(".account-sheet__notice--waiting")?.textContent)
+      .toBe(t("account.notice.scheduled", { account: "Spare" }));
+    expect(sheet()?.querySelector('[data-account="acct-spare"] .account-sheet__detail')?.textContent)
+      .toContain(t("account.pendingDetail", { usage: t("account.usage.unknown") }));
   });
 
   it("shows why the last attach was refused until a controlling attach succeeds", async () => {

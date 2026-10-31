@@ -218,6 +218,34 @@ pub enum HubRequest {
         #[serde(default)]
         branch: Option<String>,
     },
+    /// Read one session's provider account and the accounts it could move
+    /// to, with the usage the desktop's account selector shows.
+    ///
+    /// Asked when the sheet opens rather than pushed in the catalog: usage is
+    /// read on demand on the desktop too, and pushing it would poll for a
+    /// screen nobody is looking at. See `session_account.rs`.
+    SessionAccountsV1 {
+        session_id: String,
+    },
+    /// Move one session to another account, keeping its conversation.
+    ///
+    /// A distinct variant rather than a field on the read, for the reason
+    /// `CreatePullRequest` gives: a retried read must never become a write.
+    SwitchSessionAccountV1 {
+        session_id: String,
+        /// This press's name, like `StartAgent.action_id`: a retry after a
+        /// lost answer reaches the same switch instead of starting another.
+        action_id: String,
+        /// The id a `SessionAccountsV1` answer listed. Absent selects the
+        /// provider's default account.
+        #[serde(default)]
+        account_id: Option<String>,
+        /// The person confirmed the restart. Absent or false is refused by
+        /// the hub, the way `dure runs switch-account` only previews without
+        /// `--confirm-restart`.
+        #[serde(default)]
+        confirm_restart: bool,
+    },
     /// 이 노트북이 모르는 요청.
     ///
     /// # 왜 갈래가 하나 더 있는가
@@ -460,6 +488,48 @@ mod tests {
         let hello = read_hello(&mut framed.as_slice()).expect("reads");
 
         assert_eq!(hello.request, request);
+    }
+
+    #[test]
+    fn account_requests_round_trip_and_stay_distinct() {
+        let read = HubRequest::SessionAccountsV1 {
+            session_id: "session-1".to_string(),
+        };
+        let switch = HubRequest::SwitchSessionAccountV1 {
+            session_id: "session-1".to_string(),
+            action_id: "press-1".to_string(),
+            account_id: Some("account-spare".to_string()),
+            confirm_restart: true,
+        };
+        for request in [read, switch] {
+            let framed = encode_hello_for("token-1", request.clone()).expect("encodes");
+            assert_eq!(
+                read_hello(&mut framed.as_slice()).expect("reads").request,
+                request
+            );
+        }
+    }
+
+    /// A switch that does not say the restart was confirmed is not a
+    /// confirmed switch. Absence must read as false, not fail the greeting
+    /// (which the phone would show as a revoked pairing).
+    #[test]
+    fn an_account_switch_without_confirmation_reads_as_unconfirmed() {
+        let hello: HubHello = serde_json::from_value(serde_json::json!({
+            "hub_hello_version": HUB_HELLO_VERSION,
+            "token": "t",
+            "request": { "kind": "switch_session_account_v1", "session_id": "s", "action_id": "a" },
+        }))
+        .expect("reads");
+        assert_eq!(
+            hello.request,
+            HubRequest::SwitchSessionAccountV1 {
+                session_id: "s".to_string(),
+                action_id: "a".to_string(),
+                account_id: None,
+                confirm_restart: false,
+            }
+        );
     }
 
     #[test]

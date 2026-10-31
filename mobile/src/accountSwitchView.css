@@ -1,0 +1,104 @@
+/* The account sheet (`accountSwitchView.ts`). The tray sheet's panel, with
+ * rows shaped like the info sheet's facts: name above, usage under it, so a
+ * long account name or reset time wraps inside the row instead of off it. */
+
+.account-sheet__waiting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 4px;
+  color: var(--muted-foreground);
+  font: 400 13px/18px var(--font-ui);
+}
+
+.account-sheet__notice {
+  margin: 0 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--glass-chrome);
+  color: var(--foreground);
+  font: 400 13px/18px var(--font-ui);
+}
+
+.account-sheet__notice--done {
+  color: var(--status-run);
+}
+
+.account-sheet__notice--waiting {
+  color: var(--status-warn);
+}
+
+.account-sheet__notice--error {
+  color: var(--destructive);
+}
+
+.account-sheet__list {
+  display: flex;
+  flex-direction: column;
+}
+
+.account-sheet__heading {
+  margin: 8px 4px 2px;
+  color: var(--muted-foreground);
+  font: 500 12px/16px var(--font-ui);
+}
+
+.account-sheet__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  /* The press highlight reaches 8px past the content, as on 추가's rows. */
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button.account-sheet__row:active {
+  background: var(--glass-chrome);
+}
+
+button.account-sheet__row:disabled {
+  opacity: 0.5;
+}
+
+.account-sheet__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.account-sheet__name {
+  color: var(--foreground);
+  font: 500 14px/20px var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.account-sheet__detail {
+  color: var(--muted-foreground);
+  font: 400 12px/16px var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+/* At its limit: the reason somebody opened this sheet, so it reads first. */
+.account-sheet__row--limited .account-sheet__detail {
+  color: var(--destructive);
+}
+
+.account-sheet__mark {
+  flex: none;
+  color: var(--status-run);
+}
+
+.account-sheet__mark--pending {
+  color: var(--status-warn);
+}
