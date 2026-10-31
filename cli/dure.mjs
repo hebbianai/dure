@@ -1242,7 +1242,37 @@ async function cmdRead(query, opts) {
     const reg = loadRegistryOptional() ?? { agents: [] };
     const target = resolveReadTarget(reg, query);
     readLabel = target;
-    readScreen = (signal) => capture(reg, target, opts.lines, signal, opts);
+    const { agentScreenReader, currentAgentSessionSuccessor } = await import(
+      "./lib/agent-current-session.mjs"
+    );
+    readScreen = agentScreenReader({
+      agent: target,
+      capture: (session, signal) =>
+        session === target
+          ? capture(reg, target, opts.lines, signal, opts)
+          : capture(reg, session.sessionId, opts.lines, signal, {
+              ...opts,
+              workspace: session.workspaceId,
+            }),
+      findSuccessor: (agent) =>
+        currentAgentSessionSuccessor({
+          agent,
+          resolveBackend: () =>
+            backendProfileQueryContext(
+              typeof agent.runtimeBinding?.backendProfileId === "string"
+                ? { backendSpecified: true, backend: agent.runtimeBinding.backendProfileId }
+                : {},
+            ),
+        }),
+      onSuccessor: (session) => {
+        readLabel = session.sessionId;
+        process.stderr.write(
+          `${agentDisplayName(target)} now runs in Session ${session.sessionId} ` +
+            `(workspace ${session.workspaceId}); the app's agent registry still lists ` +
+            `${target.sessionId}. Reading the current Session.\n`,
+        );
+      },
+    });
   }
   const interruption = captureInterruption();
   if (!opts.follow) {
@@ -1589,6 +1619,7 @@ async function sessionQueryContext(opts, loadSessionClientProjection) {
 
 async function emitSessionQuery(action, sessionId, opts) {
   const {
+    collectAliveSessionQuery,
     collectSessionQuery,
     formatSessionQuery,
     loadSessionClientProjection,
@@ -1598,7 +1629,7 @@ async function emitSessionQuery(action, sessionId, opts) {
     opts,
     loadSessionClientProjection,
   );
-  const report = await collectSessionQuery({
+  const query = {
     action,
     hmuxCommand: hmuxCommand(),
     sessionId,
@@ -1610,16 +1641,15 @@ async function emitSessionQuery(action, sessionId, opts) {
     probeBudgetMs:
       opts.probeBudgetMs === undefined ? undefined : Number(opts.probeBudgetMs),
     backend,
-  });
+  };
+  // --alive (only alive sessions) filters every page of the census.
+  const report = action === "list" && opts.alive
+    ? await collectAliveSessionQuery(query)
+    : await collectSessionQuery(query);
 
   // Apply client-side filtering for ls command
   if (action === "list" && report.kind === "dure.sessions.list") {
     let filtered = report.sessions;
-
-    // Filter by --alive (only show alive sessions)
-    if (opts.alive) {
-      filtered = filtered.filter((session) => session.liveness.state === "alive");
-    }
 
     // Filter by --hide-provider (can be repeated)
     if (opts.hideProvider && opts.hideProvider.length > 0) {
@@ -1666,7 +1696,7 @@ after this page, and observationComplete means every returned row was probed.
 Recent lists provider history through the connected app.
 
 Filtering options (dure ls only):
-  --alive                   Show only alive sessions (exclude exited and unknown)
+  --alive                   Show only alive sessions from every census page (exclude exited and unknown)
   --hide-provider ID        Hide sessions from the specified provider ID (can be repeated)
 
 Use --help or -h to show this help without contacting a backend.

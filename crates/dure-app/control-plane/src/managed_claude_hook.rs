@@ -247,9 +247,9 @@ async fn deliver(
         .headers(headers)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .body(input.body)
-        .timeout(Duration::from_millis(1_500))
         .build()
         .map_err(|_| HookFailure::Unavailable)?;
+    let mut rejection = None;
     for candidate in descriptor::candidates(&root.path, deadline) {
         if Instant::now() >= deadline {
             return Err(HookFailure::Timeout);
@@ -294,6 +294,10 @@ async fn deliver(
             .url_mut()
             .set_port(Some(descriptor.port))
             .map_err(|_| HookFailure::Unavailable)?;
+        // The app answers `202 accepted` once its Host report has not finished
+        // within 1.5 s. Waiting only that long here turned every slow report,
+        // such as the first prompt after a restart, into a false failure.
+        *request.timeout_mut() = Some(deadline.saturating_duration_since(Instant::now()));
         let mut authorization =
             HeaderValue::from_str(&format!("Bearer {}", descriptor.report_token))
                 .map_err(|_| HookFailure::Unavailable)?;
@@ -303,7 +307,9 @@ async fn deliver(
             .insert(reqwest::header::AUTHORIZATION, authorization);
         let sent = client.execute(request).await;
         if let Ok(response) = sent {
-            if response.status().is_success() && bounded_response(response).await.is_ok() {
+            let success = response.status().is_success();
+            let body = bounded_response(response).await;
+            if success && body.is_ok() {
                 if root.writable {
                     if let Some(stamp) = &stamp {
                         stamp.record();
@@ -311,9 +317,24 @@ async fn deliver(
                 }
                 return Ok(());
             }
+            if !success {
+                rejection = body.ok().as_deref().and_then(rejection_code).or(rejection);
+            }
         }
     }
+    if let Some(code) = rejection {
+        // Name why the app refused the report; its message is never copied.
+        eprintln!("managed_hook_report_rejected: {code}");
+    }
     Err(HookFailure::Unavailable)
+}
+
+/// The app's refusal code, when it is a plain identifier. Messages may carry
+/// paths or provider input and are never surfaced.
+fn rejection_code(body: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let code = value.get("error")?.get("code")?.as_str()?;
+    identifier(code).then(|| code.to_owned())
 }
 
 /// One invocation owns one deadline, including input and discovery. Neither

@@ -9,9 +9,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   hmuxSession,
+  hostGeneration,
   installHmuxStub,
   installRemoteBackendFixture,
   runSessionCli,
+  writeRegistry,
 } from "./lib/dure-session-test-fixture.mjs";
 
 const temporaryRoots = [];
@@ -233,6 +235,53 @@ describe("dure ls canonical session projection", () => {
     const parsed = JSON.parse(result.stdout);
     expect(parsed.sessions).toHaveLength(1);
     expect(parsed.sessions[0].sessionId).toBe("session-1");
+  });
+
+  it("finds a live successor that sorts past the first page while its exited predecessor keeps priority", () => {
+    const root = temporaryRoot();
+    const exited = { lifecycle: "exited", health: "exited", manifestLifecycle: "exited",
+      effectiveLifecycle: "exited", exit: { kind: "normal", exit_code: 0 } };
+    // An account switch leaves the predecessor as an exited tombstone and starts
+    // an unnamed successor in the same workspace; the app registry still names
+    // the predecessor until it re-projects the transition.
+    const sessions = [
+      ...Array.from({ length: 140 }, (_, index) => hmuxSession(index + 1, exited)),
+      hmuxSession(141, { session_id: "runtime-native-successor", workspace_id: "workspace-zz-lead" }),
+    ];
+    const hmux = installHmuxStub(root, sessions, {
+      capabilities: ["bounded_session_catalog_query_v1", "bounded_session_catalog_pagination_v1"],
+    });
+    writeRegistry(root, [{
+      id: "agent-lead", name: "lead", displayName: "lead", sessionId: "session-1",
+      provider: "codex", worktree: "/repo",
+      runtimeBinding: { runtime: "hmux_managed_v1", source: "local", hostId: "local", ...hostGeneration() },
+    }]);
+
+    const result = runSessionCli(root, hmux, ["ls", "--alive", "--json"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.sessions.map((session) => session.sessionId)).toEqual(["runtime-native-successor"]);
+    expect(parsed).toMatchObject({ inventoryComplete: true, truncation: { items: false, omittedCount: 0 } });
+    // Without --alive the bounded first page still reports its truncation.
+    const unfiltered = JSON.parse(runSessionCli(root, hmux, ["ls", "--json"]).stdout);
+    expect(unfiltered.truncation.items).toBe(true);
+    expect(unfiltered.sessions.map((session) => session.sessionId)).not.toContain("runtime-native-successor");
+  });
+
+  it("keeps --alive to the first page with its truncation when Hmux cannot paginate", () => {
+    const root = temporaryRoot();
+    const exited = { lifecycle: "exited", health: "exited", exit: { kind: "normal", exit_code: 0 } };
+    const sessions = [
+      ...Array.from({ length: 129 }, (_, index) => hmuxSession(index + 1, exited)),
+      hmuxSession(130, { session_id: "runtime-native-successor", workspace_id: "workspace-zz-lead" }),
+    ];
+    const hmux = installHmuxStub(root, sessions);
+
+    const result = runSessionCli(root, hmux, ["ls", "--alive"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("Inventory truncated.");
   });
 
   it("filters sessions with --hide-provider to exclude specific providers", () => {
