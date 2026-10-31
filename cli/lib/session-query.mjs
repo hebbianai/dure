@@ -977,7 +977,9 @@ export function formatSessionQuery(report) {
         session.provider.pid,
         session.liveness.state,
         session.cwd ?? "-",
-        session.runtime?.agentRuntimeState?.activity ?? "-",
+        session.runtime?.agentRuntimeState?.backgroundWork
+          ? "waiting+background"
+          : session.runtime?.agentRuntimeState?.activity ?? "-",
         session.clientProjection.agents
           .map((agent) => agent.displayName ?? agent.name ?? agent.id ?? "?")
           .join(",") || "-",

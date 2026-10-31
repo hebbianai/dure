@@ -1,3 +1,4 @@
+mod background_work;
 mod causal_reports;
 mod controller_input;
 
@@ -1408,6 +1409,7 @@ fn state_report(
         causality: None,
         working_ttl_ms: None,
         expected_observation: None,
+        background_work: false,
     }
 }
 

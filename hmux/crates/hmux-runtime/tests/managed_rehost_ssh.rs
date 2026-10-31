@@ -1220,6 +1220,7 @@ fn remote_waiting_fence(
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
         )
         .unwrap();

@@ -4886,6 +4886,7 @@ mod tests {
             source: AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 2,
             program_status: None,
+            background_work: false,
         };
         let expected = provider_identity(7);
         let (gateway_connection, _local_host) = structured_connection(
@@ -5066,6 +5067,7 @@ mod tests {
             source: AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 0,
             program_status: None,
+            background_work: false,
         };
         let identity = ProviderConversationIdentityProjection {
             fence: fence(),
@@ -7406,6 +7408,7 @@ mod tests {
                     working_ttl_ms: None,
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 }),
                 false
             ),

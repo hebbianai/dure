@@ -133,6 +133,7 @@ async fn run_then_rehost(conversation: Option<&str>) {
                         expected_fence: Some(source_fence.clone()),
                     }),
                     expected_observation: None,
+                    background_work: false,
                 },
                 source_fence,
             )

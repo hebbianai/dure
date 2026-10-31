@@ -339,6 +339,7 @@ fn report_activity(
                     working_ttl_ms: None,
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
             )
             .unwrap(),

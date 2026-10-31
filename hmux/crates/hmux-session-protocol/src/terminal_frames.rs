@@ -242,6 +242,12 @@ pub struct AgentRuntimeStateProjection {
     /// snapshot frames carrying this projection stay compact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub program_status: Option<Box<super::ProgramStatusProjection>>,
+    /// The provider's turn ended and its prompt accepts input, but background
+    /// work it started (child agents, shells, scheduled wakeups) is in flight.
+    /// Only set beside `working`, so decoders that predate it keep treating
+    /// the session as busy; agent prompt admission treats it as ready.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub background_work: bool,
 }
 
 fn u64_is_zero(value: &u64) -> bool {
@@ -256,6 +262,7 @@ impl AgentRuntimeStateProjection {
             && self.activity == AgentRuntimeActivity::Waiting
             && self.attention == AgentRuntimeAttention::None
             && self.attention_id.is_none()
+            && !self.background_work
             && matches!(
                 self.source,
                 AgentRuntimeStateSource::ProviderEvent
@@ -281,6 +288,7 @@ impl fmt::Debug for AgentRuntimeStateProjection {
             .field("source", &self.source)
             .field("turn_completed_count", &self.turn_completed_count)
             .field("program_status", &self.program_status)
+            .field("background_work", &self.background_work)
             .finish()
     }
 }
@@ -754,6 +762,12 @@ pub struct AgentStateReport {
     /// Host drops the report as a `no_op` if output or runtime state advanced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_observation: Option<AgentStateReportObservationFence>,
+    /// Background work the provider started is in flight. With `waiting`, the
+    /// provider's turn ended and its prompt accepts input; with `working`, the
+    /// work observed is background work and does not start a foreground turn.
+    /// Capability-gated: older Hosts receive the plain `working` report.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub background_work: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -692,6 +692,7 @@ mod tests {
                 source: AgentRuntimeStateSource::ProviderEvent,
                 turn_completed_count: 0,
                 program_status: None,
+                background_work: false,
             }),
             provider_conversation_identity: None,
             recovered_presentation: None,
@@ -926,6 +927,7 @@ mod tests {
             source: AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 0,
             program_status: None,
+            background_work: false,
         });
         let ordinary = FrameBody::Detach(Detach { reason: None });
         let observer = delivery(SnapshotProjection::new(false, false));

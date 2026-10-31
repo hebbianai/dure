@@ -682,6 +682,7 @@ fn every_non_ready_initial_prompt_refuses_before_the_writer() {
                 causality: None,
                 working_ttl_ms: None,
                 expected_observation: None,
+                background_work: false,
             },
         )
         .unwrap();

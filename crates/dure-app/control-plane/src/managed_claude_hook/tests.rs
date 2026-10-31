@@ -61,6 +61,28 @@ fn requires_all_exact_fence_fields_before_reporting() {
 }
 
 #[test]
+fn subagent_tool_calls_keep_their_identity_and_coalesce_apart() {
+    let call = |agent: Option<&str>| {
+        let mut input = serde_json::json!({
+            "hook_event_name": "PreToolUse", "session_id": "fixture",
+            "tool_name": "Write", "tool_input": { "content": "x".repeat(MAX_BODY_BYTES) },
+        });
+        if let Some(agent) = agent {
+            input["agent_id"] = agent.into();
+        }
+        bounded_body(serde_json::to_vec(&input).unwrap()).unwrap()
+    };
+    let (parent, subagent) = (call(None), call(Some("agent-1")));
+    let body: Value = serde_json::from_slice(&subagent.body).unwrap();
+    assert_eq!(body["agent_id"], "agent-1");
+    assert_eq!(parent.pre_tool_conversation.as_deref(), Some("fixture"));
+    assert_eq!(
+        subagent.pre_tool_conversation.as_deref(),
+        Some("fixture/subagent")
+    );
+}
+
+#[test]
 fn carries_normal_input_exactly_and_bounds_large_tool_payloads() {
     let ordinary = br#"{ "hook_event_name": "SessionStart", "session_id": "fixture" }"#.to_vec();
     assert_eq!(bounded_body(ordinary.clone()).unwrap().body, ordinary);

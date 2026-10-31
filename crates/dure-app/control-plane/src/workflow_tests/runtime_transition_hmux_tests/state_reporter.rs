@@ -25,6 +25,7 @@ pub(super) fn report(
             working_ttl_ms: Some(60_000),
             conversation_identity: None,
             expected_observation: None,
+            background_work: false,
         },
         hmux_client::SessionFence {
             workspace_id: source.workspace_id.clone(),

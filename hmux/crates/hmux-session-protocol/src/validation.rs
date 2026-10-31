@@ -657,6 +657,12 @@ fn validate_agent_runtime_state_projection(
     }) {
         return Err(inconsistent("agent_runtime_state.program_status"));
     }
+    if projection.background_work
+        && (projection.lifecycle != AgentRuntimeLifecycle::Running
+            || projection.activity != AgentRuntimeActivity::Working)
+    {
+        return Err(inconsistent("agent_runtime_state.background_work"));
+    }
     Ok(())
 }
 
@@ -694,6 +700,13 @@ fn validate_agent_state_report(
         && frame.activity != AgentRuntimeActivity::Waiting
     {
         return Err(inconsistent("agent_state_report.attention_activity"));
+    }
+    if frame.background_work
+        && (frame.identity_only
+            || frame.turn_completed
+            || frame.attention != AgentRuntimeAttention::None)
+    {
+        return Err(inconsistent("agent_state_report.background_work"));
     }
     if let Some(causality) = &frame.causality {
         if causality.sequence == 0 {
@@ -1817,6 +1830,7 @@ mod tests {
             source: AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 0,
             program_status: None,
+            background_work: false,
         };
         let state = frame(FrameBody::AgentRuntimeState(valid.clone()));
         assert!(state.validate(&FrameLimits::default()).is_ok());
@@ -1915,6 +1929,7 @@ mod tests {
                 source: AgentRuntimeStateSource::ProviderEvent,
                 turn_completed_count: 1,
                 program_status: None,
+                background_work: false,
             }),
             provider_conversation_identity: None,
             recovered_presentation: None,
@@ -1982,6 +1997,7 @@ mod tests {
             }),
             working_ttl_ms: None,
             expected_observation: None,
+            background_work: false,
             conversation_identity: Some(crate::ProviderConversationIdentityReport {
                 provider_id: "claude".into(),
                 conversation_id: "next".into(),
@@ -2027,6 +2043,96 @@ mod tests {
     }
 
     #[test]
+    fn background_work_is_an_additive_busy_fact_with_a_ready_prompt() {
+        let report = crate::AgentStateReport {
+            progress: None,
+            request_id: "background".into(),
+            identity_only: false,
+            activity: AgentRuntimeActivity::Waiting,
+            attention: AgentRuntimeAttention::None,
+            turn_completed: false,
+            turn_completion_id: None,
+            causality: None,
+            working_ttl_ms: Some(crate::AGENT_STATE_REPORT_MAX_WORKING_TTL_MS),
+            conversation_identity: None,
+            expected_observation: None,
+            background_work: true,
+        };
+        let codec = FrameCodec::new(FrameLimits::default());
+        let wire = frame(FrameBody::AgentStateReport(report.clone()));
+        assert_eq!(codec.decode(&codec.encode(&wire).unwrap()).unwrap(), wire);
+        for invalid in 0..3 {
+            let mut changed = report.clone();
+            match invalid {
+                0 => changed.attention = AgentRuntimeAttention::ApprovalRequired,
+                1 => changed.turn_completed = true,
+                _ => changed.identity_only = true,
+            }
+            assert_eq!(
+                frame(FrameBody::AgentStateReport(changed)).validate(&FrameLimits::default()),
+                Err(FrameValidationError::Inconsistent {
+                    field: "agent_state_report.background_work",
+                })
+            );
+        }
+        let plain = crate::AgentStateReport {
+            background_work: false,
+            ..report
+        };
+        assert!(
+            serde_json::to_value(&plain)
+                .unwrap()
+                .get("background_work")
+                .is_none()
+        );
+
+        let busy = AgentRuntimeStateProjection {
+            progress: None,
+            terminal_epoch: "terminal-1".into(),
+            revision: 2,
+            observed_through_output_seq: 4,
+            lifecycle: AgentRuntimeLifecycle::Running,
+            activity: AgentRuntimeActivity::Working,
+            attention: AgentRuntimeAttention::None,
+            attention_id: None,
+            source: AgentRuntimeStateSource::ProviderEvent,
+            turn_completed_count: 0,
+            program_status: None,
+            background_work: true,
+        };
+        assert!(
+            frame(FrameBody::AgentRuntimeState(busy.clone()))
+                .validate(&FrameLimits::default())
+                .is_ok()
+        );
+        assert!(!busy.is_semantically_quiescent());
+        // Decoders that predate the field keep reading a working session.
+        let encoded = serde_json::to_value(&busy).unwrap();
+        assert_eq!(encoded["activity"], "working");
+        assert_eq!(encoded["background_work"], true);
+        let idle = AgentRuntimeStateProjection {
+            activity: AgentRuntimeActivity::Waiting,
+            ..busy.clone()
+        };
+        assert_eq!(
+            frame(FrameBody::AgentRuntimeState(idle.clone())).validate(&FrameLimits::default()),
+            Err(FrameValidationError::Inconsistent {
+                field: "agent_runtime_state.background_work",
+            })
+        );
+        let plain = AgentRuntimeStateProjection {
+            background_work: false,
+            ..idle
+        };
+        assert!(
+            serde_json::to_value(&plain)
+                .unwrap()
+                .get("background_work")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn agent_state_reports_are_bounded_consistent_and_round_trip() {
         use crate::{
             AGENT_STATE_REPORT_MAX_WORKING_TTL_MS, AgentStateReport,
@@ -2047,6 +2153,7 @@ mod tests {
             working_ttl_ms: Some(600_000),
             conversation_identity: None,
             expected_observation: None,
+            background_work: false,
         };
         for report in [
             valid.clone(),
@@ -2072,6 +2179,7 @@ mod tests {
                     runtime_revision: 4,
                     output_sequence: 0,
                 }),
+                background_work: false,
                 ..valid.clone()
             },
         ] {
@@ -2153,6 +2261,7 @@ mod tests {
                         runtime_revision: 0,
                         output_sequence: 0,
                     }),
+                    background_work: false,
                     ..valid.clone()
                 },
                 "agent_state_report.expected_observation.runtime_revision",
@@ -2171,6 +2280,7 @@ mod tests {
                         runtime_revision: 1,
                         output_sequence: 0,
                     }),
+                    background_work: false,
                     ..valid.clone()
                 },
                 "agent_state_report.identity_only_expected_observation",
@@ -2188,6 +2298,7 @@ mod tests {
                         runtime_revision: 1,
                         output_sequence: 0,
                     }),
+                    background_work: false,
                     ..valid.clone()
                 },
                 "agent_state_report.expected_observation_conversation_identity",

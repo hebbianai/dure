@@ -68,6 +68,9 @@ export interface HmuxAgentRuntimeState {
 		| "process_lifecycle";
 	/** Host 완료 카운터(u64 → 10진 문자열). f2s 이전 백엔드는 생략한다. */
 	turnCompletedCount?: string;
+	/** Working only on background work after the provider's turn ended; the
+	 * prompt accepts input. Older Hosts omit it. */
+	backgroundWork?: true;
 }
 
 export interface HmuxProviderConversationIdentity

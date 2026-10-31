@@ -39,6 +39,7 @@ fn quiescent_managed_stop_refuses_after_a_reserved_crash_and_controller_input() 
         working_ttl_ms: None,
         conversation_identity: None,
         expected_observation: None,
+        background_work: false,
     };
     assert!(matches!(
         reporter

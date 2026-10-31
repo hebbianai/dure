@@ -535,6 +535,10 @@ pub struct AgentStateReportRequest {
     pub working_ttl_ms: Option<u64>,
     pub conversation_identity: Option<ReportedProviderConversationIdentity>,
     pub expected_observation: Option<ReportedAgentStateObservationFence>,
+    /// Background work the provider started is in flight; older Hosts get
+    /// the plain working report.
+    #[serde(default)]
+    pub background_work: bool,
 }
 
 impl fmt::Debug for AgentStateReportRequest {
@@ -551,6 +555,7 @@ impl fmt::Debug for AgentStateReportRequest {
             .field("working_ttl_ms", &self.working_ttl_ms)
             .field("has_conversation_identity", &self.conversation_identity.is_some())
             .field("has_expected_observation", &self.expected_observation.is_some())
+            .field("background_work", &self.background_work)
             .finish()
     }
 }
@@ -745,6 +750,10 @@ pub struct ObserverAgentRuntimeState {
     /// Program-reported OSC 7501 status; presentation beside Host semantics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub program_status: Option<Box<hmux_client::ProgramStatusProjection>>,
+    /// Working only on background work after the turn ended; the prompt
+    /// accepts input. Omitted while false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub background_work: bool,
 }
 
 #[derive(Clone, Eq, PartialEq, Serialize)]
@@ -1363,6 +1372,7 @@ impl HmuxManager {
             working_ttl_ms,
             conversation_identity,
             expected_observation,
+            background_work,
         } = request;
         validate_identifier("session id", &session_id)
             .map_err(report_request_failure)?;
@@ -1485,6 +1495,7 @@ impl HmuxManager {
             working_ttl_ms,
             conversation_identity,
             expected_observation,
+            background_work,
         };
         if report
             .conversation_identity
@@ -1611,6 +1622,7 @@ impl HmuxManager {
                         expected_fence: Some(expected_fence.clone()),
                     }),
                     expected_observation: None,
+                    background_work: false,
                 },
                 expected_fence,
             )
@@ -2310,6 +2322,7 @@ fn project_agent_runtime_state(state: AgentRuntimeStateDescriptor) -> ObserverAg
         progress: state.progress,
         turn_completed_count: state.turn_completed_count,
         program_status: state.program_status,
+        background_work: state.background_work,
     }
 }
 
@@ -2899,6 +2912,7 @@ mod tests {
             progress: None,
             turn_completed_count: "3".into(),
             program_status: None,
+            background_work: false,
         });
         assert_eq!(projected.turn_completed_count, "3");
         assert_eq!(projected.activity, "waiting");
@@ -2971,6 +2985,7 @@ mod tests {
                 expected_fence: None,
             }),
             expected_observation: None,
+            background_work: false,
         };
 
         let debug = format!("{request:?}");

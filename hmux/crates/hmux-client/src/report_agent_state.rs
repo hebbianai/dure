@@ -6,6 +6,7 @@ use crate::error::host_refused;
 use crate::managed_attach::ManagedSessionAttacher;
 use crate::observer::{AgentRuntimeActivity, AgentRuntimeAttention};
 use crate::{ClientError, LocalSession, SessionFence};
+use hmux_session_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY;
 use hmux_session_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY;
 use hmux_session_protocol::PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY;
 use hmux_session_protocol::{
@@ -49,6 +50,28 @@ pub struct AgentStateReport {
     pub working_ttl_ms: Option<u64>,
     pub conversation_identity: Option<ProviderConversationIdentity>,
     pub expected_observation: Option<AgentStateReportObservationFence>,
+    /// Background work the provider started is in flight. `waiting` says the
+    /// provider's turn ended and its prompt accepts input; `working` says the
+    /// observed work is background work. Hosts without
+    /// `agent_state_report_background_work_v1` receive the plain working
+    /// report instead, see [`AgentStateReport::without_background_work`].
+    pub background_work: bool,
+}
+
+impl AgentStateReport {
+    /// The report a Host that predates background work has always received:
+    /// background work keeps the session working, so idle-time operations
+    /// cannot stop it.
+    #[must_use]
+    pub fn without_background_work(mut self) -> Self {
+        if self.background_work {
+            self.background_work = false;
+            self.activity = AgentRuntimeActivity::Working;
+            self.working_ttl_ms
+                .get_or_insert(hmux_session_protocol::AGENT_STATE_REPORT_MAX_WORKING_TTL_MS);
+        }
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -185,7 +208,7 @@ impl LocalSession {
     /// authority, so callers must pass `None` for them.
     pub fn report_agent_state(
         &self,
-        report: AgentStateReport,
+        mut report: AgentStateReport,
         authorization_proof_reference: Option<String>,
     ) -> Result<AgentStateReportOutcome, ClientError> {
         if report.progress.as_ref().is_some_and(|p| !p.is_valid())
@@ -243,6 +266,14 @@ impl LocalSession {
             return Err(ClientError::MissingCapability {
                 capability: PROVIDER_CONVERSATION_IDENTITY_CAPABILITY,
             });
+        }
+        if !self
+            .descriptor()
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY)
+        {
+            report = report.without_background_work();
         }
         let identified_completion = report.turn_completion_id.is_some();
         let causal = report.causality.is_some();
@@ -367,6 +398,9 @@ impl LocalSession {
         if continuation {
             optional_capabilities.push(PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY);
         }
+        if report.background_work {
+            optional_capabilities.push(AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY);
+        }
         let mut connection = self.connect_with_options(
             ConnectionOptions::new(LocalAttachRole::Observer, authorization_proof_reference)
                 .with_optional_capabilities(&optional_capabilities),
@@ -421,6 +455,10 @@ impl LocalSession {
                 capability: PROVIDER_CONVERSATION_IDENTITY_ONLY_REPORT_CAPABILITY,
             });
         }
+        // Discovery can be stale: the handshake decides what this Host gets.
+        if !connection.supports(AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY) {
+            report = report.without_background_work();
+        }
         let request_id = next_report_request_id();
         let identity_only = report.identity_only;
         let expected_conversation_identity = report.conversation_identity.clone();
@@ -469,6 +507,7 @@ impl LocalSession {
                         output_sequence: expected.output_sequence,
                     }
                 }),
+                background_work: report.background_work,
             }))?;
 
         let receipt_started = Instant::now();
@@ -639,6 +678,7 @@ mod tests {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         );
@@ -649,6 +689,35 @@ mod tests {
                 capability: AGENT_STATE_REPORT_CAPABILITY,
             })
         ));
+    }
+
+    #[test]
+    fn older_hosts_receive_background_work_as_the_working_report() {
+        let ended = AgentStateReport {
+            progress: None,
+            identity_only: false,
+            activity: AgentRuntimeActivity::Waiting,
+            attention: AgentRuntimeAttention::None,
+            turn_completed: false,
+            turn_completion_id: None,
+            causality: None,
+            working_ttl_ms: None,
+            conversation_identity: None,
+            expected_observation: None,
+            background_work: true,
+        };
+        let older = ended.clone().without_background_work();
+        assert_eq!(older.activity, AgentRuntimeActivity::Working);
+        assert!(!older.background_work);
+        assert_eq!(
+            older.working_ttl_ms,
+            Some(hmux_session_protocol::AGENT_STATE_REPORT_MAX_WORKING_TTL_MS)
+        );
+        let plain = AgentStateReport {
+            background_work: false,
+            ..ended
+        };
+        assert_eq!(plain.clone().without_background_work(), plain);
     }
 
     #[test]
@@ -671,6 +740,7 @@ mod tests {
                     runtime_revision: 1,
                     output_sequence: 0,
                 }),
+                background_work: false,
             },
             None,
         );
@@ -699,6 +769,7 @@ mod tests {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         );
@@ -729,6 +800,7 @@ mod tests {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         );
@@ -766,6 +838,7 @@ mod tests {
                     expected_fence: None,
                 }),
                 expected_observation: None,
+                background_work: false,
             },
             None,
         );
@@ -817,6 +890,7 @@ mod tests {
                     expected_fence: None,
                 }),
                 expected_observation: None,
+                background_work: false,
             },
             None,
         );
@@ -853,6 +927,7 @@ mod tests {
                     expected_fence: None,
                 }),
                 expected_observation: None,
+                background_work: false,
             },
             None,
         );

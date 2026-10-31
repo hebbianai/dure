@@ -501,6 +501,7 @@ fn managed_windows_native_runtime_is_idempotent_attachable_and_stoppable() {
         working_ttl_ms: None,
         conversation_identity: None,
         expected_observation: None,
+        background_work: false,
     };
     assert!(matches!(
         reporter
@@ -804,6 +805,7 @@ impl WindowsAgentPromptFixture {
                         expected_fence: Some(self.expected_fence.clone()),
                     }),
                     expected_observation: None,
+                    background_work: false,
                 },
             )
             .unwrap();

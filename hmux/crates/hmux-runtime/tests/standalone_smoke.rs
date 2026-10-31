@@ -6390,6 +6390,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         )
@@ -6422,6 +6423,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         )
@@ -6448,6 +6450,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         )
@@ -6468,6 +6471,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 working_ttl_ms: None,
                 conversation_identity: None,
                 expected_observation: None,
+                background_work: false,
             },
             None,
         )
@@ -6506,6 +6510,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                     working_ttl_ms: None,
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
                 None,
             )
@@ -6527,6 +6532,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                     working_ttl_ms: None,
                     conversation_identity: None,
                     expected_observation: Some(stale_boundary),
+                    background_work: false,
                 },
                 None,
             )
@@ -6571,6 +6577,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                         runtime_revision: current_runtime.revision.parse().unwrap(),
                         output_sequence: current_snapshot.sequence_through.parse().unwrap(),
                     }),
+                    background_work: false,
                 },
                 None,
             )
@@ -6632,6 +6639,7 @@ fn bounded_working_report_retains_work_until_a_typed_provider_report() {
                     working_ttl_ms: Some(50),
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
                 None,
             )
@@ -6680,6 +6688,7 @@ fn bounded_working_report_retains_work_until_a_typed_provider_report() {
                     working_ttl_ms: None,
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
                 None,
             )
@@ -6740,6 +6749,7 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
                     working_ttl_ms: Some(10_000),
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
                 None,
             )
@@ -6777,6 +6787,7 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
                     working_ttl_ms: None,
                     conversation_identity: None,
                     expected_observation: None,
+                    background_work: false,
                 },
                 None,
             )
@@ -8233,6 +8244,7 @@ fn agent_progress_native_deadline_survives_observer_reconnect() {
         working_ttl_ms: None,
         conversation_identity: None,
         expected_observation: None,
+        background_work: false,
     };
     assert_eq!(
         session.report_agent_state(report.clone(), None).unwrap(),

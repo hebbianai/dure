@@ -1524,6 +1524,7 @@ mod tests {
             source: AgentRuntimeStateSource::ProviderEvent,
             turn_completed_count: 3,
             program_status: None,
+            background_work: false,
         }
     }
 

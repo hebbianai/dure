@@ -70,6 +70,8 @@ export function agentRuntimeState(value, generation, outputSequence) {
     source: value.source,
     turnCompletedCount: value.turn_completed_count,
     ...(agentProgress(value.progress) ? { progress: agentProgress(value.progress) } : {}),
+    // The turn ended and the prompt accepts input; background work keeps it busy.
+    ...(value.background_work === true && value.activity === "working" ? { backgroundWork: true } : {}),
   };
 }
 
