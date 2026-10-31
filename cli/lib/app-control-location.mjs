@@ -9,8 +9,8 @@ export function appControlDirectory(environment = process.env) {
   return channel === "stable" ? root : join(root, "channels", channel);
 }
 
-export function appRootDirectory(environment = process.env) {
-  return environment.DURE_HOME || join(homedir(), ".dure");
+export function appRootDirectory(environment = process.env, homeDirectory = homedir()) {
+  return environment.DURE_HOME || join(homeDirectory, ".dure");
 }
 
 export function loadAppControlDescriptor(directory) {

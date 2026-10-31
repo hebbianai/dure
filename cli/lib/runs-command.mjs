@@ -57,8 +57,8 @@ Switch-account previews by default; --confirm-restart executes the same backend
 transition as the UI account selector. It preserves the exact conversation and
 Chat/Terminal mode for Claude and Codex, on local and SSH backends, without an app.
 A closed, stopped Agent restarts with the selected account and its retained conversation.
-List registered account IDs/generations with dure recovery get claude or codex
-on the same --backend. --account default explicitly selects provider defaults.
+dure recovery get claude or codex on the same --backend lists registered account
+IDs with profile names and usage. --account default selects provider defaults.
 An unregistered account must first be prepared on that backend through Dure's
 account settings. Busy work is retained, never interrupted or silently resent.
 A busy refusal names its reason (a running turn, background work, a pending

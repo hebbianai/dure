@@ -1,19 +1,26 @@
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import {
   backendTransportErrorReport,
   performBackendProfileRequest,
 } from "./backend-transport.mjs";
+import { formatRegisteredAccounts, summarizeRegisteredAccounts } from "./recovery-accounts.mjs";
 
 export const RECOVERY_HELP = `dure recovery — automatic account recovery on the owning backend (Beta)
 
-  dure recovery get PROVIDER [--backend ID]
+  dure recovery get PROVIDER [--backend ID] [--json]
   dure recovery put PROVIDER --enabled true|false --accounts JSON
                             --expected-revision N [--idempotency-key KEY] [--backend ID]
   dure recovery status AGENT_ID [--backend ID]
   dure recovery observe --observations JSON [--backend ID]
 
-Results are JSON. get returns the policy and registered credential profile handles.
-accounts is an ordered array of {profile, name}; copy exact profiles from get.
+get lists each registered login once with its account IDs, its policy name,
+and, for the local backend, its profile directory and 5h/weekly usage with reset
+times from the app's usage caches (unknown until observed). IDs registered for
+the same login select the same credential. get --json returns the policy, the
+registered profile handles and this summary as registeredAccounts.
+Other results are JSON. accounts is an ordered array of {profile, name}; copy
+exact profiles from get --json.
 Use revision 0 for a new policy. Only explicitly allowed accounts are used.
 Joining a workspace does not register or offer personal accounts. Unknown usage
 is eligible; optional observations contain {profile, usedPercent, observedAtMs}.
@@ -32,6 +39,7 @@ export function parseRecoveryCommand(args) {
   if (action !== "observe" && (!target || target.startsWith("--")))
     throw new Error(RECOVERY_HELP);
   const options = {};
+  let json = false;
   const allowed = [
     "--backend",
     ...(action === "put"
@@ -42,6 +50,7 @@ export function parseRecoveryCommand(args) {
   for (let index = 0; index < rest.length; index += 2) {
     const flag = rest[index];
     if (flag === "--json") {
+      json = true;
       index -= 1;
       continue;
     }
@@ -71,7 +80,7 @@ export function parseRecoveryCommand(args) {
       ...(action === "get" ? { providerId: target } : { agentId: target }) };
   }
   return {
-    action, backend: options["--backend"], body,
+    action, backend: options["--backend"], body, json,
     operation: action === "status" ? "agent_recovery.read"
       : `provider_recovery.${action === "observe" ? "observe_usage" : action}`,
   };
@@ -81,6 +90,9 @@ export async function runRecoveryCommand(args, {
   resolveBackend,
   requestBackend = performBackendProfileRequest,
   output = (text) => process.stdout.write(`${text}\n`),
+  environment = process.env,
+  homeDirectory = homedir(),
+  now = Date.now,
 }) {
   const command = parseRecoveryCommand(args);
   if (command.action === "help") {
@@ -95,7 +107,18 @@ export async function runRecoveryCommand(args, {
       operation: command.operation, body: command.body,
       requiredCapabilities: ["account_recovery.v1"],
     }, backend.transportOptions);
-    output(JSON.stringify(response.result));
+    if (command.action !== "get") {
+      output(JSON.stringify(response.result));
+      return true;
+    }
+    const nowMs = now();
+    const local = backend.profile.transport?.kind === "local";
+    const accounts = summarizeRegisteredAccounts({ providerId: command.body.providerId,
+      result: response.result, local, environment, homeDirectory, nowMs });
+    if (!accounts) output(JSON.stringify(response.result));
+    else if (command.json) output(JSON.stringify({ ...response.result, registeredAccounts: accounts }));
+    else output(formatRegisteredAccounts({ providerId: command.body.providerId,
+      backend: backend.profile.id, policy: response.result.policy, accounts, local, nowMs }));
     return true;
   } catch (error) {
     output(JSON.stringify({ ...backendTransportErrorReport(error),
