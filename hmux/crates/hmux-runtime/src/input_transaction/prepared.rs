@@ -3,6 +3,7 @@ use std::io;
 
 use super::*;
 use crate::controller_input::{SubmitScanner, fold_written_input_prefix};
+use crate::controller_input_effect::DraftFold;
 
 /// Encodes once and retains exact delivery progress across PTY readiness waits.
 /// The caller serializes whole input frames, but holds the Host only for each
@@ -122,15 +123,32 @@ impl<'a> PreparedInput<'a> {
         if !prefix.is_empty() {
             self.admitted_revision = prepared_revision;
         }
-        let runtime_state = if self.effect.retains_pending_draft() && !prefix.is_empty() {
-            fold_written_input_prefix(host, fence, scanner, prefix, start > 0)
-                .map_err(InputTransactionFailure::after_write)?
-        } else {
-            if !prefix.is_empty() {
-                host.record_controller_write(fence)
-                    .map_err(InputTransactionFailure::after_write)?;
-            }
+        let runtime_state = if prefix.is_empty() {
             None
+        } else {
+            match self.effect.draft_fold() {
+                DraftFold::Bytes => fold_written_input_prefix(
+                    host,
+                    fence,
+                    scanner,
+                    prefix,
+                    start > 0,
+                    self.written == self.encoded.len(),
+                )
+                .map_err(InputTransactionFailure::after_write)?,
+                // One keypress has one effect, however many PTY writes
+                // deliver its bytes.
+                DraftFold::Edit(edit) if start == 0 => {
+                    host.record_controller_draft_edit(fence, edit)
+                        .map_err(InputTransactionFailure::after_write)?;
+                    None
+                }
+                DraftFold::Edit(_) | DraftFold::WriteOnly => {
+                    host.record_controller_write(fence)
+                        .map_err(InputTransactionFailure::after_write)?;
+                    None
+                }
+            }
         };
         if progress.pending {
             return Ok(InputStep::Pending(runtime_state));

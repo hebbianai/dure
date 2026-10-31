@@ -41,10 +41,10 @@ use crate::local_protocol::{
     WorkingDirectoryProjection,
 };
 pub use agent_identity::AgentIdentityObservation;
-use agent_runtime::PendingControllerInput;
 pub use agent_runtime::{
-    AgentRuntimeObservation, AgentStateReportFold, AgentStateReportObservation,
+    AgentRuntimeObservation, AgentStateReportFold, AgentStateReportObservation, ControllerDraftEdit,
 };
+use agent_runtime::{ControllerDraft, PendingControllerInput};
 pub use canonical_snapshot::TerminalProjections;
 pub use execution_location::ExecutionLocationObservation;
 use std::time::{Duration, Instant};
@@ -422,12 +422,12 @@ pub struct TerminalReplay {
     // Input delivery and provider activity are independent. A submitted input
     // awaits a provider observation; an unsubmitted draft must survive it.
     pending_controller_input: PendingControllerInput,
-    // Whether draft-capable controller input was accepted after the last
-    // accepted submit. Unlike `pending_controller_input`, this fact does not
-    // wait for provider acknowledgement and is cleared by any submit, so a
-    // draft-guarded write can tell a person's unsubmitted text from a turn
-    // that is merely awaiting its provider report.
-    unsubmitted_controller_draft: bool,
+    // The Host's estimate of the draft-capable controller input accepted
+    // after the last accepted submit. Unlike `pending_controller_input`, this
+    // fact does not wait for provider acknowledgement and is cleared by any
+    // submit, so a draft-guarded write can tell a person's unsubmitted text
+    // from a turn that is merely awaiting its provider report.
+    unsubmitted_controller_draft: ControllerDraft,
     // A fresh prompt is one-shot within a terminal epoch. The first actual
     // non-empty PTY prefix consumes it through the common controller-input
     // fold; read-only preparation never changes this fact.
@@ -743,7 +743,7 @@ impl TerminalReplay {
             recovered_presentation: None,
             recovered_history_boundary: None,
             pending_controller_input: PendingControllerInput::None,
-            unsubmitted_controller_draft: false,
+            unsubmitted_controller_draft: ControllerDraft::Empty,
             fresh_agent_prompt_consumed: false,
             limits,
         })
@@ -787,7 +787,7 @@ impl TerminalReplay {
             provider_conversation_identity: None,
             recovered_presentation: None,
             pending_controller_input: PendingControllerInput::None,
-            unsubmitted_controller_draft: false,
+            unsubmitted_controller_draft: ControllerDraft::Empty,
             fresh_agent_prompt_consumed: false,
             limits,
         })

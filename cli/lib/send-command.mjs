@@ -31,9 +31,10 @@ Choose exactly one text source. Newlines and whitespace in file/stdin are preser
 Enter is sent by default; use --no-enter to insert without submitting.
 Terminal input never merges into text the user has typed but not submitted: text and
 Enter are one Host transaction, written only while the target has no such draft. A send
-waits up to --draft-wait for the user to submit; if the draft remains it fails with
-hmux_input_draft_pending and nothing written. The draft clears only when the user submits
-it; erasing the text without Enter does not. Retry later, use --track, or --ignore-draft
+waits up to --draft-wait for the draft to clear; if it remains the send fails with
+hmux_input_draft_pending and nothing written. The draft clears when the user submits it or
+erases every typed character with Backspace; input Dure cannot count (completion, history
+recall, a word erase) stays a draft until Enter. Retry later, use --track, or --ignore-draft
 to write anyway. A session started before the guard existed receives ordinary input, with
 a warning on stderr; restart that session to guard it.
 Tracked messages require a managed Session and support 'dure wait --message <receiptPath>'.
