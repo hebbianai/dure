@@ -575,8 +575,9 @@ function draftGuardGuidance(code, draftGuard) {
   if (code === "hmux_input_draft_pending") {
     return ` The target terminal still has unsubmitted input from its user` +
       `${draftGuard ? ` after waiting ${draftGuard.waitMs / 1000}s` : ""}, so nothing was sent.` +
-      " The guard clears when the user submits (presses Enter) in that terminal; erasing the" +
-      " text without Enter does not clear it. Retry later (raise --draft-wait to wait longer)," +
+      " The guard clears when the user submits (presses Enter) in that terminal or erases every" +
+      " typed character with Backspace; input Dure cannot count stays a draft until Enter." +
+      " Retry later (raise --draft-wait to wait longer)," +
       " use --track to queue a durable message, or resend with --ignore-draft to send anyway.";
   }
   if (code === "hmux_input_draft_guard_unavailable") {

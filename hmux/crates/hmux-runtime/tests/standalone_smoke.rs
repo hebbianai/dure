@@ -1025,6 +1025,108 @@ fn draft_guarded_command_input_passes_keys_that_cannot_insert_text() {
     fixture.terminate_and_verify();
 }
 
+/// A person types a line and erases it again without Enter. The Host counts
+/// the typed characters and the Backspaces, so the emptied prompt admits an
+/// automated report at once instead of refusing it until the next submit,
+/// while one character left standing still refuses it.
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn draft_guarded_command_input_passes_a_draft_typed_and_erased_again() {
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create(
+        &state,
+        "standalone-draft-guard-erased",
+        vec![
+            std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            "--ignored".into(),
+            "--exact".into(),
+            "standalone_draft_guard_fixture_provider".into(),
+            "--nocapture".into(),
+        ],
+    );
+    wait_for_replay_snapshot(&fixture.session, b"DRAFT_GUARD_READY");
+    let writer = |session: &LocalSession| {
+        let connection = session
+            .connect_with_options(TerminalSurfaceAttachment::connection_options(
+                TerminalSurfaceAccess::Writer,
+                None,
+            ))
+            .unwrap();
+        TerminalSurfaceAttachment::from_connection(connection).unwrap()
+    };
+    let mut person = writer(&fixture.session);
+    let mut agent = writer(&fixture.session);
+
+    person
+        .send_text_confirmed("draft".into(), Duration::from_secs(2))
+        .unwrap();
+    wait_for_replay_snapshot(&fixture.session, b"INPUT[draft]");
+    for _ in 0..4 {
+        let receipt = person
+            .send_key_confirmed(
+                "Backspace".into(),
+                "Backspace".into(),
+                0,
+                false,
+                Duration::from_secs(2),
+            )
+            .unwrap();
+        assert!(matches!(
+            receipt.outcome,
+            Some(terminal_state_protocol::input_receipt::Outcome::WrittenToPty(_))
+        ));
+    }
+    wait_for_replay_snapshot(&fixture.session, br"INPUT[draft\x7f\x7f\x7f\x7f]");
+
+    // One character is still standing.
+    let refused = agent
+        .send_draft_guarded_command_input_confirmed(
+            "lane report".into(),
+            true,
+            Duration::ZERO,
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+    assert_eq!(refused.code(), "hmux_input_draft_pending");
+    assert_eq!(refused.delivery_state(), "not_written");
+
+    let receipt = person
+        .send_key_confirmed(
+            "Backspace".into(),
+            "Backspace".into(),
+            0,
+            false,
+            Duration::from_secs(2),
+        )
+        .unwrap();
+    assert!(matches!(
+        receipt.outcome,
+        Some(terminal_state_protocol::input_receipt::Outcome::WrittenToPty(_))
+    ));
+    wait_for_replay_snapshot(&fixture.session, br"INPUT[draft\x7f\x7f\x7f\x7f\x7f]");
+
+    let delivered = agent
+        .send_draft_guarded_command_input_confirmed(
+            "lane report".into(),
+            true,
+            Duration::ZERO,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+    assert!(delivered.draft_guarded());
+    wait_for_replay_snapshot(
+        &fixture.session,
+        br"INPUT[draft\x7f\x7f\x7f\x7f\x7f\e[200~lane report\e[201~\r]",
+    );
+
+    let _ = person.detach();
+    let _ = agent.detach();
+    fixture.terminate_and_verify();
+}
+
 #[cfg(feature = "terminal-state-stream")]
 #[test]
 fn structured_surface_delivers_host_parsed_osc52_clipboard_writes() {
@@ -4187,6 +4289,8 @@ fn standalone_draft_guard_fixture_provider() {
         for byte in &buffer[..count] {
             match byte {
                 0x1b => transcript.push_str("\\e"),
+                0x7f => transcript.push_str("\\x7f"),
+                0x08 => transcript.push_str("\\b"),
                 b'\r' => transcript.push_str("\\r"),
                 b'\n' => transcript.push_str("\\n"),
                 byte => transcript.push(char::from(*byte)),

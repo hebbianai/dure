@@ -265,6 +265,14 @@ impl std::fmt::Debug for KeyPress {
                 "key {:?}/{:?}/{:#x}",
                 key.key, key.code, key.modifiers
             ),
+            Self::Structured(InputIntent {
+                intent: Some(input_intent::Intent::Text(text)),
+                ..
+            }) => write!(formatter, "text of {} bytes", text.utf8.len()),
+            Self::Structured(InputIntent {
+                intent: Some(input_intent::Intent::Paste(paste)),
+                ..
+            }) => write!(formatter, "paste of {} bytes", paste.utf8.len()),
             Self::Structured(_) => formatter.write_str("structured input"),
             Self::Bytes(bytes) => write!(formatter, "bytes \"{}\"", bytes.escape_ascii()),
         }
@@ -303,55 +311,59 @@ impl KeyPress {
         .unwrap();
         assert_eq!(written.outcome, InputTransactionOutcome::Written);
     }
+}
 
-    /// Presses the key at an idle prompt and reports whether both a guarded
-    /// `dure send` and an inbox wake prompt are still admitted afterwards.
-    fn leaves_prompt_open_to_automated_input(&self) -> bool {
-        let mut host = ready_host(true);
-        let mut scanner = SubmitScanner::default();
-        self.apply(&mut host, &mut scanner);
-        let draft = host.has_unsubmitted_controller_draft(&fence()).unwrap();
-        let report = draft_guarded(b"lane report", true);
-        let sent = apply_recorded(
-            &mut host,
-            &mut scanner,
-            PtyInput::Structured(&report),
-            guarded_admission(&report),
-            &mut Vec::new(),
-        );
-
-        let mut host = ready_host(true);
-        let mut scanner = SubmitScanner::default();
-        self.apply(&mut host, &mut scanner);
-        let wake = existing_prompt(b"read your inbox", "conversation-1");
-        let woke = apply_input_transaction(
-            &mut host,
-            &fence(),
-            &mut scanner,
-            PtyInput::Structured(&wake),
-            ControllerInputEffect::DraftCapable,
-            admission(&wake),
-            |bytes| PtyWriteOutcome::from_progress(bytes.len(), bytes.len(), Ok(())),
-        )
-        .unwrap()
-        .outcome;
-
-        let admitted = sent == InputTransactionOutcome::Written;
-        assert_eq!(
-            woke == InputTransactionOutcome::Written,
-            admitted,
-            "{self:?}: the wake prompt and the guarded send share one draft fact"
-        );
-        assert_eq!(draft, !admitted, "{self:?}");
-        admitted
+/// Presses the keys in order at an idle prompt and reports whether both a
+/// guarded `dure send` and an inbox wake prompt are admitted afterwards.
+fn prompt_open_after(presses: &[KeyPress]) -> bool {
+    let mut host = ready_host(true);
+    let mut scanner = SubmitScanner::default();
+    for press in presses {
+        press.apply(&mut host, &mut scanner);
     }
+    let draft = host.has_unsubmitted_controller_draft(&fence()).unwrap();
+    let report = draft_guarded(b"lane report", true);
+    let sent = apply_recorded(
+        &mut host,
+        &mut scanner,
+        PtyInput::Structured(&report),
+        guarded_admission(&report),
+        &mut Vec::new(),
+    );
+
+    let mut host = ready_host(true);
+    let mut scanner = SubmitScanner::default();
+    for press in presses {
+        press.apply(&mut host, &mut scanner);
+    }
+    let wake = existing_prompt(b"read your inbox", "conversation-1");
+    let woke = apply_input_transaction(
+        &mut host,
+        &fence(),
+        &mut scanner,
+        PtyInput::Structured(&wake),
+        ControllerInputEffect::DraftCapable,
+        admission(&wake),
+        |bytes| PtyWriteOutcome::from_progress(bytes.len(), bytes.len(), Ok(())),
+    )
+    .unwrap()
+    .outcome;
+
+    let admitted = sent == InputTransactionOutcome::Written;
+    assert_eq!(
+        woke == InputTransactionOutcome::Written,
+        admitted,
+        "{presses:?}: the wake prompt and the guarded send share one draft fact"
+    );
+    assert_eq!(draft, !admitted, "{presses:?}");
+    admitted
 }
 
 #[test]
 fn keys_that_cannot_insert_text_leave_an_idle_prompt_open_to_guarded_input() {
     for press in KeyPress::non_inserting() {
         assert!(
-            press.leaves_prompt_open_to_automated_input(),
+            prompt_open_after(std::slice::from_ref(&press)),
             "{press:?} must not hold the draft guard on an empty prompt"
         );
     }
@@ -423,8 +435,206 @@ fn keys_that_can_insert_text_still_hold_the_draft_guard() {
     .map(KeyPress::Bytes);
     for press in structured.chain(legacy) {
         assert!(
-            !press.leaves_prompt_open_to_automated_input(),
+            !prompt_open_after(std::slice::from_ref(&press)),
             "{press:?} may put text into the prompt and must hold the guard"
         );
     }
+}
+
+fn typed(text: &str) -> KeyPress {
+    KeyPress::Structured(InputIntent {
+        intent: Some(input_intent::Intent::Text(
+            terminal_state_protocol::TextInputIntent {
+                utf8: text.as_bytes().to_vec(),
+            },
+        )),
+    })
+}
+
+fn pasted(text: &str) -> KeyPress {
+    KeyPress::Structured(InputIntent {
+        intent: Some(input_intent::Intent::Paste(
+            terminal_state_protocol::PasteInputIntent {
+                utf8: text.as_bytes().to_vec(),
+            },
+        )),
+    })
+}
+
+fn pressed(name: &str, code: &str, modifiers: u32) -> KeyPress {
+    KeyPress::Structured(key(name, code, modifiers))
+}
+
+fn backspace() -> KeyPress {
+    pressed("Backspace", "Backspace", 0)
+}
+
+/// The Host counts the characters it wrote and the Backspaces that erase
+/// them, so a draft typed and then erased again without Enter stops holding
+/// the guard.
+#[test]
+fn text_typed_and_then_erased_again_leaves_the_prompt_open_to_automated_input() {
+    let sequences = [
+        vec![typed("ab"), backspace(), backspace()],
+        vec![
+            typed("ab"),
+            KeyPress::Bytes(b"\x7f"),
+            KeyPress::Bytes(b"\x08"),
+        ],
+        // Key repeat can batch Backspaces into one frame.
+        vec![KeyPress::Bytes(b"ab"), KeyPress::Bytes(b"\x7f\x7f")],
+        // Characters, not bytes: one Backspace erases one syllable.
+        vec![typed("한글"), backspace(), backspace()],
+        vec![typed("a"), typed("b"), backspace(), backspace()],
+        // Pasted text is counted too, structured or as a bracketed paste.
+        vec![pasted("ab"), backspace(), backspace()],
+        vec![
+            KeyPress::Bytes(b"\x1b[200~a\nb\x1b[201~"),
+            backspace(),
+            backspace(),
+            backspace(),
+        ],
+        // Backspace on an empty prompt erases nothing.
+        vec![
+            backspace(),
+            backspace(),
+            typed("ab"),
+            backspace(),
+            backspace(),
+        ],
+        vec![typed("ab"), backspace(), backspace(), backspace()],
+        // Keys that cannot insert text do not disturb the count...
+        vec![
+            typed("ab"),
+            pressed("Escape", "Escape", 0),
+            pressed("ArrowRight", "ArrowRight", 0),
+            pressed("End", "End", 0),
+            pressed("Delete", "Delete", 0),
+            KeyPress::Bytes(b"\x1b[C"),
+            pressed("Backspace", "Backspace", SHIFT),
+            backspace(),
+        ],
+        // ...and editing an empty line leaves it empty.
+        vec![
+            typed("ab"),
+            backspace(),
+            backspace(),
+            pressed("ArrowLeft", "ArrowLeft", 0),
+            KeyPress::Bytes(b"\x1b[D"),
+            pressed("Backspace", "Backspace", CONTROL),
+        ],
+    ];
+    for presses in sequences {
+        assert!(
+            prompt_open_after(&presses),
+            "{presses:?} leaves an empty prompt and must not hold the draft guard"
+        );
+    }
+}
+
+#[test]
+fn a_draft_the_host_cannot_count_as_erased_still_holds_the_guard() {
+    let sequences = [
+        vec![typed("ab"), backspace()],
+        vec![typed("ab"), backspace(), backspace(), typed("c")],
+        // The cursor moved into the line: later Backspaces may erase nothing.
+        vec![
+            typed("ab"),
+            pressed("ArrowLeft", "ArrowLeft", 0),
+            backspace(),
+            backspace(),
+        ],
+        vec![
+            typed("ab"),
+            KeyPress::Bytes(b"\x1b[D"),
+            backspace(),
+            backspace(),
+        ],
+        vec![
+            typed("ab"),
+            pressed("Home", "Home", 0),
+            backspace(),
+            backspace(),
+        ],
+        // A word erase has no countable length.
+        vec![typed("ab"), pressed("Backspace", "Backspace", CONTROL)],
+        // Completion, history recall and escape sequences insert text the
+        // Host cannot count, so only a submit clears them.
+        vec![
+            pressed("Tab", "Tab", 0),
+            backspace(),
+            backspace(),
+            backspace(),
+        ],
+        vec![
+            KeyPress::Bytes(b"\x1b[A"),
+            backspace(),
+            backspace(),
+            backspace(),
+        ],
+        vec![
+            typed("ab\t"),
+            backspace(),
+            backspace(),
+            backspace(),
+            backspace(),
+        ],
+        vec![
+            typed("ab"),
+            KeyPress::Bytes(b"\x1b\r"),
+            backspace(),
+            backspace(),
+            backspace(),
+        ],
+    ];
+    for presses in sequences {
+        assert!(
+            !prompt_open_after(&presses),
+            "{presses:?} may leave text in the prompt and must hold the guard"
+        );
+    }
+}
+
+/// A key sequence the PTY accepted one byte at a time is still that key, not
+/// typed text: an Up arrow recalls history the Host cannot count.
+#[test]
+fn a_key_sequence_split_across_pty_writes_is_not_typed_text() {
+    let mut host = ready_host(true);
+    let mut scanner = SubmitScanner::default();
+    let mut prepared = PreparedInput::new(
+        &mut host,
+        &fence(),
+        PtyInput::Bytes(b"\x1b[A"),
+        ControllerInputEffect::DraftCapable,
+        InputAdmission::Ordinary,
+    )
+    .unwrap();
+    let first = prepared
+        .advance(&mut host, &fence(), &mut scanner, |_| PtyWriteOutcome {
+            bytes_written: 1,
+            outcome: Ok(()),
+            pending: true,
+        })
+        .unwrap();
+    assert!(matches!(first, InputStep::Pending(None)));
+    let second = prepared
+        .advance(&mut host, &fence(), &mut scanner, |rest| {
+            PtyWriteOutcome::from_progress(rest.len(), rest.len(), Ok(()))
+        })
+        .unwrap();
+    assert!(matches!(
+        second,
+        InputStep::Complete(InputTransaction {
+            outcome: InputTransactionOutcome::Written,
+            ..
+        })
+    ));
+
+    for _ in 0..3 {
+        backspace().apply(&mut host, &mut scanner);
+    }
+    assert!(
+        host.has_unsubmitted_controller_draft(&fence()).unwrap(),
+        "the recalled line has no countable length"
+    );
 }

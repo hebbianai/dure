@@ -9,7 +9,7 @@ export function deferredWake(deliveries) {
     reason: "wake_deferred",
     wakeReasonCode: wake.reasonCode ?? null,
     message: wake.reasonCode === "hmux_input_draft_pending"
-      ? "The target has unsubmitted input at its prompt, so no wake prompt was written yet. Dure retries the wake for up to 24 hours once that input is submitted; the message stays in the inbox."
+      ? "The target has unsubmitted input at its prompt, so no wake prompt was written yet. Dure retries the wake for up to 24 hours once that input is submitted or erased; the message stays in the inbox."
       : "The target was not idle at its prompt, so no wake prompt was written yet. Dure retries the wake for up to 24 hours once it is idle; the message stays in the inbox.",
   };
 }
