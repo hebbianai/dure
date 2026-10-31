@@ -13,6 +13,10 @@ mod quiescent_stop;
 #[path = "managed_smoke/background_work.rs"]
 mod background_work;
 
+#[cfg(feature = "terminal-state-stream")]
+#[path = "managed_smoke/interrupt_request.rs"]
+mod interrupt_request;
+
 #[cfg(debug_assertions)]
 #[path = "managed_smoke/socket_owner.rs"]
 mod socket_owner;

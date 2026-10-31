@@ -127,16 +127,22 @@ fn runtime_agent_prompt_admission(
     target: &AgentPromptTarget,
     runtime: &AgentRuntimeStateProjection,
     required_source: AgentRuntimeStateSource,
+    interrupt_requested: bool,
 ) -> AgentPromptAdmission {
     if runtime.source != required_source || runtime.lifecycle == AgentRuntimeLifecycle::Starting {
         return target.unresolved_authority();
     }
     // Background work after an ended turn keeps the session busy for idle
-    // operations, but the provider's prompt itself accepts input.
+    // operations, but the provider's prompt itself accepts input. So does a
+    // turn a person interrupted with Escape, which the provider never reports;
+    // see `TerminalReplay::record_controller_interrupt_request`.
+    let prompt_accepts_input = runtime.activity == AgentRuntimeActivity::Waiting
+        || runtime.background_work
+        || interrupt_requested;
     if runtime.lifecycle != AgentRuntimeLifecycle::Running
         || runtime.attention != AgentRuntimeAttention::None
         || runtime.attention_id.is_some()
-        || (runtime.activity != AgentRuntimeActivity::Waiting && !runtime.background_work)
+        || !prompt_accepts_input
     {
         return AgentPromptAdmission::Refused;
     }
@@ -432,6 +438,12 @@ pub struct TerminalReplay {
     // non-empty PTY prefix consumes it through the common controller-input
     // fold; read-only preparation never changes this fact.
     fresh_agent_prompt_consumed: bool,
+    // A bare Escape reached a provider-reported working turn. Host-owned and
+    // not on the wire: it widens agent prompt admission while the projection
+    // stays `working`, and every later typed runtime observation, applied
+    // provider report or accepted submit clears it. See
+    // `record_controller_interrupt_request`.
+    interrupt_requested: bool,
     limits: TerminalReplayLimits,
 }
 
@@ -745,6 +757,7 @@ impl TerminalReplay {
             pending_controller_input: PendingControllerInput::None,
             unsubmitted_controller_draft: ControllerDraft::Empty,
             fresh_agent_prompt_consumed: false,
+            interrupt_requested: false,
             limits,
         })
     }
@@ -789,6 +802,7 @@ impl TerminalReplay {
             pending_controller_input: PendingControllerInput::None,
             unsubmitted_controller_draft: ControllerDraft::Empty,
             fresh_agent_prompt_consumed: false,
+            interrupt_requested: false,
             limits,
         })
     }
@@ -1206,6 +1220,7 @@ impl TerminalReplay {
                     target,
                     runtime,
                     AgentRuntimeStateSource::ProcessLifecycle,
+                    self.interrupt_requested,
                 );
             }
         }
@@ -1218,6 +1233,7 @@ impl TerminalReplay {
                     target,
                     runtime,
                     AgentRuntimeStateSource::ProviderEvent,
+                    self.interrupt_requested,
                 ),
                 _ => target.unresolved_authority(),
             };
@@ -1241,7 +1257,12 @@ impl TerminalReplay {
         let Some(runtime) = self.agent_runtime_state.as_ref() else {
             return target.unresolved_authority();
         };
-        runtime_agent_prompt_admission(target, runtime, AgentRuntimeStateSource::ProviderEvent)
+        runtime_agent_prompt_admission(
+            target,
+            runtime,
+            AgentRuntimeStateSource::ProviderEvent,
+            self.interrupt_requested,
+        )
     }
 
     /// Prepares the exact provider target under the caller's serialized PTY
@@ -1352,6 +1373,8 @@ impl TerminalReplay {
                 // this newer boundary has been observed.
                 self.retire_pending_turn_completion();
                 self.remember_report_causality(&report);
+                // The provider itself reports how the turn ended.
+                self.interrupt_requested = false;
                 let mut report = report;
                 // The observation fence authorized admission. Terminal output
                 // produced while the provider settles is presentation, not a
@@ -1434,6 +1457,9 @@ impl TerminalReplay {
         // Every later report supersedes a pending candidate, even when its
         // activity is unchanged. Retire only after the fallible fold succeeds.
         self.retire_pending_turn_completion();
+        // The report says what the turn did after an Escape the Host saw,
+        // even when it leaves the projection unchanged (a later tool call).
+        self.interrupt_requested = false;
         // A snapshot-fenced read or delayed settlement cannot acknowledge input
         // accepted since the original observation. Only a new semantic event can.
         if acknowledges_input {
@@ -1614,6 +1640,7 @@ impl TerminalReplay {
         let previous_agent_runtime_state = self.agent_runtime_state.clone();
         let previous_agent_runtime_changed_at = self.agent_runtime_changed_at;
         let previous_controller_input = self.pending_controller_input;
+        let previous_interrupt_requested = self.interrupt_requested;
         let previous_working_deadline = self.working_deadline;
         let previous_pending_turn_completion = self.pending_turn_completion.clone();
         let previous_completion_id_order = self.accepted_turn_completion_id_order.clone();
@@ -1643,6 +1670,7 @@ impl TerminalReplay {
             self.agent_runtime_state = previous_agent_runtime_state;
             self.agent_runtime_changed_at = previous_agent_runtime_changed_at;
             self.pending_controller_input = previous_controller_input;
+            self.interrupt_requested = previous_interrupt_requested;
             self.working_deadline = previous_working_deadline;
             self.pending_turn_completion = previous_pending_turn_completion;
             self.accepted_turn_completion_id_order = previous_completion_id_order;

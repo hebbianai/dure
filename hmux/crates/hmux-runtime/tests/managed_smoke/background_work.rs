@@ -18,7 +18,7 @@ fn turn_ended_with_background_work() -> AgentStateReport {
     }
 }
 
-fn observe(
+pub(super) fn observe(
     discovery_root: &std::path::Path,
     descriptor: &hmux_client::SessionDescriptor,
 ) -> hmux_client::ScreenSnapshotDescriptor {

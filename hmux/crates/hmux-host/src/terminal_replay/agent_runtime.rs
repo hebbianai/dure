@@ -238,6 +238,10 @@ impl TerminalReplay {
         );
         let projection =
             self.fold_agent_runtime_observation(observation, false, acknowledges_input, now)?;
+        // A typed runtime observation supersedes an Escape the Host saw: the
+        // provider, its process or a controller submit now says what the turn
+        // did. A repeated process-inspection baseline returned above instead.
+        self.interrupt_requested = false;
         if acknowledges_input {
             self.acknowledge_controller_submit();
         }
@@ -334,8 +338,39 @@ impl TerminalReplay {
         !self.unsubmitted_controller_draft.is_empty()
     }
 
+    /// Records that a bare Escape reached the PTY. While the provider reports
+    /// an unfinished turn, that keypress is the only sign the Host can see of
+    /// a person interrupting it: Claude Code runs no hook for an interrupt,
+    /// so the turn's working lease would otherwise refuse every prompt until
+    /// a later turn reports. The Host does not guess the provider's state:
+    /// the projection stays `working` and semantic quiescence stays blocked,
+    /// but agent prompt admission treats the prompt as able to take input
+    /// until the next provider report or accepted submit. An Escape that
+    /// closed a menu instead therefore only widens admission; it never makes
+    /// the pane look idle. Outside a provider-reported working turn Escape
+    /// is a plain control write.
+    pub fn record_controller_interrupt_request(&mut self) {
+        self.record_controller_write();
+        if self.agent_runtime_state.as_ref().is_some_and(|state| {
+            state.source == AgentRuntimeStateSource::ProviderEvent
+                && state.lifecycle == AgentRuntimeLifecycle::Running
+                && state.activity == AgentRuntimeActivity::Working
+                && !state.background_work
+        }) {
+            self.interrupt_requested = true;
+        }
+    }
+
+    /// Whether a bare Escape reached a provider-reported working turn that no
+    /// later provider report or accepted submit has superseded.
+    #[must_use]
+    pub fn has_interrupt_request(&self) -> bool {
+        self.interrupt_requested
+    }
+
     pub(crate) fn is_semantically_quiescent(&self) -> bool {
         !self.has_pending_controller_input()
+            && !self.interrupt_requested
             && self
                 .agent_runtime_state
                 .as_ref()
@@ -357,8 +392,10 @@ impl TerminalReplay {
     ) -> Result<Option<AgentRuntimeStateProjection>, TerminalReplayError> {
         self.record_controller_write();
         // The submit bytes already crossed the PTY boundary, so the draft is
-        // no longer unsubmitted even if the fallible provider fold fails.
+        // no longer unsubmitted even if the fallible provider fold fails, and
+        // the turn it starts has its own reports to answer an earlier Escape.
         self.unsubmitted_controller_draft = ControllerDraft::Empty;
+        self.interrupt_requested = false;
         if self.pending_turn_completion.is_some()
             || self.agent_runtime_state.as_ref().is_some_and(|state| {
                 matches!(

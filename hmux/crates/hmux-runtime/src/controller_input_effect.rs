@@ -26,6 +26,11 @@ pub(crate) enum ControllerInputEffect {
     /// for typing.
     #[cfg(feature = "terminal-state-stream")]
     NonInsertingKey,
+    /// A bare Escape. It cannot insert text, and during a provider-reported
+    /// working turn it is the only sign the Host can see of a person
+    /// interrupting that turn, which Claude Code reports through no hook.
+    #[cfg(feature = "terminal-state-stream")]
+    RequestsInterrupt,
     /// Terminal control traffic such as focus and pointer reports.
     #[cfg(feature = "terminal-state-stream")]
     ControlOnly,
@@ -39,6 +44,9 @@ pub(crate) enum DraftFold {
     Bytes,
     /// Apply this one edit, whatever bytes the terminal encoded the key as.
     Edit(ControllerDraftEdit),
+    /// Record an interrupt request if the provider reports a working turn,
+    /// and consume fresh-prompt authority; no draft changes.
+    InterruptRequest,
     /// Consume fresh-prompt authority only.
     WriteOnly,
 }
@@ -53,6 +61,8 @@ impl ControllerInputEffect {
             #[cfg(feature = "terminal-state-stream")]
             Self::EditsDraft => DraftFold::Edit(ControllerDraftEdit::EditedUncounted),
             #[cfg(feature = "terminal-state-stream")]
+            Self::RequestsInterrupt => DraftFold::InterruptRequest,
+            #[cfg(feature = "terminal-state-stream")]
             Self::NonInsertingKey | Self::ControlOnly => DraftFold::WriteOnly,
         }
     }
@@ -66,7 +76,8 @@ impl ControllerInputEffect {
             Self::DraftCapable
             | Self::ErasesCharacter
             | Self::EditsDraft
-            | Self::NonInsertingKey => true,
+            | Self::NonInsertingKey
+            | Self::RequestsInterrupt => true,
             Self::ControlOnly => false,
         }
     }
@@ -112,14 +123,14 @@ const CHORD: u32 = 0x0f;
 
 /// The effect of a structured key that can never put text into a line
 /// editor, or `None` for a key that may. Escape, Shift+Tab, Right/End,
-/// Delete, Insert, F1-F24 and Ctrl+C change no draft; Backspace erases one
-/// character; Left, Home and Ctrl+Backspace change a draft in a way the Host
-/// cannot count. The Host encodes the physical code, so a named key must
-/// also be its own code, or carry none (software keyboards). Alt and Meta
-/// chords stay draft-capable because line editors bind them to word commands
-/// and yanks. Tab completes, Up/Down and PageUp/PageDown can recall history,
-/// and other Ctrl letters can yank, paste or accept a search, so they stay
-/// too.
+/// Delete, Insert, F1-F24 and Ctrl+C change no draft, and a bare Escape also
+/// asks a running agent turn to stop; Backspace erases one character; Left,
+/// Home and Ctrl+Backspace change a draft in a way the Host cannot count. The
+/// Host encodes the physical code, so a named key must also be its own code,
+/// or carry none (software keyboards). Alt and Meta chords stay draft-capable
+/// because line editors bind them to word commands and yanks. Tab completes,
+/// Up/Down and PageUp/PageDown can recall history, and other Ctrl letters can
+/// yank, paste or accept a search, so they stay too.
 #[cfg(feature = "terminal-state-stream")]
 fn non_inserting_key_effect(
     key: &terminal_state_protocol::KeyInputIntent,
@@ -128,8 +139,9 @@ fn non_inserting_key_effect(
     let named = key.code.is_empty() || key.code == key.key;
     let shift_or_control_only = chord & !(SHIFT | CONTROL) == 0;
     let effect = match key.key.as_str() {
+        "Escape" if named && chord == 0 => ControllerInputEffect::RequestsInterrupt,
         // Shift+Insert pastes in PSReadLine and many terminals.
-        "Escape" | "Insert" if named && chord == 0 => ControllerInputEffect::NonInsertingKey,
+        "Insert" if named && chord == 0 => ControllerInputEffect::NonInsertingKey,
         "Tab" if named && chord == SHIFT => ControllerInputEffect::NonInsertingKey,
         // Ctrl+Backspace erases a word, whose length the Host cannot count.
         "Backspace" if named && chord & !SHIFT == 0 => ControllerInputEffect::ErasesCharacter,
@@ -221,12 +233,14 @@ mod tests {
 
     #[test]
     fn keys_that_cannot_insert_text_carry_their_draft_effect() {
-        use ControllerInputEffect::{EditsDraft, ErasesCharacter, NonInsertingKey};
+        use ControllerInputEffect::{
+            EditsDraft, ErasesCharacter, NonInsertingKey, RequestsInterrupt,
+        };
         const CAPS_LOCK: u32 = 1 << 4;
         const NUM_LOCK: u32 = 1 << 5;
         for (key, code, modifiers, effect) in [
-            ("Escape", "Escape", 0, NonInsertingKey),
-            ("Escape", "", NUM_LOCK, NonInsertingKey),
+            ("Escape", "Escape", 0, RequestsInterrupt),
+            ("Escape", "", NUM_LOCK, RequestsInterrupt),
             ("Tab", "Tab", SHIFT, NonInsertingKey),
             ("Tab", "Tab", SHIFT | CAPS_LOCK, NonInsertingKey),
             ("ArrowLeft", "ArrowLeft", 0, EditsDraft),
@@ -319,6 +333,10 @@ mod tests {
             DraftFold::WriteOnly
         );
         assert_eq!(
+            ControllerInputEffect::RequestsInterrupt.draft_fold(),
+            DraftFold::InterruptRequest
+        );
+        assert_eq!(
             ControllerInputEffect::ControlOnly.draft_fold(),
             DraftFold::WriteOnly
         );
@@ -331,6 +349,7 @@ mod tests {
             ControllerInputEffect::ErasesCharacter,
             ControllerInputEffect::EditsDraft,
             ControllerInputEffect::NonInsertingKey,
+            ControllerInputEffect::RequestsInterrupt,
         ] {
             assert!(effect.awaits_echo(), "{effect:?}");
         }

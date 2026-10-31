@@ -143,7 +143,12 @@ impl<'a> PreparedInput<'a> {
                         .map_err(InputTransactionFailure::after_write)?;
                     None
                 }
-                DraftFold::Edit(_) | DraftFold::WriteOnly => {
+                DraftFold::InterruptRequest if start == 0 => {
+                    host.record_controller_interrupt_request(fence)
+                        .map_err(InputTransactionFailure::after_write)?;
+                    None
+                }
+                DraftFold::Edit(_) | DraftFold::InterruptRequest | DraftFold::WriteOnly => {
                     host.record_controller_write(fence)
                         .map_err(InputTransactionFailure::after_write)?;
                     None
