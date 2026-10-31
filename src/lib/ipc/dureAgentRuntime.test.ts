@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { t } from "@/lib/i18n";
 import {
+	agentRuntimeTransitionFailure,
 	createDureAgentRuntimeClient,
 	DureAgentRuntimeSourceActiveError,
 } from "@/lib/ipc/dureAgentRuntime";
@@ -1466,3 +1467,79 @@ it.each([
 		).rejects.toThrow();
 	},
 );
+
+describe("agentRuntimeTransitionFailure", () => {
+	const failure = { kind: "operation", disposition: "retry_same" } as const;
+
+	it("keeps the backend code with its typed reason code", () => {
+		expect(
+			agentRuntimeTransitionFailure(
+				new DureBackendRequestError(
+					"agent_runtime_source_busy",
+					"source busy",
+					failure,
+					{ reasonCode: "agent_working" },
+				),
+			),
+		).toEqual({ code: "agent_runtime_source_busy", reason: "agent_working" });
+	});
+
+	it("falls back to the bounded message without a reason code", () => {
+		expect(
+			agentRuntimeTransitionFailure(
+				new DureBackendRequestError(
+					"agent_runtime_transition_transport_failed",
+					"backend unreachable",
+					{ kind: "transport" },
+					{ reasonCode: 7 },
+				),
+			),
+		).toEqual({
+			code: "agent_runtime_transition_transport_failed",
+			reason: "backend unreachable",
+		});
+	});
+
+	it("drops a code that is not identifier-shaped and unsafe text", () => {
+		expect(
+			agentRuntimeTransitionFailure(
+				new DureBackendRequestError(
+					"not an identifier",
+					"line\u0000break",
+					failure,
+					{ reasonCode: "x".repeat(513) },
+				),
+			),
+		).toEqual({});
+		expect(
+			agentRuntimeTransitionFailure(
+				new DureBackendRequestError("agent_runtime_x", "", failure, {
+					reasonCode: "",
+				}),
+			),
+		).toEqual({ code: "agent_runtime_x" });
+	});
+
+	it("reads through a source-active refusal to its backend code", () => {
+		expect(
+			agentRuntimeTransitionFailure(
+				new DureAgentRuntimeSourceActiveError(
+					new DureBackendRequestError(
+						"agent_runtime_source_retained",
+						"source retained",
+						failure,
+					),
+				),
+			),
+		).toEqual({
+			code: "agent_runtime_source_retained",
+			reason: t("agents.runtime.sourceRetained"),
+		});
+	});
+
+	it("carries nothing for errors that did not come from the backend", () => {
+		expect(agentRuntimeTransitionFailure(new Error("boom"))).toEqual({});
+		expect(agentRuntimeTransitionFailure("boom")).toEqual({});
+		expect(agentRuntimeTransitionFailure(undefined)).toEqual({});
+	});
+});

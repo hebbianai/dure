@@ -105,6 +105,49 @@ export class DureAgentRuntimeSourceActiveError extends Error {
 	}
 }
 
+/** Backend text is shown only when it is short and free of control characters. */
+function displayableDetail(value: unknown): string | undefined {
+	return typeof value === "string" &&
+		value.length <= 512 &&
+		!/\p{Cc}/u.test(value)
+		? value
+		: undefined;
+}
+
+/** The backend's own account of a refused transition, bounded for display:
+ * its refusal code when identifier-shaped, and its typed reason code or,
+ * failing that, the error's message. A rejection that did not come from the
+ * backend carries neither, so callers keep their generic copy. */
+export interface DureAgentRuntimeTransitionFailureV1 {
+	readonly code?: string;
+	readonly reason?: string;
+}
+
+export function agentRuntimeTransitionFailure(
+	error: unknown,
+): DureAgentRuntimeTransitionFailureV1 {
+	const refusal =
+		error instanceof DureAgentRuntimeSourceActiveError
+			? error.requestError
+			: error;
+	if (!(refusal instanceof DureBackendRequestError)) return {};
+	const code = PROVIDER_DIAGNOSTIC_CODE.test(refusal.code)
+		? refusal.code
+		: undefined;
+	const reason =
+		displayableDetail(refusal.details?.reasonCode) ||
+		displayableDetail(
+			error instanceof DureAgentRuntimeSourceActiveError
+				? error.message
+				: refusal.message,
+		) ||
+		undefined;
+	return {
+		...(code === undefined ? {} : { code }),
+		...(reason === undefined ? {} : { reason }),
+	};
+}
+
 function normalizeTransitionError(error: unknown): unknown {
 	if (!(error instanceof DureBackendRequestError)) return error;
 	if (
@@ -114,16 +157,10 @@ function normalizeTransitionError(error: unknown): unknown {
 		return new DureAgentRuntimeSourceActiveError(error);
 	}
 	if (error.code === "agent_runtime_structured_profile_unavailable") {
-		const detail = error.details?.detail;
-		const message =
-			typeof detail === "string" &&
-			detail.length <= 512 &&
-			!/\p{Cc}/u.test(detail)
-				? detail
-				: t("agents.runtime.chatUnavailable");
 		return new DureBackendRequestError(
 			error.code,
-			message,
+			displayableDetail(error.details?.detail) ??
+				t("agents.runtime.chatUnavailable"),
 			error.failure,
 			error.details,
 		);
