@@ -534,6 +534,121 @@ fn escape_then_provider_idle_preserves_only_a_real_draft() {
     }
 }
 
+/// Claude Code runs no hook when a person interrupts a turn with Escape, so
+/// the Host would refuse the inbox prompt until the working lease expired. A
+/// bare Escape during a provider-reported working turn admits the
+/// existing-conversation prompt, whether the client sent the structured key
+/// or the lone byte; the prompt's own submit ends the request.
+#[test]
+fn escape_during_a_provider_working_turn_admits_the_existing_conversation_prompt() {
+    for structured in [false, true] {
+        let mut host = ready_host(false);
+        let mut scanner = SubmitScanner::default();
+        host.observe_agent_runtime_state(
+            &fence(),
+            AgentRuntimeObservation::working(AgentRuntimeStateSource::ProviderEvent),
+        )
+        .unwrap();
+        let prompt = existing_prompt(b"read your inbox", "conversation-1");
+        let refused = apply_input_transaction(
+            &mut host,
+            &fence(),
+            &mut scanner,
+            PtyInput::Structured(&prompt),
+            ControllerInputEffect::DraftCapable,
+            admission(&prompt),
+            |_| panic!("a working turn must refuse the prompt before its first byte"),
+        )
+        .unwrap();
+        assert_eq!(
+            refused.outcome,
+            InputTransactionOutcome::NotWritten(OperationReceiptReason::AgentRuntimeChanged)
+        );
+
+        let escape = InputIntent {
+            intent: Some(input_intent::Intent::Key(
+                terminal_state_protocol::KeyInputIntent {
+                    key: "Escape".into(),
+                    code: "Escape".into(),
+                    ..Default::default()
+                },
+            )),
+        };
+        let (input, effect) = if structured {
+            (
+                PtyInput::Structured(&escape),
+                ControllerInputEffect::from_non_resize_structured(escape.intent.as_ref().unwrap())
+                    .unwrap(),
+            )
+        } else {
+            (
+                PtyInput::Bytes(b"\x1b"),
+                ControllerInputEffect::DraftCapable,
+            )
+        };
+        let written = apply_input_transaction(
+            &mut host,
+            &fence(),
+            &mut scanner,
+            input,
+            effect,
+            InputAdmission::Ordinary,
+            |bytes| PtyWriteOutcome::from_progress(bytes.len(), bytes.len(), Ok(())),
+        )
+        .unwrap();
+        assert_eq!(written.outcome, InputTransactionOutcome::Written);
+        assert!(
+            host.has_interrupt_request(&fence()).unwrap(),
+            "structured={structured}"
+        );
+
+        let mut writes = Vec::new();
+        let admitted = apply_input_transaction(
+            &mut host,
+            &fence(),
+            &mut scanner,
+            PtyInput::Structured(&prompt),
+            ControllerInputEffect::DraftCapable,
+            admission(&prompt),
+            |bytes| {
+                writes.push(bytes.to_vec());
+                PtyWriteOutcome::from_progress(bytes.len(), bytes.len(), Ok(()))
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            admitted.outcome,
+            InputTransactionOutcome::Written,
+            "structured={structured}"
+        );
+        assert!(admitted.admitted_agent_runtime_revision.is_some());
+        let written = writes.concat();
+        assert!(
+            written
+                .windows(b"read your inbox".len())
+                .any(|window| window == b"read your inbox")
+        );
+        assert!(
+            !host.has_interrupt_request(&fence()).unwrap(),
+            "the prompt's submit starts a turn with its own reports"
+        );
+        let second = apply_input_transaction(
+            &mut host,
+            &fence(),
+            &mut scanner,
+            PtyInput::Structured(&prompt),
+            ControllerInputEffect::DraftCapable,
+            admission(&prompt),
+            |_| panic!("the new turn must wait for its provider acknowledgement"),
+        )
+        .unwrap();
+        assert_eq!(
+            second.outcome,
+            InputTransactionOutcome::NotWritten(OperationReceiptReason::AgentRuntimeChanged)
+        );
+    }
+}
+
 #[test]
 fn control_only_write_consumes_fresh_prompt_authority_without_a_draft() {
     let mut host = ready_host(false);

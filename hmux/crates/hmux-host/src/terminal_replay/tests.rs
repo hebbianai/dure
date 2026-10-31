@@ -1,6 +1,7 @@
 mod background_work;
 mod causal_reports;
 mod controller_input;
+mod interrupt_request;
 
 use super::*;
 use crate::local_protocol::{ScreenSnapshotProfile, WorkingDirectorySource};

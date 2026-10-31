@@ -14,8 +14,8 @@ const BACKSPACE: DraftFold = DraftFold::Edit(ControllerDraftEdit::Erased(1));
 /// only a frame that is exactly one of these is that keypress; anything
 /// longer may carry text.
 const NON_INSERTING_KEY_CHUNKS: &[(&[u8], DraftFold)] = &[
-    // Escape and Shift+Tab.
-    (b"\x1b", DraftFold::WriteOnly),
+    // Escape, which also asks a working agent turn to stop, and Shift+Tab.
+    (b"\x1b", DraftFold::InterruptRequest),
     (b"\x1b[Z", DraftFold::WriteOnly),
     // Left and Home move the cursor into the line, in normal and application
     // cursor-key mode; Right and End leave a cursor at its end where it is.
@@ -219,6 +219,7 @@ pub(crate) fn fold_written_input_prefix(
         if let Some(fold) = scanner.non_inserting_key_fold(bytes) {
             match fold {
                 DraftFold::Edit(edit) => host.record_controller_draft_edit(fence, edit)?,
+                DraftFold::InterruptRequest => host.record_controller_interrupt_request(fence)?,
                 DraftFold::Bytes | DraftFold::WriteOnly => host.record_controller_write(fence)?,
             }
             return Ok(None);
@@ -271,6 +272,10 @@ mod tests {
             );
             assert!(!SubmitScanner::default().observe(keypress).submitted);
         }
+        assert_eq!(
+            scanner.non_inserting_key_fold(b"\x1b"),
+            Some(DraftFold::InterruptRequest)
+        );
         assert_eq!(
             scanner.non_inserting_key_fold(b"\x1b[D"),
             Some(DraftFold::Edit(EditedUncounted))

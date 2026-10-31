@@ -73,6 +73,39 @@ impl SessionHost {
         Ok(replay.has_unsubmitted_controller_draft())
     }
 
+    /// Records a bare Escape that reached the PTY. During a provider-reported
+    /// working turn it is the only sign of a person interrupting that turn,
+    /// so the Host admits agent prompts while the pane stays busy for idle
+    /// replacement, account switches and hibernation.
+    pub fn record_controller_interrupt_request(
+        &mut self,
+        expected_fence: &SessionFence,
+    ) -> Result<(), SessionHostError> {
+        let ProviderEpoch::Running { replay, .. } = &mut self.current else {
+            return Err(SessionHostError::SessionExited);
+        };
+        expected_fence
+            .ensure_matches(replay.fence())
+            .map_err(|_| SessionHostError::FenceMismatch)?;
+        replay.record_controller_interrupt_request();
+        Ok(())
+    }
+
+    /// Reports whether a bare Escape reached a provider-reported working turn
+    /// that no later provider report or accepted submit has superseded.
+    pub fn has_interrupt_request(
+        &self,
+        expected_fence: &SessionFence,
+    ) -> Result<bool, SessionHostError> {
+        let ProviderEpoch::Running { replay, .. } = &self.current else {
+            return Err(SessionHostError::SessionExited);
+        };
+        expected_fence
+            .ensure_matches(replay.fence())
+            .map_err(|_| SessionHostError::FenceMismatch)?;
+        Ok(replay.has_interrupt_request())
+    }
+
     /// Observes whether the Host should wait for provider-event startup,
     /// proceed to the serialized PTY cut, or refuse this attempt.
     pub fn agent_prompt_admission(
