@@ -1370,7 +1370,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dure"
-version = "0.2.54"
+version = "0.2.55"
 dependencies = [
  "base64 0.22.1",
  "block2",
@@ -1459,6 +1459,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
+ "tokio",
 ]
 
 [[package]]
@@ -2470,7 +2471,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-client"
-version = "0.2.54"
+version = "0.2.55"
 dependencies = [
  "dirs",
  "fs2",
@@ -2491,7 +2492,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-host"
-version = "0.2.54"
+version = "0.2.55"
 dependencies = [
  "alacritty_terminal",
  "base64 0.22.1",
@@ -2507,7 +2508,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-local-platform"
-version = "0.2.54"
+version = "0.2.55"
 dependencies = [
  "hmux-session-protocol",
  "libc",
@@ -2516,7 +2517,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-runtime-contract"
-version = "0.2.54"
+version = "0.2.55"
 dependencies = [
  "hmux-session-protocol",
  "serde",
@@ -2525,7 +2526,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-session-protocol"
-version = "0.2.54"
+version = "0.2.55"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -2534,7 +2535,7 @@ dependencies = [
 
 [[package]]
 name = "hmux-ssh-transport"
-version = "0.2.54"
+version = "0.2.55"
 dependencies = [
  "hmux-client",
  "hmux-runtime-contract",
@@ -6330,7 +6331,7 @@ dependencies = [
 
 [[package]]
 name = "terminal-state-protocol"
-version = "0.2.54"
+version = "0.2.55"
 dependencies = [
  "prost",
 ]
