@@ -1133,7 +1133,11 @@ mod tests {
 
     #[test]
     fn codex_launch_keeps_the_provider_prompt_for_models_without_a_known_upgrade() {
-        for (provider_id, model) in [("codex", "gpt-6-astra"), ("codex", "gpt-6-sol"), ("claude", "opus")] {
+        for (provider_id, model) in [
+            ("codex", "gpt-6-astra"),
+            ("codex", "gpt-6-sol"),
+            ("claude", "opus"),
+        ] {
             let model = AgentSpawnModelSelectionV1::parse(model).unwrap();
             let plan = native_provider_launch_plan(
                 &provider(provider_id),
