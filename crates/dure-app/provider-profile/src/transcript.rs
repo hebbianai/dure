@@ -380,14 +380,28 @@ pub fn read_roots(
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderConversationTranscript, String> {
+    let parse = match provider {
+        "claude" => claude_turn as fn(&Value) -> Option<(ConversationTurnRole, String)>,
+        "codex" => codex_turn,
+        _ => return Err("provider transcript export is unsupported".to_string()),
+    };
+    let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
+    transcript_from_file(&path, provider, conversation_id, parse)
+}
+
+fn conversation_path(
+    claude_projects: &Path,
+    codex_sessions: &Path,
+    provider: &str,
+    conversation_id: &str,
+) -> Result<PathBuf, String> {
     if !safe_id(conversation_id) {
         return Err("provider conversation id is invalid".to_string());
     }
-    let (path, parse) = match provider {
-        "claude" => (
-            find_claude_conversation(claude_projects, conversation_id).map(|(_, path)| path),
-            claude_turn as fn(&Value) -> Option<(ConversationTurnRole, String)>,
-        ),
+    let path = match provider {
+        "claude" => {
+            find_claude_conversation(claude_projects, conversation_id).map(|(_, path)| path)
+        }
         "codex" => {
             let mut inspected = 0;
             let active =
@@ -398,19 +412,127 @@ pub fn read_roots(
                 .and_then(|directory| {
                     find_codex_conversation(&directory, conversation_id, 0, &mut inspected)
                 });
-            (
-                [active, archived]
-                    .into_iter()
-                    .flatten()
-                    .max_by_key(|(modified, _)| *modified)
-                    .map(|(_, path)| path),
-                codex_turn as fn(&Value) -> Option<(ConversationTurnRole, String)>,
-            )
+            [active, archived]
+                .into_iter()
+                .flatten()
+                .max_by_key(|(modified, _)| *modified)
+                .map(|(_, path)| path)
         }
         _ => return Err("provider transcript export is unsupported".to_string()),
     };
-    let path = path.ok_or_else(|| "provider conversation was not found".to_string())?;
-    transcript_from_file(&path, provider, conversation_id, parse)
+    path.ok_or_else(|| "provider conversation was not found".to_string())
+}
+
+/// The model and reasoning effort a conversation's latest main-thread turn
+/// ran with, exactly as its provider recorded them.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ProviderSessionSettings {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+/// The latest turn sits at the end of a transcript, so a bounded suffix
+/// suffices without reading a long conversation's whole history.
+const MAX_SESSION_SETTINGS_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Read the settings the conversation's latest turn ran with. A provider keeps
+/// an in-session model or effort change only in the running account's own
+/// configuration, or only in the session, so a relaunch cannot recover it
+/// from configuration. Both providers record it on every turn instead.
+pub fn read_session_settings_roots(
+    claude_projects: &Path,
+    codex_sessions: &Path,
+    provider: &str,
+    conversation_id: &str,
+) -> Result<ProviderSessionSettings, String> {
+    let parse = match provider {
+        "claude" => claude_turn_settings as fn(&Value) -> Option<ProviderSessionSettings>,
+        "codex" => codex_turn_settings,
+        _ => return Err("provider session settings are unsupported".to_string()),
+    };
+    let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
+    let content = bounded_suffix(&path, MAX_SESSION_SETTINGS_SOURCE_BYTES)
+        .ok_or_else(|| "read provider transcript".to_string())?;
+    Ok(content
+        .lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find_map(|value| parse(&value))
+        .unwrap_or_default())
+}
+
+fn bounded_suffix(path: &Path, max_bytes: u64) -> Option<String> {
+    let mut file = fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    // Start one byte earlier so a record exactly on the boundary is retained.
+    let start = metadata.len().saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start.saturating_sub(1))).ok()?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes + u64::from(start > 0))
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let bytes = if start > 0 {
+        // Never decode a partial JSON record or split UTF-8 code point.
+        let boundary = bytes
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(bytes.len(), |index| index + 1);
+        &bytes[boundary..]
+    } else {
+        &bytes[..]
+    };
+    Some(String::from_utf8_lossy(bytes).into_owned())
+}
+
+fn recorded_setting(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .filter(|setting| !setting.trim().is_empty())
+        .map(str::to_owned)
+}
+
+fn claude_turn_settings(value: &Value) -> Option<ProviderSessionSettings> {
+    // Subagent sidechains, synthetic replies and API errors did not run the
+    // session's own selection.
+    if value.get("type").and_then(Value::as_str) != Some("assistant")
+        || value.get("isSidechain").and_then(Value::as_bool) == Some(true)
+        || value.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true)
+        || value.pointer("/message/model").and_then(Value::as_str) == Some("<synthetic>")
+    {
+        return None;
+    }
+    // `requestedModel` keeps the selected spelling, including a context-window
+    // suffix that the API-reported `message.model` omits.
+    Some(ProviderSessionSettings {
+        model: recorded_setting(value.get("requestedModel")),
+        effort: recorded_setting(value.get("effort")),
+    })
+}
+
+fn codex_turn_settings(value: &Value) -> Option<ProviderSessionSettings> {
+    if value.get("type").and_then(Value::as_str) != Some("turn_context") {
+        return None;
+    }
+    let payload = value.get("payload")?;
+    // Plan mode runs at its own configured effort, not the session's.
+    if payload
+        .pointer("/collaboration_mode/mode")
+        .and_then(Value::as_str)
+        == Some("plan")
+    {
+        return None;
+    }
+    Some(ProviderSessionSettings {
+        model: recorded_setting(payload.get("model")),
+        effort: recorded_setting(
+            payload
+                .get("effort")
+                .or_else(|| payload.get("reasoning_effort")),
+        ),
+    })
 }
 
 /// Resolve exact history in the selected account's namespace without copying

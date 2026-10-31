@@ -56,6 +56,7 @@ async fn account_switch(provider: &str) {
             .into(),
     )
     .unwrap();
+    let history_home = root.path().to_path_buf();
     let hmux = RealHmux::install(root, &mut state);
     make_fixture_mutation_authority(&mut state);
     let authority = BackendRequestAuthority {
@@ -152,6 +153,10 @@ async fn account_switch(provider: &str) {
         AgentRuntimeAttention::None,
         true,
     );
+    // The run launched on the account defaults, then changed model and
+    // effort in session. The provider saved that only to the source
+    // account's settings and recorded it on the conversation's turns.
+    let (model, effort) = record_in_session_settings(&history_home, provider);
     let (ok, switched) = run_cli(&state, &hmux.root, &confirmed, None, None).await;
     assert!(ok, "{switched}");
     assert_eq!(switched["accountSwitch"]["state"], "completed");
@@ -178,6 +183,15 @@ async fn account_switch(provider: &str) {
     assert!(
         launched.contains(CONVERSATION),
         "conversation not passed to provider"
+    );
+    let arguments = launched.lines().skip(2).collect::<Vec<_>>();
+    assert!(
+        arguments.windows(2).any(|pair| pair == ["--model", model]),
+        "in-session model not carried: {arguments:?}"
+    );
+    assert!(
+        arguments.windows(2).any(|pair| pair == effort),
+        "in-session effort not carried: {arguments:?}"
     );
     let retry: Vec<&str> = switched["accountSwitch"]["continuation"]["retry"]
         .as_array()
@@ -217,4 +231,53 @@ fn current_session(hmux: &RealHmux, provider: &str) -> WorkflowSessionGeneration
         host_instance_id: session.host_instance_id,
         terminal_epoch: session.terminal_epoch,
     }
+}
+
+/// Record a turn that ran after an in-session model and effort change in the
+/// canonical history every account profile links. Returns the model and the
+/// effort arguments a successor must launch with.
+fn record_in_session_settings(
+    home: &std::path::Path,
+    provider: &str,
+) -> (&'static str, [&'static str; 2]) {
+    let (directory, file, lines, model, effort) = match provider {
+        "claude" => (
+            home.join(".claude/projects/account-switch-fixture"),
+            format!("{CONVERSATION}.jsonl"),
+            vec![json!({"type": "assistant", "sessionId": CONVERSATION,
+                "requestedModel": "claude-sonnet-5-5", "effort": "low",
+                "message": {"model": "claude-sonnet-5-5", "content": "ok"}})],
+            "claude-sonnet-5-5",
+            ["--effort", "low"],
+        ),
+        "codex" => (
+            home.join(".codex/sessions/2026/10/30"),
+            format!("rollout-2026-10-30T00-00-00-{CONVERSATION}.jsonl"),
+            vec![
+                json!({"type": "session_meta", "payload": {"id": CONVERSATION}}),
+                json!({"type": "turn_context", "payload": {"model": "gpt-6-astra",
+                    "effort": "low", "collaboration_mode": {"mode": "default"}}}),
+            ],
+            "gpt-6-astra",
+            ["-c", "model_reasoning_effort=low"],
+        ),
+        _ => unreachable!("fixture provider"),
+    };
+    fs::create_dir_all(&directory).unwrap();
+    let canonical = home.join(format!(".{provider}"));
+    for ancestor in directory
+        .ancestors()
+        .take_while(|path| path.starts_with(&canonical))
+    {
+        fs::set_permissions(ancestor, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    fs::write(
+        directory.join(file),
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    (model, effort)
 }

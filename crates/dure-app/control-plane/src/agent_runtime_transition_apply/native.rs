@@ -543,7 +543,14 @@ pub(super) async fn start_target(
     prepared_profile: PreparedProviderCredentialLaunchV1,
 ) -> Result<AgentRuntimeTransitionRecordV1, TargetStartFailure> {
     let source = &transition.intent.source;
-    let launch = transition.intent.effective_launch_selection();
+    let launch = super::session_settings::successor_launch_selection(
+        &transition.intent,
+        crate::provider_credential_profile::provider_state_directory(
+            &source.provider_id,
+            prepared_profile.resolved(),
+        ),
+    )
+    .await;
     let permission_mode = transition.intent.effective_permission_mode();
     let request = dure_app::AgentProviderSessionLaunchRequestV1 {
         provider_id: &source.provider_id,

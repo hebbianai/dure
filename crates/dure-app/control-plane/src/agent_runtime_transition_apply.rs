@@ -46,6 +46,7 @@ mod request_replay;
 pub(super) use request_replay::{apply, apply_locked};
 pub(super) mod native;
 mod replacement;
+mod session_settings;
 use admission::{load_or_admit, validate_replay};
 use replacement::corrected_successor_intent;
 
