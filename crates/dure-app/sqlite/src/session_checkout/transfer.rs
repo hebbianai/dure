@@ -36,10 +36,8 @@ impl SqliteDomainStore {
         E: From<DomainStoreErrorV1>,
     {
         let mut transaction = self
-            .pool
-            .begin_with("BEGIN IMMEDIATE")
-            .await
-            .map_err(|error| map_sqlx("transfer_session_checkout", error))?;
+            .begin_immediate_with_retry("transfer_session_checkout")
+            .await?;
         let record = transfer_on(
             &mut transaction,
             expected,

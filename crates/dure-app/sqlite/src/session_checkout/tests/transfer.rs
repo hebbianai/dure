@@ -235,6 +235,89 @@ async fn an_admitted_claim_excludes_transfer_until_its_writer_finishes() {
 }
 
 #[tokio::test]
+async fn a_busy_transfer_start_is_retried_until_the_writer_releases_the_lock() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("domain.sqlite"))
+        .await
+        .unwrap();
+    let other = retrying_writer(&store, RETRY_UNTIL_RELEASED).await;
+    let source = binding();
+    let target = target();
+    store.prepare_session_checkout(&source).await.unwrap();
+    let lock = store.pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let reservations = Arc::new(AtomicUsize::new(0));
+    let transfer = tokio::spawn({
+        let other = other.clone();
+        let source = source.clone();
+        let target = target.clone();
+        let reservations = Arc::clone(&reservations);
+        async move {
+            other
+                .transfer_session_checkout_with(&source, &target, || async {
+                    reservations.fetch_add(1, Ordering::SeqCst);
+                    Ok::<(), DomainStoreErrorV1>(())
+                })
+                .await
+        }
+    });
+    failed_attempt_observed(&other).await;
+    assert_eq!(reservations.load(Ordering::SeqCst), 0);
+    lock.rollback().await.unwrap();
+    let transferred = transfer.await.unwrap().unwrap();
+    assert_eq!(
+        transferred.binding,
+        SessionCheckoutBindingV1 {
+            identity: target.clone(),
+            ..source.clone()
+        }
+    );
+    assert_eq!(reservations.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store.session_checkout(&source.identity).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        store.session_checkout(&target).await.unwrap(),
+        Some(transferred)
+    );
+    other.close().await;
+    store.close().await;
+}
+
+#[tokio::test]
+async fn a_lock_held_past_the_transfer_retry_bound_still_reports_busy() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("domain.sqlite"))
+        .await
+        .unwrap();
+    let other = retrying_writer(&store, RETRY_BRIEFLY).await;
+    let source = binding();
+    let target = target();
+    let original = store.prepare_session_checkout(&source).await.unwrap();
+    let lock = store.pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    assert!(matches!(
+        other
+            .transfer_session_checkout_with(&source, &target, must_not_reserve)
+            .await,
+        Err(DomainStoreErrorV1::Busy {
+            operation: "transfer_session_checkout"
+        })
+    ));
+    lock.rollback().await.unwrap();
+    assert_eq!(
+        other.session_checkout(&source.identity).await.unwrap(),
+        Some(original)
+    );
+    assert_eq!(other.session_checkout(&target).await.unwrap(), None);
+    other
+        .transfer_session_checkout_with(&source, &target, reservation_succeeds)
+        .await
+        .unwrap();
+    other.close().await;
+    store.close().await;
+}
+
+#[tokio::test]
 async fn a_failed_reservation_preserves_the_source_binding() {
     let root = tempfile::tempdir().unwrap();
     let store = SqliteDomainStore::open(root.path().join("domain.sqlite"))
