@@ -955,6 +955,76 @@ fn draft_guarded_command_input_never_merges_into_an_unsubmitted_draft() {
     fixture.terminate_and_verify();
 }
 
+/// Keys that cannot insert text, such as Claude Code's Shift+Tab mode toggle
+/// or cursor movement on an empty prompt, leave no draft. An automated report
+/// is written at once instead of waiting for an Enter that never comes.
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn draft_guarded_command_input_passes_keys_that_cannot_insert_text() {
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create(
+        &state,
+        "standalone-draft-guard-keys",
+        vec![
+            std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            "--ignored".into(),
+            "--exact".into(),
+            "standalone_draft_guard_fixture_provider".into(),
+            "--nocapture".into(),
+        ],
+    );
+    wait_for_replay_snapshot(&fixture.session, b"DRAFT_GUARD_READY");
+    let writer = |session: &LocalSession| {
+        let connection = session
+            .connect_with_options(TerminalSurfaceAttachment::connection_options(
+                TerminalSurfaceAccess::Writer,
+                None,
+            ))
+            .unwrap();
+        TerminalSurfaceAttachment::from_connection(connection).unwrap()
+    };
+    let mut person = writer(&fixture.session);
+    let mut agent = writer(&fixture.session);
+
+    for (key, code, modifiers) in [("Tab", "Tab", 1), ("ArrowLeft", "ArrowLeft", 0)] {
+        let receipt = person
+            .send_key_confirmed(
+                key.into(),
+                code.into(),
+                modifiers,
+                false,
+                Duration::from_secs(2),
+            )
+            .unwrap();
+        assert!(matches!(
+            receipt.outcome,
+            Some(terminal_state_protocol::input_receipt::Outcome::WrittenToPty(_))
+        ));
+    }
+    wait_for_replay_snapshot(&fixture.session, br"INPUT[\e[Z\e[D]");
+
+    let delivered = agent
+        .send_draft_guarded_command_input_confirmed(
+            "lane report".into(),
+            true,
+            Duration::ZERO,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+    assert!(delivered.draft_guarded());
+    wait_for_replay_snapshot(
+        &fixture.session,
+        br"INPUT[\e[Z\e[D\e[200~lane report\e[201~\r]",
+    );
+
+    let _ = person.detach();
+    let _ = agent.detach();
+    fixture.terminate_and_verify();
+}
+
 #[cfg(feature = "terminal-state-stream")]
 #[test]
 fn structured_surface_delivers_host_parsed_osc52_clipboard_writes() {

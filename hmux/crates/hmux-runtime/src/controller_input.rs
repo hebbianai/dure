@@ -2,6 +2,50 @@ const PASTE_START: &[u8] = b"\x1b[200~";
 const PASTE_END: &[u8] = b"\x1b[201~";
 const MARKER_LEN: usize = PASTE_START.len();
 
+/// What terminals send for keys that cannot put text into a line editor.
+/// Legacy byte input carries no typed key, so only a chunk that is exactly
+/// one of these is that keypress; anything longer may carry text.
+const NON_INSERTING_KEY_CHUNKS: &[&[u8]] = &[
+    // Escape and Shift+Tab.
+    b"\x1b",
+    b"\x1b[Z",
+    // Right and Left, in normal and application cursor-key mode.
+    b"\x1b[C",
+    b"\x1b[D",
+    b"\x1bOC",
+    b"\x1bOD",
+    // Home and End.
+    b"\x1b[H",
+    b"\x1b[F",
+    b"\x1bOH",
+    b"\x1bOF",
+    b"\x1b[1~",
+    b"\x1b[4~",
+    // Insert, Delete, Backspace and Ctrl+C.
+    b"\x1b[2~",
+    b"\x1b[3~",
+    b"\x7f",
+    b"\x08",
+    b"\x03",
+    // F1-F12.
+    b"\x1bOP",
+    b"\x1bOQ",
+    b"\x1bOR",
+    b"\x1bOS",
+    b"\x1b[11~",
+    b"\x1b[12~",
+    b"\x1b[13~",
+    b"\x1b[14~",
+    b"\x1b[15~",
+    b"\x1b[17~",
+    b"\x1b[18~",
+    b"\x1b[19~",
+    b"\x1b[20~",
+    b"\x1b[21~",
+    b"\x1b[23~",
+    b"\x1b[24~",
+];
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct SubmitScan {
     submitted: bool,
@@ -79,6 +123,12 @@ impl SubmitScanner {
         scan
     }
 
+    /// Whether this whole chunk is one keypress that cannot insert text.
+    /// Inside a bracketed paste the same bytes are pasted content.
+    fn is_non_inserting_key(&self, bytes: &[u8]) -> bool {
+        !self.in_bracketed_paste && NON_INSERTING_KEY_CHUNKS.contains(&bytes)
+    }
+
     /// Forget paste and carry state. Called when stream continuity breaks —
     /// a controller change or writer disconnect can strand an unclosed paste
     /// envelope, which would otherwise classify every later Enter as paste
@@ -102,10 +152,11 @@ pub(crate) fn fold_written_input_prefix(
     Option<hmux_host::local_protocol::AgentRuntimeStateProjection>,
     hmux_host::session_host::SessionHostError,
 > {
-    // Legacy byte input has no typed Key intent. A bare Escape outside paste
-    // is control traffic, not a draft. Still feed the scanner so a later Enter
+    // Legacy byte input has no typed Key intent. One keypress that cannot
+    // insert text (a bare Escape, Shift+Tab, an arrow, Backspace, Ctrl+C...)
+    // outside paste is not a draft. Still feed the scanner so a later Enter
     // remains a separate submit, and never erase previously retained input.
-    if bytes == b"\x1b" && !scanner.in_bracketed_paste {
+    if scanner.is_non_inserting_key(bytes) {
         host.record_controller_write(fence)?;
     } else {
         host.record_controller_input(fence)?;
@@ -142,6 +193,33 @@ mod tests {
         let mut separate_frames = SubmitScanner::default();
         assert!(!separate_frames.observe_chunk(b"\x1b", false).submitted);
         assert!(separate_frames.observe_chunk(b"\r", false).submitted);
+    }
+
+    #[test]
+    fn a_non_inserting_key_is_one_whole_chunk_outside_paste() {
+        let scanner = SubmitScanner::default();
+        for keypress in NON_INSERTING_KEY_CHUNKS {
+            assert!(scanner.is_non_inserting_key(keypress), "{keypress:?}");
+            assert!(!SubmitScanner::default().observe(keypress).submitted);
+        }
+        for chunk in [
+            b"".as_slice(),
+            b"\x1b[D\x1b[D",
+            b"\x7fx",
+            b"\x1b[A",
+            b"\x1b[5~",
+            b"\x1b[1;2D",
+            b"\x1bb",
+            b"\t",
+            b"\r",
+        ] {
+            assert!(!scanner.is_non_inserting_key(chunk), "{chunk:?}");
+        }
+        let mut pasting = SubmitScanner::default();
+        pasting.observe(b"\x1b[200~");
+        assert!(!pasting.is_non_inserting_key(b"\x7f"));
+        pasting.observe(b"\x1b[201~");
+        assert!(pasting.is_non_inserting_key(b"\x7f"));
     }
 
     #[test]
