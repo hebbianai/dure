@@ -130,6 +130,9 @@ pub(crate) async fn publish_completed_successor_locked(
     let resolution = match lookup {
         ManagedRehostResolutionLookup::NotFound => return Ok(false),
         ManagedRehostResolutionLookup::RetryRequired { .. } => {
+            // A pending operation that no client finishes stays pending until
+            // the hub resumes or expires it; a stuck observation is the kick.
+            state.managed_rehost_recovery_wake.notify_one();
             return Err(Stage::LineageResolution.unavailable("hmux_managed_rehost_retry_required"));
         }
         ManagedRehostResolutionLookup::Resolved(resolution) => resolution,
