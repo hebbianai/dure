@@ -30,6 +30,12 @@ function fixture() {
     resolveBackend: async () => backend, opts: { rest: ["show", entry.name] } };
 }
 
+/** A virtual clock: waiting advances time instead of blocking the test. */
+function fakeClock() {
+  let time = 0;
+  return { now: () => time, sleep: async (ms) => { time += Math.max(1, ms); } };
+}
+
 function dormantFixture() {
   const f = fixture();
   const asleep = { schemaVersion: 1, state: "transitioning", agentId: f.entry.agentId,
@@ -152,11 +158,35 @@ describe("durable Run commands", () => {
   it("retains exact recovery commands after uncertain execution without another launch", async () => {
     const f = fixture();
     const run = vi.fn(async () => ({ kind: "timeout" }));
-    const report = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name], confirmRestart: true }, command: "hmux", run });
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name], confirmRestart: true },
+      command: "hmux", run, settle: fakeClock() });
     expect(report).toMatchObject({ ok: false, recovery: { state: "unknown", publication: "not_requested" } });
-    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls.filter(([argv]) => argv[1] !== "managed-rehost-resolve")).toHaveLength(1);
     expect(report.recovery.continuation.retry).toContain(report.recovery.continuation.operationId);
     expect(f.requestBackend).toHaveBeenCalledTimes(2);
+  });
+  it("returns a running handle, not an error, while Hmux still applies the confirmed rehost", async () => {
+    const f = fixture();
+    const source = f.runtime.receipt.authority.authority;
+    const pending = { schema: "hmux-managed-rehost-resolution-v1", schemaVersion: 1, state: "retry_required",
+      code: "hmux_managed_rehost_retry_required",
+      source: { sessionId: source.binding.sessionId, workspaceId: source.runtimeWorkspaceId } };
+    const run = vi.fn(async (argv) => argv[1] === "managed-rehost-resolve"
+      ? { kind: "success", stdout: JSON.stringify({ ...pending, operationId: argv[argv.indexOf("--operation-id") + 1] }) }
+      : { kind: "timeout" });
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name], confirmRestart: true },
+      command: "hmux", run, settle: fakeClock() });
+    expect(report).toMatchObject({ ok: true,
+      recovery: { ok: true, state: "running", nativeExecution: "running", publication: "not_requested" } });
+    expect(report.error).toBeUndefined();
+    expect(run.mock.calls.filter(([argv]) => argv[1] !== "managed-rehost-resolve")).toHaveLength(1);
+    // Publication waits for completion; nothing was published yet.
+    expect(f.requestBackend).toHaveBeenCalledTimes(2);
+    const text = formatRunsCommand(report);
+    expect(text).toContain(`${f.entry.agentId}: running (native running)`);
+    expect(text).toContain("Hmux is still applying this rehost");
+    expect(text).toContain(`Status: ${"dure 'hmux' 'rehost' 'status'"}`);
+    expect(text).toContain("Publish: dure 'hmux' 'rehost' 'publish'");
   });
   it("uses a published successor, and refuses incomplete or unrelated current authority", () => {
     const f = fixture();

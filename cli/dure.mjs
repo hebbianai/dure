@@ -2586,6 +2586,7 @@ async function cmdHmux(sub, opts) {
         "dure hmux rehost retry [<original-session-id> --workspace ID] --operation-id ID --confirm-restart [--json]  # resume an existing local operation\n" +
         "dure hmux rehost publish <agent-id> --from-session <original-session-id> --workspace ID --operation-id ID [--backend ID] [--json]  # publish completion; never restarts a provider\n" +
         "Rehost keeps the original working folder; --project, --path and --cwd are unsupported.\n" +
+        "start and retry wait up to a minute for an operation Hmux is still applying; if it is still running they exit 0 with state running and its status command.\n" +
         "dure hmux convert --name <session> --target-panel-id ID --to <managed|standalone> [--agent-name NAME] [--confirm-restart]\n" +
         "dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] [--yes] [--json]  # alias for dure stop\n" +
         "dure hmux migrate ...  # adopt alias\n",

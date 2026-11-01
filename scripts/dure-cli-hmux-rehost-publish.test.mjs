@@ -70,18 +70,30 @@ async function fixture(respond) {
   }), { mode: 0o600 });
   const native = join(root, "hmux");
   const nativeCalls = join(root, "native-calls.jsonl");
-  const installNative = ({ invalidReply = false } = {}) => writeFileSync(native, `#!/usr/bin/env node
+  // busyFirst: another executor holds the operation's lock until the journal records completion.
+  const installNative = ({ invalidReply = false, busyFirst = false } = {}) => writeFileSync(native, `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 const value = (flag) => args[args.indexOf(flag) + 1];
 fs.appendFileSync(${JSON.stringify(nativeCalls)}, JSON.stringify(args) + "\\n");
+const source = { sessionId: value("--session"), workspaceId: value("--workspace") };
 const receipt = {
   schema: "hmux-managed-rehost-v1", schemaVersion: 1,
-  operationId: value("--operation-id"), replayed: false,
-  sourceStopReceipt: { sessionId: value("--session"), workspaceId: value("--workspace") },
+  operationId: value("--operation-id"), replayed: ${busyFirst},
+  sourceStopReceipt: source,
   replacementReceipt: { sessionId: "successor-1", workspaceId: value("--workspace") },
 };
-process.stdout.write(${invalidReply} ? "lost receipt" : JSON.stringify(receipt));
+if (${busyFirst} && args[0] === "managed-rehost-resolve") {
+  process.stdout.write(JSON.stringify({ schema: "hmux-managed-rehost-resolution-v1", schemaVersion: 1,
+    state: "resolved", operationIds: [value("--operation-id")], sourceGeneration: source,
+    currentGeneration: receipt.replacementReceipt }));
+} else if (${busyFirst} && args[0] === "managed-rehost-start") {
+  process.stdout.write(JSON.stringify({ schema: "hmux-managed-rehost-v1", schemaVersion: 1, state: "refused",
+    error: { code: "hmux_recovery_busy", message: "hmux_recovery_busy: recovery operation is already running" } }));
+  process.exitCode = 1;
+} else {
+  process.stdout.write(${invalidReply} ? "lost receipt" : JSON.stringify(receipt));
+}
 `, { mode: 0o700 });
   const runCommand = async (args) => {
     try {
@@ -258,6 +270,26 @@ it("executes a confirmed name through native start and publishes its original so
     "--operation-id", report.continuation.operationId, "--confirm-restart", "--json",
   ]);
   expect(existsSync(join(root, "server.json"))).toBe(false);
+});
+
+it("waits for a rehost another executor is applying, then publishes it once", async () => {
+  const { root, calls, runCommand, installNative, nativeCalls } = await fixture((request) =>
+    request.operation === "agent_runtime.projection.inspect" ? { result: projection() } : undefined);
+  writeRegistry(root);
+  installNative({ busyFirst: true });
+  const output = await runCommand([...previewArgs, "--confirm-restart"]);
+  expect(output.code, output.stderr).toBe(0);
+  const report = JSON.parse(output.stdout);
+  expect(report).toMatchObject({ ok: true, nativeExecution: "completed", publication: "published",
+    receipt: { replayed: true } });
+  const identity = ["--session", "runtime-native-1", "--workspace", "workspace-1",
+    "--operation-id", report.continuation.operationId];
+  expect(nativeCalls()).toEqual([
+    ["managed-rehost-start", ...identity, "--confirm-restart", "--json"],
+    ["managed-rehost-resolve", ...identity, "--json"],
+    ["managed-rehost-reconcile", ...identity, "--confirm-restart", "--json"],
+  ]);
+  expect(calls.map((request) => request.operation)).toEqual(["agent_runtime.projection.inspect", operation]);
 });
 
 it("pins the selected Agent and backend through name and profile changes during execution", async () => {
