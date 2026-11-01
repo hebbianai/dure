@@ -94,6 +94,7 @@
             "group": "Automation",
             "pages": [
               "en/cli-and-automation",
+              "en/lead-agent-team",
               "en/orchestration"
             ]
           },
@@ -153,6 +154,7 @@
             "group": "自动化",
             "pages": [
               "cn/cli-and-automation",
+              "cn/lead-agent-team",
               "cn/orchestration"
             ]
           },
@@ -212,6 +214,7 @@
             "group": "자동화",
             "pages": [
               "ko/cli-and-automation",
+              "ko/lead-agent-team",
               "ko/orchestration"
             ]
           },
@@ -271,6 +274,7 @@
             "group": "自動化",
             "pages": [
               "jp/cli-and-automation",
+              "jp/lead-agent-team",
               "jp/orchestration"
             ]
           },

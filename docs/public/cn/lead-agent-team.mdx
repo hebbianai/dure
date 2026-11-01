@@ -1,0 +1,78 @@
+---
+title: "用负责人智能体带领团队"
+description: "启动一个负责人智能体：把目标拆成可跟踪的 issue，为每个 issue 在专用 worktree 中启动一个工作者 Run，跟进进度并汇报。"
+---
+
+负责人 Run 是一次普通的 `dure run`，只是提示词变成了"目标 + 内置的负责人简报"。负责人不写代码：它为每个工作项开一个 GitHub issue，为每个 issue 在专用 worktree 中启动一个工作者 Run，等待工作者，合并通过检查的 pull request，最后以一份报告收尾。工作者同样是普通的 Run，负责人交给它们的简报才使它们成为工作者。没有新增任何存储：计划在 GitHub 里，Run 在 Dure 里。
+
+## 开始之前
+
+- 一个已注册的项目（`dure projects list`），其目录是带 GitHub 远程的 Git 检出，并且 `gh` 已用有权在该仓库创建 issue 和 pull request 的账号登录。
+- 执行主机上已登录的提供商。示例使用 Claude Code。
+- 使用 Claude 工作者时，先在该账号里信任一次项目目录。Claude Code 在账号首次打开某个目录时会显示目录信任提示，停在提示上的工作者还没有读到简报。信任项目根目录即可覆盖 Dure 在 `<project>/.worktrees/` 下创建的 worktree。用同一账号在项目根目录打开一个 Claude 会话并接受提示，然后再启动负责人。
+- 决定同时运行多少个工作者。默认是 3 个；其他上限写进目标里。
+
+## 启动负责人
+
+```sh
+dure run --project PROJECT_ID --provider claude --name lead-onboarding \
+  --permission-override bypass_approvals \
+  --lead "关闭三个未完成的引导流程 issue（#118、#119、#121）。上限：2 个工作者。"
+```
+
+`--lead` 会在目标前面加上负责人简报；简报把智能体引向 `dure skills get dure-lead`，也就是随 CLI 一起分发的完整流程。其余部分与普通 Run 相同：`--project` 或 `--path` 选择项目，`--space` 决定面板位置，`--json` 返回回执。负责人只做读取并运行 `gh` 和 `dure`，所以可以留在项目根目录；拿到 worktree 的是工作者。`bypass_approvals` 让它运行这些命令时不必等待批准；若想在面板里逐条批准，省略它即可。
+
+不启动任何东西、只阅读流程：
+
+```sh
+dure skills get dure-lead
+```
+
+## 接下来会发生什么
+
+一个三个 issue 的小例子：
+
+| 步骤 | 负责人做什么 | 你看到什么 |
+| --- | --- | --- |
+| 拆分 | 确认项目 ID 和仓库，为每个工作项新开或复用一个 issue，在跟踪 issue 上发布计划表，并给每个已认领的 issue 打上 `lead:claimed` 标签 | 三个 issue 和一条计划评论 |
+| 派发 | 对每个工作项执行 `dure run --project … --name work-118 --worktree work-118 --permission-override bypass_approvals "<brief>"`，直到达到上限 | `dure ls` 中的工作者面板或无界面会话；分支 `agent/work-118`、`agent/work-119`、… |
+| 跟踪 | 对每个工作者 `dure wait`，用 `dure inspect` 看状态，用 `gh pr list` 和 `gh pr checks` 看结果 | 带 `Closes #118` 的 pull request 和 CI 运行 |
+| 恢复 | 已知不稳定的 CI 作业重跑一次，真实失败时给工作者发一条消息，崩溃的工作者恢复一次，需要决策的 issue 打上 `needs:founder` 标签 | 解释每一步处理的 issue 评论 |
+| 合并与汇报 | 合并工作者未能合并的绿色 pull request，然后发布报告 | 每个 issue 一行的报告评论 |
+
+工作者简报要求每个工作者：阅读自己的 issue，留在自己的 worktree 中，在行为所在的层级测试，针对默认分支开一个带 `Closes #n` 的 pull request，等待 CI，已知不稳定的作业只重跑一次，仓库规则允许时自行合并，最后以一条写明 pull request 的评论收尾。需要产品决策的工作者不会猜测，而是给 issue 打上 `needs:founder` 标签并停下。
+
+## 自己盯一盯
+
+```sh
+dure ls                         # ACTIVITY: working, waiting, input_required
+dure read work-118 -n 60        # 客户端登记后可按名称读取工作者的屏幕
+dure runs list --json           # 持久的 Run 记录，包括无界面的工作者
+```
+
+刚启动就显示 ACTIVITY 为 `input_required` 的工作者正停在 Claude 的目录信任提示上，它的 `dure run` 回执以 `prompt_delivery_uncertain` 结束并带有 `startup_gate`。简报已在 Claude 内部排队，不能再次发送：按上面的说明信任目录，或在该工作者的面板里回答提示，工作者就会自行继续。负责人会报告这一状态，而不是假设工作者已经开始。
+
+## 阅读报告
+
+```md
+## Lead report: 关闭三个未完成的引导流程 issue
+
+Project `…` on `acme/app` · 3 items · 3 workers started · 2 PRs merged · 1 open · 1 escalated
+
+| Issue | Item | Worker | PR | Result |
+| --- | --- | --- | --- | --- |
+| #118 | 校验邀请表单 | work-118 | #130 merged | done |
+| #119 | 重发确认邮件 | work-119 | #131 merged | done |
+| #121 | 重命名引导标签页 | work-121 | #132 open | needs:founder: 用哪个名字？ |
+```
+
+负责人把报告发布到跟踪 issue 上，并在自己的会话里打印。未能完成的项目会写明所需的决策。已停止的工作者保留各自的 worktree 和对话，因此你可以在面板中或用 `dure runs resume` 继续任意一个。
+
+## 限制
+
+- 一个负责人、一个项目、一个后端：负责人在自己运行的后端上启动工作者。
+- 每个工作者都是一个完整的提供商会话；上限保护的是你的机器和账号额度，而不是正确性。
+- 负责人不回答信任或权限提示，不在产品选项之间做选择，只有在目标明确要求且仓库允许时才以管理员权限合并。
+- Dure 尚未记录哪个工作者负责哪个 issue；`lead:claimed` 标签和 pull request 就是共享的记录。
+
+负责人使用的 Run 选项见[通过 CLI 执行和调度任务](/cn/cli-and-automation)，手动拆分工作见[并行任务](/cn/first-parallel-workflow)。
