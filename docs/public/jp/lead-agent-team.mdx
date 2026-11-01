@@ -1,0 +1,78 @@
+---
+title: "リードエージェントでチームを動かす"
+description: "目標を追跡可能な Issue に分け、Issue ごとに専用 worktree でワーカー Run を起動し、進行を見守って報告するリードエージェントを 1 つ開始します。"
+---
+
+リード Run は、プロンプトが「目標 + 同梱のリードブリーフ」になっている通常の `dure run` です。リードはコードを書きません。作業項目ごとに GitHub Issue を 1 つ開き、Issue ごとに専用 worktree でワーカー Run を 1 つ開始し、ワーカーを待ち、チェックを通過した pull request をマージして、1 つの報告で終えます。ワーカーも通常の Run であり、リードが渡すブリーフがワーカーをワーカーにします。新しく保存されるものはありません。計画は GitHub に、Run は Dure にあります。
+
+## 始める前に
+
+- 登録済みプロジェクト（`dure projects list`）のフォルダーが GitHub リモートを持つ Git チェックアウトであり、そのリポジトリで Issue と pull request を開ける権限で `gh` にサインインしていること。
+- 実行ホストでサインイン済みのプロバイダー。例では Claude Code を使います。
+- Claude ワーカーを使う場合は、そのアカウントでプロジェクトフォルダーを一度信頼しておきます。Claude Code はアカウントがフォルダーを初めて開くときにフォルダー信頼プロンプトを表示し、そこで止まったワーカーはまだブリーフを読んでいません。プロジェクトルートを信頼すると、Dure が `<project>/.worktrees/` 以下に作る worktree も対象になります。同じアカウントでプロジェクトルートに Claude セッションを 1 つ開いてプロンプトを受け入れてから、リードを開始してください。
+- 同時に動かすワーカー数を決めます。既定は 3 で、別の上限は目標に書きます。
+
+## リードを開始する
+
+```sh
+dure run --project PROJECT_ID --provider claude --name lead-onboarding \
+  --permission-override bypass_approvals \
+  --lead "オープン中のオンボーディング Issue 3 件（#118、#119、#121）をクローズしてください。上限: ワーカー 2。"
+```
+
+`--lead` は目標の前にリードブリーフを付けます。ブリーフはエージェントを、CLI に同梱された手順全体である `dure skills get dure-lead` へ誘導します。それ以外は通常の Run と同じです。`--project` か `--path` がプロジェクトを、`--space` がペインの配置先を決め、`--json` はレシートを返します。リードは読み取りと `gh`、`dure` の実行しかしないのでプロジェクトルートに留まってよく、worktree を受け取るのはワーカーです。`bypass_approvals` はこれらのコマンドを承認待ちなしで実行させます。ペインでコマンドごとに承認するなら省略してください。
+
+何も開始せずに手順だけ読むには:
+
+```sh
+dure skills get dure-lead
+```
+
+## その後に起きること
+
+Issue 3 件の小さな例です。
+
+| 段階 | リードがすること | 見えるもの |
+| --- | --- | --- |
+| 分割 | プロジェクト ID とリポジトリを確認し、項目ごとに Issue を開くか既存の Issue を再利用し、追跡 Issue に計画表を投稿し、担当させた Issue に `lead:claimed` ラベルを付けます | Issue 3 件と計画コメント 1 つ |
+| ディスパッチ | 項目ごとに上限まで `dure run --project … --name work-118 --worktree work-118 --permission-override bypass_approvals "<brief>"` | `dure ls` に見えるワーカーのペインまたは画面なしセッション、`agent/work-118`、`agent/work-119`、… のブランチ |
+| 追跡 | ワーカーごとに `dure wait`、状態は `dure inspect`、結果は `gh pr list` と `gh pr checks` | `Closes #118` 付きの pull request と CI 実行 |
+| 復旧 | 既知の不安定な CI ジョブは一度だけ再実行し、本当の失敗にはワーカーへメッセージを 1 回送り、落ちたワーカーは一度再開し、判断が必要な Issue に `needs:founder` ラベルを付けます | 各対応を説明する Issue コメント |
+| マージと報告 | ワーカーがマージできなかったグリーンの pull request をマージし、報告を投稿します | Issue ごとに 1 行の報告コメント |
+
+ワーカーブリーフは各ワーカーに、Issue を読み、自分の worktree に留まり、振る舞いのある層でテストし、既定ブランチに対して `Closes #n` 付きの pull request を開き、CI を待ち、既知の不安定なジョブは一度だけ再実行し、リポジトリの規則が許せばマージし、pull request を記したコメントで終えるよう指示します。製品判断が必要なワーカーは推測せず、Issue に `needs:founder` ラベルを付けて停止します。
+
+## 自分で見守る
+
+```sh
+dure ls                         # ACTIVITY: working, waiting, input_required
+dure read work-118 -n 60        # クライアントが登録した後は名前でワーカーの画面を読む
+dure runs list --json           # 画面なしワーカーを含む永続的な Run 記録
+```
+
+開始直後に ACTIVITY が `input_required` のワーカーは Claude のフォルダー信頼プロンプトで待っており、その `dure run` レシートは `startup_gate` を伴って `prompt_delivery_uncertain` で終わります。ブリーフは Claude の中で待機しているので、再送してはいけません。上記のとおりフォルダーを信頼するか、そのワーカーのペインでプロンプトに答えれば、ワーカーは自分で続行します。リードはワーカーが開始したと仮定せず、この状態を報告します。
+
+## 報告を読む
+
+```md
+## Lead report: オープン中のオンボーディング Issue 3 件をクローズする
+
+Project `…` on `acme/app` · 3 items · 3 workers started · 2 PRs merged · 1 open · 1 escalated
+
+| Issue | Item | Worker | PR | Result |
+| --- | --- | --- | --- | --- |
+| #118 | 招待フォームの検証 | work-118 | #130 merged | done |
+| #119 | 確認メールの再送 | work-119 | #131 merged | done |
+| #121 | オンボーディングタブの改名 | work-121 | #132 open | needs:founder: どの名前にするか |
+```
+
+リードは報告を追跡 Issue に投稿し、自分のセッションにも出力します。終えられなかった項目には必要な判断が書かれています。停止したワーカーは worktree と会話を保持しているので、ペインから、または `dure runs resume` でどのワーカーでも続行できます。
+
+## 制限
+
+- リード 1 つ、プロジェクト 1 つ、バックエンド 1 つです。リードは自分が動いているバックエンドでワーカーを開始します。
+- ワーカー 1 つはプロバイダーセッション 1 つ分です。上限が守るのは正しさではなく、マシンとアカウントの上限です。
+- リードは信頼や権限のプロンプトに答えず、製品の選択肢の間で選ばず、目標が明示しリポジトリが許可する場合にのみ管理者権限でマージします。
+- Dure はどのワーカーがどの Issue を担当しているかをまだ記録しません。`lead:claimed` ラベルと pull request が共有の記録です。
+
+リードが使う Run オプションは [CLI から実行とスケジュール設定](/jp/cli-and-automation)、作業を手で分ける方法は [並行タスク](/jp/first-parallel-workflow) を参照してください。

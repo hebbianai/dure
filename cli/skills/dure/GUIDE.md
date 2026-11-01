@@ -78,12 +78,22 @@ dure run --path /workspace/project "run the full test suite"
 # is also accepted.
 dure run --space Build "investigate the failing test"
 
+# Lead a team toward one goal: the prompt is the goal and the CLI prepends
+# the bundled lead brief (dure skills get dure-lead).
+dure run --project project-id --provider claude --lead "close the three open onboarding issues"
+
 # A fresh backend has no implicit client registry. Register the repository once;
 # --path defaults to the current directory and --name defaults to the stable ID.
 dure projects register project-id
 dure projects register project-id --path /workspace/project --name "Project"
 dure projects register --help
 ```
+
+`--lead` turns the Run into a lead: it splits the goal into GitHub issues, starts
+one worker Run per issue in its own worktree with a standard brief, tracks the
+workers, merges the pull requests that pass and ends with a report.
+`dure skills get dure-lead` holds the loop and the worker brief; the lead itself
+creates no new state.
 
 `--project` and `--path` are mutually exclusive. Both select an existing backend
 registration. `--path` selects the deepest registered project containing that

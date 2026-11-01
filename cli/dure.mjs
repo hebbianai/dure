@@ -2021,7 +2021,8 @@ Usage:
            [--setup-command COMMAND] [--account ACCOUNT_ID|default]
            [--permission-override require_approvals|auto_edit|bypass_approvals]
            [--skip-permissions]
-           [--space ID|NAME] [--idempotency-key KEY] [--backend ID] [--json] [--verbose] <prompt>
+           [--space ID|NAME] [--idempotency-key KEY] [--backend ID] [--json] [--verbose]
+           [--lead] <prompt>
   dure spawn [run options] [prompt]
   dure spawn --reuse --project ID|NAME --name AGENT
              [--agent PROVIDER | --provider PROVIDER]
@@ -2047,6 +2048,10 @@ spaceId, state (the Run receipt state), presentation (the pane outcome) and
 interactionProfile; a value the receipt cannot vouch for is null. The full receipt,
 presentation and registration follow unchanged. source.backend carries the backend
 identity, protocol and capabilityCount; --verbose adds its full capabilities list.
+--lead starts a lead Run: the prompt is the goal, and the CLI prepends the bundled lead
+brief, which sends the agent to dure skills get dure-lead — split the goal into tracked
+issues, start one worker Run per item in its own worktree, watch them, merge what passes
+and report. Only the prompt changes; no other state is created. spawn rejects --lead.
 spawn --reuse reuses an existing Agent without creating a new provider.`;
 
 function writeCliActionError(
@@ -2135,7 +2140,6 @@ async function cmdLegacySpawnReuse(opts, prompt, positionalPrompt, providerId) {
 async function cmdRun(opts, { legacySpawn = false } = {}) {
   const positionalPrompt = opts.rest.join(" ");
   const prompt = legacySpawn ? opts.prompt || positionalPrompt : positionalPrompt;
-  const runPrompt = prompt || undefined;
   const legacyOptionStyle =
     legacySpawn && (Boolean(opts.agent) || Boolean(opts.prompt));
   const requestedProviderId = legacySpawn
@@ -2153,6 +2157,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
   if (
     (opts.account !== undefined && !opts.account) ||
     (!legacySpawn && !prompt) ||
+    (legacySpawn && opts.lead === true) ||
     (!legacySpawn && opts.reuse === true) ||
     (legacySpawn && Boolean(opts.prompt) && Boolean(positionalPrompt)) ||
     (legacySpawn &&
@@ -2187,6 +2192,13 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
   ) {
     fail(RUN_HELP);
   }
+  // --lead: the positional prompt is the goal; the Run carries the bundled
+  // lead brief in front of it. Composed here, after validation, so an empty
+  // goal is refused by the usage check above like any missing prompt.
+  const runPrompt =
+    opts.lead === true
+      ? (await import("./lib/lead-run-prompt.mjs")).leadRunPrompt(prompt)
+      : prompt || undefined;
   const {
     failedRunPresentation,
     formatRunPresentation,

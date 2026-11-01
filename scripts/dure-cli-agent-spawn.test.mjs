@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -28,6 +29,7 @@ import {
 } from "./fixtures/agent-spawn-receipts.mjs";
 import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
 import { collectAgentRun } from "../cli/lib/agent-run.mjs";
+import { leadRunPrompt } from "../cli/lib/lead-run-prompt.mjs";
 import {
   agentSpawnLaunchProjection,
   agentSpawnWorkspaceProjection,
@@ -1937,6 +1939,34 @@ describe("dure run and spawn CLI", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("--project ID | --path PATH");
     expect(existsSync(remote.log)).toBe(false);
+  });
+
+  it("sends the composed lead brief, not the bare goal, with --lead and never serializes it", async () => {
+    // The brief is composed in cmdRun from the positional goal; what proves
+    // it reached the Run is the backend's view: the preview digest and the
+    // apply prompt are those of leadRunPrompt(goal). The receipt stays free
+    // of prompt text either way.
+    const root = temporaryRoot();
+    const remote = installRunRemoteFixture(root);
+    const goal = "close the three open onboarding issues";
+    const result = await runCliAsync(
+      root,
+      ["run", "--lead", goal, "--project", "dure", "--provider", "codex", "--idempotency-key", "lead-run-1", "--backend", "remote-a", "--json"],
+      { DURE_AGENT_SPAWN_LOG: remote.log, PATH: `${remote.bin}:${process.env.PATH}` },
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const composed = leadRunPrompt(goal);
+    expect(composed).not.toBe(goal);
+    const observations = JSON.parse(readFileSync(remote.log, "utf8"));
+    expect(observations.map(({ request }) => request.operation)).toEqual(["agent_spawn.preview", "agent_spawn.apply"]);
+    expect(observations[0].request.body.promptDigest).toBe(`sha256:${createHash("sha256").update(composed).digest("hex")}`);
+    expect(observations[1].request.body.prompt).toBe(composed);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      receipt: { state: "succeeded", plan: { request: { providerId: "codex" } } },
+      presentation: { state: "headless" },
+    });
+    for (const text of [goal, "dure skills get dure-lead"]) expect(result.stdout).not.toContain(text);
   });
 
   it("shows run help without selecting a backend or creating an operation", () => {

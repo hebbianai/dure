@@ -1,0 +1,78 @@
+---
+title: "Run a team with a lead agent"
+description: "Start one lead agent that turns a goal into tracked issues, dispatches a worker Run per issue in its own worktree, watches them and reports back."
+---
+
+A lead Run is an ordinary `dure run` whose prompt is a goal plus the bundled lead brief. The lead does not write code: it opens one GitHub issue per work item, starts one worker Run per issue in a dedicated worktree, waits on the workers, merges the pull requests that pass and ends with one report. Workers are ordinary Runs too; the brief the lead hands them is what makes them workers. Nothing new is stored: the plan lives in GitHub, the Runs in Dure.
+
+## Before you start
+
+- A registered project (`dure projects list`) whose folder is a Git checkout with a GitHub remote, and `gh` signed in with permission to open issues and pull requests there.
+- A provider signed in on the execution host. The examples use Claude Code.
+- For Claude workers, trust the project folder once in that account. Claude Code shows a folder-trust prompt the first time an account opens a folder, and a worker parked on it has not read its brief. Trusting the project root covers the worktrees Dure creates under `<project>/.worktrees/`. Open one Claude session in the project root with the same account, accept the prompt, then start the lead.
+- Decide how many workers may run at once. The default is three; put another cap in the goal.
+
+## Start the lead
+
+```sh
+dure run --project PROJECT_ID --provider claude --name lead-onboarding \
+  --permission-override bypass_approvals \
+  --lead "Close the three open onboarding issues (#118, #119, #121). Cap: 2 workers."
+```
+
+`--lead` prepends the lead brief to your goal; the brief sends the agent to `dure skills get dure-lead`, the full loop bundled with the CLI. Everything else is a normal Run: `--project` or `--path` selects the project, `--space` places the pane, `--json` returns the receipt. The lead only reads and runs `gh` and `dure`, so it can stay in the project root; the workers get worktrees. `bypass_approvals` lets it run those commands without stopping for approval; omit it to approve each command in the pane.
+
+Read the loop without starting anything:
+
+```sh
+dure skills get dure-lead
+```
+
+## What happens next
+
+A small example with three issues:
+
+| Step | What the lead does | What you see |
+| --- | --- | --- |
+| Split | Confirms the project id and repository, opens or reuses one issue per item, posts a plan table on a tracking issue, labels each claimed issue `lead:claimed` | Three issues and one plan comment |
+| Dispatch | `dure run --project … --name work-118 --worktree work-118 --permission-override bypass_approvals "<brief>"` for each item, up to the cap | Worker panes or headless sessions in `dure ls`; branches `agent/work-118`, `agent/work-119`, … |
+| Track | `dure wait` on each worker, `dure inspect` for its state, `gh pr list` and `gh pr checks` for the result | Pull requests with `Closes #118`, CI runs |
+| Recover | Reruns a known-flaky CI job once, sends a worker one message for a real failure, resumes a crashed worker once, labels a needed decision `needs:founder` | Issue comments that explain each move |
+| Merge and report | Merges green pull requests the worker could not, then posts the report | A report comment with one row per issue |
+
+The worker brief tells each worker to read its issue, stay in its worktree, test at the level where the behavior lives, open a pull request against the default branch with `Closes #n`, wait for CI, rerun known-flaky jobs once, merge if the repository's rules allow it, and finish with a comment naming the pull request. A worker that needs a product decision labels the issue `needs:founder` and stops instead of guessing.
+
+## Watch it yourself
+
+```sh
+dure ls                         # ACTIVITY: working, waiting, input_required
+dure read work-118 -n 60        # a worker's screen, by name once a client registered it
+dure runs list --json           # durable Run records, including headless workers
+```
+
+A worker whose ACTIVITY is `input_required` right after it started is waiting on Claude's folder-trust prompt, and its `dure run` receipt ends `prompt_delivery_uncertain` with a `startup_gate`. The brief is queued inside Claude and must not be sent again: trust the folder as described above, or answer the prompt in that worker's pane, and the worker continues by itself. The lead reports this instead of assuming the worker started.
+
+## Read the report
+
+```md
+## Lead report: Close the three open onboarding issues
+
+Project `…` on `acme/app` · 3 items · 3 workers started · 2 PRs merged · 1 open · 1 escalated
+
+| Issue | Item | Worker | PR | Result |
+| --- | --- | --- | --- | --- |
+| #118 | Validate the invite form | work-118 | #130 merged | done |
+| #119 | Resend the confirmation mail | work-119 | #131 merged | done |
+| #121 | Rename the onboarding tab | work-121 | #132 open | needs:founder: which name? |
+```
+
+The lead posts it on the tracking issue and prints it in its session. Items it could not finish name the decision they need. Stopped workers keep their worktrees and conversations, so you can continue any of them from its pane or with `dure runs resume`.
+
+## Limits
+
+- One lead, one project, one backend: the lead starts its workers on the backend it runs on.
+- Each worker is a full provider session; the cap protects your machine and your account limits, not correctness.
+- The lead does not answer trust or permission prompts, does not choose between product options, and merges with admin rights only when the goal says so and the repository allows it.
+- Dure does not yet record which worker owns which issue; the `lead:claimed` label and the pull requests are the shared record.
+
+See [CLI runs and schedules](/en/cli-and-automation) for the Run options the lead uses and [parallel tasks](/en/first-parallel-workflow) for splitting work by hand.

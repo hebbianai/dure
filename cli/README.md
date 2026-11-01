@@ -95,6 +95,8 @@ Moving a pane to another Space does not change its process's working directory.
 
 Agent-facing instructions are packaged in [the Dure skill](skills/dure/SKILL.md)
 and the separate [orchestration integration](../orchestration/integration/SKILL.md).
+The [lead skill](skills/dure-lead/SKILL.md) is the loop behind `dure run --lead`:
+one agent splits a goal into issues, starts a worker Run per issue and reports.
 Customer-facing guides belong to [public documentation](../docs/public/).
 
 Browser input errors retain their machine-readable `error.code` and include
