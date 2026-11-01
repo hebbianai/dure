@@ -281,6 +281,22 @@ async function currentDispatchContext(environment, dependencies) {
   return context;
 }
 
+/** Tools that forward their `body` to exactly one orchestration method. The
+ * context and Event tools are not listed: they resolve this Session's context
+ * and cursor checkpoint before calling the backend. */
+export const ORCHESTRATION_MCP_TOOL_METHODS = Object.freeze({
+  agent_goal_get: "agent_goal.get",
+  agent_goal_put: "agent_goal.put",
+  orchestration_interaction_open: "interaction.open",
+  orchestration_message_open_exact_session: "interaction.message.open.exact-session",
+  orchestration_interaction_get: "interaction.get",
+  orchestration_interaction_progress: "interaction.progress",
+  orchestration_decision_answer: "interaction.answer",
+  orchestration_dispatch_complete: "dispatch.complete",
+  orchestration_dispatch_deadline_set: "dispatch.deadline.set",
+  orchestration_dispatch_deadline_get: "dispatch.deadline.get",
+});
+
 const FENCED_INTERACTION_READS = new Set(["interaction.get", "interaction.progress"]);
 // Only a read that a stale fence can make fail is retried with the current one.
 const STALE_FENCE_CODES = new Set(["orchestration_record_not_found", "orchestration_capability_denied"]);
@@ -499,18 +515,9 @@ export async function handleMcpRequest(
     );
     return toolResult(receipt);
   }
-  const method = {
-    agent_goal_get: "agent_goal.get",
-    agent_goal_put: "agent_goal.put",
-    orchestration_interaction_open: "interaction.open",
-    orchestration_message_open_exact_session: "interaction.message.open.exact-session",
-    orchestration_interaction_get: "interaction.get",
-    orchestration_interaction_progress: "interaction.progress",
-    orchestration_decision_answer: "interaction.answer",
-    orchestration_dispatch_complete: "dispatch.complete",
-    orchestration_dispatch_deadline_set: "dispatch.deadline.set",
-    orchestration_dispatch_deadline_get: "dispatch.deadline.get",
-  }[name];
+  const method = Object.hasOwn(ORCHESTRATION_MCP_TOOL_METHODS, name)
+    ? ORCHESTRATION_MCP_TOOL_METHODS[name]
+    : undefined;
   if (!method) throw new Error(`unsupported orchestration tool: ${name}`);
   if (FENCED_INTERACTION_READS.has(method)) {
     const { receipt, notice } = await withBackendRejectionDetails(() =>

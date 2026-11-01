@@ -400,6 +400,50 @@ function cmdOrchestrationStatus(subcommand, opts) {
   });
 }
 
+async function reportOrchestrationCommandFailure(error, opts) {
+  const { BackendTransportError } = await import(
+    "./lib/backend-transport.mjs"
+  );
+  const { orchestrationFailureDetail } = await import("./lib/orchestration-failure.mjs");
+  // The MCP handler wraps a backend rejection with its guidance; report the
+  // rejection's typed detail rather than the wrapper.
+  const transportError =
+    error instanceof BackendTransportError
+      ? error
+      : error?.cause instanceof BackendTransportError
+        ? error.cause
+        : null;
+  const code =
+    typeof error?.code === "string"
+      ? error.code
+      : "orchestration_request_failed";
+  const message = error instanceof Error ? error.message : String(error);
+  const detail = transportError
+    ? orchestrationFailureDetail(transportError)
+    : {
+        code,
+        ...(typeof error?.field === "string" ? { field: error.field } : {}),
+        ...(typeof error?.disposition === "string" ? { disposition: error.disposition } : {}),
+        message,
+      };
+  if (opts.json) {
+    process.stderr.write(
+      `${JSON.stringify({
+        apiVersion: "dure.orchestration/v1",
+        error: detail,
+      })}\n`,
+    );
+  } else {
+    const reason = [
+      detail.remoteCode ?? detail.code,
+      detail.reasonCode,
+      detail.disposition,
+    ].filter(Boolean).join(": ");
+    process.stderr.write(`\x1b[31m${reason}: ${detail.message}\x1b[0m\n`);
+  }
+  process.exitCode = 2;
+}
+
 async function cmdOrchestrationInvoke(opts) {
   try {
     const { runOrchestrationInvokeFromCli } = await import(
@@ -421,40 +465,23 @@ async function cmdOrchestrationInvoke(opts) {
         }),
     });
   } catch (error) {
-    const { BackendTransportError } = await import(
-      "./lib/backend-transport.mjs"
+    await reportOrchestrationCommandFailure(error, opts);
+  }
+}
+
+async function cmdOrchestrationTool(opts) {
+  try {
+    const { runOrchestrationToolFromCli } = await import(
+      "./lib/orchestration-tool-command.mjs"
     );
-    const { orchestrationFailureDetail } = await import("./lib/orchestration-failure.mjs");
-    const code =
-      typeof error?.code === "string"
-        ? error.code
-        : "orchestration_request_failed";
-    const message = error instanceof Error ? error.message : String(error);
-    const detail =
-      error instanceof BackendTransportError
-        ? orchestrationFailureDetail(error)
-        : {
-            code,
-            ...(typeof error?.field === "string" ? { field: error.field } : {}),
-            ...(typeof error?.disposition === "string" ? { disposition: error.disposition } : {}),
-            message,
-          };
-    if (opts.json) {
-      process.stderr.write(
-        `${JSON.stringify({
-          apiVersion: "dure.orchestration/v1",
-          error: detail,
-        })}\n`,
-      );
-    } else {
-      const reason = [
-        detail.remoteCode ?? detail.code,
-        detail.reasonCode,
-        detail.disposition,
-      ].filter(Boolean).join(": ");
-      process.stderr.write(`\x1b[31m${reason}: ${detail.message}\x1b[0m\n`);
-    }
-    process.exitCode = 2;
+    const { isError } = await runOrchestrationToolFromCli({
+      arguments_: opts.rest.slice(1),
+      provider: opts.provider,
+      json: Boolean(opts.json),
+    });
+    if (isError) process.exitCode = 2;
+  } catch (error) {
+    await reportOrchestrationCommandFailure(error, opts);
   }
 }
 
@@ -2789,9 +2816,21 @@ const ORCH_HELP = `dure orchestration — durable interaction service client
 
   orchestration events-canary --session-file PATH [--backend ID] [--json]
       Observe existing event delivery state without enrolling or acknowledging.
+  orchestration tool <tool-name> [<arguments-json>] [--provider claude|codex] [--json]
+      Run one dure-orchestration MCP tool from the shell when the provider could not
+      connect the MCP server. Arguments are the MCP tool's own (default {}), and the
+      same handler runs, so orchestration_context_get_current resolves this Session and
+      orchestration_events_read '{"acknowledgement":{"through":N,"idempotencyKey":"K"}}'
+      advances the local cursor checkpoint. The provider defaults to the one this shell
+      runs under (Claude Code) or the only installed integration.
   orchestration invoke <method> <body-json> [--backend ID] [--json]
       Call the versioned orchestration API through the selected local/SSH backend.
       DURE_ORCHESTRATION_ENDPOINT selects a hosted HTTPS authority instead.
+      Methods are dotted, for example interaction.open, interaction.get,
+      interaction.progress, interaction.answer, events.read, dispatch.complete,
+      dispatch.context.get. The body is the method's body without the MCP wrapper.
+      events.read with an acknowledgement does not move the local cursor checkpoint;
+      use 'orchestration tool orchestration_events_read' for that.
       dispatch.deadline.set: exact target, writeCapability, expectedDispatchRevision,
         idempotencyKey, dueAtMs (Unix ms or null to clear), changedAtMs, schemaVersion: 1.
       dispatch.deadline.get: exact target, readCapability, schemaVersion: 1.
@@ -3751,6 +3790,8 @@ Usage:
                                       Read-only event observation for an existing exact session
   dure orchestration invoke <method> <body-json> [--backend ID] [--json]
                                       Call the same versioned API on local, SSH or hosted backends
+  dure orchestration tool <tool-name> [<arguments-json>] [--provider claude|codex] [--json]
+                                      Run a dure-orchestration MCP tool when the MCP server is unavailable
   dure workflow done --task <id> --dispatch <id> --generation <n> [--result <text>]
                                       Complete work as the current exact Hmux worker session
   dure workflow show --task <id> --dispatch <id> --generation <n>
@@ -4369,6 +4410,12 @@ async function main() {
     opts.rest[0] === "invoke"
   ) {
     return await cmdOrchestrationInvoke(opts);
+  }
+  if (
+    (cmd === "orch" || cmd === "orchestration") &&
+    opts.rest[0] === "tool"
+  ) {
+    return await cmdOrchestrationTool(opts);
   }
   if (cmd === "orch" || cmd === "orchestration") {
     return cmdOrch(opts.rest[0]);

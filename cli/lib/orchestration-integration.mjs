@@ -34,6 +34,7 @@ const PROVIDERS = Object.freeze({
     hookMatcher: "startup|resume|clear",
   },
 });
+export const ORCHESTRATION_INTEGRATION_PROVIDERS = Object.freeze(Object.keys(PROVIDERS));
 const RECEIPT = "install-receipt.json";
 const MCP_NAME = "dure-orchestration";
 const CODEX_BLOCK_BEGIN = "# BEGIN DURE ORCHESTRATION MCP";
@@ -93,6 +94,18 @@ function targetFor({ provider, adapter, homeDirectory, global, installRoot, work
     hookPath: path.join(stagedProviderRoot, installRoot ? "lifecycle-hooks.json" : adapter.hookFile),
     staged: sharedStage,
   };
+}
+
+/** Install receipts that can configure `provider` for a shell in
+ * `workspaceRoot`: the workspace-scoped install first, then the global one. */
+export function orchestrationIntegrationReceiptPaths({ provider, homeDirectory, workspaceRoot }) {
+  if (provider === undefined) throw new Error("provider is required");
+  const [[name, adapter]] = selectedProviders(provider);
+  return [false, true].map((global) =>
+    path.join(
+      targetFor({ provider: name, adapter, homeDirectory, global, workspaceRoot }).installRoot,
+      RECEIPT,
+    ));
 }
 
 function readReceipt(target, expected, payload) {

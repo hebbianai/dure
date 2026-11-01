@@ -102,6 +102,24 @@ export function parseOrchestrationInvoke(arguments_) {
   });
 }
 
+/** Methods are dotted; MCP tool names never are. Name the command that runs a
+ * tool instead of sending the backend a method it cannot know. */
+async function refuseMcpToolName(method) {
+  if (method.includes(".")) return;
+  const { handleMcpRequest, ORCHESTRATION_MCP_TOOL_METHODS } = await import(
+    "./orchestration-mcp-server.mjs"
+  );
+  const { tools } = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/list" });
+  if (!tools.some((tool) => tool.name === method)) return;
+  const equivalent = Object.hasOwn(ORCHESTRATION_MCP_TOOL_METHODS, method)
+    ? `, or invoke its method with the body alone: dure orchestration invoke ${ORCHESTRATION_MCP_TOOL_METHODS[method]} '<body-json>'`
+    : "";
+  throw new OrchestrationCommandError(
+    "orchestration_method_unsupported",
+    `${method} is an MCP tool name, not an orchestration method. Run the tool with its MCP arguments: dure orchestration tool ${method} '<arguments-json>'${equivalent}`,
+  );
+}
+
 export async function runOrchestrationInvokeFromCli({
   arguments_,
   backend,
@@ -113,6 +131,7 @@ export async function runOrchestrationInvokeFromCli({
   request = requestOrchestration,
 } = {}) {
   const orchestrationRequest = parseOrchestrationInvoke(arguments_);
+  await refuseMcpToolName(orchestrationRequest.method);
   const endpoint = await prepareEndpoint(
     resolveEndpoint({ backend, backendSpecified, environment }),
     prepareBackendProfile,
