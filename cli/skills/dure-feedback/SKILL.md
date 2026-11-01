@@ -53,8 +53,11 @@ arch, locale, window) — the same disclosure the in-app preview shows.
 ## Options come first, and `--` protects your text
 
 The option set is closed: `--kind`, `--contact`, `--json`, `--yes`, `--help`,
-`-h`. Any other token shaped like a flag is refused wherever it appears, and
-even an allowed option is refused once it follows the first word of the text.
+`-h`. `dure feedback --help` (or `-h`, or `dure help feedback`) prints this
+command's own usage — the kinds, the limits, the `--` rule and the exit codes —
+and sends nothing. Any other token shaped like a flag is refused wherever it
+appears, and even an allowed option is refused once it follows the first word
+of the text.
 That refusal is the feature. Writing `the --contact flag is broken` as bare
 arguments would otherwise mail the body "the is broken" and file "flag" as your
 contact address, and you would never see it happen.
