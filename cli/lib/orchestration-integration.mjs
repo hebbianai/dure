@@ -309,7 +309,7 @@ function previouslyApprovedRefreshIsSafe(target, expected, payload) {
         ORCHESTRATION_CLIENT_CAPABILITIES,
       ) ||
       payloadDigest(target.installRoot) !== receipt.digest ||
-      !providerAdapterCurrent(target, receipt)
+      !providerAdapterCurrent(target, receipt, { acceptInstalledRelay: true })
     ) {
       return false;
     }
@@ -595,11 +595,79 @@ function prepareClaudeMcp(configPath, receipt, previousReceipt) {
   const current = settings.mcpServers[MCP_NAME];
   const expected = claudeMcpEntry(receipt);
   const previous = previousReceipt ? claudeMcpEntry(previousReceipt) : null;
-  if (current && !mcpEntryMatches(current, expected) && !(previous && mcpEntryMatches(current, previous))) {
+  if (
+    current &&
+    !mcpEntryMatches(current, expected) &&
+    !(previous && mcpEntryMatches(current, previous)) &&
+    !installedRelayOfOtherVersion(current, expected, receipt.provider)
+  ) {
     throw new Error(`provider MCP name is already owned: ${configPath}`);
   }
   settings.mcpServers[MCP_NAME] = { ...(current ?? {}), ...expected };
   return `${JSON.stringify(settings, null, 2)}\n`;
+}
+
+// Claude's shared-state sync can restore an older copy of this entry after an
+// update has already moved the receipt on, so the entry matches neither
+// receipt. It is still Dure's when it is this provider's relay from the same
+// installed version tree as the expected relay, differing only by version.
+function installedRelayOfOtherVersion(candidate, expected, provider) {
+  const relay = relayEntryLayout(candidate);
+  const current = relayEntryLayout(expected);
+  return Boolean(
+    relay &&
+      current &&
+      relay.provider === provider &&
+      relay.versionsRoot === current.versionsRoot &&
+      relay.binaryDirectory === current.binaryDirectory &&
+      relay.command === current.command,
+  );
+}
+
+function relayEntryLayout(entry) {
+  if (entry?.type !== "stdio" || typeof entry.command !== "string" || !Array.isArray(entry.args)) {
+    return null;
+  }
+  const [subcommand, nodeFlag, node, workerFlag, worker, catalogueFlag, catalogue, receiptFlag, receiptJson] =
+    entry.args;
+  if (
+    entry.args.length !== 9 ||
+    subcommand !== "mcp-stdio-relay" ||
+    nodeFlag !== "--node" ||
+    workerFlag !== "--worker" ||
+    catalogueFlag !== "--catalogue" ||
+    receiptFlag !== "--receipt-json" ||
+    ![entry.command, node, worker, catalogue].every(
+      (pathname) => typeof pathname === "string" && path.isAbsolute(pathname),
+    )
+  ) {
+    return null;
+  }
+  // Mirrors the version-bound layout written by immutableOrchestrationIdleWorker.
+  const binaryRoot = path.dirname(path.dirname(worker));
+  if (
+    worker !== path.join(binaryRoot, "lib", "orchestration-mcp-server.mjs") ||
+    catalogue !== path.join(binaryRoot, "orchestration-mcp-catalogue.json")
+  ) {
+    return null;
+  }
+  const command = path.relative(binaryRoot, entry.command);
+  if (command === "" || command.startsWith("..") || path.isAbsolute(command)) return null;
+  let integrationReceipt;
+  try {
+    integrationReceipt = JSON.parse(receiptJson);
+  } catch {
+    return null;
+  }
+  if (integrationReceipt?.schemaVersion !== 1 || typeof integrationReceipt.version !== "string") {
+    return null;
+  }
+  return {
+    provider: integrationReceipt.provider,
+    versionsRoot: path.dirname(path.dirname(binaryRoot)),
+    binaryDirectory: path.basename(binaryRoot),
+    command,
+  };
 }
 
 function claudeMcpEntry(receipt) {
@@ -729,7 +797,7 @@ function prepareLifecycleHook(target, receipt, previousReceipt) {
   return `${JSON.stringify(settings, null, 2)}\n`;
 }
 
-function providerAdapterCurrent(target, receipt) {
+function providerAdapterCurrent(target, receipt, { acceptInstalledRelay = false } = {}) {
   if (
     receipt.nativeConfigPath !== path.resolve(target.nativeConfigPath) ||
     receipt.lifecycleHookPath !== path.resolve(target.hookPath) ||
@@ -746,13 +814,16 @@ function providerAdapterCurrent(target, receipt) {
       hookCommandRegistered(hooks, receipt.lifecycleCommand)
     );
   }
-  const nativeCurrent =
-    target.adapter.nativeConfig === "claude-json"
-      ? mcpEntryMatches(
-          readJsonObject(target.nativeConfigPath, "provider MCP config").mcpServers?.[MCP_NAME],
-          claudeMcpEntry(receipt),
-        )
-      : extractCodexBlock(readTextFile(target.nativeConfigPath)) === renderCodexBlock(receipt);
+  let nativeCurrent;
+  if (target.adapter.nativeConfig === "claude-json") {
+    const entry = readJsonObject(target.nativeConfigPath, "provider MCP config").mcpServers?.[MCP_NAME];
+    const expected = claudeMcpEntry(receipt);
+    nativeCurrent =
+      mcpEntryMatches(entry, expected) ||
+      (acceptInstalledRelay && installedRelayOfOtherVersion(entry, expected, receipt.provider));
+  } else {
+    nativeCurrent = extractCodexBlock(readTextFile(target.nativeConfigPath)) === renderCodexBlock(receipt);
+  }
   const hooks = readJsonObject(target.hookPath, "provider lifecycle hook config");
   return nativeCurrent && hookCommandRegistered(hooks, receipt.lifecycleCommand);
 }

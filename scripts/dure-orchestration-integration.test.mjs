@@ -618,6 +618,84 @@ describe("immutable generic orchestration integration", () => {
     expect(fs.existsSync(argument(updated, "--worker"))).toBe(true);
   });
 
+  describe("a Claude relay entry restored to an older version after its receipt moved on", () => {
+    // The Claude shared-state sync can put back the previous version's relay
+    // entry right after an update wrote the new receipt. That entry is still
+    // Dure's own, so both an approved refresh and an explicit update replace it.
+    function staleClaudeRelay() {
+      const root = fixture();
+      const first = idleWorkerCliFixture(root, "0.1.4+relay-one");
+      const second = idleWorkerCliFixture(root, "0.1.4+relay-two");
+      const homeDirectory = path.join(root, "provider-home");
+      const configPath = path.join(homeDirectory, ".claude.json");
+      const options = { provider: "claude", homeDirectory, global: true, channel: "test" };
+      const readConfig = () => JSON.parse(fs.readFileSync(configPath, "utf8"));
+      mutateOrchestrationIntegrations({ ...options, action: "install", approval: true, cliScriptPath: first.cli });
+      const stale = readConfig().mcpServers["dure-orchestration"];
+      mutateOrchestrationIntegrations({ ...options, action: "update", approval: true, cliScriptPath: second.cli });
+      const current = readConfig().mcpServers["dure-orchestration"];
+      expect(current).not.toEqual(stale);
+      const restore = (entry) => {
+        const config = readConfig();
+        config.mcpServers["dure-orchestration"] = entry;
+        config.unrelatedSetting = "preserve";
+        fs.writeFileSync(configPath, JSON.stringify(config));
+      };
+      restore(stale);
+      return { options: { ...options, cliScriptPath: second.cli }, configPath, readConfig, restore, stale, current };
+    }
+
+    it("upgrades the stale entry on an explicit update", () => {
+      const { options, readConfig, current } = staleClaudeRelay();
+      expect(inspectOrchestrationIntegrations(options)[0].status).toBe("outdated");
+      const [updated] = mutateOrchestrationIntegrations({ ...options, action: "update", approval: true });
+      expect(updated.status).toBe("current");
+      expect(readConfig().mcpServers["dure-orchestration"]).toEqual(current);
+      expect(readConfig().unrelatedSetting).toBe("preserve");
+      expect(inspectOrchestrationIntegrations(options)[0].status).toBe("current");
+    });
+
+    it("lets the previously approved refresh repair the stale entry", () => {
+      const { options, readConfig, current } = staleClaudeRelay();
+      expect(approvedOrchestrationIntegrationRefreshProviders(options)).toEqual(["claude"]);
+      mutateOrchestrationIntegrations({ ...options, action: "refresh" });
+      expect(readConfig().mcpServers["dure-orchestration"]).toEqual(current);
+      expect(inspectOrchestrationIntegrations(options)[0].status).toBe("current");
+    });
+
+    it.each([
+      ["another provider's relay", (entry) => {
+        const index = entry.args.indexOf("--receipt-json") + 1;
+        entry.args[index] = JSON.stringify({ ...JSON.parse(entry.args[index]), provider: "codex" });
+      }],
+      ["a relay from another installation", (entry) => {
+        const elsewhere = (pathname) => pathname.replace(`${path.sep}cli-payload${path.sep}`, `${path.sep}elsewhere${path.sep}`);
+        entry.command = elsewhere(entry.command);
+        for (const flag of ["--worker", "--catalogue"]) {
+          const index = entry.args.indexOf(flag) + 1;
+          entry.args[index] = elsewhere(entry.args[index]);
+        }
+      }],
+      ["a relay whose worker is outside its binary root", (entry) => {
+        const index = entry.args.indexOf("--worker") + 1;
+        entry.args[index] = path.join(path.dirname(entry.args[index]), "other-server.mjs");
+      }],
+      ["another server", (entry) => {
+        entry.args = ["unowned-server.mjs"];
+      }],
+    ])("still refuses %s under the Dure name", (_name, change) => {
+      const { options, configPath, restore, stale } = staleClaudeRelay();
+      const foreign = structuredClone(stale);
+      change(foreign);
+      restore(foreign);
+      const before = fs.readFileSync(configPath);
+      expect(approvedOrchestrationIntegrationRefreshProviders(options)).toEqual([]);
+      expect(() => mutateOrchestrationIntegrations({ ...options, action: "update", approval: true }))
+        .toThrow(/already owned/);
+      expect(fs.readFileSync(configPath)).toEqual(before);
+    });
+  });
+
   it("keeps managed Session enrollment identity stable across app and payload clients", () => {
     const session = {
       sessionId: "session-1",
