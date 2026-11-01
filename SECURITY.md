@@ -31,3 +31,20 @@ published long-term support or backport schedule for older releases.
 Use the [official download page](https://www.dureai.dev/download/mac/) for app
 updates. Ordinary bugs and feature requests belong in
 [public issues](https://github.com/hebbianai/dure/issues/new/choose).
+
+## Dependency advisories
+
+Advisories against third-party packages are tracked in the repository, not
+answered case by case. The public CI workflow's **Dependency advisories** job
+([`.github/workflows/public-repository.yml`](.github/workflows/public-repository.yml))
+runs `cargo audit` against the shipped Cargo lockfiles (`src-tauri`,
+`crates/dure-app`, `hmux` and `mobile/src-tauri`) on every code change; an
+advisory that does not apply is ignored there by id, next to its reason.
+`pnpm audit --prod` is kept free of critical and high findings for the npm
+trees that ship or build the product (the repository root, `mobile/` and the
+control-plane claude driver), and the pull request that last refreshed a
+lockfile records what remained and why. [Dependabot](.github/dependabot.yml)
+opens weekly, grouped update pull requests for npm, Cargo and GitHub Actions,
+and the repository's Dependabot alerts list any open advisory against a
+tracked lockfile. A dependency vulnerability with user impact is still
+reported through the private form above.
