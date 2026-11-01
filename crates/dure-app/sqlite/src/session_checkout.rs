@@ -136,12 +136,8 @@ impl SqliteDomainStore {
         let mut transaction = self
             .begin_immediate_with_retry("prepare_session_checkout")
             .await?;
-        let record = preparation::prepare_on(&mut transaction, binding, reserve_runtime).await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| map_sqlx("prepare_session_checkout", error))?;
-        Ok(record)
+        let record = preparation::prepare_on(&mut transaction, binding, reserve_runtime).await;
+        commit_or_rollback(transaction, "prepare_session_checkout", record).await
     }
 
     pub async fn session_checkout(
@@ -258,12 +254,37 @@ impl SqliteDomainStore {
             close_payload,
             transition,
         )
-        .await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| map_sqlx("close_session_checkout", error))?;
-        Ok(record)
+        .await;
+        commit_or_rollback(transaction, "close_session_checkout", record).await
+    }
+}
+
+/// Commit the write behind `result`, or roll it back before its error is
+/// returned. Dropping a sqlx transaction only queues the `ROLLBACK` on the
+/// connection's worker thread, so a caller acting on the error could still
+/// find the write lock held and see `Busy` instead of the decided outcome.
+async fn commit_or_rollback<T, E>(
+    transaction: Transaction<'static, Sqlite>,
+    operation: &'static str,
+    result: Result<T, E>,
+) -> Result<T, E>
+where
+    E: From<DomainStoreErrorV1>,
+{
+    match result {
+        Ok(value) => {
+            transaction
+                .commit()
+                .await
+                .map_err(|error| E::from(map_sqlx(operation, error)))?;
+            Ok(value)
+        }
+        Err(error) => {
+            // The outcome is already decided; a rollback failure cannot make
+            // it more useful than the error the caller is about to see.
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
     }
 }
 
