@@ -197,3 +197,14 @@ the canonical local backend ID and schedule arguments, or an exact quoted
 is reported as unchecked. SSH guidance is executed on the owning SSH host, since
 app host IDs are not backend profile IDs. Keep registration and schedule commands
 on the same backend; app project IDs alone do not register backend projects.
+
+Add `--register-backend` to make a new local repository usable by `dure run` and
+`dure schedule` in the same command: when the local backend reports the folder as
+unregistered, the CLI runs `projects.register` for it under the same path-derived
+ID the printed command would use, and `backendProject.registration` reports
+`created` (or `existing` when it already was). The flag is opt-in because it
+writes a durable backend project, whereas the app registration alone never
+touches the backend. If the registration was requested but could not be
+performed — no local backend, an SSH project, or a backend refusal —
+`registration` is `failed` with a `reason`, the manual command is still printed,
+and the exit code is 1 while the app registration stands.

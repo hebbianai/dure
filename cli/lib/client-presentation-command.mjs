@@ -26,7 +26,7 @@ Usage:
   dure client unopened get <agent-id> [--json]
   dure client unopened hide|restore <agent-id> --expected-episode N [--json]
   dure client project add [PATH] [--space ID_OR_NAME | --space-id ID]
-                         [--host local|SSH_HOST_ID] [--json]
+                         [--host local|SSH_HOST_ID] [--register-backend] [--json]
   dure client host add <SSH_CONFIG_ALIAS> [--name NAME] [--json]
   dure client host add --hostname HOST --user USER [--port PORT]
                        [--identity-file PATH] [--name NAME] [--json]
@@ -57,6 +57,11 @@ Project add registers a shared app location; Space is request context, not owner
 It creates no pane/session/worktree. Local PATH defaults to CLI cwd; SSH PATH is required.
 Existing GUI folder inspection, canonical repository identity and trust behavior apply.
 The receipt includes the canonical local backend project ID or a projects register command.
+--register-backend also registers an unregistered local folder on the local backend in the
+same step (projects.register under a path-derived ID), so dure run --path works right away.
+It is opt-in because it writes a durable backend project; without it the app registration
+leaves the backend untouched and the receipt prints the register command. When requested
+but not performed, backendProject.registration is "failed" with a reason and the exit code is 1.
 For SSH projects, run the printed registration command on the owning host.
 Host add uses the app's durable SSH registration; the returned host.id works with --host.
 An alias imports ~/.ssh/config. Explicit destinations use a key file or normal SSH authentication.
@@ -286,14 +291,17 @@ function parsePaneCreateCommand(tail) {
 function parseProjectAddCommand(tail) {
   const { options, target } = readCommandTail(tail, {
     values: new Map([["--space", "space"], ["--space-id", "spaceId"], ["--host", "hostId"]]),
-    flags: new Map([["--json", "json"]]), optionLabel: "client project add",
+    flags: new Map([["--json", "json"], ["--register-backend", "registerBackend"]]), optionLabel: "client project add",
   });
   const selection = locationSelection(options);
   if (selection.body.hostId !== "local" && target === undefined) {
     throw invalidRequest("An explicit PATH is required for an SSH project; local cwd is not a remote directory.");
   }
+  // The backend registration is the CLI's follow-up step, not part of the
+  // app transaction: it stays out of `body` so the app request is unchanged.
   return {
     domain: "project", action: "add", path: "/project/add", ...selection,
+    registerBackend: options.registerBackend === true,
     body: { ...selection.body, ...(target !== undefined ? { path: boundedPath(target) } : {}) },
   };
 }
@@ -648,7 +656,9 @@ export async function runClientPresentationCommand(
       schemaVersion: 1, apiVersion: PRESENTATION_API_VERSION,
       kind: "dure.client_project.add", action: command.action,
       client: clientIdentity(descriptor), registration: member,
-      backendProject: await clientProjectBackendGuidance(member, { environment }),
+      backendProject: await clientProjectBackendGuidance(member, {
+        environment, registerBackend: command.registerBackend === true,
+      }),
     };
   }
   if (command.domain === "host") {
@@ -779,5 +789,9 @@ export function formatClientPresentationReceipt(report) {
 }
 
 export function clientPresentationExitCode(report) {
-  return ["refused", "failed"].includes(report.pane?.result?.outcome) ? 2 : 0;
+  if (["refused", "failed"].includes(report.pane?.result?.outcome)) return 2;
+  // The app registration succeeded, the requested backend registration did
+  // not: a partial result, reported like a Run whose receipt did not succeed.
+  if (report.backendProject?.registration === "failed") return 1;
+  return 0;
 }
