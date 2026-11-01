@@ -111,6 +111,7 @@ export const sessions: Record<string, string> = {
 	"sessions.recent.reviewSshAction": "Vérifier la configuration SSH…",
 	"sessions.recent.shownInPane": "Affichée dans un pane",
 	"sessions.recent.sshReviewRequired": "Vérification SSH requise",
+	"sessions.recovery.reconnecting": "Reconnexion au Host…",
 	"sessions.recovery.resumeExactConversation": "Reprendre la conversation exacte",
 	"sessions.remoteResume.confirmAction": "Enregistrer le dossier et continuer dans un nouveau volet",
 	"sessions.remoteResume.description": "Dure enregistrera le dossier de travail distant et reprendra la conversation exacte du fournisseur dans un nouveau volet. Aucun volet n’est créé avant que la session distante soit prête.",

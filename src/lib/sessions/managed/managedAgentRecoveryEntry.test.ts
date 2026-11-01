@@ -5,17 +5,22 @@ import {
 	shouldOfferDisconnectedConversationSelection,
 } from "@/lib/sessions/managed/managedAgentRecoveryEntry";
 
+const HIDDEN = { visible: false, posture: "unknown" } as const;
+const RECONNECTING = { visible: true, posture: "reconnecting" } as const;
+const UNAVAILABLE = { visible: true, posture: "unavailable" } as const;
+
+/** The projection a hub restart or a failed census produces for a Host that
+ * is still running: the backend derives every one of these fields from its
+ * own failed handshake. */
+const transportFailure = {
+	lifecycle: "unavailable",
+	health: "stale_transport",
+	inputAllowed: false,
+} as const;
+
 describe("managedAgentRecoveryEntry", () => {
 	it.each([
-		[
-			"stale transport",
-			"working",
-			{
-				lifecycle: "unavailable",
-				health: "stale_transport",
-			},
-			"unavailable",
-		],
+		["stale transport", "working", transportFailure, "reconnecting"],
 		[
 			"exited summary",
 			"exited",
@@ -49,99 +54,189 @@ describe("managedAgentRecoveryEntry", () => {
 					inputAllowed: true,
 				},
 			}),
-		).toEqual({ visible: false, posture: "unknown" });
+		).toEqual(HIDDEN);
 	});
 
-	it.each([
-		["same live epoch", { state: "live", terminalEpoch: "terminal-1" }, false],
-		[
-			"different live epoch",
-			{ state: "live", terminalEpoch: "terminal-2" },
-			true,
-		],
-		["missing epoch", { state: "live" }, true],
-		["no attachment", undefined, true],
-		["disconnected", { state: "error", terminalEpoch: "terminal-1" }, true],
-		[
-			"reconnecting",
-			{ state: "recovering", terminalEpoch: "terminal-1" },
-			true,
-		],
-	] as const)(
-		"uses exact attachment health for a failed census: %s",
-		(_label, paneHealth, visible) => {
+	// Hub restart / failed census: the Host is alive and may still be
+	// streaming, but the census could not reach it. hostProcessAlive is
+	// undefined (no claim) or true; a dead Host is the only false.
+	describe("hub restart with the Host alive", () => {
+		it.each([
+			["unknown liveness, live pane", undefined, { state: "live" }, HIDDEN],
+			["asserted alive, live pane", true, { state: "live" }, HIDDEN],
+			["unknown liveness, unobserved pane", undefined, undefined, RECONNECTING],
+			["asserted alive, unobserved pane", true, undefined, RECONNECTING],
+			[
+				"unknown liveness, connecting pane",
+				undefined,
+				{ state: "connecting" },
+				RECONNECTING,
+			],
+			[
+				"unknown liveness, recovering pane",
+				undefined,
+				{ state: "recovering" },
+				RECONNECTING,
+			],
+			["unknown liveness, stale pane", undefined, { state: "stale" }, RECONNECTING],
+			[
+				"unknown liveness, disconnected pane",
+				undefined,
+				{ state: "error" },
+				RECONNECTING,
+			],
+		] as const)(
+			"never offers replacement for %s",
+			(_label, hostProcessAlive, paneHealth, expected) => {
+				for (const activity of ["connecting", "working", "waiting"] as const) {
+					expect(
+						managedAgentRecoveryEntry({
+							hasAgent: true,
+							hasBinding: true,
+							activity,
+							metadata: { ...transportFailure, hostProcessAlive },
+							paneHealth,
+						}),
+					).toEqual(expected);
+				}
+			},
+		);
+
+		it.each([
+			["lifecycle only", { lifecycle: "unavailable", health: "current_healthy" }],
+			["health only", { lifecycle: "ready", health: "stale_transport" }],
+			["without inputAllowed", { lifecycle: "unavailable", health: "stale_transport" }],
+		] as const)(
+			"treats a transport failure projected as %s the same way",
+			(_label, metadata) => {
+				expect(
+					managedAgentRecoveryEntry({
+						hasAgent: true,
+						hasBinding: true,
+						activity: "working",
+						metadata,
+					}),
+				).toEqual(RECONNECTING);
+				expect(
+					managedAgentRecoveryEntry({
+						hasAgent: true,
+						hasBinding: true,
+						activity: "working",
+						metadata,
+						paneHealth: { state: "live" },
+					}),
+				).toEqual(HIDDEN);
+			},
+		);
+
+		it("clears as soon as the next projection is live again", () => {
+			const base = { hasAgent: true, hasBinding: true, activity: "working" } as const;
+			expect(
+				managedAgentRecoveryEntry({ ...base, metadata: transportFailure }),
+			).toEqual(RECONNECTING);
+			expect(
+				managedAgentRecoveryEntry({
+					...base,
+					metadata: {
+						lifecycle: "ready",
+						health: "current_healthy",
+						inputAllowed: true,
+					},
+				}),
+			).toEqual(HIDDEN);
+		});
+
+		it("lets an exit the pane observed outrank the failed census", () => {
 			expect(
 				managedAgentRecoveryEntry({
 					hasAgent: true,
 					hasBinding: true,
-					activity: "working",
-					metadata: {
-						lifecycle: "unavailable",
-						health: "stale_transport",
-						inputAllowed: false,
-						terminalEpoch: "terminal-1",
-					},
-					paneHealth,
-				}).visible,
-			).toBe(visible);
-		},
-	);
-
-	it.each([undefined, ""])(
-		"does not infer an exact generation from missing metadata epoch %s",
-		(terminalEpoch) => {
+					activity: "exited",
+					metadata: transportFailure,
+				}),
+			).toEqual({ visible: true, posture: "unknown" });
 			expect(
 				managedAgentRecoveryEntry({
 					hasAgent: true,
 					hasBinding: true,
-					activity: "working",
-					metadata: {
-						lifecycle: "unavailable",
-						health: "stale_transport",
-						terminalEpoch,
-					},
-					paneHealth: { state: "live", terminalEpoch: "terminal-1" },
-				}).visible,
-			).toBe(true);
-		},
-	);
-
-	it("does not hide confirmed Host death behind its last live frame", () => {
-		expect(
-			managedAgentRecoveryEntry({
-				hasAgent: true,
-				hasBinding: true,
-				activity: "working",
-				metadata: {
-					lifecycle: "unavailable",
-					health: "stale_transport",
-					hostProcessAlive: false,
-					terminalEpoch: "terminal-1",
-				},
-				paneHealth: { state: "live", terminalEpoch: "terminal-1" },
-			}).visible,
-		).toBe(true);
+					activity: "exited",
+					metadata: transportFailure,
+					inspectUnknownExit: false,
+				}),
+			).toEqual(HIDDEN);
+		});
 	});
 
-	it.each(["exited", "incompatible_protocol"] as const)(
-		"does not hide confirmed %s behind a live frame",
-		(health) => {
+	describe("confirmed exits", () => {
+		it.each([
+			["unobserved pane", undefined],
+			["disconnected pane", { state: "error" }],
+			["reconnecting pane", { state: "recovering" }],
+		] as const)(
+			"offers replacement for a confirmed-dead Host with a %s",
+			(_label, paneHealth) => {
+				expect(
+					managedAgentRecoveryEntry({
+						hasAgent: true,
+						hasBinding: true,
+						activity: "working",
+						metadata: { ...transportFailure, hostProcessAlive: false },
+						paneHealth,
+					}),
+				).toEqual(UNAVAILABLE);
+			},
+		);
+
+		it("waits for the live attachment to drop before replacing a confirmed-dead Host", () => {
+			expect(
+				managedAgentRecoveryEntry({
+					hasAgent: true,
+					hasBinding: true,
+					activity: "working",
+					metadata: { ...transportFailure, hostProcessAlive: false },
+					paneHealth: { state: "live" },
+				}),
+			).toEqual(RECONNECTING);
+		});
+
+		it.each(["exited", "incompatible_protocol"] as const)(
+			"does not hide confirmed %s behind a live frame",
+			(health) => {
+				expect(
+					managedAgentRecoveryEntry({
+						hasAgent: true,
+						hasBinding: true,
+						activity: "working",
+						metadata: {
+							lifecycle: health === "exited" ? "exited" : "unavailable",
+							health,
+							inputAllowed: false,
+						},
+						paneHealth: { state: "live" },
+					}),
+				).toEqual({
+					visible: true,
+					posture: health === "exited" ? "exited" : "unavailable",
+				});
+			},
+		);
+
+		it("keeps a reachable Host that bridges no live input as unavailable", () => {
 			expect(
 				managedAgentRecoveryEntry({
 					hasAgent: true,
 					hasBinding: true,
 					activity: "working",
 					metadata: {
-						lifecycle: health === "exited" ? "exited" : "unavailable",
-						health,
+						lifecycle: "ready",
+						health: "compatible_old_healthy",
 						inputAllowed: false,
-						terminalEpoch: "terminal-1",
 					},
-					paneHealth: { state: "live", terminalEpoch: "terminal-1" },
-				}).visible,
-			).toBe(true);
-		},
-	);
+					paneHealth: { state: "live" },
+				}),
+			).toEqual(UNAVAILABLE);
+		});
+	});
 
 	it.each(["unprobed", "generation_changed"] as const)(
 		"does not turn %s uncertainty into recovery or a dead-input shell escape",
@@ -158,7 +253,7 @@ describe("managedAgentRecoveryEntry", () => {
 					activity: "working",
 					metadata,
 				}),
-			).toEqual({ visible: false, posture: "unknown" });
+			).toEqual(HIDDEN);
 			expect(managedAgentRecoveryHasDeadInput(metadata)).toBe(false);
 		},
 	);
@@ -196,14 +291,10 @@ describe("managedAgentRecoveryEntry", () => {
 				hasAgent: true,
 				hasBinding: true,
 				activity: "exited",
-				metadata: {
-					lifecycle: "unavailable",
-					health: "stale_transport",
-					inputAllowed: false,
-				},
+				metadata: transportFailure,
 				credentialSwitchTransition: true,
 			}),
-		).toEqual({ visible: false, posture: "unknown" });
+		).toEqual(HIDDEN);
 	});
 
 	it("lets a pane treat a confirmed provider exit as a normal ended session", () => {
@@ -215,7 +306,7 @@ describe("managedAgentRecoveryEntry", () => {
 				metadata: { lifecycle: "exited", health: "exited" },
 				inspectConfirmedExit: false,
 			}),
-		).toEqual({ visible: false, posture: "unknown" });
+		).toEqual(HIDDEN);
 	});
 
 	it("keeps an unconfirmed exit in recovery inspection", () => {
@@ -238,7 +329,7 @@ describe("managedAgentRecoveryEntry", () => {
 				activity: "exited",
 				inspectUnknownExit: false,
 			}),
-		).toEqual({ visible: false, posture: "unknown" });
+		).toEqual(HIDDEN);
 	});
 
 	it("does not expose recovery without an exact managed binding", () => {
@@ -248,7 +339,7 @@ describe("managedAgentRecoveryEntry", () => {
 				hasBinding: false,
 				activity: "exited",
 			}),
-		).toEqual({ visible: false, posture: "unknown" });
+		).toEqual(HIDDEN);
 	});
 
 	it("offers exact conversation selection for a structured disconnected identity failure", () => {
@@ -267,6 +358,9 @@ describe("managedAgentRecoveryEntry", () => {
 		).toBe(true);
 		expect(
 			shouldOfferDisconnectedConversationSelection("unknown", failure),
+		).toBe(false);
+		expect(
+			shouldOfferDisconnectedConversationSelection("reconnecting", failure),
 		).toBe(false);
 		expect(
 			shouldOfferDisconnectedConversationSelection(

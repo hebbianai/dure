@@ -111,6 +111,7 @@ export const sessions: Record<string, string> = {
 	"sessions.recent.reviewSshAction": "检查 SSH 设置…",
 	"sessions.recent.shownInPane": "已显示在窗格中",
 	"sessions.recent.sshReviewRequired": "需要确认 SSH",
+	"sessions.recovery.reconnecting": "正在重新连接 Host…",
 	"sessions.recovery.resumeExactConversation": "恢复确切对话",
 	"sessions.remoteResume.confirmAction": "注册文件夹并在新窗格中继续",
 	"sessions.remoteResume.description": "Dure 将注册远程工作文件夹，并在新窗格中继续准确的 provider 对话。远程会话准备就绪前不会创建窗格。",

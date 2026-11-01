@@ -111,6 +111,7 @@ export const sessionsEnglishTranslations: Record<string, string> = {
 	"sessions.recent.reviewSshAction": "Review SSH setup…",
 	"sessions.recent.shownInPane": "Shown in a pane",
 	"sessions.recent.sshReviewRequired": "SSH review required",
+	"sessions.recovery.reconnecting": "Reconnecting to the Host…",
 	"sessions.recovery.resumeExactConversation": "Resume exact conversation",
 	"sessions.remoteResume.confirmAction": "Register folder and continue in a new pane",
 	"sessions.remoteResume.description": "Dure will register the remote working folder and resume the exact provider conversation in a new pane. No pane is created until the remote session is ready.",

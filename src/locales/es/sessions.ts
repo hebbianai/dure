@@ -111,6 +111,7 @@ export const sessions: Record<string, string> = {
 	"sessions.recent.reviewSshAction": "Revisar configuración SSH…",
 	"sessions.recent.shownInPane": "Mostrada en un panel",
 	"sessions.recent.sshReviewRequired": "Revisión SSH necesaria",
+	"sessions.recovery.reconnecting": "Reconectando con el Host…",
 	"sessions.recovery.resumeExactConversation": "Reanudar conversación exacta",
 	"sessions.remoteResume.confirmAction": "Registrar carpeta y continuar en un panel nuevo",
 	"sessions.remoteResume.description": "Dure registrará la carpeta de trabajo remota y reanudará la conversación exacta del proveedor en un panel nuevo. No se crea ningún panel hasta que la sesión remota esté lista.",

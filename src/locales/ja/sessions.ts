@@ -111,6 +111,7 @@ export const sessions: Record<string, string> = {
 	"sessions.recent.reviewSshAction": "SSH 設定を確認…",
 	"sessions.recent.shownInPane": "pane に表示中",
 	"sessions.recent.sshReviewRequired": "SSH の確認が必要",
+	"sessions.recovery.reconnecting": "Hostに再接続中…",
 	"sessions.recovery.resumeExactConversation": "正確な会話を再開",
 	"sessions.remoteResume.confirmAction": "フォルダーを登録して新しいペインで続ける",
 	"sessions.remoteResume.description": "Dure はリモート作業フォルダーを登録し、正確な provider 会話を新しいペインで再開します。リモートセッションの準備が完了するまでペインは作成されません。",

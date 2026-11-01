@@ -111,6 +111,7 @@ export const sessions: Record<string, string> = {
 	"sessions.recent.reviewSshAction": "Revisar configuração SSH…",
 	"sessions.recent.shownInPane": "Exibida em um painel",
 	"sessions.recent.sshReviewRequired": "Revisão SSH necessária",
+	"sessions.recovery.reconnecting": "Reconectando ao Host…",
 	"sessions.recovery.resumeExactConversation": "Retomar conversa exata",
 	"sessions.remoteResume.confirmAction": "Registrar pasta e continuar em um novo painel",
 	"sessions.remoteResume.description": "O Dure registrará a pasta de trabalho remota e retomará a conversa exata do provedor em um novo painel. Nenhum painel é criado até que a sessão remota esteja pronta.",
