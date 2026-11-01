@@ -177,6 +177,11 @@ that folder. The selected backend must advertise `schedule.worktree_project_root
 older backends refuse the opt-in before a schedule is changed. Git-specific
 `--base-commit`, `--branch` and `--setup-command` options cannot accompany it.
 
+Pause a schedule in place with `dure schedule set ID --disabled --expected-revision N`
+and resume it with `--enabled`. The same command can change `--cron`, `--timezone`,
+`--name`, `--prompt`, `--model` or `--effort`. It keeps the schedule's other fields,
+its ID and its revision history, and the backend refuses a stale revision.
+
 Scheduled Claude runs require an existing trust decision for the registered
 project folder (or its parent) in the selected Claude account. Review the folder
 and complete Claude's interactive startup in that account first. An untrusted

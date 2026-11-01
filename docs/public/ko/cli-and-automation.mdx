@@ -37,6 +37,8 @@ dure schedule runs daily-review
 
 생성하면 지정한 시간대의 평일 오전 9시에 실행되도록 활성화됩니다. 예약만 저장하고 실행은 켜지 않으려면 `--disabled`를 추가하세요. 예약 실행은 독립된 Git worktree를 사용합니다. 반환된 실행 키로 `dure schedule inspect`를 호출하면 저장된 보고서를 읽을 수 있습니다.
 
+나중에 이력을 잃지 않고 잠시 멈추려면 `dure schedule show`가 보여 준 리비전으로 `dure schedule set daily-review --disabled --expected-revision N`을 실행하세요. `--enabled`로 다시 켭니다. 같은 명령으로 `--cron`, `--timezone`, `--name`, `--prompt`도 바꿀 수 있습니다.
+
 실행 서비스와 컴퓨터를 사용할 수 있어야 합니다. 앱 화면을 닫는 것과 서비스를 중지하는 것은 다릅니다. 절전 중이거나 꺼진 컴퓨터에서는 작업이 정상적으로 실행될 수 없습니다.
 
 ## 원격 백엔드 선택

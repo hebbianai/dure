@@ -37,6 +37,8 @@ dure schedule runs daily-review
 
 Creation enables future weekday runs at 09:00 in the named timezone. Add `--disabled` if you want to save the schedule without enabling recurring execution. Scheduled runs use isolated Git worktrees. Use `dure schedule inspect` with a returned run key to read the retained report.
 
+To pause it later without losing its history, run `dure schedule set daily-review --disabled --expected-revision N` with the revision shown by `dure schedule show`; `--enabled` resumes it. The same command can change `--cron`, `--timezone`, `--name` or `--prompt`.
+
 The execution service and machine must be available. Closing the app's view is different from stopping that service; a sleeping or powered-off machine cannot run tasks normally.
 
 ## Select a remote backend
