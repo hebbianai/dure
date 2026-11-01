@@ -5,3 +5,37 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+  # Every npm tree with its own pnpm-lock.yaml that ships or builds the
+  # product: the desktop frontend and its tooling, the CLI, the mobile client
+  # and the control-plane claude driver staged into the desktop app.
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /cli
+      - /mobile
+      - /crates/dure-app/control-plane/provider-drivers/claude
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+  # The Cargo workspaces whose lockfiles ship: the desktop adapter, the app
+  # core, Hmux and the mobile adapter. The public CI "Dependency advisories"
+  # job audits the same lockfiles. Major updates stay separate pull requests.
+  - package-ecosystem: cargo
+    directories:
+      - /src-tauri
+      - /crates/dure-app
+      - /hmux
+      - /mobile/src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        update-types:
+          - minor
+          - patch
