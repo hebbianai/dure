@@ -18,12 +18,13 @@ const operations = {
     properties: { spaceId: id }, required: ["spaceId"], args: ({ spaceId }) => ["space", "show", spaceId],
   },
   app_project_add: {
-    description: "Register a folder in the connected app's shared project list using the GUI registration owner. Space (ID or unique name) or spaceId selects request context, not project ownership; omission uses the known invoking pane's Space or app default. Local path defaults to CLI cwd; SSH requires an explicit path and registered app hostId. Returns the canonical persisted project; creates no pane, process or worktree. Existing GUI folder trust behavior applies. Independent of backend projects.register and DURE_BACKEND_PROFILE.",
-    properties: { path: { type: "string", maxLength: 4096 }, space: id, spaceId: id, hostId: id }, required: [],
-    args: ({ path, space, spaceId, hostId }) => ["project", "add", ...(path !== undefined ? [path] : []),
+    description: "Register a folder in the connected app's shared project list using the GUI registration owner. Space (ID or unique name) or spaceId selects request context, not project ownership; omission uses the known invoking pane's Space or app default. Local path defaults to CLI cwd; SSH requires an explicit path and registered app hostId. Returns the canonical persisted project; creates no pane, process or worktree. Existing GUI folder trust behavior applies. The app registration is independent of backend projects.register and DURE_BACKEND_PROFILE; registerBackend=true additionally registers an unregistered local folder on the local backend so dure run can use it, and reports backendProject.registration (created, existing, not_requested, failed).",
+    properties: { path: { type: "string", maxLength: 4096 }, space: id, spaceId: id, hostId: id, registerBackend: { type: "boolean" } }, required: [],
+    args: ({ path, space, spaceId, hostId, registerBackend }) => ["project", "add", ...(path !== undefined ? [path] : []),
       ...(space !== undefined ? ["--space", space] : []),
       ...(spaceId !== undefined ? ["--space-id", spaceId] : []),
-      ...(hostId !== undefined ? ["--host", hostId] : [])],
+      ...(hostId !== undefined ? ["--host", hostId] : []),
+      ...(registerBackend === true ? ["--register-backend"] : [])],
   },
   app_observe: {
     description: "Discover Dure Spaces, windows and exact pane IDs from the saved client projection, with its age. Follow with app_pane_state for current mounted actions.",

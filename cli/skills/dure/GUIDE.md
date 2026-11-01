@@ -500,7 +500,11 @@ recipient, accepts edited/redacted text, and never submits the draft.
 creates no pane, session or worktree; it is the client-side counterpart of the
 backend-only `dure projects register` above. Its `backendProject` receipt reports
 the canonical local backend project ID and schedule arguments when registered.
-Otherwise it prints a quoted `projects register ... --backend local` command.
+Otherwise it prints a quoted `projects register ... --backend local` command,
+or, with `--register-backend`, runs that registration itself so `dure run --path`
+works right away; `backendProject.registration` then reads `created`, `existing`,
+`not_requested` or `failed` (exit 1, reason included, manual command kept). The
+flag is opt-in because it writes a durable backend project.
 An unavailable/older backend is reported as unchecked, not unregistered. For an
 SSH app project, run the printed command on its owning host; an app host ID is
 not a backend profile ID. The app project ID is never a schedule project selector.

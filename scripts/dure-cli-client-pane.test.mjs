@@ -468,6 +468,54 @@ describe("Dure connected-client project registration", () => {
     expect(JSON.parse(result.stderr).error.code).toBe("client_capability_missing");
     expect(fixture.requests).toHaveLength(0);
   });
+
+  it("keeps --register-backend out of the app transaction and reports a backend-less attempt as failed, exit 1", async () => {
+    expect(parseClientPresentationCommand(["project", "add", "/plain", "--register-backend"])).toMatchObject({
+      registerBackend: true, body: { hostId: "local", path: "/plain" },
+    });
+    expect(parseClientPresentationCommand(["project", "add", "/plain"]).registerBackend).toBe(false);
+    const fixture = await fixtureClient(() => ({ status: 200, body: { ok: true, registration } }));
+    const result = await runCli(["client", "project", "add", "/plain", "--register-backend", "--json"], fixture.environment);
+    // The app registration succeeded and is reported; the isolated HOME has no
+    // local backend profile, so the requested backend registration could not run.
+    expect(result.code).toBe(1);
+    expect(fixture.requests).toHaveLength(1);
+    expect(fixture.requests[0].body).toEqual({ hostId: "local", path: "/plain" });
+    const report = JSON.parse(result.stdout);
+    expect(report).toMatchObject({ kind: "dure.client_project.add", registration });
+    expect(report.backendProject).toMatchObject({ state: "unavailable", registration: "failed", backendProfileId: "local" });
+    expect(typeof report.backendProject.reason).toBe("string");
+    expect(report.backendProject.registerCommand).toMatch(/^dure projects register project-[a-f0-9]{12} --path '\/plain' --backend local$/);
+    const text = await runCli(["client", "project", "add", "/plain", "--register-backend"], fixture.environment);
+    expect(text.code).toBe(1);
+    expect(text.stdout).toContain("requested but not performed");
+    expect(text.stdout).toContain(report.backendProject.registerCommand);
+  });
+
+  it("leaves the default path untouched: no flag means no backend write and exit 0", async () => {
+    const fixture = await fixtureClient(() => ({ status: 200, body: { ok: true, registration } }));
+    const result = await runCli(["client", "project", "add", "/plain", "--json"], fixture.environment);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).backendProject).toMatchObject({ registration: "not_requested" });
+  });
+
+  it("exposes registerBackend through the shared MCP tool with the same receipt and error signal", async () => {
+    const fixture = await fixtureClient(() => ({ status: 200, body: { ok: true, registration } }));
+    const cli = await runCli(["client", "project", "add", "/plain", "--register-backend", "--json"], fixture.environment);
+    const mcp = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/call", params: {
+      name: "app_project_add", arguments: { path: "/plain", registerBackend: true },
+    } }, { DURE_HOME: join(fixture.home, ".dure"), DURE_BACKEND_PROFILE: "runtime-backend" });
+    expect(mcp.isError).toBe(true);
+    expect(mcp.structuredContent.backendProject).toMatchObject({ registration: "failed" });
+    expect(mcp.structuredContent.registration).toEqual(JSON.parse(cli.stdout).registration);
+    expect(fixture.requests).toHaveLength(2);
+    expect(fixture.requests[0].body).toEqual(fixture.requests[1].body);
+    const rejected = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/call", params: {
+      name: "app_project_add", arguments: { path: "/plain", registerBackend: "yes" },
+    } }, { DURE_HOME: join(fixture.home, ".dure") });
+    expect(rejected.isError).toBe(true);
+    expect(fixture.requests).toHaveLength(2);
+  });
 });
 
 describe("Dure connected-client pane CLI", () => {
