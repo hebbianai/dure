@@ -30,7 +30,28 @@ const receipt = {
   replacementReceipt: { sessionId: "target-1", workspaceId: "workspace-1" },
 };
 
-function fixture({ result = receipt, failure, action = "retry", operationOnly = false } = {}) {
+/** Real Hmux output while another executor holds this operation's journal lock. */
+const busyRefusal = `process.stdout.write(JSON.stringify({ schema: "hmux-managed-rehost-v1", schemaVersion: 1,
+  state: "refused", error: { code: "hmux_recovery_busy", message: "hmux_recovery_busy: recovery operation is already running" } }));
+process.stderr.write("hmux: error: hmux_recovery_busy: recovery operation is already running\\n");
+process.exitCode = 1;`;
+
+/** Busy until the executor that holds the lock records completion, then replays the receipt. */
+const busyUntilResolved = (calls) => `
+const executions = fs.readFileSync(${JSON.stringify(calls)}, "utf8").trim().split("\\n")
+  .map((line) => JSON.parse(line)[0]).filter((name) => name !== "managed-rehost-resolve").length;
+if (process.argv[2] === "managed-rehost-resolve") {
+  process.stdout.write(JSON.stringify({ schema: "hmux-managed-rehost-resolution-v1", schemaVersion: 1,
+    state: "resolved", operationIds: ["operation-1"],
+    sourceGeneration: { sessionId: "source-1", workspaceId: "workspace-1" },
+    currentGeneration: { sessionId: "target-1", workspaceId: "workspace-1" } }));
+} else if (executions === 1) {
+  ${busyRefusal}
+} else {
+  process.stdout.write(${JSON.stringify(JSON.stringify(receipt))});
+}`;
+
+function fixture({ result = receipt, failure, script, action = "retry", operationOnly = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "dure-rehost-retry-"));
   roots.push(root);
   const binary = join(root, "hmux");
@@ -41,7 +62,9 @@ function fixture({ result = receipt, failure, action = "retry", operationOnly = 
 const fs = require('node:fs');
 fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)) + '\\n');
 ${
-  failure
+  script
+    ? script(calls)
+    : failure
     ? `process.stderr.write(${JSON.stringify(failure)}); process.exitCode = 1;`
     : `process.stdout.write(${JSON.stringify(JSON.stringify(result))});`
 }
@@ -144,9 +167,25 @@ it("start preserves an uncertain native outcome without submitting another comma
   expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
 });
 
+it.each(["retry", "start"])(
+  "%s waits for an operation another executor is applying and returns its receipt",
+  async (action) => {
+    const { run, calls } = fixture({ action, script: busyUntilResolved });
+    const result = await run();
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(receipt);
+    const identity = ["--session", "source-1", "--workspace", "workspace-1", "--operation-id", "operation-1"];
+    expect(readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse)).toEqual([
+      [action === "start" ? "managed-rehost-start" : "managed-rehost-reconcile", ...identity, "--confirm-restart", "--json"],
+      ["managed-rehost-resolve", ...identity, "--json"],
+      // Reconcile only continues the journaled operation; here it replays the completed receipt.
+      ["managed-rehost-reconcile", ...identity, "--confirm-restart", "--json"],
+    ]);
+  },
+);
+
 it.each([
   "hmux_managed_rehost_intent_not_found",
-  "hmux_recovery_busy",
   "hmux_managed_rehost_outcome_unknown",
 ])("preserves %s without a new operation or app fallback", async (failure) => {
   const { run, calls } = fixture({ failure });

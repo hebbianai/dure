@@ -5,9 +5,12 @@ import { collectManagedRehostPublication } from "./managed-rehost-publication.mj
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { ManagedRuntimeRecoveryIncompleteError, wakeManagedRuntime } from "./managed-runtime-recovery.mjs";
 
+export const MANAGED_REHOST_RUNNING_GUIDANCE =
+  "Hmux is still applying this rehost; nothing new was submitted. Check Status until it reports completed, then run Publish once. Do not start another operation.";
+
 /** Compose the existing owners once; publication failure never repeats native execution. */
 export async function collectManagedRehostNamed({
-  opts, registry, agentId, resolveBackend, requestBackend, command, run,
+  opts, registry, agentId, resolveBackend, requestBackend, command, run, settle,
 }) {
   let backend;
   const prepared = await collectManagedRehostPreview({
@@ -68,11 +71,16 @@ export async function collectManagedRehostNamed({
   const { operationId, sourceSessionId, sourceWorkspaceId } = prepared.continuation;
   const execution = await collectManagedRehostCommand({
     action: "start", sessionId: sourceSessionId, workspaceId: sourceWorkspaceId,
-    operationId, confirmRestart: opts.confirmRestart, command, run,
+    operationId, confirmRestart: opts.confirmRestart, command, run, settle,
   });
   if (!execution.ok) {
     return { ...prepared, ok: false, state: "unknown", nativeExecution: "unknown",
       publication: "not_requested", error: execution.error };
+  }
+  if (execution.state === "running") {
+    // Publication needs the native completion; the retained commands finish it.
+    return { ...prepared, state: "running", nativeExecution: "running",
+      publication: "not_requested", nativeObservation: execution.observation };
   }
   const publication = await collectManagedRehostPublication({
     opts: {
@@ -95,13 +103,15 @@ export async function runManagedRehostNamed(opts, registryPath, resolveBackend, 
     opts, registry: loadSessionClientProjection({ registryPath }), resolveBackend, command,
   });
   const output = opts.json ? JSON.stringify(report) : [
-    report.ok
-      ? report.continuation?.kind?.startsWith("runtime_")
-        ? `${report.agentId}: ${report.continuation.kind === "runtime_wake" ? "wake" : "restart"} ${report.state}` +
-          (report.conversationId ? ` (conversation ${report.conversationId})` : "")
-        : `${report.agentId}: rehost completed (${report.receipt.sourceStopReceipt.sessionId} -> ${report.receipt.replacementReceipt.sessionId})`
-      : [`${report.error.remoteCode ?? report.error.code}: ${report.error.message}`,
-        ...formatNameCandidates(report.error.candidates)].join("\n"),
+    report.state === "running"
+      ? `${report.agentId}: rehost still running\n${MANAGED_REHOST_RUNNING_GUIDANCE}`
+      : report.ok
+        ? report.continuation?.kind?.startsWith("runtime_")
+          ? `${report.agentId}: ${report.continuation.kind === "runtime_wake" ? "wake" : "restart"} ${report.state}` +
+            (report.conversationId ? ` (conversation ${report.conversationId})` : "")
+          : `${report.agentId}: rehost completed (${report.receipt.sourceStopReceipt.sessionId} -> ${report.receipt.replacementReceipt.sessionId})`
+        : [`${report.error.remoteCode ?? report.error.code}: ${report.error.message}`,
+          ...formatNameCandidates(report.error.candidates)].join("\n"),
     `${report.continuation?.kind?.startsWith("runtime_") ? `Backend execution: ${report.backendExecution ?? "not_requested"}` : `Native execution: ${report.nativeExecution}`}. Binding publication: ${report.publication}.`,
     ...(report.publicationError
       ? [`Publication is unconfirmed: ${report.publicationError.remoteCode ?? report.publicationError.code}. Retry publication only; the native rehost already completed.`]

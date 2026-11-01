@@ -4,7 +4,7 @@ import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { collectAgentSpawnQuery } from "./agent-spawn-query.mjs";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
-import { collectManagedRehostNamed } from "./managed-rehost-named.mjs";
+import { collectManagedRehostNamed, MANAGED_REHOST_RUNNING_GUIDANCE } from "./managed-rehost-named.mjs";
 import { collectManagedRehostPreview, formatManagedRecoveryCommands } from "./managed-rehost-preview.mjs";
 import { presentAgentRunRuntime } from "./run-presentation.mjs";
 import { collectRunAccountSwitch, formatRunAccountSwitch } from "./run-account-switch.mjs";
@@ -49,7 +49,10 @@ recovery metadata is unavailable after reboot.
 Retain resume's exact status/retry commands after an uncertain response; do not
 repeat a name-based resume. Wake retains the operation ID, journal revision and
 request key, and publishes through the backend. Run a separate publish command
-only when returned for native rehost. Use open after recovery to place the pane.
+only when returned for native rehost. Native rehost waits up to a minute for an
+operation Hmux is still applying; if it is still running, resume exits 0 with
+state running and its status/publish commands instead of an error.
+Use open after recovery to place the pane.
 For live Session observations use dure ls. Use the Session/workspace from show
 with dure read <session-id> --workspace ID or dure send <session-id> --workspace ID.
 
@@ -93,7 +96,7 @@ function validPage(value) {
 
 export async function collectRunsCommand({
   opts, resolveBackend, resolveTarget, descriptor, command,
-  requestBackend = performBackendProfileRequest, run, present = presentAgentRunRuntime,
+  requestBackend = performBackendProfileRequest, run, settle, present = presentAgentRunRuntime,
   loadRegistry = () => ({ state: "absent", agents: [] }),
 }) {
   const [action, selector] = opts.rest;
@@ -156,7 +159,7 @@ export async function collectRunsCommand({
     if (action === "resume") {
       const recover = opts.confirmRestart ? collectManagedRehostNamed : collectManagedRehostPreview;
       const recovery = await recover({ opts: { rest: ["rehost", selector], confirmRestart: opts.confirmRestart },
-        agentId: selected.agentId, resolveBackend: async () => backend, requestBackend, command, run });
+        agentId: selected.agentId, resolveBackend: async () => backend, requestBackend, command, run, settle });
       return { ...base, ok: recovery.ok && !recovery.publicationError, ...owner(), recovery,
         ...(!recovery.ok || recovery.publicationError ? { error: recovery.error ?? recovery.publicationError } : {}) };
     }
@@ -222,6 +225,7 @@ function formatRecovery(recovery) {
   return [
     `${recovery.agentId}: ${recovery.state} (${recovery.continuation?.kind?.startsWith("runtime_") ? `backend ${recovery.backendExecution ?? "not_requested"}` : `native ${recovery.nativeExecution}`})`,
     ...(recovery.publication ? [`Binding publication: ${recovery.publication}`] : []),
+    ...(recovery.state === "running" ? [MANAGED_REHOST_RUNNING_GUIDANCE] : []),
     ...(recovery.conversationId ? [`Conversation: ${recovery.conversationId}`] : []),
     ...formatManagedRecoveryCommands(recovery.continuation),
   ].join("\n");
