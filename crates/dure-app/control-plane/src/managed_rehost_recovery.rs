@@ -191,7 +191,7 @@ pub(crate) async fn sweep(
     resumer: Arc<dyn PendingRehostResumer>,
     minimum_age: Duration,
 ) -> Result<SweepReport, String> {
-    let now_unix_ms = SystemTime::now()
+    let now_unix_ms: u64 = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_millis()
