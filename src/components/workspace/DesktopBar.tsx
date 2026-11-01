@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
 } from "react";
 import { Plus, TriangleAlert, X } from "lucide-react";
 import {
@@ -110,6 +111,11 @@ function PersistenceIndicator() {
   );
 }
 
+
+function pointInsideRect(rect: DOMRect, x: number, y: number): boolean {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
 export function DesktopBar() {
   const {
     spaces,
@@ -172,6 +178,25 @@ export function DesktopBar() {
   // four — most of a tab — so what fades is a tab, and it is seen to be one
   // (forty still read narrow, owner call after seeing it).
   const stripRef = useRef<HTMLDivElement>(null);
+  const onDesktopDragOverStrip = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!draggingDesktop.current || !manualReorder) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    const target = desktopTargetAt(event.clientX);
+    setDesktopDropTarget((previous) =>
+      previous?.id === target?.id && previous?.position === target?.position
+        ? previous : target,
+    );
+  };
+  const onPaneDragOverTab = (e: ReactDragEvent<HTMLElement>, desktopId: string) => {
+    if (draggingDesktop.current) return;
+    if (canDropPaneOnSpace(desktopId)) {
+      e.preventDefault(); // 드롭 허용
+      e.dataTransfer.dropEffect = "move";
+      if (dropTarget !== desktopId) setDropTarget(desktopId);
+    }
+  };
   const desktopTargetAt = (clientX: number) => desktopDropTargetAt(
     visibleDesktops.flatMap(({ id }) => {
       const tab = document.getElementById(`desktop-tab-${id}`);
@@ -310,19 +335,18 @@ export function DesktopBar() {
         style={{ maskImage: stripMask, WebkitMaskImage: stripMask }}
         onScroll={syncStripEdges}
         onWheel={onStripWheel}
-        onDragOver={(event) => {
-          if (!draggingDesktop.current || !manualReorder) return;
-          event.preventDefault();
-          event.stopPropagation();
-          event.dataTransfer.dropEffect = "move";
-          const target = desktopTargetAt(event.clientX);
-          setDesktopDropTarget((previous) =>
-            previous?.id === target?.id && previous?.position === target?.position
-              ? previous : target,
-          );
-        }}
+        // WebKit only routes dragover to an element whose dragenter was
+        // cancelled; without this the strip saw nothing until the pointer
+        // left the bar and came back (reported 2026-11-01). dragenter and
+        // dragover therefore share one handler.
+        onDragEnter={onDesktopDragOverStrip}
+        onDragOver={onDesktopDragOverStrip}
         onDragLeave={(event) => {
           if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+          // WebKit leaves relatedTarget empty, so a move between two tabs
+          // also arrives here; keep the indicator while the pointer is still
+          // inside the strip.
+          if (pointInsideRect(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY)) return;
           setDesktopDropTarget(null);
         }}
         onDrop={(event) => {
@@ -415,14 +439,10 @@ export function DesktopBar() {
                 draggingDesktop.current = null;
                 setDesktopDropTarget(null);
               }}
-              onDragOver={(e) => {
-                if (draggingDesktop.current) return;
-                if (canDropPaneOnSpace(d.id)) {
-                  e.preventDefault(); // 드롭 허용
-                  e.dataTransfer.dropEffect = "move";
-                  if (dropTarget !== d.id) setDropTarget(d.id);
-                }
-              }}
+              // Same WebKit rule as the strip: a pane drop onto a tab needs
+              // dragenter cancelled as well as dragover.
+              onDragEnter={(e) => onPaneDragOverTab(e, d.id)}
+              onDragOver={(e) => onPaneDragOverTab(e, d.id)}
               onDragLeave={() => {
                 setDropTarget((target) => (target === d.id ? null : target));
               }}
