@@ -238,7 +238,7 @@ pub(super) fn matches_rehost_target(
         })
 }
 
-fn with_recovery_directory<T>(
+pub(super) fn with_recovery_directory<T>(
     discovery_root: &Path,
     read: impl FnOnce(&Path) -> Result<T, String>,
 ) -> Result<Option<T>, String> {
@@ -256,7 +256,9 @@ fn with_recovery_directory<T>(
     read(&directory).map(Some)
 }
 
-fn prepared_identity(request: &ManagedRehostReconcileRequest) -> PreparedRecoveryIdentity {
+pub(super) fn prepared_identity(
+    request: &ManagedRehostReconcileRequest,
+) -> PreparedRecoveryIdentity {
     PreparedRecoveryIdentity {
         recovery_id: format!(
             "{MANAGED_REHOST_RECOVERY_ID_PREFIX}{}",

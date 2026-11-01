@@ -18,6 +18,7 @@ mod completion_acknowledgement;
 pub mod existing_operation;
 pub mod managed_create_ledger;
 mod managed_rehost_observation;
+mod managed_rehost_pending;
 mod managed_rehost_resolution;
 mod managed_rehost_successor_index;
 pub mod managed_replacement;
@@ -37,6 +38,10 @@ pub mod standalone_upgrade;
 pub use managed_rehost_observation::{
     observe_managed_rehost_operation, read_completed_managed_rehost_receipt,
     read_managed_rehost_predecessor, resolve_managed_rehost_operation_identity,
+};
+pub use managed_rehost_pending::{
+    ManagedRehostExpiry, PendingManagedRehostOperation, expire_pending_managed_rehost,
+    pending_managed_rehost_operations,
 };
 pub use managed_rehost_resolution::resolve_managed_rehost_current;
 

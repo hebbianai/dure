@@ -319,6 +319,7 @@ impl PreparedControlPlane {
         background_tasks.spawn(schedule_runtime::run_loop(Arc::clone(&state)));
         background_tasks.spawn(crate::workflow_graph::runtime::run_loop(Arc::clone(&state)));
         background_tasks.spawn(agent_runtime_recovery::run(Arc::clone(&state)));
+        background_tasks.spawn(crate::managed_rehost_recovery::run(Arc::clone(&state)));
         background_tasks.spawn(idle::run(Arc::clone(&state)));
         background_tasks.spawn(crate::slack_connector::restore_when_active(Arc::clone(
             &state,
@@ -655,6 +656,7 @@ pub async fn prepare_with_agent_conversation_runtimes(
         agent_conversations,
         agent_operations: agent_operation_lock::AgentOperationLocks::default(),
         agent_runtime_recovery_wake: Notify::new(),
+        managed_rehost_recovery_wake: Notify::new(),
         goal_wakeup: Notify::new(),
         runtime_idle: idle::IdleRuntime::from_environment(),
         project_catalog_lock: Mutex::new(()),

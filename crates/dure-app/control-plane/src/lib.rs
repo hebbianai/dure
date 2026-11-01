@@ -81,6 +81,7 @@ pub mod managed_claude_hook;
 mod managed_create_recovery_test_support;
 #[cfg(unix)]
 mod managed_provider_connection;
+mod managed_rehost_recovery;
 #[cfg(unix)]
 mod managed_structured_runtime;
 pub mod mcp_stdio_relay;
@@ -731,6 +732,7 @@ struct ServiceState {
     agent_conversations: Arc<agent_conversation_api::AgentConversationApi<SqliteDomainStore>>,
     agent_operations: agent_operation_lock::AgentOperationLocks,
     agent_runtime_recovery_wake: Notify,
+    managed_rehost_recovery_wake: Notify,
     goal_wakeup: Notify,
     runtime_idle: agent_runtime_transition_apply::deferred::idle::IdleRuntime,
     project_catalog_lock: Mutex<()>,
