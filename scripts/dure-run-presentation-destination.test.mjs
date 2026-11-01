@@ -3,6 +3,7 @@ import {
   managedRunPresentationRequest,
   presentAgentRunRuntime,
   registerAgentRunInBackground,
+  runReceiptSummary,
   structuredRunPresentationRequest,
 } from "../cli/lib/run-presentation.mjs";
 import {
@@ -200,5 +201,63 @@ describe("native Run background registration", () => {
     expect(await registerAgentRunInBackground({profile:{transport:{kind:"ssh"}},descriptor:{capabilities:["agent.run_background_v1"]},fetchImpl})).toBeUndefined();
     expect(await registerAgentRunInBackground({profile:{transport:{kind:"local"}},fetchImpl})).toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("Run receipt summary", () => {
+  const nativeReport = () => ({ kind: "dure.agent_spawn.apply", receipt: succeededNativeReceipt() });
+  const launchedSession = (receipt) =>
+    receipt.completed.find((stage) => stage.stage === "runtime_launch").evidence.session.sessionId;
+
+  it("leads with the launched session and the opened pane for a verified native Run", () => {
+    const report = nativeReport();
+    const presentation = { state: "opened", pane: { spaceId: "space-a", panelId: "agent:pane-1", agentId: report.receipt.plan.agentId } };
+    expect(runReceiptSummary(report, presentation)).toEqual({
+      agentId: report.receipt.plan.agentId,
+      sessionId: launchedSession(report.receipt),
+      workspaceId: report.receipt.plan.workspaceId,
+      panelId: "agent:pane-1",
+      spaceId: "space-a",
+      state: "succeeded",
+      presentation: "opened",
+      interactionProfile: "native_cli",
+    });
+  });
+
+  it("reports the runtime's actual session, not the planned one, when the launch landed elsewhere", () => {
+    const receipt = succeededNativeReceipt({ sessionId: "session-relaunched", launchIdempotencyKey: "spawn-runtime:relaunch-1" });
+    expect(receipt.plan.launch.sessionId).not.toBe("session-relaunched");
+    expect(runReceiptSummary({ kind: "dure.agent_spawn.apply", receipt }).sessionId).toBe("session-relaunched");
+  });
+
+  it("leaves pane fields null for a headless Run and session null for a structured Run", () => {
+    const headless = runReceiptSummary(nativeReport(), { state: "headless", reason: "no_client" });
+    expect(headless).toMatchObject({ panelId: null, spaceId: null, presentation: "headless", state: "succeeded" });
+    const structured = runReceiptSummary(
+      { kind: "dure.agent_spawn.apply", receipt: succeededStructuredReceipt() },
+      { state: "background", agent: { agentId: "agent-x" } },
+    );
+    expect(structured).toMatchObject({ sessionId: null, interactionProfile: "structured_protocol", presentation: "background", panelId: null });
+    expect(structured.agentId).toBeTruthy();
+  });
+
+  it("falls back to the plan for an unverified receipt and to null for a backend error", () => {
+    const report = nativeReport();
+    report.receipt.state = "applying";
+    report.receipt.completed = [];
+    expect(runReceiptSummary(report)).toEqual({
+      agentId: report.receipt.plan.agentId,
+      sessionId: report.receipt.plan.launch.sessionId,
+      workspaceId: report.receipt.plan.workspaceId,
+      panelId: null,
+      spaceId: null,
+      state: "applying",
+      presentation: null,
+      interactionProfile: "native_cli",
+    });
+    expect(runReceiptSummary({ kind: "dure.agent_spawn.error", error: { code: "x" } })).toEqual({
+      agentId: null, sessionId: null, workspaceId: null, panelId: null, spaceId: null,
+      state: null, presentation: null, interactionProfile: null,
+    });
   });
 });

@@ -1752,9 +1752,9 @@ async function cmdSessions(sub, opts) {
   return emitSessionQuery(action, sessionId, opts);
 }
 
-const PROJECTS_HELP = `Usage: dure projects list [--backend ID] [--json] [--deadline-ms N]
-       dure projects show <project-id> [--backend ID] [--json] [--deadline-ms N]
-       dure projects register <project-id> [--path PATH] [--name NAME] [--backend ID] [--json] [--deadline-ms N]
+const PROJECTS_HELP = `Usage: dure projects list [--backend ID] [--json] [--verbose] [--deadline-ms N]
+       dure projects show <project-id> [--backend ID] [--json] [--verbose] [--deadline-ms N]
+       dure projects register <project-id> [--path PATH] [--name NAME] [--backend ID] [--json] [--verbose] [--deadline-ms N]
 
 Register a directory explicitly in the selected backend's project catalog.
 Registration creates no Run, pane or worktree. It is separate from client project add.
@@ -1766,7 +1766,9 @@ hyphens, starting and ending with a letter or digit.
                     For SSH, use an absolute path on the selected backend.
   --name NAME       Display name; defaults to <project-id>.
   --backend ID      Select the backend (otherwise DURE_BACKEND_PROFILE or default).
-  --json            Print a structured result.
+  --json            Print a structured result. source.backend carries the backend
+                    identity, protocol and capabilityCount.
+  --verbose         Also include the backend's full capabilities list in source.backend.
   --deadline-ms N   Request deadline, 1-10000 ms (default 2500).
   --help, -h        Print this help without contacting a backend.
 
@@ -1807,6 +1809,7 @@ async function cmdProjects(sub, opts) {
     backend,
     deadlineMs:
       opts.deadlineMs === undefined ? undefined : Number(opts.deadlineMs),
+    verbose: opts.verbose === true,
   });
   process.stdout.write(
     (opts.json ? JSON.stringify(report) : formatProjectCommand(report)) + "\n",
@@ -1927,9 +1930,9 @@ async function cmdAgentSpawn(sub, opts) {
   ) {
     fail(
       "Usage: dure spawn preview (--project ID | --path PATH) --provider ID --name NAME --idempotency-key KEY " +
-        "(--no-worktree | --base-commit SHA --branch REF) [--setup-command COMMAND] [--prompt TEXT] [--permission-override require_approvals|auto_edit|bypass_approvals] [--skip-permissions] [--backend ID] [--json]\n" +
-        "        dure spawn apply --operation-id ID --plan-token TOKEN --expected-sequence N [--prompt TEXT] [--backend ID] [--json]\n" +
-        "        dure spawn status (--operation-id ID | --idempotency-key KEY) [--backend ID] [--json]",
+        "(--no-worktree | --base-commit SHA --branch REF) [--setup-command COMMAND] [--prompt TEXT] [--permission-override require_approvals|auto_edit|bypass_approvals] [--skip-permissions] [--backend ID] [--json] [--verbose]\n" +
+        "        dure spawn apply --operation-id ID --plan-token TOKEN --expected-sequence N [--prompt TEXT] [--backend ID] [--json] [--verbose]\n" +
+        "        dure spawn status (--operation-id ID | --idempotency-key KEY) [--backend ID] [--json] [--verbose]",
     );
   }
   const {
@@ -1960,6 +1963,7 @@ async function cmdAgentSpawn(sub, opts) {
     backend,
     deadlineMs:
       opts.deadlineMs === undefined ? undefined : Number(opts.deadlineMs),
+    verbose: opts.verbose === true,
   });
   writeAgentSpawnReport(report, opts, {
     agentSpawnQueryExitCode,
@@ -1990,7 +1994,7 @@ Usage:
            [--setup-command COMMAND] [--account ACCOUNT_ID|default]
            [--permission-override require_approvals|auto_edit|bypass_approvals]
            [--skip-permissions]
-           [--space ID|NAME] [--idempotency-key KEY] [--backend ID] [--json] <prompt>
+           [--space ID|NAME] [--idempotency-key KEY] [--backend ID] [--json] [--verbose] <prompt>
   dure spawn [run options] [prompt]
   dure spawn --reuse --project ID|NAME --name AGENT
              [--agent PROVIDER | --provider PROVIDER]
@@ -2011,6 +2015,11 @@ It accepts app account IDs and the IDs registered on the backend, the same IDs
 runs switch-account accepts; dure recovery get PROVIDER lists registered IDs.
 Without account-selection support, omitted --account uses the provider default.
 The Run receipt executionProfile identifies the credential reference and generation.
+With --json the receipt starts with summary: agentId, sessionId, workspaceId, panelId,
+spaceId, state (the Run receipt state), presentation (the pane outcome) and
+interactionProfile; a value the receipt cannot vouch for is null. The full receipt,
+presentation and registration follow unchanged. source.backend carries the backend
+identity, protocol and capabilityCount; --verbose adds its full capabilities list.
 spawn --reuse reuses an existing Agent without creating a new provider.`;
 
 function writeCliActionError(
@@ -2158,6 +2167,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     presentAgentRunRuntime,
     registerAgentRunInBackground,
     resolveRunPresentationTarget,
+    runReceiptSummary,
   } = await import("./lib/run-presentation.mjs");
   const { loadSessionClientProjection } = await import(
     "./lib/session-query.mjs"
@@ -2257,13 +2267,20 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     interactionPreference,
     backend,
     deadlineMs,
+    verbose: opts.verbose === true,
   });
   const runExitCode = agentRunExitCode(report);
   if (runExitCode !== 0 && !hasPresentableAgentRuntime(report)) {
-    writeAgentSpawnReport(report, opts, {
-      agentSpawnQueryExitCode: agentRunExitCode,
-      formatAgentSpawnQuery: formatAgentRun,
-    });
+    // A receipt that did not succeed still gets the compact head when there
+    // is one; a backend error report has no receipt and keeps its shape.
+    writeAgentSpawnReport(
+      report.receipt ? { summary: runReceiptSummary(report), ...report } : report,
+      opts,
+      {
+        agentSpawnQueryExitCode: agentRunExitCode,
+        formatAgentSpawnQuery: formatAgentRun,
+      },
+    );
     return;
   }
   let registration;
@@ -2288,7 +2305,14 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
       presentationTarget.state === "requested",
     );
   }
-  const output = { ...report, presentation, ...(registration ? {registration} : {}) };
+  // The summary leads the receipt so agentId/sessionId/panelId/state are the
+  // first keys an agent reads; every existing key keeps its name and place.
+  const output = {
+    summary: runReceiptSummary(report, presentation),
+    ...report,
+    presentation,
+    ...(registration ? { registration } : {}),
+  };
   process.stdout.write(
     opts.json
       ? `${JSON.stringify(output)}\n`

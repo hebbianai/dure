@@ -61,6 +61,14 @@ of creating a second agent. Exit 0 succeeded, 1 the receipt is not `succeeded`,
 2 the backend or pane placement failed — and success means setup and prompt
 delivery finished, never that the provider answered.
 
+With `--json` the receipt starts with `summary` — `agentId`, `sessionId`,
+`workspaceId`, `panelId`, `spaceId`, `state`, `presentation`,
+`interactionProfile` — so the identities the next command needs are the first
+keys in the output; a value the receipt cannot vouch for is `null`. The full
+`receipt`, `presentation` and `registration` follow unchanged. `source.backend`
+names the backend and its `capabilityCount`; pass `--verbose` when you need the
+full `capabilities` list (also on `dure projects … --json`).
+
 ## Choose a Run account
 
 A current connected app supplies the selected account for the requested provider,

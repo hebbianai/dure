@@ -103,6 +103,34 @@ describe("project client contract", () => {
       },
     ]);
     expect(JSON.stringify(report)).not.toContain("/srv/dure");
+    // The backend's capability list is the transport's business; the receipt
+    // keeps the identity and reports the count so the project stays in view.
+    expect(report.source.backend).toEqual({
+      id: "remote-b-backend",
+      generation: "remote-b-generation-1",
+      protocol: { major: 1, minor: 0 },
+      capabilityCount: 3,
+      observedAtMs: expect.any(Number),
+    });
+  });
+
+  it("embeds the backend capability list only when verbose is requested", async () => {
+    const collect = (verbose) =>
+      collectProjectCommand({
+        action: "show",
+        projectId: "dure",
+        backend: { profile: profile() },
+        requestBackend: async () => backendResult({ schemaVersion: 1, project: projection() }),
+        verbose,
+      });
+    const compact = await collect(false);
+    expect(compact.source.backend).not.toHaveProperty("capabilities");
+    expect(compact.source.backend.capabilityCount).toBe(3);
+    const verbose = await collect(true);
+    expect(verbose.source.backend).toMatchObject({
+      capabilityCount: 3,
+      capabilities: ["projects.list", "projects.register", "projects.show"],
+    });
   });
 
   it("lists and shows strict backend-owned identities with bounded requests", async () => {
@@ -603,7 +631,7 @@ describe("dure projects CLI", () => {
     expect(result.status, result.stderr || result.stdout).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("dure projects register <project-id>");
-    for (const flag of ["--path", "--name", "--backend", "--json", "--deadline-ms"]) {
+    for (const flag of ["--path", "--name", "--backend", "--json", "--verbose", "--deadline-ms"]) {
       expect(result.stdout).toContain(flag);
     }
     expect(result.stdout).toContain("current directory");
@@ -725,6 +753,14 @@ describe("dure projects CLI", () => {
       },
       projects: [projection()],
     });
+    expect(report.source.backend).toEqual({
+      id: "remote-b-backend",
+      generation: "remote-b-generation-1",
+      protocol: { major: 1, minor: 0 },
+      capabilityCount: 5,
+      observedAtMs: expect.any(Number),
+      sourceAgeMs: expect.any(Number),
+    });
     const observation = JSON.parse(readFileSync(remote.log, "utf8")).at(-1);
     expect(observation.request).toMatchObject({
       operation: "projects.list",
@@ -761,6 +797,24 @@ describe("dure projects CLI", () => {
     );
     expect(shown.status, `${shown.stdout}\n${shown.stderr}`).toBe(0);
     expect(JSON.parse(shown.stdout).project).toEqual(report.projects[0]);
+    expect(JSON.parse(shown.stdout).source.backend).not.toHaveProperty("capabilities");
+
+    const verbose = runCli(
+      root,
+      ["projects", "show", "dure", "--backend", "remote-b", "--json", "--verbose"],
+      { ...environment, DURE_CLIENT_ID: "desktop-b" },
+    );
+    expect(verbose.status, `${verbose.stdout}\n${verbose.stderr}`).toBe(0);
+    expect(JSON.parse(verbose.stdout).source.backend).toMatchObject({
+      capabilityCount: 5,
+      capabilities: [
+        "agent_spawn.apply",
+        "agent_spawn.preview.v2",
+        "projects.list",
+        "projects.register",
+        "projects.show",
+      ],
+    });
 
     const prompt = "run from the registered remote child";
     const run = runCli(
@@ -798,6 +852,31 @@ describe("dure projects CLI", () => {
       },
     });
     expect(runReport.receipt.plan.request).not.toHaveProperty("projectPath");
+    // The compact head leads the receipt: the identities an agent needs next,
+    // before the plan and the stage evidence. Every existing key stays.
+    expect(Object.keys(runReport)[0]).toBe("summary");
+    expect(runReport.summary).toEqual({
+      agentId: "agent-0123456789abcdef0123456789abcdef",
+      sessionId: "session-0123456789abcdef0123456789abcdef",
+      workspaceId: "workspace-0123456789abcdef0123456789abcdef",
+      panelId: null,
+      spaceId: null,
+      state: "succeeded",
+      presentation: "headless",
+      interactionProfile: "native_cli",
+    });
+    expect(Object.keys(runReport)).toEqual(expect.arrayContaining([
+      "schemaVersion", "apiVersion", "kind", "action", "complete", "found",
+      "observedAtMs", "durationMs", "source", "limits", "receipt", "presentation",
+    ]));
+    expect(runReport.source.backend).toEqual({
+      id: "remote-b-backend",
+      generation: "remote-b-generation-1",
+      protocol: { major: 1, minor: 0 },
+      capabilityCount: 5,
+      observedAtMs: expect.any(Number),
+      sourceAgeMs: expect.any(Number),
+    });
     expect(run.stdout).not.toContain(remoteProject);
     expect(run.stdout).not.toContain(prompt);
     const observations = JSON.parse(readFileSync(remote.log, "utf8"));
