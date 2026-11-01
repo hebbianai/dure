@@ -147,6 +147,7 @@ Read the [contribution guide](CONTRIBUTING.md), follow our [Code of Conduct](COD
 - **Release notes:** [GitHub Releases](https://github.com/hebbianai/dure/releases)
 - **Privacy and telemetry:** [Privacy and telemetry](https://docs.dureai.dev/en/privacy-and-telemetry)
 - **Community:** [Discord](https://discord.gg/aTuRV6DXhb)
+- **Support the project:** [Buy Me a Coffee](https://buymeacoffee.com/dureai)
 - **Updates:** [X · @hebbianai_](https://x.com/hebbianai_)
 
 ---
