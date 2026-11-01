@@ -111,6 +111,7 @@ export const sessions: Record<string, string> = {
 	"sessions.recent.reviewSshAction": "SSH 설정 확인…",
 	"sessions.recent.shownInPane": "pane에 표시 중",
 	"sessions.recent.sshReviewRequired": "SSH 확인 필요",
+	"sessions.recovery.reconnecting": "Host에 다시 연결하는 중…",
 	"sessions.recovery.resumeExactConversation": "정확한 대화 재개",
 	"sessions.remoteResume.confirmAction": "폴더를 등록하고 새 pane에서 이어가기",
 	"sessions.remoteResume.description": "원격 작업 폴더를 등록하고 정확한 provider 대화를 새 pane에서 이어갑니다. 원격 세션 준비가 끝나기 전에는 pane을 만들지 않습니다.",

@@ -25,7 +25,10 @@ import { TerminalPresentationRoleStore } from "@/lib/terminal/presentation/termi
 import type { TerminalAttachRecovery } from "@/lib/terminal/terminalAttachRecovery";
 import type { HmuxManagedPaneBindingV1 } from "@/lib/terminal/terminalBinding";
 import { hmuxPaneHealthId } from "@/lib/terminal/terminalHealth";
-import { paneActionSnapshot } from "@/lib/workspace/pane/paneActionRegistry";
+import {
+	paneActionSnapshot,
+	registerPaneActions,
+} from "@/lib/workspace/pane/paneActionRegistry";
 import { requestManagedRecovery } from "@/lib/workspace/pane/paneMenuSignals";
 import { useStore } from "@/store";
 import type { Agent } from "@/types";
@@ -654,7 +657,7 @@ describe("ManagedAgentRecoveryBar", () => {
 		expect(screen.queryByText(/Host 상태/)).toBeNull();
 	});
 
-	it("lets a disconnected local managed Agent become a managed shell immediately", async () => {
+	it("lets a local managed Agent whose Host is confirmed dead become a managed shell immediately", async () => {
 		useStore.setState({
 			agentActivity: { [agent.id]: "working" },
 			hmuxSessionMetadata: {
@@ -664,6 +667,7 @@ describe("ManagedAgentRecoveryBar", () => {
 					sessionClass: "managed",
 					lifecycle: "ready",
 					health: "stale_transport",
+					hostProcessAlive: false,
 					terminalEpoch: "terminal-old",
 					outputSeq: "10",
 					capabilities: [],
@@ -688,6 +692,138 @@ describe("ManagedAgentRecoveryBar", () => {
 		);
 		fireEvent.click(await screen.findByRole("button", { name: "Shell 열기" }));
 		await waitFor(() => expect(onOpenShell).toHaveBeenCalledOnce());
+	});
+
+	// Hub restart / failed census (#326): the census projects
+	// lifecycle=unavailable, health=stale_transport, inputAllowed=false for a
+	// Host it could not reach, with no claim about the Host process itself.
+	it("waits for an unreachable Host with Refresh instead of offering replacement", async () => {
+		const key = hmuxSessionMetadataKey(binding.workspaceId, binding.sessionId);
+		const unreachable = {
+			...useStore.getState().hmuxSessionMetadata[key],
+			lifecycle: "unavailable" as const,
+			health: "stale_transport" as const,
+			inputAllowed: false,
+		};
+		useStore.setState({
+			agentActivity: { [agent.id]: "working" },
+			hmuxSessionMetadata: { [key]: unreachable },
+		});
+		publishHmuxPaneHealthObservation(paneHealthId, {
+			kind: "connection",
+			state: "error",
+			reason: "host_disconnected",
+		});
+		const refresh = vi.fn().mockResolvedValue(undefined);
+		const unregister = registerPaneActions({
+			paneId: "agent:agent-1",
+			actions: { refresh },
+			owner: {},
+		});
+		const onOpenShell = vi.fn().mockResolvedValue(undefined);
+		const onAvailabilityChange = vi.fn();
+		const onTransitioningChange = vi.fn();
+		try {
+			render(
+				<ManagedAgentRecoveryBar
+					agentId={agent.id}
+					panelId="agent:agent-1"
+					binding={binding}
+					onOpenShell={onOpenShell}
+					onTransitioningChange={onTransitioningChange}
+					onAvailabilityChange={onAvailabilityChange}
+				/>,
+			);
+			expect(screen.getByRole("status").textContent).toBe(
+				t("sessions.recovery.reconnecting"),
+			);
+			expect(
+				screen.getAllByRole("button").map((button) => button.textContent?.trim()),
+			).toEqual([t("common.refresh")]);
+			// Input is not dead on the strength of a failed census: Ctrl+C must
+			// keep interrupting the provider instead of opening a shell.
+			expect(onAvailabilityChange).toHaveBeenLastCalledWith(true, false);
+
+			// Refresh is the pane header's own action (one authority), not a
+			// recovery launch planned by this bar.
+			fireEvent.click(screen.getByRole("button", { name: t("common.refresh") }));
+			await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+			await waitFor(() =>
+				expect(onTransitioningChange).toHaveBeenLastCalledWith(false),
+			);
+			expect(onTransitioningChange).toHaveBeenCalledWith(true);
+
+			act(() =>
+				useStore.getState().setHmuxSessionMetadata({
+					...unreachable,
+					lifecycle: "ready",
+					health: "current_healthy",
+					inputAllowed: true,
+				}),
+			);
+			expect(screen.queryByRole("button")).toBeNull();
+			expect(screen.queryByRole("status")).toBeNull();
+			expect(onAvailabilityChange).toHaveBeenLastCalledWith(false, false);
+			expect(mocks.listConversations).not.toHaveBeenCalled();
+			expect(mocks.recoverExitedManagedConversationPane).not.toHaveBeenCalled();
+			expect(mocks.startFreshManagedAgentPane).not.toHaveBeenCalled();
+			expect(onOpenShell).not.toHaveBeenCalled();
+		} finally {
+			unregister();
+		}
+	});
+
+	it("keeps a Refresh refusal visible without touching the session", async () => {
+		const key = hmuxSessionMetadataKey(binding.workspaceId, binding.sessionId);
+		useStore.setState({
+			agentActivity: { [agent.id]: "working" },
+			hmuxSessionMetadata: {
+				[key]: {
+					...useStore.getState().hmuxSessionMetadata[key],
+					lifecycle: "unavailable",
+					health: "stale_transport",
+					inputAllowed: false,
+				},
+			},
+		});
+		render(
+			<ManagedAgentRecoveryBar
+				agentId={agent.id}
+				panelId="agent:agent-1"
+				binding={binding}
+				onAvailabilityChange={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: t("common.refresh") }));
+		expect(await screen.findByText(/is not mounted/)).toBeTruthy();
+		expect(screen.getByRole("button", { name: t("common.refresh") })).toBeTruthy();
+		expect(mocks.recoverExitedManagedConversationPane).not.toHaveBeenCalled();
+		expect(mocks.startFreshManagedAgentPane).not.toHaveBeenCalled();
+	});
+
+	it("keeps explicit conversation selection available while the Host is awaited", async () => {
+		const key = hmuxSessionMetadataKey(binding.workspaceId, binding.sessionId);
+		useStore.setState({
+			agentActivity: { [agent.id]: "working" },
+			hmuxSessionMetadata: {
+				[key]: {
+					...useStore.getState().hmuxSessionMetadata[key],
+					lifecycle: "unavailable",
+					health: "stale_transport",
+					inputAllowed: false,
+				},
+			},
+		});
+		render(<RecoverySurfaceHarness />);
+		expect(
+			screen.getAllByRole("button").map((button) => button.textContent?.trim()),
+		).toEqual([t("common.refresh")]);
+		act(() => requestManagedRecovery("agent:agent-1"));
+		expect(
+			await screen.findByRole("button", { name: t("common.newConversation") }),
+		).toBeTruthy();
+		expect(screen.queryByRole("button", { name: t("common.refresh") })).toBeNull();
+		expect(mocks.recoverExitedManagedConversationPane).not.toHaveBeenCalled();
 	});
 
 	it("keeps a healthy pane hidden", async () => {
@@ -791,10 +927,12 @@ describe("ManagedAgentRecoveryBar", () => {
 					reason: "host_disconnected",
 				});
 			});
+			// The attachment dropped while the census could not reach the Host:
+			// wait with Refresh at hand, never offer replacement or a shell escape.
 			expect(
-				screen.getByRole("button", { name: t("common.newConversation") }),
-			).toBeTruthy();
-			expect(onAvailabilityChange).toHaveBeenLastCalledWith(true, true);
+				screen.getAllByRole("button").map((button) => button.textContent?.trim()),
+			).toEqual([t("common.refresh")]);
+			expect(onAvailabilityChange).toHaveBeenLastCalledWith(true, false);
 			act(() => {
 				publishHmuxPaneHealthObservation(paneHealthId, {
 					kind: "frame_received",

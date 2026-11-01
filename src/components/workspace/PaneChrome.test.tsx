@@ -1758,7 +1758,7 @@ describe("PaneChrome", () => {
     expect(screen.getByText("연결 오류")).toBeTruthy();
   });
 
-  it("does not offer Resume for the source disconnect while Rehost is pending", async () => {
+  it("does not offer recovery for the source disconnect while Rehost is pending", async () => {
     const binding = hmuxManagedBinding("rehost-recovery", "ws-progress");
     const agent = localRehostAgent(binding);
     let finishRehost!: () => void;
@@ -1780,11 +1780,17 @@ describe("PaneChrome", () => {
       });
     });
     try {
+      // The bar yields to the pending rehost: neither exact resume nor the
+      // reconnecting notice shows while the Host is being replaced.
       expect(screen.queryByRole("button", { name: /정확한 대화 재개/ })).toBeNull();
+      expect(screen.queryByRole("button", { name: "새로고침" })).toBeNull();
     } finally {
       await act(async () => { finishRehost(); });
     }
-    expect(screen.getByRole("button", { name: /정확한 대화 재개/ })).toBeTruthy();
+    // A failed census with no claim about the Host process is a reconnecting
+    // state once the rehost settles: Refresh, never exact resume (#326).
+    expect(screen.getByRole("button", { name: "새로고침" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /정확한 대화 재개/ })).toBeNull();
   });
 
   it("advertises and invokes the visible Rehost control as a named pane action", async () => {

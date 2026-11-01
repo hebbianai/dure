@@ -1,4 +1,4 @@
-import { Play, SquareTerminal } from "lucide-react";
+import { Play, RefreshCw, SquareTerminal } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { useManagedAgentRecoveryBarState } from "@/components/sessions/useManagedAgentRecoveryBarState";
 import { Alert } from "@/components/ui/alert";
@@ -14,12 +14,15 @@ import {
 	managedAgentRecoveryEntry,
 	managedAgentRecoveryHasDeadInput,
 } from "@/lib/sessions/managed/managedAgentRecoveryEntry";
+import { managedConversationId } from "@/lib/sessions/managed/managedConversationIdentity";
 import { recoverExitedManagedConversationPane } from "@/lib/sessions/managed/managedConversationLaunch";
 import { useManagedCredentialSwitchTransition } from "@/lib/sessions/managed/managedCredentialSwitchTransition";
 import {
 	type HmuxManagedPaneBindingV1,
 	hmuxPaneConversationId,
 } from "@/lib/terminal/terminalBinding";
+import { showToast } from "@/lib/toast";
+import { invokePaneAction } from "@/lib/workspace/pane/paneActionRegistry";
 
 interface RecoveryFailure {
 	message: string;
@@ -91,19 +94,32 @@ export function ManagedAgentRecoveryBar({
 		inspectUnknownExit,
 	});
 	const rehosting = usePaneActionPending(panelId, "rehost");
-	const showRecoveryActions = entry.visible || selectingConversation;
-	const visible =
+	// A census that cannot reach the Host offers no replacement: an explicit
+	// recovery request is the only way to the actions while the Host is awaited.
+	const reconnecting = entry.visible && entry.posture === "reconnecting";
+	const showRecoveryActions =
+		(entry.visible && !reconnecting) || selectingConversation;
+	const actionsVisible =
 		!rehosting &&
 		(showRecoveryActions ||
 			(!credentialSwitchTransition && conversationPeers.length > 0));
+	const reconnectingNotice = !rehosting && reconnecting && !showRecoveryActions;
+	const visible = actionsVisible || reconnectingNotice;
 	const actionDisabled = disabled || busy;
 	const storedConversationId = selectingConversation ? "" : savedConversationId;
-	const deadInput = entry.visible && managedAgentRecoveryHasDeadInput(metadata);
+	// The failed census observation that produced inputAllowed=false says
+	// nothing about the mounted input; only a confirmed-dead or refusing Host
+	// turns the pane's input into a shell escape.
+	const deadInput =
+		entry.visible &&
+		!reconnecting &&
+		managedAgentRecoveryHasDeadInput(metadata);
+	const refreshConversationId = agent ? managedConversationId(agent) : undefined;
 	const worktreePath = agent?.worktreePath;
 	const provider = agent?.provider;
 	let historyProfile: ReturnType<typeof conversationHistoryCredentialProfile>;
 	let historyError: string | undefined;
-	if (agent && visible && !storedConversationId) {
+	if (agent && actionsVisible && !storedConversationId) {
 		try {
 			historyProfile = conversationHistoryCredentialProfile({
 				agent,
@@ -129,7 +145,7 @@ export function ManagedAgentRecoveryBar({
 		setSelectedConversationId("");
 		setFailure(null);
 		setBusy(false);
-		if (!ownerKey || !worktreePath || !provider || !visible) {
+		if (!ownerKey || !worktreePath || !provider || !actionsVisible) {
 			return;
 		}
 		if (storedConversationId) {
@@ -170,7 +186,7 @@ export function ManagedAgentRecoveryBar({
 		worktreePath,
 		provider,
 		panelId,
-		visible,
+		actionsVisible,
 		selectingConversation,
 		storedConversationId,
 		historyReferenceId,
@@ -212,6 +228,16 @@ export function ManagedAgentRecoveryBar({
 		});
 	};
 
+	// The pane header's Refresh (resume this exact conversation on a new Host)
+	// is one authority shared by its menu, the CLI and this notice.
+	const refreshHost = async () => {
+		await runRecovery(async () => {
+			const result = await invokePaneAction(panelId, "refresh");
+			if (!result.ok) throw new Error(result.error.message);
+			showToast(t("workspace.refresh.success"), { paneId: panelId });
+		});
+	};
+
 	if (rehosting) return null;
 	if (!agent || !binding || !visible) return fallback;
 	const conversationId =
@@ -220,12 +246,42 @@ export function ManagedAgentRecoveryBar({
 		t("sessions.exactResume.selectionRequired");
 	const hasExactConversationOption =
 		storedConversationId !== "" || (candidates?.length ?? 0) > 0;
+	const failureNotice = failure ? (
+		<div className="text-destructive">
+			<p>
+				{t("sessions.exactResume.failureReason")}: {failure.message}
+			</p>
+		</div>
+	) : null;
 
 	return (
 		// A fixed element on the opaque pane, not an overlay above it — the
 		// pane's own face plus a hairline, no blur.
 		<div className="@container/managed-recovery absolute inset-x-0 bottom-0 z-20 max-h-[50%] overflow-y-auto border-t border-glass-hairline bg-glass-pane px-3 py-2">
 			<div className="flex flex-col gap-2">
+				{reconnectingNotice && (
+					<div className="flex flex-col gap-1 text-xs">
+						<div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+							<span role="status" className="min-w-0 flex-1 text-muted-foreground">
+								{t("sessions.recovery.reconnecting")}
+							</span>
+							<Button
+								size="xs"
+								variant="outline"
+								title={
+									refreshConversationId
+										? t("workspace.refresh.description")
+										: t("workspace.refresh.identityUnavailable")
+								}
+								disabled={actionDisabled || !refreshConversationId}
+								onClick={() => void refreshHost()}
+							>
+								<RefreshCw className="size-3" /> {t("common.refresh")}
+							</Button>
+						</div>
+						{failureNotice}
+					</div>
+				)}
 				{!credentialSwitchTransition && conversationPeers.length > 0 && (
 					<Alert
 						tone="warn"
@@ -309,13 +365,7 @@ export function ManagedAgentRecoveryBar({
 									</p>
 								</div>
 							)}
-							{failure && (
-								<div className="text-destructive">
-									<p>
-										{t("sessions.exactResume.failureReason")}: {failure.message}
-									</p>
-								</div>
-							)}
+							{failureNotice}
 						</div>
 						{/* Exact resume keeps primary weight when it is available; otherwise
 				    fresh start becomes the primary escape route. */}

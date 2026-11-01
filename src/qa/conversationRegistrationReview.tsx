@@ -173,12 +173,17 @@ export async function probeConversationRegistrationReview() {
 				reason: "host_disconnected",
 			});
 		});
+		// The attachment dropped while the census could not reach a Host nobody
+		// saw die: the pane waits with Refresh, offering neither replacement nor
+		// a dead-input shell escape (#326).
 		if (
-			!button(t("sessions.recovery.resumeExactConversation")) ||
+			!button(t("common.refresh")) ||
+			button(t("sessions.recovery.resumeExactConversation")) ||
+			button(t("common.newConversation")) ||
 			!available ||
-			!deadInput
+			deadInput
 		)
-			throw new Error("Disconnected attachment lost recovery");
+			throw new Error("Disconnected attachment lost its reconnecting notice");
 		flushSync(() =>
 			publishHmuxPaneHealthObservation(paneHealthId, {
 				kind: "frame_received",
