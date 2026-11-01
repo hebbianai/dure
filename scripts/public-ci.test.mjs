@@ -1,5 +1,15 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +38,7 @@ const codeResults = {
   SCRIPTS_PROCESS_RESULT: "RUN_CODE_CHECKS",
   MOBILE_WEB_RESULT: "RUN_CODE_CHECKS",
   SHARED_PROTOCOL_RESULT: "RUN_CODE_CHECKS",
+  DEPENDENCY_ADVISORIES_RESULT: "RUN_CODE_CHECKS",
   HMUX_RESULT: "RUN_HMUX_CHECKS",
   APP_RESULT: "RUN_APP_CHECKS",
 };
@@ -255,6 +266,47 @@ describe("public CI workflow wiring", () => {
     expect(job.steps[proof].run).toContain("HMUX_GHOSTTY_VT_PROOF_PREFIX=");
     expect(proof).toBeLessThan(job.steps.length - 1);
     expect(workflow.jobs.app["runs-on"]).toBe("ubuntu-24.04");
+  });
+});
+
+describe("public CI dependency advisories", () => {
+  const job = workflow.jobs["dependency-advisories"];
+  const dependabot = parse(readFileSync(resolve(repositoryRoot, ".github/dependabot.yml"), "utf8"));
+  const updates = (ecosystem) =>
+    dependabot.updates.filter((update) => update["package-ecosystem"] === ecosystem);
+  const directories = (ecosystem) =>
+    updates(ecosystem).flatMap((update) => update.directories ?? [update.directory]);
+
+  it("audits every shipped Cargo lockfile that Dependabot keeps updated", () => {
+    expect(job.needs).toBe("plan");
+    expect(job.if).toBe("${{ needs.plan.outputs.run_code_checks == 'true' }}");
+    const audit = job.steps.at(-1).run;
+    const workspaces = [...audit.matchAll(/(\S+)\/Cargo\.lock/g)].map(([, workspace]) => workspace);
+    expect(workspaces).toEqual(["src-tauri", "crates/dure-app", "hmux", "mobile/src-tauri"]);
+    for (const workspace of workspaces) {
+      expect(existsSync(resolve(repositoryRoot, workspace, "Cargo.lock")), workspace).toBe(true);
+    }
+    // Every lockfile is audited before the job fails, and failures fail it.
+    expect(audit).toMatch(/\|\| status=1/);
+    expect(audit.trim().endsWith('exit "$status"')).toBe(true);
+    expect([...directories("cargo")].sort()).toEqual(workspaces.map((workspace) => `/${workspace}`).sort());
+  });
+
+  it("schedules grouped weekly minor and patch updates for every npm and Cargo tree", () => {
+    for (const ecosystem of ["npm", "cargo"]) {
+      expect(updates(ecosystem).length).toBeGreaterThan(0);
+      for (const update of updates(ecosystem)) {
+        expect(update.schedule.interval).toBe("weekly");
+        const groups = Object.values(update.groups ?? {});
+        expect(groups.length).toBeGreaterThan(0);
+        for (const group of groups) expect(group["update-types"]).toEqual(["minor", "patch"]);
+      }
+    }
+    const npm = directories("npm");
+    expect(npm).toEqual(expect.arrayContaining(["/", "/cli", "/mobile"]));
+    for (const directory of npm) {
+      expect(existsSync(resolve(repositoryRoot, `.${directory}`, "package.json")), directory).toBe(true);
+    }
   });
 });
 
