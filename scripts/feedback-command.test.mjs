@@ -24,6 +24,7 @@ import { parseOpts } from "../cli/lib/cli-options.mjs";
 import {
 	classifyFeedbackArgs,
 	FEEDBACK_CLI_KINDS,
+	FEEDBACK_HELP,
 	FeedbackUsageError,
 	humanOperatingSystem,
 	loadOrCreateFeedbackDeviceId,
@@ -987,29 +988,70 @@ describe("dure feedback (real subprocess)", () => {
 		expect(requests[0].payload.body).toBe("piped in from a script\n");
 	});
 
-	it("prints usage help for --help without attempting to send anything", async () => {
+	// `dure feedback --help` used to print the top-level command index (exit 0),
+	// which names the command but none of its grammar — the option set, the
+	// body/contact limits, the `--` rule, the stdin/editor order. An agent
+	// reading it learned nothing it could act on. The command's own usage is
+	// the contract now, for every spelling of the request.
+	it.each([
+		[["--help"]],
+		[["-h"]],
+		[["--kind", "bug", "--help"]],
+		[["--json", "--yes", "-h"]],
+	])("prints the feedback command's own usage, not the command index, for %j", async (argv) => {
 		const home = tempHome();
-		const result = await runCli(["--help"], {
+		const result = await runCli(argv, {
 			env: {
 				HOME: home,
 				DURE_HOME: join(home, ".dure"),
 				DURE_FEEDBACK_ENDPOINT: UNREACHABLE_FEEDBACK_ENDPOINT,
 			},
 		});
-		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("dure feedback");
+		expect(result).toEqual({ code: 0, stdout: `${FEEDBACK_HELP}\n`, stderr: "" });
+		expect(result.stdout.startsWith("dure feedback — ")).toBe(true);
+		expect(result.stdout).not.toContain("dure — command-line control for Dure agents");
+		// Help is registry-free and side-effect free: no device id is minted.
+		expect(existsSync(join(home, ".dure", "feedback-device-id"))).toBe(false);
 	});
 
-	it("documents the literal -- / stdin rule for text containing a flag-like word", async () => {
+	it("answers `dure help feedback` with the same usage text", async () => {
 		const home = tempHome();
-		const result = await runCli(["--help"], {
-			env: {
-				HOME: home,
-				DURE_HOME: join(home, ".dure"),
-				DURE_FEEDBACK_ENDPOINT: UNREACHABLE_FEEDBACK_ENDPOINT,
-			},
+		const result = await new Promise((resolve) => {
+			const child = spawn(process.execPath, [cli, "help", "feedback"], {
+				env: {
+					...process.env,
+					DURE_APP_CHANNEL: "stable",
+					HOME: home,
+					DURE_HOME: join(home, ".dure"),
+					DURE_FEEDBACK_ENDPOINT: UNREACHABLE_FEEDBACK_ENDPOINT,
+				},
+				stdio: ["ignore", "pipe", "pipe"],
+				timeout: 10_000,
+			});
+			let stdout = "";
+			let stderr = "";
+			child.stdout.on("data", (chunk) => {
+				stdout += chunk;
+			});
+			child.stderr.on("data", (chunk) => {
+				stderr += chunk;
+			});
+			child.on("close", (code) => resolve({ code, stdout, stderr }));
 		});
-		expect(result.stdout).toContain("needs a literal -- first, or use stdin");
+		expect(result).toEqual({ code: 0, stdout: `${FEEDBACK_HELP}\n`, stderr: "" });
+	});
+
+	it("documents every option, both limits, the -- / stdin rule and the exit codes in its usage", () => {
+		for (const option of ["--kind bug|idea|other", "--contact", "--json", "--yes", "--help, -h"]) {
+			expect(FEEDBACK_HELP).toContain(option);
+		}
+		expect(FEEDBACK_HELP).toContain(`${FEEDBACK_BODY_LIMIT} characters`);
+		expect(FEEDBACK_HELP).toContain(`--contact to ${FEEDBACK_CONTACT_LIMIT}`);
+		expect(FEEDBACK_HELP).toContain("must follow a literal -- or arrive via stdin");
+		expect(FEEDBACK_HELP).toContain("$EDITOR");
+		expect(FEEDBACK_HELP).toMatch(/Exit codes:\n\s+0 .*\n(.*\n)*\s+1 .*\n(.*\n)*\s+2 /);
+		// The wire accepts "crash"; the CLI deliberately does not, and says so.
+		expect(FEEDBACK_HELP).toContain('"crash" kind is not accepted');
 	});
 
 	it("exits 2 for an unknown --kind", async () => {

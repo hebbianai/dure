@@ -18,6 +18,8 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import {
 	buildFeedbackEnvelope,
+	FEEDBACK_BODY_LIMIT,
+	FEEDBACK_CONTACT_LIMIT,
 	FEEDBACK_ENDPOINT_DEFAULT,
 	isValidFeedbackDevice,
 } from "./contracts/feedback-envelope.mjs";
@@ -157,6 +159,49 @@ const FEEDBACK_DEVICE_ID_FILE = "feedback-device-id";
 // of UTF-8) with headroom, matching the default readUtf8Input already uses
 // for `dure send --stdin`.
 const STDIN_MAX_BYTES = 64 * 1024;
+
+/** `dure feedback --help`. Built from the same constants the command enforces
+ *  (the kinds it accepts, the wire's body and contact caps, the stdin
+ *  ceiling) so this text cannot drift from the behaviour it describes. */
+export const FEEDBACK_HELP = `dure feedback — send a report to the Dure intake, the same one the in-app dialog uses
+
+Usage:
+  dure feedback [--kind ${FEEDBACK_CLI_KINDS.join("|")}] [--contact VALUE] [--json] [--yes] [text...]
+  dure feedback [options] -- <text that starts with a dash...>
+  <producer> | dure feedback [options]
+
+Options (all must come before the text):
+  --kind ${FEEDBACK_CLI_KINDS.join("|")}   What kind of report this is (default: bug).
+                          bug: Dure did something wrong; idea: a surface should exist or differ;
+                          other: neither. The wire-only "crash" kind is not accepted here.
+  --contact VALUE         Optional way to reach you, at most ${FEEDBACK_CONTACT_LIMIT} characters.
+  --json                  Print {"reference":"…"} on success; failures go to stderr as {"error":"…"}.
+  --yes, -y               Skip the confirmation prompt on the interactive $EDITOR path.
+  --help, -h              Print this help and send nothing.
+
+Text:
+  Positional arguments are the report. Without any, the report is read from stdin
+  when stdin is not a TTY (to EOF, at most ${STDIN_MAX_BYTES / 1024} KiB); otherwise $EDITOR opens when both
+  stdin and stdout are TTYs, shows a preview and asks for confirmation unless --yes.
+  The body is limited to ${FEEDBACK_BODY_LIMIT} characters and --contact to ${FEEDBACK_CONTACT_LIMIT}, counted in Unicode
+  scalar values. An empty or whitespace-only body is refused.
+  The option set above is closed. A flag-shaped word inside the text (for example
+  "the --contact flag is ignored") must follow a literal -- or arrive via stdin;
+  anywhere else it is refused instead of being swallowed as an option. A bare -
+  and a negative number such as -5 are ordinary text.
+
+Exit codes:
+  0  accepted; the reference id is the only line on stdout.
+  1  built but not sent: declined confirmation, network failure, rate limit (429),
+     temporary outage (503), or a permanent rejection (400, or 413 for an oversized field).
+  2  usage: unknown --kind, a misplaced or unknown flag, empty body, body or contact
+     over its limit, or no text and no $EDITOR.
+
+The envelope also carries a persistent device id and six environment values (app,
+channel, os, arch, locale, window), the same disclosure the in-app preview shows.
+This command never reads the app registry, so it works before the app has ever run.
+DURE_FEEDBACK_ENDPOINT overrides the intake URL for a test intake you control;
+there is no dry-run flag.`;
 
 export class FeedbackUsageError extends Error {
 	constructor(message) {

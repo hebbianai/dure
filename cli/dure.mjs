@@ -4052,6 +4052,12 @@ async function main() {
     return;
   }
   if (cmd === "help" && rest[0] === "client") return cmdClient(["--help"]);
+  if (cmd === "help" && rest[0] === "feedback") {
+    // Offline, registry-free, like `dure feedback --help` below.
+    const { FEEDBACK_HELP } = await import("./lib/feedback-command.mjs");
+    process.stdout.write(`${FEEDBACK_HELP}\n`);
+    return;
+  }
   const sessionCommands = ["ls", "list", "inspect", "sessions"];
   if (
     (cmd === "help" && rest[0] === "projects") ||
@@ -4391,9 +4397,8 @@ async function main() {
   if (cmd === "feedback") {
     // Never needs the app registry — this is the one thing an agent should
     // be able to do even when the app has never run.
-    const { runFeedbackCommand, classifyFeedbackArgs, formatFeedbackError } = await import(
-      "./lib/feedback-command.mjs"
-    );
+    const { FEEDBACK_HELP, runFeedbackCommand, classifyFeedbackArgs, formatFeedbackError } =
+      await import("./lib/feedback-command.mjs");
     // Classified against the RAW argv (`rest`), not `opts` — parseOpts has
     // already consumed the evidence of a disallowed or misplaced flag by
     // the time `opts` exists. The only options are feedback's own
@@ -4406,7 +4411,10 @@ async function main() {
     // classifyFeedbackArgs's doc comment.
     const classified = classifyFeedbackArgs(rest);
     if (classified.outcome === "help") {
-      process.stdout.write(`${HELP}\n`);
+      // The command's own usage, not the top-level HELP: an agent asking
+      // `dure feedback --help` needs the option set, the limits and the
+      // `--` rule, none of which the command index carries.
+      process.stdout.write(`${FEEDBACK_HELP}\n`);
       return;
     }
     if (classified.outcome === "error") {
