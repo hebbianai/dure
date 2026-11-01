@@ -45,12 +45,8 @@ impl SqliteDomainStore {
             close_payload,
             reserve_runtime,
         )
-        .await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| map_sqlx("transfer_session_checkout", error))?;
-        Ok(record)
+        .await;
+        commit_or_rollback(transaction, "transfer_session_checkout", record).await
     }
 }
 

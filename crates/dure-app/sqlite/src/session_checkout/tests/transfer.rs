@@ -110,12 +110,16 @@ async fn transfer_first_publishes_one_owner_and_excludes_a_late_source_close() {
             ..
         })
     ));
-    assert!(matches!(
-        other
-            .transfer_session_checkout_with(&source, &competitor, must_not_reserve)
-            .await,
-        Err(DomainStoreErrorV1::IdentityConflict { .. })
-    ));
+    let late_transfer = other
+        .transfer_session_checkout_with(&source, &competitor, must_not_reserve)
+        .await;
+    assert!(
+        matches!(
+            late_transfer,
+            Err(DomainStoreErrorV1::IdentityConflict { .. })
+        ),
+        "a transfer after the late source close saw {late_transfer:?}"
+    );
     assert_eq!(
         other.session_checkout(&target).await.unwrap(),
         Some(transferred.clone())
@@ -480,5 +484,49 @@ async fn another_owner_or_changed_frozen_resource_cannot_be_overwritten() {
         store.session_checkout(&target).await.unwrap(),
         Some(preserved)
     );
+    store.close().await;
+}
+
+#[tokio::test]
+async fn a_rejected_write_releases_the_lock_before_its_error_returns() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("domain.sqlite"))
+        .await
+        .unwrap();
+    let other = second_writer(&store).await;
+    let source = binding();
+    let target = target();
+    let original = store.prepare_session_checkout(&source).await.unwrap();
+    let mut changed = source.clone();
+    changed.working_directory = "/different/checkout".into();
+
+    // A zero-timeout writer acting on the rejection must find the lock
+    // released, not a rollback that is still queued on the failed writer.
+    assert!(matches!(
+        store
+            .transfer_session_checkout_with(&changed, &target, must_not_reserve)
+            .await,
+        Err(DomainStoreErrorV1::IdentityConflict { .. })
+    ));
+    let replayed = other.prepare_session_checkout(&source).await;
+    assert!(
+        matches!(&replayed, Ok(record) if *record == original),
+        "a prepare replay after a rejected transfer saw {replayed:?}"
+    );
+
+    assert!(matches!(
+        store.prepare_session_checkout(&changed).await,
+        Err(DomainStoreErrorV1::IdentityConflict { .. })
+    ));
+    let closed = other.begin_session_checkout_close(&source.identity).await;
+    assert!(
+        matches!(
+            &closed,
+            Ok(Some(record)) if record.admission == SessionCheckoutAdmissionV1::Closing
+        ),
+        "a close after a rejected prepare saw {closed:?}"
+    );
+    assert_eq!(other.session_checkout(&target).await.unwrap(), None);
+    other.close().await;
     store.close().await;
 }
