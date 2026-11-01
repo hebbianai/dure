@@ -13,6 +13,9 @@ export const GOAL_HELP = `dure goal — continue an explicit goal in the same co
 Use revision 0 for the first goal. Read the current revision before changing it.
 Active goals continue after successful segments. Pausing stops future continuation;
 already admitted work keeps running. Failures are not automatically retried.
+Goals need a structured conversation such as the app's chat; an agent running a
+native CLI (dure run, a terminal pane) is refused with
+agent_goal_interaction_profile_unsupported, which retrying cannot change.
 Results are JSON. Goal changes and conversation messages use the same Dure backend.`;
 
 export function parseGoalCommand(args) {

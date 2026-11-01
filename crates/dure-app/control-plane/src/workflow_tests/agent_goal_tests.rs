@@ -169,13 +169,72 @@ async fn goal_fixture(
     (root, Arc::new(state), commands)
 }
 
-async fn put(state: &Arc<ServiceState>, id: &str, revision: u64, status: &str) -> Value {
-    let response = request_over_test_connection(Arc::clone(state), "agent_goal.put", "agent_goal.v1",
+async fn put_response(state: &Arc<ServiceState>, id: &str, revision: u64, status: &str) -> Value {
+    request_over_test_connection(Arc::clone(state), "agent_goal.put", "agent_goal.v1",
         json!({ "schemaVersion": 1, "agentId": id, "expectedRevision": revision,
             "idempotencyKey": format!("{id}-{revision}-{status}"), "objective": "Finish both segments and check the result",
-            "status": status, "detail": null })).await;
+            "status": status, "detail": null })).await
+}
+
+async fn put(state: &Arc<ServiceState>, id: &str, revision: u64, status: &str) -> Value {
+    let response = put_response(state, id, revision, status).await;
     assert_eq!(response["kind"], BACKEND_RESPONSE_KIND, "{response}");
     response["result"]["goal"].clone()
+}
+
+async fn get_response(state: &Arc<ServiceState>, id: &str) -> Value {
+    request_over_test_connection(
+        Arc::clone(state),
+        "agent_goal.get",
+        "agent_goal.v1",
+        json!({ "schemaVersion": 1, "agentId": id }),
+    )
+    .await
+}
+
+/// An Agent registered the way a native CLI launch (for example `dure run`)
+/// registers it: a durable Agent record and a `native_cli` runtime selection,
+/// with no interaction binding in the common conversation API.
+async fn agent_without_conversation(
+    id: &str,
+    selection: Option<AgentInteractionProfileV1>,
+) -> (TempDir, Arc<ServiceState>) {
+    let (root, mut state, _, _) = fixture(Vec::new()).await;
+    make_fixture_mutation_authority(&mut state);
+    let agent_id = AgentIdV1::new(id).unwrap();
+    let provider_id = ProviderIdV1::new("claude").unwrap();
+    state
+        .store
+        .upsert_agent(&AgentRecordV1 {
+            agent_id: agent_id.clone(),
+            workspace_id: WorkspaceIdV1::new("workspace-1").unwrap(),
+            provider_id: provider_id.clone(),
+            display_name: id.into(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+        .await
+        .unwrap();
+    if let Some(interaction_profile) = selection {
+        state
+            .store
+            .initialize_agent_runtime_selection(&AgentRuntimeSelectionV1 {
+                schema_version: 1,
+                agent_id,
+                provider_id,
+                interaction_profile,
+                execution_profile: AgentExecutionProfileV1::ProviderDefault,
+                permission_mode: ProviderPermissionModeV1::Default,
+                model: None,
+                effort: None,
+                revision: 1,
+                selected_by_operation_id: None,
+                updated_at_ms: 1,
+            })
+            .await
+            .unwrap();
+    }
+    (root, Arc::new(state))
 }
 
 async fn wait_for_idle(state: &ServiceState, id: &str) {
@@ -718,4 +777,51 @@ async fn goal_changes_invalidate_the_existing_conversation_without_a_new_timelin
         panic!("expected page")
     };
     assert_eq!(serde_json::to_value(page.goal).unwrap(), updated);
+}
+
+#[tokio::test]
+async fn a_native_cli_agent_is_refused_terminally_instead_of_being_told_to_retry() {
+    let (_root, state) =
+        agent_without_conversation("goal-native", Some(AgentInteractionProfileV1::NativeCli)).await;
+    let read = get_response(&state, "goal-native").await;
+    assert_eq!(read["kind"], BACKEND_RESPONSE_KIND, "{read}");
+    assert_eq!(read["result"]["goal"], Value::Null);
+    for status in ["active", "paused"] {
+        for _ in 0..2 {
+            let response = put_response(&state, "goal-native", 0, status).await;
+            assert_eq!(
+                response["error"]["code"], "agent_goal_interaction_profile_unsupported",
+                "{response}"
+            );
+            assert_eq!(response["error"]["details"]["disposition"], "terminal");
+            assert_eq!(response["error"]["details"]["reasonCode"], "native_cli");
+        }
+    }
+    assert_eq!(
+        state
+            .store
+            .agent_goal(&AgentIdV1::new("goal-native").unwrap())
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn an_agent_without_any_conversation_is_refused_terminally() {
+    let (_root, state) = agent_without_conversation("goal-unbound", None).await;
+    let response = put_response(&state, "goal-unbound", 0, "active").await;
+    assert_eq!(
+        response["error"]["code"], "agent_goal_conversation_not_found",
+        "{response}"
+    );
+    assert_eq!(response["error"]["details"]["disposition"], "terminal");
+    assert_eq!(
+        state
+            .store
+            .agent_goal(&AgentIdV1::new("goal-unbound").unwrap())
+            .await
+            .unwrap(),
+        None
+    );
 }

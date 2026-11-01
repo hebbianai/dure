@@ -273,6 +273,12 @@ objective the backend continues across segments of the same conversation, and
 it introduces no tracker and no mandatory next-work Decision. Touch them only
 when the user asked for a goal.
 
+A goal needs a structured conversation, such as the app's chat. An agent that
+runs a native CLI — a provider terminal started by `dure run` or a terminal
+pane — has none, and `agent_goal_put` refuses it with
+`agent_goal_interaction_profile_unsupported` (terminal). Tell the user goals are
+unavailable for that agent and carry on without one; resending cannot succeed.
+
 ```jsonc
 // agent_goal_get
 { "body": { "schemaVersion": 1, "agentId": "…" } }

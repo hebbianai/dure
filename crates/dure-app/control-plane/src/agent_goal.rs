@@ -2,15 +2,21 @@
 
 use dure_app::{
     AgentClientMessageIdV1, AgentGoalPutRequestV1, AgentGoalRecordV1, AgentGoalStatusV1,
-    AgentGoalStore, AgentGoalTurnRequestV1, AgentIdV1, AgentStartTurnIntentV1,
-    AgentTimelineReadDirectionV1, AgentTimelineReadRequestV1, AgentTimelineReadV1,
-    AgentTimelineStore, AgentTurnEffectStateV1, AgentTurnIdV1,
+    AgentGoalStore, AgentGoalTurnRequestV1, AgentIdV1, AgentInteractionProfileV1,
+    AgentRuntimeTransitionStore, AgentStartTurnIntentV1, AgentTimelineReadDirectionV1,
+    AgentTimelineReadRequestV1, AgentTimelineReadV1, AgentTimelineStore, AgentTurnEffectStateV1,
+    AgentTurnIdV1,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{BackendDispatchError, ServiceState, now_ms, pro_features};
+use crate::{
+    BackendDispatchError, BackendFailureDispositionV1, ServiceState, now_ms, pro_features,
+};
+
+/// Refusal for an agent whose current runtime cannot carry a goal.
+const INTERACTION_PROFILE_UNSUPPORTED: &str = "agent_goal_interaction_profile_unsupported";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -41,6 +47,7 @@ pub(crate) async fn invoke(
         if request.status == AgentGoalStatusV1::Active && !pro_features::available() {
             return Err(BackendDispatchError::terminal("pro_required"));
         }
+        reject_unsupported_interaction_profile(state, &request.agent_id).await?;
         let goal = state
             .store
             .put_agent_goal(
@@ -56,8 +63,10 @@ pub(crate) async fn invoke(
                 dure_app::DomainStoreErrorV1::InvalidRecord { .. } => {
                     "agent_goal_request_invalid".into()
                 }
+                // No interaction binding exists for this agent, so the same
+                // request stays refused until a conversation is created.
                 dure_app::DomainStoreErrorV1::NotFound { .. } => {
-                    "agent_goal_conversation_not_found".into()
+                    BackendDispatchError::terminal("agent_goal_conversation_not_found")
                 }
                 _ => "agent_goal_store_failed".into(),
             })?;
@@ -70,6 +79,34 @@ pub(crate) async fn invoke(
         Some(goal)
     };
     Ok(json!({ "schemaVersion": 1, "goal": goal }))
+}
+
+/// A goal continues its conversation through the common conversation API,
+/// which only a structured-protocol runtime provides. A native CLI runtime (a
+/// provider terminal, for example one started by `dure run`) records its
+/// provider conversation in the checkpoint binding and never gets an
+/// interaction binding, so the store could only report the binding as missing.
+/// Name the actual reason instead, and mark it terminal: resending the same
+/// request cannot succeed while this agent runs a native CLI.
+async fn reject_unsupported_interaction_profile(
+    state: &ServiceState,
+    agent_id: &AgentIdV1,
+) -> Result<(), BackendDispatchError> {
+    let selection = state
+        .store
+        .agent_runtime_selection(agent_id)
+        .await
+        .map_err(|_| "agent_goal_store_failed")?;
+    match selection.map(|selection| selection.interaction_profile) {
+        Some(AgentInteractionProfileV1::NativeCli) => Err(BackendDispatchError {
+            code: INTERACTION_PROFILE_UNSUPPORTED.into(),
+            message: "goals continue a structured conversation; this agent runs a native CLI"
+                .into(),
+            details: Some(json!({ "reasonCode": "native_cli" })),
+            disposition: BackendFailureDispositionV1::Terminal,
+        }),
+        Some(AgentInteractionProfileV1::StructuredProtocol) | None => Ok(()),
+    }
 }
 
 pub(crate) fn tool_instructions(agent_id: &AgentIdV1) -> String {
