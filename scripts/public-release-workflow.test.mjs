@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
 import YAML from "yaml";
+import { RELEASE_HOST_MAX_LOAD_PER_CORE } from "./lib/release-host-admission.mjs";
 
 const workflow = YAML.parse(
   fs.readFileSync(".github/workflows/release.yml", "utf8"),
@@ -330,8 +331,11 @@ test("only the protected build step receives signing credentials and offers the 
   expect(build.env).not.toHaveProperty("VITE_DURE_INTERFACE_MODE_POLICY");
   expect(build.run).toContain("node ../scripts/check-macos-signing.mjs");
   expect(build.run).toContain(
-    "node scripts/run-with-build-storage.mjs full -- corepack pnpm tauri build --config src-tauri/tauri.beta.conf.json",
+    "node scripts/run-with-build-storage.mjs full -- corepack pnpm tauri build --config src-tauri/tauri.beta.conf.json --bundles app",
   );
+  // The bundler never packages the DMG here: see the dedicated step below.
+  expect(build.run).not.toMatch(/--bundles\s+\S*dmg/);
+  expect(build.env).not.toHaveProperty("TAURI_BUNDLER_DMG_IGNORE_CI");
   expect(build.env).not.toHaveProperty("APPLE_CERTIFICATE");
   for (const [name, job] of Object.entries(workflow.jobs)) {
     for (const step of job.steps) {
@@ -397,7 +401,7 @@ test("separates protected workflow helpers from the immutable selected applicati
       ? "${{ needs.source.outputs.source_sha }}" : "${{ needs.version.outputs.release_sha }}");
     expect(workflow.jobs[name].defaults.run["working-directory"]).toBe("source");
     for (const step of workflow.jobs[name].steps) {
-      if (/node .*\/(?:release-public|prepare-release-candidate|validate-release-assets|build-latest-json)\.mjs/.test(step.run ?? ""))
+      if (/node .*\/(?:release-public|prepare-release-candidate|validate-release-assets|build-latest-json|bundle-release-dmg)\.mjs/.test(step.run ?? ""))
         expect(step.run).toMatch(/node \.\.\/scripts\//);
     }
   }
@@ -408,4 +412,53 @@ test("separates protected workflow helpers from the immutable selected applicati
   expect(workflow.jobs.version.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");
   expect(workflow.jobs.draft.env.RELEASE_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");
   expect(workflow.jobs.build.steps[0]["working-directory"]).toBe("${{ github.workspace }}");
+});
+
+test("the DMG is packaged from the signed app with layout retries, a plain fallback and kept logs", () => {
+  const steps = workflow.jobs.build.steps;
+  const build = steps.findIndex((step) => step.name === "Build signed and notarized beta");
+  const dmg = steps.findIndex((step) => step.name === "Package the signed app into a DMG");
+  const logs = steps[dmg + 1];
+  expect(dmg).toBe(build + 1);
+  expect(steps.findIndex((step) => step.id === "assets")).toBeGreaterThan(dmg + 1);
+  expect(steps[dmg].env).toEqual({ APPLE_SIGNING_IDENTITY: "${{ secrets.APPLE_SIGNING_IDENTITY }}" });
+  expect(steps[dmg].run).toBe(
+    'node ../scripts/bundle-release-dmg.mjs --config src-tauri/tauri.beta.conf.json --sign --log-dir "$RUNNER_TEMP/dure-dmg-logs"',
+  );
+  expect(steps[dmg].if).toBeUndefined();
+  // The packager never rebuilds, re-signs or re-notarizes the app, so it gets
+  // neither the bundler nor the updater key nor notarization credentials.
+  expect(JSON.stringify(steps[dmg])).not.toMatch(/tauri build|TAURI_SIGNING|APPLE_ID|APPLE_PASSWORD|APPLE_API/);
+  expect(logs.uses).toMatch(/^actions\/upload-artifact@/);
+  expect(logs.if).toBe("always()");
+  expect(logs.with).toMatchObject({
+    name: "release-dmg-logs-${{ needs.version.outputs.tag }}",
+    path: "${{ runner.temp }}/dure-dmg-logs",
+    "if-no-files-found": "ignore",
+  });
+  expect(logs.with["retention-days"]).toBeGreaterThanOrEqual(14);
+  // Two layout attempts and the plain fallback may add about 18 minutes.
+  expect(workflow.jobs.build["timeout-minutes"]).toBeGreaterThanOrEqual(120);
+});
+
+test("an overloaded signing host is refused before any version ref exists, never after", () => {
+  const check = `node scripts/check-release-host.mjs --max-load-per-core ${RELEASE_HOST_MAX_LOAD_PER_CORE}`;
+  for (const name of ["verification", "host-preflight"]) {
+    const steps = workflow.jobs[name].steps;
+    const refusal = steps.findIndex((step) => step.run === check);
+    expect(refusal, name).toBeGreaterThan(
+      steps.findIndex((step) => step.uses?.startsWith("actions/setup-node@")),
+    );
+    const heavy = steps.findIndex((step) =>
+      /cargo|pnpm|tauri|run-with-build-storage/.test(step.run ?? "") || step.uses?.startsWith("dtolnay/"),
+    );
+    expect(refusal, name).toBeLessThan(heavy);
+  }
+  const preflight = workflow.jobs["host-preflight"].steps;
+  expect(preflight.findIndex((step) => step.run === check)).toBeGreaterThan(
+    preflight.findIndex((step) => step.name === "Check the signing host session"),
+  );
+  // After the tag exists a refusal would only burn the version; the DMG
+  // packager waits for the load to drop instead.
+  expect(workflow.jobs.build.steps.some((step) => /check-release-host/.test(step.run ?? ""))).toBe(false);
 });

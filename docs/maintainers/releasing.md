@@ -141,16 +141,37 @@ the option does not reuse a historical exception for a later release.
 No version ref is created before the signing host has been approved and has
 admitted the build. In full mode the verification job does this on the signing
 runner. In emergency mode a `host-preflight` job runs there instead: it waits for
-the `macos-release` approval, checks the arm64 host and its Finder session, and
-runs the full build's storage admission without building
-(`run-with-build-storage.mjs full -- true`). It receives no publisher
-credentials or signing secrets. A rejected or cancelled approval, or a storage
-refusal, stops the run before `release/vX.Y.Z` and `vX.Y.Z` exist, so the version
-stays unused; fix the host, then re-run the failed jobs or start a new
-dispatch. The build job uses the same environment after the tag exists, so every
+the `macos-release` approval, checks the arm64 host and its Finder session,
+refuses an overloaded host, and runs the full build's storage admission without
+building (`run-with-build-storage.mjs full -- true`). It receives no publisher
+credentials or signing secrets. A rejected or cancelled approval, a load
+refusal or a storage refusal stops the run before `release/vX.Y.Z` and
+`vX.Y.Z` exist, so the version stays unused; fix the host, then re-run the
+failed jobs or start a new dispatch. The build job uses the same environment after the tag exists, so every
 run asks for `macos-release` approval twice. The preflight is a point-in-time
 check: the build admits its storage again, and a volume that fills up in between
 still stops the build after tagging.
+
+Both pre-tag jobs run `check-release-host.mjs --max-load-per-core 16` and
+refuse with `release_host_overloaded` when the one-minute load average exceeds
+16 per logical core (256 on the 16-core signing host), or with
+`release_host_memory_critical`. The threshold comes from release run
+41195693547 (#308): the DMG step succeeded at a load of about 155 and failed at
+400–935 while the host swapped. The check is a point-in-time refusal before the
+version is reserved; the build job never refuses after tagging.
+
+The build job runs `tauri build --bundles app`, which compiles, signs and
+notarizes the app and writes the signed updater archive, and then packages the
+DMG itself with `bundle-release-dmg.mjs` from that unchanged app, because the
+bundler can only rebuild a DMG together with the app. Up to two Finder layout
+attempts run, each after waiting up to three minutes for the load to drop under
+the same limit and each under a four-minute deadline that kills the attempt's
+process group. If both fail, the step produces a plain disk image (no background
+or icon positions), prints a warning in the job summary and lets the release
+continue. Every command's output is logged and uploaded as the
+`release-dmg-logs-vX.Y.Z` artifact, so a failure is diagnosable from the run.
+Accept a fallback DMG deliberately: it is signed and contains the same notarized
+app, but its Finder window is unstyled.
 
 The independent hosted version writer treats the candidate patch as data. It
 reconstructs every allowed manifest/lock byte from the frozen source, commits

@@ -139,6 +139,10 @@ jobs:
         with:
           node-version-file: .node-version
           package-manager-cache: false
+      # Before hours of verification on the signing host, refuse the load at
+      # which the later DMG step fails (#308) while the version is still unused.
+      - name: Refuse an overloaded host
+        run: node scripts/check-release-host.mjs --max-load-per-core 16
       - name: Isolate Cargo home
         env:
           CARGO_HOME: ${{ runner.temp }}/hebbian-cargo-home
@@ -206,6 +210,10 @@ jobs:
         run: |
           test "$(uname -m)" = arm64
           osascript -e 'tell application "Finder" to get version'
+      # Refuse the point-in-time load at which the DMG step fails (#308) while
+      # the version is still unused; rerun the failed jobs once the host is quiet.
+      - name: Refuse an overloaded host
+        run: node scripts/check-release-host.mjs --max-load-per-core 16
       - name: Admit the signed build's storage without building
         run: node scripts/run-with-build-storage.mjs full -- true
 
@@ -266,7 +274,7 @@ jobs:
       group: dure-release
       labels: [self-hosted, macOS, ARM64, dure-release]
     environment: macos-release
-    timeout-minutes: 90
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: source
@@ -311,7 +319,6 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
       - name: Build signed and notarized beta
         env:
-          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
           DURE_TELEMETRY_KEY: ${{ vars.DURE_TELEMETRY_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -332,7 +339,24 @@ jobs:
             unset APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_PATH
           fi
           osascript -e 'tell application "Finder" to get version'
-          node scripts/run-with-build-storage.mjs full -- corepack pnpm tauri build --config src-tauri/tauri.beta.conf.json
+          # Only the app and the updater archive: the DMG comes from the next
+          # step, so a Finder failure never discards this signed, notarized app.
+          node scripts/run-with-build-storage.mjs full -- corepack pnpm tauri build --config src-tauri/tauri.beta.conf.json --bundles app
+      # The bundler can only rebuild the DMG together with the app (re-signing
+      # and re-notarizing it), so the image is packaged here from the unchanged
+      # app. Finder layout attempts retry under a deadline, then a plain image
+      # is produced instead of failing the release; every attempt's output is kept.
+      - name: Package the signed app into a DMG
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: node ../scripts/bundle-release-dmg.mjs --config src-tauri/tauri.beta.conf.json --sign --log-dir "$RUNNER_TEMP/dure-dmg-logs"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: release-dmg-logs-${{ needs.version.outputs.tag }}
+          path: ${{ runner.temp }}/dure-dmg-logs
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Verify compiled telemetry configuration
         env:
           DURE_TELEMETRY_KEY: ${{ vars.DURE_TELEMETRY_KEY }}
