@@ -53,12 +53,27 @@ impl PreparedProviderCredentialLaunchV1 {
 }
 
 pub(crate) trait ProviderCredentialProfileLaunchPreparer: Send + Sync {
-    fn check_unattended_claude_workspace(
+    /// Read Claude's recorded trust decision for `workspace` from the selected
+    /// profile directory, or the platform home without one. It observes the
+    /// decision and never answers the prompt.
+    fn claude_workspace_trusted(
         &self,
         _directory: Option<&Path>,
         _workspace: &Path,
+    ) -> Result<bool, &'static str> {
+        Err("claude_trust_unavailable")
+    }
+
+    fn check_unattended_claude_workspace(
+        &self,
+        directory: Option<&Path>,
+        workspace: &Path,
     ) -> Result<(), &'static str> {
-        Err("schedule_claude_trust_unavailable")
+        match self.claude_workspace_trusted(directory, workspace) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("schedule_claude_project_trust_required"),
+            Err(_) => Err("schedule_claude_trust_unavailable"),
+        }
     }
 
     fn prepare(
@@ -93,20 +108,16 @@ impl NativeProviderCredentialProfileLaunchPreparer {
 }
 
 impl ProviderCredentialProfileLaunchPreparer for NativeProviderCredentialProfileLaunchPreparer {
-    fn check_unattended_claude_workspace(
+    fn claude_workspace_trusted(
         &self,
         directory: Option<&Path>,
         workspace: &Path,
-    ) -> Result<(), &'static str> {
+    ) -> Result<bool, &'static str> {
         let root = directory
             .or(self.platform_home.as_deref())
-            .ok_or("schedule_claude_trust_unavailable")?;
-        match dure_provider_profile::claude_workspace_trusted(&root.join(".claude.json"), workspace)
-        {
-            Ok(true) => Ok(()),
-            Ok(false) => Err("schedule_claude_project_trust_required"),
-            Err(_) => Err("schedule_claude_trust_unavailable"),
-        }
+            .ok_or("claude_trust_unavailable")?;
+        dure_provider_profile::claude_workspace_trusted(&root.join(".claude.json"), workspace)
+            .map_err(|_| "claude_trust_unavailable")
     }
 
     fn prepare(
@@ -629,6 +640,26 @@ where
             .map_err(|error| error.code().to_string())?;
         self.launch_preparer
             .check_unattended_claude_workspace(
+                prepared.resolved().map(|profile| profile.directory()),
+                workspace,
+            )
+            .map_err(str::to_string)
+    }
+
+    /// Whether Claude already trusts `workspace` in the profile this launch
+    /// uses. `Ok(false)` means Claude stops at its folder-trust prompt before
+    /// it reads any input; an error means the decision could not be read.
+    pub(crate) async fn claude_workspace_trusted(
+        &self,
+        execution_profile: &AgentExecutionProfileV1,
+        workspace: &Path,
+    ) -> Result<bool, String> {
+        let prepared = self
+            .prepare_for_launch(&ProviderIdV1::new("claude").unwrap(), execution_profile)
+            .await
+            .map_err(|error| error.code().to_string())?;
+        self.launch_preparer
+            .claude_workspace_trusted(
                 prepared.resolved().map(|profile| profile.directory()),
                 workspace,
             )

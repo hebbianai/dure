@@ -195,6 +195,36 @@ describe("dure ls canonical session projection", () => {
     expect(state.backgroundWork).toBe(true);
   });
 
+  it("shows the attention the provider asked for instead of a waiting activity", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, {
+        agentRuntimeState: {
+          terminal_epoch: "terminal-1",
+          revision: "2",
+          observed_through_output_seq: "11",
+          lifecycle: "running",
+          activity: "waiting",
+          attention: "input_required",
+          attention_id: "attention-2",
+          source: "provider_event",
+          turn_completed_count: "0",
+        },
+      }),
+    ], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+    });
+
+    const table = runSessionCli(root, hmux, ["ls"]);
+    expect(table.status, `${table.stdout}\n${table.stderr}`).toBe(0);
+    const [header, row] = table.stdout.trim().split("\n");
+    expect(row.split("\t")[header.split("\t").indexOf("ACTIVITY")]).toBe("input_required");
+    const json = runSessionCli(root, hmux, ["ls", "--json"]);
+    const state = JSON.parse(json.stdout).sessions[0].runtime.agentRuntimeState;
+    expect(state.activity).toBe("waiting");
+    expect(state.attention).toBe("input_required");
+  });
+
   it("shows activity state in JSON output when agent runtime state is available", () => {
     const root = temporaryRoot();
     const hmux = installHmuxStub(root, [

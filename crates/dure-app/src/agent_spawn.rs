@@ -683,6 +683,17 @@ impl AgentSpawnStageInputsV1 {
     }
 }
 
+/// A first-run prompt the provider shows before it reads any input, including
+/// a prompt handed to its launch command. The provider runs no hook until the
+/// person answers it, so the Hub predicts the gate from provider state it can
+/// read before launch rather than inferring it from the terminal.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSpawnStartupGateKindV1 {
+    /// Claude Code asks whether the person trusts the workspace folder.
+    WorkspaceTrust,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSpawnStageDispositionV1 {

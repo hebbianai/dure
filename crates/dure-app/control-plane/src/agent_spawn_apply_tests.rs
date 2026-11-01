@@ -102,6 +102,35 @@ impl AgentSpawnProviderStatePreparer for FixtureProviderStatePreparer {
 
 static FIXTURE_PROVIDER_STATE_PREPARER: FixtureProviderStatePreparer = FixtureProviderStatePreparer;
 
+/// A Claude profile whose trust decision for the workspace is already known.
+struct ClaudeTrustPreparer {
+    trusted: bool,
+}
+
+impl AgentSpawnProviderStatePreparer for ClaudeTrustPreparer {
+    fn prepare<'a>(
+        &'a self,
+        _provider_id: &'a ProviderIdV1,
+        _execution_profile: &'a AgentExecutionProfileV1,
+    ) -> ProviderStatePreparationFuture<'a> {
+        Box::pin(async { Ok(provider_default_state_environment()) })
+    }
+
+    fn claude_workspace_trusted<'a>(
+        &'a self,
+        _execution_profile: &'a AgentExecutionProfileV1,
+        _workspace: &'a Path,
+    ) -> ClaudeWorkspaceTrustFuture<'a> {
+        let trusted = self.trusted;
+        Box::pin(async move { Ok(trusted) })
+    }
+}
+
+static UNTRUSTED_CLAUDE_WORKSPACE_PREPARER: ClaudeTrustPreparer =
+    ClaudeTrustPreparer { trusted: false };
+static TRUSTED_CLAUDE_WORKSPACE_PREPARER: ClaudeTrustPreparer =
+    ClaudeTrustPreparer { trusted: true };
+
 #[derive(Default)]
 struct RecordingProviderStatePreparer {
     calls: AtomicUsize,
@@ -621,9 +650,22 @@ struct RecordingLauncher {
     setup_commands: Arc<Mutex<Vec<Option<String>>>>,
     provider_state_environments: Arc<Mutex<Vec<ProviderStateEnvironment>>>,
     provider_conversations: Arc<Mutex<Vec<Option<String>>>>,
+    startup_gates: Arc<Mutex<Vec<(String, AgentSpawnStartupGateKindV1)>>>,
 }
 
 impl crate::workflow_launch::CredentialAwareWorkflowSessionLauncher for RecordingLauncher {
+    fn report_startup_gate(
+        &self,
+        session: WorkflowSessionGenerationV1,
+        gate: AgentSpawnStartupGateKindV1,
+    ) -> crate::workflow_launch::StartupGateReportFuture<'_> {
+        self.startup_gates
+            .lock()
+            .unwrap()
+            .push((session.session_id, gate));
+        Box::pin(async { Ok(()) })
+    }
+
     fn launch_with_provider_state(
         &self,
         request: WorkflowSessionLaunchRequestV1,
@@ -1179,6 +1221,29 @@ async fn native_exact_resume_reaches_the_existing_launcher_and_durable_binding()
             .as_deref(),
         Some("conversation-history")
     );
+}
+
+async fn planned_native_claude_prompt_spawn(
+    store: &SqliteDomainStore,
+) -> AgentSpawnJournalReceiptV1 {
+    register_project(store).await;
+    let providers = crate::provider_extension::test_local_agent_provider_registry();
+    let mut request = request();
+    request.idempotency_key = "spawn-native-claude-prompt".into();
+    request.provider_id = ProviderIdV1::new("claude").unwrap();
+    request.agent_name = "claude-1".into();
+    request.interaction_preference = Some(AgentSpawnInteractionPreferenceV1::NativeCli);
+    agent_spawn_api::preview(
+        store,
+        &providers,
+        "dure-local",
+        "generation-1",
+        project(),
+        request,
+        1,
+    )
+    .await
+    .unwrap()
 }
 
 fn apply_body(receipt: &AgentSpawnJournalReceiptV1, prompt: &str) -> AgentSpawnApplyBody {
@@ -1909,4 +1974,82 @@ async fn prompt_failure_before_any_write_can_retry_the_persisted_stage() {
     assert_eq!(launch_calls.load(Ordering::SeqCst), 1);
     assert_eq!(prompt_calls.load(Ordering::SeqCst), 2);
     assert_eq!(provider_state_preparer.calls.load(Ordering::SeqCst), 1);
+}
+
+/// Claude Code stops at its folder-trust prompt before it reads anything,
+/// including the prompt handed to its launch command, and runs no hook until
+/// the person answers (observed on Claude Code 2.1.316). The Hub reads the
+/// trust decision from the selected profile, so it tells the Host the agent
+/// needs input instead of leaving `dure ls` to show a merely waiting agent.
+#[tokio::test]
+async fn claude_spawn_into_an_untrusted_folder_reports_the_trust_prompt_to_the_host() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let planned = planned_native_claude_prompt_spawn(&store).await;
+    let body = apply_body(&planned, "private prompt");
+    let launcher = RecordingLauncher::default();
+    let prompt_deliverer = FixturePromptDeliverer {
+        calls: Arc::new(AtomicUsize::new(0)),
+        uncertain: false,
+    };
+
+    let applied = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &UNTRUSTED_CLAUDE_WORKSPACE_PREPARER,
+            &FixturePromptActivityObserver::observed(),
+            dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+        )),
+    )
+    .await
+    .unwrap();
+
+    let (session_id, _) = native_launch(&applied.plan).unwrap();
+    assert_eq!(
+        *launcher.startup_gates.lock().unwrap(),
+        vec![(
+            session_id.to_string(),
+            AgentSpawnStartupGateKindV1::WorkspaceTrust
+        )]
+    );
+    assert_eq!(launcher.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn claude_spawn_into_a_trusted_folder_reports_no_startup_gate() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let planned = planned_native_claude_prompt_spawn(&store).await;
+    let body = apply_body(&planned, "private prompt");
+    let launcher = RecordingLauncher::default();
+    let prompt_deliverer = FixturePromptDeliverer {
+        calls: Arc::new(AtomicUsize::new(0)),
+        uncertain: false,
+    };
+
+    let succeeded = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &TRUSTED_CLAUDE_WORKSPACE_PREPARER,
+            &FixturePromptActivityObserver::observed(),
+            dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+        )),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(succeeded.state, AgentSpawnJournalStateV1::Succeeded);
+    assert!(launcher.startup_gates.lock().unwrap().is_empty());
 }

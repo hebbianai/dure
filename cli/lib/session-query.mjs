@@ -1006,6 +1006,14 @@ export function sessionQueryExitCode(report) {
   return report.kind === "dure.sessions.error" ? 2 : 0;
 }
 
+// A provider that needs input or approval is not merely waiting: the Host's
+// attention is what the person has to act on, so it takes the column.
+function activityColumn(state) {
+  if (!state) return "-";
+  if (state.attention !== "none") return state.attention;
+  return state.backgroundWork ? "waiting+background" : state.activity;
+}
+
 export function formatSessionQuery(report) {
   if (report.kind === "dure.sessions.error") {
     return [`Dure sessions unavailable: ${report.error.code}`,
@@ -1028,9 +1036,7 @@ export function formatSessionQuery(report) {
         session.provider.pid,
         session.liveness.state,
         session.cwd ?? "-",
-        session.runtime?.agentRuntimeState?.backgroundWork
-          ? "waiting+background"
-          : session.runtime?.agentRuntimeState?.activity ?? "-",
+        activityColumn(session.runtime?.agentRuntimeState),
         session.clientProjection.agents
           .map((agent) => agent.displayName ?? agent.name ?? agent.id ?? "?")
           .join(",") || "-",

@@ -105,10 +105,10 @@ pub use agent_spawn::{
     AgentSpawnRecoveryDirectiveV1, AgentSpawnRuntimePlanV1, AgentSpawnSourceRuntimeAuthorityV1,
     AgentSpawnSourceSelectionAuthorityV1, AgentSpawnStageDispositionV1, AgentSpawnStageEvidenceV1,
     AgentSpawnStageInputsV1, AgentSpawnStageReceiptV1, AgentSpawnStageV1,
-    AgentSpawnTerminalOutcomeV1, AgentSpawnWorkspaceLeaseV1, AgentSpawnWorktreePolicyV1,
-    create_agent_spawn_plan_from_defaults_v1, create_agent_spawn_plan_v1,
-    fold_agent_spawn_journal_v1, structured_prompt_identity, validate_agent_spawn_plan_intent_v1,
-    worktree_directory_name,
+    AgentSpawnStartupGateKindV1, AgentSpawnTerminalOutcomeV1, AgentSpawnWorkspaceLeaseV1,
+    AgentSpawnWorktreePolicyV1, create_agent_spawn_plan_from_defaults_v1,
+    create_agent_spawn_plan_v1, fold_agent_spawn_journal_v1, structured_prompt_identity,
+    validate_agent_spawn_plan_intent_v1, worktree_directory_name,
 };
 pub use agent_timeline::*;
 pub use backend_observation::is_durable_agent_observation;

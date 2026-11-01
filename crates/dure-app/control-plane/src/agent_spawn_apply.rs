@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,13 +14,14 @@ use dure_app::{
     AgentSpawnLaunchPlanV1, AgentSpawnModelSelectionV1, AgentSpawnPermissionModeV1,
     AgentSpawnPlanTokenV1, AgentSpawnRecoveryDirectiveV1, AgentSpawnStageDispositionV1,
     AgentSpawnStageEvidenceV1, AgentSpawnStageInputsV1, AgentSpawnStageV1,
-    AgentSpawnTerminalOutcomeV1, AgentSpawnWorktreePolicyV1, AgentTurnEffectReceiptV1,
-    AgentTurnEffectStateV1, AgentTurnIdV1, DomainStore, OperationEventIdV1, OperationIdV1,
-    ProviderIdV1, SessionBindingRecordV1, WorkflowPromptActivityObservationRequestV1,
-    WorkflowPromptActivityObserver, WorkflowPromptActivityStateV1, WorkflowPromptDeliverer,
-    WorkflowPromptDeliveryIntentV1, WorkflowPromptDeliveryRequestV1, WorkflowSessionGenerationV1,
-    WorkflowSessionLaunchReceiptV1, WorkflowSessionLaunchRequestV1,
-    agent_provider_launch_prompt_is_valid, structured_prompt_identity,
+    AgentSpawnStartupGateKindV1, AgentSpawnTerminalOutcomeV1, AgentSpawnWorktreePolicyV1,
+    AgentTurnEffectReceiptV1, AgentTurnEffectStateV1, AgentTurnIdV1, DomainStore,
+    OperationEventIdV1, OperationIdV1, ProviderIdV1, SessionBindingRecordV1,
+    WorkflowPromptActivityObservationRequestV1, WorkflowPromptActivityObserver,
+    WorkflowPromptActivityStateV1, WorkflowPromptDeliverer, WorkflowPromptDeliveryIntentV1,
+    WorkflowPromptDeliveryRequestV1, WorkflowSessionGenerationV1, WorkflowSessionLaunchReceiptV1,
+    WorkflowSessionLaunchRequestV1, agent_provider_launch_prompt_is_valid,
+    structured_prompt_identity,
 };
 use dure_app_sqlite::SqliteDomainStore;
 use hmux_client::ProviderStateEnvironment;
@@ -61,12 +62,27 @@ pub(crate) struct AgentSpawnExecution<'a> {
 pub(crate) type ProviderStatePreparationFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ProviderStateEnvironment, String>> + Send + 'a>>;
 
+pub(crate) type ClaudeWorkspaceTrustFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<bool, String>> + Send + 'a>>;
+
 pub(crate) trait AgentSpawnProviderStatePreparer: Send + Sync {
     fn prepare<'a>(
         &'a self,
         provider_id: &'a ProviderIdV1,
         execution_profile: &'a AgentExecutionProfileV1,
     ) -> ProviderStatePreparationFuture<'a>;
+
+    /// Whether Claude already trusts `workspace` in the profile that
+    /// `execution_profile` selects. `Ok(false)` predicts Claude's folder-trust
+    /// prompt; an error means the decision could not be read and claims
+    /// nothing either way.
+    fn claude_workspace_trusted<'a>(
+        &'a self,
+        _execution_profile: &'a AgentExecutionProfileV1,
+        _workspace: &'a Path,
+    ) -> ClaudeWorkspaceTrustFuture<'a> {
+        Box::pin(async { Err("claude_trust_unavailable".to_string()) })
+    }
 }
 
 impl AgentSpawnProviderStatePreparer for ProviderCredentialProfileRegistry<SqliteDomainStore> {
@@ -81,6 +97,44 @@ impl AgentSpawnProviderStatePreparer for ProviderCredentialProfileRegistry<Sqlit
                 .map(|prepared| prepared.environment())
                 .map_err(|error| error.code().to_string())
         })
+    }
+
+    fn claude_workspace_trusted<'a>(
+        &'a self,
+        execution_profile: &'a AgentExecutionProfileV1,
+        workspace: &'a Path,
+    ) -> ClaudeWorkspaceTrustFuture<'a> {
+        Box::pin(ProviderCredentialProfileRegistry::claude_workspace_trusted(
+            self,
+            execution_profile,
+            workspace,
+        ))
+    }
+}
+
+/// The first-run prompt the provider will stop at before it reads any input,
+/// when the Hub can read that from provider state before launch. Claude Code
+/// shows its folder-trust prompt for a workspace its selected profile has not
+/// trusted and runs no hook until the person answers, so nothing downstream
+/// can report it; the Hub has to know up front. A trusted workspace or an
+/// unreadable decision predicts no gate: the Hub never claims one it cannot see.
+async fn startup_gate_before_launch(
+    preparer: &dyn AgentSpawnProviderStatePreparer,
+    receipt: &AgentSpawnJournalReceiptV1,
+    workspace_root: &str,
+) -> Option<AgentSpawnStartupGateKindV1> {
+    if receipt.plan.request.provider_id.as_str() != "claude" {
+        return None;
+    }
+    match preparer
+        .claude_workspace_trusted(
+            &receipt.plan.request.execution_profile,
+            Path::new(workspace_root),
+        )
+        .await
+    {
+        Ok(false) => Some(AgentSpawnStartupGateKindV1::WorkspaceTrust),
+        Ok(true) | Err(_) => None,
     }
 }
 
@@ -527,6 +581,9 @@ async fn execute_prepared_stage(
                     &receipt.plan.request.execution_profile,
                 )
                 .await?;
+            let startup_gate =
+                startup_gate_before_launch(*provider_state_preparer, &receipt, workspace_root)
+                    .await;
             match launcher
                 .launch_with_provider_state(launch.clone(), provider_state_environment, None)
                 .await
@@ -536,6 +593,14 @@ async fn execute_prepared_stage(
                         launch_idempotency_key,
                         session,
                     } = launch_receipt;
+                    if let Some(gate) = startup_gate {
+                        // The Host owns what the agent is doing. Without this
+                        // report it shows a merely waiting agent while the
+                        // provider sits on a question only a person can
+                        // answer. A Host that cannot take the report leaves
+                        // the spawn receipt as the only evidence.
+                        let _ = launcher.report_startup_gate(session.clone(), gate).await;
+                    }
                     match persist_native_runtime_selection(store, &receipt, &session).await {
                         Ok(()) => {
                             append(

@@ -1,4 +1,6 @@
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -8,10 +10,11 @@ use std::thread;
 use std::time::Duration;
 
 use dure_app::{
-    AgentProviderPromptTargetV1, AgentProviderRegistry, WorkflowPromptActivityFailureV1,
-    WorkflowPromptActivityFutureV1, WorkflowPromptActivityObservationRequestV1,
-    WorkflowPromptActivityObserver, WorkflowPromptActivityReceiptV1, WorkflowPromptActivityStateV1,
-    WorkflowPromptDeliverer, WorkflowPromptDeliveryEvidenceV1, WorkflowPromptDeliveryFailureV1,
+    AgentProviderPromptTargetV1, AgentProviderRegistry, AgentSpawnStartupGateKindV1,
+    WorkflowPromptActivityFailureV1, WorkflowPromptActivityFutureV1,
+    WorkflowPromptActivityObservationRequestV1, WorkflowPromptActivityObserver,
+    WorkflowPromptActivityReceiptV1, WorkflowPromptActivityStateV1, WorkflowPromptDeliverer,
+    WorkflowPromptDeliveryEvidenceV1, WorkflowPromptDeliveryFailureV1,
     WorkflowPromptDeliveryFutureV1, WorkflowPromptDeliveryIntentV1,
     WorkflowPromptDeliveryRequestV1, WorkflowSessionGenerationV1, WorkflowSessionLaunchFailureV1,
     WorkflowSessionLaunchFutureV1, WorkflowSessionLaunchReceiptV1, WorkflowSessionLaunchRequestV1,
@@ -52,6 +55,40 @@ pub(crate) trait CredentialAwareWorkflowSessionLauncher: Send + Sync {
         provider_state_environment: ProviderStateEnvironment,
         presentation_predecessor: Option<PresentationCheckpointPredecessor>,
     ) -> WorkflowSessionLaunchFutureV1;
+
+    /// Tell the Host that the provider just launched into `session` stops at
+    /// a first-run prompt before it reads any input, so its agent runtime
+    /// state carries `input_required` instead of a merely waiting agent. A
+    /// launcher without a Host projection accepts the report and keeps nothing.
+    fn report_startup_gate(
+        &self,
+        _session: WorkflowSessionGenerationV1,
+        _gate: AgentSpawnStartupGateKindV1,
+    ) -> StartupGateReportFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+pub(crate) type StartupGateReportFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+/// Every first-run prompt is a question to the person: the provider waits and
+/// needs input. The gate's kind stays in the spawn receipt because the Host
+/// projection is provider-neutral.
+fn startup_gate_report() -> hmux_client::AgentStateReport {
+    hmux_client::AgentStateReport {
+        progress: None,
+        identity_only: false,
+        activity: hmux_client::AgentRuntimeActivity::Waiting,
+        attention: hmux_client::AgentRuntimeAttention::InputRequired,
+        turn_completed: false,
+        turn_completion_id: None,
+        causality: None,
+        working_ttl_ms: None,
+        conversation_identity: None,
+        expected_observation: None,
+        background_work: false,
+    }
 }
 
 impl HmuxWorkflowSessionLauncher {
@@ -136,6 +173,42 @@ impl CredentialAwareWorkflowSessionLauncher for HmuxWorkflowSessionLauncher {
             provider_state_environment,
             presentation_predecessor,
         )
+    }
+
+    fn report_startup_gate(
+        &self,
+        session: WorkflowSessionGenerationV1,
+        _gate: AgentSpawnStartupGateKindV1,
+    ) -> StartupGateReportFuture<'_> {
+        let runtime_executable = self.runtime_executable.clone();
+        let discovery_root = self.discovery_root.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                let fence = workflow_session_fence(&session).map_err(|failure| failure.code)?;
+                let request = hmux_client::ManagedAttachRequest::new(
+                    &session.session_id,
+                    &session.workspace_id,
+                )
+                .map_err(|error| error.to_string())?;
+                let cwd = std::env::current_dir()
+                    .map_err(|_| "startup_gate_report_cwd_unavailable".to_string())?;
+                // The fence pins the report to the generation this launch
+                // created, so a successor Host never inherits the gate.
+                let outcome = hmux_client::ManagedAgentStateReporter::new(runtime_executable, cwd)
+                    .with_discovery_root(discovery_root)
+                    .report_agent_state_for_fence(request, startup_gate_report(), fence)
+                    .map_err(|error| error.code().to_string())?;
+                match outcome {
+                    hmux_client::AgentStateReportOutcome::Applied
+                    | hmux_client::AgentStateReportOutcome::NoOp => Ok(()),
+                    hmux_client::AgentStateReportOutcome::DroppedExited => {
+                        Err("startup_gate_report_provider_exited".to_string())
+                    }
+                }
+            })
+            .await
+            .map_err(|_| "startup_gate_report_worker_failed".to_string())?
+        })
     }
 }
 
