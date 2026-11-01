@@ -1119,6 +1119,22 @@ function errorReport(action, code, observedAtMs, durationMs, details = {}) {
   };
 }
 
+const PROVIDER_PREFLIGHT_GUIDANCE = Object.freeze({
+  provider_runtime_integration_unavailable:
+    "The execution host has no Dure-managed integration for this provider's terminal sessions. " +
+    "The Dure app publishes it for its channel; start the Dure app for this channel on that host once, then retry this request.",
+  provider_executable_unavailable:
+    "The provider executable could not be resolved on the execution host. Install the selected provider there or fix the backend's PATH, then retry this request.",
+  permission_mode_unsupported:
+    "The selected provider does not support the requested permission mode. Choose another permission mode, then retry this request.",
+  model_selection_unsupported:
+    "The selected provider does not accept a model selection for this launch. Remove the model selection " +
+    "(dure provider-defaults get shows saved defaults), then retry this request.",
+  effort_selection_unsupported:
+    "The selected provider does not accept an effort selection for this launch. Remove the effort selection " +
+    "(dure provider-defaults get shows saved defaults), then retry this request.",
+});
+
 function backendErrorReport(action, error, profile, startedAt, deadlineMs) {
   const observedAtMs = Date.now();
   const { code, ...detail } = backendRequestFailure(error, profile);
@@ -1142,6 +1158,13 @@ function backendErrorReport(action, error, profile, startedAt, deadlineMs) {
       provider_executable_path_missing: "PATH is unavailable on the execution host. Restore PATH, then retry this request.",
     }[detail.reasonCode];
     if (typeof guidance === "string") detail.message = guidance;
+  }
+  // A refused provider plan names its check with a typed failure code. Codes
+  // without reviewed advice are still named rather than reported bare.
+  if (detail.remoteCode === "agent_spawn_provider_preflight_failed" && typeof detail.reasonCode === "string") {
+    detail.message = Object.hasOwn(PROVIDER_PREFLIGHT_GUIDANCE, detail.reasonCode)
+      ? PROVIDER_PREFLIGHT_GUIDANCE[detail.reasonCode]
+      : `Provider preflight check failed on the execution host: ${detail.reasonCode}.`;
   }
   return errorReport(
     action,

@@ -841,6 +841,17 @@ impl BackendDispatchError {
         self
     }
 
+    /// A provider refused to plan a launch. Its typed failure code names the
+    /// check (integration, executable, permission, model) for the caller.
+    fn provider_preflight(code: &str, reason: &str) -> Self {
+        Self {
+            code: code.into(),
+            message: format!("provider preflight check failed: {reason}"),
+            details: Some(json!({ "reasonCode": reason })),
+            disposition: BackendFailureDispositionV1::RetrySame,
+        }
+    }
+
     fn stale_as_terminal(mut self) -> Self {
         if matches!(
             self.disposition,
@@ -2099,6 +2110,19 @@ fn provider_launch_defaults_error(error: DomainStoreErrorV1) -> BackendDispatchE
     }
 }
 
+fn agent_spawn_preview_failure(code: String) -> BackendDispatchError {
+    if code == "agent_spawn_project_not_found" {
+        return BackendDispatchError::terminal(&code);
+    }
+    match agent_spawn_api::provider_preflight_reason(&code) {
+        Some(reason) => BackendDispatchError::provider_preflight(
+            agent_spawn_api::PROVIDER_PREFLIGHT_FAILED,
+            reason,
+        ),
+        None => code.into(),
+    }
+}
+
 async fn show_agent_spawn(
     state: &ServiceState,
     body: agent_spawn_api::AgentSpawnStatusBody,
@@ -2162,7 +2186,12 @@ async fn apply_agent_spawn(
                         receipt.plan.request.provider_conversation_ref.as_option(),
                         hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
                     )
-                    .map_err(|_| "agent_spawn_provider_preflight_failed".to_string())?
+                    .map_err(|error| {
+                        BackendDispatchError::provider_preflight(
+                            agent_spawn_api::PROVIDER_PREFLIGHT_FAILED,
+                            error.code.as_str(),
+                        )
+                    })?
                     .ok_or_else(|| "agent_spawn_provider_unavailable".to_string())?;
                 let prompt_target = state
                     .agent_providers
@@ -2409,7 +2438,13 @@ async fn workflow_launch_request(
             None,
             hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
         )
-        .map_err(|_| BackendDispatchError::terminal("workflow_provider_preflight_failed"))?
+        .map_err(|error| {
+            BackendDispatchError::provider_preflight(
+                "workflow_provider_preflight_failed",
+                error.code.as_str(),
+            )
+            .with_disposition(BackendFailureDispositionV1::Terminal)
+        })?
         .ok_or_else(|| BackendDispatchError::terminal("workflow_provider_unavailable"))?;
     let executable = resolve_provider_executable(&plan.launch.executable)?;
     let workspace = state
@@ -3778,13 +3813,7 @@ async fn dispatch_authorized(
         "agent_spawn.preview" => {
             boxed_operation(|| preview_agent_spawn(state, &authority, &request.body))
                 .await
-                .map_err(|code| {
-                    if code == "agent_spawn_project_not_found" {
-                        BackendDispatchError::terminal(&code)
-                    } else {
-                        code.into()
-                    }
-                })
+                .map_err(agent_spawn_preview_failure)
         }
         "agent_spawn.apply" => {
             let body: agent_spawn_apply::AgentSpawnApplyBody =

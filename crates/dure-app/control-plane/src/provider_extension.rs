@@ -456,6 +456,18 @@ pub(crate) fn test_codex_provider_arguments(
         .arguments
 }
 
+/// A host where no Dure app has published provider integrations, as on a
+/// headless backend. Codex keeps its structured runtime.
+#[cfg(test)]
+pub(crate) fn test_unintegrated_provider_registry() -> AgentProviderRegistry {
+    provider_registry(
+        Arc::new(StaticProviderRuntimeIntegrationSource {
+            integrations: BTreeMap::new(),
+        }),
+        BTreeSet::from([ProviderIdV1::new("codex").unwrap()]),
+    )
+}
+
 #[cfg(test)]
 pub(crate) fn test_codex_structured_agent_provider_registry() -> AgentProviderRegistry {
     provider_registry(

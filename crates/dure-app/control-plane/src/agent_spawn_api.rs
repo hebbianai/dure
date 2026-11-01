@@ -19,6 +19,7 @@ use crate::agent_spawn_support::{random_nonce, store_error};
 use crate::project_catalog::ProjectProjection;
 
 const LOCAL_HMUX_RUNTIME_KIND: &str = "runtime.hmux";
+pub(crate) const PROVIDER_PREFLIGHT_FAILED: &str = "agent_spawn_provider_preflight_failed";
 const RUNTIME_REQUIRED_CAPABILITIES: [&str; 2] = ["provider-launch", "session-create"];
 
 #[derive(Clone, Debug, Deserialize)]
@@ -260,7 +261,10 @@ async fn preview_inner(
     );
     let event_id = OperationEventIdV1::new(format!("spawn-event-{nonce}"))
         .map_err(|_| "agent_spawn_plan_invalid".to_string())?;
-    match store
+    // The provider's typed failure names the refused check; the admission
+    // rejection the store reports carries only the static spawn code.
+    let mut provider_failure = None;
+    let appended = store
         .append_agent_spawn_plan_resolving_provider_defaults(
             draft,
             event_id,
@@ -299,17 +303,23 @@ async fn preview_inner(
                     Ok(None) => Err(DomainStoreErrorV1::AgentSpawnPlanAdmissionRejected {
                         code: "agent_spawn_provider_unavailable",
                     }),
-                    Err(_) => Err(DomainStoreErrorV1::AgentSpawnPlanAdmissionRejected {
-                        code: "agent_spawn_provider_preflight_failed",
-                    }),
+                    Err(error) => {
+                        provider_failure = Some(error.code);
+                        Err(DomainStoreErrorV1::AgentSpawnPlanAdmissionRejected {
+                            code: PROVIDER_PREFLIGHT_FAILED,
+                        })
+                    }
                 },
-                Err(_) => Err(DomainStoreErrorV1::AgentSpawnPlanAdmissionRejected {
-                    code: "agent_spawn_provider_preflight_failed",
-                }),
+                Err(error) => {
+                    provider_failure = Some(error.code);
+                    Err(DomainStoreErrorV1::AgentSpawnPlanAdmissionRejected {
+                        code: PROVIDER_PREFLIGHT_FAILED,
+                    })
+                }
             },
         )
-        .await
-    {
+        .await;
+    match appended {
         Ok(receipt) => Ok(receipt),
         Err(DomainStoreErrorV1::IdempotencyConflict { .. }) => {
             let existing = store
@@ -325,8 +335,22 @@ async fn preview_inner(
                 worktree_base_reconciliation,
             )
         }
-        Err(error) => Err(store_error(error)),
+        Err(error) => Err(match (error, provider_failure) {
+            (DomainStoreErrorV1::AgentSpawnPlanAdmissionRejected { code }, Some(failure)) => {
+                format!("{code}:{}", failure.as_str())
+            }
+            (error, _) => store_error(error),
+        }),
     }
+}
+
+/// The provider check named by a preview's `code:reason` preflight refusal.
+/// Callers that record only the code keep reading the part before `:`.
+pub(crate) fn provider_preflight_reason(error: &str) -> Option<&str> {
+    error
+        .strip_prefix(PROVIDER_PREFLIGHT_FAILED)?
+        .strip_prefix(':')
+        .filter(|reason| !reason.is_empty())
 }
 
 pub(crate) async fn status(
