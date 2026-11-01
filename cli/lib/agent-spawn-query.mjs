@@ -43,6 +43,9 @@ const STATES = [
   "manual_intervention_required",
 ];
 const PERMISSION_MODES = ["default", "auto_edit", "skip_permissions"];
+// First-run prompts a provider stops at before it reads anything, including a
+// prompt handed to its launch command.
+const STARTUP_GATES = ["workspace_trust"];
 const PERMISSION_OVERRIDES = [
   "require_approvals",
   "auto_edit",
@@ -550,18 +553,24 @@ function validStageEvidence(value) {
     const launchPromptKey = value.initial_prompt_accepted === undefined
       ? []
       : ["initial_prompt_accepted"];
+    const startupGateKey = value.startup_gate === undefined ? [] : ["startup_gate"];
     return (
       onlyKeys(value, [
         "stage",
         "session",
         ...launchKey,
         ...launchPromptKey,
+        ...startupGateKey,
       ]) &&
       validRuntimeSession(value.session) &&
       (value.launch_idempotency_key === undefined ||
         TOKEN.test(value.launch_idempotency_key)) &&
       (value.initial_prompt_accepted === undefined ||
-        typeof value.initial_prompt_accepted === "boolean")
+        typeof value.initial_prompt_accepted === "boolean") &&
+      (value.startup_gate === undefined || validStartupGate(value.startup_gate)) &&
+      // Behind a gate the provider has read nothing, so the launch prompt
+      // cannot have been accepted.
+      !(value.initial_prompt_accepted === true && value.startup_gate !== undefined)
     );
   }
   if (value.stage === "structured_launch") {
@@ -589,6 +598,14 @@ function validStageEvidence(value) {
     onlyKeys(value, ["stage", "session_id", "delivery_id"]) &&
     TOKEN.test(value.session_id) &&
     TOKEN.test(value.delivery_id)
+  );
+}
+
+function validStartupGate(value) {
+  return (
+    onlyKeys(value, ["kind", "launch_prompt_carried"]) &&
+    STARTUP_GATES.includes(value.kind) &&
+    typeof value.launch_prompt_carried === "boolean"
   );
 }
 
@@ -747,6 +764,8 @@ function stageEvidenceMatchesPlan(evidence, inputs, plan) {
       evidence.session.workspaceId === plan.workspaceId &&
       evidence.session.providerId === plan.request.providerId &&
       (evidence.initial_prompt_accepted !== true ||
+        plan.request.promptDigest !== null) &&
+      (evidence.startup_gate?.launch_prompt_carried !== true ||
         plan.request.promptDigest !== null)
     );
   }
@@ -1392,5 +1411,13 @@ export function formatAgentSpawnQuery(report) {
       ? `session\t${launch.sessionId}`
       : "interaction\tstructured_protocol",
   );
+  // A Run that stopped short says why: the gate the provider is stopped at
+  // and the failure the stage recorded, so nobody has to read the JSON.
+  const startupGate = receipt.completed.find((stage) => stage.stage === "runtime_launch")
+    ?.evidence.startup_gate;
+  if (startupGate) lines.push(`startup_gate\t${startupGate.kind}`);
+  if (receipt.recovery.error_code) lines.push(`error\t${receipt.recovery.error_code}`);
+  if (receipt.recovery.error_detail) lines.push(`detail\t${receipt.recovery.error_detail}`);
+  if (receipt.terminalCode) lines.push(`terminal\t${receipt.terminalCode}`);
   return lines.join("\n");
 }

@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,13 +14,14 @@ use dure_app::{
     AgentSpawnLaunchPlanV1, AgentSpawnModelSelectionV1, AgentSpawnPermissionModeV1,
     AgentSpawnPlanTokenV1, AgentSpawnRecoveryDirectiveV1, AgentSpawnStageDispositionV1,
     AgentSpawnStageEvidenceV1, AgentSpawnStageInputsV1, AgentSpawnStageV1,
-    AgentSpawnTerminalOutcomeV1, AgentSpawnWorktreePolicyV1, AgentTurnEffectReceiptV1,
-    AgentTurnEffectStateV1, AgentTurnIdV1, DomainStore, OperationEventIdV1, OperationIdV1,
-    ProviderIdV1, SessionBindingRecordV1, WorkflowPromptActivityObservationRequestV1,
-    WorkflowPromptActivityObserver, WorkflowPromptActivityStateV1, WorkflowPromptDeliverer,
-    WorkflowPromptDeliveryIntentV1, WorkflowPromptDeliveryRequestV1, WorkflowSessionGenerationV1,
-    WorkflowSessionLaunchReceiptV1, WorkflowSessionLaunchRequestV1,
-    agent_provider_launch_prompt_is_valid, structured_prompt_identity,
+    AgentSpawnStartupGateKindV1, AgentSpawnStartupGateV1, AgentSpawnTerminalOutcomeV1,
+    AgentSpawnWorktreePolicyV1, AgentTurnEffectReceiptV1, AgentTurnEffectStateV1, AgentTurnIdV1,
+    DomainStore, OperationEventIdV1, OperationIdV1, ProviderIdV1, SessionBindingRecordV1,
+    WorkflowPromptActivityObservationRequestV1, WorkflowPromptActivityObserver,
+    WorkflowPromptActivityStateV1, WorkflowPromptDeliverer, WorkflowPromptDeliveryIntentV1,
+    WorkflowPromptDeliveryRequestV1, WorkflowSessionGenerationV1, WorkflowSessionLaunchReceiptV1,
+    WorkflowSessionLaunchRequestV1, agent_provider_launch_prompt_is_valid,
+    structured_prompt_identity,
 };
 use dure_app_sqlite::SqliteDomainStore;
 use hmux_client::ProviderStateEnvironment;
@@ -61,12 +62,27 @@ pub(crate) struct AgentSpawnExecution<'a> {
 pub(crate) type ProviderStatePreparationFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ProviderStateEnvironment, String>> + Send + 'a>>;
 
+pub(crate) type ClaudeWorkspaceTrustFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<bool, String>> + Send + 'a>>;
+
 pub(crate) trait AgentSpawnProviderStatePreparer: Send + Sync {
     fn prepare<'a>(
         &'a self,
         provider_id: &'a ProviderIdV1,
         execution_profile: &'a AgentExecutionProfileV1,
     ) -> ProviderStatePreparationFuture<'a>;
+
+    /// Whether Claude already trusts `workspace` in the profile that
+    /// `execution_profile` selects. `Ok(false)` predicts Claude's folder-trust
+    /// prompt; an error means the decision could not be read and claims
+    /// nothing either way.
+    fn claude_workspace_trusted<'a>(
+        &'a self,
+        _execution_profile: &'a AgentExecutionProfileV1,
+        _workspace: &'a Path,
+    ) -> ClaudeWorkspaceTrustFuture<'a> {
+        Box::pin(async { Err("claude_trust_unavailable".to_string()) })
+    }
 }
 
 impl AgentSpawnProviderStatePreparer for ProviderCredentialProfileRegistry<SqliteDomainStore> {
@@ -81,6 +97,44 @@ impl AgentSpawnProviderStatePreparer for ProviderCredentialProfileRegistry<Sqlit
                 .map(|prepared| prepared.environment())
                 .map_err(|error| error.code().to_string())
         })
+    }
+
+    fn claude_workspace_trusted<'a>(
+        &'a self,
+        execution_profile: &'a AgentExecutionProfileV1,
+        workspace: &'a Path,
+    ) -> ClaudeWorkspaceTrustFuture<'a> {
+        Box::pin(ProviderCredentialProfileRegistry::claude_workspace_trusted(
+            self,
+            execution_profile,
+            workspace,
+        ))
+    }
+}
+
+/// The first-run prompt the provider will stop at before it reads any input,
+/// when the Hub can read that from provider state before launch. Claude Code
+/// shows its folder-trust prompt for a workspace its selected profile has not
+/// trusted and runs no hook until the person answers, so nothing downstream
+/// can report it; the Hub has to know up front. A trusted workspace or an
+/// unreadable decision predicts no gate: the Hub never claims one it cannot see.
+async fn startup_gate_before_launch(
+    preparer: &dyn AgentSpawnProviderStatePreparer,
+    receipt: &AgentSpawnJournalReceiptV1,
+    workspace_root: &str,
+) -> Option<AgentSpawnStartupGateKindV1> {
+    if receipt.plan.request.provider_id.as_str() != "claude" {
+        return None;
+    }
+    match preparer
+        .claude_workspace_trusted(
+            &receipt.plan.request.execution_profile,
+            Path::new(workspace_root),
+        )
+        .await
+    {
+        Ok(false) => Some(AgentSpawnStartupGateKindV1::WorkspaceTrust),
+        Ok(true) | Err(_) => None,
     }
 }
 
@@ -491,7 +545,7 @@ async fn execute_prepared_stage(
                         && agent_provider_launch_prompt_is_valid(prompt)
                 })
                 .cloned();
-            let initial_prompt_accepted = initial_prompt.is_some();
+            let launch_prompt_carried = initial_prompt.is_some();
             let launch = WorkflowSessionLaunchRequestV1 {
                 runtime_kind_id: runtime.runtime_kind_id.clone(),
                 launch_idempotency_key: format!(
@@ -527,6 +581,17 @@ async fn execute_prepared_stage(
                     &receipt.plan.request.execution_profile,
                 )
                 .await?;
+            // Behind a gate the provider reads nothing until the person
+            // answers, so a prompt the launch command carries is queued, not
+            // accepted; the receipt says so instead of claiming delivery.
+            let startup_gate =
+                startup_gate_before_launch(*provider_state_preparer, &receipt, workspace_root)
+                    .await
+                    .map(|kind| AgentSpawnStartupGateV1 {
+                        kind,
+                        launch_prompt_carried,
+                    });
+            let initial_prompt_accepted = launch_prompt_carried && startup_gate.is_none();
             match launcher
                 .launch_with_provider_state(launch.clone(), provider_state_environment, None)
                 .await
@@ -536,6 +601,16 @@ async fn execute_prepared_stage(
                         launch_idempotency_key,
                         session,
                     } = launch_receipt;
+                    if let Some(gate) = &startup_gate {
+                        // The Host owns what the agent is doing. Without this
+                        // report it shows a merely waiting agent while the
+                        // provider sits on a question only a person can
+                        // answer. A Host that cannot take the report leaves
+                        // the spawn receipt as the only evidence.
+                        let _ = launcher
+                            .report_startup_gate(session.clone(), gate.kind)
+                            .await;
+                    }
                     match persist_native_runtime_selection(store, &receipt, &session).await {
                         Ok(()) => {
                             append(
@@ -547,6 +622,7 @@ async fn execute_prepared_stage(
                                         session,
                                         launch_idempotency_key: Some(launch_idempotency_key),
                                         initial_prompt_accepted,
+                                        startup_gate,
                                     },
                                 },
                             )
@@ -601,6 +677,7 @@ async fn execute_prepared_stage(
             let AgentSpawnLaunchExecution::NativeCli {
                 prompt_deliverer,
                 prompt_activity_observer,
+                provider_state_preparer,
                 ..
             } = &execution.launch
             else {
@@ -612,6 +689,36 @@ async fn execute_prepared_stage(
                 .ok_or_else(|| "agent_spawn_prompt_mismatch".to_string())?;
             let session = runtime_session(&receipt)?;
             let session_id = session.session_id.clone();
+            if let Some(gate) = runtime_launch_startup_gate(&receipt) {
+                // The provider has read nothing yet: it is stopped at a
+                // first-run question only a person can answer, and typing the
+                // prompt now would answer that dialog instead. A prompt the
+                // launch command carried is queued inside the provider and
+                // must never be typed again; one that was not carried can be
+                // typed once the gate is answered, so that failure is retried.
+                let gate_answered = !gate.launch_prompt_carried
+                    && match workspace_root {
+                        Some(root) => {
+                            startup_gate_answered(*provider_state_preparer, &receipt, root).await
+                        }
+                        None => false,
+                    };
+                if !gate_answered {
+                    let (error_code, error_detail) = startup_gate_prompt_failure(&gate);
+                    return append(
+                        store,
+                        &receipt,
+                        AgentSpawnJournalEventBodyV1::StageFailed {
+                            stage: AgentSpawnStageV1::PromptDelivery,
+                            attempt,
+                            error_code,
+                            error_detail: Some(error_detail),
+                            may_have_written: Some(gate.launch_prompt_carried),
+                        },
+                    )
+                    .await;
+                }
+            }
             if runtime_launch_accepted_initial_prompt(&receipt) {
                 return append(
                     store,
@@ -1021,6 +1128,58 @@ fn runtime_session(
             _ => None,
         })
         .ok_or_else(|| "agent_spawn_runtime_receipt_missing".to_string())
+}
+
+fn runtime_launch_startup_gate(
+    receipt: &AgentSpawnJournalReceiptV1,
+) -> Option<AgentSpawnStartupGateV1> {
+    receipt
+        .completed
+        .iter()
+        .find_map(|stage| match &stage.evidence {
+            AgentSpawnStageEvidenceV1::RuntimeLaunch { startup_gate, .. } => startup_gate.clone(),
+            _ => None,
+        })
+}
+
+/// Whether the gate recorded at launch has since been answered. Only a
+/// positive reading counts: an unreadable decision keeps the prompt out of
+/// the dialog.
+async fn startup_gate_answered(
+    preparer: &dyn AgentSpawnProviderStatePreparer,
+    receipt: &AgentSpawnJournalReceiptV1,
+    workspace_root: &str,
+) -> bool {
+    receipt.plan.request.provider_id.as_str() == "claude"
+        && matches!(
+            preparer
+                .claude_workspace_trusted(
+                    &receipt.plan.request.execution_profile,
+                    Path::new(workspace_root),
+                )
+                .await,
+            Ok(true)
+        )
+}
+
+/// The failure a prompt delivery records while the provider is stopped at its
+/// gate: the code names the gate, the detail says what the person has to do.
+fn startup_gate_prompt_failure(gate: &AgentSpawnStartupGateV1) -> (String, String) {
+    match gate.kind {
+        AgentSpawnStartupGateKindV1::WorkspaceTrust => (
+            "agent_spawn_prompt_behind_workspace_trust".into(),
+            if gate.launch_prompt_carried {
+                "Claude Code is asking whether to trust this folder before it reads anything; \
+                 the prompt rode the launch command and Claude submits it once the folder is \
+                 trusted in the session, so it must not be sent again"
+            } else {
+                "Claude Code is asking whether to trust this folder before it reads anything; \
+                 typing the prompt now would answer that dialog instead, so trust the folder \
+                 in the session and retry"
+            }
+            .into(),
+        ),
+    }
 }
 
 fn runtime_launch_accepted_initial_prompt(receipt: &AgentSpawnJournalReceiptV1) -> bool {

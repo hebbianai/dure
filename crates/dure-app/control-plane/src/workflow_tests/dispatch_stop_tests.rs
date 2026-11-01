@@ -470,6 +470,7 @@ async fn seed_dispatch_stop_with_runtime(
                 session: spawn_session.clone(),
                 launch_idempotency_key: None,
                 initial_prompt_accepted: false,
+                startup_gate: None,
             },
         ),
         _ => unreachable!("runtime fixture and launch authority must agree"),

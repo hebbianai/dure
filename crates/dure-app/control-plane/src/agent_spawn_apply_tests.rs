@@ -102,6 +102,35 @@ impl AgentSpawnProviderStatePreparer for FixtureProviderStatePreparer {
 
 static FIXTURE_PROVIDER_STATE_PREPARER: FixtureProviderStatePreparer = FixtureProviderStatePreparer;
 
+/// A Claude profile whose trust decision for the workspace is already known.
+struct ClaudeTrustPreparer {
+    trusted: bool,
+}
+
+impl AgentSpawnProviderStatePreparer for ClaudeTrustPreparer {
+    fn prepare<'a>(
+        &'a self,
+        _provider_id: &'a ProviderIdV1,
+        _execution_profile: &'a AgentExecutionProfileV1,
+    ) -> ProviderStatePreparationFuture<'a> {
+        Box::pin(async { Ok(provider_default_state_environment()) })
+    }
+
+    fn claude_workspace_trusted<'a>(
+        &'a self,
+        _execution_profile: &'a AgentExecutionProfileV1,
+        _workspace: &'a Path,
+    ) -> ClaudeWorkspaceTrustFuture<'a> {
+        let trusted = self.trusted;
+        Box::pin(async move { Ok(trusted) })
+    }
+}
+
+static UNTRUSTED_CLAUDE_WORKSPACE_PREPARER: ClaudeTrustPreparer =
+    ClaudeTrustPreparer { trusted: false };
+static TRUSTED_CLAUDE_WORKSPACE_PREPARER: ClaudeTrustPreparer =
+    ClaudeTrustPreparer { trusted: true };
+
 #[derive(Default)]
 struct RecordingProviderStatePreparer {
     calls: AtomicUsize,
@@ -621,9 +650,22 @@ struct RecordingLauncher {
     setup_commands: Arc<Mutex<Vec<Option<String>>>>,
     provider_state_environments: Arc<Mutex<Vec<ProviderStateEnvironment>>>,
     provider_conversations: Arc<Mutex<Vec<Option<String>>>>,
+    startup_gates: Arc<Mutex<Vec<(String, AgentSpawnStartupGateKindV1)>>>,
 }
 
 impl crate::workflow_launch::CredentialAwareWorkflowSessionLauncher for RecordingLauncher {
+    fn report_startup_gate(
+        &self,
+        session: WorkflowSessionGenerationV1,
+        gate: AgentSpawnStartupGateKindV1,
+    ) -> crate::workflow_launch::StartupGateReportFuture<'_> {
+        self.startup_gates
+            .lock()
+            .unwrap()
+            .push((session.session_id, gate));
+        Box::pin(async { Ok(()) })
+    }
+
     fn launch_with_provider_state(
         &self,
         request: WorkflowSessionLaunchRequestV1,
@@ -1179,6 +1221,29 @@ async fn native_exact_resume_reaches_the_existing_launcher_and_durable_binding()
             .as_deref(),
         Some("conversation-history")
     );
+}
+
+async fn planned_native_claude_prompt_spawn(
+    store: &SqliteDomainStore,
+) -> AgentSpawnJournalReceiptV1 {
+    register_project(store).await;
+    let providers = crate::provider_extension::test_local_agent_provider_registry();
+    let mut request = request();
+    request.idempotency_key = "spawn-native-claude-prompt".into();
+    request.provider_id = ProviderIdV1::new("claude").unwrap();
+    request.agent_name = "claude-1".into();
+    request.interaction_preference = Some(AgentSpawnInteractionPreferenceV1::NativeCli);
+    agent_spawn_api::preview(
+        store,
+        &providers,
+        "dure-local",
+        "generation-1",
+        project(),
+        request,
+        1,
+    )
+    .await
+    .unwrap()
 }
 
 fn apply_body(receipt: &AgentSpawnJournalReceiptV1, prompt: &str) -> AgentSpawnApplyBody {
@@ -1909,4 +1974,202 @@ async fn prompt_failure_before_any_write_can_retry_the_persisted_stage() {
     assert_eq!(launch_calls.load(Ordering::SeqCst), 1);
     assert_eq!(prompt_calls.load(Ordering::SeqCst), 2);
     assert_eq!(provider_state_preparer.calls.load(Ordering::SeqCst), 1);
+}
+
+/// Claude Code stops at its folder-trust prompt before it reads anything,
+/// including the prompt handed to its launch command, and runs no hook until
+/// the person answers (observed on Claude Code 2.1.316). The Hub reads the
+/// trust decision from the selected profile, so it tells the Host the agent
+/// needs input instead of leaving `dure ls` to show a merely waiting agent.
+#[tokio::test]
+async fn claude_spawn_into_an_untrusted_folder_reports_the_trust_prompt_to_the_host() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let planned = planned_native_claude_prompt_spawn(&store).await;
+    let body = apply_body(&planned, "private prompt");
+    let launcher = RecordingLauncher::default();
+    let prompt_deliverer = FixturePromptDeliverer {
+        calls: Arc::new(AtomicUsize::new(0)),
+        uncertain: false,
+    };
+
+    let applied = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &UNTRUSTED_CLAUDE_WORKSPACE_PREPARER,
+            &FixturePromptActivityObserver::observed(),
+            dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+        )),
+    )
+    .await
+    .unwrap();
+
+    let (session_id, _) = native_launch(&applied.plan).unwrap();
+    assert_eq!(
+        *launcher.startup_gates.lock().unwrap(),
+        vec![(
+            session_id.to_string(),
+            AgentSpawnStartupGateKindV1::WorkspaceTrust
+        )]
+    );
+    assert_eq!(launcher.calls.load(Ordering::SeqCst), 1);
+
+    // The prompt rode the launch command, so Claude submits it once the folder
+    // is trusted; until then nothing proves it was read, and typing it again
+    // would answer the dialog. The receipt says exactly that.
+    assert_eq!(
+        *launcher.initial_prompts.lock().unwrap(),
+        vec![Some("private prompt".to_string())]
+    );
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+    assert!(applied.completed.iter().any(|stage| matches!(
+        &stage.evidence,
+        AgentSpawnStageEvidenceV1::RuntimeLaunch {
+            initial_prompt_accepted: false,
+            startup_gate: Some(AgentSpawnStartupGateV1 {
+                kind: AgentSpawnStartupGateKindV1::WorkspaceTrust,
+                launch_prompt_carried: true,
+            }),
+            ..
+        }
+    )));
+    assert_eq!(
+        applied.state,
+        AgentSpawnJournalStateV1::PromptDeliveryUncertain
+    );
+    let AgentSpawnRecoveryDirectiveV1::DoNotReplayPrompt {
+        error_code,
+        error_detail,
+        ..
+    } = &applied.recovery
+    else {
+        panic!("a prompt queued behind the trust gate must never be replayed, got {applied:?}");
+    };
+    assert_eq!(
+        error_code.as_deref(),
+        Some("agent_spawn_prompt_behind_workspace_trust")
+    );
+    assert!(
+        error_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("trust")),
+        "the failure must say what the person has to do, got {error_detail:?}"
+    );
+    assert!(
+        !serde_json::to_string(&applied)
+            .unwrap()
+            .contains("private prompt")
+    );
+
+    // A retry sees the same receipt: the prompt is neither relaunched nor typed.
+    let mut retry = apply_body(&planned, "private prompt");
+    retry.expected_last_sequence = applied.last_sequence;
+    let replayed = apply(
+        &store,
+        authorize(&store, "dure-local", &retry).await.unwrap(),
+        &retry,
+        Some(execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &UNTRUSTED_CLAUDE_WORKSPACE_PREPARER,
+            &FixturePromptActivityObserver::observed(),
+            dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+        )),
+    )
+    .await
+    .unwrap();
+    assert_eq!(replayed, applied);
+    assert_eq!(launcher.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+}
+
+/// When the prompt cannot ride the launch command it would have to be typed,
+/// and typing into the trust prompt answers that dialog instead. Nothing is
+/// written, so the delivery can be retried once the folder is trusted.
+#[tokio::test]
+async fn a_prompt_that_cannot_ride_the_launch_is_not_typed_into_the_trust_prompt() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let planned = planned_native_claude_prompt_spawn(&store).await;
+    let body = apply_body(&planned, "private prompt");
+    let launcher = RecordingLauncher::default();
+    let prompt_deliverer = FixturePromptDeliverer {
+        calls: Arc::new(AtomicUsize::new(0)),
+        uncertain: false,
+    };
+
+    let blocked = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &UNTRUSTED_CLAUDE_WORKSPACE_PREPARER,
+            &FixturePromptActivityObserver::observed(),
+            dure_app::AgentProviderPromptTargetV1::ProcessObserved,
+        )),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(*launcher.initial_prompts.lock().unwrap(), vec![None]);
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(blocked.state, AgentSpawnJournalStateV1::RetryRequired);
+    let AgentSpawnRecoveryDirectiveV1::RetryRequired { error_code, .. } = &blocked.recovery else {
+        panic!("an untyped prompt stays retryable, got {blocked:?}");
+    };
+    assert_eq!(error_code, "agent_spawn_prompt_behind_workspace_trust");
+    assert!(blocked.completed.iter().any(|stage| matches!(
+        &stage.evidence,
+        AgentSpawnStageEvidenceV1::RuntimeLaunch {
+            initial_prompt_accepted: false,
+            startup_gate: Some(AgentSpawnStartupGateV1 {
+                launch_prompt_carried: false,
+                ..
+            }),
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn claude_spawn_into_a_trusted_folder_reports_no_startup_gate() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let planned = planned_native_claude_prompt_spawn(&store).await;
+    let body = apply_body(&planned, "private prompt");
+    let launcher = RecordingLauncher::default();
+    let prompt_deliverer = FixturePromptDeliverer {
+        calls: Arc::new(AtomicUsize::new(0)),
+        uncertain: false,
+    };
+
+    let succeeded = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &TRUSTED_CLAUDE_WORKSPACE_PREPARER,
+            &FixturePromptActivityObserver::observed(),
+            dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+        )),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(succeeded.state, AgentSpawnJournalStateV1::Succeeded);
+    assert!(launcher.startup_gates.lock().unwrap().is_empty());
 }

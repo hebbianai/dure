@@ -282,3 +282,25 @@ export function succeededNativeReceipt({
   value.updatedAtMs += 7;
   return value;
 }
+
+// A Claude Run into a folder its account has not trusted: the launch command
+// carried the prompt, Claude stopped at its folder-trust prompt, and the
+// receipt says the delivery is uncertain instead of done.
+export function trustGatedNativeReceipt() {
+  const value = succeededNativeReceipt();
+  value.completed[1].evidence.startup_gate = {
+    kind: "workspace_trust",
+    launch_prompt_carried: true,
+  };
+  const prompt = value.completed.pop();
+  value.state = "prompt_delivery_uncertain";
+  value.lastSequence = 7;
+  value.recovery = {
+    kind: "do_not_replay_prompt",
+    attempt: 1,
+    inputs: prompt.inputs,
+    error_code: "agent_spawn_prompt_behind_workspace_trust",
+    error_detail: "Claude Code is asking whether to trust this folder before it reads anything",
+  };
+  return value;
+}
