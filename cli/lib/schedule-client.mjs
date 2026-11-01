@@ -456,6 +456,56 @@ export async function collectScheduleCommand(options = {}) {
   return report;
 }
 
+/**
+ * A put that keeps every field of `schedule` except the given changes. The
+ * project, provider, permission, credential and workspace policy stay as
+ * recorded; `set` cannot change them.
+ */
+function scheduleUpdateCommand(schedule, changes = {}) {
+  const template = schedule.runTemplate;
+  return {
+    action: "put",
+    scheduleId: schedule.scheduleId,
+    name: changes.name ?? schedule.name,
+    enabled: changes.enabled ?? schedule.enabled,
+    expression: changes.expression ?? schedule.expression,
+    timezone: changes.timezone ?? schedule.timezone,
+    projectId: template.projectId,
+    providerId: template.providerId,
+    prompt: changes.prompt ?? template.prompt,
+    permissionMode: template.permissionMode,
+    model: changes.model ?? template.model,
+    effort: changes.effort ?? template.effort,
+    executionProfile: template.executionProfile,
+    worktree: template.worktree,
+  };
+}
+
+/**
+ * Changes an existing schedule in place. The backend owns the revision check:
+ * a put against a stale `expectedRevision` is refused, and a retry with the
+ * same idempotency key replays the accepted revision.
+ */
+export async function collectScheduleUpdate({
+  changes,
+  expectedRevision,
+  idempotencyKey,
+  scheduleId,
+  ...request
+}) {
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+    return errorReport("put", "backend_schedule_request_invalid", Date.now(), 0);
+  }
+  const current = await collectScheduleCommand({ ...request, action: "show", scheduleId });
+  if (current.kind === "dure.schedules.error") return current;
+  return collectScheduleCommand({
+    ...request,
+    ...scheduleUpdateCommand(current.schedule, changes),
+    expectedRevision,
+    idempotencyKey,
+  });
+}
+
 export function scheduleCommandExitCode(report) {
   return report.kind === "dure.schedules.error" ? 2 : 0;
 }

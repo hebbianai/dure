@@ -14,7 +14,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { collectScheduleCommand, formatScheduleCommand } from "../cli/lib/schedule-client.mjs";
+import {
+  collectScheduleCommand,
+  collectScheduleUpdate,
+  formatScheduleCommand,
+} from "../cli/lib/schedule-client.mjs";
 
 const cliPath = fileURLToPath(new URL("../cli/dure.mjs", import.meta.url));
 const roots = [];
@@ -450,6 +454,133 @@ describe("dure schedule", () => {
     expect(result.stderr).toContain("dure schedule");
     expect(existsSync(join(fixture.root, "automations.json"))).toBe(false);
     expect(existsSync(join(fixture.root, "automation-runs.json"))).toBe(false);
+  });
+});
+
+describe("dure schedule set", () => {
+  const recorded = {
+    schemaVersion: 1,
+    scheduleId: "daily-review",
+    revision: 4,
+    name: "Daily review",
+    enabled: true,
+    expression: "0 9 * * 1-5",
+    timezone: "Asia/Seoul",
+    runTemplate: {
+      projectId: "operations",
+      providerId: "claude",
+      prompt: "Review recent changes.",
+      permissionMode: "skip_permissions",
+      model: "claude-opus-5-5",
+      effort: "high",
+      executionProfile: { kind: "credential_reference", reference_id: "work", credential_generation: "g2" },
+      worktree: { kind: "project_root" },
+    },
+    createdAtMs: 1_700_000_000_000,
+    updatedAtMs: 1_700_000_000_000,
+  };
+
+  function backendStub(requests) {
+    return async (_profile, request) => {
+      requests.push(request);
+      const schedule = request.operation === "schedule.put"
+        ? { ...recorded, revision: request.body.expectedRevision + 1, name: request.body.name,
+          enabled: request.body.enabled, expression: request.body.expression, timezone: request.body.timezone,
+          runTemplate: request.body.runTemplate }
+        : recorded;
+      return { backend: { id: "local" }, result: { schemaVersion: 1, schedule } };
+    };
+  }
+
+  const local = { profile: { id: "local", transport: { kind: "local" } }, transportOptions: {} };
+
+  it("pauses a schedule in place and keeps every other recorded field", async () => {
+    const requests = [];
+    const report = await collectScheduleUpdate({
+      scheduleId: "daily-review", expectedRevision: 4, idempotencyKey: "pause-1",
+      changes: { enabled: false }, backend: local, requestBackend: backendStub(requests),
+    });
+
+    expect(requests.map((request) => request.operation)).toEqual(["schedule.show", "schedule.put"]);
+    expect(requests[1]).toMatchObject({
+      requiredCapabilities: ["schedule.put", "schedule.worktree_project_root_v1"],
+      body: {
+        scheduleId: "daily-review", expectedRevision: 4, idempotencyKey: "pause-1",
+        name: "Daily review", enabled: false, expression: "0 9 * * 1-5", timezone: "Asia/Seoul",
+      },
+    });
+    expect(requests[1].body.runTemplate).toEqual(recorded.runTemplate);
+    expect(report).toMatchObject({ kind: "dure.schedules.put", schedule: { revision: 5, enabled: false } });
+    expect(formatScheduleCommand(report)).toContain("daily-review\t5\tdisabled");
+  });
+
+  it("puts against the caller's revision so the backend refuses a stale change", async () => {
+    const requests = [];
+    await collectScheduleUpdate({
+      scheduleId: "daily-review", expectedRevision: 3, idempotencyKey: "edit-1",
+      changes: { expression: "0 10 * * 1-5", prompt: "Review and summarize." },
+      backend: local, requestBackend: backendStub(requests),
+    });
+
+    expect(requests[1].body).toMatchObject({
+      expectedRevision: 3, enabled: true, expression: "0 10 * * 1-5",
+      runTemplate: { prompt: "Review and summarize.", model: "claude-opus-5-5" },
+    });
+  });
+
+  it("does not write when the current schedule cannot be read", async () => {
+    const requests = [];
+    const report = await collectScheduleUpdate({
+      scheduleId: "daily-review", expectedRevision: 4, idempotencyKey: "pause-1",
+      changes: { enabled: false }, backend: local,
+      requestBackend: async (profile, request) => {
+        requests.push(request);
+        return { backend: { id: "local" }, result: { schemaVersion: 1 } };
+      },
+    });
+
+    expect(report.kind).toBe("dure.schedules.error");
+    expect(requests.map((request) => request.operation)).toEqual(["schedule.show"]);
+  });
+
+  it("routes set through show and a revision-checked put on the selected backend", () => {
+    const fixture = installRemoteFixture();
+    const result = spawnSync(process.execPath, [
+      cliPath, "schedule", "set", "morning-triage", "--disabled", "--expected-revision", "1",
+      "--idempotency-key", "pause-fixture", "--backend", "remote", "--json",
+    ], {
+      encoding: "utf8",
+      env: { ...process.env, DURE_APP_CHANNEL: "stable", DURE_HOME: fixture.root, DURE_SCHEDULE_REQUEST_LOG: fixture.requestLog, PATH: `${fixture.bin}:${process.env.PATH}` },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).schedule).toMatchObject({ scheduleId: "morning-triage", enabled: false });
+    const requests = readFileSync(fixture.requestLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(requests.map((request) => request.operation)).toEqual(["schedule.show", "schedule.put"]);
+    expect(requests[1].body).toEqual({
+      schemaVersion: 1, scheduleId: "morning-triage", expectedRevision: 1, idempotencyKey: "pause-fixture",
+      name: "Morning triage", enabled: false, expression: "0 9 * * 1-5", timezone: "Asia/Seoul",
+      runTemplate: { projectId: "dure", providerId: "codex", prompt: "triage ready work", permissionMode: "default" },
+    });
+  });
+
+  it.each([
+    ["no change", ["--expected-revision", "1"]],
+    ["no revision", ["--disabled"]],
+    ["both states", ["--enabled", "--disabled", "--expected-revision", "1"]],
+    ["a fixed project", ["--disabled", "--project", "other", "--expected-revision", "1"]],
+    ["a fixed provider", ["--disabled", "--provider", "codex", "--expected-revision", "1"]],
+    ["a positional prompt", ["--expected-revision", "1", "--", "new prompt"]],
+  ])("refuses %s before contacting the backend", (_label, extra) => {
+    const fixture = installRemoteFixture();
+    const result = spawnSync(process.execPath, [cliPath, "schedule", "set", "morning-triage", ...extra, "--backend", "remote"], {
+      encoding: "utf8",
+      env: { ...process.env, DURE_APP_CHANNEL: "stable", DURE_HOME: fixture.root, DURE_SCHEDULE_REQUEST_LOG: fixture.requestLog, PATH: `${fixture.bin}:${process.env.PATH}` },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("dure schedule set <id>");
+    expect(existsSync(fixture.requestLog)).toBe(false);
   });
 });
 

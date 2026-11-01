@@ -10,6 +10,9 @@ Usage:
                        [--expected-revision N] [--disabled] [--idempotency-key KEY] <prompt>
   dure schedule list
   dure schedule show <id>
+  dure schedule set <id> --expected-revision N [--enabled | --disabled] [--cron "M H D M W"]
+                    [--timezone IANA] [--name NAME] [--prompt TEXT] [--model MODEL]
+                    [--effort EFFORT] [--idempotency-key KEY]
   dure schedule delete <id> --expected-revision N [--idempotency-key KEY]
   dure schedule run-once <id> --expected-revision N [--idempotency-key KEY]
   dure schedule runs [id]
@@ -19,6 +22,9 @@ All commands support --backend ID and --json. Runs use an isolated Git worktree 
 --no-worktree runs in the registered project root, including non-Git directories.
 It requires backend capability schedule.worktree_project_root_v1; shared files are not isolated.
 The local or SSH control plane must be running; the IDE can be closed.
+Set changes only the given fields in place and keeps the schedule's revision history:
+--disabled pauses future runs, --enabled resumes them. Read N from show.
+Project, provider, permissions, credentials and workspace policy are kept as recorded.
 Run-once queues a test without changing the schedule. Inspect reads the retained report.
 Scheduled Claude requires prior trust of the registered project folder in the selected account.
 Review that folder and complete Claude's interactive startup before scheduling; bypass approvals does not grant folder trust.
@@ -36,6 +42,10 @@ export async function runScheduleCli(sub, opts, { backendProfileQueryContext, ba
       : sub === "runs"
         ? "occurrences"
         : sub === "run-once" ? "run_once" : sub;
+  if (action === "set") {
+    await runScheduleSet(opts, { backendProfileQueryContext, fail });
+    return;
+  }
   const explicitScheduleId = action === "put" ? opts.id : opts.rest[1];
   const scheduleId =
     action === "put"
@@ -74,14 +84,8 @@ export async function runScheduleCli(sub, opts, { backendProfileQueryContext, ba
     ? opts.idempotencyKey ||
       `schedule-${action}-${randomUUID().replaceAll("-", "").slice(0, 12)}`
     : undefined;
-  if (action !== "inspect" && idempotencyKey && !opts.idempotencyKey) {
-    process.stderr.write(`Retry key: ${idempotencyKey}\n`);
-  }
-  const {
-    collectScheduleCommand,
-    formatScheduleCommand,
-    scheduleCommandExitCode,
-  } = await import("./schedule-client.mjs");
+  if (action !== "inspect") announceRetryKey(idempotencyKey, opts);
+  const { collectScheduleCommand } = await import("./schedule-client.mjs");
   const backend = await backendProfileQueryContext(opts);
   const report = await collectScheduleCommand({
     action,
@@ -115,9 +119,73 @@ export async function runScheduleCli(sub, opts, { backendProfileQueryContext, ba
       kind: "credential_reference", reference_id: opts.credentialReference, credential_generation: opts.credentialGeneration,
     } } : {}),
     backend,
-    deadlineMs:
-      opts.deadlineMs === undefined ? undefined : Number(opts.deadlineMs),
+    deadlineMs: deadlineOption(opts),
   });
+  await writeScheduleReport(report, opts);
+}
+
+/** `set` changes the named fields of the current revision; other create options are refused. */
+async function runScheduleSet(opts, { backendProfileQueryContext, fail }) {
+  const scheduleId = opts.rest[1];
+  const expectedRevision =
+    opts.expectedRevision === undefined ? undefined : Number(opts.expectedRevision);
+  const changes = {
+    ...(opts.enabled ? { enabled: true } : {}),
+    ...(opts.disabled ? { enabled: false } : {}),
+    ...(opts.cron === undefined ? {} : { expression: opts.cron }),
+    ...(opts.timezone === undefined ? {} : { timezone: opts.timezone }),
+    ...(opts.nameSpecified ? { name: opts.name } : {}),
+    ...(opts.prompt ? { prompt: opts.prompt } : {}),
+    ...(opts.model === undefined ? {} : { model: opts.model }),
+    ...(opts.effort === undefined ? {} : { effort: opts.effort }),
+  };
+  const fixedFieldOption =
+    opts.id !== undefined ||
+    opts.projectSpecified ||
+    opts.pathSpecified ||
+    opts.provider !== undefined ||
+    opts.worktreeSpecified ||
+    Boolean(opts.baseCommit || opts.branch || opts.setupCommand) ||
+    Boolean(opts.credentialReference || opts.credentialGeneration) ||
+    Boolean(opts.skipPermissions);
+  if (
+    opts.rest.length !== 2 ||
+    !scheduleId ||
+    !Number.isSafeInteger(expectedRevision) ||
+    expectedRevision < 1 ||
+    (opts.enabled && opts.disabled) ||
+    fixedFieldOption ||
+    Object.keys(changes).length === 0
+  ) {
+    fail(SCHEDULE_HELP);
+  }
+  const idempotencyKey = opts.idempotencyKey ||
+    `schedule-set-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  announceRetryKey(idempotencyKey, opts);
+  const { collectScheduleUpdate } = await import("./schedule-client.mjs");
+  const report = await collectScheduleUpdate({
+    scheduleId,
+    expectedRevision,
+    idempotencyKey,
+    changes,
+    backend: await backendProfileQueryContext(opts),
+    deadlineMs: deadlineOption(opts),
+  });
+  await writeScheduleReport(report, opts);
+}
+
+function announceRetryKey(idempotencyKey, opts) {
+  if (idempotencyKey && !opts.idempotencyKey) {
+    process.stderr.write(`Retry key: ${idempotencyKey}\n`);
+  }
+}
+
+function deadlineOption(opts) {
+  return opts.deadlineMs === undefined ? undefined : Number(opts.deadlineMs);
+}
+
+async function writeScheduleReport(report, opts) {
+  const { formatScheduleCommand, scheduleCommandExitCode } = await import("./schedule-client.mjs");
   process.stdout.write(
     `${opts.json ? JSON.stringify(report) : formatScheduleCommand(report)}\n`,
   );

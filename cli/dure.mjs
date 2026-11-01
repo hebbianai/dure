@@ -3739,8 +3739,9 @@ Usage:
   dure schedule create --cron "M H D M W" [--timezone IANA] <prompt>
                                       Run durable schedules on the selected backend
                                       Project path defaults to cwd; same contract for local and SSH
-  dure schedule <list|show|delete|runs> ...
-                                      Inspect schedules, delete with a revision check, or read run history
+  dure schedule <list|show|set|delete|runs> ...
+                                      Inspect schedules, pause, resume, edit or delete them with a
+                                      revision check, or read run history
   dure environment <recipes|create|list|suspend|resume|destroy> ...
                                       Manage per-worktree VM environments (Beta)
   dure wait <name> [--timeout S] [--json]   Observe the next Host-reported response end

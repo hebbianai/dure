@@ -37,6 +37,8 @@ dure schedule runs daily-review
 
 作成すると、指定タイムゾーンの平日 09:00 の実行が有効になります。保存だけして定期実行を有効にしない場合は `--disabled` を追加します。スケジュール実行は独立した Git worktree を使います。返された実行キーで `dure schedule inspect` を呼ぶと、保存された報告を読めます。
 
+履歴を失わずに後で一時停止するには、`dure schedule show` が示すリビジョンで `dure schedule set daily-review --disabled --expected-revision N` を実行します。`--enabled` で再開します。同じコマンドで `--cron`、`--timezone`、`--name`、`--prompt` も変更できます。
+
 実行サービスとマシンが利用可能である必要があります。アプリ画面を閉じることとサービスを止めることは異なり、スリープ中や電源が切れたマシンでは通常どおり実行できません。
 
 ## リモートバックエンドを選ぶ

@@ -307,9 +307,17 @@ dure schedule create --cron "0 9 * * 1-5" --timezone Asia/Seoul \
 dure schedule list --backend devbox --json
 dure schedule show <schedule-id> --backend devbox --json
 dure schedule runs [schedule-id] --backend devbox --json
+dure schedule set <schedule-id> --disabled --expected-revision <revision> \
+  --idempotency-key <stable-key> --backend devbox --json
 dure schedule delete <schedule-id> --expected-revision <revision> \
   --idempotency-key <stable-key> --backend devbox --json
 ```
+
+To pause a schedule, use `schedule set --disabled`, and resume it with
+`--enabled`; do not delete and recreate it. `set` can also change `--cron`,
+`--timezone`, `--name`, `--prompt`, `--model` and `--effort`. Every other field
+is kept, and the schedule keeps its ID and revision history. Read the revision
+from `schedule show`. The backend refuses a stale revision.
 
 With no `--project` or `--path`, the backend resolves the current directory.
 Schedules use an isolated Git worktree by default. For operational tasks, pass
