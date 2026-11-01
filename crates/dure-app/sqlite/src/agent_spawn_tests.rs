@@ -192,6 +192,7 @@ fn successful_events(plan: &AgentSpawnPlanV1) -> Vec<AgentSpawnJournalEventV1> {
                         terminal_epoch: "terminal-epoch-1".into(),
                     },
                     initial_prompt_accepted: false,
+                    startup_gate: None,
                 },
             },
         ),

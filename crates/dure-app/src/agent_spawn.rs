@@ -694,6 +694,18 @@ pub enum AgentSpawnStartupGateKindV1 {
     WorkspaceTrust,
 }
 
+/// A first-run prompt the launched provider is stopped at. Behind it the
+/// provider has read nothing, so the launch prompt is never `accepted`; a
+/// carried prompt is queued inside the provider and submitted only once the
+/// person answers, which is why it must never be typed a second time.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct AgentSpawnStartupGateV1 {
+    pub kind: AgentSpawnStartupGateKindV1,
+    /// The launch command carried the prompt as an argument.
+    pub launch_prompt_carried: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSpawnStageDispositionV1 {
@@ -739,6 +751,9 @@ pub enum AgentSpawnStageEvidenceV1 {
         launch_idempotency_key: Option<String>,
         #[serde(default, skip_serializing_if = "is_false")]
         initial_prompt_accepted: bool,
+        /// The provider stopped at a first-run prompt before reading input.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        startup_gate: Option<AgentSpawnStartupGateV1>,
     },
     PromptDelivery {
         session_id: String,
@@ -1568,6 +1583,7 @@ fn validate_stage_evidence(
             session,
             launch_idempotency_key,
             initial_prompt_accepted,
+            startup_gate,
         } => {
             session
                 .validate_for_launch_scope(plan.workspace_id.as_str(), &plan.request.provider_id)
@@ -1590,7 +1606,15 @@ fn validate_stage_evidence(
                 }
                 AgentSpawnLaunchPlanV1::StructuredProtocol => false,
             };
+            // Behind a gate the provider has read nothing, so the launch
+            // prompt cannot have been accepted; a prompt the launch carried
+            // still has to exist in the plan.
+            let gate_consistent = startup_gate.as_ref().is_none_or(|gate| {
+                !*initial_prompt_accepted
+                    && (!gate.launch_prompt_carried || plan.request.prompt_digest.is_some())
+            });
             launch_identity_matches
+                && gate_consistent
                 && (!*initial_prompt_accepted || plan.request.prompt_digest.is_some())
         }
         AgentSpawnStageEvidenceV1::PromptDelivery {
@@ -2099,6 +2123,7 @@ mod tests {
                     terminal_epoch: "terminal-epoch-1".into(),
                 },
                 initial_prompt_accepted: false,
+                startup_gate: None,
             },
             AgentSpawnStageV1::PromptDelivery => AgentSpawnStageEvidenceV1::PromptDelivery {
                 session_id: native_launch(plan).0.into(),
@@ -2521,6 +2546,55 @@ mod tests {
         session.session_id = "successor-session".into();
         *launch_idempotency_key = Some(format!("spawn-runtime:{}", plan.operation_id.as_str()));
         assert!(fold_agent_spawn_journal_v1(&successor_with_root_key).is_err());
+    }
+
+    #[test]
+    fn runtime_launch_behind_a_startup_gate_never_claims_prompt_acceptance() {
+        let plan = create_agent_spawn_plan_v1(draft()).unwrap();
+        let gate = AgentSpawnStartupGateV1 {
+            kind: AgentSpawnStartupGateKindV1::WorkspaceTrust,
+            launch_prompt_carried: true,
+        };
+
+        let mut gated = completed_events(&plan);
+        let AgentSpawnJournalEventBodyV1::StageCommitted {
+            evidence:
+                AgentSpawnStageEvidenceV1::RuntimeLaunch {
+                    initial_prompt_accepted,
+                    startup_gate,
+                    ..
+                },
+            ..
+        } = &mut gated[4].body
+        else {
+            unreachable!();
+        };
+        *initial_prompt_accepted = false;
+        *startup_gate = Some(gate.clone());
+        let receipt = fold_agent_spawn_journal_v1(&gated).unwrap();
+        let wire = serde_json::to_value(&receipt.completed[1].evidence).unwrap();
+        assert_eq!(
+            wire["startup_gate"],
+            serde_json::json!({ "kind": "workspace_trust", "launch_prompt_carried": true })
+        );
+        assert!(wire.get("initial_prompt_accepted").is_none());
+
+        let mut accepted_behind_gate = completed_events(&plan);
+        let AgentSpawnJournalEventBodyV1::StageCommitted {
+            evidence:
+                AgentSpawnStageEvidenceV1::RuntimeLaunch {
+                    initial_prompt_accepted,
+                    startup_gate,
+                    ..
+                },
+            ..
+        } = &mut accepted_behind_gate[4].body
+        else {
+            unreachable!();
+        };
+        *initial_prompt_accepted = true;
+        *startup_gate = Some(gate);
+        assert!(fold_agent_spawn_journal_v1(&accepted_behind_gate).is_err());
     }
 
     #[test]

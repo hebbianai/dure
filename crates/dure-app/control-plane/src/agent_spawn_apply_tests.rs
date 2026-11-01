@@ -2019,6 +2019,126 @@ async fn claude_spawn_into_an_untrusted_folder_reports_the_trust_prompt_to_the_h
         )]
     );
     assert_eq!(launcher.calls.load(Ordering::SeqCst), 1);
+
+    // The prompt rode the launch command, so Claude submits it once the folder
+    // is trusted; until then nothing proves it was read, and typing it again
+    // would answer the dialog. The receipt says exactly that.
+    assert_eq!(
+        *launcher.initial_prompts.lock().unwrap(),
+        vec![Some("private prompt".to_string())]
+    );
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+    assert!(applied.completed.iter().any(|stage| matches!(
+        &stage.evidence,
+        AgentSpawnStageEvidenceV1::RuntimeLaunch {
+            initial_prompt_accepted: false,
+            startup_gate: Some(AgentSpawnStartupGateV1 {
+                kind: AgentSpawnStartupGateKindV1::WorkspaceTrust,
+                launch_prompt_carried: true,
+            }),
+            ..
+        }
+    )));
+    assert_eq!(
+        applied.state,
+        AgentSpawnJournalStateV1::PromptDeliveryUncertain
+    );
+    let AgentSpawnRecoveryDirectiveV1::DoNotReplayPrompt {
+        error_code,
+        error_detail,
+        ..
+    } = &applied.recovery
+    else {
+        panic!("a prompt queued behind the trust gate must never be replayed, got {applied:?}");
+    };
+    assert_eq!(
+        error_code.as_deref(),
+        Some("agent_spawn_prompt_behind_workspace_trust")
+    );
+    assert!(
+        error_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("trust")),
+        "the failure must say what the person has to do, got {error_detail:?}"
+    );
+    assert!(
+        !serde_json::to_string(&applied)
+            .unwrap()
+            .contains("private prompt")
+    );
+
+    // A retry sees the same receipt: the prompt is neither relaunched nor typed.
+    let mut retry = apply_body(&planned, "private prompt");
+    retry.expected_last_sequence = applied.last_sequence;
+    let replayed = apply(
+        &store,
+        authorize(&store, "dure-local", &retry).await.unwrap(),
+        &retry,
+        Some(execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &UNTRUSTED_CLAUDE_WORKSPACE_PREPARER,
+            &FixturePromptActivityObserver::observed(),
+            dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+        )),
+    )
+    .await
+    .unwrap();
+    assert_eq!(replayed, applied);
+    assert_eq!(launcher.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+}
+
+/// When the prompt cannot ride the launch command it would have to be typed,
+/// and typing into the trust prompt answers that dialog instead. Nothing is
+/// written, so the delivery can be retried once the folder is trusted.
+#[tokio::test]
+async fn a_prompt_that_cannot_ride_the_launch_is_not_typed_into_the_trust_prompt() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let planned = planned_native_claude_prompt_spawn(&store).await;
+    let body = apply_body(&planned, "private prompt");
+    let launcher = RecordingLauncher::default();
+    let prompt_deliverer = FixturePromptDeliverer {
+        calls: Arc::new(AtomicUsize::new(0)),
+        uncertain: false,
+    };
+
+    let blocked = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &UNTRUSTED_CLAUDE_WORKSPACE_PREPARER,
+            &FixturePromptActivityObserver::observed(),
+            dure_app::AgentProviderPromptTargetV1::ProcessObserved,
+        )),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(*launcher.initial_prompts.lock().unwrap(), vec![None]);
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(blocked.state, AgentSpawnJournalStateV1::RetryRequired);
+    let AgentSpawnRecoveryDirectiveV1::RetryRequired { error_code, .. } = &blocked.recovery else {
+        panic!("an untyped prompt stays retryable, got {blocked:?}");
+    };
+    assert_eq!(error_code, "agent_spawn_prompt_behind_workspace_trust");
+    assert!(blocked.completed.iter().any(|stage| matches!(
+        &stage.evidence,
+        AgentSpawnStageEvidenceV1::RuntimeLaunch {
+            initial_prompt_accepted: false,
+            startup_gate: Some(AgentSpawnStartupGateV1 {
+                launch_prompt_carried: false,
+                ..
+            }),
+            ..
+        }
+    )));
 }
 
 #[tokio::test]

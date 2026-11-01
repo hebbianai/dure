@@ -107,6 +107,14 @@ including `dure projects register --help` and `-h`, works offline.
 The CLI previews and then applies one durable backend plan, so retries reuse
 the same operation instead of creating a second agent.
 
+A Claude Run into a folder the selected account has not trusted stops at Claude
+Code's folder-trust prompt before it reads anything, including the prompt the
+launch command carried. The receipt ends `prompt_delivery_uncertain` with
+`agent_spawn_prompt_behind_workspace_trust` and `dure ls` shows
+`input_required`. Answer the prompt in the session; a trusted folder submits
+the carried prompt itself, so never send it again. Dure never answers trust
+prompts.
+
 Generated worktrees inside a checkout are excluded through Git's local
 `info/exclude`, shared by interactive and scheduled Runs. This preserves tracked
 ignore files and the index; files already tracked before the fix stay tracked.

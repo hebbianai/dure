@@ -22,6 +22,7 @@ import {
   receipt,
   request,
   succeededNativeReceipt,
+  trustGatedNativeReceipt,
   succeededStructuredReceipt,
   worktree,
 } from "./fixtures/agent-spawn-receipts.mjs";
@@ -353,6 +354,41 @@ describe("agent spawn query contract", () => {
       },
     });
     expect(JSON.stringify(report)).not.toContain(prompt);
+  });
+
+  it("keeps a prompt queued behind Claude's trust prompt out of the accepted evidence", async () => {
+    const status = (receipt) => collectAgentSpawnQuery({
+      action: "status",
+      operationId: receipt.operationId,
+      backend: { profile: profile(), transportOptions: {} },
+      requestBackend: async () =>
+        backendResult({ schemaVersion: 1, receipt }),
+    });
+
+    const report = await status(trustGatedNativeReceipt());
+    expect(report.kind).toBe("dure.agent_spawn.status");
+    expect(report.receipt.state).toBe("prompt_delivery_uncertain");
+    expect(report.receipt.completed[1].evidence).toMatchObject({
+      stage: "runtime_launch",
+      startup_gate: { kind: "workspace_trust", launch_prompt_carried: true },
+    });
+    expect(report.receipt.completed[1].evidence.initial_prompt_accepted).toBeUndefined();
+    const text = formatAgentSpawnQuery(report);
+    expect(text).toContain("state\tprompt_delivery_uncertain");
+    expect(text).toContain("startup_gate\tworkspace_trust");
+    expect(text).toContain("error\tagent_spawn_prompt_behind_workspace_trust");
+    expect(text).toContain("detail\tClaude Code is asking");
+    expect(text).not.toContain("undefined");
+
+    // A receipt that claims the launch prompt was accepted behind the gate
+    // contradicts itself and is not a receipt.
+    const contradictory = trustGatedNativeReceipt();
+    contradictory.completed[1].evidence.initial_prompt_accepted = true;
+    expect((await status(contradictory)).kind).toBe("dure.agent_spawn.error");
+
+    const unknownGate = trustGatedNativeReceipt();
+    unknownGate.completed[1].evidence.startup_gate.kind = "something_else";
+    expect((await status(unknownGate)).kind).toBe("dure.agent_spawn.error");
   });
 
   it("projects one advanced native Session with the matching effective create key", async () => {
