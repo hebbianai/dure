@@ -203,6 +203,37 @@ describe("DesktopBar tab reordering", () => {
 		expect(useStore.getState().spaces.map(({ id }) => id)).toEqual(["second", "first", "third"]);
 	});
 
+	it("takes the drop as soon as the pointer enters another tab, without leaving the strip first", () => {
+		// WebKit routes dragover only to an element whose dragenter was cancelled.
+		const { tabs, dataTransfer } = setupDrag();
+		const enter = new MouseEvent("dragenter", { bubbles: true, cancelable: true, clientX: 225 });
+		Object.defineProperty(enter, "dataTransfer", { value: dataTransfer });
+		fireEvent(tabs[2], enter);
+		expect(enter.defaultPrevented).toBe(true);
+		expect(tabs[2].className).toMatch(/shadow-\[-?2px_0_0_0_var\(--link\)\]/);
+		dragAt(tabs[2], "drop", 225, dataTransfer);
+		expect(useStore.getState().spaces.map(({ id }) => id)).toEqual(["second", "first", "third"]);
+	});
+
+	it("keeps the drop indicator when WebKit reports a dragleave between two tabs", () => {
+		const { strip, tabs, dataTransfer } = setupDrag();
+		dragAt(tabs[2], "dragover", 225, dataTransfer);
+		expect(tabs[2].className).toMatch(/shadow-\[-?2px_0_0_0_var\(--link\)\]/);
+		vi.spyOn(strip, "getBoundingClientRect").mockReturnValue({
+			left: 0, right: 330, width: 330, top: 0, bottom: 24, height: 24, x: 0, y: 0, toJSON: () => ({}),
+		});
+		// relatedTarget is null in WebKit; the pointer is still inside the strip.
+		const leave = new MouseEvent("dragleave", { bubbles: true, cancelable: true, clientX: 225, clientY: 12 });
+		Object.defineProperty(leave, "dataTransfer", { value: dataTransfer });
+		fireEvent(strip, leave);
+		expect(tabs[2].className).toMatch(/shadow-\[-?2px_0_0_0_var\(--link\)\]/);
+		// Leaving the strip for real clears it.
+		const gone = new MouseEvent("dragleave", { bubbles: true, cancelable: true, clientX: 225, clientY: 80 });
+		Object.defineProperty(gone, "dataTransfer", { value: dataTransfer });
+		fireEvent(strip, gone);
+		expect(tabs[2].className).not.toMatch(/shadow-\[-?2px_0_0_0_var\(--link\)\]/);
+	});
+
 	it("accepts the empty end of the strip and does not change the active Space", () => {
 		const { strip, dataTransfer } = setupDrag();
 		dragAt(strip, "dragover", 400, dataTransfer);
