@@ -1,4 +1,5 @@
 import { backendRequestFailure } from "./backend-request-failure.mjs";
+import { backendSourceSummary } from "./backend-source.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { validProjectId, validProjectPath } from "./project-contract.mjs";
 
@@ -125,6 +126,7 @@ export async function collectProjectCommand({
   backend,
   deadlineMs = DEFAULT_PROJECT_COMMAND_DEADLINE_MS,
   requestBackend = performBackendProfileRequest,
+  verbose = false,
 } = {}) {
   const startedAt = Date.now();
   const invalid =
@@ -202,7 +204,7 @@ export async function collectProjectCommand({
     appDaemonRequired: false,
     profileId: profile.id,
     transport: profile.transport.kind,
-    backend: response.backend,
+    backend: backendSourceSummary(response.backend, { verbose }),
   };
   const base = {
     schemaVersion: PROJECT_CLIENT_SCHEMA_VERSION,

@@ -114,6 +114,7 @@ export async function collectAgentRun({
   deadlineMs,
   requestBackend,
   interactionPreference,
+  verbose = false,
 } = {}) {
   const preview = await collectAgentSpawnQuery({
     action: "preview",
@@ -134,6 +135,7 @@ export async function collectAgentRun({
     backend,
     deadlineMs,
     requestBackend,
+    verbose,
   });
   const { presentationProject, ...previewReport } = preview;
   if (agentSpawnQueryExitCode(previewReport) !== 0 || !previewReport.receipt) {
@@ -149,6 +151,7 @@ export async function collectAgentRun({
     backend,
     deadlineMs,
     requestBackend,
+    verbose,
   });
   return { report, presentationProject: presentationProject ?? null };
 }

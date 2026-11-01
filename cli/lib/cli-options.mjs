@@ -143,6 +143,7 @@ export function parseOpts(args) {
     else if (a === "--transport-ref") opts.transportRef = args[++i];
     else if (a === "--hook-json") opts.hookJson = true;
     else if (a === "--json") opts.json = true;
+    else if (a === "--verbose") opts.verbose = true;
     else if (a === "--check") opts.check = true;
     else if (a === "--require") opts.require = args[++i] ?? "";
     else if (a === "--backend") {

@@ -256,6 +256,46 @@ export function hasPresentableAgentRuntime(report) {
   }
 }
 
+/**
+ * The compact head of a `dure run --json` receipt: the identities the next
+ * command needs, read once from the verified receipt instead of being dug
+ * out of `receipt.plan`, `receipt.completed[]` and `presentation.pane` by
+ * every consumer. Keys are always present; a value the receipt cannot
+ * vouch for is `null`, never guessed. `sessionId` is the launched native
+ * Hmux session, so it is `null` for a structured-protocol Run, which has
+ * no PTY session — `interactionProfile` says which case this is.
+ */
+export function runReceiptSummary(report, presentation = null) {
+  const receipt = report?.receipt ?? null;
+  const plan = receipt?.plan ?? null;
+  const token = (value) => (typeof value === "string" && SAFE_TOKEN.test(value) ? value : null);
+  let sessionId = null;
+  let interactionProfile = null;
+  try {
+    const projected = presentableRunPlan(report);
+    interactionProfile = projected.interactionProfile;
+    if (projected.interactionProfile === "native_cli") {
+      sessionId = token(projected.runtimeGeneration.sessionId);
+    }
+  } catch {
+    // Not a verified succeeded receipt (a preview, an unfinished apply, a
+    // failed stage): fall back to what the plan itself declares.
+    const launch = plan?.launch ?? (plan?.sessionId !== undefined ? { interactionProfile: "native_cli", sessionId: plan.sessionId } : null);
+    interactionProfile = ["native_cli", "structured_protocol"].includes(launch?.interactionProfile) ? launch.interactionProfile : null;
+    sessionId = interactionProfile === "native_cli" ? token(launch?.sessionId) : null;
+  }
+  return {
+    agentId: token(plan?.agentId),
+    sessionId,
+    workspaceId: token(plan?.workspaceId),
+    panelId: token(presentation?.pane?.panelId),
+    spaceId: token(presentation?.pane?.spaceId),
+    state: token(receipt?.state),
+    presentation: token(presentation?.state),
+    interactionProfile,
+  };
+}
+
 function managedRunPresentationRequestFromPlan(
   projected,
   { target, profile, projectPath },

@@ -99,8 +99,9 @@ dots, underscores or hyphens, starting and ending with a letter or digit.
 there. SSH paths must be absolute on the selected backend and are not resolved
 against the CLI host. `--name` defaults to the ID. Use `--backend ID` (or
 `DURE_BACKEND_PROFILE`) consistently for registration and Run, `--json` for a
-structured result, and `--deadline-ms N` for a 1–10000 ms request deadline
-(default 2500). Registration creates no Run, pane or worktree. Nested help,
+structured result (its `source.backend` reports the backend identity and
+`capabilityCount`; add `--verbose` for the full capability list), and
+`--deadline-ms N` for a 1–10000 ms request deadline (default 2500). Registration creates no Run, pane or worktree. Nested help,
 including `dure projects register --help` and `-h`, works offline.
 
 The CLI previews and then applies one durable backend plan, so retries reuse

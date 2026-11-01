@@ -1,4 +1,5 @@
 import { isProviderModelSelection, isProviderEffortSelection } from "./contracts/provider-launch-selection.mjs";
+import { backendSourceSummary } from "./backend-source.mjs";
 import { createHash } from "node:crypto";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
@@ -1208,6 +1209,7 @@ export async function collectAgentSpawnQuery({
   backend,
   deadlineMs,
   requestBackend = performBackendProfileRequest,
+  verbose = false,
 } = {}) {
   const startedAt = Date.now();
   const presentationProjectSupported =
@@ -1343,7 +1345,7 @@ export async function collectAgentSpawnQuery({
       appDaemonRequired: false,
       profileId: profile.id,
       transport: profile.transport.kind,
-      backend: response.backend,
+      backend: backendSourceSummary(response.backend, { verbose }),
     },
     limits: {
       deadlineMs: effectiveDeadlineMs,
