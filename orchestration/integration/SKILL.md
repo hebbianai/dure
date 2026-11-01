@@ -262,8 +262,14 @@ and satisfy that project's prerequisites and coordination requirements. If it
 is stale, publish one explanatory Message and open a refreshed Decision from
 current evidence. If the user selects `stop`, do not claim or start more work.
 
-If MCP discovery is unavailable, invoke the installed generic client contract;
-do not type orchestration payloads into a PTY or provider conversation.
+If MCP discovery is unavailable, run the same tool from the shell with
+`dure orchestration tool <tool-name> '<arguments-json>' --json`, passing the
+arguments the MCP tool takes (for example
+`dure orchestration tool orchestration_events_read '{"acknowledgement":{"through":7,"idempotencyKey":"ack-7"}}' --json`).
+It runs the same handler, so context resolution and the cursor checkpoint
+behave as they do over MCP. Add `--provider codex` from a Codex session when
+both integrations are installed. Do not type orchestration payloads into a PTY
+or provider conversation.
 
 ## Agent goals
 

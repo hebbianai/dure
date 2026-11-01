@@ -21,6 +21,13 @@ export function orchestrationFailureDetail(error) {
     return { ...detail, disposition: "terminal", message:
       "The request body is invalid. Correct it using the tool's input schema or the dure-orchestration skill before resubmitting; retrying the unchanged body cannot succeed." };
   }
+  if (detail.remoteCode === "orchestration_method_unsupported") {
+    return { ...detail, message:
+      "The backend does not accept this orchestration method. Methods are dotted names such as " +
+      "interaction.get or events.read (see dure orchestration --help); MCP tool names run with " +
+      "dure orchestration tool. A backend older than this client may not offer the method yet; " +
+      "retrying the same method cannot succeed." };
+  }
   if (detail.remoteCode === "orchestration_generation_conflict" &&
       detail.reasonCode === "hmux_session_exited") {
     return { ...detail, message:

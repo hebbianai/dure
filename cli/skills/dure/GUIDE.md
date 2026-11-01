@@ -563,9 +563,13 @@ completion contract.
 
 The old `orch` file-mailbox subcommands — `send`, `inbox`, `check`, `ask`,
 `task`, `gate`, `dispatch`, `reset` — are retired and fail without reading or
-writing `~/.dure/orchestration.json`. For raw protocol debugging only,
+writing `~/.dure/orchestration.json`. When the provider could not connect the
+MCP server, `dure orchestration tool <tool-name> '<arguments-json>' --json`
+runs the same tool with the same arguments from the shell, including Event
+reads that acknowledge the cursor. For raw protocol debugging only,
 `dure orchestration invoke <method> '<body-json>' [--backend ID] --json`
-calls the same local, SSH, or hosted authority.
+calls the same local, SSH, or hosted authority with dotted method names such as
+`interaction.get`; it does not move the local cursor checkpoint.
 
 After Resume, use `orchestration_context_get_current` to resolve the current
 managed Session. `orchestration_session_unavailable` with `retry_same` means the
