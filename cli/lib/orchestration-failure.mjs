@@ -2,8 +2,21 @@ import { backendTransportErrorReport } from "./backend-transport.mjs";
 
 // Only derive guidance from known codes. Backend messages may contain private
 // paths or provider output and must not be copied into CLI/MCP responses.
+// A goal continues a structured conversation. Neither refusal below changes by
+// resending the same request, so the hint is terminal even when an older
+// backend still reports retry_same.
+const GOAL_REFUSALS = Object.freeze({
+  agent_goal_interaction_profile_unsupported:
+    "This agent runs a native CLI (for example a provider terminal started by dure run or a pane), and Dure goals continue only a structured conversation such as the app's chat. Goals are unavailable for this agent: tell the user, keep the work in this conversation, and do not resend agent_goal_put; retrying cannot succeed.",
+  agent_goal_conversation_not_found:
+    "The backend has no conversation for this agentId, so it cannot store a goal for it. Use the agent ID from the Dure conversation context or run receipt; retrying the same request cannot succeed.",
+});
+
 export function orchestrationFailureDetail(error) {
   const detail = backendTransportErrorReport(error).error;
+  if (Object.hasOwn(GOAL_REFUSALS, detail.remoteCode)) {
+    return { ...detail, disposition: "terminal", message: GOAL_REFUSALS[detail.remoteCode] };
+  }
   if (detail.remoteCode === "orchestration_request_invalid") {
     return { ...detail, disposition: "terminal", message:
       "The request body is invalid. Correct it using the tool's input schema or the dure-orchestration skill before resubmitting; retrying the unchanged body cannot succeed." };

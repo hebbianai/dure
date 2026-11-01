@@ -107,6 +107,43 @@ describe("explicit goal commands", () => {
     });
   });
 
+  it.each([
+    [
+      "agent_goal_interaction_profile_unsupported",
+      "terminal",
+      "native_cli",
+      /^agent_goal_interaction_profile_unsupported: native_cli \(terminal\): This agent runs a native CLI .* retrying cannot succeed\.$/u,
+    ],
+    [
+      "agent_goal_conversation_not_found",
+      "retry_same",
+      undefined,
+      /^agent_goal_conversation_not_found \(terminal\): The backend has no conversation for this agentId.* retrying the same request cannot succeed\.$/u,
+    ],
+  ])(
+    "explains the MCP goal refusal %s without a retry hint",
+    async (code, disposition, reasonCode, expected) => {
+      const request = vi.fn(async () => {
+        throw new BackendTransportError("backend_transport_remote_error", {
+          details: { code, disposition, ...(reasonCode ? { reasonCode } : {}) },
+        });
+      });
+      await expect(
+        handleMcpRequest(
+          {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name: "agent_goal_put", arguments: { body } },
+          },
+          { DURE_BACKEND_PROFILE: "team" },
+          { request },
+        ),
+      ).rejects.toThrow(expected);
+      expect(request).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it.each(["get", "put"])(
     "forwards MCP goal %s through the common backend without opening a next-work decision",
     async (action) => {
