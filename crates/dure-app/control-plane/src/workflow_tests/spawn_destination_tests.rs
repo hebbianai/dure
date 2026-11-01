@@ -56,6 +56,28 @@ async fn unregistered_spawn_path_requires_explicit_project_registration() {
     assert!(launcher.requests().is_empty());
 }
 
+#[test]
+fn provider_preflight_preview_failure_names_the_refused_check_on_the_wire() {
+    let wire = backend_error_body(agent_spawn_preview_failure(
+        "agent_spawn_provider_preflight_failed:provider_runtime_integration_unavailable".into(),
+    ));
+    assert_eq!(wire["code"], "agent_spawn_provider_preflight_failed");
+    assert_eq!(
+        wire["details"]["reasonCode"],
+        "provider_runtime_integration_unavailable"
+    );
+    assert_eq!(wire["details"]["disposition"], "retry_same");
+
+    // Other preview failures keep their existing projection.
+    let bare = backend_error_body(agent_spawn_preview_failure(
+        "agent_spawn_runtime_unavailable".into(),
+    ));
+    assert_eq!(bare["code"], "agent_spawn_runtime_unavailable");
+    assert!(bare["details"].get("reasonCode").is_none());
+    let missing = agent_spawn_preview_failure("agent_spawn_project_not_found".into());
+    assert_eq!(missing.disposition, BackendFailureDispositionV1::Terminal);
+}
+
 #[tokio::test]
 async fn missing_provider_setup_preserves_the_plan_and_retries_without_duplicate_launch() {
     missing_provider_setup(false).await;

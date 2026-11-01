@@ -555,6 +555,53 @@ async fn structured_spawn_uses_one_chat_runtime_and_typed_prompt_effect() {
 }
 
 #[tokio::test]
+async fn native_preflight_rejection_names_the_failed_provider_check() {
+    // A headless Run pins the native CLI. Without the app-published provider
+    // integration, preview must say which provider check refused the plan.
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let providers = crate::provider_extension::test_unintegrated_provider_registry();
+    let mut native = request();
+    native.interaction_preference = Some(AgentSpawnInteractionPreferenceV1::NativeCli);
+    let error = agent_spawn_api::preview(
+        &store,
+        &providers,
+        "dure-local",
+        "generation-1",
+        project(),
+        native,
+        1,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error,
+        "agent_spawn_provider_preflight_failed:provider_runtime_integration_unavailable"
+    );
+
+    // The chat path plans the structured runtime, which needs no integration.
+    let mut structured = request();
+    structured.idempotency_key = "spawn-request-structured".into();
+    let planned = agent_spawn_api::preview(
+        &store,
+        &providers,
+        "dure-local",
+        "generation-1",
+        project(),
+        structured,
+        2,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        planned.plan.launch,
+        AgentSpawnLaunchPlanV1::StructuredProtocol
+    ));
+}
+
+#[tokio::test]
 async fn native_preference_pins_the_pty_launch_even_when_structured_exists() {
     // Basic interface mode creates agents as terminal panes (owner decision
     // 2026-08-31): the caller's native_cli preference must skip the

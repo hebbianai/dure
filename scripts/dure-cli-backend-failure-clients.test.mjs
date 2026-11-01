@@ -107,6 +107,39 @@ it.each([
   expect(JSON.stringify(report)).not.toContain("/Users/someone");
 });
 
+it.each([
+  ["provider_runtime_integration_unavailable", "start the Dure app for this channel"],
+  ["provider_executable_unavailable", "Install the selected provider"],
+  ["future_check", "Provider preflight check failed on the execution host: future_check."],
+  ["constructor", "Provider preflight check failed on the execution host: constructor."],
+])("names the refused provider preflight check %s", async (reasonCode, guidance) => {
+  const report = await collectAgentSpawnQuery({
+    action: "preview",
+    projectId: "dure",
+    providerId: "codex",
+    agentName: "codex-1",
+    idempotencyKey: "spawn-request-1",
+    worktree: { kind: "project_root" },
+    backend: backend(),
+    requestBackend: async () => {
+      throw new BackendTransportError("backend_transport_remote_error", {
+        details: {
+          code: "agent_spawn_provider_preflight_failed",
+          reasonCode,
+          disposition: "retry_same",
+          message: "private /Users/someone/provider",
+        },
+      });
+    },
+  });
+  expect(report.error).toMatchObject({ remoteCode: "agent_spawn_provider_preflight_failed", reasonCode });
+  expect(report.error.message).toContain(guidance);
+  expect(formatAgentSpawnQuery(report)).toContain("agent_spawn_provider_preflight_failed");
+  expect(formatAgentSpawnQuery(report)).toContain(guidance);
+  expect(agentSpawnQueryExitCode(report)).toBe(2);
+  expect(JSON.stringify(report)).not.toContain("/Users/someone");
+});
+
 describe.each(clients)("$name backend failure projection", ({ action, collect, kind }) => {
   it("preserves the recovering receipt", async () => {
     const report = await collect({
