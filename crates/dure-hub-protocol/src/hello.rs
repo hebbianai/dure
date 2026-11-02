@@ -260,6 +260,9 @@ pub enum HubRequest {
         /// desktop serves itself answers with a transcript; a remote box is
         /// refused `remote_unsupported`.
         box_id: String,
+        /// The catalog entry's workspace. A session id alone can be visible
+        /// from more than one discovery root; the pair names one session.
+        workspace_id: String,
         /// The catalog entry's Hmux session id.
         session_id: String,
         /// How many of the newest entries to return. Absent asks for
@@ -285,12 +288,16 @@ pub enum HubRequest {
     /// this request reads it as [`Self::Unsupported`] and closes after the
     /// greeting, having written nothing.
     ///
-    /// The text rides in the greeting, so together with the token and ids it
-    /// must fit in `MAX_HELLO_BYTES`; [`encode_hello_for`] refuses a greeting
-    /// that does not, before anything is sent.
+    /// The text rides in the greeting, so it is bounded by
+    /// `conversation::MAX_AGENT_PROMPT_BYTES`: check it with
+    /// `conversation::check_agent_prompt` before sending, which names the
+    /// limit. The hub applies the same check. A longer prompt needs a data
+    /// frame after the greeting, like `StageSessionFileV1` — milestone 2.
     AgentPromptV1 {
         /// The catalog entry's box, as `Attach` names it.
         box_id: String,
+        /// The catalog entry's workspace, as for `ConversationTranscriptV1`.
+        workspace_id: String,
         session_id: String,
         text: String,
         /// The provider process the person was looking at — the catalog
@@ -603,12 +610,14 @@ mod tests {
     fn conversation_requests_round_trip_and_stay_distinct() {
         let read = HubRequest::ConversationTranscriptV1 {
             box_id: "this-laptop".to_string(),
+            workspace_id: "workspace-1".to_string(),
             session_id: "session-1".to_string(),
             limit: Some(50),
             after: Some(conversation_cursor()),
         };
         let prompt = HubRequest::AgentPromptV1 {
             box_id: "this-laptop".to_string(),
+            workspace_id: "workspace-1".to_string(),
             session_id: "session-1".to_string(),
             text: "Run the tests again\nand report".to_string(),
             expected_terminal_epoch: "terminal-1".to_string(),
@@ -628,6 +637,7 @@ mod tests {
     fn conversation_requests_use_their_wire_names() {
         let value = serde_json::to_value(HubRequest::ConversationTranscriptV1 {
             box_id: "b".to_string(),
+            workspace_id: "w".to_string(),
             session_id: "s".to_string(),
             limit: None,
             after: None,
@@ -635,10 +645,16 @@ mod tests {
         .expect("to value");
         assert_eq!(
             value,
-            serde_json::json!({ "kind": "conversation_transcript_v1", "box_id": "b", "session_id": "s" })
+            serde_json::json!({
+                "kind": "conversation_transcript_v1",
+                "box_id": "b",
+                "workspace_id": "w",
+                "session_id": "s",
+            })
         );
         let value = serde_json::to_value(HubRequest::AgentPromptV1 {
             box_id: "b".to_string(),
+            workspace_id: "w".to_string(),
             session_id: "s".to_string(),
             text: "t".to_string(),
             expected_terminal_epoch: "e".to_string(),
@@ -657,13 +673,19 @@ mod tests {
         let hello: HubHello = serde_json::from_value(serde_json::json!({
             "hub_hello_version": HUB_HELLO_VERSION,
             "token": "t",
-            "request": { "kind": "conversation_transcript_v1", "box_id": "b", "session_id": "s" },
+            "request": {
+                "kind": "conversation_transcript_v1",
+                "box_id": "b",
+                "workspace_id": "w",
+                "session_id": "s",
+            },
         }))
         .expect("reads");
         assert_eq!(
             hello.request,
             HubRequest::ConversationTranscriptV1 {
                 box_id: "b".to_string(),
+                workspace_id: "w".to_string(),
                 session_id: "s".to_string(),
                 limit: None,
                 after: None,
@@ -675,6 +697,7 @@ mod tests {
             "request": {
                 "kind": "agent_prompt_v1",
                 "box_id": "b",
+                "workspace_id": "w",
                 "session_id": "s",
                 "text": "hi",
                 "expected_terminal_epoch": "e",
@@ -685,6 +708,7 @@ mod tests {
             hello.request,
             HubRequest::AgentPromptV1 {
                 box_id: "b".to_string(),
+                workspace_id: "w".to_string(),
                 session_id: "s".to_string(),
                 text: "hi".to_string(),
                 expected_terminal_epoch: "e".to_string(),
@@ -723,12 +747,14 @@ mod tests {
         for request in [
             HubRequest::ConversationTranscriptV1 {
                 box_id: "this-laptop".to_string(),
+                workspace_id: "workspace-1".to_string(),
                 session_id: "session-1".to_string(),
                 limit: Some(20),
                 after: Some(conversation_cursor()),
             },
             HubRequest::AgentPromptV1 {
                 box_id: "this-laptop".to_string(),
+                workspace_id: "workspace-1".to_string(),
                 session_id: "session-1".to_string(),
                 text: "hi".to_string(),
                 expected_terminal_epoch: "terminal-1".to_string(),
@@ -743,12 +769,40 @@ mod tests {
         }
     }
 
+    /// The exported limit is a promise: the longest allowed prompt, written in
+    /// the worst way JSON escapes it, still fits the greeting next to a real
+    /// device token and ids at their 256-byte bound.
+    #[test]
+    fn the_longest_allowed_prompt_always_fits_the_greeting() {
+        use crate::conversation::{MAX_AGENT_PROMPT_BYTES, check_agent_prompt};
+        let id = "i".repeat(256);
+        // Quotes escape to two bytes, the most an allowed character costs.
+        let text = "\"".repeat(MAX_AGENT_PROMPT_BYTES);
+        assert_eq!(check_agent_prompt(&text), Ok(()));
+        let request = HubRequest::AgentPromptV1 {
+            box_id: id.clone(),
+            workspace_id: id.clone(),
+            session_id: id.clone(),
+            text,
+            expected_terminal_epoch: id.clone(),
+            expected_conversation_id: Some(id),
+        };
+        // A device token is 32 random bytes, URL-safe base64 without padding.
+        let token = "t".repeat(43);
+        let framed = encode_hello_for(&token, request.clone()).expect("fits the greeting");
+        assert_eq!(
+            read_hello(&mut framed.as_slice()).expect("reads").request,
+            request
+        );
+    }
+
     /// A prompt longer than the greeting can hold fails on the phone, before
     /// a byte is sent, rather than being cut or silently dropped.
     #[test]
     fn a_prompt_that_does_not_fit_the_greeting_is_refused_before_sending() {
         let request = HubRequest::AgentPromptV1 {
             box_id: "this-laptop".to_string(),
+            workspace_id: "workspace-1".to_string(),
             session_id: "session-1".to_string(),
             text: "x".repeat(MAX_HELLO_BYTES),
             expected_terminal_epoch: "terminal-1".to_string(),

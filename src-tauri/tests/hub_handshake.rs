@@ -404,6 +404,7 @@ fn conversation_requests_are_answered_with_typed_refusals_not_the_catalog() {
 
     let read = HubRequest::ConversationTranscriptV1 {
         box_id: "this-laptop".into(),
+        workspace_id: "workspace_1".into(),
         session_id: "standalone_abc".into(),
         limit: Some(20),
         after: None,
@@ -421,6 +422,7 @@ fn conversation_requests_are_answered_with_typed_refusals_not_the_catalog() {
 
     let prompt = HubRequest::AgentPromptV1 {
         box_id: "this-laptop".into(),
+        workspace_id: "workspace_1".into(),
         session_id: "standalone_abc".into(),
         text: "Run the tests".into(),
         expected_terminal_epoch: "terminal_1".into(),

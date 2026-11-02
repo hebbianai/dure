@@ -20,11 +20,19 @@
 //! # Why the cursor
 //!
 //! Re-reading a transcript means scanning a provider file that can be tens of
-//! megabytes. The answer carries a [`ConversationCursor`] made of facts the
-//! Host already holds; a client that echoes it as `after` gets `unchanged`
-//! without the file being read when none of them moved. Compare cursors only
-//! for equality — their fields are reported so a person can debug them, not so
-//! a client can do arithmetic on them.
+//! megabytes, and the phone polls while the chat is open. The answer carries a
+//! [`ConversationCursor`] made of facts the Host already holds; a client that
+//! echoes it as `after` gets `unchanged`, without the file being read, until a
+//! turn completes or the process or conversation changes
+//! ([`ConversationCursor::same_turns_as`]). Text the agent writes in the middle
+//! of a turn shows when that turn completes.
+//!
+//! # Why the prompt is short
+//!
+//! The prompt rides in the greeting, whose frame is `MAX_HELLO_BYTES`, so it is
+//! bounded by [`MAX_AGENT_PROMPT_BYTES`]; [`check_agent_prompt`] is the check
+//! both sides apply. A longer prompt needs a data frame after the greeting, the
+//! way `StageSessionFileV1` sends a file — that is milestone 2.
 //!
 //! # What does not cross
 //!
@@ -63,6 +71,16 @@ pub const MAX_ENTRY_TEXT_BYTES: usize = 64 * 1024;
 /// the frame.
 const FRAME_SLACK_BYTES: usize = 1024;
 
+/// The longest prompt one `AgentPromptV1` carries, in UTF-8 bytes.
+///
+/// The prompt rides in the greeting next to the device token and the ids. A
+/// prompt that passes [`check_agent_prompt`] at most doubles when written as
+/// JSON (quotes, backslashes, line breaks and tabs are its only escaped
+/// characters), so at this length the greeting always fits `MAX_HELLO_BYTES`
+/// with ids of up to 256 bytes. A longer prompt needs a data frame after the
+/// greeting (milestone 2).
+pub const MAX_AGENT_PROMPT_BYTES: usize = 3 * 1024;
+
 /// Who said it.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -82,18 +100,33 @@ pub struct ConversationEntry {
 }
 
 /// What the desktop observed when it answered. Echo it back as `after`.
-///
-/// It moves when the provider process is replaced (`terminal_epoch`), when the
-/// provider starts another conversation in the same process
-/// (`conversation_id`), when a turn completes (`turn_completed_count`), and
-/// when the Host's agent runtime state changes at all — a turn starting, the
-/// agent reporting progress, attention being raised (`runtime_revision`).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConversationCursor {
+    /// The provider process. Moves when it is replaced.
     pub terminal_epoch: String,
+    /// Moves when the provider starts another conversation in the same
+    /// process.
     pub conversation_id: String,
+    /// Moves when a turn completes.
     pub turn_completed_count: u64,
+    /// The Host's agent runtime revision. Reported, not compared: it moves on
+    /// every runtime change, progress included, so deciding `unchanged` on it
+    /// would re-read the transcript on every poll while the agent works. A
+    /// client can use it to see that the agent's state moved (a turn started,
+    /// attention was raised) without asking for the transcript again.
     pub runtime_revision: u64,
+}
+
+impl ConversationCursor {
+    /// Nothing the transcript depends on moved between `self` and `other`:
+    /// the same process, the same conversation, no turn completed. This is
+    /// the rule the desktop answers `unchanged` by.
+    #[must_use]
+    pub fn same_turns_as(&self, other: &Self) -> bool {
+        self.terminal_epoch == other.terminal_epoch
+            && self.conversation_id == other.conversation_id
+            && self.turn_completed_count == other.turn_completed_count
+    }
 }
 
 /// Why the desktop did not answer with a transcript, or did not write a prompt.
@@ -126,9 +159,15 @@ pub enum ConversationRefusal {
     /// Someone has typed into the terminal without submitting; nothing was
     /// written, so their draft is not merged with the prompt.
     InputDraftPending,
-    /// The request itself is unusable (an empty prompt, for example).
+    /// The request itself is unusable (an empty or too long prompt, for
+    /// example).
     InvalidRequest,
-    /// The desktop could not reach the session or answer at all.
+    /// The desktop could not observe or attach to the session's Host in time,
+    /// or its transport did not answer. The agent may well be alive — on a
+    /// busy desktop this happens — so ask again; nothing was written.
+    ProbeTimeout,
+    /// The desktop could not reach the session or answer at all (the session
+    /// exited, for example).
     Unavailable,
     #[serde(other)]
     Unknown,
@@ -231,7 +270,7 @@ impl HubConversationTranscriptResult {
         let mut first_kept = entries.len();
         for (index, entry) in entries.iter().enumerate().rev() {
             // One more for the separating comma.
-            let size = serialized_len(entry).saturating_add(1);
+            let size = entry_json_len(entry).saturating_add(1);
             if used.saturating_add(size) > budget {
                 break;
             }
@@ -385,6 +424,89 @@ fn serialized_len<T: Serialize>(value: &T) -> usize {
     serde_json::to_vec(value).map_or(usize::MAX, |bytes| bytes.len())
 }
 
+/// The bytes `serde_json` writes for one entry, counted without writing it.
+fn entry_json_len(entry: &ConversationEntry) -> usize {
+    let role = match entry.role {
+        ConversationRole::User => "user".len(),
+        ConversationRole::Agent => "agent".len(),
+    };
+    // {"role":"<role>","text":<text>} and, when cut, ,"truncated":true
+    let truncated = if entry.truncated {
+        r#","truncated":true"#.len()
+    } else {
+        0
+    };
+    r#"{"role":"","text":}"#.len() + role + json_string_len(&entry.text) + truncated
+}
+
+/// The bytes `serde_json` writes for `text` as a JSON string, quotes included.
+fn json_string_len(text: &str) -> usize {
+    2 + text
+        .chars()
+        .map(|character| match character {
+            '"' | '\\' | '\u{08}' | '\u{0c}' | '\n' | '\r' | '\t' => 2,
+            control if u32::from(control) < 0x20 => 6,
+            other => other.len_utf8(),
+        })
+        .sum::<usize>()
+}
+
+/// Why a prompt cannot be sent as written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentPromptTextError {
+    /// Nothing but whitespace.
+    Empty,
+    /// A control character other than a line break or a tab. Such bytes act
+    /// on the agent's terminal rather than reading as text.
+    ControlCharacter,
+    /// Longer than [`MAX_AGENT_PROMPT_BYTES`].
+    TooLong { length: usize, limit: usize },
+}
+
+impl std::fmt::Display for AgentPromptTextError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => write!(formatter, "The prompt is empty"),
+            Self::ControlCharacter => write!(
+                formatter,
+                "The prompt contains a control character other than a line break or a tab"
+            ),
+            Self::TooLong { length, limit } => write!(
+                formatter,
+                "The prompt is {length} bytes; a prompt sent to an agent can be at most \
+                 {limit} bytes. Paste longer text in the terminal"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AgentPromptTextError {}
+
+/// The check a client applies before sending an `AgentPromptV1`, and the hub
+/// applies again before the Host hears of it.
+///
+/// # Errors
+/// When the prompt is empty, carries a control character other than a line
+/// break or a tab, or is longer than [`MAX_AGENT_PROMPT_BYTES`].
+pub fn check_agent_prompt(text: &str) -> Result<(), AgentPromptTextError> {
+    if text.trim().is_empty() {
+        return Err(AgentPromptTextError::Empty);
+    }
+    if text
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return Err(AgentPromptTextError::ControlCharacter);
+    }
+    if text.len() > MAX_AGENT_PROMPT_BYTES {
+        return Err(AgentPromptTextError::TooLong {
+            length: text.len(),
+            limit: MAX_AGENT_PROMPT_BYTES,
+        });
+    }
+    Ok(())
+}
+
 /// Hub side: one transcript answer as a frame.
 ///
 /// # Errors
@@ -426,12 +548,18 @@ fn read_versioned<T: serde::de::DeserializeOwned, R: Read>(
     let payload = frame::read_bytes(reader, limit)?;
     // The loose probe reads the version first, so a document from another
     // version says "update one side" rather than "malformed".
-    let probe: VersionProbe = serde_json::from_slice(&payload)
-        .map_err(|_| ConversationError::Frame(FrameError::Malformed("Missing version")))?;
-    if probe.hub_conversation_version != HUB_CONVERSATION_VERSION {
-        return Err(ConversationError::UnsupportedVersion {
-            found: probe.hub_conversation_version,
-        });
+    let probe: VersionProbe = serde_json::from_slice(&payload).map_err(|_| {
+        ConversationError::Frame(FrameError::Malformed(
+            "Could not read the conversation answer",
+        ))
+    })?;
+    let found = probe
+        .hub_conversation_version
+        .ok_or(ConversationError::Frame(FrameError::Malformed(
+            "Missing version",
+        )))?;
+    if found != HUB_CONVERSATION_VERSION {
+        return Err(ConversationError::UnsupportedVersion { found });
     }
     serde_json::from_slice(&payload).map_err(|_| {
         ConversationError::Frame(FrameError::Malformed(
@@ -442,7 +570,7 @@ fn read_versioned<T: serde::de::DeserializeOwned, R: Read>(
 
 #[derive(Deserialize)]
 struct VersionProbe {
-    hub_conversation_version: u16,
+    hub_conversation_version: Option<u16>,
 }
 
 #[derive(Debug)]
@@ -701,6 +829,126 @@ mod tests {
         assert_eq!(value["state"], "refused");
         assert_eq!(value["code"], "not_idle");
         assert!(value.get("record_id").is_none());
+    }
+
+    /// The frame is filled by counting, not by writing every entry twice; the
+    /// count must be exactly what `serde_json` writes.
+    #[test]
+    fn entries_are_measured_exactly_as_serde_json_writes_them() {
+        for text in [
+            "",
+            "plain",
+            "quote \" and backslash \\",
+            "lines\nand\ttabs\r\n",
+            "bell \u{07} escape \u{1b} nul \u{0} backspace \u{08} form \u{0c}",
+            "한국어 텍스트와 emoji 🚀",
+            "del \u{7f} and next-line \u{85} and line-separator \u{2028}",
+        ] {
+            for role in [ConversationRole::User, ConversationRole::Agent] {
+                for truncated in [false, true] {
+                    let entry = ConversationEntry {
+                        role,
+                        text: text.to_string(),
+                        truncated,
+                    };
+                    assert_eq!(entry_json_len(&entry), serialized_len(&entry), "{text:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_prompt_is_checked_with_the_limit_named() {
+        assert_eq!(
+            check_agent_prompt("Run the tests\n\tthen report\r\n"),
+            Ok(())
+        );
+        assert_eq!(
+            check_agent_prompt(&"가".repeat(MAX_AGENT_PROMPT_BYTES / 3)),
+            Ok(())
+        );
+        assert_eq!(
+            check_agent_prompt(" \n\t"),
+            Err(AgentPromptTextError::Empty)
+        );
+        for text in [
+            "clear \u{1b}[2J",
+            "interrupt \u{03}",
+            "nul \u{0}",
+            "csi \u{9b}",
+        ] {
+            assert_eq!(
+                check_agent_prompt(text),
+                Err(AgentPromptTextError::ControlCharacter),
+                "{text:?}"
+            );
+        }
+        let long = "x".repeat(MAX_AGENT_PROMPT_BYTES + 1);
+        let error = check_agent_prompt(&long).expect_err("too long");
+        assert_eq!(
+            error,
+            AgentPromptTextError::TooLong {
+                length: MAX_AGENT_PROMPT_BYTES + 1,
+                limit: MAX_AGENT_PROMPT_BYTES,
+            }
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(&MAX_AGENT_PROMPT_BYTES.to_string()),
+            "{error}"
+        );
+    }
+
+    /// Progress moves the runtime revision on every event; the transcript
+    /// only changes when a turn completes or the identity moves.
+    #[test]
+    fn the_same_turns_ignore_the_runtime_revision() {
+        let mut progressed = cursor();
+        progressed.runtime_revision += 40;
+        assert!(cursor().same_turns_as(&progressed));
+        let mut completed = cursor();
+        completed.turn_completed_count += 1;
+        assert!(!cursor().same_turns_as(&completed));
+        let mut other = cursor();
+        other.conversation_id = "conversation-2".to_string();
+        assert!(!cursor().same_turns_as(&other));
+        let mut replaced = cursor();
+        replaced.terminal_epoch = "terminal-2".to_string();
+        assert!(!cursor().same_turns_as(&replaced));
+    }
+
+    #[test]
+    fn a_probe_timeout_has_its_own_wire_name() {
+        assert_eq!(
+            serde_json::to_value(ConversationRefusal::ProbeTimeout).expect("to value"),
+            "probe_timeout"
+        );
+    }
+
+    /// A broken answer and an answer without a version are different
+    /// failures, and say so.
+    #[test]
+    fn a_broken_answer_is_not_reported_as_a_missing_version() {
+        let unversioned = frame::encode(
+            &serde_json::json!({ "state": "refused" }),
+            MAX_PROMPT_RESULT_BYTES,
+        )
+        .expect("encode");
+        assert!(matches!(
+            read_prompt(&mut unversioned.as_slice()),
+            Err(ConversationError::Frame(FrameError::Malformed(
+                "Missing version"
+            )))
+        ));
+        let mut broken = 5_u32.to_be_bytes().to_vec();
+        broken.extend_from_slice(b"{\"hub");
+        assert!(matches!(
+            read_prompt(&mut broken.as_slice()),
+            Err(ConversationError::Frame(FrameError::Malformed(
+                "Could not read the conversation answer"
+            )))
+        ));
     }
 
     #[test]

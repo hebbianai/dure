@@ -1055,6 +1055,7 @@ fn serve_one(
 
     if let HubRequest::ConversationTranscriptV1 {
         box_id,
+        workspace_id,
         session_id,
         limit,
         after,
@@ -1066,6 +1067,7 @@ fn serve_one(
             hub.conversations,
             box_route(&hub, &box_id),
             conversation::TranscriptRequest {
+                workspace_id,
                 session_id,
                 limit,
                 after,
@@ -1083,6 +1085,7 @@ fn serve_one(
 
     if let HubRequest::AgentPromptV1 {
         box_id,
+        workspace_id,
         session_id,
         text,
         expected_terminal_epoch,
@@ -1095,6 +1098,7 @@ fn serve_one(
             hub.conversations,
             box_route(&hub, &box_id),
             conversation::PromptRequest {
+                workspace_id,
                 session_id,
                 text,
                 expected_terminal_epoch,
