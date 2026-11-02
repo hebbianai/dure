@@ -298,3 +298,38 @@ it("restores Markdown in source mode and keeps that mode when explicitly discard
   await waitFor(() => expect(editor().value).toBe("# Disk"));
   expect(useStore.getState().fileDrafts["local::/notes.md"]).toBeUndefined();
 });
+
+it("shows Markdown images that use a path relative to the document", async () => {
+  vi.mocked(readFile).mockImplementation(async (path) =>
+    path === "/docs/gallery.md"
+      ? { ...textFile(path, "# Gallery\n\n![Dark type](mockups/retro/type-dark.png)"), kind: "markdown" }
+      : { path, name: "type-dark.png", kind: "image", content: "iVBORw0K", size: 6, mime: "image/png", truncated: false },
+  );
+  render(<FileViewerPanel {...panelProps({ path: "/docs/gallery.md", source: "local" })} />);
+  const image = await screen.findByRole("img", { name: "Dark type" });
+  await waitFor(() => expect(image.getAttribute("src")).toBe("data:image/png;base64,iVBORw0K"));
+  expect(readFile).toHaveBeenCalledWith("/docs/mockups/retro/type-dark.png");
+});
+
+it("marks a Markdown image whose file cannot be read instead of showing a broken image", async () => {
+  vi.mocked(readFile).mockImplementation(async (path) => {
+    if (path === "/docs/gallery.md") return { ...textFile(path, "![Missing shot](shots/missing.png)"), kind: "markdown" };
+    throw new Error(`${path}: No such file or directory (os error 2)`);
+  });
+  render(<FileViewerPanel {...panelProps({ path: "/docs/gallery.md", source: "local" })} />);
+  await waitFor(() => expect(screen.getByRole("img", { name: "Missing shot" }).tagName).toBe("SPAN"));
+  expect(screen.getByRole("img", { name: "Missing shot" }).getAttribute("title")).toBe("/docs/shots/missing.png");
+});
+
+it("reads relative Markdown images of a remote file over the same SSH host", async () => {
+  mocks.sshReadFile.mockImplementation(async ({ path }: { path: string }) =>
+    path === "/srv/repo/README.md"
+      ? { ...textFile(path, "![Logo](../media/logo.png)"), kind: "markdown" }
+      : { path, name: "logo.png", kind: "image", content: "AAAA", size: 3, mime: "image/png", truncated: false },
+  );
+  render(<FileViewerPanel {...panelProps({ path: "/srv/repo/README.md", source: "ssh", hostId: "ssh-1" })} />);
+  const image = await screen.findByRole("img", { name: "Logo" });
+  await waitFor(() => expect(image.getAttribute("src")).toBe("data:image/png;base64,AAAA"));
+  expect(mocks.sshReadFile).toHaveBeenCalledWith({ id: undefined, connectOpts: { host: "example.com", user: "dev" }, path: "/srv/media/logo.png" });
+  expect(readFile).not.toHaveBeenCalled();
+});

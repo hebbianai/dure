@@ -1,8 +1,8 @@
 import type { FileTarget } from "@/lib/files/fileTarget";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import type { IDockviewPanelProps } from "dockview-react";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
@@ -17,6 +17,7 @@ import { showToast } from "@/lib/toast";
 import { workspacePerformance } from "@/lib/workspace/performance/workspacePerformance";
 import { LazyCodeEditor } from "@/components/editor/LazyCodeEditor";
 import { ImageViewerBody } from "@/components/files/ImageViewerBody";
+import { MarkdownFileImage } from "@/components/files/MarkdownFileImage";
 import { useFileViewerPanelState } from "@/components/files/useFileViewerPanelState";
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { Button } from "@/components/ui/button";
@@ -170,7 +171,7 @@ export function FileViewerPanel(props: IDockviewPanelProps<FileViewerParams>) {
           </Suspense>
         ) : (
           <div className="h-full overflow-auto">
-            <FileBody paneId={paneId} file={file} local={source === "local"} />
+            <FileBody paneId={paneId} file={file} target={props.params} />
           </div>
         )}
       </div>
@@ -234,24 +235,46 @@ function OpenExternallyButton({ path, paneId }: { path: string; paneId?: string 
   );
 }
 
+/** Rendered Markdown whose relative images load from beside the file. */
+function MarkdownFileBody({ content, document }: { content: string; document: FileTarget }) {
+  const { path, source, hostId, sessionId } = document;
+  // Renderer functions are React component types; keep them stable so loaded images survive re-renders.
+  const components = useMemo<Components>(
+    () => ({
+      img: ({ src, alt, title }) => (
+        <MarkdownFileImage
+          document={{ path, source, hostId, sessionId }}
+          src={typeof src === "string" ? src : undefined}
+          alt={alt}
+          title={title}
+        />
+      ),
+    }),
+    [path, source, hostId, sessionId],
+  );
+  return (
+    <div className="prose-terminal mx-auto max-w-3xl px-6 py-5">
+      <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={components}>
+        {content}
+      </Markdown>
+    </div>
+  );
+}
+
 function FileBody({
   file,
-  local,
+  target,
   paneId,
 }: {
   file: FileContent;
-  local?: boolean;
+  /** Where the pane reads the file from; `file.path` is the path actually read. */
+  target: FileTarget;
   /** The pane showing the file, so its reports land there. */
   paneId?: string;
 }) {
+  const local = target.source === "local";
   if (file.kind === "markdown") {
-    return (
-      <div className="prose-terminal mx-auto max-w-3xl px-6 py-5">
-        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-          {file.content}
-        </Markdown>
-      </div>
-    );
+    return <MarkdownFileBody content={file.content} document={{ ...target, path: file.path }} />;
   }
   if (file.kind === "image" && file.mime) {
     return (
