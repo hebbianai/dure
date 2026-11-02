@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	externalWorkspaceTargets,
+	openExternalFileNative,
 	openExternalWorkspaceNative,
 } from "./externalWorkspace";
 
@@ -46,5 +47,28 @@ describe("external workspace IPC boundary", () => {
 		await expect(
 			openExternalWorkspaceNative("/repo/.worktrees/agent-1", "cursor"),
 		).rejects.toMatchObject({ code: "external_response_invalid" });
+	});
+
+	it("asks the native launcher for the declared subject", async () => {
+		invokeMock.mockImplementation(async (_command, args) => ({
+			schemaVersion: 1,
+			targetId: (args as { targetId: string }).targetId,
+			canonicalPath: (args as { path: string }).path,
+			attemptedCandidates: 1,
+		}));
+
+		await openExternalWorkspaceNative("/repo", "finder");
+		await openExternalFileNative("/notes/gallery.md", "cursor");
+
+		expect(invokeMock.mock.calls).toEqual([
+			[
+				"open_external_workspace",
+				{ path: "/repo", targetId: "finder", subject: "workspace" },
+			],
+			[
+				"open_external_workspace",
+				{ path: "/notes/gallery.md", targetId: "cursor", subject: "file" },
+			],
+		]);
 	});
 });

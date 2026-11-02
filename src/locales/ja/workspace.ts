@@ -148,6 +148,7 @@ export const workspace: Record<string, string> = {
 	"workspace.popout.returnHint": "pane を元の位置に戻してウィンドウを閉じる",
 	"workspace.agentWindow.viewSession": "{provider} セッションを大きなウィンドウで表示",
 	"workspace.externalOpen.opened": "{target} でワークスペースを開きました",
+	"workspace.externalOpen.fileOpened": "{target} でファイルを開きました",
 	"workspace.health.unprobed": "未検査",
 	"workspace.pane.pin": "固定",
 	"workspace.pane.unpin": "ピン留めを解除",

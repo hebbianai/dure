@@ -2,6 +2,7 @@ import type { ExternalOpenTarget } from "@/lib/ipc/externalWorkspace";
 import {
 	externalWorkspaceTargets,
 	type NativeExternalWorkspaceOpenReceipt,
+	openExternalFileNative,
 	openExternalWorkspaceNative,
 } from "@/lib/ipc/externalWorkspace";
 import { normalizeSlashPath } from "@/lib/files/paths";
@@ -27,7 +28,7 @@ export interface ExternalWorkspaceOpenRequest
 export interface ExternalWorkspaceOpenReceipt
 	extends NativeExternalWorkspaceOpenReceipt,
 		ExternalWorkspaceReference {
-	kind: "agent" | "project" | "terminal";
+	kind: "agent" | "project" | "terminal" | "file";
 }
 
 export class ExternalWorkspaceActionError extends Error {
@@ -71,6 +72,11 @@ export interface ExternalWorkspaceDependencies {
 		path: string,
 		targetId: string,
 	): Promise<NativeExternalWorkspaceOpenReceipt>;
+	/** Opens one local file, for a file pane that no workspace contains. */
+	openFile(
+		path: string,
+		targetId: string,
+	): Promise<NativeExternalWorkspaceOpenReceipt>;
 }
 
 const productionDependencies: ExternalWorkspaceDependencies = {
@@ -78,6 +84,7 @@ const productionDependencies: ExternalWorkspaceDependencies = {
 	state: () => useStore.getState(),
 	executionLocation: getTerminalExecutionLocation,
 	open: openExternalWorkspaceNative,
+	openFile: openExternalFileNative,
 };
 
 function stringMember(
@@ -148,11 +155,17 @@ function containsPath(root: string, candidate: string): boolean {
 	);
 }
 
-function localFileWorkspace(path: string, state: WorkspaceState) {
-	const candidates: Array<{
-		kind: "agent" | "project";
-		path: string;
-	}> = [];
+interface LocalFileWorkspace {
+	kind: "agent" | "project";
+	path: string;
+}
+
+/** The innermost known local workspace containing `path`, if any. */
+function localFileWorkspace(
+	path: string,
+	state: WorkspaceState,
+): LocalFileWorkspace | undefined {
+	const candidates: LocalFileWorkspace[] = [];
 	for (const agent of state.agents) {
 		const project = state.projects.find(
 			(candidate) => candidate.id === agent.projectId,
@@ -278,13 +291,11 @@ function resolveWorkspace(
 				"The selected file pane does not identify a local file target.",
 			);
 		}
-		const workspace = localFileWorkspace(filePath, state);
-		if (!workspace) {
-			throw new ExternalWorkspaceActionError(
-				"workspace_unavailable",
-				"This pane does not expose an authoritative local workspace path.",
-			);
-		}
+		// A standalone file has no workspace to infer; the file is the target.
+		const workspace = localFileWorkspace(filePath, state) ?? {
+			kind: "file" as const,
+			path: filePath,
+		};
 		return { dockview, panel, ...workspace };
 	}
 
@@ -362,7 +373,9 @@ export async function openExternalWorkspaceForPane(
 		);
 	}
 	try {
-		const receipt = await dependencies.open(resolved.path, targetId);
+		const open =
+			resolved.kind === "file" ? dependencies.openFile : dependencies.open;
+		const receipt = await open(resolved.path, targetId);
 		dependencies
 			.state()
 			.setUiPrefs({ defaultExternalOpenTargetId: receipt.targetId });

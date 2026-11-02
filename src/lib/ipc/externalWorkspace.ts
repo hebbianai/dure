@@ -99,13 +99,25 @@ function externalWorkspaceOpenReceipt(
 	};
 }
 
-export const openExternalWorkspaceNative = async (
+/** What the native launcher must find at `path` before handing it over. */
+type ExternalOpenSubject = "workspace" | "file";
+
+const openExternalNative = async (
 	path: string,
 	targetId: string,
+	subject: ExternalOpenSubject,
 ) => {
 	const receipt = await invoke<unknown>("open_external_workspace", {
 		path,
 		targetId,
+		subject,
 	});
 	return externalWorkspaceOpenReceipt(receipt, targetId);
 };
+
+export const openExternalWorkspaceNative = (path: string, targetId: string) =>
+	openExternalNative(path, targetId, "workspace");
+
+/** Opens one regular file; Finder reveals it and Terminal starts in its folder. */
+export const openExternalFileNative = (path: string, targetId: string) =>
+	openExternalNative(path, targetId, "file");

@@ -53,9 +53,12 @@ export function usePaneExternalWorkspaceOpen({
           });
           const target = targets.find((candidate) => candidate.id === receipt.targetId);
           showToast(
-            t("workspace.externalOpen.opened", {
-              target: target?.label ?? receipt.targetId,
-            }),
+            t(
+              receipt.kind === "file"
+                ? "workspace.externalOpen.fileOpened"
+                : "workspace.externalOpen.opened",
+              { target: target?.label ?? receipt.targetId },
+            ),
             { paneId: panelId },
           );
         } catch (error) {
