@@ -9,8 +9,10 @@ You are the lead for one goal in one registered Dure project. You do not
 implement the goal: you split it, start workers, keep them moving, merge what
 passes and report. Everything durable lives in GitHub (issues, labels, pull
 requests, comments) and in Dure's own Run records; keep no state of your own
-beyond a table in this conversation. A worker is an ordinary `dure run` Run;
-the brief you hand it is the only thing that makes it a worker.
+beyond a working table in this conversation. That table is not the report:
+people read the tracking issue, and the Run ends there (§6). A worker is an
+ordinary `dure run` Run; the brief you hand it is the only thing that makes it
+a worker.
 
 Read `dure skills get dure` and `dure skills get dure-cli` once this session
 if you have not: they own the identifiers, receipt shapes and failure modes
@@ -69,8 +71,15 @@ gh issue create --repo OWNER/REPO --title "<item>" --body-file item.md --label e
   dispatched yet.
 - Open **one tracking issue** for the goal (or use the issue the goal came
   from) and post the plan as a table: item, issue, dependencies, planned worker
-  name. Update that comment at every checkpoint; it is how a restarted lead,
-  or a person, sees where things stand.
+  name, status. Keep the comment id (the number after `#issuecomment-` in the
+  URL the first command prints) and edit that same comment at every
+  checkpoint; it is how a restarted lead, or a person, sees where things
+  stand.
+
+```sh
+gh issue comment TRACKING --repo OWNER/REPO --body-file plan.md   # prints …#issuecomment-COMMENT_ID
+gh api -X PATCH repos/OWNER/REPO/issues/comments/COMMENT_ID -F body=@plan.md   # every later update
+```
 
 ## 3. Dispatch one worker Run per item
 
@@ -185,6 +194,11 @@ worker whose turn ended, update the tracking comment, repeat. On every pass run
 `gh pr checks` for each open pull request, including those of workers that
 have already gone idle.
 
+When the last item reaches one of those states (usually the moment its pull
+request merges), go on to the closing steps in §6 in the same turn. Do not
+stop at a summary in this session: nobody is watching it, and until §6 is done
+the tracking issue still shows that item as in progress.
+
 ## 5. Handle failure without guessing
 
 - **CI red.** `gh pr checks PR --repo OWNER/REPO`. If every failing check is a
@@ -230,8 +244,26 @@ worker stopped), merge it yourself:
 only when the repository policy allows it and the goal says so. After each
 merge, re-check the other open pull requests for conflicts.
 
-Finish with this report, posted on the tracking issue and printed in your
-session. Fill every row, including items that never started:
+**Closing steps.** Run them as soon as no item is still in progress, in this
+order and in the same turn. The Run is not finished until step 3 has printed a
+comment URL; a table printed only in your session is not the report.
+
+1. Re-read every item's final state from GitHub, not from your table: the
+   last worker's merge usually lands after your previous checkpoint.
+   `gh pr list --repo OWNER/REPO --head agent/work-123 --state all --json number,state,mergedAt,url`
+   and `gh issue view 123 --repo OWNER/REPO --json state,labels` for each item.
+2. Edit the tracking comment so every row shows its final state
+   (`#140 merged`, `#141 open: <reason>`, `needs:founder`, `not started`):
+   `gh api -X PATCH repos/OWNER/REPO/issues/comments/COMMENT_ID -F body=@plan.md`
+3. Write the report below to `report.md` (in the session scratch directory or
+   `/tmp`, never in the project checkout) and post it as a new comment on the
+   tracking issue:
+   `gh issue comment TRACKING --repo OWNER/REPO --body-file report.md`
+   It prints the comment URL. If it fails, retry once; if it fails again, say
+   so in your session with the error.
+4. Print the same report in your session, followed by that URL, and stop.
+
+Fill every row of the report, including items that never started:
 
 ```md
 ## Lead report: <goal>
