@@ -143,6 +143,15 @@ type PhoneStream = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
 
 /// 붙어서 인사까지 보낸 스트림. 그 뒤에 무엇이 오는지는 부르는 쪽이 정한다.
 fn connect(port: u16, pinned: &str, token: &str) -> Result<PhoneStream, String> {
+    connect_for(
+        port,
+        pinned,
+        listener::encode_hello(token).map_err(|error| error.to_string())?,
+    )
+}
+
+/// The same, greeting with a particular request.
+fn connect_for(port: u16, pinned: &str, hello: Vec<u8>) -> Result<PhoneStream, String> {
     let config = client_config(pinned.to_string());
     let server_name = rustls::pki_types::ServerName::try_from("hebbian-hub.local")
         .map_err(|error| error.to_string())?;
@@ -154,7 +163,6 @@ fn connect(port: u16, pinned: &str, token: &str) -> Result<PhoneStream, String> 
         .map_err(|error| error.to_string())?;
     let mut tls = rustls::StreamOwned::new(connection, socket);
 
-    let hello = listener::encode_hello(token).map_err(|error| error.to_string())?;
     tls.write_all(&hello).map_err(|error| error.to_string())?;
     tls.flush().map_err(|error| error.to_string())?;
     Ok(tls)
@@ -268,6 +276,7 @@ impl CatalogSource for OneSession {
                 host_instance_id: "host_1".into(),
                 terminal_epoch: "terminal_1".into(),
                 capabilities: vec!["live_output".into()],
+                conversation: false,
                 box_id: "this-laptop".into(),
                 box_label: "내 노트북".into(),
             }],
@@ -377,6 +386,57 @@ fn a_device_paired_while_the_hub_runs_can_connect_immediately() {
     let ack: listener::HubHelloAck =
         serde_json::from_slice(&read_frame(&mut tls).unwrap()).unwrap();
     assert_eq!(ack.device_label, "갓 페어링한 폰");
+    hub.server.stop();
+}
+
+/// A conversation request is answered in its own document, never with the
+/// session list: this hub serves no agent session of its own, so both
+/// requests come back as typed refusals the phone can branch on.
+#[test]
+fn conversation_requests_are_answered_with_typed_refusals_not_the_catalog() {
+    use dure_hub_protocol::conversation::{
+        read_prompt, read_transcript, AgentPromptState, ConversationRefusal, TranscriptOutcome,
+    };
+    use dure_hub_protocol::hello::{encode_hello_for, HubRequest};
+
+    let hub = run_hub();
+    let phone = hub.registry.register("내 폰".into()).expect("등록");
+
+    let read = HubRequest::ConversationTranscriptV1 {
+        box_id: "this-laptop".into(),
+        session_id: "standalone_abc".into(),
+        limit: Some(20),
+        after: None,
+    };
+    let mut tls = connect_for(
+        hub.port,
+        &hub.fingerprint,
+        encode_hello_for(&phone.token, read).expect("인사"),
+    )
+    .expect("붙는다");
+    read_frame(&mut tls).expect("ack");
+    let transcript = read_transcript(&mut tls).expect("a conversation answer");
+    assert_eq!(transcript.outcome, TranscriptOutcome::Refused);
+    assert_eq!(transcript.code, Some(ConversationRefusal::SessionNotFound));
+
+    let prompt = HubRequest::AgentPromptV1 {
+        box_id: "this-laptop".into(),
+        session_id: "standalone_abc".into(),
+        text: "Run the tests".into(),
+        expected_terminal_epoch: "terminal_1".into(),
+        expected_conversation_id: None,
+    };
+    let mut tls = connect_for(
+        hub.port,
+        &hub.fingerprint,
+        encode_hello_for(&phone.token, prompt).expect("인사"),
+    )
+    .expect("붙는다");
+    read_frame(&mut tls).expect("ack");
+    let prompt = read_prompt(&mut tls).expect("a prompt answer");
+    assert_eq!(prompt.state, AgentPromptState::Refused);
+    assert_eq!(prompt.code, Some(ConversationRefusal::SessionNotFound));
+    assert_eq!(prompt.record_id, None);
     hub.server.stop();
 }
 

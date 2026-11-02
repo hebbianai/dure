@@ -56,6 +56,18 @@ pub struct HubCatalogEntry {
     /// 사실이라, 셸로 시작해 나중에 ssh 를 친 세션은 여전히 셸로 읽힌다.
     #[serde(default)]
     pub launch_program: Option<String>,
+    /// This desktop answers `ConversationTranscriptV1` and `AgentPromptV1`
+    /// for this session: a local managed Claude Code or Codex agent.
+    ///
+    /// Absent from older desktops, for shells and for remote sessions, so it
+    /// doubles as that capability and a phone never offers a chat the
+    /// computer cannot serve. Optional like `presentation`, so an older phone
+    /// ignores it and the catalog version stays. Whether the agent has
+    /// reported its conversation yet is answered by the request itself
+    /// (`conversation_unknown`): knowing it here would probe every session on
+    /// every catalog read.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub conversation: bool,
     /// 이 세션이 어느 상자에 있는지. 허브가 여러 상자를 합쳐 보여주므로, 폰은
     /// 같은 목록에서 노트북 세션과 서버 세션을 구별할 수 있어야 한다.
     pub box_id: String,
@@ -321,6 +333,22 @@ mod tests {
         assert_eq!(older.account, None);
     }
 
+    /// The conversation capability is optional both ways: a catalog from an
+    /// older desktop reads as "no chat here", and an entry without it writes
+    /// nothing an older phone could trip on.
+    #[test]
+    fn the_conversation_capability_is_optional_both_ways() {
+        let mut served = catalog();
+        served.sessions[0].conversation = true;
+        let encoded = encode(&served).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), served);
+
+        let without = serde_json::to_value(entry()).unwrap();
+        assert!(without.get("conversation").is_none());
+        let older: HubCatalogEntry = serde_json::from_value(without).unwrap();
+        assert!(!older.conversation);
+    }
+
     /// 구조체 리터럴인 것이 의도다: 매니페스트에 필드가 늘면 컴파일이 깨져
     /// 허용 목록을 다시 보게 된다.
     fn entry() -> HubCatalogEntry {
@@ -340,6 +368,7 @@ mod tests {
             terminal_epoch: "terminal-1".to_string(),
             capabilities: vec!["terminal_stream".to_string()],
             launch_program: Some("zsh".to_string()),
+            conversation: false,
             box_id: "box-1".to_string(),
             box_label: "노트북".to_string(),
         }

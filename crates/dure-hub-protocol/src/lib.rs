@@ -29,6 +29,7 @@
 //! rustls 스트림을 읽기/쓰기 절반으로 기계적으로 나누기만 한다.
 
 pub mod catalog;
+pub mod conversation;
 pub mod file_diff;
 pub mod fingerprint;
 pub mod folder_browser;

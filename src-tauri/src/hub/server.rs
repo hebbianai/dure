@@ -18,6 +18,7 @@
 //! 곳에 필요해진다. 논블로킹 + 짧은 잠은 끄기 지연이 조금 늘 뿐이고, 그 지연은
 //! 사람이 스위치를 누르는 시간에 묻힌다.
 
+use super::conversation;
 use super::file_diff;
 use super::folder_browser;
 use super::git_status;
@@ -106,6 +107,8 @@ pub(super) struct ServedHub<'a> {
     pub files: Option<&'a dyn super::session_file::SessionFileSink>,
     /// The side that reads and switches a session's provider account.
     pub accounts: Option<&'a dyn session_account::SessionAccountSink>,
+    /// The side that reads an agent's conversation and types a prompt into it.
+    pub conversations: Option<&'a dyn conversation::ConversationSink>,
     pub terminal_widths: Option<&'a Arc<TerminalWidths>>,
 }
 
@@ -124,6 +127,8 @@ pub(super) struct HubServices {
     pub files: Option<Arc<dyn super::session_file::SessionFileSink>>,
     /// The side that reads and switches a session's provider account.
     pub accounts: Option<Arc<dyn session_account::SessionAccountSink>>,
+    /// The side that reads an agent's conversation and types a prompt into it.
+    pub conversations: Option<Arc<dyn conversation::ConversationSink>>,
     pub terminal_widths: Option<Arc<TerminalWidths>>,
 }
 
@@ -151,6 +156,7 @@ impl HubServices {
             diffs: None,
             files: None,
             accounts: None,
+            conversations: None,
             terminal_widths: None,
         }
     }
@@ -165,6 +171,7 @@ impl HubServices {
             diffs: None,
             files: None,
             accounts: None,
+            conversations: None,
             terminal_widths: None,
         }
     }
@@ -210,6 +217,17 @@ impl HubServices {
         accounts: Arc<dyn session_account::SessionAccountSink>,
     ) -> Self {
         self.accounts = Some(accounts);
+        self
+    }
+
+    /// Attach the side that serves agent conversations. Without it,
+    /// conversation requests are refused `unavailable`.
+    #[must_use]
+    pub(super) fn serving_conversations(
+        mut self,
+        conversations: Arc<dyn conversation::ConversationSink>,
+    ) -> Self {
+        self.conversations = Some(conversations);
         self
     }
 }
@@ -769,6 +787,7 @@ fn serve_loop(
                             diffs: services.diffs.as_deref(),
                             files: services.files.as_deref(),
                             accounts: services.accounts.as_deref(),
+                            conversations: services.conversations.as_deref(),
                             terminal_widths: services.terminal_widths.as_ref(),
                         },
                         &registration.authenticated,
@@ -1034,6 +1053,64 @@ fn serve_one(
         return;
     }
 
+    if let HubRequest::ConversationTranscriptV1 {
+        box_id,
+        session_id,
+        limit,
+        after,
+    } = hello.request
+    {
+        // The desktop reads only its own sessions' transcripts; which box the
+        // request names decides that before any session is looked up.
+        let result = conversation::answer_transcript(
+            hub.conversations,
+            box_route(&hub, &box_id),
+            conversation::TranscriptRequest {
+                session_id,
+                limit,
+                after,
+            },
+        );
+        match dure_hub_protocol::conversation::encode_transcript(&result) {
+            Ok(framed) => {
+                let _ = tls.write_all(&framed);
+                let _ = tls.flush();
+            }
+            Err(error) => eprintln!("[hub] Could not encode the conversation in a frame: {error}"),
+        }
+        return;
+    }
+
+    if let HubRequest::AgentPromptV1 {
+        box_id,
+        session_id,
+        text,
+        expected_terminal_epoch,
+        expected_conversation_id,
+    } = hello.request
+    {
+        // The Hmux Host admits the prompt (`conversation.rs`); an answer that
+        // never arrives would read as "refused" and invite a second send.
+        let result = conversation::answer_prompt(
+            hub.conversations,
+            box_route(&hub, &box_id),
+            conversation::PromptRequest {
+                session_id,
+                text,
+                expected_terminal_epoch,
+                expected_conversation_id,
+            },
+        );
+        match dure_hub_protocol::conversation::encode_prompt(&result) {
+            Ok(framed) => {
+                let _ = tls.write_all(&framed);
+                let _ = tls.flush();
+            }
+            Err(error) => eprintln!("[hub] Could not encode the prompt result in a frame: {error}"),
+        }
+        return;
+    }
+
     if let HubRequest::GitStatus { session_id, want } = hello.request {
         // 어느 저장소인지 아는 것은 화면이다 — 폰이 보낸 것은 hmux 세션 id 이고,
         // 그것을 워크트리로 옮기는 표는 앱의 개념 위에 있다(`git_status.rs`).
@@ -1225,6 +1302,18 @@ fn serve_one(
     };
     let _ = tls.write_all(&framed);
     let _ = tls.flush();
+}
+
+/// Whether a request's box is this desktop's own, a remote host it reaches,
+/// or neither — the same distinction `Attach` makes.
+fn box_route(hub: &ServedHub<'_>, box_id: &str) -> conversation::BoxRoute {
+    if hub.gateway.is_some_and(|gateway| gateway.box_id == box_id) {
+        conversation::BoxRoute::Local
+    } else if hub.source.remote_host(box_id).is_some() {
+        conversation::BoxRoute::Remote
+    } else {
+        conversation::BoxRoute::Unknown
+    }
 }
 
 fn write_session_account(

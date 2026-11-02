@@ -54,11 +54,17 @@ pub fn entry_from(
         terminal_epoch: descriptor.terminal_epoch.clone(),
         capabilities: descriptor.capabilities.clone(),
         launch_program: descriptor.launch_program.clone(),
+        conversation: super::conversation::serves_conversation(
+            &descriptor.session_class,
+            &descriptor.provider_id,
+        ),
         box_id: box_id.to_string(),
         box_label: box_label.to_string(),
     }
 }
 
+/// A remote host's session. Its conversation is not served yet
+/// (`conversation.rs`), so the entry never offers one.
 #[must_use]
 pub fn remote_entry_from(
     descriptor: &hmux_ssh_transport::RemoteCatalogSession,
@@ -81,6 +87,7 @@ pub fn remote_entry_from(
         terminal_epoch: descriptor.terminal_epoch.clone(),
         capabilities: descriptor.capabilities.clone(),
         launch_program: descriptor.launch_program.clone(),
+        conversation: false,
         box_id: box_id.to_string(),
         box_label: box_label.to_string(),
     }

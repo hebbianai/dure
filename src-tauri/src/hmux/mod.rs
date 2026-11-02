@@ -122,7 +122,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 use observer_webview_lifecycle::ObserverWebviewLifecycle;
-use product_catalog::product_catalog;
+pub(crate) use product_catalog::product_catalog;
 
 const MAX_CENSUS_WORKERS: usize = 4;
 const CENSUS_TOTAL_BUDGET: Duration = Duration::from_millis(1_500);

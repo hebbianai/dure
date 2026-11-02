@@ -246,6 +246,64 @@ pub enum HubRequest {
         #[serde(default)]
         confirm_restart: bool,
     },
+    /// Read the newest messages of one agent session's provider conversation.
+    ///
+    /// Asked when the chat opens and polled while it is open, not pushed in
+    /// the catalog: reading a transcript scans a provider file, and pushing it
+    /// would do that for a screen nobody is looking at. See `conversation.rs`.
+    ///
+    /// Answered with a `conversation::HubConversationTranscriptResult`. A
+    /// desktop that predates this request reads it as [`Self::Unsupported`]
+    /// and closes after the greeting.
+    ConversationTranscriptV1 {
+        /// The catalog entry's box, as `Attach` names it. Only the box this
+        /// desktop serves itself answers with a transcript; a remote box is
+        /// refused `remote_unsupported`.
+        box_id: String,
+        /// The catalog entry's Hmux session id.
+        session_id: String,
+        /// How many of the newest entries to return. Absent asks for
+        /// `conversation::MAX_TRANSCRIPT_ENTRIES`, a larger value reads as
+        /// that maximum, and zero returns only the cursor and final response.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+        /// The cursor a previous answer returned. When nothing it names has
+        /// moved, the answer is `unchanged` and the transcript is not read.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<crate::conversation::ConversationCursor>,
+    },
+    /// Type one prompt into an agent that is waiting for input.
+    ///
+    /// A distinct variant rather than a field on the read, for the reason
+    /// `CreatePullRequest` gives: a retried read must never become a write.
+    ///
+    /// The desktop writes nothing unless the Hmux Host itself admits the
+    /// prompt — the agent idle, no attention raised, the expected process and
+    /// conversation — and then writes the text and its submit in one record,
+    /// so it never merges with someone's unsubmitted terminal input. Answered
+    /// with a `conversation::HubAgentPromptResult`; a desktop that predates
+    /// this request reads it as [`Self::Unsupported`] and closes after the
+    /// greeting, having written nothing.
+    ///
+    /// The text rides in the greeting, so together with the token and ids it
+    /// must fit in `MAX_HELLO_BYTES`; [`encode_hello_for`] refuses a greeting
+    /// that does not, before anything is sent.
+    AgentPromptV1 {
+        /// The catalog entry's box, as `Attach` names it.
+        box_id: String,
+        session_id: String,
+        text: String,
+        /// The provider process the person was looking at — the catalog
+        /// entry's or the last transcript cursor's `terminal_epoch`. Another
+        /// process is refused `identity_changed`.
+        expected_terminal_epoch: String,
+        /// The conversation the person was looking at, from the last
+        /// transcript answer. Another conversation is refused
+        /// `identity_changed`. Absent accepts whatever conversation the agent
+        /// is on now.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_conversation_id: Option<String>,
+    },
     /// 이 노트북이 모르는 요청.
     ///
     /// # 왜 갈래가 하나 더 있는가
@@ -530,6 +588,176 @@ mod tests {
                 confirm_restart: false,
             }
         );
+    }
+
+    fn conversation_cursor() -> crate::conversation::ConversationCursor {
+        crate::conversation::ConversationCursor {
+            terminal_epoch: "terminal-1".to_string(),
+            conversation_id: "conversation-1".to_string(),
+            turn_completed_count: 2,
+            runtime_revision: 9,
+        }
+    }
+
+    #[test]
+    fn conversation_requests_round_trip_and_stay_distinct() {
+        let read = HubRequest::ConversationTranscriptV1 {
+            box_id: "this-laptop".to_string(),
+            session_id: "session-1".to_string(),
+            limit: Some(50),
+            after: Some(conversation_cursor()),
+        };
+        let prompt = HubRequest::AgentPromptV1 {
+            box_id: "this-laptop".to_string(),
+            session_id: "session-1".to_string(),
+            text: "Run the tests again\nand report".to_string(),
+            expected_terminal_epoch: "terminal-1".to_string(),
+            expected_conversation_id: Some("conversation-1".to_string()),
+        };
+        for request in [read, prompt] {
+            let framed = encode_hello_for("token-1", request.clone()).expect("encodes");
+            assert_eq!(
+                read_hello(&mut framed.as_slice()).expect("reads").request,
+                request
+            );
+        }
+    }
+
+    /// The names the phone writes on the wire.
+    #[test]
+    fn conversation_requests_use_their_wire_names() {
+        let value = serde_json::to_value(HubRequest::ConversationTranscriptV1 {
+            box_id: "b".to_string(),
+            session_id: "s".to_string(),
+            limit: None,
+            after: None,
+        })
+        .expect("to value");
+        assert_eq!(
+            value,
+            serde_json::json!({ "kind": "conversation_transcript_v1", "box_id": "b", "session_id": "s" })
+        );
+        let value = serde_json::to_value(HubRequest::AgentPromptV1 {
+            box_id: "b".to_string(),
+            session_id: "s".to_string(),
+            text: "t".to_string(),
+            expected_terminal_epoch: "e".to_string(),
+            expected_conversation_id: None,
+        })
+        .expect("to value");
+        assert_eq!(value["kind"], "agent_prompt_v1");
+        assert!(value.get("expected_conversation_id").is_none());
+    }
+
+    /// A first read carries neither limit nor cursor; a prompt that does not
+    /// name a conversation accepts the current one. Absence must not fail the
+    /// greeting, which the phone would show as a revoked pairing.
+    #[test]
+    fn conversation_requests_without_optional_fields_read_as_defaults() {
+        let hello: HubHello = serde_json::from_value(serde_json::json!({
+            "hub_hello_version": HUB_HELLO_VERSION,
+            "token": "t",
+            "request": { "kind": "conversation_transcript_v1", "box_id": "b", "session_id": "s" },
+        }))
+        .expect("reads");
+        assert_eq!(
+            hello.request,
+            HubRequest::ConversationTranscriptV1 {
+                box_id: "b".to_string(),
+                session_id: "s".to_string(),
+                limit: None,
+                after: None,
+            }
+        );
+        let hello: HubHello = serde_json::from_value(serde_json::json!({
+            "hub_hello_version": HUB_HELLO_VERSION,
+            "token": "t",
+            "request": {
+                "kind": "agent_prompt_v1",
+                "box_id": "b",
+                "session_id": "s",
+                "text": "hi",
+                "expected_terminal_epoch": "e",
+            },
+        }))
+        .expect("reads");
+        assert_eq!(
+            hello.request,
+            HubRequest::AgentPromptV1 {
+                box_id: "b".to_string(),
+                session_id: "s".to_string(),
+                text: "hi".to_string(),
+                expected_terminal_epoch: "e".to_string(),
+                expected_conversation_id: None,
+            }
+        );
+    }
+
+    /// A desktop built before these requests still answers them the way it
+    /// answers every question it does not know: `Unsupported`, which it
+    /// closes on after the greeting without writing anything.
+    #[test]
+    fn a_desktop_that_predates_the_conversation_requests_reads_them_as_unsupported() {
+        /// The request enum as a build before these variants had it, cut
+        /// down to what the decision depends on: tagged by `kind`, with the
+        /// `serde(other)` catch-all.
+        #[derive(Debug, Deserialize, PartialEq)]
+        #[serde(tag = "kind", rename_all = "snake_case")]
+        enum EarlierHubRequest {
+            Catalog,
+            Attach {
+                writable: bool,
+                box_id: String,
+            },
+            SessionAccountsV1 {
+                session_id: String,
+            },
+            #[serde(other)]
+            Unsupported,
+        }
+        #[derive(Deserialize)]
+        struct EarlierHello {
+            request: EarlierHubRequest,
+        }
+
+        for request in [
+            HubRequest::ConversationTranscriptV1 {
+                box_id: "this-laptop".to_string(),
+                session_id: "session-1".to_string(),
+                limit: Some(20),
+                after: Some(conversation_cursor()),
+            },
+            HubRequest::AgentPromptV1 {
+                box_id: "this-laptop".to_string(),
+                session_id: "session-1".to_string(),
+                text: "hi".to_string(),
+                expected_terminal_epoch: "terminal-1".to_string(),
+                expected_conversation_id: None,
+            },
+        ] {
+            let framed = encode_hello_for("token-1", request).expect("encodes");
+            let payload =
+                frame::read_bytes(&mut framed.as_slice(), MAX_HELLO_BYTES).expect("frame");
+            let earlier: EarlierHello = serde_json::from_slice(&payload).expect("still reads");
+            assert_eq!(earlier.request, EarlierHubRequest::Unsupported);
+        }
+    }
+
+    /// A prompt longer than the greeting can hold fails on the phone, before
+    /// a byte is sent, rather than being cut or silently dropped.
+    #[test]
+    fn a_prompt_that_does_not_fit_the_greeting_is_refused_before_sending() {
+        let request = HubRequest::AgentPromptV1 {
+            box_id: "this-laptop".to_string(),
+            session_id: "session-1".to_string(),
+            text: "x".repeat(MAX_HELLO_BYTES),
+            expected_terminal_epoch: "terminal-1".to_string(),
+            expected_conversation_id: None,
+        };
+        assert!(matches!(
+            encode_hello_for("token-1", request),
+            Err(FrameError::OutOfRange { .. })
+        ));
     }
 
     #[test]

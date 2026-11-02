@@ -259,7 +259,8 @@ pub fn hub_start(app: tauri::AppHandle, address: String, port: u16) -> Result<Hu
         .switching_accounts(Arc::new(ScreenRoundTrip {
             app: app.clone(),
             pending: Arc::clone(&state.pending_account),
-        })),
+        }))
+        .serving_conversations(Arc::new(super::conversation::LocalConversations)),
     )?;
     status.device_count = device_count;
     // 켠 것을 기억한다. 이 기록이 없으면 앱을 다시 켤 때마다 폰 쪽에서는
@@ -347,7 +348,8 @@ pub fn hub_relay_start(
         .switching_accounts(Arc::new(ScreenRoundTrip {
             app: app.clone(),
             pending: Arc::clone(&state.pending_account),
-        })),
+        }))
+        .serving_conversations(Arc::new(super::conversation::LocalConversations)),
     );
     if let Err(error) = super::autostart::remember_relay(&root, &recorded_endpoint) {
         eprintln!("[hub] Could not save the relay automatic resume record: {error}");
