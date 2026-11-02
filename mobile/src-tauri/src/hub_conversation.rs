@@ -6,21 +6,23 @@
 //! sheet's questions do: the greeting carries the request, the ack comes back,
 //! then one answer document (`dure_hub_protocol::conversation`).
 //!
-//! # An older computer
+//! # A transcript that never comes
 //!
-//! A desktop that predates these requests reads them as `Unsupported`, sends
-//! the ack and closes without another byte. This module names that
-//! [`UNSUPPORTED`] so the screen can say "update Dure on the computer" rather
-//! than "could not connect". The catalog's `conversation` flag already keeps an
-//! older desktop from being asked; this is the answer for the case it misses.
+//! A desktop that predates these requests reads them as `Unsupported`, acks
+//! and closes without another byte — but so does a relay that drops, a desktop
+//! that restarts, or one that fails to encode its answer. Chat is only offered
+//! when the catalog says the computer serves it, which an older desktop never
+//! does, so a silent close is reported as [`NO_ANSWER`] and the screen treats
+//! it as one more failed ask; only a run of them suggests updating.
 //!
 //! # A prompt whose answer is lost
 //!
-//! Once the greeting with the prompt is on the wire, the desktop may write the
-//! prompt even if its answer never arrives. From that point a broken
-//! connection is answered as the protocol's own `unknown` ("read the
-//! transcript before sending this again"), never as an error the screen would
-//! retry by itself.
+//! Once the greeting with the prompt is fully written, the desktop may write
+//! the prompt even if nothing at all comes back: it acknowledges and then acts,
+//! and the ack can be lost after it was sent. From that point every failure is
+//! the protocol's own `unknown` ("read the transcript before sending this
+//! again"), never an error. An error from [`hub_agent_prompt`] therefore always
+//! means nothing was written.
 
 use crate::hub_client::{self, HubClientError};
 use crate::CommandError;
@@ -33,9 +35,9 @@ use dure_hub_protocol::hello::{self, HubRequest};
 use serde::Deserialize;
 use std::io::{Read, Write};
 
-/// The computer took the request and closed without answering: a Dure from
-/// before the chat.
-pub const UNSUPPORTED: &str = "conversation_unsupported";
+/// The computer took a transcript request and closed without answering. An
+/// older Dure does this, and so does a dropped relay or a restarting desktop.
+pub const NO_ANSWER: &str = "conversation_no_answer";
 
 /// The computer answered in a conversation version this build cannot read.
 pub const VERSION_UNSUPPORTED: &str = "conversation_version_unsupported";
@@ -76,11 +78,15 @@ fn client_error(error: &HubClientError) -> CommandError {
     command_error(error.code(), error.to_string())
 }
 
-fn unsupported() -> CommandError {
+fn no_answer() -> CommandError {
     command_error(
-        UNSUPPORTED,
-        "The computer's Dure does not serve conversations yet. Update Dure on the computer",
+        NO_ANSWER,
+        "The computer closed the connection without answering",
     )
+}
+
+fn lost(error: impl std::fmt::Display) -> HubAgentPromptResult {
+    HubAgentPromptResult::unknown(format!("The computer's answer was lost: {error}"))
 }
 
 fn answer_error(error: &ConversationError) -> CommandError {
@@ -109,7 +115,7 @@ fn transcript_on_stream<S: Read + Write>(
     match conversation::read_transcript(&mut counted) {
         Ok(result) => Ok(result),
         Err(ConversationError::Frame(error)) if closed_silently(&error, counted.read) => {
-            Err(unsupported())
+            Err(no_answer())
         }
         Err(error) => Err(answer_error(&error)),
     }
@@ -117,10 +123,10 @@ fn transcript_on_stream<S: Read + Write>(
 
 /// One prompt on an open stream.
 ///
-/// `Err` only while nothing can have been written: the greeting did not get
-/// out whole, or the desktop closed without acknowledging it (it acknowledges
-/// before it acts, and a stream delivers in order, so an end with no ack is an
-/// end before any action). Every later failure is `Ok(unknown)`.
+/// `Err` only while the greeting is not yet fully written: the desktop cannot
+/// act on part of a frame. Once it is, every failure — no ack, a lost ack, a
+/// silent close, a broken answer — is `Ok(unknown)`, because the desktop acks
+/// before it acts and the prompt may already be in the agent's terminal.
 fn prompt_on_stream<S: Read + Write>(
     stream: &mut S,
     token: &str,
@@ -133,35 +139,10 @@ fn prompt_on_stream<S: Read + Write>(
         .and_then(|()| stream.flush())
         .map_err(|error| client_error(&HubClientError::Unreachable(error.to_string())))?;
 
-    let mut counted = Counted {
-        inner: stream,
-        read: 0,
-    };
-    match hello::read_ack(&mut counted) {
-        Ok(_) => {}
-        Err(hello::HelloError::Frame(error)) if closed_silently(&error, counted.read) => {
-            return Err(client_error(&HubClientError::Refused));
-        }
-        Err(error) => {
-            return Ok(HubAgentPromptResult::unknown(format!(
-                "The computer's answer was lost: {error}"
-            )));
-        }
+    if let Err(error) = hello::read_ack(stream) {
+        return Ok(lost(error));
     }
-
-    let mut counted = Counted {
-        inner: counted.inner,
-        read: 0,
-    };
-    match conversation::read_prompt(&mut counted) {
-        Ok(result) => Ok(result),
-        Err(ConversationError::Frame(error)) if closed_silently(&error, counted.read) => {
-            Err(unsupported())
-        }
-        Err(error) => Ok(HubAgentPromptResult::unknown(format!(
-            "The computer's answer was lost: {error}"
-        ))),
-    }
+    conversation::read_prompt(stream).or_else(|error| Ok(lost(error)))
 }
 
 /// The pinned TLS stream [`hub_client::dial_tls`] opens.
@@ -252,7 +233,9 @@ fn prompt_request(input: PromptInput) -> Result<HubRequest, HubAgentPromptResult
 }
 
 /// Deliver one prompt. A refusal is an answer, not an error; an error means
-/// nothing was written.
+/// nothing was written. Of the errors, only `hub_unreachable` and
+/// `hub_computer_offline` say the computer may answer a retry: both come from
+/// dialing or from writing the greeting, before anything could be acted on.
 #[tauri::command]
 pub async fn hub_agent_prompt(
     app: tauri::AppHandle,
@@ -397,26 +380,22 @@ mod tests {
         assert_eq!(sent.request, transcript_request());
     }
 
-    /// An older desktop acks and drops the stream. Through rustls that is an
-    /// unexpected end, not a clean one; either way it is "update the computer".
+    /// A silent close after the ack — an older desktop, a dropped relay, a
+    /// restart — is named for what was seen, not for a guessed cause. Through
+    /// rustls it is an unexpected end, not a clean one; both read the same.
     #[test]
-    fn an_older_desktop_closing_after_the_ack_reads_as_unsupported() {
+    fn a_transcript_closed_after_the_ack_reads_as_no_answer() {
         for end in [End::Closed, End::Dropped] {
             let mut stream = Duplex::new(ack(), end);
             let error = transcript_on_stream(&mut stream, "token-1", transcript_request())
                 .expect_err("no answer");
-            assert_eq!(error.code, UNSUPPORTED);
-
-            let mut stream = Duplex::new(ack(), end);
-            let error = prompt_on_stream(&mut stream, "token-1", prompt_request_for("hello"))
-                .expect_err("no answer");
-            assert_eq!(error.code, UNSUPPORTED);
+            assert_eq!(error.code, NO_ANSWER);
         }
     }
 
-    /// Half an answer is a broken connection, not an older desktop.
+    /// Half an answer is a broken connection, not a silent close.
     #[test]
-    fn a_transcript_cut_mid_answer_is_not_unsupported() {
+    fn a_transcript_cut_mid_answer_is_not_no_answer() {
         let answer = HubConversationTranscriptResult::refused(
             ConversationRefusal::ConversationUnknown,
             "not yet",
@@ -432,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn a_silent_transcript_is_unreachable_not_unsupported() {
+    fn a_silent_transcript_is_unreachable() {
         let mut stream = Duplex::new(ack(), End::TimedOut);
         let error = transcript_on_stream(&mut stream, "token-1", transcript_request())
             .expect_err("timed out");
@@ -454,37 +433,64 @@ mod tests {
         }
     }
 
-    /// The desktop acknowledges before it acts, so an end before the ack is
-    /// "nothing written" and the phone may try again.
+    /// The desktop acks and then acts, and an ack can be lost after it was
+    /// sent. Once the greeting is out, nothing that comes back — or does not —
+    /// proves the prompt was not written.
     #[test]
-    fn a_prompt_closed_before_the_ack_was_not_sent() {
-        let mut stream = Duplex::new(Vec::new(), End::Dropped);
-        let error = prompt_on_stream(&mut stream, "token-1", prompt_request_for("hello"))
-            .expect_err("refused");
-        assert_eq!(error.code, "hub_refused");
+    fn every_failure_after_the_greeting_is_unknown_never_an_error() {
+        let written =
+            conversation::encode_prompt(&HubAgentPromptResult::written("terminal-1", "record-1"))
+                .expect("encodes");
+        let mut cut_answer = ack();
+        cut_answer.extend(&written[..written.len() - 3]);
+        let half_ack = ack()[..3].to_vec();
+        let cases: [(&str, Vec<u8>, End); 9] = [
+            ("closed before the ack", Vec::new(), End::Closed),
+            ("dropped before the ack", Vec::new(), End::Dropped),
+            ("silent before the ack", Vec::new(), End::TimedOut),
+            ("cut inside the ack", half_ack, End::Dropped),
+            ("closed after the ack", ack(), End::Closed),
+            ("dropped after the ack", ack(), End::Dropped),
+            ("silent after the ack", ack(), End::TimedOut),
+            ("cut inside the answer", cut_answer, End::Dropped),
+            (
+                "garbage for an answer",
+                {
+                    let mut garbage = ack();
+                    garbage.extend([0, 0, 0, 2, b'{', b'}']);
+                    garbage
+                },
+                End::Dropped,
+            ),
+        ];
+        for (case, incoming, end) in cases {
+            let mut stream = Duplex::new(incoming, end);
+            let read = prompt_on_stream(&mut stream, "token-1", prompt_request_for("hello"))
+                .unwrap_or_else(|error| panic!("{case}: an error ({})", error.code));
+            assert_eq!(read.state, AgentPromptState::Unknown, "{case}");
+        }
     }
 
-    /// After the greeting is out, a lost answer may hide a written prompt.
+    /// A greeting that never got out whole cannot have been acted on.
     #[test]
-    fn a_prompt_whose_answer_is_lost_is_unknown_not_an_error() {
-        let mut stream = Duplex::new(Vec::new(), End::TimedOut);
-        let read = prompt_on_stream(&mut stream, "token-1", prompt_request_for("hello"))
-            .expect("unknown is an answer");
-        assert_eq!(read.state, AgentPromptState::Unknown);
-
-        let mut stream = Duplex::new(ack(), End::TimedOut);
-        let read = prompt_on_stream(&mut stream, "token-1", prompt_request_for("hello"))
-            .expect("unknown is an answer");
-        assert_eq!(read.state, AgentPromptState::Unknown);
-
-        let answer = HubAgentPromptResult::written("terminal-1", "record-1");
-        let frame = conversation::encode_prompt(&answer).expect("encodes");
-        let mut incoming = ack();
-        incoming.extend(&frame[..frame.len() - 3]);
-        let mut stream = Duplex::new(incoming, End::Dropped);
-        let read = prompt_on_stream(&mut stream, "token-1", prompt_request_for("hello"))
-            .expect("unknown is an answer");
-        assert_eq!(read.state, AgentPromptState::Unknown);
+    fn a_prompt_whose_greeting_did_not_go_out_was_not_sent() {
+        struct Unwritable;
+        impl Read for Unwritable {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Ok(0)
+            }
+        }
+        impl Write for Unwritable {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let error = prompt_on_stream(&mut Unwritable, "token-1", prompt_request_for("hello"))
+            .expect_err("not sent");
+        assert_eq!(error.code, "hub_unreachable");
     }
 
     #[test]

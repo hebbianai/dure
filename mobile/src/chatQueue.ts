@@ -13,16 +13,24 @@
  * # Which refusals keep it
  *
  * `not_idle`, `attention_pending` and `probe_timeout` say "not now": the
- * prompt stays queued and goes again at the next idle report. A computer that
- * could not be reached wrote nothing, so that keeps it too. Every other
+ * prompt stays queued and goes again at the next idle report. Every other
  * refusal stops it and gives the text back to the composer with the reason —
  * above all `identity_changed`, because a prompt is never delivered into a
- * conversation other than the one it was written for. An answer lost after
- * the prompt went out (`unknown`) also gives it back, with a note to check the
- * conversation first, rather than sending it a second time unasked.
+ * conversation other than the one it was written for.
+ *
+ * # Never twice by itself
+ *
+ * A failed delivery keeps the prompt only when the failure proves nothing was
+ * written: the computer could not be reached before the prompt went out
+ * ([`NOT_SENT_CODES`]). Anything else — an answer lost after the prompt went
+ * out (`unknown`), a command error this build does not know to be harmless —
+ * gives the text back with a note to check the conversation first. Text given
+ * back stays stored until the person sends or clears it, so closing the app
+ * does not lose it either.
  */
 
-import type { AgentPromptAnswer, CommandError, ConversationRefusal } from "./ipc";
+import { isCommandError } from "./commandError";
+import type { AgentPromptAnswer, ConversationRefusal } from "./ipc";
 
 /** The protocol's `MAX_AGENT_PROMPT_BYTES`: one prompt rides in the greeting. */
 export const MAX_AGENT_PROMPT_BYTES = 3 * 1024;
@@ -145,10 +153,8 @@ export const RETRYABLE_REFUSALS: ReadonlySet<ConversationRefusal> = new Set([
 /** Why a prompt came back to the composer. */
 export type ReturnReason =
   | ConversationRefusal
-  /** The answer was lost after the prompt went out; it may have been written. */
-  | "uncertain"
-  /** The computer predates the chat. */
-  | "unsupported";
+  /** It may have been written: check the conversation before sending again. */
+  | "uncertain";
 
 export type Delivery =
   | { readonly kind: "sent"; readonly text: string }
@@ -159,23 +165,24 @@ export type DeliveryResult =
   | { readonly kind: "answer"; readonly answer: AgentPromptAnswer }
   | { readonly kind: "error"; readonly error: unknown };
 
-function isCommandError(error: unknown): error is CommandError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    typeof (error as CommandError).code === "string"
-  );
-}
+/**
+ * The command errors that prove a prompt was not written and may be tried
+ * again: `hub_agent_prompt` returns them only from dialing the computer or
+ * from writing the greeting, before the computer could act on it.
+ */
+export const NOT_SENT_CODES: ReadonlySet<string> = new Set([
+  "hub_unreachable",
+  "hub_computer_offline",
+]);
 
 /** What one delivery attempt did with the queued prompt. */
 export function settleDelivery(prompt: QueuedPrompt, result: DeliveryResult): Delivery {
   if (result.kind === "error") {
-    const code = isCommandError(result.error) ? result.error.code : "";
-    // The command reports an error only while nothing can have been written.
-    if (code === "conversation_unsupported" || code === "conversation_version_unsupported") {
-      return { kind: "returned", text: prompt.text, reason: "unsupported" };
+    if (isCommandError(result.error) && NOT_SENT_CODES.has(result.error.code)) {
+      return { kind: "kept", prompt: { ...prompt, wait: "unreachable" } };
     }
-    return { kind: "kept", prompt: { ...prompt, wait: "unreachable" } };
+    // Anything else might have happened after the prompt went out.
+    return { kind: "returned", text: prompt.text, reason: "uncertain" };
   }
   const { answer } = result;
   switch (answer.state) {
@@ -248,17 +255,25 @@ export function queueKey(
   return JSON.stringify([hubId, boxId, workspaceId, sessionId]);
 }
 
-interface StoredPrompt {
-  text: string;
-  target: PromptTarget;
-  queuedAtMs: number;
-  /** Written just before a delivery starts and cleared when it settles. */
-  sending?: true;
-}
+/** What one session has stored: a queued prompt, or text given back to the composer. */
+export type ChatEntry =
+  | { readonly kind: "queued"; readonly prompt: QueuedPrompt }
+  | { readonly kind: "returned"; readonly text: string; readonly reason: ReturnReason };
+
+type StoredEntry =
+  | {
+      kind: "queued";
+      text: string;
+      target: PromptTarget;
+      queuedAtMs: number;
+      /** Written just before a delivery starts and cleared when it settles. */
+      sending?: true;
+    }
+  | { kind: "returned"; text: string; reason: string };
 
 interface StoredQueue {
   readonly version: 1;
-  readonly prompts: Record<string, StoredPrompt>;
+  readonly prompts: Record<string, StoredEntry>;
 }
 
 type QueueStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -283,29 +298,51 @@ function readStored(storage: QueueStorage): StoredQueue {
   return { version: 1, prompts: {} };
 }
 
-function storedPrompt(value: unknown): QueuedPrompt | undefined {
+function storedEntry(value: unknown): ChatEntry | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const { text, target, queuedAtMs, sending } = value as Record<string, unknown>;
-  if (typeof text !== "string" || typeof queuedAtMs !== "number") return undefined;
+  const { kind, text, target, queuedAtMs, sending, reason } = value as Record<string, unknown>;
+  if (typeof text !== "string") return undefined;
+  if (kind === "returned") {
+    // A reason this build does not know still reads as "check first".
+    return {
+      kind: "returned",
+      text,
+      reason: typeof reason === "string" ? (reason as ReturnReason) : "uncertain",
+    };
+  }
+  if (kind !== "queued" || typeof queuedAtMs !== "number") return undefined;
   if (typeof target !== "object" || target === null) return undefined;
   const { terminalEpoch, conversationId } = target as Record<string, unknown>;
   if (typeof terminalEpoch !== "string") return undefined;
   if (conversationId !== undefined && typeof conversationId !== "string") return undefined;
   return {
-    text,
-    queuedAtMs,
-    target: conversationId === undefined ? { terminalEpoch } : { terminalEpoch, conversationId },
-    ...(sending === true ? { interrupted: true } : {}),
+    kind: "queued",
+    prompt: {
+      text,
+      queuedAtMs,
+      target: conversationId === undefined ? { terminalEpoch } : { terminalEpoch, conversationId },
+      ...(sending === true ? { interrupted: true } : {}),
+    },
   };
 }
 
-/** The prompt queued for one session, if any. Never throws. */
-export function loadQueuedPrompt(
-  storage: QueueStorage | undefined,
-  key: string,
-): QueuedPrompt | undefined {
+/** What one session has stored, if anything. Never throws. */
+export function loadChatEntry(storage: QueueStorage | undefined, key: string): ChatEntry | undefined {
   if (!storage) return undefined;
-  return storedPrompt(readStored(storage).prompts[key]);
+  return storedEntry(readStored(storage).prompts[key]);
+}
+
+function writeEntry(storage: QueueStorage | undefined, key: string, entry: StoredEntry | undefined): void {
+  if (!storage) return;
+  const prompts = { ...readStored(storage).prompts };
+  if (entry) prompts[key] = entry;
+  else delete prompts[key];
+  try {
+    if (Object.keys(prompts).length === 0) storage.removeItem(CHAT_QUEUE_STORAGE_KEY);
+    else storage.setItem(CHAT_QUEUE_STORAGE_KEY, JSON.stringify({ version: 1, prompts }));
+  } catch {
+    // A full or blocked store keeps the prompt for this run only.
+  }
 }
 
 /**
@@ -320,23 +357,28 @@ export function saveQueuedPrompt(
   prompt: QueuedPrompt | undefined,
   sending = false,
 ): void {
-  if (!storage) return;
-  const stored = readStored(storage);
-  const prompts = { ...stored.prompts };
-  if (prompt) {
-    prompts[key] = {
+  writeEntry(
+    storage,
+    key,
+    prompt && {
+      kind: "queued",
       text: prompt.text,
       target: prompt.target,
       queuedAtMs: prompt.queuedAtMs,
       ...(sending ? { sending: true as const } : {}),
-    };
-  } else {
-    delete prompts[key];
-  }
-  try {
-    if (Object.keys(prompts).length === 0) storage.removeItem(CHAT_QUEUE_STORAGE_KEY);
-    else storage.setItem(CHAT_QUEUE_STORAGE_KEY, JSON.stringify({ version: 1, prompts }));
-  } catch {
-    // A full or blocked store keeps the prompt for this run only.
-  }
+    },
+  );
+}
+
+/**
+ * Keep text given back to the composer, with why, until the person sends it
+ * or clears it. Empty text forgets it. Never throws.
+ */
+export function saveReturnedDraft(
+  storage: QueueStorage | undefined,
+  key: string,
+  text: string,
+  reason: ReturnReason,
+): void {
+  writeEntry(storage, key, text.trim() === "" ? undefined : { kind: "returned", text, reason });
 }

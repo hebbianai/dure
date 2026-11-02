@@ -12,8 +12,8 @@
 
 import type { AgentRuntimeState } from "./agentRuntimeState";
 import type { AgentReadiness } from "./chatQueue";
+import { isCommandError } from "./commandError";
 import type {
-  CommandError,
   ConversationCursor,
   ConversationEntry,
   ConversationRefusal,
@@ -81,12 +81,12 @@ export type ChatWait =
   | "unavailable"
   | "session_not_found"
   | "unreachable"
+  /** The computer keeps closing without answering, as an older Dure would. */
+  | "no_answer"
   | "unknown";
 
 /** Why the chat gives way to the terminal for this session. */
 export type ChatFallback =
-  /** The computer predates the chat: update Dure there. */
-  | "update_computer"
   /** This phone cannot read the computer's answer: update the app. */
   | "update_phone"
   /** The session has no conversation the computer can serve. */
@@ -166,25 +166,48 @@ export function applyTranscriptAnswer(
   }
 }
 
-/** A transcript request that failed before the computer answered. */
-export function transcriptFailure(error: unknown): TranscriptStep {
-  const code =
-    typeof error === "object" && error !== null && typeof (error as CommandError).code === "string"
-      ? (error as CommandError).code
-      : "";
-  if (code === "conversation_unsupported") return { kind: "fallback", fallback: "update_computer" };
-  if (code === "conversation_version_unsupported") {
-    return { kind: "fallback", fallback: "update_phone" };
+/**
+ * Silent closes in a row before the chat suggests updating the computer.
+ *
+ * One silent close is as likely a dropped relay or a restarting desktop as an
+ * older Dure — and an older Dure never offers the chat in the first place —
+ * so a single one is just a failed ask.
+ */
+export const SILENT_CLOSES_BEFORE_UPDATE = 3;
+
+/**
+ * A transcript request that failed before the computer answered, and the run
+ * of silent closes it extends or ends. It never forces the terminal: the chat
+ * keeps asking, and says more only when the same thing keeps happening.
+ */
+export function transcriptFailure(
+  error: unknown,
+  silentCloses: number,
+): { readonly step: TranscriptStep; readonly silentCloses: number } {
+  const code = isCommandError(error) ? error.code : "";
+  if (code === "conversation_no_answer") {
+    const run = silentCloses + 1;
+    return {
+      silentCloses: run,
+      step: { kind: "wait", wait: run >= SILENT_CLOSES_BEFORE_UPDATE ? "no_answer" : "unreachable" },
+    };
   }
-  return { kind: "wait", wait: "unreachable" };
+  if (code === "conversation_version_unsupported") {
+    return { silentCloses: 0, step: { kind: "fallback", fallback: "update_phone" } };
+  }
+  return { silentCloses: 0, step: { kind: "wait", wait: "unreachable" } };
 }
 
 /** A prompt the computer wrote, shown until the transcript carries it. */
 export interface SentPrompt {
   readonly text: string;
-  /** Matching user messages in the transcript when it was sent. */
-  readonly matchesAtSend: number;
-  /** Completed turns at the time, when a cursor had said. */
+  /**
+   * Matching user messages in the transcript when it was sent — only when the
+   * transcript then was current (it had seen every completed turn), since a
+   * stale one undercounts and would settle the bubble at the next read.
+   */
+  readonly matchesAtSend?: number;
+  /** Completed turns the attached session reported when it was sent. */
   readonly turnsAtSend?: number;
   readonly conversationId?: string;
 }
@@ -201,25 +224,48 @@ function userMatches(transcript: ChatTranscript | undefined, text: string): numb
   ).length;
 }
 
-export function sentPrompt(text: string, transcript: ChatTranscript | undefined): SentPrompt {
+/** Completed turns, from the runtime's decimal string. */
+export function completedTurns(runtime: AgentRuntimeState | undefined): number | undefined {
+  if (!runtime) return undefined;
+  const turns = Number(runtime.turnCompletedCount);
+  return Number.isSafeInteger(turns) ? turns : undefined;
+}
+
+/**
+ * Remember a prompt the computer just wrote.
+ *
+ * `turns` is the attached session's count at that moment, not the last
+ * transcript's: the transcript is usually a turn or more behind by the time a
+ * queued prompt goes out, and comparing against it would settle at once.
+ */
+export function sentPrompt(
+  text: string,
+  transcript: ChatTranscript | undefined,
+  turns: number | undefined,
+): SentPrompt {
+  const current = transcript?.cursor !== undefined && turns !== undefined &&
+    transcript.cursor.turn_completed_count === turns;
   return {
     text,
-    matchesAtSend: userMatches(transcript, text),
-    ...(transcript?.cursor ? { turnsAtSend: transcript.cursor.turn_completed_count } : {}),
+    ...(current ? { matchesAtSend: userMatches(transcript, text) } : {}),
+    ...(turns !== undefined ? { turnsAtSend: turns } : {}),
     ...(transcript?.conversationId ? { conversationId: transcript.conversationId } : {}),
   };
 }
 
 /**
  * The transcript now carries the sent prompt, or no longer could: one more
- * user message with its text, a turn completed since, or another conversation.
+ * user message with its text (where the count at send time is known), the
+ * prompt's own turn completed, or another conversation.
  */
 export function sentPromptSettled(sent: SentPrompt, transcript: ChatTranscript): boolean {
   if (sent.conversationId && transcript.conversationId &&
     transcript.conversationId !== sent.conversationId) {
     return true;
   }
-  if (userMatches(transcript, sent.text) > sent.matchesAtSend) return true;
+  if (sent.matchesAtSend !== undefined && userMatches(transcript, sent.text) > sent.matchesAtSend) {
+    return true;
+  }
   const turns = transcript.cursor?.turn_completed_count;
   return sent.turnsAtSend !== undefined && turns !== undefined && turns > sent.turnsAtSend;
 }

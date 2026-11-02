@@ -23,7 +23,12 @@ export type ChatBlock =
       readonly items: readonly (readonly ChatInline[])[];
     };
 
-const FENCE = /^\s{0,3}(`{3,}|~{3,})\s*([\w+#.-]*)\s*$/;
+/**
+ * An opening fence and its info string. The info string may hold more than a
+ * language (```` ```ts title="a.ts" ````); after a backtick fence it may not
+ * hold a backtick, which is how a line of inline code is told from a fence.
+ */
+const FENCE = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
 const UNORDERED = /^\s{0,3}[-*+]\s+(.*)$/;
 const ORDERED = /^\s{0,3}(\d{1,9})[.)]\s+(.*)$/;
 const HEADING = /^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$/;
@@ -40,6 +45,26 @@ function listMarker(line: string): ListMarker | undefined {
   const ordered = ORDERED.exec(line);
   if (ordered) return { ordered: true, number: Number(ordered[1]), text: ordered[2] };
   return undefined;
+}
+
+function openingFence(line: string): { marker: string; language?: string } | undefined {
+  const match = FENCE.exec(line);
+  if (!match) return undefined;
+  const [, marker, info] = match;
+  if (marker.startsWith("`") && info.includes("`")) return undefined;
+  const language = info.trim().split(/\s+/)[0];
+  return language ? { marker, language } : { marker };
+}
+
+/**
+ * A closing fence is the opening's character, at least as many of them, and
+ * nothing else. A ```` ```python ```` line inside the block is content.
+ */
+function closesFence(line: string, marker: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length >= marker.length &&
+    /^\s{0,3}\S/.test(line) &&
+    [...trimmed].every((character) => character === marker[0]);
 }
 
 /** Split one message into blocks. Line breaks inside a paragraph are kept. */
@@ -67,23 +92,22 @@ export function chatBlocks(source: string): ChatBlock[] {
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const fence = FENCE.exec(line);
+    const fence = openingFence(line);
     if (fence) {
       flushParagraph();
       flushList();
-      const marker = fence[1];
       const body: string[] = [];
       index += 1;
       // An unclosed fence runs to the end of the message: an agent cut off
       // mid-block still shows its code as code.
-      while (index < lines.length && !lines[index].trim().startsWith(marker)) {
+      while (index < lines.length && !closesFence(lines[index], fence.marker)) {
         body.push(lines[index]);
         index += 1;
       }
       blocks.push({
         kind: "code",
         text: body.join("\n"),
-        ...(fence[2] ? { language: fence[2] } : {}),
+        ...(fence.language ? { language: fence.language } : {}),
       });
       continue;
     }

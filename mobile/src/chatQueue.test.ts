@@ -6,13 +6,15 @@ import {
   deliveryDue,
   editQueuedPrompt,
   enqueuePrompt,
-  loadQueuedPrompt,
+  loadChatEntry,
   MAX_AGENT_PROMPT_BYTES,
+  NOT_SENT_CODES,
   normalizePrompt,
   type QueuedPrompt,
   queueKey,
   returnToComposer,
   saveQueuedPrompt,
+  saveReturnedDraft,
   settleDelivery,
 } from "./chatQueue";
 import type { AgentPromptAnswer, ConversationRefusal } from "./ipc";
@@ -145,22 +147,33 @@ describe("settleDelivery", () => {
     });
   });
 
-  it("keeps it queued when the computer could not be reached, since nothing was written", () => {
-    const error = { kind: "error", error: { code: "hub_unreachable", message: "offline" } } as const;
-    expect(settleDelivery(queued(), error)).toEqual({
-      kind: "kept",
-      prompt: { ...queued(), wait: "unreachable" },
-    });
-  });
-
-  it("gives the text back when the computer predates the chat", () => {
-    for (const code of ["conversation_unsupported", "conversation_version_unsupported"]) {
-      expect(settleDelivery(queued(), { kind: "error", error: { code, message: "" } })).toEqual({
-        kind: "returned",
-        text: "run the tests",
-        reason: "unsupported",
+  it.each(["hub_unreachable", "hub_computer_offline"])(
+    "keeps it queued after %s, which proves nothing was written",
+    (code) => {
+      expect(NOT_SENT_CODES.has(code)).toBe(true);
+      expect(settleDelivery(queued(), { kind: "error", error: { code, message: "offline" } })).toEqual({
+        kind: "kept",
+        prompt: { ...queued(), wait: "unreachable" },
       });
-    }
+    },
+  );
+
+  /** Never sent again by itself: none of these proves the prompt was not written. */
+  it.each([
+    { code: "hub_join", message: "the task panicked" },
+    { code: "hub_protocol", message: "broken frame" },
+    { code: "hub_unknown", message: "pairing removed" },
+    { code: "hub_refused", message: "device revoked" },
+    { code: "conversation_no_answer", message: "closed" },
+    { code: "something_new", message: "" },
+    new Error("not a command error"),
+    "a string",
+  ])("gives the text back to check first after %o", (error) => {
+    expect(settleDelivery(queued(), { kind: "error", error })).toEqual({
+      kind: "returned",
+      text: "run the tests",
+      reason: "uncertain",
+    });
   });
 
   it("reads a refusal without a code as one that stops", () => {
@@ -211,39 +224,57 @@ describe("the persisted queue", () => {
   it("keeps one prompt per session across loads", () => {
     saveQueuedPrompt(localStorage, first, queued("first"));
     saveQueuedPrompt(localStorage, second, { ...queued("second"), wait: "not_idle" });
-    expect(loadQueuedPrompt(localStorage, first)).toEqual(queued("first"));
+    expect(loadChatEntry(localStorage, first)).toEqual({ kind: "queued", prompt: queued("first") });
     // Why the last attempt waited belongs to that run, not to the stored prompt.
-    expect(loadQueuedPrompt(localStorage, second)).toEqual(queued("second"));
+    expect(loadChatEntry(localStorage, second)).toEqual({ kind: "queued", prompt: queued("second") });
   });
 
   it("forgets a session's prompt and clears the store when none are left", () => {
     saveQueuedPrompt(localStorage, first, queued());
     saveQueuedPrompt(localStorage, first, undefined);
-    expect(loadQueuedPrompt(localStorage, first)).toBeUndefined();
+    expect(loadChatEntry(localStorage, first)).toBeUndefined();
     expect(localStorage.getItem(CHAT_QUEUE_STORAGE_KEY)).toBeNull();
   });
 
   it("reads a prompt left mid-delivery as interrupted, never as due", () => {
     saveQueuedPrompt(localStorage, first, queued(), true);
-    expect(loadQueuedPrompt(localStorage, first)).toEqual({ ...queued(), interrupted: true });
+    expect(loadChatEntry(localStorage, first)).toEqual({
+      kind: "queued",
+      prompt: { ...queued(), interrupted: true },
+    });
     saveQueuedPrompt(localStorage, first, queued());
-    expect(loadQueuedPrompt(localStorage, first)).toEqual(queued());
+    expect(loadChatEntry(localStorage, first)).toEqual({ kind: "queued", prompt: queued() });
+  });
+
+  it("keeps text given back to the composer, with why, until it is cleared", () => {
+    saveReturnedDraft(localStorage, first, "check this", "uncertain");
+    expect(loadChatEntry(localStorage, first)).toEqual({
+      kind: "returned",
+      text: "check this",
+      reason: "uncertain",
+    });
+    // Sending it queues it in its place.
+    saveQueuedPrompt(localStorage, first, queued("check this"));
+    expect(loadChatEntry(localStorage, first)?.kind).toBe("queued");
+    saveReturnedDraft(localStorage, first, "again", "identity_changed");
+    saveReturnedDraft(localStorage, first, "  ", "identity_changed");
+    expect(loadChatEntry(localStorage, first)).toBeUndefined();
   });
 
   it("keeps a prompt written before any conversation was known", () => {
     const early = { text: "hi", target: { terminalEpoch: "terminal-1" }, queuedAtMs: 3 };
     saveQueuedPrompt(localStorage, first, early);
-    expect(loadQueuedPrompt(localStorage, first)).toEqual(early);
+    expect(loadChatEntry(localStorage, first)).toEqual({ kind: "queued", prompt: early });
   });
 
-  it("reads broken or foreign storage as nothing queued, and never throws", () => {
+  it("reads broken or foreign storage as nothing stored, and never throws", () => {
     localStorage.setItem(CHAT_QUEUE_STORAGE_KEY, "{not json");
-    expect(loadQueuedPrompt(localStorage, first)).toBeUndefined();
+    expect(loadChatEntry(localStorage, first)).toBeUndefined();
     localStorage.setItem(
       CHAT_QUEUE_STORAGE_KEY,
-      JSON.stringify({ version: 1, prompts: { [first]: { text: 4, target: {} } } }),
+      JSON.stringify({ version: 1, prompts: { [first]: { kind: "queued", text: 4, target: {} } } }),
     );
-    expect(loadQueuedPrompt(localStorage, first)).toBeUndefined();
+    expect(loadChatEntry(localStorage, first)).toBeUndefined();
     const throwing = {
       getItem: () => {
         throw new Error("blocked");
@@ -255,8 +286,9 @@ describe("the persisted queue", () => {
         throw new Error("blocked");
       },
     };
-    expect(loadQueuedPrompt(throwing, first)).toBeUndefined();
+    expect(loadChatEntry(throwing, first)).toBeUndefined();
     expect(() => saveQueuedPrompt(throwing, first, queued())).not.toThrow();
-    expect(loadQueuedPrompt(undefined, first)).toBeUndefined();
+    expect(() => saveReturnedDraft(throwing, first, "x", "uncertain")).not.toThrow();
+    expect(loadChatEntry(undefined, first)).toBeUndefined();
   });
 });

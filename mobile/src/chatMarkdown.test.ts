@@ -17,6 +17,39 @@ describe("chatBlocks", () => {
     ]);
   });
 
+  it("opens a fence whose info string has more than a language", () => {
+    expect(chatBlocks('```ts title="a.ts"\nconst a = 1;\n```\nAfter')).toEqual([
+      { kind: "code", language: "ts", text: "const a = 1;" },
+      { kind: "paragraph", inline: [{ kind: "text", text: "After" }] },
+    ]);
+  });
+
+  it("closes a fence only on a line of fence characters", () => {
+    const message = [
+      "````md",
+      "Example:",
+      "```python",
+      "print(1)",
+      "```",
+      "````",
+      "Done",
+    ].join("\n");
+    expect(chatBlocks(message)).toEqual([
+      { kind: "code", language: "md", text: "Example:\n```python\nprint(1)\n```" },
+      { kind: "paragraph", inline: [{ kind: "text", text: "Done" }] },
+    ]);
+    expect(chatBlocks("```\na\n```python\nb\n```")).toEqual([
+      { kind: "code", text: "a\n```python\nb" },
+    ]);
+  });
+
+  it("closes a tilde fence with tildes, and leaves inline triple backticks as text", () => {
+    expect(chatBlocks("~~~\n```\n~~~~")).toEqual([{ kind: "code", text: "```" }]);
+    expect(chatBlocks("```inline``` text")).toEqual([
+      { kind: "paragraph", inline: [{ kind: "code", text: "inline" }, { kind: "text", text: " text" }] },
+    ]);
+  });
+
   it("keeps an unclosed fence as code to the end", () => {
     expect(chatBlocks("```\nhalf")).toEqual([{ kind: "code", text: "half" }]);
   });

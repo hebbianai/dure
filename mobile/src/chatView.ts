@@ -19,6 +19,15 @@
  *
  * A queued prompt (see `chatQueue.ts`) is delivered whenever the runtime
  * reports the agent idle with no attention — whichever tab is showing.
+ *
+ * # Who settles a delivery
+ *
+ * Leaving a session and coming back makes a new controller while the old one
+ * may still be waiting for the computer's answer. A delivery in flight is
+ * therefore held per session in [`flights`], outside any controller: a new
+ * controller for that session adopts it, shows it as sending and settles it,
+ * and the old one leaves storage alone. A `sending` mark in storage with no
+ * flight here can only be a delivery a closed app never heard back from.
  */
 
 import "./chatView.css";
@@ -32,6 +41,7 @@ import {
   type ChatTranscript,
   type ChatWait,
   chatRows,
+  completedTurns,
   refreshMark,
   type SentPrompt,
   sendsNow,
@@ -47,13 +57,14 @@ import {
   deliveryDue,
   editQueuedPrompt,
   enqueuePrompt,
-  loadQueuedPrompt,
+  loadChatEntry,
   type PromptProblem,
   type PromptTarget,
   type QueuedPrompt,
   type ReturnReason,
   returnToComposer,
   saveQueuedPrompt,
+  saveReturnedDraft,
   settleDelivery,
 } from "./chatQueue";
 import { element, glyph, loader } from "./dom";
@@ -97,13 +108,13 @@ const WAIT_TEXT: Record<ChatWait, string> = {
   probe_timeout: "chat.wait.unreachable",
   unavailable: "chat.wait.unreachable",
   unreachable: "chat.wait.unreachable",
+  no_answer: "chat.wait.noAnswer",
   session_not_found: "chat.wait.sessionNotFound",
   unknown: "chat.wait.unknown",
 };
 
 /** The fallback's one line, also shown by the caller as it switches to Terminal. */
 export const FALLBACK_TEXT: Record<ChatFallback, string> = {
-  update_computer: "chat.fallback.updateComputer",
   update_phone: "chat.fallback.updatePhone",
   not_available: "chat.fallback.notAvailable",
 };
@@ -116,8 +127,6 @@ function returnedText(reason: ReturnReason): string {
       return t("chat.returned.inputDraftPending");
     case "uncertain":
       return t("chat.returned.uncertain");
-    case "unsupported":
-      return t("chat.fallback.updateComputer");
     case "unsupported_runtime":
     case "remote_unsupported":
       return t("chat.fallback.notAvailable");
@@ -190,23 +199,39 @@ function messageRow(role: "user" | "agent", text: string, truncated: boolean): H
 /** Close enough to the end that new messages should keep it in view. */
 const BOTTOM_SLACK_PX = 32;
 
+/** One delivery on its way to the computer. */
+interface Flight {
+  readonly prompt: QueuedPrompt;
+  /** What the bubble waits for once the computer has written it. */
+  readonly sent: SentPrompt;
+  readonly result: Promise<DeliveryResult>;
+  /** The controller that settles it: the one that started it, or one that adopted it. */
+  owner: object;
+}
+
+/**
+ * Deliveries in flight, by `queueKey`, for as long as this app runs.
+ *
+ * Module state on purpose: it is the one fact that must outlive the
+ * controller that started it. See "Who settles a delivery" above.
+ */
+const flights = new Map<string, Flight>();
+
 export function createChatView(options: ChatViewOptions): ChatController {
   const now = options.now ?? (() => Date.now());
   const pollMs = options.pollIntervalMs ?? CHAT_POLL_INTERVAL_MS;
+  const key = options.queueKey;
+  const self = {};
 
   let transcript: ChatTranscript | undefined;
   let wait: ChatWait | undefined;
+  let silentCloses = 0;
   let fallback: ChatFallback | undefined;
-  let queued: QueuedPrompt | undefined = loadQueuedPrompt(options.storage, options.queueKey);
+  let queued: QueuedPrompt | undefined;
   let sent: SentPrompt | undefined;
   let note: ComposerNote | undefined;
-  // The app went away while this was being delivered, so it may have been
-  // written. It goes back to the composer, said as such, and nowhere else.
-  const interrupted = queued?.interrupted ? queued.text : undefined;
-  if (interrupted !== undefined) {
-    queued = undefined;
-    note = { kind: "returned", reason: "uncertain" };
-  }
+  /** Text given back to the composer stays stored, with why, until sent or cleared. */
+  let returned: ReturnReason | undefined;
   let runtime: AgentRuntimeState | undefined;
   let lastMark: string | undefined;
   let delivering = false;
@@ -218,6 +243,8 @@ export function createChatView(options: ChatViewOptions): ChatController {
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let pinned = true;
   let savedScrollTop = 0;
+  /** The person was typing here; a re-render moving the field must not end that. */
+  let wantsFocus = false;
 
   const root = element("section", "chat");
   const scroll = element("div", "chat__scroll");
@@ -248,10 +275,6 @@ export function createChatView(options: ChatViewOptions): ChatController {
   send.type = "button";
   send.append(glyph(iconArrowRight, 18));
   composer.append(input, send);
-  if (interrupted !== undefined) {
-    input.value = interrupted;
-    saveQueuedPrompt(options.storage, options.queueKey, undefined);
-  }
   root.append(scroll, attention, composerNote, composer);
 
   const readiness = () => agentReadiness(runtime);
@@ -264,7 +287,15 @@ export function createChatView(options: ChatViewOptions): ChatController {
     };
   };
 
-  const persist = () => saveQueuedPrompt(options.storage, options.queueKey, queued, delivering);
+  const persist = () => saveQueuedPrompt(options.storage, key, queued, delivering);
+
+  /** Put text back in the composer, in front of the draft, and keep it stored. */
+  const giveBack = (text: string, reason: ReturnReason) => {
+    input.value = returnToComposer(text, input.value);
+    returned = reason;
+    note = { kind: "returned", reason };
+    saveReturnedDraft(options.storage, key, input.value, reason);
+  };
 
   const followEnd = () => {
     if (pinned && scroll.isConnected) scroll.scrollTop = scroll.scrollHeight;
@@ -274,6 +305,18 @@ export function createChatView(options: ChatViewOptions): ChatController {
     if (!scroll.isConnected) return;
     savedScrollTop = scroll.scrollTop;
     pinned = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < BOTTOM_SLACK_PX;
+  });
+
+  input.addEventListener("focus", () => {
+    wantsFocus = true;
+  });
+  input.addEventListener("blur", () => {
+    // Moving the field into the next render's tree can blur it; the restore in
+    // `mount` runs before this looks. A field still in the tree and still not
+    // focused is one the person left.
+    setTimeout(() => {
+      if (input.isConnected && document.activeElement !== input) wantsFocus = false;
+    }, 0);
   });
 
   const paintRows = () => {
@@ -346,7 +389,7 @@ export function createChatView(options: ChatViewOptions): ChatController {
     if (drawn === statusDrawn) return;
     statusDrawn = drawn;
     const parts: Node[] = [];
-    const say = (key: string) => parts.push(element("span", undefined, t(key)));
+    const say = (text: string) => parts.push(element("span", undefined, t(text)));
     if (fallback) {
       say(FALLBACK_TEXT[fallback]);
       const retry = element("button", "chat__meta-action", t("chat.retry"));
@@ -445,9 +488,12 @@ export function createChatView(options: ChatViewOptions): ChatController {
     fetching = true;
     try {
       const answer = await options.fetch(force ? undefined : transcript?.cursor);
+      silentCloses = 0;
       if (!disposed) applyStep(applyTranscriptAnswer(force ? undefined : transcript, answer));
     } catch (error) {
-      if (!disposed) applyStep(transcriptFailure(error));
+      const failed = transcriptFailure(error, silentCloses);
+      silentCloses = failed.silentCloses;
+      if (!disposed) applyStep(failed.step);
     } finally {
       fetching = false;
       const next = again;
@@ -456,40 +502,23 @@ export function createChatView(options: ChatViewOptions): ChatController {
     }
   }
 
-  /** Deliver the queued prompt if the agent is idle. */
-  async function deliver(): Promise<void> {
-    if (disposed || !deliveryDue(queued, readiness(), delivering) || !queued) return;
-    const prompt = queued;
-    delivering = true;
-    // Marked before it leaves: an app that dies now finds it interrupted, not due.
-    persist();
-    paint();
-    let result: DeliveryResult;
-    try {
-      result = { kind: "answer", answer: await options.send(prompt.text, prompt.target) };
-    } catch (error) {
-      result = { kind: "error", error };
-    }
+  /** Settle a delivery this controller owns, into its state and storage. */
+  function settle(flight: Flight, result: DeliveryResult): void {
     delivering = false;
-    const delivery = settleDelivery(prompt, result);
+    const delivery = settleDelivery(flight.prompt, result);
     // A send made meanwhile added to the prompt in flight; this splits it again.
-    const after = afterDelivery(prompt, queued, delivery);
+    const after = afterDelivery(flight.prompt, queued, delivery);
     queued = after.queued;
-    // Settled into storage even after the screen went away, so a prompt the
-    // computer wrote is never delivered a second time from the queue.
-    if (disposed && after.returned) {
-      // Nowhere to give the text back to: it waits for the next open, which
-      // hands it to the composer (as unconfirmed, when it may have been written)
-      // or tries it again.
-      saveQueuedPrompt(
-        options.storage,
-        options.queueKey,
-        { ...prompt, text: after.returned.text },
-        after.returned.reason === "uncertain",
-      );
-      return;
+    if (after.returned) {
+      if (disposed) {
+        // Nowhere on screen to put it: stored as given back, for the next open.
+        saveReturnedDraft(options.storage, key, after.returned.text, after.returned.reason);
+        return;
+      }
+      giveBack(after.returned.text, after.returned.reason);
+    } else {
+      persist();
     }
-    persist();
     if (disposed) return;
     if (delivery.kind === "kept" && retryTimer === undefined) {
       // "Not now" waits for the next idle report; this is the floor under it,
@@ -500,17 +529,64 @@ export function createChatView(options: ChatViewOptions): ChatController {
       }, pollMs);
     }
     if (after.sent !== undefined) {
-      sent = sentPrompt(after.sent, transcript);
-      note = undefined;
-    }
-    if (after.returned) {
-      input.value = returnToComposer(after.returned.text, input.value);
-      note = { kind: "returned", reason: after.returned.reason };
+      sent = flight.sent;
+      if (note?.kind === "problem") note = undefined;
     }
     paint();
     if (after.sent !== undefined || after.returned) void refresh();
     // What was added during the delivery goes next, if the agent is still idle.
     if (after.sent !== undefined && queued) void deliver();
+  }
+
+  /** Wait for a flight, and settle it if it is still this controller's. */
+  async function follow(flight: Flight): Promise<void> {
+    const result = await flight.result;
+    if (flights.get(key) === flight) flights.delete(key);
+    if (flight.owner === self) settle(flight, result);
+  }
+
+  /** Deliver the queued prompt if the agent is idle. */
+  function deliver(): void {
+    if (disposed || !deliveryDue(queued, readiness(), delivering) || !queued) return;
+    const prompt = queued;
+    delivering = true;
+    // Marked before it leaves: an app that dies now finds it interrupted, not due.
+    persist();
+    paint();
+    const flight: Flight = {
+      prompt,
+      // From the session's own turn count at this moment, not the last read.
+      sent: sentPrompt(prompt.text, transcript, completedTurns(runtime)),
+      owner: self,
+      result: options.send(prompt.text, prompt.target).then(
+        (answer): DeliveryResult => ({ kind: "answer", answer }),
+        (error): DeliveryResult => ({ kind: "error", error }),
+      ),
+    };
+    flights.set(key, flight);
+    void follow(flight);
+  }
+
+  // What this session left behind: a delivery still in flight in this app, a
+  // queued prompt, or text that was given back to the composer.
+  const entry = loadChatEntry(options.storage, key);
+  const inFlight = flights.get(key);
+  if (inFlight) {
+    inFlight.owner = self;
+    delivering = true;
+    queued = entry?.kind === "queued"
+      ? { text: entry.prompt.text, target: entry.prompt.target, queuedAtMs: entry.prompt.queuedAtMs }
+      : inFlight.prompt;
+    void follow(inFlight);
+  } else if (entry?.kind === "queued" && entry.prompt.interrupted) {
+    // A closed app never heard back, so the computer may have written it.
+    giveBack(entry.prompt.text, "uncertain");
+  } else if (entry?.kind === "queued") {
+    queued = entry.prompt;
+  } else if (entry?.kind === "returned") {
+    input.value = entry.text;
+    returned = entry.reason;
+    note = { kind: "returned", reason: entry.reason };
   }
 
   const submit = () => {
@@ -521,12 +597,14 @@ export function createChatView(options: ChatViewOptions): ChatController {
       return;
     }
     queued = result.prompt;
+    // Replaces any given-back text in storage: it is in this prompt now.
+    returned = undefined;
     persist();
     input.value = "";
     note = undefined;
     pinned = true;
     paint();
-    void deliver();
+    deliver();
   };
   send.addEventListener("click", submit);
   // The send circle must not take the keyboard down with the field's focus.
@@ -534,6 +612,15 @@ export function createChatView(options: ChatViewOptions): ChatController {
   input.addEventListener("input", () => {
     send.disabled = input.value.trim() === "";
     fitInput();
+    if (returned !== undefined) {
+      // Edited given-back text is still given back; cleared, it is discarded.
+      saveReturnedDraft(options.storage, key, input.value, returned);
+      if (input.value.trim() === "") {
+        returned = undefined;
+        note = undefined;
+        paintComposer();
+      }
+    }
   });
 
   attachPullToRefresh(scroll, pull, () => void refresh(true), () => scroll.scrollTop);
@@ -555,13 +642,25 @@ export function createChatView(options: ChatViewOptions): ChatController {
 
   return {
     mount(container) {
+      if (root.parentElement === container) return;
+      // Read before the move: the app replaced the old tree already, and the
+      // field may have lost focus with it, but its selection is still its own.
+      const restore = wantsFocus;
+      const start = input.selectionStart;
+      const end = input.selectionEnd;
+      const direction = input.selectionDirection;
       container.append(root);
       // After the caller's tree is in the document: a detached node has no
-      // scroll position to restore.
+      // scroll position to restore and cannot take focus.
       queueMicrotask(() => {
         if (!scroll.isConnected) return;
         if (pinned) scroll.scrollTop = scroll.scrollHeight;
         else scroll.scrollTop = savedScrollTop;
+        // Same task as the render that moved it, so the OS keyboard stays up.
+        if (restore && document.activeElement !== input) {
+          input.focus({ preventScroll: true });
+          input.setSelectionRange(start, end, direction ?? undefined);
+        }
       });
     },
     observe(next) {
@@ -573,7 +672,7 @@ export function createChatView(options: ChatViewOptions): ChatController {
         if (visible && !first) void refresh();
       }
       paint();
-      void deliver();
+      deliver();
     },
     setVisible(next) {
       if (visible === next) return;
@@ -582,6 +681,8 @@ export function createChatView(options: ChatViewOptions): ChatController {
         void refresh();
         startPolling();
       } else {
+        // Hidden by a tab switch or a covering screen: the person left the field.
+        wantsFocus = false;
         stopPolling();
       }
     },

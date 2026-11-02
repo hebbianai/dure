@@ -815,8 +815,9 @@ export const ipc = {
    * The newest messages of an agent session's conversation (`ConversationTranscriptV1`).
    *
    * `after` is the previous answer's cursor; when nothing moved since, the
-   * answer is `unchanged` and carries no entries. A computer from before the
-   * chat fails with the code `conversation_unsupported`.
+   * answer is `unchanged` and carries no entries. A computer that closes
+   * without answering fails with `conversation_no_answer`: one failed ask, as
+   * likely a dropped relay as an older Dure.
    */
   hubConversationTranscript: (
     hubId: string,
@@ -834,7 +835,8 @@ export const ipc = {
    *
    * The computer writes it only when the agent is idle, without attention, on
    * the expected process and conversation; otherwise the answer is a typed
-   * refusal. An error means nothing was written.
+   * refusal. An error means nothing was written; once the prompt has gone
+   * out, a lost answer is the state `unknown`, never an error.
    */
   hubAgentPrompt: (
     hubId: string,
