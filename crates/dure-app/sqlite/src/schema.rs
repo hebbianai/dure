@@ -16,7 +16,7 @@ use crate::error::{io, map_sqlx, storage};
 use crate::schedule_schema::*;
 
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_CONNECTIONS: u32 = 4;
+pub(crate) const MAX_CONNECTIONS: u32 = 4;
 static BACKUP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) const CREATE_METADATA: &str = r#"
@@ -2205,6 +2205,7 @@ pub(crate) async fn open_database(
 
     let pool = SqlitePoolOptions::new()
         .max_connections(MAX_CONNECTIONS)
+        .after_release(|connection, _| Box::pin(release_outside_transaction(connection)))
         .connect_with(writable_connect_options(&path))
         .await
         .map_err(|error| map_sqlx("open", error))?;
@@ -3454,6 +3455,30 @@ pub(crate) async fn finish_transaction<T>(
             Err(error)
         }
     }
+}
+
+/// Whether a connection being returned to the pool can be reused.
+///
+/// Store transactions are opened with raw `BEGIN` statements on a pooled
+/// connection, so sqlx cannot roll them back itself. When the request future
+/// that owns one is dropped before its `COMMIT` or `ROLLBACK` (the control
+/// plane cancels requests at their response deadline), the connection would
+/// otherwise return to the pool still inside the transaction, holding the
+/// write lock and failing every later `BEGIN` on it. `BEGIN` only succeeds
+/// outside a transaction; on any failure the pool closes the connection, and
+/// closing rolls the transaction back.
+pub(crate) async fn release_outside_transaction(
+    connection: &mut SqliteConnection,
+) -> Result<bool, sqlx::Error> {
+    if sqlx::query("BEGIN")
+        .execute(&mut *connection)
+        .await
+        .is_err()
+    {
+        return Ok(false);
+    }
+    sqlx::query("ROLLBACK").execute(&mut *connection).await?;
+    Ok(true)
 }
 
 pub(crate) fn writable_connect_options(path: &Path) -> SqliteConnectOptions {

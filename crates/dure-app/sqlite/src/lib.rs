@@ -1009,6 +1009,8 @@ mod client_view_tests;
 #[cfg(test)]
 mod plugin_apply_tests;
 #[cfg(test)]
+mod pool_release_tests;
+#[cfg(test)]
 mod schedule_tests;
 #[cfg(test)]
 mod tests;
