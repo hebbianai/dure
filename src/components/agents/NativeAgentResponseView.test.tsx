@@ -18,6 +18,7 @@ import {
 	normalizePersistedState,
 	persistedSlice,
 } from "@/lib/persistence/persistedAppState";
+import { NATIVE_AGENT_PENDING_IDLE_GRACE_MS } from "@/lib/agents/chat/nativeAgentChat";
 import { useStore } from "@/store";
 import {
 	managedAgentFixture,
@@ -311,9 +312,20 @@ describe("Pro conversation view", () => {
 			name: t("agents.chat.composerLabel"),
 		}) as HTMLTextAreaElement;
 	const send = () =>
-		screen.getByRole("button", { name: t("agents.chat.send") });
+		screen.getByRole("button", {
+			name: t("agents.chat.send"),
+		}) as HTMLButtonElement;
 	const showConversation = () =>
 		fireEvent.click(screen.getByRole("radio", { name: conversationName() }));
+	const showTerminal = () =>
+		fireEvent.click(screen.getByRole("radio", { name: t("common.terminal") }));
+	const nativePrompt = () =>
+		screen.queryByRole("textbox", { name: "Native prompt" });
+	const sendPrompt = async (text: string) => {
+		fireEvent.change(composer(), { target: { value: text } });
+		fireEvent.click(send());
+		await screen.findByText(t("agents.nativeChat.reason.pending"));
+	};
 
 	beforeEach(() => {
 		// jsdom has no layout; expose a visible viewport to the real virtualizer.
@@ -323,6 +335,7 @@ describe("Pro conversation view", () => {
 			},
 		);
 		useStore.getState().setUiPrefs({ agentFinalResponseOnly: false });
+		useStore.setState({ chatDrafts: {} });
 		mocks.read.mockResolvedValue(history());
 		mocks.send.mockResolvedValue({ terminalEpoch: "epoch-one", recordId: "1" });
 	});
@@ -379,7 +392,7 @@ describe("Pro conversation view", () => {
 		await screen.findByText(t("agents.nativeChat.reason.pending"));
 		expect(screen.getByText("Third question")).toBeTruthy();
 		expect(composer().value).toBe("");
-		expect(composer().disabled).toBe(true);
+		expect(send().disabled).toBe(true);
 
 		runtime("working", "1");
 		await screen.findByText(t("agents.nativeChat.reason.working"));
@@ -397,7 +410,8 @@ describe("Pro conversation view", () => {
 		expect(
 			screen.queryByText(t("agents.nativeChat.reason.pending")),
 		).toBeNull();
-		await waitFor(() => expect(composer().disabled).toBe(false));
+		fireEvent.change(composer(), { target: { value: "Fourth" } });
+		await waitFor(() => expect(send().disabled).toBe(false));
 		expect(mocks.send).toHaveBeenCalledTimes(1);
 	});
 
@@ -406,19 +420,18 @@ describe("Pro conversation view", () => {
 		render(view());
 		showConversation();
 		await screen.findByText("First answer");
-		expect(composer().disabled).toBe(true);
 		expect(
 			screen.getByText(t("agents.nativeChat.reason.working")),
 		).toBeTruthy();
 
 		runtime("blocked", "1");
 		await screen.findByText(t("agents.nativeChat.reason.attention"));
-		expect(composer().disabled).toBe(true);
 
 		mocks.send.mockRejectedValueOnce({ code: "hmux_agent_prompt_refused" });
-		runtime("waiting", "1");
-		await waitFor(() => expect(composer().disabled).toBe(false));
 		fireEvent.change(composer(), { target: { value: "Try now" } });
+		expect(send().disabled).toBe(true);
+		runtime("waiting", "1");
+		await waitFor(() => expect(send().disabled).toBe(false));
 		fireEvent.click(send());
 		const alert = await screen.findByRole("alert");
 		expect(alert.textContent).toContain(t("agents.nativeChat.error.refused"));
@@ -444,6 +457,214 @@ describe("Pro conversation view", () => {
 		await waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2));
 		await screen.findByText("First answer");
 		expect(screen.queryByText(t("common.loading"))).toBeNull();
+	});
+
+	it("lets a draft be typed while the agent works and sends only at an idle prompt", async () => {
+		runtime("working", "1");
+		render(view());
+		showConversation();
+		await screen.findByText("First answer");
+		expect(composer().disabled).toBe(false);
+		fireEvent.change(composer(), { target: { value: "Next step" } });
+		expect(composer().value).toBe("Next step");
+		expect(send().disabled).toBe(true);
+		fireEvent.keyDown(composer(), { key: "Enter" });
+		expect(mocks.send).not.toHaveBeenCalled();
+
+		runtime("waiting", "1");
+		await waitFor(() => expect(send().disabled).toBe(false));
+		fireEvent.keyDown(composer(), { key: "Enter" });
+		await waitFor(() =>
+			expect(mocks.send).toHaveBeenCalledWith(
+				expect.objectContaining({ agentId: "agent-one" }),
+				"Next step",
+			),
+		);
+	});
+
+	it("keeps the draft in the shared draft store across a pane remount", async () => {
+		const first = render(view());
+		showConversation();
+		await screen.findByText("First answer");
+		fireEvent.change(composer(), { target: { value: "Moving draft" } });
+		expect(useStore.getState().chatDrafts["agent-one"]).toEqual({
+			[JSON.stringify(["local", "native:agent-one"])]: {
+				text: "Moving draft",
+				attachments: [],
+			},
+		});
+		first.unmount();
+
+		render(view());
+		showConversation();
+		await screen.findByText("First answer");
+		expect(composer().value).toBe("Moving draft");
+	});
+
+	it("reopens the composer after a TUI-only input once the runtime stays idle", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			render(view());
+			showConversation();
+			await screen.findByText("First answer");
+			await sendPrompt("/help");
+			expect(mocks.send).toHaveBeenCalledWith(expect.anything(), "/help");
+
+			// The Host stays at its idle prompt; no turn and no transcript entry.
+			await act(async () => {
+				vi.advanceTimersByTime(NATIVE_AGENT_PENDING_IDLE_GRACE_MS - 500);
+			});
+			expect(
+				screen.getByText(t("agents.nativeChat.reason.pending")),
+			).toBeTruthy();
+			expect(screen.getByText("/help")).toBeTruthy();
+
+			await act(async () => {
+				vi.advanceTimersByTime(1_000);
+			});
+			expect(
+				screen.queryByText(t("agents.nativeChat.reason.pending")),
+			).toBeNull();
+			expect(screen.queryByText("/help")).toBeNull();
+			fireEvent.change(composer(), { target: { value: "/status" } });
+			expect(send().disabled).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not settle a real prompt early while the agent works on it", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			render(view());
+			showConversation();
+			await screen.findByText("First answer");
+			await sendPrompt("Long task");
+			runtime("working", "1");
+			await act(async () => {
+				vi.advanceTimersByTime(NATIVE_AGENT_PENDING_IDLE_GRACE_MS * 3);
+			});
+			expect(screen.getByText("Long task")).toBeTruthy();
+			expect(
+				screen.getByText(t("agents.nativeChat.reason.working")),
+			).toBeTruthy();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps a pending prompt through a brief runtime transition and never offers it again", async () => {
+		let confirm!: (value: unknown) => void;
+		mocks.send.mockImplementationOnce(
+			() =>
+				new Promise((done) => {
+					confirm = done;
+				}),
+		);
+		const mounted = render(view());
+		showConversation();
+		await screen.findByText("First answer");
+		fireEvent.change(composer(), { target: { value: "Only once" } });
+		fireEvent.click(send());
+		await screen.findByText(t("agents.nativeChat.reason.sending"));
+
+		// A transition (resume / runtime switch) hides the conversation view
+		// while the Host write is still in flight.
+		mounted.rerender(view(agent, true));
+		expect(screen.queryByText(conversationName())).toBeNull();
+		await act(async () =>
+			confirm({ terminalEpoch: "epoch-one", recordId: "1" }),
+		);
+
+		// The runtime projection also drops for a moment (reconnect).
+		act(() => useStore.setState({ sessionAgentRuntimeState: {} }));
+		mounted.rerender(view());
+		runtime("waiting", "1");
+
+		await screen.findByText(t("agents.nativeChat.reason.pending"));
+		expect(screen.getByText("Only once")).toBeTruthy();
+		fireEvent.change(composer(), { target: { value: "Only once" } });
+		expect(send().disabled).toBe(true);
+		fireEvent.keyDown(composer(), { key: "Enter" });
+		expect(mocks.send).toHaveBeenCalledTimes(1);
+	});
+
+	it("shows the terminal itself when asked, even with final-response-only on", async () => {
+		useStore.getState().setUiPrefs({ agentFinalResponseOnly: true });
+		mocks.read.mockResolvedValue(history());
+		render(view());
+		// The final-response overlay covers the terminal at rest.
+		await screen.findByText("Second answer");
+		expect(nativePrompt()).toBeNull();
+
+		showConversation();
+		await screen.findByText("First answer");
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: t("agents.finalResponse.continueInTerminal"),
+			}),
+		);
+		expect(nativePrompt()).toBeTruthy();
+		expect(screen.queryByText("Second answer")).toBeNull();
+		expect(
+			screen.getByRole("radio", { name: t("common.terminal") }),
+		).toHaveProperty("ariaChecked", "true");
+
+		showConversation();
+		await screen.findByText("First answer");
+		showTerminal();
+		expect(nativePrompt()).toBeTruthy();
+		expect(screen.queryByText("Second answer")).toBeNull();
+	});
+
+	it("reveals the terminal from the toggle while the final-response overlay covers it", async () => {
+		useStore.getState().setUiPrefs({ agentFinalResponseOnly: true });
+		render(view());
+		await screen.findByText("Second answer");
+		expect(nativePrompt()).toBeNull();
+		showTerminal();
+		expect(nativePrompt()).toBeTruthy();
+		expect(screen.queryByText("Second answer")).toBeNull();
+	});
+
+	it("keeps the view toggle in its own row, off the live terminal", async () => {
+		const mounted = render(view());
+		const group = screen.getByRole("radiogroup", {
+			name: t("agents.runtime.viewLabel"),
+		});
+		const terminal = nativePrompt() as HTMLElement;
+		// Nothing between the toggle and the view root is an overlay, and the
+		// terminal's own frame does not contain it.
+		expect(group.closest(".absolute")).toBeNull();
+		const terminalFrame = terminal.closest(".relative") as HTMLElement;
+		expect(terminalFrame.contains(group)).toBe(false);
+		const row = terminalFrame.previousElementSibling as HTMLElement;
+		expect(row.contains(group)).toBe(true);
+
+		// A transition hides the toggle but keeps its row, so the terminal is
+		// not resized by it.
+		mounted.rerender(view(agent, true));
+		expect(screen.queryByRole("radiogroup")).toBeNull();
+		expect(terminalFrame.previousElementSibling).toBe(row);
+		expect(mocks.mounted).toHaveBeenCalledTimes(1);
+	});
+
+	it("shows a refusal's carried message instead of its raw token", async () => {
+		mocks.send.mockRejectedValueOnce({
+			code: "hmux_capability_missing",
+			message: "This terminal cannot accept a prompt from the app.",
+		});
+		render(view());
+		showConversation();
+		await screen.findByText("First answer");
+		fireEvent.change(composer(), { target: { value: "Hello" } });
+		fireEvent.click(send());
+		const alert = await screen.findByRole("alert");
+		expect(alert.textContent).toContain(
+			"This terminal cannot accept a prompt from the app.",
+		);
+		expect(alert.textContent).toContain("hmux_capability_missing");
+		expect(composer().value).toBe("Hello");
 	});
 
 	it("is offered only for a live Pro local terminal of this generation", () => {

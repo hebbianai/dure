@@ -78,17 +78,78 @@ export function nativeTranscriptUserEntries(
 	return transcript.entries.filter((entry) => entry.role === "user").length;
 }
 
-/** The pending prompt is gone once the transcript holds a newer user entry,
- * or once the Host completed a turn after the send and the transcript read at
- * that count still lacks it (for example a TUI-only command). */
+/** The composer's draft lives in the shared chat draft store, keyed to the
+ * pane's Agent rather than one conversation, so it survives pane moves,
+ * layout restores, a new terminal generation and a provider-side new chat. */
+export function nativeAgentChatDraftIdentity(agent: Agent) {
+	return {
+		agentId: agent.id,
+		backendProfileId: nativeAgentPromptBackendProfileId(agent),
+		interactionSessionId: `native:${agent.id}`,
+	};
+}
+
+/** The Host reports an idle prompt with no attention: the only state in which
+ * it admits a prompt. */
+export function nativeAgentChatIdle({
+	runtime,
+	state,
+}: {
+	runtime: Pick<HmuxAgentRuntimeState, "lifecycle" | "attention"> | undefined;
+	state: AgentDisplayState;
+}): boolean {
+	return (
+		runtime?.lifecycle === "running" &&
+		runtime.attention === "none" &&
+		state === "waiting"
+	);
+}
+
+/** How long the runtime must stay at an idle prompt after a send before a
+ * prompt nothing has recorded stops counting as pending. */
+export const NATIVE_AGENT_PENDING_IDLE_GRACE_MS = 3_000;
+
+/** When a pending prompt settles without a transcript entry or a completed
+ * turn: a TUI-only input (`/help`, `/status`, `/cost`) is written and
+ * answered in the terminal but never opens a turn. It settles once the
+ * runtime has stayed idle for the grace period, counted from the later of
+ * the send and the moment the runtime last became idle. Undefined while the
+ * runtime is not idle. */
+export function nativeAgentChatPendingIdleDeadline(
+	pending: Pick<NativeAgentChatPendingPrompt, "sentAtMs">,
+	idleSinceMs: number | undefined,
+): number | undefined {
+	return idleSinceMs === undefined
+		? undefined
+		: Math.max(pending.sentAtMs, idleSinceMs) +
+				NATIVE_AGENT_PENDING_IDLE_GRACE_MS;
+}
+
+function trailingUserText(
+	transcript: ProviderConversationTranscriptV1,
+): string | undefined {
+	for (let index = transcript.entries.length - 1; index >= 0; index -= 1) {
+		const entry = transcript.entries[index];
+		if (entry.role === "user") return entry.text.trim();
+	}
+	return undefined;
+}
+
+/** The pending prompt is gone once the transcript holds a newer user entry
+ * (or, when no transcript had loaded at send time, ends with the same user
+ * text), or once the Host completed a turn after the send and the transcript
+ * read at that count still lacks it. A prompt that never produces either
+ * settles on the idle deadline above. */
 export function nativeAgentChatPendingSettled(
 	pending: NativeAgentChatPendingPrompt,
 	snapshot: NativeAgentChatSnapshot | undefined,
 ): boolean {
 	if (!snapshot) return false;
 	if (
-		pending.userEntriesAtSend !== null &&
-		nativeTranscriptUserEntries(snapshot.transcript) > pending.userEntriesAtSend
+		pending.userEntriesAtSend === null
+			? trailingUserText(snapshot.transcript) === pending.text.trim()
+			: nativeTranscriptUserEntries(snapshot.transcript) >
+				pending.userEntriesAtSend
 	) {
 		return true;
 	}
@@ -141,7 +202,7 @@ export function nativeAgentChatComposerState({
 	}
 	if (state === "working") return { kind: "disabled", reason: "working" };
 	if (pending) return { kind: "disabled", reason: "pending" };
-	return state === "waiting"
+	return nativeAgentChatIdle({ runtime, state })
 		? { kind: "ready" }
 		: { kind: "disabled", reason: "unavailable" };
 }
@@ -163,26 +224,61 @@ export function nativeAgentChatComposerReason(
 	return state.kind === "ready" ? null : t(COMPOSER_REASON_COPY[state.reason]);
 }
 
+/** A refused or failed send: the typed token plus the message the error
+ * carried (already translated for refusals raised in the client). */
+export interface NativeAgentInputFailure {
+	readonly code: string;
+	readonly message?: string;
+}
+
+export function nativeAgentInputFailure(
+	cause: unknown,
+): NativeAgentInputFailure {
+	const value =
+		cause !== null && typeof cause === "object"
+			? (cause as { code?: unknown; message?: unknown })
+			: undefined;
+	const code =
+		typeof value?.code === "string" && value.code
+			? value.code
+			: "agent_runtime_native_input_failed";
+	const message =
+		typeof value?.message === "string" && value.message.trim()
+			? value.message
+			: undefined;
+	return message ? { code, message } : { code };
+}
+
 /** Refusal tokens from `agent_runtime.native.input` and the Host prompt
- * admission. An unknown token renders verbatim; a known one keeps the token
- * as its diagnostic detail. */
+ * admission. A catalogued token reads as its translated sentence; any other
+ * token shows the message its error carried; a bare unknown token renders
+ * verbatim. The token stays as the diagnostic detail whenever it is not
+ * already the message. */
 const INPUT_ERROR_COPY: Record<string, string> = {
 	agent_runtime_native_changed: "agents.nativeChat.error.changed",
 	hmux_agent_prompt_runtime_changed: "agents.nativeChat.error.changed",
 	agent_runtime_native_conversation_missing:
 		"agents.nativeChat.error.conversationMissing",
+	agent_runtime_native_request_invalid:
+		"agents.nativeChat.error.requestInvalid",
 	hmux_agent_prompt_refused: "agents.nativeChat.error.refused",
 	hmux_input_draft_pending: "agents.nativeChat.error.terminalDraft",
 	agent_runtime_native_input_unconfirmed: "agents.nativeChat.error.unconfirmed",
 	backend_request_deadline_exceeded: "agents.nativeChat.error.unconfirmed",
 };
 
-export function presentNativeAgentInputError(code: string): {
+export function presentNativeAgentInputError({
+	code,
+	message,
+}: NativeAgentInputFailure): {
 	readonly message: string;
 	readonly detail?: string;
 } {
 	const key = INPUT_ERROR_COPY[code];
-	return key ? { message: t(key), detail: code } : { message: code };
+	if (key) return { message: t(key), detail: code };
+	return message && message !== code
+		? { message, detail: code }
+		: { message: code };
 }
 
 function row(
