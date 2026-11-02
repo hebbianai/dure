@@ -42,6 +42,18 @@ Issue 3 件の小さな例です。
 
 ワーカーブリーフは各ワーカーに、Issue を読み、自分の worktree に留まり、振る舞いのある層でテストし、既定ブランチに対して `Closes #n` 付きの pull request を開き、CI を待ち、既知の不安定なジョブは一度だけ再実行し、リポジトリの規則が許せばマージし、pull request を記したコメントで終えるよう指示します。製品判断が必要なワーカーは推測せず、Issue に `needs:founder` ラベルを付けて停止します。
 
+## レビューを待ってからマージする
+
+既定では、各ワーカーは CI がグリーンになると自分の pull request をマージします。すべての pull request をマージ前にレビューするには、`--merge-policy review` を付けてリードを開始します。
+
+```sh
+dure run --project PROJECT_ID --provider claude --name lead-onboarding \
+  --permission-override bypass_approvals --merge-policy review \
+  --lead "オープン中のオンボーディング Issue 3 件（#118、#119、#121）をクローズしてください。上限: ワーカー 2。"
+```
+
+このポリシーはリードのブリーフに含まれるため、最初のディスパッチからすべてのワーカーブリーフにマージしないよう書かれます。ワーカーは pull request を開き、CI がグリーンになるのを待ち、レビューの準備ができたとコメントして停止します。マージを許可するには GitHub で承認します。自分のアカウントが開いた pull request で GitHub が承認を許さない場合は、`lead:approved` ラベルを付けます。変更をリクエストするかレビューコメントを残すと、リードがそれをワーカーに伝え、ワーカーは修正をプッシュして再び待ちます。レビュー待ちの pull request だけが残ると、リードはそれらを `awaiting review` とした報告を投稿して待機します。レビュー後に `dure send lead-onboarding "reviewed"` のようなメッセージを送ると、承認済みのものをマージします。リードが自分で pull request を承認したりラベルを付けたりすることはありません。目標でマージ前のレビューを求めている場合は、フラグがなくても同じポリシーになります。
+
 ## 自分で見守る
 
 ```sh

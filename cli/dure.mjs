@@ -2022,7 +2022,7 @@ Usage:
            [--permission-override require_approvals|auto_edit|bypass_approvals]
            [--skip-permissions]
            [--space ID|NAME] [--idempotency-key KEY] [--backend ID] [--json] [--verbose]
-           [--lead] <prompt>
+           [--lead [--merge-policy auto|review]] <prompt>
   dure spawn [run options] [prompt]
   dure spawn --reuse --project ID|NAME --name AGENT
              [--agent PROVIDER | --provider PROVIDER]
@@ -2052,6 +2052,10 @@ identity, protocol and capabilityCount; --verbose adds its full capabilities lis
 brief, which sends the agent to dure skills get dure-lead — split the goal into tracked
 issues, start one worker Run per item in its own worktree, watch them, merge what passes
 and report. Only the prompt changes; no other state is created. spawn rejects --lead.
+--merge-policy sets how worker pull requests merge: auto (default) lets each worker merge
+its own green pull request; review holds every one for a person's approval (a GitHub
+approval, or the lead:approved label on the pull request) before the lead merges it, and
+puts that rule in every worker brief from the first dispatch. It requires --lead.
 spawn --reuse reuses an existing Agent without creating a new provider.`;
 
 function writeCliActionError(
@@ -2097,7 +2101,8 @@ async function cmdLegacySpawnReuse(opts, prompt, positionalPrompt, providerId) {
     opts.skipPermissions === true ||
     opts.permissionOverride !== undefined ||
     opts.setupCommand !== undefined ||
-    opts.backendSpecified === true || opts.account !== undefined
+    opts.backendSpecified === true || opts.account !== undefined ||
+    opts.mergePolicy !== undefined
   ) {
     fail(RUN_HELP);
   }
@@ -2154,10 +2159,17 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     );
   }
   const providerId = requestedProviderId || "claude";
+  const leadRun =
+    opts.lead === true || opts.mergePolicy !== undefined
+      ? await import("./lib/lead-run-prompt.mjs")
+      : null;
   if (
     (opts.account !== undefined && !opts.account) ||
     (!legacySpawn && !prompt) ||
     (legacySpawn && opts.lead === true) ||
+    (opts.mergePolicy !== undefined &&
+      (opts.lead !== true ||
+        !leadRun.LEAD_MERGE_POLICIES.includes(opts.mergePolicy))) ||
     (!legacySpawn && opts.reuse === true) ||
     (legacySpawn && Boolean(opts.prompt) && Boolean(positionalPrompt)) ||
     (legacySpawn &&
@@ -2197,7 +2209,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
   // goal is refused by the usage check above like any missing prompt.
   const runPrompt =
     opts.lead === true
-      ? (await import("./lib/lead-run-prompt.mjs")).leadRunPrompt(prompt)
+      ? leadRun.leadRunPrompt(prompt, { mergePolicy: opts.mergePolicy })
       : prompt || undefined;
   const {
     failedRunPresentation,

@@ -42,6 +42,18 @@ A small example with three issues:
 
 The worker brief tells each worker to read its issue, stay in its worktree, test at the level where the behavior lives, open a pull request against the default branch with `Closes #n`, wait for CI, rerun known-flaky jobs once, merge if the repository's rules allow it, and finish with a comment naming the pull request. A worker that needs a product decision labels the issue `needs:founder` and stops instead of guessing.
 
+## Hold merges for review
+
+By default each worker merges its own pull request once CI is green. To review every pull request before it lands, start the lead with `--merge-policy review`:
+
+```sh
+dure run --project PROJECT_ID --provider claude --name lead-onboarding \
+  --permission-override bypass_approvals --merge-policy review \
+  --lead "Close the three open onboarding issues (#118, #119, #121). Cap: 2 workers."
+```
+
+The policy is part of the lead's brief, so every worker brief says not to merge from the first dispatch. Workers open their pull requests, wait for green CI, comment that they are ready for review and stop. To release one, approve it on GitHub, or add the `lead:approved` label when GitHub will not let you approve a pull request your own account opened. Request changes or leave review comments and the lead passes them to the worker, which pushes fixes and waits again. When only pull requests awaiting review remain, the lead posts its report with them as `awaiting review` and waits; after reviewing, send it a message such as `dure send lead-onboarding "reviewed"` and it merges the approved ones. The lead never approves or labels a pull request itself. A goal that asks for review before merging selects the same policy without the flag.
+
 ## Watch it yourself
 
 ```sh

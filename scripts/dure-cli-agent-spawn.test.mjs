@@ -1969,6 +1969,25 @@ describe("dure run and spawn CLI", () => {
     for (const text of [goal, "dure skills get dure-lead"]) expect(result.stdout).not.toContain(text);
   });
 
+  it("sends the review merge policy inside the lead brief with --lead --merge-policy review", async () => {
+    const root = temporaryRoot();
+    const remote = installRunRemoteFixture(root);
+    const goal = "close the three open onboarding issues";
+    const result = await runCliAsync(
+      root,
+      ["run", "--lead", "--merge-policy", "review", goal, "--project", "dure", "--provider", "codex", "--idempotency-key", "lead-run-review-1", "--backend", "remote-a", "--json"],
+      { DURE_AGENT_SPAWN_LOG: remote.log, PATH: `${remote.bin}:${process.env.PATH}` },
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const composed = leadRunPrompt(goal, { mergePolicy: "review" });
+    expect(composed).not.toBe(leadRunPrompt(goal));
+    const observations = JSON.parse(readFileSync(remote.log, "utf8"));
+    expect(observations[0].request.body.promptDigest).toBe(`sha256:${createHash("sha256").update(composed).digest("hex")}`);
+    expect(observations[1].request.body.prompt).toBe(composed);
+    expect(result.stdout).not.toContain("Merge policy");
+  });
+
   it("shows run help without selecting a backend or creating an operation", () => {
     const root = temporaryRoot();
 

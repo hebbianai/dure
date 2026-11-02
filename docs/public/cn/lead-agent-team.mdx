@@ -42,6 +42,18 @@ dure skills get dure-lead
 
 工作者简报要求每个工作者：阅读自己的 issue，留在自己的 worktree 中，在行为所在的层级测试，针对默认分支开一个带 `Closes #n` 的 pull request，等待 CI，已知不稳定的作业只重跑一次，仓库规则允许时自行合并，最后以一条写明 pull request 的评论收尾。需要产品决策的工作者不会猜测，而是给 issue 打上 `needs:founder` 标签并停下。
 
+## 合并前等待评审
+
+默认情况下，每个工作者在 CI 变绿后自行合并自己的 pull request。若要在合并前评审每个 pull request，请用 `--merge-policy review` 启动负责人：
+
+```sh
+dure run --project PROJECT_ID --provider claude --name lead-onboarding \
+  --permission-override bypass_approvals --merge-policy review \
+  --lead "关闭三个未完成的引导流程 issue（#118、#119、#121）。上限：2 个工作者。"
+```
+
+该策略写在负责人的简报里，因此从第一次派发起，每份工作者简报都要求不要合并。工作者开 pull request，等待 CI 变绿，评论说明可以评审，然后停下。要放行某个 pull request，请在 GitHub 上批准它；如果 pull request 是你自己的账号开的、GitHub 不允许你批准，就给它加上 `lead:approved` 标签。请求修改或留下评审意见后，负责人会把它们转给工作者，工作者推送修复后再次等待。只剩等待评审的 pull request 时，负责人会发布报告，把它们标为 `awaiting review` 并等待；评审完成后发一条消息，例如 `dure send lead-onboarding "reviewed"`，它就会合并已批准的 pull request。负责人从不自行批准 pull request 或给它加标签。如果目标要求合并前评审，不加该标志也会采用同一策略。
+
 ## 自己盯一盯
 
 ```sh

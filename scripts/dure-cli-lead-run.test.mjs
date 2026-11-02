@@ -2,8 +2,9 @@
 // leadRunPrompt(goal) — so the contract worth pinning is the brief itself: it
 // carries the goal verbatim, it sends the agent to the bundled guide under
 // the name the CLI serves it as, it names the worker gate the lead must check
-// for, and it leaves an ordinary goal room inside the 16 KiB prompt the
-// backend accepts. The CLI-level checks here never reach a backend: help, and
+// for, it carries the review merge policy only when asked (so the default
+// prompt is unchanged), and it leaves an ordinary goal room inside the 16 KiB
+// prompt the backend accepts. The CLI-level checks here never reach a backend: help, and
 // the refusals that happen before one is selected. The end-to-end check that
 // the backend sees the composed prompt (and never the bare goal) sits beside
 // the other run receipts in scripts/dure-cli-agent-spawn.test.mjs.
@@ -13,7 +14,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { LEAD_SKILL_NAME, leadRunPrompt } from "../cli/lib/lead-run-prompt.mjs";
+import {
+  LEAD_APPROVED_LABEL,
+  LEAD_MERGE_POLICIES,
+  LEAD_SKILL_NAME,
+  leadRunPrompt,
+} from "../cli/lib/lead-run-prompt.mjs";
 import { scriptTestEnvironment } from "./lib/script-test-environment.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -85,6 +91,63 @@ describe("leadRunPrompt", () => {
   it.each(["", "   ", "\n\t", undefined, 42])("refuses a blank or non-string goal %j", (goal) => {
     expect(() => leadRunPrompt(goal)).toThrow(/goal/);
   });
+
+  it("keeps the default prompt free of any merge-policy text", () => {
+    expect(LEAD_MERGE_POLICIES).toEqual(["auto", "review"]);
+    expect(leadRunPrompt("goal", { mergePolicy: "auto" })).toBe(leadRunPrompt("goal"));
+    expect(leadRunPrompt("goal", {})).toBe(leadRunPrompt("goal"));
+    expect(leadRunPrompt("goal")).not.toContain("Merge policy");
+  });
+
+  it("puts the review gate in the brief, ahead of the goal, under the review policy", () => {
+    const goal = "Close the open onboarding issues.";
+    const prompt = leadRunPrompt(goal, { mergePolicy: "review" });
+    expect(prompt.endsWith(`Goal:\n${goal}`)).toBe(true);
+    const gate = prompt.indexOf("Merge policy: review.");
+    expect(gate).toBeGreaterThan(prompt.indexOf(`dure skills get ${LEAD_SKILL_NAME}`));
+    expect(gate).toBeLessThan(prompt.indexOf("Goal:\n"));
+    for (const marker of ["from the first dispatch", "no worker merges", LEAD_APPROVED_LABEL, "never approve or label one yourself", "awaiting review counts as finished for the close-out"]) {
+      expect(prompt).toContain(marker);
+    }
+    const briefBytes = Buffer.byteLength(leadRunPrompt("x", { mergePolicy: "review" }), "utf8") - 1;
+    expect(briefBytes).toBeLessThan(2048);
+  });
+
+  it.each(["", "manual", "REVIEW", null, 1])("refuses an unknown merge policy %j", (mergePolicy) => {
+    expect(() => leadRunPrompt("goal", { mergePolicy })).toThrow(/merge-policy/);
+  });
+});
+
+describe("dure-lead guide merge policies", () => {
+  const guide = readFileSync(skillPath, "utf8");
+  const brief = guide.slice(guide.indexOf("## 7. The worker brief"));
+
+  it("asks the lead to choose the policy before the first dispatch, with review winning", () => {
+    expect(guide).toContain("Decide the merge policy, before the first dispatch");
+    expect(guide).toContain("`Merge policy: review`");
+    expect(guide).toContain("`dure run --lead --merge-policy review`");
+    expect(guide).toContain("When either asks for review, review\n    wins.");
+    expect(guide).toContain(`gh label create ${LEAD_APPROVED_LABEL}`);
+  });
+
+  it("fills the worker's merge step from the policy instead of hard-coding self-merge", () => {
+    expect(brief).toContain("If it fails for a real reason, fix it and push. <MERGE>");
+    const blocks = [...brief.matchAll(/```text\n([\s\S]*?)```/g)].map(([, body]) => body);
+    // auto variant, review variant, then the brief itself.
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0]).toContain("gh pr merge <pr> --squash --delete-branch");
+    expect(blocks[1]).toContain("do not merge");
+    expect(blocks[1]).not.toContain("gh pr merge");
+    expect(blocks[2]).not.toContain("gh pr merge");
+  });
+
+  it("names the approval signals and forbids the lead from approving its own way through", () => {
+    const merge = guide.slice(guide.indexOf("## 6. Merge and report"), guide.indexOf("## 7. The worker brief"));
+    expect(merge).toContain('`reviewDecision: "APPROVED"`');
+    expect(merge).toContain(LEAD_APPROVED_LABEL);
+    expect(merge).toContain("never merge one that is green but unapproved");
+    expect(merge).toContain("awaiting review");
+  });
 });
 
 /** The text of one numbered section of the lead guide, from its `## <n>.`
@@ -127,8 +190,9 @@ describe("dure run --lead", () => {
   it("documents --lead in run help without selecting a backend", () => {
     const result = isolatedCli(["run", "--help"]);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toContain("[--lead]");
+    expect(result.stdout).toContain("[--lead [--merge-policy auto|review]]");
     expect(result.stdout).toContain(`dure skills get ${LEAD_SKILL_NAME}`);
+    expect(result.stdout).toContain(LEAD_APPROVED_LABEL);
     expect(existsSync(result.env.DURE_HOME)).toBe(false);
   });
 
@@ -138,6 +202,21 @@ describe("dure run --lead", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("dure run");
     expect(result.stderr).toContain("--lead");
+    expect(existsSync(join(result.env.DURE_HOME, "backend-profiles.json"))).toBe(false);
+  });
+
+  it.each([
+    [["run", "--merge-policy", "review", "close the open issues", "--json"]],
+    [["run", "--lead", "--merge-policy", "manual", "close the open issues", "--json"]],
+    [["run", "--lead", "--merge-policy", "", "close the open issues", "--json"]],
+    [["run", "--lead", "close the open issues", "--json", "--merge-policy"]],
+    [["spawn", "--lead", "--merge-policy", "review", "close the open issues"]],
+    [["spawn", "--reuse", "--project", "p", "--name", "a", "--merge-policy", "review"]],
+  ])("refuses a misplaced or unknown --merge-policy before selecting a backend: %j", (args) => {
+    const result = isolatedCli(args);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("--merge-policy auto|review");
     expect(existsSync(join(result.env.DURE_HOME, "backend-profiles.json"))).toBe(false);
   });
 
