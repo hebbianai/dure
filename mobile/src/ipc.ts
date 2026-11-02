@@ -194,6 +194,74 @@ export interface SessionAccountOutcome {
   code: string | null;
 }
 
+/** Rust `ConversationRefusal`: why the computer answered without a transcript or did not write a prompt. */
+export type ConversationRefusal =
+  | "session_not_found"
+  | "remote_unsupported"
+  | "unsupported_runtime"
+  | "conversation_unknown"
+  | "transcript_unavailable"
+  | "not_idle"
+  | "attention_pending"
+  | "identity_changed"
+  | "input_draft_pending"
+  | "invalid_request"
+  | "probe_timeout"
+  | "unavailable"
+  | "unknown";
+
+/** One message of an agent's conversation, oldest first. */
+export interface ConversationEntry {
+  role: "user" | "agent";
+  text: string;
+  /** The computer cut a very long message. */
+  truncated?: boolean;
+}
+
+/**
+ * What the computer observed when it answered. Echoed back as `after`, so an
+ * unchanged conversation is answered without the computer reading it again.
+ */
+export interface ConversationCursor {
+  terminal_epoch: string;
+  conversation_id: string;
+  turn_completed_count: number;
+  turn_open: boolean;
+  runtime_revision: number;
+}
+
+/** Rust `HubConversationTranscriptResult`. A refusal is an answer, not an error. */
+export interface ConversationTranscriptAnswer {
+  outcome: "transcript" | "unchanged" | "refused";
+  provider?: string | null;
+  conversation_id?: string | null;
+  /** Oldest first. Empty unless `outcome` is `transcript`. */
+  entries: ConversationEntry[];
+  final_response?: string | null;
+  /** Nothing older was left out. */
+  history_complete: boolean;
+  cursor?: ConversationCursor | null;
+  code?: ConversationRefusal | null;
+  detail?: string | null;
+}
+
+/** Rust `HubAgentPromptResult`. */
+export interface AgentPromptAnswer {
+  /** `unknown`: the answer was lost after writing may have started. */
+  state: "written_to_pty" | "refused" | "unknown";
+  record_id?: string | null;
+  terminal_epoch?: string | null;
+  code?: ConversationRefusal | null;
+  detail?: string | null;
+}
+
+/** The session a conversation request names, as the computer's catalog entry does. */
+export interface ConversationSession {
+  boxId: string;
+  workspaceId: string;
+  sessionId: string;
+}
+
 export interface FolderBrowserEntry {
   name: string;
   path: string;
@@ -480,6 +548,11 @@ export interface HubProbeSession extends RemoteSession {
   hmux_session_name?: string | null;
   /** Rust가 계산해 붙인다. 화면이 `lifecycle`을 다시 해석하지 않는다. */
   ready: boolean;
+  /**
+   * The computer serves this session's conversation, so it opens on Chat.
+   * Missing from older computers and phones' older Rust halves.
+   */
+  conversation?: boolean;
   box_id: string;
   box_label: string;
 }
@@ -736,6 +809,48 @@ export const ipc = {
     invoke<SessionAccountOutcome>("hub_switch_session_account", {
       id: hubId,
       input: { sessionId, actionId, accountId, confirmRestart: true },
+    }),
+
+  /**
+   * The newest messages of an agent session's conversation (`ConversationTranscriptV1`).
+   *
+   * `after` is the previous answer's cursor; when nothing moved since, the
+   * answer is `unchanged` and carries no entries. A computer from before the
+   * chat fails with the code `conversation_unsupported`.
+   */
+  hubConversationTranscript: (
+    hubId: string,
+    session: ConversationSession,
+    after?: ConversationCursor,
+    limit?: number,
+  ) =>
+    invoke<ConversationTranscriptAnswer>("hub_conversation_transcript", {
+      id: hubId,
+      input: { ...session, limit: limit ?? null, after: after ?? null },
+    }),
+
+  /**
+   * Type one prompt into an agent that waits for input (`AgentPromptV1`).
+   *
+   * The computer writes it only when the agent is idle, without attention, on
+   * the expected process and conversation; otherwise the answer is a typed
+   * refusal. An error means nothing was written.
+   */
+  hubAgentPrompt: (
+    hubId: string,
+    session: ConversationSession,
+    text: string,
+    expectedTerminalEpoch: string,
+    expectedConversationId?: string,
+  ) =>
+    invoke<AgentPromptAnswer>("hub_agent_prompt", {
+      id: hubId,
+      input: {
+        ...session,
+        text,
+        expectedTerminalEpoch,
+        expectedConversationId: expectedConversationId ?? null,
+      },
     }),
 
   /**

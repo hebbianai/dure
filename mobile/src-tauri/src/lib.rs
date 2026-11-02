@@ -22,6 +22,7 @@ pub mod device_identity;
 pub mod device_key;
 pub mod device_reset;
 pub mod hub_client;
+pub mod hub_conversation;
 pub mod hub_session_file;
 pub mod hub_store;
 mod hub_transport;
@@ -2587,6 +2588,7 @@ fn describe(
                 // 없는 쪽으로 떨어진다 — 새 "terminating" 이 생겨도 열 수 있는
                 // 것처럼 보이지 않는다.
                 ready: entry.lifecycle == catalog::LIFECYCLE_READY,
+                conversation: entry.conversation,
                 box_id: entry.box_id.clone(),
                 box_label: entry.box_label.clone(),
                 presentation: entry.presentation.clone(),
@@ -2701,6 +2703,10 @@ pub struct HubProbeSession {
     /// 붙일 수 있는지. `lifecycle` 문자열을 화면이 다시 해석하지 않는다는 뜻이고,
     /// 그 규칙은 SSH 경로의 [`catalog::DiscoveredSession`] 과 같다.
     pub ready: bool,
+    /// The computer serves this session's conversation and takes a prompt for
+    /// it (`HubCatalogEntry::conversation`): the session opens on Chat. False
+    /// from an older computer, for shells and for remote sessions.
+    pub conversation: bool,
     pub box_id: String,
     pub box_label: String,
     /// 세션의 hmux 이름. `session.session_name` 은 노트북 사이드바 제목이 있으면
@@ -2981,6 +2987,8 @@ pub fn run() {
             clipboard::read_terminal_clipboard,
             hub_file_diff,
             hub_session_file::hub_stage_session_file,
+            hub_conversation::hub_conversation_transcript,
+            hub_conversation::hub_agent_prompt,
             push::sync_push_notifications,
             ssh_file_diff,
             hub_scm_write,

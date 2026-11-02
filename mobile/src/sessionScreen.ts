@@ -50,6 +50,7 @@ import { renderSessionSwitcher, type SessionSibling } from "./sessionSwitcher";
 import type { TerminalPasteContent } from "./terminalPaste";
 import { showTerminalPasteMenu } from "./terminalPasteMenu";
 import { hasTerminalTextSelection } from "./terminalTextSelection";
+import type { SessionView } from "./chat";
 
 /** Which drawer is open under the input, if any. */
 export type SessionPanel = "none" | "history" | "sessions" | "keys";
@@ -106,6 +107,12 @@ export interface SessionModel {
   readonly opening?: string;
   /** A tick under the finger on every tray key, arrow and cap. */
   readonly haptics: boolean;
+  /**
+   * Which view of the agent is showing, when the computer serves its
+   * conversation. Absent for shells and remote sessions: those have only the
+   * terminal, and no switch is drawn.
+   */
+  readonly view?: SessionView;
 }
 
 export interface SessionActions {
@@ -133,6 +140,33 @@ export interface SessionActions {
   readonly openSession: (row: UnifiedRow) => void;
   /** The git button. Figma 3042:80841 — Source control. */
   readonly openSourceControl: () => void;
+  /**
+   * Puts the chat into `container`. Owned by the caller for the same reason
+   * as the transcript: the draft and the history outlive any one render.
+   */
+  readonly chat?: (container: HTMLElement) => void;
+  readonly switchView?: (view: SessionView) => void;
+}
+
+/** Chat or Terminal, the two views of the same agent (#361). */
+function viewSwitch(current: SessionView, switchView: (view: SessionView) => void): HTMLElement {
+  const bar = element("div", "session__views");
+  bar.setAttribute("role", "tablist");
+  for (const [view, label] of [
+    ["chat", t("session.view.chat")],
+    ["terminal", t("session.view.terminal")],
+  ] as const) {
+    const tab = element("button", "session__view", label);
+    tab.type = "button";
+    tab.dataset.view = view;
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(view === current));
+    tab.addEventListener("click", () => {
+      if (view !== current) switchView(view);
+    });
+    bar.append(tab);
+  }
+  return bar;
 }
 
 /**
@@ -520,6 +554,33 @@ export function renderSessionScreen(
   const inputEnabled = model.attached.role === "controller" && model.unavailable === undefined;
   const screen = element("section", "session");
   screen.append(header(model, actions));
+
+  if (model.view !== undefined && actions.chat && actions.switchView) {
+    screen.append(viewSwitch(model.view, actions.switchView));
+    if (model.view === "chat") {
+      // A prompt from the chat does not need this attach's write lease, so the
+      // read-only line is the terminal's alone. A lost attachment still says so
+      // here: the chat learns that the agent is idle through it.
+      if (model.unavailable !== undefined) {
+        const lost = element("p", "banner banner--warn");
+        lost.append(element("span", undefined, model.unavailable));
+        const reconnect = element("button", "banner__action", t("terminal.reconnectNow"));
+        reconnect.type = "button";
+        reconnect.disabled = model.opening === model.session.session_id;
+        reconnect.addEventListener("click", actions.enableInput);
+        lost.append(reconnect);
+        screen.append(lost);
+      }
+      // The terminal keeps running under the chat: its surface carries the
+      // runtime state, the approval gate and the notifications. Mounted, not
+      // shown — a detached surface keeps reading and never resizes the PTY.
+      actions.transcript(element("div", "session__stage"));
+      const chat = element("div", "session__chat");
+      actions.chat(chat);
+      screen.append(chat);
+      return screen;
+    }
+  }
 
   // Read-only is said only when it is true. A line that is always on screen is
   // one nobody reads, and this one has to be read before handing the phone over.

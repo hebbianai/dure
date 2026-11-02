@@ -30,6 +30,7 @@ import {
   type HubLayout,
   type HubOfferPreview,
   type HubProbe,
+  type HubProbeSession,
   type HubRow,
   type KeyRole,
   type PairingOutcome,
@@ -107,6 +108,9 @@ import {
   yieldTrayDrawer,
 } from "./sessionScreen";
 import type { AgentRuntimeState } from "./agentRuntimeState";
+import { CHAT_TRANSCRIPT_LIMIT, defaultSessionView, type SessionView } from "./chat";
+import { queueKey } from "./chatQueue";
+import { type ChatController, createChatView, FALLBACK_TEXT } from "./chatView";
 import { publishTranscriptLift } from "./transcriptLift";
 import {
   type SourceControlChanges,
@@ -387,6 +391,11 @@ type Screen =
       returnTo: Screen;
       /** 왜 보기만 되는지. 쓰기가 거부된 뒤의 관찰 attach 에만 있다. */
       watchReason?: string;
+      /**
+       * Chat or Terminal, when the computer serves this session's
+       * conversation (#361). Absent: the terminal only.
+       */
+      view?: SessionView;
     };
 
 type SessionSource =
@@ -770,6 +779,15 @@ export function startApp(root: HTMLElement): () => void {
    */
   let transcriptNode: HTMLElement | undefined;
   let transcriptAttachment: string | undefined;
+  /**
+   * The chat of the session on screen, and whose it is (`chatQueue.queueKey`).
+   *
+   * Tied to the session rather than the attachment: reconnecting the terminal
+   * must not lose the draft or a prompt on its way. It goes when the screen no
+   * longer holds that session.
+   */
+  let chat: ChatController | undefined;
+  let chatKey: string | undefined;
   let transcriptScroll = { scrollTop: 0, scrollLeft: 0 };
   let sessionOpenGeneration = 0;
   /**
@@ -1043,11 +1061,19 @@ export function startApp(root: HTMLElement): () => void {
     // surface belongs to. A re-render of the same session keeps it.
     const keeping =
       transcriptAttachment !== undefined && liveAttachment(state.screen) === transcriptAttachment;
+    const chatScreen = selectedTerminal(state.screen);
+    if (chat && chatKeyOf(chatScreen) !== chatKey) {
+      chat.dispose();
+      chat = undefined;
+      chatKey = undefined;
+    }
     if (!keeping) {
       surface?.dispose();
       surface = undefined;
       approvalGate?.reset();
       approvalGate = undefined;
+      // The runtime it reported belonged to that attachment.
+      chat?.observe(undefined);
       transcriptNode = undefined;
       transcriptAttachment = undefined;
       writeState({ terminalRuntime: undefined });
@@ -1380,6 +1406,9 @@ export function startApp(root: HTMLElement): () => void {
         detail.append(renderTerminal(state.screen));
         break;
     }
+    // Asks for the conversation only while somebody can see it; a prompt it
+    // holds is delivered whichever tab is up.
+    chat?.setVisible(state.screen.kind === "terminal" && state.screen.view === "chat");
 
     if (state.screen.kind === "terminal" && state.panel !== "none") {
       nativeBack.bind(() => openTrayPanel("none"));
@@ -2543,6 +2572,12 @@ export function startApp(root: HTMLElement): () => void {
             })
           : state.recents;
       if (source.kind === "ssh") recents.save(visited);
+      const previous = selectedTerminal(state.screen);
+      const offersChat = source.kind === "hub" && (session as Partial<HubProbeSession>).conversation === true;
+      // A reconnect of the same session keeps the tab the person was on.
+      const view = !offersChat ? undefined
+        : previous?.session.session_id === session.session_id && previous.view !== undefined
+          ? previous.view : defaultSessionView(true);
       setState({
         banner: undefined,
         recents: visited,
@@ -2556,6 +2591,7 @@ export function startApp(root: HTMLElement): () => void {
           attached,
           returnTo,
           ...(watchReason === undefined ? {} : { watchReason }),
+          ...(view === undefined ? {} : { view }),
         },
       });
       return true;
@@ -3982,6 +4018,54 @@ export function startApp(root: HTMLElement): () => void {
 
   // ----------------------------------------------------------------- 터미널
 
+  /** Whose chat a session screen shows, or none for a terminal-only session. */
+  function chatKeyOf(screen: Extract<Screen, { kind: "terminal" }> | undefined): string | undefined {
+    if (!screen || screen.view === undefined || screen.source.kind !== "hub") return undefined;
+    const { source, session } = screen;
+    return queueKey(source.id, source.boxId, session.workspace_id, session.session_id);
+  }
+
+  /** The chat of this session screen, created on first use and kept across renders. */
+  function chatFor(screenState: Extract<Screen, { kind: "terminal" }>): ChatController | undefined {
+    const key = chatKeyOf(screenState);
+    const { source, session } = screenState;
+    if (key === undefined || source.kind !== "hub") return undefined;
+    if (chat && chatKey === key) return chat;
+    chat?.dispose();
+    const target = { boxId: source.boxId, workspaceId: session.workspace_id, sessionId: session.session_id };
+    const created = createChatView({
+      queueKey: key,
+      terminalEpoch: session.terminal_epoch,
+      fetch: after => ipc.hubConversationTranscript(source.id, target, after, CHAT_TRANSCRIPT_LIMIT),
+      send: (text, prompt) =>
+        ipc.hubAgentPrompt(source.id, target, text, prompt.terminalEpoch, prompt.conversationId),
+      openTerminal: () => switchSessionView("terminal"),
+      fallBack: fallback => {
+        // Said once, in a toast, as the screen goes to the terminal; the chat
+        // tab keeps the same line with a way to ask again.
+        if (state.screen.kind === "terminal" && chatKeyOf(state.screen) === key) {
+          setState({ report: t(FALLBACK_TEXT[fallback]), screen: { ...state.screen, view: "terminal" } });
+        }
+      },
+      storage: typeof localStorage === "undefined" ? undefined : localStorage,
+    });
+    chat = created;
+    chatKey = key;
+    const runtime = state.terminalRuntime;
+    if (runtime && runtime.attachmentId === screenState.attached.terminal.attachment_id) {
+      created.observe(runtime.runtime);
+    }
+    return created;
+  }
+
+  function switchSessionView(next: SessionView): void {
+    if (state.screen.kind !== "terminal" || state.screen.view === undefined) return;
+    if (state.screen.view === next) return;
+    // Put the keyboard and any drawer away: neither belongs to the other view.
+    lowerKeyboard();
+    setState({ screen: { ...state.screen, view: next }, panel: "none", armed: undefined });
+  }
+
   /** 그림은 `sessionScreen`이 그리고 여기는 배선만 한다. */
   function renderTerminal(screenState: Extract<Screen, { kind: "terminal" }>): HTMLElement {
     const { source, session, attached, returnTo } = screenState;
@@ -4011,6 +4095,7 @@ export function startApp(root: HTMLElement): () => void {
         nowMs: Date.now(),
         opening: state.opening,
         haptics: state.settings.haptics,
+        ...(screenState.view === undefined ? {} : { view: screenState.view }),
       },
       {
         back: nativeBack.bind(() => {
@@ -4019,6 +4104,8 @@ export function startApp(root: HTMLElement): () => void {
           });
         }),
         transcript: stage => transcriptHost(attached, session, stage),
+        chat: container => chatFor(screenState)?.mount(container),
+        switchView: next => switchSessionView(next),
         enableInput: () => {
           void openSession(source, session, returnTo, "reconnect");
         },
@@ -4275,6 +4362,7 @@ export function startApp(root: HTMLElement): () => void {
           if (transcriptAttachment !== terminal.attachment_id ||
             liveAttachment(state.screen) !== terminal.attachment_id) return;
           gate.reset();
+          chat?.observe(undefined);
           setState({ terminalUnavailable: { attachmentId: terminal.attachment_id, detail } });
         },
         onAgentRuntimeState: (runtime) => {
@@ -4285,6 +4373,9 @@ export function startApp(root: HTMLElement): () => void {
           if (state.screen.kind === "terminal") paintSessionState(view, { session, runtime });
           gate.observe(runtime);
           notifier.observe(runtime);
+          if (chatKey !== undefined && chatKey === chatKeyOf(selectedTerminal(state.screen))) {
+            chat?.observe(runtime);
+          }
         },
         guardInput: gate.admit,
         trackpadDirection: (direction, fast) => showTrackpadDirection(document, direction, fast),
@@ -4477,6 +4568,7 @@ export function startApp(root: HTMLElement): () => void {
     window.visualViewport?.removeEventListener("scroll", refit);
     surface?.dispose();
     approvalGate?.reset();
+    chat?.dispose();
     clearTimeout(hostRetryTimer);
     cancelHandover();
   };
