@@ -69,6 +69,13 @@ describe("leadRunPrompt", () => {
     expect(prompt).toContain("do not implement work items yourself");
   });
 
+  it("ends the Run on the tracking issue, not with a summary in the session", () => {
+    const prompt = leadRunPrompt("goal");
+    for (const marker of ["tracking comment", "tracking issue", "gh issue comment", "same turn"]) {
+      expect(prompt).toContain(marker);
+    }
+  });
+
   it("leaves an ordinary goal room inside the run prompt limit", () => {
     const briefBytes = Buffer.byteLength(leadRunPrompt("x"), "utf8") - 1;
     expect(briefBytes).toBeLessThan(2048);
@@ -77,6 +84,42 @@ describe("leadRunPrompt", () => {
 
   it.each(["", "   ", "\n\t", undefined, 42])("refuses a blank or non-string goal %j", (goal) => {
     expect(() => leadRunPrompt(goal)).toThrow(/goal/);
+  });
+});
+
+/** The text of one numbered section of the lead guide, from its `## <n>.`
+ *  heading up to the next numbered one (fenced examples inside a section,
+ *  such as the report template, carry their own `## ` lines). */
+function guideSection(number) {
+  const guide = readFileSync(skillPath, "utf8");
+  const start = guide.indexOf(`\n## ${number}. `);
+  expect(start, `section ${number} of the lead guide`).toBeGreaterThan(-1);
+  const end = guide.indexOf(`\n## ${number + 1}. `, start);
+  return guide.slice(start, end === -1 ? undefined : end);
+}
+
+describe("the lead guide closes out on the tracking issue", () => {
+  it("keeps the tracking comment's id so it can be edited in place", () => {
+    const split = guideSection(2);
+    expect(split).toContain("gh issue comment TRACKING --repo OWNER/REPO --body-file plan.md");
+    expect(split).toContain("gh api -X PATCH repos/OWNER/REPO/issues/comments/COMMENT_ID -F body=@plan.md");
+  });
+
+  it("hands the end of the loop straight to the closing steps", () => {
+    const loop = guideSection(4);
+    expect(loop).toContain("closing steps in §6");
+    expect(loop).toContain("same turn");
+  });
+
+  it("re-checks GitHub, edits the tracking comment, then posts the report, in that order", () => {
+    const close = guideSection(6);
+    const order = [
+      "gh pr list --repo OWNER/REPO --head agent/work-",
+      "gh api -X PATCH repos/OWNER/REPO/issues/comments/COMMENT_ID -F body=@plan.md",
+      "gh issue comment TRACKING --repo OWNER/REPO --body-file report.md",
+    ].map((step) => close.indexOf(step));
+    for (const at of order) expect(at).toBeGreaterThan(-1);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 });
 
