@@ -43,6 +43,17 @@ export function appCssSources(doc: Document): { inline: string[]; hrefs: string[
 
 const escapeStyleText = (css: string) => css.replace(/<\/style/gi, "<\\/style");
 
+/**
+ * The app shell pins its own document (`html, body, #root { height: 100%;
+ * overflow: hidden }`) so wheel events never scroll the IDE, and that rule
+ * arrives with the injected app CSS. The preview document scrolls instead:
+ * html carries the viewport scroll, while body and #root keep their full-pane
+ * height and let taller content overflow into it. Unlayered and appended after
+ * the app CSS, it beats the shell's `@layer base` rule; the mockup's own
+ * styles follow it and still win.
+ */
+export const MOCKUP_DOCUMENT_SCROLL_CSS = "html{overflow:auto}body,#root{overflow:visible}";
+
 /** Quote-agnostic class attribute inside an <html ...> tag. */
 const CLASS_ATTR = /(?:^|\s)class\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=>]+))/i;
 
@@ -54,7 +65,7 @@ const CLASS_ATTR = /(?:^|\s)class\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=>]+))/i;
  * must never be interpreted as $-replacement patterns.
  */
 export function buildMockupSrcdoc(mockupHtml: string, tokenCss: string, dark: boolean): string {
-	const styleBlock = `<style ${MOCKUP_TOKEN_STYLE_ATTR}>${escapeStyleText(tokenCss)}</style>`;
+	const styleBlock = `<style ${MOCKUP_TOKEN_STYLE_ATTR}>${escapeStyleText(tokenCss)}\n${MOCKUP_DOCUMENT_SCROLL_CSS}</style>`;
 	const htmlTag = mockupHtml.match(/<html\b[^>]*>/i);
 	if (!htmlTag) {
 		return `<!doctype html><html class="${dark ? "dark" : ""}"><head>${styleBlock}</head><body>${mockupHtml}</body></html>`;

@@ -5,6 +5,7 @@ import {
 	appCssSources,
 	buildMockupSrcdoc,
 	isMockupPath,
+	MOCKUP_DOCUMENT_SCROLL_CSS,
 	MOCKUP_TOKEN_STYLE_ATTR,
 	mockupPaneTitle,
 } from "./mockupSrcdoc";
@@ -85,6 +86,20 @@ describe("buildMockupSrcdoc", () => {
 		expect(out).toContain("<head><style");
 		expect(out).not.toMatch(/<\/STYLE>/);
 		expect(out).not.toMatch(/[^\\]<\/style>[\s\S]*<\/style>[\s\S]*$/);
+	});
+
+	it("lifts the app shell's document scroll lock so a tall mockup scrolls", () => {
+		// The injected app CSS pins its own document so the IDE never scrolls.
+		const appCss = "@layer base { html, body, #root { height: 100%; overflow: hidden; } }";
+		const doc = `<!doctype html><html><head><style>body { color: red }</style></head><body>b</body></html>`;
+		const out = buildMockupSrcdoc(doc, appCss, false);
+		const injected = out.slice(out.indexOf(`<style ${MOCKUP_TOKEN_STYLE_ATTR}>`), out.indexOf("</style>"));
+		// Unlayered and after the app CSS, so it beats the shell lock …
+		expect(MOCKUP_DOCUMENT_SCROLL_CSS).not.toContain("@layer");
+		expect(injected.indexOf(MOCKUP_DOCUMENT_SCROLL_CSS)).toBeGreaterThan(injected.indexOf(appCss));
+		// … and before the mockup's own styles, which keep the last word.
+		expect(out.indexOf(MOCKUP_DOCUMENT_SCROLL_CSS)).toBeLessThan(out.indexOf("body { color: red }"));
+		expect(buildMockupSrcdoc("<div>fragment</div>", appCss, true)).toContain(MOCKUP_DOCUMENT_SCROLL_CSS);
 	});
 
 	it("does not interpret $-sequences in collected CSS as replace patterns", () => {

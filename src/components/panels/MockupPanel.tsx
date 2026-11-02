@@ -1,5 +1,5 @@
 import type { IDockviewPanelProps } from "dockview-react";
-import { MessageSquarePlus, Moon, Sun } from "lucide-react";
+import { MessageSquarePlus, Moon, Sun, ZoomIn, ZoomOut } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmationButton } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
@@ -7,6 +7,7 @@ import { RefreshButton } from "@/components/ui/refresh-button";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { LoadingStatus, PanelStatus } from "@/components/common/PanelStatus";
 import { Textarea } from "@/components/ui/textarea";
+import { Titled } from "@/components/ui/tooltip";
 import { usePaneFirstReveal } from "@/components/workspace/usePaneFirstReveal";
 import { typeAgentPrompt } from "@/lib/agents/agentDelivery";
 import {
@@ -15,6 +16,7 @@ import {
 	mockupPaneTitle,
 } from "@/lib/design/mockupSrcdoc";
 import { describeMockupElement, formatMockupComment } from "@/lib/design/mockupReview";
+import { stepZoom } from "@/lib/files/imageZoom";
 import { t } from "@/lib/i18n";
 import { readFile } from "@/lib/ipc/files";
 import { schemeOverrideCss } from "@/lib/theme/themePreference";
@@ -44,6 +46,17 @@ async function collectAppCss(previewDark: boolean): Promise<string> {
 	return [...sources.inline, ...fetched, schemeOverrideCss(previewDark)].join("\n");
 }
 
+/** Zooms the rendered preview like browser zoom: CSS zoom on the root scales
+ *  layout, scrolling and hit testing together, so element picking keeps using
+ *  plain viewport coordinates. 100% drops the override and leaves the mockup's
+ *  own styles alone. */
+function applyPreviewZoom(doc: Document | null | undefined, scale: number) {
+	const root = doc?.documentElement;
+	if (!root) return;
+	if (scale === 1) root.style.removeProperty("zoom");
+	else root.style.setProperty("zoom", String(scale));
+}
+
 interface MockupBuild {
 	srcdoc: string;
 	dark: boolean;
@@ -61,6 +74,7 @@ export function MockupPanel(props: IDockviewPanelProps<MockupPanelParams>) {
 		document.documentElement.classList.contains("dark"),
 	);
 	const [nonce, setNonce] = useState(0);
+	const [zoom, setZoom] = useState(1);
 	const agents = usePaneAgentChoices();
 	/** review comment draft (anchor picked from the rendered mockup) */
 	const [draft, setDraft] = useState<{ anchor: string; comment: string; agentId: string } | null>(
@@ -139,6 +153,12 @@ export function MockupPanel(props: IDockviewPanelProps<MockupPanelParams>) {
 		applyAutomaticPaneTitle(props.api, mockupPaneTitle(path) ?? path);
 	}, [path, props.api]);
 
+	// The loaded document follows zoom changes; a rebuilt one (theme toggle,
+	// reload) picks the current zoom up in onLoad.
+	useEffect(() => {
+		applyPreviewZoom(frameRef.current?.contentDocument, zoom);
+	}, [zoom]);
+
 	useEffect(() => {
 		if (!revealed) return;
 		let cancelled = false;
@@ -170,6 +190,27 @@ export function MockupPanel(props: IDockviewPanelProps<MockupPanelParams>) {
 				<span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
 					{path.split("/").slice(-3).join("/")}
 				</span>
+				<IconButton
+					title={t("panels.mockup.zoomOut")}
+					onClick={() => setZoom((scale) => stepZoom(scale, -1))}
+				>
+					<ZoomOut />
+				</IconButton>
+				<Titled title={t("panels.mockup.resetZoom")}>
+					<button
+						type="button"
+						className="h-6 min-w-10 rounded-md px-1 text-center text-[10px] tabular-nums text-muted-foreground transition-colors hover:bg-glass-tint-hover hover:text-foreground"
+						onClick={() => setZoom(1)}
+					>
+						{Math.round(zoom * 100)}%
+					</button>
+				</Titled>
+				<IconButton
+					title={t("panels.mockup.zoomIn")}
+					onClick={() => setZoom((scale) => stepZoom(scale, 1))}
+				>
+					<ZoomIn />
+				</IconButton>
 				<IconButton
 					title={dark ? t("panels.mockup.previewLight") : t("panels.mockup.previewDark")}
 					onClick={() => setDark((v) => !v)}
@@ -258,6 +299,7 @@ export function MockupPanel(props: IDockviewPanelProps<MockupPanelParams>) {
 						sandbox="allow-same-origin"
 						className="h-full w-full border-0 bg-background"
 						srcDoc={build.srcdoc}
+						onLoad={(event) => applyPreviewZoom(event.currentTarget.contentDocument, zoom)}
 					/>
 					{commentMode ? (
 						// Click-capture overlay: the sandboxed doc runs no scripts, so
