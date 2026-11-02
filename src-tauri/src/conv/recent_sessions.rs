@@ -1,11 +1,10 @@
 #[cfg(test)]
-use dure_provider_profile::transcript::{
-    provider_final_response, transcript_from_file, ProviderTranscriptEntry,
-};
+use dure_provider_profile::transcript::{provider_final_response, ProviderTranscriptEntry};
 pub use dure_provider_profile::transcript::{ConversationTurnRole, ProviderConversationTranscript};
 use dure_provider_profile::transcript::{
     bounded_prefix, claude_turn, codex_content_text, codex_turn, find_claude_conversation,
-    mtime, provider_context_injection, safe_id, text_content, MAX_TRANSCRIPT_DISCOVERY_ENTRIES,
+    find_codex_conversation, mtime, provider_context_injection, safe_id, text_content,
+    transcript_from_file, MAX_TRANSCRIPT_DISCOVERY_ENTRIES,
 };
 use serde::Serialize;
 #[path = "pi_sessions.rs"]
@@ -1575,6 +1574,124 @@ pub fn transcript_global(
         provider,
         conversation_id,
     )
+}
+
+/// The most entries of Dure's account root one read looks through, and the
+/// most profiles of one provider it searches.
+const MAX_ACCOUNT_ROOT_ENTRIES: usize = 256;
+const MAX_ACCOUNT_PROFILES: usize = 32;
+
+/// One exact provider-owned transcript, wherever the agent's account keeps it.
+///
+/// A managed agent launched under a Dure account profile has that profile as
+/// its provider state root (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`), and the
+/// desktop process's own environment names only the default one. The desktop
+/// does not hold the map from a session's credential reference to a profile
+/// directory — the account registry belongs to the renderer and the control
+/// plane, and Hmux records only the reference — so this looks for the exact
+/// conversation, whose id the provider issued, in the default state root and
+/// in each of the provider's profiles under Dure's account root, and reads
+/// the most recently written match. Profiles pass the trust boundary managed
+/// launches use (`resolve_account_profile_directory`), and a shared overlay
+/// link that resolves to a directory already searched is not searched again.
+pub fn transcript_any_account(
+    provider: &str,
+    conversation_id: &str,
+) -> Result<ProviderConversationTranscript, String> {
+    let profiles = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(|home| account_profile_directories(Path::new(&home), provider))
+        .unwrap_or_default();
+    transcript_for_roots_and_profiles(
+        &DiscoveryRoots::from_environment(),
+        &profiles,
+        provider,
+        conversation_id,
+    )
+}
+
+/// The provider's account profile directories that managed launches would
+/// accept: `<home>/.dure/accounts/<provider>-*`, owned real directories.
+fn account_profile_directories(home: &Path, provider: &str) -> Vec<PathBuf> {
+    let Some(home_text) = home.to_str() else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(home.join(".dure").join("accounts")) else {
+        return Vec::new();
+    };
+    let prefix = format!("{provider}-");
+    entries
+        .flatten()
+        .take(MAX_ACCOUNT_ROOT_ENTRIES)
+        .filter(|entry| entry.file_name().to_str().is_some_and(|name| name.starts_with(&prefix)))
+        .filter_map(|entry| {
+            let path = entry.path();
+            dure_provider_profile::resolve_account_profile_directory(
+                provider,
+                home_text,
+                "provider-transcript",
+                path.to_str()?,
+            )
+            .ok()
+        })
+        .take(MAX_ACCOUNT_PROFILES)
+        .collect()
+}
+
+fn transcript_for_roots_and_profiles(
+    roots: &DiscoveryRoots,
+    profiles: &[PathBuf],
+    provider: &str,
+    conversation_id: &str,
+) -> Result<ProviderConversationTranscript, String> {
+    if !safe_id(conversation_id) {
+        return Err("provider conversation id is invalid".to_string());
+    }
+    let parse: fn(&Value) -> Option<(ConversationTurnRole, String)>;
+    let directories: Vec<PathBuf> = match provider {
+        "claude" => {
+            parse = claude_turn;
+            std::iter::once(roots.claude_projects.clone())
+                .chain(profiles.iter().map(|profile| profile.join("projects")))
+                .collect()
+        }
+        "codex" => {
+            parse = codex_turn;
+            let default_archive = roots
+                .codex_sessions
+                .parent()
+                .map(|root| root.join("archived_sessions"));
+            std::iter::once(roots.codex_sessions.clone())
+                .chain(default_archive)
+                .chain(profiles.iter().flat_map(|profile| {
+                    [profile.join("sessions"), profile.join("archived_sessions")]
+                }))
+                .collect()
+        }
+        _ => return Err("provider transcript export is unsupported".to_string()),
+    };
+    let mut searched = HashSet::new();
+    let mut newest: Option<(u64, PathBuf)> = None;
+    for directory in directories {
+        let Ok(canonical) = fs::canonicalize(&directory) else {
+            continue;
+        };
+        if !searched.insert(canonical.clone()) {
+            continue;
+        }
+        let found = if provider == "claude" {
+            find_claude_conversation(&canonical, conversation_id).map(|(_, path)| (mtime(&path), path))
+        } else {
+            find_codex_conversation(&canonical, conversation_id, 0, &mut 0)
+        };
+        if let Some((modified, path)) = found {
+            if newest.as_ref().is_none_or(|(current, _)| modified > *current) {
+                newest = Some((modified, path));
+            }
+        }
+    }
+    let (_, path) = newest.ok_or_else(|| "provider conversation was not found".to_string())?;
+    transcript_from_file(&path, provider, conversation_id, parse)
 }
 
 fn claude_details(
@@ -3299,6 +3416,161 @@ mod tests {
                 .unwrap()
                 .entries,
             transcript.entries
+        );
+    }
+
+    fn write_claude_conversation(path: &Path, prompt: &str, answer: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let records = [
+            serde_json::json!({ "type": "user", "message": { "role": "user", "content": prompt } }),
+            serde_json::json!({ "type": "assistant", "message": { "role": "assistant", "stop_reason": "end_turn", "content": [{ "type": "text", "text": answer }] } }),
+        ];
+        fs::write(
+            path,
+            records.iter().map(Value::to_string).collect::<Vec<_>>().join("\n"),
+        )
+        .unwrap();
+    }
+
+    fn set_modified(path: &Path, seconds_ago: u64) {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(
+                std::time::SystemTime::now() - std::time::Duration::from_secs(seconds_ago),
+            )
+            .unwrap();
+    }
+
+    /// A pane launched under another account writes its transcript in that
+    /// account's profile, not under the desktop's own `HOME` state root. A
+    /// legacy profile keeps a profile-local `projects` directory rather than
+    /// the shared overlay link, which is the case the default roots miss.
+    #[test]
+    fn a_conversation_written_under_an_account_profile_is_found() {
+        let temporary = tempfile::tempdir().unwrap();
+        let roots = roots(&temporary);
+        fs::create_dir_all(&roots.claude_projects).unwrap();
+        let profile = temporary.path().join(".dure/accounts/claude-work");
+        let conversation_id = "conversation-in-profile";
+        write_claude_conversation(
+            &profile.join(format!("projects/-repo/{conversation_id}.jsonl")),
+            "Fix the menu",
+            "Done under the work account",
+        );
+        // Another provider's profile is not this provider's state root.
+        write_claude_conversation(
+            &temporary
+                .path()
+                .join(format!(".dure/accounts/codex-work/projects/-repo/{conversation_id}.jsonl")),
+            "Wrong provider",
+            "Wrong provider",
+        );
+
+        assert!(
+            transcript_for_roots(&roots, "claude", conversation_id).is_err(),
+            "the default state root alone misses the profile"
+        );
+        let profiles = account_profile_directories(temporary.path(), "claude");
+        assert_eq!(profiles, [profile.canonicalize().unwrap()]);
+        let transcript =
+            transcript_for_roots_and_profiles(&roots, &profiles, "claude", conversation_id)
+                .unwrap();
+        assert_eq!(
+            transcript.final_response.as_deref(),
+            Some("Done under the work account")
+        );
+        assert_eq!(transcript.entries.len(), 2);
+    }
+
+    /// A conversation moved between accounts can leave an older copy behind;
+    /// the one still being written is the live one.
+    #[test]
+    fn the_most_recently_written_copy_of_a_conversation_wins() {
+        let temporary = tempfile::tempdir().unwrap();
+        let roots = roots(&temporary);
+        let conversation_id = "conversation-moved";
+        let stale = roots.claude_projects.join(format!("-repo/{conversation_id}.jsonl"));
+        write_claude_conversation(&stale, "Fix the menu", "Old account");
+        set_modified(&stale, 3_600);
+        let profile = temporary.path().join(".dure/accounts/claude-spare");
+        write_claude_conversation(
+            &profile.join(format!("projects/-repo/{conversation_id}.jsonl")),
+            "Fix the menu",
+            "Current account",
+        );
+
+        let profiles = account_profile_directories(temporary.path(), "claude");
+        let transcript =
+            transcript_for_roots_and_profiles(&roots, &profiles, "claude", conversation_id)
+                .unwrap();
+        assert_eq!(transcript.final_response.as_deref(), Some("Current account"));
+    }
+
+    /// Codex keeps its rollouts under `<CODEX_HOME>/sessions`; a profile is a
+    /// `CODEX_HOME` of its own.
+    #[test]
+    fn a_codex_rollout_under_an_account_profile_is_found() {
+        let temporary = tempfile::tempdir().unwrap();
+        let roots = roots(&temporary);
+        let conversation_id = "rollout-in-profile";
+        let directory = temporary
+            .path()
+            .join(".dure/accounts/codex-work/sessions/2026/11/02");
+        fs::create_dir_all(&directory).unwrap();
+        let records = [
+            serde_json::json!({ "type": "session_meta", "payload": { "id": conversation_id, "cwd": "/repo" } }),
+            serde_json::json!({ "type": "response_item", "payload": { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "Run the tests" }] } }),
+            serde_json::json!({ "type": "response_item", "payload": { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "All green" }] } }),
+        ];
+        fs::write(
+            directory.join(format!("rollout-{conversation_id}.jsonl")),
+            records.iter().map(Value::to_string).collect::<Vec<_>>().join("\n"),
+        )
+        .unwrap();
+
+        let profiles = account_profile_directories(temporary.path(), "codex");
+        let transcript =
+            transcript_for_roots_and_profiles(&roots, &profiles, "codex", conversation_id)
+                .unwrap();
+        assert_eq!(
+            transcript.entries.last().map(|entry| entry.text.as_str()),
+            Some("All green")
+        );
+    }
+
+    /// A profile whose `projects` is the shared overlay link resolves to the
+    /// default directory; it is searched once, and the conversation is found.
+    #[cfg(unix)]
+    #[test]
+    fn a_shared_overlay_link_reads_the_default_directory() {
+        let temporary = tempfile::tempdir().unwrap();
+        let roots = roots(&temporary);
+        let conversation_id = "conversation-shared";
+        write_claude_conversation(
+            &roots.claude_projects.join(format!("-repo/{conversation_id}.jsonl")),
+            "Fix the menu",
+            "Shared",
+        );
+        let profile = temporary.path().join(".dure/accounts/claude-linked");
+        fs::create_dir_all(&profile).unwrap();
+        std::os::unix::fs::symlink(&roots.claude_projects, profile.join("projects")).unwrap();
+
+        let profiles = account_profile_directories(temporary.path(), "claude");
+        assert_eq!(profiles.len(), 1);
+        let transcript =
+            transcript_for_roots_and_profiles(&roots, &profiles, "claude", conversation_id)
+                .unwrap();
+        assert_eq!(transcript.final_response.as_deref(), Some("Shared"));
+    }
+
+    #[test]
+    fn an_unsafe_conversation_id_is_refused_before_any_search() {
+        let temporary = tempfile::tempdir().unwrap();
+        let roots = roots(&temporary);
+        assert!(
+            transcript_for_roots_and_profiles(&roots, &[], "claude", "../escape").is_err()
         );
     }
 

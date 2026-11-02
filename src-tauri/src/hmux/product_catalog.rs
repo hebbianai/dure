@@ -9,7 +9,7 @@ use std::path::PathBuf;
 /// Product runtime brokers likewise inherit this environment; passing only
 /// `catalog.discovery_root()` as `HMUX_DISCOVERY_ROOT` would flatten the plan
 /// and silently discard those read-only compatibility roots.
-pub(super) fn product_catalog() -> Result<LocalSessionCatalog, hmux_client::ClientError> {
+pub(crate) fn product_catalog() -> Result<LocalSessionCatalog, hmux_client::ClientError> {
     LocalSessionCatalog::from_environment()
 }
 

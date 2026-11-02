@@ -54,11 +54,18 @@ pub fn entry_from(
         terminal_epoch: descriptor.terminal_epoch.clone(),
         capabilities: descriptor.capabilities.clone(),
         launch_program: descriptor.launch_program.clone(),
+        conversation: super::conversation::offers_conversation(
+            &descriptor.session_class,
+            &descriptor.provider_id,
+            &descriptor.lifecycle,
+        ),
         box_id: box_id.to_string(),
         box_label: box_label.to_string(),
     }
 }
 
+/// A remote host's session. Its conversation is not served yet
+/// (`conversation.rs`), so the entry never offers one.
 #[must_use]
 pub fn remote_entry_from(
     descriptor: &hmux_ssh_transport::RemoteCatalogSession,
@@ -81,6 +88,7 @@ pub fn remote_entry_from(
         terminal_epoch: descriptor.terminal_epoch.clone(),
         capabilities: descriptor.capabilities.clone(),
         launch_program: descriptor.launch_program.clone(),
+        conversation: false,
         box_id: box_id.to_string(),
         box_label: box_label.to_string(),
     }
@@ -160,6 +168,24 @@ mod tests {
             exit: None,
             failure: None,
         }
+    }
+
+    /// A chat is offered only for a running managed agent this desktop can
+    /// serve: an exited one would be refused, and a shell has no
+    /// conversation.
+    #[test]
+    fn only_a_running_managed_agent_offers_a_conversation() {
+        let mut managed = descriptor();
+        managed.session_class = hmux_client::SessionClass::Managed;
+        managed.provider_id = "claude".into();
+        assert!(entry_from(&managed, "this-laptop", "이 노트북").conversation);
+
+        let mut exited = managed.clone();
+        exited.lifecycle = hmux_client::SessionLifecycle::Exited;
+        assert!(!entry_from(&exited, "this-laptop", "이 노트북").conversation);
+
+        // The fixture is a standalone session.
+        assert!(!entry_from(&descriptor(), "this-laptop", "이 노트북").conversation);
     }
 
     #[test]
