@@ -289,9 +289,9 @@ pub enum HubRequest {
     /// greeting, having written nothing.
     ///
     /// The text rides in the greeting, so it is bounded by
-    /// `conversation::MAX_AGENT_PROMPT_BYTES`: check it with
-    /// `conversation::check_agent_prompt` before sending, which names the
-    /// limit. The hub applies the same check. A longer prompt needs a data
+    /// `conversation::MAX_AGENT_PROMPT_BYTES`: send what
+    /// `conversation::normalize_agent_prompt` returns, which names the limit
+    /// when it refuses. The hub applies the same normalization. A longer prompt needs a data
     /// frame after the greeting, like `StageSessionFileV1` — milestone 2.
     AgentPromptV1 {
         /// The catalog entry's box, as `Attach` names it.
@@ -602,6 +602,7 @@ mod tests {
             terminal_epoch: "terminal-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             turn_completed_count: 2,
+            turn_open: true,
             runtime_revision: 9,
         }
     }
@@ -774,11 +775,11 @@ mod tests {
     /// device token and ids at their 256-byte bound.
     #[test]
     fn the_longest_allowed_prompt_always_fits_the_greeting() {
-        use crate::conversation::{MAX_AGENT_PROMPT_BYTES, check_agent_prompt};
+        use crate::conversation::{MAX_AGENT_PROMPT_BYTES, normalize_agent_prompt};
         let id = "i".repeat(256);
         // Quotes escape to two bytes, the most an allowed character costs.
         let text = "\"".repeat(MAX_AGENT_PROMPT_BYTES);
-        assert_eq!(check_agent_prompt(&text), Ok(()));
+        assert_eq!(normalize_agent_prompt(&text).as_ref(), Ok(&text));
         let request = HubRequest::AgentPromptV1 {
             box_id: id.clone(),
             workspace_id: id.clone(),

@@ -23,15 +23,16 @@
 //! megabytes, and the phone polls while the chat is open. The answer carries a
 //! [`ConversationCursor`] made of facts the Host already holds; a client that
 //! echoes it as `after` gets `unchanged`, without the file being read, until a
-//! turn completes or the process or conversation changes
-//! ([`ConversationCursor::same_turns_as`]). Text the agent writes in the middle
-//! of a turn shows when that turn completes.
+//! turn starts or completes or the process or conversation changes
+//! ([`ConversationCursor::same_turns_as`]). A turn starting re-reads once, so
+//! the prompt that started it shows; text the agent writes in the middle of a
+//! turn shows when that turn completes.
 //!
 //! # Why the prompt is short
 //!
 //! The prompt rides in the greeting, whose frame is `MAX_HELLO_BYTES`, so it is
-//! bounded by [`MAX_AGENT_PROMPT_BYTES`]; [`check_agent_prompt`] is the check
-//! both sides apply. A longer prompt needs a data frame after the greeting, the
+//! bounded by [`MAX_AGENT_PROMPT_BYTES`]; [`normalize_agent_prompt`] is the
+//! check both sides apply. A longer prompt needs a data frame after the greeting, the
 //! way `StageSessionFileV1` sends a file — that is milestone 2.
 //!
 //! # What does not cross
@@ -71,14 +72,15 @@ pub const MAX_ENTRY_TEXT_BYTES: usize = 64 * 1024;
 /// the frame.
 const FRAME_SLACK_BYTES: usize = 1024;
 
-/// The longest prompt one `AgentPromptV1` carries, in UTF-8 bytes.
+/// The longest prompt one `AgentPromptV1` carries, in UTF-8 bytes, after
+/// [`normalize_agent_prompt`].
 ///
 /// The prompt rides in the greeting next to the device token and the ids. A
-/// prompt that passes [`check_agent_prompt`] at most doubles when written as
-/// JSON (quotes, backslashes, line breaks and tabs are its only escaped
-/// characters), so at this length the greeting always fits `MAX_HELLO_BYTES`
-/// with ids of up to 256 bytes. A longer prompt needs a data frame after the
-/// greeting (milestone 2).
+/// normalized prompt at most doubles when written as JSON (quotes,
+/// backslashes, line feeds and tabs are its only escaped characters), so at
+/// this length the greeting always fits `MAX_HELLO_BYTES` with ids of up to
+/// 256 bytes. A longer prompt needs a data frame after the greeting
+/// (milestone 2).
 pub const MAX_AGENT_PROMPT_BYTES: usize = 3 * 1024;
 
 /// Who said it.
@@ -109,23 +111,30 @@ pub struct ConversationCursor {
     pub conversation_id: String,
     /// Moves when a turn completes.
     pub turn_completed_count: u64,
+    /// The Host observes a turn running: the agent is working on a prompt
+    /// (background work after a turn ended does not count). It turns true
+    /// when a turn starts — the prompt that started it, from the phone or the
+    /// terminal, is then in the transcript — and false when the turn ends.
+    pub turn_open: bool,
     /// The Host's agent runtime revision. Reported, not compared: it moves on
     /// every runtime change, progress included, so deciding `unchanged` on it
     /// would re-read the transcript on every poll while the agent works. A
-    /// client can use it to see that the agent's state moved (a turn started,
-    /// attention was raised) without asking for the transcript again.
+    /// client can use it to see that the agent's state moved (attention was
+    /// raised, for example) without asking for the transcript again.
     pub runtime_revision: u64,
 }
 
 impl ConversationCursor {
     /// Nothing the transcript depends on moved between `self` and `other`:
-    /// the same process, the same conversation, no turn completed. This is
-    /// the rule the desktop answers `unchanged` by.
+    /// the same process, the same conversation, no turn started or
+    /// completed. This is the rule the desktop answers `unchanged` by; one
+    /// turn therefore costs two transcript reads however long it runs.
     #[must_use]
     pub fn same_turns_as(&self, other: &Self) -> bool {
         self.terminal_epoch == other.terminal_epoch
             && self.conversation_id == other.conversation_id
             && self.turn_completed_count == other.turn_completed_count
+            && self.turn_open == other.turn_open
     }
 }
 
@@ -482,19 +491,27 @@ impl std::fmt::Display for AgentPromptTextError {
 
 impl std::error::Error for AgentPromptTextError {}
 
-/// The check a client applies before sending an `AgentPromptV1`, and the hub
-/// applies again before the Host hears of it.
+/// The prompt as it is sent: what a client applies before sending an
+/// `AgentPromptV1`, and what the hub applies again before the Host hears of
+/// it, so both sides agree on the bytes and on the limit.
+///
+/// Line breaks become line feeds: `\r\n` and a lone `\r` (what a phone's text
+/// field may produce) read as one `\n`. The Host writes the body as a paste
+/// followed by its own Enter, and outside bracketed-paste mode a carriage
+/// return in the body would submit the prompt in pieces.
 ///
 /// # Errors
 /// When the prompt is empty, carries a control character other than a line
-/// break or a tab, or is longer than [`MAX_AGENT_PROMPT_BYTES`].
-pub fn check_agent_prompt(text: &str) -> Result<(), AgentPromptTextError> {
+/// break or a tab, or is longer than [`MAX_AGENT_PROMPT_BYTES`] once
+/// normalized.
+pub fn normalize_agent_prompt(text: &str) -> Result<String, AgentPromptTextError> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
     if text.trim().is_empty() {
         return Err(AgentPromptTextError::Empty);
     }
     if text
         .chars()
-        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\t'))
     {
         return Err(AgentPromptTextError::ControlCharacter);
     }
@@ -504,7 +521,7 @@ pub fn check_agent_prompt(text: &str) -> Result<(), AgentPromptTextError> {
             limit: MAX_AGENT_PROMPT_BYTES,
         });
     }
-    Ok(())
+    Ok(text)
 }
 
 /// Hub side: one transcript answer as a frame.
@@ -608,6 +625,7 @@ mod tests {
             terminal_epoch: "terminal-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             turn_completed_count: 3,
+            turn_open: false,
             runtime_revision: 17,
         }
     }
@@ -667,6 +685,7 @@ mod tests {
                 "terminal_epoch": "terminal-1",
                 "conversation_id": "conversation-1",
                 "turn_completed_count": 3,
+                "turn_open": false,
                 "runtime_revision": 17,
             })
         );
@@ -860,15 +879,13 @@ mod tests {
     #[test]
     fn a_prompt_is_checked_with_the_limit_named() {
         assert_eq!(
-            check_agent_prompt("Run the tests\n\tthen report\r\n"),
-            Ok(())
+            normalize_agent_prompt("Run the tests\n\tthen report"),
+            Ok("Run the tests\n\tthen report".to_string())
         );
+        let korean = "가".repeat(MAX_AGENT_PROMPT_BYTES / 3);
+        assert_eq!(normalize_agent_prompt(&korean), Ok(korean));
         assert_eq!(
-            check_agent_prompt(&"가".repeat(MAX_AGENT_PROMPT_BYTES / 3)),
-            Ok(())
-        );
-        assert_eq!(
-            check_agent_prompt(" \n\t"),
+            normalize_agent_prompt(" \n\t\r\n"),
             Err(AgentPromptTextError::Empty)
         );
         for text in [
@@ -878,13 +895,13 @@ mod tests {
             "csi \u{9b}",
         ] {
             assert_eq!(
-                check_agent_prompt(text),
+                normalize_agent_prompt(text),
                 Err(AgentPromptTextError::ControlCharacter),
                 "{text:?}"
             );
         }
         let long = "x".repeat(MAX_AGENT_PROMPT_BYTES + 1);
-        let error = check_agent_prompt(&long).expect_err("too long");
+        let error = normalize_agent_prompt(&long).expect_err("too long");
         assert_eq!(
             error,
             AgentPromptTextError::TooLong {
@@ -897,6 +914,24 @@ mod tests {
                 .to_string()
                 .contains(&MAX_AGENT_PROMPT_BYTES.to_string()),
             "{error}"
+        );
+    }
+
+    /// A phone's text field may end lines with `\r\n` or `\r`. Outside
+    /// bracketed-paste mode a carriage return submits, so the prompt would
+    /// arrive in pieces; both sides send line feeds instead.
+    #[test]
+    fn carriage_returns_become_line_feeds() {
+        assert_eq!(
+            normalize_agent_prompt("first\r\nsecond\rthird\n"),
+            Ok("first\nsecond\nthird\n".to_string())
+        );
+        // The limit applies to what is sent: a CRLF prompt one byte over the
+        // limit per line break still fits once normalized.
+        let crlf = format!("{}\r\n", "x".repeat(MAX_AGENT_PROMPT_BYTES - 1));
+        assert_eq!(
+            normalize_agent_prompt(&crlf).map(|text| text.len()),
+            Ok(MAX_AGENT_PROMPT_BYTES)
         );
     }
 
@@ -916,6 +951,18 @@ mod tests {
         let mut replaced = cursor();
         replaced.terminal_epoch = "terminal-2".to_string();
         assert!(!cursor().same_turns_as(&replaced));
+    }
+
+    /// A prompt starting a turn re-reads once, so the prompt shows before the
+    /// turn ends; progress inside the turn does not.
+    #[test]
+    fn a_turn_starting_is_not_the_same_turns() {
+        let mut started = cursor();
+        started.turn_open = true;
+        assert!(!cursor().same_turns_as(&started));
+        let mut progressed = started.clone();
+        progressed.runtime_revision += 12;
+        assert!(started.same_turns_as(&progressed));
     }
 
     #[test]

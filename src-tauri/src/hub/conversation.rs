@@ -2,10 +2,11 @@
 //!
 //! # Who decides what
 //!
-//! - **The transcript** is read by the reader the desktop's own response view
-//!   and the CLI server's `/transcript` use (`conv::transcript_global`), for
-//!   the conversation the Hmux Host observed on the session. The phone names a
-//!   session, never a provider file or conversation to read.
+//! - **The transcript** is read with the desktop's provider transcript reader,
+//!   for the conversation the Hmux Host observed on the session, from the
+//!   default state root or the account profile the agent runs under
+//!   (`conv::transcript_any_account`). The phone names a session, never a
+//!   provider file or conversation to read.
 //! - **The prompt** is admitted by the Hmux Host, through the same
 //!   agent-prompt input the control plane's `agent_runtime.native.input`
 //!   sends: the Host writes only when it observes the agent idle, with no
@@ -21,12 +22,13 @@
 //! transcript lives on the remote machine.
 
 use dure_hub_protocol::conversation::{
-    check_agent_prompt, ConversationCursor, ConversationEntry, ConversationRefusal,
+    normalize_agent_prompt, ConversationCursor, ConversationEntry, ConversationRefusal,
     ConversationRole, HubAgentPromptResult, HubConversationTranscriptResult, TranscriptParts,
 };
 use dure_provider_profile::transcript::{ConversationTurnRole, ProviderConversationTranscript};
 use hmux_client::{
-    AgentRuntimeAttention, AgentRuntimeStateDescriptor, ClientError, LocalSessionCatalog,
+    AgentRuntimeActivity, AgentRuntimeAttention, AgentRuntimeLifecycle,
+    AgentRuntimeStateDescriptor, ClientError, LocalSessionCatalog,
     ProviderConversationIdentityDescriptor, ProviderConversationIdentitySeed,
     ProviderConversationIdentitySource, SessionClass, SessionDescriptor, SessionFence,
     SessionHealth, SessionLifecycle, SessionSelector, TerminalSurfaceAttachment,
@@ -111,16 +113,23 @@ pub fn answer_transcript(
 pub fn answer_prompt(
     sink: Option<&dyn ConversationSink>,
     route: BoxRoute,
-    request: PromptRequest,
+    mut request: PromptRequest,
 ) -> HubAgentPromptResult {
     let sink = match admit(route, sink, &request.workspace_id, &request.session_id) {
         Ok(sink) => sink,
         Err((code, detail)) => return HubAgentPromptResult::refused(code, detail),
     };
-    // The same check the phone applies before sending; it names the limit.
-    if let Err(error) = check_agent_prompt(&request.text) {
-        return HubAgentPromptResult::refused(ConversationRefusal::InvalidRequest, error.to_string());
-    }
+    // The same normalization the phone applies before sending, so both sides
+    // agree on the bytes and the limit; the refusal names the limit.
+    request.text = match normalize_agent_prompt(&request.text) {
+        Ok(text) => text,
+        Err(error) => {
+            return HubAgentPromptResult::refused(
+                ConversationRefusal::InvalidRequest,
+                error.to_string(),
+            )
+        }
+    };
     if !bounded_identifier(&request.expected_terminal_epoch)
         || request
             .expected_conversation_id
@@ -222,6 +231,9 @@ pub struct ObservedConversation {
 pub struct ObservedRuntime {
     pub revision: u64,
     pub turn_completed_count: u64,
+    /// A turn is running: the agent works on a prompt. Background work after
+    /// a turn ended is not a turn.
+    pub turn_open: bool,
     pub attention: bool,
 }
 
@@ -248,6 +260,9 @@ impl ObservedAgent {
                 Some(ObservedRuntime {
                     revision: runtime.revision.parse().ok()?,
                     turn_completed_count: runtime.turn_completed_count.parse().ok()?,
+                    turn_open: runtime.lifecycle == AgentRuntimeLifecycle::Running
+                        && runtime.activity == AgentRuntimeActivity::Working
+                        && !runtime.background_work,
                     attention: runtime.attention != AgentRuntimeAttention::None
                         || runtime.attention_id.is_some(),
                 })
@@ -259,20 +274,12 @@ impl ObservedAgent {
         }
     }
 
-    /// The process this was observed on is gone: it was replaced.
-    fn replaced() -> Self {
-        Self {
-            terminal_epoch: String::new(),
-            conversation: None,
-            runtime: None,
-        }
-    }
-
     fn cursor(&self, conversation: &ObservedConversation) -> ConversationCursor {
         ConversationCursor {
             terminal_epoch: self.terminal_epoch.clone(),
             conversation_id: conversation.conversation_id.clone(),
             turn_completed_count: self.runtime.map_or(0, |runtime| runtime.turn_completed_count),
+            turn_open: self.runtime.is_some_and(|runtime| runtime.turn_open),
             runtime_revision: self.runtime.map_or(0, |runtime| runtime.revision),
         }
     }
@@ -301,9 +308,9 @@ pub fn transcript_answer(
         );
     };
     let cursor = observed.cursor(conversation);
-    // Without the Host's runtime state the cursor cannot see a turn complete,
-    // so it never vouches for "unchanged". The runtime revision moves on
-    // every progress event and does not decide it (`same_turns_as`).
+    // Without the Host's runtime state the cursor cannot see a turn start or
+    // complete, so it never vouches for "unchanged". The runtime revision
+    // moves on every progress event and does not decide it (`same_turns_as`).
     if observed.runtime.is_some()
         && request
             .after
@@ -400,10 +407,12 @@ fn refusal_needs_a_second_look(code: &str) -> bool {
 
 /// Name the Host's answer to a prompt it did not confirm.
 ///
-/// `now` is what the Host observes after it refused, not the snapshot taken
-/// at attach: the conversation can change between the two, and the Host
-/// gives one reason for every idle-admission refusal. When the agent is no
-/// longer on the conversation the prompt was fenced on, that is the reason.
+/// For the refusals the Host gives one reason for
+/// ([`refusal_needs_a_second_look`]), `now` is a second inspection taken
+/// after the refusal ([`refusal_after_second_look`]), not the snapshot taken
+/// at attach: the conversation can change between the two. When the agent is
+/// no longer on the conversation the prompt was fenced on, that is the
+/// reason.
 #[must_use]
 pub fn prompt_failure(
     code: &str,
@@ -448,9 +457,46 @@ pub fn prompt_failure(
     }
 }
 
-/// Name a failure to attach for a prompt. Nothing was written. Classified the
-/// way Hmux classifies a failed probe: incompatibility and generation changes
-/// are final, anything else about the transport is worth asking again.
+/// Name a Host refusal from the second inspection taken after it, on its own
+/// terms: a Host that cannot be observed now, has exited or was replaced says
+/// so, rather than the attach snapshot answering for it. Nothing was written.
+#[must_use]
+pub fn refusal_after_second_look(
+    code: &str,
+    expected_terminal_epoch: &str,
+    expected: &ProviderConversationIdentitySeed,
+    health: SessionHealth,
+    now: &ObservedAgent,
+) -> HubAgentPromptResult {
+    match health_refusal(health) {
+        Some((refusal, detail)) => HubAgentPromptResult::refused(refusal, detail),
+        None => prompt_failure(code, "not_written", expected_terminal_epoch, expected, now),
+    }
+}
+
+/// A deadline ran out, as opposed to the Host or the transport refusing. Only
+/// this is worth asking again unchanged.
+fn timed_out(error: &ClientError) -> bool {
+    match error {
+        ClientError::Io { source, .. } => matches!(
+            source.kind(),
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+        ),
+        ClientError::WriteNotStarted { .. } => true,
+        _ => matches!(
+            error.code(),
+            "hmux_attach_deadline_exceeded"
+                | "hmux_read_deadline_exceeded"
+                | "hmux_managed_authorization_grant_timeout"
+                | "hmux_discovery_census_timeout"
+        ),
+    }
+}
+
+/// Name a failure to attach for a prompt. Nothing was written. Incompatibility
+/// and generation changes are final, a deadline is worth asking again, and
+/// anything else (authorization, a Host that is exiting, a broken transport)
+/// is reported as unavailable with its code, not as something a retry fixes.
 fn attach_refusal(error: &ClientError) -> HubAgentPromptResult {
     match error.code() {
         "hmux_expected_generation_mismatch"
@@ -470,9 +516,13 @@ fn attach_refusal(error: &ClientError) -> HubAgentPromptResult {
             ConversationRefusal::SessionNotFound,
             "This desktop serves no such session",
         ),
-        code => HubAgentPromptResult::refused(
+        code if timed_out(error) => HubAgentPromptResult::refused(
             ConversationRefusal::ProbeTimeout,
             format!("The session's Host did not answer in time ({code}). Ask again"),
+        ),
+        code => HubAgentPromptResult::refused(
+            ConversationRefusal::Unavailable,
+            format!("Could not reach the session ({code})"),
         ),
     }
 }
@@ -517,25 +567,6 @@ impl LocalConversations {
         }
         Ok((catalog, descriptor))
     }
-
-    /// What the Host observes now, for naming a refusal. When it cannot be
-    /// observed again the attach snapshot stands in.
-    fn observe_again(
-        catalog: &LocalSessionCatalog,
-        descriptor: SessionDescriptor,
-        snapshot: ObservedAgent,
-    ) -> ObservedAgent {
-        let inspection = hmux_client::inspect_local_session(catalog, descriptor);
-        match inspection.health {
-            SessionHealth::Healthy => ObservedAgent::from_host(
-                &inspection.descriptor.terminal_epoch,
-                inspection.provider_conversation_identity.as_deref(),
-                inspection.agent_runtime_state.as_ref(),
-            ),
-            SessionHealth::GenerationChanged => ObservedAgent::replaced(),
-            _ => snapshot,
-        }
-    }
 }
 
 impl ConversationSink for LocalConversations {
@@ -556,7 +587,7 @@ impl ConversationSink for LocalConversations {
             inspection.provider_conversation_identity.as_deref(),
             inspection.agent_runtime_state.as_ref(),
         );
-        transcript_answer(&observed, &request, crate::conv::transcript_global)
+        transcript_answer(&observed, &request, crate::conv::transcript_any_account)
     }
 
     fn prompt(&self, request: PromptRequest) -> HubAgentPromptResult {
@@ -613,20 +644,31 @@ impl ConversationSink for LocalConversations {
                 receipt.terminal_epoch(),
                 receipt.input().in_reply_to_record_id.to_string(),
             ),
-            Err(error) => {
-                let now = if refusal_needs_a_second_look(error.code()) {
-                    Self::observe_again(&catalog, descriptor, snapshot)
-                } else {
-                    snapshot
-                };
-                prompt_failure(
+            Err(error)
+                if error.delivery_state() == "not_written"
+                    && refusal_needs_a_second_look(error.code()) =>
+            {
+                let inspection = hmux_client::inspect_local_session(&catalog, descriptor);
+                let now = ObservedAgent::from_host(
+                    &inspection.descriptor.terminal_epoch,
+                    inspection.provider_conversation_identity.as_deref(),
+                    inspection.agent_runtime_state.as_ref(),
+                );
+                refusal_after_second_look(
                     error.code(),
-                    error.delivery_state(),
                     &request.expected_terminal_epoch,
                     &expected,
+                    inspection.health,
                     &now,
                 )
             }
+            Err(error) => prompt_failure(
+                error.code(),
+                error.delivery_state(),
+                &request.expected_terminal_epoch,
+                &expected,
+                &snapshot,
+            ),
         }
     }
 }
@@ -921,6 +963,7 @@ mod tests {
             Some(ObservedRuntime {
                 revision: 12,
                 turn_completed_count: 3,
+                turn_open: false,
                 attention: false,
             })
         );
@@ -929,6 +972,16 @@ mod tests {
             AgentRuntimeAttention::ApprovalRequired,
         );
         assert!(approving.runtime.unwrap().attention);
+        assert!(approving.runtime.unwrap().turn_open);
+        // Background work after a turn ended is not a running turn.
+        let mut background = runtime(
+            "terminal-1",
+            AgentRuntimeActivity::Working,
+            AgentRuntimeAttention::None,
+        );
+        background.background_work = true;
+        let observed = ObservedAgent::from_host("terminal-1", None, Some(&background));
+        assert!(!observed.runtime.unwrap().turn_open);
     }
 
     #[test]
@@ -959,6 +1012,7 @@ mod tests {
                 terminal_epoch: "terminal-1".into(),
                 conversation_id: "conversation-1".into(),
                 turn_completed_count: 3,
+                turn_open: false,
                 runtime_revision: 12,
             })
         );
@@ -980,26 +1034,46 @@ mod tests {
         assert!(result.entries.is_empty());
     }
 
-    /// A working agent reports progress on every step. The phone polls every
-    /// few seconds, so progress alone must not re-read the provider file.
-    #[test]
-    fn progress_while_a_turn_runs_does_not_reread_the_transcript() {
-        let first = transcript_answer(&idle_agent(), &read_request(), |_, _| Ok(transcript()));
+    fn working_at(revision: &str) -> ObservedAgent {
         let mut working = runtime(
             "terminal-1",
             AgentRuntimeActivity::Working,
             AgentRuntimeAttention::None,
         );
-        working.revision = "40".into();
-        let observed =
-            ObservedAgent::from_host("terminal-1", Some(&reported("terminal-1")), Some(&working));
-        let again = TranscriptRequest {
-            after: first.cursor,
-            ..read_request()
-        };
-        let result = transcript_answer(&observed, &again, |_, _| {
-            panic!("progress alone must not read the transcript")
-        });
+        working.revision = revision.into();
+        ObservedAgent::from_host("terminal-1", Some(&reported("terminal-1")), Some(&working))
+    }
+
+    /// The prompt the phone just wrote (or one typed in the terminal) starts a
+    /// turn; that re-reads once, so it shows before the turn completes.
+    #[test]
+    fn a_turn_starting_rereads_the_transcript_once() {
+        let idle = transcript_answer(&idle_agent(), &read_request(), |_, _| Ok(transcript()));
+        let started = transcript_answer(
+            &working_at("13"),
+            &TranscriptRequest {
+                after: idle.cursor,
+                ..read_request()
+            },
+            |_, _| Ok(transcript()),
+        );
+        assert_eq!(started.outcome, TranscriptOutcome::Transcript);
+        assert_eq!(started.cursor.as_ref().map(|cursor| cursor.turn_open), Some(true));
+    }
+
+    /// A working agent reports progress on every step. The phone polls every
+    /// few seconds, so progress alone must not re-read the provider file.
+    #[test]
+    fn progress_while_a_turn_runs_does_not_reread_the_transcript() {
+        let started = transcript_answer(&working_at("13"), &read_request(), |_, _| Ok(transcript()));
+        let result = transcript_answer(
+            &working_at("40"),
+            &TranscriptRequest {
+                after: started.cursor,
+                ..read_request()
+            },
+            |_, _| panic!("progress alone must not read the transcript"),
+        );
         assert_eq!(result.outcome, TranscriptOutcome::Unchanged);
         // The answer still reports where the runtime is now.
         assert_eq!(result.cursor.map(|cursor| cursor.runtime_revision), Some(40));
@@ -1155,11 +1229,9 @@ mod tests {
                 AgentRuntimeAttention::None,
             )),
         );
-        for now in [elsewhere, ObservedAgent::replaced()] {
-            for code in ["hmux_agent_prompt_runtime_changed", "hmux_agent_prompt_refused"] {
-                let result = prompt_failure(code, "not_written", "terminal-1", &expected(), &now);
-                assert_eq!(result.code, Some(ConversationRefusal::IdentityChanged), "{code}");
-            }
+        for code in ["hmux_agent_prompt_runtime_changed", "hmux_agent_prompt_refused"] {
+            let result = prompt_failure(code, "not_written", "terminal-1", &expected(), &elsewhere);
+            assert_eq!(result.code, Some(ConversationRefusal::IdentityChanged), "{code}");
         }
         // A replaced process is moved too, whatever its new conversation.
         let respawned = ObservedAgent::from_host(
@@ -1220,12 +1292,106 @@ mod tests {
                 },
                 ConversationRefusal::SessionNotFound,
             ),
-            (
-                transport("hmux_attach_deadline_exceeded"),
-                ConversationRefusal::ProbeTimeout,
-            ),
         ] {
             assert_eq!(attach_refusal(&error).code, Some(refusal), "{}", error.code());
         }
+    }
+
+    /// Only a deadline is worth asking again. A permanent failure reported as
+    /// "ask again" would keep the phone retrying forever.
+    #[test]
+    fn only_a_deadline_is_a_probe_timeout() {
+        let transport = |code: &'static str| ClientError::Transport {
+            code,
+            message: "test".into(),
+        };
+        for error in [
+            transport("hmux_attach_deadline_exceeded"),
+            transport("hmux_read_deadline_exceeded"),
+            transport("hmux_managed_authorization_grant_timeout"),
+            ClientError::Io {
+                operation: "read",
+                source: std::io::Error::from(std::io::ErrorKind::TimedOut),
+            },
+            ClientError::WriteNotStarted {
+                message: "write deadline".into(),
+            },
+        ] {
+            assert_eq!(
+                attach_refusal(&error).code,
+                Some(ConversationRefusal::ProbeTimeout),
+                "{}",
+                error.code()
+            );
+        }
+        for error in [
+            transport("hmux_authorization_denied"),
+            transport("hmux_managed_attach_proof_invalid"),
+            ClientError::Io {
+                operation: "connect",
+                source: std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
+            },
+            transport("hmux_session_exited"),
+        ] {
+            let result = attach_refusal(&error);
+            assert_eq!(result.code, Some(ConversationRefusal::Unavailable), "{}", error.code());
+            assert!(
+                result.detail.as_deref().is_some_and(|detail| detail.contains(error.code())),
+                "{:?}",
+                result.detail
+            );
+        }
+    }
+
+    /// The second inspection after a Host refusal is classified on its own:
+    /// the attach snapshot never stands in for a Host that cannot be observed
+    /// now, has exited or was replaced.
+    #[test]
+    fn a_second_look_that_finds_no_healthy_host_says_what_it_found() {
+        // The snapshot would have read as idle on the expected conversation.
+        let snapshot = idle_agent();
+        for (health, refusal) in [
+            (SessionHealth::Unprobed, ConversationRefusal::ProbeTimeout),
+            (SessionHealth::StaleTransport, ConversationRefusal::ProbeTimeout),
+            (SessionHealth::Exited, ConversationRefusal::Unavailable),
+            (SessionHealth::GenerationChanged, ConversationRefusal::IdentityChanged),
+            (SessionHealth::IncompatibleProtocol, ConversationRefusal::UnsupportedRuntime),
+        ] {
+            let result = refusal_after_second_look(
+                "hmux_agent_prompt_runtime_changed",
+                "terminal-1",
+                &expected(),
+                health,
+                &snapshot,
+            );
+            assert_eq!(result.state, AgentPromptState::Refused, "{health:?}");
+            assert_eq!(result.code, Some(refusal), "{health:?}");
+        }
+        // A healthy second look on another process is an identity change.
+        let respawned = ObservedAgent::from_host("terminal-2", Some(&reported("terminal-2")), None);
+        let result = refusal_after_second_look(
+            "hmux_agent_prompt_runtime_changed",
+            "terminal-1",
+            &expected(),
+            SessionHealth::Healthy,
+            &respawned,
+        );
+        assert_eq!(result.code, Some(ConversationRefusal::IdentityChanged));
+    }
+
+    /// The hub sends what the shared normalization returns: a CRLF prompt
+    /// from a phone's text field reaches the Host as line feeds only.
+    #[test]
+    fn a_prompt_reaches_the_desktop_normalized() {
+        let sink = Recorder::default();
+        let _ = answer_prompt(
+            Some(&sink),
+            BoxRoute::Local,
+            PromptRequest {
+                text: "first\r\nsecond\rthird".into(),
+                ..prompt_request()
+            },
+        );
+        assert_eq!(sink.prompts.lock().unwrap()[0].text, "first\nsecond\nthird");
     }
 }
