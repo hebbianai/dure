@@ -29,12 +29,16 @@ import { NativeAgentResponseView } from "./NativeAgentResponseView";
 
 const mocks = vi.hoisted(() => ({
 	read: vi.fn(),
+	send: vi.fn(),
 	mounted: vi.fn(),
 	unmounted: vi.fn(),
 }));
 vi.mock("@/lib/ipc/conversations", () => ({
 	readProviderConversationTranscript: (...args: unknown[]) =>
 		mocks.read(...args),
+}));
+vi.mock("@/lib/ipc/dureAgentNativeInput", () => ({
+	sendNativeAgentPrompt: (...args: unknown[]) => mocks.send(...args),
 }));
 vi.mock("@/components/agents/chat/ChatMarkdown", () => ({
 	ChatMarkdown: ({ markdown }: { markdown: string }) => <div>{markdown}</div>,
@@ -287,4 +291,180 @@ describe("Pro final response presentation", () => {
 			await waitFor(() => expect(screen.getByRole("textbox")).toBeTruthy());
 		},
 	);
+});
+
+describe("Pro conversation view", () => {
+	const conversationName = () => t("agents.nativeChat.conversation");
+	const history = (
+		entries: Array<{ role: "user" | "agent"; text: string }> = [],
+	) => ({
+		...reply(),
+		finalResponse: "Second answer",
+		entries: [
+			{ role: "user", text: "First question" },
+			{ role: "agent", text: "First answer" },
+			...entries,
+		],
+	});
+	const composer = () =>
+		screen.getByRole("textbox", {
+			name: t("agents.chat.composerLabel"),
+		}) as HTMLTextAreaElement;
+	const send = () =>
+		screen.getByRole("button", { name: t("agents.chat.send") });
+	const showConversation = () =>
+		fireEvent.click(screen.getByRole("radio", { name: conversationName() }));
+
+	beforeEach(() => {
+		// jsdom has no layout; expose a visible viewport to the real virtualizer.
+		vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
+			function (this: HTMLElement) {
+				return this.hasAttribute("data-index") ? 32 : 600;
+			},
+		);
+		useStore.getState().setUiPrefs({ agentFinalResponseOnly: false });
+		mocks.read.mockResolvedValue(history());
+		mocks.send.mockResolvedValue({ terminalEpoch: "epoch-one", recordId: "1" });
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("flips between the terminal and the conversation without losing either", async () => {
+		render(view());
+		expect(screen.getByRole("textbox", { name: "Native prompt" })).toBeTruthy();
+		showConversation();
+		await screen.findByText("First answer");
+		expect(screen.getByText("First question")).toBeTruthy();
+		expect(screen.queryByRole("textbox", { name: "Native prompt" })).toBeNull();
+		fireEvent.change(composer(), { target: { value: "draft prompt" } });
+
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: t("agents.finalResponse.continueInTerminal"),
+			}),
+		);
+		expect(
+			screen.getByRole("textbox", { name: "Native prompt" }),
+		).toHaveProperty("value", "unsent draft");
+		expect(screen.queryByText("First answer")).toBeNull();
+
+		showConversation();
+		await screen.findByText("First answer");
+		expect(composer().value).toBe("draft prompt");
+		fireEvent.click(screen.getByRole("radio", { name: t("common.terminal") }));
+		expect(screen.getByRole("textbox", { name: "Native prompt" })).toBeTruthy();
+		expect(mocks.mounted).toHaveBeenCalledTimes(1);
+		expect(mocks.unmounted).not.toHaveBeenCalled();
+	});
+
+	it("sends at an idle prompt and keeps it pending until the transcript has it", async () => {
+		runtime("waiting", "1");
+		render(view());
+		showConversation();
+		await screen.findByText("First answer");
+		fireEvent.change(composer(), { target: { value: "Third question" } });
+		fireEvent.click(send());
+
+		await waitFor(() =>
+			expect(mocks.send).toHaveBeenCalledWith(
+				{
+					agentId: "agent-one",
+					backendProfileId: "local",
+					expectedTerminalEpoch: "epoch-one",
+				},
+				"Third question",
+			),
+		);
+		await screen.findByText(t("agents.nativeChat.reason.pending"));
+		expect(screen.getByText("Third question")).toBeTruthy();
+		expect(composer().value).toBe("");
+		expect(composer().disabled).toBe(true);
+
+		runtime("working", "1");
+		await screen.findByText(t("agents.nativeChat.reason.working"));
+		expect(screen.getByText("Third question")).toBeTruthy();
+
+		mocks.read.mockResolvedValue(
+			history([
+				{ role: "user", text: "Third question" },
+				{ role: "agent", text: "Third answer" },
+			]),
+		);
+		runtime("waiting", "2");
+		await screen.findByText("Third answer");
+		expect(screen.getAllByText("Third question")).toHaveLength(1);
+		expect(
+			screen.queryByText(t("agents.nativeChat.reason.pending")),
+		).toBeNull();
+		await waitFor(() => expect(composer().disabled).toBe(false));
+		expect(mocks.send).toHaveBeenCalledTimes(1);
+	});
+
+	it("explains a closed composer and shows a Host refusal inline", async () => {
+		runtime("working", "1");
+		render(view());
+		showConversation();
+		await screen.findByText("First answer");
+		expect(composer().disabled).toBe(true);
+		expect(
+			screen.getByText(t("agents.nativeChat.reason.working")),
+		).toBeTruthy();
+
+		runtime("blocked", "1");
+		await screen.findByText(t("agents.nativeChat.reason.attention"));
+		expect(composer().disabled).toBe(true);
+
+		mocks.send.mockRejectedValueOnce({ code: "hmux_agent_prompt_refused" });
+		runtime("waiting", "1");
+		await waitFor(() => expect(composer().disabled).toBe(false));
+		fireEvent.change(composer(), { target: { value: "Try now" } });
+		fireEvent.click(send());
+		const alert = await screen.findByRole("alert");
+		expect(alert.textContent).toContain(t("agents.nativeChat.error.refused"));
+		expect(alert.textContent).toContain("hmux_agent_prompt_refused");
+		expect(composer().value).toBe("Try now");
+	});
+
+	it("re-reads for a new presentation owner instead of staying on loading", async () => {
+		const mounted = render(view());
+		showConversation();
+		await screen.findByText("First answer");
+		expect(mocks.read).toHaveBeenCalledTimes(1);
+		mounted.rerender(
+			view({
+				...agent,
+				executionProfile: {
+					kind: "credential_reference",
+					reference_id: "account-b",
+					credential_generation: "2",
+				},
+			}),
+		);
+		await waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2));
+		await screen.findByText("First answer");
+		expect(screen.queryByText(t("common.loading"))).toBeNull();
+	});
+
+	it("is offered only for a live Pro local terminal of this generation", () => {
+		const mounted = render(view());
+		expect(
+			screen.getByRole("radio", { name: conversationName() }),
+		).toBeTruthy();
+		mounted.rerender(view(agent, true));
+		expect(
+			screen.queryByRole("radio", { name: conversationName() }),
+		).toBeNull();
+		mounted.rerender(view());
+		runtime("waiting", "1", "epoch-replacement");
+		expect(
+			screen.queryByRole("radio", { name: conversationName() }),
+		).toBeNull();
+		runtime("waiting", "1");
+		act(() => useStore.getState().setUiPrefs({ interfaceMode: "basic" }));
+		expect(
+			screen.queryByRole("radio", { name: conversationName() }),
+		).toBeNull();
+		expect(mocks.send).not.toHaveBeenCalled();
+	});
 });

@@ -1,8 +1,11 @@
-import { type ReactNode, useEffect } from "react";
+import { MessageSquareText, SquareTerminal } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 import { ChatMarkdown } from "@/components/agents/chat/ChatMarkdown";
+import { NativeAgentChatView } from "@/components/agents/NativeAgentChatView";
 import { useNativeAgentResponseState } from "@/components/agents/useAgentDisplayState";
 import { useRuntimeOwnedValue } from "@/components/agents/useRuntimeOwnedValue";
 import { Button } from "@/components/ui/button";
+import { Segmented } from "@/components/ui/segmented";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
 import { nativeFinalResponse } from "@/lib/agents/nativeFinalResponse";
@@ -11,8 +14,12 @@ import { readProviderConversationTranscript } from "@/lib/ipc/conversations";
 import type { Agent } from "@/types";
 import { nativeAgentTranscriptSource } from "../../../cli/lib/agent-transcript.mjs";
 
+type NativeAgentView = "terminal" | "conversation";
+
 /** Both docked and detached panes keep the same native terminal mounted and
- * sized. Only its presentation is covered; input/recovery never changes owners. */
+ * sized. Only its presentation is covered; input/recovery never changes owners.
+ * Pro panes can also be flipped to the conversation view; that selection is
+ * pane-local presentation state and never switches the runtime. */
 export function NativeAgentResponseView({
 	agent,
 	disabled = false,
@@ -38,20 +45,33 @@ export function NativeAgentResponseView({
 	]);
 	const [response, setResponse] = useRuntimeOwnedValue<string | null>(ownerKey);
 	const [revealed, setRevealed] = useRuntimeOwnedValue<string>(ownerKey);
-	const eligible =
+	const [view, setView] = useState<NativeAgentView>("terminal");
+	const [draft, setDraft] = useState("");
+	const conversationAvailable = Boolean(
 		mode === "pro" &&
+			!disabled &&
+			source.kind === "local" &&
+			runtime?.lifecycle === "running" &&
+			agent.runtimeBinding?.runtime === "hmux_managed_v1" &&
+			agent.runtimeBinding?.conversationIdentity?.terminalEpoch ===
+				runtime.terminalEpoch,
+	);
+	const conversation =
+		conversationAvailable &&
+		view === "conversation" &&
+		source.kind === "local" &&
+		runtime
+			? { source, runtime }
+			: undefined;
+	const eligible =
+		conversationAvailable &&
 		enabled &&
-		!disabled &&
-		provider &&
-		conversationId &&
-		runtime?.lifecycle === "running" &&
-		agent.runtimeBinding?.runtime === "hmux_managed_v1" &&
-		agent.runtimeBinding?.conversationIdentity?.terminalEpoch ===
-			runtime.terminalEpoch &&
-		runtime.attention === "none" &&
+		runtime?.attention === "none" &&
 		(state === "working" || state === "waiting");
 	const completed = count !== undefined && /^[1-9]\d*$/.test(count);
-	const shouldRead = Boolean(eligible && completed && state === "waiting");
+	const shouldRead = Boolean(
+		!conversation && eligible && completed && state === "waiting",
+	);
 
 	useEffect(() => {
 		if (!shouldRead || !provider || !conversationId) return;
@@ -81,11 +101,13 @@ export function NativeAgentResponseView({
 
 	// Revealing the native prompt lasts until the next work/completion state.
 	// There is no terminal text parsing, keyboard interception, or runtime switch.
-	const covered = Boolean(
-		eligible &&
+	const responseCovered = Boolean(
+		!conversation &&
+			eligible &&
 			revealed !== state &&
 			(state === "working" || (completed && response !== null)),
 	);
+	const covered = responseCovered || conversation !== undefined;
 	return (
 		<div className="relative h-full min-h-0">
 			<div
@@ -96,9 +118,52 @@ export function NativeAgentResponseView({
 			>
 				{children}
 			</div>
-			{covered && (
+			{conversation && (
+				<NativeAgentChatView
+					agent={agent}
+					source={conversation.source}
+					runtime={conversation.runtime}
+					state={state}
+					draft={draft}
+					onDraftChange={setDraft}
+					onContinueInTerminal={() => setView("terminal")}
+				/>
+			)}
+			{conversationAvailable && (
+				<div
+					role="group"
+					aria-label={t("agents.runtime.viewLabel")}
+					className="absolute top-2 right-2 z-20"
+				>
+					<Segmented
+						variant="pills"
+						size="sm"
+						iconOnly
+						className="bg-glass-chrome shadow-card backdrop-blur-xl"
+						value={conversation ? "conversation" : "terminal"}
+						onChange={setView}
+						options={[
+							{
+								value: "terminal",
+								label: t("common.terminal"),
+								icon: (
+									<SquareTerminal aria-hidden="true" className="size-3.5" />
+								),
+							},
+							{
+								value: "conversation",
+								label: t("agents.nativeChat.conversation"),
+								icon: (
+									<MessageSquareText aria-hidden="true" className="size-3.5" />
+								),
+							},
+						]}
+					/>
+				</div>
+			)}
+			{responseCovered && (
 				<section
-					className="absolute inset-0 flex min-h-0 flex-col bg-surface-terminal p-4"
+					className="absolute inset-0 flex min-h-0 flex-col bg-surface-terminal p-4 pt-10"
 					aria-label={t("settings.terminal.finalResponseOnly.title")}
 				>
 					<div
