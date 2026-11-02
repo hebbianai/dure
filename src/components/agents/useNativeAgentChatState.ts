@@ -27,19 +27,20 @@ export function useNativeAgentChatState(ownerKey: string, idle: boolean) {
 		setIdleSinceMs(idle ? Date.now() : undefined);
 	}, [idle]);
 
-	// A prompt nothing recorded (TUI-only input) settles once the runtime has
-	// stayed idle through the grace period; leaving idle cancels the timer.
+	// A prompt nothing recorded (TUI-only input) releases the composer once
+	// the runtime has stayed idle through the grace period; its row stays as a
+	// sent message. Leaving idle cancels the timer.
 	const idleDeadline = pending
 		? nativeAgentChatPendingIdleDeadline(pending, idleSinceMs)
 		: undefined;
 	useEffect(() => {
-		if (idleDeadline === undefined) return;
+		if (!pending || idleDeadline === undefined) return;
 		const timer = setTimeout(
-			() => setPending(undefined),
+			() => setPending({ ...pending, released: true }),
 			Math.max(0, idleDeadline - Date.now()),
 		);
 		return () => clearTimeout(timer);
-	}, [idleDeadline, setPending]);
+	}, [pending, idleDeadline, setPending]);
 
 	return {
 		snapshot,

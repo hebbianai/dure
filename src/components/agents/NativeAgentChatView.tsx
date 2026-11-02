@@ -80,13 +80,17 @@ export function NativeAgentChatView({
 
 	// The cursor is the refresh contract: it changes exactly when the inputs
 	// read below (conversation, terminal generation, Host count) change. A new
-	// owner of the pane's state also re-reads, since its setters are new.
+	// owner of the pane's state also re-reads, since its setters are new. The
+	// pane keeps the last read, so showing the view again at the same cursor
+	// reuses it.
+	const readCursor = snapshot?.cursor;
 	useEffect(() => {
+		if (readCursor === cursor) return;
 		let current = true;
 		void readProviderConversationTranscript(provider, conversationId).then(
 			(transcript) => {
 				if (!current) return;
-				setSnapshot({ transcript, turnCompletedCount: count });
+				setSnapshot({ transcript, turnCompletedCount: count, cursor });
 				setReadFailed(false);
 			},
 			() => {
@@ -129,7 +133,7 @@ export function NativeAgentChatView({
 		runtime,
 		state,
 		sending,
-		pending: livePending !== undefined,
+		pending: livePending !== undefined && !livePending.released,
 	});
 	const reason = nativeAgentChatComposerReason(composer);
 	const error = sendError ? presentNativeAgentInputError(sendError) : undefined;

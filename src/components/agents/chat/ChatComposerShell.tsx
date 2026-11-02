@@ -65,7 +65,7 @@ export function ChatComposerShell({
 							aria-hidden="true"
 							className="invisible col-start-1 row-start-1 max-h-40 min-h-7 overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words px-1 py-1 text-[length:inherit]"
 						>
-							{`${value}​`}
+							{`${value}\u200b`}
 						</div>
 						<Textarea
 							rows={1}

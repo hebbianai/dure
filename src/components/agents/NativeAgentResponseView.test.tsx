@@ -369,6 +369,8 @@ describe("Pro conversation view", () => {
 		expect(screen.getByRole("textbox", { name: "Native prompt" })).toBeTruthy();
 		expect(mocks.mounted).toHaveBeenCalledTimes(1);
 		expect(mocks.unmounted).not.toHaveBeenCalled();
+		// The pane kept the read; flipping at the same cursor does not repeat it.
+		expect(mocks.read).toHaveBeenCalledTimes(1);
 	});
 
 	it("sends at an idle prompt and keeps it pending until the transcript has it", async () => {
@@ -501,7 +503,7 @@ describe("Pro conversation view", () => {
 		expect(composer().value).toBe("Moving draft");
 	});
 
-	it("reopens the composer after a TUI-only input once the runtime stays idle", async () => {
+	it("reopens the composer after a TUI-only input once the runtime stays idle, keeping the row as sent", async () => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		try {
 			render(view());
@@ -525,12 +527,30 @@ describe("Pro conversation view", () => {
 			expect(
 				screen.queryByText(t("agents.nativeChat.reason.pending")),
 			).toBeNull();
-			expect(screen.queryByText("/help")).toBeNull();
+			// The sent row stays; only the composer reopens.
+			expect(screen.getByText("/help")).toBeTruthy();
 			fireEvent.change(composer(), { target: { value: "/status" } });
 			expect(send().disabled).toBe(false);
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it("keeps a repeated prompt pending when the first read failed, showing it once", async () => {
+		mocks.read.mockRejectedValueOnce(new Error("read failed"));
+		render(view());
+		showConversation();
+		await screen.findByText(t("agents.nativeChat.transcriptUnavailable"));
+		// The transcript (once readable) already ends with this same text.
+		await sendPrompt("First question");
+
+		runtime("working", "1");
+		await screen.findByText("First answer");
+		runtime("waiting", "1");
+		await screen.findByText(t("agents.nativeChat.reason.pending"));
+		expect(screen.getAllByText("First question")).toHaveLength(1);
+		fireEvent.change(composer(), { target: { value: "again" } });
+		expect(send().disabled).toBe(true);
 	});
 
 	it("does not settle a real prompt early while the agent works on it", async () => {
@@ -646,6 +666,28 @@ describe("Pro conversation view", () => {
 		mounted.rerender(view(agent, true));
 		expect(screen.queryByRole("radiogroup")).toBeNull();
 		expect(terminalFrame.previousElementSibling).toBe(row);
+		expect(mocks.mounted).toHaveBeenCalledTimes(1);
+	});
+
+	it("reserves the toggle row from launch, before the runtime binding is recorded", () => {
+		const { runtimeBinding: _binding, ...unbound } = agent;
+		const mounted = render(view({ ...unbound, conversationId: undefined }));
+		const terminalFrame = (nativePrompt() as HTMLElement).closest(
+			".relative",
+		) as HTMLElement;
+		const row = terminalFrame.previousElementSibling as HTMLElement;
+		expect(row).toBeTruthy();
+		expect(screen.queryByRole("radiogroup")).toBeNull();
+
+		mounted.rerender(view());
+		expect(terminalFrame.previousElementSibling).toBe(row);
+		expect(
+			row.contains(
+				screen.getByRole("radiogroup", {
+					name: t("agents.runtime.viewLabel"),
+				}),
+			),
+		).toBe(true);
 		expect(mocks.mounted).toHaveBeenCalledTimes(1);
 	});
 

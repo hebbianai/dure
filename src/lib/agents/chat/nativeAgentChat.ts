@@ -27,6 +27,9 @@ const PENDING_ITEM_ID = "native-pending-prompt";
 export interface NativeAgentChatSnapshot {
 	readonly transcript: ProviderConversationTranscriptV1;
 	readonly turnCompletedCount: string | undefined;
+	/** The refresh cursor this read answered; a view that mounts again at the
+	 * same cursor reuses the read instead of repeating it. */
+	readonly cursor?: string;
 }
 
 /** A prompt the Host confirmed writing that the transcript has not shown yet. */
@@ -36,6 +39,11 @@ export interface NativeAgentChatPendingPrompt {
 	/** User entries in the newest transcript at send time; null if none loaded. */
 	readonly userEntriesAtSend: number | null;
 	readonly turnCompletedCountAtSend: string | undefined;
+	/** The runtime stayed idle through the grace period without the
+	 * transcript or the Host count showing the prompt. The composer reopens;
+	 * the row stays as a sent message until a read or a newer send replaces
+	 * it. */
+	readonly released?: boolean;
 }
 
 /** The transcript is re-read when the Host completes a turn and when work
@@ -89,37 +97,24 @@ export function nativeAgentChatDraftIdentity(agent: Agent) {
 	};
 }
 
-/** The Host reports an idle prompt with no attention: the only state in which
- * it admits a prompt. */
-export function nativeAgentChatIdle({
-	runtime,
-	state,
-}: {
-	runtime: Pick<HmuxAgentRuntimeState, "lifecycle" | "attention"> | undefined;
-	state: AgentDisplayState;
-}): boolean {
-	return (
-		runtime?.lifecycle === "running" &&
-		runtime.attention === "none" &&
-		state === "waiting"
-	);
-}
-
 /** How long the runtime must stay at an idle prompt after a send before a
- * prompt nothing has recorded stops counting as pending. */
-export const NATIVE_AGENT_PENDING_IDLE_GRACE_MS = 3_000;
+ * prompt nothing has recorded stops holding the composer. Generous on
+ * purpose: a loaded desktop can report `working` seconds after the Host
+ * wrote the prompt, and releasing too early would reopen the composer while
+ * the prompt is still being taken up. */
+export const NATIVE_AGENT_PENDING_IDLE_GRACE_MS = 10_000;
 
-/** When a pending prompt settles without a transcript entry or a completed
- * turn: a TUI-only input (`/help`, `/status`, `/cost`) is written and
- * answered in the terminal but never opens a turn. It settles once the
- * runtime has stayed idle for the grace period, counted from the later of
- * the send and the moment the runtime last became idle. Undefined while the
- * runtime is not idle. */
+/** When a pending prompt that neither the transcript nor the Host count has
+ * shown releases the composer: a TUI-only input (`/help`, `/status`,
+ * `/cost`) is written and answered in the terminal but never opens a turn.
+ * The deadline is the grace period counted from the later of the send and
+ * the moment the runtime last became idle. Undefined while the runtime is
+ * not idle, or once the prompt was released. */
 export function nativeAgentChatPendingIdleDeadline(
-	pending: Pick<NativeAgentChatPendingPrompt, "sentAtMs">,
+	pending: Pick<NativeAgentChatPendingPrompt, "sentAtMs" | "released">,
 	idleSinceMs: number | undefined,
 ): number | undefined {
-	return idleSinceMs === undefined
+	return idleSinceMs === undefined || pending.released
 		? undefined
 		: Math.max(pending.sentAtMs, idleSinceMs) +
 				NATIVE_AGENT_PENDING_IDLE_GRACE_MS;
@@ -135,21 +130,32 @@ function trailingUserText(
 	return undefined;
 }
 
+/** A prompt sent before any transcript loaded cannot be told apart from an
+ * earlier identical prompt ("continue" after "continue"), so text never
+ * settles it. When the transcript already ends with the same text, the row
+ * is shown once and the composer stays closed until the Host count or the
+ * idle grace settles it. */
+export function nativeAgentChatPendingEchoed(
+	pending: Pick<NativeAgentChatPendingPrompt, "text" | "userEntriesAtSend">,
+	transcript: ProviderConversationTranscriptV1,
+): boolean {
+	return (
+		pending.userEntriesAtSend === null &&
+		trailingUserText(transcript) === pending.text.trim()
+	);
+}
+
 /** The pending prompt is gone once the transcript holds a newer user entry
- * (or, when no transcript had loaded at send time, ends with the same user
- * text), or once the Host completed a turn after the send and the transcript
- * read at that count still lacks it. A prompt that never produces either
- * settles on the idle deadline above. */
+ * than at send time, or once the Host completed a turn after the send and
+ * the transcript read at that count still lacks it. */
 export function nativeAgentChatPendingSettled(
 	pending: NativeAgentChatPendingPrompt,
 	snapshot: NativeAgentChatSnapshot | undefined,
 ): boolean {
 	if (!snapshot) return false;
 	if (
-		pending.userEntriesAtSend === null
-			? trailingUserText(snapshot.transcript) === pending.text.trim()
-			: nativeTranscriptUserEntries(snapshot.transcript) >
-				pending.userEntriesAtSend
+		pending.userEntriesAtSend !== null &&
+		nativeTranscriptUserEntries(snapshot.transcript) > pending.userEntriesAtSend
 	) {
 		return true;
 	}
@@ -202,9 +208,29 @@ export function nativeAgentChatComposerState({
 	}
 	if (state === "working") return { kind: "disabled", reason: "working" };
 	if (pending) return { kind: "disabled", reason: "pending" };
-	return nativeAgentChatIdle({ runtime, state })
+	return state === "waiting"
 		? { kind: "ready" }
 		: { kind: "disabled", reason: "unavailable" };
+}
+
+/** The Host reports an idle prompt with no attention, the only state in
+ * which it admits a prompt: the composer would be ready with nothing sent or
+ * in flight. */
+export function nativeAgentChatIdle({
+	runtime,
+	state,
+}: {
+	runtime: Pick<HmuxAgentRuntimeState, "lifecycle" | "attention"> | undefined;
+	state: AgentDisplayState;
+}): boolean {
+	return (
+		nativeAgentChatComposerState({
+			runtime,
+			state,
+			sending: false,
+			pending: false,
+		}).kind === "ready"
+	);
 }
 
 const COMPOSER_REASON_COPY: Record<
@@ -294,8 +320,11 @@ function row(
 /** Projects the bounded provider transcript into the timeline page the shared
  * chat rows already render. Each user message opens a turn; the newest turn
  * stays open while the Agent works. A Host-confirmed prompt the transcript
- * does not yet hold closes that turn and opens a pending one. Provider
- * entries carry no timestamps, so durations stay unset rather than invented. */
+ * does not yet hold closes that turn and opens a pending one, which stays
+ * open until the prompt is released (then it reads as a sent message). A
+ * prompt the transcript already ends with (see `nativeAgentChatPendingEchoed`)
+ * is shown once. Provider entries carry no timestamps, so durations stay
+ * unset rather than invented. */
 export function nativeAgentChatPage({
 	source,
 	transcript,
@@ -368,18 +397,21 @@ export function nativeAgentChatPage({
 			createdAtMs: 0,
 		});
 	});
-	if (pending) {
-		openTurn(PENDING_ITEM_ID, pending.sentAtMs);
+	const pendingRow =
+		pending && !nativeAgentChatPendingEchoed(pending, transcript)
+			? pending
+			: undefined;
+	if (pendingRow) {
+		openTurn(PENDING_ITEM_ID, pendingRow.sentAtMs);
 		push({
 			itemId: PENDING_ITEM_ID,
 			turnId,
 			clientMessageId: turnId,
-			body: { type: "message", role: "user", markdown: pending.text },
-			createdAtMs: pending.sentAtMs,
+			body: { type: "message", role: "user", markdown: pendingRow.text },
+			createdAtMs: pendingRow.sentAtMs,
 		});
-	} else if (!working) {
-		closeTurn();
 	}
+	if (!working && (!pendingRow || pendingRow.released)) closeTurn();
 
 	return {
 		binding: {

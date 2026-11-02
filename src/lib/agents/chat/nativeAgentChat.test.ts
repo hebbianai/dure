@@ -8,6 +8,7 @@ import {
 	nativeAgentChatDraftIdentity,
 	nativeAgentChatIdle,
 	nativeAgentChatPage,
+	nativeAgentChatPendingEchoed,
 	nativeAgentChatPendingIdleDeadline,
 	nativeAgentChatPendingSettled,
 	nativeAgentChatRefreshCursor,
@@ -147,6 +148,67 @@ describe("native conversation timeline", () => {
 		});
 	});
 
+	it("keeps a released prompt as a sent message, open again while the agent works", () => {
+		const released = pending({ released: true });
+		const idle = blocks(
+			nativeAgentChatPage({
+				source,
+				transcript: conversation,
+				terminalEpoch: "epoch-one",
+				working: false,
+				pending: released,
+			}),
+		);
+		expect(idle[idle.length - 1]).toMatchObject({
+			state: "completed",
+			messages: ["user:Third question"],
+		});
+		const working = blocks(
+			nativeAgentChatPage({
+				source,
+				transcript: conversation,
+				terminalEpoch: "epoch-one",
+				working: true,
+				pending: released,
+			}),
+		);
+		expect(working[working.length - 1]).toMatchObject({
+			state: "active",
+			messages: ["user:Third question"],
+		});
+	});
+
+	it("shows a prompt sent before any transcript loaded once when the transcript ends with it", () => {
+		const repeated = transcript([
+			{ role: "user", text: "continue" },
+			{ role: "agent", text: "Done." },
+		]);
+		const unread = pending({ text: "continue\n", userEntriesAtSend: null });
+		expect(nativeAgentChatPendingEchoed(unread, repeated)).toBe(true);
+		expect(nativeAgentChatPendingEchoed(unread, conversation)).toBe(false);
+		// A known send-time count never hides the row: the count settles it.
+		expect(
+			nativeAgentChatPendingEchoed(
+				pending({ text: "continue", userEntriesAtSend: 1 }),
+				repeated,
+			),
+		).toBe(false);
+		const page = nativeAgentChatPage({
+			source,
+			transcript: repeated,
+			terminalEpoch: "epoch-one",
+			working: false,
+			pending: unread,
+		});
+		expect(
+			page.rows.filter(
+				(row) =>
+					row.item.body.type === "message" &&
+					row.item.body.markdown.trim() === "continue",
+			),
+		).toHaveLength(1);
+	});
+
 	it("marks a bounded provider history and leaves leading agent text outside a turn", () => {
 		const page = nativeAgentChatPage({
 			source,
@@ -247,31 +309,35 @@ describe("native conversation refresh and pending prompt", () => {
 		).toBe(false);
 	});
 
-	it("settles a prompt sent before any transcript loaded once the transcript ends with it", () => {
+	it("never settles a prompt sent before any transcript loaded on matching text alone", () => {
+		// "continue" after an earlier "continue": the older entry must not
+		// settle the new prompt while the Host is still taking it up.
 		const unread = pending({
-			text: "Third question\n",
+			text: "continue",
 			userEntriesAtSend: null,
 			turnCompletedCountAtSend: "2",
 		});
+		const repeated = transcript([
+			...conversation.entries,
+			{ role: "user", text: "continue" },
+			{ role: "agent", text: "Done." },
+		]);
 		expect(
 			nativeAgentChatPendingSettled(unread, {
-				transcript: transcript([
-					...conversation.entries,
-					{ role: "user", text: "Third question" },
-					{ role: "agent", text: "Working on it." },
-				]),
-				turnCompletedCount: "2",
-			}),
-		).toBe(true);
-		expect(
-			nativeAgentChatPendingSettled(unread, {
-				transcript: conversation,
+				transcript: repeated,
 				turnCompletedCount: "2",
 			}),
 		).toBe(false);
+		expect(
+			nativeAgentChatPendingSettled(unread, {
+				transcript: repeated,
+				turnCompletedCount: "3",
+			}),
+		).toBe(true);
 	});
 
-	it("settles a prompt nothing records once the runtime stayed idle through the grace period", () => {
+	it("releases a prompt nothing records once the runtime stayed idle through the grace period", () => {
+		expect(NATIVE_AGENT_PENDING_IDLE_GRACE_MS).toBeGreaterThanOrEqual(10_000);
 		const sent = pending({ sentAtMs: 10_000 });
 		// Not idle: no deadline, the prompt stays pending.
 		expect(nativeAgentChatPendingIdleDeadline(sent, undefined)).toBeUndefined();
@@ -283,6 +349,10 @@ describe("native conversation refresh and pending prompt", () => {
 		expect(nativeAgentChatPendingIdleDeadline(sent, 25_000)).toBe(
 			25_000 + NATIVE_AGENT_PENDING_IDLE_GRACE_MS,
 		);
+		// Released once; no second deadline.
+		expect(
+			nativeAgentChatPendingIdleDeadline({ ...sent, released: true }, 4_000),
+		).toBeUndefined();
 	});
 });
 

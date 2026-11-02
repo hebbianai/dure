@@ -65,17 +65,20 @@ export function NativeAgentResponseView({
 		nativeAgentChatIdle({ runtime, state }),
 	);
 	// The toggle's row is reserved whenever this pane can offer the
-	// conversation at all (from launch, before the first conversation is
-	// observed), so it never covers terminal cells and neither a transient
-	// runtime drop nor a new conversation resizes the terminal.
+	// conversation at all, judged from what is known at mount (Pro, a local
+	// Claude/Codex pane) rather than from the runtime binding, which a freshly
+	// launched Agent records only after its terminal mounted. So the toggle
+	// never covers terminal cells, and neither the binding arriving, a
+	// transient runtime drop nor a new conversation resizes the terminal.
 	const conversationOffered = Boolean(
 		mode === "pro" &&
 			(source.kind === "local" || source.kind === "identity_unavailable") &&
-			binding?.runtime === "hmux_managed_v1",
+			binding?.runtime !== "hmux_standalone_v1",
 	);
 	const conversationAvailable = Boolean(
 		conversationOffered &&
 			source.kind === "local" &&
+			binding?.runtime === "hmux_managed_v1" &&
 			!disabled &&
 			runtime?.lifecycle === "running" &&
 			conversationEpoch === runtime.terminalEpoch,
