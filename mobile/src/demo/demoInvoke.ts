@@ -14,8 +14,10 @@
 import type { InvokeArgs, InvokeOptions } from "@tauri-apps/api/core";
 import type { ServerReport } from "../census";
 import type {
+  AgentPromptAnswer,
   AttachedSession,
   CommandError,
+  ConversationTranscriptAnswer,
   CreatedSessionOutcome,
   FileDiffOutcome,
   FolderBrowserOutcome,
@@ -558,6 +560,26 @@ const handlers: Record<string, Handler> = {
       };
     }
     return outcome(sessionId, "pull_request");
+  },
+  // Demo sessions report no conversation, so the phone never opens their
+  // Chat; asked anyway, the computer answers as one with nothing to serve.
+  hub_conversation_transcript: (args): ConversationTranscriptAnswer => {
+    hubState(str(args, "id"));
+    return {
+      outcome: "refused",
+      entries: [],
+      history_complete: false,
+      code: "unsupported_runtime",
+      detail: "The demo has no agent conversations.",
+    };
+  },
+  hub_agent_prompt: (args): AgentPromptAnswer => {
+    hubState(str(args, "id"));
+    return {
+      state: "refused",
+      code: "unsupported_runtime",
+      detail: "The demo has no agent conversations.",
+    };
   },
   hub_session_accounts: (args): SessionAccountOutcome => {
     hubState(str(args, "id"));

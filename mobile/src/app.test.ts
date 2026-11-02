@@ -582,6 +582,24 @@ vi.mock("@tauri-apps/api/core", () => ({
           detail: null,
           code: null,
         });
+      case "hub_conversation_transcript":
+        return Promise.resolve({
+          outcome: "transcript",
+          provider: "claude",
+          conversation_id: "conversation-1",
+          entries: [
+            { role: "user", text: "Run the tests" },
+            { role: "agent", text: "All tests pass." },
+          ],
+          history_complete: true,
+          cursor: {
+            terminal_epoch: "epoch-1",
+            conversation_id: "conversation-1",
+            turn_completed_count: 1,
+            turn_open: false,
+            runtime_revision: 1,
+          },
+        });
       case "sync_push_notifications":
         return Promise.resolve({ supported: pushSupported, outcomes: [{ id: "hub-1", error: pushFailure }] });
       case "plugin:notification|is_permission_granted":
@@ -4574,6 +4592,8 @@ describe("페어링한 컴퓨터", () => {
     expect(opened.args.boxId).toBe("this-laptop");
     expect((opened.args.session as { session_id?: string }).session_id).toBe("hub-live");
     expect(root.querySelector(".terminal")).not.toBeNull();
+    // A session without a conversation has the terminal only.
+    expect(root.querySelector(".session__views")).toBeNull();
     await vi.waitFor(() => expect(root.textContent).toContain("ready"));
 
     const input = terminalInput(root);
@@ -4583,6 +4603,57 @@ describe("페어링한 컴퓨터", () => {
     expect(sentInputIntents()).toContainEqual(
       expect.objectContaining({ case: "text", text: "pwd" }),
     );
+  });
+
+  it("opens a session that reports a conversation on Chat, with the terminal one tap away", async () => {
+    hubRows = [hubRow()];
+    hubCatalogSessions = [{
+      ...remoteSession(),
+      session_id: "hub-live",
+      session_name: "배선",
+      workspace_id: "agent-ide",
+      provider_id: "claude-code",
+      launch_program: null,
+      box_id: "this-laptop",
+      box_label: "맥북",
+      conversation: true,
+    }];
+    const root = await launch();
+    [...root.querySelectorAll<HTMLButtonElement>(".list__open")]
+      .find((row) => row.textContent?.includes("배선"))?.click();
+    await settle();
+
+    expect(pick(root, '.session__view[data-view="chat"]').getAttribute("aria-selected")).toBe("true");
+    expect(root.querySelector(".tray")).toBeNull();
+    await vi.waitFor(() => expect(root.querySelectorAll(".chat__row")).toHaveLength(2));
+    const asked = invocations.find((entry) => entry.command === "hub_conversation_transcript");
+    expect(asked?.args).toMatchObject({
+      id: HUB_ID,
+      input: { boxId: "this-laptop", workspaceId: "agent-ide", sessionId: "hub-live" },
+    });
+    // The terminal keeps running under the chat: same writable attach, records still read.
+    const attaches = invocations.filter((entry) => entry.command === "attach_hub_session");
+    expect(attaches).toHaveLength(1);
+    expect(attaches[0].args.writable).toBe(true);
+    expect(invocations.map((entry) => entry.command)).toContain("next_terminal_record");
+
+    pick(root, '.session__view[data-view="terminal"]').click();
+    await settle();
+    expect(root.querySelector(".chat")).toBeNull();
+    expect(root.querySelector(".tray")).not.toBeNull();
+    const input = terminalInput(root);
+    input.value = "pwd";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+    expect(sentInputIntents()).toContainEqual(
+      expect.objectContaining({ case: "text", text: "pwd" }),
+    );
+
+    // Back to Chat: the same messages, no second attach.
+    pick(root, '.session__view[data-view="chat"]').click();
+    await settle();
+    expect(root.querySelectorAll(".chat__row")).toHaveLength(2);
+    expect(invocations.filter((entry) => entry.command === "attach_hub_session")).toHaveLength(1);
   });
 
   /**

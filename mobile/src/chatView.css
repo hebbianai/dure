@@ -1,0 +1,296 @@
+/* The session's Chat tab (`chatView.ts`) and the switch between it and the
+ * terminal (`sessionScreen.ts`). Opaque reading surfaces throughout: this is
+ * the agent's output, and the charter keeps blur off anything read. */
+
+/* Two tabs under the header. A segmented pair rather than icons: the two are
+ * views of the same agent, and the words say which one is showing. */
+.session__views {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  margin: 8px 16px 0;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--glass-chrome);
+}
+
+.session__view {
+  flex: 1;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted-foreground);
+  font: 500 13px/18px var(--font-ui);
+}
+
+.session__view[aria-selected="true"] {
+  background: var(--glass-tint-selected);
+  color: var(--foreground);
+}
+
+.session__view:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: -2px;
+}
+
+.session__chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.chat {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-pane);
+}
+
+.chat__scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 16px 16px;
+}
+
+.chat__older,
+.chat__status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted-foreground);
+  font: 400 13px/18px var(--font-ui);
+  text-align: center;
+}
+
+.chat__messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat__row {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chat__row--user {
+  align-items: flex-end;
+}
+
+.chat__bubble {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--foreground);
+  font: 400 15px/22px var(--font-ui);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* The person's own words sit in a lifted bubble on the right; the agent's
+   answer reads as the page, so long answers are not boxed in. */
+.chat__row--user .chat__bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 16px 16px 4px 16px;
+  background: var(--glass-bubble);
+}
+
+.chat__row--queued .chat__bubble {
+  border: 1px dashed var(--glass-edge);
+  background: none;
+}
+
+.chat__row--sent .chat__bubble {
+  opacity: 0.75;
+}
+
+.chat__p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.chat__p + .chat__p,
+.chat__bubble > * + * {
+  margin-top: 8px;
+}
+
+.chat__list-block {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.chat__list-block li + li {
+  margin-top: 4px;
+}
+
+.chat__code {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  color: var(--foreground);
+  font: 400 12px/18px var(--font-mono);
+  white-space: pre;
+}
+
+.chat__inline-code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--glass-chrome);
+  font: 400 13px/20px var(--font-mono);
+}
+
+.chat__truncated {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font: 400 12px/16px var(--font-ui);
+}
+
+/* Under an outgoing bubble: what will happen to it, and the two things the
+   person can still do about it. */
+.chat__meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  max-width: 85%;
+  color: var(--muted-foreground);
+  font: 400 12px/16px var(--font-ui);
+}
+
+.chat__meta-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.chat__meta-hint {
+  opacity: 0.85;
+}
+
+.chat__meta-action {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--glass-chip);
+  color: var(--foreground);
+  font: 500 12px/16px var(--font-ui);
+}
+
+/* The agent is asking in the terminal, where the question is in M1. */
+.chat__attention {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 12px 8px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 12px;
+  background: var(--warn-surface);
+  color: var(--warn-ink);
+  font: 400 13px/18px var(--font-ui);
+}
+
+.chat__attention[hidden],
+.chat__note[hidden],
+.chat__status[hidden],
+.chat__older[hidden] {
+  display: none;
+}
+
+.chat__attention-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat__attention-action {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--glass-chip);
+  color: var(--foreground);
+  font: 500 13px/18px var(--font-ui);
+}
+
+.chat__note {
+  flex: none;
+  margin: 0 16px 6px;
+  color: var(--muted-foreground);
+  font: 400 13px/18px var(--font-ui);
+}
+
+.chat__composer {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--glass-hairline-soft);
+  background: var(--glass-shell);
+}
+
+/* The keys already cover the home indicator. */
+html[data-keyboard="on"] .chat__composer {
+  padding-bottom: 8px;
+}
+
+.chat__input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 160px;
+  padding: 9px 14px;
+  resize: none;
+  border: 1px solid var(--input);
+  border-radius: 20px;
+  background: var(--glass-pane);
+  color: var(--foreground);
+  /* 16px keeps iOS from zooming the page when the field takes focus. */
+  font: 400 16px/20px var(--font-ui);
+}
+
+.chat__input:focus {
+  outline: none;
+  border-color: var(--muted-foreground);
+}
+
+.chat__send {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.chat__send:disabled {
+  opacity: 0.4;
+}
+
+.chat__pull {
+  margin: -12px -16px 0;
+}
