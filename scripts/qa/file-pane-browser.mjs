@@ -28,6 +28,8 @@ const files = {
   [join(isolated, "report notes.md")]: "# Review report\n\nRendered **Markdown** from the GUI viewer.\n",
   [join(isolated, "page.html")]: '<h1>Ordinary HTML source</h1><script>parent.__FILE_SCRIPT_RAN__ = true;</script>',
   [join(isolated, "design/mockups/review/Report/default.html")]: '<h1>Static HTML preview</h1><button onclick="parent.__FILE_SCRIPT_RAN__ = true">Sandboxed button</button><script>parent.__FILE_SCRIPT_RAN__ = true;</script>',
+  // A page much taller than the pane: the preview must scroll to its end.
+  [join(isolated, "design/mockups/review/Report/tall.html")]: '<!doctype html><html><head><title>tall</title></head><body><h1>Tall mockup top</h1><div style="width:640px;height:3000px;background:linear-gradient(#36c,#c63)"></div><h2>Tall mockup bottom</h2></body></html>',
 };
 let browser;
 let page;
@@ -112,14 +114,69 @@ try {
   await frame.getByRole("button", { name: "Sandboxed button" }).click();
   assert.equal(await page.evaluate(() => window.__FILE_SCRIPT_RAN__), false);
   await page.screenshot({ path: join(output, "html-sandbox.png") });
+  const tall = await cli("design/mockups/review/Report/tall.html");
+  assert.equal(tall.pane.component, "mockup");
+  const tallFrameElement = page.locator('iframe[title="Report · tall"]');
+  const tallFrame = await (await tallFrameElement.elementHandle()).contentFrame();
+  await tallFrame.getByRole("heading", { name: "Tall mockup top" }).waitFor();
+  const tallScroll = () => tallFrame.evaluate(() => {
+    const root = document.scrollingElement;
+    return { top: root.scrollTop, height: root.scrollHeight, view: root.clientHeight };
+  });
+  const tallBefore = await tallScroll();
+  assert.ok(tallBefore.height > tallBefore.view * 2, `tall mockup overflows the pane: ${JSON.stringify(tallBefore)}`);
+  await tallFrameElement.hover();
+  await page.mouse.wheel(0, 5000);
+  await page.waitForFunction(() => {
+    const frame = document.querySelector('iframe[title="Report · tall"]');
+    const root = frame?.contentDocument?.scrollingElement;
+    return Boolean(root && root.scrollTop + root.clientHeight >= root.scrollHeight - 1);
+  }, undefined, { timeout: 5000 });
+  const tallScrolled = await tallScroll();
+  await page.screenshot({ path: join(output, "mockup-scrolled.png") });
+  // Zoom like browser zoom: the toolbar steps it, the preview document scales
+  // and scrolls further, element picking still lands, and a rebuilt document
+  // (theme toggle) keeps the zoom.
+  const tallPane = page.locator('[data-pane-surface="own"]').filter({ has: page.locator('iframe[title="Report · tall"]') });
+  await tallPane.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await tallPane.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await tallPane.getByRole("button", { name: "156%", exact: true }).waitFor();
+  const tallZoomed = await tallFrame.evaluate(() => {
+    document.scrollingElement.scrollTop = 0;
+    return { zoom: document.documentElement.style.zoom, height: document.scrollingElement.scrollHeight };
+  });
+  assert.equal(tallZoomed.zoom, "1.5625");
+  assert.ok(tallZoomed.height > tallBefore.height * 1.5, `zoomed mockup grows: ${JSON.stringify(tallZoomed)}`);
+  await page.screenshot({ path: join(output, "mockup-zoomed.png") });
+  await tallPane.getByRole("button", { name: "Pick an element and ask an agent to change it", exact: true }).click();
+  const frameBox = await tallFrameElement.boundingBox();
+  const headingBox = await tallFrame.evaluate(() => {
+    const rect = document.querySelector("h1").getBoundingClientRect();
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  });
+  await page.mouse.click(frameBox.x + 24, frameBox.y + headingBox.y + headingBox.height - 4);
+  await tallPane.getByText(/^html(\.dark)? > body > h1 — "Tall mockup top"$/).waitFor();
+  await tallPane.getByRole("button", { name: "Cancel", exact: true }).click();
+  await tallFrame.evaluate(() => { document.documentElement.dataset.qaPreviousBuild = "1"; });
+  await tallPane.getByRole("button", { name: /^Preview in (light|dark) theme$/ }).click();
+  await page.waitForFunction(() => {
+    const root = document.querySelector('iframe[title="Report · tall"]')?.contentDocument?.documentElement;
+    return Boolean(root && !root.dataset.qaPreviousBuild && root.querySelector("h1") && root.style.zoom === "1.5625");
+  }, undefined, { timeout: 5000 });
+  await tallPane.getByRole("button", { name: "156%", exact: true }).click();
+  await page.waitForFunction(() => {
+    const root = document.querySelector('iframe[title="Report · tall"]')?.contentDocument?.documentElement;
+    return root?.style.zoom === "";
+  }, undefined, { timeout: 5000 });
+  await tallPane.getByRole("button", { name: "100%", exact: true }).waitFor();
   const missing = await cli("missing.md");
   assert.equal(missing.pane.mounted, true);
   await page.getByText("Error: No such file (fixture)", { exact: true }).waitFor();
   const snapshot = await page.evaluate(() => window.__FILE_PANE_FIXTURE__.snapshot());
-  assert.equal(snapshot.panes.length, 4);
+  assert.equal(snapshot.panes.length, 5);
   assert.deepEqual(errors, []);
-  await writeFile(join(output, "evidence.json"), JSON.stringify({ source: "headless Chromium + source CLI + real frontend, fixture native I/O and window routing", markdown, repeated, html, mockup, missing, snapshot, requests, errors }, null, 2));
-  console.log(`PASS local file CLI, Markdown, preserved draft, HTML source, static sandbox and read error: ${output}`);
+  await writeFile(join(output, "evidence.json"), JSON.stringify({ source: "headless Chromium + source CLI + real frontend, fixture native I/O and window routing", markdown, repeated, html, mockup, tall, tallBefore, tallScrolled, tallZoomed, missing, snapshot, requests, errors }, null, 2));
+  console.log(`PASS local file CLI, Markdown, preserved draft, HTML source, static sandbox, tall mockup scroll and zoom, and read error: ${output}`);
 } catch (error) {
   await page?.screenshot({ path: join(output, "failure.png") });
   await writeFile(join(output, "failure.json"), JSON.stringify({ error: String(error), errors, requests, reads: await page?.evaluate(() => window.__FILE_READS__) }, null, 2));
