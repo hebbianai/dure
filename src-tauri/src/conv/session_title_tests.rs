@@ -74,7 +74,9 @@ fn recent_codex_app_conversations_keep_their_identity_title_and_preview_after_hi
         .unwrap();
     assert_eq!(app.title, "My Codex app work");
     assert_eq!(app.provider, "codex");
-    assert_eq!(app.cwd, cwd.to_str().unwrap());
+    // The reader canonicalizes the working directory; macOS temp dirs live
+    // under /private/var while the fixture path says /var.
+    assert_eq!(app.cwd, cwd.canonicalize().unwrap().to_str().unwrap());
     assert!(app.working_directory_available);
     assert_eq!(
         serde_json::to_value(app).unwrap()["resumeCapability"],

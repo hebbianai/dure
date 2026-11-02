@@ -415,6 +415,9 @@ mod tests {
 
     #[test]
     fn live_legacy_owner_is_preserved_without_writing_descriptors_or_hooks() {
+        // reqwest is built with rustls-no-provider; the app installs the
+        // provider at startup, so the test installs it too (as the hub tests do).
+        let _ = rustls::crypto::ring::default_provider().install_default();
         for mismatch in [
             None,
             Some("generation"),
