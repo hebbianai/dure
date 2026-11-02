@@ -117,13 +117,13 @@ pub(crate) fn publish_guarded(
         if let Some(obj) = value.as_object() {
             let has_agents = obj.get("agents")
                 .and_then(|a| a.as_array())
-                .map_or(false, |a| !a.is_empty());
+                .is_some_and(|a| !a.is_empty());
             let has_projects = obj.get("projects")
                 .and_then(|p| p.as_array())
-                .map_or(false, |p| !p.is_empty());
+                .is_some_and(|p| !p.is_empty());
             let has_ssh_hosts = obj.get("sshHosts")
                 .and_then(|s| s.as_array())
-                .map_or(false, |s| !s.is_empty());
+                .is_some_and(|s| !s.is_empty());
 
             !has_agents && !has_projects && !has_ssh_hosts
         } else {

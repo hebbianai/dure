@@ -45,7 +45,7 @@ fn list_snapshots(directory: &Path) -> Result<Vec<(PathBuf, SystemTime)>, String
         }
     }
 
-    snapshots.sort_by(|a, b| a.1.cmp(&b.1));
+    snapshots.sort_by_key(|a| a.1);
     Ok(snapshots)
 }
 
@@ -87,16 +87,16 @@ fn is_empty_state(json: &str) -> bool {
                 if let Some(state) = obj.get("state").and_then(|s| s.as_object()) {
                     let has_agents = state.get("agents")
                         .and_then(|a| a.as_array())
-                        .map_or(false, |a| !a.is_empty());
+                        .is_some_and(|a| !a.is_empty());
                     let has_accounts = state.get("accounts")
                         .and_then(|a| a.as_array())
-                        .map_or(false, |a| !a.is_empty());
+                        .is_some_and(|a| !a.is_empty());
                     let has_projects = state.get("projects")
                         .and_then(|p| p.as_array())
-                        .map_or(false, |p| !p.is_empty());
+                        .is_some_and(|p| !p.is_empty());
                     let has_layouts = state.get("layouts")
                         .and_then(|l| l.as_object())
-                        .map_or(false, |l| !l.is_empty());
+                        .is_some_and(|l| !l.is_empty());
 
                     return !has_agents && !has_accounts && !has_projects && !has_layouts;
                 }
