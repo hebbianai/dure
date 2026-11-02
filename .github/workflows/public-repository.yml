@@ -481,7 +481,8 @@ jobs:
         # - RUSTSEC-2026-0194, RUSTSEC-2026-0195: quick-xml under plist, which
         #   tauri uses for the app's own bundled property lists; no plist
         #   release on quick-xml 0.41 exists yet.
-        # - RUSTSEC-2026-0367, RUSTSEC-2026-0368, RUSTSEC-2026-0369: zip 4
+        # - RUSTSEC-2026-0367, RUSTSEC-2026-0368, RUSTSEC-2026-0369,
+        #   RUSTSEC-2026-0429: zip 4
         #   under tauri-plugin-updater, which extracts only signature-verified
         #   update archives; the fix is the updater 2.14 bump (zip 9) together
         #   with the matching npm plugin, tracked as its own change.
@@ -497,7 +498,8 @@ jobs:
           audit src-tauri/Cargo.lock \
             --ignore RUSTSEC-2023-0071 \
             --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 \
-            --ignore RUSTSEC-2026-0367 --ignore RUSTSEC-2026-0368 --ignore RUSTSEC-2026-0369
+            --ignore RUSTSEC-2026-0367 --ignore RUSTSEC-2026-0368 --ignore RUSTSEC-2026-0369 \
+            --ignore RUSTSEC-2026-0429
           audit crates/dure-app/Cargo.lock
           audit hmux/Cargo.lock --ignore RUSTSEC-2023-0071
           audit mobile/src-tauri/Cargo.lock --ignore RUSTSEC-2023-0071
