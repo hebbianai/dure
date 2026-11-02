@@ -42,6 +42,18 @@ dure skills get dure-lead
 
 워커 브리프는 각 워커에게 이슈를 읽고, 자기 worktree에만 머물고, 동작이 있는 수준에서 테스트하고, 기본 브랜치를 대상으로 `Closes #n`이 적힌 pull request를 열고, CI를 기다리고, 알려진 불안정 작업은 한 번만 재실행하고, 저장소 규칙이 허용하면 병합하고, pull request를 적은 댓글로 마치라고 지시합니다. 제품 결정이 필요한 워커는 추측하는 대신 이슈에 `needs:founder` 레이블을 붙이고 멈춥니다.
 
+## 리뷰 후 병합
+
+기본적으로 각 워커는 CI가 초록색이 되면 자기 pull request를 직접 병합합니다. 모든 pull request를 병합 전에 검토하려면 `--merge-policy review`로 리드를 시작하세요.
+
+```sh
+dure run --project PROJECT_ID --provider claude --name lead-onboarding \
+  --permission-override bypass_approvals --merge-policy review \
+  --lead "열려 있는 온보딩 이슈 세 건(#118, #119, #121)을 닫아줘. 상한: 워커 2개."
+```
+
+이 정책은 리드 브리프에 들어가므로 첫 디스패치부터 모든 워커 브리프에 병합하지 말라고 적힙니다. 워커는 pull request를 열고, CI가 초록색이 될 때까지 기다리고, 리뷰할 준비가 됐다는 댓글을 남긴 뒤 멈춥니다. 병합을 허락하려면 GitHub에서 승인하세요. 내 계정이 연 pull request라서 GitHub가 승인을 막는다면 `lead:approved` 레이블을 붙이면 됩니다. 변경을 요청하거나 리뷰 댓글을 남기면 리드가 그 내용을 워커에게 전달하고, 워커는 수정을 푸시한 뒤 다시 기다립니다. 리뷰를 기다리는 pull request만 남으면 리드는 그 항목을 `awaiting review`로 적은 보고서를 올리고 기다립니다. 리뷰를 마친 뒤 `dure send lead-onboarding "reviewed"` 같은 메시지를 보내면 승인된 pull request를 병합합니다. 리드는 pull request를 스스로 승인하거나 레이블을 붙이지 않습니다. 목표에 병합 전 리뷰를 요구하는 내용이 있으면 플래그 없이도 같은 정책이 적용됩니다.
+
 ## 직접 지켜보기
 
 ```sh

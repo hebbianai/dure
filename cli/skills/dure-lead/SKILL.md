@@ -42,13 +42,26 @@ dure whoami --json                 # your own identity, when a client registered
 - Decide the concurrency cap. Default: **3 active workers**. The goal may set
   another number; never exceed it, because every worker is a full provider
   session on the same machine or Host.
-- Make sure the labels exist (`--force` makes both commands idempotent):
+- Decide the merge policy, before the first dispatch, because it is written
+  into every worker brief (§7):
+  - **auto** (default): each worker merges its own pull request once its
+    checks are green.
+  - **review**: no worker merges; every pull request waits for a person's
+    approval and you merge it (§6). Use it when your brief says
+    `Merge policy: review` (the Run was started with
+    `dure run --lead --merge-policy review`) **or** the goal asks for a review,
+    an approval or a hold before merging. When either asks for review, review
+    wins.
+- Make sure the labels exist (`--force` makes these commands idempotent; the
+  third is needed only under the review policy):
 
 ```sh
 gh label create lead:claimed --repo OWNER/REPO --force --color 0E8A16 \
   --description "A lead agent has started a worker on this issue"
 gh label create needs:founder --repo OWNER/REPO --force --color D93F0B \
   --description "Needs a product decision from a person"
+gh label create lead:approved --repo OWNER/REPO --force --color 1D76DB \
+  --description "A person approved this pull request for the lead to merge"
 ```
 
 ## 2. Split the goal into tracked work items
@@ -71,10 +84,10 @@ gh issue create --repo OWNER/REPO --title "<item>" --body-file item.md --label e
   dispatched yet.
 - Open **one tracking issue** for the goal (or use the issue the goal came
   from) and post the plan as a table: item, issue, dependencies, planned worker
-  name, status. Keep the comment id (the number after `#issuecomment-` in the
-  URL the first command prints) and edit that same comment at every
-  checkpoint; it is how a restarted lead, or a person, sees where things
-  stand.
+  name, status, with the merge policy stated above it. Keep the comment id
+  (the number after `#issuecomment-` in the URL the first command prints) and
+  edit that same comment at every checkpoint; it is how a restarted lead, or a
+  person, sees where things stand.
 
 ```sh
 gh issue comment TRACKING --repo OWNER/REPO --body-file plan.md   # prints …#issuecomment-COMMENT_ID
@@ -88,8 +101,8 @@ letters, digits, `.`, `_`, `-`; 1–64 characters, starting and ending with a
 letter or digit). The branch becomes `agent/work-<issue>` and the worktree
 `<project>/.worktrees/work-<issue>`.
 
-Fill the brief in §7 (`<REPO>`, `<N>`, `<BASE>`, `<CHECKS>`) into a file such
-as `brief-123.md`, keep the whole prompt under 16 KiB, label the issue
+Fill the brief in §7 (`<REPO>`, `<N>`, `<BASE>`, `<CHECKS>`, `<MERGE>`) into a
+file such as `brief-123.md`, keep the whole prompt under 16 KiB, label the issue
 `lead:claimed`, then start the worker:
 
 ```sh
@@ -182,15 +195,20 @@ timeout never stops the worker.
 
 **Completion is a GitHub fact, not a session state.** A worker is done when
 its pull request is merged (or open and handed back with a reason) **and** its
-final issue comment exists. `activity: waiting` with a risen turn count only
-tells you to go and look. A finished worker stays alive and idle; it does not
-count toward the cap. Once you have recorded its result,
-`dure stop AGENT_ID --yes --json` releases its pane (needs a running app; its
-worktree and conversation are kept). Leave it if there is no app.
+final issue comment exists. Under the review policy a worker is also done when
+its pull request is open, green and waiting for review; the item is not, until
+§6 merges it. `activity: waiting` with a risen turn count only tells you to go
+and look. A finished worker stays alive and idle; it does not count toward the
+cap. Once you have recorded its result, `dure stop AGENT_ID --yes --json`
+releases its pane (needs a running app; its worktree and conversation are
+kept). Leave it if there is no app, and under the review policy keep it until
+its pull request is merged, because it may still have review feedback to
+address.
 
-Loop until every item is merged, handed back or escalated: dispatch ready
-items up to the cap, wait on the oldest active worker, re-check GitHub for each
-worker whose turn ended, update the tracking comment, repeat. On every pass run
+Loop until every item is merged, handed back, escalated or (review policy)
+green and waiting for review: dispatch ready items up to the cap, wait on the
+oldest active worker, re-check GitHub for each worker whose turn ended, update
+the tracking comment, repeat. On every pass run
 `gh pr checks` for each open pull request, including those of workers that
 have already gone idle.
 
@@ -216,6 +234,14 @@ the tracking issue still shows that item as in progress.
   back; then send the message. Two rounds without a green run: leave the pull
   request open, comment what is failing, label the issue `needs:founder`, move
   on.
+- **Review asks for changes** (review policy). A person requested changes or
+  left review comments on a pull request (`gh pr view PR --repo OWNER/REPO
+  --json reviewDecision,reviews,comments`). Send the worker one message that
+  points at the review: `dure send SESSION_ID --workspace WORKSPACE_ID "Review
+  on PR <pr> asks for changes: address every comment, push, wait for CI, do not
+  merge."` Then `dure wait` again. Resume an exited worker as above first. Do
+  not decide a disagreement between the reviewer and the issue yourself: label
+  the issue `needs:founder` and put the question in a comment.
 - **Worker crashed before a pull request** (`exited`, nothing pushed). Resume
   it once as above. If that fails, dispatch the item again as `work-123-2` with
   a new worktree and say so in the issue; the old branch stays for inspection.
@@ -236,13 +262,31 @@ the lifecycle command, and it is optional.
 
 ## 6. Merge and report
 
-Merge policy, in order: the worker merges its own pull request when its checks
-are green and the repository's rules let it (the brief says so). If a green
-pull request is still open after the worker has finished (no permission,
-worker stopped), merge it yourself:
+Under the **auto** policy, in order: the worker merges its own pull request
+when its checks are green and the repository's rules let it (the brief says
+so). If a green pull request is still open after the worker has finished (no
+permission, worker stopped), merge it yourself:
 `gh pr merge PR --repo OWNER/REPO --squash --delete-branch`. Use `--admin`
-only when the repository policy allows it and the goal says so. After each
-merge, re-check the other open pull requests for conflicts.
+only when the repository policy allows it and the goal says so.
+
+Under the **review** policy, workers never merge and neither do you until a
+person approves. A pull request is approved when its checks are green and
+either GitHub reports it approved or a person added the `lead:approved` label:
+
+```sh
+gh pr checks PR --repo OWNER/REPO
+gh pr view PR --repo OWNER/REPO --json reviewDecision,labels
+```
+
+`reviewDecision: "APPROVED"` or a `lead:approved` label is the approval. The
+label exists because GitHub does not let an account approve its own pull
+request, and workers usually push as the person who reviews them. Never add
+that label, run `gh pr review --approve`, or otherwise approve a pull request
+yourself, and never merge one that is green but unapproved. A
+`CHANGES_REQUESTED` decision overrides the label until the reviewer approves
+again. Then merge as above, with `--admin` only under the same conditions.
+
+After each merge, re-check the other open pull requests for conflicts.
 
 **Closing steps.** Run them as soon as no item is still in progress, in this
 order and in the same turn. The Run is not finished until step 3 has printed a
@@ -253,7 +297,8 @@ comment URL; a table printed only in your session is not the report.
    `gh pr list --repo OWNER/REPO --head agent/work-123 --state all --json number,state,mergedAt,url`
    and `gh issue view 123 --repo OWNER/REPO --json state,labels` for each item.
 2. Edit the tracking comment so every row shows its final state
-   (`#140 merged`, `#141 open: <reason>`, `needs:founder`, `not started`):
+   (`#140 merged`, `#141 open: <reason>`, `#142 awaiting review`,
+   `needs:founder`, `not started`):
    `gh api -X PATCH repos/OWNER/REPO/issues/comments/COMMENT_ID -F body=@plan.md`
 3. Write the report below to `report.md` (in the session scratch directory or
    `/tmp`, never in the project checkout) and post it as a new comment on the
@@ -262,6 +307,14 @@ comment URL; a table printed only in your session is not the report.
    It prints the comment URL. If it fails, retry once; if it fails again, say
    so in your session with the error.
 4. Print the same report in your session, followed by that URL, and stop.
+
+Under the review policy, a green pull request waiting for review is no longer
+in progress: when only such pull requests remain, run the closing steps with
+them as `awaiting review`, then stop and wait for a person to review and
+message you (for example `dure send <lead> "reviewed"`). On every later turn,
+check each waiting pull request again, merge the approved ones, forward change
+requests (§5) and run the closing steps again, so the tracking comment and a
+new report show the new states.
 
 Fill every row of the report, including items that never started:
 
@@ -275,6 +328,7 @@ Project `<project id>` on `OWNER/REPO` · <k> items · <m> workers started · <p
 | #123 | <item> | work-123 | #140 merged | done |
 | #124 | <item> | work-124 | #141 open, CI red (<test>) | needs:founder: <question> |
 | #125 | <item> | work-125 | – | not started: folder-trust prompt (see below) |
+| #126 | <item> | work-126 | #142 open, green | awaiting review (review policy) |
 
 ### Needs a person
 - <decision or unblock, with the issue link>
@@ -289,8 +343,23 @@ output only.
 
 ## 7. The worker brief
 
-Fill `<REPO>`, `<N>`, `<BASE>` (the default branch) and `<CHECKS>` (the
-project's lint, typecheck and test commands). Change nothing else.
+Fill `<REPO>`, `<N>`, `<BASE>` (the default branch), `<CHECKS>` (the
+project's lint, typecheck and test commands) and `<MERGE>` (the text for the
+merge policy from §1, below). Change nothing else.
+
+`<MERGE>` under the **auto** policy:
+
+```text
+When it is green, merge with `gh pr merge <pr> --squash --delete-branch` if the repository's rules let you; otherwise leave it open and say so.
+```
+
+`<MERGE>` under the **review** policy:
+
+```text
+When it is green, do not merge: a person reviews every pull request first and the lead merges it after approval. Comment on the pull request that it is ready for review and leave it open. If the lead sends you review feedback, address it, push and wait for CI again; still do not merge, approve or label it yourself.
+```
+
+The brief:
 
 ```text
 You are a worker agent started by a Dure lead for <REPO> issue #<N>. Work autonomously; nobody will answer questions in this terminal, and the lead reads your pull request and issue comments, not your screen. Repository rules in AGENTS.md and CONTRIBUTING.md apply.
@@ -299,7 +368,7 @@ You are a worker agent started by a Dure lead for <REPO> issue #<N>. Work autono
 2. You are already in an isolated worktree on your own branch (`agent/work-<N>`), created from <BASE>. Never check out branches elsewhere, never use bare `git stash` / `git stash pop`, never touch other worktrees or the primary checkout.
 3. For a bug, reproduce it first (a fixture, a unit test, or the repository's QA runners with disposable HOME-style isolation; never a person's live app or data). Keep the change focused; add tests at the level where the behavior lives; run the project's lint, typecheck and the test files you touched. Project checks: <CHECKS>.
 4. Commit in English, conventional style (`fix(scope): …`, `feat(scope): …`), with the attribution lines the repository asks for. Push the branch and open a pull request against <BASE> with `gh pr create`: body = root cause or context, the change, tests run, what was not verified, and `Closes #<N>`.
-5. Wait for CI: `gh pr checks <pr> --watch`. If it fails only on a test the repository lists as known-flaky, rerun the failed jobs once (`gh run rerun <run> --failed`). If it fails for a real reason, fix it and push. When it is green, merge with `gh pr merge <pr> --squash --delete-branch` if the repository's rules let you; otherwise leave it open and say so.
+5. Wait for CI: `gh pr checks <pr> --watch`. If it fails only on a test the repository lists as known-flaky, rerun the failed jobs once (`gh run rerun <run> --failed`). If it fails for a real reason, fix it and push. <MERGE>
 6. If the issue needs a product decision, is a duplicate, or is not this repository's problem, do not guess: comment the question, add the label `needs:founder` to the issue, leave your work as a draft pull request if there is any, and stop.
 7. Finish with a short comment on the issue naming the pull request, what changed and what was not verified. Then stop; do not start other work. Keep private paths, session ids and credentials out of every public comment.
 ```

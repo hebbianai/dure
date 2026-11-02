@@ -81,6 +81,8 @@ dure run --space Build "investigate the failing test"
 # Lead a team toward one goal: the prompt is the goal and the CLI prepends
 # the bundled lead brief (dure skills get dure-lead).
 dure run --project project-id --provider claude --lead "close the three open onboarding issues"
+# Same, but every worker pull request waits for your approval before it merges.
+dure run --project project-id --provider claude --lead --merge-policy review "close the three open onboarding issues"
 
 # A fresh backend has no implicit client registry. Register the repository once;
 # --path defaults to the current directory and --name defaults to the stable ID.
@@ -93,7 +95,9 @@ dure projects register --help
 one worker Run per issue in its own worktree with a standard brief, tracks the
 workers, merges the pull requests that pass and ends with a report.
 `dure skills get dure-lead` holds the loop and the worker brief; the lead itself
-creates no new state.
+creates no new state. `--merge-policy review` keeps workers from merging: each
+pull request waits for a GitHub approval or the `lead:approved` label before the
+lead merges it, and that rule is in every worker brief from the first dispatch.
 
 `--project` and `--path` are mutually exclusive. Both select an existing backend
 registration. `--path` selects the deepest registered project containing that
