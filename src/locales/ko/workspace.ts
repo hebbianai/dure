@@ -57,6 +57,7 @@ export const workspace: Record<string, string> = {
 	"workspace.popout.returnHint": "pane을 원래 위치로 되돌리고 창 닫기",
 	"workspace.agentWindow.viewSession": "{provider} 세션을 큰 창에서 보기",
 	"workspace.externalOpen.opened": "{target}에서 workspace를 열었습니다",
+	"workspace.externalOpen.fileOpened": "{target}에서 파일을 열었습니다",
 	"workspace.health.unprobed": "검사되지 않음",
 	"workspace.pane.pin": "고정",
 	"workspace.pane.unpin": "고정 해제",

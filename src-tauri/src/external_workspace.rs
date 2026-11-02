@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -229,6 +229,22 @@ impl ExternalWorkspaceOpenError {
     }
 }
 
+/// What the caller asks to open; it must match the object found at the path.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExternalOpenSubject {
+    #[default]
+    Workspace,
+    File,
+}
+
+/// The exact filesystem object one launch hands to an application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LaunchSubject<'a> {
+    Directory(&'a Path),
+    File(&'a Path),
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct LaunchPlan {
     executable: &'static str,
@@ -249,9 +265,30 @@ fn target_spec(target_id: &str) -> Option<&'static TargetSpec> {
     TARGETS.iter().find(|target| target.id == target_id)
 }
 
-fn launch_plan(candidate: LaunchCandidate, path: &Path) -> LaunchPlan {
+fn launch_subject<'a>(
+    spec: &TargetSpec,
+    subject: ExternalOpenSubject,
+    canonical_path: &'a Path,
+) -> LaunchSubject<'a> {
+    match subject {
+        ExternalOpenSubject::Workspace => LaunchSubject::Directory(canonical_path),
+        // Terminal runs the documents it opens, so a file only selects its folder.
+        ExternalOpenSubject::File if spec.group == "terminal" => {
+            LaunchSubject::Directory(canonical_path.parent().unwrap_or(canonical_path))
+        }
+        ExternalOpenSubject::File => LaunchSubject::File(canonical_path),
+    }
+}
+
+fn launch_plan(candidate: LaunchCandidate, subject: LaunchSubject<'_>) -> LaunchPlan {
+    let (path, reveal) = match subject {
+        LaunchSubject::Directory(path) => (path, false),
+        LaunchSubject::File(path) => (path, true),
+    };
     let path = path.to_string_lossy().into_owned();
     let args = match (candidate.application, candidate.delivery) {
+        // Without `-R`, Finder would hand a file to its default application.
+        (MacApplication::Finder, _) if reveal => vec!["-R".into(), path],
         (MacApplication::Finder, _) => vec![path],
         (MacApplication::Name(name), PathDelivery::Document) => {
             vec!["-a".into(), name.into(), path]
@@ -278,39 +315,39 @@ fn launch_plan(candidate: LaunchCandidate, path: &Path) -> LaunchPlan {
     }
 }
 
-fn canonical_workspace_path(path: &str) -> Result<PathBuf, ExternalWorkspaceOpenError> {
+fn canonical_open_path(
+    path: &str,
+    subject: ExternalOpenSubject,
+) -> Result<PathBuf, ExternalWorkspaceOpenError> {
+    let (noun, expected) = match subject {
+        ExternalOpenSubject::Workspace => ("workspace path", "a directory"),
+        ExternalOpenSubject::File => ("file path", "a regular file"),
+    };
+    let unavailable =
+        |detail: String| ExternalWorkspaceOpenError::new("workspace_unavailable", detail, None);
     let requested = Path::new(path);
     if !requested.is_absolute() {
-        return Err(ExternalWorkspaceOpenError::new(
-            "workspace_unavailable",
-            "workspace path must be absolute",
-            None,
-        ));
+        return Err(unavailable(format!("{noun} must be absolute")));
     }
-    let canonical = fs::canonicalize(requested).map_err(|_| {
-        ExternalWorkspaceOpenError::new(
-            "workspace_unavailable",
-            "workspace path is unavailable",
-            None,
-        )
-    })?;
-    if !canonical.is_dir() {
-        return Err(ExternalWorkspaceOpenError::new(
-            "workspace_unavailable",
-            "workspace path is not a directory",
-            None,
-        ));
+    let canonical =
+        fs::canonicalize(requested).map_err(|_| unavailable(format!("{noun} is unavailable")))?;
+    let matches = match subject {
+        ExternalOpenSubject::Workspace => canonical.is_dir(),
+        ExternalOpenSubject::File => canonical.is_file(),
+    };
+    if !matches {
+        return Err(unavailable(format!("{noun} is not {expected}")));
     }
     Ok(canonical)
 }
 
 fn execute_target(
     spec: &'static TargetSpec,
-    canonical_path: &Path,
+    subject: LaunchSubject<'_>,
     mut run: impl FnMut(&LaunchPlan) -> Result<(), ()>,
 ) -> Result<usize, ExternalWorkspaceOpenError> {
     for (index, candidate) in spec.candidates.iter().copied().enumerate() {
-        if run(&launch_plan(candidate, canonical_path)).is_ok() {
+        if run(&launch_plan(candidate, subject)).is_ok() {
             return Ok(index + 1);
         }
     }
@@ -330,7 +367,9 @@ pub fn external_workspace_targets() -> Vec<ExternalOpenTarget> {
 pub fn open_external_workspace(
     path: String,
     target_id: String,
+    subject: Option<ExternalOpenSubject>,
 ) -> Result<ExternalWorkspaceOpenReceipt, ExternalWorkspaceOpenError> {
+    let subject = subject.unwrap_or_default();
     let target_id = target_id.trim();
     let spec = target_spec(target_id).ok_or_else(|| {
         ExternalWorkspaceOpenError::new(
@@ -339,7 +378,7 @@ pub fn open_external_workspace(
             Some(target_id),
         )
     })?;
-    let canonical_path = canonical_workspace_path(&path)?;
+    let canonical_path = canonical_open_path(&path, subject)?;
     let canonical_path_text = canonical_path.to_str().ok_or_else(|| {
         ExternalWorkspaceOpenError::new(
             "workspace_unavailable",
@@ -349,7 +388,7 @@ pub fn open_external_workspace(
     })?;
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (spec, canonical_path_text);
+        let _ = (spec, subject, canonical_path_text);
         Err(ExternalWorkspaceOpenError::new(
             "platform_unsupported",
             "external workspace opening is currently available on macOS",
@@ -359,7 +398,8 @@ pub fn open_external_workspace(
 
     #[cfg(target_os = "macos")]
     {
-        let attempted_candidates = execute_target(spec, &canonical_path, |plan| {
+        let launch = launch_subject(spec, subject, &canonical_path);
+        let attempted_candidates = execute_target(spec, launch, |plan| {
             Command::new(plan.executable)
                 .args(&plan.args)
                 .status()
@@ -405,8 +445,11 @@ mod tests {
     #[test]
     fn shell_metacharacters_remain_one_path_argument() {
         let path = Path::new("/tmp/work tree;$(touch should-not-run)");
-        let ordinary = launch_plan(application("Cursor"), path);
-        let jetbrains = launch_plan(project_bundle("com.jetbrains.intellij"), path);
+        let ordinary = launch_plan(application("Cursor"), LaunchSubject::Directory(path));
+        let jetbrains = launch_plan(
+            project_bundle("com.jetbrains.intellij"),
+            LaunchSubject::Directory(path),
+        );
 
         assert_eq!(ordinary.executable, "/usr/bin/open");
         assert_eq!(ordinary.args, ["-a", "Cursor", path.to_str().unwrap()]);
@@ -426,15 +469,16 @@ mod tests {
     fn bounded_candidates_preserve_order_without_editor_fallback() {
         let spec = target_spec("vscode").unwrap();
         let mut attempts = Vec::new();
-        let attempted = execute_target(spec, Path::new("/repo"), |plan| {
-            attempts.push(plan.args.clone());
-            if attempts.len() == 2 {
-                Ok(())
-            } else {
-                Err(())
-            }
-        })
-        .unwrap();
+        let attempted =
+            execute_target(spec, LaunchSubject::Directory(Path::new("/repo")), |plan| {
+                attempts.push(plan.args.clone());
+                if attempts.len() == 2 {
+                    Ok(())
+                } else {
+                    Err(())
+                }
+            })
+            .unwrap();
 
         assert_eq!(attempted, 2);
         assert_eq!(attempts.len(), 2);
@@ -444,12 +488,97 @@ mod tests {
 
     #[test]
     fn candidate_exhaustion_is_a_typed_unavailable_error() {
-        let error = execute_target(target_spec("pycharm").unwrap(), Path::new("/repo"), |_| {
-            Err(())
-        })
+        let error = execute_target(
+            target_spec("pycharm").unwrap(),
+            LaunchSubject::Directory(Path::new("/repo")),
+            |_| Err(()),
+        )
         .unwrap_err();
 
         assert_eq!(error.code, "target_unavailable");
         assert_eq!(error.target_id.as_deref(), Some("pycharm"));
+    }
+
+    #[test]
+    fn a_file_is_revealed_by_finder_and_opened_by_editors() {
+        let file = Path::new("/notes/gallery.md");
+
+        assert_eq!(
+            launch_plan(finder(), LaunchSubject::File(file)).args,
+            ["-R", "/notes/gallery.md"]
+        );
+        assert_eq!(
+            launch_plan(application("Cursor"), LaunchSubject::File(file)).args,
+            ["-a", "Cursor", "/notes/gallery.md"]
+        );
+        assert_eq!(
+            launch_plan(finder(), LaunchSubject::Directory(Path::new("/repo"))).args,
+            ["/repo"]
+        );
+    }
+
+    #[test]
+    fn terminal_starts_in_a_file_folder_instead_of_running_the_file() {
+        let file = Path::new("/notes/run.command");
+
+        assert_eq!(
+            launch_subject(
+                target_spec("terminal").unwrap(),
+                ExternalOpenSubject::File,
+                file
+            ),
+            LaunchSubject::Directory(Path::new("/notes"))
+        );
+        assert_eq!(
+            launch_subject(
+                target_spec("cursor").unwrap(),
+                ExternalOpenSubject::File,
+                file
+            ),
+            LaunchSubject::File(file)
+        );
+        assert_eq!(
+            launch_subject(
+                target_spec("terminal").unwrap(),
+                ExternalOpenSubject::Workspace,
+                Path::new("/repo")
+            ),
+            LaunchSubject::Directory(Path::new("/repo"))
+        );
+    }
+
+    #[test]
+    fn the_declared_subject_must_match_the_filesystem_object() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("gallery.md");
+        fs::write(&file, "# gallery").unwrap();
+        let directory = root.path().to_str().unwrap();
+        let file = file.to_str().unwrap();
+
+        assert!(canonical_open_path(directory, ExternalOpenSubject::Workspace).is_ok());
+        assert!(canonical_open_path(file, ExternalOpenSubject::File)
+            .unwrap()
+            .is_file());
+        for (path, subject) in [
+            (file, ExternalOpenSubject::Workspace),
+            (directory, ExternalOpenSubject::File),
+            ("gallery.md", ExternalOpenSubject::File),
+        ] {
+            assert_eq!(
+                canonical_open_path(path, subject).unwrap_err().code,
+                "workspace_unavailable"
+            );
+        }
+    }
+
+    #[test]
+    fn subject_uses_camel_case_names_and_defaults_to_workspace() {
+        let subject: ExternalOpenSubject = serde_json::from_str("\"file\"").unwrap();
+
+        assert_eq!(subject, ExternalOpenSubject::File);
+        assert_eq!(
+            ExternalOpenSubject::default(),
+            ExternalOpenSubject::Workspace
+        );
     }
 }

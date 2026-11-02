@@ -148,6 +148,7 @@ export const workspace: Record<string, string> = {
 	"workspace.popout.returnHint": "将窗格还原到原位置并关闭窗口",
 	"workspace.agentWindow.viewSession": "在大窗口中查看 {provider} 会话",
 	"workspace.externalOpen.opened": "已在 {target} 中打开工作区",
+	"workspace.externalOpen.fileOpened": "已在 {target} 中打开文件",
 	"workspace.health.unprobed": "未探测",
 	"workspace.pane.pin": "固定",
 	"workspace.pane.unpin": "取消固定",

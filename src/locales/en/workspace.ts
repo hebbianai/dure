@@ -162,6 +162,7 @@ export const workspaceEnglishTranslations = {
 	"workspace.popout.returnHint": "Return panes to their original position and close",
 	"workspace.agentWindow.viewSession": "View the {provider} session in a large window",
 	"workspace.externalOpen.opened": "Opened workspace in {target}",
+	"workspace.externalOpen.fileOpened": "Opened file in {target}",
 	"workspace.health.unprobed": "Unprobed",
 	"workspace.pane.pin": "Pin",
 	"workspace.pane.unpin": "Unpin",

@@ -28,12 +28,14 @@ const localAgent: Agent = {
 function fixture(overrides: Partial<ExternalWorkspaceDependencies> = {}) {
 	const panel = paneSnapshot("agent:agent-1", "agent", { agentRef: { agentId: localAgent.id } });
 	const preferences: { defaultExternalOpenTargetId?: string } = {};
-	const open = vi.fn(async (path: string, targetId: string) => ({
+	const receipt = async (path: string, targetId: string) => ({
 		schemaVersion: 1 as const,
 		targetId,
 		canonicalPath: path,
 		attemptedCandidates: 1,
-	}));
+	});
+	const open = vi.fn(receipt);
+	const openFile = vi.fn(receipt);
 	const setUiPrefs = vi.fn((next: { defaultExternalOpenTargetId: string }) => {
 		Object.assign(preferences, next);
 	});
@@ -51,9 +53,10 @@ function fixture(overrides: Partial<ExternalWorkspaceDependencies> = {}) {
 		}),
 		executionLocation: () => ({ kind: "local" }),
 		open,
+		openFile,
 		...overrides,
 	};
-	return { dependencies, open, panel, preferences, setUiPrefs };
+	return { dependencies, open, openFile, panel, preferences, setUiPrefs };
 }
 
 function paneSnapshot(id: string, component: string, params: Record<string, unknown> = {}) {
@@ -209,6 +212,7 @@ describe("external workspace action", () => {
 		);
 
 		expect(base.open).toHaveBeenCalledWith("/repo", "finder");
+		expect(base.openFile).not.toHaveBeenCalled();
 		expect(receipt.kind).toBe("project");
 	});
 
@@ -251,7 +255,7 @@ describe("external workspace action", () => {
 		);
 	});
 
-	it("does not guess a workspace for an unrelated local file pane", async () => {
+	it("opens a standalone local file itself instead of guessing a workspace", async () => {
 		const base = fixture();
 		const path = "/repo-other/notes.md";
 		const panel = {
@@ -265,13 +269,19 @@ describe("external workspace action", () => {
 			dockview: () => dockview,
 		};
 
-		await expect(
-			openExternalWorkspaceForPane(
-				{ spaceId: "space-1", panelId: panel.id, targetId: "finder" },
-				dependencies,
-			),
-		).rejects.toMatchObject({ code: "workspace_unavailable" });
+		const receipt = await openExternalWorkspaceForPane(
+			{ spaceId: "space-1", panelId: panel.id, targetId: "cursor" },
+			dependencies,
+		);
+
+		expect(base.openFile).toHaveBeenCalledWith(path, "cursor");
 		expect(base.open).not.toHaveBeenCalled();
+		expect(receipt).toMatchObject({
+			panelId: panel.id,
+			kind: "file",
+			canonicalPath: path,
+		});
+		expect(base.preferences.defaultExternalOpenTargetId).toBe("cursor");
 	});
 
 	it("rejects a remote file pane before native I/O", async () => {

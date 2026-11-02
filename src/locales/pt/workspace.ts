@@ -148,6 +148,7 @@ export const workspace: Record<string, string> = {
 	"workspace.popout.returnHint": "Retornar os painéis à posição original e fechar",
 	"workspace.agentWindow.viewSession": "Ver a sessão do {provider} em uma janela grande",
 	"workspace.externalOpen.opened": "Workspace aberto em {target}",
+	"workspace.externalOpen.fileOpened": "Arquivo aberto em {target}",
 	"workspace.health.unprobed": "Não sondado",
 	"workspace.pane.pin": "Fixar",
 	"workspace.pane.unpin": "Desafixar",
