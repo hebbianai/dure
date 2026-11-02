@@ -1,15 +1,12 @@
 import type { IDockviewPanelProps } from "dockview-react";
-import { ArrowUp, CornerUpLeft, ImageIcon, Square, X, Zap } from "lucide-react";
+import { CornerUpLeft, ImageIcon, Square, X, Zap } from "lucide-react";
 import { ChatAlert } from "@/components/agents/chat/ChatAlert";
-import { Titled } from "@/components/ui/tooltip";
 import {
-	type FormEvent,
-	type KeyboardEvent,
-	useEffect,
-	useMemo,
-	useRef,
-	useState,
-} from "react";
+	ChatComposerSendButton,
+	ChatComposerShell,
+} from "@/components/agents/chat/ChatComposerShell";
+import { Titled } from "@/components/ui/tooltip";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentLaunchSelectionControls } from "@/components/agents/AgentLaunchSelectionControls";
 import { AgentSlackShare } from "@/components/agents/chat/AgentSlackShare";
 import { usePromptAttachments } from "@/components/agents/usePromptAttachments";
@@ -17,7 +14,6 @@ import { useChatInputLatency } from "@/components/agents/chat/useChatInputLatenc
 import { useAgentLaunchControlsPresentation } from "@/components/agents/useAgentToolbarControls";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
-import { Textarea } from "@/components/ui/textarea";
 import { ToolbarControl } from "@/components/ui/toolbar-control";
 import { usePaneInputFocus } from "@/components/workspace/usePaneInputFocus";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
@@ -38,7 +34,6 @@ import { PROVIDER_IDS } from "@/lib/agents/providers";
 import { t } from "@/lib/i18n";
 import { saveChatAttachments } from "@/lib/ipc";
 import { track } from "@/lib/ipc/telemetry";
-import { noteUserInput } from "@/lib/scheduling/interactionSignals";
 import type { Provider } from "@/types";
 
 function knownProvider(value: string): Provider | null {
@@ -227,8 +222,7 @@ export function ChatComposer({
 		[],
 	);
 
-	const submit = async (event?: FormEvent) => {
-		event?.preventDefault();
+	const submit = async () => {
 		if (deferSubmit()) return;
 		if (
 			disabled ||
@@ -322,17 +316,6 @@ export function ChatComposer({
 		}
 	};
 
-	const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-		if (
-			event.key === "Enter" &&
-			!event.shiftKey &&
-			!event.nativeEvent.isComposing
-		) {
-			event.preventDefault();
-			void submit();
-		}
-	};
-
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const inputDisabled =
 		disabled ||
@@ -344,165 +327,161 @@ export function ChatComposer({
 	usePaneInputFocus({ paneApi, inputRef, inputReady: !inputDisabled });
 
 	return (
-		<form
-			className="px-2 pt-0.5 pb-2 @2xl/chat:px-3 @2xl/chat:pb-3"
-			onSubmit={submit}
-		>
-			<div className="mx-auto max-w-3xl">
-				{session.error && !session.reconnecting && (
-					<ChatAlert className="mb-2 items-center">
-						<span className="min-w-0 flex-1">{session.error}</span>
-						<Button
-							type="button"
-							size="xs"
-							variant="outline"
-							onClick={session.retryConnection}
-						>
-							{t("common.retry")}
-						</Button>
-					</ChatAlert>
-				)}
-				{attachmentError && (
-					<ChatAlert className="mb-2 items-center">
-						<span className="min-w-0 flex-1">{attachmentError}</span>
-					</ChatAlert>
-				)}
-				{handedOff && (
-					<ChatAlert className="mb-2 flex-wrap items-center" icon={false}>
-						<span className="min-w-0 flex-1">
-							{handedOff.fromName
-								? t("agents.chat.recovery.handedOff", {
-										from: handedOff.fromName,
-										to: handedOff.toName,
-									})
-								: t("agents.chat.recovery.handedOffTo", { to: handedOff.toName })}
-						</span>
-						<div className="ml-auto flex flex-wrap justify-end gap-1">
-							{handedOff.resend && (
-								<Button
-									type="button"
-									size="xs"
-									variant="outline"
-									onClick={() => {
-										// The session owns the visible error and any uncertain
-										// request; this button never creates a retry itself.
-										void Promise.resolve(handedOff.resend?.()).catch(() => {});
-									}}
-								>
-									{t("agents.chat.recovery.resend")}
-								</Button>
-							)}
-							<IconButton
-								title={t("common.close")}
-								showTooltip={false}
-								className="-m-1 shrink-0"
-								onClick={() => setDismissedFailureItemId(handedOff.failure.itemId)}
+		<ChatComposerShell
+			onSubmit={() => void submit()}
+			notices={
+				<>
+					{session.error && !session.reconnecting && (
+						<ChatAlert className="mb-2 items-center">
+							<span className="min-w-0 flex-1">{session.error}</span>
+							<Button
+								type="button"
+								size="xs"
+								variant="outline"
+								onClick={session.retryConnection}
 							>
-								<X aria-hidden="true" />
-							</IconButton>
-						</div>
-					</ChatAlert>
-				)}
-				{failureRecovery && recovery && (
-					<ChatAlert className="mb-2 flex-wrap items-center">
-						<span className="min-w-0 flex-1">
-							{t(TURN_FAILURE_REASON_COPY[failureRecovery.reason])}
-						</span>
-						<div className="ml-auto flex flex-wrap justify-end gap-1">
-							{failureRecovery.recoveries.includes("sign_in") &&
-								recovery.signIn && (
+								{t("common.retry")}
+							</Button>
+						</ChatAlert>
+					)}
+					{attachmentError && (
+						<ChatAlert className="mb-2 items-center">
+							<span className="min-w-0 flex-1">{attachmentError}</span>
+						</ChatAlert>
+					)}
+					{handedOff && (
+						<ChatAlert className="mb-2 flex-wrap items-center" icon={false}>
+							<span className="min-w-0 flex-1">
+								{handedOff.fromName
+									? t("agents.chat.recovery.handedOff", {
+											from: handedOff.fromName,
+											to: handedOff.toName,
+										})
+									: t("agents.chat.recovery.handedOffTo", { to: handedOff.toName })}
+							</span>
+							<div className="ml-auto flex flex-wrap justify-end gap-1">
+								{handedOff.resend && (
 									<Button
 										type="button"
 										size="xs"
 										variant="outline"
-										onClick={recovery.signIn}
+										onClick={() => {
+											// The session owns the visible error and any uncertain
+											// request; this button never creates a retry itself.
+											void Promise.resolve(handedOff.resend?.()).catch(() => {});
+										}}
 									>
-										{t("agents.chat.recovery.signIn")}
+										{t("agents.chat.recovery.resend")}
 									</Button>
 								)}
-							{recovery.switchAccount ? (
-								<Button
-									type="button"
-									size="xs"
-									variant="outline"
-									onClick={recovery.switchAccount.run}
+								<IconButton
+									title={t("common.close")}
+									showTooltip={false}
+									className="-m-1 shrink-0"
+									onClick={() => setDismissedFailureItemId(handedOff.failure.itemId)}
 								>
-									{t("agents.chat.recovery.switchTo", {
-										name: recovery.switchAccount.targetName,
-									})}
-								</Button>
-							) : (
-								<Button
-									type="button"
-									size="xs"
-									variant="outline"
-									onClick={recovery.chooseAccount ?? recovery.manageAccounts}
-								>
-									{t(recovery.chooseAccount ? "agents.chat.recovery.chooseAccount" : "agents.chat.recovery.manageAccounts")}
-								</Button>
-							)}
-							<IconButton
-								title={t("common.close")}
-								showTooltip={false}
-								className="-m-1 shrink-0 text-destructive hover:text-destructive"
-								onClick={() => setDismissedFailureItemId(failureRecovery.itemId)}
-							>
-								<X aria-hidden="true" />
-							</IconButton>
-						</div>
-					</ChatAlert>
-				)}
-				{session.actionError && (
-					<ChatAlert className="mb-2 flex-wrap items-center">
-						<ActionErrorText raw={session.actionError} />
-						{!session.retryTurnAvailable && (
-							<IconButton
-								title={t("common.close")}
-								showTooltip={false}
-								className="-m-1 ml-auto shrink-0 text-destructive hover:text-destructive"
-								onClick={() => session.dismissActionError()}
-							>
-								<X aria-hidden="true" />
-							</IconButton>
-						)}
-						{session.retryTurnAvailable && (
-							<div className="ml-auto flex w-full flex-wrap justify-end gap-1 @lg/chat:w-auto">
-								<Button
-									type="button"
-									size="xs"
-									variant="outline"
-									onClick={() => void session.retryTurn().catch(() => {})}
-								>
-									{t("agents.chat.retrySend")}
-								</Button>
-								<Button
-									type="button"
-									size="xs"
-									variant="outline"
-									onClick={() => {
-										if (!mayEditDraft()) return;
-										void session
-											.editRetryableTurn((restored) => {
-												setDraft((current) =>
-													current ? `${restored}\n${current}` : restored,
-												);
-											})
-											.catch(() => {});
-									}}
-								>
-									{t("agents.chat.editUncertainSend")}
-								</Button>
+									<X aria-hidden="true" />
+								</IconButton>
 							</div>
-						)}
-					</ChatAlert>
-				)}
-				{/* glass/chrome is the input-on-glass material (the same fill
-				    SEARCH_FIELD_SURFACE uses), not the app floor. bg-background
-				    made this bar darker than the pane it floats on, which reads
-				    as sunken — depth here is brightness, not shadow (SOUL §3.2)
-				    — and the gap widened once the pane surface stopped sharing
-				    the app floor's value. */}
-				<div className="flex flex-col gap-0.5 rounded-xl border border-glass-hairline bg-glass-chrome px-2 py-1.5 shadow-card backdrop-blur-xl transition-shadow duration-150 focus-within:shadow-menu @2xl/chat:rounded-2xl @2xl/chat:px-2.5">
+						</ChatAlert>
+					)}
+					{failureRecovery && recovery && (
+						<ChatAlert className="mb-2 flex-wrap items-center">
+							<span className="min-w-0 flex-1">
+								{t(TURN_FAILURE_REASON_COPY[failureRecovery.reason])}
+							</span>
+							<div className="ml-auto flex flex-wrap justify-end gap-1">
+								{failureRecovery.recoveries.includes("sign_in") &&
+									recovery.signIn && (
+										<Button
+											type="button"
+											size="xs"
+											variant="outline"
+											onClick={recovery.signIn}
+										>
+											{t("agents.chat.recovery.signIn")}
+										</Button>
+									)}
+								{recovery.switchAccount ? (
+									<Button
+										type="button"
+										size="xs"
+										variant="outline"
+										onClick={recovery.switchAccount.run}
+									>
+										{t("agents.chat.recovery.switchTo", {
+											name: recovery.switchAccount.targetName,
+										})}
+									</Button>
+								) : (
+									<Button
+										type="button"
+										size="xs"
+										variant="outline"
+										onClick={recovery.chooseAccount ?? recovery.manageAccounts}
+									>
+										{t(recovery.chooseAccount ? "agents.chat.recovery.chooseAccount" : "agents.chat.recovery.manageAccounts")}
+									</Button>
+								)}
+								<IconButton
+									title={t("common.close")}
+									showTooltip={false}
+									className="-m-1 shrink-0 text-destructive hover:text-destructive"
+									onClick={() => setDismissedFailureItemId(failureRecovery.itemId)}
+								>
+									<X aria-hidden="true" />
+								</IconButton>
+							</div>
+						</ChatAlert>
+					)}
+					{session.actionError && (
+						<ChatAlert className="mb-2 flex-wrap items-center">
+							<ActionErrorText raw={session.actionError} />
+							{!session.retryTurnAvailable && (
+								<IconButton
+									title={t("common.close")}
+									showTooltip={false}
+									className="-m-1 ml-auto shrink-0 text-destructive hover:text-destructive"
+									onClick={() => session.dismissActionError()}
+								>
+									<X aria-hidden="true" />
+								</IconButton>
+							)}
+							{session.retryTurnAvailable && (
+								<div className="ml-auto flex w-full flex-wrap justify-end gap-1 @lg/chat:w-auto">
+									<Button
+										type="button"
+										size="xs"
+										variant="outline"
+										onClick={() => void session.retryTurn().catch(() => {})}
+									>
+										{t("agents.chat.retrySend")}
+									</Button>
+									<Button
+										type="button"
+										size="xs"
+										variant="outline"
+										onClick={() => {
+											if (!mayEditDraft()) return;
+											void session
+												.editRetryableTurn((restored) => {
+													setDraft((current) =>
+														current ? `${restored}\n${current}` : restored,
+													);
+												})
+												.catch(() => {});
+										}}
+									>
+										{t("agents.chat.editUncertainSend")}
+									</Button>
+								</div>
+							)}
+						</ChatAlert>
+					)}
+				</>
+			}
+			header={
+				<>
 					{queueRows.length > 0 && (
 						<div className="flex flex-col gap-1 border-b border-glass-hairline px-1 pt-0.5 pb-1.5">
 							{queueRows.map((input) => (
@@ -609,102 +588,79 @@ export function ChatComposer({
 							))}
 						</div>
 					)}
-					{/* The grid mirror owns intrinsic height without a geometry read;
-					    the sentinel preserves an empty trailing line. */}
-					<div className="grid min-w-0">
-						<div
-							aria-hidden="true"
-							className="invisible col-start-1 row-start-1 max-h-40 min-h-7 overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words px-1 py-1 text-[length:inherit]"
+				</>
+			}
+			input={{
+				ref: inputRef,
+				value: draft,
+				onValueChange: (value) => {
+					beginInputLatencySample();
+					setDraft(value);
+				},
+				...attachmentInput,
+				disabled: inputDisabled,
+			}}
+			controls={
+				<>
+					{provider && !replacementInFlight && (
+						<AgentLaunchSelectionControls
+							provider={provider}
+							launch={runtimeLaunch}
+							presentation={launchControlsPresentation}
+							observedModel={historyFacts.model}
+							catalog={historyFacts.catalog}
+							catalogSource={catalogSource}
+							busy={
+								disabled || draftMoving ||
+								replacementInFlight ||
+								submissionInFlight ||
+								session.sending ||
+								Boolean(session.activeTurn)
+							}
+						/>
+					)}
+					{replacementInFlight && launch && (
+						<span
+							className={`${shimmer ? "chat-shimmer " : ""}min-w-0 truncate pl-1 text-[0.85em]`}
 						>
-							{`${draft}\u200b`}
-						</div>
-						<Textarea
-							ref={inputRef}
-							rows={1}
-							value={draft}
-							onChange={(event) => {
-								beginInputLatencySample();
-								noteUserInput();
-								setDraft(event.target.value);
-							}}
-							onKeyDown={onComposerKeyDown}
-							{...attachmentInput}
-							placeholder={t("agents.chat.composerPlaceholder")}
-							aria-label={t("agents.chat.composerLabel")}
-							className="col-start-1 row-start-1 h-full max-h-40 min-h-7 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1 text-[length:inherit] shadow-none focus-visible:ring-0 dark:bg-transparent dark:disabled:bg-transparent"
-							disabled={inputDisabled}
-						/>
-					</div>
-					{/* Wrap instead of truncating: in a narrow pane three pills
-					    squeezed onto one line all cut mid-word ("Reasoning
-					    effo…"), which read as broken UI (user report
-					    2026-08-31). */}
-					<div className="flex min-w-0 flex-wrap items-center gap-0.5">
-						{provider && !replacementInFlight && (
-							<AgentLaunchSelectionControls
-								provider={provider}
-								launch={runtimeLaunch}
-								presentation={launchControlsPresentation}
-								observedModel={historyFacts.model}
-								catalog={historyFacts.catalog}
-								catalogSource={catalogSource}
-								busy={
-									disabled || draftMoving ||
-									replacementInFlight ||
-									submissionInFlight ||
-									session.sending ||
-									Boolean(session.activeTurn)
-								}
-							/>
-						)}
-						{replacementInFlight && launch && (
-							<span
-								className={`${shimmer ? "chat-shimmer " : ""}min-w-0 truncate pl-1 text-[0.85em]`}
-							>
-								{t("agents.chat.switching")}
-							</span>
-						)}
-						<AgentSlackShare
-							key={`${session.draftIdentity.backendProfileId}:${session.draftIdentity.agentId}:${session.draftIdentity.interactionSessionId}`}
-							identity={session.draftIdentity}
-							disabled={disabled || draftMoving || replacementInFlight || session.phase !== "ready"}
-						/>
-						<div className="ml-auto shrink-0 pl-2">
-							{session.activeTurn ? (
-								<Button
-									type="button"
-									size="icon-sm"
-									variant="outline"
-									className="rounded-full"
-									title={t("agents.chat.interrupt")}
-									disabled={disabled || session.interrupting}
-									onClick={() => void session.interrupt().catch(() => {})}
-								>
-									<Square aria-hidden="true" className="fill-current" />
-								</Button>
-							) : (
-								<Button
-									type="submit"
-									size="icon-sm"
-									className="rounded-full"
-									title={t("agents.chat.send")}
-									disabled={
-										disabled || draftMoving ||
-										replacementInFlight ||
-										submissionInFlight ||
-										(!draft.trim() && attachments.length === 0) ||
-										session.sending ||
-										session.retryTurnAvailable ||
-										session.phase !== "ready"
-									}
-								>
-									<ArrowUp aria-hidden="true" />
-								</Button>
-							)}
-						</div>
-					</div>
-				</div>
-			</div>
-		</form>
+							{t("agents.chat.switching")}
+						</span>
+					)}
+					<AgentSlackShare
+						key={`${session.draftIdentity.backendProfileId}:${session.draftIdentity.agentId}:${session.draftIdentity.interactionSessionId}`}
+						identity={session.draftIdentity}
+						disabled={disabled || draftMoving || replacementInFlight || session.phase !== "ready"}
+					/>
+				</>
+			}
+			action={
+				session.activeTurn ? (
+					<Button
+						type="button"
+						size="icon-sm"
+						variant="outline"
+						className="rounded-full"
+						title={t("agents.chat.interrupt")}
+						disabled={disabled || session.interrupting}
+						onClick={() => void session.interrupt().catch(() => {})}
+					>
+						<Square aria-hidden="true" className="fill-current" />
+					</Button>
+				) : (
+					<ChatComposerSendButton
+						disabled={
+							disabled ||
+							draftMoving ||
+							replacementInFlight ||
+							submissionInFlight ||
+							(!draft.trim() && attachments.length === 0) ||
+							session.sending ||
+							session.retryTurnAvailable ||
+							session.phase !== "ready"
+						}
+					/>
+				)
+			}
+		/>
 	);
 }

@@ -3,11 +3,13 @@ import { type ReactNode, useEffect, useState } from "react";
 import { ChatMarkdown } from "@/components/agents/chat/ChatMarkdown";
 import { NativeAgentChatView } from "@/components/agents/NativeAgentChatView";
 import { useNativeAgentResponseState } from "@/components/agents/useAgentDisplayState";
+import { useNativeAgentChatState } from "@/components/agents/useNativeAgentChatState";
 import { useRuntimeOwnedValue } from "@/components/agents/useRuntimeOwnedValue";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
+import { nativeAgentChatIdle } from "@/lib/agents/chat/nativeAgentChat";
 import { nativeFinalResponse } from "@/lib/agents/nativeFinalResponse";
 import { t } from "@/lib/i18n";
 import { readProviderConversationTranscript } from "@/lib/ipc/conversations";
@@ -35,6 +37,11 @@ export function NativeAgentResponseView({
 	const provider = source.kind === "local" ? source.provider : undefined;
 	const conversationId =
 		source.kind === "local" ? source.conversationId : undefined;
+	const binding = agent.runtimeBinding;
+	const conversationEpoch =
+		binding?.runtime === "hmux_managed_v1"
+			? binding.conversationIdentity?.terminalEpoch
+			: undefined;
 	const count = runtime?.turnCompletedCount;
 	const ownerKey = JSON.stringify([
 		agentRuntimePresentationOwnerKey(agent),
@@ -46,15 +53,35 @@ export function NativeAgentResponseView({
 	const [response, setResponse] = useRuntimeOwnedValue<string | null>(ownerKey);
 	const [revealed, setRevealed] = useRuntimeOwnedValue<string>(ownerKey);
 	const [view, setView] = useState<NativeAgentView>("terminal");
-	const [draft, setDraft] = useState("");
-	const conversationAvailable = Boolean(
+	// The conversation's runtime state is owned here, keyed to the Agent's
+	// recorded conversation rather than the live runtime projection, so a
+	// momentary drop of the projection does not forget a sent prompt.
+	const chat = useNativeAgentChatState(
+		JSON.stringify([
+			agentRuntimePresentationOwnerKey(agent),
+			conversationId,
+			conversationEpoch,
+		]),
+		nativeAgentChatIdle({ runtime, state }),
+	);
+	// The toggle's row is reserved whenever this pane can offer the
+	// conversation at all, judged from what is known at mount (Pro, a local
+	// Claude/Codex pane) rather than from the runtime binding, which a freshly
+	// launched Agent records only after its terminal mounted. So the toggle
+	// never covers terminal cells, and neither the binding arriving, a
+	// transient runtime drop nor a new conversation resizes the terminal.
+	const conversationOffered = Boolean(
 		mode === "pro" &&
-			!disabled &&
+			(source.kind === "local" || source.kind === "identity_unavailable") &&
+			binding?.runtime !== "hmux_standalone_v1",
+	);
+	const conversationAvailable = Boolean(
+		conversationOffered &&
 			source.kind === "local" &&
+			binding?.runtime === "hmux_managed_v1" &&
+			!disabled &&
 			runtime?.lifecycle === "running" &&
-			agent.runtimeBinding?.runtime === "hmux_managed_v1" &&
-			agent.runtimeBinding?.conversationIdentity?.terminalEpoch ===
-				runtime.terminalEpoch,
+			conversationEpoch === runtime.terminalEpoch,
 	);
 	const conversation =
 		conversationAvailable &&
@@ -107,92 +134,100 @@ export function NativeAgentResponseView({
 			revealed !== state &&
 			(state === "working" || (completed && response !== null)),
 	);
+	// An explicit request for the terminal shows the terminal itself, not the
+	// final-response overlay that would otherwise cover it.
+	const showView = (next: NativeAgentView) => {
+		setView(next);
+		if (next === "terminal") setRevealed(state);
+	};
 	const covered = responseCovered || conversation !== undefined;
 	return (
-		<div className="relative h-full min-h-0">
-			<div
-				className="h-full"
-				inert={covered}
-				aria-hidden={covered || undefined}
-				style={covered ? { visibility: "hidden" } : undefined}
-			>
-				{children}
-			</div>
-			{conversation && (
-				<NativeAgentChatView
-					agent={agent}
-					source={conversation.source}
-					runtime={conversation.runtime}
-					state={state}
-					draft={draft}
-					onDraftChange={setDraft}
-					onContinueInTerminal={() => setView("terminal")}
-				/>
-			)}
-			{conversationAvailable && (
-				<div
-					role="group"
-					aria-label={t("agents.runtime.viewLabel")}
-					className="absolute top-2 right-2 z-20"
-				>
-					<Segmented
-						variant="pills"
-						size="sm"
-						iconOnly
-						className="bg-glass-chrome shadow-card backdrop-blur-xl"
-						value={conversation ? "conversation" : "terminal"}
-						onChange={setView}
-						options={[
-							{
-								value: "terminal",
-								label: t("common.terminal"),
-								icon: (
-									<SquareTerminal aria-hidden="true" className="size-3.5" />
-								),
-							},
-							{
-								value: "conversation",
-								label: t("agents.nativeChat.conversation"),
-								icon: (
-									<MessageSquareText aria-hidden="true" className="size-3.5" />
-								),
-							},
-						]}
-					/>
+		<div className="flex h-full min-h-0 flex-col">
+			{conversationOffered && (
+				<div className="flex h-8 shrink-0 items-center justify-end bg-surface-terminal px-2">
+					{conversationAvailable && (
+						<Segmented
+							variant="pills"
+							size="sm"
+							iconOnly
+							aria-label={t("agents.runtime.viewLabel")}
+							value={conversation ? "conversation" : "terminal"}
+							onChange={showView}
+							options={[
+								{
+									value: "terminal",
+									label: t("common.terminal"),
+									icon: (
+										<SquareTerminal aria-hidden="true" className="size-3.5" />
+									),
+								},
+								{
+									value: "conversation",
+									label: t("agents.nativeChat.conversation"),
+									icon: (
+										<MessageSquareText
+											aria-hidden="true"
+											className="size-3.5"
+										/>
+									),
+								},
+							]}
+						/>
+					)}
 				</div>
 			)}
-			{responseCovered && (
-				<section
-					className="absolute inset-0 flex min-h-0 flex-col bg-surface-terminal p-4 pt-10"
-					aria-label={t("settings.terminal.finalResponseOnly.title")}
+			<div className="relative min-h-0 flex-1">
+				<div
+					className="h-full"
+					inert={covered}
+					aria-hidden={covered || undefined}
+					style={covered ? { visibility: "hidden" } : undefined}
 				>
-					<div
-						role="region"
+					{children}
+				</div>
+				{conversation && (
+					<NativeAgentChatView
+						agent={agent}
+						source={conversation.source}
+						runtime={conversation.runtime}
+						state={state}
+						chat={chat}
+						onContinueInTerminal={() => showView("terminal")}
+					/>
+				)}
+				{responseCovered && (
+					<section
+						className="absolute inset-0 flex min-h-0 flex-col bg-surface-terminal p-4"
 						aria-label={t("settings.terminal.finalResponseOnly.title")}
-						className="min-h-0 flex-1 overflow-auto text-sm leading-relaxed"
 					>
-						{state === "working" ? (
-							<p role="status" className="text-muted-foreground">
-								{t("common.working")}
-							</p>
-						) : response === undefined ? (
-							<p role="status" className="text-muted-foreground">
-								{t("common.loading")}
-							</p>
-						) : (
-							<ChatMarkdown markdown={response ?? ""} />
-						)}
-					</div>
-					<Button
-						variant="outline"
-						size="sm"
-						className="mt-3 self-start"
-						onClick={() => setRevealed(state)}
-					>
-						{t("agents.finalResponse.continueInTerminal")}
-					</Button>
-				</section>
-			)}
+						<div
+							role="region"
+							aria-label={t("settings.terminal.finalResponseOnly.title")}
+							className="min-h-0 flex-1 overflow-auto text-sm leading-relaxed"
+						>
+							{state === "working" ? (
+								<p role="status" className="text-muted-foreground">
+									{t("common.working")}
+								</p>
+							) : response === undefined ? (
+								<p role="status" className="text-muted-foreground">
+									{t("common.loading")}
+								</p>
+							) : (
+								<ChatMarkdown markdown={response ?? ""} />
+							)}
+						</div>
+						<Button
+							variant="outline"
+							size="sm"
+							className="mt-3 self-start"
+							onClick={() => setRevealed(state)}
+						>
+							{t("agents.finalResponse.continueInTerminal")}
+						</Button>
+					</section>
+				)}
+			</div>
 		</div>
 	);
 }

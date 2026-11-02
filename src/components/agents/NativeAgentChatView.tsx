@@ -1,28 +1,23 @@
-import { ArrowUp } from "lucide-react";
-import {
-	type FormEvent,
-	type KeyboardEvent,
-	useEffect,
-	useId,
-	useMemo,
-	useState,
-} from "react";
+import { useEffect, useId, useMemo } from "react";
 import { TranscriptContents } from "@/components/agents/chat/AgentChatTimelineRows";
 import { ChatAlert } from "@/components/agents/chat/ChatAlert";
-import { useRuntimeOwnedValue } from "@/components/agents/useRuntimeOwnedValue";
+import {
+	ChatComposerSendButton,
+	ChatComposerShell,
+} from "@/components/agents/chat/ChatComposerShell";
+import { useAgentChatDraft } from "@/components/agents/chat/useAgentChatDraft";
+import type { NativeAgentChatState } from "@/components/agents/useNativeAgentChatState";
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import {
-	type NativeAgentChatPendingPrompt,
-	type NativeAgentChatSnapshot,
 	nativeAgentChatComposerReason,
 	nativeAgentChatComposerState,
+	nativeAgentChatDraftIdentity,
 	nativeAgentChatPage,
 	nativeAgentChatPendingSettled,
 	nativeAgentChatRefreshCursor,
+	nativeAgentInputFailure,
 	nativeAgentPromptBackendProfileId,
 	nativeTranscriptUserEntries,
 	presentNativeAgentInputError,
@@ -37,24 +32,24 @@ import type { NativeAgentTranscriptSource } from "../../../cli/lib/agent-transcr
 const noOlderHistory = async () => {};
 
 /** The conversation view of a native terminal Agent: the provider transcript
- * rendered with the shared chat rows, plus a composer on the Host's idle
- * prompt path. The terminal stays mounted underneath and owns everything the
- * transcript cannot show (approvals, slash commands, trust prompts). */
+ * rendered with the shared chat rows, plus the shared composer on the Host's
+ * idle prompt path. The terminal stays mounted underneath and owns
+ * everything the transcript cannot show (approvals, slash commands, trust
+ * prompts). The pane owns the runtime state (`chat`) and the draft lives in
+ * the shared chat draft store, so neither is lost when this view unmounts. */
 export function NativeAgentChatView({
 	agent,
 	source,
 	runtime,
 	state,
-	draft,
-	onDraftChange,
+	chat,
 	onContinueInTerminal,
 }: {
 	agent: Agent;
 	source: NativeAgentTranscriptSource;
 	runtime: HmuxAgentRuntimeState;
 	state: AgentDisplayState;
-	draft: string;
-	onDraftChange(draft: string): void;
+	chat: NativeAgentChatState;
 	onContinueInTerminal(): void;
 }) {
 	const { agentId, provider, conversationId } = source;
@@ -62,19 +57,20 @@ export function NativeAgentChatView({
 	const terminalEpoch = runtime.terminalEpoch;
 	const count = runtime.turnCompletedCount;
 	const working = state === "working";
-	const ownerKey = JSON.stringify([
-		agentRuntimePresentationOwnerKey(agent),
-		conversationId,
-		terminalEpoch,
-	]);
-	const [snapshot, setSnapshot] =
-		useRuntimeOwnedValue<NativeAgentChatSnapshot>(ownerKey);
-	const [readFailed, setReadFailed] = useRuntimeOwnedValue<boolean>(ownerKey);
-	const [pending, setPending] =
-		useRuntimeOwnedValue<NativeAgentChatPendingPrompt>(ownerKey);
-	const [sendError, setSendError] = useRuntimeOwnedValue<string>(ownerKey);
-	const [sendingOwner, setSendingOwner] = useState<string>();
-	const sending = sendingOwner === ownerKey;
+	const {
+		snapshot,
+		setSnapshot,
+		readFailed,
+		setReadFailed,
+		pending,
+		setPending,
+		sendError,
+		setSendError,
+		sending,
+		setSending,
+	} = chat;
+	const chatDraft = useAgentChatDraft(nativeAgentChatDraftIdentity(agent));
+	const draft = chatDraft.draft.text;
 	const cursor = nativeAgentChatRefreshCursor({
 		conversationId,
 		terminalEpoch,
@@ -84,13 +80,17 @@ export function NativeAgentChatView({
 
 	// The cursor is the refresh contract: it changes exactly when the inputs
 	// read below (conversation, terminal generation, Host count) change. A new
-	// presentation owner also re-reads, since its setters drop older writes.
+	// owner of the pane's state also re-reads, since its setters are new. The
+	// pane keeps the last read, so showing the view again at the same cursor
+	// reuses it.
+	const readCursor = snapshot?.cursor;
 	useEffect(() => {
+		if (readCursor === cursor) return;
 		let current = true;
 		void readProviderConversationTranscript(provider, conversationId).then(
 			(transcript) => {
 				if (!current) return;
-				setSnapshot({ transcript, turnCompletedCount: count });
+				setSnapshot({ transcript, turnCompletedCount: count, cursor });
 				setReadFailed(false);
 			},
 			() => {
@@ -100,7 +100,7 @@ export function NativeAgentChatView({
 		return () => {
 			current = false;
 		};
-	}, [ownerKey, cursor]);
+	}, [cursor, setSnapshot, setReadFailed]);
 
 	const livePending =
 		pending && !nativeAgentChatPendingSettled(pending, snapshot)
@@ -133,17 +133,26 @@ export function NativeAgentChatView({
 		runtime,
 		state,
 		sending,
-		pending: livePending !== undefined,
+		pending: livePending !== undefined && !livePending.released,
 	});
 	const reason = nativeAgentChatComposerReason(composer);
 	const error = sendError ? presentNativeAgentInputError(sendError) : undefined;
 
-	const submit = async (event?: FormEvent) => {
-		event?.preventDefault();
+	// Drafting is always open; only submission waits for an idle prompt. The
+	// draft is read-only for the short in-flight send so the text that clears
+	// on success is exactly the text that was written.
+	const submit = async () => {
 		const text = draft;
-		if (composer.kind !== "ready" || !text.trim()) return;
+		if (
+			composer.kind !== "ready" ||
+			chatDraft.moving ||
+			!chatDraft.mayEdit() ||
+			!text.trim()
+		) {
+			return;
+		}
 		setSendError(undefined);
-		setSendingOwner(ownerKey);
+		setSending(true);
 		try {
 			await sendNativeAgentPrompt(
 				{
@@ -161,34 +170,18 @@ export function NativeAgentChatView({
 					: null,
 				turnCompletedCountAtSend: count,
 			});
-			onDraftChange("");
+			chatDraft.setText((current) => (current === text ? "" : current));
 		} catch (cause) {
-			const code =
-				cause && typeof cause === "object" && "code" in cause
-					? String(cause.code)
-					: "agent_runtime_native_input_failed";
-			setSendError(code);
+			setSendError(nativeAgentInputFailure(cause));
 		} finally {
-			setSendingOwner((current) =>
-				current === ownerKey ? undefined : current,
-			);
-		}
-	};
-	const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-		if (
-			event.key === "Enter" &&
-			!event.shiftKey &&
-			!event.nativeEvent.isComposing
-		) {
-			event.preventDefault();
-			void submit();
+			setSending(undefined);
 		}
 	};
 
 	return (
 		<section
 			aria-label={t("agents.nativeChat.conversation")}
-			className="@container/chat absolute inset-0 flex min-h-0 flex-col bg-surface-terminal pt-9 text-sm leading-relaxed"
+			className="@container/chat absolute inset-0 flex min-h-0 flex-col bg-surface-terminal text-sm leading-relaxed"
 		>
 			{page === undefined && !readFailed ? (
 				<PanelStatus role="status">{t("common.loading")}</PanelStatus>
@@ -203,84 +196,74 @@ export function NativeAgentChatView({
 					{t("agents.nativeChat.transcriptUnavailable")}
 				</PanelStatus>
 			)}
-			<form
-				className="px-2 pt-0.5 pb-2 @2xl/chat:px-3 @2xl/chat:pb-3"
-				onSubmit={(event) => void submit(event)}
-			>
-				<div className="mx-auto flex max-w-3xl flex-col gap-1.5">
-					{page && readFailed && (
-						<ChatAlert className="items-center">
-							<span className="min-w-0 flex-1">
-								{t("agents.nativeChat.transcriptUnavailable")}
-							</span>
-						</ChatAlert>
-					)}
-					{error && (
-						<ChatAlert className="items-center" role="alert">
-							<span data-selectable className="min-w-0 flex-1">
-								{error.message}
-								{error.detail && (
-									<span className="ml-1 font-mono text-[0.85em] opacity-70">
-										{error.detail}
-									</span>
-								)}
-							</span>
-						</ChatAlert>
-					)}
-					<div className="flex flex-col gap-0.5 rounded-xl border border-glass-hairline bg-glass-chrome px-2 py-1.5 shadow-card backdrop-blur-xl transition-shadow duration-150 focus-within:shadow-menu @2xl/chat:rounded-2xl @2xl/chat:px-2.5">
-						<Textarea
-							rows={1}
-							value={draft}
-							onChange={(event) => onDraftChange(event.target.value)}
-							onKeyDown={onKeyDown}
-							placeholder={t("agents.chat.composerPlaceholder")}
-							aria-label={t("agents.chat.composerLabel")}
-							aria-describedby={reason ? reasonId : undefined}
-							className="max-h-40 min-h-7 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1 text-[length:inherit] shadow-none focus-visible:ring-0 dark:bg-transparent dark:disabled:bg-transparent"
-							disabled={composer.kind !== "ready"}
-						/>
-						<div className="flex min-w-0 flex-wrap items-center gap-1">
-							<Button
-								type="button"
-								variant="ghost"
-								size="xs"
-								onClick={onContinueInTerminal}
-							>
-								{t("agents.finalResponse.continueInTerminal")}
-							</Button>
-							{reason && (
-								<span
-									id={reasonId}
-									role="status"
-									className={`min-w-0 flex-1 truncate text-[0.85em] text-muted-foreground ${
-										composer.kind === "disabled" &&
-										(
-											composer.reason === "working" ||
-												composer.reason === "sending"
-										)
-											? "chat-shimmer"
-											: ""
-									}`}
-								>
-									{reason}
+			<ChatComposerShell
+				onSubmit={() => void submit()}
+				notices={
+					<>
+						{page && readFailed && (
+							<ChatAlert className="mb-2 items-center">
+								<span className="min-w-0 flex-1">
+									{t("agents.nativeChat.transcriptUnavailable")}
 								</span>
-							)}
-							<div className="ml-auto shrink-0 pl-2">
-								<Button
-									type="submit"
-									size="icon-sm"
-									className="rounded-full"
-									title={t("agents.chat.send")}
-									aria-label={t("agents.chat.send")}
-									disabled={composer.kind !== "ready" || !draft.trim()}
-								>
-									<ArrowUp aria-hidden="true" />
-								</Button>
-							</div>
-						</div>
-					</div>
-				</div>
-			</form>
+							</ChatAlert>
+						)}
+						{error && (
+							<ChatAlert className="mb-2 items-center" role="alert">
+								<span data-selectable className="min-w-0 flex-1">
+									{error.message}
+									{error.detail && (
+										<span className="ml-1 font-mono text-[0.85em] opacity-70">
+											{error.detail}
+										</span>
+									)}
+								</span>
+							</ChatAlert>
+						)}
+					</>
+				}
+				input={{
+					value: draft,
+					onValueChange: (value) => chatDraft.setText(value),
+					readOnly: sending || chatDraft.moving,
+					"aria-describedby": reason ? reasonId : undefined,
+				}}
+				controls={
+					<>
+						<Button
+							type="button"
+							variant="ghost"
+							size="xs"
+							onClick={onContinueInTerminal}
+						>
+							{t("agents.finalResponse.continueInTerminal")}
+						</Button>
+						{reason && (
+							<span
+								id={reasonId}
+								role="status"
+								className={`min-w-0 flex-1 truncate pl-1 text-[0.85em] text-muted-foreground ${
+									composer.kind === "disabled" &&
+									(
+										composer.reason === "working" ||
+											composer.reason === "sending"
+									)
+										? "chat-shimmer"
+										: ""
+								}`}
+							>
+								{reason}
+							</span>
+						)}
+					</>
+				}
+				action={
+					<ChatComposerSendButton
+						disabled={
+							composer.kind !== "ready" || chatDraft.moving || !draft.trim()
+						}
+					/>
+				}
+			/>
 		</section>
 	);
 }

@@ -1,17 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { projectAgentChatTranscript } from "@/lib/agents/chat/agentChatProjection";
 import {
+	NATIVE_AGENT_PENDING_IDLE_GRACE_MS,
 	type NativeAgentChatPendingPrompt,
 	nativeAgentChatComposerReason,
 	nativeAgentChatComposerState,
+	nativeAgentChatDraftIdentity,
+	nativeAgentChatIdle,
 	nativeAgentChatPage,
+	nativeAgentChatPendingEchoed,
+	nativeAgentChatPendingIdleDeadline,
 	nativeAgentChatPendingSettled,
 	nativeAgentChatRefreshCursor,
+	nativeAgentInputFailure,
 	nativeAgentPromptBackendProfileId,
 	nativeTranscriptUserEntries,
 	presentNativeAgentInputError,
 } from "@/lib/agents/chat/nativeAgentChat";
 import { t } from "@/lib/i18n";
+import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import type { Agent } from "@/types";
 import type { ProviderConversationTranscriptV1 } from "../../../../cli/lib/agent-transcript.mjs";
 
@@ -141,6 +148,67 @@ describe("native conversation timeline", () => {
 		});
 	});
 
+	it("keeps a released prompt as a sent message, open again while the agent works", () => {
+		const released = pending({ released: true });
+		const idle = blocks(
+			nativeAgentChatPage({
+				source,
+				transcript: conversation,
+				terminalEpoch: "epoch-one",
+				working: false,
+				pending: released,
+			}),
+		);
+		expect(idle[idle.length - 1]).toMatchObject({
+			state: "completed",
+			messages: ["user:Third question"],
+		});
+		const working = blocks(
+			nativeAgentChatPage({
+				source,
+				transcript: conversation,
+				terminalEpoch: "epoch-one",
+				working: true,
+				pending: released,
+			}),
+		);
+		expect(working[working.length - 1]).toMatchObject({
+			state: "active",
+			messages: ["user:Third question"],
+		});
+	});
+
+	it("shows a prompt sent before any transcript loaded once when the transcript ends with it", () => {
+		const repeated = transcript([
+			{ role: "user", text: "continue" },
+			{ role: "agent", text: "Done." },
+		]);
+		const unread = pending({ text: "continue\n", userEntriesAtSend: null });
+		expect(nativeAgentChatPendingEchoed(unread, repeated)).toBe(true);
+		expect(nativeAgentChatPendingEchoed(unread, conversation)).toBe(false);
+		// A known send-time count never hides the row: the count settles it.
+		expect(
+			nativeAgentChatPendingEchoed(
+				pending({ text: "continue", userEntriesAtSend: 1 }),
+				repeated,
+			),
+		).toBe(false);
+		const page = nativeAgentChatPage({
+			source,
+			transcript: repeated,
+			terminalEpoch: "epoch-one",
+			working: false,
+			pending: unread,
+		});
+		expect(
+			page.rows.filter(
+				(row) =>
+					row.item.body.type === "message" &&
+					row.item.body.markdown.trim() === "continue",
+			),
+		).toHaveLength(1);
+	});
+
 	it("marks a bounded provider history and leaves leading agent text outside a turn", () => {
 		const page = nativeAgentChatPage({
 			source,
@@ -240,11 +308,67 @@ describe("native conversation refresh and pending prompt", () => {
 			),
 		).toBe(false);
 	});
+
+	it("never settles a prompt sent before any transcript loaded on matching text alone", () => {
+		// "continue" after an earlier "continue": the older entry must not
+		// settle the new prompt while the Host is still taking it up.
+		const unread = pending({
+			text: "continue",
+			userEntriesAtSend: null,
+			turnCompletedCountAtSend: "2",
+		});
+		const repeated = transcript([
+			...conversation.entries,
+			{ role: "user", text: "continue" },
+			{ role: "agent", text: "Done." },
+		]);
+		expect(
+			nativeAgentChatPendingSettled(unread, {
+				transcript: repeated,
+				turnCompletedCount: "2",
+			}),
+		).toBe(false);
+		expect(
+			nativeAgentChatPendingSettled(unread, {
+				transcript: repeated,
+				turnCompletedCount: "3",
+			}),
+		).toBe(true);
+	});
+
+	it("releases a prompt nothing records once the runtime stayed idle through the grace period", () => {
+		expect(NATIVE_AGENT_PENDING_IDLE_GRACE_MS).toBeGreaterThanOrEqual(10_000);
+		const sent = pending({ sentAtMs: 10_000 });
+		// Not idle: no deadline, the prompt stays pending.
+		expect(nativeAgentChatPendingIdleDeadline(sent, undefined)).toBeUndefined();
+		// Idle since before the send (a TUI-only input never starts work).
+		expect(nativeAgentChatPendingIdleDeadline(sent, 4_000)).toBe(
+			10_000 + NATIVE_AGENT_PENDING_IDLE_GRACE_MS,
+		);
+		// Idle again after the work the prompt started.
+		expect(nativeAgentChatPendingIdleDeadline(sent, 25_000)).toBe(
+			25_000 + NATIVE_AGENT_PENDING_IDLE_GRACE_MS,
+		);
+		// Released once; no second deadline.
+		expect(
+			nativeAgentChatPendingIdleDeadline({ ...sent, released: true }, 4_000),
+		).toBeUndefined();
+	});
 });
 
 describe("native conversation composer", () => {
 	const idle = { lifecycle: "running", attention: "none" } as const;
 	it("is ready only at an idle prompt with no attention", () => {
+		expect(nativeAgentChatIdle({ runtime: idle, state: "waiting" })).toBe(true);
+		for (const [runtime, state] of [
+			[undefined, "waiting"],
+			[{ ...idle, lifecycle: "exited" }, "waiting"],
+			[{ ...idle, attention: "approval_required" }, "waiting"],
+			[idle, "working"],
+			[idle, "blocked"],
+		] as const) {
+			expect(nativeAgentChatIdle({ runtime, state })).toBe(false);
+		}
 		expect(
 			nativeAgentChatComposerState({
 				runtime: idle,
@@ -289,17 +413,86 @@ describe("native conversation composer", () => {
 		);
 	});
 
-	it("humanizes known refusals and keeps unknown tokens verbatim", () => {
-		expect(presentNativeAgentInputError("hmux_agent_prompt_refused")).toEqual({
+	it("humanizes known refusals, shows a carried message, and keeps bare unknown tokens verbatim", () => {
+		expect(
+			presentNativeAgentInputError({ code: "hmux_agent_prompt_refused" }),
+		).toEqual({
 			message: t("agents.nativeChat.error.refused"),
 			detail: "hmux_agent_prompt_refused",
 		});
-		expect(presentNativeAgentInputError("hmux_input_draft_pending")).toEqual({
+		expect(
+			presentNativeAgentInputError({
+				code: "hmux_input_draft_pending",
+				message: "Host text",
+			}),
+		).toEqual({
 			message: t("agents.nativeChat.error.terminalDraft"),
 			detail: "hmux_input_draft_pending",
 		});
-		expect(presentNativeAgentInputError("hmux_capability_missing")).toEqual({
-			message: "hmux_capability_missing",
+		expect(
+			presentNativeAgentInputError({
+				code: "agent_runtime_native_request_invalid",
+			}),
+		).toEqual({
+			message: t("agents.nativeChat.error.requestInvalid"),
+			detail: "agent_runtime_native_request_invalid",
+		});
+		for (const code of [
+			"agent_runtime_native_input_failed",
+			"hmux_capability_missing",
+			"backend_transport_unavailable",
+		]) {
+			expect(
+				presentNativeAgentInputError({ code, message: "Carried sentence." }),
+			).toEqual({ message: "Carried sentence.", detail: code });
+		}
+		expect(
+			presentNativeAgentInputError({ code: "hmux_capability_missing" }),
+		).toEqual({ message: "hmux_capability_missing" });
+		expect(
+			presentNativeAgentInputError({
+				code: "hmux_capability_missing",
+				message: "hmux_capability_missing",
+			}),
+		).toEqual({ message: "hmux_capability_missing" });
+	});
+
+	it("keeps a failure's token and its carried message", () => {
+		expect(
+			nativeAgentInputFailure(
+				new DureBackendRequestError("hmux_capability_missing", "Translated.", {
+					kind: "transport",
+				}),
+			),
+		).toEqual({ code: "hmux_capability_missing", message: "Translated." });
+		expect(
+			nativeAgentInputFailure({ code: "hmux_agent_prompt_refused" }),
+		).toEqual({ code: "hmux_agent_prompt_refused" });
+		expect(nativeAgentInputFailure(new Error(""))).toEqual({
+			code: "agent_runtime_native_input_failed",
+		});
+		expect(nativeAgentInputFailure("boom")).toEqual({
+			code: "agent_runtime_native_input_failed",
+		});
+	});
+
+	it("keys the draft to the pane's Agent and control plane, not one conversation", () => {
+		const agent = {
+			id: "agent-one",
+			runtimeBinding: {
+				schemaVersion: 1,
+				runtime: "hmux_managed_v1",
+				source: "local",
+				hostId: "local",
+				sessionId: "session-one",
+				workspaceId: "workspace-one",
+				backendProfileId: "qa-profile",
+			},
+		} as Agent;
+		expect(nativeAgentChatDraftIdentity(agent)).toEqual({
+			agentId: "agent-one",
+			backendProfileId: "qa-profile",
+			interactionSessionId: "native:agent-one",
 		});
 	});
 

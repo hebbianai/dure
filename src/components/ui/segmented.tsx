@@ -51,6 +51,7 @@ export function Segmented<T extends string>({
   variant = "outline",
   size = "default",
   iconOnly = false,
+  "aria-label": ariaLabel,
 }: {
   value: T;
   onChange: (v: T) => void;
@@ -67,13 +68,15 @@ export function Segmented<T extends string>({
   /** Collapse icon-bearing pill options to square buttons while preserving
    * their labels for assistive technology. */
   iconOnly?: boolean;
+  /** Names the radiogroup itself for assistive technology. */
+  "aria-label"?: string;
 }) {
   if (variant === "chips") {
     return (
       // flex-wrap, not inline-grid: each chip hugs its own icon+label and the
       // set breaks into rows. Buttons remain direct children of the track so
       // handleArrowKey's sibling lookup still lands on the right chip.
-      <div role="radiogroup" className={cn("flex flex-wrap items-center gap-2", className)}>
+      <div role="radiogroup" aria-label={ariaLabel} className={cn("flex flex-wrap items-center gap-2", className)}>
         {options.map((o, i) => (
           <button
             type="button"
@@ -117,6 +120,7 @@ export function Segmented<T extends string>({
       // 균등 칸을 쓴다.
       <div
         role="radiogroup"
+        aria-label={ariaLabel}
         className={cn(
           // The track holds the resting tone and only the selected pill rises
           // out of it — shadcn's own rule (`TabsList` is `text-muted-foreground`
@@ -205,6 +209,7 @@ export function Segmented<T extends string>({
     // 띄는 차이는 아니지만 "완전히 같다"는 아니다.
     <div
       role="radiogroup"
+      aria-label={ariaLabel}
       className={cn("inline-grid auto-cols-fr grid-flow-col items-center", className)}
     >
       {options.map((o, i) => (
