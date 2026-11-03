@@ -60,9 +60,12 @@ export const listConversations = (
 export const providerConversationMetadata = (
 	targets: readonly ProviderConversationMetadataTarget[],
 ) =>
-	invoke<Array<ProviderConversationMetadata | null>>("provider_conversation_metadata", {
-		targets,
-	});
+	invoke<Array<ProviderConversationMetadata | null>>(
+		"provider_conversation_metadata",
+		{
+			targets,
+		},
+	);
 
 /** The same exact lookups on one registered SSH host. Only the reviewed
  * relative credential root crosses the SSH boundary; results stay positional. */
@@ -86,6 +89,42 @@ export const readProviderConversationTranscript = (
 			conversationId,
 		},
 	);
+
+export type BackgroundWorkKind = "subagent" | "workflow" | "shell" | "monitor";
+
+/** One running piece of an agent's background work, as the desktop read it
+ * from the provider's records behind the Host's facts. */
+export interface BackgroundWorkItem {
+	id: string;
+	kind: BackgroundWorkKind;
+	/** The model-written description; never a command. */
+	label?: string | null;
+	startedUnixMs: number;
+	steps?: { done: number; total: number } | null;
+	tokens?: number | null;
+}
+
+export interface BackgroundWorkList {
+	/** Newest first, at most 64. */
+	items: BackgroundWorkItem[];
+	/** Every running item, including those cut from `items`. */
+	counts: {
+		subagents: number;
+		workflows: number;
+		shells: number;
+		monitors: number;
+	};
+	truncated: boolean;
+}
+
+export const readAgentBackgroundWork = (
+	workspaceId: string,
+	sessionId: string,
+) =>
+	invoke<BackgroundWorkList>("read_agent_background_work", {
+		workspaceId,
+		sessionId,
+	});
 
 export const sshListConversations = (opts: {
 	id?: string;

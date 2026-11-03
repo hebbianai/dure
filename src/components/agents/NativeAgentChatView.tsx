@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo } from "react";
+import { NativeAgentBackgroundWork } from "@/components/agents/NativeAgentBackgroundWork";
 import { TranscriptContents } from "@/components/agents/chat/AgentChatTimelineRows";
 import { ChatAlert } from "@/components/agents/chat/ChatAlert";
 import {
@@ -53,6 +54,13 @@ export function NativeAgentChatView({
 	onContinueInTerminal(): void;
 }) {
 	const { agentId, provider, conversationId } = source;
+	// The desktop reads background work for its own managed sessions; for a
+	// provider without readable records it answers an empty list.
+	const binding = agent.runtimeBinding;
+	const backgroundWorkTarget =
+		binding?.runtime === "hmux_managed_v1" && binding.source === "local"
+			? binding
+			: null;
 	const reasonId = useId();
 	const terminalEpoch = runtime.terminalEpoch;
 	const count = runtime.turnCompletedCount;
@@ -196,6 +204,15 @@ export function NativeAgentChatView({
 					{t("agents.nativeChat.transcriptUnavailable")}
 				</PanelStatus>
 			)}
+			{backgroundWorkTarget ? (
+				<NativeAgentBackgroundWork
+					workspaceId={backgroundWorkTarget.workspaceId}
+					sessionId={backgroundWorkTarget.sessionId}
+					active={
+						runtime.lifecycle === "running" && runtime.activity === "working"
+					}
+				/>
+			) : null}
 			<ChatComposerShell
 				onSubmit={() => void submit()}
 				notices={

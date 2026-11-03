@@ -37,6 +37,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/ipc/conversations", () => ({
 	readProviderConversationTranscript: (...args: unknown[]) =>
 		mocks.read(...args),
+	readAgentBackgroundWork: async () => ({
+		items: [],
+		counts: { subagents: 0, workflows: 0, shells: 0, monitors: 0 },
+		truncated: false,
+	}),
 }));
 vi.mock("@/lib/ipc/dureAgentNativeInput", () => ({
 	sendNativeAgentPrompt: (...args: unknown[]) => mocks.send(...args),
