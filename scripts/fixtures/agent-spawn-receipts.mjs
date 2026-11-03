@@ -304,3 +304,15 @@ export function trustGatedNativeReceipt() {
   };
   return value;
 }
+
+// A Codex Run whose account's login is missing or expired: the launch command
+// carried the prompt, Codex stopped at its sign-in screen, and the receipt
+// says the delivery is uncertain instead of done.
+export function loginGatedNativeReceipt() {
+  const value = trustGatedNativeReceipt();
+  value.completed[1].evidence.startup_gate.kind = "login";
+  value.recovery.error_code = "agent_spawn_prompt_behind_login";
+  value.recovery.error_detail =
+    "Codex is showing its sign-in screen because the selected account's login is missing or expired";
+  return value;
+}

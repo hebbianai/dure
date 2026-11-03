@@ -684,14 +684,18 @@ impl AgentSpawnStageInputsV1 {
 }
 
 /// A first-run prompt the provider shows before it reads any input, including
-/// a prompt handed to its launch command. The provider runs no hook until the
-/// person answers it, so the Hub predicts the gate from provider state it can
-/// read before launch rather than inferring it from the terminal.
+/// a prompt handed to its launch command. The Hub learns of a gate from
+/// provider state it can read before launch, or from the provider's own
+/// startup report on the Host; it never infers one from the terminal.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSpawnStartupGateKindV1 {
     /// Claude Code asks whether the person trusts the workspace folder.
     WorkspaceTrust,
+    /// The provider asks the person to sign in: Codex found no usable login
+    /// for the selected account, missing or expired, and shows its sign-in
+    /// screen before it starts a session.
+    Login,
 }
 
 /// A first-run prompt the launched provider is stopped at. Behind it the
@@ -2578,6 +2582,10 @@ mod tests {
             serde_json::json!({ "kind": "workspace_trust", "launch_prompt_carried": true })
         );
         assert!(wire.get("initial_prompt_accepted").is_none());
+        assert_eq!(
+            serde_json::to_value(AgentSpawnStartupGateKindV1::Login).unwrap(),
+            serde_json::json!("login")
+        );
 
         let mut accepted_behind_gate = completed_events(&plan);
         let AgentSpawnJournalEventBodyV1::StageCommitted {

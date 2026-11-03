@@ -102,6 +102,7 @@ impl Lifecycle {
     ) -> Result<(), CodexConnectionDriverError> {
         let Some(
             method @ ("initialize"
+            | "account/read"
             | "thread/start"
             | "thread/resume"
             | "thread/goal/get"
@@ -437,6 +438,9 @@ impl Lifecycle {
                     false,
                 )));
             }
+            if pending.method == "account/read" {
+                return Ok(self.sign_in_report(message, fence));
+            }
             if pending.method == "thread/goal/get" {
                 if !self.is_selected_connection(connection)
                     || pending.thread != self.thread
@@ -585,6 +589,25 @@ impl Lifecycle {
             _ => None,
         };
         Ok(report)
+    }
+
+    /// Codex reads the account before it starts a session and shows its
+    /// sign-in screen when the app-server has no usable login, a missing one
+    /// and an expired one alike (observed on Codex 0.166.0). Codex then waits
+    /// for a person and reads no input, including a prompt its launch command
+    /// carried. Only an explicit signed-out reading before any conversation
+    /// exists claims that; the first turn after sign-in clears the attention.
+    fn sign_in_report(&self, message: &Value, fence: &SessionFence) -> Option<AgentStateReport> {
+        let signed_out = self.thread.is_none()
+            && message.pointer("/result/account") == Some(&Value::Null)
+            && message
+                .pointer("/result/requiresOpenaiAuth")
+                .and_then(Value::as_bool)
+                == Some(true);
+        signed_out.then(|| AgentStateReport {
+            attention: AgentRuntimeAttention::InputRequired,
+            ..self.report(fence, AgentRuntimeActivity::Waiting, None, false)
+        })
     }
 
     fn reconciled_report(

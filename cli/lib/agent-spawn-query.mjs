@@ -44,8 +44,9 @@ const STATES = [
 ];
 const PERMISSION_MODES = ["default", "auto_edit", "skip_permissions"];
 // First-run prompts a provider stops at before it reads anything, including a
-// prompt handed to its launch command.
-const STARTUP_GATES = ["workspace_trust"];
+// prompt handed to its launch command: Claude's folder-trust prompt and
+// Codex's sign-in screen.
+const STARTUP_GATES = ["workspace_trust", "login"];
 const PERMISSION_OVERRIDES = [
   "require_approvals",
   "auto_edit",

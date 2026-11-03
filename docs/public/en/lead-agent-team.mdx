@@ -62,7 +62,7 @@ dure read work-118 -n 60        # a worker's screen, by name once a client regis
 dure runs list --json           # durable Run records, including headless workers
 ```
 
-A worker whose ACTIVITY is `input_required` right after it started is waiting on Claude's folder-trust prompt, and its `dure run` receipt ends `prompt_delivery_uncertain` with a `startup_gate`. The brief is queued inside Claude and must not be sent again: trust the folder as described above, or answer the prompt in that worker's pane, and the worker continues by itself. The lead reports this instead of assuming the worker started.
+A worker whose ACTIVITY is `input_required` right after it started is waiting on a first-run prompt: Claude's folder-trust prompt, or Codex's sign-in screen when the worker's Codex account is no longer signed in. Its `dure run` receipt ends `prompt_delivery_uncertain` with a `startup_gate` (`workspace_trust` or `login`). The brief is queued inside the agent and must not be sent again: trust the folder as described above, or answer the prompt or sign in in that worker's pane, and the worker continues by itself. The lead reports this instead of assuming the worker started.
 
 ## Read the report
 

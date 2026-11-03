@@ -551,7 +551,13 @@ impl ManagedLifecycle {
             }
             return Ok(());
         };
-        self.publish(evidence, report).await.map(|_| ())
+        // The sign-in screen is the person's to answer. A Host that cannot
+        // record it must not take Codex, and that screen, down with the driver.
+        let sign_in = payload.pointer("/result/requiresOpenaiAuth").is_some();
+        match self.publish(evidence, report).await {
+            Err(_) if sign_in => Ok(()),
+            published => published.map(|_| ()),
+        }
     }
 
     async fn publish(

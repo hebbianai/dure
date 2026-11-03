@@ -127,7 +127,9 @@ launch command carried. The receipt ends `prompt_delivery_uncertain` with
 `agent_spawn_prompt_behind_workspace_trust` and `dure ls` shows
 `input_required`. Answer the prompt in the session; a trusted folder submits
 the carried prompt itself, so never send it again. Dure never answers trust
-prompts.
+prompts. A Codex Run whose account's login is missing or expired stops the
+same way at Codex's sign-in screen, with `agent_spawn_prompt_behind_login`
+and a `login` startup gate.
 
 Generated worktrees inside a checkout are excluded through Git's local
 `info/exclude`, shared by interactive and scheduled Runs. This preserves tracked

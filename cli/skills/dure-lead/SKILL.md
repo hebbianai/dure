@@ -151,6 +151,16 @@ prompts, and neither does a lead. Instead:
    can instead run in the already-trusted project root (omit `--worktree`);
    never do that for a worker that edits files.
 
+A Codex Run whose account has no usable login, missing or expired, parks the
+same way at Codex's sign-in screen: the error is
+`agent_spawn_prompt_behind_login` and the gate
+`startup_gate: { kind: "login" }` (text form `startup_gate\tlogin`). Never send
+the brief again and do not sign in yourself. Stop dispatching Codex workers on
+that account, tell the person which account needs signing in (in the parked
+worker's pane, or before the next Run), and give the next worker another
+account if one is available. A `dure recovery get codex` reading is a past
+observation, not proof that the login still works.
+
 Other non-zero receipts: exit 2 is a backend or pane failure before any
 session existed; retry the same command once with the printed retry key, then
 report it. A `succeeded` receipt whose session later shows
