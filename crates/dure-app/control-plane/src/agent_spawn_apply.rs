@@ -31,7 +31,7 @@ use sha2::{Digest, Sha256};
 use crate::agent_spawn_support::{random_nonce, store_error};
 use crate::project_catalog::ProjectAuthority;
 use crate::provider_credential_profile::ProviderCredentialProfileRegistry;
-use crate::workflow_launch::CredentialAwareWorkflowSessionLauncher;
+use crate::workflow_launch::{CredentialAwareWorkflowSessionLauncher, LaunchPromptObservation};
 use crate::workspace_git::{WorkspaceAcquireRequest, WorkspaceAcquirer, WorkspaceHandle};
 
 const MAX_PROMPT_BYTES: usize = 16 * 1024;
@@ -135,6 +135,28 @@ async fn startup_gate_before_launch(
     {
         Ok(false) => Some(AgentSpawnStartupGateKindV1::WorkspaceTrust),
         Ok(true) | Err(_) => None,
+    }
+}
+
+/// The first-run prompt the provider stopped at after launch, when the Host
+/// shows it. Codex starts no session while the selected account has no usable
+/// login and shows its sign-in screen instead. An expired login is still on
+/// disk, so the Hub cannot read that before launch, and probing would start a
+/// second Codex that refreshes the same login beside the session's own.
+/// Codex's native driver reports the screen to the Host as `input_required`
+/// ahead of any turn, and the Hub waits for that or the first turn before it
+/// claims the carried prompt was read. Without either it claims nothing.
+async fn startup_gate_after_launch(
+    launcher: &dyn CredentialAwareWorkflowSessionLauncher,
+    receipt: &AgentSpawnJournalReceiptV1,
+    session: &WorkflowSessionGenerationV1,
+) -> Option<AgentSpawnStartupGateKindV1> {
+    if receipt.plan.request.provider_id.as_str() != "codex" {
+        return None;
+    }
+    match launcher.observe_launch_prompt(session.clone()).await {
+        Some(LaunchPromptObservation::InputRequired) => Some(AgentSpawnStartupGateKindV1::Login),
+        Some(LaunchPromptObservation::TakenUp) | None => None,
     }
 }
 
@@ -584,14 +606,13 @@ async fn execute_prepared_stage(
             // Behind a gate the provider reads nothing until the person
             // answers, so a prompt the launch command carries is queued, not
             // accepted; the receipt says so instead of claiming delivery.
-            let startup_gate =
+            let mut startup_gate =
                 startup_gate_before_launch(*provider_state_preparer, &receipt, workspace_root)
                     .await
                     .map(|kind| AgentSpawnStartupGateV1 {
                         kind,
                         launch_prompt_carried,
                     });
-            let initial_prompt_accepted = launch_prompt_carried && startup_gate.is_none();
             match launcher
                 .launch_with_provider_state(launch.clone(), provider_state_environment, None)
                 .await
@@ -610,7 +631,15 @@ async fn execute_prepared_stage(
                         let _ = launcher
                             .report_startup_gate(session.clone(), gate.kind)
                             .await;
+                    } else if launch_prompt_carried {
+                        startup_gate = startup_gate_after_launch(*launcher, &receipt, &session)
+                            .await
+                            .map(|kind| AgentSpawnStartupGateV1 {
+                                kind,
+                                launch_prompt_carried,
+                            });
                     }
+                    let initial_prompt_accepted = launch_prompt_carried && startup_gate.is_none();
                     match persist_native_runtime_selection(store, &receipt, &session).await {
                         Ok(()) => {
                             append(
@@ -1176,6 +1205,19 @@ fn startup_gate_prompt_failure(gate: &AgentSpawnStartupGateV1) -> (String, Strin
                 "Claude Code is asking whether to trust this folder before it reads anything; \
                  typing the prompt now would answer that dialog instead, so trust the folder \
                  in the session and retry"
+            }
+            .into(),
+        ),
+        AgentSpawnStartupGateKindV1::Login => (
+            "agent_spawn_prompt_behind_login".into(),
+            if gate.launch_prompt_carried {
+                "Codex is showing its sign-in screen because the selected account's login is \
+                 missing or expired; the prompt rode the launch command and Codex submits it \
+                 once someone signs in in the session, so it must not be sent again"
+            } else {
+                "Codex is showing its sign-in screen because the selected account's login is \
+                 missing or expired; typing the prompt now would answer that screen instead, \
+                 so sign in in the session and retry"
             }
             .into(),
         ),

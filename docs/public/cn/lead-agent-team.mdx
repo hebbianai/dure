@@ -62,7 +62,7 @@ dure read work-118 -n 60        # 客户端登记后可按名称读取工作者�
 dure runs list --json           # 持久的 Run 记录，包括无界面的工作者
 ```
 
-刚启动就显示 ACTIVITY 为 `input_required` 的工作者正停在 Claude 的目录信任提示上，它的 `dure run` 回执以 `prompt_delivery_uncertain` 结束并带有 `startup_gate`。简报已在 Claude 内部排队，不能再次发送：按上面的说明信任目录，或在该工作者的面板里回答提示，工作者就会自行继续。负责人会报告这一状态，而不是假设工作者已经开始。
+刚启动就显示 ACTIVITY 为 `input_required` 的工作者正停在首次运行的提示上：Claude 的目录信任提示，或在该工作者的 Codex 账户登录已失效时出现的 Codex 登录界面。它的 `dure run` 回执以 `prompt_delivery_uncertain` 结束并带有 `startup_gate`（`workspace_trust` 或 `login`）。简报已在代理内部排队，不能再次发送：按上面的说明信任目录，或在该工作者的面板里回答提示或登录，工作者就会自行继续。负责人会报告这一状态，而不是假设工作者已经开始。
 
 ## 阅读报告
 

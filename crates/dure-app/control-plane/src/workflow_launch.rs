@@ -32,6 +32,9 @@ use hmux_client::{MANAGED_STOP_CONVERSATION_FENCE_REQUEST_VERSION, ManagedCreate
 
 const PROMPT_DELIVERY_TIMEOUT: Duration = Duration::from_secs(30);
 const PROMPT_ACTIVITY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Codex reports its first turn, or its sign-in screen, within seconds of
+/// launch. The bound matters only when the Host shows neither.
+const LAUNCH_PROMPT_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MANAGED_CREATE_PENDING_CODE: &str = "hmux_managed_create_pending";
 
 mod checkout;
@@ -67,10 +70,36 @@ pub(crate) trait CredentialAwareWorkflowSessionLauncher: Send + Sync {
     ) -> StartupGateReportFuture<'_> {
         Box::pin(async { Ok(()) })
     }
+
+    /// Watch the Host's agent state for the session just launched into
+    /// `session` until the provider either takes up the prompt its launch
+    /// command carried or asks a person for input first. `None` claims
+    /// nothing: the Host showed neither in time or could not be observed. A
+    /// launcher without a Host projection observes nothing.
+    fn observe_launch_prompt(
+        &self,
+        _session: WorkflowSessionGenerationV1,
+    ) -> LaunchPromptObservationFuture<'_> {
+        Box::pin(async { None })
+    }
 }
 
 pub(crate) type StartupGateReportFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+/// What the Host's agent state says about a prompt the launch command handed
+/// the provider.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LaunchPromptObservation {
+    /// The provider started a turn: it took the prompt up.
+    TakenUp,
+    /// The provider asks a person for input before its first turn, so it is
+    /// stopped ahead of the prompt.
+    InputRequired,
+}
+
+pub(crate) type LaunchPromptObservationFuture<'a> =
+    Pin<Box<dyn Future<Output = Option<LaunchPromptObservation>> + Send + 'a>>;
 
 /// Every first-run prompt is a question to the person: the provider waits and
 /// needs input. The gate's kind stays in the spawn receipt because the Host
@@ -209,6 +238,242 @@ impl CredentialAwareWorkflowSessionLauncher for HmuxWorkflowSessionLauncher {
             .await
             .map_err(|_| "startup_gate_report_worker_failed".to_string())?
         })
+    }
+
+    fn observe_launch_prompt(
+        &self,
+        session: WorkflowSessionGenerationV1,
+    ) -> LaunchPromptObservationFuture<'_> {
+        let discovery_root = self.discovery_root.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                observe_launch_prompt(&discovery_root, &session, LAUNCH_PROMPT_OBSERVATION_TIMEOUT)
+            })
+            .await
+            .ok()
+            .flatten()
+        })
+    }
+}
+
+/// Watch the exact session generation until its agent state settles what
+/// became of the launch prompt, or the timeout passes. Every failure to
+/// observe ends in `None`: the Hub then claims nothing it did not see.
+fn observe_launch_prompt(
+    discovery_root: &std::path::Path,
+    session: &WorkflowSessionGenerationV1,
+    timeout: Duration,
+) -> Option<LaunchPromptObservation> {
+    let catalog = LocalSessionCatalog::new(discovery_root);
+    let selector = SessionSelector::new(&session.session_id, Some(session.workspace_id.clone()));
+    let deadline = std::time::Instant::now() + timeout;
+    let mut observer = LocalSessionObserver::connect(
+        &catalog,
+        &selector,
+        ObserverAttachOptions::default()
+            .with_handshake_timeout(timeout)
+            .with_handshake_completion_timeout(timeout)
+            .with_handshake_deadline(deadline),
+    )
+    .ok()?;
+    let initial = observer
+        .attachment()
+        .initial_snapshot
+        .agent_runtime_state
+        .as_deref()
+        .map(|state| launch_prompt_state(state, &session.terminal_epoch));
+    let settled = match initial {
+        _ if !exact_observer_matches(observer.attachment(), session) => Some(None),
+        Some(LaunchPromptState::Settled(observation)) => Some(Some(observation)),
+        Some(LaunchPromptState::Gone) => Some(None),
+        Some(LaunchPromptState::Pending) | None => None,
+    };
+    if let Some(observation) = settled {
+        let _ = observer.detach();
+        return observation;
+    }
+    let Ok(interrupt) = observer.interrupt_handle() else {
+        let _ = observer.detach();
+        return None;
+    };
+    let (cancel_watchdog, watchdog_cancelled) = mpsc::channel::<()>();
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    let watchdog = thread::spawn(move || {
+        if watchdog_cancelled.recv_timeout(remaining).is_err() {
+            interrupt.interrupt();
+        }
+    });
+    let observation = loop {
+        match observer.read_event() {
+            Ok(Some(ObserverEvent::AgentRuntimeState(state))) => {
+                match launch_prompt_state(&state, &session.terminal_epoch) {
+                    LaunchPromptState::Pending => {}
+                    LaunchPromptState::Settled(observation) => break Some(observation),
+                    LaunchPromptState::Gone => break None,
+                }
+            }
+            // Agent state frames are whole states, so a missed output range
+            // loses nothing this watch reads.
+            Ok(Some(
+                ObserverEvent::Output(_)
+                | ObserverEvent::Snapshot(_)
+                | ObserverEvent::ProviderConversationIdentity(_)
+                | ObserverEvent::ReplayGap(_),
+            )) => {}
+            Ok(Some(ObserverEvent::Exit(_)) | None) | Err(_) => break None,
+        }
+    };
+    let _ = cancel_watchdog.send(());
+    let _ = watchdog.join();
+    let _ = observer.detach();
+    observation
+}
+
+enum LaunchPromptState {
+    Pending,
+    Settled(LaunchPromptObservation),
+    /// The provider exited or the session moved on to another terminal.
+    Gone,
+}
+
+/// A working provider, or one that already finished a turn, took the launch
+/// prompt up. One asking for input before its first turn is stopped ahead of
+/// it. Anything else, such as the waiting state of a provider that is still
+/// starting, is not evidence yet.
+fn launch_prompt_state(
+    state: &hmux_client::AgentRuntimeStateDescriptor,
+    terminal_epoch: &str,
+) -> LaunchPromptState {
+    if state.terminal_epoch != terminal_epoch
+        || state.lifecycle == hmux_client::AgentRuntimeLifecycle::Exited
+    {
+        return LaunchPromptState::Gone;
+    }
+    let turn_completed = state
+        .turn_completed_count
+        .parse::<u64>()
+        .is_ok_and(|count| count > 0);
+    if state.activity == hmux_client::AgentRuntimeActivity::Working || turn_completed {
+        LaunchPromptState::Settled(LaunchPromptObservation::TakenUp)
+    } else if state.attention == hmux_client::AgentRuntimeAttention::InputRequired {
+        LaunchPromptState::Settled(LaunchPromptObservation::InputRequired)
+    } else {
+        LaunchPromptState::Pending
+    }
+}
+
+#[cfg(test)]
+mod launch_prompt_tests {
+    use super::*;
+    use hmux_client::{
+        AgentRuntimeActivity as Activity, AgentRuntimeAttention as Attention,
+        AgentRuntimeLifecycle as Lifecycle, AgentRuntimeStateDescriptor,
+    };
+
+    fn state(
+        lifecycle: Lifecycle,
+        activity: Activity,
+        attention: Attention,
+        turns: &str,
+    ) -> AgentRuntimeStateDescriptor {
+        AgentRuntimeStateDescriptor {
+            progress: None,
+            terminal_epoch: "terminal-1".into(),
+            revision: "2".into(),
+            observed_through_output_seq: "40".into(),
+            lifecycle,
+            activity,
+            attention,
+            attention_id: (attention != Attention::None).then(|| "attention-1".into()),
+            source: hmux_client::AgentRuntimeStateSource::ProviderEvent,
+            turn_completed_count: turns.into(),
+            program_status: None,
+            background_work: false,
+        }
+    }
+
+    fn read(state: &AgentRuntimeStateDescriptor) -> Option<Option<LaunchPromptObservation>> {
+        match launch_prompt_state(state, "terminal-1") {
+            LaunchPromptState::Pending => None,
+            LaunchPromptState::Settled(observation) => Some(Some(observation)),
+            LaunchPromptState::Gone => Some(None),
+        }
+    }
+
+    #[test]
+    fn a_turn_takes_the_prompt_up_and_input_before_any_turn_stops_ahead_of_it() {
+        use LaunchPromptObservation::{InputRequired, TakenUp};
+        for (lifecycle, activity, attention, turns, expected) in [
+            // Codex's driver reports readiness before the account is read.
+            (
+                Lifecycle::Running,
+                Activity::Waiting,
+                Attention::None,
+                "0",
+                None,
+            ),
+            (
+                Lifecycle::Starting,
+                Activity::Waiting,
+                Attention::None,
+                "0",
+                None,
+            ),
+            (
+                Lifecycle::Running,
+                Activity::Waiting,
+                Attention::InputRequired,
+                "0",
+                Some(Some(InputRequired)),
+            ),
+            (
+                Lifecycle::Running,
+                Activity::Working,
+                Attention::None,
+                "0",
+                Some(Some(TakenUp)),
+            ),
+            // A turn that already finished took the prompt up, whatever came next.
+            (
+                Lifecycle::Running,
+                Activity::Waiting,
+                Attention::InputRequired,
+                "1",
+                Some(Some(TakenUp)),
+            ),
+            (
+                Lifecycle::Running,
+                Activity::Waiting,
+                Attention::None,
+                "1",
+                Some(Some(TakenUp)),
+            ),
+            (
+                Lifecycle::Exited,
+                Activity::Waiting,
+                Attention::None,
+                "0",
+                Some(None),
+            ),
+        ] {
+            assert_eq!(
+                read(&state(lifecycle, activity, attention, turns)),
+                expected,
+                "{lifecycle:?} {activity:?} {attention:?} turns={turns}"
+            );
+        }
+    }
+
+    #[test]
+    fn another_terminal_generation_settles_nothing_about_this_launch() {
+        let mut successor = state(
+            Lifecycle::Running,
+            Activity::Waiting,
+            Attention::InputRequired,
+            "0",
+        );
+        successor.terminal_epoch = "terminal-2".into();
+        assert_eq!(read(&successor), Some(None));
     }
 }
 
@@ -1001,6 +1266,137 @@ mod prompt_delivery_integration_tests {
         ManagedSessionStopper, ManagedStopOutcome, ManagedStopRequest, PermissionMode,
     };
     use std::os::unix::fs::PermissionsExt;
+
+    /// The Hub's launch-prompt watch against a real Host: the reports Codex's
+    /// native driver sends for a signed-out account (readiness, then its
+    /// sign-in screen) settle the watch as `InputRequired`, and the first turn
+    /// after sign-in settles a later watch as `TakenUp`.
+    #[tokio::test]
+    #[ignore = "requires DURE_QA_HMUX_RUNTIME"]
+    async fn launch_prompt_watch_reads_the_providers_own_host_reports() {
+        let runtime = PathBuf::from(
+            std::env::var_os("DURE_QA_HMUX_RUNTIME")
+                .expect("DURE_QA_HMUX_RUNTIME must point to hmux-runtime"),
+        )
+        .canonicalize()
+        .unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let discovery_root = state.path().join("discovery");
+        let cwd = state.path().canonicalize().unwrap();
+        let provider = state.path().join("codex");
+        std::fs::write(&provider, b"#!/bin/sh\nexec sleep 60\n").unwrap();
+        let mut permissions = std::fs::metadata(&provider).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&provider, permissions).unwrap();
+        let created = ManagedSessionCreator::new(&runtime)
+            .with_discovery_root(&discovery_root)
+            .create(
+                ManagedCreateRequest::new(
+                    "dure-launch-prompt-watch-create",
+                    "dure-launch-prompt-watch",
+                    "dure-launch-prompt-watch-workspace",
+                    "codex",
+                    PermissionMode::Default,
+                    &cwd,
+                    vec![provider.to_string_lossy().into_owned()],
+                    24,
+                    80,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let descriptor = created.session().descriptor().clone();
+        let session = WorkflowSessionGenerationV1 {
+            session_id: descriptor.session_id.clone(),
+            workspace_id: descriptor.workspace_id.clone(),
+            provider_id: ProviderIdV1::new("codex").unwrap(),
+            runner_principal: descriptor.runner_principal.clone(),
+            runner_instance: descriptor.runner_instance.clone(),
+            channel_epoch: descriptor.channel_epoch.clone(),
+            host_instance_id: descriptor.host_instance_id.clone(),
+            terminal_epoch: descriptor.terminal_epoch.clone(),
+        };
+        let report = |activity, attention| {
+            let reporter = hmux_client::ManagedAgentStateReporter::new(&runtime, &cwd)
+                .with_discovery_root(&discovery_root);
+            let request =
+                hmux_client::ManagedAttachRequest::new(&session.session_id, &session.workspace_id)
+                    .unwrap();
+            let fence = workflow_session_fence(&session).unwrap();
+            let report = hmux_client::AgentStateReport {
+                activity,
+                attention,
+                working_ttl_ms: (activity == hmux_client::AgentRuntimeActivity::Working)
+                    .then_some(86_400_000),
+                ..startup_gate_report()
+            };
+            tokio::task::spawn_blocking(move || {
+                reporter
+                    .report_agent_state_for_fence(request, report, fence)
+                    .unwrap()
+            })
+        };
+        let watch = |session: WorkflowSessionGenerationV1| {
+            let launcher =
+                HmuxWorkflowSessionLauncher::new(runtime.clone(), discovery_root.clone());
+            tokio::spawn(async move { launcher.observe_launch_prompt(session).await })
+        };
+
+        let signed_out = watch(session.clone());
+        // The driver's readiness report is not evidence either way.
+        report(
+            hmux_client::AgentRuntimeActivity::Waiting,
+            hmux_client::AgentRuntimeAttention::None,
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!signed_out.is_finished(), "readiness settled the watch");
+        report(
+            hmux_client::AgentRuntimeActivity::Waiting,
+            hmux_client::AgentRuntimeAttention::InputRequired,
+        )
+        .await
+        .unwrap();
+        let signed_out = tokio::time::timeout(Duration::from_secs(10), signed_out)
+            .await
+            .expect("the sign-in report did not reach the watch")
+            .unwrap();
+
+        report(
+            hmux_client::AgentRuntimeActivity::Working,
+            hmux_client::AgentRuntimeAttention::None,
+        )
+        .await
+        .unwrap();
+        let signed_in = tokio::time::timeout(Duration::from_secs(10), watch(session.clone()))
+            .await
+            .expect("the first turn did not reach the watch")
+            .unwrap();
+
+        let stop = ManagedStopRequest::new(
+            "dure-launch-prompt-watch-stop",
+            &descriptor.session_id,
+            &descriptor.workspace_id,
+        )
+        .and_then(|request| {
+            request.with_expected_fence(
+                &descriptor.runner_principal,
+                &descriptor.runner_instance,
+                descriptor.channel_epoch.parse().unwrap(),
+                &descriptor.host_instance_id,
+                &descriptor.terminal_epoch,
+            )
+        })
+        .unwrap();
+        let stopped = ManagedSessionStopper::new(&runtime, state.path())
+            .with_discovery_root(&discovery_root)
+            .stop(stop)
+            .unwrap();
+        assert_eq!(stopped.outcome(), ManagedStopOutcome::Stopped);
+        assert_eq!(signed_out, Some(LaunchPromptObservation::InputRequired));
+        assert_eq!(signed_in, Some(LaunchPromptObservation::TakenUp));
+    }
 
     #[tokio::test]
     #[ignore = "requires DURE_QA_HMUX_RUNTIME"]

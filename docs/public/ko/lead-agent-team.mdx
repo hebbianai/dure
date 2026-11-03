@@ -62,7 +62,7 @@ dure read work-118 -n 60        # 클라이언트가 등록한 뒤에는 이름�
 dure runs list --json           # 화면 없는 워커를 포함한 영구 Run 기록
 ```
 
-시작 직후 ACTIVITY가 `input_required`인 워커는 Claude의 폴더 신뢰 프롬프트에서 기다리는 중이며, 그 `dure run` 영수증은 `startup_gate`와 함께 `prompt_delivery_uncertain`으로 끝납니다. 브리프는 Claude 안에 대기 중이므로 다시 보내면 안 됩니다. 위에서 설명한 대로 폴더를 신뢰하거나 그 워커의 pane에서 프롬프트에 답하면 워커가 스스로 이어갑니다. 리드는 워커가 시작했다고 가정하지 않고 이 상태를 보고합니다.
+시작 직후 ACTIVITY가 `input_required`인 워커는 첫 실행 프롬프트에서 기다리는 중입니다. Claude의 폴더 신뢰 프롬프트이거나, 워커의 Codex 계정 로그인이 더 이상 유효하지 않을 때 나타나는 Codex 로그인 화면입니다. 그 `dure run` 영수증은 `startup_gate`(`workspace_trust` 또는 `login`)와 함께 `prompt_delivery_uncertain`으로 끝납니다. 브리프는 에이전트 안에 대기 중이므로 다시 보내면 안 됩니다. 위에서 설명한 대로 폴더를 신뢰하거나, 그 워커의 pane에서 프롬프트에 답하거나 로그인하면 워커가 스스로 이어갑니다. 리드는 워커가 시작했다고 가정하지 않고 이 상태를 보고합니다.
 
 ## 보고서 읽기
 

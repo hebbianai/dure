@@ -698,9 +698,34 @@ struct RecordingLauncher {
     provider_state_environments: Arc<Mutex<Vec<ProviderStateEnvironment>>>,
     provider_conversations: Arc<Mutex<Vec<Option<String>>>>,
     startup_gates: Arc<Mutex<Vec<(String, AgentSpawnStartupGateKindV1)>>>,
+    /// What the Host shows about the launch prompt; `None` is a Host that
+    /// showed nothing in time.
+    launch_prompt: Option<LaunchPromptObservation>,
+    launch_prompt_watches: Arc<Mutex<Vec<String>>>,
+}
+
+impl RecordingLauncher {
+    fn showing(launch_prompt: LaunchPromptObservation) -> Self {
+        Self {
+            launch_prompt: Some(launch_prompt),
+            ..Self::default()
+        }
+    }
 }
 
 impl crate::workflow_launch::CredentialAwareWorkflowSessionLauncher for RecordingLauncher {
+    fn observe_launch_prompt(
+        &self,
+        session: WorkflowSessionGenerationV1,
+    ) -> crate::workflow_launch::LaunchPromptObservationFuture<'_> {
+        self.launch_prompt_watches
+            .lock()
+            .unwrap()
+            .push(session.session_id);
+        let observation = self.launch_prompt;
+        Box::pin(async move { observation })
+    }
+
     fn report_startup_gate(
         &self,
         session: WorkflowSessionGenerationV1,
@@ -2219,4 +2244,195 @@ async fn claude_spawn_into_a_trusted_folder_reports_no_startup_gate() {
 
     assert_eq!(succeeded.state, AgentSpawnJournalStateV1::Succeeded);
     assert!(launcher.startup_gates.lock().unwrap().is_empty());
+    // Claude's gate is read before launch; nothing waits on the Host for it.
+    assert!(launcher.launch_prompt_watches.lock().unwrap().is_empty());
+}
+
+/// Codex shows its sign-in screen and starts no session when the selected
+/// account's login is missing or expired (#388; reproduced on Codex 0.166.0
+/// with an expired refresh token, which leaves the login on disk). Its native
+/// driver reports that screen to the Host as `input_required` before any
+/// turn. A Run whose brief rode the launch command must not end `succeeded`
+/// while Codex has read nothing.
+#[tokio::test]
+async fn codex_spawn_stopped_at_the_sign_in_screen_does_not_claim_the_prompt() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let planned = planned_prompt_spawn(&store).await;
+    let body = apply_body(&planned, "private prompt");
+    let launcher = RecordingLauncher::showing(LaunchPromptObservation::InputRequired);
+    let prompt_deliverer = FixturePromptDeliverer {
+        calls: Arc::new(AtomicUsize::new(0)),
+        uncertain: false,
+    };
+    let prompt_activity_observer = FixturePromptActivityObserver::observed();
+    let execution = || {
+        execution_with_prompt_target(
+            &launcher,
+            &prompt_deliverer,
+            &FIXTURE_PROVIDER_STATE_PREPARER,
+            &prompt_activity_observer,
+            dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+        )
+    };
+
+    let applied = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(execution()),
+    )
+    .await
+    .unwrap();
+
+    let (session_id, _) = native_launch(&applied.plan).unwrap();
+    assert_eq!(
+        *launcher.launch_prompt_watches.lock().unwrap(),
+        vec![session_id.to_string()]
+    );
+    // The driver already told the Host; the Hub adds no second report.
+    assert!(launcher.startup_gates.lock().unwrap().is_empty());
+    assert_eq!(
+        *launcher.initial_prompts.lock().unwrap(),
+        vec![Some("private prompt".to_string())]
+    );
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+    assert!(applied.completed.iter().any(|stage| matches!(
+        &stage.evidence,
+        AgentSpawnStageEvidenceV1::RuntimeLaunch {
+            initial_prompt_accepted: false,
+            startup_gate: Some(AgentSpawnStartupGateV1 {
+                kind: AgentSpawnStartupGateKindV1::Login,
+                launch_prompt_carried: true,
+            }),
+            ..
+        }
+    )));
+    assert_eq!(
+        applied.state,
+        AgentSpawnJournalStateV1::PromptDeliveryUncertain
+    );
+    let AgentSpawnRecoveryDirectiveV1::DoNotReplayPrompt {
+        error_code,
+        error_detail,
+        ..
+    } = &applied.recovery
+    else {
+        panic!("a prompt queued behind the sign-in screen must never be replayed, got {applied:?}");
+    };
+    assert_eq!(
+        error_code.as_deref(),
+        Some("agent_spawn_prompt_behind_login")
+    );
+    assert!(
+        error_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("sign")),
+        "the failure must say what the person has to do, got {error_detail:?}"
+    );
+    assert!(
+        !serde_json::to_string(&applied)
+            .unwrap()
+            .contains("private prompt")
+    );
+
+    // A retry sees the same receipt: Codex is neither relaunched nor typed into.
+    let mut retry = apply_body(&planned, "private prompt");
+    retry.expected_last_sequence = applied.last_sequence;
+    let replayed = apply(
+        &store,
+        authorize(&store, "dure-local", &retry).await.unwrap(),
+        &retry,
+        Some(execution()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(replayed, applied);
+    assert_eq!(launcher.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+}
+
+/// A Codex that starts its first turn took the brief up. A Host that shows
+/// neither a turn nor the sign-in screen in time proves nothing either way,
+/// so the receipt keeps the launch's own claim rather than inventing a gate.
+#[tokio::test]
+async fn codex_spawn_claims_the_launch_prompt_unless_the_host_shows_the_sign_in_screen() {
+    for launcher in [
+        RecordingLauncher::showing(LaunchPromptObservation::TakenUp),
+        RecordingLauncher::default(),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+            .await
+            .unwrap();
+        let planned = planned_prompt_spawn(&store).await;
+        let body = apply_body(&planned, "private prompt");
+        let prompt_deliverer = FixturePromptDeliverer {
+            calls: Arc::new(AtomicUsize::new(0)),
+            uncertain: false,
+        };
+
+        let succeeded = apply(
+            &store,
+            authorize(&store, "dure-local", &body).await.unwrap(),
+            &body,
+            Some(execution_with_prompt_target(
+                &launcher,
+                &prompt_deliverer,
+                &FIXTURE_PROVIDER_STATE_PREPARER,
+                &FixturePromptActivityObserver::observed(),
+                dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+            )),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(succeeded.state, AgentSpawnJournalStateV1::Succeeded);
+        assert_eq!(launcher.launch_prompt_watches.lock().unwrap().len(), 1);
+        assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+        assert!(succeeded.completed.iter().any(|stage| matches!(
+            stage.evidence,
+            AgentSpawnStageEvidenceV1::RuntimeLaunch {
+                initial_prompt_accepted: true,
+                startup_gate: None,
+                ..
+            }
+        )));
+    }
+}
+
+/// A prompt that could not ride the launch is typed and confirmed through the
+/// prompt-activity path; the launch has no carried prompt to watch for.
+#[tokio::test]
+async fn codex_spawn_without_a_carried_prompt_does_not_wait_on_the_host() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+        .await
+        .unwrap();
+    let planned = planned_prompt_spawn(&store).await;
+    let body = apply_body(&planned, "private prompt");
+    let launcher = RecordingLauncher::showing(LaunchPromptObservation::InputRequired);
+    let prompt_deliverer = FixturePromptDeliverer {
+        calls: Arc::new(AtomicUsize::new(0)),
+        uncertain: false,
+    };
+
+    let succeeded = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(execution(
+            &launcher,
+            &prompt_deliverer,
+            &FixturePromptActivityObserver::observed(),
+        )),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(succeeded.state, AgentSpawnJournalStateV1::Succeeded);
+    assert!(launcher.launch_prompt_watches.lock().unwrap().is_empty());
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 1);
 }

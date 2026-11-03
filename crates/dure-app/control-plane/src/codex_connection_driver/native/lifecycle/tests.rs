@@ -402,6 +402,118 @@ fn fresh_server_initialization_establishes_input_readiness_before_the_lazy_threa
     );
 }
 
+/// The app-server's answer for an account whose login is missing or expired,
+/// recorded from Codex 0.166.0 for both cases.
+fn signed_out_account(id: u64) -> Value {
+    json!({"id": id, "result": {"account": null, "requiresOpenaiAuth": true, "workspaceRouting": null}})
+}
+
+/// Codex shows its sign-in screen and reads no input, not even the prompt its
+/// launch command carried, when the account it starts with has no usable
+/// login. Without this report the Host shows a merely waiting agent.
+#[test]
+fn signed_out_account_before_a_session_reports_that_codex_needs_a_person() {
+    let mut projection = Lifecycle::default();
+    projection
+        .client(1, &json!({"id": 0, "method": "initialize", "params": {}}))
+        .unwrap();
+    projection
+        .provider(
+            1,
+            &json!({"id": 0, "result": {"userAgent": "codex"}}),
+            &fence(),
+        )
+        .unwrap();
+    projection
+        .client(
+            1,
+            &json!({"id": 1, "method": "account/read", "params": {"refreshToken": true}}),
+        )
+        .unwrap();
+
+    let report = projection
+        .provider(1, &signed_out_account(1), &fence())
+        .unwrap()
+        .expect("the sign-in screen must reach the Host");
+    assert_eq!(report.activity, AgentRuntimeActivity::Waiting);
+    assert_eq!(report.attention, AgentRuntimeAttention::InputRequired);
+    assert!(!report.identity_only);
+    assert!(!report.turn_completed);
+    assert!(report.conversation_identity.is_none());
+
+    // After sign-in Codex starts its session and takes up the queued prompt;
+    // that first turn is what moves the Host off the attention.
+    projection
+        .client(1, &json!({"id": 2, "method": "thread/start", "params": {}}))
+        .unwrap();
+    projection
+        .provider(
+            1,
+            &json!({"id": 2, "result": {"thread": {"id": "thread-main", "path": durable_thread_path()}}}),
+            &fence(),
+        )
+        .unwrap();
+    let report = projection
+        .provider(
+            1,
+            &event("turn/started", "turn-main", "inProgress"),
+            &fence(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(report.activity, AgentRuntimeActivity::Working);
+    assert_eq!(report.attention, AgentRuntimeAttention::None);
+}
+
+#[test]
+fn only_an_explicit_signed_out_reading_before_a_session_claims_the_sign_in_screen() {
+    let readings = [
+        // Signed in.
+        json!({"id": 1, "result": {"account": {"type": "chatgpt"}, "requiresOpenaiAuth": true}}),
+        // A provider that needs no OpenAI login never shows the screen.
+        json!({"id": 1, "result": {"account": null, "requiresOpenaiAuth": false}}),
+        // Missing evidence claims nothing.
+        json!({"id": 1, "result": {"account": null}}),
+        json!({"id": 1, "result": {}}),
+        json!({"id": 1, "error": {"code": -32603, "message": "account/read failed"}}),
+    ];
+    for reading in readings {
+        let mut projection = Lifecycle::default();
+        projection
+            .client(1, &json!({"id": 1, "method": "account/read", "params": {}}))
+            .unwrap();
+        assert!(
+            projection
+                .provider(1, &reading, &fence())
+                .unwrap()
+                .is_none(),
+            "{reading} must not report a sign-in screen"
+        );
+    }
+
+    // Once a conversation runs, an account reading is not Codex's start-up
+    // screen; a helper's read must not raise attention over live work.
+    let mut projection = selected();
+    projection
+        .client(2, &json!({"id": 1, "method": "account/read", "params": {}}))
+        .unwrap();
+    assert!(
+        projection
+            .provider(2, &signed_out_account(1), &fence())
+            .unwrap()
+            .is_none()
+    );
+
+    // A response nobody asked for is not an account reading either.
+    let mut projection = Lifecycle::default();
+    assert!(
+        projection
+            .provider(1, &signed_out_account(7), &fence())
+            .unwrap()
+            .is_none()
+    );
+}
+
 fn event(method: &str, id: &str, status: &str) -> Value {
     json!({"method": method, "params": {"threadId": "thread-main", "turn": {"id": id, "status": status}}})
 }

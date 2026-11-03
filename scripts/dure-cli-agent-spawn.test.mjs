@@ -23,6 +23,7 @@ import {
   receipt,
   request,
   succeededNativeReceipt,
+  loginGatedNativeReceipt,
   trustGatedNativeReceipt,
   succeededStructuredReceipt,
   worktree,
@@ -391,6 +392,29 @@ describe("agent spawn query contract", () => {
     const unknownGate = trustGatedNativeReceipt();
     unknownGate.completed[1].evidence.startup_gate.kind = "something_else";
     expect((await status(unknownGate)).kind).toBe("dure.agent_spawn.error");
+  });
+
+  it("keeps a prompt queued behind Codex's sign-in screen out of the accepted evidence", async () => {
+    const receipt = loginGatedNativeReceipt();
+    const report = await collectAgentSpawnQuery({
+      action: "status",
+      operationId: receipt.operationId,
+      backend: { profile: profile(), transportOptions: {} },
+      requestBackend: async () =>
+        backendResult({ schemaVersion: 1, receipt }),
+    });
+
+    expect(report.kind).toBe("dure.agent_spawn.status");
+    expect(report.receipt.state).toBe("prompt_delivery_uncertain");
+    expect(report.receipt.recovery.kind).toBe("do_not_replay_prompt");
+    expect(report.receipt.completed[1].evidence).toMatchObject({
+      stage: "runtime_launch",
+      startup_gate: { kind: "login", launch_prompt_carried: true },
+    });
+    const text = formatAgentSpawnQuery(report);
+    expect(text).toContain("startup_gate\tlogin");
+    expect(text).toContain("error\tagent_spawn_prompt_behind_login");
+    expect(text).toContain("detail\tCodex is showing its sign-in screen");
   });
 
   it("projects one advanced native Session with the matching effective create key", async () => {
