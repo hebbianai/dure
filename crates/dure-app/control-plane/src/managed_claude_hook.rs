@@ -5,7 +5,7 @@ mod coalescing;
 mod descriptor;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     io::Write,
     path::Path,
     time::{Duration, Instant},
@@ -22,6 +22,8 @@ const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
 const TOTAL_TIMEOUT: Duration = Duration::from_millis(2_400);
+/// First wait for each candidate's liveness check; see `deliver_to_candidates`.
+const PING_TIMEOUT: Duration = Duration::from_millis(350);
 const CAPABILITY: &str = "managed_claude_host_report_causality_v1";
 const SOURCE_SEQUENCE_HEADER: &str = "x-hebbian-hmux-source-sequence";
 const FENCE_HEADERS: [(&str, &str); 7] = [
@@ -208,12 +210,21 @@ fn bounded_body(raw: Vec<u8>) -> Result<Input, HookFailure> {
     })
 }
 
+/// A timeout means the request's wait ended, not that the peer is absent.
+fn transport_failure(error: &reqwest::Error) -> HookFailure {
+    if error.is_timeout() {
+        HookFailure::Timeout
+    } else {
+        HookFailure::Unavailable
+    }
+}
+
 async fn bounded_response(mut response: Response) -> Result<Vec<u8>, HookFailure> {
     let mut body = Vec::new();
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| HookFailure::Unavailable)?
+        .map_err(|error| transport_failure(&error))?
     {
         if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
             return Err(HookFailure::Unavailable);
@@ -221,6 +232,132 @@ async fn bounded_response(mut response: Response) -> Result<Vec<u8>, HookFailure
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+fn remaining(deadline: Instant) -> Result<Duration, HookFailure> {
+    Some(deadline.saturating_duration_since(Instant::now()))
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or(HookFailure::Timeout)
+}
+
+enum Attempt {
+    Delivered,
+    /// The liveness check got no answer before its wait ended.
+    Late,
+    Skipped,
+}
+
+/// Checks that the candidate is the exact app generation it names, then
+/// posts the report there.
+async fn attempt(
+    client: &Client,
+    template: &reqwest::Request,
+    descriptor: &descriptor::Descriptor,
+    ping_wait: Duration,
+    deadline: Instant,
+    rejection: &mut Option<String>,
+) -> Result<Attempt, HookFailure> {
+    let ping = match client
+        .get(format!("http://127.0.0.1:{}/ping", descriptor.port))
+        .bearer_auth(&descriptor.report_token)
+        .timeout(ping_wait)
+        .send()
+        .await
+    {
+        Ok(ping) if ping.status().is_success() => bounded_response(ping).await,
+        Ok(_) => return Ok(Attempt::Skipped),
+        Err(error) => Err(transport_failure(&error)),
+    };
+    let ping = match ping {
+        Ok(ping) => ping,
+        Err(HookFailure::Timeout) => return Ok(Attempt::Late),
+        Err(_) => return Ok(Attempt::Skipped),
+    };
+    let Ok(ping) = serde_json::from_slice::<Value>(&ping) else {
+        return Ok(Attempt::Skipped);
+    };
+    if ping.get("ok") != Some(&Value::Bool(true))
+        || ping.get("channel").and_then(Value::as_str) != Some(&descriptor.channel)
+        || ping.get("generation").and_then(Value::as_str) != Some(&descriptor.generation)
+        || ping.get("processId").and_then(Value::as_u64) != Some(u64::from(descriptor.process_id))
+        || !ping
+            .get("capabilities")
+            .and_then(Value::as_array)
+            .is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|value| value.as_str() == Some(CAPABILITY))
+            })
+    {
+        return Ok(Attempt::Skipped);
+    }
+    let mut request = template.try_clone().ok_or(HookFailure::InvalidInput)?;
+    request
+        .url_mut()
+        .set_port(Some(descriptor.port))
+        .map_err(|_| HookFailure::Unavailable)?;
+    // The app answers `202 accepted` once its Host report has not finished
+    // within 1.5 s. Waiting only that long here turned every slow report,
+    // such as the first prompt after a restart, into a false failure.
+    *request.timeout_mut() = Some(remaining(deadline)?);
+    let mut authorization = HeaderValue::from_str(&format!("Bearer {}", descriptor.report_token))
+        .map_err(|_| HookFailure::Unavailable)?;
+    authorization.set_sensitive(true);
+    request
+        .headers_mut()
+        .insert(reqwest::header::AUTHORIZATION, authorization);
+    // The report waits for the rest of the budget, so its timeout ends the
+    // invocation; the app may already hold the report and is not sent it again.
+    let response = match client.execute(request).await {
+        Ok(response) => response,
+        Err(error) if error.is_timeout() => return Err(HookFailure::Timeout),
+        Err(_) => return Ok(Attempt::Skipped),
+    };
+    let success = response.status().is_success();
+    match bounded_response(response).await {
+        Ok(_) if success => return Ok(Attempt::Delivered),
+        Err(HookFailure::Timeout) => return Err(HookFailure::Timeout),
+        Ok(body) if !success => {
+            if let Some(code) = rejection_code(&body) {
+                *rejection = Some(code);
+            }
+        }
+        _ => {}
+    }
+    Ok(Attempt::Skipped)
+}
+
+/// Every candidate first gets a short liveness check, so a stale or foreign
+/// listener cannot hold the report away from the live app. A candidate that
+/// answers only late is usually the live app on a loaded host, or one whose
+/// single report thread is still serving another agent, so it is checked
+/// again with the rest of the budget instead of being called unavailable.
+async fn deliver_to_candidates(
+    client: &Client,
+    template: &reqwest::Request,
+    descriptors: Vec<descriptor::Descriptor>,
+    deadline: Instant,
+    rejection: &mut Option<String>,
+) -> Result<(), HookFailure> {
+    let mut queue: VecDeque<_> = descriptors
+        .into_iter()
+        .map(|descriptor| (descriptor, false))
+        .collect();
+    while let Some((descriptor, patient)) = queue.pop_front() {
+        let budget = remaining(deadline)?;
+        let wait = if patient {
+            budget
+        } else {
+            PING_TIMEOUT.min(budget)
+        };
+        match attempt(client, template, &descriptor, wait, deadline, rejection).await? {
+            Attempt::Delivered => return Ok(()),
+            Attempt::Late if !patient => queue.push_back((descriptor, true)),
+            Attempt::Late | Attempt::Skipped => {}
+        }
+    }
+    // A patient check that went unanswered spent the rest of the budget.
+    remaining(deadline).and(Err(HookFailure::Unavailable))
 }
 
 async fn deliver(
@@ -249,84 +386,24 @@ async fn deliver(
         .body(input.body)
         .build()
         .map_err(|_| HookFailure::Unavailable)?;
+    let descriptors = descriptor::candidates(&root.path, deadline)
+        .iter()
+        .filter_map(|candidate| descriptor::read(&root.path, candidate))
+        .collect();
     let mut rejection = None;
-    for candidate in descriptor::candidates(&root.path, deadline) {
-        if Instant::now() >= deadline {
-            return Err(HookFailure::Timeout);
-        }
-        let Some(descriptor) = descriptor::read(&root.path, &candidate) else {
-            continue;
-        };
-        let ping = client
-            .get(format!("http://127.0.0.1:{}/ping", descriptor.port))
-            .bearer_auth(&descriptor.report_token)
-            .timeout(Duration::from_millis(350))
-            .send()
-            .await;
-        let Ok(ping) = ping else { continue };
-        if !ping.status().is_success() {
-            continue;
-        }
-        let Ok(ping) = bounded_response(ping).await else {
-            continue;
-        };
-        let Ok(ping) = serde_json::from_slice::<Value>(&ping) else {
-            continue;
-        };
-        if ping.get("ok") != Some(&Value::Bool(true))
-            || ping.get("channel").and_then(Value::as_str) != Some(&descriptor.channel)
-            || ping.get("generation").and_then(Value::as_str) != Some(&descriptor.generation)
-            || ping.get("processId").and_then(Value::as_u64)
-                != Some(u64::from(descriptor.process_id))
-            || !ping
-                .get("capabilities")
-                .and_then(Value::as_array)
-                .is_some_and(|values| {
-                    values
-                        .iter()
-                        .any(|value| value.as_str() == Some(CAPABILITY))
-                })
-        {
-            continue;
-        }
-        let mut request = template.try_clone().ok_or(HookFailure::InvalidInput)?;
-        request
-            .url_mut()
-            .set_port(Some(descriptor.port))
-            .map_err(|_| HookFailure::Unavailable)?;
-        // The app answers `202 accepted` once its Host report has not finished
-        // within 1.5 s. Waiting only that long here turned every slow report,
-        // such as the first prompt after a restart, into a false failure.
-        *request.timeout_mut() = Some(deadline.saturating_duration_since(Instant::now()));
-        let mut authorization =
-            HeaderValue::from_str(&format!("Bearer {}", descriptor.report_token))
-                .map_err(|_| HookFailure::Unavailable)?;
-        authorization.set_sensitive(true);
-        request
-            .headers_mut()
-            .insert(reqwest::header::AUTHORIZATION, authorization);
-        let sent = client.execute(request).await;
-        if let Ok(response) = sent {
-            let success = response.status().is_success();
-            let body = bounded_response(response).await;
-            if success && body.is_ok() {
-                if root.writable {
-                    if let Some(stamp) = &stamp {
-                        stamp.record();
-                    }
-                }
-                return Ok(());
-            }
-            if !success {
-                rejection = body.ok().as_deref().and_then(rejection_code).or(rejection);
+    let delivered =
+        deliver_to_candidates(&client, &template, descriptors, deadline, &mut rejection).await;
+    match (&delivered, rejection) {
+        (Ok(()), _) if root.writable => {
+            if let Some(stamp) = &stamp {
+                stamp.record();
             }
         }
-    }
-    if let Some(code) = rejection {
         // Name why the app refused the report; its message is never copied.
-        eprintln!("managed_hook_report_rejected: {code}");
+        (Err(_), Some(code)) => eprintln!("managed_hook_report_rejected: {code}"),
+        _ => {}
     }
-    Err(HookFailure::Unavailable)
+    delivered
 }
 
 /// The app's refusal code, when it is a plain identifier. Messages may carry
