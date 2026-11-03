@@ -9,6 +9,7 @@
 import type { DockviewApi, IDockviewPanel } from "dockview-react";
 import { t } from "@/lib/i18n";
 import { PaneCommandError } from "@/lib/workspace/pane/paneCommandError";
+import { restoreMaximizedPane } from "@/lib/workspace/pane/paneMaximize";
 import {
 	capturePaneGrid,
 	preserveSizesAfterAdd,
@@ -49,6 +50,9 @@ function referenceGroupId(
 /**
  * Explicit splits share the referenced pane's space. General edge additions
  * share the row proportionally, preserving the existing siblings' ratios.
+ *
+ * A maximized pane is restored before a new pane opens, so nothing lands
+ * hidden behind it. Replacing content in place keeps its slot maximized.
  */
 export function addPanePreservingSizes<Options>(
 	api: DockviewApi,
@@ -67,6 +71,7 @@ export function addPanePreservingSizes<Options>(
 			t("workspace.launcher.unavailable"),
 		);
 	}
+	restoreMaximizedPane(api);
 	const before = canResize(api) ? capturePaneGrid(api) : undefined;
 	const position = paneOptions?.position;
 	const directional =
@@ -101,12 +106,13 @@ export function addPanePreservingSizes<Options>(
 
 /**
  * Remove a pane, handing its space to one neighbour rather than letting
- * dockview equalise the whole row.
+ * dockview equalise the whole row. A maximized pane is restored first.
  */
 export function removePanePreservingSizes(
 	api: DockviewApi,
 	panel: Parameters<DockviewApi["removePanel"]>[0],
 ): void {
+	restoreMaximizedPane(api);
 	const group = (panel as { group?: { id?: string } } | undefined)?.group;
 	// Only the last pane of a group takes its space with it; closing a tab out
 	// of a stacked group leaves the group, and the grid, exactly as it was.

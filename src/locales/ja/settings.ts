@@ -393,6 +393,7 @@ export const settings: Record<string, string> = {
 	"settings.agentTooling.skillState.unmanaged": "Dure の外部でインストール済み",
 	"settings.macosPerms.title": "macOS の権限",
 	"settings.notifications.test.macosDisabled": "macOS で Dure の通知がオフになっています。",
+	"settings.shortcuts.cmd.toggleMaximizePane": "ペインを最大化 / 元に戻す",
 	"settings.shortcuts.cmd.undoPaneMove": "ペイン移動を元に戻す",
 	"settings.stats.providers.enabledSummary": "{a} 件有効・{b} 件にデータあり",
 	"settings.general.providerSkipPermissions": "{label} を権限確認なしで実行",

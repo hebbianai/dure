@@ -1,4 +1,5 @@
-// pane 조작 전역 단축키 배선 — 분할(⌘D/⌘⇧D)·포커스 이동(⌘[/⌘], ⌥⌘화살표).
+// pane 조작 전역 단축키 배선 — 분할(⌘D/⌘⇧D)·포커스 이동(⌘[/⌘], ⌥⌘화살표)·
+// 최대화 토글(⌘⇧↵, 복원은 Esc도).
 // 카탈로그(lib/settingsShortcuts)와 오버라이드(matchesChord)를 그대로 지나
 // 설정 › 단축키에서 재지정할 수 있다. ⌘W(close-pane)와 같은 window 리스너
 // 패턴이다.
@@ -23,6 +24,11 @@ import {
 } from "@/lib/workspace/pane/paneFocusNavigation";
 import { paneFromFocusHistory } from "@/lib/workspace/pane/paneFocusHistory";
 import { undoPaneMove } from "@/lib/workspace/pane/paneDragBehaviors";
+import {
+	escapeRestoresMaximizedPane,
+	restoreMaximizedPane,
+	toggleMaximizedPane,
+} from "@/lib/workspace/pane/paneMaximize";
 import { DEFAULT_UI_PREFS, useStore } from "@/store";
 
 function splitActivePane(
@@ -122,6 +128,15 @@ export function navigatePaneHistory(
 	return true;
 }
 
+function paneDockview(targetDesktopId?: string) {
+	return getDockview(targetDesktopId ?? useStore.getState().activeSpaceId);
+}
+
+function toggleActivePaneMaximized(targetDesktopId?: string): boolean {
+	const api = paneDockview(targetDesktopId);
+	return api ? toggleMaximizedPane(api) : false;
+}
+
 export function balanceActiveSpacePanes(): void {
 	const desktopId = useStore.getState().activeSpaceId;
 	const api = getDockview(desktopId);
@@ -176,12 +191,45 @@ export function installPaneShortcuts(targetDesktopId?: string): () => void {
 			if (undoPaneMove(api)) event.preventDefault();
 			return;
 		}
+		// Esc is a fixed restore path beside the rebindable toggle. It is never
+		// taken from a terminal, TUI, editor or input (escapeRestoresMaximizedPane).
+		if (escapeRestoresMaximizedPane(event)) {
+			if (restoreMaximizedPane(paneDockview(targetDesktopId))) {
+				event.preventDefault();
+			}
+			return;
+		}
 		for (const action of ACTIONS) {
 			if (!matchesChord(shortcutChord(action.id, overrides), event)) continue;
 			if (action.run(targetDesktopId)) event.preventDefault();
 			return;
 		}
 	};
+	// The maximize toggle is consumed before its target sees it. Elsewhere than
+	// macOS the chord is Ctrl+Shift+Enter, which a focused terminal or agent TUI
+	// would also send as Enter; capture runs ahead of the input's handler and of
+	// React's root delegation. A chord with nothing to toggle passes through,
+	// and an open dialog keeps it (several submit on ⌘↵ without checking ⇧).
+	const onToggleMaximize = (event: KeyboardEvent) => {
+		const chord = shortcutChord(
+			"toggle-maximize-pane",
+			useStore.getState().shortcutOverrides,
+		);
+		if (!matchesChord(chord, event)) return;
+		if (
+			event.target instanceof Element &&
+			event.target.closest("[role='dialog'],[role='alertdialog']")
+		) {
+			return;
+		}
+		if (!toggleActivePaneMaximized(targetDesktopId)) return;
+		event.preventDefault();
+		event.stopPropagation();
+	};
+	window.addEventListener("keydown", onToggleMaximize, true);
 	window.addEventListener("keydown", onKey);
-	return () => window.removeEventListener("keydown", onKey);
+	return () => {
+		window.removeEventListener("keydown", onToggleMaximize, true);
+		window.removeEventListener("keydown", onKey);
+	};
 }

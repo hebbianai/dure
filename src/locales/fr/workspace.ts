@@ -153,6 +153,8 @@ export const workspace: Record<string, string> = {
 	"workspace.pane.pin": "Épingler",
 	"workspace.pane.unpin": "Désépingler",
 	"workspace.pane.dockBack": "Ramener dans la grille",
+	"workspace.pane.maximize": "Agrandir",
+	"workspace.pane.restore": "Restaurer",
 	"workspace.paneClose.pinnedTitle": "Fermer le volet épinglé",
 	"workspace.desktopClose.sharedSessionsKept": "Les sessions partagées ou persistantes ({n}) sont conservées.",
 	"workspace.sessionClass.managed": "Géré",

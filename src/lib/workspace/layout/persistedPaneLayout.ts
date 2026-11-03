@@ -79,9 +79,10 @@ export function normalizePersistedPaneDefinition(
 /** Normalize saved content references without changing pane identity.
  * Agent runtime authority stays in its registry, not copied view parameters. */
 export function normalizePersistedPaneLayout(layout: unknown): unknown {
-	const candidate = record(layout);
+	const restored = withoutMaximizedPane(layout);
+	const candidate = record(restored);
 	const panels = record(candidate?.panels);
-	if (!candidate || !panels) return layout;
+	if (!candidate || !panels) return restored;
 	let nextPanels: UnknownRecord | undefined;
 	for (const [panelId, value] of Object.entries(panels)) {
 		const panel = normalizePersistedPaneDefinition(panelId, value);
@@ -89,7 +90,19 @@ export function normalizePersistedPaneLayout(layout: unknown): unknown {
 		nextPanels ??= { ...panels };
 		nextPanels[panelId] = panel;
 	}
-	return nextPanels ? { ...candidate, panels: nextPanels } : layout;
+	return nextPanels ? { ...candidate, panels: nextPanels } : restored;
+}
+
+/** A maximized pane is presentation only (#392). Dockview serializes it as
+ * `grid.maximizedNode`; a saved layout drops it so a reload opens normally.
+ * Dockview writes the grid's own visibility as if restored, so nothing else
+ * changes. Returns `layout` itself when nothing is maximized. */
+export function withoutMaximizedPane<Layout>(layout: Layout): Layout {
+	const candidate = record(layout);
+	const grid = record(candidate?.grid);
+	if (!candidate || !grid || !("maximizedNode" in grid)) return layout;
+	const { maximizedNode: _presentation, ...restored } = grid;
+	return { ...candidate, grid: restored } as Layout;
 }
 
 export function normalizePersistedPaneLayouts(

@@ -393,6 +393,7 @@ export const settings: Record<string, string> = {
 	"settings.agentTooling.skillState.unmanaged": "在 Dure 之外安装",
 	"settings.macosPerms.title": "macOS 权限",
 	"settings.notifications.test.macosDisabled": "macOS 中的 Dure 通知已关闭。",
+	"settings.shortcuts.cmd.toggleMaximizePane": "最大化或还原窗格",
 	"settings.shortcuts.cmd.undoPaneMove": "撤销窗格移动",
 	"settings.stats.providers.enabledSummary": "{a} 个已启用 · {b} 个有数据",
 	"settings.general.providerSkipPermissions": "跳过权限确认直接运行 {label}",

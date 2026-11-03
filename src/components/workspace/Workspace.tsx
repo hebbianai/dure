@@ -95,6 +95,7 @@ import {
 } from "@/lib/workspace/layout/layoutPushChannel";
 import { slimGitHubIssueLayout } from "@/lib/github/githubIssuePane";
 import { pruneEmptyDockviewGroups } from "@/lib/workspace/layout/layoutLifecycle";
+import { withoutMaximizedPane } from "@/lib/workspace/layout/persistedPaneLayout";
 import { installWorkspaceLayoutPersistence } from "@/lib/workspace/layout/workspaceLayoutPersistence";
 import { dockPanelReference } from "@/lib/workspace/dock/dockPanelParameters";
 import { workspacePerformance } from "@/lib/workspace/performance/workspacePerformance";
@@ -294,7 +295,12 @@ export const Workspace = memo(function Workspace({
 
   const persistDockviewLayout = useCallback((api: DockviewReadyEvent["api"]) => {
     try {
-      const nextLayout = slimGitHubIssueLayout(pruneEmptyDockviewGroups(api.toJSON()));
+      // Sign the layout as the store keeps it: a maximized pane is not saved,
+      // so maximizing writes nothing and a background projection of the same
+      // layout does not restore it.
+      const nextLayout = withoutMaximizedPane(
+        slimGitHubIssueLayout(pruneEmptyDockviewGroups(api.toJSON())),
+      );
       const signature = JSON.stringify(nextLayout);
       if (signature === persistedLayoutSignature.current) return true;
       persistedLayoutSignature.current = signature;

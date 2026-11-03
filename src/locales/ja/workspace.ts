@@ -153,6 +153,8 @@ export const workspace: Record<string, string> = {
 	"workspace.pane.pin": "固定",
 	"workspace.pane.unpin": "ピン留めを解除",
 	"workspace.pane.dockBack": "グリッドに戻す",
+	"workspace.pane.maximize": "最大化",
+	"workspace.pane.restore": "元のサイズに戻す",
 	"workspace.paneClose.pinnedTitle": "ピン留めされたペインを閉じる",
 	"workspace.desktopClose.sharedSessionsKept": "共有中または永続的なセッション {n} 個は保持されます。",
 	"workspace.sessionClass.managed": "管理対象",

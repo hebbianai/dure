@@ -153,6 +153,8 @@ export const workspace: Record<string, string> = {
 	"workspace.pane.pin": "固定",
 	"workspace.pane.unpin": "取消固定",
 	"workspace.pane.dockBack": "放回网格",
+	"workspace.pane.maximize": "最大化",
+	"workspace.pane.restore": "还原",
 	"workspace.paneClose.pinnedTitle": "关闭固定面板",
 	"workspace.desktopClose.sharedSessionsKept": "共享或持久化的 {n} 个会话将被保留。",
 	"workspace.sessionClass.managed": "托管",

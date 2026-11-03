@@ -1,6 +1,7 @@
 // Prefer a nearby split that fits, then another readable group. Existing panes
 // keep their topology; placement only divides the chosen group's available space.
 import type { DockviewApi } from "dockview-react";
+import { restoreMaximizedPane } from "@/lib/workspace/pane/paneMaximize";
 import type { PanelPosition } from "@/lib/workspace/pane/panePlacement";
 
 export interface PlacementCandidate {
@@ -16,9 +17,13 @@ export interface GridSplitChoice {
 
 /** Ordinary terminals or explicit rail placements form a full-height right rail.
  * Match visible Agent groups, falling back to terminals before the first Agent.
- * Use their post-add mean width, counting a tabbed group once. */
+ * Use their post-add mean width, counting a tabbed group once.
+ *
+ * Placement precedes an open, and opening restores a maximized pane first, so
+ * placement measures the real layout rather than the one maximized pane. */
 export function rightRailPosition(api: DockviewApi): PanelPosition | undefined {
 	if (api.panels.length === 0) return undefined;
+	restoreMaximizedPane(api);
 	if (!Number.isFinite(api.width) || api.width <= 0)
 		return { direction: "right" };
 	const agentWidths = new Map<string, number>();
@@ -149,6 +154,8 @@ export function autoSplitPosition(
 	options: { preferredPanelId?: string; minimumSize?: PaneSize } = {},
 ): PanelPosition | undefined {
 	if (api.panels.length === 0) return undefined;
+	// Measure the real layout, as rightRailPosition does.
+	restoreMaximizedPane(api);
 	const activeGroup =
 		(options.preferredPanelId
 			? api.getPanel(options.preferredPanelId)?.group

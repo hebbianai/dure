@@ -43,6 +43,7 @@ import { dockPanelReference } from "@/lib/workspace/dock/dockPanelParameters";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { subscribeDockviewRegistration } from "@/lib/workspace/dock/dockviewRegistration";
 import { useHiddenPanes } from "@/lib/workspace/pane/hiddenPanesStore";
+import { paneShownInLayout } from "@/lib/workspace/pane/paneMaximize";
 import {
 	observedTitle,
 	resolveAgentPaneTitle,
@@ -99,13 +100,14 @@ export function useSpaces() {
 	const activeSpaceId = useStore((state) => state.activeSpaceId);
 	const readPanes = useCallback(() => {
 		const state = useStore.getState();
+		const dockview = getDockview(activeSpaceId);
 		return projectPanes(
 			state.layouts,
 			activeSpaceId,
 			desktopOrder,
-			getDockview(activeSpaceId)?.panels.map((panel) => ({
+			dockview?.panels.map((panel) => ({
 				...dockPanelReference(panel),
-				isVisible: panel.api.isVisible,
+				isVisible: paneShownInLayout(dockview, panel),
 			})),
 		);
 	}, [activeSpaceId, desktopOrder, projectPanes]);

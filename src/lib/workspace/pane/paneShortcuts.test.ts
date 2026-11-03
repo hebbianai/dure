@@ -625,3 +625,173 @@ describe("pane focus shortcuts across Spaces", () => {
 		expect(peekPendingPanelFocus(nextId)).toBeUndefined();
 	});
 });
+
+describe("pane maximize shortcuts", () => {
+	function realDockview(desktopId: string): DockviewApi {
+		const container = document.createElement("div");
+		document.body.append(container);
+		const api = createDockview(container, {
+			createComponent: () => {
+				const element = document.createElement("div");
+				element.append(document.createElement("textarea"));
+				return { element, init() {} };
+			},
+		});
+		disposers.push(() => {
+			api.dispose();
+			container.remove();
+		});
+		api.layout(1000, 600);
+		api.addPanel({ id: "left", component: "terminal" });
+		api.addPanel({
+			id: "right",
+			component: "terminal",
+			position: { referencePanel: "left", direction: "right" },
+		});
+		registerDockview(desktopId, api);
+		registered.push({ desktopId, api });
+		return api;
+	}
+
+	function press(
+		target: EventTarget,
+		key: string,
+		modifiers: Partial<KeyboardEventInit> = {},
+	) {
+		const event = new KeyboardEvent("keydown", {
+			key,
+			bubbles: true,
+			cancelable: true,
+			...modifiers,
+		});
+		target.dispatchEvent(event);
+		return event;
+	}
+
+	it("toggles the active pane with the same chord", () => {
+		const desktopId = `shortcut-maximize-${++sequence}`;
+		const api = realDockview(desktopId);
+		useStore.setState({ activeSpaceId: desktopId, shortcutOverrides: {} });
+		disposers.push(installPaneShortcuts());
+
+		expect(
+			press(window, "Enter", { metaKey: true, shiftKey: true })
+				.defaultPrevented,
+		).toBe(true);
+		expect(api.getPanel("right")!.api.isMaximized()).toBe(true);
+		expect(
+			press(window, "Enter", { ctrlKey: true, shiftKey: true })
+				.defaultPrevented,
+		).toBe(true);
+		expect(api.hasMaximizedGroup()).toBe(false);
+	});
+
+	it("consumes Ctrl+Shift+Enter before a focused terminal can send it as Enter", () => {
+		const desktopId = `shortcut-maximize-terminal-${++sequence}`;
+		const api = realDockview(desktopId);
+		useStore.setState({ activeSpaceId: desktopId, shortcutOverrides: {} });
+		disposers.push(installPaneShortcuts());
+		const right = api.getPanel("right")!;
+		const content = right.view.content.element;
+		const terminalInput = content.querySelector("textarea")!;
+		// The structured terminal's handler runs on its input; React delegates
+		// it from the root container, which sits between window and the input.
+		const reachedTerminal = vi.fn();
+		terminalInput.addEventListener("keydown", reachedTerminal);
+		content.addEventListener("keydown", reachedTerminal);
+		terminalInput.focus();
+
+		const toggle = press(terminalInput, "Enter", {
+			ctrlKey: true,
+			shiftKey: true,
+		});
+		expect(right.api.isMaximized()).toBe(true);
+		expect(toggle.defaultPrevented).toBe(true);
+		const restore = press(terminalInput, "Enter", {
+			ctrlKey: true,
+			shiftKey: true,
+		});
+		expect(api.hasMaximizedGroup()).toBe(false);
+		expect(restore.defaultPrevented).toBe(true);
+		expect(reachedTerminal).not.toHaveBeenCalled();
+
+		// Plain Enter and Shift+Enter are the agent's, untouched.
+		press(terminalInput, "Enter");
+		press(terminalInput, "Enter", { shiftKey: true });
+		expect(reachedTerminal).toHaveBeenCalledTimes(4);
+		expect(api.hasMaximizedGroup()).toBe(false);
+	});
+
+	it("lets the chord through to the terminal when there is no pane to toggle", () => {
+		const desktopId = `shortcut-maximize-floating-${++sequence}`;
+		const api = realDockview(desktopId);
+		useStore.setState({ activeSpaceId: desktopId, shortcutOverrides: {} });
+		disposers.push(installPaneShortcuts());
+		const floating = api.addPanel({
+			id: "floating",
+			component: "terminal",
+			floating: { width: 300, height: 200 },
+		});
+		const terminalInput =
+			floating.view.content.element.querySelector("textarea")!;
+		const reachedTerminal = vi.fn();
+		terminalInput.addEventListener("keydown", reachedTerminal);
+
+		const event = press(terminalInput, "Enter", {
+			ctrlKey: true,
+			shiftKey: true,
+		});
+		expect(api.hasMaximizedGroup()).toBe(false);
+		expect(event.defaultPrevented).toBe(false);
+		expect(reachedTerminal).toHaveBeenCalledOnce();
+	});
+
+	it("leaves the chord to an open dialog", () => {
+		const desktopId = `shortcut-maximize-dialog-${++sequence}`;
+		const api = realDockview(desktopId);
+		useStore.setState({ activeSpaceId: desktopId, shortcutOverrides: {} });
+		disposers.push(installPaneShortcuts());
+		const dialog = document.createElement("div");
+		dialog.setAttribute("role", "dialog");
+		const field = document.createElement("textarea");
+		dialog.append(field);
+		document.body.append(dialog);
+		disposers.push(() => dialog.remove());
+		// Dialogs that submit on ⌘↵ do not check ⇧.
+		const submit = vi.fn();
+		dialog.addEventListener("keydown", submit);
+
+		press(field, "Enter", { metaKey: true, shiftKey: true });
+		expect(api.hasMaximizedGroup()).toBe(false);
+		expect(submit).toHaveBeenCalledOnce();
+	});
+
+	it("restores with Esc unless a terminal or text input has the key", () => {
+		const desktopId = `shortcut-maximize-escape-${++sequence}`;
+		const api = realDockview(desktopId);
+		useStore.setState({ activeSpaceId: desktopId, shortcutOverrides: {} });
+		disposers.push(installPaneShortcuts());
+		const right = api.getPanel("right")!;
+		right.api.maximize();
+
+		const input = right.view.content.element.querySelector("textarea")!;
+		expect(press(input, "Escape").defaultPrevented).toBe(false);
+		expect(right.api.isMaximized()).toBe(true);
+
+		expect(press(document.body, "Escape").defaultPrevented).toBe(true);
+		expect(api.hasMaximizedGroup()).toBe(false);
+		expect(press(document.body, "Escape").defaultPrevented).toBe(false);
+	});
+
+	it("acts on a popout window's own Space", () => {
+		const popoutId = `shortcut-maximize-popout-${++sequence}`;
+		const api = realDockview(popoutId);
+		useStore.setState({ activeSpaceId: "elsewhere", shortcutOverrides: {} });
+		disposers.push(installPaneShortcuts(popoutId));
+
+		press(window, "Enter", { metaKey: true, shiftKey: true });
+		expect(api.hasMaximizedGroup()).toBe(true);
+		press(document.body, "Escape");
+		expect(api.hasMaximizedGroup()).toBe(false);
+	});
+});

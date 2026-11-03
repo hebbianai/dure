@@ -393,6 +393,7 @@ export const settings: Record<string, string> = {
 	"settings.agentTooling.skillState.unmanaged": "Instalado fora do Dure",
 	"settings.macosPerms.title": "Permissões do macOS",
 	"settings.notifications.test.macosDisabled": "As notificações do Dure estão desativadas no macOS.",
+	"settings.shortcuts.cmd.toggleMaximizePane": "Maximizar ou restaurar painel",
 	"settings.shortcuts.cmd.undoPaneMove": "Desfazer movimento do painel",
 	"settings.stats.providers.enabledSummary": "{a} ativados · {b} com dados",
 	"settings.general.providerSkipPermissions": "Executar {label} sem confirmações de permissão",

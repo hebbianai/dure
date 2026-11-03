@@ -30,7 +30,6 @@ import { t } from "@/lib/i18n";
 import { fileTargetFromPane } from "@/lib/files/fileTarget";
 import { AgentActivityGlyph } from "@/components/agents/AgentActivityGlyph";
 import { ProgramStatusBadge } from "@/components/agents/ProgramStatusBadge";
-import { IconButton } from "@/components/ui/icon-button";
 import { OverflowRevealText } from "@/components/ui/overflow-reveal-text";
 import { StatusDot } from "@/components/ui/status-dot";
 import { openAgentPanel } from "@/lib/workspace/dock";
@@ -97,6 +96,8 @@ import { requestDelegateTaskDialog } from "@/lib/workspace/pane/paneMenuSignals"
 import { syncSpacesPaneHoverGroup } from "@/lib/workspace/dockviewGroupPresentation";
 import { useDockviewGroupActive } from "@/components/workspace/useDockviewGroupActive";
 import { useDockviewPaneFloating } from "@/components/workspace/useDockviewPaneFloating";
+import { PaneActionButton } from "@/components/workspace/PaneActionButton";
+import { PaneMaximizeButton } from "@/components/workspace/PaneMaximizeButton";
 import { usePaneExternalWorkspaceOpen } from "@/components/workspace/usePaneExternalWorkspaceOpen";
 import {
   buildPaneInfoModel,
@@ -707,7 +708,8 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
           takes ~180px with its glyph and insets, so the split pair stays up
           to 320px and folds below; the pin folds below 260px. 420/340 folded
           them while the bar still had a hand's width of air (owner report
-          2026-09-13). */}
+          2026-09-13). Maximize never folds: the narrowest pane needs it most,
+          so it takes its 26px from the title instead (#392). */}
       <div data-pane-actions="" className="flex shrink-0 items-center gap-1 pl-2">
         {/* 분할·고정·세션 전환은 한 메뉴로 — 버튼 줄이 길수록 top bar hover의
             우선권(제목 대신 액션)이 흐려진다(사용자 요청 2026-08-01). 고정된
@@ -752,6 +754,7 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
             {pinned ? <PinOff /> : <Pin />}
           </PaneActionButton>
         </span>
+        <PaneMaximizeButton api={props.api} containerApi={props.containerApi} />
         <PaneActionDropdown
           open={paneMenuOpen}
           onOpenChange={(open) => {
@@ -829,45 +832,5 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
         />
       )}
     </>
-  );
-}
-
-/** pane 헤더 오른쪽 액션 버튼 — 시안 2070:31476 (22px 박스 / 14px 아이콘 / 6px 라운드).
- *
- *  시안은 이 버튼들을 늘 보이게 둔다. 예전에는 hover에서만 나타났는데, pane이
- *  여러 개일 때 어느 pane에 마우스를 올려야 버튼이 나오는지 알 수 없어
- *  분할·닫기가 사실상 우클릭 메뉴 전용이었다. */
-function PaneActionButton({
-  label,
-  onClick,
-  children,
-  active,
-  showTooltip,
-}: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-  /** 눌린 상태로 남는 토글(고정 등) — 색으로 현재 상태를 알린다. */
-  active?: boolean;
-  /** Off for a glyph that names itself (the close ✕). */
-  showTooltip?: boolean;
-}) {
-  return (
-    <IconButton
-      title={label}
-      showTooltip={showTooltip}
-      // Toggle buttons (pin) pass their state; plain actions leave it
-      // undefined so IconButton renders no aria-pressed for them.
-      pressed={active}
-      className="size-[22px] shrink-0 rounded-sm p-1 duration-150 hover:bg-glass-tint-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-      // 헤더 전체가 드래그 표면이라, 버튼 위에서 시작한 포인터는 막아야 한다.
-      onPointerDown={(event) => event.stopPropagation()}
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
-    >
-      {children}
-    </IconButton>
   );
 }
