@@ -196,7 +196,11 @@ export function CodexUsagePopover({
 			),
 			credits: [
 				codexResetCreditsLabel(accountSnapshot, nowSec),
-				codexCreditsLabel(accountSnapshot, nowSec),
+				codexCreditsLabel(
+					accountSnapshot,
+					nowSec,
+					(accountMeter?.pct ?? 0) >= 100,
+				),
 			],
 		};
 	};

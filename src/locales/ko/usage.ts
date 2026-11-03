@@ -103,6 +103,8 @@ export const usage: Record<string, string> = {
 	"usage.credits.remaining": "워크스페이스 크레딧 {balance}",
 	"usage.credits.unlimited": "워크스페이스 크레딧 무제한",
 	"usage.credits.unavailable": "워크스페이스 크레딧 확인 불가",
+	"usage.credits.inUse": "한도 소진 · 워크스페이스 크레딧으로 사용 중 {balance}",
+	"usage.credits.inUseUnlimited": "한도 소진 · 무제한 워크스페이스 크레딧으로 사용 중",
 	"usage.resetCredits.available": "한도 초기화 {count}회",
 	"usage.resetCredits.unavailable": "한도 초기화 횟수 확인 불가",
 	"usage.credits.lastKnown": "마지막 확인: {credits}",

@@ -18,23 +18,35 @@ export function codexResetCreditsLabel(
 		: label;
 }
 
+/** The account's workspace credit balance. `limitReached` says its plan
+ * limit is used up: with a balance left, Codex keeps running on the credits,
+ * so the label says so instead of leaving a bare 100% that reads as blocked. */
 export function codexCreditsLabel(
 	snapshot: CodexUsageSnapshot | undefined,
 	nowSec: number,
+	limitReached = false,
 ): string {
 	const credits = snapshot?.capturedAt
 		? snapshot.rateLimits.find((limit) => limit.limitId === "codex")?.credits
 		: null;
 	const raw = credits?.balance?.trim();
 	const balance = raw ? Number(raw) : Number.NaN;
+	const shown = Number.isFinite(balance)
+		? balance.toLocaleString(undefined, { maximumFractionDigits: 20 })
+		: "";
 	const label = credits?.unlimited
-		? t("usage.credits.unlimited")
+		? t(
+				limitReached
+					? "usage.credits.inUseUnlimited"
+					: "usage.credits.unlimited",
+			)
 		: Number.isFinite(balance) && balance >= 0
-			? t("usage.credits.remaining", {
-					balance: balance.toLocaleString(undefined, {
-						maximumFractionDigits: 20,
-					}),
-				})
+			? t(
+					limitReached && balance > 0
+						? "usage.credits.inUse"
+						: "usage.credits.remaining",
+					{ balance: shown },
+				)
 			: null;
 	if (!label) return t("usage.credits.unavailable");
 	return codexSnapshotFreshness(snapshot, nowSec) === "stale"

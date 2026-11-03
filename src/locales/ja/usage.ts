@@ -103,6 +103,8 @@ export const usage: Record<string, string> = {
 	"usage.credits.remaining": "ワークスペースのクレジット: {balance}",
 	"usage.credits.unlimited": "ワークスペースのクレジット無制限",
 	"usage.credits.unavailable": "ワークスペースのクレジット確認不可",
+	"usage.credits.inUse": "上限到達 · ワークスペースのクレジットで利用中: {balance}",
+	"usage.credits.inUseUnlimited": "上限到達 · 無制限のワークスペースのクレジットで利用中",
 	"usage.resetCredits.available": "使用上限リセット: {count}回",
 	"usage.resetCredits.unavailable": "使用上限リセット回数を確認できません",
 	"usage.credits.lastKnown": "最終確認: {credits}",

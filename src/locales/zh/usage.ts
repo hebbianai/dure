@@ -103,6 +103,8 @@ export const usage: Record<string, string> = {
 	"usage.credits.remaining": "工作区积分：{balance}",
 	"usage.credits.unlimited": "工作区积分无限制",
 	"usage.credits.unavailable": "无法获取工作区积分",
+	"usage.credits.inUse": "已达上限 · 正在使用工作区积分：{balance}",
+	"usage.credits.inUseUnlimited": "已达上限 · 正在使用无限制的工作区积分",
 	"usage.resetCredits.available": "用量重置次数：{count}",
 	"usage.resetCredits.unavailable": "无法获取用量重置次数",
 	"usage.credits.lastKnown": "上次确认：{credits}",

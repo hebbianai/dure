@@ -89,6 +89,42 @@ describe("Codex credit labels", () => {
 			).toBe(t("usage.credits.unavailable"));
 		}
 	});
+	it("says a used-up limit keeps running on workspace credits", () => {
+		const funded = snapshot({
+			hasCredits: true,
+			unlimited: false,
+			balance: "39425.507414",
+		});
+		const balance = (39425.507414).toLocaleString(undefined, {
+			maximumFractionDigits: 20,
+		});
+		expect(codexCreditsLabel(funded, 110, true)).toBe(
+			t("usage.credits.inUse", { balance }),
+		);
+		expect(
+			codexCreditsLabel(
+				snapshot({ hasCredits: true, unlimited: true, balance: null }),
+				110,
+				true,
+			),
+		).toBe(t("usage.credits.inUseUnlimited"));
+		// With nothing left, the limit does stop the account.
+		expect(
+			codexCreditsLabel(
+				snapshot({ hasCredits: false, unlimited: false, balance: "0" }),
+				110,
+				true,
+			),
+		).toBe(t("usage.credits.remaining", { balance: "0" }));
+		expect(codexCreditsLabel(funded, 110, false)).toBe(
+			t("usage.credits.remaining", { balance }),
+		);
+		expect(codexCreditsLabel(funded, 2000, true)).toBe(
+			t("usage.credits.lastKnown", {
+				credits: t("usage.credits.inUse", { balance }),
+			}),
+		);
+	});
 	it("distinguishes unlimited from an absent or model-scoped balance", () => {
 		expect(
 			codexCreditsLabel(

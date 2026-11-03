@@ -103,6 +103,8 @@ export const usageEnglishTranslations: Record<string, string> = {
 	"usage.credits.remaining": "Workspace credits: {balance}",
 	"usage.credits.unlimited": "Unlimited workspace credits",
 	"usage.credits.unavailable": "Workspace credits unavailable",
+	"usage.credits.inUse": "Limit reached · running on workspace credits: {balance}",
+	"usage.credits.inUseUnlimited": "Limit reached · running on unlimited workspace credits",
 	"usage.resetCredits.available": "Usage resets: {count}",
 	"usage.resetCredits.unavailable": "Usage resets unavailable",
 	"usage.credits.lastKnown": "Last known: {credits}",
