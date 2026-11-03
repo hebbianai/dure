@@ -461,7 +461,7 @@ pub fn read_session_settings_roots(
         .unwrap_or_default())
 }
 
-fn bounded_suffix(path: &Path, max_bytes: u64) -> Option<String> {
+pub(crate) fn bounded_suffix(path: &Path, max_bytes: u64) -> Option<String> {
     let mut file = fs::File::open(path).ok()?;
     let metadata = file.metadata().ok()?;
     if !metadata.is_file() {

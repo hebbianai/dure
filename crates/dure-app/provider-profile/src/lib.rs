@@ -20,6 +20,8 @@ mod overlay_topology;
 mod refresh_tests;
 pub mod transcript;
 
+pub mod background_work;
+
 mod app_home {
     pub const DIR_NAME: &str = ".dure";
     #[cfg(not(windows))]
