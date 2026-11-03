@@ -1,5 +1,6 @@
 #[cfg(test)]
 use dure_provider_profile::transcript::{provider_final_response, ProviderTranscriptEntry};
+use dure_provider_profile::background_work::{read_claude_background_work, BackgroundWorkList};
 pub use dure_provider_profile::transcript::{ConversationTurnRole, ProviderConversationTranscript};
 use dure_provider_profile::transcript::{
     bounded_prefix, claude_turn, codex_content_text, codex_turn, find_claude_conversation,
@@ -1644,19 +1645,58 @@ fn transcript_for_roots_and_profiles(
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderConversationTranscript, String> {
+    let parse: fn(&Value) -> Option<(ConversationTurnRole, String)> = match provider {
+        "claude" => claude_turn,
+        "codex" => codex_turn,
+        _ => return Err("provider transcript export is unsupported".to_string()),
+    };
+    let path = newest_conversation_file(roots, profiles, provider, conversation_id)?;
+    transcript_from_file(&path, provider, conversation_id, parse)
+}
+
+/// The running background work recorded for one exact conversation, read
+/// from wherever the transcript would be (`transcript_any_account`). Only
+/// Claude Code records it; a conversation that cannot be found has none.
+pub fn background_work_any_account(
+    provider: &str,
+    conversation_id: &str,
+    since_unix_ms: Option<u64>,
+) -> BackgroundWorkList {
+    if provider != "claude" {
+        return BackgroundWorkList::default();
+    }
+    let profiles = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(|home| account_profile_directories(Path::new(&home), provider))
+        .unwrap_or_default();
+    newest_conversation_file(
+        &DiscoveryRoots::from_environment(),
+        &profiles,
+        provider,
+        conversation_id,
+    )
+    .map(|path| read_claude_background_work(&path, since_unix_ms))
+    .unwrap_or_default()
+}
+
+/// The most recently written file of an exact conversation across the
+/// default roots and the provider's account profiles.
+fn newest_conversation_file(
+    roots: &DiscoveryRoots,
+    profiles: &[PathBuf],
+    provider: &str,
+    conversation_id: &str,
+) -> Result<PathBuf, String> {
     if !safe_id(conversation_id) {
         return Err("provider conversation id is invalid".to_string());
     }
-    let parse: fn(&Value) -> Option<(ConversationTurnRole, String)>;
     let directories: Vec<PathBuf> = match provider {
         "claude" => {
-            parse = claude_turn;
             std::iter::once(roots.claude_projects.clone())
                 .chain(profiles.iter().map(|profile| profile.join("projects")))
                 .collect()
         }
         "codex" => {
-            parse = codex_turn;
             let default_archive = roots
                 .codex_sessions
                 .parent()
@@ -1690,8 +1730,9 @@ fn transcript_for_roots_and_profiles(
             }
         }
     }
-    let (_, path) = newest.ok_or_else(|| "provider conversation was not found".to_string())?;
-    transcript_from_file(&path, provider, conversation_id, parse)
+    newest
+        .map(|(_, path)| path)
+        .ok_or_else(|| "provider conversation was not found".to_string())
 }
 
 fn claude_details(

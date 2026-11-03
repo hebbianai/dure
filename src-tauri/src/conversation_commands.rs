@@ -151,6 +151,22 @@ pub(crate) async fn read_provider_conversation_transcript(
     .map_err(|error| format!("provider transcript task failed: {error}"))?
 }
 
+/// The running background work of one local managed agent session, as the
+/// chat view's line above the composer shows it. The desktop decides it from
+/// the provider's records behind the Host's facts (`hub::conversation`).
+#[tauri::command(async)]
+pub(crate) async fn read_agent_background_work(
+    workspace_id: String,
+    session_id: String,
+) -> Result<dure_provider_profile::background_work::BackgroundWorkList, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::hub::conversation::LocalConversations::background_work(&workspace_id, &session_id)
+            .map_err(|(_, detail)| detail)
+    })
+    .await
+    .map_err(|error| format!("background work task failed: {error}"))?
+}
+
 /// List provider-owned recent records on one registered SSH host.
 #[tauri::command(async)]
 pub(crate) async fn list_remote_provider_conversations(

@@ -126,7 +126,8 @@ mod windows_managed_provider_launch;
 
 use conversation_commands::{
     list_conversations, list_provider_conversations, list_remote_provider_conversations,
-    provider_conversation_metadata, read_provider_conversation_transcript, ssh_list_conversations,
+    provider_conversation_metadata, read_agent_background_work, read_provider_conversation_transcript,
+    ssh_list_conversations,
     ssh_provider_conversation_metadata,
 };
 use serde::Serialize;
@@ -2530,6 +2531,7 @@ pub fn run() {
             list_provider_conversations,
             provider_conversation_metadata,
             read_provider_conversation_transcript,
+            read_agent_background_work,
             conv::provider_conversation_details,
             list_remote_provider_conversations,
             conv::remote_provider_conversation_details,

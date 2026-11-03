@@ -25,6 +25,7 @@ use dure_hub_protocol::conversation::{
     normalize_agent_prompt, ConversationCursor, ConversationEntry, ConversationRefusal,
     ConversationRole, HubAgentPromptResult, HubConversationTranscriptResult, TranscriptParts,
 };
+use dure_provider_profile::background_work::BackgroundWorkList;
 use dure_provider_profile::transcript::{ConversationTurnRole, ProviderConversationTranscript};
 use hmux_client::{
     AgentRuntimeActivity, AgentRuntimeAttention, AgentRuntimeLifecycle,
@@ -234,6 +235,8 @@ pub struct ObservedRuntime {
     /// A turn is running: the agent works on a prompt. Background work after
     /// a turn ended is not a turn.
     pub turn_open: bool,
+    /// The provider runs and works, on a turn or on background work after it.
+    pub working: bool,
     pub attention: bool,
 }
 
@@ -263,6 +266,8 @@ impl ObservedAgent {
                     turn_open: runtime.lifecycle == AgentRuntimeLifecycle::Running
                         && runtime.activity == AgentRuntimeActivity::Working
                         && !runtime.background_work,
+                    working: runtime.lifecycle == AgentRuntimeLifecycle::Running
+                        && runtime.activity == AgentRuntimeActivity::Working,
                     attention: runtime.attention != AgentRuntimeAttention::None
                         || runtime.attention_id.is_some(),
                 })
@@ -350,6 +355,45 @@ pub fn transcript_answer(
             ConversationRefusal::TranscriptUnavailable,
             format!("Could not read the provider transcript: {detail}"),
         ),
+    }
+}
+
+/// The agent's running background work, decided in this one place: the
+/// provider's records list the items and the Host's facts gate them. Nothing
+/// is read unless the Host reports the provider running and working, so an
+/// item whose end the records never got (a crash, a replaced process) cannot
+/// show while the agent is idle, and `provider_started_unix_ms` drops items an
+/// earlier process started. `read` is the provider record reader.
+pub fn background_work_answer(
+    observed: &ObservedAgent,
+    provider_started_unix_ms: Option<u64>,
+    read: impl FnOnce(&str, &str, Option<u64>) -> BackgroundWorkList,
+) -> BackgroundWorkList {
+    let (Some(runtime), Some(conversation)) = (observed.runtime, &observed.conversation) else {
+        return BackgroundWorkList::default();
+    };
+    if !runtime.working || conversation.provider_id != "claude" {
+        return BackgroundWorkList::default();
+    }
+    read(
+        &conversation.provider_id,
+        &conversation.conversation_id,
+        provider_started_unix_ms,
+    )
+}
+
+/// When the provider process started, on the wall clock the provider's
+/// records use. Only macOS reports a wall-clock start here; elsewhere the
+/// answer relies on the Host gate alone.
+fn provider_started_unix_ms(process_id: u32) -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        hebbian_process_sampler::process_start_time(process_id).map(|micros| micros / 1000)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = process_id;
+        None
     }
 }
 
@@ -531,6 +575,30 @@ fn attach_refusal(error: &ClientError) -> HubAgentPromptResult {
 pub struct LocalConversations;
 
 impl LocalConversations {
+    /// The running background work of one local session, behind the same
+    /// lookup and one bounded Host handshake as its transcript.
+    pub fn background_work(
+        workspace_id: &str,
+        session_id: &str,
+    ) -> Result<BackgroundWorkList, (ConversationRefusal, String)> {
+        let (catalog, descriptor) = Self::session(workspace_id, session_id)?;
+        let process_id = descriptor.provider_process.process_id;
+        let inspection = hmux_client::inspect_local_session(&catalog, descriptor);
+        if let Some((code, detail)) = health_refusal(inspection.health) {
+            return Err((code, detail.to_string()));
+        }
+        let observed = ObservedAgent::from_host(
+            &inspection.descriptor.terminal_epoch,
+            inspection.provider_conversation_identity.as_deref(),
+            inspection.agent_runtime_state.as_ref(),
+        );
+        Ok(background_work_answer(
+            &observed,
+            provider_started_unix_ms(process_id),
+            crate::conv::background_work_any_account,
+        ))
+    }
+
     fn session(
         workspace_id: &str,
         session_id: &str,
@@ -678,6 +746,9 @@ mod tests {
     use super::*;
     use dure_hub_protocol::conversation::{
         AgentPromptState, TranscriptOutcome, MAX_AGENT_PROMPT_BYTES,
+    };
+    use dure_provider_profile::background_work::{
+        BackgroundWorkCounts, BackgroundWorkItem, BackgroundWorkKind,
     };
     use dure_provider_profile::transcript::ProviderTranscriptEntry;
     use hmux_client::{AgentRuntimeActivity, AgentRuntimeLifecycle};
@@ -964,6 +1035,7 @@ mod tests {
                 revision: 12,
                 turn_completed_count: 3,
                 turn_open: false,
+                working: false,
                 attention: false,
             })
         );
@@ -982,6 +1054,89 @@ mod tests {
         background.background_work = true;
         let observed = ObservedAgent::from_host("terminal-1", None, Some(&background));
         assert!(!observed.runtime.unwrap().turn_open);
+        assert!(observed.runtime.unwrap().working);
+    }
+
+    fn shell_list() -> BackgroundWorkList {
+        BackgroundWorkList {
+            items: vec![BackgroundWorkItem {
+                id: "b1".into(),
+                kind: BackgroundWorkKind::Shell,
+                label: Some("Watch the release chain".into()),
+                started_unix_ms: 1_793_600_000_000,
+                steps: None,
+                tokens: None,
+            }],
+            counts: BackgroundWorkCounts {
+                shells: 1,
+                ..BackgroundWorkCounts::default()
+            },
+            truncated: false,
+        }
+    }
+
+    fn after_turn() -> ObservedAgent {
+        let mut background = runtime(
+            "terminal-1",
+            AgentRuntimeActivity::Working,
+            AgentRuntimeAttention::None,
+        );
+        background.background_work = true;
+        ObservedAgent::from_host("terminal-1", Some(&reported("terminal-1")), Some(&background))
+    }
+
+    #[test]
+    fn a_host_without_open_turn_or_background_work_shows_nothing() {
+        let unread = |_: &str, _: &str, _: Option<u64>| -> BackgroundWorkList {
+            panic!("records must not be read while the Host reports no work")
+        };
+        assert_eq!(background_work_answer(&idle_agent(), None, unread), BackgroundWorkList::default());
+        let unobserved = ObservedAgent::from_host("terminal-1", Some(&reported("terminal-1")), None);
+        assert_eq!(background_work_answer(&unobserved, None, unread), BackgroundWorkList::default());
+        let mut exited = runtime(
+            "terminal-1",
+            AgentRuntimeActivity::Working,
+            AgentRuntimeAttention::None,
+        );
+        exited.lifecycle = AgentRuntimeLifecycle::Exited;
+        let exited = ObservedAgent::from_host("terminal-1", Some(&reported("terminal-1")), Some(&exited));
+        assert_eq!(background_work_answer(&exited, None, unread), BackgroundWorkList::default());
+    }
+
+    #[test]
+    fn background_work_after_the_turn_reads_the_list() {
+        let list = background_work_answer(&after_turn(), None, |provider, conversation, since| {
+            assert_eq!((provider, conversation, since), ("claude", "conversation-1", None));
+            shell_list()
+        });
+        assert_eq!(list, shell_list());
+        let working = agent(AgentRuntimeActivity::Working, AgentRuntimeAttention::None);
+        assert_eq!(background_work_answer(&working, None, |_, _, _| shell_list()), shell_list());
+    }
+
+    #[test]
+    fn items_from_an_earlier_provider_process_are_dropped() {
+        let mut seen = None;
+        background_work_answer(&after_turn(), Some(1_793_600_000_000), |_, _, since| {
+            seen = since;
+            BackgroundWorkList::default()
+        });
+        assert_eq!(seen, Some(1_793_600_000_000));
+    }
+
+    #[test]
+    fn a_non_claude_provider_answers_empty() {
+        let mut codex = reported("terminal-1");
+        codex.provider_id = "codex".into();
+        let mut background = runtime(
+            "terminal-1",
+            AgentRuntimeActivity::Working,
+            AgentRuntimeAttention::None,
+        );
+        background.background_work = true;
+        let observed = ObservedAgent::from_host("terminal-1", Some(&codex), Some(&background));
+        let list = background_work_answer(&observed, None, |_, _, _| panic!("codex records are not read"));
+        assert_eq!(list, BackgroundWorkList::default());
     }
 
     #[test]

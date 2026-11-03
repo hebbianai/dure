@@ -20,7 +20,8 @@ pub(crate) mod presentation_metadata;
 mod recent_sessions;
 pub(crate) mod remote_presentation_metadata;
 pub use recent_sessions::{
-    details_global, details_remote, list_global, list_remote, ProviderConversationDetails,
+    background_work_any_account, details_global, details_remote, list_global, list_remote,
+    ProviderConversationDetails,
     ProviderConversationRecord, ProviderConversationTranscript, transcript_any_account,
     transcript_global,
 };
