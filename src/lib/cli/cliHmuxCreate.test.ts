@@ -8,7 +8,10 @@ import { resolveCliSpaceId } from "@/lib/cli/cliSpaceIdentity";
 import { routeCliRequestToSpaceOwner } from "@/lib/cli/cliSpaceOwnerRouting";
 import { HmuxPaneAttachmentTimeoutError } from "@/lib/hmux/hmuxPaneAttachment";
 import { RemoteHmuxOpenError } from "@/lib/hmux/remote/remoteHmuxTerminalSession";
-import type { HmuxPaneAttachmentStatus } from "@/lib/ipc";
+import type {
+	HmuxPaneAttachmentStatus,
+	HmuxPaneDepartureReceipt,
+} from "@/lib/ipc";
 import { remoteHmuxStandaloneBinding } from "@/lib/terminal/terminalBinding";
 import { PaneCommandError } from "@/lib/workspace/pane/paneCommandError";
 
@@ -73,10 +76,13 @@ function harness() {
 		return true;
 	});
 	const preparePaneRemoval = vi.fn(() => removePane);
-	const abandonUnpresentedCreation = vi.fn(async () => {
+	const abandonUnpresentedCreation = vi.fn<
+		CliHmuxCreateDependencies["abandonUnpresentedCreation"]
+	>(async () => {
 		events.push("abandon");
-		return undefined;
+		return { state: "retirement_armed" };
 	});
+	const windowHidden = vi.fn(() => false);
 	const dependencies: CliHmuxCreateDependencies = {
 		claim,
 		routeToSpaceOwner,
@@ -92,6 +98,7 @@ function harness() {
 		waitForActivation,
 		preparePaneRemoval,
 		abandonUnpresentedCreation,
+		windowHidden,
 	};
 	return {
 		dependencies,
@@ -113,8 +120,12 @@ function harness() {
 		removePane,
 		preparePaneRemoval,
 		abandonUnpresentedCreation,
+		windowHidden,
 	};
 }
+
+const ROLLED_BACK =
+	"Nothing was kept: this request's pane and Hmux session were removed.";
 
 function arrangePlacement(
 	run: ReturnType<typeof harness>,
@@ -563,7 +574,12 @@ describe("handleCliHmuxCreate", () => {
 			),
 		).resolves.toEqual({
 			ok: false,
-			error: { code: "pane_changed", message: "layout commit failed" },
+			error: {
+				code: "pane_changed",
+				message: "layout commit failed",
+				retryable: true,
+				nextAction: `${ROLLED_BACK} Creating the terminal again is safe.`,
+			},
 		});
 		expect(run.events).toEqual(["claim", "create", "open", "abandon"]);
 		expect(run.waitForActivation).not.toHaveBeenCalled();
@@ -599,6 +615,8 @@ describe("handleCliHmuxCreate", () => {
 			error: {
 				code: "hmux_pane_attachment_timeout",
 				message: timeout.message,
+				retryable: true,
+				nextAction: `${ROLLED_BACK} Creating the terminal again is safe.`,
 			},
 		});
 		expect(run.events).toEqual([
@@ -650,10 +668,196 @@ describe("handleCliHmuxCreate", () => {
 			error: {
 				code: "hmux_pane_attachment_timeout",
 				message: timeout.message,
+				retryable: false,
+				nextAction:
+					"Cleanup was not confirmed (pane_cleanup_failed): the pane or " +
+					"Hmux session standalone-created in workspace workspace-created " +
+					"may remain. Inspect dure client observe --json before creating " +
+					"another terminal.",
 			},
 		});
 		expect(run.events.slice(-2)).toEqual(["remove", "abandon"]);
 		expect(run.removePane).toHaveBeenCalledOnce();
 		expect(run.abandonUnpresentedCreation).toHaveBeenCalledOnce();
+	});
+	it("keeps a preserved session out of the retry-safe receipt", async () => {
+		const run = harness();
+		const timeout = new HmuxPaneAttachmentTimeoutError({
+			ownerId: attachment.ownerId,
+			sessionId: created.sessionId,
+			workspaceId: created.workspaceId,
+		});
+		run.waitForActivation.mockRejectedValue(timeout);
+		run.abandonUnpresentedCreation.mockResolvedValue({
+			state: "session_preserved",
+			reason: "other_clients_attached",
+		} satisfies HmuxPaneDepartureReceipt);
+
+		const result = await handleCliHmuxCreate(
+			{ spaceId: "space-active" },
+			"request-session-preserved",
+			run.dependencies,
+		);
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: {
+				code: "hmux_pane_attachment_timeout",
+				retryable: false,
+				nextAction: expect.stringContaining(
+					"Cleanup was not confirmed (other_clients_attached)",
+				),
+			},
+		});
+	});
+
+	it("reports a failed session cleanup even when the pane was removed", async () => {
+		const run = harness();
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		run.waitForActivation.mockRejectedValue(
+			new HmuxPaneAttachmentTimeoutError({
+				ownerId: attachment.ownerId,
+				sessionId: created.sessionId,
+				workspaceId: created.workspaceId,
+			}),
+		);
+		run.abandonUnpresentedCreation.mockRejectedValue(
+			new Error("Host unreachable"),
+		);
+
+		const result = await handleCliHmuxCreate(
+			{ spaceId: "space-active" },
+			"request-abandon-failed",
+			run.dependencies,
+		);
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: {
+				retryable: false,
+				nextAction: expect.stringContaining(
+					"Cleanup was not confirmed (session_cleanup_failed)",
+				),
+			},
+		});
+		expect(run.removePane).toHaveBeenCalledOnce();
+	});
+
+	it("does not report a clean rollback while a pre-existing pane stays bound", async () => {
+		const run = harness();
+		run.openAndCommit.mockImplementation(() => {
+			run.events.push("open");
+			return { panel: run.panel, paneOwnership: "pre_existing" };
+		});
+		run.waitForActivation.mockRejectedValue(
+			new HmuxPaneAttachmentTimeoutError({
+				ownerId: attachment.ownerId,
+				sessionId: created.sessionId,
+				workspaceId: created.workspaceId,
+			}),
+		);
+
+		const result = await handleCliHmuxCreate(
+			{ spaceId: "space-active" },
+			"request-pre-existing-pane",
+			run.dependencies,
+		);
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: {
+				retryable: false,
+				nextAction: expect.stringContaining(
+					"Cleanup was not confirmed (pane_preserved)",
+				),
+			},
+		});
+		expect(run.preparePaneRemoval).not.toHaveBeenCalled();
+		expect(run.abandonUnpresentedCreation).toHaveBeenCalledOnce();
+	});
+
+	it("reports a pane the compensation could no longer remove", async () => {
+		const run = harness();
+		run.removePane.mockReturnValue(false);
+		run.waitForActivation.mockRejectedValue(
+			new HmuxPaneAttachmentTimeoutError({
+				ownerId: attachment.ownerId,
+				sessionId: created.sessionId,
+				workspaceId: created.workspaceId,
+			}),
+		);
+
+		const result = await handleCliHmuxCreate(
+			{ spaceId: "space-active" },
+			"request-pane-changed",
+			run.dependencies,
+		);
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: {
+				retryable: false,
+				nextAction: expect.stringContaining(
+					"Cleanup was not confirmed (pane_cleanup_failed)",
+				),
+			},
+		});
+	});
+
+	it("names the hidden window when the active Space could not attach", async () => {
+		const run = harness();
+		run.windowHidden.mockReturnValue(true);
+		const timeout = new HmuxPaneAttachmentTimeoutError({
+			ownerId: attachment.ownerId,
+			sessionId: created.sessionId,
+			workspaceId: created.workspaceId,
+		});
+		run.waitForActivation.mockRejectedValue(timeout);
+
+		await expect(
+			handleCliHmuxCreate(
+				{ spaceId: "space-active" },
+				"request-hidden-window",
+				run.dependencies,
+			),
+		).resolves.toEqual({
+			ok: false,
+			error: {
+				code: "hmux_pane_attachment_timeout",
+				message: timeout.message,
+				retryable: true,
+				nextAction:
+					`${ROLLED_BACK} The Dure window is hidden, and the active Space ` +
+					"attaches a new terminal only while the window is visible. Show " +
+					"the Dure window, then create the terminal again.",
+			},
+		});
+	});
+
+	it("does not blame window visibility for a Space that attaches while hidden", async () => {
+		const run = harness();
+		arrangePlacement(run);
+		run.windowHidden.mockReturnValue(true);
+		run.waitForActivation.mockRejectedValue(
+			new HmuxPaneAttachmentTimeoutError({
+				ownerId: attachment.ownerId,
+				sessionId: created.sessionId,
+				workspaceId: created.workspaceId,
+			}),
+		);
+
+		const result = await handleCliHmuxCreate(
+			{ spaceId: "space-active" },
+			"request-hidden-other-space",
+			run.dependencies,
+		);
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: {
+				retryable: true,
+				nextAction: `${ROLLED_BACK} Creating the terminal again is safe.`,
+			},
+		});
 	});
 });

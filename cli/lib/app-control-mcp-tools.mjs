@@ -69,7 +69,7 @@ const operations = {
       ...(spaceId !== undefined ? ["--space-id", spaceId] : [])],
   },
   app_pane_create: {
-    description: "Create a terminal through the connected app's existing local or registered SSH creation transaction, independently of the runtime backend profile. Choose space (ID or unique name) or spaceId (exact ID without a saved projection); omission uses the invoking pane's Space when known, otherwise the app's active Space. No worktree is created. Local receipts prove attachment; SSH receipts prove durable mount. An uncertain response must not be blindly retried.",
+    description: "Create a terminal through the connected app's existing local or registered SSH creation transaction, independently of the runtime backend profile. Choose space (ID or unique name) or spaceId (exact ID without a saved projection); omission uses the invoking pane's Space when known, otherwise the app's active Space. No worktree is created. Local receipts prove attachment; SSH receipts prove durable mount. A failed local create sets error.retryable=true only after confirming its pane and session were removed; otherwise follow error.nextAction. An uncertain response must not be blindly retried.",
     properties: { space: id, spaceId: id, hostId: id, cwd: { type: "string", maxLength: 4096 } }, required: [],
     args: ({ space, spaceId, hostId, cwd }) => ["pane", "create",
       ...(space !== undefined ? ["--space", space] : []),

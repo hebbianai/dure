@@ -13,11 +13,17 @@ import {
 	type CliSpaceOwnerRoute,
 	routeCliRequestToSpaceOwner,
 } from "@/lib/cli/cliSpaceOwnerRouting";
+import { HmuxPaneAttachmentTimeoutError } from "@/lib/hmux/hmuxPaneAttachment";
 import {
 	openRemoteHmuxTerminal,
 	RemoteHmuxOpenError,
 } from "@/lib/hmux/remote/remoteHmuxTerminalSession";
-import { type HmuxPaneAttachmentStatus, hmux, homeDir } from "@/lib/ipc";
+import {
+	type HmuxPaneAttachmentStatus,
+	type HmuxPaneDepartureReceipt,
+	hmux,
+	homeDir,
+} from "@/lib/ipc";
 import type { TerminalDefaultColors } from "@/lib/terminal/state/terminalDefaultColors";
 import { terminalEnvironmentParam } from "@/lib/terminal/terminalEnvironmentParam";
 import { currentTerminalDefaultColors } from "@/lib/theme/themePreference";
@@ -76,7 +82,9 @@ export interface CliHmuxCreateDependencies {
 	abandonUnpresentedCreation(
 		sessionId: string,
 		workspaceId: string,
-	): Promise<unknown>;
+	): Promise<HmuxPaneDepartureReceipt>;
+	/** Whether this window's document is hidden (minimized or covered). */
+	windowHidden(): boolean;
 }
 
 const defaultDependencies: CliHmuxCreateDependencies = {
@@ -99,7 +107,49 @@ const defaultDependencies: CliHmuxCreateDependencies = {
 	preparePaneRemoval: preparePaneProjectionRemoval,
 	abandonUnpresentedCreation: (sessionId, workspaceId) =>
 		hmux.abandonUnpresentedCreation(sessionId, workspaceId),
+	windowHidden: () => document.visibilityState === "hidden",
 };
+
+/** What a failed local create left behind. Only a confirmed rollback makes a
+ * new create safe; anything else must be inspected before creating again. */
+type CreationRollback =
+	| { readonly confirmed: true }
+	| { readonly confirmed: false; readonly reason: string };
+
+interface CreationRecovery {
+	readonly retryable: boolean;
+	readonly nextAction: string;
+}
+
+const ROLLED_BACK =
+	"Nothing was kept: this request's pane and Hmux session were removed.";
+
+function creationRecovery(
+	rollback: CreationRollback,
+	created: CliHmuxCreatedSession,
+	hiddenActiveSpace: boolean,
+): CreationRecovery {
+	if (!rollback.confirmed) {
+		return {
+			retryable: false,
+			nextAction:
+				`Cleanup was not confirmed (${rollback.reason}): the pane or Hmux ` +
+				`session ${created.sessionId} in workspace ${created.workspaceId} ` +
+				"may remain. Inspect dure client observe --json before creating " +
+				"another terminal.",
+		};
+	}
+	return {
+		retryable: true,
+		// The active Space defers terminal attachment while its window is hidden
+		// (VisibilityRetainedStructuredTerminal), so this create could not finish.
+		nextAction: hiddenActiveSpace
+			? `${ROLLED_BACK} The Dure window is hidden, and the active Space ` +
+				"attaches a new terminal only while the window is visible. Show the " +
+				"Dure window, then create the terminal again."
+			: `${ROLLED_BACK} Creating the terminal again is safe.`,
+	};
+}
 
 function errorPayload(error: unknown) {
 	return {
@@ -119,29 +169,46 @@ function errorPayload(error: unknown) {
 async function abandonCreatedSession(
 	dependencies: CliHmuxCreateDependencies,
 	created: CliHmuxCreatedSession,
-): Promise<void> {
-	await dependencies
-		.abandonUnpresentedCreation(created.sessionId, created.workspaceId)
-		.catch((cleanupError) => {
-			console.error(
-				`[cli hmux.create] safe unpresented-create compensation failed for ${created.sessionId}: ${cleanupError}`,
-			);
-		});
+): Promise<CreationRollback> {
+	try {
+		const receipt = await dependencies.abandonUnpresentedCreation(
+			created.sessionId,
+			created.workspaceId,
+		);
+		// Only an armed retirement proves the Host is ending this exact launch.
+		return receipt?.state === "retirement_armed"
+			? { confirmed: true }
+			: {
+					confirmed: false,
+					reason: receipt?.reason ?? receipt?.state ?? "session_cleanup_failed",
+				};
+	} catch (cleanupError) {
+		console.error(
+			`[cli hmux.create] safe unpresented-create compensation failed for ${created.sessionId}: ${cleanupError}`,
+		);
+		return { confirmed: false, reason: "session_cleanup_failed" };
+	}
 }
 
 async function compensateCommittedPane(
 	dependencies: CliHmuxCreateDependencies,
 	created: CliHmuxCreatedSession,
 	removePane: (() => boolean) | undefined,
-): Promise<void> {
+): Promise<CreationRollback> {
+	// A pre-existing pane is not this request's to remove, so it stays behind.
+	let paneCleanup: string | undefined = removePane
+		? undefined
+		: "pane_preserved";
 	try {
-		removePane?.();
+		if (removePane && !removePane()) paneCleanup = "pane_cleanup_failed";
 	} catch (cleanupError) {
+		paneCleanup = "pane_cleanup_failed";
 		console.error(
 			`[cli hmux.create] pane compensation failed for ${created.sessionId}: ${cleanupError}`,
 		);
 	}
-	await abandonCreatedSession(dependencies, created);
+	const session = await abandonCreatedSession(dependencies, created);
+	return paneCleanup ? { confirmed: false, reason: paneCleanup } : session;
 }
 
 /** Reuse the presentation transaction for the selected host. Local creation
@@ -152,6 +219,7 @@ export async function handleCliHmuxCreate(
 	dependencies: CliHmuxCreateDependencies = defaultDependencies,
 ) {
 	let claimed = false;
+	let recovery: CreationRecovery | undefined;
 	const claim = async () => {
 		if (claimed) return true;
 		claimed = await dependencies.claim(reqId);
@@ -230,7 +298,11 @@ export async function handleCliHmuxCreate(
 				placement?.position,
 			);
 		} catch (presentationError) {
-			await abandonCreatedSession(dependencies, created);
+			recovery = creationRecovery(
+				await abandonCreatedSession(dependencies, created),
+				created,
+				false,
+			);
 			throw presentationError;
 		}
 		const { panel, paneOwnership } = presentation;
@@ -249,7 +321,15 @@ export async function handleCliHmuxCreate(
 				workspaceId: created.workspaceId,
 			});
 		} catch (presentationError) {
-			await compensateCommittedPane(dependencies, created, removePane);
+			const hiddenActiveSpace =
+				presentationError instanceof HmuxPaneAttachmentTimeoutError &&
+				paneDesktopId === dependencies.activeSpaceId() &&
+				dependencies.windowHidden();
+			recovery = creationRecovery(
+				await compensateCommittedPane(dependencies, created, removePane),
+				created,
+				hiddenActiveSpace,
+			);
 			throw presentationError;
 		}
 
@@ -276,6 +356,6 @@ export async function handleCliHmuxCreate(
 		};
 	} catch (error) {
 		if (!(await claim())) return null;
-		return { ok: false, error: errorPayload(error) };
+		return { ok: false, error: { ...errorPayload(error), ...recovery } };
 	}
 }

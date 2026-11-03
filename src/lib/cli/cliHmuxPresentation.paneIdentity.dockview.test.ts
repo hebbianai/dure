@@ -9,6 +9,7 @@ import {
 	type CliHmuxCreateDependencies,
 	handleCliHmuxCreate,
 } from "./cliHmuxCreate";
+import type { HmuxPaneDepartureReceipt } from "@/lib/ipc";
 import { hmuxStandaloneBinding } from "@/lib/terminal/terminalBinding";
 import {
 	isDockviewProjectionOnly,
@@ -59,7 +60,11 @@ function setup() {
 			}),
 		),
 	};
-	const abandon = vi.fn(async () => undefined);
+	const abandon = vi.fn(
+		async (): Promise<HmuxPaneDepartureReceipt> => ({
+			state: "retirement_armed",
+		}),
+	);
 	const attach: CliHmuxAttachDependencies = {
 		...shared,
 		resolveSession: async () => session,
@@ -77,6 +82,7 @@ function setup() {
 		createStandalone: vi.fn(async () => session),
 		openRemote: vi.fn(),
 		abandonUnpresentedCreation: abandon,
+		windowHidden: () => false,
 	};
 	const run = (kind: "attach" | "create") =>
 		kind === "attach"

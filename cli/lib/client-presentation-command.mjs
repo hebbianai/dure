@@ -79,6 +79,7 @@ No Git worktree is created. --host selects a registered app SSH host, not a back
 Client presentation uses the connected app, independently of DURE_BACKEND_PROFILE.
 Local creation reports native attachment; SSH creation reports durable pane mount.
 An uncertain response is not permission to create again; inspect the app first.
+A failed local create sets error.retryable=true only after its pane and session were removed.
 Use pane state/act for the mounted pane's actions (including terminal.input).
 When a managed Agent pane offers refresh, pane act uses the same conversation
 recovery as the UI Refresh and Resume session controls, including closed-source recovery.
