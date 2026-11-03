@@ -15,9 +15,13 @@ export const RECOVERY_HELP = `dure recovery — automatic account recovery on th
   dure recovery observe --observations JSON [--backend ID]
 
 get lists each registered login once with its account IDs, its policy name,
-and, for the local backend, its profile directory and 5h/weekly usage with reset
-times from the app's usage caches (unknown until observed). IDs registered for
-the same login select the same credential. get --json returns the policy, the
+and, for the local backend, its profile directory and the usage the app last
+observed: each limit window the provider reports, with its reset time (unknown
+until observed). For Codex it adds the credit balance, available usage resets
+and a failed latest check. The app checks each Codex account about every 15
+minutes while it runs, so a reading can trail recent work, and an account past
+its window can keep working while it has credits. IDs registered for the same
+login select the same credential. get --json returns the policy, the
 registered profile handles and this summary as registeredAccounts.
 Other results are JSON. accounts is an ordered array of {profile, name}; copy
 exact profiles from get --json.

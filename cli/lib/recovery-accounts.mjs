@@ -68,10 +68,15 @@ function usageWindow(usedPercent, resetsAtSeconds, nowMs) {
   return resetsAtMs > nowMs ? { usedPercent, resetsAtMs } : null;
 }
 
-function usageSummary(fiveHour, weekly, capturedAtSeconds) {
-  if (!fiveHour && !weekly) return null;
+/** A window is null when the provider did not report it or it reset after
+ * the capture. Credits, usage resets and the latest check exist only where the
+ * provider's collector records them. */
+function usageSummary({ fiveHour = null, weekly = null, capturedAtSeconds, credits = null,
+  usageResetsAvailable = null, lastCheck = null }) {
+  if (!fiveHour && !weekly && !credits && usageResetsAvailable === null && !lastCheck) return null;
   return { fiveHour, weekly,
-    observedAtMs: Number.isSafeInteger(capturedAtSeconds) ? capturedAtSeconds * 1000 : null };
+    observedAtMs: Number.isSafeInteger(capturedAtSeconds) ? capturedAtSeconds * 1000 : null,
+    credits, usageResetsAvailable, lastCheck };
 }
 
 function readJson(path, maxBytes) {
@@ -91,24 +96,49 @@ function claudeUsageReader({ homeDirectory, nowMs }) {
     const limits = readJson(join(root, `${profileName}.json`), MAX_CLAUDE_USAGE_CACHE_BYTES);
     const window = (value) => Number.isSafeInteger(value?.resets_at)
       ? usageWindow(value.used_percentage, value.resets_at, nowMs) : null;
-    return usageSummary(window(limits?.rate_limits?.five_hour), window(limits?.rate_limits?.seven_day),
-      limits?.captured_at);
+    return usageSummary({ fiveHour: window(limits?.rate_limits?.five_hour),
+      weekly: window(limits?.rate_limits?.seven_day), capturedAtSeconds: limits?.captured_at });
   };
 }
 
-/** The Codex usage collector's last successful App Server snapshot per account
- * ID; the general "codex" limit is the account's budget. */
+function newestBy(entries, field) {
+  return entries.filter((entry) => Number.isSafeInteger(entry[field]))
+    .sort((left, right) => right[field] - left[field])[0];
+}
+
+/** An account past its window keeps working on purchased credits, so the
+ * balance explains a full window that does not stop work. */
+function codexCredits(credits) {
+  if (!credits || typeof credits !== "object") return null;
+  const raw = typeof credits.balance === "string" ? credits.balance.trim() : "";
+  const balance = raw ? Number(raw) : Number.NaN;
+  return { unlimited: credits.unlimited === true,
+    balance: Number.isFinite(balance) && balance >= 0 ? balance : null };
+}
+
+/** The Codex usage collector's latest App Server snapshot among a login's
+ * account IDs; the general "codex" limit is the account's budget. A failed
+ * probe keeps the last successful reading and records its own attempt. */
 function codexUsageReader({ appRoot, nowMs }) {
   const cache = readJson(join(appRoot, "codex-usage-snapshots.json"), MAX_CODEX_USAGE_CACHE_BYTES);
-  const snapshots = cache?.schemaVersion === 1 && Array.isArray(cache.snapshots) ? cache.snapshots : [];
+  const snapshots = cache?.schemaVersion === 1 && Array.isArray(cache.snapshots)
+    ? cache.snapshots.filter((entry) => entry && typeof entry === "object") : [];
   return ({ referenceIds }) => {
-    const snapshot = snapshots
-      .filter((entry) => referenceIds.includes(entry?.credentialId) && Number.isSafeInteger(entry.capturedAt))
-      .sort((left, right) => right.capturedAt - left.capturedAt)[0];
+    const login = snapshots.filter((entry) => referenceIds.includes(entry.credentialId));
+    const snapshot = newestBy(login, "capturedAt");
+    const attempt = newestBy(login, "attemptedAt");
     const general = Array.isArray(snapshot?.rateLimits)
       ? snapshot.rateLimits.find((limit) => limit?.limitId === "codex") : undefined;
-    return usageSummary(usageWindow(general?.usedPercent, general?.resetsAt, nowMs),
-      usageWindow(general?.usedPercentWeekly, general?.weeklyResetsAt, nowMs), snapshot?.capturedAt);
+    const resets = snapshot?.rateLimitResetsAvailable;
+    return usageSummary({
+      fiveHour: usageWindow(general?.usedPercent, general?.resetsAt, nowMs),
+      weekly: usageWindow(general?.usedPercentWeekly, general?.weeklyResetsAt, nowMs),
+      capturedAtSeconds: snapshot?.capturedAt,
+      credits: codexCredits(general?.credits),
+      usageResetsAvailable: Number.isSafeInteger(resets) && resets >= 0 ? resets : null,
+      lastCheck: attempt ? { checkedAtMs: attempt.attemptedAt * 1000,
+        error: typeof attempt.error === "string" && attempt.error ? attempt.error : null } : null,
+    });
   };
 }
 
@@ -163,16 +193,31 @@ function duration(ms) {
   return hours % 24 ? `${Math.floor(hours / 24)}d ${hours % 24}h` : `${Math.floor(hours / 24)}d`;
 }
 
+const CHECK_FAILURES = { codex_usage_not_signed_in: "not signed in" };
+
+function formatCheckFailure({ checkedAtMs, error }, nowMs) {
+  const reason = CHECK_FAILURES[error] ?? (/^[a-z0-9_]{1,80}$/u.test(error) ? error : "error");
+  return `check failed ${duration(nowMs - checkedAtMs)} ago (${reason})`;
+}
+
+/** Lists only the windows the provider currently describes; a provider that
+ * reports a weekly window alone has no 5h limit to show. */
 function formatUsage(usage, nowMs) {
   if (!usage) return "usage unknown";
   const window = (label, value) => {
-    if (!value) return `${label} unknown`;
     const reset = value.resetsAtMs === null ? "reset time unknown"
       : `resets in ${duration(value.resetsAtMs - nowMs)}`;
     return `${label} ${Math.round(value.usedPercent)}% (${reset})`;
   };
-  return [window("5h", usage.fiveHour), window("weekly", usage.weekly),
-    ...(usage.observedAtMs === null ? [] : [`observed ${duration(nowMs - usage.observedAtMs)} ago`])]
+  const windows = [["5h", usage.fiveHour], ["weekly", usage.weekly]]
+    .filter(([, value]) => value).map(([label, value]) => window(label, value));
+  const { credits, usageResetsAvailable, lastCheck } = usage;
+  return [...(windows.length ? windows : ["usage unknown"]),
+    ...(credits?.unlimited ? ["unlimited credits"] : credits?.balance > 0
+      ? [`credits ${credits.balance.toLocaleString("en-US", { maximumFractionDigits: 2 })}`] : []),
+    ...(usageResetsAvailable > 0 ? [`usage resets ${usageResetsAvailable}`] : []),
+    ...(usage.observedAtMs === null ? [] : [`observed ${duration(nowMs - usage.observedAtMs)} ago`]),
+    ...(lastCheck?.error ? [formatCheckFailure(lastCheck, nowMs)] : [])]
     .join(" · ");
 }
 

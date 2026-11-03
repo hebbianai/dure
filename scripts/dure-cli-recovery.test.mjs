@@ -169,7 +169,7 @@ test("get lists each login once with its local profile name, usage windows and r
       name: null, profileName: "claude-work", usage: {
         fiveHour: { usedPercent: 42, resetsAtMs: NOW + 2 * HOUR + 10 * MINUTE },
         weekly: { usedPercent: 61.4, resetsAtMs: NOW + 99 * HOUR },
-        observedAtMs: NOW - 12 * MINUTE } },
+        observedAtMs: NOW - 12 * MINUTE, credits: null, usageResetsAvailable: null, lastCheck: null } },
     { referenceId: "acc-unmatched", aliasReferenceIds: [], credentialGeneration: "credential-v2-elsewhere",
       name: null, profileName: null, usage: null },
   ]);
@@ -262,5 +262,64 @@ test("codex usage comes from the app's snapshot for any of the login's account I
     environment, homeDirectory: home, now: () => NOW,
   }), true);
   assert.equal(output.join("\n").split("\n")[1],
-    "  acc-codex-new  codex-work  5h unknown · weekly 28% (resets in 1d 2h) · observed 5m ago");
+    "  acc-codex-new  codex-work  weekly 28% (resets in 1d 2h) · observed 5m ago · " +
+    "check failed <1m ago (codex_usage_probe_failed)");
+});
+
+function codexProfile(referenceId, credentialGeneration) {
+  return { schemaVersion: 1, providerId: "codex", referenceId, credentialGeneration };
+}
+
+function codexWeekly(usedPercentWeekly, weeklyResetsAt, credits) {
+  return [{ limitId: "codex", limitName: null, usedPercent: null, usedPercentWeekly,
+    resetsAt: null, weeklyResetsAt, credits }];
+}
+
+test("codex usage explains a full weekly window that keeps working and a failed account check", async () => {
+  const { home, environment } = localAccountsFixture({ profiles: {
+    "codex-full": "credential-v2-full", "codex-fresh": "credential-v2-fresh",
+    "codex-signed-out": "credential-v2-signed-out", "codex-failing": "credential-v2-failing" } });
+  writeFileSync(join(home, ".dure", "codex-usage-snapshots.json"), JSON.stringify({ schemaVersion: 1, snapshots: [
+    // Codex reports only a weekly window; purchased credits continue past it.
+    { credentialId: "acc-full", capturedAt: seconds(NOW - 3 * MINUTE), attemptedAt: seconds(NOW - 3 * MINUTE),
+      error: null, rateLimitResetsAvailable: 2, rateLimits: codexWeekly(100, seconds(NOW + 110 * HOUR),
+        { hasCredits: true, unlimited: false, balance: "40147.9436810000" }) },
+    { credentialId: "acc-fresh", capturedAt: seconds(NOW - 3 * MINUTE), attemptedAt: seconds(NOW - 3 * MINUTE),
+      error: null, rateLimitResetsAvailable: 0, rateLimits: codexWeekly(1, seconds(NOW + 167 * HOUR),
+        { hasCredits: false, unlimited: false, balance: "0" }) },
+    // A profile that never produced a reading still reports why.
+    { credentialId: "acc-signed-out", capturedAt: null, attemptedAt: seconds(NOW - 2 * MINUTE),
+      error: "codex_usage_not_signed_in", rateLimits: [] },
+    // A later failure keeps the last reading and says the check failed.
+    { credentialId: "acc-failing", capturedAt: seconds(NOW - 3 * 24 * HOUR), attemptedAt: seconds(NOW - 2 * MINUTE),
+      error: "codex_usage_unavailable", rateLimitResetsAvailable: 1,
+      rateLimits: codexWeekly(0, seconds(NOW + 4 * 24 * HOUR), { hasCredits: true, unlimited: true, balance: null }) },
+  ] }));
+  const result = { schemaVersion: 1, policy: null, profiles: [
+    codexProfile("acc-full", "credential-v2-full"), codexProfile("acc-fresh", "credential-v2-fresh"),
+    codexProfile("acc-signed-out", "credential-v2-signed-out"), codexProfile("acc-failing", "credential-v2-failing"),
+  ] };
+  const run = (args) => {
+    const output = [];
+    return runRecoveryCommand(["get", "codex", ...args], {
+      resolveBackend: async () => ({ profile: { id: "local", transport: { kind: "local" } }, transportOptions: {} }),
+      requestBackend: async () => ({ result }), output: (text) => output.push(text),
+      environment, homeDirectory: home, now: () => NOW,
+    }).then((ok) => { assert.equal(ok, true); return output.join("\n"); });
+  };
+  assert.deepEqual((await run([])).split("\n").slice(1, 5), [
+    "  acc-full        codex-full        weekly 100% (resets in 4d 14h) · credits 40,147.94 · usage resets 2 · observed 3m ago",
+    "  acc-fresh       codex-fresh       weekly 1% (resets in 6d 23h) · observed 3m ago",
+    "  acc-signed-out  codex-signed-out  usage unknown · check failed 2m ago (not signed in)",
+    "  acc-failing     codex-failing     weekly 0% (resets in 4d) · unlimited credits · usage resets 1 · observed 3d ago · " +
+      "check failed 2m ago (codex_usage_unavailable)",
+  ]);
+  const usage = JSON.parse(await run(["--json"])).registeredAccounts.map((account) => account.usage);
+  assert.deepEqual(usage[0], { fiveHour: null,
+    weekly: { usedPercent: 100, resetsAtMs: seconds(NOW + 110 * HOUR) * 1000 },
+    observedAtMs: seconds(NOW - 3 * MINUTE) * 1000, credits: { unlimited: false, balance: 40147.943681 },
+    usageResetsAvailable: 2, lastCheck: { checkedAtMs: seconds(NOW - 3 * MINUTE) * 1000, error: null } });
+  assert.deepEqual(usage[2], { fiveHour: null, weekly: null, observedAtMs: null, credits: null,
+    usageResetsAvailable: null, lastCheck: { checkedAtMs: seconds(NOW - 2 * MINUTE) * 1000,
+      error: "codex_usage_not_signed_in" } });
 });
