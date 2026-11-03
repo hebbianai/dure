@@ -2589,6 +2589,7 @@ fn describe(
                 // 것처럼 보이지 않는다.
                 ready: entry.lifecycle == catalog::LIFECYCLE_READY,
                 conversation: entry.conversation,
+                background_work: entry.background_work,
                 box_id: entry.box_id.clone(),
                 box_label: entry.box_label.clone(),
                 presentation: entry.presentation.clone(),
@@ -2707,6 +2708,9 @@ pub struct HubProbeSession {
     /// it (`HubCatalogEntry::conversation`): the session opens on Chat. False
     /// from an older computer, for shells and for remote sessions.
     pub conversation: bool,
+    /// The computer lists this session's running background work
+    /// (`HubCatalogEntry::background_work`). False from an older computer.
+    pub background_work: bool,
     pub box_id: String,
     pub box_label: String,
     /// 세션의 hmux 이름. `session.session_name` 은 노트북 사이드바 제목이 있으면
@@ -2989,6 +2993,7 @@ pub fn run() {
             hub_session_file::hub_stage_session_file,
             hub_conversation::hub_conversation_transcript,
             hub_conversation::hub_agent_prompt,
+            hub_conversation::hub_agent_background_work,
             push::sync_push_notifications,
             ssh_file_diff,
             hub_scm_write,

@@ -34,6 +34,12 @@ import "./chatView.css";
 import type { AgentRuntimeState } from "./agentRuntimeState";
 import iconArrowRight from "./assets/icon-arrow-right.svg";
 import {
+  type BackgroundWorkAnswer,
+  backgroundWorkHiddenCount,
+  backgroundWorkRows,
+  backgroundWorkSummary,
+} from "./backgroundWork";
+import {
   agentReadiness,
   applyTranscriptAnswer,
   CHAT_POLL_INTERVAL_MS,
@@ -86,6 +92,11 @@ export interface ChatViewOptions {
   readonly storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   readonly now?: () => number;
   readonly pollIntervalMs?: number;
+  /**
+   * Ask the computer for the agent's running background work. Given only when
+   * the catalog entry carries `background_work`; without it there is no line.
+   */
+  readonly backgroundWork?: () => Promise<BackgroundWorkAnswer>;
 }
 
 export interface ChatController {
@@ -275,7 +286,14 @@ export function createChatView(options: ChatViewOptions): ChatController {
   send.type = "button";
   send.append(glyph(iconArrowRight, 18));
   composer.append(input, send);
-  root.append(scroll, attention, composerNote, composer);
+  // The agent's subagents, workflows, shells and monitors: one line, collapsed.
+  const background = element("details", "chat__background");
+  background.hidden = true;
+  background.setAttribute("aria-label", t("chat.backgroundWork.label"));
+  const backgroundSummary = element("summary", "chat__background-summary");
+  const backgroundRows = element("ul", "chat__background-rows");
+  background.append(backgroundSummary, backgroundRows);
+  root.append(scroll, attention, background, composerNote, composer);
 
   const readiness = () => agentReadiness(runtime);
 
@@ -447,11 +465,75 @@ export function createChatView(options: ChatViewOptions): ChatController {
     composerNote.textContent = text;
   };
 
+  let backgroundAnswer: BackgroundWorkAnswer | undefined;
+  let backgroundFetching = false;
+  let backgroundDrawn = "";
+  let lastWorking: boolean | undefined;
+  const agentWorking = () => runtime?.lifecycle === "running" && runtime.activity === "working";
+
+  const paintBackground = () => {
+    const summary =
+      backgroundAnswer && agentWorking() ? backgroundWorkSummary(backgroundAnswer) : null;
+    const rows = summary && backgroundAnswer ? backgroundWorkRows(backgroundAnswer, now()) : [];
+    const hiddenCount =
+      summary && backgroundAnswer ? backgroundWorkHiddenCount(backgroundAnswer) : 0;
+    const drawn = JSON.stringify([summary, rows, hiddenCount]);
+    if (drawn === backgroundDrawn) return;
+    backgroundDrawn = drawn;
+    background.hidden = summary === null;
+    backgroundSummary.textContent = summary ?? "";
+    backgroundRows.replaceChildren(
+      ...rows.map((row) => {
+        const item = element("li", "chat__background-row");
+        const bar = element("span", "chat__background-bar");
+        if (row.progress !== null) {
+          const fill = element("span", "chat__background-fill");
+          fill.style.width = `${Math.round(row.progress * 100)}%`;
+          bar.append(fill);
+        }
+        item.append(
+          element("span", "chat__background-label", row.label),
+          bar,
+          element("span", "chat__background-meta", row.steps ?? ""),
+          element("span", "chat__background-meta", row.elapsed),
+          element("span", "chat__background-meta", row.tokens ?? ""),
+        );
+        return item;
+      }),
+      ...(hiddenCount > 0
+        ? [element("li", "chat__background-more", t("chat.backgroundWork.more", { n: hiddenCount }))]
+        : []),
+    );
+  };
+
+  /** One background-work ask at a time, only while the agent works. */
+  async function refreshBackground(): Promise<void> {
+    if (!options.backgroundWork || disposed) return;
+    if (!agentWorking()) {
+      backgroundAnswer = undefined;
+      paintBackground();
+      return;
+    }
+    if (backgroundFetching) return;
+    backgroundFetching = true;
+    try {
+      const next = await options.backgroundWork();
+      if (!disposed) backgroundAnswer = next;
+    } catch {
+      // A failed ask hides the line; the next tick asks again.
+      if (!disposed) backgroundAnswer = undefined;
+    } finally {
+      backgroundFetching = false;
+      if (!disposed) paintBackground();
+    }
+  }
+
   function paint(rows = false): void {
     if (rows) paintRows();
     paintOutgoing();
     paintStatus();
     paintAttention();
+    paintBackground();
     paintComposer();
     followEnd();
   }
@@ -630,6 +712,7 @@ export function createChatView(options: ChatViewOptions): ChatController {
     timer = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void refresh();
+      void refreshBackground();
     }, pollMs);
   }
 
@@ -671,6 +754,11 @@ export function createChatView(options: ChatViewOptions): ChatController {
         lastMark = mark;
         if (visible && !first) void refresh();
       }
+      const working = agentWorking();
+      if (working !== lastWorking) {
+        lastWorking = working;
+        if (visible) void refreshBackground();
+      }
       paint();
       deliver();
     },
@@ -679,6 +767,7 @@ export function createChatView(options: ChatViewOptions): ChatController {
       visible = next;
       if (visible) {
         void refresh();
+        void refreshBackground();
         startPolling();
       } else {
         // Hidden by a tab switch or a covering screen: the person left the field.

@@ -209,6 +209,66 @@
   font: 400 13px/18px var(--font-ui);
 }
 
+/* The agent's running background work: a count, and a row each when open. */
+.chat__background {
+  flex: none;
+  margin: 0 12px 8px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: var(--glass-chip);
+  color: var(--muted-foreground);
+  font: 400 12px/16px var(--font-ui);
+}
+
+.chat__background-summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.chat__background-summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat__background-rows {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat__background-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px 32px 44px 40px;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.chat__background-label {
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat__background-bar {
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+}
+
+.chat__background-fill {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+
+.chat__background-meta {
+  text-align: right;
+}
+
+.chat__background[hidden],
 .chat__attention[hidden],
 .chat__note[hidden],
 .chat__status[hidden],

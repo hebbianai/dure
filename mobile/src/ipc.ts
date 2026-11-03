@@ -1,6 +1,7 @@
 import type { SessionPresentation } from "@/lib/hub/sessionPresentation";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { demoInvoke } from "./demo/demoInvoke";
+import type { BackgroundWorkAnswer } from "./backgroundWork";
 import type { ServerReport } from "./census";
 import type { ServerEntry } from "./servers";
 import type { RemoteSession } from "./sessions";
@@ -553,6 +554,11 @@ export interface HubProbeSession extends RemoteSession {
    * Missing from older computers and phones' older Rust halves.
    */
   conversation?: boolean;
+  /**
+   * The computer lists this session's running background work for the
+   * chat's line above the composer. Missing from older computers.
+   */
+  background_work?: boolean;
   box_id: string;
   box_label: string;
 }
@@ -829,6 +835,14 @@ export const ipc = {
       id: hubId,
       input: { ...session, limit: limit ?? null, after: after ?? null },
     }),
+
+  /**
+   * The agent's running subagents, workflows, shells and monitors
+   * (`AgentBackgroundWorkV1`), decided on the computer. Asked only where the
+   * catalog entry carries `background_work`.
+   */
+  hubAgentBackgroundWork: (hubId: string, session: ConversationSession) =>
+    invoke<BackgroundWorkAnswer>("hub_agent_background_work", { id: hubId, input: session }),
 
   /**
    * Type one prompt into an agent that waits for input (`AgentPromptV1`).

@@ -478,3 +478,81 @@ describe("the chat view", () => {
     expect(container.querySelector<HTMLElement>(".chat__note")?.hidden).toBe(false);
   });
 });
+
+describe("background work line", () => {
+  const working = () => runtime({ activity: "working" });
+  const answer = () => ({
+    hub_conversation_version: 1,
+    outcome: "listed" as const,
+    items: [{ id: "b1", kind: "shell", label: "Watch CI", started_unix_ms: Date.now() - 5_000 }],
+    counts: { subagents: 0, workflows: 0, shells: 1, monitors: 0 },
+  });
+
+  beforeEach(() => {
+    sessions += 1;
+    key = queueKey("hub-1", "box-1", "workspace-1", `bg-session-${sessions}`);
+  });
+  afterEach(() => {
+    controller?.dispose();
+    controller = undefined;
+    document.body.replaceChildren();
+  });
+
+  it("shows the count collapsed, above the composer, while the agent works", async () => {
+    const backgroundWork = vi.fn(async () => answer());
+    const { container } = open({ backgroundWork });
+    controller?.observe(working());
+    controller?.setVisible(true);
+    await flush();
+    await flush();
+    const line = container.querySelector<HTMLDetailsElement>(".chat__background");
+    expect(backgroundWork).toHaveBeenCalled();
+    expect(line?.hidden).toBe(false);
+    expect(line?.open).toBe(false);
+    expect(line?.querySelector("summary")?.textContent).toContain(
+      t("chat.backgroundWork.shells.one"),
+    );
+    const composer = container.querySelector(".chat__composer");
+    expect(
+      line && composer && line.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // Expanded, the rows sit inside the disclosure.
+    expect(line?.querySelector(".chat__background-rows")?.textContent).toContain("Watch CI");
+  });
+
+  it("asks nothing and shows nothing while the agent waits", async () => {
+    const backgroundWork = vi.fn(async () => answer());
+    const { container } = open({ backgroundWork });
+    controller?.observe(runtime({ activity: "waiting" }));
+    controller?.setVisible(true);
+    await flush();
+    expect(backgroundWork).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLElement>(".chat__background")?.hidden ?? true).toBe(true);
+  });
+
+  it("shows no line for a computer that does not list background work", async () => {
+    const { container } = open();
+    controller?.observe(working());
+    controller?.setVisible(true);
+    await flush();
+    expect(container.querySelector<HTMLElement>(".chat__background")?.hidden ?? true).toBe(true);
+  });
+
+  it("hides the line again when the ask fails", async () => {
+    const backgroundWork = vi
+      .fn<() => Promise<ReturnType<typeof answer>>>()
+      .mockResolvedValueOnce(answer())
+      .mockRejectedValueOnce(new Error("conversation_no_answer"));
+    const { container } = open({ backgroundWork });
+    controller?.observe(working());
+    controller?.setVisible(true);
+    await flush();
+    await flush();
+    expect(container.querySelector<HTMLElement>(".chat__background")?.hidden).toBe(false);
+    controller?.setVisible(false);
+    controller?.setVisible(true);
+    await flush();
+    await flush();
+    expect(container.querySelector<HTMLElement>(".chat__background")?.hidden).toBe(true);
+  });
+});

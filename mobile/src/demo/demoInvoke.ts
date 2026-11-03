@@ -12,6 +12,7 @@
  */
 
 import type { InvokeArgs, InvokeOptions } from "@tauri-apps/api/core";
+import type { BackgroundWorkAnswer } from "../backgroundWork";
 import type { ServerReport } from "../census";
 import type {
   AgentPromptAnswer,
@@ -571,6 +572,15 @@ const handlers: Record<string, Handler> = {
       history_complete: false,
       code: "unsupported_runtime",
       detail: "The demo has no agent conversations.",
+    };
+  },
+  hub_agent_background_work: (args): BackgroundWorkAnswer => {
+    hubState(str(args, "id"));
+    return {
+      hub_conversation_version: 1,
+      outcome: "listed",
+      items: [],
+      counts: { subagents: 0, workflows: 0, shells: 0, monitors: 0 },
     };
   },
   hub_agent_prompt: (args): AgentPromptAnswer => {

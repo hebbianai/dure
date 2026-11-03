@@ -4037,6 +4037,10 @@ export function startApp(root: HTMLElement): () => void {
       queueKey: key,
       terminalEpoch: session.terminal_epoch,
       fetch: after => ipc.hubConversationTranscript(source.id, target, after, CHAT_TRANSCRIPT_LIMIT),
+      // Only a computer that lists background work for this session is asked.
+      ...((session as Partial<HubProbeSession>).background_work === true
+        ? { backgroundWork: () => ipc.hubAgentBackgroundWork(source.id, target) }
+        : {}),
       send: (text, prompt) =>
         ipc.hubAgentPrompt(source.id, target, text, prompt.terminalEpoch, prompt.conversationId),
       openTerminal: () => switchSessionView("terminal"),

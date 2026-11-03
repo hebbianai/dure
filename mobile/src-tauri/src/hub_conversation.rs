@@ -26,6 +26,7 @@
 
 use crate::hub_client::{self, HubClientError};
 use crate::CommandError;
+use dure_hub_protocol::background_work::{self, HubAgentBackgroundWorkResult};
 use dure_hub_protocol::conversation::{
     self, ConversationCursor, ConversationError, ConversationRefusal, HubAgentPromptResult,
     HubConversationTranscriptResult,
@@ -121,6 +122,27 @@ fn transcript_on_stream<S: Read + Write>(
     }
 }
 
+/// One background-work question on an open stream. A silent close is
+/// [`NO_ANSWER`], as for the transcript.
+fn background_work_on_stream<S: Read + Write>(
+    stream: &mut S,
+    token: &str,
+    request: HubRequest,
+) -> Result<HubAgentBackgroundWorkResult, CommandError> {
+    hub_client::handshake_for(stream, token, request).map_err(|error| client_error(&error))?;
+    let mut counted = Counted {
+        inner: stream,
+        read: 0,
+    };
+    match background_work::read_background_work(&mut counted) {
+        Ok(result) => Ok(result),
+        Err(ConversationError::Frame(error)) if closed_silently(&error, counted.read) => {
+            Err(no_answer())
+        }
+        Err(error) => Err(answer_error(&error)),
+    }
+}
+
 /// One prompt on an open stream.
 ///
 /// `Err` only while the greeting is not yet fully written: the desktop cannot
@@ -199,6 +221,33 @@ pub async fn hub_conversation_transcript(
     };
     exchange(&app, &id, move |stream, token| {
         transcript_on_stream(stream, token, request)
+    })
+    .await
+}
+
+/// Which session, as the catalog entry names it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundWorkInput {
+    box_id: String,
+    workspace_id: String,
+    session_id: String,
+}
+
+/// The chat is open on an agent whose catalog entry carries `background_work`.
+#[tauri::command]
+pub async fn hub_agent_background_work(
+    app: tauri::AppHandle,
+    id: String,
+    input: BackgroundWorkInput,
+) -> Result<HubAgentBackgroundWorkResult, CommandError> {
+    let request = HubRequest::AgentBackgroundWorkV1 {
+        box_id: input.box_id,
+        workspace_id: input.workspace_id,
+        session_id: input.session_id,
+    };
+    exchange(&app, &id, move |stream, token| {
+        background_work_on_stream(stream, token, request)
     })
     .await
 }
@@ -348,6 +397,50 @@ mod tests {
 
     fn prompt_request_for(text: &str) -> HubRequest {
         prompt_request(prompt_input(text)).expect("a usable prompt")
+    }
+
+    fn background_request() -> HubRequest {
+        HubRequest::AgentBackgroundWorkV1 {
+            box_id: "box-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            session_id: "session-1".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_background_work_answer_is_read_after_the_ack() {
+        let answer = dure_hub_protocol::background_work::HubAgentBackgroundWorkResult::listed(
+            Vec::new(),
+            dure_hub_protocol::background_work::HubBackgroundWorkCounts {
+                shells: 1,
+                ..Default::default()
+            },
+            false,
+        );
+        let mut incoming = ack();
+        incoming.extend(
+            dure_hub_protocol::background_work::encode_background_work(&answer).expect("encodes"),
+        );
+        let mut stream = Duplex::new(incoming, End::Dropped);
+
+        let read = background_work_on_stream(&mut stream, "token-1", background_request())
+            .expect("an answer");
+
+        assert_eq!(read, answer);
+        let sent = hello::read_hello(&mut stream.written.as_slice()).expect("a greeting");
+        assert_eq!(sent.request, background_request());
+    }
+
+    /// The flag in the catalog keeps a phone from asking an older desktop, so
+    /// a silent close is one failed ask, as for the transcript.
+    #[test]
+    fn background_work_closed_after_the_ack_reads_as_no_answer() {
+        for end in [End::Closed, End::Dropped] {
+            let mut stream = Duplex::new(ack(), end);
+            let error = background_work_on_stream(&mut stream, "token-1", background_request())
+                .expect_err("no answer");
+            assert_eq!(error.code, NO_ANSWER);
+        }
     }
 
     #[test]
