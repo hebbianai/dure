@@ -19,6 +19,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::time::{Duration, Instant};
 
+pub mod conversation_transcript;
 mod response;
 pub mod session_resolution;
 pub(crate) use response::{finish_answer, read_answer};
@@ -984,11 +985,17 @@ fn encode_request_with_listing_version(
         GatewayRequest::SourceControlFileDiff(_) => GATEWAY_REQUEST_VERSION_SOURCE_CONTROL_DIFF,
         GatewayRequest::ResolveSession(_) => session_resolution::GATEWAY_REQUEST_VERSION,
     };
-    let payload = serde_json::to_vec(&GatewayRequestDocument {
+    framed_document(&GatewayRequestDocument {
         gateway_request_version,
         request,
     })
-    .map_err(|error| CatalogError::Request(error.to_string()))?;
+}
+
+/// One request document, length-prefixed exactly as `FrameCodec` prefixes a
+/// frame, refused here rather than by the far end when it exceeds the frame.
+fn framed_document(document: &impl Serialize) -> Result<Vec<u8>, CatalogError> {
+    let payload =
+        serde_json::to_vec(document).map_err(|error| CatalogError::Request(error.to_string()))?;
     let maximum = FrameLimits::default().max_frame_bytes;
     if payload.len() > maximum {
         return Err(CatalogError::Request(format!(

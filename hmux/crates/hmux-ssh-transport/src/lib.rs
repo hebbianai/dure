@@ -63,7 +63,6 @@ pub use attach::{
     attach_over_ssh, attach_terminal_surface_over_ssh, depart_gracefully_over_ssh,
     describe_attestation, relay_output,
 };
-pub use catalog::session_resolution;
 pub use catalog::{
     CatalogError, FileDiffBody, FileDiffDocument, MAX_REMOTE_SESSION_INPUT_BYTES,
     RemoteCatalogSession, RemoteCommandIntercept, RemoteHostLiveness, RemoteProtocolVersion,
@@ -77,6 +76,7 @@ pub use catalog::{
     list_sessions_over_ssh, list_sessions_with_facts_over_ssh, source_control_status_over_ssh,
     write_session_input_over_ssh,
 };
+pub use catalog::{conversation_transcript, session_resolution};
 pub use channel::{ChannelEvent, ExecChannelReader, ExecChannelWriter};
 pub use dialer::{SshExecDialer, SshTransportHalves};
 pub use error::SshTransportError;
