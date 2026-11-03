@@ -4,7 +4,7 @@ use base64::Engine;
 use serde::Serialize;
 use ssh2::Sftp;
 
-use super::{acquire, exec_on, shell_quote, SshOptions};
+use super::{acquire_sftp, exec_on, shell_quote, SshOptions};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,8 +100,7 @@ fn resolve(sftp: &Sftp, path: Option<&str>) -> Result<String, String> {
 }
 
 pub fn browse(opts: &SshOptions, path: Option<&str>) -> Result<DirectoryListing, String> {
-    let session = acquire(opts)?;
-    let sftp = session.sftp().map_err(|e| format!("Open SFTP: {e}"))?;
+    let sftp = acquire_sftp(opts)?;
     let path = resolve(&sftp, path)?;
     // Read names separately from local Path components: a POSIX filename may
     // contain backslashes even when the desktop running this adapter is Windows.
@@ -174,10 +173,9 @@ fn project_command(path: &str) -> String {
 }
 
 pub fn project(opts: &SshOptions, path: &str) -> Result<ProjectDirectory, String> {
-    let session = acquire(opts)?;
-    let sftp = session.sftp().map_err(|e| format!("Open SFTP: {e}"))?;
+    let sftp = acquire_sftp(opts)?;
     let path = resolve(&sftp, Some(path))?;
-    let result = exec_on(&session, &project_command(&path))?;
+    let result = exec_on(sftp.session(), &project_command(&path))?;
     if result.code != 0 {
         return Err(format!(
             "Read remote project (exit {}): {}",

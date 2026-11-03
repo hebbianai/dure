@@ -167,6 +167,7 @@
     "test:hmux-session-conversion": "sh scripts/qa/hmux-session-conversion-smoke.sh",
     "test:hmux-remote-github": "node scripts/run-with-build-storage.mjs dev -- node scripts/run-hmux-tests.mjs -- node scripts/qa/remote-github-ssh-smoke.mjs",
     "test:hmux-ssh-registration": "sh scripts/qa/ssh-registration-smoke.sh",
+    "test:ssh-pool-sftp": "node scripts/run-with-build-storage.mjs dev -- node scripts/qa/ssh-pool-sftp-smoke.mjs",
     "test:hmux-gateway-create": "node scripts/run-with-build-storage.mjs qa -- node scripts/run-hmux-tests.mjs -- sh -c 'cargo test --locked --manifest-path hmux/Cargo.toml -p hmux-cli --bin hmux command_bridge -- --nocapture && cargo build --locked --manifest-path hmux/Cargo.toml -p hmux-runtime --features terminal-state-stream && cargo test --locked --manifest-path hmux/Cargo.toml -p hmux-cli --test mobile_gateway gateway_v -- --nocapture'",
     "test:hmux-runtime-diagnostics": "sh scripts/qa/hmux-runtime-diagnostics-smoke.sh",
     "test:hmux-idle-retirement": "sh scripts/qa/hmux-idle-retirement-smoke.sh",

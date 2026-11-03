@@ -3125,8 +3125,7 @@ pub fn details_remote(
     if !safe_id(conversation_id) {
         return Err("provider conversation id is invalid".to_string());
     }
-    let session = crate::ssh::acquire(opts)?;
-    let sftp = session.sftp().map_err(|error| format!("open SFTP: {error}"))?;
+    let sftp = crate::ssh::acquire_sftp(opts)?;
     let home = sftp
         .realpath(Path::new("."))
         .map_err(|error| format!("resolve remote home: {error}"))?;
@@ -3161,13 +3160,12 @@ pub fn list_remote(
     if !safe_id(host_id) {
         return Err("remote provider history host id is invalid".to_string());
     }
-    let session = crate::ssh::acquire(opts)?;
-    let sftp = session.sftp().map_err(|error| format!("open SFTP: {error}"))?;
+    let sftp = crate::ssh::acquire_sftp(opts)?;
     let home = sftp
         .realpath(Path::new("."))
         .map_err(|error| format!("resolve remote home: {error}"))?;
     let mut candidates = Vec::new();
-    let mut locations = RemoteLocations::new(&session);
+    let mut locations = RemoteLocations::new(sftp.session());
     let minimum_mtime = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
