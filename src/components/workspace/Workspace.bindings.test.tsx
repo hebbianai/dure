@@ -257,6 +257,37 @@ describe("Workspace binding lifetime", () => {
 			}),
 		);
 	});
+	it("keeps a maximized pane through a background projection and saves the layout unmaximized", async () => {
+		render(<Workspace desktopId="maximize-fixture" active />);
+		const api = getDockview("maximize-fixture")!;
+		vi.spyOn(document, "hasFocus").mockReturnValue(true);
+		act(() => {
+			api.layout(1000, 600);
+			api.addPanel({ id: "left", component: "launcher" });
+			api.addPanel({
+				id: "right",
+				component: "launcher",
+				position: { referencePanel: "left", direction: "right" },
+			});
+		});
+		await waitFor(() =>
+			expect(useStore.getState().layouts["maximize-fixture"]).toBeDefined(),
+		);
+		const restore = vi.spyOn(api, "fromJSON");
+
+		act(() => api.getPanel("right")!.api.maximize());
+		expect(api.getPanel("right")!.api.isMaximized()).toBe(true);
+		const saved = useStore.getState().layouts["maximize-fixture"] as {
+			grid: Record<string, unknown>;
+		};
+		expect(saved.grid).not.toHaveProperty("maximizedNode");
+
+		act(() => {
+			for (const project of fixture.projections) expect(project()).toBe(true);
+		});
+		expect(restore).not.toHaveBeenCalled();
+		expect(api.getPanel("right")!.api.isMaximized()).toBe(true);
+	});
 	it.each([false, true])(
 		"reconnects without replacing panes or duplicating subscriptions (StrictMode: %s)",
 		async (strict) => {

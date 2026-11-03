@@ -157,6 +157,7 @@ export const settings: Record<string, string> = {
 	"settings.agentTooling.skillState.unmanaged": "Dure 외부에서 설치됨",
 	"settings.macosPerms.title": "macOS 권한",
 	"settings.notifications.test.macosDisabled": "macOS에서 Dure 알림이 꺼져 있습니다.",
+	"settings.shortcuts.cmd.toggleMaximizePane": "pane 최대화·복원",
 	"settings.shortcuts.cmd.undoPaneMove": "pane 이동 되돌리기",
 	"settings.stats.providers.enabledSummary": "{a} 활성화됨 · {b} 데이터 있음",
 	"settings.general.providerSkipPermissions": "{label} 권한 확인 건너뛰고 실행",

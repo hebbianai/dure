@@ -153,6 +153,8 @@ export const workspace: Record<string, string> = {
 	"workspace.pane.pin": "Fijar",
 	"workspace.pane.unpin": "Desfijar",
 	"workspace.pane.dockBack": "Devolver a la cuadrícula",
+	"workspace.pane.maximize": "Maximizar",
+	"workspace.pane.restore": "Restaurar",
 	"workspace.paneClose.pinnedTitle": "Cerrar panel fijado",
 	"workspace.desktopClose.sharedSessionsKept": "Las sesiones compartidas o persistentes se conservan: {n}.",
 	"workspace.sessionClass.managed": "Gestionado",

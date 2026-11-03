@@ -99,6 +99,12 @@ const SHORTCUT_DEFINITIONS = Object.freeze({
 		"⌘",
 		"↓",
 	]),
+	// ⌘ is Ctrl outside macOS (Ctrl+Shift+Enter). paneShortcuts consumes the
+	// chord in capture, so a focused terminal or agent TUI never receives it.
+	"toggle-maximize-pane": appShortcut(
+		"settings.shortcuts.cmd.toggleMaximizePane",
+		["⌘", "⇧", "↵"],
+	),
 	"undo-pane-move": appShortcut("settings.shortcuts.cmd.undoPaneMove", [
 		"⌘",
 		"Z",
@@ -163,6 +169,7 @@ const SHORTCUT_GROUPS = [
 			"focus-pane-right",
 			"focus-pane-up",
 			"focus-pane-down",
+			"toggle-maximize-pane",
 			"undo-pane-move",
 			"send-feedback",
 		],

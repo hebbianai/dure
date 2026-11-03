@@ -62,6 +62,8 @@ export const workspace: Record<string, string> = {
 	"workspace.pane.pin": "고정",
 	"workspace.pane.unpin": "고정 해제",
 	"workspace.pane.dockBack": "그리드로 되돌리기",
+	"workspace.pane.maximize": "최대화",
+	"workspace.pane.restore": "원래 크기로",
 	"workspace.paneClose.pinnedTitle": "고정된 pane 닫기",
 	"workspace.desktopClose.sharedSessionsKept": "공유 중이거나 지속형인 세션 {n}개는 유지됩니다.",
 	"workspace.sessionClass.managed": "관리형",

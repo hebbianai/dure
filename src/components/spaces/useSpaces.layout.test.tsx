@@ -288,4 +288,45 @@ describe("Spaces pane layout publications", () => {
 			"term:other",
 		]);
 	});
+
+	it("lists Agent panes a maximized pane covers as open, not hidden", () => {
+		seed();
+		const api = mounted();
+		useStore.setState({
+			agents: ["left", "right"].map((id) =>
+				agentFixture({ id, projectId: "repo", sessionId: `${id}-runtime` }),
+			),
+		});
+		act(() => {
+			api.addPanel({
+				id: "agent:left",
+				component: "agent",
+				params: { agentRef: { agentId: "left" } },
+			});
+			api.addPanel({
+				id: "agent:right",
+				component: "agent",
+				params: { agentRef: { agentId: "right" } },
+				position: { referencePanel: "agent:left", direction: "right" },
+			});
+		});
+		const hook = renderHook(() => useSpaces());
+		const shown = () =>
+			hook.result.current.map(({ key, hidden }) => ({ key, hidden }));
+		const unmaximized = shown();
+		expect(unmaximized.filter(({ key }) => key.startsWith("agent:"))).toEqual([
+			{ key: "agent:left", hidden: undefined },
+			{ key: "agent:right", hidden: undefined },
+		]);
+
+		// Any parent render re-reads live visibility (store updates are constant).
+		act(() => api.getPanel("agent:right")!.api.maximize());
+		hook.rerender();
+		expect(api.getPanel("agent:left")!.api.isVisible).toBe(false);
+		expect(shown()).toEqual(unmaximized);
+
+		act(() => api.exitMaximizedGroup());
+		hook.rerender();
+		expect(shown()).toEqual(unmaximized);
+	});
 });

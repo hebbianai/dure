@@ -193,4 +193,37 @@ describe("normalizePersistedPaneLayout", () => {
 		expect(normalizePersistedPaneLayout(layout)).toBe(layout);
 		expect(normalizePersistedPaneLayouts(layouts)).toBe(layouts);
 	});
+
+	it("drops a maximized pane so a saved layout reopens unmaximized", () => {
+		const root = {
+			type: "branch",
+			data: [
+				{ type: "leaf", size: 600, data: { id: "1", views: ["a"] } },
+				{ type: "leaf", size: 600, data: { id: "2", views: ["b"] } },
+			],
+		};
+		const layout = {
+			grid: {
+				root,
+				width: 1200,
+				height: 800,
+				orientation: "HORIZONTAL",
+				maximizedNode: { location: [1] },
+			},
+			panels: { a: { contentComponent: "terminal" } },
+			activeGroup: "2",
+		};
+
+		const normalized = normalizePersistedPaneLayout(layout) as typeof layout;
+
+		expect(normalized.grid).not.toHaveProperty("maximizedNode");
+		expect(normalized).toEqual({
+			...layout,
+			grid: { root, width: 1200, height: 800, orientation: "HORIZONTAL" },
+		});
+		expect(layout.grid.maximizedNode).toEqual({ location: [1] });
+		expect(normalizePersistedPaneLayouts({ main: layout }).main).toEqual(
+			normalized,
+		);
+	});
 });

@@ -8,6 +8,7 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -496,6 +497,47 @@ describe("PaneChrome", () => {
     toolbarButton.focus();
     fireEvent.click(toolbarButton);
     expect(document.activeElement).not.toBe(input);
+  });
+
+  it("maximizes a grid pane over the layout from its header and restores it", () => {
+    let dock!: DockviewApi;
+    render(
+      <DockviewReact
+        components={{ content: () => null }}
+        defaultTabComponent={PaneChrome}
+        onReady={({ api }) => { dock = api; }}
+      />,
+    );
+    act(() => {
+      dock.layout(800, 500);
+      dock.addPanel({ id: "term:max-left", component: "content" });
+      dock.addPanel({
+        id: "term:max-right", component: "content",
+        position: { referencePanel: "term:max-left", direction: "right" },
+      });
+      dock.addPanel({
+        id: "term:max-floating", component: "content",
+        floating: { width: 200, height: 150 },
+      });
+    });
+    const left = dock.getPanel("term:max-left")!;
+    const header = within(left.group.element);
+
+    fireEvent.click(header.getByRole("button", { name: t("workspace.pane.maximize") }));
+    expect(left.api.isMaximized()).toBe(true);
+    expect(dock.activePanel?.id).toBe(left.id);
+    const restore = header.getByRole("button", { name: t("workspace.pane.restore") });
+    expect(restore.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(restore);
+    expect(dock.hasMaximizedGroup()).toBe(false);
+    expect(header.getByRole("button", { name: t("workspace.pane.maximize") })).toBeTruthy();
+    expect(
+      within(dock.getPanel("term:max-floating")!.group.element).queryByRole(
+        "button",
+        { name: t("workspace.pane.maximize") },
+      ),
+    ).toBeNull();
   });
 
   it("follows Host agent identity through the canonical pane binding", () => {

@@ -167,6 +167,8 @@ export const workspaceEnglishTranslations = {
 	"workspace.pane.pin": "Pin",
 	"workspace.pane.unpin": "Unpin",
 	"workspace.pane.dockBack": "Return to the grid",
+	"workspace.pane.maximize": "Maximize",
+	"workspace.pane.restore": "Restore",
 	"workspace.paneClose.pinnedTitle": "Close pinned pane",
 	"workspace.desktopClose.sharedSessionsKept": "Shared or persistent sessions are preserved: {n}.",
 	"workspace.sessionClass.managed": "Managed",

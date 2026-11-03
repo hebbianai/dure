@@ -424,6 +424,7 @@ export const settingsEnglishTranslations = {
 	"settings.agentTooling.skillState.unmanaged": "Installed outside Dure",
 	"settings.macosPerms.title": "macOS permissions",
 	"settings.notifications.test.macosDisabled": "Dure notifications are disabled in macOS.",
+	"settings.shortcuts.cmd.toggleMaximizePane": "Maximize or restore pane",
 	"settings.shortcuts.cmd.undoPaneMove": "Undo pane move",
 	"settings.stats.providers.enabledSummary": "{a} enabled · {b} with data",
 	"settings.general.providerSkipPermissions": "Run {label} without permission prompts",
