@@ -246,6 +246,13 @@ impl HubConversationTranscriptResult {
     /// only. Leaving older entries out clears `history_complete`.
     #[must_use]
     pub fn transcript(parts: TranscriptParts, limit: Option<u32>) -> Self {
+        Self::transcript_within(parts, limit, MAX_TRANSCRIPT_BYTES)
+    }
+
+    /// [`Self::transcript`] for a carrier whose frame holds at most
+    /// `max_bytes`: the newest entries that fit it.
+    #[must_use]
+    pub fn transcript_within(parts: TranscriptParts, limit: Option<u32>, max_bytes: usize) -> Self {
         let TranscriptParts {
             provider,
             conversation_id,
@@ -276,8 +283,7 @@ impl HubConversationTranscriptResult {
             detail: None,
         };
         // Fill from the newest entry backwards until the frame is full.
-        let budget =
-            MAX_TRANSCRIPT_BYTES.saturating_sub(serialized_len(&result) + FRAME_SLACK_BYTES);
+        let budget = max_bytes.saturating_sub(serialized_len(&result) + FRAME_SLACK_BYTES);
         let mut used = 0usize;
         let mut first_kept = entries.len();
         for (index, entry) in entries.iter().enumerate().rev() {
@@ -769,6 +775,37 @@ mod tests {
         assert!(!read.entries.is_empty());
         assert!(read.entries.len() < MAX_TRANSCRIPT_ENTRIES);
         assert!(!read.history_complete);
+    }
+
+    /// A carrier with a smaller frame than the hub's (the SSH gateway's
+    /// 1 MiB) gets the newest entries that fit its own budget.
+    #[test]
+    fn a_smaller_frame_keeps_the_newest_entries_that_fit_it() {
+        const SMALLER_FRAME: usize = 1024 * 1024;
+        // About 2.6 MB in all: over the smaller frame, within the hub's.
+        let text = "x".repeat(MAX_ENTRY_TEXT_BYTES - 8);
+        let sent = HubConversationTranscriptResult::transcript_within(
+            sent_parts(40, &text),
+            None,
+            SMALLER_FRAME,
+        );
+        let encoded = serde_json::to_vec(&sent).expect("encode");
+        assert!(encoded.len() <= SMALLER_FRAME, "{} bytes", encoded.len());
+        assert!(!sent.entries.is_empty());
+        assert!(sent.entries.last().unwrap().text.starts_with("39:"));
+        assert!(!sent.history_complete);
+
+        // The hub's own frame keeps every one of them.
+        let hub = HubConversationTranscriptResult::transcript(sent_parts(40, &text), None);
+        assert_eq!(hub.entries.len(), 40);
+    }
+
+    fn sent_parts(count: usize, text: &str) -> TranscriptParts {
+        parts(
+            (0..count)
+                .map(|index| entry(ConversationRole::Agent, format!("{index}:{text}")))
+                .collect(),
+        )
     }
 
     #[test]
