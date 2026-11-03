@@ -21,12 +21,16 @@ impl Drop for Server {
 }
 
 async fn server(ping: Value, post_status: u16) -> Server {
-    server_replying(ping, post_status, Duration::ZERO, "{}").await
+    server_replying(ping, Duration::ZERO, post_status, Duration::ZERO, "{}").await
 }
 
-/// Like the app server, a POST reply can wait for the Host before it answers.
+/// Like the app server, the fixture serves one request at a time, and a POST
+/// reply can wait for the Host before it answers. During `busy` the fixture
+/// accepts nothing, as when the app's report thread is still serving another
+/// agent: connections queue and are answered once it is free.
 async fn server_replying(
     ping: Value,
+    busy: Duration,
     post_status: u16,
     post_delay: Duration,
     post_body: &'static str,
@@ -36,49 +40,62 @@ async fn server_replying(
     let posts = Arc::new(Mutex::new(Vec::new()));
     let received = posts.clone();
     let task = tokio::spawn(async move {
+        tokio::time::sleep(busy).await;
         loop {
             let (stream, _) = listener.accept().await.unwrap();
-            let mut stream = BufReader::new(stream);
-            let mut headers = String::new();
-            loop {
-                let mut line = String::new();
-                if stream.read_line(&mut line).await.unwrap() == 0 {
-                    break;
-                }
-                headers.push_str(&line);
-                if line == "\r\n" {
-                    break;
-                }
-                assert!(headers.len() < 16_384);
-            }
-            let size = headers
-                .lines()
-                .find_map(|line| {
-                    line.to_ascii_lowercase()
-                        .strip_prefix("content-length: ")
-                        .map(str::parse::<usize>)
-                })
-                .transpose()
-                .unwrap()
-                .unwrap_or(0);
-            assert!(size <= MAX_BODY_BYTES);
-            let mut body = vec![0; size];
-            stream.read_exact(&mut body).await.unwrap();
-            let (status, response) = if headers.starts_with("POST /hooks/claude ") {
-                received.lock().unwrap().push((headers, body));
-                tokio::time::sleep(post_delay).await;
-                (post_status, post_body.to_string())
-            } else {
-                (200, ping.to_string())
-            };
-            let response = format!(
-                "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
-                response.len()
-            );
-            stream.write_all(response.as_bytes()).await.unwrap();
+            // A hook that stopped waiting has hung up; serve the next one.
+            let _ = serve(stream, &ping, &received, post_status, post_delay, post_body).await;
         }
     });
     Server { port, posts, task }
+}
+
+async fn serve(
+    stream: tokio::net::TcpStream,
+    ping: &Value,
+    received: &RecordedPosts,
+    post_status: u16,
+    post_delay: Duration,
+    post_body: &str,
+) -> std::io::Result<()> {
+    let mut stream = BufReader::new(stream);
+    let mut headers = String::new();
+    loop {
+        let mut line = String::new();
+        if stream.read_line(&mut line).await? == 0 {
+            break;
+        }
+        headers.push_str(&line);
+        if line == "\r\n" {
+            break;
+        }
+        assert!(headers.len() < 16_384);
+    }
+    let size = headers
+        .lines()
+        .find_map(|line| {
+            line.to_ascii_lowercase()
+                .strip_prefix("content-length: ")
+                .map(str::parse::<usize>)
+        })
+        .transpose()
+        .unwrap()
+        .unwrap_or(0);
+    assert!(size <= MAX_BODY_BYTES);
+    let mut body = vec![0; size];
+    stream.read_exact(&mut body).await?;
+    let (status, response) = if headers.starts_with("POST /hooks/claude ") {
+        received.lock().unwrap().push((headers, body));
+        tokio::time::sleep(post_delay).await;
+        (post_status, post_body.to_string())
+    } else {
+        (200, ping.to_string())
+    };
+    let response = format!(
+        "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+        response.len()
+    );
+    stream.write_all(response.as_bytes()).await
 }
 
 fn ping() -> Value {
@@ -220,6 +237,7 @@ async fn waits_for_the_app_servers_accepted_reply_after_a_slow_host_report() {
     // instant reports a delivered prompt as unavailable.
     let server = server_replying(
         ping(),
+        Duration::ZERO,
         202,
         Duration::from_millis(1_700),
         r#"{"ok":true,"accepted":true}"#,
@@ -236,7 +254,7 @@ async fn waits_for_the_app_servers_accepted_reply_after_a_slow_host_report() {
 
 #[tokio::test]
 async fn a_report_the_app_never_answers_still_ends_within_the_hook_budget() {
-    let server = server_replying(ping(), 202, Duration::from_secs(30), "{}").await;
+    let server = server_replying(ping(), Duration::ZERO, 202, Duration::from_secs(30), "{}").await;
     let root = tempfile::tempdir().unwrap();
     publish(root.path(), server.port);
     let started = Instant::now();
@@ -246,13 +264,64 @@ async fn a_report_the_app_never_answers_still_ends_within_the_hook_budget() {
     )
     .await;
     assert!(
-        matches!(
-            delivered,
-            Err(_) | Ok(Err(HookFailure::Unavailable | HookFailure::Timeout))
-        ),
+        matches!(delivered, Err(_) | Ok(Err(HookFailure::Timeout))),
         "{delivered:?}"
     );
     assert!(started.elapsed() < TOTAL_TIMEOUT + Duration::from_millis(250));
+}
+
+#[tokio::test]
+async fn waits_for_a_live_app_that_answers_its_ping_late() {
+    // On a loaded host, or while the app's single report thread still serves
+    // another agent, a live app misses the quick liveness check. Calling it
+    // unavailable dropped the first prompt of a fresh Run.
+    let server = server_replying(
+        ping(),
+        Duration::from_millis(900),
+        200,
+        Duration::ZERO,
+        "{}",
+    )
+    .await;
+    let root = tempfile::tempdir().unwrap();
+    publish(root.path(), server.port);
+    assert_eq!(
+        send(root.path(), "UserPromptSubmit", "epoch-1", true).await,
+        Ok(())
+    );
+    let posts = server.posts.lock().unwrap();
+    assert_eq!(posts.len(), 1);
+    let report: Value = serde_json::from_slice(&posts[0].1).unwrap();
+    assert_eq!(report["hook_event_name"], "UserPromptSubmit");
+}
+
+#[tokio::test]
+async fn a_live_app_too_busy_for_the_whole_budget_is_named_a_timeout() {
+    let server = server_replying(ping(), Duration::from_secs(30), 200, Duration::ZERO, "{}").await;
+    let root = tempfile::tempdir().unwrap();
+    publish(root.path(), server.port);
+    let started = Instant::now();
+    assert_eq!(
+        send(root.path(), "UserPromptSubmit", "epoch-1", true).await,
+        Err(HookFailure::Timeout)
+    );
+    assert!(started.elapsed() < TOTAL_TIMEOUT + Duration::from_millis(250));
+    assert!(server.posts.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_closed_candidate_is_still_unavailable_without_waiting() {
+    let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = closed.local_addr().unwrap().port();
+    drop(closed);
+    let root = tempfile::tempdir().unwrap();
+    publish(root.path(), port);
+    let started = Instant::now();
+    assert_eq!(
+        send(root.path(), "UserPromptSubmit", "epoch-1", true).await,
+        Err(HookFailure::Unavailable)
+    );
+    assert!(started.elapsed() < PING_TIMEOUT);
 }
 
 #[test]
