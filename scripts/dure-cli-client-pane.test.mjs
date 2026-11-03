@@ -588,6 +588,27 @@ describe("Dure connected-client pane CLI", () => {
     expect(fixture.requests[0].body).toEqual({ hostId: "ssh-missing" });
   });
 
+  it("carries a local create's rollback outcome to CLI and MCP callers", async () => {
+    const error = {
+      code: "hmux_pane_attachment_timeout",
+      message: "native attachment for window:main:desktop:space-1:pane:term:s did not acknowledge w/s",
+      retryable: true,
+      nextAction: "Nothing was kept: this request's pane and Hmux session were removed. Creating the terminal again is safe.",
+    };
+    const fixture = await fixtureClient(() => ({ status: 409, body: { ok: false, error } }));
+    const result = await runCli(["client", "pane", "create", "--cwd", "/qa/plain-folder", "--json"], fixture.environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr).error).toEqual(error);
+    const mcp = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/call", params: {
+      name: "app_pane_create", arguments: { cwd: "/qa/plain-folder" },
+    } }, { DURE_HOME: join(fixture.home, ".dure") });
+    expect(mcp.isError).toBe(true);
+    expect(mcp.structuredContent.error).toEqual(error);
+    const human = await runCli(["client", "pane", "create", "--cwd", "/qa/plain-folder"], fixture.environment);
+    expect(human.stderr).toContain(`→ ${error.nextAction}`);
+    expect(fixture.requests).toHaveLength(3);
+  });
+
   it("rejects unsupported backend options and conflicting Space options", async () => {
     const fixture = await fixtureClient();
     for (const options of [["--backend", "remote"], ["--space", "A", "--space-id", "B"]]) {
