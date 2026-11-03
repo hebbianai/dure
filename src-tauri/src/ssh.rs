@@ -19,6 +19,8 @@ mod exec;
 pub(crate) mod target;
 pub(crate) mod host_location;
 pub mod directory;
+#[cfg(test)]
+mod sftp_pool_tests;
 
 const OPENSSH_HOST_KEY_PREFERENCE: &str = concat!(
     "ssh-ed25519,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,",
@@ -470,6 +472,52 @@ pub(crate) fn with_session<T>(
                 }
             }
         }
+    }
+}
+
+/// The SFTP subsystem on a pooled session, for one bounded piece of work.
+/// The subsystem is declared first so it closes before the session is parked.
+pub(crate) struct PooledSftp {
+    sftp: ssh2::Sftp,
+    session: PooledSession,
+}
+
+impl PooledSftp {
+    fn open(mut session: PooledSession) -> Result<Self, String> {
+        match session.sftp() {
+            Ok(sftp) => Ok(Self { sftp, session }),
+            Err(error) => {
+                session.poison();
+                Err(format!("Open SFTP: {error}"))
+            }
+        }
+    }
+
+    /// The session under the subsystem, for commands in the same loan.
+    pub(crate) fn session(&self) -> &Session {
+        &self.session
+    }
+}
+
+impl Deref for PooledSftp {
+    type Target = ssh2::Sftp;
+
+    fn deref(&self) -> &ssh2::Sftp {
+        &self.sftp
+    }
+}
+
+/// Open SFTP on a pooled session. libssh2 reports every failure to open the
+/// subsystem channel as a plain channel failure, including a socket that went
+/// away while the session was parked, so the release-time transport check
+/// cannot see it. A session that fails here is closed instead of parked, and
+/// a reused one is replaced once by a fresh connection: nothing ran remotely.
+pub(crate) fn acquire_sftp(opts: &SshOptions) -> Result<PooledSftp, String> {
+    let session = acquire(opts)?;
+    let reused = session.is_reused();
+    match PooledSftp::open(session) {
+        Err(_) if reused => PooledSftp::open(acquire_fresh(opts)?),
+        result => result,
     }
 }
 
