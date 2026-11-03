@@ -18,7 +18,10 @@ import {
 } from "vitest";
 import { setLang } from "@/lib/i18n";
 import type { BackgroundWorkList } from "@/lib/ipc/conversations";
-import { NativeAgentBackgroundWork } from "./NativeAgentBackgroundWork";
+import {
+	BACKGROUND_WORK_REFRESH_MS,
+	NativeAgentBackgroundWork,
+} from "./NativeAgentBackgroundWork";
 
 const mocks = vi.hoisted(() => ({ read: vi.fn() }));
 vi.mock("@/lib/ipc/conversations", () => ({
@@ -87,6 +90,35 @@ describe("NativeAgentBackgroundWork", () => {
 		expect(screen.getByText("34m")).toBeTruthy();
 		expect(screen.getByText("515k")).toBeTruthy();
 		expect(screen.getByText("Watch CI")).toBeTruthy();
+	});
+
+	it("starts no second read while one is in flight", async () => {
+		vi.useFakeTimers();
+		try {
+			let finish: (list: BackgroundWorkList) => void = () => {};
+			mocks.read.mockImplementation(
+				() =>
+					new Promise<BackgroundWorkList>((resolve) => {
+						finish = resolve;
+					}),
+			);
+			render(
+				<NativeAgentBackgroundWork
+					workspaceId="workspace-1"
+					sessionId="session-1"
+					active
+					now={() => NOW}
+				/>,
+			);
+			expect(mocks.read).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(BACKGROUND_WORK_REFRESH_MS * 3);
+			expect(mocks.read).toHaveBeenCalledTimes(1);
+			finish(running);
+			await vi.advanceTimersByTimeAsync(BACKGROUND_WORK_REFRESH_MS);
+			expect(mocks.read).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("hides the line when the list comes back empty or the read fails", async () => {

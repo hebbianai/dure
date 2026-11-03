@@ -2,6 +2,7 @@ mod adoption;
 mod bounded_process;
 mod census;
 mod claude_adoption;
+pub(crate) use claude_adoption::process_start_unix_ms;
 pub(crate) mod command_input;
 #[cfg(test)]
 mod command_input_smoke;

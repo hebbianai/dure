@@ -401,12 +401,12 @@ fn process_start_evidence(process_start_time: u64) -> Result<ProcessStartEvidenc
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn process_start_unix_ms(process_start_time: u64) -> Option<u64> {
+pub(crate) fn process_start_unix_ms(process_start_time: u64) -> Option<u64> {
     process_start_time.checked_div(1_000)
 }
 
 #[cfg(target_os = "linux")]
-fn process_start_unix_ms(process_start_time: u64) -> Option<u64> {
+pub(crate) fn process_start_unix_ms(process_start_time: u64) -> Option<u64> {
     let boot_seconds = fs::read_to_string("/proc/stat")
         .ok()?
         .lines()
@@ -426,7 +426,7 @@ fn process_start_unix_ms(process_start_time: u64) -> Option<u64> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "linux")))]
-fn process_start_unix_ms(_process_start_time: u64) -> Option<u64> {
+pub(crate) fn process_start_unix_ms(_process_start_time: u64) -> Option<u64> {
     None
 }
 

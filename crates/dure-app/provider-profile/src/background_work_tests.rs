@@ -412,3 +412,150 @@ fn iso_timestamps_parse_to_unix_millis() {
     );
     assert_eq!(parse_unix_ms("yesterday"), None);
 }
+
+#[test]
+fn a_monitor_event_leaves_it_running() {
+    let mut s = Session::new();
+    s.tool_use(
+        T0,
+        "tu-m",
+        "Monitor",
+        json!({"command":"tail -f x","description":"CI result","timeout_ms":1_800_000}),
+    )
+    .tool_result(
+        T0 + 5,
+        "tu-m",
+        json!({"taskId":"m1","timeoutMs":1_800_000,"persistent":false}),
+    );
+    // Each event of a running monitor arrives as a notification without a status.
+    let event = "<task-notification>\n<task-id>m1</task-id>\n<summary>Monitor event</summary>\n<event>build 3 green</event>\n</task-notification>";
+    s.push(json!({"type":"queue-operation","operation":"enqueue","timestamp":iso(T0 + 210_000),"content":event}));
+    let list = s.read(None, T0 + 220_000);
+    assert_eq!(list.counts.monitors, 1, "{list:?}");
+}
+
+#[test]
+fn a_recovery_record_ends_every_task_it_lists() {
+    let mut s = Session::new();
+    for task in ["b1", "b2", "b3"] {
+        shell(&mut s, T0, &format!("tu-{task}"), task, "Long build");
+    }
+    let recovery = "<task-notification>\n<task-id>b1</task-id>\n<task-id>b2</task-id>\n<task-id>b3</task-id>\n<status>stopped</status>\n<summary>3 background shell command tasks didn't finish before the previous session ended</summary>\n</task-notification>";
+    s.push(json!({"type":"queue-operation","operation":"enqueue","timestamp":iso(T0 + 9_000),"content":recovery}));
+    assert!(s.read(None, T0 + 10_000).items.is_empty());
+}
+
+#[test]
+fn a_large_agent_transcript_counts_every_token_across_reads() {
+    let mut s = Session::new();
+    s.tool_use(
+        T0,
+        "tu-a",
+        "Agent",
+        json!({"description":"Long review","run_in_background":true}),
+    )
+    .tool_result(
+        T0 + 5,
+        "tu-a",
+        json!({"isAsync":true,"status":"async_launched","agentId":"big"}),
+    );
+    let agent: Vec<String> = (0..50)
+        .map(|i| {
+            json!({"type":"assistant","message":{"id":format!("x{i}"),"usage":{"output_tokens":100},
+                "content":[{"type":"text","text":"padding ".repeat(30)}]}})
+            .to_string()
+        })
+        .collect();
+    s.write_side("subagents/agent-big.jsonl", &(agent.join("\n") + "\n"));
+    s.write();
+    let limits = Limits {
+        agent_bytes: 2 * 1024,
+        ..Limits::default()
+    };
+    let mut seen = Vec::new();
+    for _ in 0..40 {
+        let list = read_claude_background_work_at(&s.file, None, T0 + 1_000, &limits);
+        seen.push(list.items[0].tokens);
+        if list.items[0].tokens.is_some() {
+            break;
+        }
+    }
+    assert_eq!(seen.last().copied().flatten(), Some(5_000), "{seen:?}");
+    assert!(
+        seen[..seen.len() - 1].iter().all(Option::is_none),
+        "a partial sum is never shown: {seen:?}"
+    );
+    // Later reads stay exact and only grow.
+    let again = read_claude_background_work_at(&s.file, None, T0 + 2_000, &limits);
+    assert_eq!(again.items[0].tokens, Some(5_000));
+}
+
+#[test]
+fn a_workflow_with_more_agent_files_than_the_limit_reports_no_tokens() {
+    let mut s = Session::new();
+    s.tool_use(T0, "tu-w", "Workflow", json!({"script":"x"}))
+        .tool_result(T0 + 5, "tu-w", json!({"status":"async_launched","taskId":"w1","runId":"wf_many","workflowName":"many"}));
+    s.write_side(
+        "subagents/workflows/wf_many/journal.jsonl",
+        &json!({"type":"started","agentId":"g1"}).to_string(),
+    );
+    for i in 0..3 {
+        s.write_side(
+            &format!("subagents/workflows/wf_many/agent-g{i}.jsonl"),
+            &json!({"type":"assistant","message":{"id":format!("y{i}"),"usage":{"output_tokens":10}}}).to_string(),
+        );
+    }
+    s.write();
+    let limits = Limits {
+        workflow_agent_files: 2,
+        ..Limits::default()
+    };
+    let list = read_claude_background_work_at(&s.file, None, T0 + 1_000, &limits);
+    assert_eq!(
+        list.items[0].steps,
+        Some(BackgroundWorkSteps { done: 0, total: 1 })
+    );
+    assert_eq!(list.items[0].tokens, None);
+}
+
+#[test]
+fn a_later_read_parses_only_what_was_appended() {
+    let mut s = Session::new();
+    shell(&mut s, T0, "tu-1", "b1", "First");
+    assert_eq!(s.read(None, T0 + 1_000).counts.shells, 1);
+    // Change a record before the point already read, keeping the file's
+    // length: a reader that re-parses the file would now see a second shell.
+    let mut text = fs::read_to_string(&s.file).unwrap();
+    text = text.replacen("\"b1\"", "\"bX\"", 1);
+    fs::write(&s.file, &text).unwrap();
+    let mut file = fs::OpenOptions::new().append(true).open(&s.file).unwrap();
+    use std::io::Write as _;
+    for line in [
+        json!({"type":"assistant","timestamp":iso(T0 + 2_000),"message":{"id":"m-2","content":[{"type":"tool_use","id":"tu-2","name":"Bash","input":{"description":"Second","run_in_background":true}}]}}),
+        json!({"type":"user","timestamp":iso(T0 + 2_010),"message":{"content":[{"type":"tool_result","tool_use_id":"tu-2","content":"ok"}]},"toolUseResult":{"backgroundTaskId":"b2"}}),
+    ] {
+        writeln!(file, "{line}").unwrap();
+    }
+    let list = read_claude_background_work_at(&s.file, None, T0 + 3_000, &Limits::default());
+    let ids: Vec<_> = list.items.iter().map(|item| item.id.as_str()).collect();
+    assert_eq!(ids, ["b2", "b1"]);
+}
+
+#[test]
+fn a_replaced_file_is_read_again() {
+    let mut s = Session::new();
+    shell(&mut s, T0, "tu-1", "b1", "First");
+    shell(&mut s, T0 + 10, "tu-2", "b2", "Second");
+    assert_eq!(s.read(None, T0 + 1_000).counts.shells, 2);
+    let mut fresh = Session::new();
+    fresh.file = s.file.clone();
+    shell(&mut fresh, T0 + 20, "tu-3", "b3", "Third");
+    let list = fresh.read(None, T0 + 2_000);
+    assert_eq!(
+        list.items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        ["b3"]
+    );
+}

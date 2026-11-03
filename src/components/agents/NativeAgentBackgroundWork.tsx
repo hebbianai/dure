@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChatDisclosure } from "@/components/agents/chat/ChatDisclosure";
+import { Disclosure } from "@/components/ui/disclosure";
 import {
 	backgroundWorkHiddenCount,
 	backgroundWorkRows,
@@ -11,9 +11,11 @@ import {
 	readAgentBackgroundWork,
 } from "@/lib/ipc/conversations";
 
-/** How often the line re-reads while the agent works. Background work moves
- * without turns, so the transcript's refresh cursor cannot drive it. */
-export const BACKGROUND_WORK_REFRESH_MS = 5_000;
+/** How long the line waits after one read before the next, while the agent
+ * works. Background work moves without turns, so the transcript's refresh
+ * cursor cannot drive it; reads are incremental on the desktop, and one at a
+ * time, so a slow read never piles up behind the next. */
+export const BACKGROUND_WORK_REFRESH_MS = 10_000;
 
 /** The agent's running subagents, workflows, shells and monitors, collapsed
  * to one line above the composer. The desktop decides what runs from the
@@ -34,26 +36,28 @@ export function NativeAgentBackgroundWork({
 	const [list, setList] = useState<BackgroundWorkList | null>(null);
 
 	useEffect(() => {
-		if (!active) {
-			setList(null);
-			return;
-		}
+		setList(null);
+		if (!active) return;
 		let cancelled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
 		const read = () => {
-			readAgentBackgroundWork(workspaceId, sessionId).then(
-				(next) => {
-					if (!cancelled) setList(next);
-				},
-				() => {
-					if (!cancelled) setList(null);
-				},
-			);
+			readAgentBackgroundWork(workspaceId, sessionId)
+				.then(
+					(next) => {
+						if (!cancelled) setList(next);
+					},
+					() => {
+						if (!cancelled) setList(null);
+					},
+				)
+				.finally(() => {
+					if (!cancelled) timer = setTimeout(read, BACKGROUND_WORK_REFRESH_MS);
+				});
 		};
 		read();
-		const timer = setInterval(read, BACKGROUND_WORK_REFRESH_MS);
 		return () => {
 			cancelled = true;
-			clearInterval(timer);
+			if (timer !== undefined) clearTimeout(timer);
 		};
 	}, [active, workspaceId, sessionId]);
 
@@ -63,61 +67,47 @@ export function NativeAgentBackgroundWork({
 	return (
 		<section
 			aria-label={t("agents.backgroundWork.label")}
-			className="shrink-0 border-t border-glass-hairline px-3 py-1.5 text-xs text-muted-foreground"
+			className="shrink-0 border-t border-glass-hairline px-3 py-1.5 text-muted-foreground"
 		>
-			<ChatDisclosure disclosureKey={`background-work:${sessionId}`}>
-				{(expanded) => (
-					<>
-						<summary
-							className="flex cursor-pointer list-none items-center gap-2 select-none"
-							title={t(
-								expanded
-									? "agents.backgroundWork.collapse"
-									: "agents.backgroundWork.expand",
-							)}
+			<Disclosure
+				label={
+					<span className="inline-flex items-center gap-2 font-normal text-muted-foreground">
+						<span
+							aria-hidden
+							className="size-1.5 shrink-0 rounded-full bg-status-run"
+						/>
+						{summary}
+					</span>
+				}
+				bodyClassName="max-h-48 overflow-y-auto"
+			>
+				<ul className="space-y-0.5 font-mono text-[11px]">
+					{backgroundWorkRows(list, now()).map((row) => (
+						<li
+							key={`${row.kind}:${row.id}`}
+							className="grid grid-cols-[minmax(0,1fr)_4.5rem_2.5rem_3.5rem_3.5rem] items-center gap-2"
 						>
-							<span
-								aria-hidden
-								className="size-1.5 shrink-0 rounded-full bg-emerald-500"
-							/>
-							<span>{summary}</span>
-							<span aria-hidden className="ml-auto">
-								{expanded ? "▾" : "▴"}
+							<span className="truncate text-foreground">{row.label}</span>
+							<span className="h-1 overflow-hidden rounded-full bg-muted">
+								{row.progress === null ? null : (
+									<span
+										className="block h-full bg-primary"
+										style={{
+											width: `${Math.round(row.progress * 100)}%`,
+										}}
+									/>
+								)}
 							</span>
-						</summary>
-						{expanded ? (
-							<ul className="mt-1.5 space-y-0.5 font-mono text-[11px]">
-								{backgroundWorkRows(list, now()).map((row) => (
-									<li
-										key={`${row.kind}:${row.id}`}
-										className="grid grid-cols-[minmax(0,1fr)_4.5rem_2.5rem_3.5rem_3.5rem] items-center gap-2"
-									>
-										<span className="truncate text-foreground">
-											{row.label}
-										</span>
-										<span className="h-1 overflow-hidden rounded-full bg-muted">
-											{row.progress === null ? null : (
-												<span
-													className="block h-full bg-primary"
-													style={{
-														width: `${Math.round(row.progress * 100)}%`,
-													}}
-												/>
-											)}
-										</span>
-										<span className="text-right">{row.steps}</span>
-										<span className="text-right">{row.elapsed}</span>
-										<span className="text-right">{row.tokens}</span>
-									</li>
-								))}
-								{hidden > 0 ? (
-									<li>{t("agents.backgroundWork.more", { n: hidden })}</li>
-								) : null}
-							</ul>
-						) : null}
-					</>
-				)}
-			</ChatDisclosure>
+							<span className="text-right">{row.steps}</span>
+							<span className="text-right">{row.elapsed}</span>
+							<span className="text-right">{row.tokens}</span>
+						</li>
+					))}
+					{hidden > 0 ? (
+						<li>{t("agents.backgroundWork.more", { n: hidden })}</li>
+					) : null}
+				</ul>
+			</Disclosure>
 		</section>
 	);
 }

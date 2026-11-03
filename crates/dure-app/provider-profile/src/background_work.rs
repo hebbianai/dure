@@ -10,9 +10,11 @@
 use crate::transcript::bounded_suffix;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MAX_BACKGROUND_WORK_ITEMS: usize = 64;
@@ -94,16 +96,114 @@ pub fn read_claude_background_work(
     read_claude_background_work_at(conversation_file, since_unix_ms, now, &Limits::default())
 }
 
+#[derive(Clone)]
 struct Call {
     name: String,
     label: Option<String>,
     started: u64,
 }
 
+#[derive(Clone)]
 struct Tracked {
     item: BackgroundWorkItem,
     aliases: Vec<String>,
     deadline: Option<u64>,
+}
+
+/// What has been read of one conversation file so far. The file only grows,
+/// so each read parses what was appended since the last one.
+#[derive(Default)]
+struct Scan {
+    offset: u64,
+    calls: HashMap<String, Call>,
+    tracked: Vec<Tracked>,
+    ended: HashSet<String>,
+}
+
+const MAX_SCANS: usize = 256;
+const MAX_ENDED_IDS: usize = 16_384;
+
+fn scans() -> &'static Mutex<HashMap<PathBuf, Scan>> {
+    static SCANS: OnceLock<Mutex<HashMap<PathBuf, Scan>>> = OnceLock::new();
+    SCANS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+impl Scan {
+    /// Parse the complete lines appended since the last read. A file that
+    /// shrank was replaced; one that grew by more than `main_bytes` since is
+    /// read afresh from its last `main_bytes`.
+    fn advance(&mut self, conversation_file: &Path, main_bytes: u64) -> Option<()> {
+        let mut file = fs::File::open(conversation_file).ok()?;
+        let length = file.metadata().ok().filter(fs::Metadata::is_file)?.len();
+        if length < self.offset || length - self.offset > main_bytes {
+            *self = Scan::default();
+            self.offset = length.saturating_sub(main_bytes);
+            if self.offset > 0 {
+                // Start one byte earlier so a record exactly on the boundary
+                // is kept; the partial record before it is skipped below.
+                self.offset -= 1;
+                file.seek(SeekFrom::Start(self.offset)).ok()?;
+                let mut skipped = Vec::new();
+                std::io::BufRead::read_until(
+                    &mut std::io::BufReader::new(&mut file),
+                    b'\n',
+                    &mut skipped,
+                )
+                .ok()?;
+                self.offset += skipped.len() as u64;
+            }
+        }
+        file.seek(SeekFrom::Start(self.offset)).ok()?;
+        let mut bytes = Vec::new();
+        file.take(length - self.offset)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        // A record still being written waits for its newline.
+        let complete = bytes
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |index| index + 1);
+        for line in String::from_utf8_lossy(&bytes[..complete]).lines() {
+            self.line(line);
+        }
+        self.offset += complete as u64;
+        let ended = &self.ended;
+        self.tracked
+            .retain(|entry| !entry.aliases.iter().any(|alias| ended.contains(alias)));
+        if self.ended.len() > MAX_ENDED_IDS {
+            self.ended.clear();
+        }
+        Some(())
+    }
+
+    fn line(&mut self, line: &str) {
+        // Most lines are messages and tool output; parse only those that can
+        // start or end background work.
+        if !(line.contains("\"tool_use\"")
+            || line.contains("\"tool_result\"")
+            || line.contains("task-notification"))
+        {
+            return;
+        }
+        let Ok(record) = serde_json::from_str::<Value>(line) else {
+            return;
+        };
+        match record.get("type").and_then(Value::as_str) {
+            Some("assistant") => collect_calls(&record, &mut self.calls, &mut self.ended),
+            Some("user") => {
+                resolve_results(&record, &mut self.calls, &mut self.tracked);
+                if let Some(text) = record.pointer("/message/content").and_then(Value::as_str) {
+                    collect_notifications(text, &mut self.ended);
+                }
+            }
+            Some("queue-operation") => {
+                if let Some(text) = record.get("content").and_then(Value::as_str) {
+                    collect_notifications(text, &mut self.ended);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 pub(crate) fn read_claude_background_work_at(
@@ -112,52 +212,41 @@ pub(crate) fn read_claude_background_work_at(
     now_unix_ms: u64,
     limits: &Limits,
 ) -> BackgroundWorkList {
-    let Some(text) = bounded_suffix(conversation_file, limits.main_bytes) else {
-        return BackgroundWorkList::default();
+    let (mut tracked, ended) = {
+        let Ok(mut scans) = scans().lock() else {
+            return BackgroundWorkList::default();
+        };
+        if scans.len() >= MAX_SCANS && !scans.contains_key(conversation_file) {
+            scans.clear();
+        }
+        let scan = scans.entry(conversation_file.to_path_buf()).or_default();
+        if scan.advance(conversation_file, limits.main_bytes).is_none() {
+            scans.remove(conversation_file);
+            return BackgroundWorkList::default();
+        }
+        let mut tracked = scan.tracked.clone();
+        // A subagent the turn is still waiting on has no result yet.
+        for (tool_use_id, call) in &scan.calls {
+            if call.name == "Agent" {
+                tracked.push(Tracked {
+                    item: item(
+                        tool_use_id.clone(),
+                        BackgroundWorkKind::Subagent,
+                        call.label.clone(),
+                        call.started,
+                    ),
+                    aliases: vec![tool_use_id.clone()],
+                    deadline: None,
+                });
+            }
+        }
+        (tracked, scan.ended.clone())
     };
     let side = conversation_file.with_extension("");
-    let mut calls: HashMap<String, Call> = HashMap::new();
-    let mut tracked: Vec<Tracked> = Vec::new();
-    let mut ended: HashSet<String> = HashSet::new();
-    for line in text.lines() {
-        let Ok(record) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        match record.get("type").and_then(Value::as_str) {
-            Some("assistant") => collect_calls(&record, &mut calls, &mut ended),
-            Some("user") => {
-                resolve_results(&record, &mut calls, &mut tracked);
-                if let Some(text) = record.pointer("/message/content").and_then(Value::as_str) {
-                    collect_notifications(text, &mut ended);
-                }
-            }
-            Some("queue-operation") => {
-                if let Some(text) = record.get("content").and_then(Value::as_str) {
-                    collect_notifications(text, &mut ended);
-                }
-            }
-            _ => {}
-        }
-    }
-    // A subagent the turn is still waiting on has no result yet.
-    for (tool_use_id, call) in calls {
-        if call.name == "Agent" {
-            tracked.push(Tracked {
-                item: item(
-                    tool_use_id.clone(),
-                    BackgroundWorkKind::Subagent,
-                    call.label,
-                    call.started,
-                ),
-                aliases: vec![tool_use_id],
-                deadline: None,
-            });
-        }
-    }
+    tracked.retain(|entry| !entry.aliases.iter().any(|alias| ended.contains(alias)));
 
     let mut running: Vec<BackgroundWorkItem> = tracked
         .into_iter()
-        .filter(|entry| !entry.aliases.iter().any(|alias| ended.contains(alias)))
         .filter(|entry| since_unix_ms.is_none_or(|since| entry.item.started_unix_ms >= since))
         .filter(|entry| entry.deadline.is_none_or(|deadline| now_unix_ms < deadline))
         .filter_map(|entry| enrich(entry.item, &side, limits))
@@ -319,25 +408,34 @@ fn resolve_results(record: &Value, calls: &mut HashMap<String, Call>, tracked: &
     }
 }
 
+/// A notification ends the tasks it names only when it carries a status: a
+/// running monitor reports each event as a notification without one. One
+/// notification can name several tasks (the record Claude Code writes for
+/// tasks a previous process left unfinished).
 fn collect_notifications(text: &str, ended: &mut HashSet<String>) {
     for notification in text.split("<task-notification>").skip(1) {
         let body = notification
             .split("</task-notification>")
             .next()
             .unwrap_or("");
+        if tag_values(body, "status").is_empty() {
+            continue;
+        }
         for tag in ["task-id", "tool-use-id"] {
-            if let Some(value) = tag_value(body, tag) {
-                ended.insert(value.to_string());
-            }
+            ended.extend(tag_values(body, tag).into_iter().map(str::to_string));
         }
     }
 }
 
-fn tag_value<'a>(body: &'a str, tag: &str) -> Option<&'a str> {
-    let start = body.find(&format!("<{tag}>"))? + tag.len() + 2;
-    let end = body[start..].find(&format!("</{tag}>"))? + start;
-    let value = body[start..end].trim();
-    (!value.is_empty()).then_some(value)
+fn tag_values<'a>(body: &'a str, tag: &str) -> Vec<&'a str> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    body.split(open.as_str())
+        .skip(1)
+        .filter_map(|rest| rest.split(close.as_str()).next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect()
 }
 
 /// Adds what the side files know, and drops an item they record as finished.
@@ -396,6 +494,9 @@ fn journal_steps(journal: &Path, max_bytes: u64) -> Option<BackgroundWorkSteps> 
     })
 }
 
+/// The workflow's agents' output tokens, or `None` while any of them is still
+/// being counted or when there are more agent files than one read covers: a
+/// partial sum would read as exact.
 fn workflow_tokens(run: &Path, limits: &Limits) -> Option<u64> {
     let mut files: Vec<PathBuf> = fs::read_dir(run)
         .ok()?
@@ -406,44 +507,120 @@ fn workflow_tokens(run: &Path, limits: &Limits) -> Option<u64> {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.starts_with("agent-") && name.ends_with(".jsonl"))
         })
-        .take(limits.workflow_agent_files)
+        .take(limits.workflow_agent_files + 1)
         .collect();
+    if files.is_empty() || files.len() > limits.workflow_agent_files {
+        return None;
+    }
     files.sort();
-    let sums: Vec<u64> = files
-        .iter()
-        .filter_map(|file| output_tokens(file, limits.agent_bytes))
-        .collect();
-    (!sums.is_empty()).then(|| sums.iter().sum())
-}
-
-/// Output tokens of an agent transcript, counting each message once although
-/// the provider records one line per content block.
-fn output_tokens(transcript: &Path, max_bytes: u64) -> Option<u64> {
-    let text = bounded_suffix(transcript, max_bytes)?;
-    let mut seen = HashSet::new();
     let mut total = 0u64;
-    for record in text
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-    {
-        if record.get("type").and_then(Value::as_str) != Some("assistant") {
-            continue;
-        }
-        let Some(tokens) = record
-            .pointer("/message/usage/output_tokens")
-            .and_then(Value::as_u64)
-        else {
-            continue;
-        };
-        let id = record
-            .pointer("/message/id")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if id.is_empty() || seen.insert(id.to_string()) {
-            total = total.saturating_add(tokens);
+    let mut complete = true;
+    for file in &files {
+        match output_tokens(file, limits.agent_bytes) {
+            Some(tokens) => total = total.saturating_add(tokens),
+            None => complete = false,
         }
     }
-    Some(total)
+    complete.then_some(total)
+}
+
+/// How far one agent transcript has been counted. Transcripts only grow, so
+/// each read continues where the last stopped instead of re-reading the file.
+#[derive(Default)]
+struct Tally {
+    offset: u64,
+    total: u64,
+    /// Message ids just counted: the provider writes one line per content
+    /// block of a message, each with the message's usage.
+    recent: VecDeque<String>,
+}
+
+const MAX_TALLIES: usize = 4096;
+const RECENT_MESSAGE_IDS: usize = 16;
+
+fn tallies() -> &'static Mutex<HashMap<PathBuf, Tally>> {
+    static TALLIES: OnceLock<Mutex<HashMap<PathBuf, Tally>>> = OnceLock::new();
+    TALLIES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Output tokens of an agent transcript, each message counted once. Reads at
+/// most `max_bytes` more of the file per call; `None` until the whole file
+/// has been counted, so a partial sum is never shown.
+fn output_tokens(transcript: &Path, max_bytes: u64) -> Option<u64> {
+    let mut file = fs::File::open(transcript).ok()?;
+    let length = file.metadata().ok().filter(fs::Metadata::is_file)?.len();
+    let mut tallies = tallies().lock().ok()?;
+    if tallies.len() >= MAX_TALLIES && !tallies.contains_key(transcript) {
+        tallies.clear();
+    }
+    let tally = tallies.entry(transcript.to_path_buf()).or_default();
+    if length < tally.offset {
+        // Replaced or truncated: count it again.
+        *tally = Tally::default();
+    }
+    file.seek(SeekFrom::Start(tally.offset)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes).read_to_end(&mut bytes).ok()?;
+    // Complete lines are counted and remembered; a last line without its
+    // newline yet is counted for this answer only, once it parses.
+    let complete = bytes
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    for line in String::from_utf8_lossy(&bytes[..complete]).lines() {
+        if let Some((id, tokens)) = message_output_tokens(line) {
+            if tally.count(id) {
+                tally.total = tally.total.saturating_add(tokens);
+            }
+        }
+    }
+    tally.offset += complete as u64;
+    if tally.offset + (bytes.len() - complete) as u64 != length {
+        // More of the file is left than one read takes: not caught up yet.
+        return None;
+    }
+    let tail = String::from_utf8_lossy(&bytes[complete..]);
+    let pending = message_output_tokens(tail.trim())
+        .filter(|(id, _)| id.is_empty() || !tally.recent.iter().any(|seen| seen == id))
+        .map_or(0, |(_, tokens)| tokens);
+    Some(tally.total.saturating_add(pending))
+}
+
+impl Tally {
+    /// Whether a message's usage is new, remembering its id if it is.
+    fn count(&mut self, id: String) -> bool {
+        if id.is_empty() {
+            return true;
+        }
+        if self.recent.iter().any(|seen| *seen == id) {
+            return false;
+        }
+        if self.recent.len() == RECENT_MESSAGE_IDS {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(id);
+        true
+    }
+}
+
+/// An assistant record's message id and output tokens.
+fn message_output_tokens(line: &str) -> Option<(String, u64)> {
+    if !line.contains("output_tokens") {
+        return None;
+    }
+    let record = serde_json::from_str::<Value>(line).ok()?;
+    if record.get("type").and_then(Value::as_str) != Some("assistant") {
+        return None;
+    }
+    let tokens = record
+        .pointer("/message/usage/output_tokens")
+        .and_then(Value::as_u64)?;
+    let id = record
+        .pointer("/message/id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Some((id, tokens))
 }
 
 fn is_true(value: Option<&Value>) -> bool {

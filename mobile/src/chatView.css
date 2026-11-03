@@ -230,6 +230,9 @@
 }
 
 .chat__background-rows {
+  /* About eight rows; more scroll here, so the composer stays on screen. */
+  max-height: 160px;
+  overflow-y: auto;
   margin: 6px 0 0;
   padding: 0;
   list-style: none;

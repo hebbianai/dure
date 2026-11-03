@@ -453,18 +453,29 @@ pub fn background_work_answer(
 }
 
 /// When the provider process started, on the wall clock the provider's
-/// records use. Only macOS reports a wall-clock start here; elsewhere the
-/// answer relies on the Host gate alone.
-fn provider_started_unix_ms(process_id: u32) -> Option<u64> {
-    #[cfg(target_os = "macos")]
-    {
-        hebbian_process_sampler::process_start_time(process_id).map(|micros| micros / 1000)
+/// records use: the Windows runtime's start marker, or the operating system's
+/// process start on macOS and Linux. Unknown leaves the Host gate alone.
+fn provider_started_unix_ms(process: &hmux_client::ProcessDescriptor) -> Option<u64> {
+    if let Some(started) = windows_start_marker_unix_ms(&process.start_marker) {
+        return Some(started);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(unix)]
     {
-        let _ = process_id;
+        hebbian_process_sampler::process_start_time(process.process_id)
+            .and_then(crate::hmux::process_start_unix_ms)
+    }
+    #[cfg(not(unix))]
+    {
         None
     }
+}
+
+/// `windows-proc-start-v1:<FILETIME>`, the marker Hmux's Windows runtime gives
+/// a process: 100 ns ticks since 1601-01-01 UTC.
+fn windows_start_marker_unix_ms(marker: &str) -> Option<u64> {
+    const UNIX_EPOCH_AS_FILETIME_MS: u64 = 11_644_473_600_000;
+    let ticks: u64 = marker.strip_prefix("windows-proc-start-v1:")?.parse().ok()?;
+    (ticks / 10_000).checked_sub(UNIX_EPOCH_AS_FILETIME_MS)
 }
 
 /// The conversation to prompt, once everything provable before the Host
@@ -652,7 +663,6 @@ impl LocalConversations {
         session_id: &str,
     ) -> Result<BackgroundWorkList, (ConversationRefusal, String)> {
         let (catalog, descriptor) = Self::session(workspace_id, session_id)?;
-        let process_id = descriptor.provider_process.process_id;
         let inspection = hmux_client::inspect_local_session(&catalog, descriptor);
         if let Some((code, detail)) = health_refusal(inspection.health) {
             return Err((code, detail.to_string()));
@@ -664,7 +674,7 @@ impl LocalConversations {
         );
         Ok(background_work_answer(
             &observed,
-            provider_started_unix_ms(process_id),
+            provider_started_unix_ms(&inspection.descriptor.provider_process),
             crate::conv::background_work_any_account,
         ))
     }
@@ -1248,6 +1258,21 @@ mod tests {
             BackgroundWorkList::default()
         });
         assert_eq!(seen, Some(1_793_600_000_000));
+    }
+
+    /// Hmux's Windows runtime marks a provider process with its creation
+    /// FILETIME; that is a wall-clock start the records can be compared to.
+    #[test]
+    fn a_windows_start_marker_reads_as_its_unix_time() {
+        // 2026-11-02T06:13:20Z as 100 ns ticks since 1601-01-01.
+        let filetime = (1_793_600_000_000u64 + 11_644_473_600_000) * 10_000;
+        assert_eq!(
+            windows_start_marker_unix_ms(&format!("windows-proc-start-v1:{filetime}")),
+            Some(1_793_600_000_000)
+        );
+        assert_eq!(windows_start_marker_unix_ms("host-process-1"), None);
+        assert_eq!(windows_start_marker_unix_ms("windows-proc-start-v1:soon"), None);
+        assert_eq!(windows_start_marker_unix_ms("windows-proc-start-v1:5"), None);
     }
 
     #[test]
