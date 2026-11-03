@@ -10,6 +10,7 @@ description = "Native provider credential profile projection for Dure"
 [dependencies]
 dure-app = { path = ".." }
 dure-git-checkout = { path = "../git-checkout" }
+dure-provider-transcript = { path = "../provider-transcript" }
 fs2 = "0.4"
 hmux-runtime-contract = { path = "../../../hmux/crates/hmux-runtime-contract" }
 libc = "0.2"
