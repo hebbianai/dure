@@ -31,6 +31,8 @@ let rejectNextAccountSwitch = false;
 let hubLaunchOffer: LaunchOffer | undefined;
 let hubStartedSessionId: string | null = null;
 let hubCatalogSessions: HubProbeSession[] | undefined;
+/** What the server answers `ssh_conversation_transcript` with: a failure, or the default transcript. */
+let sshTranscriptError: unknown;
 let discoveredSessions: RemoteSession[] | undefined;
 let discoveryError: unknown;
 let successorResolution: SessionResolution = { state: "unknown" };
@@ -582,6 +584,26 @@ vi.mock("@tauri-apps/api/core", () => ({
           detail: null,
           code: null,
         });
+      case "ssh_conversation_transcript":
+        if (sshTranscriptError !== undefined) return Promise.reject(sshTranscriptError);
+        return Promise.resolve({
+          hub_conversation_version: 1,
+          outcome: "transcript",
+          provider: "claude",
+          conversation_id: "server-conversation",
+          entries: [
+            { role: "user", text: "Deploy the fix" },
+            { role: "agent", text: "Deployed." },
+          ],
+          history_complete: true,
+          cursor: {
+            terminal_epoch: "epoch-1",
+            conversation_id: "server-conversation",
+            turn_completed_count: 1,
+            turn_open: false,
+            runtime_revision: 1,
+          },
+        });
       case "hub_conversation_transcript":
         return Promise.resolve({
           outcome: "transcript",
@@ -747,6 +769,22 @@ function remoteSession() {
     terminal_epoch: "terminal_68a626fe60be4c069dd3337c4be98535",
     capabilities: ["terminal_surface_v1"],
     ready: true,
+  };
+}
+
+/** A managed Claude Code agent on the server, whose Host serves Chat. */
+function serverAgentSession() {
+  return {
+    ...remoteSession(),
+    session_name: "deploy",
+    session_class: "managed",
+    provider_id: "claude",
+    capabilities: [
+      "terminal_surface_v1",
+      "agent_runtime_state_v1",
+      "provider_conversation_identity_v1",
+      "agent_prompt_v1",
+    ],
   };
 }
 
@@ -922,6 +960,7 @@ beforeEach(() => {
   hubLaunchOffer = undefined;
   hubStartedSessionId = null;
   hubCatalogSessions = undefined;
+  sshTranscriptError = undefined;
   discoveredSessions = undefined;
   discoveryError = undefined;
   successorResolution = { state: "unknown" };
@@ -1065,6 +1104,63 @@ describe("세션 출력 배선", () => {
     expect(root.textContent).not.toContain(
       t("읽기 전용({role}) — 입력은 전달되지 않습니다", { role: "observer" }),
     );
+  });
+
+  it("opens a managed agent on a server on Chat over the phone's own SSH connection", async () => {
+    censusReports = [{
+      server_id: "lab",
+      server_label: "Loopback lab",
+      outcome: { state: "listed", sessions: [serverAgentSession()] },
+    }];
+    const root = await openTerminal();
+
+    expect(pick(root, '.session__view[data-view="chat"]').getAttribute("aria-selected")).toBe("true");
+    await vi.waitFor(() => expect(root.querySelectorAll(".chat__row")).toHaveLength(2));
+    expect(root.textContent).toContain("Deployed.");
+    const asked = invocations.find((entry) => entry.command === "ssh_conversation_transcript");
+    expect(asked?.args).toMatchObject({
+      serverId: "lab",
+      session: {
+        session_id: SESSION_ID,
+        workspace_id: "workspace_64532e59deecf7bb",
+        terminal_epoch: "terminal_68a626fe60be4c069dd3337c4be98535",
+      },
+    });
+    expect(invocations.map((entry) => entry.command)).not.toContain("hub_conversation_transcript");
+    // The terminal keeps running under the chat on the same writable attach.
+    const attaches = invocations.filter((entry) => entry.command === "attach_session");
+    expect(attaches).toHaveLength(1);
+    expect(attaches[0].args.writable).toBe(true);
+
+    pick(root, '.session__view[data-view="terminal"]').click();
+    await settle();
+    expect(root.querySelector(".chat")).toBeNull();
+    expect(root.querySelector(".tray")).not.toBeNull();
+  });
+
+  it("gives way to the terminal when the server's Dure CLI predates Chat", async () => {
+    censusReports = [{
+      server_id: "lab",
+      server_label: "Loopback lab",
+      outcome: { state: "listed", sessions: [serverAgentSession()] },
+    }];
+    sshTranscriptError = {
+      code: "conversation_server_update_required",
+      message: "unsupported protocol version",
+    };
+    const root = await openTerminal();
+
+    await vi.waitFor(() =>
+      expect(pick(root, '.session__view[data-view="terminal"]').getAttribute("aria-selected")).toBe("true"),
+    );
+    expect(root.textContent).toContain(t("chat.fallback.updateServer"));
+    expect(root.querySelector(".tray")).not.toBeNull();
+  });
+
+  it("keeps a shell on a server on the terminal only", async () => {
+    const root = await openTerminal();
+    expect(root.querySelector(".session__views")).toBeNull();
+    expect(invocations.map((entry) => entry.command)).not.toContain("ssh_conversation_transcript");
   });
 
   it("passes the attached Host's wheel capability through to mobile finger scrolling", async () => {

@@ -182,6 +182,7 @@ export const ko: Record<string, string> = {
   "chat.wait.sessionNotFound": "컴퓨터에 이 세션이 더 이상 없습니다.",
   "chat.wait.unknown": "대화를 읽지 못했습니다. Dure가 다시 시도합니다.",
   "chat.fallback.updatePhone": "채팅을 쓰려면 이 폰의 Dure를 업데이트하세요. 터미널은 그대로 쓸 수 있습니다.",
+  "chat.fallback.updateServer": "채팅을 쓰려면 이 서버의 Dure CLI를 업데이트하세요. 터미널은 그대로 쓸 수 있습니다.",
   "chat.fallback.notAvailable": "이 세션에서는 채팅을 쓸 수 없습니다. 터미널을 쓰세요.",
   "chat.returned.identityChanged": "보내지 않았습니다: 에이전트가 다른 대화로 옮겼습니다. 프롬프트를 입력란에 돌려놓았습니다.",
   "chat.returned.inputDraftPending": "보내지 않았습니다: 터미널에서 누군가 입력 중입니다. 프롬프트를 입력란에 돌려놓았습니다.",

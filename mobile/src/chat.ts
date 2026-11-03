@@ -19,6 +19,7 @@ import type {
   ConversationRefusal,
   ConversationTranscriptAnswer,
 } from "./ipc";
+import type { RemoteSession } from "./sessions";
 
 export type SessionView = "chat" | "terminal";
 
@@ -33,6 +34,35 @@ export const CONVERSATION_DEFAULT_VIEW: SessionView = "chat";
 /** Sessions without a conversation (shells, remote hosts) have nothing to show in Chat. */
 export function defaultSessionView(conversation: boolean): SessionView {
   return conversation ? CONVERSATION_DEFAULT_VIEW : "terminal";
+}
+
+/** The providers whose transcript a server reads for Chat. */
+const SERVER_CHAT_PROVIDERS: ReadonlySet<string> = new Set(["claude", "codex"]);
+
+/**
+ * What a server session's Host must advertise for Chat (#384): its runtime
+ * state (idle or working), the conversation the provider reported, and the
+ * idle-only prompt.
+ */
+const SERVER_CHAT_CAPABILITIES = [
+  "agent_runtime_state_v1",
+  "provider_conversation_identity_v1",
+  "agent_prompt_v1",
+] as const;
+
+/**
+ * Whether a session on a server this phone reaches over SSH opens on Chat: a
+ * managed Claude Code or Codex agent whose Host can serve it. Whether the
+ * server's own Dure CLI can read the transcript is learned by asking; one that
+ * cannot gives way to the terminal (`update_server`).
+ */
+export function offersServerChat(session: RemoteSession): boolean {
+  return (
+    session.ready &&
+    session.session_class === "managed" &&
+    SERVER_CHAT_PROVIDERS.has(session.provider_id) &&
+    SERVER_CHAT_CAPABILITIES.every((capability) => session.capabilities.includes(capability))
+  );
 }
 
 /** How often an open chat asks again while nothing else has told it to. */
@@ -89,6 +119,8 @@ export type ChatWait =
 export type ChatFallback =
   /** This phone cannot read the computer's answer: update the app. */
   | "update_phone"
+  /** The server's Dure CLI predates Chat: update it there. */
+  | "update_server"
   /** The session has no conversation the computer can serve. */
   | "not_available";
 
@@ -194,6 +226,9 @@ export function transcriptFailure(
   }
   if (code === "conversation_version_unsupported") {
     return { silentCloses: 0, step: { kind: "fallback", fallback: "update_phone" } };
+  }
+  if (code === "conversation_server_update_required") {
+    return { silentCloses: 0, step: { kind: "fallback", fallback: "update_server" } };
   }
   return { silentCloses: 0, step: { kind: "wait", wait: "unreachable" } };
 }

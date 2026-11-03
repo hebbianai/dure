@@ -8,6 +8,7 @@ import {
   completedTurns,
   CONVERSATION_DEFAULT_VIEW,
   defaultSessionView,
+  offersServerChat,
   refreshMark,
   sendsNow,
   sentPrompt,
@@ -16,6 +17,7 @@ import {
   transcriptFailure,
 } from "./chat";
 import type { ConversationCursor, ConversationTranscriptAnswer } from "./ipc";
+import type { RemoteSession } from "./sessions";
 
 function runtime(overrides: Partial<AgentRuntimeState> = {}): AgentRuntimeState {
   return {
@@ -67,6 +69,49 @@ describe("the default view", () => {
     expect(CONVERSATION_DEFAULT_VIEW).toBe("chat");
     expect(defaultSessionView(true)).toBe("chat");
     expect(defaultSessionView(false)).toBe("terminal");
+  });
+});
+
+describe("offersServerChat", () => {
+  const agent = (overrides: Partial<RemoteSession> = {}): RemoteSession => ({
+    session_id: "session-1",
+    session_name: null,
+    workspace_id: "workspace-1",
+    session_class: "managed",
+    lifecycle: "ready",
+    provider_id: "claude",
+    runner_principal: "server-user",
+    runner_instance: "runner-1",
+    channel_epoch: "1",
+    host_instance_id: "host-1",
+    terminal_epoch: "terminal-1",
+    capabilities: [
+      "terminal_surface_v1",
+      "agent_runtime_state_v1",
+      "provider_conversation_identity_v1",
+      "agent_prompt_v1",
+    ],
+    ready: true,
+    ...overrides,
+  });
+
+  it("offers Chat for a managed Claude Code or Codex agent whose Host can serve it", () => {
+    expect(offersServerChat(agent())).toBe(true);
+    expect(offersServerChat(agent({ provider_id: "codex" }))).toBe(true);
+  });
+
+  it("keeps shells, other agents and Hosts without the capabilities on Terminal", () => {
+    expect(offersServerChat(agent({ session_class: "standalone", provider_id: "shell" }))).toBe(false);
+    expect(offersServerChat(agent({ provider_id: "gemini" }))).toBe(false);
+    expect(offersServerChat(agent({ ready: false }))).toBe(false);
+    for (const missing of [
+      "agent_runtime_state_v1",
+      "provider_conversation_identity_v1",
+      "agent_prompt_v1",
+    ]) {
+      const capabilities = agent().capabilities.filter((capability) => capability !== missing);
+      expect(offersServerChat(agent({ capabilities }))).toBe(false);
+    }
   });
 });
 
@@ -220,6 +265,12 @@ describe("transcriptFailure", () => {
     expect(
       transcriptFailure({ code: "conversation_version_unsupported", message: "" }, 2).step,
     ).toEqual({ kind: "fallback", fallback: "update_phone" });
+  });
+
+  it("gives way to the terminal and asks to update a server whose Dure CLI predates Chat", () => {
+    expect(
+      transcriptFailure({ code: "conversation_server_update_required", message: "" }, 2),
+    ).toEqual({ silentCloses: 0, step: { kind: "fallback", fallback: "update_server" } });
   });
 
   it("keeps asking when the computer could not be reached", () => {

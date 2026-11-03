@@ -34,6 +34,7 @@ pub mod push;
 #[cfg(target_os = "ios")]
 mod push_ios;
 pub mod relay;
+pub mod server_conversation;
 pub mod server_store;
 pub mod source_control;
 pub mod standalone;
@@ -594,6 +595,63 @@ async fn resolve_session_successor(
     .await
     .map_err(|error| CommandError {
         code: "session_resolution_join_failed".into(),
+        message: error.to_string(),
+    })?
+}
+
+/// The newest messages of an agent session on a server, asked of the server
+/// itself over this phone's SSH connection (#384), so Chat needs no computer.
+///
+/// The attach key, not the list key: a key pinned to `--list` answers nothing
+/// but a listing.
+#[tauri::command]
+async fn ssh_conversation_transcript(
+    app: AppHandle,
+    server_id: String,
+    session: RemoteSession,
+    limit: Option<u32>,
+    after: Option<dure_hub_protocol::conversation::ConversationCursor>,
+) -> Result<dure_hub_protocol::conversation::HubConversationTranscriptResult, CommandError> {
+    let (entry, keys) = target_for(&app, &server_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let key = identity_store::load(&keys, &entry.id, KeyRole::Attach)?;
+        let config = relay::ssh_config(&relay_target(&entry), key, None, relay::gateway_command())?;
+        server_conversation::transcript(config, &session, limit, after)
+    })
+    .await
+    .map_err(|error| CommandError {
+        code: "ssh_conversation_join_failed".into(),
+        message: error.to_string(),
+    })?
+}
+
+/// Type one prompt into an agent on a server through its Host's idle-only
+/// admission, over this phone's SSH connection (#384). A refusal is an
+/// answer; an error means nothing was written.
+#[tauri::command]
+async fn ssh_agent_prompt(
+    app: AppHandle,
+    server_id: String,
+    session: RemoteSession,
+    text: String,
+    expected_terminal_epoch: String,
+    expected_conversation_id: Option<String>,
+) -> Result<dure_hub_protocol::conversation::HubAgentPromptResult, CommandError> {
+    let (entry, keys) = target_for(&app, &server_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let key = identity_store::load(&keys, &entry.id, KeyRole::Attach)?;
+        let config = relay::ssh_config(&relay_target(&entry), key, None, relay::gateway_command())?;
+        server_conversation::prompt(
+            config,
+            &session,
+            &text,
+            &expected_terminal_epoch,
+            expected_conversation_id.as_deref(),
+        )
+    })
+    .await
+    .map_err(|error| CommandError {
+        code: "ssh_agent_prompt_join_failed".into(),
         message: error.to_string(),
     })?
 }
@@ -2975,6 +3033,8 @@ pub fn run() {
             save_identity,
             discover_sessions,
             resolve_session_successor,
+            ssh_conversation_transcript,
+            ssh_agent_prompt,
             resolve_hub_session_successor,
             take_session_census,
             pair_from_scan,

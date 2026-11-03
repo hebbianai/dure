@@ -223,8 +223,14 @@ pub(crate) fn activate_terminal_surface(
     let terminal_epoch = initial.terminal_epoch().to_string();
     let through_output_seq = initial.through_output_seq().to_string();
     let state_revision = initial.state_revision().to_string();
-    let initial_records = VecDeque::from(attachment.surface.initial_delivery_records().to_vec());
+    let mut initial_records =
+        VecDeque::from(attachment.surface.initial_delivery_records().to_vec());
+    // The seed's own count: the runtime record after it is read like any
+    // later record, so the screen's geometry sync is unchanged.
     let initial_delivery_record_count = initial_records.len();
+    if let Some(state) = attachment.surface.initial_agent_runtime_state() {
+        initial_records.push_back(initial_runtime_record(state)?);
+    }
     let granted_capabilities = attachment.surface.selected_capabilities().to_vec();
     let upstream = attachment.surface.upstream_handles();
     let epoch = state.next_epoch();
@@ -392,9 +398,143 @@ pub(crate) fn detach_session(
     )
 }
 
+/// The attach's initial agent runtime state, as one record shaped like the
+/// live `agent_runtime_state` control record the screen already parses.
+///
+/// The Host captures it in the attach transaction, but it rides beside the
+/// viewport seed rather than among its records, so without this the chat
+/// would not know whether the agent is idle until the state next changed.
+/// Only the fields the screen reads are written; an absent attention id is
+/// absent, as on the wire, because the screen refuses a null one.
+fn initial_runtime_record(
+    state: &hmux_client::AgentRuntimeStateDescriptor,
+) -> Result<Vec<u8>, CommandError> {
+    #[derive(Serialize)]
+    struct Payload<'a> {
+        terminal_epoch: &'a str,
+        revision: &'a str,
+        lifecycle: hmux_client::AgentRuntimeLifecycle,
+        activity: hmux_client::AgentRuntimeActivity,
+        attention: hmux_client::AgentRuntimeAttention,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attention_id: Option<&'a str>,
+        turn_completed_count: &'a str,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        background_work: bool,
+    }
+    #[derive(Serialize)]
+    struct Body<'a> {
+        kind: &'static str,
+        payload: Payload<'a>,
+    }
+    #[derive(Serialize)]
+    struct Record<'a> {
+        kind: &'static str,
+        body: Body<'a>,
+    }
+    serde_json::to_vec(&Record {
+        kind: "control",
+        body: Body {
+            kind: "agent_runtime_state",
+            payload: Payload {
+                terminal_epoch: &state.terminal_epoch,
+                revision: &state.revision,
+                lifecycle: state.lifecycle,
+                activity: state.activity,
+                attention: state.attention,
+                attention_id: state.attention_id.as_deref(),
+                turn_completed_count: &state.turn_completed_count,
+                background_work: state.background_work,
+            },
+        },
+    })
+    .map_err(|error| CommandError {
+        code: "terminal_record_encode_failed".to_string(),
+        message: error.to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn runtime_descriptor(attention_id: Option<&str>) -> hmux_client::AgentRuntimeStateDescriptor {
+        hmux_client::AgentRuntimeStateDescriptor {
+            progress: None,
+            terminal_epoch: "terminal-1".into(),
+            revision: "12".into(),
+            observed_through_output_seq: "40".into(),
+            lifecycle: hmux_client::AgentRuntimeLifecycle::Running,
+            activity: hmux_client::AgentRuntimeActivity::Waiting,
+            attention: if attention_id.is_some() {
+                hmux_client::AgentRuntimeAttention::ApprovalRequired
+            } else {
+                hmux_client::AgentRuntimeAttention::None
+            },
+            attention_id: attention_id.map(str::to_string),
+            source: hmux_client::AgentRuntimeStateSource::ProviderEvent,
+            turn_completed_count: "3".into(),
+            program_status: None,
+            background_work: false,
+        }
+    }
+
+    /// The live record for the same state, as the Host's frame relays it.
+    fn live_record(attention_id: Option<&str>) -> serde_json::Value {
+        use hmux_host::local_protocol::{
+            AgentRuntimeActivity, AgentRuntimeAttention, AgentRuntimeLifecycle,
+            AgentRuntimeStateProjection, AgentRuntimeStateSource,
+        };
+        let body = FrameBody::AgentRuntimeState(AgentRuntimeStateProjection {
+            progress: None,
+            terminal_epoch: "terminal-1".into(),
+            revision: 12,
+            observed_through_output_seq: 40,
+            lifecycle: AgentRuntimeLifecycle::Running,
+            activity: AgentRuntimeActivity::Waiting,
+            attention: if attention_id.is_some() {
+                AgentRuntimeAttention::ApprovalRequired
+            } else {
+                AgentRuntimeAttention::None
+            },
+            attention_id: attention_id.map(str::to_string),
+            source: AgentRuntimeStateSource::ProviderEvent,
+            turn_completed_count: 3,
+            program_status: None,
+            background_work: false,
+        });
+        serde_json::to_value(AdapterRecord::Control { body: &body }).unwrap()
+    }
+
+    #[test]
+    fn the_initial_runtime_state_reads_as_the_live_record_the_chat_parses() {
+        for attention_id in [None, Some("approval-1")] {
+            let synthetic: serde_json::Value = serde_json::from_slice(
+                &initial_runtime_record(&runtime_descriptor(attention_id)).unwrap(),
+            )
+            .unwrap();
+            let live = live_record(attention_id);
+            assert_eq!(synthetic["kind"], live["kind"]);
+            assert_eq!(synthetic["body"]["kind"], live["body"]["kind"]);
+            // The fields `parseAgentRuntimeRecord` reads, value for value; an
+            // absent attention id is absent, not null.
+            for field in [
+                "terminal_epoch",
+                "lifecycle",
+                "activity",
+                "attention",
+                "attention_id",
+                "revision",
+                "turn_completed_count",
+            ] {
+                assert_eq!(
+                    synthetic["body"]["payload"].get(field),
+                    live["body"]["payload"].get(field),
+                    "{field}"
+                );
+            }
+        }
+    }
 
     #[derive(Default)]
     struct RecordingInterrupt {
