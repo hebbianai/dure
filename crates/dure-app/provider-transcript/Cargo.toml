@@ -1,0 +1,18 @@
+[package]
+name = "dure-provider-transcript"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+description = "Provider-owned Claude Code and Codex transcript reads shared by Dure and Hmux"
+
+# Deliberately lean: serde and std. The desktop links this through
+# `dure-provider-profile`, and `hmux mobile-gateway` links it on every server
+# the phone reads a conversation from, so anything added here ships there too.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

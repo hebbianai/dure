@@ -870,6 +870,46 @@ export const ipc = {
     }),
 
   /**
+   * The newest messages of an agent session on a server, asked of the server
+   * itself over this phone's SSH connection (#384), in the same answer shape
+   * as `hubConversationTranscript`. A server whose Dure CLI predates Chat
+   * fails with `conversation_server_update_required`.
+   */
+  sshConversationTranscript: (
+    serverId: string,
+    session: RemoteSession,
+    after?: ConversationCursor,
+    limit?: number,
+  ) =>
+    invoke<ConversationTranscriptAnswer>("ssh_conversation_transcript", {
+      serverId,
+      session,
+      limit: limit ?? null,
+      after: after ?? null,
+    }),
+
+  /**
+   * Type one prompt into an agent on a server through its Host's idle-only
+   * admission, over this phone's SSH connection. As for `hubAgentPrompt`, a
+   * refusal is an answer and an error means nothing was written;
+   * `server_unreachable` says the SSH connection itself failed.
+   */
+  sshAgentPrompt: (
+    serverId: string,
+    session: RemoteSession,
+    text: string,
+    expectedTerminalEpoch: string,
+    expectedConversationId?: string,
+  ) =>
+    invoke<AgentPromptAnswer>("ssh_agent_prompt", {
+      serverId,
+      session,
+      text,
+      expectedTerminalEpoch,
+      expectedConversationId: expectedConversationId ?? null,
+    }),
+
+  /**
    * 세션 하나가 무엇을 바꿔 놓았는지 그 상자에 직접 묻는다.
    *
    * [`hubGitStatus`] 와 같은 질문에 대한 두 번째 답. 짝지은 노트북이 그 세션을

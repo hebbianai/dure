@@ -42,6 +42,9 @@ mod retirement_tests;
 #[path = "mobile_gateway/resolution_tests.rs"]
 mod resolution_tests;
 
+#[path = "mobile_gateway/conversation_tests.rs"]
+mod conversation_tests;
+
 /// The runtime binary lands beside this package's binary in the same profile
 /// directory. Failing loudly beats skipping: a silently skipped relay test is
 /// indistinguishable from a passing one.

@@ -127,6 +127,7 @@ const WAIT_TEXT: Record<ChatWait, string> = {
 /** The fallback's one line, also shown by the caller as it switches to Terminal. */
 export const FALLBACK_TEXT: Record<ChatFallback, string> = {
   update_phone: "chat.fallback.updatePhone",
+  update_server: "chat.fallback.updateServer",
   not_available: "chat.fallback.notAvailable",
 };
 

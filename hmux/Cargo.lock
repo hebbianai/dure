@@ -902,6 +902,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
+name = "dure-hub-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "dure-provider-transcript"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1352,6 +1370,8 @@ dependencies = [
  "clap",
  "crossterm",
  "dirs",
+ "dure-hub-protocol",
+ "dure-provider-transcript",
  "ed25519-dalek",
  "fs2",
  "getrandom 0.4.3",

@@ -44,6 +44,7 @@ pub mod relay;
 pub mod session_account;
 pub mod session_file;
 pub mod start_agent;
+#[cfg(feature = "tls")]
 pub mod tls;
 
 pub use catalog::{HUB_CATALOG_VERSION, HubCatalog, HubCatalogEntry, UnreachableBox};

@@ -15,6 +15,7 @@ import {
   returnToComposer,
   saveQueuedPrompt,
   saveReturnedDraft,
+  serverQueueKey,
   settleDelivery,
 } from "./chatQueue";
 import type { AgentPromptAnswer, ConversationRefusal } from "./ipc";
@@ -147,7 +148,7 @@ describe("settleDelivery", () => {
     });
   });
 
-  it.each(["hub_unreachable", "hub_computer_offline"])(
+  it.each(["hub_unreachable", "hub_computer_offline", "server_unreachable"])(
     "keeps it queued after %s, which proves nothing was written",
     (code) => {
       expect(NOT_SENT_CODES.has(code)).toBe(true);
@@ -220,6 +221,15 @@ describe("the persisted queue", () => {
 
   const first = queueKey("hub-1", "box-1", "workspace-1", "session-1");
   const second = queueKey("hub-1", "box-1", "workspace-1", "session-2");
+
+  it("keeps a server session's prompt apart from a computer's with the same names", () => {
+    const server = serverQueueKey("hub-1", "workspace-1", "session-1");
+    expect(server).not.toBe(queueKey("hub-1", "ssh", "workspace-1", "session-1"));
+    saveQueuedPrompt(localStorage, server, queued("on the server"));
+    saveQueuedPrompt(localStorage, first, queued("on the computer"));
+    expect(loadChatEntry(localStorage, server)).toEqual({ kind: "queued", prompt: queued("on the server") });
+    expect(loadChatEntry(localStorage, first)).toEqual({ kind: "queued", prompt: queued("on the computer") });
+  });
 
   it("keeps one prompt per session across loads", () => {
     saveQueuedPrompt(localStorage, first, queued("first"));

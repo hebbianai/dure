@@ -168,11 +168,14 @@ export type DeliveryResult =
 /**
  * The command errors that prove a prompt was not written and may be tried
  * again: `hub_agent_prompt` returns them only from dialing the computer or
- * from writing the greeting, before the computer could act on it.
+ * from writing the greeting, before the computer could act on it, and
+ * `ssh_agent_prompt` returns `server_unreachable` only when the SSH
+ * connection to the server failed.
  */
 export const NOT_SENT_CODES: ReadonlySet<string> = new Set([
   "hub_unreachable",
   "hub_computer_offline",
+  "server_unreachable",
 ]);
 
 /** What one delivery attempt did with the queued prompt. */
@@ -253,6 +256,14 @@ export function queueKey(
   sessionId: string,
 ): string {
   return JSON.stringify([hubId, boxId, workspaceId, sessionId]);
+}
+
+/**
+ * The same for a session on a server this phone reaches over SSH. Its own
+ * shape, so it can never name a computer's session.
+ */
+export function serverQueueKey(serverId: string, workspaceId: string, sessionId: string): string {
+  return JSON.stringify(["ssh", serverId, workspaceId, sessionId]);
 }
 
 /** What one session has stored: a queued prompt, or text given back to the composer. */

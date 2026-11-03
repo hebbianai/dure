@@ -96,6 +96,7 @@
 //! an allow-list, and the process proofs are not on it.
 
 use crate::CliError;
+mod conversation;
 mod downstream;
 #[cfg(test)]
 use downstream::relay_downstream_body;
@@ -468,7 +469,8 @@ const LENGTH_PREFIX_BYTES: usize = 4;
 /// not the attach protocol and not the catalog record, and coupling any two of
 /// the three would make one of them un-evolvable.
 const GATEWAY_REQUEST_VERSION_MINIMUM: u16 = 1;
-const GATEWAY_REQUEST_VERSION_MAXIMUM: u16 = session_resolution::GATEWAY_REQUEST_VERSION;
+const GATEWAY_REQUEST_VERSION_MAXIMUM: u16 =
+    hmux_ssh_transport::conversation_transcript::GATEWAY_REQUEST_VERSION;
 const GATEWAY_REQUEST_VERSION_RETIREMENT_POLICY: u16 = 2;
 const GATEWAY_REQUEST_VERSION_ABANDON_UNPRESENTED_CREATION: u16 = 3;
 /// A listing that also carries what each session was launched to run and
@@ -591,6 +593,9 @@ enum GatewayRequest {
     SourceControlFileDiff(SourceControlFileDiffRequestDocument),
     /// Resolve one retired source without attaching or widening a pairing key.
     ResolveSession(SessionResolutionRequest),
+    /// Read one agent session's provider conversation, answered in the hub's
+    /// conversation shape. A read: see [`conversation`].
+    ConversationTranscript(conversation::ConversationTranscriptRequest),
 }
 
 #[derive(Debug, Eq, PartialEq, Deserialize)]
@@ -788,7 +793,7 @@ fn gateway_request_is_supported(document: &GatewayRequestDocument) -> bool {
             GatewayRequest::SourceControlStatus(_) | GatewayRequest::SourceControlFileDiff(_) => {
                 false
             }
-            GatewayRequest::ResolveSession(_) => false,
+            GatewayRequest::ResolveSession(_) | GatewayRequest::ConversationTranscript(_) => false,
         },
         GATEWAY_REQUEST_VERSION_RETIREMENT_POLICY => match &document.request {
             GatewayRequest::ListSessions => true,
@@ -833,6 +838,9 @@ fn gateway_request_is_supported(document: &GatewayRequestDocument) -> bool {
         ),
         session_resolution::GATEWAY_REQUEST_VERSION => {
             matches!(document.request, GatewayRequest::ResolveSession(_))
+        }
+        hmux_ssh_transport::conversation_transcript::GATEWAY_REQUEST_VERSION => {
+            matches!(document.request, GatewayRequest::ConversationTranscript(_))
         }
         _ => false,
     }
@@ -2469,6 +2477,22 @@ where
                     .map_err(|(refusal, retry)| refuse_with_retry(&sink, refusal, retry))?;
             let mut guard = lock_sink(&sink)?;
             write_source_control_file_diff_document(guard.output_mut(), &request, outcome)?;
+            return Ok(());
+        }
+        FirstDocument::Request {
+            request: GatewayRequest::ConversationTranscript(request),
+            ..
+        } => {
+            // No forced-command gate: a read, like the listing and the status.
+            let answer = conversation::conversation_transcript(
+                catalog,
+                &request,
+                session_identifier,
+                workspace_id,
+            )
+            .map_err(|(refusal, retry)| refuse_with_retry(&sink, refusal, retry))?;
+            let mut guard = lock_sink(&sink)?;
+            write_gateway_document(guard.output_mut(), &answer, "a conversation transcript")?;
             return Ok(());
         }
         FirstDocument::Refused(refusal) => return Err(refuse(&sink, refusal)),
@@ -5981,14 +6005,67 @@ mod tests {
         ));
     }
 
-    /// Session resolution owns the current ceiling; older and future request
-    /// versions must not admit it.
+    /// The conversation transcript owns the current ceiling; older and future
+    /// request versions must not admit it, so a gateway that predates it
+    /// refuses it as an unsupported version.
     #[test]
-    fn session_resolution_is_admitted_only_at_the_current_ceiling() {
+    fn a_conversation_transcript_is_admitted_only_at_the_current_ceiling() {
         assert_eq!(
             GATEWAY_REQUEST_VERSION_MAXIMUM,
-            session_resolution::GATEWAY_REQUEST_VERSION
+            hmux_ssh_transport::conversation_transcript::GATEWAY_REQUEST_VERSION
         );
+        for version in GATEWAY_REQUEST_VERSION_MINIMUM..=GATEWAY_REQUEST_VERSION_MAXIMUM + 1 {
+            let document = serde_json::json!({
+                "gateway_request_version": version,
+                "request": { "conversation_transcript": {
+                    "expected_fence": fence(),
+                    "limit": 100,
+                    "after": {
+                        "terminal_epoch": "epoch",
+                        "conversation_id": "conversation",
+                        "turn_completed_count": 3,
+                        "turn_open": false,
+                        "runtime_revision": 9,
+                    },
+                } },
+            });
+            let classified = classify_first_document(&serde_json::to_vec(&document).unwrap());
+            if version == GATEWAY_REQUEST_VERSION_MAXIMUM {
+                let FirstDocument::Request {
+                    request: GatewayRequest::ConversationTranscript(request),
+                    ..
+                } = classified
+                else {
+                    panic!("the current ceiling must admit a conversation transcript");
+                };
+                assert_eq!(request.limit, Some(100));
+                assert_eq!(request.after.unwrap().turn_completed_count, 3);
+            } else {
+                let FirstDocument::Refused(refusal) = classified else {
+                    panic!("version {version} must not admit a conversation transcript");
+                };
+                assert_eq!(refusal.code, ErrorCode::UnsupportedProtocolVersion);
+            }
+        }
+        // A field the request does not define is a disagreement about its
+        // meaning, not something to ignore.
+        let unknown = serde_json::json!({
+            "gateway_request_version": GATEWAY_REQUEST_VERSION_MAXIMUM,
+            "request": { "conversation_transcript": {
+                "expected_fence": fence(),
+                "path": "/home/someone/.claude",
+            } },
+        });
+        assert!(matches!(
+            classify_first_document(&serde_json::to_vec(&unknown).unwrap()),
+            FirstDocument::Refused(_)
+        ));
+    }
+
+    /// Session resolution is admitted at its own version; older and newer
+    /// request versions must not admit it.
+    #[test]
+    fn session_resolution_is_admitted_only_at_its_own_version() {
         for version in GATEWAY_REQUEST_VERSION_MINIMUM..=GATEWAY_REQUEST_VERSION_MAXIMUM + 1 {
             let document = serde_json::json!({
                 "gateway_request_version": version,

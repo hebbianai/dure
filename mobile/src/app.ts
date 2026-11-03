@@ -108,9 +108,9 @@ import {
   yieldTrayDrawer,
 } from "./sessionScreen";
 import type { AgentRuntimeState } from "./agentRuntimeState";
-import { CHAT_TRANSCRIPT_LIMIT, defaultSessionView, type SessionView } from "./chat";
-import { queueKey } from "./chatQueue";
-import { type ChatController, createChatView, FALLBACK_TEXT } from "./chatView";
+import { CHAT_TRANSCRIPT_LIMIT, defaultSessionView, offersServerChat, type SessionView } from "./chat";
+import { queueKey, serverQueueKey } from "./chatQueue";
+import { type ChatController, type ChatViewOptions, createChatView, FALLBACK_TEXT } from "./chatView";
 import { publishTranscriptLift } from "./transcriptLift";
 import {
   type SourceControlChanges,
@@ -2573,7 +2573,11 @@ export function startApp(root: HTMLElement): () => void {
           : state.recents;
       if (source.kind === "ssh") recents.save(visited);
       const previous = selectedTerminal(state.screen);
-      const offersChat = source.kind === "hub" && (session as Partial<HubProbeSession>).conversation === true;
+      // A computer says which of its sessions it serves; a server is asked
+      // directly when its Host can serve the agent (#384).
+      const offersChat = source.kind === "hub"
+        ? (session as Partial<HubProbeSession>).conversation === true
+        : offersServerChat(session);
       // A reconnect of the same session keeps the tab the person was on.
       const view = !offersChat ? undefined
         : previous?.session.session_id === session.session_id && previous.view !== undefined
@@ -4020,29 +4024,52 @@ export function startApp(root: HTMLElement): () => void {
 
   /** Whose chat a session screen shows, or none for a terminal-only session. */
   function chatKeyOf(screen: Extract<Screen, { kind: "terminal" }> | undefined): string | undefined {
-    if (!screen || screen.view === undefined || screen.source.kind !== "hub") return undefined;
+    if (!screen || screen.view === undefined) return undefined;
     const { source, session } = screen;
-    return queueKey(source.id, source.boxId, session.workspace_id, session.session_id);
+    return source.kind === "hub"
+      ? queueKey(source.id, source.boxId, session.workspace_id, session.session_id)
+      : serverQueueKey(source.id, session.workspace_id, session.session_id);
+  }
+
+  /** How this session's chat reads and writes: through the computer, or the server itself. */
+  function chatChannel(
+    screenState: Extract<Screen, { kind: "terminal" }>,
+    key: string,
+  ): Pick<ChatViewOptions, "fetch" | "send" | "backgroundWork"> {
+    const { source, session } = screenState;
+    if (source.kind === "hub") {
+      const target = { boxId: source.boxId, workspaceId: session.workspace_id, sessionId: session.session_id };
+      return {
+        fetch: after => ipc.hubConversationTranscript(source.id, target, after, CHAT_TRANSCRIPT_LIMIT),
+        // Only a computer that lists background work for this session is asked.
+        ...((session as Partial<HubProbeSession>).background_work === true
+          ? { backgroundWork: () => ipc.hubAgentBackgroundWork(source.id, target) }
+          : {}),
+        send: (text, prompt) =>
+          ipc.hubAgentPrompt(source.id, target, text, prompt.terminalEpoch, prompt.conversationId),
+      };
+    }
+    // The server is asked by the exact fence, so it is read from the screen
+    // each time: a reconnect after the agent's Host moved brings a new one.
+    const sessionNow = () =>
+      state.screen.kind === "terminal" && chatKeyOf(state.screen) === key ? state.screen.session : session;
+    return {
+      fetch: after => ipc.sshConversationTranscript(source.id, sessionNow(), after, CHAT_TRANSCRIPT_LIMIT),
+      send: (text, prompt) =>
+        ipc.sshAgentPrompt(source.id, sessionNow(), text, prompt.terminalEpoch, prompt.conversationId),
+    };
   }
 
   /** The chat of this session screen, created on first use and kept across renders. */
   function chatFor(screenState: Extract<Screen, { kind: "terminal" }>): ChatController | undefined {
     const key = chatKeyOf(screenState);
-    const { source, session } = screenState;
-    if (key === undefined || source.kind !== "hub") return undefined;
+    if (key === undefined) return undefined;
     if (chat && chatKey === key) return chat;
     chat?.dispose();
-    const target = { boxId: source.boxId, workspaceId: session.workspace_id, sessionId: session.session_id };
     const created = createChatView({
       queueKey: key,
-      terminalEpoch: session.terminal_epoch,
-      fetch: after => ipc.hubConversationTranscript(source.id, target, after, CHAT_TRANSCRIPT_LIMIT),
-      // Only a computer that lists background work for this session is asked.
-      ...((session as Partial<HubProbeSession>).background_work === true
-        ? { backgroundWork: () => ipc.hubAgentBackgroundWork(source.id, target) }
-        : {}),
-      send: (text, prompt) =>
-        ipc.hubAgentPrompt(source.id, target, text, prompt.terminalEpoch, prompt.conversationId),
+      terminalEpoch: screenState.session.terminal_epoch,
+      ...chatChannel(screenState, key),
       openTerminal: () => switchSessionView("terminal"),
       fallBack: fallback => {
         // Said once, in a toast, as the screen goes to the terminal; the chat

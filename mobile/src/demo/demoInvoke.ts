@@ -591,6 +591,20 @@ const handlers: Record<string, Handler> = {
       detail: "The demo has no agent conversations.",
     };
   },
+  // Demo server sessions are shells, so the phone never opens their Chat;
+  // asked anyway, the server answers as one with nothing to serve.
+  ssh_conversation_transcript: (): ConversationTranscriptAnswer => ({
+    outcome: "refused",
+    entries: [],
+    history_complete: false,
+    code: "unsupported_runtime",
+    detail: "The demo has no agent conversations.",
+  }),
+  ssh_agent_prompt: (): AgentPromptAnswer => ({
+    state: "refused",
+    code: "unsupported_runtime",
+    detail: "The demo has no agent conversations.",
+  }),
   hub_session_accounts: (args): SessionAccountOutcome => {
     hubState(str(args, "id"));
     return { outcome: "listed", accounts: demoAccounts(str(args, "sessionId")), detail: null, code: null };

@@ -177,6 +177,13 @@ fn target_edges() -> BTreeSet<LocalEdge> {
     [
         edge("hmux-cli", "hmux-client"),
         edge("hmux-cli", "hmux-ssh-transport"),
+        // The phone gateway answers a conversation with the phone's own hub
+        // document, so the phone keeps one reader for it. The crate is taken
+        // without its TLS feature.
+        parent_edge("hmux-cli", "dure-hub-protocol"),
+        // The lean provider transcript reader (serde/std only), shared with
+        // the desktop so a server reads conversations by the same rules.
+        parent_edge("hmux-cli", "dure-provider-transcript"),
         edge("hmux-client", "hmux-session-protocol"),
         edge("hmux-client", "hmux-local-platform"),
         // Session-file routing reuses leaf OS services behind local-runtime.

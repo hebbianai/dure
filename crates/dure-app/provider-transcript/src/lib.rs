@@ -1,4 +1,8 @@
-//! Provider-owned transcript reads shared by desktop views and backend integrations.
+//! Provider-owned transcript reads shared by desktop views, backend
+//! integrations and `hmux mobile-gateway`.
+//!
+//! One reader, so a conversation reads the same on the server a phone asks
+//! directly as on the desktop that asks for it.
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -8,6 +12,11 @@ use std::{
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
+mod accounts;
+pub use accounts::{
+    ProviderStateRoots, account_profile_directories, newest_conversation_file, read_newest,
+};
+
 const MAX_SESSION_BYTES: u64 = 1024 * 1024;
 pub const MAX_TRANSCRIPT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_TRANSCRIPT_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
@@ -461,7 +470,7 @@ pub fn read_session_settings_roots(
         .unwrap_or_default())
 }
 
-pub(crate) fn bounded_suffix(path: &Path, max_bytes: u64) -> Option<String> {
+pub fn bounded_suffix(path: &Path, max_bytes: u64) -> Option<String> {
     let mut file = fs::File::open(path).ok()?;
     let metadata = file.metadata().ok()?;
     if !metadata.is_file() {
@@ -613,5 +622,4 @@ fn preflight_claude_project_move_history(
 }
 
 #[cfg(test)]
-#[path = "transcript_tests.rs"]
 mod tests;

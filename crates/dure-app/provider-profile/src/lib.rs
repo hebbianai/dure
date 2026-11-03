@@ -18,7 +18,7 @@ mod codex_config_tests;
 mod overlay_topology;
 #[cfg(test)]
 mod refresh_tests;
-pub mod transcript;
+pub use dure_provider_transcript as transcript;
 
 pub mod background_work;
 

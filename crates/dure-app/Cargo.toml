@@ -14,6 +14,7 @@ members = [
     "protocol",
     "provider-adapter",
     "provider-profile",
+    "provider-transcript",
     "session-runtime",
     "sqlite",
 ]

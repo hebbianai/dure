@@ -746,6 +746,7 @@ export const en: Record<string, string> = {
   "chat.wait.sessionNotFound": "The computer no longer has this session.",
   "chat.wait.unknown": "The conversation could not be read. Dure will try again.",
   "chat.fallback.updatePhone": "Update Dure on this phone to use Chat. The terminal still works.",
+  "chat.fallback.updateServer": "Update the Dure CLI on this server to use Chat. The terminal still works.",
   "chat.fallback.notAvailable": "Chat is not available for this session. Use the terminal.",
   "chat.returned.identityChanged": "Not sent: the agent moved to another conversation. Your prompt is back in the box.",
   "chat.returned.inputDraftPending": "Not sent: someone is typing in the terminal. Your prompt is back in the box.",
