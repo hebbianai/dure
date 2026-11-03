@@ -21,11 +21,15 @@
 //! Sessions on remote hosts are refused `remote_unsupported` for now: their
 //! transcript lives on the remote machine.
 
+use dure_hub_protocol::background_work::{
+    HubAgentBackgroundWorkResult, HubBackgroundWorkCounts, HubBackgroundWorkItem,
+    HubBackgroundWorkKind, HubBackgroundWorkSteps,
+};
 use dure_hub_protocol::conversation::{
     normalize_agent_prompt, ConversationCursor, ConversationEntry, ConversationRefusal,
     ConversationRole, HubAgentPromptResult, HubConversationTranscriptResult, TranscriptParts,
 };
-use dure_provider_profile::background_work::BackgroundWorkList;
+use dure_provider_profile::background_work::{BackgroundWorkKind, BackgroundWorkList};
 use dure_provider_profile::transcript::{ConversationTurnRole, ProviderConversationTranscript};
 use hmux_client::{
     AgentRuntimeActivity, AgentRuntimeAttention, AgentRuntimeLifecycle,
@@ -64,6 +68,17 @@ pub fn offers_conversation(
     *lifecycle == SessionLifecycle::Ready && serves_conversation(session_class, provider_id)
 }
 
+/// Whether the catalog offers a session's background work: a chat this
+/// desktop serves whose provider records it (Claude Code).
+#[must_use]
+pub fn offers_background_work(
+    session_class: &SessionClass,
+    provider_id: &str,
+    lifecycle: &SessionLifecycle,
+) -> bool {
+    provider_id == "claude" && offers_conversation(session_class, provider_id, lifecycle)
+}
+
 /// Where the request's box is, from this hub's point of view.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BoxRoute {
@@ -92,10 +107,65 @@ pub struct PromptRequest {
     pub expected_conversation_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackgroundWorkRequest {
+    pub workspace_id: String,
+    pub session_id: String,
+}
+
 /// The side that reads and writes this desktop's agent sessions.
 pub trait ConversationSink: Send + Sync {
     fn transcript(&self, request: TranscriptRequest) -> HubConversationTranscriptResult;
     fn prompt(&self, request: PromptRequest) -> HubAgentPromptResult;
+    fn background_work(&self, request: BackgroundWorkRequest) -> HubAgentBackgroundWorkResult;
+}
+
+/// List one session's running background work, if it is this desktop's to
+/// read. Routed and admitted exactly as the transcript is.
+pub fn answer_background_work(
+    sink: Option<&dyn ConversationSink>,
+    route: BoxRoute,
+    request: BackgroundWorkRequest,
+) -> HubAgentBackgroundWorkResult {
+    match admit(route, sink, &request.workspace_id, &request.session_id) {
+        Ok(sink) => sink.background_work(request),
+        Err((code, detail)) => HubAgentBackgroundWorkResult::refused(code, detail),
+    }
+}
+
+/// The desktop's list in the phone's wire shape.
+#[must_use]
+pub fn hub_background_work(list: BackgroundWorkList) -> HubAgentBackgroundWorkResult {
+    let items = list
+        .items
+        .into_iter()
+        .map(|item| HubBackgroundWorkItem {
+            id: item.id,
+            kind: match item.kind {
+                BackgroundWorkKind::Subagent => HubBackgroundWorkKind::Subagent,
+                BackgroundWorkKind::Workflow => HubBackgroundWorkKind::Workflow,
+                BackgroundWorkKind::Shell => HubBackgroundWorkKind::Shell,
+                BackgroundWorkKind::Monitor => HubBackgroundWorkKind::Monitor,
+            },
+            label: item.label,
+            started_unix_ms: item.started_unix_ms,
+            steps: item.steps.map(|steps| HubBackgroundWorkSteps {
+                done: steps.done,
+                total: steps.total,
+            }),
+            tokens: item.tokens,
+        })
+        .collect();
+    HubAgentBackgroundWorkResult::listed(
+        items,
+        HubBackgroundWorkCounts {
+            subagents: list.counts.subagents,
+            workflows: list.counts.workflows,
+            shells: list.counts.shells,
+            monitors: list.counts.monitors,
+        },
+        list.truncated,
+    )
 }
 
 /// Read one session's conversation, if it is this desktop's to read.
@@ -658,6 +728,13 @@ impl ConversationSink for LocalConversations {
         transcript_answer(&observed, &request, crate::conv::transcript_any_account)
     }
 
+    fn background_work(&self, request: BackgroundWorkRequest) -> HubAgentBackgroundWorkResult {
+        match Self::background_work(&request.workspace_id, &request.session_id) {
+            Ok(list) => hub_background_work(list),
+            Err((code, detail)) => HubAgentBackgroundWorkResult::refused(code, detail),
+        }
+    }
+
     fn prompt(&self, request: PromptRequest) -> HubAgentPromptResult {
         let (catalog, descriptor) = match Self::session(&request.workspace_id, &request.session_id) {
             Ok(found) => found,
@@ -744,6 +821,9 @@ impl ConversationSink for LocalConversations {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dure_hub_protocol::background_work::{
+        BackgroundWorkOutcome, HubBackgroundWorkItem, HubBackgroundWorkKind,
+    };
     use dure_hub_protocol::conversation::{
         AgentPromptState, TranscriptOutcome, MAX_AGENT_PROMPT_BYTES,
     };
@@ -758,6 +838,7 @@ mod tests {
     struct Recorder {
         transcripts: Mutex<Vec<TranscriptRequest>>,
         prompts: Mutex<Vec<PromptRequest>>,
+        background: Mutex<Vec<BackgroundWorkRequest>>,
     }
 
     impl ConversationSink for Recorder {
@@ -770,6 +851,51 @@ mod tests {
             self.prompts.lock().unwrap().push(request);
             HubAgentPromptResult::written("terminal-1", "7")
         }
+
+        fn background_work(&self, request: BackgroundWorkRequest) -> HubAgentBackgroundWorkResult {
+            self.background.lock().unwrap().push(request);
+            hub_background_work(shell_list())
+        }
+    }
+
+    fn background_request() -> BackgroundWorkRequest {
+        BackgroundWorkRequest {
+            workspace_id: "workspace-1".into(),
+            session_id: "session-1".into(),
+        }
+    }
+
+    #[test]
+    fn background_work_follows_the_same_routing_as_the_transcript() {
+        let sink = Recorder::default();
+        let remote = answer_background_work(Some(&sink), BoxRoute::Remote, background_request());
+        assert_eq!(remote.code, Some(ConversationRefusal::RemoteUnsupported));
+        let unknown = answer_background_work(Some(&sink), BoxRoute::Unknown, background_request());
+        assert_eq!(unknown.code, Some(ConversationRefusal::SessionNotFound));
+        let unserved = answer_background_work(None, BoxRoute::Local, background_request());
+        assert_eq!(unserved.code, Some(ConversationRefusal::Unavailable));
+        assert!(sink.background.lock().unwrap().is_empty());
+        let local = answer_background_work(Some(&sink), BoxRoute::Local, background_request());
+        assert_eq!(local.outcome, BackgroundWorkOutcome::Listed);
+        assert_eq!(sink.background.lock().unwrap().as_slice(), [background_request()]);
+    }
+
+    #[test]
+    fn the_list_crosses_as_its_wire_shape() {
+        let result = hub_background_work(shell_list());
+        assert_eq!(result.outcome, BackgroundWorkOutcome::Listed);
+        assert_eq!(result.counts.shells, 1);
+        assert_eq!(
+            result.items,
+            vec![HubBackgroundWorkItem {
+                id: "b1".into(),
+                kind: HubBackgroundWorkKind::Shell,
+                label: Some("Watch the release chain".into()),
+                started_unix_ms: 1_793_600_000_000,
+                steps: None,
+                tokens: None,
+            }]
+        );
     }
 
     fn read_request() -> TranscriptRequest {

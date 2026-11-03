@@ -38,7 +38,10 @@
 //! # What does not cross
 //!
 //! Message text only: tool calls, tool results, file paths of the transcript
-//! and anything about the provider account stay on the desktop.
+//! and anything about the provider account stay on the desktop. The agent's
+//! running background work crosses in its own answer as the model-written
+//! descriptions only (`background_work.rs`); commands and tool inputs and
+//! outputs never do.
 //!
 //! # Why a separate version
 //!
@@ -558,7 +561,7 @@ pub fn read_prompt<R: Read>(reader: &mut R) -> Result<HubAgentPromptResult, Conv
     read_versioned(reader, MAX_PROMPT_RESULT_BYTES)
 }
 
-fn read_versioned<T: serde::de::DeserializeOwned, R: Read>(
+pub(crate) fn read_versioned<T: serde::de::DeserializeOwned, R: Read>(
     reader: &mut R,
     limit: usize,
 ) -> Result<T, ConversationError> {

@@ -68,6 +68,11 @@ pub struct HubCatalogEntry {
     /// every catalog read.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub conversation: bool,
+    /// This desktop answers `AgentBackgroundWorkV1` for this session. Its own
+    /// flag rather than implied by `conversation`, so a phone never asks a
+    /// desktop that predates the request, which would close without a word.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub background_work: bool,
     /// 이 세션이 어느 상자에 있는지. 허브가 여러 상자를 합쳐 보여주므로, 폰은
     /// 같은 목록에서 노트북 세션과 서버 세션을 구별할 수 있어야 한다.
     pub box_id: String,
@@ -349,6 +354,23 @@ mod tests {
         assert!(!older.conversation);
     }
 
+    /// Like `conversation`: an older desktop never sends the background-work
+    /// flag, so a newer phone asks nothing it cannot answer, and an older
+    /// phone ignores it.
+    #[test]
+    fn the_background_work_flag_is_optional_both_ways() {
+        let mut served = catalog();
+        served.sessions[0].conversation = true;
+        served.sessions[0].background_work = true;
+        let encoded = encode(&served).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), served);
+
+        let without = serde_json::to_value(entry()).unwrap();
+        assert!(without.get("background_work").is_none());
+        let older: HubCatalogEntry = serde_json::from_value(without).unwrap();
+        assert!(!older.background_work);
+    }
+
     /// 구조체 리터럴인 것이 의도다: 매니페스트에 필드가 늘면 컴파일이 깨져
     /// 허용 목록을 다시 보게 된다.
     fn entry() -> HubCatalogEntry {
@@ -369,6 +391,7 @@ mod tests {
             capabilities: vec!["terminal_stream".to_string()],
             launch_program: Some("zsh".to_string()),
             conversation: false,
+            background_work: false,
             box_id: "box-1".to_string(),
             box_label: "노트북".to_string(),
         }

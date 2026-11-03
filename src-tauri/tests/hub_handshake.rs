@@ -277,6 +277,7 @@ impl CatalogSource for OneSession {
                 terminal_epoch: "terminal_1".into(),
                 capabilities: vec!["live_output".into()],
                 conversation: false,
+                background_work: false,
                 box_id: "this-laptop".into(),
                 box_label: "내 노트북".into(),
             }],
@@ -439,6 +440,26 @@ fn conversation_requests_are_answered_with_typed_refusals_not_the_catalog() {
     assert_eq!(prompt.state, AgentPromptState::Refused);
     assert_eq!(prompt.code, Some(ConversationRefusal::SessionNotFound));
     assert_eq!(prompt.record_id, None);
+
+    let background = HubRequest::AgentBackgroundWorkV1 {
+        box_id: "this-laptop".into(),
+        workspace_id: "workspace_1".into(),
+        session_id: "standalone_abc".into(),
+    };
+    let mut tls = connect_for(
+        hub.port,
+        &hub.fingerprint,
+        encode_hello_for(&phone.token, background).expect("인사"),
+    )
+    .expect("붙는다");
+    read_frame(&mut tls).expect("ack");
+    let background = dure_hub_protocol::background_work::read_background_work(&mut tls)
+        .expect("a background work answer");
+    assert_eq!(
+        background.outcome,
+        dure_hub_protocol::background_work::BackgroundWorkOutcome::Refused
+    );
+    assert_eq!(background.code, Some(ConversationRefusal::SessionNotFound));
     hub.server.stop();
 }
 

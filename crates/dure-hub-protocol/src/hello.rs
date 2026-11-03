@@ -311,6 +311,22 @@ pub enum HubRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_conversation_id: Option<String>,
     },
+    /// List the agent's running subagents, workflows, background shells and
+    /// monitors, for the chat's line above the composer.
+    ///
+    /// Its own request, not part of the transcript: the transcript answers
+    /// `unchanged` while no turn moves, and background work moves without
+    /// turns. Asked only while the chat is open. Answered with a
+    /// `background_work::HubAgentBackgroundWorkResult`. A desktop that
+    /// predates it reads it as [`Self::Unsupported`]; the phone asks only
+    /// where the catalog entry carries `background_work`.
+    AgentBackgroundWorkV1 {
+        /// The catalog entry's box, as `Attach` names it.
+        box_id: String,
+        /// The catalog entry's workspace, as for `ConversationTranscriptV1`.
+        workspace_id: String,
+        session_id: String,
+    },
     /// 이 노트북이 모르는 요청.
     ///
     /// # 왜 갈래가 하나 더 있는가
@@ -666,6 +682,27 @@ mod tests {
         assert!(value.get("expected_conversation_id").is_none());
     }
 
+    #[test]
+    fn background_work_request_round_trips_and_uses_its_wire_name() {
+        let request = HubRequest::AgentBackgroundWorkV1 {
+            box_id: "b".to_string(),
+            workspace_id: "w".to_string(),
+            session_id: "s".to_string(),
+        };
+        let value = serde_json::to_value(&request).expect("to value");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "kind": "agent_background_work_v1",
+                "box_id": "b",
+                "workspace_id": "w",
+                "session_id": "s",
+            })
+        );
+        let back: HubRequest = serde_json::from_value(value).expect("reads back");
+        assert_eq!(back, request);
+    }
+
     /// A first read carries neither limit nor cursor; a prompt that does not
     /// name a conversation accepts the current one. Absence must not fail the
     /// greeting, which the phone would show as a revoked pairing.
@@ -760,6 +797,11 @@ mod tests {
                 text: "hi".to_string(),
                 expected_terminal_epoch: "terminal-1".to_string(),
                 expected_conversation_id: None,
+            },
+            HubRequest::AgentBackgroundWorkV1 {
+                box_id: "this-laptop".to_string(),
+                workspace_id: "workspace-1".to_string(),
+                session_id: "session-1".to_string(),
             },
         ] {
             let framed = encode_hello_for("token-1", request).expect("encodes");

@@ -59,6 +59,11 @@ pub fn entry_from(
             &descriptor.provider_id,
             &descriptor.lifecycle,
         ),
+        background_work: super::conversation::offers_background_work(
+            &descriptor.session_class,
+            &descriptor.provider_id,
+            &descriptor.lifecycle,
+        ),
         box_id: box_id.to_string(),
         box_label: box_label.to_string(),
     }
@@ -89,6 +94,7 @@ pub fn remote_entry_from(
         capabilities: descriptor.capabilities.clone(),
         launch_program: descriptor.launch_program.clone(),
         conversation: false,
+        background_work: false,
         box_id: box_id.to_string(),
         box_label: box_label.to_string(),
     }
@@ -186,6 +192,26 @@ mod tests {
 
         // The fixture is a standalone session.
         assert!(!entry_from(&descriptor(), "this-laptop", "이 노트북").conversation);
+    }
+
+    /// Background work is read from Claude Code's records only, so only a
+    /// Claude Code agent this desktop serves a chat for advertises it.
+    #[test]
+    fn only_a_claude_agent_with_a_chat_offers_background_work() {
+        let mut claude = descriptor();
+        claude.session_class = hmux_client::SessionClass::Managed;
+        claude.provider_id = "claude".into();
+        assert!(entry_from(&claude, "this-laptop", "이 노트북").background_work);
+
+        let mut codex = claude.clone();
+        codex.provider_id = "codex".into();
+        let codex = entry_from(&codex, "this-laptop", "이 노트북");
+        assert!(codex.conversation);
+        assert!(!codex.background_work);
+
+        let mut exited = claude.clone();
+        exited.lifecycle = hmux_client::SessionLifecycle::Exited;
+        assert!(!entry_from(&exited, "this-laptop", "이 노트북").background_work);
     }
 
     #[test]

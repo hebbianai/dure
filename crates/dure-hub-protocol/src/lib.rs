@@ -28,6 +28,7 @@
 //! 곳에 두지 않는다. [`tls`]도 암호 설정이나 인증 판단은 하지 않고, 이미 인증된
 //! rustls 스트림을 읽기/쓰기 절반으로 기계적으로 나누기만 한다.
 
+pub mod background_work;
 pub mod catalog;
 pub mod conversation;
 pub mod file_diff;

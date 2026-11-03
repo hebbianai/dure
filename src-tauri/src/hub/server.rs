@@ -1083,6 +1083,32 @@ fn serve_one(
         return;
     }
 
+    if let HubRequest::AgentBackgroundWorkV1 {
+        box_id,
+        workspace_id,
+        session_id,
+    } = hello.request
+    {
+        let result = conversation::answer_background_work(
+            hub.conversations,
+            box_route(&hub, &box_id),
+            conversation::BackgroundWorkRequest {
+                workspace_id,
+                session_id,
+            },
+        );
+        match dure_hub_protocol::background_work::encode_background_work(&result) {
+            Ok(framed) => {
+                let _ = tls.write_all(&framed);
+                let _ = tls.flush();
+            }
+            Err(error) => {
+                eprintln!("[hub] Could not encode the background work in a frame: {error}")
+            }
+        }
+        return;
+    }
+
     if let HubRequest::AgentPromptV1 {
         box_id,
         workspace_id,
