@@ -60,6 +60,7 @@ vi.mock("@/lib/workspace/dock/openCommandTerminal", async (importOriginal) => ({
 import { ClaudeUsageDetail } from "@/components/usage/ProviderUsageDetail";
 import { UsageBadge } from "@/components/usage/UsageBadge";
 import { t } from "@/lib/i18n";
+import { onOpenSettings } from "@/lib/settings/settingsBus";
 import { useStore } from "@/store";
 
 /** provider별 팝오버 트리거의 접근성 이름 (PROVIDERS 라벨 기준). */
@@ -225,6 +226,34 @@ describe("UsageBadge", () => {
 			await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 			await new Promise((resolve) => setTimeout(resolve, 10));
 			expect(document.activeElement).not.toBe(trigger);
+		},
+	);
+
+	it.each([CLAUDE_METER, CODEX_METER])(
+		"opens Settings → Accounts from the %s usage popover",
+		async (meter) => {
+			mockUsage({});
+			const pages: (string | undefined)[] = [];
+			const stop = onOpenSettings((page) => pages.push(page));
+			try {
+				render(<UsageBadge />);
+				fireEvent.click(await screen.findByRole("button", { name: meter }));
+				fireEvent.click(
+					screen.getByRole("button", {
+						name: t("usage.action.manageAccounts"),
+					}),
+				);
+				expect(pages).toEqual(["accounts"]);
+				await waitFor(() =>
+					expect(
+						document.querySelector(
+							'[data-slot="provider-usage-popover-content"]',
+						),
+					).toBeNull(),
+				);
+			} finally {
+				stop();
+			}
 		},
 	);
 

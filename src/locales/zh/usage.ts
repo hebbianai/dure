@@ -31,6 +31,7 @@ export const usage: Record<string, string> = {
 	"usage.account.noHistoryYet": "此账户尚无采集记录 — 从下一次响应开始将显示该账户的百分比",
 	"usage.account.selectedPane": "账户（所选窗格）",
 	"usage.account.switch": "切换 {provider} 账户",
+	"usage.action.manageAccounts": "管理账户",
 	"usage.action.statsUsage": "统计 · 使用量",
 	"usage.agents.working": "正在工作的代理",
 	"usage.attribution.noneTotal": "没有账户归属记录，因此为总合计 — 从新会话开始将按账户区分",

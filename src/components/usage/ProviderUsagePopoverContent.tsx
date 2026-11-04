@@ -1,4 +1,4 @@
-import { ExternalLink, Plus } from "lucide-react";
+import { ExternalLink, Plus, UserCog } from "lucide-react";
 import { Popover } from "radix-ui";
 import type { ReactNode } from "react";
 import { ProviderGlyph } from "@/components/agents/ProviderLogo";
@@ -217,6 +217,20 @@ export function ProviderUsagePopoverContent({
 						<Plus aria-hidden="true" className="size-3 text-muted-foreground" />
 					}
 					onClick={onAddAccount}
+				/>
+			</Popover.Close>
+			{/* 이름 변경·제거는 설정 → 계정 한 곳에 둔다 — 팝업에 같은 확인 절차를
+			    두 벌 만들지 않는다. */}
+			<Popover.Close asChild>
+				<Action
+					label={t("usage.action.manageAccounts")}
+					detail={
+						<UserCog
+							aria-hidden="true"
+							className="size-3 text-muted-foreground"
+						/>
+					}
+					onClick={() => openSettingsPage("accounts")}
 				/>
 			</Popover.Close>
 			<Popover.Close asChild>

@@ -31,6 +31,7 @@ export const usage: Record<string, string> = {
 	"usage.account.noHistoryYet": "このアカウントはまだ収集履歴がありません — 次の応答からこのアカウントの % が表示されます",
 	"usage.account.selectedPane": "アカウント（選択中の pane）",
 	"usage.account.switch": "{provider} アカウントを切り替え",
+	"usage.action.manageAccounts": "アカウント管理",
 	"usage.action.statsUsage": "統計 · 使用量",
 	"usage.agents.working": "作業中のエージェント",
 	"usage.attribution.noneTotal": "アカウントの帰属記録がないため全体の合計です — 新しいセッションからアカウント別に分かれます",

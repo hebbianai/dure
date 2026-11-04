@@ -31,6 +31,7 @@ export const usageEnglishTranslations: Record<string, string> = {
 	"usage.account.noHistoryYet": "Nothing collected for this account yet — its % appears after the next response",
 	"usage.account.selectedPane": "Account (selected pane)",
 	"usage.account.switch": "Switch {provider} account",
+	"usage.action.manageAccounts": "Manage accounts",
 	"usage.action.statsUsage": "Stats · Usage",
 	"usage.agents.working": "Agents working",
 	"usage.attribution.noneTotal": "No account attribution on record, so this is the total — new sessions split per account",

@@ -31,6 +31,7 @@ export const usage: Record<string, string> = {
 	"usage.account.noHistoryYet": "Nada foi coletado para esta conta ainda — o % dela aparece a partir da próxima resposta",
 	"usage.account.selectedPane": "Conta (painel selecionado)",
 	"usage.account.switch": "Trocar conta do {provider}",
+	"usage.action.manageAccounts": "Gerenciar contas",
 	"usage.action.statsUsage": "Estatísticas · Uso",
 	"usage.agents.working": "Agentes trabalhando",
 	"usage.attribution.noneTotal": "Não há atribuição de conta registrada, então este é o total — novas sessões serão divididas por conta",

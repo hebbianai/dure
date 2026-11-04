@@ -31,6 +31,7 @@ export const usage: Record<string, string> = {
 	"usage.account.noHistoryYet": "이 계정은 아직 수집 이력이 없습니다 — 다음 응답부터 이 계정 %가 표시됩니다",
 	"usage.account.selectedPane": "계정 (선택된 pane)",
 	"usage.account.switch": "{provider} 계정 전환",
+	"usage.action.manageAccounts": "계정 관리",
 	"usage.action.statsUsage": "통계 · 사용량",
 	"usage.agents.working": "작업 중 에이전트",
 	"usage.attribution.noneTotal": "계정 귀속 기록이 없어 전체 합계입니다 — 새 세션부터 계정별로 갈립니다",
