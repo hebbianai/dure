@@ -84,23 +84,14 @@ async fn idle_schedule_run_uses_real_hmux() {
             .root_path,
     );
     assert!(checkout.is_dir());
-    let authority = state
-        .store
-        .agent_checkpoint_binding_authority(&agent)
-        .await
-        .unwrap()
-        .unwrap();
-    state
-        .store
-        .converge_agent_checkpoint_provider_conversation(&authority, CONVERSATION)
-        .await
-        .unwrap();
-    state_reporter::report(
+    // The binding learns this identity from the Host, as with a real provider.
+    state_reporter::report_conversation(
         &hmux,
         &source,
         AgentRuntimeActivity::Waiting,
         AgentRuntimeAttention::None,
         true,
+        Some(CONVERSATION),
     );
     let descriptor = hmux.session(&source);
 
@@ -120,8 +111,20 @@ async fn idle_schedule_run_uses_real_hmux() {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
     })
-    .await
-    .expect("a scheduled agent hibernates despite the saved opt-out");
+    .await;
+    let asleep = match asleep {
+        Ok(asleep) => asleep,
+        Err(_) => panic!(
+            "a scheduled agent hibernates despite the saved opt-out: {:?}",
+            agent_runtime_transition_apply::deferred::idle::hibernate_if_host_idle(
+                &state,
+                &agent,
+                0,
+                Duration::from_secs(2),
+            )
+            .await
+        ),
+    };
     RealHmux::assert_exited(&descriptor).await;
     assert_eq!(
         serde_json::to_value(state.runtime_idle.observe(&state).await).unwrap()["configuration"],

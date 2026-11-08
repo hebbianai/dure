@@ -7,6 +7,27 @@ pub(super) fn report(
     attention: hmux_client::AgentRuntimeAttention,
     completed: bool,
 ) {
+    report_conversation(hmux, source, activity, attention, completed, None);
+}
+
+/// Report state with the conversation identity a real provider tells its Host.
+pub(super) fn report_conversation(
+    hmux: &RealHmux,
+    source: &WorkflowSessionGenerationV1,
+    activity: hmux_client::AgentRuntimeActivity,
+    attention: hmux_client::AgentRuntimeAttention,
+    completed: bool,
+    conversation: Option<&str>,
+) {
+    let fence = hmux_client::SessionFence {
+        workspace_id: source.workspace_id.clone(),
+        session_id: source.session_id.clone(),
+        runner_principal: source.runner_principal.clone(),
+        runner_instance: source.runner_instance.clone(),
+        channel_epoch: source.channel_epoch.parse().unwrap(),
+        host_instance_id: source.host_instance_id.clone(),
+        terminal_epoch: source.terminal_epoch.clone(),
+    };
     hmux_client::ManagedAgentStateReporter::new(
         PathBuf::from(std::env::var_os("DURE_QA_HMUX_RUNTIME").unwrap()),
         &hmux.root,
@@ -23,19 +44,18 @@ pub(super) fn report(
             turn_completion_id: None,
             causality: None,
             working_ttl_ms: Some(60_000),
-            conversation_identity: None,
+            conversation_identity: conversation.map(|id| {
+                hmux_client::ProviderConversationIdentity {
+                    provider_id: source.provider_id.as_str().into(),
+                    conversation_id: id.into(),
+                    previous_conversation_id: None,
+                    expected_fence: Some(fence.clone()),
+                }
+            }),
             expected_observation: None,
             background_work: false,
         },
-        hmux_client::SessionFence {
-            workspace_id: source.workspace_id.clone(),
-            session_id: source.session_id.clone(),
-            runner_principal: source.runner_principal.clone(),
-            runner_instance: source.runner_instance.clone(),
-            channel_epoch: source.channel_epoch.parse().unwrap(),
-            host_instance_id: source.host_instance_id.clone(),
-            terminal_epoch: source.terminal_epoch.clone(),
-        },
+        fence,
     )
     .unwrap();
 }
