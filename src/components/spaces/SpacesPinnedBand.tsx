@@ -18,6 +18,7 @@ export function SpacesPinnedBand({
   pinnedRows,
   pinnedGroups,
   attentionByRepository,
+  programStatusByRepository,
   dropTargetKey,
   emptyLabel,
   repositoryBindings,
@@ -25,6 +26,7 @@ export function SpacesPinnedBand({
   pinnedRows: readonly SpaceRow[];
   pinnedGroups: readonly SpacesRepositorySectionProps["group"][];
   attentionByRepository: ReadonlyMap<string, number>;
+  programStatusByRepository: ReadonlyMap<string, number>;
   dropTargetKey: string | null;
   /** What an empty pinned repository says while a search or filter is on. */
   emptyLabel: string | undefined;
@@ -92,6 +94,7 @@ export function SpacesPinnedBand({
               attentionCount={
                 attentionByRepository.get(group.key) ?? 0
               }
+              programStatusCount={programStatusByRepository.get(group.key) ?? 0}
               dropTargetKey={
                 dropKeyInRepository(dropTargetKey, group.key) ? dropTargetKey : null
               }

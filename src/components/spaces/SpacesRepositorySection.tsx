@@ -18,6 +18,7 @@ import type { SpaceRow } from "@/components/spaces/useSpaces";
 import { useFocusedRowIn } from "@/components/spaces/useSpacesPaneState";
 import { t } from "@/lib/i18n";
 import type { RepositoryFirstGroup } from "@/lib/spaces/spaceRepositoryGroups";
+import { countProgramStatusRows } from "@/lib/spaces/spacesStateFilter";
 import type { Desktop, Project, SshHostConfig } from "@/types";
 
 /** Drop-highlight identity of one space section inside a repository. */
@@ -50,6 +51,8 @@ export interface SpacesRepositorySectionProps
 	labelledBy?: string;
 	/** Sessions of this repository that need a human, across every space. */
 	attentionCount: number;
+	/** Terminal programs of this repository reporting that they wait. */
+	programStatusCount?: number;
 	canCloseDesktop: boolean;
 	/** Drop-target key narrowed to this repository (null: the hover is elsewhere). */
 	dropTargetKey: string | null;
@@ -95,6 +98,7 @@ function propsEqual(
 		) &&
 		prev.isFirst === next.isFirst &&
 		prev.attentionCount === next.attentionCount &&
+		prev.programStatusCount === next.programStatusCount &&
 		prev.canCloseDesktop === next.canCloseDesktop &&
 		prev.dropTargetKey === next.dropTargetKey &&
 		prev.projects === next.projects &&
@@ -120,6 +124,7 @@ export const SpacesRepositorySection = memo(function SpacesRepositorySection({
 	heading,
 	labelledBy,
 	attentionCount,
+	programStatusCount,
 	canCloseDesktop,
 	dropTargetKey,
 	projects,
@@ -154,6 +159,7 @@ export const SpacesRepositorySection = memo(function SpacesRepositorySection({
 			projects={projects}
 			sshHosts={sshHosts}
 			attentionCount={attentionCount}
+			programStatusCount={programStatusCount}
 			foldedContent={
 				focusedRow && (
 					<SpacesOpenRowList
@@ -200,6 +206,8 @@ export const SpacesRepositorySection = memo(function SpacesRepositorySection({
 						sectionKey={sectionKey}
 						isFirst={index === 0}
 						attentionCount={0}
+						// A folded space under a repository still says a program waits.
+						programStatusCount={countProgramStatusRows(spaces)}
 						canClose={canCloseDesktop}
 						isDropTarget={dropTargetKey === sectionKey}
 						onActivate={onActivateDesktop}

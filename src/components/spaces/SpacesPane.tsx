@@ -627,6 +627,7 @@ export function SpacesPane() {
             pinnedRows={hierarchy.pinnedRows}
             pinnedGroups={hierarchy.pinnedGroups}
             attentionByRepository={hierarchy.attentionByRepository}
+            programStatusByRepository={hierarchy.programStatusByRepository}
             dropTargetKey={dropTargetKey}
             emptyLabel={
               normalizedQuery || filtersActive
@@ -636,13 +637,14 @@ export function SpacesPane() {
             repositoryBindings={repositorySectionProps}
           />
           {hierarchy.groupBy === "space" ? (
-            hierarchy.groups.map(({ desktop, repositoryGroups, attentionCount }) => (
+            hierarchy.groups.map(({ desktop, repositoryGroups, attentionCount, programStatusCount }) => (
               <SpacesDesktopSection
                 key={desktop.id}
                 desktop={desktop}
                 level="group"
                 sectionKey={desktop.id}
                 attentionCount={attentionCount}
+                programStatusCount={programStatusCount}
                 canClose={canCloseDesktop}
                 isDropTarget={dropTargetKey === desktop.id}
                 onActivate={onActivateDesktop}
@@ -712,6 +714,7 @@ export function SpacesPane() {
                   group={group}
                   isFirst={index === 0}
                   attentionCount={hierarchy.attentionByRepository.get(group.key) ?? 0}
+                  programStatusCount={hierarchy.programStatusByRepository.get(group.key) ?? 0}
                   dropTargetKey={
                     dropKeyInRepository(dropTargetKey, group.key) ? dropTargetKey : null
                   }

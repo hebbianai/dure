@@ -6,6 +6,7 @@ export type SpacesRuntimeRecords = Pick<
 	SessionRuntimeStoreSlice,
 	| "agentActivity"
 	| "sessionAgentRuntimeState"
+	| "sessionAgentRuntimeObservers"
 	| "sessionCwd"
 	| "sessionTitle"
 	| "sessionAgent"
@@ -61,6 +62,7 @@ export function createSpacesRuntimeSelector(
 	return createScopedRecordsSelector<SpacesRuntimeRecords>({
 		agentActivity: agentIds,
 		sessionAgentRuntimeState: sessionIds,
+		sessionAgentRuntimeObservers: sessionIds,
 		sessionCwd: sessionIds,
 		sessionTitle: sessionIds,
 		sessionAgent: sessionIds,

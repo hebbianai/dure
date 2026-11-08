@@ -51,6 +51,7 @@ interface SpacesDesktopGroup {
 	/** Flat rows in visual order — selection ranges read this. */
 	readonly spaces: readonly SpaceRow[];
 	readonly attentionCount: number;
+	readonly programStatusCount: number;
 }
 
 interface HierarchyCommon {
@@ -73,6 +74,7 @@ interface HierarchyCommon {
 	readonly visibleCollapsibleGroupKeys: readonly string[];
 	/** Repository attention for the pinned band, independent of grouping. */
 	readonly attentionByRepository: ReadonlyMap<string, number>;
+	readonly programStatusByRepository: ReadonlyMap<string, number>;
 	/** Open rows surviving search and filters, before grouping. */
 	readonly visibleRowCount: number;
 }
@@ -188,6 +190,8 @@ export function useSpacesGroups({
 				pinnedByDesktop: pinned.visibleByDesktop,
 				attentionByDesktop: bodyAttention.attentionByDesktop,
 				attentionByRepository: attention.attentionByRepository,
+				programStatusByDesktop: bodyAttention.programStatusByDesktop,
+				programStatusByRepository: attention.programStatusByRepository,
 			};
 		},
 		[visibleRowsByPin, allRowsByPin],
@@ -247,6 +251,7 @@ export function useSpacesGroups({
 				pinnedRows,
 				visibleRowCount: projectedSpaces.length,
 				attentionByRepository: buckets.attentionByRepository,
+				programStatusByRepository: buckets.programStatusByRepository,
 				hiddenFileDesktops: narrowed
 					? []
 					: orderedDesktops.filter((desktop) =>
@@ -281,6 +286,8 @@ export function useSpacesGroups({
 						repositoryGroups,
 						spaces: repositoryGroups.flatMap((group) => group.spaces),
 						attentionCount: buckets.attentionByDesktop.get(desktop.id) ?? 0,
+						programStatusCount:
+							buckets.programStatusByDesktop.get(desktop.id) ?? 0,
 					};
 				})
 				// Empty desktops stay listed while nothing narrows the list — they
@@ -304,6 +311,7 @@ export function useSpacesGroups({
 				pinnedRows,
 				visibleRowCount: projectedSpaces.length,
 				attentionByRepository: buckets.attentionByRepository,
+				programStatusByRepository: buckets.programStatusByRepository,
 				selectionOrder: [
 					...pinnedRowKeys,
 					...selectableRowKeys([...pinnedGroups, ...repositoryGroups], collapsed, focusedRowKey),
@@ -347,6 +355,7 @@ export function useSpacesGroups({
 			hiddenFileDesktops,
 			visibleRowCount: projectedSpaces.length,
 			attentionByRepository: buckets.attentionByRepository,
+			programStatusByRepository: buckets.programStatusByRepository,
 			selectionOrder: [
 				...pinnedRowKeys,
 				...selectableRowKeys(pinnedGroups, collapsed, focusedRowKey),

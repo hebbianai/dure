@@ -1,5 +1,10 @@
 import { OverflowRevealText } from "@/components/ui/overflow-reveal-text";
-import { type HTMLAttributes, type ReactNode, useState } from "react";
+import {
+	type HTMLAttributes,
+	type MouseEventHandler,
+	type ReactNode,
+	useState,
+} from "react";
 import { Badge } from "@/components/ui/badge";
 import {
 	Tooltip,
@@ -30,10 +35,13 @@ export function SessionStatusBadge({
 	status,
 	description,
 	tone = "neutral",
+	onClick,
 }: {
 	status: string;
 	description?: string;
 	tone?: SessionListRowStatusTone;
+	/** Only a badge with a description renders as a button. */
+	onClick?: MouseEventHandler<HTMLButtonElement>;
 }) {
 	const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
 	const badge = (
@@ -47,7 +55,7 @@ export function SessionStatusBadge({
 			)}
 		>
 			{description ? (
-				<button type="button" ref={setTrigger}>
+				<button type="button" ref={setTrigger} onClick={onClick}>
 					{status}
 				</button>
 			) : (

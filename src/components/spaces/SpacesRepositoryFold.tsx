@@ -39,6 +39,7 @@ interface SpacesRepositoryFoldBaseProps {
 	projects: readonly Project[];
 	sshHosts: readonly SshHostConfig[];
 	attentionCount?: number;
+	programStatusCount?: number;
 	/** What stays on screen while folded, if anything. */
 	foldedContent?: ReactNode;
 	children: ReactNode;
@@ -59,6 +60,7 @@ export function SpacesRepositoryFold({
 	projects,
 	sshHosts,
 	attentionCount,
+	programStatusCount,
 	foldedContent,
 	children,
 	...quickAdd
@@ -111,6 +113,7 @@ export function SpacesRepositoryFold({
 				projects={projects}
 				sshHosts={sshHosts}
 				attentionCount={attentionCount}
+				programStatusCount={programStatusCount}
 				{...quickAdd}
 			/>
 			{content ? (

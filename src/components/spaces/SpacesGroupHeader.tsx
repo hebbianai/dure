@@ -29,6 +29,7 @@ import { DesktopAddMenuButton } from "@/components/spaces/DesktopAddMenuButton";
 import { useIsActiveDesktop } from "@/components/spaces/useSpacesPaneState";
 import { DisclosureChevron } from "@/components/ui/disclosure-chevron";
 import { OverflowRevealText } from "@/components/ui/overflow-reveal-text";
+import { Titled } from "@/components/ui/tooltip";
 
 /** Where a heading stands: top of the list (`group`) or nested one level
  *  down (`sub`) — the space heading under a repository in the project-first
@@ -48,6 +49,9 @@ export interface SpacesGroupHeaderProps {
    *  아무것도 그리지 않는다 — 잘 돌아가는 중은 조용한 것이 기본값(SOUL §5.1).
    *  스크롤 밖·접힌 그룹의 대기 세션을 머리행이 대신 말해 준다. */
   attentionCount?: number;
+  /** Terminal programs here that report they are waiting, on rows Host
+   *  attention has not already counted. */
+  programStatusCount?: number;
   /** Top of the list (`group`, default) or nested under a repository (`sub`). */
   level?: SpacesGroupLevel;
   /** Semantic level when another grouping axis wraps this hierarchy. */
@@ -63,17 +67,46 @@ export interface SpacesGroupHeaderProps {
 /** Attention rollup glyph shared by the space and repository headings: a 5px
  *  blocked-status dot and a mono count, drawn only when someone is waiting on
  *  a human. Zero draws nothing — silence is the default (SOUL §5.1). */
-export function SpacesAttentionRollup({ count }: { count: number }) {
-  if (count <= 0) return null;
-  const label = t("spaces.group.attentionCount", { n: count });
+export function SpacesAttentionRollup({
+  count,
+  programStatusCount = 0,
+}: {
+  count: number;
+  programStatusCount?: number;
+}) {
   return (
-    <span
-      className="ml-1.5 flex shrink-0 items-center gap-1 font-mono text-meta text-muted-foreground"
-      aria-label={label}
-    >
-      <span className="block size-[5px] rounded-full bg-status-blocked" />
-      {count}
-    </span>
+    <>
+      {count > 0 && (
+        <span
+          className="ml-1.5 flex shrink-0 items-center gap-1 font-mono text-meta text-muted-foreground"
+          aria-label={t("spaces.group.attentionCount", { n: count })}
+        >
+          <span className="block size-[5px] rounded-full bg-status-blocked" />
+          {count}
+        </span>
+      )}
+      <SpacesProgramStatusRollup count={programStatusCount} />
+    </>
+  );
+}
+
+/** Terminal programs that say they are waiting, kept apart from Host attention
+ *  beside it: the hollow dot marks a program's claim rather than a Host fact,
+ *  and the label says whose words these are (#408). */
+function SpacesProgramStatusRollup({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const label = t("spaces.group.programStatusCount", { n: count });
+  return (
+    <Titled title={label}>
+      <span
+        className="ml-1.5 flex shrink-0 items-center gap-1 font-mono text-meta text-muted-foreground"
+        aria-label={label}
+        data-space-program-status-rollup=""
+      >
+        <span className="block size-[5px] rounded-full border border-status-warn" />
+        {count}
+      </span>
+    </Titled>
   );
 }
 
@@ -85,6 +118,7 @@ export function SpacesGroupHeader({
   onAddTerminal,
   canClose,
   attentionCount = 0,
+  programStatusCount = 0,
   level = "group",
   heading,
   collapsed = false,
@@ -196,7 +230,10 @@ export function SpacesGroupHeader({
               single list (owner call 2026-09-14). */}
           <OverflowRevealText text={desktop.name} />
         </Heading>
-        <SpacesAttentionRollup count={attentionCount} />
+        <SpacesAttentionRollup
+          count={attentionCount}
+          programStatusCount={programStatusCount}
+        />
         {/* Folded, the heading is all that is left of this space: nothing
             follows it, and two folded spaces in a row read as two loose labels
             (owner report 2026-09-14). What the fold says for itself is the

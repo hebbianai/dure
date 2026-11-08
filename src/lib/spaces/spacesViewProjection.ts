@@ -1,6 +1,9 @@
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import { spaceRepositoryGroupKey } from "@/lib/spaces/spaceRepositoryGroups";
-import { ATTENTION_DISPLAY_STATES } from "@/lib/spaces/spacesStateFilter";
+import {
+	ATTENTION_DISPLAY_STATES,
+	countsTowardProgramStatusRollup,
+} from "@/lib/spaces/spacesStateFilter";
 import {
 	hasActiveSpacesFilters,
 	SPACES_ENVIRONMENTS,
@@ -19,6 +22,7 @@ import {
 export interface SpacesFacetSource {
 	readonly activityAt?: number;
 	readonly displayState?: AgentDisplayState;
+	readonly programStatusKind?: string;
 	readonly projectId?: string;
 	readonly projectName?: string;
 	readonly cwd?: string;
@@ -70,6 +74,7 @@ export interface SpacesFacetGroup<Row> {
 	readonly bucket: SpacesFacetBucket;
 	readonly spaces: readonly Row[];
 	readonly attentionCount: number;
+	readonly programStatusCount: number;
 }
 
 const STATUS_RANK: Record<SpacesStatusBucket, number> = {
@@ -253,6 +258,7 @@ export function groupSpacesRows<Row extends SpacesFacetSource>(
 			bucket: SpacesFacetBucket;
 			spaces: Row[];
 			attentionCount: number;
+			programStatusCount: number;
 		}
 	>();
 	for (const row of rows) {
@@ -264,10 +270,13 @@ export function groupSpacesRows<Row extends SpacesFacetSource>(
 			bucket,
 			spaces: [],
 			attentionCount: 0,
+			programStatusCount: 0,
 		};
 		if (isVisible(row)) group.spaces.push(row);
 		if (facets.status && ATTENTION_DISPLAY_STATES.has(facets.status)) {
 			group.attentionCount += 1;
+		} else if (countsTowardProgramStatusRollup(row)) {
+			group.programStatusCount += 1;
 		}
 		groups.set(key, group);
 	}

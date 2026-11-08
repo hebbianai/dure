@@ -445,4 +445,31 @@ describe("groupSpacesRows", () => {
 		expect(group?.spaces.map((row) => row.key)).toEqual(["visible"]);
 		expect(group?.attentionCount).toBe(1);
 	});
+
+	it("counts a program's waiting report beside attention, independent of search", () => {
+		const rows = [
+			{
+				key: "visible",
+				activityAt: 10,
+				displayState: "waiting" as const,
+				programStatusKind: "permission" as const,
+			},
+			{ key: "filtered", activityAt: 10, programStatusKind: "question" as const },
+			{
+				key: "host-attention",
+				activityAt: 10,
+				displayState: "blocked" as const,
+				programStatusKind: "permission" as const,
+			},
+		];
+		const [group] = groupSpacesRows(
+			rows,
+			"updated",
+			10,
+			(row) => row.key === "visible",
+		);
+
+		expect(group?.programStatusCount).toBe(2);
+		expect(group?.attentionCount).toBe(1);
+	});
 });

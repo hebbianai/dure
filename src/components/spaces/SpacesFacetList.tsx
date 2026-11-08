@@ -32,6 +32,7 @@ export type RepositoryBindings = Omit<
 	| "isFirst"
 	| "labelledBy"
 	| "attentionCount"
+	| "programStatusCount"
 	| "dropTargetKey"
 >;
 type FacetHierarchy = Extract<
@@ -92,8 +93,11 @@ function SpacesFacetSection({
 				weight="medium"
 				chevron="trailing"
 				actions={
-					group.attentionCount > 0 ? (
-						<SpacesAttentionRollup count={group.attentionCount} />
+					group.attentionCount > 0 || group.programStatusCount > 0 ? (
+						<SpacesAttentionRollup
+							count={group.attentionCount}
+							programStatusCount={group.programStatusCount}
+						/>
 					) : undefined
 				}
 			/>

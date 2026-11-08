@@ -13,6 +13,7 @@ interface Row {
 	readonly projectName: string;
 	readonly hostId?: string;
 	readonly displayState?: string;
+	readonly programStatusKind?: string;
 }
 
 it("partitions pane pins before repository pins using exact desktop identity", () => {
@@ -79,6 +80,41 @@ describe("bucketVisibleSpaces", () => {
 		expect([...attentionByRepository.entries()]).toEqual([
 			['["project","alpha"]', 2],
 		]);
+	});
+
+	it("rolls a program's waiting report up beside attention without counting a row twice", () => {
+		const reporting: Row[] = [
+			{
+				key: "terminal",
+				desktopId: "d1",
+				projectId: "alpha",
+				projectName: "Alpha",
+				displayState: "waiting",
+				programStatusKind: "permission",
+			},
+			{
+				key: "already-attention",
+				desktopId: "d1",
+				projectId: "alpha",
+				projectName: "Alpha",
+				displayState: "blocked",
+				programStatusKind: "question",
+			},
+			{
+				key: "plain-shell",
+				desktopId: "d2",
+				projectName: "Local",
+				programStatusKind: "auth",
+			},
+		];
+		const buckets = bucketVisibleSpaces(reporting, () => false);
+		expect([...buckets.programStatusByDesktop.entries()]).toEqual([
+			["d1", 1],
+			["d2", 1],
+		]);
+		expect(buckets.programStatusByRepository.get('["project","alpha"]')).toBe(1);
+		expect([...buckets.attentionByDesktop.entries()]).toEqual([["d1", 1]]);
+		expect(buckets.attentionByRepository.get('["project","alpha"]')).toBe(1);
 	});
 });
 

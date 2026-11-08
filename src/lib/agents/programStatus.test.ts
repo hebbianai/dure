@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseProgramStatus, programStatusNotice } from "./programStatus";
+import {
+	parseProgramStatus,
+	programStatusNotice,
+	waitingProgramStatusNotice,
+} from "./programStatus";
 
 describe("parseProgramStatus", () => {
 	it("keeps every field of a consistent report", () => {
@@ -75,5 +79,68 @@ describe("programStatusNotice", () => {
 		expect(
 			programStatusNotice({ state: "error", message: "⁦" }),
 		).toEqual({ kind: "error" });
+	});
+});
+
+describe("waitingProgramStatusNotice", () => {
+	const running = (
+		programStatus: Parameters<typeof programStatusNotice>[0],
+	) => ({ lifecycle: "running" as const, programStatus });
+
+	it.each(["permission", "question", "auth"] as const)(
+		"repeats a program waiting for %s with its author",
+		(kind) => {
+			expect(
+				waitingProgramStatusNotice(
+					running({
+						state: "blocked",
+						blocked_kind: kind,
+						app: "codex",
+						message: "Run tests?",
+					}),
+					true,
+				),
+			).toEqual({ kind, app: "codex", message: "Run tests?" });
+		},
+	);
+
+	it("repeats a wait the program did not classify", () => {
+		expect(
+			waitingProgramStatusNotice(running({ state: "blocked" }), true),
+		).toEqual({ kind: "blocked" });
+	});
+
+	it("leaves a failure on the pane because it is a result, not a wait", () => {
+		expect(
+			waitingProgramStatusNotice(running({ state: "error" }), true),
+		).toBeUndefined();
+	});
+
+	it("says nothing while the program is working or has stopped reporting", () => {
+		expect(
+			waitingProgramStatusNotice(running({ state: "working" }), true),
+		).toBeUndefined();
+		expect(waitingProgramStatusNotice(running(undefined), true)).toBeUndefined();
+		expect(waitingProgramStatusNotice(undefined, true)).toBeUndefined();
+	});
+
+	it("makes no claim for an exited agent or a snapshot no live stream supports", () => {
+		const blocked = { state: "blocked" as const, blocked_kind: "permission" as const };
+		expect(
+			waitingProgramStatusNotice(
+				{ lifecycle: "exited", programStatus: blocked },
+				true,
+			),
+		).toBeUndefined();
+		expect(waitingProgramStatusNotice(running(blocked), false)).toBeUndefined();
+	});
+
+	it("accepts a snapshot from before any stream lifetime existed", () => {
+		expect(
+			waitingProgramStatusNotice(
+				running({ state: "blocked", blocked_kind: "auth" }),
+				undefined,
+			),
+		).toEqual({ kind: "auth" });
 	});
 });

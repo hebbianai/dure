@@ -11,6 +11,7 @@ function records(
 	return {
 		agentActivity: {},
 		sessionAgentRuntimeState: {},
+		sessionAgentRuntimeObservers: {},
 		sessionCwd: {},
 		sessionTitle: {},
 		sessionAgent: {},

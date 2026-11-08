@@ -38,6 +38,7 @@ export interface SpacesDesktopSectionProps {
 	/** Identity of this section for the drop highlight. */
 	sectionKey: string;
 	attentionCount: number;
+	programStatusCount?: number;
 	/** Rows inside, for the folded heading to report. */
 	canClose: boolean;
 	isDropTarget: boolean;
@@ -59,6 +60,7 @@ export function SpacesDesktopSection({
 	heading,
 	sectionKey,
 	attentionCount,
+	programStatusCount,
 	canClose,
 	isDropTarget,
 	isFirst = true,
@@ -154,6 +156,7 @@ export function SpacesDesktopSection({
 				level={level}
 				heading={heading}
 				attentionCount={attentionCount}
+				programStatusCount={programStatusCount}
 				canClose={canClose}
 				isDropTarget={isDropTarget}
 				onActivate={onActivate}

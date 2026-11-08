@@ -119,6 +119,8 @@ interface SpacesRepositoryHeaderBaseProps {
 	sshHosts: readonly SshHostConfig[];
 	/** Sessions in this repository that need a human — drawn only when > 0. */
 	attentionCount?: number;
+	/** Terminal programs here that report they are waiting. */
+	programStatusCount?: number;
 }
 
 type SpacesRepositoryHeaderProps = SpacesRepositoryHeaderBaseProps &
@@ -135,6 +137,7 @@ export const SpacesRepositoryHeader = memo(function SpacesRepositoryHeader({
 	projects,
 	sshHosts,
 	attentionCount = 0,
+	programStatusCount = 0,
 	quickAdd = true,
 	onAddRepositoryTerminal,
 	onAddRepositoryAgent,
@@ -390,7 +393,10 @@ export const SpacesRepositoryHeader = memo(function SpacesRepositoryHeader({
 						)}
 						{/* A fold carries no count (owner call 2026-09-15): the rows say
 						    it open, and folded the number was one more thing to read. */}
-						<SpacesAttentionRollup count={attentionCount} />
+						<SpacesAttentionRollup
+							count={attentionCount}
+							programStatusCount={programStatusCount}
+						/>
 						{/* After the count, shown while the row is hovered (owner call 2026-09-10). */}
 						<DisclosureChevron hint open={!collapsed} />
 					</span>

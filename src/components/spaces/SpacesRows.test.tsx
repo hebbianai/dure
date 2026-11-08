@@ -7,7 +7,9 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { cloneElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { t } from "@/lib/i18n";
 import type { SpacesVisibleField } from "@/lib/spaces/spacesViewOptions";
 import type { Agent } from "@/types";
 import { focusByKeyboard } from "@/test/keyboardFocus";
@@ -110,6 +112,7 @@ describe("OpenSpaceRow managed promotion", () => {
     // false draws the row flat, as the pinned band does, where the row states
     // its space and its remoteness itself.
     listed = true,
+    onSpaceClick = vi.fn(),
   ) {
     return (
       <OpenSpaceRow
@@ -132,7 +135,7 @@ describe("OpenSpaceRow managed promotion", () => {
             : 0
         }
         promotionBusy={false}
-        onSpaceClick={vi.fn()}
+        onSpaceClick={onSpaceClick}
         onContextMenuOpenChange={vi.fn()}
         onRowDragStart={vi.fn()}
         onRowDragEnd={vi.fn()}
@@ -140,6 +143,74 @@ describe("OpenSpaceRow managed promotion", () => {
       />
     );
   }
+
+  const reporting = {
+    ...space,
+    programStatusKind: "permission",
+    programStatusApp: "codex",
+    programStatusMessage: "Run cargo test?",
+  } satisfies SpaceRowView;
+  const permissionBadge = () =>
+    screen.queryByRole("button", { name: t("agents.programStatus.permission") });
+
+  function hoveredDescription(badge: HTMLElement) {
+    fireEvent.pointerMove(badge, { pointerType: "mouse" });
+    act(() => vi.advanceTimersByTime(100));
+    return screen
+      .getByRole("tooltip")
+      .querySelector("[data-slot='tooltip-description']")?.textContent;
+  }
+
+  it("repeats a program's waiting report on the title line with its author", () => {
+    vi.useFakeTimers();
+    try {
+      render(row(handlers(), reporting));
+      const badge = permissionBadge();
+      expect(badge?.closest("[data-row-line]")?.getAttribute("data-row-line")).toBe("title");
+      expect(hoveredDescription(badge as HTMLElement)).toBe(
+        t("agents.programStatus.messageFromApp", {
+          app: "codex",
+          message: "Run cargo test?",
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("goes to the waiting pane when its report is clicked", () => {
+    const onSpaceClick = vi.fn();
+    render(row(handlers(), reporting, undefined, true, onSpaceClick));
+    fireEvent.click(permissionBadge() as HTMLElement);
+    expect(onSpaceClick).toHaveBeenCalledWith(
+      expect.anything(),
+      reporting.key,
+      reporting.desktopId,
+    );
+  });
+
+  it("redraws when only the program's report changes, and clears with it", () => {
+    vi.useFakeTimers();
+    try {
+      const first = row(handlers(), reporting);
+      const { rerender } = render(first);
+      rerender(
+        cloneElement(first, {
+          space: { ...reporting, programStatusMessage: "Run pnpm lint?" },
+        }),
+      );
+      expect(hoveredDescription(permissionBadge() as HTMLElement)).toBe(
+        t("agents.programStatus.messageFromApp", {
+          app: "codex",
+          message: "Run pnpm lint?",
+        }),
+      );
+      rerender(cloneElement(first, { space }));
+      expect(permissionBadge()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("shows relative activity time only while the pane is not working", () => {
     const nextSpace = { ...space, activityAt: Date.now() - 3 * 60_000 };
