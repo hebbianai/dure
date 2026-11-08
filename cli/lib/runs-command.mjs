@@ -1,5 +1,4 @@
 import { parseArgs } from "node:util";
-import { randomUUID } from "node:crypto";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { collectAgentSpawnQuery } from "./agent-spawn-query.mjs";
@@ -10,7 +9,7 @@ import { presentAgentRunRuntime } from "./run-presentation.mjs";
 import { collectRunAccountSwitch, formatRunAccountSwitch } from "./run-account-switch.mjs";
 import { collectAgentProjectMove, formatAgentProjectMove } from "./agent-project-move-command.mjs";
 import { assertNoConversationProjectOptions } from "./conversation-project-options.mjs";
-import { exactRunRetry, formatRunCandidates, resolveAgentWithoutRun } from "./run-agent-selection.mjs";
+import { exactRunRetry, formatRunCandidates, listRunRecords, resolveAgentWithoutRun, selectRunRecord } from "./run-agent-selection.mjs";
 
 export const RUNS_HELP = `Usage:
   dure runs list [--cursor CURSOR] [--backend ID] [--json]
@@ -81,18 +80,6 @@ export function parseRunsOptions(args) {
 }
 
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
-const STATES = new Set(["applying", "ready_to_succeed", "inspect_before_retry", "retry_required",
-  "prompt_delivery_uncertain", "succeeded", "failed", "manual_intervention_required"]);
-function validPage(value) {
-  return value?.schemaVersion === 1 && Array.isArray(value.runs) && value.runs.length <= 64 &&
-    (value.nextCursor === null || (typeof value.nextCursor === "string" && TOKEN.test(value.nextCursor))) &&
-    value.runs.every((run) => [run.agentId, run.operationId, run.name, run.providerId, run.workspaceId, run.projectId]
-      .every((id) => typeof id === "string" && TOKEN.test(id)) && STATES.has(run.launchState) &&
-      Number.isSafeInteger(run.createdAtMs) && run.createdAtMs >= 0 &&
-      Number.isSafeInteger(run.updatedAtMs) && run.updatedAtMs >= run.createdAtMs) &&
-    value.runs.every((run, i) => i === 0 || run.operationId > value.runs[i - 1].operationId) &&
-    (value.nextCursor === null || (value.runs.length === 64 && value.nextCursor === value.runs.at(-1).operationId));
-}
 
 export async function collectRunsCommand({
   opts, resolveBackend, resolveTarget, descriptor, command,
@@ -120,29 +107,15 @@ export async function collectRunsCommand({
       const projectMove = await collectAgentProjectMove({ agentId: selector, projectId: opts.project, movePlan: opts.movePlan, confirmRestart: opts.confirmRestart, backend, requestBackend });
       return { ...base, ok: projectMove.ok, projectMove, ...(!projectMove.ok ? { error: projectMove.error } : {}) };
     }
-    const response = await requestBackend(backend.profile, {
-      requestId: randomUUID(), operation: "agent_spawn.list", requiredCapabilities: ["agent_spawn.list"],
-      body: { schemaVersion: 1, ...(opts.cursor ? { after: opts.cursor } : {}), ...(selector ? { selector } : {}) },
-    }, backend.transportOptions);
-    const page = response.result;
-    if (!validPage(page) || (selector && page.runs.some((entry) =>
-        ![entry.name, entry.agentId, entry.operationId].includes(selector))) || (opts.cursor && page.runs.some((entry) => entry.operationId <= opts.cursor))) {
-      return failure({ code: "runs_response_invalid" });
-    }
-    if (action === "list") return { ...base, ok: true, backend: response.backend, ...page };
-    // Exact IDs win over name collisions. A partial page cannot establish uniqueness.
-    const exact = page.runs.filter((entry) => entry.agentId === selector || entry.operationId === selector);
-    const matches = exact.length ? exact : page.runs;
-    if (matches.length > 1 || (matches.length === 1 && page.nextCursor !== null)) {
-      return failure({ code: "run_selector_ambiguous",
-        message: `${page.nextCursor === null ? matches.length : "More than " + matches.length} Runs match ${selector}. Retry with one exact Agent ID:`,
-        candidates: matches.map((entry) => ({ agentId: entry.agentId, name: entry.name, projectId: entry.projectId,
-          providerId: entry.providerId, operationId: entry.operationId, launchState: entry.launchState,
-          retry: exactRunRetry({ action, agentId: entry.agentId, opts, backendId: backend.profile.id }) })) });
-    }
+    const listed = await listRunRecords({ backend, requestBackend, selector, cursor: opts.cursor });
+    if (listed.error) return failure(listed.error);
+    if (action === "list") return { ...base, ok: true, backend: listed.backend, ...listed.page };
+    const selection = selectRunRecord(listed.page, selector,
+      (agentId) => exactRunRetry({ action, agentId, opts, backendId: backend.profile.id }));
+    if (selection.error) return failure(selection.error);
     // App-launched, resumed and imported Agents have no spawn receipt; the
     // backend runtime projection still owns their account and recovery.
-    let selected = matches[0];
+    let selected = selection.run;
     let observed;
     const owner = () => selected.operationId ? { run: selected } : { agent: selected };
     if (!selected) {

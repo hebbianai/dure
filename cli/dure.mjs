@@ -2710,8 +2710,12 @@ async function cmdHmux(sub, opts) {
   }).catch((error) => fail(`App server request failed: ${error.message}`));
   const receipt = await res.json().catch(() => null);
   if (action === "stop") {
-    const { agentStopReport, formatAgentStopReport } = await import("./lib/agent-stop-command.mjs");
-    const report = agentStopReport(receipt, res.ok);
+    const { agentStopReport, collectRunRecordStop, formatAgentStopReport, stopsRunRecord } =
+      await import("./lib/agent-stop-command.mjs");
+    const report = stopsRunRecord(receipt, opts)
+      ? agentStopReport(await collectRunRecordStop({ selector: name, appReceipt: receipt,
+        resolveBackend: () => backendProfileQueryContext({}) }), true)
+      : agentStopReport(receipt, res.ok);
     const output = opts.json ? JSON.stringify(report) : formatAgentStopReport(report, name);
     (opts.json || report.ok ? process.stdout : process.stderr).write(`${output}\n`);
     if (!report.ok) process.exitCode = 1;

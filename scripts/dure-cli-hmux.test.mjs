@@ -135,6 +135,70 @@ function homeWithServer(prefix, port, token, capabilities) {
   return { home, dureDir };
 }
 
+// DURE_HOME pointing at the fixture app plus an SSH backend profile whose
+// `ssh` is a fake backend holding one scheduled Run record and its stop
+// journal. Each backend request is logged as one JSON line.
+function scheduledRunBackendFixture(appPort) {
+  const root = mkdtempSync(join(tmpdir(), "dure-stop-run-record-"));
+  temporaryRoots.push(root);
+  writeServerConfig(root, appPort, "stop-token");
+  const capabilities = ["agent_spawn.list", "dispatch.stop.apply", "dispatch.stop.preview", "dispatch.stop.status"];
+  writeFileSync(join(root, "backend-profiles.json"), JSON.stringify({
+    schemaVersion: 1, kind: "dure.backend_profiles", profiles: [{
+      id: "remote-a", default: true,
+      transport: { kind: "ssh", host: "remote-a.example.test", port: 22, user: "dure",
+        endpoint: { kind: "tcp", host: "127.0.0.1", port: 6767 }, batchMode: true,
+        strictHostKeyChecking: "yes", connectTimeoutMs: 1_000 },
+      auth: { kind: "identity_file", reference: "credential-profile:remote-a" },
+      trust: { kind: "known_hosts", reference: "known-hosts-profile:remote-a" },
+      expected: { backendId: "remote-a-backend", generation: "remote-a-generation-1",
+        protocol: { minimum: { major: 1, minor: 0 }, maximum: { major: 1, minor: 0 } },
+        capabilities },
+      deadlineMs: 10_000,
+    }],
+  }), { mode: 0o600 });
+  const identity = join(root, "remote-a-identity");
+  const knownHosts = join(root, "remote-a-known-hosts");
+  writeFileSync(identity, "private material", { mode: 0o600 });
+  writeFileSync(knownHosts, "remote-a.example.test fixture", { mode: 0o600 });
+  writeFileSync(join(root, "backend-ssh-references.json"), JSON.stringify({
+    schemaVersion: 1, kind: "dure.backend_ssh_references", references: [
+      { reference: "credential-profile:remote-a", kind: "identity_file", path: identity },
+      { reference: "known-hosts-profile:remote-a", kind: "known_hosts_file", path: knownHosts },
+    ],
+  }), { mode: 0o600 });
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "ssh"), `#!/usr/bin/env node
+const { appendFileSync, readFileSync } = require("node:fs");
+const request = JSON.parse(readFileSync(0, "utf8"));
+appendFileSync(process.env.DURE_FAKE_BACKEND_LOG, JSON.stringify({ operation: request.operation, body: request.body }) + "\\n");
+const run = { agentId: "agent-scheduled-1", operationId: "spawn-scheduled-1", name: "nightly-review",
+  providerId: "codex", workspaceId: "workspace-1", projectId: "dure", launchState: "succeeded",
+  createdAtMs: 1700000000000, updatedAtMs: 1700000000000 };
+const stop = (state, journalRevision) => ({ schemaVersion: 1, receipt: {
+  plan: { schemaVersion: 1, operationId: "dispatch-stop-1", agentId: run.agentId,
+    planToken: "sha256:${"a".repeat(64)}", workspaceDisposition: "preserve",
+    spawn: { operationId: run.operationId } },
+  state, journalRevision, createdAtMs: 1700000000000, updatedAtMs: 1700000000000 } });
+const selector = request.body.selector;
+const result = {
+  "agent_spawn.list": () => ({ schemaVersion: 1, nextCursor: null,
+    runs: [run.agentId, run.operationId, run.name].includes(selector) ? [run] : [] }),
+  "dispatch.stop.status": () => ({ schemaVersion: 1, receipt: null }),
+  "dispatch.stop.preview": () => stop({ status: "planned" }, 1),
+  "dispatch.stop.apply": () => stop({ status: "workspace_preserved", runtime: {} }, 3),
+}[request.operation]();
+process.stdout.write(JSON.stringify({ schemaVersion: 1, apiVersion: "dure.backend-transport/v1",
+  kind: "dure.backend.response", requestId: request.requestId,
+  backend: { id: request.expected.backendId, generation: request.expected.generation,
+    protocol: { major: 1, minor: 0 }, capabilities: ${JSON.stringify(capabilities)}, observedAtMs: Date.now() },
+  result }));
+`);
+  chmodSync(join(bin, "ssh"), 0o755);
+  return { root, bin, log: join(root, "backend-requests.jsonl") };
+}
+
 // Registry with one managed agent bound to an exact local Hmux runtime.
 function writeManagedAgentRegistry(directory, agentOverrides = {}) {
   writeFileSync(
@@ -645,6 +709,53 @@ describe("Dure Hmux IDE CLI", () => {
       expect(requests).toEqual([{ url: "/hmux/stop", body: { name: "agent-canonical", confirm: true } }]);
     },
   );
+
+  it.each([["stop", "agent-scheduled-1"], ["hmux", "stop", "--name", "nightly-review"]].map((args) => [args]))(
+    "stops a Run the app has not opened through its backend Run record via %j", async (args) => {
+      const appRequests = [];
+      const port = await startAppServer(withBody((incoming, response, body) => {
+        appRequests.push({ url: incoming.url, body: JSON.parse(body) });
+        respondJson(response, { ok: false, error: { code: "pane_not_found",
+          message: `Hmux agent ${JSON.parse(body).name} was not found` } }, 409);
+      }));
+      const root = scheduledRunBackendFixture(port);
+      const result = await runCli([...args, "--yes", "--json"], isolatedEnvironment({
+        HOME: root.root, DURE_HOME: root.root, DURE_BACKEND_PROFILE: "remote-a",
+        PATH: `${root.bin}:${process.env.PATH}`, DURE_FAKE_BACKEND_LOG: root.log,
+      }));
+      expect(result.stderr).toBe("");
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ apiVersion: "dure.agent-stop/v1", ok: true,
+        agent: { id: "agent-scheduled-1", name: "nightly-review" },
+        dispatchStop: { status: "workspace_preserved", workspaceDisposition: "preserve",
+          spawnOperationId: "spawn-scheduled-1" } });
+      expect(appRequests).toEqual([{ url: "/hmux/stop", body: { name: args.at(-1), confirm: true } }]);
+      const backendRequests = readFileSync(root.log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      expect(backendRequests).toEqual([
+        { operation: "agent_spawn.list", body: { schemaVersion: 1, selector: args.at(-1) } },
+        { operation: "dispatch.stop.status", body: { schemaVersion: 1, spawnOperationId: "spawn-scheduled-1" } },
+        { operation: "dispatch.stop.preview", body: { schemaVersion: 1, spawnOperationId: "spawn-scheduled-1",
+          workspaceDisposition: "preserve" } },
+        { operation: "dispatch.stop.apply", body: { schemaVersion: 1, operationId: "dispatch-stop-1",
+          planToken: `sha256:${"a".repeat(64)}`, expectedJournalRevision: 1 } },
+      ]);
+    },
+  );
+
+  it("keeps the app's not-found answer when the backend has no Run record either", async () => {
+    const port = await startAppServer(withBody((_incoming, response) => {
+      respondJson(response, { ok: false, error: { code: "pane_not_found", message: "Hmux agent ghost was not found" } }, 409);
+    }));
+    const root = scheduledRunBackendFixture(port);
+    const result = await runCli(["stop", "ghost", "--yes", "--json"], isolatedEnvironment({
+      HOME: root.root, DURE_HOME: root.root, DURE_BACKEND_PROFILE: "remote-a",
+      PATH: `${root.bin}:${process.env.PATH}`, DURE_FAKE_BACKEND_LOG: root.log,
+    }));
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: "pane_not_found" } });
+    expect(readFileSync(root.log, "utf8").trim().split("\n").map((line) => JSON.parse(line).operation))
+      .toEqual(["agent_spawn.list"]);
+  });
 
   it("preserves partial cleanup evidence and failure exit status as JSON", async () => {
     const port = await startAppServer(withBody((_incoming, response) => {

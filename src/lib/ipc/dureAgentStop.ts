@@ -1,5 +1,6 @@
 import {
 	type CanonicalAgentStopReceiptV1,
+	canonicalAgentStopApplyRevisionV1,
 	parseCanonicalAgentStopResultV1,
 } from "@/lib/agents/canonicalAgentStopLifecycle";
 import { t } from "@/lib/i18n";
@@ -65,11 +66,11 @@ function exactReceipt(
 }
 
 function expectedApplyRevision(receipt: CanonicalAgentStopReceiptV1): number {
-	if (receipt.status === "planned") return receipt.journalRevision;
-	if (receipt.status === "authorized" && receipt.journalRevision > 1) {
-		return receipt.journalRevision - 1;
+	const revision = canonicalAgentStopApplyRevisionV1(receipt);
+	if (revision === null) {
+		throw contractError("agent_dispatch_stop_not_applicable");
 	}
-	throw contractError("agent_dispatch_stop_not_applicable");
+	return revision;
 }
 
 export function createDureAgentStopClient(options: {
