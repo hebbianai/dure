@@ -482,6 +482,31 @@ describe("headless runtime command", () => {
     expect(output).not.toContain("the backend rejected the request");
   });
 
+  it.each([
+    ["agent_runtime_provider_conversation_unavailable", "This runtime has no provider conversation to resume"],
+    ["agent_runtime_transition_request_invalid", "Older backends refuse a runtime with no provider conversation"],
+  ])("explains that runtime hibernate refused %s and names the stop that retires it", async (code, reason) => {
+    const command = (action) => collectAgentRuntimeCommand({
+      args: action === "switch" ? ["switch", "agent-1", "chat"] : ["hibernate", "agent-1"],
+      expectedRevision: 1,
+      requestId: "fresh-source",
+      resolveBackend: async () => ({ profile: { id: "selected" } }),
+      requestBackend: async () => {
+        throw new BackendTransportError("backend_transport_remote_error", { details: { code } });
+      },
+    });
+    const report = await command("hibernate");
+    expect(report).toMatchObject({ ok: false, error: { remoteCode: code } });
+    const output = formatAgentRuntimeCommand(report);
+    expect(output).toContain(`${code}: `);
+    expect(output).toContain(reason);
+    expect(output).toContain("nothing was stopped.");
+    expect(output).toContain("run dure stop agent-1 --yes with DURE_BACKEND_PROFILE=selected.");
+    expect(output).not.toContain("the backend rejected the request");
+    // Other runtime commands keep the transport's own text for this code.
+    expect(formatAgentRuntimeCommand(await command("switch"))).not.toContain("dure stop");
+  });
+
   it("rejects an unknown target before resolving or starting a backend", async () => {
     const report = await collectAgentRuntimeCommand({
       args: ["switch", "agent-1", "automatic"],
