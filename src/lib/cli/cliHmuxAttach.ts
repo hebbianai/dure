@@ -24,7 +24,10 @@ import { resolvePaneReference } from "@/lib/workspace/dock";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { openAndCommitHmuxStandaloneTerminalOn } from "@/lib/workspace/dock/standaloneShellTerminal";
 import { preparePaneProjectionRemoval } from "@/lib/workspace/pane/paneCloseCoordinator";
-import { PaneCommandError } from "@/lib/workspace/pane/paneCommandError";
+import {
+	PaneCommandError,
+	spaceNotMountedError,
+} from "@/lib/workspace/pane/paneCommandError";
 import type { PanelPosition } from "@/lib/workspace/pane/panePlacement";
 import { useStore } from "@/store";
 
@@ -132,12 +135,7 @@ export async function handleCliHmuxAttach(
 		const desktopId =
 			placement?.desktopId ?? requestedSpaceId ?? dependencies.activeSpaceId();
 		const api = placement?.api ?? dependencies.getDockview(desktopId);
-		if (!api) {
-			throw new PaneCommandError(
-				"pane_not_found",
-				`desktop ${desktopId} is not mounted`,
-			);
-		}
+		if (!api) throw spaceNotMountedError(desktopId);
 		const cwd = params.cwd ? String(params.cwd) : undefined;
 		const { panel, paneOwnership } = dependencies.openAndCommit(
 			desktopId,
