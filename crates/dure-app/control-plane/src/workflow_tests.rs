@@ -3195,6 +3195,21 @@ async fn initialize_structured_source_for_provider(
     agent_id: AgentIdV1,
     provider_id: ProviderIdV1,
 ) -> (AgentRuntimeSelectionV1, AgentInteractionBindingV1) {
+    initialize_structured_source_with_conversation(
+        state,
+        agent_id,
+        provider_id,
+        Some("conversation-retained"),
+    )
+    .await
+}
+
+async fn initialize_structured_source_with_conversation(
+    state: &ServiceState,
+    agent_id: AgentIdV1,
+    provider_id: ProviderIdV1,
+    provider_conversation_ref: Option<&str>,
+) -> (AgentRuntimeSelectionV1, AgentInteractionBindingV1) {
     let source = AgentRuntimeSelectionV1 {
         schema_version: 1,
         agent_id: agent_id.clone(),
@@ -3219,7 +3234,7 @@ async fn initialize_structured_source_for_provider(
         agent_id: agent_id.clone(),
         provider_id: provider_id.clone(),
         execution_profile: AgentExecutionProfileV1::ProviderDefault,
-        provider_conversation_ref: Some("conversation-retained".into()),
+        provider_conversation_ref: provider_conversation_ref.map(str::to_owned),
         runtime: AgentProviderRuntimeFenceV1 {
             runtime_generation: "runtime-retained".into(),
             provider_epoch: "provider-retained".into(),

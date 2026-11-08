@@ -161,6 +161,68 @@ async fn deferred_api_reuses_stop_recovery_and_observation_only_replay() {
     assert_eq!(open_count.load(Ordering::SeqCst), 2);
 }
 
+/// A Run whose first turn never started has no provider conversation to wake.
+/// Hibernate names that reason as terminal instead of an invalid journal
+/// record that asks the caller to retry, and leaves the source running.
+#[tokio::test]
+async fn hibernate_names_a_source_without_a_resumable_conversation() {
+    use agent_runtime_transition_apply::deferred::{HibernateBodyV1, hibernate};
+    let (_root, mut state, _, _) = fixture(Vec::new()).await;
+    let agent_id = AgentIdV1::new("fresh-structured-agent").unwrap();
+    let provider_id = ProviderIdV1::new("codex").unwrap();
+    state
+        .store
+        .upsert_agent(&AgentRecordV1 {
+            agent_id: agent_id.clone(),
+            provider_id: provider_id.clone(),
+            workspace_id: WorkspaceIdV1::new("workspace-1").unwrap(),
+            display_name: "Fresh fixture".into(),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+        .await
+        .unwrap();
+    let (source, _) =
+        initialize_structured_source_with_conversation(&state, agent_id, provider_id, None).await;
+    state.agent_providers =
+        Arc::new(provider_extension::test_codex_structured_agent_provider_registry());
+    let stop_count = Arc::new(AtomicUsize::new(0));
+    let open_count = Arc::new(AtomicUsize::new(0));
+    let mut runtimes = structured_provider_runtime::StructuredProviderRuntimeRegistry::default();
+    runtimes.register(source.provider_id.clone(), Arc::new(RepairableReplacementRuntime {
+        store: Arc::clone(&state.store),
+        stop_count: Arc::clone(&stop_count),
+        open_count: Arc::clone(&open_count),
+        first_failure_kind: structured_provider_runtime::StructuredProviderRuntimeErrorKindV1::RuntimeUnavailable,
+        second_failure_kind: None,
+        succeed_on_retry: true,
+    })).unwrap();
+    state.structured_runtimes = Arc::new(runtimes);
+    make_fixture_mutation_authority(&mut state);
+    let body = HibernateBodyV1 {
+        schema_version: 1,
+        agent_id: source.agent_id.clone(),
+        expected_source_revision: 1,
+        expected_idle: None,
+    };
+    for attempt in ["fresh-hibernate", "fresh-hibernate-retry"] {
+        let refused = hibernate(&state, attempt, body.clone()).await.unwrap_err();
+        assert_eq!(
+            refused.code,
+            "agent_runtime_provider_conversation_unavailable"
+        );
+        assert_eq!(refused.disposition, BackendFailureDispositionV1::Terminal);
+    }
+    assert_eq!(stop_count.load(Ordering::SeqCst), 0);
+    assert_eq!(open_count.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        crate::agent_runtime_projection::read_locked(&state, &source.agent_id)
+            .await
+            .unwrap(),
+        crate::agent_runtime_projection::AgentRuntimeObservedV1::Stable { .. }
+    ));
+}
+
 #[tokio::test]
 async fn deferred_driver_does_not_launch_on_repeated_drive_or_reopened_store() {
     let (root, mut state, launcher, _) = fixture(Vec::new()).await;
