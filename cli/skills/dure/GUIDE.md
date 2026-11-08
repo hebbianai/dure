@@ -58,6 +58,9 @@ registration and panes. Workspaces, worktrees and conversation history are
 preserved. Use the exact Agent ID for retries or `project/name` when names repeat.
 The selected Dure app must be running; its `DURE_APP_CHANNEL` chooses the client.
 The app routes each Agent to its own backend. `--backend` is not accepted here.
+A Run the app has not opened, such as a schedule occurrence, is stopped through
+its Run record on `DURE_BACKEND_PROFILE` or the local backend; select it by Agent
+ID, operation ID or Run name from `dure runs list` or `dure schedule runs`.
 `dure hmux stop --name ... --yes --json` uses the same path, including for Agents
 created by `dure run`. Do not inject `/exit` or kill a PID to bypass `dispatch.stop`.
 Read `dure stop --help` for options. Exit 0 with `ok: true` confirms cleanup;

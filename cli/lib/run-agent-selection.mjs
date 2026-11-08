@@ -1,9 +1,56 @@
+import { randomUUID } from "node:crypto";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { agentDisplayName, matchingAgents } from "./client-registry.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 import { rehostCommandLine } from "./managed-rehost-preview.mjs";
 
 const MAX_INSPECTED_CANDIDATES = 8;
+
+const RUN_LAUNCH_STATES = new Set(["applying", "ready_to_succeed", "inspect_before_retry", "retry_required",
+  "prompt_delivery_uncertain", "succeeded", "failed", "manual_intervention_required"]);
+
+function validRunPage(value) {
+  return value?.schemaVersion === 1 && Array.isArray(value.runs) && value.runs.length <= 64 &&
+    (value.nextCursor === null || isDureDomainIdV1(value.nextCursor)) &&
+    value.runs.every((run) => [run.agentId, run.operationId, run.name, run.providerId, run.workspaceId, run.projectId]
+      .every(isDureDomainIdV1) && RUN_LAUNCH_STATES.has(run.launchState) &&
+      Number.isSafeInteger(run.createdAtMs) && run.createdAtMs >= 0 &&
+      Number.isSafeInteger(run.updatedAtMs) && run.updatedAtMs >= run.createdAtMs) &&
+    value.runs.every((run, i) => i === 0 || run.operationId > value.runs[i - 1].operationId) &&
+    (value.nextCursor === null || (value.runs.length === 64 && value.nextCursor === value.runs.at(-1).operationId));
+}
+
+/** One bounded page of the backend's durable Run records. A selector narrows
+ * it to Runs whose name, Agent ID or operation ID equals the selector. */
+export async function listRunRecords({ backend, requestBackend, selector, cursor }) {
+  const response = await requestBackend(backend.profile, {
+    requestId: randomUUID(), operation: "agent_spawn.list", requiredCapabilities: ["agent_spawn.list"],
+    body: { schemaVersion: 1, ...(cursor ? { after: cursor } : {}), ...(selector ? { selector } : {}) },
+  }, backend.transportOptions);
+  const page = response.result;
+  if (!validRunPage(page) || (selector && page.runs.some((entry) =>
+      ![entry.name, entry.agentId, entry.operationId].includes(selector))) ||
+      (cursor && page.runs.some((entry) => entry.operationId <= cursor))) {
+    return { error: { code: "runs_response_invalid" } };
+  }
+  return { page, backend: response.backend };
+}
+
+/** Exact IDs win over name collisions. A partial page cannot establish
+ * uniqueness, so each candidate carries its exact `retry(agentId)` command.
+ * Returns `{ run: undefined }` when no Run record matches. */
+export function selectRunRecord(page, selector, retry) {
+  const exact = page.runs.filter((entry) => entry.agentId === selector || entry.operationId === selector);
+  const matches = exact.length ? exact : page.runs;
+  if (matches.length > 1 || (matches.length === 1 && page.nextCursor !== null)) {
+    return { error: { code: "run_selector_ambiguous",
+      message: `${page.nextCursor === null ? matches.length : "More than " + matches.length} Runs match ${selector}. Retry with one exact Agent ID:`,
+      candidates: matches.map((entry) => ({ agentId: entry.agentId, name: entry.name, projectId: entry.projectId,
+        providerId: entry.providerId, operationId: entry.operationId, launchState: entry.launchState,
+        retry: retry(entry.agentId) })) } };
+  }
+  return { run: matches[0] };
+}
 
 /** A runtime label for choosing between candidates, not proof of liveness. */
 function runtimeStateLabel(observation) {
