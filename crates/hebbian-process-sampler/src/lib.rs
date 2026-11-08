@@ -63,7 +63,16 @@ const MAX_PROCESS_ARGUMENT_BYTES: usize = 1024 * 1024;
 const MAX_RESPONSE_PAYLOAD_BYTES: usize =
     MAX_PS_OUTPUT_BYTES * 3 + MAX_PROCESS_RECORDS * 16 + std::mem::size_of::<u64>() + 4;
 const DEFAULT_FRESHNESS: Duration = Duration::from_millis(500);
+/// Budget for a fresh or complete census. Idle retirement waits on these while
+/// holding the Host's attach gate, so they stay short and fail closed.
 const PROCESS_SAMPLE_TIMEOUT: Duration = Duration::from_secs(1);
+/// Budget for a census that only feeds periodic observation.
+///
+/// This is wall-clock time, which is what a loaded machine takes away: with a
+/// run queue ten times the core count, a `ps` needing a quarter of a second of
+/// CPU took up to three seconds. Killing it at one second discarded that work,
+/// left every Host without an answer, and sent each of them to run its own.
+const OBSERVATION_SAMPLE_TIMEOUT: Duration = Duration::from_secs(5);
 const COMPLETE_SNAPSHOT_WAIT_TIMEOUT: Duration = Duration::from_millis(1_500);
 const MAX_COMPLETE_SNAPSHOT_AGE: Duration = Duration::from_millis(500);
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
@@ -75,6 +84,16 @@ const MAX_PENDING_CONNECTIONS: usize = 32;
 /// Bound consecutive timeouts or unavailable replies before deferring peer probes.
 const MAX_UNRESPONSIVE_ATTEMPTS: u32 = 3;
 const PEER_RECOVERY_INTERVAL: Duration = Duration::from_secs(30);
+/// How long observers keep the last good table while censuses are failing.
+/// Past this the sampler reports unavailable, and clients may observe locally.
+const MAX_OBSERVATION_STALENESS: Duration = PEER_RECOVERY_INTERVAL;
+/// How often one sampler may repeat a private census for ordinary observation.
+///
+/// Peers stop serving together when a machine is busy, so every Host falls back
+/// at once. Sampling privately at the shared freshness turned that into one
+/// full `ps` per Host per poll, which kept the machine busy. A sampler's first
+/// private census is immediate, so one-shot callers are still answered.
+const LOCAL_FALLBACK_FRESHNESS: Duration = PEER_RECOVERY_INTERVAL;
 
 /// Announced at most once per process — see `announce_local_fallback`.
 static LOCAL_FALLBACK_ANNOUNCED: AtomicBool = AtomicBool::new(false);
@@ -530,7 +549,7 @@ impl SharedProcessSampler {
             .map_err(|_| io::Error::other("process sampler fallback state lock is poisoned"))?;
         Ok(Arc::clone(state.get_or_insert_with(|| {
             Arc::new(SharedSamplerState::new(
-                self.freshness,
+                self.freshness.max(LOCAL_FALLBACK_FRESHNESS),
                 Arc::clone(&self.source),
             ))
         })))
@@ -574,6 +593,7 @@ impl SharedProcessSampler {
         })?;
         verify_peer_attestation(&mut stream, deadline)?;
 
+        let deadline = Instant::now() + request.response_budget();
         let mut header = [0_u8; RESPONSE_HEADER_BYTES];
         read_exact_before(&mut stream, &mut header, deadline).map_err(|error| {
             io::Error::new(
@@ -1176,6 +1196,22 @@ enum SamplerRequest {
     CompleteSnapshot { required_pid: u32, max_age_ms: u32 },
 }
 
+impl SamplerRequest {
+    /// How long a peer that has already attested may take to answer.
+    ///
+    /// Observation requests can wait on a census the peer is running. A slow
+    /// census is not a wedged peer, and a peer that never attests still fails
+    /// within `IO_TIMEOUT`.
+    fn response_budget(self) -> Duration {
+        match self {
+            Self::Agent(_) | Self::Foreground(_) | Self::Snapshot => {
+                OBSERVATION_SAMPLE_TIMEOUT + IO_TIMEOUT
+            }
+            Self::FreshSnapshot | Self::CompleteSnapshot { .. } => IO_TIMEOUT,
+        }
+    }
+}
+
 /// What one round trip with the socket peer produced.
 enum PeerOutcome {
     Answered(SamplerResponse),
@@ -1568,38 +1604,19 @@ fn classify_process_session_id(result: io::Result<libc::pid_t>) -> io::Result<Op
 }
 
 trait ProcessSource: Send + Sync {
-    fn sample(&self) -> io::Result<ProcessTable>;
+    fn sample(&self, timeout: Duration) -> io::Result<ProcessTable>;
 }
 
 struct PsProcessSource;
 
 impl ProcessSource for PsProcessSource {
-    fn sample(&self) -> io::Result<ProcessTable> {
+    fn sample(&self, timeout: Duration) -> io::Result<ProcessTable> {
         let mut command = CommandSpec::new("/bin/ps");
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         command.args(["-axo", "pid=,ppid=,pgid=,tpgid=,command="]);
         #[cfg(not(any(target_os = "macos", target_os = "ios")))]
         command.args(["-axo", "pid=,ppid=,sid=,pgid=,tpgid=,command="]);
-        let output = run_bounded(&command, PROCESS_SAMPLE_TIMEOUT, MAX_PS_OUTPUT_BYTES).map_err(
-            |failure| {
-                let kind = if matches!(failure, CommandFailure::Timeout(_)) {
-                    io::ErrorKind::TimedOut
-                } else {
-                    io::ErrorKind::Other
-                };
-                io::Error::new(
-                    kind,
-                    format!(
-                        "bounded process table sampling failed at {}",
-                        failure.stage()
-                    ),
-                )
-            },
-        )?;
-        if !output.status.success() || output.exceeded_limit {
-            return Err(io::Error::other("process table sampling failed"));
-        }
-        let snapshot = String::from_utf8_lossy(&output.stdout);
+        let snapshot = bounded_census_output(&command, timeout)?;
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         return Ok(ProcessTable::parse_with_os_session_ids(&snapshot));
         #[cfg(not(any(target_os = "macos", target_os = "ios")))]
@@ -1607,9 +1624,31 @@ impl ProcessSource for PsProcessSource {
     }
 }
 
+fn bounded_census_output(command: &CommandSpec, timeout: Duration) -> io::Result<String> {
+    let output = run_bounded(command, timeout, MAX_PS_OUTPUT_BYTES).map_err(|failure| {
+        let kind = if matches!(failure, CommandFailure::Timeout(_)) {
+            io::ErrorKind::TimedOut
+        } else {
+            io::ErrorKind::Other
+        };
+        io::Error::new(
+            kind,
+            format!(
+                "bounded process table sampling failed at {}",
+                failure.stage()
+            ),
+        )
+    })?;
+    if !output.status.success() || output.exceeded_limit {
+        return Err(io::Error::other("process table sampling failed"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 struct SamplerState {
     freshness: Duration,
     sampled_at: Option<Instant>,
+    table_sampled_at: Option<Instant>,
     revision: u64,
     refresh_generation: u64,
     table: Option<ProcessTable>,
@@ -1629,12 +1668,22 @@ enum RefreshKind {
     Fresh,
 }
 
+impl RefreshKind {
+    fn sample_timeout(self) -> Duration {
+        match self {
+            Self::Cached => OBSERVATION_SAMPLE_TIMEOUT,
+            Self::Fresh => PROCESS_SAMPLE_TIMEOUT,
+        }
+    }
+}
+
 impl SharedSamplerState {
     fn new(freshness: Duration, source: Arc<dyn ProcessSource>) -> Self {
         Self {
             state: Mutex::new(SamplerState {
                 freshness,
                 sampled_at: None,
+                table_sampled_at: None,
                 revision: 0,
                 refresh_generation: 0,
                 table: None,
@@ -1670,12 +1719,19 @@ impl SharedSamplerState {
             Arc::clone(&state.source)
         };
 
-        self.run_refresh(source)
+        let refreshed = self.run_refresh(source, kind.sample_timeout());
+        // Observers keep the last good table; with none left, report why not.
+        if kind == RefreshKind::Cached && refreshed.is_err() && self.lock()?.availability().is_ok()
+        {
+            return Ok(());
+        }
+        refreshed
     }
 
-    fn run_refresh(&self, source: Arc<dyn ProcessSource>) -> io::Result<()> {
-        let sampled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source.sample()))
-            .unwrap_or_else(|_| Err(io::Error::other("process table sampler panicked")));
+    fn run_refresh(&self, source: Arc<dyn ProcessSource>, timeout: Duration) -> io::Result<()> {
+        let sampled =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source.sample(timeout)))
+                .unwrap_or_else(|_| Err(io::Error::other("process table sampler panicked")));
         let mut state = self.lock()?;
         state.sampled_at = Some(Instant::now());
         state.refresh_in_flight = false;
@@ -1683,6 +1739,7 @@ impl SharedSamplerState {
         let result = match sampled {
             Ok(table) => {
                 state.table = Some(table);
+                state.table_sampled_at = state.sampled_at;
                 state.revision = state.revision.saturating_add(1).max(1);
                 state.last_sample_failed = false;
                 Ok(())
@@ -1788,7 +1845,7 @@ impl SharedSamplerState {
             Arc::clone(&state.source)
         };
 
-        self.run_refresh(source)?;
+        self.run_refresh(source, PROCESS_SAMPLE_TIMEOUT)?;
         self.lock()?
             .require_recent_complete_snapshot(required_pid, max_age)
     }
@@ -1824,8 +1881,13 @@ impl SharedSamplerState {
 }
 
 impl SamplerState {
+    /// Whether observers can be answered. A failed census leaves the last good
+    /// table usable for a bounded time; destructive callers check separately.
     fn availability(&self) -> io::Result<()> {
-        if self.last_sample_failed || self.table.is_none() {
+        let table_expired = self
+            .table_sampled_at
+            .is_none_or(|sampled_at| sampled_at.elapsed() > MAX_OBSERVATION_STALENESS);
+        if self.table.is_none() || (self.last_sample_failed && table_expired) {
             Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
                 "process table sample is unavailable",
@@ -2422,7 +2484,7 @@ mod tests {
     }
 
     impl ProcessSource for CountingSource {
-        fn sample(&self) -> io::Result<ProcessTable> {
+        fn sample(&self, _timeout: Duration) -> io::Result<ProcessTable> {
             self.samples.fetch_add(1, Ordering::SeqCst);
             Ok(self.table.clone())
         }
@@ -2433,9 +2495,39 @@ mod tests {
     }
 
     impl ProcessSource for FailingSource {
-        fn sample(&self) -> io::Result<ProcessTable> {
+        fn sample(&self, _timeout: Duration) -> io::Result<ProcessTable> {
             self.samples.fetch_add(1, Ordering::SeqCst);
             Err(io::Error::other("injected sample failure"))
+        }
+    }
+
+    /// Succeeds once, then every later census fails, as on a machine that has
+    /// just become too loaded for `ps` to finish inside its budget.
+    struct FailsAfterFirstSource {
+        samples: AtomicUsize,
+        table: ProcessTable,
+    }
+
+    impl ProcessSource for FailsAfterFirstSource {
+        fn sample(&self, _timeout: Duration) -> io::Result<ProcessTable> {
+            if self.samples.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(self.table.clone())
+            } else {
+                Err(io::Error::other("injected later census failure"))
+            }
+        }
+    }
+
+    struct SlowSource {
+        samples: AtomicUsize,
+        delay: Duration,
+    }
+
+    impl ProcessSource for SlowSource {
+        fn sample(&self, _timeout: Duration) -> io::Result<ProcessTable> {
+            self.samples.fetch_add(1, Ordering::SeqCst);
+            thread::sleep(self.delay);
+            Ok(ProcessTable::default())
         }
     }
 
@@ -2445,7 +2537,7 @@ mod tests {
     }
 
     impl ProcessSource for AppearingProcessSource {
-        fn sample(&self) -> io::Result<ProcessTable> {
+        fn sample(&self, _timeout: Duration) -> io::Result<ProcessTable> {
             let sample = self.samples.fetch_add(1, Ordering::SeqCst);
             Ok(if sample == 0 {
                 ProcessTable::default()
@@ -2472,7 +2564,7 @@ mod tests {
     }
 
     impl ProcessSource for BlockingRefreshSource {
-        fn sample(&self) -> io::Result<ProcessTable> {
+        fn sample(&self, _timeout: Duration) -> io::Result<ProcessTable> {
             if self.samples.fetch_add(1, Ordering::SeqCst) > 0 {
                 if let Some(refresh_started) = self.refresh_started.lock().unwrap().take() {
                     refresh_started.send(()).unwrap();
@@ -2494,7 +2586,7 @@ mod tests {
     }
 
     impl ProcessSource for PanickingRefreshSource {
-        fn sample(&self) -> io::Result<ProcessTable> {
+        fn sample(&self, _timeout: Duration) -> io::Result<ProcessTable> {
             let sample = self.samples.fetch_add(1, Ordering::SeqCst);
             if sample == 1 {
                 if let Some(refresh_started) = self.refresh_started.lock().unwrap().take() {
@@ -3735,6 +3827,136 @@ mod tests {
         assert!(state.agent_process(std::process::id()).is_err());
         assert!(state.process_snapshot().is_err());
         assert_eq!(source.samples.load(Ordering::SeqCst), 1);
+    }
+
+    fn table_containing(pid: u32) -> ProcessTable {
+        ProcessTable {
+            records: vec![ProcessRecord {
+                pid,
+                parent_pid: 1,
+                session_id: pid,
+                command: "/bin/sh".into(),
+            }],
+            ..ProcessTable::default()
+        }
+    }
+
+    #[test]
+    fn polling_behind_an_unavailable_peer_runs_one_private_census_per_window() {
+        let runtime = tempfile::tempdir().unwrap();
+        let pid = std::process::id();
+        let source = Arc::new(CountingSource {
+            samples: AtomicUsize::new(0),
+            table: ProcessTable::default(),
+        });
+        let mut poller = sampler_behind_peer(&runtime, reply_unavailable);
+        poller.source = source.clone();
+        poller.freshness = Duration::from_millis(1);
+
+        // Every host polls like this. Each poll past the peer's freshness used
+        // to spawn another full `ps`, once per host.
+        for _ in 0..MAX_UNRESPONSIVE_ATTEMPTS * 3 {
+            poller.agent_process(pid).unwrap();
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(source.samples.load(Ordering::SeqCst), 1);
+
+        // A one-shot caller builds its own sampler and still gets an answer.
+        let one_shot = SharedProcessSampler::with_source(
+            runtime.path().to_path_buf(),
+            Duration::from_millis(1),
+            source.clone(),
+        )
+        .unwrap();
+        one_shot.agent_process(pid).unwrap();
+        assert_eq!(source.samples.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn observation_census_outlasts_a_loaded_machine_but_strict_census_stays_tight() {
+        let mut slow = CommandSpec::new("/bin/sh");
+        slow.args(["-c", "sleep 1.5; printf census"]);
+
+        assert_eq!(
+            bounded_census_output(&slow, RefreshKind::Cached.sample_timeout()).unwrap(),
+            "census"
+        );
+        assert_eq!(
+            bounded_census_output(&slow, RefreshKind::Fresh.sample_timeout())
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+    }
+
+    #[test]
+    fn slow_census_is_awaited_instead_of_demoting_the_peer() {
+        let runtime = tempfile::tempdir().unwrap();
+        let source = Arc::new(SlowSource {
+            samples: AtomicUsize::new(0),
+            delay: IO_TIMEOUT + Duration::from_millis(400),
+        });
+        let sampler = SharedProcessSampler::with_source(
+            runtime.path().to_path_buf(),
+            Duration::from_secs(30),
+            source.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(sampler.process_snapshot().unwrap().revision, 1);
+        assert_eq!(source.samples.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            sampler
+                .fallback
+                .unresponsive_attempts
+                .load(Ordering::SeqCst),
+            0
+        );
+        assert!(sampler.fallback.state.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn failed_census_keeps_the_last_table_for_observers_until_it_is_too_old() {
+        let pid = std::process::id();
+        let source = Arc::new(FailsAfterFirstSource {
+            samples: AtomicUsize::new(0),
+            table: table_containing(pid),
+        });
+        let state = SharedSamplerState::new(Duration::ZERO, source.clone());
+
+        assert_eq!(state.process_snapshot().unwrap().revision, 1);
+        // Zero freshness makes this poll run a census, and that census fails.
+        assert_eq!(state.process_snapshot().unwrap().revision, 1);
+        assert_eq!(source.samples.load(Ordering::SeqCst), 2);
+
+        // Destructive callers still fail closed on the same failure.
+        assert!(state.fresh_process_snapshot().is_err());
+        assert!(
+            state
+                .complete_process_snapshot_containing(pid, MAX_COMPLETE_SNAPSHOT_AGE)
+                .is_err()
+        );
+
+        state.lock().unwrap().table_sampled_at =
+            Instant::now().checked_sub(MAX_OBSERVATION_STALENESS + Duration::from_secs(1));
+        assert!(state.process_snapshot().is_err());
+    }
+
+    #[test]
+    fn failed_strict_census_does_not_disturb_observers() {
+        let pid = std::process::id();
+        let source = Arc::new(FailsAfterFirstSource {
+            samples: AtomicUsize::new(0),
+            table: table_containing(pid),
+        });
+        let state = SharedSamplerState::new(Duration::from_secs(30), source.clone());
+
+        assert_eq!(state.process_snapshot().unwrap().revision, 1);
+        assert!(state.fresh_process_snapshot().is_err());
+        // Without this, each failed strict census sent every polling host to
+        // its own private `ps` for the rest of the freshness window.
+        assert_eq!(state.process_snapshot().unwrap().revision, 1);
+        assert_eq!(source.samples.load(Ordering::SeqCst), 2);
     }
 
     #[test]
