@@ -116,7 +116,13 @@ name is refused with each candidate's exact retry command; use the Agent ID.
 Accounts must be
 registered for that provider on the owning backend; display names are not IDs.
 An unregistered account needs preparation through Dure's account settings first.
-`--account default` explicitly selects the provider's default credentials.
+On a headless backend, sign in on that host with the provider's own CLI pointed
+at a directory like `~/.dure/accounts/codex-work`, then run
+`dure accounts register codex --dir codex-work --backend ID`. The directory name
+is the account ID, and running the command again keeps it. `dure accounts help`
+has the exact sign-in commands. Dure never copies credentials between machines.
+`--account default` explicitly selects the provider's default credentials and
+needs no registration.
 
 Preview returns `continuation.start`, `retry` and `status`: retain these exact
 commands. The apply/retry command pins the Agent, current mode, source revision,

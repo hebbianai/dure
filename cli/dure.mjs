@@ -3880,6 +3880,8 @@ Usage:
                                       Register cwd or the specified path on the selected backend
   dure recovery <get|put|status|observe> [--backend ID] [--json]
                                       Discover registered accounts or configure automatic account recovery
+  dure accounts register <provider> --dir NAME [--backend ID] [--json]
+                                      Register a provider login already signed in on the backend host
   dure provider-defaults <get|set> [provider mode] [--backend ID] [--json]
                                       Read or change provider permission defaults on the selected backend
   dure providers capabilities [--json]
@@ -4205,6 +4207,15 @@ async function main() {
     const { runRecoveryCommand } = await import("./lib/recovery-command.mjs");
     try {
       process.exitCode = await runRecoveryCommand(cmd === "help" ? ["--help"] : rest, { resolveBackend: backendProfileQueryContext }) ? 0 : 2;
+    } catch (error) {
+      fail(error.message);
+    }
+    return;
+  }
+  if (cmd === "accounts" || (cmd === "help" && rest[0] === "accounts")) {
+    const { runAccountsCommand } = await import("./lib/accounts-command.mjs");
+    try {
+      process.exitCode = await runAccountsCommand(cmd === "help" ? ["--help"] : rest, { resolveBackend: backendProfileQueryContext }) ? 0 : 2;
     } catch (error) {
       fail(error.message);
     }

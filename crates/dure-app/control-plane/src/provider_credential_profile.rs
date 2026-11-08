@@ -1516,6 +1516,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn directory_named_account_id_is_stable_and_never_takes_over_a_client_account() {
+        let temporary = tempfile::tempdir().unwrap();
+        let home = temporary.path();
+        owner_directory_at(&home.join("accounts"));
+        owner_directory_at(&home.join("accounts/codex-work"));
+        owner_directory_at(&home.join("accounts/codex-app"));
+        let store = Arc::new(
+            SqliteDomainStore::open(home.join("application-state.sqlite3"))
+                .await
+                .unwrap(),
+        );
+        let registry = ProviderCredentialProfileRegistry::new(home.to_path_buf(), store);
+        let request = |directory: &str, reference: &str| RegisterProviderCredentialProfileBodyV1 {
+            schema_version: PROVIDER_CREDENTIAL_PROFILE_SCHEMA_VERSION_V1,
+            provider_id: "codex".into(),
+            reference_id: reference.into(),
+            profile_directory_name: directory.into(),
+        };
+
+        let first = registry
+            .register(request("codex-work", "codex-work"))
+            .await
+            .unwrap();
+        assert_eq!(first.reference_id, "codex-work");
+        assert_eq!(
+            registry
+                .register(request("codex-work", "codex-work"))
+                .await
+                .unwrap(),
+            first
+        );
+
+        // The desktop app can still adopt a directory the CLI registered.
+        let adopted = registry
+            .register(request("codex-work", "acc-work-client"))
+            .await
+            .unwrap();
+        assert_eq!(adopted.credential_generation, first.credential_generation);
+
+        // A directory a client already registered keeps that client's ID.
+        registry
+            .register(request("codex-app", "acc-app-client"))
+            .await
+            .unwrap();
+        assert_eq!(
+            registry
+                .register(request("codex-app", "codex-app"))
+                .await
+                .unwrap_err(),
+            ProviderCredentialProfileErrorV1::Conflict
+        );
+    }
+
+    #[tokio::test]
     async fn concurrent_registration_converges_on_one_generation() {
         concurrent_registration("acc-profile-a").await;
     }

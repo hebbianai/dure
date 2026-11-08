@@ -31,6 +31,10 @@ is eligible; optional observations contain {profile, usedPercent, observedAtMs}.
 A failed or uncertain attempt is retained. Reading status never resends work.
 For a manual same-conversation account change (Claude or Codex), use
 dure runs switch-account <name-or-id> --account ACCOUNT_ID; see dure runs --help.
+The provider's default login on the backend needs no registration:
+dure runs switch-account RUN --account default --confirm-restart.
+Add a login signed in on the backend host with dure accounts register; see
+dure accounts help.
 Automatic recovery is opt-in and may require Dure Pro; a manual switch does not enable it.`;
 
 export function parseRecoveryCommand(args) {

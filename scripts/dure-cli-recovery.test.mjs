@@ -156,6 +156,8 @@ test("get lists each login once with its local profile name, usage windows and r
     "                 same login, also registered as acc-work-b",
     "  acc-unmatched  name unknown     usage unknown",
     "Switch with: dure runs switch-account RUN --account ID. Any ID of one login selects the same credential.",
+    "Use the provider's default login, which needs no registration: dure runs switch-account RUN --account default --confirm-restart",
+    "Add a login signed in on this backend's host: dure accounts register claude --dir NAME --backend local (see dure accounts help)",
   ].join("\n"));
 
   const json = accountsCommand({ result, home, environment, args: ["--json"] });

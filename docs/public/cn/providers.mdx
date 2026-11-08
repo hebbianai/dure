@@ -50,6 +50,8 @@ Dure 使用你安装的编码智能体 CLI 和提供商账户。模型、认证�
 
 切换账户可能重启提供商进程并恢复对话。请查看切换提示和登录要求；移动面板不会切换账户。远程项目还需要在[远程主机](/cn/remote-and-ssh)上配置提供商。
 
+在无界面服务器上，请在该主机上用提供商自己的 CLI 登录，并指向 `~/.dure/accounts` 下类似 `codex-work` 的目录，同时确保这两个文件夹不对其他用户开放（`chmod 700`）。然后运行 `dure accounts register codex --dir codex-work --backend SERVER`。目录名即账户 ID，重复运行该命令 ID 不变。Dure 不会代为登录，也不会在机器之间复制凭据，这样注册的账户暂时不会显示在桌面账户列表中。运行 `dure accounts help` 可查看确切的登录命令。要在不注册的情况下使用服务器上的提供商默认登录，请运行 `dure runs switch-account RUN --account default --confirm-restart`。
+
 ## 查看使用量和限额
 
 Claude 和 Codex 使用量控件显示提供商返回的限额和重置时间。可在 **Settings → Appearance → Status bar** 显示或隐藏顶部栏指示器，在 **Stats and usage** 查看活动。缺失或过时的数据无法证明还有可用额度。

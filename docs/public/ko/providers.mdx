@@ -50,6 +50,8 @@ Beta에서는 Claude Code, Codex, OpenCode, Pi에 구조화된 채팅 통합이 
 
 계정 전환은 제공자 프로세스를 재시작하고 대화를 재개할 수 있습니다. 전환 안내와 로그인 요구를 확인하세요. pane을 옮겨도 계정은 바뀌지 않습니다. 원격 프로젝트는 [원격 호스트](/ko/remote-and-ssh)에도 제공자 설정이 필요합니다.
 
+헤드리스 서버에서는 해당 호스트에서 제공자 CLI로 직접 로그인하세요. 이때 `~/.dure/accounts` 아래의 `codex-work` 같은 디렉터리를 지정하고, 두 폴더 모두 다른 사용자가 접근할 수 없게 합니다(`chmod 700`). 그런 다음 `dure accounts register codex --dir codex-work --backend SERVER`를 실행합니다. 디렉터리 이름이 계정 ID가 되며, 명령을 다시 실행해도 ID는 유지됩니다. Dure는 로그인을 대신 실행하거나 기기 간에 자격 증명을 복사하지 않으며, 이렇게 등록한 계정은 아직 데스크톱 계정 목록에 표시되지 않습니다. 정확한 로그인 명령은 `dure accounts help`에서 확인하세요. 서버의 제공자 기본 로그인을 등록 없이 사용하려면 `dure runs switch-account RUN --account default --confirm-restart`를 실행하세요.
+
 ## 사용량과 한도 확인
 
 Claude와 Codex 사용량 컨트롤은 제공자가 반환한 한도와 초기화 시각을 보여 줍니다. **Settings → Appearance → Status bar**에서 상단 표시를 켜거나 끄고 **Stats and usage**에서 활동을 확인하세요. 값이 없거나 오래되었다면 남은 용량을 판단할 수 없습니다.

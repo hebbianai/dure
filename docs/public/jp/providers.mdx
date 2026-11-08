@@ -50,6 +50,8 @@ Beta では Claude Code、Codex、OpenCode、Pi に構造化チャットの統�
 
 アカウント切り替えでは、プロバイダープロセスの再起動と会話の再開が行われる場合があります。切り替え案内とログイン要求を確認してください。ペインの移動ではアカウントは変わりません。リモートプロジェクトでは[リモートホスト](/jp/remote-and-ssh)にも設定が必要です。
 
+ヘッドレスサーバーでは、そのホスト上でプロバイダーのCLIを使ってサインインします。`~/.dure/accounts`配下の`codex-work`のようなディレクトリを指定し、両方のフォルダーを他のユーザーから閉じてください（`chmod 700`）。そのあと`dure accounts register codex --dir codex-work --backend SERVER`を実行します。ディレクトリ名がアカウントIDになり、コマンドを再実行しても同じIDのままです。Dureはサインインを代行せず、マシン間で認証情報をコピーしません。この方法で登録したアカウントは、まだデスクトップのアカウント一覧には表示されません。正確なサインインコマンドは`dure accounts help`で確認できます。サーバーのプロバイダー既定のログインを登録なしで使うには、`dure runs switch-account RUN --account default --confirm-restart`を実行します。
+
 ## 使用量と上限を確認する
 
 Claude と Codex の使用量コントロールは、プロバイダーが返した上限とリセット時刻を表示します。**Settings → Appearance → Status bar** で上部バーの表示を切り替え、**Stats and usage** で活動を確認できます。情報がない、または古い場合は、余裕があるとは判断できません。

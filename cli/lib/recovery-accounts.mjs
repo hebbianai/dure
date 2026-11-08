@@ -247,5 +247,7 @@ export function formatRegisteredAccounts({ providerId, backend, policy, accounts
     lines.push(`Profile names and usage are read from this computer, so they are unknown for remote backend ${backend}.`);
   }
   lines.push("Switch with: dure runs switch-account RUN --account ID. Any ID of one login selects the same credential.");
+  lines.push("Use the provider's default login, which needs no registration: dure runs switch-account RUN --account default --confirm-restart");
+  lines.push(`Add a login signed in on this backend's host: dure accounts register ${providerId} --dir NAME --backend ${backend} (see dure accounts help)`);
   return lines.join("\n");
 }

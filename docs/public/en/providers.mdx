@@ -50,6 +50,8 @@ Open **Settings → AI provider accounts** to add supported account profiles. Se
 
 Account switching may restart the provider process and resume its conversation. Review the pending switch and any sign-in requirement; moving a pane does not switch its account. Remote projects also need provider setup on the [remote host](/en/remote-and-ssh).
 
+On a headless backend, sign in on that host with the provider's own CLI, pointed at a directory like `codex-work` under `~/.dure/accounts`, with both folders closed to other users (`chmod 700`). Then run `dure accounts register codex --dir codex-work --backend SERVER`. The directory name becomes the account ID, and running the command again keeps it. Dure does not run the sign-in or copy credentials between machines, and these accounts do not appear in the desktop account list yet. `dure accounts help` has the exact sign-in commands. To use the provider's default login on a backend without registering it, run `dure runs switch-account RUN --account default --confirm-restart`.
+
 ## Read usage and limits
 
 Claude and Codex usage controls show available provider-reported limits and reset times. Show or hide their top-bar indicators in **Settings → Appearance → Status bar** and inspect broader activity in **Stats and usage**. An absent or stale reading does not establish spare capacity.
