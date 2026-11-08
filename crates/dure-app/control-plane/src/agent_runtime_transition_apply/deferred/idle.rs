@@ -389,6 +389,29 @@ pub(crate) async fn run(state: Arc<ServiceState>) {
     }
 }
 
+/// Apply one fixed idle rule outside the user-facing policy. Only the Host's
+/// own clock qualifies, so a caller keeps no observation state of its own.
+pub(crate) async fn hibernate_if_host_idle(
+    state: &ServiceState,
+    agent_id: &AgentIdV1,
+    policy_revision: u64,
+    after: Duration,
+) -> Result<(), String> {
+    let (_, body, Some(elapsed)) = capture(state, agent_id).await? else {
+        return Ok(());
+    };
+    let Some(attempt) = native_idle_attempt(&body, Some(policy_revision), after, elapsed)? else {
+        return Ok(());
+    };
+    if !state.is_mutation_authority() {
+        return Err("runtime_idle_authority_unavailable".into());
+    }
+    hibernate(state, &attempt, body)
+        .await
+        .map(|_| ())
+        .map_err(|error| error.code)
+}
+
 fn legacy_source_key(source: &IdleSource) -> Result<String, String> {
     let encoded = serde_json::to_vec(
         &serde_json::to_value(source).map_err(|_| "runtime_idle_source_unavailable")?,

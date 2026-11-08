@@ -4,7 +4,7 @@ export const usageEnglishTranslations: Record<string, string> = {
 	"usage.cleanup.local": "Local agents only",
 	"usage.cleanup.loadFailed": "Could not read cleanup observations. Refresh to try again.",
 	"usage.cleanup.enabled": "Automatic hibernation after {duration} of confirmed inactivity",
-	"usage.cleanup.disabled": "Automatic hibernation is off",
+	"usage.cleanup.disabled": "Automatic hibernation is off for agents you start. Scheduled agents still hibernate after 30 minutes idle.",
 	"usage.cleanup.invalid": "The automatic hibernation policy could not be read",
 	"usage.cleanup.observedAt": "Observed at",
 	"usage.cleanup.unobserved": "Not observed yet",

@@ -25,8 +25,10 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::process::Command;
 
+mod disposable;
 mod git_process;
 mod local_exclude;
+pub use disposable::git_checkout_is_disposable;
 #[cfg(test)]
 use git_process::scrub_git_environment;
 use git_process::{checkout_is_clean_for_plain_remove, git_output};

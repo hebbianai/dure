@@ -537,6 +537,30 @@ fn structured_replacement_retirement_failure(
     }
 }
 
+/// A scheduled agent's checkout may have been removed while it slept. Only a
+/// wake pays for this lookup, and only once the folder is known to be missing.
+async fn wake_workspace(
+    state: &ServiceState,
+    transition: &AgentRuntimeTransitionRecordV1,
+    source: &AgentRuntimeSelectionV1,
+) -> Result<(String, std::path::PathBuf), String> {
+    match runtime_workspace(state, source).await {
+        Err(code)
+            if code == "agent_runtime_workspace_unavailable"
+                && transition.deferred_target.is_some() =>
+        {
+            crate::schedule_runtime::lifecycle::restore_checkout_for_wake(
+                state,
+                &source.agent_id,
+                &transition.intent.operation_id,
+            )
+            .await?;
+            runtime_workspace(state, source).await
+        }
+        result => result,
+    }
+}
+
 pub(super) async fn start_target(
     state: &ServiceState,
     transition: &AgentRuntimeTransitionRecordV1,
@@ -596,7 +620,7 @@ pub(super) async fn start_target(
             std::path::PathBuf::from(&movement.target_workspace.root_path),
         )
     } else {
-        runtime_workspace(state, source)
+        wake_workspace(state, transition, source)
             .await
             .map_err(TargetStartFailure::retryable)?
     };

@@ -4,7 +4,7 @@ export const usage: Record<string, string> = {
 	"usage.cleanup.local": "로컬 에이전트만 표시",
 	"usage.cleanup.loadFailed": "정리 관측 결과를 읽지 못했습니다. 새로고침해 다시 시도하세요.",
 	"usage.cleanup.enabled": "유휴 상태가 {duration} 동안 확인되면 자동 휴면",
-	"usage.cleanup.disabled": "자동 휴면 꺼짐",
+	"usage.cleanup.disabled": "직접 시작한 에이전트의 자동 휴면이 꺼져 있습니다. 예약 에이전트는 30분간 유휴 상태이면 휴면합니다.",
 	"usage.cleanup.invalid": "자동 휴면 설정을 읽을 수 없음",
 	"usage.cleanup.observedAt": "관측 시각",
 	"usage.cleanup.unobserved": "아직 관측되지 않음",

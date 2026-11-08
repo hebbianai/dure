@@ -25,6 +25,7 @@ use crate::{
 const MAX_SCHEDULE_ITEMS: usize = 128;
 const MAX_OCCURRENCE_ITEMS: usize = 256;
 const SCHEDULE_TICK_INTERVAL: Duration = Duration::from_secs(30);
+pub(crate) mod lifecycle;
 mod observation;
 
 #[derive(Clone, Debug, Deserialize)]

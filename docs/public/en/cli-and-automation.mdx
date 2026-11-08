@@ -35,7 +35,7 @@ dure schedule show daily-review
 dure schedule runs daily-review
 ```
 
-Creation enables future weekday runs at 09:00 in the named timezone. Add `--disabled` if you want to save the schedule without enabling recurring execution. Scheduled runs use isolated Git worktrees. Use `dure schedule inspect` with a returned run key to read the retained report.
+Creation enables future weekday runs at 09:00 in the named timezone. Add `--disabled` if you want to save the schedule without enabling recurring execution. Scheduled runs use isolated Git worktrees. A scheduled agent hibernates after 30 minutes of confirmed idle and can be woken with its conversation intact. Once it has stopped, its worktree is removed only if it has no uncommitted or untracked changes and every commit on it is already on the default branch; otherwise it is kept. Use `dure schedule inspect` with a returned run key to read the retained report.
 
 To pause it later without losing its history, run `dure schedule set daily-review --disabled --expected-revision N` with the revision shown by `dure schedule show`; `--enabled` resumes it. The same command can change `--cron`, `--timezone`, `--name` or `--prompt`.
 

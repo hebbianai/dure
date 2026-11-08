@@ -1,6 +1,7 @@
 use dure_app::{
-    DomainStoreErrorV1, SCHEDULE_OCCURRENCE_SCHEMA_VERSION_V2, ScheduleIdV1, ScheduleLaunchStateV1,
-    ScheduleOccurrenceRecordV2, ScheduleRunTemplateV1, ScheduleTriggerV1,
+    AgentIdV1, DomainStoreErrorV1, OperationIdV1, SCHEDULE_OCCURRENCE_SCHEMA_VERSION_V2,
+    ScheduleIdV1, ScheduleLaunchStateV1, ScheduleOccurrenceRecordV2, ScheduleRunTemplateV1,
+    ScheduleTriggerV1,
 };
 use sqlx::{Row, SqliteConnection, sqlite::SqliteRow};
 
@@ -172,6 +173,70 @@ impl SqliteDomainStore {
         let rows = sqlx::query("SELECT * FROM schedule_occurrences WHERE state = 'pending' ORDER BY created_at_ms, idempotency_key LIMIT ?1")
             .bind(maximum as i64).fetch_all(&self.pool).await.map_err(|e| map_sqlx("pending_schedule_occurrences", e))?;
         rows.into_iter().map(from_row).collect()
+    }
+
+    /// Spawns launched for schedule occurrences, in operation order. Each page
+    /// parses only `limit` receipts, so retained history stays cheap to scan.
+    pub async fn scheduled_agent_spawns(
+        &self,
+        after: Option<&OperationIdV1>,
+        limit: usize,
+    ) -> Result<Vec<(OperationIdV1, AgentIdV1)>, DomainStoreErrorV1> {
+        validate_limit(limit)?;
+        let rows = sqlx::query(
+            r#"SELECT occurrence.operation_id AS operation_id,
+                json_extract(receipt.receipt_json, '$.plan.agentId') AS agent_id
+            FROM schedule_occurrences AS occurrence
+            JOIN agent_spawn_receipts AS receipt ON receipt.operation_id = occurrence.operation_id
+            WHERE ?1 IS NULL OR occurrence.operation_id > ?1
+            ORDER BY occurrence.operation_id LIMIT ?2"#,
+        )
+        .bind(after.map(OperationIdV1::as_str))
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| map_sqlx("scheduled_agent_spawns", e))?;
+        rows.into_iter()
+            .map(|row| {
+                let operation: String = row
+                    .try_get("operation_id")
+                    .map_err(|e| corrupt_row("scheduled_agent_spawns", e))?;
+                let agent: String = row
+                    .try_get("agent_id")
+                    .map_err(|e| corrupt_row("scheduled_agent_spawns", e))?;
+                Ok((
+                    OperationIdV1::new(operation)
+                        .map_err(|e| storage("corrupt_scheduled_spawn", e.to_string()))?,
+                    AgentIdV1::new(agent)
+                        .map_err(|e| storage("corrupt_scheduled_spawn", e.to_string()))?,
+                ))
+            })
+            .collect()
+    }
+
+    /// The schedule spawn that started this agent, if a schedule did.
+    pub async fn scheduled_spawn_for_agent(
+        &self,
+        agent_id: &AgentIdV1,
+    ) -> Result<Option<OperationIdV1>, DomainStoreErrorV1> {
+        let row = sqlx::query(
+            r#"SELECT occurrence.operation_id AS operation_id
+            FROM schedule_occurrences AS occurrence
+            JOIN agent_spawn_receipts AS receipt ON receipt.operation_id = occurrence.operation_id
+            WHERE json_extract(receipt.receipt_json, '$.plan.agentId') = ?1 LIMIT 1"#,
+        )
+        .bind(agent_id.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| map_sqlx("scheduled_spawn_for_agent", e))?;
+        row.map(|row| {
+            let operation: String = row
+                .try_get("operation_id")
+                .map_err(|e| corrupt_row("scheduled_spawn_for_agent", e))?;
+            OperationIdV1::new(operation)
+                .map_err(|e| storage("corrupt_scheduled_spawn", e.to_string()))
+        })
+        .transpose()
     }
 
     /// Persist the launch identity before an agent can enroll its reporting Run.

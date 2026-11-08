@@ -352,6 +352,13 @@ dure schedule create --project operations --backend local --no-worktree \
   --cron "0 9 * * *" --timezone UTC -- "review operational status"
 ```
 
+An agent started by a schedule hibernates after 30 minutes of confirmed idle,
+keeping its conversation for `dure runtime wake`. `dure runtime idle disable` does
+not cover scheduled agents. Once a scheduled agent has stopped, its `automation-*`
+worktree is removed only when it has no uncommitted or untracked changes and every
+commit on it is on the default branch; ignored files go with it. Otherwise it is
+kept. The branch always stays, and a wake restores a removed worktree at its path.
+
 Project-root runs share files; they provide no per-run Git isolation. Do not
 combine `--no-worktree` with `--base-commit`, `--branch` or `--setup-command`.
 This opt-in requires `schedule.worktree_project_root_v1` on the selected backend;

@@ -4,7 +4,7 @@ export const usage: Record<string, string> = {
 	"usage.cleanup.local": "ローカルエージェントのみ",
 	"usage.cleanup.loadFailed": "整理の観測結果を読み取れませんでした。更新して再試行してください。",
 	"usage.cleanup.enabled": "{duration} の非アクティブ状態を確認後に自動休止",
-	"usage.cleanup.disabled": "自動休止は無効です",
+	"usage.cleanup.disabled": "自分で起動したエージェントの自動休止は無効です。スケジュールのエージェントは 30 分アイドルで休止します。",
 	"usage.cleanup.invalid": "自動休止の設定を読み取れません",
 	"usage.cleanup.observedAt": "観測日時",
 	"usage.cleanup.unobserved": "未観測",

@@ -32,8 +32,11 @@ Uses the backend directly; no open Dure window is required.
 Idle shows retained observations for a bounded page, not a complete session census.
 Journal outcomes cover hibernations among the latest 64 runtime transition admissions.
 Confirmed source stops do not measure reclaimed memory or every auxiliary process.
-Automatic hibernation defaults off. Idle set persists a backend policy across
-restarts (1000..2592000000 milliseconds); idle disable persists an opt-out.
+Automatic hibernation defaults off for agents a person started. Agents started
+by a schedule always hibernate after 30 minutes of confirmed idle; this setting
+can shorten that, but idle disable does not cover them.
+Idle set persists a backend policy across restarts
+(1000..2592000000 milliseconds); idle disable persists an opt-out.
 Use idle to read the policy revision before configuring. Host-measured idle time
 survives policy changes; enabling can admit an already-idle source after fresh checks.
 Legacy backend-observed intervals restart when the policy revision changes.

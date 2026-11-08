@@ -172,12 +172,20 @@ five quiet minutes of thinking. This is an observation, never an automatic stop.
 
 ### Scheduled operational tasks
 
-Schedules retain isolated Git worktrees by default. Use `dure schedule create
+Schedules use isolated Git worktrees by default. Use `dure schedule create
 --no-worktree --project ID --cron "0 9 * * *" -- "review operational status"`
 for a registered project folder, including a non-Git directory. Runs then share
 that folder. The selected backend must advertise `schedule.worktree_project_root_v1`;
 older backends refuse the opt-in before a schedule is changed. Git-specific
 `--base-commit`, `--branch` and `--setup-command` options cannot accompany it.
+
+An agent started by a schedule hibernates after 30 minutes of confirmed idle. Its
+conversation is kept and `dure runtime wake` resumes it. `dure runtime idle disable`
+covers agents a person started, not scheduled ones. Once a scheduled agent has
+stopped, its `automation-*` worktree is removed only when it has no uncommitted or
+untracked changes and every commit on it is already on the repository's default
+branch; ignored files such as build output go with it. Otherwise the worktree is
+kept. The branch always stays, and a wake restores a removed worktree at its path.
 
 Pause a schedule in place with `dure schedule set ID --disabled --expected-revision N`
 and resume it with `--enabled`. The same command can change `--cron`, `--timezone`,
