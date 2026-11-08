@@ -182,7 +182,14 @@ async fn materialize_workspace(
     match plan {
         CheckoutPlan::Adopt(handle) => return Ok(*handle),
         CheckoutPlan::CheckoutOwnedBranch => {
-            return acquire_owned_checkout(request, target, lease, creation).await;
+            let AgentSpawnWorktreePolicyV1::Dedicated {
+                base_commit_sha, ..
+            } = &request.policy
+            else {
+                return Err(WorkspaceFailure::new("workspace_policy_invalid"));
+            };
+            return acquire_owned_checkout(request, target, lease, creation, Some(base_commit_sha))
+                .await;
         }
         CheckoutPlan::PublishOwnership => {}
     }
@@ -218,7 +225,76 @@ async fn materialize_workspace(
             create_failure.unwrap_or_else(|| WorkspaceFailure::new("workspace_identity_conflict"))
         );
     }
-    acquire_owned_checkout(request, target, lease, creation).await
+    acquire_owned_checkout(request, target, lease, creation, Some(base_commit_sha)).await
+}
+
+/// Re-attach an owned branch whose checkout was removed because nothing on it
+/// could be lost. The branch may have advanced since launch, so its tip is
+/// adopted instead of being compared with the launch commit.
+pub(super) async fn restore_workspace(
+    request: WorkspaceAcquireRequest,
+) -> Result<WorkspaceHandle, WorkspaceFailure> {
+    let AgentSpawnWorktreePolicyV1::Dedicated {
+        base_commit_sha,
+        branch,
+        checkout_path,
+        ..
+    } = &request.policy
+    else {
+        return Err(WorkspaceFailure::new("workspace_policy_invalid"));
+    };
+    let lease = AgentSpawnWorkspaceLeaseV1::for_dedicated(&request.workspace_id, branch)
+        .map_err(|_| WorkspaceFailure::new("workspace_lease_invalid"))?;
+    let lease_ref = lease_ref(&request.workspace_id);
+    if read_ref(&request.project_root, &lease_ref)
+        .await?
+        .as_deref()
+        != Some(base_commit_sha)
+    {
+        return Err(WorkspaceFailure::new("workspace_lease_identity_mismatch"));
+    }
+    let target = prepare_workspace_destination(
+        &request.project_root,
+        &lease.directory_name,
+        checkout_path.as_deref(),
+    )?;
+    let creation = {
+        let repository = request.project_root.clone();
+        let target = target.clone();
+        let registration_id = request.registration_id.clone();
+        let inputs = [base_commit_sha.clone(), branch.clone(), lease_ref];
+        tokio::task::spawn_blocking(move || {
+            dure_git_checkout::prepare_git_checkout_creation(
+                &repository,
+                &target,
+                &registration_id,
+                &inputs.iter().map(String::as_str).collect::<Vec<_>>(),
+            )
+        })
+        .await
+        .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
+        .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?
+        .ok_or_else(|| WorkspaceFailure::new("workspace_identity_conflict"))?
+    };
+    let creation = tokio::task::spawn_blocking(move || creation.admit())
+        .await
+        .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
+        .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
+    let handle = match acquire_owned_checkout(&request, &target, &lease, &creation, None).await {
+        Ok(handle) => handle,
+        Err(failure) => {
+            tokio::task::spawn_blocking(move || creation.abort_if_absent())
+                .await
+                .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
+                .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
+            return Err(failure);
+        }
+    };
+    tokio::task::spawn_blocking(move || creation.activate())
+        .await
+        .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
+        .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
+    Ok(handle)
 }
 
 pub(super) async fn resolve_workspace(
@@ -267,9 +343,9 @@ async fn acquire_owned_checkout(
     target: &Path,
     lease: &AgentSpawnWorkspaceLeaseV1,
     creation: &AdmittedGitCheckoutCreation,
+    expected_head: Option<&str>,
 ) -> Result<WorkspaceHandle, WorkspaceFailure> {
     let AgentSpawnWorktreePolicyV1::Dedicated {
-        base_commit_sha,
         branch,
         checkout_path,
         ..
@@ -314,7 +390,7 @@ async fn acquire_owned_checkout(
         target,
         lease,
         &branch_ref,
-        Some(base_commit_sha),
+        expected_head,
     )
     .await?
     {

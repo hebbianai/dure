@@ -4,7 +4,7 @@ export const usage: Record<string, string> = {
 	"usage.cleanup.local": "仅本地智能体",
 	"usage.cleanup.loadFailed": "无法读取清理观测结果。请刷新重试。",
 	"usage.cleanup.enabled": "确认闲置 {duration} 后自动休眠",
-	"usage.cleanup.disabled": "自动休眠已关闭",
+	"usage.cleanup.disabled": "你启动的代理已关闭自动休眠。计划任务启动的代理在空闲 30 分钟后仍会休眠。",
 	"usage.cleanup.invalid": "无法读取自动休眠策略",
 	"usage.cleanup.observedAt": "观测时间",
 	"usage.cleanup.unobserved": "尚未观测",

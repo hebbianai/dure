@@ -4,7 +4,7 @@ export const usage: Record<string, string> = {
 	"usage.cleanup.local": "Agents locaux uniquement",
 	"usage.cleanup.loadFailed": "Impossible de lire les observations. Actualisez pour réessayer.",
 	"usage.cleanup.enabled": "Mise en veille automatique après {duration} d’inactivité confirmée",
-	"usage.cleanup.disabled": "Mise en veille automatique désactivée",
+	"usage.cleanup.disabled": "La mise en veille automatique est désactivée pour les agents que vous lancez. Les agents planifiés se mettent en veille après 30 minutes d’inactivité.",
 	"usage.cleanup.invalid": "Impossible de lire la règle de mise en veille automatique",
 	"usage.cleanup.observedAt": "Observé le",
 	"usage.cleanup.unobserved": "Pas encore observé",

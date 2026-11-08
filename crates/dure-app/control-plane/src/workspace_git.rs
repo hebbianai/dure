@@ -13,7 +13,7 @@ mod checkout;
 mod destination;
 mod existing_checkout;
 mod process;
-use checkout::{acquire_workspace, resolve_workspace};
+use checkout::{acquire_workspace, resolve_workspace, restore_workspace};
 #[cfg(test)]
 use destination::dedicated_path;
 use destination::{
@@ -136,6 +136,15 @@ fn normalize_workspace_request(
         });
     }
     Ok(request)
+}
+
+/// Bring back a Dure-owned checkout at its original path. Creation commits the
+/// registration's claim, so the caller retires that claim when it removes it.
+pub(crate) async fn restore_owned_checkout(
+    request: WorkspaceAcquireRequest,
+) -> Result<PathBuf, WorkspaceFailure> {
+    let request = normalize_workspace_request(request)?;
+    Ok(restore_workspace(request).await?.root)
 }
 
 async fn claim_workspace(

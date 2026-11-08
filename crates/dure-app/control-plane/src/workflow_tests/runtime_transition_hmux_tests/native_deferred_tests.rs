@@ -4,6 +4,7 @@ use hmux_client::{AgentRuntimeActivity, AgentRuntimeAttention};
 mod admission_regressions;
 mod removal;
 mod resume_interop;
+mod scheduled_lifecycle;
 
 #[tokio::test]
 #[ignore = "requires isolated real Hmux binaries; run the deferred runtime control-plane smoke"]

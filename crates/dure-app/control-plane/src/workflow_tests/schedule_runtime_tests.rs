@@ -1,6 +1,7 @@
 use super::*;
 use dure_app::AgentSpawnJournalStore;
 mod claude;
+mod lifecycle;
 
 #[tokio::test]
 async fn schedule_permission_defaults_are_inherited_only_without_an_override() {
@@ -410,7 +411,7 @@ pub(super) async fn prepare_project(root: &TempDir, state: &ServiceState) {
     .unwrap();
 }
 
-async fn prepare_schedule(root: &TempDir, state: &ServiceState) {
+pub(super) async fn prepare_schedule(root: &TempDir, state: &ServiceState) {
     prepare_project(root, state).await;
     state
         .store
