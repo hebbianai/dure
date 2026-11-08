@@ -15,6 +15,7 @@ import {
 import { EyeOff, GitBranch, ShieldCheck } from "lucide-react";
 import { DureLoader } from "@/components/ui/dure-loader";
 import { AgentDiffBadge } from "@/components/agents/AgentDiffBadge";
+import { ProgramStatusNoticeBadge } from "@/components/agents/ProgramStatusBadge";
 import { AgentActivityGlyph } from "@/components/agents/AgentActivityGlyph";
 import { OverflowRevealText } from "@/components/ui/overflow-reveal-text";
 import { UnopenedAgentDetails } from "@/components/spaces/UnopenedAgentDetails";
@@ -90,6 +91,9 @@ const SPACE_ROW_VIEW_KEYS: readonly (keyof SpaceRowView)[] = [
   "provider",
   "managedPromotion",
   "displayState",
+  "programStatusKind",
+  "programStatusApp",
+  "programStatusMessage",
   "hidden",
   "unread",
   "agentId",
@@ -251,6 +255,31 @@ export const OpenSpaceRow = memo(function OpenSpaceRow({
       {lastActivity}
     </span>
   );
+  const diffBadge =
+    space.agentId && visibleFields.includes("gitStatus") ? (
+      <AgentDiffBadge
+        agentId={space.agentId}
+        // The diff window reads a local worktree; a remote row
+        // keeps its counters but does not launch it.
+        onClick={
+          space.hostId
+            ? undefined
+            : () => menuHandlers.onViewDiff(space.key)
+        }
+      />
+    ) : undefined;
+  // Outside the focus button so it can carry its author in a tooltip; a click
+  // still goes where the rest of the row goes.
+  const programBadge = space.programStatusKind && (
+    <ProgramStatusNoticeBadge
+      notice={{
+        kind: space.programStatusKind,
+        app: space.programStatusApp,
+        message: space.programStatusMessage,
+      }}
+      onClick={(event) => onSpaceClick(event, space.key, space.desktopId)}
+    />
+  );
   const paneHoverKey = spacesPaneHoverKey(space.desktopId, space.key);
   useEffect(
     () => () => clearSpacesPaneHover(paneHoverKey),
@@ -400,17 +429,11 @@ export const OpenSpaceRow = memo(function OpenSpaceRow({
           </button>
           <SpacesRowTrailingMeta
             badge={
-              space.agentId && visibleFields.includes("gitStatus") ? (
-                <AgentDiffBadge
-                  agentId={space.agentId}
-                  // The diff window reads a local worktree; a remote row
-                  // keeps its counters but does not launch it.
-                  onClick={
-                    space.hostId
-                      ? undefined
-                      : () => menuHandlers.onViewDiff(space.key)
-                  }
-                />
+              programBadge || diffBadge ? (
+                <>
+                  {programBadge}
+                  {diffBadge}
+                </>
               ) : undefined
             }
             activity={activityLabel}

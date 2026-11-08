@@ -102,6 +102,7 @@ export const spaces: Record<string, string> = {
 	"spaces.empty.addFolder": "폴더 추가하기",
 	"spaces.locations.unpin": "핀 해제",
 	"spaces.group.attentionCount": "주의 필요 {n}개",
+	"spaces.group.programStatusCount": "터미널 프로그램이 대기 중이라고 보고 {n}개",
 	"spaces.group.collapse": "{name} 접기",
 	"spaces.group.expand": "{name} 펼치기",
 	"spaces.kill.agentsKeepRegistration": "선택에 포함된 등록 에이전트는 pane만 닫히고 에이전트 등록과 워크트리는 남습니다.",

@@ -181,6 +181,79 @@ describe("Spaces row runtime subscriptions", () => {
 		});
 	});
 
+	const blockedReport = (revision = "1"): HmuxAgentRuntimeState => ({
+		...runtime("none", revision),
+		programStatus: {
+			state: "blocked",
+			blocked_kind: "permission",
+			app: "codex",
+			message: "Run cargo test?",
+		},
+	});
+
+	it("repeats a program's report on a terminal that is not a registered Agent until it clears", () => {
+		seed();
+		const hook = renderHook(() => useSpaces());
+		const terminal = () =>
+			hook.result.current.find((row) => row.key === "term:one");
+		act(() => {
+			useStore.getState().setSessionAgent("terminal-session", "codex");
+			useStore
+				.getState()
+				.setSessionAgentRuntimeState("terminal-session", blockedReport());
+		});
+		expect(terminal()).toMatchObject({
+			agentId: undefined,
+			programStatusKind: "permission",
+			programStatusApp: "codex",
+			programStatusMessage: "Run cargo test?",
+			// The program's words never become Host attention on the row.
+			displayState: "waiting",
+		});
+		act(() =>
+			useStore
+				.getState()
+				.setSessionAgentRuntimeState("terminal-session", runtime("none", "2")),
+		);
+		expect(terminal()).toMatchObject({
+			programStatusKind: undefined,
+			programStatusApp: undefined,
+			programStatusMessage: undefined,
+			displayState: "waiting",
+		});
+	});
+
+	it("drops a report as soon as no live stream supports it", () => {
+		seed();
+		const hook = renderHook(() => useSpaces());
+		const terminal = () =>
+			hook.result.current.find((row) => row.key === "term:one");
+		const observation = useStore
+			.getState()
+			.beginSessionAgentRuntimeObservation("terminal-session");
+		act(() => observation.publish(blockedReport()));
+		expect(terminal()?.programStatusKind).toBe("permission");
+		act(() => observation.dispose());
+		expect(terminal()?.programStatusKind).toBeUndefined();
+	});
+
+	it("repeats a registered Agent's report on its row without moving its display state", () => {
+		seed();
+		useAgentAttention.setState({ displayStates: { "agent-1": "working" } });
+		const hook = renderHook(() => useSpaces());
+		const agent = () =>
+			hook.result.current.find((row) => row.key === "agent:agent-1");
+		act(() =>
+			useStore
+				.getState()
+				.setSessionAgentRuntimeState("agent-session", blockedReport()),
+		);
+		expect(agent()).toMatchObject({
+			programStatusKind: "permission",
+			displayState: "working",
+		});
+	});
+
 	it("keeps hidden agent activity and unread facts fresh without reclassifying them", () => {
 		seed();
 		useStore.setState({ layouts: {} });

@@ -102,6 +102,7 @@ export const spaces: Record<string, string> = {
 	"spaces.empty.addFolder": "フォルダを追加",
 	"spaces.locations.unpin": "ピン解除",
 	"spaces.group.attentionCount": "要対応 {n}件",
+	"spaces.group.programStatusCount": "ターミナルのプログラムが待機中と報告 {n}件",
 	"spaces.group.collapse": "{name} を折りたたむ",
 	"spaces.group.expand": "{name} を展開",
 	"spaces.kill.agentsKeepRegistration": "選択中の登録済みエージェントはペインを閉じるだけで、エージェント登録とワークツリーは残ります。",

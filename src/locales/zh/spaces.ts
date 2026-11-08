@@ -102,6 +102,7 @@ export const spaces: Record<string, string> = {
 	"spaces.empty.addFolder": "添加文件夹",
 	"spaces.locations.unpin": "取消固定",
 	"spaces.group.attentionCount": "需要处理 {n} 个",
+	"spaces.group.programStatusCount": "终端程序报告正在等待 {n} 个",
 	"spaces.group.collapse": "折叠 {name}",
 	"spaces.group.expand": "展开 {name}",
 	"spaces.kill.agentsKeepRegistration": "所选中的已注册代理只会关闭其面板 — 代理注册和工作树将保留。",

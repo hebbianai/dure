@@ -102,6 +102,7 @@ export const spaces: Record<string, string> = {
 	"spaces.empty.addFolder": "Adicionar uma pasta",
 	"spaces.locations.unpin": "Desafixar",
 	"spaces.group.attentionCount": "Precisam de atenção: {n}",
+	"spaces.group.programStatusCount": "Aguardando, segundo programas do terminal: {n}",
 	"spaces.group.collapse": "Recolher {name}",
 	"spaces.group.expand": "Expandir {name}",
 	"spaces.kill.agentsKeepRegistration": "Os agentes registrados na seleção fecham apenas seus painéis — seus registros e worktrees são mantidos.",

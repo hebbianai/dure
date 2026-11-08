@@ -27,7 +27,13 @@ export type SpaceRowView = Pick<
 	| "unread"
 	| "agentId"
 	| "activityAt"
->;
+> &
+	Partial<
+		Pick<
+			SpaceRow,
+			"programStatusKind" | "programStatusApp" | "programStatusMessage"
+		>
+	>;
 
 export interface SpaceMenuHandlers {
 	onViewDiff: (key: string) => void;

@@ -1,4 +1,7 @@
-import type { HmuxProgramStatus } from "@/lib/ipc/hmuxContracts";
+import type {
+	HmuxAgentRuntimeState,
+	HmuxProgramStatus,
+} from "@/lib/ipc/hmuxContracts";
 
 const STATES = new Set(["idle", "working", "blocked", "done", "error"]);
 const BLOCKED_KINDS = new Set(["permission", "question", "auth"]);
@@ -67,4 +70,17 @@ export function programStatusNotice(
 		...(status.app === undefined ? {} : { app: status.app }),
 		...(message ? { message } : {}),
 	};
+}
+
+/** What a surface away from the terminal may repeat: a running program saying
+ * it waits on its user. A failure is a result, so it stays on the pane. Without
+ * a live stream the last report may be long over, so `observed === false` makes
+ * no claim, the rule Host agent state already follows. */
+export function waitingProgramStatusNotice(
+	runtime: Pick<HmuxAgentRuntimeState, "lifecycle" | "programStatus"> | undefined,
+	observed: boolean | undefined,
+): ProgramStatusNotice | undefined {
+	if (observed === false || runtime?.lifecycle !== "running") return undefined;
+	const notice = programStatusNotice(runtime.programStatus);
+	return notice?.kind === "error" ? undefined : notice;
 }

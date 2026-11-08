@@ -18,7 +18,9 @@ import { hmuxManagedPromotionAvailability } from "@/lib/hmux/conversion/hmuxMana
 import { hmuxSessionMetadataKey } from "@/lib/hmux/identity/hmuxSessionMetadata";
 import { t } from "@/lib/i18n";
 import { managedConversationId } from "@/lib/sessions/managed/managedConversationIdentity";
+import { waitingProgramStatusNotice } from "@/lib/agents/programStatus";
 import { sessionRuntimeDisplayState } from "@/lib/sessions/runtime/sessionRuntimeDisplayState";
+import { hasSessionAgentRuntimeObservation } from "@/lib/sessions/runtime/sessionRuntimeStoreSlice";
 import { paneHmuxSessionId } from "@/lib/spaces/hmuxSessionIdentity";
 import { projectIndexFor } from "@/lib/spaces/projectIndex";
 import { spaceRowDetail } from "@/lib/spaces/spaceRowDetail";
@@ -166,6 +168,7 @@ export function useSpaces() {
 	const {
 		agentActivity: activity,
 		sessionAgentRuntimeState,
+		sessionAgentRuntimeObservers,
 		sessionCwd,
 		sessionTitle,
 		sessionAgent,
@@ -305,15 +308,22 @@ export function useSpaces() {
 				// projects into sessionTitle — the same source the pane header reads.
 				conversationTitle: explicitAgentTitle ? runtimeTitle : undefined,
 			});
-			const terminalRuntime = sessionAgentRuntimeState[sessionId];
+			const sessionRuntime = sessionAgentRuntimeState[sessionId];
 			const displayState = agent
 				? presentedAgentDisplayState(
 						displayStates[agent.id],
 						activity[agent.id],
 					)
 				: provider
-					? sessionRuntimeDisplayState(terminalRuntime)
+					? sessionRuntimeDisplayState(sessionRuntime)
 					: undefined;
+			const programNotice = waitingProgramStatusNotice(
+				sessionRuntime,
+				hasSessionAgentRuntimeObservation(
+					sessionRuntime,
+					sessionAgentRuntimeObservers[sessionId],
+				),
+			);
 			const metadataKey = space.hmuxIdentity
 				? hmuxSessionMetadataKey(
 						space.hmuxIdentity.workspaceId,
@@ -382,6 +392,11 @@ export function useSpaces() {
 				// B2 표시 상태 — 에이전트는 watcher 해석값, 터미널은 프로바이더가
 				// 붙었을 때만 legacy 활동값 그대로. (행의 상태 신호는 이것 하나다.)
 				displayState,
+				/** A program's own attributed report that it is waiting; presentation
+				 *  only, never part of displayState. Flat, as rows compare by field. */
+				programStatusKind: programNotice?.kind,
+				programStatusApp: programNotice?.app,
+				programStatusMessage: programNotice?.message,
 				unread: agent ? isAgentUnread(episodes, acks, agent.id) : false,
 				...(space.hidden ? { hidden: true as const } : {}),
 			};
@@ -404,6 +419,7 @@ export function useSpaces() {
 		sessionActivity,
 		activity,
 		sessionAgentRuntimeState,
+		sessionAgentRuntimeObservers,
 		displayStates,
 		episodes,
 		acks,

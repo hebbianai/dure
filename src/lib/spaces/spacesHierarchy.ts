@@ -6,7 +6,10 @@ import {
 	type RepositorySpaceRow,
 	spaceRepositoryGroupKey,
 } from "@/lib/spaces/spaceRepositoryGroups";
-import { ATTENTION_DISPLAY_STATES } from "@/lib/spaces/spacesStateFilter";
+import {
+	ATTENTION_DISPLAY_STATES,
+	countsTowardProgramStatusRollup,
+} from "@/lib/spaces/spacesStateFilter";
 import {
 	isPanePinned,
 	panePinKey,
@@ -16,6 +19,7 @@ import {
 export interface HierarchySpaceRow extends RepositorySpaceRow {
 	readonly desktopId: string;
 	readonly displayState?: string;
+	readonly programStatusKind?: string;
 }
 
 /** Pane pins take precedence over repository pins; every row has one home.
@@ -46,6 +50,13 @@ export interface VisibleSpaceBuckets<Row> {
 	 *  waiting session in its desktop or repository, not for the listed ones. */
 	readonly attentionByDesktop: ReadonlyMap<string, number>;
 	readonly attentionByRepository: ReadonlyMap<string, number>;
+	/** Programs reporting they wait, on rows Host attention did not count. */
+	readonly programStatusByDesktop: ReadonlyMap<string, number>;
+	readonly programStatusByRepository: ReadonlyMap<string, number>;
+}
+
+function increment(counts: Map<string, number>, key: string): void {
+	counts.set(key, (counts.get(key) ?? 0) + 1);
 }
 
 /** One pass: bucket the visible rows per desktop and roll attention up per
@@ -57,27 +68,31 @@ export function bucketVisibleSpaces<Row extends HierarchySpaceRow>(
 	const visibleByDesktop = new Map<string, Row[]>();
 	const attentionByDesktop = new Map<string, number>();
 	const attentionByRepository = new Map<string, number>();
+	const programStatusByDesktop = new Map<string, number>();
+	const programStatusByRepository = new Map<string, number>();
 	for (const row of rows) {
 		if (
 			row.displayState !== undefined &&
 			ATTENTION_DISPLAY_STATES.has(row.displayState)
 		) {
-			attentionByDesktop.set(
-				row.desktopId,
-				(attentionByDesktop.get(row.desktopId) ?? 0) + 1,
-			);
-			const repositoryKey = spaceRepositoryGroupKey(row);
-			attentionByRepository.set(
-				repositoryKey,
-				(attentionByRepository.get(repositoryKey) ?? 0) + 1,
-			);
+			increment(attentionByDesktop, row.desktopId);
+			increment(attentionByRepository, spaceRepositoryGroupKey(row));
+		} else if (countsTowardProgramStatusRollup(row)) {
+			increment(programStatusByDesktop, row.desktopId);
+			increment(programStatusByRepository, spaceRepositoryGroupKey(row));
 		}
 		if (!isVisible(row)) continue;
 		const bucket = visibleByDesktop.get(row.desktopId);
 		if (bucket) bucket.push(row);
 		else visibleByDesktop.set(row.desktopId, [row]);
 	}
-	return { visibleByDesktop, attentionByDesktop, attentionByRepository };
+	return {
+		visibleByDesktop,
+		attentionByDesktop,
+		attentionByRepository,
+		programStatusByDesktop,
+		programStatusByRepository,
+	};
 }
 
 /** Popout desktops sit right after their origin (사용자 요청); a popout whose

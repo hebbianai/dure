@@ -21,3 +21,30 @@ export function countAttentionDisplayStates(
 	}
 	return count;
 }
+
+interface ProgramStatusRollupRow {
+	readonly displayState?: string;
+	readonly programStatusKind?: string;
+}
+
+/** A program's own report that it is waiting, where Host attention has not
+ *  already spoken for the row. The two stay separate counts: a report written
+ *  by terminal output never adds to Host-owned attention, and one pane never
+ *  counts twice on a heading. */
+export function countsTowardProgramStatusRollup(
+	row: ProgramStatusRollupRow,
+): boolean {
+	return (
+		row.programStatusKind !== undefined &&
+		!(
+			row.displayState !== undefined &&
+			ATTENTION_DISPLAY_STATES.has(row.displayState)
+		)
+	);
+}
+
+export function countProgramStatusRows(
+	rows: readonly ProgramStatusRollupRow[],
+): number {
+	return rows.filter(countsTowardProgramStatusRollup).length;
+}

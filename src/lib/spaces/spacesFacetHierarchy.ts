@@ -35,6 +35,7 @@ export interface SpacesFacetHierarchyGroup<
 	/** The repository subtree kept beside a focused row when the facet folds. */
 	readonly focusedRepository?: RepositoryFirstGroup<Row, Desktop>;
 	readonly attentionCount: number;
+	readonly programStatusCount: number;
 }
 
 export interface SpacesFacetHierarchyProjection<
