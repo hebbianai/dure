@@ -23,7 +23,7 @@ async function receipt(phase, timeoutMs = 240_000) {
       if (error.code !== "ENOENT") throw error;
     }
     const failed = findQaLogReceipt(log, "program-status-spaces-failed", proof);
-    if (failed) throw new Error(`In-app probe failed: ${failed.error}`);
+    if (failed) throw new Error(`In-app probe failed: ${JSON.stringify(failed)}`);
     const found = findQaLogReceipt(log, `program-status-spaces-${phase}`, proof);
     if (found) return found;
     await delay(100);
@@ -57,7 +57,8 @@ print(owned.max { area($0) < area($1) }![kCGWindowNumber as String]!)
   }
 }
 
-const ready = await receipt("ready");
+// A cold worktree spends minutes in Vite dependency reloads before the probe runs.
+const ready = await receipt("ready", 480_000);
 assert.equal(ready.isRegisteredAgent, false, "The pane must not be a registered Agent");
 assert.notEqual(ready.activeSpace, ready.paneSpace, "The pane's Space must be off-screen");
 assert.equal(ready.rowHasBadge, false);

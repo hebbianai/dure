@@ -1,6 +1,6 @@
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import { t } from "@/lib/i18n";
-import { homeDir } from "@/lib/ipc";
+import { hmux, homeDir } from "@/lib/ipc";
 import { qaLog } from "@/lib/qa/qaLog";
 import {
 	DEFAULT_SPACES_VIEW_OPTIONS,
@@ -11,6 +11,9 @@ import { createHmuxStandaloneTerminalOn } from "@/lib/workspace/dock/standaloneS
 import { useStore } from "@/store";
 
 const ROLLUP = "[data-space-program-status-rollup]";
+
+/** What the page and Host know about the pane, for a failure receipt. */
+let describePane: () => Promise<object> = async () => ({});
 
 function check(condition: unknown, message: string): asserts condition {
 	if (!condition) throw new Error(message);
@@ -65,10 +68,33 @@ async function run(report: (phase: string, facts?: object) => void) {
 	);
 	const runtime = () =>
 		useStore.getState().sessionAgentRuntimeState[session.sessionId];
+	describePane = async () => {
+		const state = useStore.getState();
+		const [inspected] = await hmux.inspectSessionsExact([
+			{ sessionId: session.sessionId, workspaceId: session.workspaceId },
+		]);
+		return {
+			visibility: document.visibilityState,
+			focused: document.hasFocus(),
+			activeSpace: state.activeSpaceId,
+			paneSpace: elsewhere,
+			paneInDockview: Boolean(
+				getDockview(elsewhere)?.panels.some(
+					(panel) => panel.id === session.panelId,
+				),
+			),
+			observers: state.sessionAgentRuntimeObservers[session.sessionId] ?? null,
+			storeRuntime: runtime() ?? null,
+			sessionAgent: state.sessionAgent[session.sessionId] ?? null,
+			hostInspection: inspected ?? null,
+		};
+	};
+	// Leave first: a hidden window releases the active Space's stream, while a
+	// retained Space out of sight stays attached, which is the case under test.
+	useStore.getState().setActiveSpace(origin);
 	await waitFor("The Host did not identify a running provider", () =>
 		runtime()?.lifecycle === "running",
 	);
-	useStore.getState().setActiveSpace(origin);
 	const row = () =>
 		document.querySelector(`[data-space-key="${CSS.escape(session.panelId)}"]`);
 	await waitFor("The Spaces row did not render", () => row() !== null);
@@ -139,10 +165,12 @@ export async function runProgramStatusSpacesProbe() {
 	const report = (phase: string, facts: object = {}) =>
 		qaLog(`program-status-spaces-${phase}`, { proof, ...facts });
 	try {
+		report("started");
 		await run(report);
 	} catch (error) {
 		report("failed", {
 			error: error instanceof Error ? error.message : String(error),
+			pane: await describePane().catch((cause: unknown) => String(cause)),
 		});
 	}
 }
