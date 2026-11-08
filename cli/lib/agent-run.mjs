@@ -7,6 +7,7 @@ import {
 } from "./agent-spawn-query.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { readRegisteredAccountProfiles, registeredAccountUnavailableMessage } from "./registered-account-profiles.mjs";
+import { appAdoptsBackgroundRuns } from "./run-presentation.mjs";
 
 export function defaultAgentRunName(providerId, idempotencyKey) {
   const suffix = createHash("sha256")
@@ -21,19 +22,28 @@ export function defaultAgentRunName(providerId, idempotencyKey) {
   return `${provider}-${suffix}`;
 }
 
-/** Resolve new CLI panes through the app's existing preference authority. */
+/**
+ * Resolve a new Run's interface through the app's existing preference authority.
+ * An undefined result leaves no pin, so the backend starts the provider's
+ * structured runtime when it has one and plans a terminal session otherwise.
+ */
 export async function resolveAgentRunInteractionPreference(
-  clientDescriptor,
+  { descriptor, presenting, profile },
   requestClient = requestAppControl,
 ) {
+  if (!descriptor) return undefined;
+  if (!presenting) {
+    // The app's background lifecycle adopts only native Runs.
+    return appAdoptsBackgroundRuns(descriptor, profile) ? "native_cli" : undefined;
+  }
   if (
-    !Array.isArray(clientDescriptor?.capabilities) ||
-    !clientDescriptor.capabilities.includes("agent.launch_preference_v1")
+    !Array.isArray(descriptor.capabilities) ||
+    !descriptor.capabilities.includes("agent.launch_preference_v1")
   ) {
     return "native_cli";
   }
   const preference = await requestClient({
-    descriptor: clientDescriptor,
+    descriptor,
     path: "/agent/launch-preference",
   });
   if (

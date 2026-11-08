@@ -2037,6 +2037,9 @@ Register explicitly with dure projects register <project-id> --path PATH first,
 keeping the same --backend selection. Use dure projects register --help for flags.
 When --space is omitted inside an exact Hmux pane, the new pane opens in the same Space.
 In a terminal or CI environment without a verified calling pane, the Run executes headlessly.
+A pane follows the connected app's Default agent pane setting. A headless Run uses the provider's
+chat runtime when the host has one (read it with dure transcript AGENT_ID) and a terminal session
+otherwise. A local Run the connected app adopts stays a terminal session.
 A connected current app supplies its selected provider account, including headless Runs.
 --account selects an exact account ID; --account default uses the provider default.
 It accepts app account IDs and the IDs registered on the backend, the same IDs
@@ -2288,9 +2291,11 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
   let executionProfile;
   try {
     executionProfile = await resolveAgentRunAccount({ descriptor: loadServer(), providerId, backendProfileId: backend.profile?.id ?? "local", account: opts.account, backend });
-    interactionPreference = await resolveAgentRunInteractionPreference(
-      presentationTarget.state === "requested" ? loadServer() : undefined,
-    );
+    interactionPreference = await resolveAgentRunInteractionPreference({
+      descriptor: loadServer(),
+      presenting: presentationTarget.state === "requested",
+      profile: backend.profile,
+    });
   } catch (error) {
     writeCliActionError(
       error,

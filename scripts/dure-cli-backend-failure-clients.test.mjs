@@ -108,7 +108,7 @@ it.each([
 });
 
 it.each([
-  ["provider_runtime_integration_unavailable", "start the Dure app for this channel"],
+  ["provider_runtime_integration_unavailable", "Open the Dure app on that host once if it can run there"],
   ["provider_executable_unavailable", "Install the selected provider"],
   ["future_check", "Provider preflight check failed on the execution host: future_check."],
   ["constructor", "Provider preflight check failed on the execution host: constructor."],
@@ -138,6 +138,35 @@ it.each([
   expect(formatAgentSpawnQuery(report)).toContain(guidance);
   expect(agentSpawnQueryExitCode(report)).toBe(2);
   expect(JSON.stringify(report)).not.toContain("/Users/someone");
+});
+
+it.each([
+  ["a terminal preference", { interactionPreference: "native_cli" }, ["Default agent pane to Chat"]],
+  ["a setup command", { setupCommand: "pnpm install" }, ["remove --setup-command"]],
+  ["both", { interactionPreference: "native_cli", setupCommand: "pnpm install" }, ["remove --setup-command", "Default agent pane to Chat"]],
+])("says how to reach chat instead of opening an app for %s", async (_label, selection, steps) => {
+  const report = await collectAgentSpawnQuery({
+    action: "preview",
+    projectId: "dure",
+    providerId: "claude",
+    agentName: "claude-1",
+    idempotencyKey: "spawn-request-1",
+    worktree: { kind: "dedicated", branch: "agent/claude-1" },
+    ...selection,
+    backend: backend(),
+    requestBackend: async () => {
+      throw new BackendTransportError("backend_transport_remote_error", {
+        details: {
+          code: "agent_spawn_provider_preflight_failed",
+          reasonCode: "provider_runtime_integration_unavailable",
+          disposition: "retry_same",
+        },
+      });
+    },
+  });
+  expect(report.error.reasonCode).toBe("provider_runtime_integration_unavailable");
+  for (const step of steps) expect(report.error.message).toContain(step);
+  expect(report.error.message).not.toMatch(/(open|start) the Dure app/i);
 });
 
 describe.each(clients)("$name backend failure projection", ({ action, collect, kind }) => {

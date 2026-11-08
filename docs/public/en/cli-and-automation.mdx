@@ -13,7 +13,7 @@ dure run --provider codex --worktree docs-review "Review the README against the 
 
 The dedicated worktree keeps this task's files separate. Choose a provider installed and signed in on the execution host. Without `--project` or `--path`, the backend resolves the current working directory.
 
-Inside an identified Dure terminal pane, omitting `--space` places the new pane in the current Space. From an ordinary terminal or CI environment without that pane context, the run is headless. Use `--space` with a connected Space's exact name or ID when you want an explicit destination.
+Inside an identified Dure terminal pane, omitting `--space` places the new pane in the current Space. From an ordinary terminal or CI environment without that pane context, the run is headless. A headless run uses the provider's chat runtime when the execution host has one, so it doesn't need the Dure app on that host; read it with `dure transcript <agent-id>`, using the `agentId` the run prints. If the connected app on the same machine adopts the run, it stays a terminal session. Use `--space` with a connected Space's exact name or ID when you want an explicit destination.
 
 ## Inspect work before sending more input
 
