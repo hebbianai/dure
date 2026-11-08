@@ -20,7 +20,9 @@ mod listener;
 mod managed_claude;
 mod replayable_request;
 mod request_broker;
-use frontend_receipt::{dispatch_remote_shell_receipt, wait_for_frontend_receipt};
+use frontend_receipt::{
+    dispatch_frontend_receipt, remote_receipt_busy, wait_for_frontend_receipt, waits_on_remote_host,
+};
 use listener::LocalApiListener;
 use replayable_request::replayable_frontend_request;
 pub use request_broker::CliRequestBroker;
@@ -42,6 +44,9 @@ const HMUX_CLEANUP_EXITED_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_sec
 // ordinary delivery budget, so a waiting send is never cut off mid-write.
 const HMUX_INPUT_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 const HMUX_REMOTE_SHELL_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+// Adding an SSH project must reach the host first; its TCP connect alone may
+// take 10s. Stays under the CLI's 60s deadline so the real outcome is reported.
+const PROJECT_ADD_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const SPAWN_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
 const WORKSPACE_IMPORT_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
 const MAX_REQUEST_BODY_BYTES: u64 = 64 * 1024;
@@ -81,6 +86,7 @@ fn claimed_request_timeout(action: &str) -> Duration {
         "hmux.cleanup-exited" => HMUX_CLEANUP_EXITED_CLAIMED_REQUEST_TIMEOUT,
         "agent.input" | "hmux.input" => HMUX_INPUT_CLAIMED_REQUEST_TIMEOUT,
         "hmux.remote-shell" => HMUX_REMOTE_SHELL_CLAIMED_REQUEST_TIMEOUT,
+        "project.add" => PROJECT_ADD_CLAIMED_REQUEST_TIMEOUT,
         "spawn" => SPAWN_CLAIMED_REQUEST_TIMEOUT,
         "sessions.recent"
         | "workspace.import.preview"
@@ -717,7 +723,7 @@ pub fn start(
     }
 
     let channel = app_channel.name.clone();
-    let remote_shell_waiters = Arc::new(tokio::sync::Semaphore::new(8));
+    let remote_receipt_waiters = Arc::new(tokio::sync::Semaphore::new(8));
     std::thread::spawn(move || {
         // Report 라우트 rate limit — 폭주한 훅이 서버 스레드와 웹뷰 이벤트를
         // 도배하지 못하게 Rust 계층에서 자른다. 한도는 소켓·이벤트 채널
@@ -1153,13 +1159,11 @@ pub fn start(
             //  /activity = herdr식 훅이 보고하는 "지금 하는 작업")
             if let Some(route) = frontend_route(&method, &url) {
                 let (action, waits_for_receipt) = (route.action, route.waits_for_receipt);
-                let remote_shell_permit = if action == "hmux.remote-shell" {
-                    match remote_shell_waiters.clone().try_acquire_owned() {
+                let remote_receipt_permit = if waits_on_remote_host(action) {
+                    match remote_receipt_waiters.clone().try_acquire_owned() {
                         Ok(permit) => Some(permit),
                         Err(_) => {
-                            let _ = req.respond(json_response(503, serde_json::json!({
-                                "ok": false, "fallback": true
-                            })));
+                            let _ = req.respond(json_response(503, remote_receipt_busy(action)));
                             continue;
                         }
                     }
@@ -1334,16 +1338,17 @@ pub fn start(
                     }
                 }
                 if let Some(receiver) = receiver {
-                    if let Some(permit) = remote_shell_permit {
-                        if let Err(error) = dispatch_remote_shell_receipt(
+                    if let Some(permit) = remote_receipt_permit {
+                        if let Err(error) = dispatch_frontend_receipt(
                             req,
                             broker.clone(),
                             req_id.clone(),
+                            action,
                             receiver,
                             permit,
                         ) {
                             broker.cancel(&req_id);
-                            eprintln!("could not start remote shell receipt worker: {error}");
+                            eprintln!("could not start remote receipt worker: {error}");
                         }
                     } else {
                         let response = wait_for_frontend_receipt(
@@ -1987,6 +1992,14 @@ mod tests {
             Some(RouteScope::Control)
         );
         assert_eq!(frontend_action(&Method::Get, "/project/add"), None);
+    }
+
+    #[test]
+    fn a_claimed_project_add_outlasts_an_ssh_connect_and_answers_before_the_cli_gives_up() {
+        let budget = claimed_request_timeout("project.add");
+        assert!(budget > Duration::from_secs(10));
+        // cli/lib/app-control-client.mjs stops waiting after 60s.
+        assert!(REQUEST_TIMEOUT + budget < Duration::from_secs(60));
     }
 
     #[test]
