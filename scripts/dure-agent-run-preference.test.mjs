@@ -3,8 +3,11 @@ import { collectAgentRun, resolveAgentRunInteractionPreference } from "../cli/li
 import { canonicalNativeReceipt, request, succeededNativeReceipt } from "./fixtures/agent-spawn-receipts.mjs";
 
 const descriptor = { port: 1234, token: "fixture-only", capabilities: ["agent.launch_preference_v1"] };
+const adoptingDescriptor = { ...descriptor, capabilities: ["agent.run_background_v1"] };
+const localProfile = { id: "local", transport: { kind: "local" } };
+const sshProfile = { id: "vm", transport: { kind: "ssh" } };
 
-function fixture(clientDescriptor, interactionPreference = "native_cli") {
+function fixture(client, interactionPreference = "native_cli") {
   const requestClient = vi.fn(async () => ({ ok: true, schemaVersion: 1, interactionPreference }));
   let preview;
   const requestBackend = vi.fn(async (_profile, envelope) => {
@@ -19,21 +22,49 @@ function fixture(clientDescriptor, interactionPreference = "native_cli") {
   const run = async () => collectAgentRun({
     ...request(), prompt: "never serialize this prompt",
     backend: { profile: { id: "local", transport: { kind: "local" } } },
-    interactionPreference: await resolveAgentRunInteractionPreference(clientDescriptor, requestClient), requestBackend,
+    interactionPreference: await resolveAgentRunInteractionPreference({ presenting: true, profile: localProfile, ...client }, requestClient), requestBackend,
   });
   return { run, requestClient, requestBackend };
 }
 
 describe("Agent Run pane preference", () => {
-  it.each([undefined, { ...descriptor, capabilities: [] }])("defaults headless and older clients to Terminal (%j)", async (clientDescriptor) => {
-    const test = fixture(clientDescriptor);
+  it.each([
+    { descriptor: null, presenting: false },
+    { descriptor: null, presenting: true },
+    { descriptor: undefined, presenting: false },
+  ])("lets the backend choose the runtime when no app can supply a preference (%j)", async (client) => {
+    const test = fixture(client);
     expect((await test.run()).report.receipt.state).toBe("succeeded");
+    expect(test.requestBackend.mock.calls[0][1].body).not.toHaveProperty("interactionPreference");
+    expect(test.requestClient).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pane on Terminal for an app too old to state a preference", async () => {
+    const test = fixture({ descriptor: { ...descriptor, capabilities: [] } });
+    await test.run();
     expect(test.requestBackend.mock.calls[0][1].body.interactionPreference).toBe("native_cli");
     expect(test.requestClient).not.toHaveBeenCalled();
   });
 
+  it("keeps a headless Run on Terminal when the local app adopts it", async () => {
+    const test = fixture({ descriptor: adoptingDescriptor, presenting: false });
+    await test.run();
+    expect(test.requestBackend.mock.calls[0][1].body.interactionPreference).toBe("native_cli");
+    expect(test.requestClient).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a remote backend", { descriptor: adoptingDescriptor, presenting: false, profile: sshProfile }],
+    ["an app that cannot adopt Runs", { descriptor, presenting: false }],
+  ])("does not pin a headless Run for %s", async (_label, client) => {
+    const test = fixture(client);
+    await test.run();
+    expect(test.requestBackend.mock.calls[0][1].body).not.toHaveProperty("interactionPreference");
+    expect(test.requestClient).not.toHaveBeenCalled();
+  });
+
   it.each(["native_cli", null])("carries the client's effective preference into the one preview (%s)", async (preference) => {
-    const test = fixture(descriptor, preference);
+    const test = fixture({ descriptor }, preference);
     expect((await test.run()).report.receipt.state).toBe("succeeded");
     expect(test.requestClient).toHaveBeenCalledOnce();
     expect(test.requestClient).toHaveBeenCalledWith(expect.objectContaining({ descriptor, path: "/agent/launch-preference" }));
@@ -41,13 +72,13 @@ describe("Agent Run pane preference", () => {
   });
 
   it("does not create a runtime after a malformed preference reply", async () => {
-    const test = fixture(descriptor, "future-profile");
+    const test = fixture({ descriptor }, "future-profile");
     await expect(test.run()).rejects.toMatchObject({ code: "client_response_invalid" });
     expect(test.requestBackend).not.toHaveBeenCalled();
   });
 
   it("preserves other programmatic Run consumers' own launch policy", async () => {
-    const test = fixture(undefined);
+    const test = fixture({ descriptor: null });
     await collectAgentRun({ ...request(), prompt: "never serialize this prompt", backend: { profile: { id: "local", transport: { kind: "local" } } }, requestBackend: test.requestBackend });
     expect(test.requestBackend.mock.calls[0][1].body).not.toHaveProperty("interactionPreference");
   });

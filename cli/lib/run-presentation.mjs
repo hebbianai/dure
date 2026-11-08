@@ -460,9 +460,14 @@ function publicPane(payload, expected) {
   };
 }
 
+/** Whether a connected app adopts Runs on this backend without showing a pane. */
+export function appAdoptsBackgroundRuns(descriptor, profile) {
+  return descriptor?.capabilities?.includes("agent.run_background_v1") === true && profile?.transport?.kind === "local";
+}
+
 /** Register local native Runs for the existing durable Agent recovery lifecycle. */
 export async function registerAgentRunInBackground({report,profile,projectPath,descriptor,fetchImpl=globalThis.fetch}) {
-  if (!descriptor?.capabilities?.includes("agent.run_background_v1") || profile?.transport?.kind !== "local") return undefined;
+  if (!appAdoptsBackgroundRuns(descriptor, profile)) return undefined;
   const projected = presentableRunPlan(report);
   if (projected.interactionProfile !== "native_cli") return undefined;
   const body = managedRunPresentationRequestFromPlan(projected, {target:{state:"background"},profile,projectPath});

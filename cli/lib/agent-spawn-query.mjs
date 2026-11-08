@@ -1120,10 +1120,25 @@ function errorReport(action, code, observedAtMs, durationMs, details = {}) {
   };
 }
 
+const TERMINAL_INTEGRATION_MISSING =
+  "The execution host has no Dure-managed integration for this provider's terminal sessions.";
+
+/** Only the Dure app publishes this integration, and many hosts cannot run one. */
+function terminalIntegrationGuidance(request) {
+  const changes = [
+    ...(request.setupCommand === undefined
+      ? []
+      : ["remove --setup-command, which needs a terminal session"]),
+    ...(request.interactionPreference === "native_cli"
+      ? ["set Default agent pane to Chat in the connected Dure app's Settings (Pro interface)"]
+      : []),
+  ];
+  return changes.length > 0
+    ? `${TERMINAL_INTEGRATION_MISSING} To use chat instead, ${changes.join(" and ")}, then retry this request.`
+    : `${TERMINAL_INTEGRATION_MISSING} Open the Dure app on that host once if it can run there, or choose a provider with a chat runtime, then retry this request.`;
+}
+
 const PROVIDER_PREFLIGHT_GUIDANCE = Object.freeze({
-  provider_runtime_integration_unavailable:
-    "The execution host has no Dure-managed integration for this provider's terminal sessions. " +
-    "The Dure app publishes it for its channel; start the Dure app for this channel on that host once, then retry this request.",
   provider_executable_unavailable:
     "The provider executable could not be resolved on the execution host. Install the selected provider there or fix the backend's PATH, then retry this request.",
   permission_mode_unsupported:
@@ -1136,7 +1151,7 @@ const PROVIDER_PREFLIGHT_GUIDANCE = Object.freeze({
     "(dure provider-defaults get shows saved defaults), then retry this request.",
 });
 
-function backendErrorReport(action, error, profile, startedAt, deadlineMs) {
+function backendErrorReport(action, error, profile, startedAt, deadlineMs, request) {
   const observedAtMs = Date.now();
   const { code, ...detail } = backendRequestFailure(error, profile);
   if (detail.remoteCode === "agent_spawn_project_not_found") {
@@ -1163,9 +1178,13 @@ function backendErrorReport(action, error, profile, startedAt, deadlineMs) {
   // A refused provider plan names its check with a typed failure code. Codes
   // without reviewed advice are still named rather than reported bare.
   if (detail.remoteCode === "agent_spawn_provider_preflight_failed" && typeof detail.reasonCode === "string") {
-    detail.message = Object.hasOwn(PROVIDER_PREFLIGHT_GUIDANCE, detail.reasonCode)
-      ? PROVIDER_PREFLIGHT_GUIDANCE[detail.reasonCode]
-      : `Provider preflight check failed on the execution host: ${detail.reasonCode}.`;
+    if (detail.reasonCode === "provider_runtime_integration_unavailable") {
+      detail.message = terminalIntegrationGuidance(request);
+    } else {
+      detail.message = Object.hasOwn(PROVIDER_PREFLIGHT_GUIDANCE, detail.reasonCode)
+        ? PROVIDER_PREFLIGHT_GUIDANCE[detail.reasonCode]
+        : `Provider preflight check failed on the execution host: ${detail.reasonCode}.`;
+    }
   }
   return errorReport(
     action,
@@ -1325,6 +1344,7 @@ export async function collectAgentSpawnQuery({
       profile,
       startedAt,
       effectiveDeadlineMs,
+      request,
     );
   }
   let response;
@@ -1363,6 +1383,7 @@ export async function collectAgentSpawnQuery({
       profile,
       startedAt,
       effectiveDeadlineMs,
+      request,
     );
   }
   const parsed = backendPayload(response.result, action, request);

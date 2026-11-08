@@ -144,7 +144,11 @@ splitting the invoking pane right or below, targeting at least 480×300 px per
 pane. If neither split fits, it chooses another fitting pane. A full Space uses
 the best available split; this does not create another Space or rearrange the
 existing layout. Explicit split directions and drop positions are respected.
-Outside a provable pane, the Run remains headless. If that exact Session
+Outside a provable pane, the Run remains headless. A headless Run uses the
+provider's chat runtime when the host has one and has no Session; read it with
+`dure transcript <agent-id>` and inspect it with `dure runs show <agent-id>`,
+not `dure read`. A local Run the connected app adopts stays a terminal
+session. If that exact Session
 is visible in multiple Spaces, specify `--space`; Dure will not guess. A pane
 failure never replays or stops a successful Run. Use `dure runs open <agent-id>
 --space <space-id>` after correcting client state.
