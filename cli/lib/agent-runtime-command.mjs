@@ -60,6 +60,8 @@ same-conversation switch and obtain the revision-fenced command, including for
 an Agent without a Run record. recovery get PROVIDER lists registered accounts
 with names and usage; --json adds IDs/generations. Claude and Codex use the same path.
 Hibernate stops only a quiescent, resumable runtime; wake retains its conversation.
+A runtime with no provider conversation, such as a Run whose first turn never
+started, cannot hibernate; retire it with dure stop AGENT --yes instead.
 Wake --conversation-id checks the saved conversation before launch; it never selects another.
 Use get to obtain the selection revision for hibernate, or the operation ID and
 journal revision for wake. These commands do not enable automatic cleanup.
@@ -67,6 +69,31 @@ After response loss, inspect with get before taking another action. Reusing
 --idempotency-key replays the original request, not a new replacement.`;
 
 const PROFILES = { chat: "structured_protocol", terminal: "native_cli" };
+
+/** Hibernate wakes only the conversation it retained. The backend refuses a
+ * source with none before stopping anything; older backends sent the same
+ * refusal as an invalid journal record. This CLI owns the guidance, and names
+ * the stop that retires the runtime without resuming it. */
+const UNRESUMABLE_HIBERNATE = {
+  agent_runtime_provider_conversation_unavailable:
+    "This runtime has no provider conversation to resume, for example a Run whose first turn never started.",
+  agent_runtime_transition_request_invalid:
+    "The backend refused to record this hibernation. Older backends refuse a runtime with no provider conversation to resume this way, for example a Run whose first turn never started.",
+};
+
+function withHibernateGuidance(error, { agentId, backendProfileId }) {
+  const reason = UNRESUMABLE_HIBERNATE[error?.remoteCode ?? error?.code];
+  if (!reason) return error;
+  const backend = backendProfileId ? ` with DURE_BACKEND_PROFILE=${backendProfileId}` : "";
+  return {
+    ...error,
+    message: [
+      reason,
+      "Hibernate keeps only a resumable conversation, so nothing was stopped.",
+      `To retire this runtime without resuming it, run dure stop ${agentId} --yes${backend}.`,
+    ].join(" "),
+  };
+}
 
 /** A command is an intent plus a formatter. The service owns admission,
  * replacement, and replay; local and SSH use the same transport contract. */
@@ -177,7 +204,10 @@ export async function collectAgentRuntimeCommand({
     }
     return { ...base, ok: true, backend: response.backend, result };
   } catch (error) {
-    return failure(withSourceBusyGuidance(backendRequestFailure(error, backend.profile)));
+    const refusal = withSourceBusyGuidance(backendRequestFailure(error, backend.profile));
+    return failure(action === "hibernate"
+      ? withHibernateGuidance(refusal, { agentId, backendProfileId: base.backendProfileId })
+      : refusal);
   }
 }
 

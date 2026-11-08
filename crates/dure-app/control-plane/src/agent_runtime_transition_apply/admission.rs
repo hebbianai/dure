@@ -210,6 +210,16 @@ pub(super) async fn load_or_admit_with_activation(
             (authority, provider_conversation_ref)
         }
     };
+    // Hibernation can only wake the conversation it retained. A source that
+    // never started one, such as a Run whose first turn never began, has
+    // nothing to resume; the journal would refuse it as an invalid record.
+    // Name the reason the idle observer already reports, and refuse it as
+    // terminal: retrying the same request cannot supply a conversation.
+    if activation == TargetActivation::Deferred && provider_conversation_ref.as_option().is_none() {
+        return Err(crate::BackendDispatchError::terminal(
+            "agent_runtime_provider_conversation_unavailable",
+        ));
+    }
     source_authority
         .validate_for_transition(&source, &provider_conversation_ref)
         .map_err(store_error)?;
