@@ -504,7 +504,8 @@ describe("handleCliHmuxCreate", () => {
 			ok: false,
 			error: {
 				code: "pane_not_found",
-				message: "desktop space-missing is not mounted",
+				message:
+					"desktop space-missing is not mounted; open it with: dure client space show space-missing",
 			},
 		});
 		expect(run.resolvePlacement).not.toHaveBeenCalled();

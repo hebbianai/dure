@@ -22,3 +22,11 @@ export class PaneCommandError extends Error {
 		this.name = "PaneCommandError";
 	}
 }
+
+/** A Space has no pane surface until it is selected in its Dure window. */
+export function spaceNotMountedError(spaceId: string): PaneCommandError {
+	return new PaneCommandError(
+		"pane_not_found",
+		`desktop ${spaceId} is not mounted; open it with: dure client space show ${spaceId}`,
+	);
+}

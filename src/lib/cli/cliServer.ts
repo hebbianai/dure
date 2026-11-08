@@ -16,7 +16,10 @@ import {
   movePaneToSpace,
   type PaneSplitDirection,
 } from "@/lib/workspace/dock";
-import { PaneCommandError } from "@/lib/workspace/pane/paneCommandError";
+import {
+  PaneCommandError,
+  spaceNotMountedError,
+} from "@/lib/workspace/pane/paneCommandError";
 import { waitForDesktopDockview } from "@/lib/workspace/dock/dockRegistry";
 import { openMobileSimulatorPanel } from "@/lib/workspace/dock/openMobileSimulatorPanel";
 import { closePanelById } from "@/lib/workspace/pane/paneCloseCoordinator";
@@ -467,12 +470,7 @@ async function handleHmuxObserve(
       workspaceId,
       params.cwd ? String(params.cwd) : undefined,
     );
-    if (!opened) {
-      throw new PaneCommandError(
-        "pane_not_found",
-        `desktop ${desktopId} is not mounted`,
-      );
-    }
+    if (!opened) throw spaceNotMountedError(desktopId);
     return {
       ok: true,
       pane: {

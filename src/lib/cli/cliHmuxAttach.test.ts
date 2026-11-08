@@ -157,6 +157,30 @@ describe("handleCliHmuxAttach", () => {
 		expect(run.removePanel).not.toHaveBeenCalled();
 	});
 
+	it("names the command that opens a Space with no mounted pane surface", async () => {
+		const run = harness();
+		const dependencies = {
+			...run.dependencies,
+			getDockview: vi.fn(() => undefined),
+		};
+
+		await expect(
+			handleCliHmuxAttach(
+				{ spaceId: "space-hidden", cwd: "/repo/hidden" },
+				"request-hidden",
+				dependencies,
+			),
+		).resolves.toMatchObject({
+			ok: false,
+			error: {
+				code: "pane_not_found",
+				message:
+					"desktop space-hidden is not mounted; open it with: dure client space show space-hidden",
+			},
+		});
+		expect(run.openAndCommit).not.toHaveBeenCalled();
+	});
+
 	it("waits for the exact native attachment after opening a non-target pane", async () => {
 		const run = harness();
 
