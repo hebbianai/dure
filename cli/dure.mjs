@@ -3823,6 +3823,8 @@ Usage:
                                       Install, inspect, update or remove the shared orchestration client
                                       Identifies the current agent automatically; use --agent <name> outside a pane
   dure whoami [--json]              Print this agent's latest display name/identity
+  dure resume --all [--dry-run] [--include-exited] [--backend ID] [--json]
+                                      Restore every agent whose Host is gone, each into its own conversation
   dure hmux attach --name <name> [--space-id <id>]
                                       Find a named Hmux session and attach it to a pane in a Space
   dure hmux upgrade --name <name> --target-panel-id <pane> --confirm-restart
@@ -4327,6 +4329,26 @@ async function main() {
       loadRegistry,
     });
     process.stdout.write(`${opts.json ? JSON.stringify(report) : formatRunsCommand(report)}\n`);
+    process.exitCode = report.ok ? 0 : 2;
+    return;
+  }
+  if (cmd === "resume" || (cmd === "help" && rest[0] === "resume")) {
+    const { RESUME_HELP, parseResumeOptions, collectResumeAll, formatResumeAll } = await import("./lib/resume-all-command.mjs");
+    if (cmd === "help" || rest.length === 0 || rest.some((arg) => arg === "--help" || arg === "-h")) {
+      process.stdout.write(`${RESUME_HELP}\n`);
+      return;
+    }
+    let opts;
+    try { opts = parseResumeOptions(rest); } catch (error) {
+      writeCliActionError(error, { json: rest.includes("--json") }, "dure.resume/v1", "dure.resume.error", "resume_request_invalid");
+      return;
+    }
+    const { loadSessionClientProjection } = await import("./lib/client-registry.mjs");
+    const report = await collectResumeAll({ opts, command: hmuxCommand(),
+      resolveBackend: () => backendProfileQueryContext(opts),
+      loadRegistry: () => loadSessionClientProjection({ registryPath: REG, clientId: sessionQueryClientId() }),
+    });
+    process.stdout.write(`${opts.json ? JSON.stringify(report) : formatResumeAll(report)}\n`);
     process.exitCode = report.ok ? 0 : 2;
     return;
   }

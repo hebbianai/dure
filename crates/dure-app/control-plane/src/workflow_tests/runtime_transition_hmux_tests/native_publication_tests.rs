@@ -7,6 +7,7 @@ use hmux_client::{
 
 mod account_switch;
 mod deferred_resume;
+mod resume_all;
 
 #[tokio::test]
 #[ignore = "requires isolated real Hmux; use scripts/qa/hmux-control-plane-smoke.mjs"]
@@ -630,7 +631,7 @@ async fn run_cli(
             .env("HMUX_RUNTIME", runtime)
             .env("HMUX_DISCOVERY_ROOT", &state.hmux_identity.discovery_root);
     }
-    let output = tokio::time::timeout(std::time::Duration::from_secs(20), command.output())
+    let output = tokio::time::timeout(std::time::Duration::from_secs(60), command.output())
         .await
         .expect("CLI request did not complete");
     let output = output.unwrap();

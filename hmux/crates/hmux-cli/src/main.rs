@@ -106,6 +106,7 @@ const CLI_CAPABILITIES: &[&str] = &[
     managed_rehost_observation::CAPABILITY,
     managed_rehost_execution::RECONCILE_CAPABILITY,
     managed_rehost_execution::START_CAPABILITY,
+    managed_rehost_execution::HOST_ABSENT_START_CAPABILITY,
     managed_rehost_identity::CAPABILITY,
     "semantic_command_input_v1",
     semantic_input::DRAFT_GUARDED_COMMAND_INPUT_CAPABILITY,
@@ -141,6 +142,7 @@ const CLI_CAPABILITIES: &[&str] = &[
     managed_rehost_observation::CAPABILITY,
     managed_rehost_execution::RECONCILE_CAPABILITY,
     managed_rehost_execution::START_CAPABILITY,
+    managed_rehost_execution::HOST_ABSENT_START_CAPABILITY,
     managed_rehost_identity::CAPABILITY,
     "semantic_command_input_v1",
     semantic_input::DRAFT_GUARDED_COMMAND_INPUT_CAPABILITY,
@@ -278,7 +280,7 @@ enum Command {
 
     /// Start or replay a same-conversation rehost of one exact original source.
     #[command(name = "managed-rehost-start")]
-    ManagedRehostStart(ManagedRehostOperationArgs),
+    ManagedRehostStart(managed_rehost_execution::ManagedRehostStartArgs),
 
     /// Resolve a retired managed source to its latest durable generation.
     #[command(name = "managed-rehost-resolve")]

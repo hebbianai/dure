@@ -9,6 +9,7 @@ use hmux_runtime_contract::{ManagedRehostReconcileRequest, ManagedRehostRequest}
 
 pub(crate) const RECONCILE_CAPABILITY: &str = "managed_rehost_operation_reconcile_v1";
 pub(crate) const START_CAPABILITY: &str = "managed_rehost_operation_start_v1";
+pub(crate) const HOST_ABSENT_START_CAPABILITY: &str = "managed_rehost_host_absent_start_v1";
 
 #[derive(Args, Debug)]
 pub(crate) struct ManagedRehostArgs {
@@ -56,6 +57,20 @@ pub(crate) struct ManagedRehostOperationArgs {
     runtime: Option<PathBuf>,
 }
 
+#[derive(Args, Debug)]
+pub(crate) struct ManagedRehostStartArgs {
+    #[command(flatten)]
+    operation: ManagedRehostOperationArgs,
+    /// Refuse unless the OS proves the exact source Host is gone, so a running
+    /// or hung Host is never replaced.
+    #[arg(long, requires = "expected_conversation")]
+    require_host_absent: bool,
+    /// Exact provider conversation to continue. A Host that is gone can no
+    /// longer report its own.
+    #[arg(long, value_name = "ID")]
+    expected_conversation: Option<String>,
+}
+
 pub(crate) fn rehost(
     root: &Path,
     args: ManagedRehostArgs,
@@ -97,9 +112,14 @@ pub(crate) fn reconcile(
 
 pub(crate) fn start(
     catalog: &LocalSessionCatalog,
-    args: ManagedRehostOperationArgs,
+    args: ManagedRehostStartArgs,
     json: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let ManagedRehostStartArgs {
+        operation: args,
+        require_host_absent,
+        expected_conversation,
+    } = args;
     args.confirmation()?;
     let (session, workspace) = args.source.required()?;
     let identity = ManagedRehostReconcileRequest::by_operation_identity(
@@ -117,7 +137,7 @@ pub(crate) fn start(
     let source = catalog
         .managed_rehost_source(&SessionSelector::new(session, Some(workspace.to_string())))?;
     let descriptor = source.descriptor();
-    let request = ManagedRehostRequest::new(
+    let mut request = ManagedRehostRequest::new(
         args.operation_id,
         &descriptor.session_id,
         &descriptor.workspace_id,
@@ -128,6 +148,13 @@ pub(crate) fn start(
         &descriptor.terminal_epoch,
         true,
     )?;
+    if let Some(conversation) = expected_conversation {
+        request = request.with_expected_conversation_id(conversation)?;
+    }
+    if require_host_absent {
+        // The broker repeats this OS-backed check at its destructive boundary.
+        request = request.requiring_socket_owner_absence()?;
+    }
     // The broker rechecks/reserves atomically; this handle cannot authorize a later generation.
     render(broker.with_source(source).rehost(request), json)
 }

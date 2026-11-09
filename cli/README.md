@@ -170,6 +170,20 @@ See `dure send --help` and `dure wait --help` for evidence limits. Native Codex
 progress also appears in `dure inspect --json`, `dure ls`, and pane headers after
 five quiet minutes of thinking. This is an observation, never an automatic stop.
 
+### Restoring agents after a reboot
+
+`dure resume --all` restores every agent whose Host is gone, each into its own
+conversation, worktree and account, without an open app. Only a Host the
+operating system proves is gone is replaced; running agents and Hosts that are
+merely not answering are left alone. Run it again at any time: restored agents
+then report as already running.
+
+`--json` returns `restored`, `alreadyRunning`, `skipped` and `failed`, with a
+stable `reason` and a `message` on each skipped or failed agent. Skipped agents
+do not fail the command; a failed restore exits 2. `--dry-run` reports the plan
+and changes nothing. `--include-exited` also restores agents whose provider had
+already exited on its own. For one agent use `dure runs resume`.
+
 ### Scheduled operational tasks
 
 Schedules use isolated Git worktrees by default. Use `dure schedule create

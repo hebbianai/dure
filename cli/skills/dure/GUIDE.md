@@ -282,6 +282,10 @@ dure runs resume worker --json                 # preview only
 dure runs resume worker --confirm-restart --json
 ```
 
+After a reboot, `dure resume --all --json` restores every agent whose Host is
+proven gone and lists the rest with reasons; add `--dry-run` to preview. It never
+replaces a running or unresponsive Host.
+
 Use the exact Agent or operation ID when names are ambiguous. `open` places the
 current existing runtime without launching another provider. `resume` preserves
 the conversation: a confirmed stopped source with a waiting deferred target uses
