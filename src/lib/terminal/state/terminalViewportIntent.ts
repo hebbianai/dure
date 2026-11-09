@@ -1,5 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import {
+	FindInHistorySchema,
+	type FindStep,
 	FollowTailSchema,
 	ScrollRowsSchema,
 	SetViewportRowsSchema,
@@ -8,7 +10,10 @@ import {
 	type ViewportIntent,
 	ViewportIntentSchema,
 } from "@/contracts/terminalStateProtocol";
-import { TERMINAL_STATE_DEFAULT_COLORS_PROTOCOL_MINOR } from "../protocol/terminalStateLimits";
+import {
+	TERMINAL_STATE_DEFAULT_COLORS_PROTOCOL_MINOR,
+	TERMINAL_STATE_HISTORY_FIND_PROTOCOL_MINOR,
+} from "../protocol/terminalStateLimits";
 import { encodeTerminalStateRecord } from "../protocol/terminalStateProtocol";
 import type { TerminalDefaultColors } from "./terminalDefaultColors";
 import type { TerminalInputFence } from "./terminalInputIntent";
@@ -65,6 +70,34 @@ export function encodeTerminalDefaultColorsIntent(
 		{
 			case: "terminalDefaultColors",
 			value: create(TerminalDefaultColorsSchema, colors),
+		},
+	);
+}
+
+export interface TerminalFindIntent {
+	readonly query: string;
+	readonly caseSensitive: boolean;
+	readonly regex: boolean;
+	readonly step: FindStep;
+}
+
+/** Host-side find over retained history; an empty query ends the find. */
+export function encodeTerminalFindIntent(
+	recordId: bigint,
+	inputFence: TerminalInputFence,
+	viewportFence: TerminalViewportIntentFence,
+	find: TerminalFindIntent,
+): Uint8Array {
+	return encodeTerminalViewportIntent(
+		recordId,
+		{
+			...inputFence,
+			schemaMinor: TERMINAL_STATE_HISTORY_FIND_PROTOCOL_MINOR,
+		},
+		viewportFence,
+		{
+			case: "findInHistory",
+			value: create(FindInHistorySchema, find),
 		},
 	);
 }

@@ -528,7 +528,8 @@ impl TerminalSurfaceAttachment {
                 .with_terminal_viewport_projection()
                 .with_agent_runtime_state()
                 .with_terminal_viewport_wheel()
-                .with_terminal_viewport_multipart();
+                .with_terminal_viewport_multipart()
+                .with_terminal_history_find();
         match access {
             TerminalSurfaceAccess::ReadOnly => options,
             TerminalSurfaceAccess::Writer => options
@@ -2147,6 +2148,7 @@ mod tests {
                 anchor_status: ViewportAnchorStatus::FollowTail as i32,
                 rows_from_tail: Some(0),
                 input_output_timing: None,
+                find: None,
             })),
         }
     }

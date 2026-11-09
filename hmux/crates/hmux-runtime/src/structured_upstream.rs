@@ -14,6 +14,7 @@ pub(crate) struct IngressPermissions<'a> {
     pub(crate) draft_guarded_input: bool,
     pub(crate) wheel: bool,
     pub(crate) default_colors: bool,
+    pub(crate) history_find: bool,
     pub(crate) base_protocol_minor: u8,
     pub(crate) host_provider_id: &'a str,
 }
@@ -48,6 +49,11 @@ pub(crate) fn decode_upstream(
                 Some(viewport_intent::Intent::TerminalDefaultColors(_))
             )
     );
+    let history_find = matches!(
+        decoded.record.body.as_ref(),
+        Some(terminal_state_record::Body::ViewportIntent(intent))
+            if matches!(intent.intent, Some(viewport_intent::Intent::FindInHistory(_)))
+    );
     let input_admission = match decoded.record.body.as_ref() {
         Some(terminal_state_record::Body::InputIntent(intent)) => {
             Some(InputAdmission::from_validated_structured(
@@ -75,6 +81,11 @@ pub(crate) fn decode_upstream(
         {
             Some(hmux_runtime_contract::TERMINAL_DEFAULT_COLORS_CAPABILITY)
         }
+        Some(terminal_state_record::Body::ViewportIntent(_))
+            if history_find && !permissions.history_find =>
+        {
+            Some(hmux_runtime_contract::TERMINAL_HISTORY_FIND_CAPABILITY)
+        }
         Some(terminal_state_record::Body::InputIntent(_)) => match input_admission.as_ref() {
             Some(Err(required_capability)) => Some(*required_capability),
             Some(Ok(InputAdmission::Ordinary)) if !permissions.input => {
@@ -91,6 +102,8 @@ pub(crate) fn decode_upstream(
     }
     let permitted_minor = if default_colors && permissions.default_colors {
         hmux_runtime_contract::TERMINAL_DEFAULT_COLORS_PROTOCOL_VERSION.envelope_minor
+    } else if history_find && permissions.history_find {
+        hmux_runtime_contract::TERMINAL_HISTORY_FIND_PROTOCOL_VERSION.envelope_minor
     } else if wheel && permissions.wheel {
         hmux_runtime_contract::TERMINAL_VIEWPORT_WHEEL_PROTOCOL_VERSION.envelope_minor
     } else {

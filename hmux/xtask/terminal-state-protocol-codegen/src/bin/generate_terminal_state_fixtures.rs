@@ -111,6 +111,7 @@ fn viewport_frame() -> ViewportFrame {
         anchor_status: ViewportAnchorStatus::FollowTail as i32,
         rows_from_tail: Some(0),
         input_output_timing: None,
+        find: None,
     }
 }
 

@@ -45,6 +45,9 @@ message ViewportFrame {
   // correlates this only when the record ID and output-sequence baseline match
   // the input fence it dispatched; it has no rendering semantics.
   InputOutputTiming input_output_timing = 22;
+  // Present only while this connection has an active find. Highlights are
+  // relative to this frame's rows; counts describe the Host's last search.
+  ViewportFind find = 23;
 }
 
 message InputOutputTiming {
@@ -107,7 +110,58 @@ message ViewportIntent {
     // Opaque embedder defaults used only by the terminal core when a program
     // queries OSC 10/11. This does not create terminal-origin color overrides.
     TerminalDefaultColors terminal_default_colors = 14;
+    // Search this connection's retained history and reveal one match. An
+    // empty query ends the find. Never changes PTY state or other viewports.
+    FindInHistory find_in_history = 15;
   }
+}
+
+message FindInHistory {
+  string query = 1;
+  bool case_sensitive = 2;
+  bool regex = 3;
+  FindStep step = 4;
+}
+
+enum FindStep {
+  FIND_STEP_UNSPECIFIED = 0;
+  // A new or edited query selects the newest match.
+  FIND_STEP_RESTART = 1;
+  // Select the next match toward older output, wrapping to the newest.
+  FIND_STEP_OLDER = 2;
+  // Select the next match toward newer output, wrapping to the oldest.
+  FIND_STEP_NEWER = 3;
+}
+
+// The Host's answer to the newest applied find on this connection.
+message ViewportFind {
+  // Intent sequence of the find this result answers.
+  uint64 find_intent_seq = 1;
+  FindStatus status = 2;
+  // Matches found, counted from the newest output.
+  uint32 match_count = 3;
+  // False when a scan or match bound stopped before the oldest retained row.
+  bool match_count_complete = 4;
+  // One-based position of the selected match counted from the newest; zero
+  // when nothing matched.
+  uint32 current_match = 5;
+  repeated FindHighlight highlights = 6;
+}
+
+enum FindStatus {
+  FIND_STATUS_UNSPECIFIED = 0;
+  FIND_STATUS_MATCHED = 1;
+  FIND_STATUS_NO_MATCH = 2;
+  FIND_STATUS_INVALID_PATTERN = 3;
+}
+
+// One match segment on one physical row of the frame. Columns are canonical
+// cells; the end is exclusive.
+message FindHighlight {
+  uint32 row = 1;
+  uint32 start_column = 2;
+  uint32 end_column = 3;
+  bool current = 4;
 }
 
 message TerminalDefaultColors {

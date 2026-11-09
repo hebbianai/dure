@@ -1,14 +1,18 @@
 import type { KeyboardEvent } from "react";
 import { useCallback } from "react";
 import type { ShortcutOverrides } from "@/lib/settings/shortcutBindings";
+import { isTerminalFindShortcut } from "@/lib/terminal/interaction/terminalFind";
 import { terminalInputLatency } from "@/lib/terminal/interaction/terminalInputLatency";
 import { terminalEditingSequence } from "@/lib/terminal/interaction/terminalKeyBindings";
+import type { TerminalInputFence } from "@/lib/terminal/state/terminalInputIntent";
 import {
 	encodeTerminalKeyIntent,
 	encodeTerminalTextIntent,
 	shouldSendTerminalKey,
 } from "@/lib/terminal/state/terminalInputIntent";
-import type { TerminalInputFence } from "@/lib/terminal/state/terminalInputIntent";
+import { detectDesktopPlatform } from "@/lib/workspace/desktop/desktopPlatform";
+
+const DESKTOP_PLATFORM = detectDesktopPlatform();
 
 type SendUserInput = (
 	encode: (recordId: bigint, fence: TerminalInputFence) => Uint8Array,
@@ -21,6 +25,8 @@ interface StructuredTerminalKeyInputOptions {
 	readonly selectedText: () => string;
 	readonly finishCompositionHandoff: () => void;
 	readonly sendUserInput: SendUserInput;
+	/** Opens the find bar; the chord never reaches the terminal. */
+	readonly openFind?: () => void;
 }
 
 /**
@@ -42,9 +48,22 @@ export function useStructuredTerminalKeyInput({
 	selectedText,
 	finishCompositionHandoff,
 	sendUserInput,
+	openFind,
 }: StructuredTerminalKeyInputOptions) {
 	return useCallback(
 		(event: KeyboardEvent<HTMLTextAreaElement>) => {
+			if (
+				openFind &&
+				isTerminalFindShortcut(
+					event.nativeEvent,
+					shortcutOverrides,
+					DESKTOP_PLATFORM,
+				)
+			) {
+				event.preventDefault();
+				openFind();
+				return;
+			}
 			terminalInputLatency.markSemanticKeydown(terminalId);
 			if (!inputReady) return;
 			if (
@@ -73,6 +92,7 @@ export function useStructuredTerminalKeyInput({
 		[
 			finishCompositionHandoff,
 			inputReady,
+			openFind,
 			selectedText,
 			sendUserInput,
 			shortcutOverrides,

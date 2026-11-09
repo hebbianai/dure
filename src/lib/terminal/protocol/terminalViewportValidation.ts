@@ -1,8 +1,11 @@
 import {
 	CursorShape,
+	FindStatus,
+	FindStep,
 	PointerKind,
 	type TerminalColorOverrides,
 	ViewportAnchorStatus,
+	type ViewportFind,
 	type ViewportFrame,
 	type ViewportFramePart,
 	type ViewportIntent,
@@ -25,7 +28,11 @@ import {
 } from "./terminalStateGridValidation";
 import { validateTerminalPointerInput } from "./terminalStateInteractionValidation";
 import {
+	TERMINAL_FIND_MAX_HIGHLIGHTS,
+	TERMINAL_FIND_MAX_MATCHES,
+	TERMINAL_FIND_MAX_QUERY_BYTES,
 	TERMINAL_STATE_DEFAULT_COLORS_PROTOCOL_MINOR,
+	TERMINAL_STATE_HISTORY_FIND_PROTOCOL_MINOR,
 	TERMINAL_STATE_MAX_BATCH_ID_BYTES,
 	TERMINAL_STATE_MAX_PAYLOAD_BYTES,
 	TERMINAL_STATE_MAX_REVISION,
@@ -148,6 +155,69 @@ export function validateTerminalViewportFrame(
 		}
 		previous = index;
 	}
+	if (frame.find) {
+		validateViewportFind(frame.find, frame.rows.length, frame.canonicalColumns);
+	}
+}
+
+function validateViewportFind(
+	find: ViewportFind,
+	rows: number,
+	columns: number,
+): void {
+	validateUint64(
+		find.findIntentSeq,
+		"viewport find intent sequence is not a uint64",
+	);
+	if (
+		find.findIntentSeq === 0n ||
+		find.findIntentSeq > TERMINAL_STATE_MAX_REVISION
+	) {
+		fail("viewport find intent sequence is invalid");
+	}
+	const status = validateEnumNumber(
+		find.status,
+		[FindStatus.MATCHED, FindStatus.NO_MATCH, FindStatus.INVALID_PATTERN],
+		"viewport find status is invalid",
+	);
+	validateUint32(find.matchCount, "viewport find match count is not a uint32");
+	validateUint32(
+		find.currentMatch,
+		"viewport find current match is not a uint32",
+	);
+	const matched = status === FindStatus.MATCHED;
+	const consistent = matched
+		? find.matchCount > 0 &&
+			find.matchCount <= TERMINAL_FIND_MAX_MATCHES &&
+			find.currentMatch > 0 &&
+			find.currentMatch <= find.matchCount
+		: find.matchCount === 0 &&
+			find.currentMatch === 0 &&
+			find.highlights.length === 0;
+	if (!consistent || find.highlights.length > TERMINAL_FIND_MAX_HIGHLIGHTS) {
+		fail("viewport find counts and highlights disagree");
+	}
+	for (const highlight of find.highlights) {
+		validateUint32(
+			highlight.row,
+			"viewport find highlight row is not a uint32",
+		);
+		validateUint32(
+			highlight.startColumn,
+			"viewport find highlight start is not a uint32",
+		);
+		validateUint32(
+			highlight.endColumn,
+			"viewport find highlight end is not a uint32",
+		);
+		if (
+			highlight.row >= rows ||
+			highlight.startColumn >= highlight.endColumn ||
+			highlight.endColumn > columns
+		) {
+			fail("viewport find highlight is outside its frame");
+		}
+	}
 }
 
 export function validateTerminalViewportIntent(
@@ -217,6 +287,26 @@ export function validateTerminalViewportIntent(
 				}
 			}
 			return;
+		case "findInHistory": {
+			if (schemaMinor < TERMINAL_STATE_HISTORY_FIND_PROTOCOL_MINOR) {
+				fail("history find requires its protocol minor");
+			}
+			const find = intent.intent.value;
+			validateEnumNumber(
+				find.step,
+				[FindStep.RESTART, FindStep.OLDER, FindStep.NEWER],
+				"history find step is invalid",
+			);
+			if (
+				intent.observedProjectionRevision === 0n ||
+				new TextEncoder().encode(find.query).length >
+					TERMINAL_FIND_MAX_QUERY_BYTES ||
+				find.query.includes("\0")
+			) {
+				fail("history find query, step or observed revision is invalid");
+			}
+			return;
+		}
 		default:
 			fail("typed viewport intent is required");
 	}

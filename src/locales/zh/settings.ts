@@ -465,6 +465,7 @@ export const settings: Record<string, string> = {
 	"settings.appearance.scheme.darkCollapsedHint": "在深色模式下应用 — 展开以更改",
 	"settings.appearance.scheme.darkDesc": "在深色模式下应用于终端和整体界面。",
 	"settings.shortcuts.cmd.termKillWord": "删除单词 (^W)",
+	"settings.shortcuts.cmd.termFind": "在终端中查找",
 	"settings.shortcuts.title": "快捷键",
 	"settings.providers.capability.conversationList": "会话列表",
 	"settings.providers.capability.fork": "分叉会话",

@@ -229,6 +229,7 @@ export const settings: Record<string, string> = {
 	"settings.appearance.scheme.darkCollapsedHint": "다크 모드일 때 적용됩니다 - 펼쳐서 변경",
 	"settings.appearance.scheme.darkDesc": "다크 모드일 때 터미널·UI 전체에 적용됩니다.",
 	"settings.shortcuts.cmd.termKillWord": "단어 삭제 (^W)",
+	"settings.shortcuts.cmd.termFind": "터미널에서 찾기",
 	"settings.shortcuts.title": "단축키",
 	"settings.providers.capability.conversationList": "대화 목록",
 	"settings.providers.capability.fork": "대화 분기",
