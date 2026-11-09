@@ -109,6 +109,51 @@ fn a_failed_creator_cannot_abort_a_partial_or_registered_checkout() {
 }
 
 #[test]
+fn a_failed_creator_discards_only_a_checkout_git_left_initializing() {
+    let fixture = fixture();
+    let add_locked = |target: &Path, reason: &str| {
+        let target = target.to_str().unwrap();
+        git(
+            &fixture.repository,
+            &["worktree", "add", "--detach", target, "HEAD"],
+        );
+        git(
+            &fixture.repository,
+            &["worktree", "lock", "--reason", reason, target],
+        );
+    };
+
+    let target = fixture._temporary.path().join("killed-execution");
+    let creation = admit_git_checkout_creation(
+        &fixture.repository,
+        &target,
+        &operation("killed-owner"),
+        &["HEAD"],
+    )
+    .unwrap()
+    .unwrap();
+    add_locked(&target, "initializing");
+    assert!(creation.abort_if_absent().unwrap());
+    assert!(!target.exists());
+
+    let target = fixture._temporary.path().join("operator-locked-execution");
+    let creation = admit_git_checkout_creation(
+        &fixture.repository,
+        &target,
+        &operation("operator-locked-owner"),
+        &["HEAD"],
+    )
+    .unwrap()
+    .unwrap();
+    add_locked(&target, "held by an operator");
+    assert_eq!(
+        creation.abort_if_absent().unwrap_err().code,
+        "checkout_use_creation_reconcile_required"
+    );
+    assert!(target.join(".git").exists());
+}
+
+#[test]
 fn preflight_abort_retires_only_its_own_unstarted_reservation() {
     let fixture = fixture();
     let target = fixture._temporary.path().join("interrupted-preflight");

@@ -271,6 +271,26 @@ fn registered_worktree_paths(repository: &Path) -> Result<Vec<PathBuf>, GitCheck
     Ok(paths)
 }
 
+/// Git writes this exact lock only while its own `worktree add` runs, so a
+/// creator whose writers have all ended knows that add never finished.
+#[cfg(unix)]
+fn worktree_initialization_interrupted(
+    repository: &Path,
+    target: &Path,
+) -> Result<bool, GitCheckoutInstanceError> {
+    let output = git_output(repository, &["worktree", "list", "--porcelain", "-z"])?;
+    let mut at_target = false;
+    for field in output.split(|byte| *byte == 0) {
+        if let Some(raw_path) = field.strip_prefix(b"worktree ") {
+            at_target = std::str::from_utf8(raw_path)
+                .is_ok_and(|path| dunce::simplified(Path::new(path)) == dunce::simplified(target));
+        } else if at_target && field == b"locked initializing" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn observe_checkout(
     repository_common: &Path,
     checkout: &Path,

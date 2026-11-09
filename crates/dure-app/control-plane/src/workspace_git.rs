@@ -53,31 +53,22 @@ impl WorkspaceFailure {
         }
     }
     fn with_detail(code: &'static str, message: &str) -> Self {
-        // The existing receipt accepts one line of evidence, at most 1024
-        // UTF-8 bytes. Diagnostic prose never determines the machine code.
-        let mut detail = String::new();
-        for word in
-            message.split(|character: char| character.is_whitespace() || character.is_control())
-        {
-            if word.is_empty() {
-                continue;
-            }
-            if !detail.is_empty() && detail.len() < 1024 {
-                detail.push(' ');
-            }
-            for character in word.chars() {
-                if detail.len() + character.len_utf8() > 1024 {
-                    return Self {
-                        code: code.into(),
-                        detail: Some(detail.trim_end().into()),
-                    };
-                }
-                detail.push(character);
-            }
-        }
         Self {
             code: code.into(),
-            detail: (!detail.is_empty()).then_some(detail),
+            detail: bounded_detail(message),
+        }
+    }
+
+    /// A cleanup problem says what was left behind. The stage still failed for
+    /// its original reason, so the code does not change.
+    fn with_cleanup_problem(self, problem: &str) -> Self {
+        let evidence = match &self.detail {
+            Some(detail) => format!("{detail}; cleanup incomplete: {problem}"),
+            None => format!("cleanup incomplete: {problem}"),
+        };
+        Self {
+            detail: bounded_detail(&evidence),
+            ..self
         }
     }
 }
@@ -165,11 +156,35 @@ async fn claim_workspace(
     .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
 }
 
+/// The existing receipt accepts one line of evidence, at most 1024 UTF-8
+/// bytes. Diagnostic prose never determines the machine code.
+fn bounded_detail(message: &str) -> Option<String> {
+    let mut detail = String::new();
+    for word in message.split(|character: char| character.is_whitespace() || character.is_control())
+    {
+        if word.is_empty() {
+            continue;
+        }
+        if !detail.is_empty() && detail.len() < 1024 {
+            detail.push(' ');
+        }
+        for character in word.chars() {
+            if detail.len() + character.len_utf8() > 1024 {
+                return Some(detail.trim_end().into());
+            }
+            detail.push(character);
+        }
+    }
+    (!detail.is_empty()).then_some(detail)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct WorktreeEntry {
     path: PathBuf,
     head: String,
     branch_ref: Option<String>,
+    /// Git still holds its own lock from a `worktree add` that never finished.
+    initializing: bool,
 }
 
 pub(crate) async fn resolve_base_commit(
@@ -349,6 +364,7 @@ fn parse_worktrees(source: &[u8]) -> Result<Vec<WorktreeEntry>, WorkspaceFailure
     let mut path = None;
     let mut head = None;
     let mut branch_ref = None;
+    let mut initializing = false;
     for field in source.split(|byte| *byte == 0) {
         if field.is_empty() {
             if let Some(path) = path.take() {
@@ -358,6 +374,7 @@ fn parse_worktrees(source: &[u8]) -> Result<Vec<WorktreeEntry>, WorkspaceFailure
                         WorkspaceFailure::new("workspace_repository_response_invalid")
                     })?,
                     branch_ref: branch_ref.take(),
+                    initializing: std::mem::take(&mut initializing),
                 });
             }
             continue;
@@ -375,6 +392,8 @@ fn parse_worktrees(source: &[u8]) -> Result<Vec<WorktreeEntry>, WorkspaceFailure
             head = Some(value.into());
         } else if let Some(value) = field.strip_prefix("branch ") {
             branch_ref = Some(value.into());
+        } else if field == "locked initializing" {
+            initializing = true;
         }
     }
     if path.is_some() || head.is_some() || branch_ref.is_some() {

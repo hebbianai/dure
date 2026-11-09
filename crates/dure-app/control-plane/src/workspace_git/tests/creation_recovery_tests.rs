@@ -160,37 +160,26 @@ fn another_run(mut request: WorkspaceAcquireRequest) -> WorkspaceAcquireRequest 
     request
 }
 
-#[tokio::test]
-async fn killed_checkout_rolls_back_and_the_next_run_can_use_the_same_name() {
-    let root = repository().await;
-    // Killing Git's whole group is what the bounded timeout does, so Git gets
-    // no chance to clean up and its registration stays locked `initializing`.
-    install_checkout_filter(root.path(), "kill -9 0").await;
-    let request = request(root.path()).await;
-    let target = root.path().join(".worktrees/feature-x");
-
-    let failure = GitWorkspaceAcquirer::default()
-        .acquire(request.clone())
-        .await
-        .expect_err("a checkout Git never finished must not be adopted");
-
-    assert_eq!(failure.code, "workspace_checkout_interrupted");
-    assert!(!target.exists(), "the partial checkout was left behind");
-    assert_eq!(list_worktrees(root.path()).await.unwrap().len(), 1);
+async fn assert_rolled_back_and_the_name_is_free(root: &Path, request: WorkspaceAcquireRequest) {
     assert!(
-        read_ref(root.path(), &lease_ref(&request.workspace_id))
+        !root.join(".worktrees/feature-x").exists(),
+        "the partial checkout was left behind"
+    );
+    assert_eq!(list_worktrees(root).await.unwrap().len(), 1);
+    assert!(
+        read_ref(root, &lease_ref(&request.workspace_id))
             .await
             .unwrap()
             .is_none()
     );
     assert!(
-        read_ref(root.path(), "refs/heads/agent/feature-x")
+        read_ref(root, "refs/heads/agent/feature-x")
             .await
             .unwrap()
             .is_none()
     );
 
-    remove_checkout_filter(root.path()).await;
+    remove_checkout_filter(root).await;
     let created = GitWorkspaceAcquirer::default()
         .acquire(another_run(request))
         .await
@@ -202,24 +191,37 @@ async fn killed_checkout_rolls_back_and_the_next_run_can_use_the_same_name() {
 }
 
 #[tokio::test]
-async fn zz_temporary_real_timeout_observation() {
+async fn killed_checkout_is_never_adopted_and_rolls_back() {
     let root = repository().await;
+    // Killing Git's whole group leaves what the bounded timeout leaves: Git
+    // gets no chance to clean up and stays locked `initializing`.
+    install_checkout_filter(root.path(), "kill -9 0").await;
+    let request = request(root.path()).await;
+
+    let failure = GitWorkspaceAcquirer::default()
+        .acquire(request.clone())
+        .await
+        .expect_err("a checkout Git never finished must not be adopted");
+
+    assert_eq!(failure.code, "workspace_checkout_interrupted");
+    assert_rolled_back_and_the_name_is_free(root.path(), request).await;
+}
+
+#[tokio::test]
+async fn timed_out_checkout_reports_the_timeout_and_rolls_back() {
+    let root = repository().await;
+    // Outlasts the real 20 second limit; the runner kills the filter with Git.
     install_checkout_filter(root.path(), "sleep 40").await;
     let request = request(root.path()).await;
-    let target = root.path().join(".worktrees/feature-x");
-    let result = GitWorkspaceAcquirer::default()
+
+    let failure = GitWorkspaceAcquirer::default()
         .acquire(request.clone())
-        .await;
-    let exists = target.exists();
-    let worktrees = list_worktrees(root.path()).await;
-    let locked = std::fs::read_to_string(root.path().join(".git/worktrees/feature-x/locked"));
-    remove_checkout_filter(root.path()).await;
-    let next = GitWorkspaceAcquirer::default()
-        .acquire(another_run(request))
-        .await;
-    panic!(
-        "OBSERVED first={result:?} target_exists={exists} worktrees={worktrees:?} locked={locked:?} next_run={next:?}"
-    );
+        .await
+        .unwrap_err();
+
+    assert_eq!(failure.code, "workspace_git_timeout");
+    assert_eq!(failure.detail, None);
+    assert_rolled_back_and_the_name_is_free(root.path(), request).await;
 }
 
 #[tokio::test]
