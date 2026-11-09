@@ -1,4 +1,23 @@
 use super::*;
+use crate::workspace_git::{CreationOwnerFuture, CreationOwnerLedger};
+use dure_app::{AgentSpawnJournalStateV1, AgentSpawnJournalStore};
+
+/// A checkout reservation's operation is the spawn that made it. Only a spawn
+/// the journal records as stopped can have abandoned its reservation; a missing
+/// or unreadable receipt proves nothing.
+impl CreationOwnerLedger for SqliteDomainStore {
+    fn has_finished<'a>(&'a self, operation: &'a OperationIdV1) -> CreationOwnerFuture<'a> {
+        Box::pin(async move {
+            matches!(
+                self.agent_spawn_receipt(operation).await,
+                Ok(Some(receipt)) if matches!(
+                    receipt.state,
+                    AgentSpawnJournalStateV1::RetryRequired | AgentSpawnJournalStateV1::Failed
+                )
+            )
+        })
+    }
+}
 
 pub(super) fn workspace_request(
     receipt: &AgentSpawnJournalReceiptV1,

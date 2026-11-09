@@ -644,7 +644,9 @@ pub async fn prepare_with_agent_conversation_runtimes(
                 hmux_identity.discovery_root.clone(),
             ),
         ),
-        workspace_acquirer: Arc::new(workspace_git::GitWorkspaceAcquirer::default()),
+        workspace_acquirer: Arc::new(workspace_git::GitWorkspaceAcquirer::with_creation_owners(
+            store.clone(),
+        )),
         hmux_identity,
         projects_catalog_path,
         store,

@@ -1,8 +1,11 @@
 use super::*;
-use dure_git_checkout::{AdmittedGitCheckoutCreation, GitCheckoutUseError};
+use dure_git_checkout::{
+    AdmittedGitCheckoutCreation, GitCheckoutCreationOperation, GitCheckoutUseError,
+};
 
 pub(super) async fn acquire_workspace(
     request: WorkspaceAcquireRequest,
+    creation_owners: Option<&dyn CreationOwnerLedger>,
 ) -> Result<WorkspaceHandle, WorkspaceFailure> {
     // A frozen registration identifies an existing checkout incarnation.
     // Resolving it can claim that checkout, but cannot create another.
@@ -85,6 +88,7 @@ pub(super) async fn acquire_workspace(
             return Err(roll_back_creation(move || creation.abort(), &request, failure).await);
         }
     };
+    let creation = retire_finished_creation_owner(creation, creation_owners).await?;
     let creation = tokio::task::spawn_blocking(move || creation.admit())
         .await
         .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
@@ -102,6 +106,36 @@ pub(super) async fn acquire_workspace(
         .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
         .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
     Ok(handle)
+}
+
+/// A creator can die, or have its abort refused over a partial directory,
+/// leaving a reservation only its own operation could retire. `creation` holds
+/// the execution lease throughout, so no writer of that reservation remains
+/// while the ledger is asked whether its operation has ended.
+async fn retire_finished_creation_owner(
+    creation: GitCheckoutCreationOperation,
+    creation_owners: Option<&dyn CreationOwnerLedger>,
+) -> Result<GitCheckoutCreationOperation, WorkspaceFailure> {
+    let Some(creation_owners) = creation_owners else {
+        return Ok(creation);
+    };
+    let (creation, owner) = tokio::task::spawn_blocking(move || {
+        let owner = creation.retirable_owner();
+        (creation, owner)
+    })
+    .await
+    .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?;
+    let owner = owner.map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
+    let Some(owner) = owner else {
+        return Ok(creation);
+    };
+    if !creation_owners.has_finished(&owner).await {
+        return Ok(creation);
+    }
+    tokio::task::spawn_blocking(move || creation.retire_finished_owner(&owner).map(|_| creation))
+        .await
+        .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
+        .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))
 }
 
 /// Retire a failed creator without letting its cleanup hide why it failed.

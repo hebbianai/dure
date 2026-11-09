@@ -350,6 +350,19 @@ fn a_free_execution_lease_does_not_authorize_an_unbound_historical_start() {
         "checkout_use_creation_reconcile_required"
     );
     assert_eq!(read_state(&authority).unwrap().unwrap().oid, before);
+    assert_eq!(
+        admit_git_checkout_creation(
+            &fixture.repository,
+            &target,
+            &operation("unbound-newcomer"),
+            &["HEAD"]
+        )
+        .err()
+        .unwrap()
+        .code,
+        "checkout_use_phase_conflict"
+    );
+    assert_eq!(read_state(&authority).unwrap().unwrap().oid, before);
     assert!(!target.exists());
 }
 
@@ -395,4 +408,233 @@ fn an_aborted_creator_cannot_use_its_historical_reservation_to_restart() {
         .is_some()
     );
     assert!(!target.exists());
+}
+
+fn abandon_started_creation(fixture: &Fixture, target: &Path, owner: &str) -> Authority {
+    let owner_id = operation(owner);
+    let authority = prepare_request(&reserve(fixture, target, owner))
+        .unwrap()
+        .authority;
+    // Dropping the admitted creation is what a dead creator leaves behind: a
+    // started reservation and a free execution lease, with no abort committed.
+    drop(
+        admit_git_checkout_creation(&fixture.repository, target, &owner_id, &["original"])
+            .unwrap()
+            .unwrap(),
+    );
+    assert_eq!(
+        read_state(&authority).unwrap().unwrap().state.phase(),
+        Phase::Creating
+    );
+    authority
+}
+
+fn prepare_newcomer(
+    fixture: &Fixture,
+    target: &Path,
+    newcomer: &OperationIdV1,
+) -> GitCheckoutCreationOperation {
+    prepare_git_checkout_creation(&fixture.repository, target, newcomer, &["next"])
+        .unwrap()
+        .unwrap()
+}
+
+fn assert_reserved_by(authority: &Authority, owner: &OperationIdV1) {
+    let state = read_state(authority).unwrap().unwrap().state;
+    assert_eq!(state.phase(), Phase::Creating);
+    assert_eq!(state.reservation().unwrap().operation_id, owner.as_str());
+    assert_eq!(
+        state.claims.keys().map(String::as_str).collect::<Vec<_>>(),
+        [owner.as_str()]
+    );
+}
+
+#[test]
+fn a_free_lease_alone_never_displaces_another_operations_reservation() {
+    let fixture = fixture();
+    let target = fixture._temporary.path().join("unvouched");
+    let authority = abandon_started_creation(&fixture, &target, "unvouched-owner");
+    let before = read_state(&authority).unwrap().unwrap().oid;
+    assert_eq!(
+        prepare_newcomer(&fixture, &target, &operation("unvouched-newcomer"))
+            .admit()
+            .err()
+            .unwrap()
+            .code,
+        "checkout_use_phase_conflict"
+    );
+    assert_eq!(read_state(&authority).unwrap().unwrap().oid, before);
+}
+
+#[test]
+fn a_vouched_owner_of_a_started_creation_yields_its_path() {
+    let fixture = fixture();
+    let target = fixture._temporary.path().join("finished-started");
+    let owner = operation("finished-started-owner");
+    let authority = abandon_started_creation(&fixture, &target, owner.as_str());
+    let newcomer = operation("finished-started-newcomer");
+    let creation = prepare_newcomer(&fixture, &target, &newcomer);
+    assert_eq!(creation.retirable_owner().unwrap(), Some(owner.clone()));
+    assert!(creation.retire_finished_owner(&owner).unwrap());
+    let admitted = creation.admit().unwrap();
+    assert_reserved_by(&authority, &newcomer);
+    assert!(!target.exists());
+    admitted.abort_if_absent().unwrap();
+}
+
+#[test]
+fn a_vouched_owner_of_an_unstarted_reservation_yields_its_path() {
+    let fixture = fixture();
+    let target = fixture._temporary.path().join("finished-reserved");
+    let owner = operation("finished-reserved-owner");
+    let request = reserve(&fixture, &target, owner.as_str());
+    apply_git_checkout_use(&request).unwrap();
+    let authority = prepare_request(&request).unwrap().authority;
+    let newcomer = operation("finished-reserved-newcomer");
+    let creation = prepare_newcomer(&fixture, &target, &newcomer);
+    assert_eq!(creation.retirable_owner().unwrap(), Some(owner.clone()));
+    assert!(creation.retire_finished_owner(&owner).unwrap());
+    let admitted = creation.admit().unwrap();
+    assert_reserved_by(&authority, &newcomer);
+    admitted.abort_if_absent().unwrap();
+}
+
+#[test]
+fn retirement_names_the_exact_owner_and_never_the_callers_own_operation() {
+    let fixture = fixture();
+    let target = fixture._temporary.path().join("exact-owner");
+    let owner = operation("exact-owner-owner");
+    let authority = abandon_started_creation(&fixture, &target, owner.as_str());
+    let before = read_state(&authority).unwrap().unwrap().oid;
+    let creation = prepare_newcomer(&fixture, &target, &operation("exact-owner-newcomer"));
+    assert!(
+        !creation
+            .retire_finished_owner(&operation("exact-owner-someone-else"))
+            .unwrap()
+    );
+    assert_eq!(read_state(&authority).unwrap().unwrap().oid, before);
+    drop(creation);
+    let own = prepare_git_checkout_creation(&fixture.repository, &target, &owner, &["original"])
+        .unwrap()
+        .unwrap();
+    assert_eq!(own.retirable_owner().unwrap(), None);
+    assert!(!own.retire_finished_owner(&owner).unwrap());
+    assert_eq!(read_state(&authority).unwrap().unwrap().oid, before);
+}
+
+#[test]
+fn a_finished_owner_keeps_its_path_until_the_partial_directory_is_gone() {
+    let fixture = fixture();
+    let target = fixture._temporary.path().join("finished-partial");
+    let owner = operation("finished-partial-owner");
+    let authority = abandon_started_creation(&fixture, &target, owner.as_str());
+    let before = read_state(&authority).unwrap().unwrap().oid;
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("retained"), b"partial user data").unwrap();
+    let newcomer = operation("finished-partial-newcomer");
+    let creation = prepare_newcomer(&fixture, &target, &newcomer);
+    assert!(!creation.retire_finished_owner(&owner).unwrap());
+    assert_eq!(read_state(&authority).unwrap().unwrap().oid, before);
+    assert_eq!(
+        fs::read(target.join("retained")).unwrap(),
+        b"partial user data"
+    );
+    assert_eq!(
+        creation.admit().err().unwrap().code,
+        "checkout_use_phase_conflict"
+    );
+
+    fs::remove_dir_all(&target).unwrap();
+    let creation = prepare_newcomer(&fixture, &target, &newcomer);
+    assert!(creation.retire_finished_owner(&owner).unwrap());
+    creation.admit().unwrap().abort_if_absent().unwrap();
+}
+
+#[test]
+fn a_finished_owner_keeps_its_path_while_git_still_registers_it() {
+    let fixture = fixture();
+    let target = fixture._temporary.path().join("finished-registered");
+    let owner = operation("finished-registered-owner");
+    let authority = abandon_started_creation(&fixture, &target, owner.as_str());
+    git(
+        &fixture.repository,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            target.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    let retained = target.with_extension("retained");
+    fs::rename(&target, &retained).unwrap();
+    let before = read_state(&authority).unwrap().unwrap().oid;
+    let creation = prepare_newcomer(&fixture, &target, &operation("finished-registered-next"));
+    assert!(!creation.retire_finished_owner(&owner).unwrap());
+    assert_eq!(read_state(&authority).unwrap().unwrap().oid, before);
+    assert!(retained.is_dir());
+}
+
+#[test]
+fn a_start_not_bound_to_the_lease_is_never_offered_for_retirement() {
+    let fixture = fixture();
+    let target = fixture._temporary.path().join("finished-unbound");
+    let owner = operation("finished-unbound-owner");
+    let request = reserve(&fixture, &target, owner.as_str());
+    let GitCheckoutUseOutcomeV1::CreationReserved { reservation } =
+        apply_git_checkout_use(&request).unwrap().outcome
+    else {
+        panic!("reservation missing");
+    };
+    apply_git_checkout_use(&GitCheckoutUseRequestV1 {
+        operation_id: operation("finished-unbound-start"),
+        action: GitCheckoutUseActionV1::StartCreation {
+            canonical_path: reservation.canonical_path,
+            reservation_token: reservation.reservation_token,
+        },
+        ..request.clone()
+    })
+    .unwrap();
+    let authority = prepare_request(&request).unwrap().authority;
+    let before = read_state(&authority).unwrap().unwrap().oid;
+    let creation = prepare_newcomer(&fixture, &target, &operation("finished-unbound-next"));
+    assert_eq!(creation.retirable_owner().unwrap(), None);
+    assert!(!creation.retire_finished_owner(&owner).unwrap());
+    assert_eq!(read_state(&authority).unwrap().unwrap().oid, before);
+}
+
+#[test]
+fn a_running_creation_cannot_be_observed_for_retirement_until_it_ends() {
+    let fixture = fixture();
+    let target = fixture._temporary.path().join("running-creation");
+    let owner = operation("running-creation-owner");
+    let authority = prepare_request(&reserve(&fixture, &target, owner.as_str()))
+        .unwrap()
+        .authority;
+    let original = admit_git_checkout_creation(&fixture.repository, &target, &owner, &["original"])
+        .unwrap()
+        .unwrap();
+    let before = read_state(&authority).unwrap().unwrap().oid;
+    let (finished, completion) = std::sync::mpsc::channel();
+    let newcomer = {
+        let repository = fixture.repository.clone();
+        let target = target.clone();
+        std::thread::spawn(move || {
+            let observed = prepare_git_checkout_creation(
+                &repository,
+                &target,
+                &operation("running-creation-newcomer"),
+                &["next"],
+            )
+            .and_then(|creation| creation.unwrap().retirable_owner());
+            finished.send(()).unwrap();
+            observed
+        })
+    };
+    let early = completion.recv_timeout(std::time::Duration::from_millis(200));
+    assert_eq!(read_state(&authority).unwrap().unwrap().oid, before);
+    drop(original);
+    let observed = newcomer.join().unwrap();
+    assert_eq!(early, Err(std::sync::mpsc::RecvTimeoutError::Timeout));
+    assert_eq!(observed.unwrap(), Some(owner));
 }

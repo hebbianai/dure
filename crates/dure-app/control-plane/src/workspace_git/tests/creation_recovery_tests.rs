@@ -310,6 +310,84 @@ async fn rejected_preflight_allows_a_fresh_registration(recovering: bool) {
     );
 }
 
+struct FinishedOwners(&'static [&'static str]);
+
+impl CreationOwnerLedger for FinishedOwners {
+    fn has_finished<'a>(&'a self, operation: &'a OperationIdV1) -> CreationOwnerFuture<'a> {
+        Box::pin(async move { self.0.contains(&operation.as_str()) })
+    }
+}
+
+/// `git worktree add` can fail after writing the directory. The creator's own
+/// abort is then refused, so the reservation outlives it. A later run reuses
+/// the name only once that directory is gone and the creator has ended.
+#[tokio::test]
+async fn partial_creation_yields_its_name_only_to_a_run_that_can_prove_it_ended() {
+    let root = repository().await;
+    let first = request(root.path()).await;
+    let hooks = root.path().join("hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    let hook = hooks.join("post-checkout");
+    std::fs::write(
+        &hook,
+        b"#!/bin/sh\nrm -rf \"$(git rev-parse --absolute-git-dir)\"\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        git_output(
+            root.path(),
+            ["config", "core.hooksPath", hooks.to_str().unwrap()],
+            None
+        )
+        .await
+        .unwrap()
+        .status
+        .success()
+    );
+    assert_eq!(
+        GitWorkspaceAcquirer::default()
+            .acquire(first.clone())
+            .await
+            .unwrap_err()
+            .code,
+        "workspace_checkout_identity_mismatch"
+    );
+    let partial = root.path().join(".worktrees/feature-x");
+    assert!(partial.is_dir());
+    std::fs::remove_dir_all(&partial).unwrap();
+    std::fs::rename(&hook, hook.with_extension("disabled")).unwrap();
+
+    let mut later = first;
+    later.workspace_id = WorkspaceIdV1::new("workspace-later-run").unwrap();
+    later.registration_id = OperationIdV1::new("spawn-later-run").unwrap();
+    let AgentSpawnWorktreePolicyV1::Dedicated { branch_mode, .. } = &mut later.policy else {
+        panic!("dedicated fixture required");
+    };
+    *branch_mode = AgentSpawnBranchModeV1::Existing;
+
+    for unproven in [
+        GitWorkspaceAcquirer::default(),
+        GitWorkspaceAcquirer::with_creation_owners(Arc::new(FinishedOwners(&["spawn-other"]))),
+    ] {
+        assert_eq!(
+            unproven.acquire(later.clone()).await.unwrap_err().code,
+            "checkout_use_phase_conflict"
+        );
+        assert!(!partial.exists());
+    }
+
+    let result =
+        GitWorkspaceAcquirer::with_creation_owners(Arc::new(FinishedOwners(&["spawn-fixture"])))
+            .acquire(later)
+            .await;
+    assert!(
+        result.is_ok(),
+        "a finished creator stranded its path: {result:?}"
+    );
+    assert!(partial.is_dir());
+}
+
 #[tokio::test]
 async fn creation_child() {
     let Some(root) = std::env::var_os(ROOT_ENV) else {

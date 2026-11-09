@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Arc;
 
 use dure_app::{
     AgentSpawnBranchModeV1, AgentSpawnStageDispositionV1, AgentSpawnWorkspaceLeaseV1,
@@ -81,17 +82,37 @@ pub(crate) trait WorkspaceAcquirer: Send + Sync {
     fn resolve(&self, request: WorkspaceAcquireRequest) -> WorkspaceFuture;
 }
 
+pub(crate) type CreationOwnerFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+
+/// Says whether the operation behind a creation reservation has ended. An
+/// operation it cannot account for counts as still running.
+pub(crate) trait CreationOwnerLedger: Send + Sync {
+    fn has_finished<'a>(&'a self, operation: &'a OperationIdV1) -> CreationOwnerFuture<'a>;
+}
+
+/// Without a ledger, a reservation only ever yields to its own operation.
 #[derive(Clone, Default)]
-pub(crate) struct GitWorkspaceAcquirer {}
+pub(crate) struct GitWorkspaceAcquirer {
+    creation_owners: Option<Arc<dyn CreationOwnerLedger>>,
+}
+
+impl GitWorkspaceAcquirer {
+    pub(crate) fn with_creation_owners(creation_owners: Arc<dyn CreationOwnerLedger>) -> Self {
+        Self {
+            creation_owners: Some(creation_owners),
+        }
+    }
+}
 
 impl WorkspaceAcquirer for GitWorkspaceAcquirer {
     fn acquire(&self, request: WorkspaceAcquireRequest) -> WorkspaceFuture {
+        let creation_owners = self.creation_owners.clone();
         Box::pin(async move {
             let request = normalize_workspace_request(request)?;
             let registration_id = request.registration_id.clone();
             let registration = request.registration.clone();
             claim_workspace(
-                acquire_workspace(request).await?,
+                acquire_workspace(request, creation_owners.as_deref()).await?,
                 registration_id,
                 registration,
             )
