@@ -1,5 +1,5 @@
 use super::*;
-use crate::workspace_git::GitWorkspaceAcquirer;
+use crate::workspace_git::{CreationOwnerLedger, GitWorkspaceAcquirer};
 use dure_git_checkout::{GitCheckoutRemovalRequestV1, remove_git_checkout_instance};
 
 struct ClaimObservingLauncher {
@@ -112,6 +112,132 @@ async fn checkout_failure_keeps_the_actual_git_reason_in_the_durable_receipt() {
             .unwrap(),
         failed,
     );
+}
+
+fn fixture_git(repository: &std::path::Path, arguments: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repository)
+        .args(arguments)
+        .env_clear()
+        .envs(std::env::vars_os().filter(|(key, _)| !key.to_string_lossy().starts_with("GIT_")))
+        .env("LC_ALL", "C")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// The reported flow through the real journal: the first spawn's worktree stage
+/// fails and leaves a reservation behind, and its receipt is what lets a later
+/// spawn with the same name take over once the partial directory is gone.
+#[tokio::test]
+async fn later_spawn_takes_over_the_reservation_of_a_spawn_the_journal_shows_stopped() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repository = crate::workspace_git::tests::repository().await;
+    let hooks = repository.path().join("hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    let hook = hooks.join("post-checkout");
+    std::fs::write(
+        &hook,
+        b"#!/bin/sh\nrm -rf \"$(git rev-parse --absolute-git-dir)\"\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+    fixture_git(
+        repository.path(),
+        &["config", "core.hooksPath", hooks.to_str().unwrap()],
+    );
+    let base_commit_sha = crate::workspace_git::resolve_base_commit(repository.path(), None)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(&root.path().join("domain.sqlite"))
+        .await
+        .unwrap();
+    let providers = crate::provider_extension::test_local_agent_provider_registry();
+    let mut requested = dedicated_request();
+    requested.prompt_digest = None;
+    requested.worktree = AgentSpawnWorktreePolicyV1::Dedicated {
+        base_commit_sha: base_commit_sha.clone(),
+        branch: "agent/feature-x".into(),
+        branch_mode: dure_app::AgentSpawnBranchModeV1::Create,
+        checkout_path: None,
+    };
+    let first = agent_spawn_api::preview(
+        &store,
+        &providers,
+        "dure-local",
+        "generation-1",
+        project(),
+        requested.clone(),
+        1,
+    )
+    .await
+    .unwrap();
+    let launcher = FixtureLauncher {
+        calls: Arc::new(AtomicUsize::new(0)),
+    };
+    let prompt = FixturePromptDeliverer {
+        calls: Arc::new(AtomicUsize::new(0)),
+        uncertain: false,
+    };
+    let observer = FixturePromptActivityObserver::observed();
+    let workspace = GitWorkspaceAcquirer::with_creation_owners(Arc::new(store.clone()));
+    let mut context = execution(&launcher, &prompt, &observer);
+    context.project_root = repository.path().to_path_buf();
+    context.workspace_acquirer = &workspace;
+    let mut body = apply_body(&first, "");
+    body.prompt = None;
+    let unknown = OperationIdV1::new("spawn-never-journaled").unwrap();
+    assert!(!store.has_finished(&unknown).await);
+    assert!(!store.has_finished(&first.operation_id).await);
+    let prepared = prepare_stage(&store, &first, AgentSpawnStageV1::Worktree, 1)
+        .await
+        .unwrap();
+    assert!(!store.has_finished(&first.operation_id).await);
+    let failed = execute_prepared_stage(&store, prepared, 1, &body, Some(&context), None)
+        .await
+        .unwrap();
+    assert_eq!(failed.state, AgentSpawnJournalStateV1::RetryRequired);
+    assert!(store.has_finished(&first.operation_id).await);
+    let partial = repository.path().join(".worktrees/feature-x");
+    assert!(partial.is_dir());
+
+    std::fs::remove_dir_all(&partial).unwrap();
+    std::fs::rename(&hook, hook.with_extension("disabled")).unwrap();
+    requested.idempotency_key = "spawn-later-same-name".into();
+    requested.worktree = AgentSpawnWorktreePolicyV1::Dedicated {
+        base_commit_sha,
+        branch: "agent/feature-x".into(),
+        branch_mode: dure_app::AgentSpawnBranchModeV1::Existing,
+        checkout_path: None,
+    };
+    let later = agent_spawn_api::preview(
+        &store,
+        &providers,
+        "dure-local",
+        "generation-1",
+        project(),
+        requested,
+        2,
+    )
+    .await
+    .unwrap();
+    let mut body = apply_body(&later, "");
+    body.prompt = None;
+    let prepared = prepare_stage(&store, &later, AgentSpawnStageV1::Worktree, 1)
+        .await
+        .unwrap();
+    let committed = execute_prepared_stage(&store, prepared, 1, &body, Some(&context), None)
+        .await
+        .unwrap();
+    assert!(
+        committed.checkout_registration.is_some(),
+        "the later spawn stayed blocked: {:?}",
+        committed.recovery
+    );
+    assert!(partial.is_dir());
 }
 
 #[tokio::test]

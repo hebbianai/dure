@@ -108,6 +108,10 @@ fn reconciliation_required(message: &str) -> GitCheckoutUseError {
     GitCheckoutUseError::new("checkout_use_creation_reconcile_required", message)
 }
 
+/// Only `admit` mints this prefix, and only while holding the execution lease
+/// its Git children inherit, so a free lease proves such a start has ended.
+const BOUND_CREATION_START_PREFIX: &str = "checkout-create-start-";
+
 /// Holds one still-admitted creation and its actual Git execution lifetime.
 /// Dropping this object closes the parent's descriptor; it never explicitly
 /// unlocks a description still inherited by an original Git process.
@@ -253,6 +257,68 @@ impl GitCheckoutCreationOperation {
         Ok(false)
     }
 
+    /// The other operation whose reservation blocks this creation, if the
+    /// held execution lease can vouch that none of its Git work remains.
+    pub fn retirable_owner(&self) -> Result<Option<OperationIdV1>, GitCheckoutUseError> {
+        let loaded = read_state(&self.request.authority)?;
+        loaded
+            .as_ref()
+            .and_then(|loaded| retirable_reservation(&self.request, &loaded.state))
+            .map(|(reservation, _)| {
+                OperationIdV1::new(reservation.operation_id.clone())
+                    .map_err(|_| state_error("stored creation reservation identity is invalid"))
+            })
+            .transpose()
+    }
+
+    /// Retire `owner`'s reservation so this creation can be admitted. A free
+    /// lease only proves no Git work remains; the caller must separately know
+    /// that `owner` has ended, because a reservation made outside `admit`
+    /// holds no lease at all. Returns false, changing nothing, when the
+    /// reservation moved on or its target is materialized or registered.
+    pub fn retire_finished_owner(
+        &self,
+        owner: &OperationIdV1,
+    ) -> Result<bool, GitCheckoutUseError> {
+        let loaded = read_state(&self.request.authority)?;
+        let Some((state, reservation, start)) = loaded.as_ref().and_then(|loaded| {
+            retirable_reservation(&self.request, &loaded.state)
+                .filter(|(reservation, _)| reservation.operation_id == owner.as_str())
+                .map(|(reservation, start)| (&loaded.state, reservation, start))
+        }) else {
+            return Ok(false);
+        };
+        let quiescent_start = start
+            .map(|start| {
+                OperationIdV1::new(start.operation_id.clone())
+                    .map(|id| (id, start.request_digest.clone()))
+                    .map_err(|_| state_error("stored creation start identity is invalid"))
+            })
+            .transpose()?;
+        let abort_id = OperationIdV1::new(format!(
+            "checkout-create-retire-{}-r{}",
+            self.binding, state.revision
+        ))
+        .map_err(|_| state_error("derived creation retirement identity is invalid"))?;
+        let retirement =
+            self.request
+                .creation_abort_of(abort_id, &reservation.token, quiescent_start)?;
+        match self.lease.apply(retirement, loaded) {
+            Ok(_) => Ok(true),
+            Err(error)
+                if matches!(
+                    error.code,
+                    "checkout_use_phase_conflict"
+                        | "checkout_use_operation_conflict"
+                        | "checkout_use_creation_reconcile_required"
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn admit(self) -> Result<AdmittedGitCheckoutCreation, GitCheckoutUseError> {
         let Self {
             request,
@@ -273,7 +339,7 @@ impl GitCheckoutCreationOperation {
                 "creation admission did not return its reservation",
             ));
         };
-        let start_id = OperationIdV1::new(format!("checkout-create-start-{binding}"))
+        let start_id = OperationIdV1::new(format!("{BOUND_CREATION_START_PREFIX}{binding}"))
             .map_err(|_| state_error("derived creation start identity is invalid"))?;
         let activation_id = OperationIdV1::new(format!("checkout-create-activate-{binding}"))
             .map_err(|_| state_error("derived creation activation identity is invalid"))?;
@@ -296,6 +362,24 @@ impl GitCheckoutCreationOperation {
             start_request,
         })
     }
+}
+
+/// The reservation another operation left behind, with its start. A start not
+/// minted under the execution lease says nothing about whether it has ended.
+fn retirable_reservation<'a>(
+    request: &PreparedRequest,
+    state: &'a State,
+) -> Option<(&'a Slot, Option<&'a Slot>)> {
+    let Lifecycle::Creating(creating) = &state.lifecycle else {
+        return None;
+    };
+    let (reservation, start) = match creating {
+        CreatingState::Reserved(reservation) => (reservation, None),
+        CreatingState::Started { reservation, start } => (reservation, Some(start)),
+    };
+    (!request.is_operation(&reservation.operation_id)
+        && start.is_none_or(|start| start.operation_id.starts_with(BOUND_CREATION_START_PREFIX)))
+    .then_some((reservation, start))
 }
 
 impl AdmittedGitCheckoutCreation {
