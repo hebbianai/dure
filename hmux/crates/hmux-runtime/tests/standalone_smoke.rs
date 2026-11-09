@@ -7768,12 +7768,20 @@ fn a_turn_end_after_a_submit_that_started_no_turn_publishes_waiting() {
         session.descriptor().session_id.clone(),
         Some(session.descriptor().workspace_id.clone()),
     );
-    let mut observer =
-        LocalSessionObserver::connect(&catalog, &selector, ObserverAttachOptions::default())
+    // A fresh attachment cannot block on a projection that never arrives.
+    let current_state = || {
+        let snapshot =
+            LocalSessionObserver::connect(&catalog, &selector, ObserverAttachOptions::default())
+                .unwrap();
+        let state = snapshot
+            .attachment()
+            .initial_snapshot
+            .agent_runtime_state
+            .clone()
             .unwrap();
-    observer
-        .set_read_timeout(Some(Duration::from_secs(3)))
-        .unwrap();
+        snapshot.detach().unwrap();
+        state
+    };
     let report = |sequence, activity, completed: bool| AgentStateReport {
         progress: None,
         identity_only: false,
@@ -7800,7 +7808,7 @@ fn a_turn_end_after_a_submit_that_started_no_turn_publishes_waiting() {
             .unwrap(),
         AgentStateReportOutcome::Applied
     );
-    let working = wait_for_provider_event_state(&mut observer);
+    let working = current_state();
     assert_eq!(working.activity, hmux_client::AgentRuntimeActivity::Working);
 
     let submit = session.send_input(b"left as a draft\r".to_vec()).unwrap();
@@ -7812,7 +7820,16 @@ fn a_turn_end_after_a_submit_that_started_no_turn_publishes_waiting() {
             None,
         )
         .unwrap();
-    let settled = wait_for_provider_event_state(&mut observer);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let settled = loop {
+        let state = current_state();
+        if state.activity == hmux_client::AgentRuntimeActivity::Waiting
+            || Instant::now() >= deadline
+        {
+            break state;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
     assert_eq!(settled.activity, hmux_client::AgentRuntimeActivity::Waiting);
     assert_eq!(
         settled.turn_completed_count, working.turn_completed_count,
