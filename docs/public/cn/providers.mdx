@@ -26,7 +26,7 @@ Dure 使用你安装的编码智能体 CLI 和提供商账户。模型、认证�
 
 在 Beta 中，Claude Code、Codex、OpenCode 和 Pi 有结构化聊天集成，是否可用还取决于安装的工具和运行时。其他工具可使用原生终端界面。
 
-智能体的状态（工作中、等待你的输入或批准、空闲）来自工具自身的生命周期事件。Claude Code 和 Codex 在所有平台上报告状态；Gemini CLI、Qwen Code、Pi 和 OpenClaude 在 macOS 和 Linux 上报告。其他工具只显示其进程是否在运行，因此工作时也可能看起来是空闲的。
+智能体的状态（工作中、等待你的输入或批准、空闲）来自工具自身的生命周期事件。Claude Code 和 Codex 在所有平台上报告状态；Gemini CLI、Qwen Code、Pi、OpenClaude 和 OpenCode 终端窗格在 macOS 和 Linux 上报告。如果启动 OpenCode 时已设置 `OPENCODE_CONFIG_CONTENT`，Dure 会保留该值，此次运行不报告状态。其他工具只显示其进程是否在运行，因此工作时也可能看起来是空闲的。
 
 <Tabs>
   <Tab title="Codex">

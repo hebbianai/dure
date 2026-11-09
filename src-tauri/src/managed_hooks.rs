@@ -5,6 +5,8 @@ mod integrations;
 #[cfg(unix)]
 mod openclaude;
 #[cfg(unix)]
+mod opencode;
+#[cfg(unix)]
 mod pi;
 #[cfg(unix)]
 mod qwen;
@@ -432,10 +434,10 @@ pub(crate) fn inject_provider_settings(
         return integrations::inject_command_wrapper(provider_id, command, &channel);
     }
     #[cfg(unix)]
-    if provider_id == "openclaude"
-        && (command == "openclaude" || command.starts_with("openclaude "))
+    if matches!(provider_id, "openclaude" | "opencode")
+        && (command == provider_id || command.starts_with(&format!("{provider_id} ")))
     {
-        // The integration only reports activity, so an unpublished one must
+        // These integrations only report activity, so an unpublished one must
         // not stop the provider from starting.
         return Ok(crate::app_channel::current()
             .map_err(|error| error.to_string())
@@ -443,7 +445,7 @@ pub(crate) fn inject_provider_settings(
                 integrations::inject_command_wrapper(provider_id, command, &channel)
             })
             .unwrap_or_else(|error| {
-                eprintln!("starting OpenClaude without activity reporting: {error}");
+                eprintln!("starting {provider_id} without activity reporting: {error}");
                 command.to_string()
             }));
     }

@@ -26,7 +26,7 @@ Dure はインストール済みのコーディングエージェント CLI と�
 
 Beta では Claude Code、Codex、OpenCode、Pi に構造化チャットの統合があり、利用可否はインストールされたツールとランタイムにも依存します。ほかのツールはネイティブのターミナル表示で利用できます。
 
-エージェントの状態（作業中、入力または承認の待機、アイドル）は、ツール自身のライフサイクルイベントから得られます。Claude Code と Codex はすべてのプラットフォームで、Gemini CLI、Qwen Code、Pi、OpenClaude は macOS と Linux で状態を報告します。ほかのツールはプロセスが動いているかどうかだけを示すため、作業中でもアイドルに見えることがあります。
+エージェントの状態（作業中、入力または承認の待機、アイドル）は、ツール自身のライフサイクルイベントから得られます。Claude Code と Codex はすべてのプラットフォームで、Gemini CLI、Qwen Code、Pi、OpenClaude、OpenCode のターミナルペインは macOS と Linux で状態を報告します。`OPENCODE_CONFIG_CONTENT` を設定済みの OpenCode 起動ではその値を維持し、状態は報告されません。ほかのツールはプロセスが動いているかどうかだけを示すため、作業中でもアイドルに見えることがあります。
 
 <Tabs>
   <Tab title="Codex">
