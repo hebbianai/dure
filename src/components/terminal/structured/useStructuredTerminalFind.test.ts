@@ -13,6 +13,7 @@ import {
 import { TERMINAL_FIND_DEBOUNCE_MS } from "@/lib/terminal/interaction/terminalFind";
 import { TERMINAL_HISTORY_FIND_CAPABILITY } from "@/lib/terminal/protocol/terminalStateLimits";
 import { decodeTerminalStateRecord } from "@/lib/terminal/protocol/terminalStateProtocol";
+import type { StructuredTerminalViewportTransport } from "./structuredTerminalViewportTransportContract";
 import { useStructuredTerminalFind } from "./useStructuredTerminalFind";
 
 beforeEach(() => {
@@ -36,7 +37,7 @@ function harness(supported = true) {
 	const sendViewportIntent = vi.fn(
 		(
 			encode: Parameters<
-				Parameters<typeof useStructuredTerminalFind>[0]["sendViewportIntent"]
+				StructuredTerminalViewportTransport["sendViewportIntent"]
 			>[0],
 		) => {
 			intentSeq += 1n;
@@ -73,14 +74,18 @@ function harness(supported = true) {
 		create(ViewportFrameSchema, { projectionRevision: 3n, find });
 	const view = renderHook(
 		({ current }: { current: ViewportFrame | null }) =>
-			useStructuredTerminalFind({
-				frame: current,
-				attachmentId: "attachment-a",
-				sendViewportIntent,
-				supportsCapability: (capability) =>
-					supported && capability === TERMINAL_HISTORY_FIND_CAPABILITY,
+			useStructuredTerminalFind(
+				{
+					replica: {
+						attachmentId: "attachment-a",
+					} as StructuredTerminalViewportTransport["replica"],
+					sendViewportIntent,
+					supportsCapability: (capability) =>
+						supported && capability === TERMINAL_HISTORY_FIND_CAPABILITY,
+				},
+				current,
 				focusTerminal,
-			}),
+			),
 		{ initialProps: { current: frame() } },
 	);
 	return { sent, view, frame, focusTerminal };
@@ -150,7 +155,7 @@ it("ends the Host find and returns focus to the terminal when closed", () => {
 	act(() => view.result.current.setQuery("x"));
 	act(() => vi.advanceTimersByTime(TERMINAL_FIND_DEBOUNCE_MS));
 	act(() => view.result.current.close());
-	expect(sent.at(-1)).toEqual({
+	expect(sent[sent.length - 1]).toEqual({
 		query: "",
 		caseSensitive: false,
 		regex: false,

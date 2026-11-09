@@ -21,14 +21,10 @@ import type { StructuredTerminalViewportTransport } from "./structuredTerminalVi
 /** UTF-16 units; at most 768 UTF-8 bytes, under the Host's 1 KiB bound. */
 export const TERMINAL_FIND_MAX_QUERY_LENGTH = 256;
 
-interface StructuredTerminalFindOptions {
-	/** The presented frame of the current attachment, or null before one. */
-	readonly frame: ViewportFrame | null;
-	readonly attachmentId: string | null;
-	readonly sendViewportIntent: StructuredTerminalViewportTransport["sendViewportIntent"];
-	readonly supportsCapability: StructuredTerminalViewportTransport["supportsCapability"];
-	readonly focusTerminal: () => void;
-}
+type StructuredTerminalFindTransport = Pick<
+	StructuredTerminalViewportTransport,
+	"replica" | "sendViewportIntent" | "supportsCapability"
+>;
 
 export interface StructuredTerminalFind {
 	readonly open: boolean;
@@ -51,13 +47,14 @@ export interface StructuredTerminalFind {
  * a competing match list. Edits restart the search after a short pause; a
  * step applies at once and continues from the Host's current match.
  */
-export function useStructuredTerminalFind({
-	frame,
-	attachmentId,
-	sendViewportIntent,
-	supportsCapability,
-	focusTerminal,
-}: StructuredTerminalFindOptions): StructuredTerminalFind {
+export function useStructuredTerminalFind(
+	transport: StructuredTerminalFindTransport,
+	/** The presented frame of the current attachment, or null before one. */
+	frame: ViewportFrame | null,
+	focusTerminal: () => void,
+): StructuredTerminalFind {
+	const { sendViewportIntent, supportsCapability } = transport;
+	const attachmentId = transport.replica.attachmentId;
 	const [open, setOpen] = useState(false);
 	const [query, setQueryState] = useState("");
 	const [caseSensitive, setCaseSensitive] = useState(false);

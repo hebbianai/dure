@@ -29,10 +29,7 @@ import {
 } from "@/lib/terminal/state/terminalInputIntent";
 import { encodeTerminalViewportScrollRowsIntent } from "@/lib/terminal/state/terminalViewportIntent";
 import { StructuredTerminalCompositionOverlay } from "./StructuredTerminalCompositionOverlay";
-import {
-	StructuredTerminalFindBar,
-	StructuredTerminalFindHighlights,
-} from "./StructuredTerminalFindBar";
+import { StructuredTerminalFindBar, StructuredTerminalFindHighlights } from "./StructuredTerminalFindBar";
 import { StructuredTerminalRecoveryStatus } from "./StructuredTerminalRecoveryStatus";
 import { useStructuredTerminalGeometryCommit } from "./useStructuredTerminalGeometryCommit";
 import { useStructuredTerminalPointerInput } from "./useStructuredTerminalPointerInput";
@@ -717,16 +714,8 @@ export function StructuredTerminalView({
 			reportTransferFailure,
 		});
 	selectionCommitRef.current = copyNativeSelection;
-	const presentedFindFrame = paintedAttachmentIsCurrent
-		? (presentedFrame?.frame ?? null)
-		: null;
-	const terminalFind = useStructuredTerminalFind({
-		frame: presentedFindFrame,
-		attachmentId: viewportReplica.attachmentId,
-		sendViewportIntent,
-		supportsCapability,
-		focusTerminal: structuredTextInput.focusPaneInput,
-	});
+	const presentedFindFrame = paintedAttachmentIsCurrent ? presentedFrame?.frame ?? null : null;
+	const terminalFind = useStructuredTerminalFind(viewportTransport, presentedFindFrame, structuredTextInput.focusPaneInput);
 	const onTerminalKeyDown = useStructuredTerminalKeyInput({
 		inputReady,
 		terminalId: surfaceId,
@@ -871,10 +860,7 @@ export function StructuredTerminalView({
 							onPaste(event.nativeEvent);
 						}}
 					/>
-					<StructuredTerminalFindHighlights
-						frame={presentedFindFrame}
-						metrics={paintedPresentationRef.current?.paint.metrics ?? null}
-					/>
+					<StructuredTerminalFindHighlights frame={presentedFindFrame} metrics={paintedPresentationRef.current?.paint.metrics ?? null} />
 					{compositionText && (
 						<StructuredTerminalCompositionOverlay
 							text={compositionText}
