@@ -1461,6 +1461,7 @@ export function formatAgentSpawnQuery(report) {
   const startupGate = receipt.completed.find((stage) => stage.stage === "runtime_launch")
     ?.evidence.startup_gate;
   if (startupGate) lines.push(`startup_gate\t${startupGate.kind}`);
+  if (receipt.recovery.stage) lines.push(`stage\t${receipt.recovery.stage}`);
   if (receipt.recovery.error_code) lines.push(`error\t${receipt.recovery.error_code}`);
   if (receipt.recovery.error_detail) lines.push(`detail\t${receipt.recovery.error_detail}`);
   if (receipt.terminalCode) lines.push(`terminal\t${receipt.terminalCode}`);

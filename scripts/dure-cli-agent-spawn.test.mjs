@@ -775,7 +775,8 @@ describe("agent spawn query contract", () => {
           backendResult({ schemaVersion: 1, receipt: withDetail(value) }),
       });
 
-    expect(await status("host_exited_before_ready: capability boundary")).toMatchObject({
+    const failed = await status("host_exited_before_ready: capability boundary");
+    expect(failed).toMatchObject({
       receipt: {
         recovery: {
           kind: "retry_required",
@@ -783,6 +784,11 @@ describe("agent spawn query contract", () => {
         },
       },
     });
+    // The text an operator reads names the stage that stopped, not only its code.
+    expect(formatAgentSpawnQuery(failed)).toContain(
+      "stage\tworktree\nerror\tworktree_create_failed\n" +
+        "detail\thost_exited_before_ready: capability boundary",
+    );
 
     // A newline would let a log dump ride into the journal record: the reader
     // refuses the receipt rather than passing it on (2 = contract violation,

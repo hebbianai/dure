@@ -120,6 +120,108 @@ async fn failed_worktree_creation_preserves_owned_refs_and_allows_a_fresh_regist
     );
 }
 
+/// Commits a file whose checkout runs `smudge`. Only the attribute is committed;
+/// the filter itself is local configuration a later attempt can drop.
+async fn install_checkout_filter(root: &Path, smudge: &str) {
+    std::fs::write(root.join(".gitattributes"), "payload filter=dure-fixture\n").unwrap();
+    std::fs::write(root.join("payload"), "payload\n").unwrap();
+    for arguments in [
+        vec!["add", ".gitattributes", "payload"],
+        vec!["commit", "-m", "add filtered payload"],
+        vec!["config", "filter.dure-fixture.smudge", smudge],
+    ] {
+        assert!(
+            git_output(root, arguments, None)
+                .await
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+}
+
+async fn remove_checkout_filter(root: &Path) {
+    assert!(
+        git_output(
+            root,
+            ["config", "--unset", "filter.dure-fixture.smudge"],
+            None
+        )
+        .await
+        .unwrap()
+        .status
+        .success()
+    );
+}
+
+fn another_run(mut request: WorkspaceAcquireRequest) -> WorkspaceAcquireRequest {
+    request.workspace_id = WorkspaceIdV1::new("workspace-next-run").unwrap();
+    request.registration_id = OperationIdV1::new("spawn-next-run").unwrap();
+    request
+}
+
+#[tokio::test]
+async fn killed_checkout_rolls_back_and_the_next_run_can_use_the_same_name() {
+    let root = repository().await;
+    // Killing Git's whole group is what the bounded timeout does, so Git gets
+    // no chance to clean up and its registration stays locked `initializing`.
+    install_checkout_filter(root.path(), "kill -9 0").await;
+    let request = request(root.path()).await;
+    let target = root.path().join(".worktrees/feature-x");
+
+    let failure = GitWorkspaceAcquirer::default()
+        .acquire(request.clone())
+        .await
+        .expect_err("a checkout Git never finished must not be adopted");
+
+    assert_eq!(failure.code, "workspace_checkout_interrupted");
+    assert!(!target.exists(), "the partial checkout was left behind");
+    assert_eq!(list_worktrees(root.path()).await.unwrap().len(), 1);
+    assert!(
+        read_ref(root.path(), &lease_ref(&request.workspace_id))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        read_ref(root.path(), "refs/heads/agent/feature-x")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    remove_checkout_filter(root.path()).await;
+    let created = GitWorkspaceAcquirer::default()
+        .acquire(another_run(request))
+        .await
+        .expect("the same worktree name must be usable after a rollback");
+    assert_eq!(
+        std::fs::read(created.root.join("payload")).unwrap(),
+        b"payload\n"
+    );
+}
+
+#[tokio::test]
+async fn zz_temporary_real_timeout_observation() {
+    let root = repository().await;
+    install_checkout_filter(root.path(), "sleep 40").await;
+    let request = request(root.path()).await;
+    let target = root.path().join(".worktrees/feature-x");
+    let result = GitWorkspaceAcquirer::default()
+        .acquire(request.clone())
+        .await;
+    let exists = target.exists();
+    let worktrees = list_worktrees(root.path()).await;
+    let locked = std::fs::read_to_string(root.path().join(".git/worktrees/feature-x/locked"));
+    remove_checkout_filter(root.path()).await;
+    let next = GitWorkspaceAcquirer::default()
+        .acquire(another_run(request))
+        .await;
+    panic!(
+        "OBSERVED first={result:?} target_exists={exists} worktrees={worktrees:?} locked={locked:?} next_run={next:?}"
+    );
+}
+
 #[tokio::test]
 async fn failed_creation_without_physical_effects_does_not_block_a_fresh_registration() {
     rejected_preflight_allows_a_fresh_registration(false).await;
