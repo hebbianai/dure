@@ -38,6 +38,10 @@ pub(crate) fn publish_native_runtimes(
             ("pi", super::pi::publish(control_dir, &runtime)),
             ("gemini", super::gemini::publish(control_dir, &runtime)),
             ("qwen-code", super::qwen::publish(control_dir, &runtime)),
+            (
+                "openclaude",
+                super::openclaude::publish(control_dir, &runtime),
+            ),
         ] {
             match result {
                 Ok(integration) => {

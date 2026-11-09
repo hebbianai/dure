@@ -767,7 +767,7 @@ pub fn apply_provider_runtime_integration(
 ) -> Result<(), ExtensionFailureCodeV1> {
     match (provider_id.as_str(), integration) {
         (
-            "codex" | "pi" | "gemini" | "qwen-code",
+            "codex" | "pi" | "gemini" | "qwen-code" | "openclaude",
             ProviderRuntimeIntegrationV1::CommandWrapper { path },
         ) => {
             plan.arguments

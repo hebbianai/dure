@@ -241,6 +241,21 @@ impl AgentProviderImplementation for BundledAgentProvider {
 }
 
 impl NativeAgentProviders {
+    /// The channel integration a native launch carries. Pi and Gemini need
+    /// theirs; OpenClaude's only reports activity, so its launch proceeds
+    /// without one that is missing or no longer matches its publication.
+    fn native_integration(
+        &self,
+        provider_id: &ProviderIdV1,
+    ) -> Result<Option<ProviderRuntimeIntegrationV1>, ExtensionFailureCodeV1> {
+        match provider_id.as_str() {
+            "pi" => self.integrations.integration(provider_id).map(Some),
+            "gemini" if cfg!(unix) => self.integrations.integration(provider_id).map(Some),
+            "openclaude" if cfg!(unix) => Ok(self.integrations.integration(provider_id).ok()),
+            _ => Ok(None),
+        }
+    }
+
     fn session_plan(
         &self,
         request: AgentProviderSessionLaunchRequestV1<'_>,
@@ -248,12 +263,8 @@ impl NativeAgentProviders {
     ) -> Result<AgentProviderSessionLaunchPlanV1, ExtensionFailureCodeV1> {
         let provider_id = request.provider_id;
         let mut plan = native_session_plan(request, project_directory)?;
-        if provider_id.as_str() == "pi" || cfg!(unix) && provider_id.as_str() == "gemini" {
-            integrate_session_launch(
-                provider_id,
-                &self.integrations.integration(provider_id)?,
-                &mut plan,
-            )?;
+        if let Some(integration) = self.native_integration(provider_id)? {
+            integrate_session_launch(provider_id, &integration, &mut plan)?;
         }
         bind_session_channel(self.integrations.as_ref(), &mut plan)?;
         Ok(plan)
@@ -287,12 +298,8 @@ impl AgentProviderImplementation for NativeAgentProviders {
             conversation(provider_conversation_ref),
         )?
         .ok_or_else(missing_launch_plan)?;
-        if provider_id.as_str() == "pi" || cfg!(unix) && provider_id.as_str() == "gemini" {
-            apply_provider_runtime_integration(
-                provider_id,
-                &self.integrations.integration(provider_id)?,
-                &mut plan,
-            )?;
+        if let Some(integration) = self.native_integration(provider_id)? {
+            apply_provider_runtime_integration(provider_id, &integration, &mut plan)?;
         }
         bind_launch_channel(self.integrations.as_ref(), &mut plan)?;
         Ok(plan)

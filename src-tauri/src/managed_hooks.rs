@@ -3,6 +3,8 @@ mod claude;
 mod gemini;
 mod integrations;
 #[cfg(unix)]
+mod openclaude;
+#[cfg(unix)]
 mod pi;
 #[cfg(unix)]
 mod qwen;
@@ -428,6 +430,22 @@ pub(crate) fn inject_provider_settings(
         let channel = crate::app_channel::current()
             .map_err(|error| format!("managed_provider_integration_unavailable: {error}"))?;
         return integrations::inject_command_wrapper(provider_id, command, &channel);
+    }
+    #[cfg(unix)]
+    if provider_id == "openclaude"
+        && (command == "openclaude" || command.starts_with("openclaude "))
+    {
+        // The integration only reports activity, so an unpublished one must
+        // not stop the provider from starting.
+        return Ok(crate::app_channel::current()
+            .map_err(|error| error.to_string())
+            .and_then(|channel| {
+                integrations::inject_command_wrapper(provider_id, command, &channel)
+            })
+            .unwrap_or_else(|error| {
+                eprintln!("starting OpenClaude without activity reporting: {error}");
+                command.to_string()
+            }));
     }
     if provider_id != "claude" && provider_id != "codex" {
         return Ok(command.to_string());
