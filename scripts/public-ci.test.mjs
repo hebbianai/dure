@@ -267,6 +267,19 @@ describe("public CI workflow wiring", () => {
     expect(proof).toBeLessThan(job.steps.length - 1);
     expect(workflow.jobs.app["runs-on"]).toBe("ubuntu-24.04");
   });
+
+  it("restores the pinned Ghostty build inputs from the Actions cache before preparing the proof", () => {
+    // The inputs are hash-checked by ensure-ghostty-vt-proof.mjs on every run, so
+    // a cached copy saves an anonymous release download without trusting the cache.
+    const job = workflow.jobs.hmux;
+    const proof = job.steps.findIndex((step) => step.run?.includes("ensure-ghostty-vt-proof.mjs"));
+    const cache = job.steps.findIndex((step) => step.uses?.startsWith("actions/cache@"));
+    expect(cache).toBeGreaterThan(-1);
+    expect(cache).toBeLessThan(proof);
+    const proofRoot = job.steps[proof].env.DURE_GHOSTTY_VT_CACHE_ROOT;
+    expect(job.steps[cache].with.path).toBe(`${proofRoot}/inputs/v2`);
+    expect(job.steps[cache].with.key).toContain("hmux-ghostty-vt-provenance-v2");
+  });
 });
 
 describe("public CI dependency advisories", () => {

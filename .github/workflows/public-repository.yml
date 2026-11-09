@@ -420,6 +420,13 @@ jobs:
           package-manager-cache: false
       - name: Enable the pinned package manager
         run: corepack enable
+      - name: Restore the pinned Ghostty VT build inputs
+        # The proof script hash-checks these inputs on every run; the cache only
+        # saves the anonymous release download, which times out under load.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/dure-ghostty-vt/inputs/v2
+          key: hmux-ghostty-vt-provenance-v2-${{ runner.os }}-${{ runner.arch }}
       - name: Prepare the pinned Ghostty VT proof
         # The proof builder compiles with its reviewed Rust baseline.
         env:
