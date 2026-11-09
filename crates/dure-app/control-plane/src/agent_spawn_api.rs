@@ -464,8 +464,8 @@ mod tests {
     use dure_app::{
         AgentExecutionProfileV1, AgentInteractionBindingV1, AgentInteractionProfileV1,
         AgentInteractionSessionIdV1, AgentProviderRuntimeFenceV1, AgentSpawnEffortSelectionV1,
-        AgentSpawnModelSelectionV1, AgentSpawnPermissionModeV1, AgentSpawnPromptDigestV1,
-        AgentSpawnWorktreePolicyV1, AgentTimelineEpochV1,
+        AgentSpawnModelSelectionV1, AgentSpawnParentV1, AgentSpawnPermissionModeV1,
+        AgentSpawnPromptDigestV1, AgentSpawnWorktreePolicyV1, AgentTimelineEpochV1,
         PROVIDER_LAUNCH_DEFAULTS_SCHEMA_VERSION_V1, ProviderIdV1, ProviderLaunchDefaultV1,
         ProviderLaunchDefaultsPutRequestV1, ProviderLaunchPermissionModeV1,
         ProviderLaunchPermissionOverrideV1, ProviderPermissionModeV1,
