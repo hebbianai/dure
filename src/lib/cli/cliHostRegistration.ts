@@ -60,16 +60,13 @@ function publicHost(host: SshHostConfig) {
 	};
 }
 
-function failure(error: unknown, fallbackCode: string) {
+function failureDetail(error: unknown, fallbackCode: string) {
 	return {
-		ok: false,
-		error: {
-			code:
-				error && typeof error === "object" && "code" in error
-					? String(error.code)
-					: fallbackCode,
-			message: error instanceof Error ? error.message : String(error),
-		},
+		code:
+			error && typeof error === "object" && "code" in error
+				? String(error.code)
+				: fallbackCode,
+		message: error instanceof Error ? error.message : String(error),
 	};
 }
 
@@ -91,7 +88,7 @@ export async function handleCliHostLookup(
 		}
 		return { ok: true, host: publicHost(host) };
 	} catch (error) {
-		return failure(error, "ssh_host_lookup_failed");
+		return { ok: false, error: failureDetail(error, "ssh_host_lookup_failed") };
 	}
 }
 
@@ -187,6 +184,6 @@ export async function handleCliHostRegistration(
 			},
 		};
 	} catch (error) {
-		return failure(error, "ssh_host_add_failed");
+		return { ok: false, error: failureDetail(error, "ssh_host_add_failed") };
 	}
 }
