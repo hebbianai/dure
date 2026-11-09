@@ -29,7 +29,7 @@ async fn launch_restorable(
                 permission_mode: ProviderPermissionModeV1::Default,
                 provider_executable: hmux.root.join("codex-fixture").to_str().unwrap().into(),
                 provider_arguments: vec!["resume".into(), conversation.into()],
-                provider_resume: WorkflowSessionResumePlanV1::from_arguments(
+                provider_resume: dure_app::WorkflowSessionResumePlanV1::from_arguments(
                     Some(vec![
                         "resume".into(),
                         MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER.into(),
