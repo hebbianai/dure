@@ -417,6 +417,7 @@ async fn seed_dispatch_stop_with_runtime(
             model: None,
             effort: None,
             interaction_preference: None,
+            parent: None,
         },
         agent_id: agent_id.clone(),
         workspace_id: workspace_id.clone(),

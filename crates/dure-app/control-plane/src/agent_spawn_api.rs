@@ -66,7 +66,7 @@ pub(crate) async fn list(
     let runs: Vec<_> = receipts
         .iter()
         .map(|receipt| {
-            serde_json::json!({
+            let mut run = serde_json::json!({
                 "operationId": receipt.operation_id,
                 "agentId": receipt.plan.agent_id,
                 "name": receipt.plan.request.agent_name,
@@ -76,7 +76,16 @@ pub(crate) async fn list(
                 "launchState": receipt.state,
                 "createdAtMs": receipt.created_at_ms,
                 "updatedAtMs": receipt.updated_at_ms,
-            })
+            });
+            // The planned terminal Session and the starting agent let a
+            // parent find and observe its children from one listing.
+            if let AgentSpawnLaunchPlanV1::NativeCli { session_id, .. } = &receipt.plan.launch {
+                run["sessionId"] = serde_json::json!(session_id);
+            }
+            if let Some(parent) = &receipt.plan.request.parent {
+                run["parent"] = serde_json::json!(parent);
+            }
+            run
         })
         .collect();
     Ok(serde_json::json!({ "schemaVersion": 1, "runs": runs, "nextCursor": next_cursor }))
@@ -455,8 +464,8 @@ mod tests {
     use dure_app::{
         AgentExecutionProfileV1, AgentInteractionBindingV1, AgentInteractionProfileV1,
         AgentInteractionSessionIdV1, AgentProviderRuntimeFenceV1, AgentSpawnEffortSelectionV1,
-        AgentSpawnModelSelectionV1, AgentSpawnPermissionModeV1, AgentSpawnPromptDigestV1,
-        AgentSpawnWorktreePolicyV1, AgentTimelineEpochV1,
+        AgentSpawnModelSelectionV1, AgentSpawnParentV1, AgentSpawnPermissionModeV1,
+        AgentSpawnPromptDigestV1, AgentSpawnWorktreePolicyV1, AgentTimelineEpochV1,
         PROVIDER_LAUNCH_DEFAULTS_SCHEMA_VERSION_V1, ProviderIdV1, ProviderLaunchDefaultV1,
         ProviderLaunchDefaultsPutRequestV1, ProviderLaunchPermissionModeV1,
         ProviderLaunchPermissionOverrideV1, ProviderPermissionModeV1,
@@ -489,6 +498,7 @@ mod tests {
             model: None,
             effort: None,
             interaction_preference: None,
+            parent: None,
         }
     }
 
@@ -930,6 +940,92 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(stored, first);
+    }
+
+    #[tokio::test]
+    async fn parent_link_is_recorded_listed_and_fenced_by_the_idempotency_key() {
+        let root = tempfile::tempdir().unwrap();
+        let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+            .await
+            .unwrap();
+        let providers = crate::provider_extension::test_local_agent_provider_registry();
+        let parent = AgentSpawnParentV1 {
+            session_id: "session-lead".into(),
+            workspace_id: "workspace-lead".into(),
+        };
+        let mut linked = request("pi-child");
+        linked.provider_id = ProviderIdV1::new("pi").unwrap();
+        linked.parent = Some(parent.clone());
+        let receipt = preview(
+            &store,
+            &providers,
+            "dure-local",
+            "generation-1",
+            project(),
+            linked.clone(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(receipt.plan.request.parent, Some(parent.clone()));
+        let AgentSpawnLaunchPlanV1::NativeCli { session_id, .. } = &receipt.plan.launch else {
+            panic!("expected a native test launch");
+        };
+
+        let listed = list(
+            &store,
+            AgentSpawnListBody {
+                schema_version: 1,
+                after: None,
+                selector: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            listed["runs"][0]["parent"],
+            serde_json::json!({ "sessionId": "session-lead", "workspaceId": "workspace-lead" })
+        );
+        assert_eq!(
+            listed["runs"][0]["sessionId"],
+            serde_json::json!(session_id)
+        );
+
+        let mut unlinked = linked.clone();
+        unlinked.parent = None;
+        let mut relinked = linked.clone();
+        relinked.parent = Some(AgentSpawnParentV1 {
+            session_id: "session-other".into(),
+            ..parent
+        });
+        for divergent in [unlinked, relinked] {
+            assert_eq!(
+                preview(
+                    &store,
+                    &providers,
+                    "dure-local",
+                    "generation-1",
+                    project(),
+                    divergent,
+                    2,
+                )
+                .await
+                .unwrap_err(),
+                "agent_spawn_idempotency_conflict"
+            );
+        }
+        let replay = preview(
+            &store,
+            &providers,
+            "dure-local",
+            "generation-1",
+            project(),
+            linked,
+            3,
+        )
+        .await
+        .unwrap();
+        assert_eq!(replay, receipt);
     }
 
     #[tokio::test]

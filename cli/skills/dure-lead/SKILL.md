@@ -203,6 +203,12 @@ required action (read the screen), 2 unknown. Pass `--after-turn` and
 `session.runtime.generation.terminalEpoch`) to resume a wait exactly. A
 timeout never stops the worker.
 
+Workers you start from your own terminal pane are linked to you. To sleep until
+the first of them needs you, run `dure wait --children any --timeout 900 --json`;
+`observation.children` names each worker with its state. A worker that has
+finished a turn stays settled, so once you have handled it, go back to the
+per-worker `dure wait` above for the ones still working.
+
 **Completion is a GitHub fact, not a session state.** A worker is done when
 its pull request is merged (or open and handed back with a reason) **and** its
 final issue comment exists. Under the review policy a worker is also done when

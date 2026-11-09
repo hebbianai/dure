@@ -25,6 +25,17 @@ dure schedule --help
 
 `dure read` 读取会话屏幕，`dure transcript` 读取可用的对话记录。用列表返回的会话和工作区标识选择受管理会话。启动成功或输入送达的回执不代表任务已完成。
 
+## 等待你启动的智能体
+
+智能体在自己的 Dure 终端面板中运行 `dure run` 时，新的 Run 会把该智能体记录为父级。之后调用方可以一次等待它的所有子级，而不必逐个轮询：
+
+```sh
+dure wait --children all --timeout 900 --json   # 所有子级都已就绪
+dure wait --children any --json                 # 第一个子级就绪
+```
+
+子级在完成一个回合并空闲、需要输入或批准、已退出或启动失败时视为就绪。JSON 会列出每个子级及其状态；退出码 1 表示某个已就绪的子级需要处理。`dure runs show <agent>` 显示 Run 的父级。使用 `--no-parent` 启动不关联的 Run，或用 `--parent <agent>` 将 Run 关联到同一后端上的另一个智能体。目前还不能等待聊天运行时上的子级；请用 `dure transcript` 读取。
+
 ## 调度重复任务
 
 在项目目录执行：

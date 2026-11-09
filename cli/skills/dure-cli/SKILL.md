@@ -241,9 +241,10 @@ guard gets ordinary input and a stderr warning; restarting it enables the guard.
 dure wait worker --timeout 900 --json  # seconds, default 600
 dure wait --operation-id <id> --json   # the run request, not its answer
 dure wait --task <id> --dispatch <id> --generation <n> --json  # delegated task
+dure wait --children all --json        # every Run this agent started has settled
 ```
 
-The three targets are exclusive, and each rejects the others' flags: with
+The targets are exclusive, and each rejects the others' flags: with
 `--task` only `--backend`, `--timeout`, `--deadline-ms` and `--json` are
 allowed, all three of `--task`, `--dispatch` and `--generation` are required,
 and the generation must be a positive integer. That target completes when the
@@ -259,6 +260,12 @@ one session, so both fields nest under it:
 `session.runtime.generation.terminalEpoch`. A rehost changes the generation and
 the old wait then can never complete. Exit 0 met, 1 failure, 2 unknown, 124
 deadline, 130 interrupted; the last two stop only you.
+
+`--children all|any` waits for the Runs started from this agent's terminal
+(`dure run` records the caller as their parent) until every child, or the first,
+finished a turn and is idle, needs input or approval, exited, or failed to
+launch. Name another parent with `dure wait --children all <agent>` or
+`<session> --workspace ID`. The `dure` skill covers the states and exit codes.
 
 ## If `dure` does not recognize something here
 

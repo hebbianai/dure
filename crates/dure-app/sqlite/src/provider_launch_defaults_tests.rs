@@ -64,6 +64,7 @@ fn spawn_draft(idempotency_key: &str) -> AgentSpawnPlanIntentDraftV1 {
             model: None,
             effort: None,
             interaction_preference: None,
+            parent: None,
         },
         agent_id: AgentIdV1::new(format!("agent-{idempotency_key}")).unwrap(),
         workspace_id: WorkspaceIdV1::new(format!("workspace-{idempotency_key}")).unwrap(),

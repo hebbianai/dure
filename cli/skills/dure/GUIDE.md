@@ -102,6 +102,35 @@ creates no new state. `--merge-policy review` keeps workers from merging: each
 pull request waits for a GitHub approval or the `lead:approved` label before the
 lead merges it, and that rule is in every worker brief from the first dispatch.
 
+### Parent and child Runs
+
+A Run started by `dure run` from inside an agent's Dure terminal pane records
+that agent's exact Session as its parent, on the local backend. The receipt's
+`summary.parent` and `dure runs list/show --json` (`parent`) show the link.
+`--no-parent` starts an unlinked Run; `--parent AGENT` links it to another agent
+on the same backend by name, Agent ID or Session ID, and
+`--parent SESSION_ID --parent-workspace ID` needs no app. An explicit parent
+the backend can't record is refused before anything starts; the automatic link
+is skipped on such a backend.
+
+```sh
+dure run --worktree fix-12 "fix #12"
+dure run --worktree fix-13 "fix #13"
+dure wait --children all --timeout 900 --json   # every child settled
+dure wait --children any --json                 # first child settled
+```
+
+A child settles when it finished a turn and is idle, needs input or approval,
+exited, or its launch failed or stopped short. `observation.children` lists each
+child with `state` (`turn_completed`, `attention_required`, `exited`,
+`launch_failed`, `launch_incomplete`, `working`, `launching`, `unobservable`).
+Exit 0 met, 1 met but a settled child needs action, 2 unknown (no linked
+children, or the rest can't be observed), 124 deadline. An idle child that has
+finished a turn counts as settled, so after you send a child more work, wait on
+that child with `dure wait <child>` instead. Chat-runtime children are
+`unobservable`; read them with `dure transcript AGENT_ID`. Links grant nothing:
+stopping a parent does not stop its children yet.
+
 `--project` and `--path` are mutually exclusive. Both select an existing backend
 registration. `--path` selects the deepest registered project containing that
 directory; it does not register a project or change the Run's working directory

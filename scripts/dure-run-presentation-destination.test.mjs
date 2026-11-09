@@ -221,6 +221,7 @@ describe("Run receipt summary", () => {
       state: "succeeded",
       presentation: "opened",
       interactionProfile: "native_cli",
+      parent: null,
     });
   });
 
@@ -254,10 +255,11 @@ describe("Run receipt summary", () => {
       state: "applying",
       presentation: null,
       interactionProfile: "native_cli",
+      parent: null,
     });
     expect(runReceiptSummary({ kind: "dure.agent_spawn.error", error: { code: "x" } })).toEqual({
       agentId: null, sessionId: null, workspaceId: null, panelId: null, spaceId: null,
-      state: null, presentation: null, interactionProfile: null,
+      state: null, presentation: null, interactionProfile: null, parent: null,
     });
   });
 });

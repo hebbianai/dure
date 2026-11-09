@@ -124,6 +124,7 @@ export async function collectAgentRun({
   deadlineMs,
   requestBackend,
   interactionPreference,
+  parent,
   verbose = false,
 } = {}) {
   const preview = await collectAgentSpawnQuery({
@@ -138,6 +139,7 @@ export async function collectAgentRun({
     effort,
     executionProfile,
     interactionPreference,
+    parent,
     setupCommand,
     includePresentationProject,
     prompt,
