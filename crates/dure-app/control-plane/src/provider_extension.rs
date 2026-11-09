@@ -427,6 +427,12 @@ fn test_integration_source() -> Arc<dyn ProviderRuntimeIntegrationSource> {
                     path: "/fixture/managed-gemini-launch.sh".into(),
                 },
             ),
+            (
+                ProviderIdV1::new("openclaude").unwrap(),
+                ProviderRuntimeIntegrationV1::CommandWrapper {
+                    path: "/fixture/managed-openclaude-launch.sh".into(),
+                },
+            ),
         ]),
     })
 }
