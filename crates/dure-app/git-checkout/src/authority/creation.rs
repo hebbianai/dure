@@ -226,21 +226,22 @@ pub fn prepare_git_checkout_creation(
 impl GitCheckoutCreationOperation {
     /// Reject preflight without minting a reservation. An interrupted earlier
     /// attempt may already own one; retire only that same operation if absent.
-    pub fn abort(self) -> Result<(), GitCheckoutUseError> {
+    /// Returns whether that retirement discarded an interrupted checkout.
+    pub fn abort(self) -> Result<bool, GitCheckoutUseError> {
         let Some(loaded) = read_state(&self.request.authority)? else {
-            return Ok(());
+            return Ok(false);
         };
         let reservation = match &loaded.state.lifecycle {
             Lifecycle::Creating(
                 CreatingState::Reserved(reservation) | CreatingState::Started { reservation, .. },
             ) => reservation,
-            _ => return Ok(()),
+            _ => return Ok(false),
         };
         if !self
             .request
             .matches_operation(&reservation.operation_id, &reservation.request_digest)
         {
-            return Ok(());
+            return Ok(false);
         }
         if loaded.state.creation_start().is_some() {
             return self.admit()?.abort_if_absent();
@@ -249,7 +250,7 @@ impl GitCheckoutCreationOperation {
             .map_err(|_| state_error("derived creation rejection identity is invalid"))?;
         let request = self.request.creation_abort(abort_id, &reservation.token)?;
         self.lease.apply(request, Some(loaded))?;
-        Ok(())
+        Ok(false)
     }
 
     pub fn admit(self) -> Result<AdmittedGitCheckoutCreation, GitCheckoutUseError> {
@@ -303,10 +304,14 @@ impl AdmittedGitCheckoutCreation {
     }
 
     /// Retire a failed creator only after its original inheriting writers end.
-    /// The reducer still refuses any materialized or registered checkout. No
-    /// ownership ref, checkout directory or user file is removed here.
-    pub fn abort_if_absent(mut self) -> Result<(), GitCheckoutUseError> {
+    /// The reducer still refuses any materialized or registered checkout. The
+    /// only thing removed here is a checkout Git still marks as initializing,
+    /// which a killed `worktree add` leaves behind and nothing else can have
+    /// used; no ownership ref or other checkout directory is touched. Returns
+    /// whether such a checkout was discarded.
+    pub fn abort_if_absent(mut self) -> Result<bool, GitCheckoutUseError> {
         self.lease = self.lease.quiesce()?;
+        let discarded = self.discard_interrupted_checkout()?;
         let abort_id = OperationIdV1::new(format!(
             "checkout-create-abort-{}",
             self.start_request.operation_digest()
@@ -317,7 +322,42 @@ impl AdmittedGitCheckoutCreation {
             .creation_abort(abort_id, &self.reservation.reservation_token)?;
         let loaded = read_state(&request.authority)?;
         self.lease.apply(request, loaded)?;
-        Ok(())
+        Ok(discarded)
+    }
+
+    fn discard_interrupted_checkout(&self) -> Result<bool, GitCheckoutUseError> {
+        let authority = &self.request.authority;
+        let interrupted = super::super::worktree_initialization_interrupted(
+            &authority.repository,
+            Path::new(&authority.canonical_path),
+        )
+        .map_err(|cause| instance_error(cause, InstanceErrorContext::Git))?;
+        if !interrupted {
+            return Ok(false);
+        }
+        let anchor = self.lease.anchor().map_err(|cause| {
+            reconciliation_required(&format!("creation execution anchor: {cause:?}"))
+        })?;
+        // Git refuses a locked worktree unless the force is doubled.
+        let output = super::super::git_process::capture_bound_git_output(
+            &authority.repository,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                "--force",
+                &authority.canonical_path,
+            ],
+            std::slice::from_ref(&anchor),
+        )
+        .map_err(|cause| instance_error(cause, InstanceErrorContext::Git))?;
+        if !output.status.success() {
+            return Err(reconciliation_required(&format!(
+                "interrupted checkout could not be removed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        Ok(true)
     }
 
     /// Commit the original reservation's claim only after the physical writer
