@@ -4018,6 +4018,8 @@ Usage:
                                       Live backend/session health requires the reported read-only checks
   dure profiles <list|show|resolve|test> [ID] [--backend ID] [--json]
                                       Inspect, select and test backend profiles independently of the app
+  dure profiles add <ID> --host <APP_SSH_HOST_ID> [--json]
+                                      Pin a Dure backend already running on a registered app SSH host; installs nothing
 
 <name> is an agent name, project/name to disambiguate, or a session ID.
 Deprecated compatibility aliases: hebbian-ade, hebbian-ide (same executable)
@@ -4126,6 +4128,46 @@ async function cmdDoctor(opts) {
   }
 }
 
+const PROFILES_ADD_USAGE = "dure profiles add <ID> --host <APP_SSH_HOST_ID> [--json]";
+const PROFILES_USAGE = `dure profiles <list|show|resolve|test> [ID] [--backend ID] [--json]\n       ${PROFILES_ADD_USAGE}`;
+
+/** Unlike the read actions below, this reads the host from the connected app. */
+async function cmdProfilesAdd(opts) {
+  const {
+    addSshBackendProfile,
+    backendProfileAddErrorReport,
+    formatBackendProfileAddReport,
+    lookupAppSshHost,
+    parseBackendProfileAddArguments,
+  } = await import("./lib/backend-profile-add.mjs");
+  const { loadBackendProfilesWithDefault } = await import("./lib/local-backend.mjs");
+  const request = parseBackendProfileAddArguments(opts.rest.slice(1));
+  if (!request || opts.backendSpecified) fail(`Usage: ${PROFILES_ADD_USAGE}`);
+  try {
+    const report = await addSshBackendProfile(request, {
+      loadCatalog: () =>
+        loadBackendProfilesWithDefault({
+          bootstrapMissing: true,
+          cliScriptPath: CLI_SCRIPT_PATH,
+        }),
+      lookupHost: (hostId) => lookupAppSshHost(hostId, { descriptor: loadServer() }),
+    });
+    process.stdout.write(
+      `${opts.json ? JSON.stringify(report) : formatBackendProfileAddReport(report)}\n`,
+    );
+  } catch (error) {
+    const report = backendProfileAddErrorReport(error);
+    if (opts.json) {
+      process.stdout.write(`${JSON.stringify(report)}\n`);
+    } else {
+      process.stderr.write(
+        `\x1b[31m${report.error.code}: ${report.error.message}\x1b[0m\n`,
+      );
+    }
+    process.exitCode = 2;
+  }
+}
+
 /** backend profile 조회 — 앱 레지스트리나 app daemon이 없어도 동작한다. */
 async function cmdProfiles(opts) {
   const {
@@ -4144,15 +4186,12 @@ async function cmdProfiles(opts) {
     action === "-h" ||
     action === "--help"
   ) {
-    process.stdout.write(
-      "dure profiles <list|show|resolve|test> [ID] [--backend ID] [--json]\n",
-    );
+    process.stdout.write(`${PROFILES_USAGE}\n`);
     return;
   }
+  if (action === "add") return await cmdProfilesAdd(opts);
   if (!new Set(["list", "show", "resolve", "test"]).has(action)) {
-    fail(
-      "Usage: dure profiles <list|show|resolve|test> [ID] [--backend ID] [--json]",
-    );
+    fail(`Usage: ${PROFILES_USAGE}`);
   }
   if (action === "show" && !profileId) {
     fail("Usage: dure profiles show <ID> [--json]");

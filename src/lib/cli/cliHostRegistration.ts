@@ -8,6 +8,7 @@ import {
 	type SshHostRegistrationResult,
 } from "@/lib/ssh/sshCredentialLifecycle";
 import { canonicalSshNetworkHost } from "@/lib/ssh/sshNetworkHost";
+import { useStore } from "@/store";
 import type { SshHostConfig } from "@/types";
 
 const dependencies = {
@@ -19,6 +20,14 @@ const dependencies = {
 };
 
 export type CliHostRegistrationDependencies = typeof dependencies;
+
+const lookupDependencies = {
+	isMainWindow: dependencies.isMainWindow,
+	claim: dependencies.claim,
+	hosts: (): readonly SshHostConfig[] => useStore.getState().sshHosts,
+};
+
+export type CliHostLookupDependencies = typeof lookupDependencies;
 
 function invalid(message: string): never {
 	throw Object.assign(new Error(message), { code: "invalid_request" });
@@ -49,6 +58,41 @@ function publicHost(host: SshHostConfig) {
 		sshConfigAlias: host.sshConfigAlias,
 		keyPath: host.keyPath,
 	};
+}
+
+function failure(error: unknown, fallbackCode: string) {
+	return {
+		ok: false,
+		error: {
+			code:
+				error && typeof error === "object" && "code" in error
+					? String(error.code)
+					: fallbackCode,
+			message: error instanceof Error ? error.message : String(error),
+		},
+	};
+}
+
+/** Connection fields of one registered Host; secrets never leave the app. */
+export async function handleCliHostLookup(
+	params: Record<string, unknown>,
+	reqId: string,
+	deps: CliHostLookupDependencies = lookupDependencies,
+) {
+	if (!deps.isMainWindow() || !(await deps.claim(reqId))) return null;
+	try {
+		const hostId = text(params.hostId, "hostId");
+		const host = deps.hosts().find((candidate) => candidate.id === hostId);
+		if (!host) {
+			throw Object.assign(
+				new Error(`SSH host ${hostId} is not registered in this app`),
+				{ code: "ssh_host_not_found" },
+			);
+		}
+		return { ok: true, host: publicHost(host) };
+	} catch (error) {
+		return failure(error, "ssh_host_lookup_failed");
+	}
 }
 
 /** CLI and GUI registration share the durable Host and credential lifecycle. */
@@ -143,15 +187,6 @@ export async function handleCliHostRegistration(
 			},
 		};
 	} catch (error) {
-		return {
-			ok: false,
-			error: {
-				code:
-					error && typeof error === "object" && "code" in error
-						? String(error.code)
-						: "ssh_host_add_failed",
-				message: error instanceof Error ? error.message : String(error),
-			},
-		};
+		return failure(error, "ssh_host_add_failed");
 	}
 }
