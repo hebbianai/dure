@@ -16,7 +16,7 @@ import {
 import type { DesktopPlatform } from "@/lib/workspace/desktop/desktopPlatform";
 import type { TerminalKeyEvent } from "./terminalKeyBindings";
 
-export const TERMINAL_FIND_SHORTCUT_ID = "term-find";
+const TERMINAL_FIND_SHORTCUT_ID = "term-find";
 /** Typing pauses this long before the Host searches again. */
 export const TERMINAL_FIND_DEBOUNCE_MS = 150;
 
