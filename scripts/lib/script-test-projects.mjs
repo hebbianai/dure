@@ -37,6 +37,7 @@ export const NODE_TEST_PATHS = Object.freeze([
   "cli/lib/provider-launch-selection.test.mjs",
   "scripts/qa/managed-gemini-hooks.test.mjs",
   "scripts/qa/managed-openclaude-hooks.test.mjs",
+  "scripts/qa/managed-opencode-plugin.test.mjs",
   "scripts/qa/managed-qwen-hooks.test.mjs",
   "scripts/qa/mobile-live.test.mjs",
   "scripts/qa/workspace-native-focus-client.test.mjs",
