@@ -17,6 +17,8 @@ mod execution_location;
 mod ghostty_core_proof;
 #[cfg(feature = "ghostty-core-proof")]
 mod ghostty_state_projection;
+#[cfg(feature = "ghostty-core-proof")]
+mod history_find;
 mod osc_scanner;
 mod program_status;
 mod tab_stop_repaint;

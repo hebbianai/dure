@@ -14,12 +14,14 @@ use hmux_local_platform::peer_attestation::{PeerAttestation, SessionScope};
 #[cfg(feature = "terminal-state-stream")]
 use hmux_runtime_contract::{
     TERMINAL_DEFAULT_COLORS_CAPABILITY, TERMINAL_DEFAULT_COLORS_PROTOCOL_VERSION,
+    TERMINAL_HISTORY_FIND_CAPABILITY, TERMINAL_HISTORY_FIND_PROTOCOL_VERSION,
     TERMINAL_INPUT_INTENT_CAPABILITY, TERMINAL_STATE_BASE_PROTOCOL_MINOR,
     TERMINAL_STATE_BINARY_CAPABILITY, TERMINAL_VIEWPORT_MULTIPART_CAPABILITY,
     TERMINAL_VIEWPORT_MULTIPART_PROTOCOL_VERSION, TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
     TERMINAL_VIEWPORT_WHEEL_CAPABILITY, TERMINAL_VIEWPORT_WHEEL_PROTOCOL_VERSION,
     selected_terminal_base_protocol_minor, terminal_default_colors_permitted,
-    terminal_viewport_multipart_permitted, terminal_viewport_wheel_permitted,
+    terminal_history_find_permitted, terminal_viewport_multipart_permitted,
+    terminal_viewport_wheel_permitted,
 };
 use hmux_session_protocol::transport::{FrameReader, FrameWriter, TransportInterrupt};
 #[cfg(feature = "terminal-state-stream")]
@@ -68,6 +70,7 @@ struct SelectedTerminalProtocol {
     viewport_multipart: bool,
     viewport_wheel: bool,
     default_colors: bool,
+    history_find: bool,
 }
 
 #[cfg(feature = "terminal-state-stream")]
@@ -211,6 +214,8 @@ pub struct ConnectionOptions {
     #[cfg(feature = "terminal-state-stream")]
     terminal_default_colors: bool,
     #[cfg(feature = "terminal-state-stream")]
+    terminal_history_find: bool,
+    #[cfg(feature = "terminal-state-stream")]
     agent_runtime_state: bool,
 }
 
@@ -237,6 +242,8 @@ impl ConnectionOptions {
             terminal_input: TerminalInputRequest::None,
             #[cfg(feature = "terminal-state-stream")]
             terminal_default_colors: false,
+            #[cfg(feature = "terminal-state-stream")]
+            terminal_history_find: false,
             #[cfg(feature = "terminal-state-stream")]
             agent_runtime_state: false,
         }
@@ -346,6 +353,16 @@ impl ConnectionOptions {
         self.terminal_viewport_projection = true;
         self.terminal_input = TerminalInputRequest::Full;
         self.terminal_default_colors = true;
+        self
+    }
+
+    /// Requests connection-local find over the terminal's retained history.
+    /// Find is presentation only and needs no input authority.
+    #[cfg(feature = "terminal-state-stream")]
+    #[must_use]
+    pub fn with_terminal_history_find(mut self) -> Self {
+        self.terminal_viewport_projection = true;
+        self.terminal_history_find = true;
         self
     }
 
@@ -1286,6 +1303,7 @@ pub struct TerminalProjectionHandle {
     inner: Arc<Mutex<WriterState>>,
     base_protocol_minor: u8,
     default_colors: bool,
+    history_find: bool,
 }
 
 /// Attach-validated capability for semantic PTY input.
@@ -1437,6 +1455,16 @@ impl TerminalProjectionHandle {
                 });
             }
             Ok(TERMINAL_DEFAULT_COLORS_PROTOCOL_VERSION.envelope_minor)
+        } else if matches!(
+            intent.intent,
+            Some(terminal_state_protocol::viewport_intent::Intent::FindInHistory(_))
+        ) {
+            if !self.history_find {
+                return Err(ClientError::MissingCapability {
+                    capability: TERMINAL_HISTORY_FIND_CAPABILITY,
+                });
+            }
+            Ok(TERMINAL_HISTORY_FIND_PROTOCOL_VERSION.envelope_minor)
         } else {
             Ok(self.base_protocol_minor)
         }
@@ -2490,6 +2518,7 @@ fn complete_attach(
         viewport_multipart: terminal_viewport_multipart_permitted(&hello_ack.selected_capabilities),
         viewport_wheel: terminal_viewport_wheel_permitted(&hello_ack.selected_capabilities),
         default_colors: terminal_default_colors_permitted(&hello_ack.selected_capabilities),
+        history_find: terminal_history_find_permitted(&hello_ack.selected_capabilities),
     };
     if let Some(expected_processes) = expected_processes.as_ref() {
         validate_manifest_process_proofs(expected_processes, &hello_ack)?;
@@ -2637,6 +2666,7 @@ fn complete_attach(
         inner: Arc::clone(&writer.inner),
         base_protocol_minor: terminal_protocol.base_record_minor,
         default_colors: terminal_protocol.default_colors,
+        history_find: terminal_protocol.history_find,
     });
     #[cfg(feature = "terminal-state-stream")]
     let terminal_input_writer =
@@ -3287,6 +3317,9 @@ fn attach_capability_profile(options: &ConnectionOptions) -> AttachCapabilityPro
         }
         if options.terminal_default_colors {
             requested.push(TERMINAL_DEFAULT_COLORS_CAPABILITY.to_string());
+        }
+        if options.terminal_history_find {
+            requested.push(TERMINAL_HISTORY_FIND_CAPABILITY.to_string());
         }
         if options.agent_runtime_state {
             requested.push(AGENT_RUNTIME_STATE_CAPABILITY.to_string());

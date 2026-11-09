@@ -190,7 +190,10 @@ fn is_canonical_blank_grapheme(
 /// a spacer tail but keeps its wide head in the new last column. Project the
 /// narrow repair Ghostty's own snapshot decoder applies, so every row stays
 /// column-aligned and its logical span never exceeds the grid.
-fn projected_cell_width(cells: &[terminal_core_ghostty_proof::ProjectedCell], index: usize) -> u8 {
+pub(super) fn projected_cell_width(
+    cells: &[terminal_core_ghostty_proof::ProjectedCell],
+    index: usize,
+) -> u8 {
     match cells[index].width {
         2 if cells.get(index + 1).is_some_and(|tail| tail.width == 0) => 2,
         0 if index > 0 && cells[index - 1].width == 2 => 0,

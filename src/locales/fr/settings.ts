@@ -465,6 +465,7 @@ export const settings: Record<string, string> = {
 	"settings.appearance.scheme.darkCollapsedHint": "Appliqué en mode sombre — déplier pour changer",
 	"settings.appearance.scheme.darkDesc": "Appliqué au terminal et à l'ensemble de l'UI en mode sombre.",
 	"settings.shortcuts.cmd.termKillWord": "Supprimer le mot (^W)",
+	"settings.shortcuts.cmd.termFind": "Rechercher dans le terminal",
 	"settings.shortcuts.title": "Raccourcis",
 	"settings.providers.capability.conversationList": "Liste des conversations",
 	"settings.providers.capability.fork": "Bifurquer la conversation",

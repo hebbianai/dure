@@ -1,10 +1,16 @@
 export const TERMINAL_STATE_PROTOCOL_MAJOR = 1;
-export const TERMINAL_STATE_PROTOCOL_MINOR = 6;
+export const TERMINAL_STATE_PROTOCOL_MINOR = 7;
 export const TERMINAL_STATE_BASE_PROTOCOL_MINOR = 4;
 export const TERMINAL_STATE_WHEEL_PROTOCOL_MINOR = 5;
 export const TERMINAL_STATE_DEFAULT_COLORS_PROTOCOL_MINOR = 6;
+export const TERMINAL_STATE_HISTORY_FIND_PROTOCOL_MINOR = 7;
 export const TERMINAL_VIEWPORT_WHEEL_CAPABILITY = "terminal_viewport_wheel_v1";
 export const TERMINAL_DEFAULT_COLORS_CAPABILITY = "terminal_default_colors_v1";
+export const TERMINAL_HISTORY_FIND_CAPABILITY = "terminal_history_find_v1";
+/** Mirrors the Host bounds in terminal-state-protocol's viewport validation. */
+export const TERMINAL_FIND_MAX_QUERY_BYTES = 1024;
+export const TERMINAL_FIND_MAX_MATCHES = 10_000;
+export const TERMINAL_FIND_MAX_HIGHLIGHTS = 4096;
 export const TERMINAL_STATE_ENVELOPE_HEADER_BYTES = 20;
 export const TERMINAL_STATE_MAX_PAYLOAD_BYTES = 1024 * 1024;
 export const TERMINAL_STATE_MAX_ENVELOPE_BYTES =

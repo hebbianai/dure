@@ -88,6 +88,12 @@ pub(super) trait TerminalCore: Send {
         requests: &[super::ViewportCaptureRequest],
         maximum_capture_bytes: usize,
     ) -> Result<std::sync::Arc<dyn HotHistoryViewportSource>, TerminalReplayError>;
+    /// Offers every retained hot row to a find, newest first.
+    #[cfg(feature = "ghostty-core-proof")]
+    fn scan_hot_rows_for_find(
+        &self,
+        scan: &mut super::history_find::FindScan,
+    ) -> Result<super::ghostty_core_proof::HotFindScan, TerminalReplayError>;
     #[cfg(feature = "ghostty-core-proof")]
     fn history_transfer_source(&mut self) -> &mut dyn TerminalHistoryTransferSource;
     #[cfg(feature = "ghostty-core-proof")]

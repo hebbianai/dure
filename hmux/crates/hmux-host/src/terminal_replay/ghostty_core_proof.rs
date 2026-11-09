@@ -3,6 +3,7 @@ use super::cold_history::{
     LogicalCellAnchor, expected_append_acknowledgement, initial_root_digest,
 };
 use super::composite_viewport_source::HotHistoryViewportSource;
+use super::history_find::{FindScan, FindScanControl};
 use super::terminal_core::{
     SnapshotRepaint, TerminalCore, TerminalCoreCheckpoint, TerminalCoreCheckpointFormat,
     TerminalCoreEvent, TerminalCoreWrite,
@@ -21,7 +22,7 @@ use std::sync::Arc;
 #[cfg(test)]
 use std::sync::{Condvar, Mutex, OnceLock};
 use terminal_core_ghostty_proof::{
-    Core, Format, HistoryPrefixOffer, IndexedScreenRow, Mutation, Observation,
+    Core, Format, HistoryPrefixOffer, IndexedScreenRow, Mutation, Observation, ProjectedCell,
     ProjectedColorOverrides, ProjectedRow, ProjectionKind,
 };
 use terminal_state_protocol::{BufferId, TerminalColorOverrides};
@@ -161,6 +162,17 @@ struct PendingHistoryOffer {
     next_logical_line_id: u64,
     canonical_bytes: usize,
     expected_acknowledgement: HistoryTransferAck,
+}
+
+/// Rows one find copies from the hot terminal per actor step.
+const FIND_HOT_CHUNK_ROWS: usize = 512;
+const FIND_HOT_CHUNK_BYTES: usize = 16 * 1024 * 1024;
+
+pub(super) struct HotFindScan {
+    pub stopped: bool,
+    /// Logical start of the oldest hot row; older rows live in cold history.
+    pub oldest: Option<LogicalCellAnchor>,
+    pub alternate_screen: bool,
 }
 
 struct GhosttyHotCapture {
@@ -363,6 +375,18 @@ fn history_boundary(anchor: LogicalCellAnchor) -> HistoryBoundary {
     token[8..12].copy_from_slice(&anchor.logical_cell_offset.to_le_bytes());
     token[12..].copy_from_slice(b"HMX1");
     HistoryBoundary::new(token, Some(anchor))
+}
+
+/// One hot cell as a find sees it: the canonical blank and wide-pair repair
+/// the viewport projection applies, so match columns agree with frames.
+fn find_cell_text(cells: &[ProjectedCell], index: usize) -> (&str, u32) {
+    let width = super::ghostty_state_projection::projected_cell_width(cells, index);
+    let text = cells[index].text.as_str();
+    match (text.is_empty(), width) {
+        (true, 0) => ("", 0),
+        (true, _) => (" ", u32::from(width)),
+        (false, _) => (text, u32::from(width)),
+    }
 }
 
 fn index_rows(
@@ -823,6 +847,86 @@ impl GhosttyProofAdapter {
                 |checkpoint| checkpoint.root_digest,
             ),
             last_projection: None,
+        })
+    }
+
+    /// Offers every hot row to a find, newest first, copying one bounded
+    /// chunk of cells at a time so the actor never holds the whole history.
+    fn scan_hot_rows_for_find(
+        &self,
+        scan: &mut FindScan,
+    ) -> Result<HotFindScan, TerminalReplayError> {
+        let observation = self
+            .core
+            .observe()
+            .map_err(|error| engine_error("observe hot history for find", error.0))?;
+        if observation.total_rows == 0 {
+            return Ok(HotFindScan {
+                stopped: false,
+                oldest: None,
+                alternate_screen: observation.alternate_screen,
+            });
+        }
+        let content_rows = self
+            .core
+            .content_rows()
+            .map_err(|error| engine_error("observe screen content extent", error.0))?;
+        let total_rows = observation
+            .scrollback_rows
+            .checked_add(usize::from(content_rows))
+            .filter(|rows| *rows > 0 && *rows <= observation.total_rows)
+            .ok_or(TerminalReplayError::ColdHistoryInvariant)?;
+        let first_logical_line_id = if observation.alternate_screen {
+            ALTERNATE_LOGICAL_LINE_BASE
+        } else {
+            self.next_logical_line_id
+        };
+        let anchor = if observation.alternate_screen || observation.scrollback_rows == 0 {
+            self.core.track_screen_row(0)
+        } else {
+            self.core.track_history_row(0)
+        }
+        .map_err(|error| engine_error("track hot history start", error.0))?;
+        let row_index = anchor
+            .index_rows(total_rows)
+            .map_err(|error| engine_error("index hot history", error.0))?;
+        drop(anchor);
+        if row_index.rows.len() != total_rows {
+            return Err(TerminalReplayError::ColdHistoryInvariant);
+        }
+        let rows = index_rows(first_logical_line_id, observation.columns, &row_index.rows)?;
+        let oldest = rows.first().map(|row| row.anchor);
+        let mut end = total_rows;
+        while end > 0 {
+            let start = end.saturating_sub(FIND_HOT_CHUNK_ROWS);
+            let projection = self
+                .core
+                .track_screen_row(start)
+                .map_err(|error| engine_error("track hot rows for find", error.0))?
+                .project_rows_with_budget(observation.columns, end - start, FIND_HOT_CHUNK_BYTES)
+                .map_err(|error| engine_error("copy hot rows for find", error.0))?;
+            if projection.rows.len() != end - start {
+                return Err(TerminalReplayError::ColdHistoryInvariant);
+            }
+            for (offset, row) in projection.rows.iter().enumerate().rev() {
+                let indexed = rows[start + offset].anchor;
+                let cells = (0..row.cells.len()).map(|column| find_cell_text(&row.cells, column));
+                if scan.push_row(indexed.logical_line_id, indexed.logical_cell_offset, cells)
+                    == FindScanControl::Stop
+                {
+                    return Ok(HotFindScan {
+                        stopped: true,
+                        oldest,
+                        alternate_screen: observation.alternate_screen,
+                    });
+                }
+            }
+            end = start;
+        }
+        Ok(HotFindScan {
+            stopped: false,
+            oldest,
+            alternate_screen: observation.alternate_screen,
         })
     }
 
@@ -1386,6 +1490,13 @@ impl TerminalCore for GhosttyProofAdapter {
         maximum_capture_bytes: usize,
     ) -> Result<Arc<dyn HotHistoryViewportSource>, TerminalReplayError> {
         Ok(self.capture_hot_source(requests, maximum_capture_bytes)?)
+    }
+
+    fn scan_hot_rows_for_find(
+        &self,
+        scan: &mut FindScan,
+    ) -> Result<HotFindScan, TerminalReplayError> {
+        GhosttyProofAdapter::scan_hot_rows_for_find(self, scan)
     }
 
     fn history_transfer_source(&mut self) -> &mut dyn TerminalHistoryTransferSource {

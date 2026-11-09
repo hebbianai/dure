@@ -29,6 +29,7 @@ import {
 } from "@/lib/terminal/state/terminalInputIntent";
 import { encodeTerminalViewportScrollRowsIntent } from "@/lib/terminal/state/terminalViewportIntent";
 import { StructuredTerminalCompositionOverlay } from "./StructuredTerminalCompositionOverlay";
+import { StructuredTerminalFindBar, StructuredTerminalFindHighlights } from "./StructuredTerminalFindBar";
 import { StructuredTerminalRecoveryStatus } from "./StructuredTerminalRecoveryStatus";
 import { useStructuredTerminalGeometryCommit } from "./useStructuredTerminalGeometryCommit";
 import { useStructuredTerminalPointerInput } from "./useStructuredTerminalPointerInput";
@@ -49,6 +50,7 @@ import { useStructuredTerminalDefaultColorSync } from "./useStructuredTerminalDe
 import { useStructuredTerminalDocumentResizeSurface } from "./useStructuredTerminalDocumentResizeSurface";
 import { useStructuredTerminalEvents } from "./useStructuredTerminalEvents";
 import { useStructuredTerminalFileDrop } from "./useStructuredTerminalFileDrop";
+import { useStructuredTerminalFind } from "./useStructuredTerminalFind";
 import { useStructuredTerminalInputLatency } from "./useStructuredTerminalInputLatency";
 import { useStructuredTerminalKeyInput } from "./useStructuredTerminalKeyInput";
 import { useStructuredTerminalLargeViewLifecycle } from "./useStructuredTerminalLargeViewLifecycle";
@@ -712,6 +714,8 @@ export function StructuredTerminalView({
 			reportTransferFailure,
 		});
 	selectionCommitRef.current = copyNativeSelection;
+	const presentedFindFrame = paintedAttachmentIsCurrent ? presentedFrame?.frame ?? null : null;
+	const terminalFind = useStructuredTerminalFind(viewportTransport, presentedFindFrame, structuredTextInput.focusPaneInput);
 	const onTerminalKeyDown = useStructuredTerminalKeyInput({
 		inputReady,
 		terminalId: surfaceId,
@@ -719,6 +723,7 @@ export function StructuredTerminalView({
 		selectedText,
 		finishCompositionHandoff: structuredTextInput.finishCompositionHandoff,
 		sendUserInput: sendUserInput,
+		openFind: terminalFind.show,
 	});
 	// 외부 파일 드롭도 결국 붙여넣기다 — 준비된 경로 묶음이 같은 경로로 들어간다.
 	useStructuredTerminalFileDrop({
@@ -855,6 +860,7 @@ export function StructuredTerminalView({
 							onPaste(event.nativeEvent);
 						}}
 					/>
+					<StructuredTerminalFindHighlights frame={presentedFindFrame} metrics={paintedPresentationRef.current?.paint.metrics ?? null} />
 					{compositionText && (
 						<StructuredTerminalCompositionOverlay
 							text={compositionText}
@@ -882,6 +888,7 @@ export function StructuredTerminalView({
 				} : terminalRecoveryAvailable ? attachRecovery : undefined}
 				onPresentationChange={onAttachRecoveryPresentationChange}
 			/>
+			<StructuredTerminalFindBar find={terminalFind} />
 			<StructuredTerminalScrollToBottom frame={paintedAttachmentIsCurrent ? presentedFrame?.frame ?? null : null} sendViewportIntent={sendViewportIntent} />
 		</TerminalViewChrome>
 	);

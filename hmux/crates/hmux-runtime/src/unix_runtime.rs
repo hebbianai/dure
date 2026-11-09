@@ -4757,6 +4757,9 @@ fn serve_client(
     #[cfg(feature = "terminal-state-stream")]
     let terminal_default_colors = terminal_default_colors_permitted(&selected_capabilities);
     #[cfg(feature = "terminal-state-stream")]
+    let terminal_history_find =
+        hmux_runtime_contract::terminal_history_find_permitted(&selected_capabilities);
+    #[cfg(feature = "terminal-state-stream")]
     let draft_guarded_input =
         hmux_runtime_contract::terminal_draft_guarded_input_permitted(&selected_capabilities);
     #[cfg(feature = "terminal-state-stream")]
@@ -5139,6 +5142,8 @@ fn serve_client(
             #[cfg(feature = "terminal-state-stream")]
             terminal_default_colors,
             #[cfg(feature = "terminal-state-stream")]
+            terminal_history_find,
+            #[cfg(feature = "terminal-state-stream")]
             terminal_base_protocol_minor,
         },
     );
@@ -5198,6 +5203,8 @@ struct ClientPermissions {
     terminal_viewport_wheel: bool,
     #[cfg(feature = "terminal-state-stream")]
     terminal_default_colors: bool,
+    #[cfg(feature = "terminal-state-stream")]
+    terminal_history_find: bool,
     #[cfg(feature = "terminal-state-stream")]
     terminal_base_protocol_minor: u8,
 }
@@ -5281,6 +5288,7 @@ fn client_read_loop(
                         draft_guarded_input: permissions.draft_guarded_input,
                         wheel: permissions.terminal_viewport_wheel,
                         default_colors: permissions.terminal_default_colors,
+                        history_find: permissions.terminal_history_find,
                         base_protocol_minor: permissions.terminal_base_protocol_minor,
                         host_provider_id: &state.common.provider_id,
                     },

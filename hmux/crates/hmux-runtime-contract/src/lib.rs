@@ -248,6 +248,10 @@ pub const TERMINAL_PREFERRED_WIDTH_CAPABILITY: &str = "terminal_preferred_width_
 /// plus optional submit written as one PTY transaction and admitted only while
 /// no unsubmitted controller draft is pending. Records use the base minor.
 pub const TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY: &str = "terminal_draft_guarded_input_v1";
+/// Connection-local find over the terminal's retained history, hot and cold.
+/// The minor-7 find intent rides the ordered viewport stream and its answer
+/// rides the attachment's own viewport frames; other records keep their minor.
+pub const TERMINAL_HISTORY_FIND_CAPABILITY: &str = "terminal_history_find_v1";
 
 /// Selects exactly one prompt wire lane without reinterpreting independent
 /// terminal capabilities requested by the same attachment.
@@ -303,6 +307,12 @@ pub const TERMINAL_DEFAULT_COLORS_PROTOCOL_VERSION: TerminalViewportProtocolVers
         envelope_minor: 6,
     };
 
+pub const TERMINAL_HISTORY_FIND_PROTOCOL_VERSION: TerminalViewportProtocolVersion =
+    TerminalViewportProtocolVersion {
+        envelope_major: 1,
+        envelope_minor: 7,
+    };
+
 /// Whether a requested structured-terminal capability set names one complete
 /// carrier. Binary transport and viewport projection are inseparable, and
 /// dependent operations cannot be requested without both.
@@ -326,7 +336,8 @@ pub fn terminal_capability_request_is_consistent(requested_capabilities: &[Strin
         || requested(TERMINAL_VIEWPORT_MULTIPART_CAPABILITY)
         || requested(TERMINAL_DEFAULT_COLORS_CAPABILITY)
         || requested(TERMINAL_PREFERRED_WIDTH_CAPABILITY)
-        || requested(TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY);
+        || requested(TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY)
+        || requested(TERMINAL_HISTORY_FIND_CAPABILITY);
     binary == viewport
         && (!dependent || (binary && viewport))
         && (!process_observed_agent_prompt || requested(AGENT_PROMPT_CAPABILITY))
@@ -393,6 +404,23 @@ pub fn terminal_default_colors_permitted(selected_capabilities: &[String]) -> bo
         TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
         TERMINAL_INPUT_INTENT_CAPABILITY,
         TERMINAL_DEFAULT_COLORS_CAPABILITY,
+    ]
+    .into_iter()
+    .all(|required| {
+        selected_capabilities
+            .iter()
+            .any(|selected| selected == required)
+    })
+}
+
+/// Whether this attachment selected minor-7 history find. Find is read-only
+/// presentation, so an observer may search without input authority.
+#[must_use]
+pub fn terminal_history_find_permitted(selected_capabilities: &[String]) -> bool {
+    [
+        TERMINAL_STATE_BINARY_CAPABILITY,
+        TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+        TERMINAL_HISTORY_FIND_CAPABILITY,
     ]
     .into_iter()
     .all(|required| {
@@ -5936,6 +5964,33 @@ mod tests {
         }
         assert!(!terminal_capability_request_is_consistent(&[
             TERMINAL_PREFERRED_WIDTH_CAPABILITY.to_string(),
+        ]));
+    }
+
+    #[test]
+    fn history_find_requires_the_structured_carrier_but_not_input() {
+        let complete = [
+            TERMINAL_STATE_BINARY_CAPABILITY,
+            TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+            TERMINAL_HISTORY_FIND_CAPABILITY,
+        ]
+        .map(str::to_string)
+        .to_vec();
+        assert!(terminal_capability_request_is_consistent(&complete));
+        assert!(terminal_history_find_permitted(&complete));
+        // Find never upgrades the minor of pre-existing record kinds.
+        assert_eq!(selected_terminal_base_protocol_minor(&complete), Some(4));
+        assert_eq!(TERMINAL_HISTORY_FIND_PROTOCOL_VERSION.envelope_minor, 7);
+        for excluded in &complete {
+            let incomplete = complete
+                .iter()
+                .filter(|value| *value != excluded)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(!terminal_history_find_permitted(&incomplete));
+        }
+        assert!(!terminal_capability_request_is_consistent(&[
+            TERMINAL_HISTORY_FIND_CAPABILITY.to_string(),
         ]));
     }
 

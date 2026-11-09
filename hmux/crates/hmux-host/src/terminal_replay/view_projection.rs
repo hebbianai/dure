@@ -1,11 +1,12 @@
 use terminal_state_protocol::{
-    BufferId, DecodedRecord, StateSnapshot, TerminalStateRecord, ViewportAnchorStatus,
-    ViewportFrame, ViewportIngressAuthority, ViewportIntent, terminal_state_record,
-    validate_viewport_ingress, viewport_intent,
+    BufferId, DecodedRecord, FindInHistory, FindStep, StateSnapshot, TerminalStateRecord,
+    ViewportAnchorStatus, ViewportFind, ViewportFrame, ViewportIngressAuthority, ViewportIntent,
+    terminal_state_record, validate_viewport_ingress, viewport_intent,
 };
 
 use super::cold_history::LogicalCellAnchor;
 use super::composite_viewport_source::CompositeViewportSource;
+use super::history_find::{FindQuery, FindRequest, FindScan, FindScanControl, FindState};
 use super::viewport_source::{
     BoundedViewportRows, TerminalViewportAnchor, TerminalViewportMetrics, ViewportAnchorError,
     ViewportProjectionGeometry, ViewportSource,
@@ -39,6 +40,8 @@ pub struct ViewProjection {
     applied_intent_seq: u64,
     last_intent: Option<ViewportIntent>,
     last_wheel_route: Option<WheelIntentRoute>,
+    /// The newest applied find on this connection, while it is active.
+    find: Option<Arc<FindState>>,
     #[cfg(test)]
     last_projection_work: Option<(usize, super::viewport_source::ViewportProjectionWork)>,
 }
@@ -136,6 +139,7 @@ impl ViewProjection {
             applied_intent_seq: 0,
             last_intent: None,
             last_wheel_route: None,
+            find: None,
             #[cfg(test)]
             last_projection_work: None,
         }
@@ -188,8 +192,9 @@ impl ViewProjection {
             pending_local_change: self.pending_local_change,
             last_record_id: self.last_record_id,
             applied_intent_seq: self.applied_intent_seq,
-            last_intent: self.last_intent,
+            last_intent: self.last_intent.clone(),
             last_wheel_route: self.last_wheel_route,
+            find: self.find.clone(),
             #[cfg(test)]
             last_projection_work: self.last_projection_work,
         }
@@ -413,6 +418,10 @@ impl CapturedViewportSource {
         {
             projection.last_projection_work = Some(projection_work);
         }
+        let find = projection
+            .find
+            .as_ref()
+            .map(|find| find.viewport_find(&viewport.rows, self.source.snapshot.columns));
         Ok(Some(CapturedViewportFrame {
             terminal_epoch: self.origin_fence.terminal_epoch.clone(),
             through_output_seq: self.through_output_seq,
@@ -425,6 +434,7 @@ impl CapturedViewportSource {
             anchor_status: projection.anchor_status,
             rows_from_tail: projection.rows_from_tail,
             viewport,
+            find,
         }))
     }
 
@@ -515,6 +525,9 @@ fn row_logical_anchor(row: &terminal_state_protocol::TerminalRow) -> LogicalCell
     }
 }
 
+/// Cold rows one find step projects; each step takes the cold store lock once.
+const FIND_COLD_CHUNK_ROWS: u16 = 256;
+
 pub struct CapturedViewportFrame {
     terminal_epoch: String,
     through_output_seq: u64,
@@ -527,6 +540,7 @@ pub struct CapturedViewportFrame {
     anchor_status: ViewportAnchorStatus,
     rows_from_tail: Option<u64>,
     viewport: BoundedViewportRows,
+    find: Option<ViewportFind>,
 }
 
 impl CapturedViewportFrame {
@@ -540,6 +554,7 @@ impl CapturedViewportFrame {
                 applied_intent_seq: self.applied_intent_seq,
                 anchor_status: self.anchor_status,
                 rows_from_tail: self.rows_from_tail,
+                find: self.find,
             },
             self.viewport,
         )?;
@@ -703,17 +718,145 @@ impl TerminalReplay {
             viewport_intent::Intent::TerminalDefaultColors(_) => {
                 ViewportIntentDisposition::NoChange
             }
+            viewport_intent::Intent::FindInHistory(find) => {
+                self.apply_find(projection, find, intent.intent_seq)?
+            }
         };
         projection.applied_intent_seq = intent.intent_seq;
         projection.pending_local_change = true;
         projection.last_record_id = Some(ingress.metadata.record_id);
-        projection.last_intent = Some(*intent);
+        projection.last_intent = Some(intent.clone());
         projection.last_wheel_route = wheel_route;
         Ok(ViewportIntentApplication {
             disposition,
             wheel_route,
             pty_bytes,
         })
+    }
+
+    /// Searches retained history for one find and reveals the selected match.
+    /// An empty query ends the find; the viewport stays where it is.
+    fn apply_find(
+        &mut self,
+        projection: &mut ViewProjection,
+        find: &FindInHistory,
+        intent_seq: u64,
+    ) -> Result<ViewportIntentDisposition, TerminalReplayError> {
+        let viewport_rows = projection
+            .viewport_rows
+            .ok_or(TerminalReplayError::InvalidStructuredInput)?;
+        if find.query.is_empty() {
+            return Ok(if projection.find.take().is_some() {
+                ViewportIntentDisposition::Applied
+            } else {
+                ViewportIntentDisposition::NoChange
+            });
+        }
+        let step = FindStep::try_from(find.step)
+            .map_err(|_| TerminalReplayError::InvalidStructuredInput)?;
+        let request = FindRequest {
+            query: find.query.clone(),
+            case_sensitive: find.case_sensitive,
+            regex: find.regex,
+        };
+        let previous = projection
+            .find
+            .as_ref()
+            .filter(|state| state.request == request)
+            .and_then(|state| state.current_match());
+        let Some(query) = FindQuery::compile(&request) else {
+            projection.find = Some(Arc::new(FindState::invalid(request, intent_seq)));
+            return Ok(ViewportIntentDisposition::Applied);
+        };
+        let mut scan = FindScan::new(query);
+        let (reached_oldest, alternate_screen) = self.scan_history_for_find(&mut scan)?;
+        let state = FindState::from_outcome(
+            request,
+            intent_seq,
+            scan.finish(reached_oldest),
+            previous,
+            step,
+        );
+        if let Some(found) = state.current_match() {
+            // Anchor on the match row, then move half a viewport toward older
+            // output so the match sits mid-screen whenever history allows.
+            projection.follow_tail = false;
+            projection.anchor_status = ViewportAnchorStatus::Anchored;
+            projection.rows_from_tail = None;
+            projection.anchor = None;
+            projection.anchor_logical = Some(found.row_anchor);
+            projection.anchor_buffer = Some(if alternate_screen {
+                BufferId::Alternate
+            } else {
+                BufferId::Normal
+            } as i32);
+            projection.pending_scroll_rows = i64::from(viewport_rows / 2);
+        }
+        projection.find = Some(Arc::new(state));
+        Ok(ViewportIntentDisposition::Applied)
+    }
+
+    /// Offers retained rows newest first: the hot terminal, then cold history
+    /// below its seam. Returns whether the oldest retained row was reached and
+    /// whether the alternate screen (which has no history) was searched.
+    fn scan_history_for_find(
+        &mut self,
+        scan: &mut FindScan,
+    ) -> Result<(bool, bool), TerminalReplayError> {
+        let hot = self.terminal.scan_hot_rows_for_find(scan)?;
+        if hot.stopped {
+            return Ok((false, hot.alternate_screen));
+        }
+        if hot.alternate_screen {
+            return Ok((true, true));
+        }
+        let cold = match self.recovered_history_boundary.as_ref() {
+            Some(boundary) => Some(boundary.projection_cold.clone()),
+            None => self
+                .history_transfer
+                .is_enabled()
+                .then(|| self.history_transfer.store().capture_projection_source())
+                .transpose()?,
+        };
+        let Some(cold) = cold else {
+            return Ok((true, false));
+        };
+        let source = self.cached_viewport_source(TerminalViewportMetrics {
+            total_rows: None,
+            scrollback_rows: None,
+            alternate_screen: false,
+        })?;
+        let geometry = viewport_geometry(&source, FIND_COLD_CHUNK_ROWS)?;
+        let seam = hot
+            .oldest
+            .map(|anchor| (anchor.logical_line_id, anchor.logical_cell_offset));
+        let mut anchor = cold.tail_anchor();
+        loop {
+            let moved = anchor
+                .move_rows(-i64::from(FIND_COLD_CHUNK_ROWS), &geometry)
+                .map_err(ViewportAnchorError::into_terminal_error)?;
+            if moved == 0 {
+                return Ok((true, false));
+            }
+            let projected = anchor
+                .project_rows(&geometry)
+                .map_err(ViewportAnchorError::into_terminal_error)?;
+            let fresh = usize::try_from(moved.unsigned_abs())
+                .unwrap_or(usize::MAX)
+                .min(projected.rows.len());
+            for row in projected.rows[..fresh].iter().rev() {
+                // Rows the hot terminal still retains were already offered.
+                if seam.is_some_and(|seam| (row.logical_line_id, row.logical_cell_offset) >= seam) {
+                    continue;
+                }
+                if scan.push_terminal_row(row, &projected.tables) == FindScanControl::Stop {
+                    return Ok((false, false));
+                }
+            }
+            if !projected.has_more_before {
+                return Ok((true, false));
+            }
+        }
     }
 
     fn apply_viewport_scroll(
@@ -854,6 +997,7 @@ impl TerminalReplay {
         projection.pending_local_change = false;
         projection.last_intent = None;
         projection.applied_intent_seq = 0;
+        projection.find = None;
         #[cfg(test)]
         {
             projection.last_projection_work = None;
@@ -929,6 +1073,7 @@ struct ViewportFrameMetadata<'a> {
     applied_intent_seq: u64,
     anchor_status: ViewportAnchorStatus,
     rows_from_tail: Option<u64>,
+    find: Option<ViewportFind>,
 }
 
 fn build_viewport_frame(
@@ -943,6 +1088,7 @@ fn build_viewport_frame(
         applied_intent_seq,
         anchor_status,
         rows_from_tail,
+        find,
     } = metadata;
     let buffer = match BufferId::try_from(source.snapshot.active_buffer).map_err(|_| {
         TerminalReplayError::InvalidStructuredProjection {
@@ -1018,6 +1164,7 @@ fn build_viewport_frame(
         anchor_status: anchor_status as i32,
         rows_from_tail,
         input_output_timing: None,
+        find,
     })
 }
 
@@ -3146,5 +3293,155 @@ mod tests {
         assert_eq!(overrides.default_foreground_rgb, Some(0xabcdef));
         assert_eq!(overrides.default_background_rgb, Some(0x010203));
         assert_eq!(overrides.cursor_rgb, Some(0x040506));
+    }
+
+    fn find(query: &str, step: FindStep) -> viewport_intent::Intent {
+        viewport_intent::Intent::FindInHistory(FindInHistory {
+            query: query.into(),
+            case_sensitive: false,
+            regex: false,
+            step: step as i32,
+        })
+    }
+
+    fn current_find_row(frame: &ViewportFrame) -> String {
+        let find = frame.find.as_ref().expect("an active find rides the frame");
+        let highlight = find
+            .highlights
+            .iter()
+            .find(|highlight| highlight.current)
+            .expect("the revealed match is highlighted");
+        row_text(frame, highlight.row as usize)
+    }
+
+    #[test]
+    fn find_reveals_matches_in_hot_and_cold_history_and_ends_on_an_empty_query() {
+        let mut replay = TerminalReplay::new(
+            SessionFence {
+                workspace_id: "workspace".into(),
+                session_id: "session".into(),
+                runner_principal: "runner".into(),
+                runner_instance: "runner-1".into(),
+                channel_epoch: 1,
+                host_instance_id: "host-1".into(),
+                terminal_epoch: "terminal-history-find".into(),
+            },
+            4,
+            80,
+            TerminalReplayLimits::default(),
+        )
+        .unwrap();
+        for batch_start in (0..5_001).step_by(500) {
+            let mut output = String::new();
+            for index in batch_start..usize::min(batch_start + 500, 5_001) {
+                let marker = match index {
+                    7 => "H000007 needle-early".to_string(),
+                    4_990 => "H004990 Needle-late".to_string(),
+                    _ => format!("H{index:06}"),
+                };
+                output.push_str(&marker);
+                output.extend(std::iter::repeat_n('x', 80 - marker.len()));
+                output.push_str("\r\n");
+            }
+            replay.ingest_output(output.as_bytes()).unwrap();
+        }
+        wait_for_cold_storage(&mut replay);
+
+        let mut projection = replay.attach_view_projection().unwrap();
+        configure(&mut replay, &mut projection, 1, 8);
+        let tail = take_frame(&mut replay, &mut projection);
+        assert!(frame(&tail).find.is_none());
+
+        let input = ingress(
+            &replay,
+            2,
+            projection.projection_revision,
+            find("NEEDLE", FindStep::Restart),
+        );
+        replay
+            .apply_viewport_intent(&mut projection, &input)
+            .unwrap();
+        let newest = protocol_round_trip(take_frame(&mut replay, &mut projection), 2);
+        let newest = frame(&newest);
+        let summary = newest.find.as_ref().unwrap();
+        assert_eq!(summary.find_intent_seq, 2);
+        assert_eq!(
+            summary.status,
+            terminal_state_protocol::FindStatus::Matched as i32
+        );
+        assert_eq!((summary.match_count, summary.current_match), (2, 1));
+        assert!(summary.match_count_complete);
+        assert!(
+            !newest.follow_tail,
+            "the newest match is above the tail viewport"
+        );
+        assert!(current_find_row(newest).starts_with("H004990 Needle-late"));
+
+        // The older match was written thousands of rows ago and now lives
+        // only in cold history, which no client holds.
+        let input = ingress(
+            &replay,
+            3,
+            projection.projection_revision,
+            find("NEEDLE", FindStep::Older),
+        );
+        replay
+            .apply_viewport_intent(&mut projection, &input)
+            .unwrap();
+        let oldest = protocol_round_trip(take_frame(&mut replay, &mut projection), 3);
+        let oldest = frame(&oldest);
+        assert_eq!(oldest.find.as_ref().unwrap().current_match, 2);
+        assert!(current_find_row(oldest).starts_with("H000007 needle-early"));
+        let current_row = oldest.find.as_ref().unwrap().highlights[0].row as usize;
+        assert_ne!(
+            oldest.rows[current_row].row_id
+                & crate::terminal_replay::cold_history::COLD_ROW_ID_MASK,
+            0,
+            "the revealed row is projected from cold history"
+        );
+
+        let input = ingress(
+            &replay,
+            4,
+            projection.projection_revision,
+            find("", FindStep::Restart),
+        );
+        replay
+            .apply_viewport_intent(&mut projection, &input)
+            .unwrap();
+        let cleared = take_frame(&mut replay, &mut projection);
+        assert!(frame(&cleared).find.is_none());
+    }
+
+    #[test]
+    fn an_invalid_pattern_is_reported_without_moving_the_viewport() {
+        let mut replay = replay();
+        populate(&mut replay, "line", 40);
+        let mut projection = replay.attach_view_projection().unwrap();
+        configure(&mut replay, &mut projection, 1, 4);
+        let _tail = take_frame(&mut replay, &mut projection);
+        let input = ingress(
+            &replay,
+            2,
+            projection.projection_revision,
+            viewport_intent::Intent::FindInHistory(FindInHistory {
+                query: "(unclosed".into(),
+                case_sensitive: false,
+                regex: true,
+                step: FindStep::Restart as i32,
+            }),
+        );
+        replay
+            .apply_viewport_intent(&mut projection, &input)
+            .unwrap();
+        let record = take_frame(&mut replay, &mut projection);
+        let invalid = frame(&record);
+        assert!(invalid.follow_tail);
+        let summary = invalid.find.as_ref().unwrap();
+        assert_eq!(
+            summary.status,
+            terminal_state_protocol::FindStatus::InvalidPattern as i32
+        );
+        assert!(summary.highlights.is_empty());
     }
 }

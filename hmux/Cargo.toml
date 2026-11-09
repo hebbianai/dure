@@ -48,6 +48,7 @@ libc = "0.2"
 portable-pty = "0.9"
 prost = "=0.14.4"
 rand = "0.10"
+regex = "1.13"
 semver = "1"
 # `ring` rather than the default `aws-lc-rs`: russh refuses to build without one
 # of the two, and aws-lc-rs needs cmake plus bindgen, which no mobile toolchain
