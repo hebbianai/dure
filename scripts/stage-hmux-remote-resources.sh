@@ -31,7 +31,9 @@ hmux_remote_base_target_root=${CARGO_TARGET_DIR:-hmux/target}
 hmux_remote_target_root=$hmux_remote_base_target_root/remote-agent-tools/$hmux_remote_build_base
 hmux_remote_source_commit=$(git rev-parse HEAD)
 
-for hmux_remote_triple in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+# Linux is staged on every build. scripts/stage-macos-remote-tools.mjs names the
+# macOS target itself, because only an Apple silicon build can produce it.
+for hmux_remote_triple in ${HMUX_REMOTE_TRIPLES:-x86_64-unknown-linux-musl aarch64-unknown-linux-musl}; do
   hmux_remote_build_id="$hmux_remote_build_base.$hmux_remote_triple.release"
   hmux_remote_output="$hmux_remote_output_root/$hmux_remote_triple"
   if [ -f "$hmux_remote_output/install.json" ] &&

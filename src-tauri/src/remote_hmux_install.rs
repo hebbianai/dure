@@ -189,22 +189,8 @@ struct BundledManifest {
     root: std::path::PathBuf,
 }
 
-fn load_manifest<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    triple: &str,
-) -> Result<BundledManifest, String> {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|error| format!("remote_hmux_provision_bundle_unavailable: {error}"))?;
-    let root = resource_dir.join("resources/hmux-remote").join(triple);
-    let installer = read_bounded(
-        &resource_dir.join("resources/install-hmux.sh"),
-        MAX_INSTALLER_BYTES,
-        "installer",
-    )?;
-    let manifest = read_bounded(&root.join("install.json"), MAX_MANIFEST_BYTES, "manifest")?;
-    let parsed: InstallManifest = serde_json::from_slice(&manifest)
+fn validated_build_id(manifest: &[u8], triple: &str) -> Result<String, String> {
+    let parsed: InstallManifest = serde_json::from_slice(manifest)
         .map_err(|error| format!("remote_hmux_provision_bundle_invalid: manifest: {error}"))?;
     if parsed.schema_version != 1
         || !safe_build_id(&parsed.build_id)
@@ -216,8 +202,25 @@ fn load_manifest<R: tauri::Runtime>(
     {
         return Err("remote_hmux_provision_bundle_invalid: manifest contract mismatch".to_string());
     }
+    Ok(parsed.build_id)
+}
+
+fn load_manifest(resource_dir: &Path, triple: &str) -> Result<BundledManifest, String> {
+    let root = resource_dir.join("resources/hmux-remote").join(triple);
+    if !root.is_dir() {
+        return Err(format!(
+            "remote_hmux_provision_bundle_unavailable: this Dure build does not carry a Hmux runtime for {triple}"
+        ));
+    }
+    let installer = read_bounded(
+        &resource_dir.join("resources/install-hmux.sh"),
+        MAX_INSTALLER_BYTES,
+        "installer",
+    )?;
+    let manifest = read_bounded(&root.join("install.json"), MAX_MANIFEST_BYTES, "manifest")?;
+    let build_id = validated_build_id(&manifest, triple)?;
     Ok(BundledManifest {
-        build_id: parsed.build_id,
+        build_id,
         installer,
         manifest,
         root,
@@ -262,7 +265,7 @@ fn exec_checked(
 }
 
 fn platform(opts: &crate::ssh::SshOptions) -> Result<&'static str, String> {
-    match crate::remote_platform::detect_linux_triple(opts) {
+    match crate::remote_platform::detect_remote_triple(opts) {
         Ok(triple) => Ok(triple),
         Err(crate::remote_platform::RemotePlatformError::Probe(detail)) => {
             Err(format!("remote_hmux_provision_platform_failed: {detail}"))
@@ -496,8 +499,19 @@ pub(crate) fn ensure<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     opts: &crate::ssh::SshOptions,
 ) -> Result<Provisioned, String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("remote_hmux_provision_bundle_unavailable: {error}"))?;
+    ensure_from_resources(&resource_dir, opts)
+}
+
+fn ensure_from_resources(
+    resource_dir: &Path,
+    opts: &crate::ssh::SshOptions,
+) -> Result<Provisioned, String> {
     let triple = platform(opts)?;
-    let bundle = load_manifest(app, triple)?;
+    let bundle = load_manifest(resource_dir, triple)?;
     let build_id = bundle.build_id.clone();
 
     let probe = currency_probe(opts);
@@ -585,6 +599,9 @@ fn prepare_available_command(
         _ => Err("remote_hmux_provision_probe_failed: invalid command availability receipt".into()),
     }
 }
+
+#[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+mod macos_ssh_smoke;
 
 #[cfg(test)]
 mod tests {
@@ -727,6 +744,46 @@ mod tests {
         assert_eq!(
             provisioned.runtime().executable().as_str(),
             "/home/developer/.local/share/hmux/versions/build-1/bin/hmux-runtime"
+        );
+    }
+
+    const APPLE_SILICON: &str = "aarch64-apple-darwin";
+
+    fn apple_silicon_manifest(build_id: &str, target: &str) -> Vec<u8> {
+        format!(
+            "{{\n  \"schemaVersion\": 1,\n  \"buildId\": \"{build_id}\",\n  \"packageVersion\": \"0.1.0\",\n  \"profile\": \"release\",\n  \"targetTriple\": \"{target}\",\n  \"protocol\": {{ \"minimum\": \"1.0\", \"maximum\": \"1.0\" }}\n}}\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn an_apple_silicon_tree_is_admitted_only_under_its_own_target() {
+        let build = format!("0.1.0+abc.dure.{APPLE_SILICON}.release");
+        assert_eq!(
+            validated_build_id(
+                &apple_silicon_manifest(&build, APPLE_SILICON),
+                APPLE_SILICON
+            )
+            .unwrap(),
+            build
+        );
+        // A Linux tree filed under the macOS slot must never reach a Mac.
+        assert!(validated_build_id(
+            &apple_silicon_manifest(&build, "aarch64-unknown-linux-musl"),
+            APPLE_SILICON
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn a_build_without_the_target_says_so_instead_of_a_file_error() {
+        let resources = tempfile::tempdir().unwrap();
+        let error = load_manifest(resources.path(), APPLE_SILICON)
+            .err()
+            .unwrap();
+        assert_eq!(
+            error,
+            "remote_hmux_provision_bundle_unavailable: this Dure build does not carry a Hmux runtime for aarch64-apple-darwin"
         );
     }
 

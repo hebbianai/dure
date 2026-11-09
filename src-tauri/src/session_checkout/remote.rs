@@ -42,7 +42,16 @@ impl RemoteCheckoutHost {
         runtime: Option<RemotePosixPath>,
     ) -> Result<Self, String> {
         let helper = crate::remote_git_checkout_helper::ensure_on(app, &session)?;
-        Ok(Self {
+        Ok(Self::with_helper(session, helper, home, runtime))
+    }
+
+    pub(crate) fn with_helper(
+        session: ssh::PooledSession,
+        helper: String,
+        home: RemotePosixPath,
+        runtime: Option<RemotePosixPath>,
+    ) -> Self {
+        Self {
             session,
             helper,
             context: CheckoutHostContextV1 {
@@ -51,7 +60,7 @@ impl RemoteCheckoutHost {
                 runtime_executable: runtime.map(|path| path.as_str().into()),
                 discovery_root: None,
             },
-        })
+        }
     }
 
     pub(crate) fn prepare_registration<R: tauri::Runtime>(
