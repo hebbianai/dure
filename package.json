@@ -138,6 +138,7 @@
     "test:hmux-client-environment": "node scripts/run-hmux-tests.mjs -- sh scripts/qa/hmux-client-environment-smoke.sh",
     "test:hmux-terminal-queries": "node scripts/run-with-build-storage.mjs qa -- node scripts/run-hmux-tests.mjs -- cargo test --locked --manifest-path hmux/Cargo.toml -p hmux-runtime --features terminal-state-stream --test standalone_smoke host_answers_terminal_queries_without_any_attached_client -- --exact --nocapture",
     "test:hmux-draft-guard": "node scripts/run-with-build-storage.mjs qa -- node scripts/run-hmux-tests.mjs -- cargo test --locked --manifest-path hmux/Cargo.toml -p hmux-runtime --features terminal-state-stream --test standalone_smoke draft_guarded_command_input_never_merges_into_an_unsubmitted_draft -- --exact --nocapture",
+    "test:dure-tui": "node scripts/run-with-build-storage.mjs qa -- sh -c 'cargo build --locked --manifest-path hmux/Cargo.toml --workspace --bins && node scripts/run-hmux-tests.mjs -- python3 scripts/qa/dure-tui-smoke.py'",
     "test:hmux-rehost-cli": "node scripts/qa/hmux-rehost-cli-smoke.mjs",
     "test:hmux-native-publication": "node scripts/run-hmux-tests.mjs -- node scripts/qa/hmux-control-plane-smoke.mjs native_rehost_publication_uses_real_hmux",
     "test:hmux-resume-all": "node scripts/run-hmux-tests.mjs -- node scripts/qa/hmux-control-plane-smoke.mjs resume_all_restores_each_agent_after_its_host_ends",

@@ -38,6 +38,10 @@ dure wait --children any --json                 # the first child settles
 
 A child settles when it has finished a turn and is idle, needs input or approval, exited, or its launch failed. The JSON lists each child with its state; exit 1 means a settled child needs action. `dure runs show <agent>` shows a Run's parent. Pass `--no-parent` to start an unlinked Run, or `--parent <agent>` to link a Run to another agent on the same backend. Children on the chat runtime can't be waited on yet; read them with `dure transcript`.
 
+## Move between agents from a terminal
+
+`dure tui` lists your agents across Spaces with their state, account and project, including over SSH without the app. Select one and press Enter to attach. Press `Ctrl-\` then `d` to detach and return to the list; the agent keeps running. Without the app on that machine, the account reads `unknown` and the project is the name of the agent's working folder.
+
 ## Schedule recurring tasks
 
 From the project folder:
