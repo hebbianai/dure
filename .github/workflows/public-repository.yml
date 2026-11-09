@@ -495,6 +495,12 @@ jobs:
         #   under tauri-plugin-updater, which extracts only signature-verified
         #   update archives; the fix is the updater 2.14 bump (zip 9) together
         #   with the matching npm plugin, tracked as its own change.
+        # - RUSTSEC-2026-0459: SQLite before 3.54 bundled by libsqlite3-sys
+        #   0.30 under sqlx 0.8 can return stale memory for a database opened
+        #   with a crafted -wal file. Dure opens only the user's own local
+        #   databases (its own, and a provider CLI's state read-only), never
+        #   files a less trusted party wrote; the fix is the sqlx 0.9 upgrade
+        #   (libsqlite3-sys 0.39), tracked as its own change.
         run: |
           status=0
           audit() {
@@ -508,8 +514,9 @@ jobs:
             --ignore RUSTSEC-2023-0071 \
             --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195 \
             --ignore RUSTSEC-2026-0367 --ignore RUSTSEC-2026-0368 --ignore RUSTSEC-2026-0369 \
-            --ignore RUSTSEC-2026-0429
-          audit crates/dure-app/Cargo.lock
+            --ignore RUSTSEC-2026-0429 \
+            --ignore RUSTSEC-2026-0459
+          audit crates/dure-app/Cargo.lock --ignore RUSTSEC-2026-0459
           audit hmux/Cargo.lock --ignore RUSTSEC-2023-0071
           audit mobile/src-tauri/Cargo.lock --ignore RUSTSEC-2023-0071
           exit "$status"
