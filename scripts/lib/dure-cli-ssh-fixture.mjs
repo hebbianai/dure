@@ -61,8 +61,9 @@ export function sshBackendProfile({
  * Installs an `ssh` stub plus the matching default `remote-build` profile and
  * known-hosts file so a CLI run exercises the SSH backend transport end to end
  * without a network. `fail` swaps the stub for one that exits before
- * responding; `capabilities`/`deadlineMs` pin both the stub's advertised
- * backend descriptor and the profile expectation.
+ * responding; `unreachableHosts` does that only for the named hosts, so one
+ * stub can serve a healthy backend beside a down one; `capabilities`/`deadlineMs`
+ * pin both the stub's advertised backend descriptor and the profile expectation.
  */
 export function installRemoteBackendFixture(
   root,
@@ -77,6 +78,7 @@ export function installRemoteBackendFixture(
     ],
     deadlineMs = FUNCTIONAL_DEADLINE_MS,
     results = {},
+    unreachableHosts = [],
   } = {},
 ) {
   const bin = join(root, "bin");
@@ -89,6 +91,8 @@ export function installRemoteBackendFixture(
       ? "#!/bin/sh\nexit 41\n"
       : `#!/usr/bin/env node
 const { appendFileSync, readFileSync } = require("node:fs");
+const unreachableHosts = ${JSON.stringify(unreachableHosts)};
+if (process.argv.some((argument) => unreachableHosts.includes(argument))) process.exit(41);
 const request = JSON.parse(readFileSync(0, "utf8"));
 if (process.env.DURE_SESSION_REQUEST_LOG) {
   appendFileSync(process.env.DURE_SESSION_REQUEST_LOG, JSON.stringify(request) + "\\n");

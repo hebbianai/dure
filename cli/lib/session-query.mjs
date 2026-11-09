@@ -1003,7 +1003,9 @@ export async function collectAliveSessionQuery(options, collect = collectSession
 }
 
 export function sessionQueryExitCode(report) {
-  return report.kind === "dure.sessions.error" ? 2 : 0;
+  if (report.kind === "dure.sessions.error") return 2;
+  // A listing across backends still succeeds when only some of them answered.
+  return report.backends?.every((backend) => backend.status === "error") ? 2 : 0;
 }
 
 // A provider that needs input or approval is not merely waiting: the Host's
@@ -1012,6 +1014,40 @@ function activityColumn(state) {
   if (!state) return "-";
   if (state.attention !== "none") return state.attention;
   return state.backgroundWork ? "waiting+background" : state.activity;
+}
+
+export const SESSION_TABLE_HEADER =
+  "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS";
+
+export function sessionTableRow(session) {
+  return [
+    session.sessionId,
+    session.workspaceId,
+    session.provider.id,
+    session.provider.pid,
+    session.liveness.state,
+    session.cwd ?? "-",
+    activityColumn(session.runtime?.agentRuntimeState),
+    session.clientProjection.agents
+      .map((agent) => agent.displayName ?? agent.name ?? agent.id ?? "?")
+      .join(",") || "-",
+    session.clientProjection.state === "current" ? session.clientProjection.agents.map((agent) => agent.accountReference ?? "unknown").join(",") : "unknown",
+    session.failure
+      ? `${session.failure.code} (${session.failure.correlationId})`
+      : "-",
+    session.runtime?.agentRuntimeState?.progress?.progress_unconfirmed ? "progress_unconfirmed" : session.runtime?.agentRuntimeState?.progress?.report.phase ?? "unknown",
+  ].join("\t");
+}
+
+/** How to reach the rows a page left out, or null when none remain. */
+export function sessionPageNotice(report) {
+  const backend = report.source.profileId ? ` --backend ${report.source.profileId}` : "";
+  if (report.pagination?.nextCursor) {
+    return `Next page: dure ls --cursor ${report.pagination.nextCursor}${backend}`;
+  }
+  return report.truncation.items
+    ? `Inventory truncated. Use dure ls --cursor start${backend} to enumerate all pages.`
+    : null;
 }
 
 export function formatSessionQuery(report) {
@@ -1025,33 +1061,10 @@ export function formatSessionQuery(report) {
   const sessions = report.kind === "dure.sessions.list" ? report.sessions : [report.session];
   // A filtered or truncated page can be empty; keep its truncation notice.
   const lines = sessions.length === 0 ? ["No Dure sessions."] : [
-    "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS",
+    SESSION_TABLE_HEADER,
+    ...sessions.map(sessionTableRow),
   ];
-  for (const session of sessions) {
-    lines.push(
-      [
-        session.sessionId,
-        session.workspaceId,
-        session.provider.id,
-        session.provider.pid,
-        session.liveness.state,
-        session.cwd ?? "-",
-        activityColumn(session.runtime?.agentRuntimeState),
-        session.clientProjection.agents
-          .map((agent) => agent.displayName ?? agent.name ?? agent.id ?? "?")
-          .join(",") || "-",
-        session.clientProjection.state === "current" ? session.clientProjection.agents.map((agent) => agent.accountReference ?? "unknown").join(",") : "unknown",
-        session.failure
-          ? `${session.failure.code} (${session.failure.correlationId})`
-          : "-",
-        session.runtime?.agentRuntimeState?.progress?.progress_unconfirmed ? "progress_unconfirmed" : session.runtime?.agentRuntimeState?.progress?.report.phase ?? "unknown",
-      ].join("\t"),
-    );
-  }
-  if (report.pagination?.nextCursor) {
-    lines.push(`Next page: dure ls --cursor ${report.pagination.nextCursor}${report.source.profileId ? ` --backend ${report.source.profileId}` : ""}`);
-  } else if (report.truncation.items) {
-    lines.push("Inventory truncated. Use dure ls --cursor start to enumerate all pages.");
-  }
+  const notice = sessionPageNotice(report);
+  if (notice) lines.push(notice);
   return lines.join("\n");
 }

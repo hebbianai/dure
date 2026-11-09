@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,13 @@ import {
   runSessionCli,
   writeRegistry,
 } from "./lib/dure-session-test-fixture.mjs";
+import { sshBackendProfile } from "./lib/dure-cli-ssh-fixture.mjs";
+import { LocalBackendError } from "../cli/lib/local-backend.mjs";
+import {
+  collectSessionQuery,
+  sessionQueryExitCode,
+} from "../cli/lib/session-query.mjs";
+import { collectAllBackendsSessionQuery } from "../cli/lib/session-query-all-backends.mjs";
 
 const temporaryRoots = [];
 
@@ -411,5 +419,310 @@ describe("dure ls canonical session projection", () => {
       operation: "sessions.list",
       expected: { requiredCapabilities: ["sessions.list"] },
     });
+  });
+});
+
+describe("dure ls --all-backends", () => {
+  const DOWN_HOST = "down.example.test";
+
+  function installBackends(root, sessions, { unreachableHosts = [], options = {} } = {}) {
+    const remote = installRemoteBackendFixture(root, sessions, { unreachableHosts, ...options });
+    const profiles = [
+      sshBackendProfile({ id: "remote-build", defaultProfile: true }),
+      sshBackendProfile({ id: "remote-down", host: DOWN_HOST }),
+    ];
+    writeFileSync(
+      join(root, "backend-profiles.json"),
+      JSON.stringify({ schemaVersion: 1, kind: "dure.backend_profiles", profiles }),
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      join(root, "backend-ssh-references.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "dure.backend_ssh_references",
+        references: profiles.map(({ id }) => ({
+          reference: `known-hosts-profile:${id}`,
+          kind: "known_hosts_file",
+          path: remote.knownHostsFile,
+        })),
+      }),
+      { mode: 0o600 },
+    );
+    return { PATH: `${remote.bin}:${process.env.PATH}` };
+  }
+
+  function unusedHmux(root) {
+    return installHmuxStub(root, { error: "must not execute" }, { status: 77 });
+  }
+
+  it("prints one table with a backend column and reports an unreachable backend beside it", () => {
+    const root = temporaryRoot();
+    const environment = installBackends(root, [hmuxSession()], { unreachableHosts: [DOWN_HOST] });
+
+    const result = runSessionCli(root, unusedHmux(root), ["ls", "--all-backends"], environment);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const [header, row, ...notices] = result.stdout.trim().split("\n");
+    expect(header.split("\t").slice(0, 2)).toEqual(["BACKEND", "SESSION"]);
+    expect(row.split("\t").slice(0, 2)).toEqual(["remote-build", "session-1"]);
+    expect(notices).toEqual([
+      expect.stringMatching(/^Backend remote-down unavailable: backend_transport_ssh_failed/),
+    ]);
+  });
+
+  it("carries the backend on each JSON row and the failure on the backend entry", () => {
+    const root = temporaryRoot();
+    const environment = installBackends(root, [hmuxSession()], { unreachableHosts: [DOWN_HOST] });
+
+    const result = runSessionCli(root, unusedHmux(root), ["ls", "--all-backends", "--json"], environment);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report).toMatchObject({
+      kind: "dure.sessions.list",
+      complete: false,
+      partial: true,
+      inventoryComplete: false,
+      source: { kind: "all_backends", appDaemonRequired: false },
+      sessions: [{ backendProfileId: "remote-build", sessionId: "session-1" }],
+    });
+    expect(report.backends).toEqual([
+      expect.objectContaining({ backendProfileId: "remote-build", status: "ok" }),
+      expect.objectContaining({
+        backendProfileId: "remote-down",
+        status: "error",
+        error: expect.objectContaining({ code: "backend_transport_ssh_failed" }),
+      }),
+    ]);
+  });
+
+  it("keeps identical Session IDs from different backends as separate rows", () => {
+    const root = temporaryRoot();
+    const environment = installBackends(root, [hmuxSession()]);
+
+    const result = runSessionCli(root, unusedHmux(root), ["ls", "--all-backends", "--json"], environment);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report).toMatchObject({ complete: true, partial: false, inventoryComplete: true });
+    expect(report.sessions.map((session) => [session.backendProfileId, session.sessionId])).toEqual([
+      ["remote-build", "session-1"],
+      ["remote-down", "session-1"],
+    ]);
+  });
+
+  it("fails without claiming there are no sessions when every backend is unreachable", () => {
+    const root = temporaryRoot();
+    const environment = installBackends(root, [hmuxSession()], {
+      unreachableHosts: ["remote.example.test", DOWN_HOST],
+    });
+
+    const result = runSessionCli(root, unusedHmux(root), ["ls", "--all-backends"], environment);
+
+    expect(result.status).toBe(2);
+    expect(result.stdout).not.toContain("No Dure sessions.");
+    expect(result.stdout).toContain("Backend remote-build unavailable:");
+    expect(result.stdout).toContain("Backend remote-down unavailable:");
+  });
+
+  it("does not report no sessions while a backend is unreachable", () => {
+    const root = temporaryRoot();
+    const environment = installBackends(root, [], { unreachableHosts: [DOWN_HOST] });
+
+    const result = runSessionCli(root, unusedHmux(root), ["ls", "--all-backends"], environment);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).not.toContain("No Dure sessions.");
+    expect(result.stdout).toContain("Backend remote-down unavailable:");
+  });
+
+  it("says no sessions when every backend answered with none", () => {
+    const root = temporaryRoot();
+    const environment = installBackends(root, []);
+
+    const result = runSessionCli(root, unusedHmux(root), ["ls", "--all-backends"], environment);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout.trim()).toBe("No Dure sessions.");
+  });
+
+  it("names the backend whose inventory was truncated", () => {
+    const root = temporaryRoot();
+    const environment = installBackends(root, [hmuxSession()], {
+      unreachableHosts: [DOWN_HOST],
+      options: {
+        results: {
+          "sessions.list": {
+            schemaVersion: 1,
+            complete: true,
+            sessions: [hmuxSession()],
+            truncation: { items: true, omittedCount: 1 },
+          },
+        },
+      },
+    });
+
+    const result = runSessionCli(root, unusedHmux(root), ["ls", "--all-backends"], environment);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(
+      "remote-build: Inventory truncated. Use dure ls --cursor start --backend remote-build to enumerate all pages.",
+    );
+    const json = JSON.parse(
+      runSessionCli(root, unusedHmux(root), ["ls", "--all-backends", "--json"], environment).stdout,
+    );
+    expect(json.truncation).toEqual({ items: true, omittedCount: 1 });
+    expect(json.backends[0]).toMatchObject({
+      backendProfileId: "remote-build",
+      truncation: { items: true, omittedCount: 1 },
+    });
+  });
+
+  it("applies --alive and --hide-provider to every backend's rows", () => {
+    const root = temporaryRoot();
+    const environment = installBackends(root, [
+      hmuxSession(1, { provider_id: "codex" }),
+      hmuxSession(2, { provider_id: "local-shell" }),
+      hmuxSession(3, { lifecycle: "exited", health: "exited", provider_id: "codex", exit: { kind: "normal", exit_code: 0 } }),
+    ]);
+
+    const result = runSessionCli(
+      root,
+      unusedHmux(root),
+      ["ls", "--all-backends", "--alive", "--hide-provider", "local-shell", "--json"],
+      environment,
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(JSON.parse(result.stdout).sessions.map((session) => [session.backendProfileId, session.sessionId])).toEqual([
+      ["remote-build", "session-1"],
+      ["remote-down", "session-1"],
+    ]);
+  });
+
+  it("lists this machine under local without creating a catalog when none is configured", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [hmuxSession()]);
+
+    const result = runSessionCli(root, hmux, ["ls", "--all-backends", "--json"]);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(existsSync(join(root, "backend-profiles.json"))).toBe(false);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      complete: true,
+      backends: [{ backendProfileId: "local", status: "ok", source: { kind: "local_hmux" } }],
+      sessions: [{ backendProfileId: "local", sessionId: "session-1" }],
+    });
+  });
+
+  it("reports a broken catalog instead of pretending only this machine exists", () => {
+    const root = temporaryRoot();
+    const hmux = unusedHmux(root);
+    writeFileSync(join(root, "backend-profiles.json"), "{ not json", { mode: 0o600 });
+
+    const result = runSessionCli(root, hmux, ["ls", "--all-backends", "--json"]);
+
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      kind: "dure.sessions.error",
+      error: { code: "backend_profiles_json_invalid" },
+    });
+  });
+
+  it("wins over DURE_BACKEND_PROFILE", () => {
+    const root = temporaryRoot();
+    const environment = installBackends(root, [hmuxSession()]);
+
+    const result = runSessionCli(root, unusedHmux(root), ["ls", "--all-backends", "--json"], {
+      ...environment,
+      DURE_BACKEND_PROFILE: "remote-down",
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(JSON.parse(result.stdout).backends).toHaveLength(2);
+  });
+
+  it.each([
+    [["ls", "--all-backends", "--backend", "remote-build"]],
+    [["ls", "--all-backends", "--cursor", "start"]],
+    [["sessions", "list", "--all-backends"]],
+    [["inspect", "session-1", "--all-backends"]],
+  ])("refuses %j before contacting a backend", (args) => {
+    const root = temporaryRoot();
+    const environment = installBackends(root, [hmuxSession()]);
+
+    const result = runSessionCli(root, unusedHmux(root), args, {
+      ...environment,
+      DURE_SESSION_REQUEST_LOG: join(root, "requests.jsonl"),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("--all-backends");
+    expect(existsSync(join(root, "requests.jsonl"))).toBe(false);
+  });
+
+  it("keeps remote backends when the local backend service cannot start", async () => {
+    const report = await collectAllBackendsSessionQuery({
+      query: {
+        action: "list",
+        requestBackend: async () => ({
+          backend: { id: "remote-backend" },
+          result: { schemaVersion: 1, complete: true, sessions: [hmuxSession()] },
+        }),
+      },
+      collect: collectSessionQuery,
+      loadCatalog: () => ({ profiles: [{ id: "local" }, { id: "remote-build" }] }),
+      resolveBackend: async (id) =>
+        id === "local"
+          ? { error: new LocalBackendError("local_backend_unavailable") }
+          : { profile: sshBackendProfile({ id }), transportOptions: {} },
+    });
+
+    expect(report.backends[0]).toMatchObject({
+      backendProfileId: "local",
+      status: "error",
+      error: { code: "local_backend_unavailable" },
+    });
+    expect(report.sessions.map((session) => session.backendProfileId)).toEqual(["remote-build"]);
+    expect(sessionQueryExitCode(report)).toBe(0);
+  });
+
+  it("keeps the other backends when one backend's response cannot be processed", async () => {
+    const requestBackend = async () => ({
+      backend: { id: "remote-backend" },
+      result: { schemaVersion: 1, complete: true, sessions: [hmuxSession()] },
+    });
+
+    const report = await collectAllBackendsSessionQuery({
+      query: { action: "list", requestBackend },
+      collect: async (query) => {
+        if (query.backend.profile?.id === "remote-bad") throw new TypeError("unexpected shape");
+        return collectSessionQuery(query);
+      },
+      loadCatalog: () => ({ profiles: [{ id: "remote-bad" }, { id: "remote-build" }] }),
+      resolveBackend: async (id) => ({ profile: sshBackendProfile({ id }), transportOptions: {} }),
+    });
+
+    expect(report.backends[0]).toMatchObject({
+      backendProfileId: "remote-bad",
+      status: "error",
+      error: { code: "backend_transport_unavailable" },
+    });
+    expect(report.sessions.map((session) => session.backendProfileId)).toEqual(["remote-build"]);
+  });
+
+  it("leaves plain dure ls without backend fields or a backend column", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [hmuxSession()]);
+
+    const table = runSessionCli(root, hmux, ["ls"]);
+    const report = JSON.parse(runSessionCli(root, hmux, ["ls", "--json"]).stdout);
+
+    expect(table.status, `${table.stdout}\n${table.stderr}`).toBe(0);
+    expect(table.stdout.split("\t")[0]).toBe("SESSION");
+    expect(report.source.kind).toBe("local_hmux");
+    expect(report.backends).toBeUndefined();
+    expect(report.sessions[0].backendProfileId).toBeUndefined();
   });
 });

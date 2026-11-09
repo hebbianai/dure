@@ -25,6 +25,8 @@ dure schedule --help
 
 `dure read` reads a session's screen; `dure transcript` reads its available conversation transcript. Use the session/workspace identifiers returned by the listing when selecting a managed session. A successful launch or input-delivery receipt is not proof the task completed.
 
+If you also work on SSH backends, `dure ls --all-backends` lists the sessions on every configured backend in one table with a `BACKEND` column. A backend that can't be reached is reported with its error and doesn't hide the others. With `--json`, each session carries `backendProfileId`.
+
 ## Wait for the agents you started
 
 When an agent runs `dure run` from its Dure terminal pane, the new Run records that agent as its parent. The calling agent can then wait for all of its children at once instead of polling each one:

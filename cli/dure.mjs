@@ -1653,8 +1653,8 @@ async function sessionQueryContext(opts, loadSessionClientProjection) {
     registryPath: REG,
     clientId: sessionQueryClientId(),
   });
-  const backendRequested =
-    opts.backendSpecified || Boolean(process.env.DURE_BACKEND_PROFILE?.trim());
+  const backendRequested = !opts.allBackends &&
+    (opts.backendSpecified || Boolean(process.env.DURE_BACKEND_PROFILE?.trim()));
   return {
     registry,
     backend: backendRequested ? await backendProfileQueryContext(opts) : null,
@@ -1687,9 +1687,20 @@ async function emitSessionQuery(action, sessionId, opts) {
     backend,
   };
   // --alive (only alive sessions) filters every page of the census.
-  const report = action === "list" && opts.alive
-    ? await collectAliveSessionQuery(query)
-    : await collectSessionQuery(query);
+  const collect = action === "list" && opts.alive
+    ? collectAliveSessionQuery
+    : collectSessionQuery;
+  const allBackends = opts.allBackends
+    ? await import("./lib/session-query-all-backends.mjs")
+    : null;
+  const report = allBackends
+    ? await allBackends.collectAllBackendsSessionQuery({
+        query,
+        collect,
+        resolveBackend: (backend) =>
+          backendProfileQueryContext({ backendSpecified: true, backend }),
+      })
+    : await collect(query);
 
   // Apply client-side filtering for ls command
   if (action === "list" && report.kind === "dure.sessions.list") {
@@ -1704,22 +1715,28 @@ async function emitSessionQuery(action, sessionId, opts) {
     report.sessions = filtered;
   }
 
-  process.stdout.write(
-    (opts.json ? JSON.stringify(report) : formatSessionQuery(report)) + "\n",
-  );
+  const text = report.backends
+    ? allBackends.formatAllBackendsSessionQuery(report)
+    : formatSessionQuery(report);
+  process.stdout.write((opts.json ? JSON.stringify(report) : text) + "\n");
   process.exitCode = sessionQueryExitCode(report);
 }
 
+const LS_USAGE =
+  "dure ls [--cursor start|CURSOR] [--backend ID | --all-backends] [--json] [--deadline-ms N] [--probe-budget-ms N] [--alive] [--hide-provider ID...]";
+
 async function cmdLs(opts) {
-  if (opts.rest.length !== 0 || opts.workspace !== undefined) {
-    fail(
-      "Usage: dure ls [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N] [--alive] [--hide-provider ID...]",
-    );
+  if (
+    opts.rest.length !== 0 ||
+    opts.workspace !== undefined ||
+    (opts.allBackends && (opts.backendSpecified || opts.cursor !== undefined))
+  ) {
+    fail(`Usage: ${LS_USAGE}`);
   }
   return emitSessionQuery("list", undefined, opts);
 }
 
-const SESSION_QUERY_HELP = `Usage: dure ls [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N] [--alive] [--hide-provider ID...]
+const SESSION_QUERY_HELP = `Usage: ${LS_USAGE}
        dure sessions list [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]
        dure inspect <session-id> [--workspace ID] [--backend ID] [--json]
        dure sessions show <session-id> [--workspace ID] [--backend ID] [--json]
@@ -1742,11 +1759,19 @@ Recent lists provider history through the connected app.
 Filtering options (dure ls only):
   --alive                   Show only alive sessions from every census page (exclude exited and unknown)
   --hide-provider ID        Hide sessions from the specified provider ID (can be repeated)
+  --all-backends            List every configured backend profile in one table with a
+                            BACKEND column; --json adds backendProfileId to each row
+                            and a backends array with each backend's status. A backend
+                            that cannot be reached is reported with its error and does
+                            not hide the others. --deadline-ms applies to each backend.
+                            Exits 2 only when no backend answered. To page one backend,
+                            use --backend ID with --cursor. Not with --backend or --cursor.
 
 Use --help or -h to show this help without contacting a backend.
 `;
 
 async function cmdSessions(sub, opts) {
+  if (opts.allBackends) fail("--all-backends is only supported by dure ls.");
   if (sub === undefined || sub === "recent") {
     if (opts.rest.length !== (sub === undefined ? 0 : 1)) {
       fail("Usage: dure sessions recent [--json]");

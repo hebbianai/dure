@@ -177,6 +177,7 @@ Observe; do not steer by typing into terminals unless §5 says so.
 ```sh
 dure inspect SESSION_ID --workspace WORKSPACE_ID --json     # one worker, exact
 dure ls --json                        # everyone on this backend; page with --cursor start, then pagination.nextCursor
+dure ls --all-backends --json         # everyone on every configured backend; backends[] says which ones answered
 dure wait SESSION_ID --workspace WORKSPACE_ID --timeout 900 --json
 dure read SESSION_ID --workspace WORKSPACE_ID -n 80         # the screen, when a state needs explaining
 gh pr list --repo OWNER/REPO --head agent/work-123 --state all \

@@ -44,6 +44,13 @@ over the live catalog, not a frozen snapshot: restart from `start` to reconcile
 sessions created behind the cursor while traversing. Older runtimes without
 pagination support return an explicit capability error.
 
+To see every configured backend at once, use `dure ls --all-backends [--json]`.
+The table gains a `BACKEND` column; JSON rows carry `backendProfileId`, and
+`backends[]` gives each backend's `status` and `error`. Exit status is 2 only
+when no backend answered, so check `backends[]` or `complete`: an unreachable
+backend's sessions are unobserved, not gone. Page one backend with
+`--backend ID --cursor`.
+
 ## Where `dure run` puts the files
 
 ```sh
