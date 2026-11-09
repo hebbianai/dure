@@ -126,6 +126,7 @@ export const DEV_CHILD_PREPARATION_PATHS = Object.freeze([
   "scripts/lib/native-build-slot.mjs",
   "scripts/native/native-build-slot.py",
   "scripts/resolve-dev-app-channel.mjs",
+  "scripts/stage-macos-remote-tools.mjs",
   "scripts/verify-static-linux-binary.sh",
 ]);
 const DEV_CHILD_PREPARATION_PATH_SET = new Set(DEV_CHILD_PREPARATION_PATHS);
