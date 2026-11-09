@@ -140,6 +140,7 @@
     "test:hmux-draft-guard": "node scripts/run-with-build-storage.mjs qa -- node scripts/run-hmux-tests.mjs -- cargo test --locked --manifest-path hmux/Cargo.toml -p hmux-runtime --features terminal-state-stream --test standalone_smoke draft_guarded_command_input_never_merges_into_an_unsubmitted_draft -- --exact --nocapture",
     "test:hmux-rehost-cli": "node scripts/qa/hmux-rehost-cli-smoke.mjs",
     "test:hmux-native-publication": "node scripts/run-hmux-tests.mjs -- node scripts/qa/hmux-control-plane-smoke.mjs native_rehost_publication_uses_real_hmux",
+    "test:hmux-resume-all": "node scripts/run-hmux-tests.mjs -- node scripts/qa/hmux-control-plane-smoke.mjs resume_all_restores_each_agent_after_its_host_ends",
     "test:hmux-run-rehost": "node scripts/run-hmux-tests.mjs -- node scripts/qa/hmux-control-plane-smoke.mjs native_run_rehost_uses_real_hmux",
     "test:hmux-provider-setup": "node scripts/run-hmux-tests.mjs -- node scripts/qa/hmux-control-plane-smoke.mjs missing_provider_setup_uses_real_hmux",
     "test:provider-setup-guide": "node scripts/qa/provider-setup-guidance.mjs",
