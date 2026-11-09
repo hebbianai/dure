@@ -5,6 +5,7 @@ import {
 } from "./app-control-client.mjs";
 import {
   agentSpawnLaunchProjection,
+  validSpawnParent,
 } from "./agent-spawn-query.mjs";
 export { resolveClientSpaceTarget as resolveRunPresentationTarget } from "./space-selection.mjs";
 import { parseAgentRuntimeInspectionEnvelope } from "./contracts/agent-runtime.mjs";
@@ -293,6 +294,7 @@ export function runReceiptSummary(report, presentation = null) {
     state: token(receipt?.state),
     presentation: token(presentation?.state),
     interactionProfile,
+    parent: validSpawnParent(plan?.request?.parent) ? plan.request.parent : null,
   };
 }
 

@@ -2022,7 +2022,8 @@ Usage:
            [--permission-override require_approvals|auto_edit|bypass_approvals]
            [--skip-permissions]
            [--space ID|NAME] [--idempotency-key KEY] [--backend ID] [--json] [--verbose]
-           [--lead [--merge-policy auto|review]] <prompt>
+           [--lead [--merge-policy auto|review]]
+           [--parent AGENT | --parent SESSION_ID --parent-workspace ID | --no-parent] <prompt>
   dure spawn [run options] [prompt]
   dure spawn --reuse --project ID|NAME --name AGENT
              [--agent PROVIDER | --provider PROVIDER]
@@ -2047,8 +2048,8 @@ runs switch-account accepts; dure recovery get PROVIDER lists registered IDs.
 Without account-selection support, omitted --account uses the provider default.
 The Run receipt executionProfile identifies the credential reference and generation.
 With --json the receipt starts with summary: agentId, sessionId, workspaceId, panelId,
-spaceId, state (the Run receipt state), presentation (the pane outcome) and
-interactionProfile; a value the receipt cannot vouch for is null. The full receipt,
+spaceId, state (the Run receipt state), presentation (the pane outcome),
+interactionProfile and parent; a value the receipt cannot vouch for is null. The full receipt,
 presentation and registration follow unchanged. source.backend carries the backend
 identity, protocol and capabilityCount; --verbose adds its full capabilities list.
 --lead starts a lead Run: the prompt is the goal, and the CLI prepends the bundled lead
@@ -2059,6 +2060,12 @@ and report. Only the prompt changes; no other state is created. spawn rejects --
 its own green pull request; review holds every one for a person's approval (a GitHub
 approval, or the lead:approved label on the pull request) before the lead merges it, and
 puts that rule in every worker brief from the first dispatch. It requires --lead.
+Run from inside an agent's terminal pane on the local backend, the new Run records that
+agent's exact Session as its parent (summary.parent in --json). --no-parent records none.
+--parent links another agent on the same backend by name, Agent ID or Session ID through
+the app's Agent list; with --parent-workspace it takes an exact Session ID. An explicit
+parent the backend can't record is refused before anything starts. The parent waits for
+its children with dure wait --children all|any. The link grants no control over either Run.
 spawn --reuse reuses an existing Agent without creating a new provider.`;
 
 function writeCliActionError(
@@ -2105,7 +2112,9 @@ async function cmdLegacySpawnReuse(opts, prompt, positionalPrompt, providerId) {
     opts.permissionOverride !== undefined ||
     opts.setupCommand !== undefined ||
     opts.backendSpecified === true || opts.account !== undefined ||
-    opts.mergePolicy !== undefined
+    opts.mergePolicy !== undefined ||
+    opts.parent !== undefined || opts.parentWorkspace !== undefined ||
+    opts.noParent === true
   ) {
     fail(RUN_HELP);
   }
@@ -2199,6 +2208,10 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     opts.operationId !== undefined ||
     opts.planToken !== undefined ||
     opts.expectedSequence !== undefined ||
+    (opts.parent !== undefined && !opts.parent) ||
+    (opts.parentWorkspace !== undefined &&
+      (!opts.parentWorkspace || opts.parent === undefined)) ||
+    (opts.noParent === true && opts.parent !== undefined) ||
     (opts.skipPermissions === true && opts.permissionOverride !== undefined) ||
     (opts.permissionOverride !== undefined &&
       !["require_approvals", "auto_edit", "bypass_approvals"].includes(
@@ -2226,15 +2239,16 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
   const { loadSessionClientProjection } = await import(
     "./lib/session-query.mjs"
   );
+  const clientRegistry = loadSessionClientProjection({
+    registryPath: REG,
+    clientId: sessionQueryClientId(),
+  });
   let presentationTarget;
   try {
     presentationTarget = resolveRunPresentationTarget({
       spaceSelector: opts.spaceSpecified ? opts.space : undefined,
       environment: process.env,
-      registry: loadSessionClientProjection({
-        registryPath: REG,
-        clientId: sessionQueryClientId(),
-      }),
+      registry: clientRegistry,
     });
   } catch (error) {
     writeCliActionError(
@@ -2261,6 +2275,21 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     resolveAgentRunAccount,
   } = await import("./lib/agent-run.mjs");
   const backend = await backendProfileQueryContext(opts);
+  let runParent;
+  try {
+    const { resolveRunParent } = await import("./lib/run-parent.mjs");
+    runParent = resolveRunParent({
+      selector: opts.parent,
+      workspaceId: opts.parentWorkspace,
+      noParent: opts.noParent === true,
+      environment: process.env,
+      registry: clientRegistry,
+      backend,
+    });
+  } catch (error) {
+    writeCliActionError(error, opts, "dure.run-parent/v1", "dure.run.error", "run_parent_invalid");
+    return;
+  }
   const explicitWorktreeName =
     typeof opts.worktree === "string" ? opts.worktree : undefined;
   const agentName =
@@ -2321,6 +2350,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     includePresentationProject: presentationTarget.state === "requested" || loadServer()?.capabilities?.includes("agent.run_background_v1"),
     executionProfile,
     interactionPreference,
+    parent: runParent.parent,
     backend,
     deadlineMs,
     verbose: opts.verbose === true,
@@ -4330,9 +4360,14 @@ async function main() {
     try {
       process.exitCode = await runWaitCommand(cmd === "help" ? ["--help"] : rest, {
         hmuxCommand: hmuxCommand(), signal: interruption.signal,
-        resolveContext: async (options) => options.subject === "response"
-          ? sessionQueryContext(options, loadSessionClientProjection)
-          : { backend: await backendProfileQueryContext(options) },
+        resolveContext: async (options) => {
+          if (options.subject === "response") return sessionQueryContext(options, loadSessionClientProjection);
+          if (options.subject !== "children") return { backend: await backendProfileQueryContext(options) };
+          // Children are listed from the backend's Run records; their Sessions
+          // are read the way a single response wait reads one.
+          const context = await sessionQueryContext(options, loadSessionClientProjection);
+          return { ...context, sessionBackend: context.backend, backend: context.backend ?? await backendProfileQueryContext(options) };
+        },
       });
     } finally {
       interruption.dispose();

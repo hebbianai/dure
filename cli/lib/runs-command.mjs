@@ -187,6 +187,7 @@ export function formatRunsCommand(report) {
     ...(source ? [`Session: ${source.binding.sessionId}\nWorkspace: ${source.runtimeWorkspaceId}`] : []),
     ...(report.run ? [
       `Operation: ${report.run.operationId}`,
+      ...(report.run.parent ? [`Parent: ${report.run.parent.sessionId} --workspace ${report.run.parent.workspaceId}`] : []),
       `Open: dure runs open ${report.run.agentId} --space <space-id>`,
     ] : ["No Run record: launched, resumed or imported by the app. Open it from the app."]),
     `Switch account: dure runs switch-account ${selected.agentId} --account ACCOUNT_ID`,

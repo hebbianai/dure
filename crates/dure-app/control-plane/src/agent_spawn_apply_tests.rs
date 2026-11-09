@@ -279,6 +279,7 @@ fn request() -> AgentSpawnPreviewIntentV1 {
         model: None,
         effort: None,
         interaction_preference: None,
+        parent: None,
     }
 }
 

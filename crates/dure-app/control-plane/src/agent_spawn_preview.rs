@@ -30,6 +30,8 @@ struct AgentSpawnPreviewBody {
     effort: Option<AgentSpawnEffortSelectionV1>,
     #[serde(default)]
     interaction_preference: Option<AgentSpawnInteractionPreferenceV1>,
+    #[serde(default)]
+    parent: Option<AgentSpawnParentV1>,
 }
 
 pub(super) async fn preview_agent_spawn(
@@ -125,6 +127,7 @@ pub(super) async fn preview_agent_spawn(
         model: incoming.model,
         effort: incoming.effort,
         interaction_preference: incoming.interaction_preference,
+        parent: incoming.parent,
     };
     state
         .credential_profiles

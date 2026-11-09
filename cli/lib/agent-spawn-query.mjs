@@ -17,6 +17,7 @@ export const MAX_AGENT_SPAWN_APPLY_DEADLINE_MS = 300_000;
 export const MAX_AGENT_SPAWN_OUTPUT_BYTES = 256 * 1024;
 export const AGENT_SPAWN_PRESENTATION_PROJECT_CAPABILITY =
   "agent_spawn.presentation_project.v1";
+export const AGENT_SPAWN_PARENT_LINK_CAPABILITY = "agent_spawn.parent_link.v1";
 
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const PROVIDER_CONVERSATION_REF = /^[A-Za-z0-9._:/-]{1,160}$/;
@@ -135,6 +136,17 @@ function validRequestFields(value, options) {
   );
 }
 
+/** The exact agent Session that started a Run. */
+export function validSpawnParent(value) {
+  return (
+    onlyKeys(value, ["sessionId", "workspaceId"]) &&
+    typeof value.sessionId === "string" &&
+    TOKEN.test(value.sessionId) &&
+    typeof value.workspaceId === "string" &&
+    TOKEN.test(value.workspaceId)
+  );
+}
+
 export function validExecutionProfile(value, { allowMissing = false } = {}) {
   if (value === undefined) return allowMissing;
   if (onlyKeys(value, ["kind"]) && value.kind === "provider_default") {
@@ -183,6 +195,7 @@ function validNormalizedRequest(value) {
   const interactionKeys = value?.interactionPreference === undefined
     ? []
     : ["interactionPreference"];
+  const parentKeys = value?.parent === undefined ? [] : ["parent"];
   return (
     onlyKeys(value, [
       "schemaVersion",
@@ -199,8 +212,10 @@ function validNormalizedRequest(value) {
       ...modelKeys,
       ...effortKeys,
       ...interactionKeys,
+      ...parentKeys,
     ]) &&
     validRequestFields(value) &&
+    (value.parent === undefined || validSpawnParent(value.parent)) &&
     (value.interactionPreference === undefined ||
       value.interactionPreference === "native_cli") &&
     (value.providerConversationRef === undefined ||
@@ -238,8 +253,9 @@ function validPreviewRequest(value) {
       ...interactionKeys,
       "promptDigest",
       ...setupKeys,
-      ...["model", "effort", "executionProfile"].filter((key) => value[key] !== undefined),
+      ...["model", "effort", "executionProfile", "parent"].filter((key) => value[key] !== undefined),
     ]) &&
+    (value.parent === undefined || validSpawnParent(value.parent)) &&
     value.schemaVersion === AGENT_SPAWN_QUERY_SCHEMA_VERSION &&
     validExecutionProfile(value.executionProfile, { allowMissing: true }) &&
     (value.model === undefined || isProviderModelSelection(value.model)) &&
@@ -1234,6 +1250,7 @@ function previewRequest(options) {
     ...(options.effort === undefined ? {} : { effort: options.effort }),
     ...(options.executionProfile === undefined ? {} : { executionProfile: options.executionProfile }),
     ...(options.interactionPreference === undefined ? {} : { interactionPreference: options.interactionPreference }),
+    ...(options.parent === undefined ? {} : { parent: options.parent }),
     agentName: options.agentName,
     worktree: options.worktree,
     ...(options.permissionOverride === undefined
@@ -1262,6 +1279,7 @@ export async function collectAgentSpawnQuery({
   executionProfile,
   includePresentationProject,
   interactionPreference,
+  parent,
   setupCommand,
   prompt,
   operationId,
@@ -1292,6 +1310,7 @@ export async function collectAgentSpawnQuery({
           effort,
           executionProfile,
           interactionPreference,
+          parent,
           includePresentationProject: presentationProjectSupported,
           setupCommand,
           prompt,
@@ -1359,6 +1378,7 @@ export async function collectAgentSpawnQuery({
               ...(request.includePresentationProject
                 ? [AGENT_SPAWN_PRESENTATION_PROJECT_CAPABILITY]
                 : []),
+              ...(request.parent ? [AGENT_SPAWN_PARENT_LINK_CAPABILITY] : []),
             ]
           : [`agent_spawn.${action}`],
         body: action === "preview"
@@ -1450,6 +1470,7 @@ export function formatAgentSpawnQuery(report) {
     `state\t${receipt.state}`,
     `agent\t${receipt.plan.request.agentName}`,
     `account\t${receipt.plan.request.executionProfile?.kind === "credential_reference" ? receipt.plan.request.executionProfile.reference_id : "provider_default"}`,
+    ...(receipt.plan.request.parent ? [`parent\t${receipt.plan.request.parent.sessionId}`] : []),
   ];
   lines.push(
     launch?.interactionProfile === "native_cli"

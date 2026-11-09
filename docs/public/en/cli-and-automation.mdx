@@ -25,6 +25,17 @@ dure schedule --help
 
 `dure read` reads a session's screen; `dure transcript` reads its available conversation transcript. Use the session/workspace identifiers returned by the listing when selecting a managed session. A successful launch or input-delivery receipt is not proof the task completed.
 
+## Wait for the agents you started
+
+When an agent runs `dure run` from its Dure terminal pane, the new Run records that agent as its parent. The calling agent can then wait for all of its children at once instead of polling each one:
+
+```sh
+dure wait --children all --timeout 900 --json   # every child settles
+dure wait --children any --json                 # the first child settles
+```
+
+A child settles when it has finished a turn and is idle, needs input or approval, exited, or its launch failed. The JSON lists each child with its state; exit 1 means a settled child needs action. `dure runs show <agent>` shows a Run's parent. Pass `--no-parent` to start an unlinked Run, or `--parent <agent>` to link a Run to another agent on the same backend. Children on the chat runtime can't be waited on yet; read them with `dure transcript`.
+
 ## Schedule recurring tasks
 
 From the project folder:

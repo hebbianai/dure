@@ -7,6 +7,16 @@ import { collectAgentSpawnQuery } from "./agent-spawn-query.mjs";
 import { collectSessionQuery } from "./session-query.mjs";
 import { boundedString, decimal, sameGeneration } from "./session-runtime-projection.mjs";
 import { readDelegatedWorkflow } from "./workflow-completion.mjs";
+import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { listRunRecords } from "./run-agent-selection.mjs";
+import {
+  ACTION_REQUIRED_CHILD_STATES,
+  SETTLED_CHILD_STATES,
+  callerSessionParent,
+  classifyChild,
+  listChildRuns,
+  registryParent,
+} from "./run-parent.mjs";
 
 export const WAIT_HELP = `dure wait — Observe one completion condition without controlling its target
 
@@ -14,6 +24,7 @@ export const WAIT_HELP = `dure wait — Observe one completion condition without
   dure wait --message RECEIPT_PATH [--until observed|acknowledged|turn_started]
   dure wait --operation-id ID
   dure wait --task ID --dispatch ID --generation N
+  dure wait --children all|any [<parent-agent-or-session> [--workspace ID]]
 
 Options: --backend ID, --timeout SECONDS (default 600), --deadline-ms N (default 2500), --json
 
@@ -30,6 +41,11 @@ Message: reads the private tracking file from 'dure send --track'. Default: inbo
 Turn started proves the wake prompt began a provider turn, not inbox read or comprehension.
 Unsupported or unavailable provider evidence remains unknown; no messages are resent.
 Task: reads the exact delegated task/dispatch generation completed by 'dure workflow done'.
+Children: waits for the Runs this agent started (recorded by dure run as their parent).
+Without a parent argument, the parent is the agent whose terminal runs this command.
+A child is settled when it finished a turn and is idle, exited, needs input or approval,
+or its launch failed or stopped short. all waits for every child, any for the first.
+Exit 1 when a settled child needs action. Chat-runtime children can't be observed yet.
 
 JSON is one dure.wait/v1 result with the target, observation and outcome.
 Unknown response results include exact inspect/resume argv in nextAction;
@@ -47,7 +63,7 @@ export function parseWaitArguments(args) {
   const { values, positionals } = parseArgs({
     args, allowPositionals: true,
     options: {
-      message: { type: "string" }, until: { type: "string" },
+      message: { type: "string" }, until: { type: "string" }, children: { type: "string" },
       "operation-id": { type: "string" }, task: { type: "string" }, dispatch: { type: "string" },
       generation: { type: "string" }, workspace: { type: "string" }, backend: { type: "string" },
       "after-turn": { type: "string" }, "terminal-epoch": { type: "string" },
@@ -56,15 +72,18 @@ export function parseWaitArguments(args) {
     },
   });
   if (values.help) return { help: true };
-  const subject = values.message !== undefined ? "message" : values["operation-id"] !== undefined ? "run" : values.task !== undefined ? "task" : "response";
+  const subject = values.children !== undefined ? "children" : values.message !== undefined ? "message" : values["operation-id"] !== undefined ? "run" : values.task !== undefined ? "task" : "response";
   const selectedFields = {
     message: ["message"], run: ["operation-id"], task: ["task", "dispatch", "generation"],
-    response: ["workspace", "after-turn", "terminal-epoch"],
+    response: ["workspace", "after-turn", "terminal-epoch"], children: ["children", "workspace"],
   };
   const allowed = new Set([...selectedFields[subject], "backend", "timeout", "deadline-ms", "json", ...(subject === "message" ? ["until"] : [])]);
   if (Object.keys(values).some((key) => !allowed.has(key)) ||
-      positionals.length !== (subject === "response" ? 1 : 0)) invalid("Choose exactly one wait target. See dure wait --help.");
-  if (subject !== "response" && subject !== "message" && selectedFields[subject].some((key) => !boundedString(values[key]))) invalid("The exact wait target is incomplete.");
+      (subject === "children" ? positionals.length > 1 : positionals.length !== (subject === "response" ? 1 : 0))) invalid("Choose exactly one wait target. See dure wait --help.");
+  if (subject === "children" && (!["all", "any"].includes(values.children) ||
+      (positionals[0] !== undefined && !boundedString(positionals[0])) ||
+      (values.workspace !== undefined && (positionals[0] === undefined || !boundedString(values.workspace))))) invalid("Use --children all or --children any; --workspace needs a parent Session ID.");
+  if (!["response", "message", "children"].includes(subject) && selectedFields[subject].some((key) => !boundedString(values[key]))) invalid("The exact wait target is incomplete.");
   if (subject === "response" && (!boundedString(positionals[0]) ||
       ((values["after-turn"] === undefined) !== (values["terminal-epoch"] === undefined)) ||
       (values["after-turn"] !== undefined && (!decimal(values["after-turn"]) || !boundedString(values["terminal-epoch"]))) ||
@@ -77,7 +96,7 @@ export function parseWaitArguments(args) {
       !Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 10000) invalid("Use a timeout up to 86400 seconds and a request deadline of 1–10000 ms.");
   if (subject === "task" && (!/^[1-9][0-9]*$/u.test(values.generation) || !Number.isSafeInteger(Number(values.generation)))) invalid("Task generation must be a positive integer.");
   return {
-    messagePath: values.message, until: values.until ?? "observed",
+    messagePath: values.message, until: values.until ?? "observed", childrenMode: values.children,
     subject, query: positionals[0], workspaceId: values.workspace,
     operationId: values["operation-id"], taskId: values.task, dispatchId: values.dispatch,
     generation: values.generation === undefined ? undefined : Number(values.generation),
@@ -103,16 +122,42 @@ function responseTarget(options, registry, backend) {
   return { sessionId: binding.sessionId, workspaceId: binding.workspaceId };
 }
 
+async function listRunsWithin({ backend, cursor, deadlineMs }) {
+  try {
+    return await listRunRecords({
+      backend: { ...backend, transportOptions: { ...backend.transportOptions, deadlineMs } },
+      requestBackend: performBackendProfileRequest, cursor,
+    });
+  } catch (error) {
+    return { error: { code: error.code ?? "wait_observation_failed", message: error.message } };
+  }
+}
+
+function waitParent(options, registry, backend, environment) {
+  if (options.query === undefined) {
+    const caller = callerSessionParent(environment);
+    if (!caller) invalid("No parent: run this inside an agent's terminal, or name it: dure wait --children all <agent>.");
+    return caller;
+  }
+  return options.workspaceId !== undefined
+    ? { sessionId: options.query, workspaceId: options.workspaceId }
+    : registryParent(options.query, registry, backend);
+}
+
+const TRANSIENT_OBSERVATION_ERRORS = ["hmux_session_query_timeout", "backend_transport_timeout"];
+
 /** Consume existing query contracts; no screen parsing, runtime writer or retry action. */
 export async function collectWait(options, {
-  registry, backend, hmuxCommand,
+  registry, backend, hmuxCommand, sessionBackend = backend,
   queryMessage = queryTrackedMessage, tracking,
   querySession = collectSessionQuery, queryRun = collectAgentSpawnQuery, queryTask = readDelegatedWorkflow,
+  listRuns = listRunsWithin, environment = process.env,
   signal, now = () => performance.now(), pause = (ms) => sleep(ms, undefined, { signal }),
 } = {}) {
   const startedAt = now();
   const { subject } = options;
-  let target = subject === "message" ? { interactionId: tracking.query.interactionId, until: options.until } : subject === "run" ? { operationId: options.operationId }
+  let children = null;
+  let target = subject === "children" ? { mode: options.childrenMode } : subject === "message" ? { interactionId: tracking.query.interactionId, until: options.until } : subject === "run" ? { operationId: options.operationId }
     : subject === "task" ? { taskId: options.taskId, dispatchId: options.dispatchId, generation: options.generation }
     : { sessionId: options.query, workspaceId: options.workspaceId };
   let observation = null;
@@ -140,16 +185,63 @@ export async function collectWait(options, {
     ...(code ? { error: { code, message, ...(lastError ? { cause: lastError } : {}) } } : {}),
   });
   try {
+    // The calling agent's own Session needs no backend to name; report a
+    // missing parent before any backend failure.
+    if (subject === "children" && options.query === undefined) target = { parent: waitParent(options, registry, backend, environment), ...target };
     if (backend?.error) throw backend.error;
     if (subject === "response") {
       target = { ...responseTarget(options, registry, backend),
         ...(options.afterTurn === undefined ? {} : { afterTurn: options.afterTurn, terminalEpoch: options.terminalEpoch }),
       };
     }
+    if (subject === "children" && !target.parent) target = { parent: waitParent(options, registry, backend, environment), ...target };
     while (!signal?.aborted) {
       const remaining = options.timeoutMs - (now() - startedAt);
       if (remaining <= 0) return result("unknown", 124, "wait_timeout", "Observation deadline reached. Query the same target; its outcome is not inferred and no execution was retried.");
       const deadlineMs = Math.max(1, Math.min(options.deadlineMs, Math.ceil(remaining)));
+      if (subject === "children") {
+        // Launch states change only until each child's launch settles; the
+        // Run records are re-read while any child is still launching.
+        if (!children || children.some((run) => classifyChild(run).state === "launching")) {
+          const listed = await listChildRuns({ parent: target.parent, backend, listRuns, deadlineMs });
+          if (signal?.aborted) break;
+          if (listed.error) {
+            lastError = listed.error;
+            if (TRANSIENT_OBSERVATION_ERRORS.includes(lastError.code)) {
+              await pause(Math.min(500, Math.max(1, options.timeoutMs - (now() - startedAt))));
+              continue;
+            }
+            return result("unknown", 2, lastError.code, "The parent's Run records are unavailable. Query the same target; nothing was retried.");
+          }
+          lastError = undefined;
+          children = listed.children;
+        }
+        if (children.length === 0) {
+          return result("unknown", 2, "wait_children_not_found", "No Run records name this agent as their parent. Runs started with --no-parent, by an older Dure, or on another backend are not linked.");
+        }
+        const states = await Promise.all(children.map(async (run) => {
+          const observed = classifyChild(run).state === "unobservable" || run.launchState !== "succeeded"
+            ? undefined
+            : await querySession({ action: "show", sessionId: run.sessionId, workspaceId: run.workspaceId, hmuxCommand, backend: sessionBackend, deadlineMs })
+              .catch((error) => ({ error: { code: error.code ?? "wait_observation_failed" } }));
+          return { agentId: run.agentId, name: run.name, operationId: run.operationId,
+            sessionId: run.sessionId ?? null, workspaceId: run.workspaceId, launchState: run.launchState,
+            ...classifyChild(run, observed) };
+        }));
+        if (signal?.aborted) break;
+        observation = { children: states };
+        const settled = states.filter((child) => SETTLED_CHILD_STATES.has(child.state));
+        if (target.mode === "any" ? settled.length > 0 : settled.length === states.length) {
+          return settled.some((child) => ACTION_REQUIRED_CHILD_STATES.has(child.state))
+            ? result("failed", 1, "wait_children_action_required", "A child needs input or approval, or its launch failed or stopped short. See observation.children.")
+            : result("completed", 0);
+        }
+        if (states.every((child) => SETTLED_CHILD_STATES.has(child.state) || child.state === "unobservable")) {
+          return result("unknown", 2, "wait_children_unobservable", "Every child still unsettled can't be observed by dure wait (chat runtime or no response observation). Read it with dure transcript AGENT_ID or dure read.");
+        }
+        await pause(Math.min(1000, Math.max(1, options.timeoutMs - (now() - startedAt))));
+        continue;
+      }
       let report;
       try {
         report = subject === "message" ? await queryMessage({ tracking, backend, hmuxCommand, deadlineMs, signal }) : subject === "run"
@@ -244,7 +336,10 @@ export async function runWaitCommand(args, { resolveContext, hmuxCommand, signal
   } catch (error) {
     report = { apiVersion: "dure.wait/v1", state: "unknown", error: { code: "wait_arguments_invalid", message: error.message }, exitCode: 2 };
   }
+  const childLines = report.subject === "children" && Array.isArray(report.observation?.children)
+    ? report.observation.children.map((child) => `  ${child.name}\t${child.agentId}\t${child.state}\n`).join("")
+    : "";
   output(options?.json || args.includes("--json") ? `${JSON.stringify(report)}\n`
-    : `${report.subject ?? "wait"}: ${report.state}${report.error ? ` — ${report.error.code}: ${report.error.message}` : " (selected condition only; other completion states are not implied)"}\n${report.diagnostic?.message ? `${report.diagnostic.message}\n` : ""}`);
+    : `${report.subject ?? "wait"}: ${report.state}${report.error ? ` — ${report.error.code}: ${report.error.message}` : " (selected condition only; other completion states are not implied)"}\n${childLines}${report.diagnostic?.message ? `${report.diagnostic.message}\n` : ""}`);
   return report.exitCode;
 }

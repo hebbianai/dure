@@ -60,6 +60,7 @@ pub(super) fn reconcile_existing(
         || persisted_request.setup_command != request.setup_command
         || persisted_request.model != request.model
         || persisted_request.effort != request.effort
+        || persisted_request.parent != request.parent
         || persisted_resolution.permission_override != request.permission_override
     {
         return Err("agent_spawn_idempotency_conflict".into());
