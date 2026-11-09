@@ -36,6 +36,33 @@ fn recovery_fences_other_recovery_and_acquire_and_never_removes_a_replacement() 
 }
 
 #[test]
+fn a_released_lock_is_not_held_by_a_child_that_has_not_exec_ed() {
+    let root = tempfile::tempdir().unwrap();
+    let id = BrowserProfileIdV1::new("shared-description").unwrap();
+    let instance = BrowserInstanceId::new("instance").unwrap();
+    let mut claim = ProfileClaim::acquire(root.path(), &id, &instance).unwrap();
+    claim.prepare_launch().unwrap();
+    // A child spawned by any backend thread shares the lock's open file
+    // description until it execs, exactly as this duplicate does.
+    let child = claim.file.try_clone().unwrap();
+    drop(claim);
+    assert_eq!(
+        recovery_status(root.path(), &id),
+        RecoveryState::RestartRequired
+    );
+    drop(child);
+
+    let recovery = Recovery::inspect(root.path(), &id).unwrap().unwrap();
+    let child = recovery.file.try_clone().unwrap();
+    drop(recovery);
+    assert_eq!(
+        recovery_status(root.path(), &id),
+        RecoveryState::RestartRequired
+    );
+    drop(child);
+}
+
+#[test]
 fn symlink_and_invalid_boot_evidence_fail_closed() {
     use std::os::unix::fs::symlink;
     let root = tempfile::tempdir().unwrap();
