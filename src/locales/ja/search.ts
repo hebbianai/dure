@@ -1,4 +1,6 @@
 export const search: Record<string, string> = {
+	"search.appCommand.alreadyOpen": "すでに開いています",
+	"search.appCommand.keyboardOnly": "キーボードショートカットのみ",
 	"search.appCommand.label": "アプリコマンド",
 	"search.appCommand.newTerminal": "新しいターミナルを開く",
 	"search.appCommand.openTokenInspector": "トークンインスペクタを開く",

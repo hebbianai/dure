@@ -24,6 +24,10 @@ export function recordPaneMoveSnapshot(
 	if (stack.length > UNDO_CAP) stack.shift();
 }
 
+export function canUndoPaneMove(api: DockviewApi | undefined): boolean {
+	return api ? (undoStacks.get(api)?.length ?? 0) > 0 : false;
+}
+
 export function undoPaneMove(api: DockviewApi | undefined): boolean {
 	if (!api) return false;
 	const snapshot = undoStacks.get(api)?.pop();

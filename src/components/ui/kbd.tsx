@@ -27,3 +27,33 @@ export function Kbd({
 }) {
   return <kbd className={cn(SIZE_CLASSES[size], className)}>{children}</kbd>;
 }
+
+/** A command's key-cap sequences, as a shortcut catalog spells them. A "…"
+ * entry is the range separator of ⌘1…⌘9, so it reads as text, not a key. */
+export function ShortcutKeys({
+  keys,
+  size = "md",
+}: {
+  keys: readonly (readonly string[])[];
+  size?: "md" | "sm";
+}) {
+  return (
+    <>
+      {keys.map((sequence, sequenceIndex) => (
+        <span key={sequenceIndex} className="flex items-center gap-1">
+          {sequence.map((label, labelIndex) =>
+            label === "…" ? (
+              <span key={labelIndex} className="px-0.5 text-xs text-muted-foreground">
+                …
+              </span>
+            ) : (
+              <Kbd key={labelIndex} size={size}>
+                {label}
+              </Kbd>
+            ),
+          )}
+        </span>
+      ))}
+    </>
+  );
+}

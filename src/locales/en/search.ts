@@ -1,4 +1,6 @@
 export const searchEnglishTranslations: Record<string, string> = {
+	"search.appCommand.alreadyOpen": "Already open",
+	"search.appCommand.keyboardOnly": "Keyboard shortcut only",
 	"search.appCommand.label": "App command",
 	"search.appCommand.newTerminal": "Open new terminal",
 	"search.appCommand.openTokenInspector": "Open token inspector",

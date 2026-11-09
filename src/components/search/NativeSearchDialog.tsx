@@ -1,6 +1,7 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Bot, File, FolderGit2, History, Search, TerminalSquare, Waypoints } from "lucide-react";
 import { DureLoader } from "@/components/ui/dure-loader";
+import { Kbd, ShortcutKeys } from "@/components/ui/kbd";
 import { Titled } from "@/components/ui/tooltip";
 import {
 	type ComponentType,
@@ -19,10 +20,8 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
-import { balanceActiveSpacePanes } from "@/lib/workspace/pane/paneShortcuts";
 import {
 	openAgentPanelOnDesktop,
-	openInheritedTerminalPanel,
 	openSshTerminalPanelOnDesktop,
 	openTerminalPanelOnDesktop,
 } from "@/lib/workspace/dock";
@@ -50,11 +49,14 @@ import {
 	searchNativeCommandHistory,
 	searchNativeFiles,
 } from "@/lib/search/nativeSearchSources";
+import { appCommandSearchItems } from "@/lib/search/nativeSearchAppCommands";
+import {
+	readAppCommandContext,
+	runAppCommand,
+} from "@/lib/commands/appCommandRunner";
+import type { RunnableAppCommandId } from "@/lib/commands/appCommands";
+import { chordToLabels, shortcutChord } from "@/lib/settings/shortcutBindings";
 import { runWorkspaceCommand } from "@/lib/workspace/workspaceCommand";
-import { requestFeedback } from "@/lib/feedback/feedbackActivation";
-import { openOnboardingPanel } from "@/lib/onboarding/onboardingEntry";
-import { openTokenInspectorPanel } from "@/lib/design/tokenInspectorPane";
-import { openSettingsPage } from "@/lib/settings/settingsBus";
 import { showToast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/store";
@@ -108,69 +110,15 @@ function snapshotLivePanels(): NativeSearchPanelSnapshot[] {
 	);
 }
 
-function appCommandItems(): NativeSearchItem[] {
-	return [
-		{
-			id: "command:app:new-terminal",
-			kind: "command",
-			title: t("search.appCommand.newTerminal"),
-			detail: t("search.appCommand.label"),
-			keywords: ["terminal", "shell"],
-			action: { type: "app-command", command: "new-terminal" },
-		},
-		{
-			id: "command:app:new-desktop",
-			kind: "command",
-			title: t("common.newDesktop"),
-			detail: t("search.appCommand.label"),
-			keywords: ["desktop", "workspace"],
-			action: { type: "app-command", command: "new-desktop" },
-		},
-		{
-			id: "command:app:balance-panes",
-			kind: "command",
-			title: t("workspace.desktopBar.balancePanes"),
-			detail: t("search.appCommand.label"),
-			keywords: ["balance", "panes", "layout", "even", "equalize"],
-			action: { type: "app-command", command: "balance-panes" },
-		},
-		{
-			id: "command:app:settings",
-			kind: "command",
-			title: t("common.openSettings"),
-			detail: t("search.appCommand.label"),
-			keywords: ["settings", "preferences"],
-			action: { type: "app-command", command: "open-settings" },
-		},
-		{
-			// 온보딩 pane을 탭 X로 닫으면 영구 dismissed가 되는데, 유일한 복귀
-			// 경로가 빈 상태 링크뿐이었다 — 폴더를 하나라도 추가한 사용자는
-			// CLI 설치·로그인 단계로 다시 돌아갈 수 없었다(2026-08-01 UX 검수).
-			id: "command:app:onboarding",
-			kind: "command",
-			title: t("common.openGettingStarted"),
-			detail: t("search.appCommand.label"),
-			keywords: ["onboarding", "guide", "start", "tutorial"],
-			action: { type: "app-command", command: "open-onboarding" },
-		},
-		{
-			id: "command:app:token-inspector",
-			kind: "command",
-			title: t("search.appCommand.openTokenInspector"),
-			detail: t("search.appCommand.label"),
-			keywords: ["token", "inspector", "design", "theme", "color"],
-			action: { type: "app-command", command: "open-token-inspector" },
-		},
-		{
-			id: "command:app:feedback",
-			kind: "command",
-			title: t("feedback.command"),
-			detail: t("search.appCommand.label"),
-			keywords: ["feedback", "bug", "report", "idea", "issue"],
-			action: { type: "app-command", command: "open-feedback" },
-		},
-	];
-}
+/** Nothing applies while closed; the facts are read when the palette opens. */
+const NO_APP_COMMAND_CONTEXT = {
+	hasActivePane: false,
+	canBalancePanes: false,
+	canUndoPaneMove: false,
+	hasNextUp: false,
+	devBuild: false,
+	proInterface: false,
+};
 
 export interface NativeSearchDialogRequest {
 	revision: number;
@@ -201,6 +149,7 @@ export function NativeSearchDialog({
 			sshStates: current.sshStates,
 		})),
 	);
+	const shortcutOverrides = useStore((current) => current.shortcutOverrides);
 	const agentDisplayStates = useAgentAttention(
 		(current) => current.displayStates,
 	);
@@ -212,42 +161,41 @@ export function NativeSearchDialog({
 	const searchSequence = useRef(0);
 	const selectedElement = useRef<HTMLButtonElement | null>(null);
 
-	// The feedback command captures a screenshot of the window right after
-	// this dialog closes — a capture that ran while this palette was even
-	// partway through its own close fade would photograph the palette
-	// instead of the app underneath it. Rather than guess at a delay, this
-	// flag defers the actual requestFeedback() call to onCloseAutoFocus
-	// below, Radix's own signal that this dialog's close animation (and
-	// unmount) has already finished — see the prop for why that one and not
-	// a timer.
-	const pendingFeedbackActivation = useRef(false);
+	// An app command runs only once this palette is fully gone. Feedback
+	// screenshots the window, so a capture during the close fade would photograph
+	// the palette; focus moves and other dialogs would race its focus scope.
+	// Rather than guess at a delay, the command waits for onCloseAutoFocus below,
+	// Radix's own signal that the close animation and unmount have finished.
+	const pendingAppCommand = useRef<RunnableAppCommandId | null>(null);
 
 	useEffect(() => {
 		if (!request) return;
 		setQuery(request.initialQuery);
 		setAsyncItems([]);
 		setSelectedIndex(0);
-		// Opening clears the pending flag as well as closing does. Radix
+		// Opening clears the pending command as well as closing does. Radix
 		// skips onCloseAutoFocus entirely when a reopen cancels the unmount
-		// mid-animation, and the flag would then outlive the request that
-		// set it and fire a capture on some later, unrelated close — the
-		// wrong failure for a feature whose premise is "only on an explicit
-		// user action". The flag belongs to one palette session; this is
-		// where a session begins.
-		pendingFeedbackActivation.current = false;
+		// mid-animation, and the command would then outlive the request that
+		// set it and fire on some later, unrelated close, which a command the
+		// user no longer asked for must never do. The command belongs to one
+		// palette session; this is where a session begins.
+		pendingAppCommand.current = null;
 		setOpen(true);
 	}, [request]);
 
 	const catalog = useMemo(
 		() => [
-			...appCommandItems(),
+			...appCommandSearchItems(
+				open ? readAppCommandContext() : NO_APP_COMMAND_CONTEXT,
+				shortcutOverrides,
+			),
 			...buildNativeSearchCatalog({
 				...state,
 				agentDisplayStates,
 				livePanels: open ? snapshotLivePanels() : [],
 			}),
 		],
-		[agentDisplayStates, open, state],
+		[agentDisplayStates, open, shortcutOverrides, state],
 	);
 	const fileContexts = useMemo(
 		() => nativeSearchFileContexts(state),
@@ -318,9 +266,10 @@ export function NativeSearchDialog({
 	}, [selectedIndex]);
 
 	const execute = useCallback(async (item: NativeSearchItem) => {
+		const action = item.action;
+		if (action.type === "unavailable") return;
 		setOpen(false);
 		const current = useStore.getState();
-		const action = item.action;
 		if (action.type === "focus-panel") {
 			navigateToPanel(action.desktopId, action.panelId);
 			return;
@@ -363,21 +312,7 @@ export function NativeSearchDialog({
 			showToast(t("common.copiedToClipboard"));
 			return;
 		}
-		if (action.command === "new-terminal") {
-			openInheritedTerminalPanel(current.activeSpaceId);
-		} else if (action.command === "new-desktop") {
-			current.addSpace();
-		} else if (action.command === "balance-panes") {
-			balanceActiveSpacePanes();
-		} else if (action.command === "open-onboarding") {
-			openOnboardingPanel(current.activeSpaceId);
-		} else if (action.command === "open-token-inspector") {
-			openTokenInspectorPanel(current.activeSpaceId);
-		} else if (action.command === "open-feedback") {
-			pendingFeedbackActivation.current = true;
-		} else {
-			openSettingsPage();
-		}
+		pendingAppCommand.current = action.command;
 	}, []);
 
 	const moveSelection = (delta: number) => {
@@ -388,8 +323,9 @@ export function NativeSearchDialog({
 	};
 
 	const parsedQuery = parseNativeSearchQuery(query);
-	const selectedCopies =
-		results[selectedIndex]?.action.type === "copy-command";
+	const paletteChord = shortcutChord("native-search", shortcutOverrides);
+	const selectedAction = results[selectedIndex]?.action.type;
+	const selectedCopies = selectedAction === "copy-command";
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogContent
@@ -403,10 +339,9 @@ export function NativeSearchDialog({
 				// that CSS by hand. Default focus-return behavior is untouched —
 				// this only piggybacks a side effect on the same signal.
 				onCloseAutoFocus={() => {
-					if (pendingFeedbackActivation.current) {
-						pendingFeedbackActivation.current = false;
-						requestFeedback();
-					}
+					const command = pendingAppCommand.current;
+					pendingAppCommand.current = null;
+					if (command) runAppCommand(command);
 				}}
 				className="top-[18%] max-h-[min(680px,72vh)] w-[min(720px,calc(100vw-32px))] max-w-none translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-none"
 			>
@@ -450,9 +385,9 @@ export function NativeSearchDialog({
 							}
 						}}
 					/>
-					<kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-						⌘P
-					</kbd>
+					{paletteChord && (
+						<Kbd size="sm">{chordToLabels(paletteChord).join("")}</Kbd>
+					)}
 				</div>
 
 				<div
@@ -463,6 +398,7 @@ export function NativeSearchDialog({
 					{results.map((item, index) => {
 						const Icon = KIND_ICONS[item.kind];
 						const selected = index === selectedIndex;
+						const unavailable = item.action.type === "unavailable";
 						return (
 							<button
 								ref={selected ? selectedElement : undefined}
@@ -471,11 +407,13 @@ export function NativeSearchDialog({
 								type="button"
 								role="option"
 								aria-selected={selected}
+								aria-disabled={unavailable || undefined}
 								className={cn(
 									"flex h-11 w-full min-w-0 items-center gap-3 px-4 text-left",
 									selected
 										? "bg-accent text-accent-foreground"
 										: "hover:bg-accent/60",
+									unavailable && "text-muted-foreground",
 								)}
 								onMouseMove={() => setSelectedIndex(index)}
 								onClick={() => void execute(item)}
@@ -503,6 +441,11 @@ export function NativeSearchDialog({
 											{statusLabel(item.status)}
 										</span>
 									</Titled>
+								)}
+								{item.shortcut && (
+									<span className="flex shrink-0 items-center gap-1">
+										<ShortcutKeys keys={item.shortcut} size="sm" />
+									</span>
 								)}
 								<span className="w-16 shrink-0 text-right text-[10px] text-muted-foreground">
 									{kindLabel(item.kind)}
@@ -534,7 +477,9 @@ export function NativeSearchDialog({
 					</div>
 					<div className="flex gap-3">
 						<span>↑↓ {t("search.footer.navigate")}</span>
-						<span>Enter {selectedCopies ? t("common.copy") : t("common.open")}</span>
+						{selectedAction !== "unavailable" && (
+							<span>Enter {selectedCopies ? t("common.copy") : t("common.open")}</span>
+						)}
 						<span>Esc {t("common.close")}</span>
 					</div>
 				</div>

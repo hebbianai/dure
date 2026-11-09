@@ -1,3 +1,4 @@
+import type { RunnableAppCommandId } from "@/lib/commands/appCommands";
 import type { AgentActivity } from "@/types";
 
 const NATIVE_SEARCH_KINDS = [
@@ -54,14 +55,11 @@ type NativeSearchAction =
 	  }
 	| {
 			type: "app-command";
-			command:
-				| "new-terminal"
-				| "new-desktop"
-				| "balance-panes"
-				| "open-settings"
-				| "open-onboarding"
-				| "open-token-inspector"
-				| "open-feedback";
+			command: RunnableAppCommandId;
+	  }
+	| {
+			/** Listed so it can be found; selecting it does nothing. */
+			type: "unavailable";
 	  };
 
 export interface NativeSearchItem {
@@ -71,6 +69,8 @@ export interface NativeSearchItem {
 	detail?: string;
 	keywords?: readonly string[];
 	status?: NativeSearchStatus;
+	/** Key-cap sequences, in the Shortcuts page's notation. */
+	shortcut?: readonly (readonly string[])[];
 	action: NativeSearchAction;
 }
 
@@ -211,6 +211,8 @@ export function rankNativeSearchItems(
 			(left, right) =>
 				right.score - left.score ||
 				KIND_ORDER[left.item.kind] - KIND_ORDER[right.item.kind] ||
+				Number(left.item.action.type === "unavailable") -
+					Number(right.item.action.type === "unavailable") ||
 				left.index - right.index,
 		)
 		.slice(0, limit)

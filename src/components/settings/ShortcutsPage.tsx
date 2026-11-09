@@ -22,16 +22,10 @@ import { FlatRow } from "@/components/settings/FlatRow";
 import { PageTitle } from "@/components/settings/PageTitle";
 import { IconButton } from "@/components/ui/icon-button";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
-import { Kbd } from "@/components/ui/kbd";
+import { ShortcutKeys } from "@/components/ui/kbd";
 import { SearchField } from "@/components/ui/search-field";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
-
-/** 단일 키캡 — 시퀀스 구분자 "…"만 여기서 걸러 평문으로 그린다. */
-function KeyCap({ label }: { label: string }) {
-  if (label === "…") return <span className="px-0.5 text-xs text-muted-foreground">…</span>;
-  return <Kbd>{label}</Kbd>;
-}
 
 /** 단축키 (Figma 448-34433): 터미널 우선순위 + 검색·상태 필터 + 그룹 목록. 실 데이터. */
 export function ShortcutsPage() {
@@ -237,25 +231,13 @@ export function ShortcutsPage() {
                           ) : s.unassigned ? (
                             <span className="text-[11px] text-muted-foreground">{t("settings.shortcuts.unbound")}</span>
                           ) : (
-                            s.keys.map((seq, i) => (
-                              <span key={i} className="flex items-center gap-1">
-                                {seq.map((k, j) => (
-                                  <KeyCap key={j} label={k} />
-                                ))}
-                              </span>
-                            ))
+                            <ShortcutKeys keys={s.keys} />
                           )}
                         </button>
                       </Titled>
                     ) : (
                       <span className="flex shrink-0 items-center gap-1 px-1 py-0.5">
-                        {s.keys.map((seq, i) => (
-                          <span key={i} className="flex items-center gap-1">
-                            {seq.map((k, j) => (
-                              <KeyCap key={j} label={k} />
-                            ))}
-                          </span>
-                        ))}
+                        <ShortcutKeys keys={s.keys} />
                       </span>
                     )}
                     {s.rebindable && (

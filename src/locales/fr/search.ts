@@ -1,4 +1,6 @@
 export const search: Record<string, string> = {
+	"search.appCommand.alreadyOpen": "Déjà ouvert",
+	"search.appCommand.keyboardOnly": "Raccourci clavier uniquement",
 	"search.appCommand.label": "Commande de l'application",
 	"search.appCommand.newTerminal": "Ouvrir un nouveau terminal",
 	"search.appCommand.openTokenInspector": "Ouvrir l’inspecteur de tokens",
