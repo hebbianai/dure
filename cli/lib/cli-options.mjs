@@ -138,6 +138,7 @@ export function parseOpts(args) {
     else if (a === "--deadline-ms") opts.deadlineMs = args[++i];
     else if (a === "--probe-budget-ms") opts.probeBudgetMs = args[++i];
     else if (a === "--alive") opts.alive = true;
+    else if (a === "--all-backends") opts.allBackends = true;
     else if (a === "--hide-provider") {
       if (!opts.hideProvider) opts.hideProvider = [];
       opts.hideProvider.push(args[++i]);
