@@ -145,7 +145,7 @@ const SHORTCUT_DEFINITIONS = Object.freeze({
 	"term-find": terminalShortcut("settings.shortcuts.cmd.termFind", ["⌘", "F"]),
 } satisfies Record<string, ShortcutDefinition>);
 
-type ShortcutId = keyof typeof SHORTCUT_DEFINITIONS;
+export type ShortcutId = keyof typeof SHORTCUT_DEFINITIONS;
 
 interface ShortcutGroupDefinition {
 	group: string;
@@ -168,6 +168,7 @@ const SHORTCUT_GROUPS = [
 			"go-to-next-up",
 			"split-right",
 			"split-below",
+			"balance-panes",
 			"focus-pane-left",
 			"focus-pane-right",
 			"focus-pane-up",

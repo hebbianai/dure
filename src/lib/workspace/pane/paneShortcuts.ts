@@ -24,6 +24,7 @@ import {
 } from "@/lib/workspace/pane/paneFocusNavigation";
 import { paneFromFocusHistory } from "@/lib/workspace/pane/paneFocusHistory";
 import { undoPaneMove } from "@/lib/workspace/pane/paneDragBehaviors";
+import { canUndoPaneMove } from "@/lib/workspace/pane/paneMoveUndo";
 import {
 	escapeRestoresMaximizedPane,
 	restoreMaximizedPane,
@@ -132,15 +133,21 @@ function paneDockview(targetDesktopId?: string) {
 	return getDockview(targetDesktopId ?? useStore.getState().activeSpaceId);
 }
 
-function toggleActivePaneMaximized(targetDesktopId?: string): boolean {
+export function toggleActivePaneMaximized(targetDesktopId?: string): boolean {
 	const api = paneDockview(targetDesktopId);
 	return api ? toggleMaximizedPane(api) : false;
+}
+
+/** Whether the active Space has panes a balance would actually move. */
+export function canBalanceActiveSpacePanes(): boolean {
+	const api = paneDockview();
+	return Boolean(api && !api.hasMaximizedGroup() && api.groups.length >= 2);
 }
 
 export function balanceActiveSpacePanes(): void {
 	const desktopId = useStore.getState().activeSpaceId;
 	const api = getDockview(desktopId);
-	if (!api || api.hasMaximizedGroup() || api.groups.length < 2) return;
+	if (!api || !canBalanceActiveSpacePanes()) return;
 	// Branch resizing does not emit Dockview's structural/sash events. Use
 	// the existing explicit commit owner to persist and publish this action.
 	commitExplicitDockviewMutation({
@@ -173,6 +180,21 @@ const ACTIONS: readonly {
 	{ id: "focus-pane-up", run: (d) => focusPaneDirection("up", d) },
 	{ id: "focus-pane-down", run: (d) => focusPaneDirection("down", d) },
 ];
+
+/** Run one pane command by its catalog id, for callers without a key event. */
+export function runPaneShortcutAction(id: string): boolean {
+	return ACTIONS.find((action) => action.id === id)?.run() ?? false;
+}
+
+/** Whether the active Space has a pane move to take back. */
+export function canUndoActivePaneMove(): boolean {
+	return canUndoPaneMove(paneDockview());
+}
+
+/** Take back the active Space's last pane move. */
+export function undoActivePaneMove(): boolean {
+	return undoPaneMove(paneDockview());
+}
 
 /** window keydown에 pane 단축키를 단다. 반환: 해제 함수.
  *
