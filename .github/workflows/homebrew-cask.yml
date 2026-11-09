@@ -1,0 +1,60 @@
+name: Homebrew cask
+
+# Off until a maintainer adds the HOMEBREW_TAP_TOKEN secret and sets the
+# HOMEBREW_TAP_ENABLED variable to true. See docs/maintainers/releasing.md.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag, for example v0.2.61
+        required: true
+        type: string
+
+concurrency:
+  group: homebrew-cask
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    if: github.repository == 'hebbianai/dure' && vars.HOMEBREW_TAP_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Read the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/hebbianai/dure/releases/tags/$TAG" > "$RUNNER_TEMP/release.json"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: hebbianai/homebrew-tap
+          ref: main
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Write the cask
+        run: node scripts/update-homebrew-cask.mjs "$RUNNER_TEMP/release.json" tap/Casks/dure.rb
+      - name: Push the cask
+        working-directory: tap
+        run: |
+          git add Casks/dure.rb
+          if git diff --cached --quiet; then
+            echo 'The cask is already current'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "dure ${TAG#v}"
+          git push origin HEAD:main

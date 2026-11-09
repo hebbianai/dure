@@ -13,6 +13,16 @@ Dure 공개 베타는 **Apple silicon Mac**에서 사용할 수 있습니다. �
 
 이 링크는 최신 공개 Mac 베타를 제공합니다. 다운로드한 버전의 지원 기능, 서명·공증 정보와 알려진 제한은 [릴리스 노트](https://github.com/hebbianai/dure/releases)에서 확인하세요.
 
+### 명령줄로 설치
+
+DMG를 열지 않고 같은 베타를 설치하려면 터미널에서 다음을 실행합니다.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hebbianai/dure/main/scripts/install-macos.sh | sh
+```
+
+스크립트는 다운로드한 파일을 릴리스에 게시된 다이제스트와 대조하고, macOS가 Dure의 서명과 공증을 승인하는지 확인한 뒤 현재 공개 베타를 설치합니다. 설치 위치는 **응용 프로그램** 폴더이며, 계정에 이 폴더의 쓰기 권한이 없으면 홈 디렉터리의 **Applications** 폴더를 사용합니다. `dure` 명령은 `~/.local/bin`에 추가됩니다. 다른 폴더에 설치하려면 `DURE_APP_INSTALL_DIR`을 절대 경로로 지정하세요. 이미 설치되어 있다면 먼저 Dure를 종료하세요. 확인에 실패하면 기존 앱은 그대로 유지됩니다. 스크립트를 다시 실행하면 현재 베타로 교체됩니다.
+
 ## 코딩 에이전트 준비
 
 사용할 에이전트를 설치하고 로그인합니다. 일반 터미널에서 `claude`, `codex`, `kimi` 등 해당 명령이 실행되는지 확인하세요. Dure의 **Settings → Agent CLI**에서 감지된 도구와 설정 동작을 볼 수 있습니다.
