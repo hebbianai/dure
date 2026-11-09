@@ -101,6 +101,20 @@ fn interrupted_partial_retirement_resumes_after_lock_owner_exits() {
 }
 
 #[test]
+fn a_finished_retirement_is_not_held_by_a_child_that_has_not_exec_ed() {
+    let directory = tempfile::tempdir().unwrap();
+    let id = selected();
+    let root = storage_root(directory.path(), &id).unwrap();
+    let retained = claim(&root, &id).unwrap();
+    // A child spawned by any backend thread shares the lock's open file
+    // description until it execs, exactly as this duplicate does.
+    let child = retained.try_clone().unwrap();
+    drop(retained);
+    retire_storage(directory.path(), &id).unwrap();
+    drop(child);
+}
+
+#[test]
 fn storage_removal_unlinks_nested_symlinks_without_following_them() {
     let directory = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();

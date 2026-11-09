@@ -30,7 +30,7 @@ fn storage_root(directory: &Path, id: &BrowserProfileIdV1) -> Result<PathBuf, Br
 }
 
 pub(super) struct ProfileClaim {
-    file: File,
+    file: evidence::LockedFile,
     path: PathBuf,
     pub(super) profile: PathBuf,
     pub(super) id: BrowserProfileIdV1,
@@ -55,7 +55,7 @@ impl ProfileClaim {
         let mut staged = tempfile::NamedTempFile::new_in(&root).map_err(storage_unavailable)?;
         staged.write_all(json!({"schemaVersion":2,"profileId":id,"instanceId":instance,"owner":owner,"boot":boot}).to_string().as_bytes()).map_err(storage_unavailable)?;
         staged.as_file().sync_all().map_err(storage_unavailable)?;
-        evidence::lock(staged.as_file())?;
+        evidence::lock(staged.as_file(), evidence::RECOVERY_BUSY)?;
         let file = staged.persist_noclobber(&path).map_err(|failure| {
             BrowserEngineError::before(
                 if failure.error.kind() == std::io::ErrorKind::AlreadyExists {
@@ -66,7 +66,7 @@ impl ProfileClaim {
             )
         })?;
         let claim = Self {
-            file,
+            file: evidence::LockedFile::held(file),
             path,
             profile: root.join("profile"),
             id: id.clone(),
