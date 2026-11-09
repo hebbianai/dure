@@ -24,7 +24,7 @@ dure-provider-adapter = { path = "../provider-adapter" }
 dure-provider-profile = { path = "../provider-profile" }
 dure-session-runtime = { path = "../session-runtime" }
 dure-app-sqlite = { path = "../sqlite" }
-getrandom = "0.3"
+getrandom = "0.4"
 futures-util = "0.3"
 hebbian-bounded-process = { path = "../../hebbian-bounded-process" }
 hmux-client = { path = "../../../hmux/crates/hmux-client", features = ["terminal-state-stream"] }

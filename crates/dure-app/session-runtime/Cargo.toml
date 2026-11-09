@@ -11,7 +11,7 @@ description = "Product checkout lifetime composition for selected-host sessions"
 dure-app = { path = ".." }
 dure-app-sqlite = { path = "../sqlite" }
 dure-git-checkout = { path = "../git-checkout" }
-getrandom = "0.3"
+getrandom = "0.4"
 hmux-client = { path = "../../../hmux/crates/hmux-client" }
 hmux-host = { path = "../../../hmux/crates/hmux-host", default-features = false }
 serde = { version = "1", features = ["derive"] }
