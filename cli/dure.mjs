@@ -2895,6 +2895,48 @@ async function cmdAttach(opts) {
   }
 }
 
+async function cmdTui(opts) {
+  if (opts.rest.length !== 0 || opts.workspace !== undefined) {
+    process.stderr.write(
+      "\x1b[31mdure_tui_argument_invalid: usage: dure tui [--backend ID]\x1b[0m\n",
+    );
+    process.exitCode = 2;
+    return;
+  }
+  const {
+    attachAgentRow,
+    collectManagedAgents,
+    formatSessionTuiError,
+    runSessionTui,
+  } = await import("./lib/session-tui.mjs");
+  const { loadSessionClientProjection } = await import("./lib/client-registry.mjs");
+  const backendRequested =
+    opts.backendSpecified || Boolean(process.env.DURE_BACKEND_PROFILE?.trim());
+  const backend = backendRequested
+    ? await backendProfileQueryContext(opts)
+    : null;
+  try {
+    await runSessionTui({
+      attach: attachAgentRow({ backend, hmuxCommand: hmuxCommand() }),
+      collect: collectManagedAgents({
+        backend,
+        hmuxCommand: hmuxCommand(),
+        loadRegistry: () =>
+          loadSessionClientProjection({
+            registryPath: REG,
+            clientId: sessionQueryClientId(),
+          }),
+      }),
+    });
+  } catch (error) {
+    process.stderr.write(`\x1b[31m${formatSessionTuiError(error)}\x1b[0m\n`);
+    process.exitCode = 2;
+    return;
+  }
+  // A refresh still in flight must not hold the shell after the list closes.
+  process.exit();
+}
+
 // ---------- durable orchestration client ----------
 
 function nowMs() {
@@ -3804,6 +3846,7 @@ Usage:
   dure logs <name> [-n N]          Dump scrollback (default 2000 lines)
   dure attach <session-id> --workspace <workspace-id> [--backend ID]
                                       Attach to an exact managed Hmux session without the app
+  dure tui [--backend ID]             List agents across Spaces and attach from a terminal
   dure spawn preview (--project <id> | --path <path>) --provider <id> --name <name> --idempotency-key <key>
                                       Create or reuse a durable spawn plan without the app daemon
                                       Requires --no-worktree or --base-commit SHA --branch REF
@@ -4215,6 +4258,15 @@ async function main() {
     // Offline, registry-free, like `dure feedback --help` below.
     const { FEEDBACK_HELP } = await import("./lib/feedback-command.mjs");
     process.stdout.write(`${FEEDBACK_HELP}\n`);
+    return;
+  }
+  if (
+    (cmd === "help" && rest[0] === "tui") ||
+    (cmd === "tui" &&
+      (optionEnd < 0 ? rest : rest.slice(0, optionEnd)).some((arg) => arg === "--help" || arg === "-h"))
+  ) {
+    const { TUI_HELP } = await import("./lib/session-tui.mjs");
+    process.stdout.write(TUI_HELP);
     return;
   }
   const sessionCommands = ["ls", "list", "inspect", "sessions"];
@@ -4645,6 +4697,7 @@ async function main() {
     return;
   }
   if (cmd === "attach") return await cmdAttach(opts);
+  if (cmd === "tui") return await cmdTui(opts);
   const reg = loadRegistry();
   switch (cmd) {
     case "logs":
