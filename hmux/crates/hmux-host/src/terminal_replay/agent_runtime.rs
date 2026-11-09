@@ -406,9 +406,14 @@ impl TerminalReplay {
             })
         {
             // A submit starts a new work boundary even if its provider begin
-            // report is lost. An older completion cannot acknowledge it.
-            if let Some(causality) = self.report_causality.as_mut() {
-                causality.work_id = None;
+            // report is lost. An older completion cannot acknowledge it, but
+            // the turn's own end must still be able to say it stopped.
+            if let Some(work_id) = self
+                .report_causality
+                .as_mut()
+                .and_then(|causality| causality.work_id.take())
+            {
+                self.submitted_over_work_id = Some(work_id);
             }
             self.pending_controller_input = PendingControllerInput::Submitted;
             return Ok(None);

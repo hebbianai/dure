@@ -36,9 +36,10 @@ impl TerminalReplay {
             return Ok(false);
         }
         if report.turn_completed {
-            return Ok(self.report_causality.as_ref().is_some_and(|current| {
-                current.work_id.is_some() && current.work_id == incoming.work_id
-            }));
+            return Ok(self.completion_ends_submitted_over_turn(report)
+                || self.report_causality.as_ref().is_some_and(|current| {
+                    current.work_id.is_some() && current.work_id == incoming.work_id
+                }));
         }
         if report.projected_activity() == AgentRuntimeActivity::Working
             || report.attention != AgentRuntimeAttention::None
@@ -59,10 +60,28 @@ impl TerminalReplay {
             }))
     }
 
+    /// Whether a completion ends the turn a controller submit landed in. The
+    /// submit took that turn's identity so its completion cannot answer the
+    /// submitted input. The provider has still said the turn is over, and a
+    /// submit that started no turn (Enter answered a dialog, or the line
+    /// editor kept the text) is followed by no report that could say so.
+    pub(super) fn completion_ends_submitted_over_turn(
+        &self,
+        report: &AgentStateReportObservation,
+    ) -> bool {
+        report.turn_completed
+            && self.submitted_over_work_id.is_some()
+            && report
+                .causality
+                .as_ref()
+                .is_some_and(|incoming| incoming.work_id == self.submitted_over_work_id)
+    }
+
     pub(super) fn remember_report_causality(&mut self, report: &AgentStateReportObservation) {
         match &report.causality {
             Some(incoming) => {
                 let work_id = if report.projected_activity() == AgentRuntimeActivity::Working {
+                    self.submitted_over_work_id = None;
                     incoming.work_id.clone()
                 } else {
                     self.report_causality
@@ -77,6 +96,7 @@ impl TerminalReplay {
             None => {
                 // An unsequenced update may represent new work. Preserve the
                 // watermark, but require a new identified begin before idle.
+                self.submitted_over_work_id = None;
                 if let Some(current) = self.report_causality.as_mut() {
                     current.work_id = None;
                 }

@@ -219,6 +219,158 @@ fn submitted_input_without_a_new_begin_cannot_be_acknowledged_by_old_completion(
     );
 }
 
+/// Enter reached the PTY during a turn but started no turn of its own (it
+/// answered a dialog, or the line editor kept the text as a draft), so no
+/// later report can ever arrive to end this turn.
+#[test]
+fn a_submit_that_starts_no_turn_cannot_hold_the_ended_turn_working() {
+    for submits in [1, 2] {
+        let mut replay = replay_with_limits(TerminalReplayLimits::default());
+        let now = Instant::now();
+        replay
+            .apply_agent_state_report_at(causal(1, "turn", false), now)
+            .unwrap();
+        for _ in 0..submits {
+            replay.record_controller_submit().unwrap();
+        }
+        replay
+            .apply_agent_state_report_at(causal(2, "turn", true), now)
+            .unwrap();
+        replay
+            .expire_agent_runtime_state(now + Duration::from_secs(1))
+            .unwrap();
+        let state = replay.agent_runtime_state().unwrap();
+        assert_eq!(state.activity, AgentRuntimeActivity::Waiting);
+        // The turn ended, but nothing proves the submitted input was read.
+        assert_eq!(state.turn_completed_count, 0);
+        assert!(replay.has_pending_controller_input());
+        assert!(!replay.is_semantically_quiescent());
+    }
+}
+
+#[test]
+fn input_submitted_during_a_turn_is_acknowledged_only_by_the_turn_it_starts() {
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    let now = Instant::now();
+    replay
+        .apply_agent_state_report_at(causal(1, "turn", false), now)
+        .unwrap();
+    replay.record_controller_submit().unwrap();
+    replay
+        .apply_agent_state_report_at(causal(2, "turn", true), now)
+        .unwrap();
+    replay
+        .expire_agent_runtime_state(now + Duration::from_secs(1))
+        .unwrap();
+    assert!(replay.has_pending_controller_input());
+
+    replay
+        .apply_agent_state_report_at(causal(3, "next-turn", false), now)
+        .unwrap();
+    assert_eq!(
+        replay.agent_runtime_state().unwrap().activity,
+        AgentRuntimeActivity::Working
+    );
+    assert!(!replay.has_pending_controller_input());
+    replay
+        .apply_agent_state_report_at(causal(4, "next-turn", true), now)
+        .unwrap();
+    replay
+        .expire_agent_runtime_state(now + Duration::from_secs(2))
+        .unwrap();
+    assert!(replay.is_semantically_quiescent());
+    assert_eq!(
+        replay.agent_runtime_state().unwrap().turn_completed_count,
+        1
+    );
+}
+
+#[test]
+fn a_queued_prompt_starting_inside_the_settle_window_never_shows_waiting() {
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    let now = Instant::now();
+    replay
+        .apply_agent_state_report_at(causal(1, "turn", false), now)
+        .unwrap();
+    replay.record_controller_submit().unwrap();
+    replay
+        .apply_agent_state_report_at(causal(2, "turn", true), now)
+        .unwrap();
+    replay
+        .apply_agent_state_report_at(
+            causal(3, "queued-turn", false),
+            now + Duration::from_millis(100),
+        )
+        .unwrap();
+    replay
+        .expire_agent_runtime_state(now + Duration::from_secs(1))
+        .unwrap();
+    let state = replay.agent_runtime_state().unwrap();
+    assert_eq!(state.activity, AgentRuntimeActivity::Working);
+    assert_eq!(state.turn_completed_count, 0);
+}
+
+#[test]
+fn a_submit_only_preserves_the_turn_it_landed_in_and_only_once() {
+    let settled_activity = |replay: &TerminalReplay| replay.agent_runtime_state().unwrap().activity;
+
+    // A completion of any other work stays obsolete.
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    let now = Instant::now();
+    replay
+        .apply_agent_state_report_at(causal(1, "old-turn", false), now)
+        .unwrap();
+    replay
+        .apply_agent_state_report_at(causal(2, "turn", false), now)
+        .unwrap();
+    replay.record_controller_submit().unwrap();
+    replay
+        .apply_agent_state_report_at(causal(3, "old-turn", true), now)
+        .unwrap();
+    replay
+        .expire_agent_runtime_state(now + Duration::from_secs(1))
+        .unwrap();
+    assert_eq!(settled_activity(&replay), AgentRuntimeActivity::Working);
+
+    // Unsequenced work may be new, so it requires a fresh identified begin.
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    replay
+        .apply_agent_state_report_at(causal(1, "turn", false), now)
+        .unwrap();
+    replay.record_controller_submit().unwrap();
+    let mut unknown = causal(2, "unknown", false);
+    unknown.causality = None;
+    replay.apply_agent_state_report_at(unknown, now).unwrap();
+    replay
+        .apply_agent_state_report_at(causal(3, "turn", true), now)
+        .unwrap();
+    replay
+        .expire_agent_runtime_state(now + Duration::from_secs(1))
+        .unwrap();
+    assert_eq!(settled_activity(&replay), AgentRuntimeActivity::Working);
+
+    // The one completion it preserves is spent once observed.
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    replay
+        .apply_agent_state_report_at(causal(1, "turn", false), now)
+        .unwrap();
+    replay.record_controller_submit().unwrap();
+    replay
+        .apply_agent_state_report_at(causal(2, "turn", true), now)
+        .unwrap();
+    replay
+        .expire_agent_runtime_state(now + Duration::from_secs(1))
+        .unwrap();
+    let settled = replay.agent_runtime_state().cloned();
+    assert_eq!(
+        replay
+            .apply_agent_state_report_at(causal(3, "turn", true), now + Duration::from_secs(1))
+            .unwrap(),
+        AgentStateReportFold::NoOp
+    );
+    assert_eq!(replay.agent_runtime_state().cloned(), settled);
+}
+
 #[test]
 fn stale_causal_report_cannot_change_conversation_identity() {
     let mut replay = replay_with_limits(TerminalReplayLimits::default());
