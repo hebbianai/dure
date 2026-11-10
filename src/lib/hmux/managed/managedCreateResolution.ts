@@ -36,6 +36,17 @@ export class ManagedCreateRetrySameError extends Error {
 	}
 }
 
+/** Backend code of a create whose store could not take its write lock in
+ * time. The store applied nothing, so the exact request is safe to replay. */
+const MANAGED_CREATE_STORE_BUSY_CODE = "session_checkout_store_busy";
+
+export function isManagedCreateStoreBusy(error: unknown): boolean {
+	return (
+		error instanceof ManagedCreateRetrySameError &&
+		error.backendCode === MANAGED_CREATE_STORE_BUSY_CODE
+	);
+}
+
 export class ManagedCreateRejectedError extends Error {
 	readonly code = "managed_create_rejected";
 

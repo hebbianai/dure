@@ -41,6 +41,7 @@ export const terminal: Record<string, string> = {
 	"terminal.recovery.resume": "Reprendre la session",
 	"terminal.recovery.resuming": "Réouverture de la session…",
 	"terminal.recovery.resumeFailed": "Cela n'a pas fonctionné — réessayer est sans risque.",
+	"terminal.recovery.resumeBusy": "Dure était occupé et n'a pas encore pu démarrer la session. Rien n'a été modifié — réessayez dans un instant.",
 	"terminal.recovery.worktreeMissingTitle": "Worktree manquant",
 	"terminal.recovery.worktreeMissingBody": "La conversation est intacte, mais le worktree enregistré pour {branch} a été supprimé. Recréez-le ou reprenez depuis la racine du dépôt.",
 	"terminal.recovery.recreateWorktree": "Recréer le worktree et reprendre",

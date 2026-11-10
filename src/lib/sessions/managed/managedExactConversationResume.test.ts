@@ -18,6 +18,7 @@ vi.mock("@/lib/agents/agentAttentionNotifier", () => ({
 }));
 
 import { installAgentTracker } from "@/lib/agents/agentTracker";
+import { ManagedCreateRetrySameError } from "@/lib/hmux/managed/managedCreateResolution";
 import { hmuxSessionMetadataKey } from "@/lib/hmux/identity/hmuxSessionMetadata";
 import { commitManagedAgentRehostReceipt } from "@/lib/sessions/managed/managedAgentRehostSynchronization";
 import { durableAppStorage, useStore } from "@/store";
@@ -126,6 +127,105 @@ function observe(
 		turnCompletedCount: "0",
 	});
 }
+
+describe("Resume replays a create the backend could not take yet", () => {
+	const busy = {
+		state: "retry_same",
+		reason: "create_retryable",
+		code: "session_checkout_store_busy",
+		message: "store is busy during prepare_session_checkout",
+	};
+	let createTimes: number[];
+
+	function answerCreates(answers: readonly unknown[]) {
+		const originalInvoke = mocks.invoke.getMockImplementation()!;
+		createTimes = [];
+		mocks.invoke.mockImplementation((command, args) => {
+			if (command !== "hmux_managed_create_advance_v1") {
+				return originalInvoke(command, args);
+			}
+			createTimes.push(Date.now());
+			return createTimes.length <= answers.length
+				? answers[createTimes.length - 1]
+				: originalInvoke(command, args);
+		});
+	}
+
+	function createRequests() {
+		return mocks.invoke.mock.calls
+			.filter(([command]) => command === "hmux_managed_create_advance_v1")
+			.map(([, args]) => args);
+	}
+
+	it("backs off and replays the same request until a busy store lets the Host start", async () => {
+		answerCreates([busy, busy, busy]);
+		const resume = await startResume();
+		resume.finish();
+		await resume.done;
+		const requests = createRequests();
+		expect(requests).toHaveLength(4);
+		for (const request of requests) expect(request).toEqual(requests[0]);
+		const gaps = createTimes.slice(1).map((at, index) => at - createTimes[index]);
+		// One immediate replay, then increasing delays (a timer may fire 1 ms early).
+		expect(gaps[1]).toBeGreaterThanOrEqual(249);
+		expect(gaps[2]).toBeGreaterThanOrEqual(499);
+		expect(useStore.getState().agents[0].sessionId).toBe("session-1");
+	});
+
+	it("reports the busy store after the bounded replays without changing the pane", async () => {
+		const original = useStore.getState().agents[0];
+		answerCreates(Array.from({ length: 10 }, () => busy));
+		vi.useFakeTimers();
+		try {
+			const failure = resumeExactManagedAgentPane(
+				"agent-1",
+				"agent:agent-1",
+				"conversation-1",
+			).then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			let error: unknown;
+			let settled = false;
+			void failure.then((value) => {
+				error = value;
+				settled = true;
+			});
+			for (let step = 0; !settled && step < 100; step++) {
+				await vi.advanceTimersByTimeAsync(50);
+			}
+			expect(error).toBeInstanceOf(ManagedCreateRetrySameError);
+			expect(error).toMatchObject({
+				reason: "create_retryable",
+				backendCode: "session_checkout_store_busy",
+				message: "store is busy during prepare_session_checkout",
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+		expect(createRequests()).toHaveLength(5);
+		expect(createTimes[4] - createTimes[0]).toBeGreaterThanOrEqual(1750);
+		expect(useStore.getState().agents[0]).toBe(original);
+		expect(mocks.resolvePane).not.toHaveBeenCalled();
+	});
+
+	it("keeps a single immediate replay for an unavailable authority", async () => {
+		const unavailable = {
+			state: "retry_same",
+			reason: "authority_unavailable",
+			code: "hmux_authority_unavailable",
+			message: "authority unavailable",
+		};
+		answerCreates([unavailable, unavailable]);
+		await expect(
+			resumeExactManagedAgentPane("agent-1", "agent:agent-1", "conversation-1"),
+		).rejects.toMatchObject({
+			reason: "authority_unavailable",
+			backendCode: "hmux_authority_unavailable",
+		});
+		expect(createRequests()).toHaveLength(2);
+	});
+});
 
 describe("native Resume presentation completion", () => {
 	it("keeps same-source retry checkpoints ordered without changing either launch input", async () => {
