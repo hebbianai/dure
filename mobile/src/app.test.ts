@@ -2442,6 +2442,108 @@ describe("terminal unavailability", () => {
     },
   );
 
+  describe("a lost connection", () => {
+    /** jsdom is always visible and online; the test decides what the phone reports. */
+    const setPhone = ({ hidden = false, online = true }: { hidden?: boolean; online?: boolean }) => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => (hidden ? "hidden" : "visible"),
+      });
+      Object.defineProperty(navigator, "onLine", { configurable: true, get: () => online });
+    };
+    afterEach(() => setPhone({}));
+
+    /** The SSH connection dropped: the client reports a close it may reconnect from. */
+    const loseConnection = (attachmentId: string) => {
+      activeAttachmentId = undefined;
+      pendingTerminalReads.get(attachmentId)?.resolve(new TextEncoder().encode(JSON.stringify({
+        kind: "closed",
+        code: "hmux_transport_closed",
+        message: "Hmux transport closed",
+        retryDirective: "reconnect",
+      })).buffer as ArrayBuffer);
+    };
+
+    const expectReconnected = (root: HTMLElement, previous: string) => {
+      expect(attachCalls()).toHaveLength(2);
+      expect(activeAttachmentId).toBeDefined();
+      expect(activeAttachmentId).not.toBe(previous);
+      expect(root.querySelector(".session .banner")).toBeNull();
+      expect(root.querySelector<HTMLTextAreaElement>(".tray__box")?.disabled).toBe(false);
+    };
+
+    it("says so in a sentence and reconnects when the app returns to the foreground", async () => {
+      const root = await openTerminal();
+      const previous = activeAttachmentId!;
+      setPhone({ hidden: true });
+      loseConnection(previous);
+      await settle();
+      const banner = root.querySelector(".session .banner")?.textContent ?? "";
+      expect(banner).toContain(t("terminal.connectionLost"));
+      expect(banner).not.toContain("hmux_transport_closed");
+      expect(root.querySelector(".session .banner__action")?.textContent).toBe(t("terminal.reconnectNow"));
+      expect(attachCalls()).toHaveLength(1);
+
+      setPhone({});
+      document.dispatchEvent(new Event("visibilitychange"));
+      await settle();
+      expectReconnected(root, previous);
+    });
+
+    it("waits for the network to come back before reconnecting", async () => {
+      const root = await openTerminal();
+      const previous = activeAttachmentId!;
+      setPhone({ online: false });
+      loseConnection(previous);
+      await settle();
+      document.dispatchEvent(new Event("visibilitychange"));
+      await settle();
+      expect(attachCalls()).toHaveLength(1);
+      expect(root.querySelector(".session .banner")?.textContent).toContain(t("terminal.connectionLost"));
+
+      setPhone({});
+      window.dispatchEvent(new Event("online"));
+      await settle();
+      expectReconnected(root, previous);
+    });
+
+    it("reconnects at once when the loss lands with the app in front, but not in a loop", async () => {
+      const root = await openTerminal();
+      const previous = activeAttachmentId!;
+      loseConnection(previous);
+      await settle();
+      expectReconnected(root, previous);
+
+      // Dropped again as soon as it was made: the button, not another dial.
+      const second = activeAttachmentId!;
+      loseConnection(second);
+      await settle();
+      expect(attachCalls()).toHaveLength(2);
+      expect(root.querySelector(".session .banner")?.textContent).toContain(t("terminal.connectionLost"));
+      // Coming back to the app is a fresh sign, and still reconnects.
+      document.dispatchEvent(new Event("visibilitychange"));
+      await settle();
+      expect(attachCalls()).toHaveLength(3);
+      expect(activeAttachmentId).toBeDefined();
+      expect(activeAttachmentId).not.toBe(second);
+    });
+
+    it("leaves other failures to the explicit reconnect", async () => {
+      const root = await openTerminal();
+      const previous = activeAttachmentId!;
+      activeAttachmentId = undefined;
+      pendingTerminalReads.get(previous)?.resolve(new TextEncoder().encode(JSON.stringify({
+        kind: "closed", code: "hmux_io_failed", message: "read failed", retryDirective: "never",
+      })).buffer as ArrayBuffer);
+      await settle();
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("online"));
+      await settle();
+      expect(attachCalls()).toHaveLength(1);
+      expect(root.querySelector(".session .banner")?.textContent).toContain("hmux_io_failed");
+    });
+  });
+
   it("ignores a retired attachment's late read failure after a new session opens", async () => {
     const root = await openTerminal();
     const previous = activeAttachmentId!;
