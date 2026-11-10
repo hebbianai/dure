@@ -43,9 +43,10 @@ export interface PaneRehostAction {
 	refreshDisabled: boolean;
 }
 
-/** `retry_same` means the backend applied nothing and replaying the exact
- * request is safe. Refresh derives that request from the unchanged pane, so the
- * user can simply run it again; the code names the cause for a report. */
+/** `retry_same` promises that replaying the exact request is safe: the backend
+ * ledger resolves the same idempotent identity. Refresh derives that request
+ * from the unchanged pane, so the user can simply run it again; the code names
+ * the cause for a report. */
 function refreshFailureMessage(error: unknown): string {
 	return error instanceof ManagedCreateRetrySameError
 		? t("workspace.refresh.retryable", { code: error.backendCode })
