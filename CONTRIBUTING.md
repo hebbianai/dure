@@ -387,6 +387,10 @@ ARM64, the only host on which the pinned Ghostty build inputs can prepare the
 terminal core that Hmux and the desktop's Hmux runtime sidecar link. These jobs use hosted runners with read-only repository permissions; they do
 not use publisher credentials or maintainer machines. Platform-native
 desktop/mobile packaging and device acceptance remain separate checks.
+Pull requests that change the Linux packaging path also run the
+[Linux package workflow](.github/workflows/linux-desktop.yml): it builds the
+AppImage and Debian packages for x86_64 and arm64 and starts each AppImage under
+a virtual display. It is not part of `Public repository checks`.
 
 Contributors submit changes to `main` through pull requests. Merging requires
 passing checks, an up-to-date branch, and resolved review conversations.

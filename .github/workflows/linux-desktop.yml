@@ -168,6 +168,9 @@ jobs:
       - name: Start the AppImage under a virtual display
         env:
           DURE_LINUX_SMOKE_EVIDENCE: ${{ runner.temp }}/linux-smoke
+          # Checks also run a command in a terminal pane. That step clicks fixed
+          # window positions, so a release build only requires a running window.
+          DURE_LINUX_SMOKE_TERMINAL: ${{ inputs.artifact-prefix == '' && '1' || '0' }}
         run: |
           appimage=$(find "$RUNNER_TEMP/linux-packages" -name '*.AppImage')
           chmod 755 "$appimage"

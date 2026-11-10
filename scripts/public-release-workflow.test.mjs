@@ -524,6 +524,11 @@ test("Linux packages build on hosted runners that receive no credentials", () =>
     { arch: "x86_64", runner: "ubuntu-22.04" },
     { arch: "aarch64", runner: "ubuntu-22.04-arm" },
   ]);
+  // Each package starts under a virtual display; checks also run a terminal
+  // command, while a release only requires the window (fixed-position clicks).
+  const smoke = linuxWorkflow.jobs.package.steps.find((step) => step.name === "Start the AppImage under a virtual display");
+  expect(smoke.run).toContain("dbus-run-session -- sh scripts/qa/linux-package-smoke.sh");
+  expect(smoke.env.DURE_LINUX_SMOKE_TERMINAL).toBe("${{ inputs.artifact-prefix == '' && '1' || '0' }}");
   // Every package job builds the commit the supply recorded, not a moving ref.
   const checkout = linuxWorkflow.jobs.package.steps.find((step) => step.uses?.startsWith("actions/checkout@"));
   expect(checkout.with.ref).toBe("${{ needs.supply.outputs.sha }}");
