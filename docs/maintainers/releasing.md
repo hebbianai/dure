@@ -256,8 +256,13 @@ How the packages are made:
    architectures: they compile C code with the pinned Ghostty Zig toolchain,
    which only runs on macOS ARM64. Hosted `ubuntu-22.04` and `ubuntu-22.04-arm`
    runners stage that supply, build the packages with the beta updater
-   configuration and start each AppImage under a virtual display. Ubuntu 22.04
-   sets the glibc 2.35 floor. None of these jobs receive credentials.
+   configuration and start each AppImage under a virtual display. The build
+   also stages the Dure CLI payload (CLI, its Node runtime, the control-plane
+   backend, the Claude process relay and Hmux), and
+   `linux-release-packages.mjs finish` adds it to both packages at
+   `usr/lib/Dure/resources/dure-cli`; the smoke requires the app to install
+   that CLI and start its backend. Ubuntu 22.04 sets the glibc 2.35 floor.
+   None of these jobs receive credentials.
 2. `linux-sign` runs on the `dure-release` signing host in the `macos-release`
    environment. It builds nothing: it signs the four packages with the existing
    `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)
@@ -294,7 +299,9 @@ installed macOS clients read unchanged.
 
 Before publishing a Linux release, accept the unchanged packages natively in a
 disposable home on each architecture: install the `.deb` and start the
-AppImage, open a terminal pane and run a command. Updating from one published
+AppImage, open a terminal pane, run a command and `dure ls`, and start an
+agent. `scripts/qa/linux-package-smoke.sh` with `DURE_LINUX_SMOKE_TERMINAL=1`
+and `DURE_LINUX_SMOKE_AGENT=1` does this with the QA fake provider. Updating from one published
 Linux build to the next can only be observed once two Linux releases exist.
 
 To get test packages for any commit without a release, run the workflow

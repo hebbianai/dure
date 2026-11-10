@@ -44,18 +44,33 @@ describe("Linux desktop configuration boundary", () => {
   });
 
   // The Hmux sidecars, Linux SSH host runtimes and checkout helper come from
-  // the macOS-built supply that `linux-desktop-supply.mjs stage` places first.
-  test("builds only the frontend before bundling, never the macOS-only stages", () => {
+  // the macOS-built supply that `linux-desktop-supply.mjs stage` places first;
+  // the build itself stages the frontend and the Dure CLI payload.
+  test("builds the frontend and the Dure CLI before bundling, never the macOS-only stages", () => {
     const scripts = json("package.json").scripts;
-    expect(linux.build.beforeBuildCommand).toBe("pnpm build:linux");
+    expect(linux.build.beforeBuildCommand).toBe(
+      "pnpm build:linux && node scripts/run-with-build-storage.mjs cli -- node scripts/stage-dure-cli.mjs",
+    );
     expect(scripts["build:linux"]).toBe("pnpm typecheck && pnpm build:frontend");
     expect(scripts["app:linux:build:implementation"]).toContain(
       'node scripts/linux-desktop-supply.mjs stage "$DURE_LINUX_SUPPLY_DIR"',
     );
-    // linuxdeploy rewrites the static Hmux executables inside the AppImage.
+    // linuxdeploy rewrites the static Hmux executables inside the AppImage,
+    // and Tauri's own copies cannot carry the CLI payload's links.
     expect(scripts["app:linux:build:implementation"]).toMatch(
-      /tauri build --bundles deb,appimage && node scripts\/linux-release-packages\.mjs repair-appimage src-tauri\/target\/release\/bundle "\$\(uname -m\)"$/,
+      /tauri build --bundles deb,appimage && node scripts\/linux-release-packages\.mjs finish src-tauri\/target\/release\/bundle "\$\(uname -m\)"$/,
     );
+    expect(read(".github/workflows/linux-desktop.yml")).toContain(
+      'node scripts/linux-release-packages.mjs finish src-tauri/target/release/bundle "${{ matrix.arch }}"',
+    );
+  });
+
+  // The Debian package puts the app executable on every user's PATH, where
+  // `dure` must stay the Dure CLI command the app installs.
+  test("keeps the dure command for the Dure CLI on Linux", () => {
+    expect(linux.mainBinaryName).toBe("dure-desktop");
+    expect(common).not.toHaveProperty("mainBinaryName");
+    expect(macos).not.toHaveProperty("mainBinaryName");
   });
 
   // tauri-build validates raw Cargo commands against the common configuration

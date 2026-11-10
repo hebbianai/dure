@@ -8,6 +8,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const LINUX_SYSTEM_LIBRARY =
+  /^(?:lib(?:c|m|dl|pthread|rt)\.so\.\d+|ld-linux-(?:x86-64|aarch64)\.so\.\d+|libstdc\+\+\.so\.6|libgcc_s\.so\.1)$/;
 const nodeVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).engines.node;
 if (process.versions.node !== nodeVersion) {
   throw new Error(`Dure packaging requires Node ${nodeVersion}`);
@@ -21,13 +23,30 @@ const untrackedPayload = execFileSync("git", [
 if (untrackedPayload.trim()) throw new Error("Dure packaging requires tracked payload sources");
 const host = execFileSync("rustc", ["-vV"], { encoding: "utf8" }).match(/^host: (.+)$/m)?.[1];
 const target = process.env.CARGO_BUILD_TARGET || host;
-if (!target?.endsWith("-apple-darwin") || target !== host || process.platform !== "darwin") {
-  throw new Error("packaged Dure CLI staging currently requires a native macOS target");
+const nativeTargets = { darwin: /-apple-darwin$/, linux: /^(?:x86_64|aarch64)-unknown-linux-gnu$/ };
+if (!nativeTargets[process.platform]?.test(target) || target !== host) {
+  throw new Error("packaged Dure CLI staging requires a native macOS or Linux (x86_64, aarch64) target");
 }
-const dependencies = execFileSync("/usr/bin/otool", ["-L", process.execPath], { encoding: "utf8" });
-for (const line of dependencies.split("\n").slice(1).filter((line) => line.trim())) {
-  if (!/^\s+\/(?:usr\/lib|System\/Library)\//.test(line)) {
-    throw new Error("packaged Node must depend only on macOS system libraries");
+if (process.platform === "darwin") {
+  const dependencies = execFileSync("/usr/bin/otool", ["-L", process.execPath], { encoding: "utf8" });
+  for (const line of dependencies.split("\n").slice(1).filter((line) => line.trim())) {
+    if (!/^\s+\/(?:usr\/lib|System\/Library)\//.test(line)) {
+      throw new Error("packaged Node must depend only on macOS system libraries");
+    }
+  }
+} else {
+  // The packaged Node runs on the user's machine: it may link only the C and
+  // C++ runtime every desktop with WebKitGTK has, and no private library path.
+  const dynamic = execFileSync("readelf", ["--dynamic", "--wide", process.execPath], {
+    encoding: "utf8", env: { ...process.env, LC_ALL: "C" },
+  });
+  if (/\((?:RPATH|RUNPATH)\)/.test(dynamic)) {
+    throw new Error("packaged Node must not carry a library search path");
+  }
+  for (const [, library] of dynamic.matchAll(/\(NEEDED\)\s+Shared library: \[([^\]]+)\]/g)) {
+    if (!LINUX_SYSTEM_LIBRARY.test(library)) {
+      throw new Error(`packaged Node must depend only on Linux system libraries, not ${library}`);
+    }
   }
 }
 const resources = join(root, "src-tauri", "resources");
