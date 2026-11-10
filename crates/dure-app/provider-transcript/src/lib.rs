@@ -13,8 +13,14 @@ use std::{
     time::UNIX_EPOCH,
 };
 mod accounts;
+mod tools;
 pub use accounts::{
     ProviderStateRoots, account_profile_directories, newest_conversation_file, read_newest,
+};
+pub use tools::{
+    MAX_TOOL_CALLS, MAX_TOOL_INPUT_BYTES, MAX_TOOL_OUTPUT_BYTES, ProviderConversationActivity,
+    ProviderToolCall, ProviderToolState, ToolEvent, ToolEventParser, bounded_input,
+    claude_tool_events, codex_tool_events, tool_events_for,
 };
 
 const MAX_SESSION_BYTES: u64 = 1024 * 1024;
@@ -295,6 +301,49 @@ pub fn transcript_from_file(
     )
 }
 
+/// The transcript with the tool calls between its messages (see [`tools`]).
+pub fn activity_from_file(
+    path: &Path,
+    provider: &str,
+    conversation_id: &str,
+) -> Result<ProviderConversationActivity, String> {
+    let (parse, tool_events) = provider_parsers(provider)?;
+    let (transcript, tools) = read_window(
+        path,
+        provider,
+        conversation_id,
+        parse,
+        Some(tool_events),
+        Limits::DEFAULT,
+    )?;
+    Ok(ProviderConversationActivity { transcript, tools })
+}
+
+type TurnParser = fn(&Value) -> Option<(ConversationTurnRole, String)>;
+
+fn provider_parsers(provider: &str) -> Result<(TurnParser, ToolEventParser), String> {
+    match provider {
+        "claude" => Ok((claude_turn, claude_tool_events)),
+        "codex" => Ok((codex_turn, codex_tool_events)),
+        _ => Err("provider transcript export is unsupported".to_string()),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Limits {
+    source: u64,
+    output: usize,
+    entries: usize,
+}
+
+impl Limits {
+    const DEFAULT: Self = Self {
+        source: MAX_TRANSCRIPT_SOURCE_BYTES,
+        output: MAX_TRANSCRIPT_OUTPUT_BYTES,
+        entries: MAX_TRANSCRIPT_ENTRIES,
+    };
+}
+
 fn transcript_window(
     path: &Path,
     provider: &str,
@@ -304,6 +353,33 @@ fn transcript_window(
     output_limit: usize,
     entry_limit: usize,
 ) -> Result<ProviderConversationTranscript, String> {
+    read_window(
+        path,
+        provider,
+        conversation_id,
+        parse,
+        None,
+        Limits {
+            source: source_limit,
+            output: output_limit,
+            entries: entry_limit,
+        },
+    )
+    .map(|(transcript, _)| transcript)
+}
+
+fn read_window(
+    path: &Path,
+    provider: &str,
+    conversation_id: &str,
+    parse: TurnParser,
+    tool_events: Option<ToolEventParser>,
+    Limits {
+        source: source_limit,
+        output: output_limit,
+        entries: entry_limit,
+    }: Limits,
+) -> Result<(ProviderConversationTranscript, Vec<ProviderToolCall>), String> {
     let read_error = |error| format!("read provider transcript: {error}");
     let mut file = fs::File::open(path).map_err(read_error)?;
     let before = file.metadata().map_err(read_error)?;
@@ -335,6 +411,11 @@ fn transcript_window(
     let mut output_bytes = 0usize;
     let mut history_complete = start == 0 && utf8_complete;
     let mut final_response = None;
+    let mut tools = tools::ToolWindow::default();
+    // Messages pushed and messages left out at the front, so a tool call's
+    // position can be rebased on the messages that were kept.
+    let mut entries_seen = 0usize;
+    let mut entries_dropped = 0usize;
     for line in content.lines().filter(|line| !line.trim().is_empty()) {
         let value = match serde_json::from_str::<Value>(line) {
             Ok(value) => value,
@@ -351,21 +432,27 @@ fn transcript_window(
             }
             final_response = Some(text);
         }
-        let Some((role, text)) = parse(&value) else {
-            continue;
-        };
-        if role == ConversationTurnRole::User {
-            final_response = None;
+        if let Some((role, text)) = parse(&value) {
+            if role == ConversationTurnRole::User {
+                final_response = None;
+            }
+            if !text.trim().is_empty() {
+                let entry = ProviderTranscriptEntry { role, text };
+                output_bytes = output_bytes.saturating_add(entry.text.len());
+                entries.push_back(entry);
+                entries_seen += 1;
+                while output_bytes > output_limit || entries.len() > entry_limit {
+                    if let Some(oldest) = entries.pop_front() {
+                        output_bytes -= oldest.text.len();
+                        entries_dropped += 1;
+                        history_complete = false;
+                    }
+                }
+            }
         }
-        if text.trim().is_empty() {
-            continue;
-        }
-        let entry = ProviderTranscriptEntry { role, text };
-        output_bytes = output_bytes.saturating_add(entry.text.len());
-        entries.push_back(entry);
-        while output_bytes > output_limit || entries.len() > entry_limit {
-            if let Some(oldest) = entries.pop_front() {
-                output_bytes -= oldest.text.len();
+        // A record's own text comes before the calls it makes.
+        if let Some(tool_events) = tool_events {
+            if !tools.apply(tool_events(&value), entries_seen) {
                 history_complete = false;
             }
         }
@@ -373,14 +460,17 @@ fn transcript_window(
     let unchanged = fs::metadata(path).ok().is_some_and(|after| {
         after.len() == before.len() && after.modified().ok() == before.modified().ok()
     });
-    Ok(ProviderConversationTranscript {
-        schema_version: 1,
-        provider: provider.to_string(),
-        conversation_id: conversation_id.to_string(),
-        history_complete: history_complete && unchanged,
-        final_response,
-        entries: entries.into(),
-    })
+    Ok((
+        ProviderConversationTranscript {
+            schema_version: 1,
+            provider: provider.to_string(),
+            conversation_id: conversation_id.to_string(),
+            history_complete: history_complete && unchanged,
+            final_response,
+            entries: entries.into(),
+        },
+        tools.finish(entries_dropped),
+    ))
 }
 
 pub fn read_roots(
@@ -389,13 +479,21 @@ pub fn read_roots(
     provider: &str,
     conversation_id: &str,
 ) -> Result<ProviderConversationTranscript, String> {
-    let parse = match provider {
-        "claude" => claude_turn as fn(&Value) -> Option<(ConversationTurnRole, String)>,
-        "codex" => codex_turn,
-        _ => return Err("provider transcript export is unsupported".to_string()),
-    };
+    let (parse, _) = provider_parsers(provider)?;
     let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
     transcript_from_file(&path, provider, conversation_id, parse)
+}
+
+/// [`read_roots`] with the tool calls between the messages.
+pub fn read_roots_activity(
+    claude_projects: &Path,
+    codex_sessions: &Path,
+    provider: &str,
+    conversation_id: &str,
+) -> Result<ProviderConversationActivity, String> {
+    provider_parsers(provider)?;
+    let path = conversation_path(claude_projects, codex_sessions, provider, conversation_id)?;
+    activity_from_file(&path, provider, conversation_id)
 }
 
 fn conversation_path(

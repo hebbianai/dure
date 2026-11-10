@@ -1,7 +1,9 @@
 #[cfg(test)]
 use dure_provider_profile::transcript::{provider_final_response, ProviderTranscriptEntry};
 use dure_provider_profile::background_work::{read_claude_background_work, BackgroundWorkList};
-pub use dure_provider_profile::transcript::{ConversationTurnRole, ProviderConversationTranscript};
+pub use dure_provider_profile::transcript::{
+    ConversationTurnRole, ProviderConversationActivity, ProviderConversationTranscript,
+};
 use dure_provider_profile::transcript::{
     bounded_prefix, claude_turn, codex_content_text, codex_turn, find_claude_conversation,
     find_codex_conversation, mtime, provider_context_injection, safe_id, text_content,
@@ -1574,6 +1576,18 @@ pub fn transcript_global(
         &DiscoveryRoots::from_environment(),
         provider,
         conversation_id,
+    )
+}
+
+/// [`transcript_global`] with the tool calls between the messages, for the
+/// desktop's own conversation view. Never served to another device.
+pub fn transcript_activity_global(
+    provider: &str,
+    conversation_id: &str,
+) -> Result<ProviderConversationActivity, String> {
+    let roots = DiscoveryRoots::from_environment();
+    dure_provider_profile::transcript::read_roots_activity(
+        &roots.claude_projects, &roots.codex_sessions, provider, conversation_id,
     )
 }
 

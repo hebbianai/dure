@@ -378,6 +378,49 @@ describe("Pro conversation view", () => {
 		expect(mocks.read).toHaveBeenCalledTimes(1);
 	});
 
+	it("shows the agent's tool calls as one collapsed line between the messages", async () => {
+		mocks.read.mockResolvedValue({
+			...history(),
+			tools: [
+				{
+					afterEntries: 1,
+					callId: "call-read",
+					name: "Read",
+					state: "completed",
+					input: { file_path: "/repo/src/a.ts" },
+				},
+				{
+					afterEntries: 1,
+					callId: "call-run",
+					name: "Bash",
+					state: "failed",
+					input: { command: "pnpm test" },
+				},
+			],
+		});
+		render(view());
+		showConversation();
+		const headline = await screen.findByText(
+			[t("agents.chat.workReadOne"), t("agents.chat.workRunOne")].join(" · "),
+		);
+		expect(mocks.read).toHaveBeenCalledWith("codex", expect.any(String), {
+			includeTools: true,
+		});
+		expect(screen.getByText(t("agents.chat.workFailedOne"))).toBeTruthy();
+		// Between the prompt and the answer, collapsed until opened.
+		const prompt = screen.getByText("First question");
+		const answer = screen.getByText("First answer");
+		expect(
+			prompt.compareDocumentPosition(headline) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		expect(
+			headline.compareDocumentPosition(answer) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		expect(screen.queryByText("pnpm test")).toBeNull();
+	});
+
 	it("sends at an idle prompt and keeps it pending until the transcript has it", async () => {
 		runtime("waiting", "1");
 		render(view());
