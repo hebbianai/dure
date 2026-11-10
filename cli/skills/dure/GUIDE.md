@@ -264,7 +264,10 @@ dure runs switch-account worker --account ACCOUNT_ID --confirm-restart --json
 ```
 
 Agents launched, resumed or imported by the app have no Run record; select them
-by Agent ID, or by name or Session ID from `dure ls`. A closed, stopped Agent
+by Agent ID, or by name or Session ID from `dure ls`. A Session ID also resolves
+through the backend after the app lost its Agent list: `dure ls --alive`, then
+`dure runs open <session-id> --space ID` reattaches that live Session to a pane
+without restarting it. A closed, stopped Agent
 restarts with the selected account and its retained conversation. An ambiguous
 name is refused with each candidate's exact retry command; use the Agent ID.
 Accounts must be

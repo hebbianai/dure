@@ -30,6 +30,8 @@ Use the [settings guide](/en/settings) for current locations in the Basic and Be
 
 Inspect [session state](/en/session-model) and actual files before launching another copy. Reconnect to living work; use the offered recovery action after the process ends. Record what completed so the agent does not repeat an external action.
 
+If the app lost its panes but an agent is still running, don't start it again. Run `dure ls --alive` to find its session ID, then `dure runs open <session-id> --space <space-id>` to put the running session back in a pane without restarting it.
+
 ## An attachment did not arrive
 
 Wait for preparation/upload to finish before sending. Check the pane's host, file path and transfer error, then retry the failed attachment. Provider image support varies; see [terminal attachments](/en/terminal-and-files).

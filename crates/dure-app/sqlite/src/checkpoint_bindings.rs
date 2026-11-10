@@ -296,6 +296,35 @@ pub(crate) async fn authority_for_exact_session_on(
     rows.first().map(authority_from_row).transpose()
 }
 
+/// Current binding authorities that name one runtime Session, in Agent ID
+/// order. This maps a Session to its Agents by identity only; the Host remains
+/// the authority for whether that Session is alive.
+pub(crate) async fn authorities_for_session(
+    pool: &SqlitePool,
+    runtime_kind_id: &RuntimeKindIdV1,
+    session_id: &str,
+    runtime_workspace_id: Option<&str>,
+    limit: u32,
+) -> Result<Vec<AgentCheckpointBindingAuthorityV1>, DomainStoreErrorV1> {
+    let rows = sqlx::query(AssertSqlSafe(authority_select(
+        r#"
+        WHERE sb.runtime_kind_id = ?1
+          AND sb.session_id = ?2
+          AND (?3 IS NULL OR authority.runtime_workspace_id = ?3)
+        ORDER BY sb.agent_id
+        LIMIT ?4
+        "#,
+    )))
+    .bind(runtime_kind_id.as_str())
+    .bind(session_id)
+    .bind(runtime_workspace_id)
+    .bind(i64::from(limit))
+    .fetch_all(pool)
+    .await
+    .map_err(|error| map_sqlx("resolve_session_checkpoint_binding_authorities", error))?;
+    rows.iter().map(authority_from_row).collect()
+}
+
 pub(crate) async fn replace_exact_on(
     connection: &mut sqlx::SqliteConnection,
     expected: &AgentCheckpointBindingAuthorityV1,

@@ -32,10 +32,12 @@ bounded to 64 records; continue with nextCursor until null. A name shared by
 several Runs or Agents is refused with each candidate's exact retry command.
 Agents launched, resumed or imported by the app have no Run record. Every action
 also selects them by Agent ID, or by name or Session ID from the app's Agent list;
-the backend confirms each. Show reads the current runtime selection. Open attaches
-that existing runtime and never launches a provider; without a Run record it needs
-a Terminal Agent and an app that supports it, and reattaches a live Session after
-the app lost its panes. Resume previews exact local recovery; add
+the backend confirms each. A Session ID also resolves through the backend's own
+binding when the app no longer lists it, for example after it lost its panes;
+dure ls --alive lists live Session IDs. Show reads the current runtime selection.
+Open attaches that existing runtime and never launches a provider; without a Run
+record it needs a Terminal Agent and an app that supports it, and reattaches a
+live Session after the app lost its panes. Resume previews exact local recovery; add
 --confirm-restart to execute and publish it. A confirmed stopped source waiting
 for a deferred target uses backend wake; an existing native source uses native
 rehost; a closed, stopped Agent restarts through the app's backend transition.
