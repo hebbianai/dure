@@ -3,6 +3,10 @@ import {
   type AppCompatibility,
 } from "@/lib/ipc";
 import {
+  type PaneRecoveryDiagnostics,
+  readPaneRecoveryDiagnostics,
+} from "@/lib/ipc/paneRecoveryDiagnostics";
+import {
   readWebviewDiagnostics,
   type WebviewDiagnostics,
 } from "@/lib/ipc/webviewDiagnostics";
@@ -14,6 +18,7 @@ export function buildCliDiagnosticsReceipt(
   compatibility: AppCompatibility,
   generatedAtMs: number,
   webviewDiagnostics?: WebviewDiagnostics,
+  paneRecoveryDiagnostics?: PaneRecoveryDiagnostics,
 ) {
   return {
     ok: true as const,
@@ -21,6 +26,7 @@ export function buildCliDiagnosticsReceipt(
     generatedAtMs,
     compatibility,
     ...(webviewDiagnostics ? { webviewDiagnostics } : {}),
+    ...(paneRecoveryDiagnostics ? { paneRecoveryDiagnostics } : {}),
   };
 }
 
@@ -30,11 +36,17 @@ export async function handleCliDiagnostics(
   inspect: InspectCompatibility = () => appCompatibility(true),
   now: () => number = Date.now,
   inspectWebview: () => Promise<WebviewDiagnostics> = readWebviewDiagnostics,
+  inspectPaneRecovery: () => Promise<PaneRecoveryDiagnostics> = readPaneRecoveryDiagnostics,
 ) {
   if (!(await claim(requestId))) return null;
   try {
     const compatibility = await inspect();
-    return buildCliDiagnosticsReceipt(compatibility, now(), await inspectWebview());
+    return buildCliDiagnosticsReceipt(
+      compatibility,
+      now(),
+      await inspectWebview(),
+      await inspectPaneRecovery(),
+    );
   } catch (error) {
     return {
       ok: false as const,

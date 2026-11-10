@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
 	inspectStructuredProjectionContext: vi.fn(),
 	startFreshManagedAgentPane: vi.fn(),
 	ensureRemoteManagedAgentRuntime: vi.fn(),
+	appendPaneRecoveryDiagnostic: vi.fn(),
+}));
+vi.mock("@/lib/ipc/paneRecoveryDiagnostics", () => ({
+	appendPaneRecoveryDiagnostic: mocks.appendPaneRecoveryDiagnostic,
 }));
 
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
@@ -746,6 +750,24 @@ describe("managed conversation history launch", () => {
 		).resolves.toBe("conversation-live");
 		expect(mocks.resumeExactManagedAgentPane).toHaveBeenCalledOnce();
 		expect(mocks.runCanonicalAddAgent).not.toHaveBeenCalled();
+	});
+
+	it("records a failed pane-scoped exact Resume without changing its error", async () => {
+		const busy = new Error("session_checkout_store_busy: store is busy");
+		mocks.resumeExactManagedAgentPane.mockRejectedValue(busy);
+		mocks.appendPaneRecoveryDiagnostic.mockResolvedValue(undefined);
+		await expect(
+			recoverExitedManagedConversationPane({
+				agentId: "agent-source",
+				panelId: "agent:agent-source",
+				target: { kind: "id", id: "conversation-live" },
+			}),
+		).rejects.toBe(busy);
+		expect(mocks.appendPaneRecoveryDiagnostic).toHaveBeenCalledExactlyOnceWith({
+			stage: "exact_resume",
+			code: "session_checkout_store_busy",
+			agentId: "agent-source",
+		});
 	});
 
 	it("does not let an exited-runtime lease preflight reject exact Resume", async () => {

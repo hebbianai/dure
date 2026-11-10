@@ -36,6 +36,7 @@ import {
 } from "@/lib/sessions/managed/managedConversationOwnership";
 import { admitManagedCreateRegistration } from "@/lib/sessions/managed/managedCreateRegistrationAdmission";
 import { resumeExactManagedAgentPane } from "@/lib/sessions/managed/managedExactConversationResume";
+import { recordManagedRecoveryFailure } from "@/lib/sessions/managed/managedRecoveryDiagnostics";
 import { openAgentPanel } from "@/lib/workspace/dock";
 import type { PanelPosition } from "@/lib/workspace/pane/panePlacement";
 import { useStore } from "@/store";
@@ -468,7 +469,10 @@ export async function recoverExitedManagedConversationPane(
 			input.agentId,
 			input.panelId,
 			input.target.id,
-		);
+		).catch((cause: unknown) => {
+			recordManagedRecoveryFailure("exact_resume", input.agentId, cause);
+			throw cause;
+		});
 		return committed.payload.conversationId ?? input.target.id.trim();
 	}
 	const initialState = useStore.getState();

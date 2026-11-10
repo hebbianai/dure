@@ -5,6 +5,7 @@ import {
 	wakeClosedManagedLineage,
 } from "@/lib/sessions/managed/managedClosedLineageWake";
 import { resumeExactManagedAgentPane } from "@/lib/sessions/managed/managedExactConversationResume";
+import { recordManagedRecoveryFailure } from "@/lib/sessions/managed/managedRecoveryDiagnostics";
 import { useStore } from "@/store";
 
 type RecoveryReceipt =
@@ -15,7 +16,8 @@ const inFlight = new Map<string, Promise<RecoveryReceipt>>();
 
 /** Resume, Refresh and registered pane actions share this recovery policy.
  * Only a confirmed closed checkout permits a different launch mechanism;
- * transport failures keep their original uncertain outcome. */
+ * transport failures keep their original uncertain outcome. A failure leaves
+ * one durable diagnostic naming the step that failed and its code. */
 export async function recoverManagedConversationPane(
 	agentId: string,
 	panelId: string,
@@ -50,9 +52,21 @@ export async function recoverManagedConversationPane(
 				diagnostics,
 			);
 		} catch (cause) {
-			if (!isClosedManagedSourceLineage(cause)) throw cause;
-			const woken = await wakeClosedManagedLineage(agentId, conversationId);
-			if (!woken) throw cause;
+			if (!isClosedManagedSourceLineage(cause)) {
+				recordManagedRecoveryFailure("exact_resume", agentId, cause);
+				throw cause;
+			}
+			let woken: Awaited<ReturnType<typeof wakeClosedManagedLineage>>;
+			try {
+				woken = await wakeClosedManagedLineage(agentId, conversationId);
+			} catch (wakeFailure) {
+				recordManagedRecoveryFailure("lineage_wake", agentId, wakeFailure);
+				throw wakeFailure;
+			}
+			if (!woken) {
+				recordManagedRecoveryFailure("exact_resume", agentId, cause);
+				throw cause;
+			}
 			return woken;
 		}
 	})();

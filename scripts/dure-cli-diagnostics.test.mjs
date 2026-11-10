@@ -343,6 +343,10 @@ describe("Dure runtime diagnostics", () => {
           code: "client_space_window_changed", firstSeenMs: 1, lastSeenMs: 2, count: 3,
           message: "private console content",
         }] },
+        paneRecoveryDiagnostics: { schemaVersion: 1, state: "available", events: [{
+          stage: "lineage_wake", code: "agent_runtime_transition_conflict", agentId: "agent-1",
+          firstSeenMs: 1, lastSeenMs: 2, count: 2, message: "/Users/private/worktree",
+        }] },
       });
     });
 
@@ -365,6 +369,11 @@ describe("Dure runtime diagnostics", () => {
     expect(JSON.stringify(app)).not.toContain("secret-control-token");
     expect(JSON.stringify(app)).not.toContain("private console content");
     expect(app.webviewDiagnostics).toMatchObject({ state: "available", events: [{ code: "client_space_window_changed", count: 3 }] });
+    expect(app.paneRecoveryDiagnostics).toEqual({ schemaVersion: 1, state: "available", events: [{
+      stage: "lineage_wake", code: "agent_runtime_transition_conflict", agentId: "agent-1",
+      firstSeenMs: 1, lastSeenMs: 2, count: 2,
+    }] });
+    expect(JSON.stringify(app)).not.toContain("/Users/private/worktree");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
@@ -403,6 +412,45 @@ describe("Dure runtime diagnostics", () => {
       expect(app.webviewDiagnostics).toEqual({ schemaVersion: 1, state: "unavailable", events: [] });
     },
   );
+
+  it.each([undefined, null, { schemaVersion: 2 }, { schemaVersion: 1, state: "available", events: [{ message: "private" }] }])(
+    "keeps compatibility available when optional pane recovery diagnostics are missing or invalid: %j", async (paneRecoveryDiagnostics) => {
+      const root = temporaryDirectory("dure-pane-recovery-compat-");
+      const descriptorPath = path.join(root, "server.json");
+      fs.writeFileSync(descriptorPath, JSON.stringify(serverDescriptor()));
+      const fetchImpl = async (url) => response(String(url).endsWith("/ping")
+        ? { ok: true, channel: "stable", generation: "generation-1", processId: 42 }
+        : { ok: true, schemaVersion: 1, compatibility: currentCompatibility(), paneRecoveryDiagnostics });
+      const app = await inspectAppRuntime({ descriptorPath, fetchImpl });
+      expect(app.compatibility.mode).toBe("current");
+      expect(app.paneRecoveryDiagnostics).toEqual({ schemaVersion: 1, state: "unavailable", events: [] });
+    },
+  );
+
+  it("prints the latest failed pane recoveries with their stage, code and recurrence", () => {
+    const events = Array.from({ length: 10 }, (_, index) => ({
+      stage: index % 2 ? "lineage_wake" : "exact_resume", code: `failure_${index}`,
+      agentId: `agent-${index}`, firstSeenMs: 1_000, lastSeenMs: 2_000, count: index + 1,
+    }));
+    const report = createDiagnosticReport({
+      cli: { pathMatchesCurrent: true },
+      app: {
+        state: "running",
+        compatibility: { state: "available", mode: "current" },
+        paneRecoveryDiagnostics: { schemaVersion: 1, state: "available", events },
+      },
+      hmux: { compatible: true },
+    });
+    const text = formatDiagnosticReport(report);
+    expect(text).toContain("pane_recovery:\n  state: available\n  retained_events: 10");
+    expect(text).toContain("  - agent-9: lineage_wake failure_9 (count 10, last 1970-01-01T00:00:02.000Z)");
+    expect(text).not.toContain("failure_1 ");
+    expect(formatDiagnosticReport(createDiagnosticReport({
+      cli: { pathMatchesCurrent: true },
+      app: { state: "not_running", compatibility: { state: "unavailable", mode: null } },
+      hmux: { compatible: true },
+    }))).toContain("pane_recovery:\n  state: unavailable\n  retained_events: 0");
+  });
 
   it("degrades safely when an old app has no diagnostics endpoint", async () => {
     const root = temporaryDirectory("dure-old-app-diagnostics-");
