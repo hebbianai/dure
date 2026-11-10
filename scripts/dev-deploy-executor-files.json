@@ -91,5 +91,7 @@
   "cli/lib/hub-run-records.mjs",
   "cli/lib/package-version.mjs",
   "cli/lib/contracts/webview-diagnostics.mjs",
+  "cli/lib/contracts/pane-recovery-diagnostics.mjs",
+  "cli/lib/contracts/protocol-identity.mjs",
   "cli/lib/app-control-location.mjs"
 ]

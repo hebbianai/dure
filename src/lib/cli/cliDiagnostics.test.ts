@@ -49,6 +49,11 @@ describe("CLI diagnostics receipt", () => {
         },
       ],
     };
+    const paneRecoveryDiagnostics = {
+      schemaVersion: 1 as const,
+      state: "unavailable" as const,
+      events: [],
+    };
     const read = vi.fn().mockResolvedValue(webviewDiagnostics);
     const receipt = await handleCliDiagnostics(
       "request-1",
@@ -56,10 +61,49 @@ describe("CLI diagnostics receipt", () => {
       async () => compatibility,
       () => 123,
       read,
+      async () => paneRecoveryDiagnostics,
     );
     expect(receipt).toEqual({
       ...buildCliDiagnosticsReceipt(compatibility, 123),
       webviewDiagnostics,
+      paneRecoveryDiagnostics,
+    });
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it("includes the bounded pane recovery journal in the claimed receipt", async () => {
+    const paneRecoveryDiagnostics = {
+      schemaVersion: 1 as const,
+      state: "available" as const,
+      events: [
+        {
+          stage: "lineage_wake" as const,
+          code: "recovering",
+          agentId: "agent-1",
+          firstSeenMs: 1,
+          lastSeenMs: 2,
+          count: 2,
+        },
+      ],
+    };
+    const webviewDiagnostics = {
+      schemaVersion: 1 as const,
+      state: "unavailable" as const,
+      events: [],
+    };
+    const read = vi.fn().mockResolvedValue(paneRecoveryDiagnostics);
+    const receipt = await handleCliDiagnostics(
+      "request-1",
+      vi.fn().mockResolvedValue(true),
+      async () => compatibility,
+      () => 123,
+      async () => webviewDiagnostics,
+      read,
+    );
+    expect(receipt).toEqual({
+      ...buildCliDiagnosticsReceipt(compatibility, 123),
+      webviewDiagnostics,
+      paneRecoveryDiagnostics,
     });
     expect(read).toHaveBeenCalledOnce();
   });

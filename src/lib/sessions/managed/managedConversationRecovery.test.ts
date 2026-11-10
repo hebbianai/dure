@@ -4,7 +4,14 @@ import { useStore } from "@/store";
 import { agentFixture, managedBindingFixture } from "@/test/agentFixtures";
 import { recoverManagedConversationPane } from "./managedConversationRecovery";
 
-const mocks = vi.hoisted(() => ({ resume: vi.fn(), wake: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	resume: vi.fn(),
+	wake: vi.fn(),
+	diagnostic: vi.fn(),
+}));
+vi.mock("@/lib/ipc/paneRecoveryDiagnostics", () => ({
+	appendPaneRecoveryDiagnostic: mocks.diagnostic,
+}));
 vi.mock("@/lib/sessions/managed/managedExactConversationResume", () => ({
 	resumeExactManagedAgentPane: mocks.resume,
 }));
@@ -21,6 +28,7 @@ const closed = new Error(
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	mocks.diagnostic.mockResolvedValue(undefined);
 	useStore.setState({
 		agents: [agentFixture({ runtimeBinding: managedBindingFixture() })],
 	});
@@ -98,5 +106,79 @@ describe("shared Resume and Refresh recovery", () => {
 		).resolves.toEqual({ projection: "applied" });
 		expect(mocks.resume).toHaveBeenCalledTimes(2);
 		expect(mocks.wake).toHaveBeenCalledOnce();
+	});
+});
+
+describe("durable trace of a failed recovery", () => {
+	it("records the exact Resume code when no wake can follow", async () => {
+		mocks.resume.mockRejectedValueOnce(
+			new Error("managed_create_outcome_unknown"),
+		);
+		await expect(
+			recoverManagedConversationPane("agent-1", "pane-1", "conversation-1"),
+		).rejects.toThrow();
+		expect(mocks.diagnostic).toHaveBeenCalledExactlyOnceWith({
+			stage: "exact_resume",
+			code: "managed_create_outcome_unknown",
+			agentId: "agent-1",
+		});
+	});
+
+	it("records the closed checkout when the Agent has no wake route", async () => {
+		mocks.resume.mockRejectedValueOnce(closed);
+		mocks.wake.mockResolvedValueOnce(undefined);
+		await expect(
+			recoverManagedConversationPane("agent-1", "pane-1", "conversation-1"),
+		).rejects.toBe(closed);
+		expect(mocks.diagnostic).toHaveBeenCalledExactlyOnceWith({
+			stage: "exact_resume",
+			code: "session_checkout_closing",
+			agentId: "agent-1",
+		});
+	});
+
+	it("records the wake stage once for every joined action", async () => {
+		mocks.resume.mockRejectedValue(closed);
+		let fail!: (reason: unknown) => void;
+		mocks.wake.mockImplementation(
+			() =>
+				new Promise((_resolve, reject) => {
+					fail = reject;
+				}),
+		);
+		const resume = recoverManagedConversationPane(
+			"agent-1",
+			"pane-1",
+			"conversation-1",
+		);
+		await vi.waitFor(() => expect(mocks.wake).toHaveBeenCalledOnce());
+		const refresh = recoverManagedConversationPane(
+			"agent-1",
+			"pane-2",
+			"conversation-1",
+		);
+		fail(new Error("recovering: backend authority is switching generations"));
+		await expect(Promise.all([resume, refresh])).rejects.toThrow("recovering");
+		expect(mocks.diagnostic).toHaveBeenCalledExactlyOnceWith({
+			stage: "lineage_wake",
+			code: "recovering",
+			agentId: "agent-1",
+		});
+	});
+
+	it("records nothing when the wake fallback recovers the pane", async () => {
+		mocks.resume.mockRejectedValueOnce(closed);
+		mocks.wake.mockResolvedValueOnce({ state: "stable" });
+		await recoverManagedConversationPane("agent-1", "pane-1", "conversation-1");
+		expect(mocks.diagnostic).not.toHaveBeenCalled();
+	});
+
+	it("keeps the recovery failure when the journal is unavailable", async () => {
+		const lost = new Error("managed_create_outcome_unknown");
+		mocks.resume.mockRejectedValueOnce(lost);
+		mocks.diagnostic.mockRejectedValueOnce(new Error("journal unavailable"));
+		await expect(
+			recoverManagedConversationPane("agent-1", "pane-1", "conversation-1"),
+		).rejects.toBe(lost);
 	});
 });

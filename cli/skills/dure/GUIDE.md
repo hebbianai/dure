@@ -525,6 +525,16 @@ content is `redacted`; messages, stacks and console arguments are never included
 Text output shows the last eight rows; `--json` includes up to 256 retained rows.
 Older apps report `unavailable`. Capture is rate limited and abrupt crashes can
 lose pending observations; absence of a row is not proof that no error occurred.
+`app.paneRecoveryDiagnostics` keeps the same kind of evidence for an Agent
+pane whose Resume or Refresh failed, including the automatic Resume after the
+pane's session exited. Each row has the step that failed (`exact_resume`, the
+managed create of the same conversation, or `lineage_wake`, the backend wake
+of a closed or hibernated runtime), its failure code (a backend code such as
+`session_checkout_store_busy`, or `unclassified`), the Agent ID, first/last
+timestamps and recurrence count. Messages and paths are never included. Text
+output shows the last eight rows; `--json` includes up to 64. Run
+`dure runtime get AGENT_ID --json` for the backend's current view of that
+runtime. A row records a failed attempt, not a stopped session.
 
 Its `selectedChannel` remains available even when the app descriptor is absent.
 The `recovery` object provides read-only checks and session-preserving steps.

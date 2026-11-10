@@ -282,6 +282,8 @@ fn append_events_json(
         "events": events,
         "incidents": incidents,
         "webviewEvents": crate::webview_diagnostics::retained_events(journal.as_ref()),
+        crate::pane_recovery_diagnostics::JOURNAL_KEY:
+            crate::pane_recovery_diagnostics::retained_events(journal.as_ref()),
     }))
     .map(|content| format!("{content}\n"))
     .map_err(|error| error.to_string())
@@ -369,6 +371,26 @@ fn is_incident(event: &serde_json::Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hmux_writes_preserve_pane_recovery_records() {
+        let row = serde_json::json!({
+            "stage": "lineage_wake", "code": "recovering", "agentId": "agent-1",
+            "firstSeenMs": 1, "lastSeenMs": 2, "count": 2,
+        });
+        let seed = serde_json::json!({
+            "schemaVersion": 2, "events": [], "incidents": [], "paneRecoveryEvents": [row],
+        })
+        .to_string();
+        let raw = append_events_json(
+            &seed,
+            vec![serde_json::json!({ "code": "hmux_transport_closed" })],
+            "now",
+        )
+        .unwrap();
+        let journal: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(journal["paneRecoveryEvents"], serde_json::json!([row]));
+    }
 
     #[test]
     fn shared_disk_journal_preserves_webview_records_across_hmux_writes() {

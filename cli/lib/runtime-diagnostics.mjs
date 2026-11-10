@@ -18,6 +18,7 @@ import { formatHubRunLines } from "./hub-run-records.mjs";
 import { comparePackageVersions } from "./package-version.mjs";
 import { resolveChannelCommand } from "./dure-cli-channel-launcher.mjs";
 import { parseWebviewDiagnostics } from "./contracts/webview-diagnostics.mjs";
+import { parsePaneRecoveryDiagnostics } from "./contracts/pane-recovery-diagnostics.mjs";
 
 const DEPRECATED_COMMANDS = new Set(["hebbian-ade", "hebbian-ide"]);
 const MAX_JSON_BYTES = 64 * 1024;
@@ -451,6 +452,9 @@ export async function inspectAppRuntime({
     webviewDiagnostics: parseWebviewDiagnostics(diagnostics.body.webviewDiagnostics) ?? {
       schemaVersion: 1, state: "unavailable", events: [],
     },
+    paneRecoveryDiagnostics: parsePaneRecoveryDiagnostics(diagnostics.body.paneRecoveryDiagnostics) ?? {
+      schemaVersion: 1, state: "unavailable", events: [],
+    },
     compatibility: {
       state: "available",
       mode: compatibility.mode,
@@ -612,6 +616,7 @@ function formatRuntimeIdentity(identity) {
 export function formatDiagnosticReport(report) {
   const compatibility = report.app.compatibility;
   const webview = report.app.webviewDiagnostics;
+  const paneRecovery = report.app.paneRecoveryDiagnostics;
   const checkLines = report.check
     ? [
         "check:",
@@ -645,6 +650,11 @@ export function formatDiagnosticReport(report) {
     `  retained_events: ${webview?.events.length ?? 0}`,
     ...(webview?.events.slice(-8).map((event) =>
       `  - ${event.windowLabel}: ${event.level} ${event.code} (${event.source}, count ${event.count})`) ?? []),
+    "pane_recovery:",
+    `  state: ${paneRecovery?.state ?? "unavailable"}`,
+    `  retained_events: ${paneRecovery?.events.length ?? 0}`,
+    ...(paneRecovery?.events.slice(-8).map((event) =>
+      `  - ${event.agentId ?? "unidentified"}: ${event.stage} ${event.code} (count ${event.count}, last ${new Date(event.lastSeenMs).toISOString()})`) ?? []),
     "hmux:",
     `  command: ${label(report.hmux.command)}`,
     `  version: ${label(report.hmux.version)}`,
