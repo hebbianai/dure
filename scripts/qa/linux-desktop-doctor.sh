@@ -22,7 +22,7 @@ require_command() {
   fi
 }
 
-for command_name in pkg-config cc c++ make curl wget file patchelf; do
+for command_name in pkg-config cc c++ make curl wget file patchelf xdg-open; do
   require_command "$command_name"
 done
 
@@ -38,7 +38,7 @@ if [ -n "$missing" ]; then
   echo "Linux desktop prerequisites are incomplete:$missing" >&2
   echo "Ubuntu 22.04+ setup:" >&2
   echo "  sudo apt update" >&2
-  echo "  sudo apt install build-essential curl wget file pkg-config patchelf libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev" >&2
+  echo "  sudo apt install build-essential curl wget file pkg-config patchelf xdg-utils libdbus-1-dev libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev" >&2
   exit 1
 fi
 

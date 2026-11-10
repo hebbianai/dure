@@ -36,9 +36,22 @@ describe("Linux desktop configuration boundary", () => {
     });
   });
 
-  test("bounds the first Linux artifact set and defers updater publication", () => {
+  // The hosted packaging build holds no updater key. The release workflow's
+  // protected signing job signs these exact files afterwards.
+  test("bundles AppImage and Debian packages without signing them during the build", () => {
     expect(linux.bundle.targets).toEqual(["deb", "appimage"]);
     expect(linux.bundle.createUpdaterArtifacts).toBe(false);
+  });
+
+  // The Hmux sidecars, Linux SSH host runtimes and checkout helper come from
+  // the macOS-built supply that `linux-desktop-supply.mjs stage` places first.
+  test("builds only the frontend before bundling, never the macOS-only stages", () => {
+    const scripts = json("package.json").scripts;
+    expect(linux.build.beforeBuildCommand).toBe("pnpm build:linux");
+    expect(scripts["build:linux"]).toBe("pnpm typecheck && pnpm build:frontend");
+    expect(scripts["app:linux:build:implementation"]).toContain(
+      'node scripts/linux-desktop-supply.mjs stage "$DURE_LINUX_SUPPLY_DIR"',
+    );
   });
 
   // tauri-build validates raw Cargo commands against the common configuration
@@ -83,5 +96,8 @@ describe("Linux desktop build gate", () => {
     }
     expect(doctor).toContain("libdbus-1-dev");
     expect(doctor).toContain("libwebkit2gtk-4.1-dev");
+    // The AppImage bundler copies xdg-open into the image.
+    expect(doctor).toContain("xdg-open");
+    expect(doctor).toContain("xdg-utils");
   });
 });
