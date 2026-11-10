@@ -2,8 +2,9 @@
 // Public CI has a documentation-only fast path. Every push, including a
 // maintainer's push to main, and every pull request is planned from its
 // complete change; any code scope retains all existing public suites, and the
-// Rust workspace jobs run when a scope their gate verifies changes. This
-// adapter does not invent a second path classifier.
+// Rust workspace jobs (Hmux, app core and the desktop app) run when a scope
+// their gate verifies changes. This adapter does not invent a second path
+// classifier.
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { withoutLocalGitOverrides } from "./lib/git-environment.mjs";
@@ -18,6 +19,8 @@ const COMMIT_SHA = /^[0-9a-f]{40}$/i;
 export const RUST_JOB_SCOPES = Object.freeze({
   runHmuxChecks: Object.freeze(["hmux-core", "hmux-mobile-compat", "terminal-state-protocol"]),
   runAppChecks: Object.freeze(["app-core"]),
+  // src-tauri, and every crate it links or tests against.
+  runDesktopChecks: Object.freeze(["desktop"]),
 });
 // Each code job must succeed when its plan output selects it and be skipped
 // otherwise.
@@ -32,6 +35,7 @@ const CODE_RESULTS = Object.freeze({
   DEPENDENCY_ADVISORIES_RESULT: "RUN_CODE_CHECKS",
   HMUX_RESULT: "RUN_HMUX_CHECKS",
   APP_RESULT: "RUN_APP_CHECKS",
+  DESKTOP_RESULT: "RUN_DESKTOP_CHECKS",
 });
 
 export function planPublicCi({
@@ -45,6 +49,7 @@ export function planPublicCi({
     runCodeChecks: true,
     runHmuxChecks: true,
     runAppChecks: true,
+    runDesktopChecks: true,
     reason,
   });
   if (eventName !== "push" && eventName !== "pull_request") {
@@ -80,6 +85,7 @@ export function planPublicCi({
       runCodeChecks: scopes.length > 0,
       runHmuxChecks: selects("runHmuxChecks"),
       runAppChecks: selects("runAppChecks"),
+      runDesktopChecks: selects("runDesktopChecks"),
       reason: scopes.length > 0 ? "code-or-shared-inputs" : "documentation-only",
       changedPathCount: paths.length,
       scopes,
@@ -122,7 +128,8 @@ function main() {
       process.env.GITHUB_OUTPUT,
       `run_code_checks=${plan.runCodeChecks}\n` +
         `run_hmux_checks=${plan.runHmuxChecks}\n` +
-        `run_app_checks=${plan.runAppChecks}\n`,
+        `run_app_checks=${plan.runAppChecks}\n` +
+        `run_desktop_checks=${plan.runDesktopChecks}\n`,
     );
     console.log(JSON.stringify(plan));
   } else if (command === "check") {

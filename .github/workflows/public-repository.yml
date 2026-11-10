@@ -27,6 +27,7 @@ jobs:
       run_code_checks: ${{ steps.plan.outputs.run_code_checks }}
       run_hmux_checks: ${{ steps.plan.outputs.run_hmux_checks }}
       run_app_checks: ${{ steps.plan.outputs.run_app_checks }}
+      run_desktop_checks: ${{ steps.plan.outputs.run_desktop_checks }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -466,6 +467,53 @@ jobs:
       - name: Verify app core
         run: pnpm app:verify
 
+  desktop:
+    name: Desktop checks
+    needs: plan
+    if: ${{ needs.plan.outputs.run_desktop_checks == 'true' }}
+    # The gate stages the product Hmux runtime sidecar the desktop crate
+    # bundles, and that build links the exact-pin Ghostty core, so it runs on
+    # the same host as the Hmux checks.
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri -> target
+          # Pull requests restore main's cache without evicting it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Restore the pinned Ghostty VT build inputs
+        # The proof script hash-checks these inputs on every run; the cache only
+        # saves the anonymous release download, which times out under load.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/dure-ghostty-vt/inputs/v2
+          key: hmux-ghostty-vt-provenance-v2-${{ runner.os }}-${{ runner.arch }}
+      - name: Prepare the pinned Ghostty VT proof
+        # The proof builder compiles with its reviewed Rust baseline.
+        env:
+          DURE_GHOSTTY_VT_CACHE_ROOT: ${{ runner.temp }}/dure-ghostty-vt
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          proof="$(node scripts/ensure-ghostty-vt-proof.mjs --target aarch64-apple-darwin)"
+          test -d "$proof"
+          printf 'HMUX_GHOSTTY_VT_PROOF_PREFIX=%s\n' "$proof" >> "$GITHUB_ENV"
+      - name: Verify the desktop app
+        run: pnpm verify:push:desktop
+
   dependency-advisories:
     name: Dependency advisories
     needs: plan
@@ -535,6 +583,7 @@ jobs:
       - shared-protocol
       - hmux
       - app
+      - desktop
       - dependency-advisories
     # A cancelled pull request run still fails this required check. A cancelled
     # push or dispatch run stays cancelled instead of reporting a failure.
@@ -555,6 +604,7 @@ jobs:
           RUN_CODE_CHECKS: ${{ needs.plan.outputs.run_code_checks }}
           RUN_HMUX_CHECKS: ${{ needs.plan.outputs.run_hmux_checks }}
           RUN_APP_CHECKS: ${{ needs.plan.outputs.run_app_checks }}
+          RUN_DESKTOP_CHECKS: ${{ needs.plan.outputs.run_desktop_checks }}
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           SCRIPTS_VITEST_RESULT: ${{ needs.scripts-vitest.result }}
@@ -565,5 +615,6 @@ jobs:
           SHARED_PROTOCOL_RESULT: ${{ needs.shared-protocol.result }}
           HMUX_RESULT: ${{ needs.hmux.result }}
           APP_RESULT: ${{ needs.app.result }}
+          DESKTOP_RESULT: ${{ needs.desktop.result }}
           DEPENDENCY_ADVISORIES_RESULT: ${{ needs.dependency-advisories.result }}
         run: node scripts/public-ci.mjs check

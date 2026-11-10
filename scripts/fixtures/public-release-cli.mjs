@@ -26,6 +26,7 @@ export const PUBLIC_CI_JOB_NAMES = Object.freeze([
   "Shared protocol (ubuntu-24.04)",
   "Hmux checks",
   "App core checks",
+  "Desktop checks",
   "Public repository checks",
 ]);
 
