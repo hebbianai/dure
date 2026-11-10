@@ -942,6 +942,19 @@ pub enum AgentSpawnCommittedWorkspaceV1<'a> {
 }
 
 impl AgentSpawnJournalReceiptV1 {
+    /// The recorded code for why this spawn has not succeeded: the terminal
+    /// code, otherwise the failed stage's code that the recovery directive
+    /// carries. `None` while a stage is in flight or nothing has failed.
+    pub fn failure_code(&self) -> Option<&str> {
+        self.terminal_code.as_deref().or(match &self.recovery {
+            AgentSpawnRecoveryDirectiveV1::RetryRequired { error_code, .. } => Some(error_code),
+            AgentSpawnRecoveryDirectiveV1::DoNotReplayPrompt { error_code, .. } => {
+                error_code.as_deref()
+            }
+            _ => None,
+        })
+    }
+
     /// Returns workspace ownership only after the journal fold committed that stage.
     pub fn committed_workspace_ownership(&self) -> Option<AgentSpawnCommittedWorkspaceV1<'_>> {
         self.completed
@@ -2770,6 +2783,59 @@ mod tests {
             "evidence must stay one line"
         );
         assert!(failed(Some("")).is_err(), "empty evidence is not evidence");
+    }
+
+    /// A caller that only read `terminal_code` reported a stage failure that
+    /// awaits retry as a generic incomplete launch (#350).
+    #[test]
+    fn failure_code_names_the_failed_stage_until_a_terminal_code_replaces_it() {
+        let plan = create_agent_spawn_plan_v1(draft()).unwrap();
+        let mut events = vec![
+            event(
+                &plan,
+                1,
+                AgentSpawnJournalEventBodyV1::Planned {
+                    plan: Box::new(plan.clone()),
+                },
+            ),
+            event(
+                &plan,
+                2,
+                AgentSpawnJournalEventBodyV1::StagePrepared {
+                    attempt: 1,
+                    inputs: inputs(&plan, AgentSpawnStageV1::Worktree),
+                },
+            ),
+        ];
+        let code = |events: &[AgentSpawnJournalEventV1]| {
+            fold_agent_spawn_journal_v1(events)
+                .unwrap()
+                .failure_code()
+                .map(str::to_owned)
+        };
+        assert_eq!(code(&events[..1]), None, "nothing has failed yet");
+        assert_eq!(code(&events), None, "an in-flight stage reported nothing");
+        events.push(event(
+            &plan,
+            3,
+            AgentSpawnJournalEventBodyV1::StageFailed {
+                stage: AgentSpawnStageV1::Worktree,
+                attempt: 1,
+                error_code: "worktree_unavailable".into(),
+                error_detail: None,
+                may_have_written: None,
+            },
+        ));
+        assert_eq!(code(&events).as_deref(), Some("worktree_unavailable"));
+        events.push(event(
+            &plan,
+            4,
+            AgentSpawnJournalEventBodyV1::Terminated {
+                outcome: AgentSpawnTerminalOutcomeV1::Failed,
+                error_code: "agent_spawn_abandoned".into(),
+            },
+        ));
+        assert_eq!(code(&events).as_deref(), Some("agent_spawn_abandoned"));
     }
 
     #[test]

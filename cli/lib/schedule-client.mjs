@@ -556,12 +556,22 @@ export function formatScheduleCommand(report) {
   ].join("\n");
 }
 
+// A chat runtime refuses to start a provider that has no login on its host.
+const PROVIDER_LOGIN_UNAVAILABLE = new Set([
+  "codex_app_server_credential_unavailable",
+  "claude_conversation_credential_unavailable",
+]);
+
 function occurrenceStatus(occurrence) {
   if (occurrence.run?.completed) return "Report received";
   if (occurrence.run?.blockedBy) return "Awaiting decision";
   if (occurrence.launchState === "failed") {
     if (occurrence.errorCode === "schedule_claude_project_trust_required") return "Start blocked: review and trust the registered project folder in Claude, then run again";
-    return `Start failed: ${occurrence.errorCode}`;
+    if (PROVIDER_LOGIN_UNAVAILABLE.has(occurrence.errorCode)) {
+      return "Start blocked: the provider is not signed in on the backend host; sign in there with the provider's CLI (see dure accounts --help), then run again";
+    }
+    // A launch that got past preview has a Run record naming the failed stage.
+    return `Start failed: ${occurrence.errorCode}${occurrence.operationId ? `; inspect with dure runs show ${occurrence.operationId}` : ""}`;
   }
   if (occurrence.launchState === "pending") return "Queued";
   if (isScheduleChatRuntime(occurrence.runtime)) {

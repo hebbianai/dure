@@ -463,6 +463,9 @@ starts on the provider's chat runtime when the provider has one there, like a
 headless `dure run`. It has no terminal Session: `dure schedule runs` names the
 `dure runs show <operation-id>` command, and `dure transcript <agent-id>` reads
 it. Idle hibernation and worktree removal apply only to terminal runs.
+A start that fails after planning names the failed stage's code and its
+`dure runs show` command. A provider that is not signed in on that host shows
+`Start blocked`: sign in there with the provider's CLI, then run it again.
 
 Project-root runs share files; they provide no per-run Git isolation. Do not
 combine `--no-worktree` with `--base-commit`, `--branch` or `--setup-command`.

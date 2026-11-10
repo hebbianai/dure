@@ -212,6 +212,21 @@ describe("dure schedule", () => {
       .toContain("Report received");
   });
 
+  it("names why a start failed and where to read the failed stage", () => {
+    const failed = { idempotencyKey: "run", launchState: "failed", operationId: "spawn-1", errorCode: "hmux_managed_runtime_failed" };
+    expect(formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence: failed }))
+      .toBe("run — Start failed: hmux_managed_runtime_failed; inspect with dure runs show spawn-1");
+    // A refusal before preview has no Run record to point at.
+    expect(formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence: { ...failed, operationId: undefined,
+      errorCode: "agent_spawn_provider_preflight_failed" } })).toBe("run — Start failed: agent_spawn_provider_preflight_failed");
+    for (const errorCode of ["codex_app_server_credential_unavailable", "claude_conversation_credential_unavailable"]) {
+      const status = formatScheduleCommand({ kind: "dure.schedules.occurrences", occurrences: [{ ...failed, errorCode,
+        scheduleId: "daily", trigger: { kind: "manual" }, createdAtMs: 1 }] });
+      expect(status).toContain("Start blocked: the provider is not signed in on the backend host");
+      expect(status).toContain("dure accounts --help");
+    }
+  });
+
   it("requires exactly one project selector at the client boundary", async () => {
     const report = await collectScheduleCommand({
       action: "put",

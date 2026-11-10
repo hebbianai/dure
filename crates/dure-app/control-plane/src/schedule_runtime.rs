@@ -548,12 +548,13 @@ async fn spawn_occurrence(
             )
         })?;
     if receipt.state != AgentSpawnJournalStateV1::Succeeded {
-        return Err((
-            Some(operation_id),
-            receipt
-                .terminal_code
-                .unwrap_or_else(|| "schedule_run_incomplete".into()),
-        ));
+        // A failed stage awaiting retry carries its own code, such as a
+        // provider with no login on this host; that is what the user fixes.
+        let code = receipt
+            .failure_code()
+            .unwrap_or("schedule_run_incomplete")
+            .to_owned();
+        return Err((Some(operation_id), code));
     }
     Ok(operation_id)
 }

@@ -125,6 +125,83 @@ async fn schedule_starts_on_the_chat_runtime_only_where_the_native_integration_i
 }
 
 #[tokio::test]
+async fn failed_schedule_launch_records_the_failed_stage_code() {
+    let (root, state, launcher, _) =
+        fixture(vec![LaunchOutcome::Reject("hmux_managed_runtime_failed")]).await;
+    prepare_schedule(&root, &state).await;
+    schedule_runtime::tick(&state, 120_000).await.unwrap();
+    assert_eq!(launcher.requests().len(), 1);
+    let occurrences = state.store.schedule_occurrences(None, 10).await.unwrap();
+    assert_eq!(occurrences.len(), 1);
+    let spawn = state
+        .store
+        .agent_spawn_receipt_by_idempotency_key(&occurrences[0].idempotency_key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        spawn.state,
+        dure_app::AgentSpawnJournalStateV1::RetryRequired
+    );
+    assert_eq!(
+        occurrences[0].launch_state,
+        dure_app::ScheduleLaunchStateV1::Failed
+    );
+    assert_eq!(
+        occurrences[0].operation_id.as_deref(),
+        Some(spawn.operation_id.as_str())
+    );
+    // The stage's own code says what to fix; a generic one does not.
+    assert_eq!(
+        occurrences[0].error_code.as_deref(),
+        Some("hmux_managed_runtime_failed")
+    );
+}
+
+/// Without the app, the chat runtime opens the provider; one with no login on
+/// that host refuses there, and the occurrence must say so.
+#[tokio::test]
+async fn headless_schedule_records_the_chat_runtime_refusal() {
+    let (root, mut state, launcher, _) = fixture(Vec::new()).await;
+    prepare_schedule(&root, &state).await;
+    state.agent_providers = Arc::new(provider_extension::test_unintegrated_provider_registry());
+    let mut runtimes = structured_provider_runtime::StructuredProviderRuntimeRegistry::default();
+    runtimes
+        .register(
+            ProviderIdV1::new("codex").unwrap(),
+            Arc::new(CountingStructuredRuntime {
+                supports_new_sessions: true,
+                attach_count: Arc::new(AtomicUsize::new(0)),
+                attach_error: None,
+            }),
+        )
+        .unwrap();
+    state.structured_runtimes = Arc::new(runtimes);
+    schedule_runtime::tick(&state, 120_000).await.unwrap();
+    assert!(launcher.requests().is_empty(), "no terminal session");
+    let occurrences = state.store.schedule_occurrences(None, 10).await.unwrap();
+    assert_eq!(occurrences.len(), 1);
+    let spawn = state
+        .store
+        .agent_spawn_receipt_by_idempotency_key(&occurrences[0].idempotency_key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        spawn.plan.launch,
+        AgentSpawnLaunchPlanV1::StructuredProtocol
+    ));
+    assert_eq!(
+        occurrences[0].operation_id.as_deref(),
+        Some(spawn.operation_id.as_str())
+    );
+    assert_eq!(
+        occurrences[0].error_code.as_deref(),
+        Some("counting_structured_runtime_unavailable")
+    );
+}
+
+#[tokio::test]
 #[ignore = "requires DURE_QA_HMUX_BIN and DURE_QA_HMUX_RUNTIME; run pnpm test:hmux-schedule"]
 async fn schedule_run_uses_real_hmux() {
     assert_schedule_run_uses_real_hmux(false).await;
