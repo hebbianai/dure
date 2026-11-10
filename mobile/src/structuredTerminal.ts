@@ -158,8 +158,13 @@ export function mountStructuredTerminal(
      * frames. A fact for the caller — the transcript draws nothing for it.
      */
     onAgentRuntimeState?: (state: AgentRuntimeState) => void;
-    /** Projects this attachment's terminal failure without changing session runtime facts. */
-    onUnavailable?: (detail: string) => void;
+    /**
+     * Projects this attachment's terminal failure without changing session
+     * runtime facts. `connectionLost` is the client boundary's word that the
+     * connection went away and a fresh attach may resume, not a reading of
+     * the detail.
+     */
+    onUnavailable?: (detail: string, connectionLost: boolean) => void;
     /**
      * Sits on the one funnel every input leaves through — keys, typed text,
      * paste, the trackpad's arrows, the tray — and decides when `send` runs.
@@ -247,7 +252,7 @@ export function mountStructuredTerminal(
     noticeTimer = setTimeout(clearNotice, NOTICE_LINGER_MS);
   };
   notice.addEventListener("click", clearNotice);
-  const fail = (detail: string) => {
+  const fail = (detail: string, connectionLost = false) => {
     if (disposed || unavailable !== undefined) return;
     unavailable = detail;
     showScrollControl(false);
@@ -256,7 +261,7 @@ export function mountStructuredTerminal(
     // The caller owns the persistent banner when it projects this failure.
     notice.textContent = options.onUnavailable ? "" : detail;
     notice.hidden = options.onUnavailable !== undefined;
-    options.onUnavailable?.(detail);
+    options.onUnavailable?.(detail, connectionLost);
   };
 
   /**
@@ -466,7 +471,7 @@ export function mountStructuredTerminal(
         }
       }
       const control = parseControlRecord(bytes);
-      if (control !== null) fail(control);
+      if (control !== null) fail(control.detail, control.connectionLost);
       return control === null;
     }
     const assembled = multipart.push(bytes);
@@ -625,30 +630,44 @@ export function mountStructuredTerminal(
   };
 }
 
-function parseControlRecord(bytes: Uint8Array): string | null {
+/** Why a record ended the attachment. */
+interface TerminalFailure {
+  readonly detail: string;
+  readonly connectionLost: boolean;
+}
+
+const ended = (detail: string): TerminalFailure => ({ detail, connectionLost: false });
+
+function parseControlRecord(bytes: Uint8Array): TerminalFailure | null {
   try {
     const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
-    if (!value || typeof value !== "object") return "structured_terminal_control_invalid";
+    if (!value || typeof value !== "object") return ended("structured_terminal_control_invalid");
     const record = value as Record<string, unknown>;
     if (record.kind === "closed") {
-      return describeError({
+      // The connection went away under a live session. Its transport text
+      // (and the gateway's stderr it once carried) says nothing a person can
+      // act on, and the session itself is fine: reattaching resumes it.
+      if (record.retryDirective === "reconnect") {
+        return { detail: t("terminal.connectionLost"), connectionLost: true };
+      }
+      return ended(describeError({
         code: typeof record.code === "string" ? record.code : "structured_terminal_closed",
         message: typeof record.message === "string" ? record.message : "structured_terminal_closed",
-      });
+      }));
     }
     if (record.kind !== "control") return null;
     const body = record.body;
-    if (!body || typeof body !== "object") return "structured_terminal_control_invalid";
+    if (!body || typeof body !== "object") return ended("structured_terminal_control_invalid");
     const control = body as Record<string, unknown>;
     if (control.kind !== "exit" && control.kind !== "error") return null;
     const payload = control.payload;
     if (payload && typeof payload === "object") {
       const details = payload as Record<string, unknown>;
       const message = control.kind === "exit" ? details.reason : details.message;
-      if (typeof message === "string") return message;
+      if (typeof message === "string") return ended(message);
     }
-    return `hmux_${String(control.kind)}`;
+    return ended(`hmux_${String(control.kind)}`);
   } catch {
-    return "structured_terminal_control_invalid";
+    return ended("structured_terminal_control_invalid");
   }
 }

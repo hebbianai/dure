@@ -2,6 +2,7 @@
 export const en: Record<string, string> = {
   "terminal.enableInput": "Enable input",
   "terminal.reconnectNow": "Reconnect now",
+  "terminal.connectionLost": "The connection to this session was lost.",
   "session.status.running": "Running",
   "session.status.attention": "Needs attention",
   "session.status.blocked": "Blocked",

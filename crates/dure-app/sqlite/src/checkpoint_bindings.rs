@@ -4,7 +4,7 @@ use dure_app::{
     RuntimeKindIdV1, SessionBindingRecordV1, WorkflowSessionGenerationV1,
 };
 use sqlx::sqlite::SqliteRow;
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::{AssertSqlSafe, QueryBuilder, Row, Sqlite, SqlitePool};
 
 use crate::error::{corrupt_identifier, corrupt_row, identity_conflict, map_sqlx, storage};
 use crate::records::session_binding_on;
@@ -249,7 +249,7 @@ pub(crate) async fn authority_on(
     connection: &mut sqlx::SqliteConnection,
     agent_id: &AgentIdV1,
 ) -> Result<Option<AgentCheckpointBindingAuthorityV1>, DomainStoreErrorV1> {
-    let row = sqlx::query(&authority_select("WHERE sb.agent_id = ?1"))
+    let row = sqlx::query(AssertSqlSafe(authority_select("WHERE sb.agent_id = ?1")))
         .bind(agent_id.as_str())
         .fetch_optional(&mut *connection)
         .await
@@ -263,7 +263,7 @@ pub(crate) async fn authority_for_exact_session_on(
     runtime_kind_id: &RuntimeKindIdV1,
 ) -> Result<Option<AgentCheckpointBindingAuthorityV1>, DomainStoreErrorV1> {
     session.validate()?;
-    let rows = sqlx::query(&authority_select(
+    let rows = sqlx::query(AssertSqlSafe(authority_select(
         r#"
         WHERE sb.runtime_kind_id = ?1
           AND sb.session_id = ?2
@@ -274,7 +274,7 @@ pub(crate) async fn authority_for_exact_session_on(
           AND authority.host_instance_id = ?7
           AND authority.terminal_epoch = ?8
         "#,
-    ))
+    )))
     .bind(runtime_kind_id.as_str())
     .bind(&session.session_id)
     .bind(&session.workspace_id)
@@ -343,7 +343,9 @@ pub(crate) async fn observations(
     rows.into_iter().map(observation_from_row).collect()
 }
 
-fn authority_select(suffix: &str) -> String {
+/// Builds the authority SELECT from compile-time SQL only: the suffix is a
+/// `'static` fragment, never a caller value, so the result is audited SQL.
+fn authority_select(suffix: &'static str) -> String {
     format!(
         r#"
         SELECT

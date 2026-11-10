@@ -24,7 +24,7 @@ dure-provider-adapter = { path = "../provider-adapter" }
 dure-provider-profile = { path = "../provider-profile" }
 dure-session-runtime = { path = "../session-runtime" }
 dure-app-sqlite = { path = "../sqlite" }
-getrandom = "0.3"
+getrandom = "0.4"
 futures-util = "0.3"
 hebbian-bounded-process = { path = "../../hebbian-bounded-process" }
 hmux-client = { path = "../../../hmux/crates/hmux-client", features = ["terminal-state-stream"] }
@@ -45,7 +45,7 @@ tokio-tungstenite = { version = "0.27", default-features = false, features = ["h
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
-sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "sqlite-unlock-notify"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 mach2 = "0.6"

@@ -1850,7 +1850,7 @@ async fn schema_22_migrates_additively_to_the_timeline_authority() {
         "agent_provider_streams",
         "agent_interaction_sessions",
     ] {
-        sqlx::query(&format!("DROP TABLE {table}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {table}")))
             .execute(&mut connection)
             .await
             .unwrap();

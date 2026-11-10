@@ -23,6 +23,11 @@ import type {
 	TerminalAttachRecovery,
 	TerminalAttachWorktreeStatus,
 } from "@/lib/terminal/terminalAttachRecovery";
+import {
+	type TerminalRecoveryFailure,
+	terminalRecoveryFailure,
+	terminalRecoveryFailureMessageId,
+} from "@/lib/terminal/terminalRecoveryFailure";
 
 interface StructuredTerminalRecoveryStatusProps {
 	readonly paneId?: string;
@@ -63,10 +68,8 @@ export function StructuredTerminalRecoveryStatus({
 	const [worktreeStatus, setWorktreeStatus] = useState<
 		TerminalAttachWorktreeStatus | "inspecting" | "none"
 	>("none");
-	const [actionFailure, setActionFailure] = useState<{
-		readonly operation: "resume" | "recreate";
-		readonly detail: string;
-	}>();
+	const [actionFailure, setActionFailure] =
+		useState<TerminalRecoveryFailure>();
 	const [copiedErrorDetails, setCopiedErrorDetails] = useState(false);
 	const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
 	const autoResumeAttemptedRef = useRef(false);
@@ -130,10 +133,7 @@ export function StructuredTerminalRecoveryStatus({
 			return await attachRecovery.resume();
 		} catch (cause) {
 			setResumeState("failed");
-			setActionFailure({
-				operation: "resume",
-				detail: cause instanceof Error ? cause.message : String(cause),
-			});
+			setActionFailure(terminalRecoveryFailure("resume", cause));
 			throw cause;
 		}
 	}, [attachRecovery]);
@@ -158,10 +158,7 @@ export function StructuredTerminalRecoveryStatus({
 			await worktree.recreate();
 		} catch (cause) {
 			setResumeState("failed");
-			setActionFailure({
-				operation: "recreate",
-				detail: cause instanceof Error ? cause.message : String(cause),
-			});
+			setActionFailure(terminalRecoveryFailure("recreate", cause));
 			throw cause;
 		}
 		try {
@@ -170,10 +167,7 @@ export function StructuredTerminalRecoveryStatus({
 			// Restoration succeeded even if the independent Host launch did not.
 			setWorktreeStatus("present");
 			setResumeState("failed");
-			setActionFailure({
-				operation: "resume",
-				detail: cause instanceof Error ? cause.message : String(cause),
-			});
+			setActionFailure(terminalRecoveryFailure("resume", cause));
 			throw cause;
 		}
 	}, [attachRecovery]);
@@ -362,11 +356,7 @@ export function StructuredTerminalRecoveryStatus({
 				</div>
 				{resumeState === "failed" && (
 					<p className="text-xs text-muted-foreground">
-						{t(
-							actionFailure?.operation === "recreate"
-								? "terminal.recovery.worktreeRecreateFailed"
-								: reconnects ? "terminal.recovery.reconnectFailed" : "terminal.recovery.resumeFailed",
-						)}
+						{t(terminalRecoveryFailureMessageId(actionFailure, reconnects))}
 					</p>
 				)}
 				{errorDetailsOpen && (

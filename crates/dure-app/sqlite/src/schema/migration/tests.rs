@@ -97,7 +97,7 @@ async fn v40(path: &Path) -> SqliteConnection {
                 .await
                 .unwrap();
         } else {
-            sqlx::query(statement)
+            sqlx::query(*statement)
                 .execute(&mut connection)
                 .await
                 .unwrap();

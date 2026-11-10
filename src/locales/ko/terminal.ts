@@ -30,6 +30,7 @@ export const terminal: Record<string, string> = {
 	"terminal.recovery.resume": "세션 이어서 재개",
 	"terminal.recovery.resuming": "세션을 다시 여는 중…",
 	"terminal.recovery.resumeFailed": "이번엔 안 됐어요 — 다시 시도해도 안전해요.",
+	"terminal.recovery.resumeBusy": "Dure가 바빠서 아직 세션을 시작하지 못했어요. 바뀐 것은 없어요 — 잠시 후 다시 시도해 주세요.",
 	"terminal.recovery.worktreeMissingTitle": "워크트리가 삭제됐어요",
 	"terminal.recovery.worktreeMissingBody": "대화는 안전하지만 {branch} 브랜치의 저장된 워크트리가 없습니다. 다시 만들거나 저장소 루트에서 바로 재개할 수 있어요.",
 	"terminal.recovery.recreateWorktree": "워크트리 다시 만들고 재개",

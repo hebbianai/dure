@@ -39,7 +39,7 @@ portable-pty = "0.9"
 ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 base64 = "0.22"
 tiny_http = "0.12"
-getrandom = "0.3"
+getrandom = "0.4"
 tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-notification = "2.3.3"
 sha2 = "0.10"
@@ -81,7 +81,7 @@ keyring = "4.1.5"
 libc = "0.2"
 tokio = { version = "1", features = ["io-util", "net", "process", "sync", "time"] }
 tempfile = "3"
-sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "sqlite-unlock-notify"] }
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 memchr = "2.8.2"

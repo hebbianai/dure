@@ -1,4 +1,5 @@
 use agent_orchestration::contract::DeliveryReceipt;
+use sqlx::AssertSqlSafe;
 
 use super::*;
 
@@ -43,7 +44,9 @@ pub(crate) async fn queued(
          ORDER BY json_extract(delivery.delivery_json, '$.receipt.wake.updatedAtMs')
          LIMIT ?"
     );
-    let mut statement = sqlx::query(&query);
+    // The only runtime text is one `?` placeholder per reason code; every
+    // reason code is bound as a value.
+    let mut statement = sqlx::query(AssertSqlSafe(query));
     for reason_code in reason_codes {
         statement = statement.bind(*reason_code);
     }

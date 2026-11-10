@@ -41,6 +41,7 @@ export const terminal: Record<string, string> = {
 	"terminal.recovery.resume": "Retomar sessão",
 	"terminal.recovery.resuming": "Reabrindo a sessão…",
 	"terminal.recovery.resumeFailed": "Não funcionou — é seguro tentar de novo.",
+	"terminal.recovery.resumeBusy": "O Dure estava ocupado e ainda não conseguiu iniciar a sessão. Nada foi alterado — tente de novo em instantes.",
 	"terminal.recovery.worktreeMissingTitle": "Worktree ausente",
 	"terminal.recovery.worktreeMissingBody": "A conversa está segura, mas o worktree salvo de {branch} foi removido. Recrie-o ou retome a partir da raiz do repositório.",
 	"terminal.recovery.recreateWorktree": "Recriar worktree e retomar",

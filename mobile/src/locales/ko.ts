@@ -2,6 +2,7 @@
 export const ko: Record<string, string> = {
   "terminal.enableInput": "입력 켜기",
   "terminal.reconnectNow": "지금 재연결",
+  "terminal.connectionLost": "이 세션과의 연결이 끊어졌습니다.",
   "session.status.running": "실행 중",
   "session.status.attention": "주의",
   "session.status.blocked": "차단됨",

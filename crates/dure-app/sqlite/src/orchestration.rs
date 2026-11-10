@@ -3318,7 +3318,7 @@ async fn persist_canonical_completion(
 
 async fn decode_store_rows<T: serde::de::DeserializeOwned>(
     connection: &mut SqliteConnection,
-    query: &str,
+    query: &'static str,
     authority_key: &str,
     column: &str,
 ) -> Result<Vec<T>, StoreError> {
@@ -3334,8 +3334,8 @@ async fn decode_store_rows<T: serde::de::DeserializeOwned>(
 
 async fn insert_immutable(
     connection: &mut SqliteConnection,
-    insert: &str,
-    select: &str,
+    insert: &'static str,
+    select: &'static str,
     authority_key: &str,
     numeric_key: i64,
     value: String,
@@ -3363,8 +3363,8 @@ async fn insert_immutable(
 
 async fn insert_immutable_text_key(
     connection: &mut SqliteConnection,
-    insert: &str,
-    select: &str,
+    insert: &'static str,
+    select: &'static str,
     authority_key: &str,
     text_key: &str,
     value: String,
@@ -3392,8 +3392,8 @@ async fn insert_immutable_text_key(
 
 async fn insert_immutable_json_text_key<T>(
     connection: &mut SqliteConnection,
-    insert: &str,
-    select: &str,
+    insert: &'static str,
+    select: &'static str,
     authority_key: &str,
     text_key: &str,
     value: &T,

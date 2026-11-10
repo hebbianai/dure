@@ -13,9 +13,11 @@ dure-app = { path = ".." }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-# SQLx 0.9 requires Rust 1.94. The lockfile also keeps url/idna_adapter on
-# Rust-1.85-compatible releases; verify dependency changes against this MSRV.
-sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+# SQLx 0.9 requires Rust 1.94, above the rust-version declared here, so this
+# crate and its dependents build only with the repository-pinned toolchain.
+# Features: the bundled SQLite and unlock-notify, as the 0.8 `sqlite` feature
+# enabled; no extension loading or (de)serialization.
+sqlx ={ version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "sqlite-unlock-notify"] }
 tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]

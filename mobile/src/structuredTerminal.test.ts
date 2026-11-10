@@ -31,6 +31,7 @@ import {
   resizeRefusedReceiptRecord,
 } from "@/test/terminalRecordFixtures";
 import type { AgentRuntimeState } from "./agentRuntimeState";
+import { t } from "./i18n";
 import { mountStructuredTerminal } from "./structuredTerminal";
 
 /** URLs handed to the opener plugin, in order. */
@@ -514,6 +515,36 @@ describe("mobile structured terminal", () => {
     expect(keyIntents(sent)).toEqual([]);
     expect(host.querySelector<HTMLElement>(".structured-terminal__notice")?.hidden).toBe(true);
     surface.dispose();
+  });
+
+  it("reports a close the client may reconnect from as a lost connection, in a sentence", async () => {
+    const failures: [string, boolean][] = [];
+    const mount = (record: Record<string, unknown>) => {
+      let reads = 0;
+      return mountScripted([], {
+        onUnavailable: (detail, connectionLost) => failures.push([detail, connectionLost]),
+      }, {
+        next: async () => ++reads === 1 ? viewportRecord().buffer as ArrayBuffer
+          : new TextEncoder().encode(JSON.stringify(record)).buffer as ArrayBuffer,
+      });
+    };
+
+    const lost = mount({
+      kind: "closed",
+      code: "hmux_transport_closed",
+      message: "read Hmux frame over SSH failed: gateway startup line",
+      retryDirective: "reconnect",
+    });
+    await vi.waitFor(() => expect(failures).toHaveLength(1));
+    expect(failures[0]).toEqual([t("terminal.connectionLost"), true]);
+    lost.surface.dispose();
+
+    const failed = mount({
+      kind: "closed", code: "hmux_io_failed", message: "Read failed", retryDirective: "never",
+    });
+    await vi.waitFor(() => expect(failures).toHaveLength(2));
+    expect(failures[1]).toEqual(["Read failed (hmux_io_failed)", false]);
+    failed.surface.dispose();
   });
 
   it.each(["read", "send"])("ignores a disposed attachment's late %s rejection", async (failure) => {
