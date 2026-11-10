@@ -7,6 +7,7 @@ export const workspace: Record<string, string> = {
 	"workspace.refresh.identityUnavailable": "会話IDをまだ確認できません",
 	"workspace.refresh.success": "新しいHostで同じ会話を再開しました",
 	"workspace.refresh.failed": "更新に失敗しました: {error}",
+	"workspace.refresh.retryable": "再読み込みをまだ完了できませんでした ({code})。会話は変更されていません — もう一度再読み込みしてください。",
 	"workspace.quickCommands.invalidText": "ターミナル制御文字を含まない、空白だけではない16,000文字以内のテキストを入力してください。",
 	"workspace.quickCommands.moveUp": "{label} を上へ移動",
 	"workspace.quickCommands.moveDown": "{label} を下へ移動",

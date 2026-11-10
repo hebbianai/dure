@@ -8,6 +8,7 @@ import { usePaneActionPending } from "@/components/workspace/useNamedPaneAction"
 import { usePaneActions } from "@/components/workspace/usePaneActions";
 import { agentRuntimePaneActionOwnerKey } from "@/lib/agents/agentRuntimePaneAction";
 import { ProviderConversationInputAuthorityError } from "@/lib/agents/providerConversationInputAuthority";
+import { ManagedCreateRetrySameError } from "@/lib/hmux/managed/managedCreateResolution";
 import {
 	createManagedRefreshTiming,
 	type ManagedCreateDiagnostics,
@@ -40,6 +41,15 @@ export interface PaneRehostAction {
 	rehostToCurrentBuild: () => void;
 	refreshConversation: (() => void) | undefined;
 	refreshDisabled: boolean;
+}
+
+/** `retry_same` means the backend applied nothing and replaying the exact
+ * request is safe. Refresh derives that request from the unchanged pane, so the
+ * user can simply run it again; the code names the cause for a report. */
+function refreshFailureMessage(error: unknown): string {
+	return error instanceof ManagedCreateRetrySameError
+		? t("workspace.refresh.retryable", { code: error.backendCode })
+		: t("workspace.refresh.failed", { error: String(error) });
 }
 
 export function usePaneRehostAction<Params extends LocalHmuxPaneParameters>({
@@ -163,12 +173,9 @@ export function usePaneRehostAction<Params extends LocalHmuxPaneParameters>({
 					requestManagedRecovery(api.id);
 				}
 				showErrorToast(
-					t(
-						action === "refresh"
-							? "workspace.refresh.failed"
-							: "workspace.rehost.failed",
-						{ error: String(error) },
-					),
+					action === "refresh"
+						? refreshFailureMessage(error)
+						: t("workspace.rehost.failed", { error: String(error) }),
 					{ paneId: api.id },
 				);
 			}

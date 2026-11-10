@@ -5,6 +5,7 @@ import type { IDockviewPanelHeaderProps } from "dockview-react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ManagedCreateRetrySameError } from "@/lib/hmux/managed/managedCreateResolution";
 import * as refreshTiming from "@/lib/hmux/managed/managedRefreshTiming";
+import { t } from "@/lib/i18n";
 import { invokePaneAction } from "@/lib/workspace/pane/paneActionRegistry";
 import { agentFixture, managedBindingFixture } from "@/test/agentFixtures";
 import { usePaneRehostAction } from "./usePaneRehostAction";
@@ -195,5 +196,65 @@ describe("exact Refresh recovery", () => {
 		);
 		expect(mocks.recovery).not.toHaveBeenCalled();
 		expect(mocks.rehost).not.toHaveBeenCalled();
+	});
+});
+
+describe("Refresh failure toast", () => {
+	function renderRefresh() {
+		const binding = managedBindingFixture();
+		const agent = agentFixture({
+			runtimeBinding: binding,
+			conversationId: "exact-conversation",
+		});
+		return renderHook(() =>
+			usePaneRehostAction({
+				agent,
+				api: { id: "agent:agent-1" } as IDockviewPanelHeaderProps["api"],
+				commitWorkspaceLayout: undefined,
+				hmuxBinding: binding,
+				paneParamsRef: { current: { binding, sessionId: binding.sessionId } },
+			}),
+		);
+	}
+
+	it.each([
+		["create_retryable", "session_checkout_store_busy"],
+		["pending", "managed_create_pending"],
+		["authority_unavailable", "hmux_authority_unavailable"],
+	] as const)(
+		"says a %s Refresh can be tried again and names %s",
+		async (reason, backendCode) => {
+			mocks.resume.mockRejectedValueOnce(
+				new ManagedCreateRetrySameError(
+					reason,
+					backendCode,
+					"store is busy during prepare_session_checkout",
+				),
+			);
+			const { result } = renderRefresh();
+			act(() => result.current.refreshConversation?.());
+			const message = t("workspace.refresh.retryable", { code: backendCode });
+			expect(message).toContain(backendCode);
+			await waitFor(() =>
+				expect(mocks.error).toHaveBeenCalledExactlyOnceWith(message, {
+					paneId: "agent:agent-1",
+				}),
+			);
+			expect(mocks.recovery).not.toHaveBeenCalled();
+		},
+	);
+
+	it("keeps the raw cause for any other Refresh failure", async () => {
+		mocks.resume.mockRejectedValueOnce(new Error("hmux_launch_failed: boom"));
+		const { result } = renderRefresh();
+		act(() => result.current.refreshConversation?.());
+		await waitFor(() =>
+			expect(mocks.error).toHaveBeenCalledExactlyOnceWith(
+				t("workspace.refresh.failed", {
+					error: "Error: hmux_launch_failed: boom",
+				}),
+				{ paneId: "agent:agent-1" },
+			),
+		);
 	});
 });
