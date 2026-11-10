@@ -39,6 +39,7 @@ import {
   parseDiagnosticRequirements,
   supportsHmuxCapability,
 } from "./lib/runtime-diagnostics.mjs";
+import { inspectHubRuns } from "./lib/hub-run-records.mjs";
 import {
   inspectRuntimeIdentity,
   permissionAttributionHint,
@@ -673,6 +674,16 @@ function cmdVersion(opts) {
   );
 }
 
+/** Reads the local hub's run records; never starts or contacts the hub. */
+async function inspectLocalHub() {
+  try {
+    const { localBackendRoot } = await import("./lib/local-backend.mjs");
+    return inspectHubRuns({ backendRoot: localBackendRoot() });
+  } catch {
+    return { state: "unavailable" };
+  }
+}
+
 async function cmdDiagnostics(opts) {
   if (opts.require !== undefined && !opts.check) {
     fail("--require must be used with diagnostics --check.");
@@ -690,6 +701,7 @@ async function cmdDiagnostics(opts) {
     descriptorPath: join(APP_CONTROL_DIR, "server.json"),
   });
   const hmuxInspection = inspectHmuxCompatibility();
+  const hub = await inspectLocalHub();
   const runtimeIdentity = inspectRuntimeIdentity({
     home: homedir(),
     appProcessId: app.state === "running" ? app.processId : null,
@@ -703,6 +715,7 @@ async function cmdDiagnostics(opts) {
     app,
     runtimeIdentity,
     selectedChannel: APP_CHANNEL,
+    hub,
     hmux: {
       command: hmuxInspection.command,
       version: hmuxInspection.version ?? null,
@@ -4130,6 +4143,9 @@ at least as new as the running app. CLI freshness and the app's frontend/backend
 compatibility are separate observations. No provider or app is restarted.
 Desktop WebView warnings/errors appear as bounded redacted evidence in
 app.webviewDiagnostics; --json includes all retained rows. Older apps report unavailable.
+The hub section reads the local hub's run records without contacting it: current
+uptime, why it was launched, and how the previous hub ended (shutdown, signal,
+error, panic, or ended without an exit record).
 Without --check, diagnostic findings do not change the exit status.`;
 
 /** 유지보수 커맨드 — 레지스트리 불필요(앱이 안 돌았어도 동작해야 한다). */

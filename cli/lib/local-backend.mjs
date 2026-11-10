@@ -54,6 +54,7 @@ import {
   currentControlPlaneBundleIdentity,
 } from "./control-plane-contract.mjs";
 import { readVerifiedDescriptorText } from "./fd-verified-read.mjs";
+import { HUB_LAUNCH_REASON_ENVIRONMENT } from "./hub-run-records.mjs";
 import { localBackendServiceEnvironment } from "./local-backend-environment.mjs";
 import { parseLocalExecutableIdentity } from "./local-backend-executable-identity.mjs";
 import {
@@ -220,6 +221,11 @@ function appHome(environment) {
       homeDirectory: environment.HOME || homedir(),
     }),
   );
+}
+
+/** The local hub's durable root: <DURE_HOME>/backend. */
+export function localBackendRoot(environment = process.env) {
+  return join(appHome(environment), "backend");
 }
 
 function assertOwnerDirectory(path, failureCode = "local_backend_root_unsafe") {
@@ -964,6 +970,7 @@ async function reconcileActivatedReplacement({
     startService({
       activationSourceGeneration: confirmation.intent.source.generation,
       claudeRuntime: targetClaudeRuntime,
+      launchReason: "activation_recovery",
       controlPlaneIdentity: confirmation.intent.target.controlPlaneIdentity,
       environment,
       generation: confirmation.intent.target.generation,
@@ -1006,6 +1013,7 @@ function startService({
   environment,
   generation,
   hmuxIdentity,
+  launchReason,
   root,
   staged = false,
 }) {
@@ -1038,6 +1046,9 @@ function startService({
   } catch (error) {
     fail("local_backend_login_environment_unavailable", { cause: error });
   }
+  // The hub keeps this reason in its run record (`dure diagnostics` shows it)
+  // and removes it from its own environment. An older hub ignores it.
+  serviceEnvironment[HUB_LAUNCH_REASON_ENVIRONMENT] = launchReason ?? "unspecified";
   const child = spawn(executable, argv, {
     detached: true,
     env: serviceEnvironment,
@@ -1429,6 +1440,7 @@ async function ensureService(options) {
         controlPlaneIdentity,
         claudeRuntime,
         generation: existingDescriptor.generation,
+        launchReason: "restart_unreachable",
         hmuxIdentity,
         root,
       });
@@ -1455,6 +1467,7 @@ async function ensureService(options) {
       claudeRuntime,
       generation: replacementIntent.target.generation,
       hmuxIdentity: replacementIntent.target.hmuxIdentity,
+      launchReason: "replacement",
       root,
       staged: true,
     });
@@ -1490,6 +1503,7 @@ async function ensureService(options) {
     claudeRuntime,
     controlPlaneIdentity,
     hmuxIdentity,
+    launchReason: "first_start",
     root,
   });
   const descriptor = await waitForCurrentService(

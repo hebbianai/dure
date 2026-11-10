@@ -12,6 +12,7 @@ use tokio::sync::{Mutex, Notify, Semaphore, oneshot};
 use tokio::task::JoinSet;
 
 use crate::agent_runtime_transition_apply::deferred::idle;
+use crate::hub_run_record::{HubLaunch, HubRun};
 
 #[cfg(unix)]
 use crate::managed_structured_runtime;
@@ -380,14 +381,27 @@ impl PreparedControlPlane {
     }
 }
 
-pub async fn serve(options: ServeOptions) -> Result<(), ControlPlaneError> {
-    prepare_with_agent_conversation_runtimes(
+/// Serves this process as the hub and keeps its durable run record.
+pub async fn serve(options: ServeOptions, launch: HubLaunch) -> Result<(), ControlPlaneError> {
+    let backend_root = options.home.join("backend");
+    let prepared = prepare_with_agent_conversation_runtimes(
         options,
         Arc::new(agent_conversation_api::AgentConversationRuntimeRegistry::default()),
     )
-    .await?
-    .serve()
-    .await
+    .await?;
+    let descriptor = &prepared.runtime.state.descriptor;
+    let run = HubRun::begin(
+        &backend_root,
+        &descriptor.generation,
+        descriptor
+            .build_id
+            .as_deref()
+            .unwrap_or(control_plane_build_id()),
+        launch,
+    );
+    let result = prepared.serve().await;
+    run.finish(&result);
+    result
 }
 
 pub async fn prepare_with_agent_conversation_runtimes(
