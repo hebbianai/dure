@@ -42,6 +42,12 @@ describe("client project backend guidance", () => {
     expect(result.registerCommand).not.toContain("ssh-AppID");
   });
 
+  it("prints the exact command that creates a backend profile for the SSH host", async () => {
+    const result = await clientProjectBackendGuidance({ ...registration, hostId: "ssh-AppID", project: { ...registration.project, kind: "ssh" } }, { loadProfiles, requestBackend: vi.fn() });
+    expect(result.profileAddCommand).toBe("dure profiles add ssh-appid --host ssh-AppID");
+    expect(formatClientProjectBackendGuidance(result)).toContain("dure profiles add ssh-appid --host ssh-AppID");
+  });
+
   describe("--register-backend", () => {
     const unregistered = { result: { schemaVersion: 1, project: null, root: null } };
     const suggestedId = /^project-[a-f0-9]{12}$/;

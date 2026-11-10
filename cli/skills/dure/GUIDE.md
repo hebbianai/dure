@@ -591,8 +591,10 @@ works right away; `backendProject.registration` then reads `created`, `existing`
 `not_requested` or `failed` (exit 1, reason included, manual command kept). The
 flag is opt-in because it writes a durable backend project.
 An unavailable/older backend is reported as unchecked, not unregistered. For an
-SSH app project, run the printed command on its owning host; an app host ID is
-not a backend profile ID. The app project ID is never a schedule project selector.
+SSH app project, run the printed command on its owning host, or run the printed
+`dure profiles add ID --host APP_SSH_HOST_ID` to use a Dure backend already running
+there as `--backend ID`; it installs nothing and stops if none answers. An app host
+ID is not a backend profile ID. The app project ID is never a schedule project selector.
 `split` creates the pane through the app's existing correlated transaction.
 
 `host add` imports an SSH config alias or registers explicit connection fields

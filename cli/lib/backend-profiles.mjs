@@ -31,6 +31,8 @@ const GENERATION = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/;
 const CAPABILITY = /^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/;
 const SSH_HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.:-]{0,251}[A-Za-z0-9])?$/;
 const SSH_USER = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+const GENERATED_APP_HOST_ID = /^host-[A-Za-z0-9_-]+$/;
+const SHELL_SAFE_APP_HOST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
 const MESSAGES = Object.freeze({
   backend_profiles_auth_invalid: "backend profile authentication is invalid",
@@ -70,11 +72,24 @@ const MESSAGES = Object.freeze({
   backend_profiles_transport_invalid: "backend profile transport is invalid",
   backend_profiles_trust_invalid: "backend profile trust policy is invalid",
   backend_profiles_unknown_field: "backend profiles configuration has an unknown field",
+  backend_profiles_add_host_key_unknown:
+    "that SSH host's key is not in known_hosts; connect to it once with ssh, then retry",
+  backend_profiles_add_key_unavailable:
+    "that SSH host's key file is missing or is not an owner-only regular file",
+  backend_profiles_add_no_backend:
+    "no Dure backend answered on that SSH host; nothing was installed or written",
+  backend_profiles_add_password_auth:
+    "an SSH host that uses password authentication cannot be a backend profile; register it with a key file or an SSH agent",
+  backend_profiles_add_profile_exists:
+    "that backend profile ID already points to a different destination",
+  backend_profiles_add_ssh_failed:
+    "could not connect to that SSH host; check its key, SSH agent and network, then retry",
 });
 
 export class BackendProfileError extends Error {
   constructor(code, options = {}) {
-    super(MESSAGES[code] ?? "backend profiles operation failed", options);
+    const message = MESSAGES[code] ?? "backend profiles operation failed";
+    super(options.detail === undefined ? message : `${message}: ${options.detail}`, options);
     this.code = code;
     this.name = "BackendProfileError";
   }
@@ -107,7 +122,7 @@ function validBoundedString(value, maximum = MAX_SHORT_STRING_LENGTH) {
   );
 }
 
-function parseProfileId(value, code = "backend_profiles_profile_id_invalid") {
+export function parseProfileId(value, code = "backend_profiles_profile_id_invalid") {
   if (
     !validBoundedString(value, MAX_ID_LENGTH) ||
     !PROFILE_ID.test(value)
@@ -528,6 +543,48 @@ export function loadBackendProfiles(options = {}) {
   return parseBackendProfiles(readOwnerOnlyFile(configPath));
 }
 
+/** The exact command that makes an app SSH host usable as `--backend`. The
+ * suggested ID equals the host ID when that is already a valid profile ID, so
+ * the `--backend` the user just tried works once the command has run. */
+export function backendProfileAddCommand(hostId) {
+  if (
+    !validBoundedString(hostId, MAX_SHORT_STRING_LENGTH) ||
+    !SHELL_SAFE_APP_HOST_ID.test(hostId)
+  ) {
+    return undefined;
+  }
+  const profileId = hostId
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/gu, "-")
+    .slice(0, MAX_ID_LENGTH)
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/gu, "");
+  return PROFILE_ID.test(profileId)
+    ? `dure profiles add ${profileId} --host ${hostId}`
+    : undefined;
+}
+
+function failUnknownSelector(code, selector) {
+  const nextCommand =
+    typeof selector === "string" && GENERATED_APP_HOST_ID.test(selector)
+      ? backendProfileAddCommand(selector)
+      : undefined;
+  fail(
+    code,
+    nextCommand === undefined
+      ? undefined
+      : {
+          detail: `${selector} is an app SSH host, not a backend profile. Create its profile with: ${nextCommand}`,
+        },
+  );
+}
+
+function parseSelector(value) {
+  if (typeof value === "string" && !PROFILE_ID.test(value)) {
+    failUnknownSelector("backend_profiles_selector_invalid", value);
+  }
+  return parseProfileId(value, "backend_profiles_selector_invalid");
+}
+
 export function selectBackendProfile(
   catalog,
   { explicitId, environment = process.env } = {},
@@ -538,13 +595,10 @@ export function selectBackendProfile(
   let selectedId;
   let source;
   if (explicitId !== undefined) {
-    selectedId = parseProfileId(explicitId, "backend_profiles_selector_invalid");
+    selectedId = parseSelector(explicitId);
     source = "cli";
   } else if (environmentId !== undefined && environmentId !== "") {
-    selectedId = parseProfileId(
-      environmentId,
-      "backend_profiles_selector_invalid",
-    );
+    selectedId = parseSelector(environmentId);
     source = "environment";
   } else {
     const defaults = catalog.profiles.filter((profile) => profile.default);
@@ -553,7 +607,7 @@ export function selectBackendProfile(
     source = "default";
   }
   const profile = catalog.profiles.find((item) => item.id === selectedId);
-  if (!profile) fail("backend_profiles_selection_not_found");
+  if (!profile) failUnknownSelector("backend_profiles_selection_not_found", selectedId);
   return { profile, source };
 }
 
