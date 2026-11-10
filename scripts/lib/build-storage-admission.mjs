@@ -45,6 +45,18 @@ function cachePreservationRefusal(label, available, required, diagnostics) {
 /** One admission boundary for build growth: adopt an inherited capability or
  * publish a host-wide reservation, run only safe reclaim when capacity is
  * insufficient, then retry once against a fresh physical observation. */
+/** A disposable GitHub-hosted runner shares its volume with no other build
+ * and is discarded after its job, so a build there keeps no floor and
+ * reserves nothing. Budgets sized for a shared host (a 60 GiB floor, 50 GiB
+ * for a full build) would otherwise refuse a `macos-15` VM with about 46 GiB
+ * free, on which the release build uses under 10 GiB. Spread the result after
+ * the caller's own request. */
+export function disposableRunnerAdmission(environment = process.env) {
+  return environment.RUNNER_ENVIRONMENT === "github-hosted"
+    ? { floorBytes: 0, goalBytes: 0, requestedBytes: 0 }
+    : {};
+}
+
 export function ensureHeadroom({
   cwd = process.cwd(),
   buildClass,

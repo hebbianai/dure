@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { runWithBuildStorage } from "../run-with-build-storage.mjs";
 import {
   assertHeadroom,
+  disposableRunnerAdmission,
   ensureHeadroom,
 } from "./build-storage-admission.mjs";
 import { inspectBuildStorageReservations } from "./build-storage-reservation.mjs";
@@ -19,6 +20,33 @@ import { buildStorageBudget, GIB } from "./disk-space.mjs";
 import { withoutLocalGitOverrides } from "./git-environment.mjs";
 
 describe("build storage admission", () => {
+  it("keeps no floor and reserves nothing only on a disposable GitHub-hosted runner", () => {
+    expect(disposableRunnerAdmission({ RUNNER_ENVIRONMENT: "github-hosted" })).toEqual({
+      floorBytes: 0, goalBytes: 0, requestedBytes: 0,
+    });
+    for (const environment of [{ RUNNER_ENVIRONMENT: "self-hosted" }, { RUNNER_ENVIRONMENT: "" }, {}])
+      expect(disposableRunnerAdmission(environment)).toEqual({});
+    // The CLI control-plane build after a hosted release build: 37.6 GiB free.
+    const options = (environment) => ({
+      environment,
+      label: "Dure CLI control-plane build",
+      requestedBytes: buildStorageBudget("cli"),
+      ...disposableRunnerAdmission(environment),
+      observeAvailableBytes: () => 37.6 * GIB,
+      reclaimOutputs: () => ({ availableAfter: 37.6 * GIB, removed: [], removedBytes: 0 }),
+      reserve: vi.fn(({ availableBytes, floorBytes, requestedBytes }) =>
+        availableBytes >= floorBytes + requestedBytes
+          ? { ok: true, reservation: { release() {} } }
+          : { ok: false, reason: "insufficient_unreserved_space", reservedBytes: 0 }),
+      log: () => {},
+    });
+    const hosted = options({ RUNNER_ENVIRONMENT: "github-hosted" });
+    expect(ensureHeadroom(hosted)).toMatchObject({ ok: true, reservation: null });
+    expect(hosted.reserve).not.toHaveBeenCalled();
+    const shared = options({ RUNNER_ENVIRONMENT: "self-hosted" });
+    expect(ensureHeadroom(shared)).toMatchObject({ ok: false, reservation: null });
+  });
+
   it.each([0, 4 * GIB])("preserves caches and refuses low capacity with requested bytes %s", (requestedBytes) => {
     const reclaimOutputs = vi.fn(() => ({
       availableAfter: 200 * GIB, removed: [], removedBytes: 0,

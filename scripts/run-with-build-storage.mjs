@@ -3,7 +3,10 @@
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { waitForHostResources } from "./lib/host-resource-admission.mjs";
-import { ensureHeadroom } from "./lib/build-storage-admission.mjs";
+import {
+  disposableRunnerAdmission,
+  ensureHeadroom,
+} from "./lib/build-storage-admission.mjs";
 import { exposeBuildStorageReservation } from "./lib/build-storage-reservation.mjs";
 import {
   BUILD_STORAGE_BUDGETS,
@@ -32,17 +35,13 @@ export function runWithBuildStorage(
   } = {},
 ) {
   const command = parseBuildStorageCommand(arguments_);
-  const disposableRunnerPolicy =
-    environment.RUNNER_ENVIRONMENT === "github-hosted"
-      ? { floorBytes: 0, goalBytes: 0 }
-      : {};
   const headroom = admit({
     cwd,
     environment,
-    ...disposableRunnerPolicy,
     label: `${command.kind} build`,
     buildClass: command.kind,
     requestedBytes: buildStorageBudget(command.kind),
+    ...disposableRunnerAdmission(environment),
   });
   if (!headroom.ok) throw new Error(headroom.message);
   const invocation =

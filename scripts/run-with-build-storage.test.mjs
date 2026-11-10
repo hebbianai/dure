@@ -7,9 +7,11 @@ import {
   runBuildStorageCli,
   runWithBuildStorage,
 } from "./run-with-build-storage.mjs";
+import { ensureHeadroom } from "./lib/build-storage-admission.mjs";
 import { BUILD_STORAGE_RESERVATION_ENV } from "./lib/build-storage-reservation.mjs";
 import {
   BUILD_STORAGE_BUDGETS,
+  GIB,
   buildStorageBudget,
 } from "./lib/disk-space.mjs";
 
@@ -207,7 +209,7 @@ process.stdout.write(JSON.stringify({
     expect(release).toHaveBeenCalledOnce();
   });
 
-  it("does not reserve a second build on a disposable GitHub-hosted runner", () => {
+  it("reserves nothing on a disposable GitHub-hosted runner", () => {
     const admit = vi.fn(() => ({ ok: true, reservation: null }));
 
     expect(
@@ -224,8 +226,43 @@ process.stdout.write(JSON.stringify({
       goalBytes: 0,
       label: "full build",
       buildClass: "full",
-      requestedBytes: buildStorageBudget("full"),
+      requestedBytes: 0,
     });
+  });
+
+  it("admits a hosted full build on less free space than the shared-host budget", () => {
+    const run = vi.fn(() => ({ status: 0 }));
+    const reserve = vi.fn();
+    expect(
+      runWithBuildStorage(["full", "--", "fixture"], {
+        admit: (options) => ensureHeadroom({
+          ...options,
+          observeAvailableBytes: () => 46 * GIB,
+          reclaimOutputs: vi.fn(),
+          reserve,
+          log: () => {},
+        }),
+        environment: { RUNNER_ENVIRONMENT: "github-hosted" },
+        run,
+      }),
+    ).toBe(0);
+    expect(run).toHaveBeenCalledOnce();
+    expect(reserve).not.toHaveBeenCalled();
+    // The same volume on a shared host is refused before the command starts.
+    expect(() =>
+      runWithBuildStorage(["full", "--", "fixture"], {
+        admit: (options) => ensureHeadroom({
+          ...options,
+          observeAvailableBytes: () => 46 * GIB,
+          reclaimOutputs: () => ({ removed: [], removedBytes: 0, availableAfter: 46 * GIB }),
+          reserve: () => ({ ok: false, reason: "insufficient_unreserved_space", reservedBytes: 0 }),
+          log: () => {},
+        }),
+        environment: { RUNNER_ENVIRONMENT: "self-hosted" },
+        run,
+      }),
+    ).toThrow("was not started");
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it("releases the reservation when the command fails to launch", () => {

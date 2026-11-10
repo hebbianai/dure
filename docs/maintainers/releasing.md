@@ -10,6 +10,52 @@ not publish, install or restart a user's app.
 
 ## Provision once
 
+The macOS jobs (`host-preflight`, `verification` and `build`) run on the
+dedicated `dure-release` runner group unless a dispatch opts into the hosted
+runner with `macos_runner=github-hosted`. A dispatch without that input, or
+with `macos_runner=self-hosted`, behaves as before. The hosted runner is a
+GitHub-hosted `macos-15` VM, a disposable Apple silicon machine for each job
+with no other work on it. Releases there do not depend on the load of a shared
+Mac and can run beside local work.
+
+### Hosted runner
+
+A hosted VM has no signing identity. Before the first
+`macos_runner=github-hosted` dispatch, register two more secrets in the
+`macos-release` environment:
+
+- `APPLE_CERTIFICATE`: the Developer ID Application identity named by
+  `APPLE_SIGNING_IDENTITY`, exported with its private key as a `.p12` file and
+  base64-encoded.
+- `APPLE_CERTIFICATE_PASSWORD`: the password chosen for that export.
+
+On the Mac that holds the identity, export it from Keychain Access (My
+Certificates, the `Developer ID Application: …` entry, Export, `.p12`) and
+pipe it in so that neither value appears in a shell argument:
+
+```sh
+base64 -i DeveloperID.p12 | gh secret set APPLE_CERTIFICATE --env macos-release --repo hebbianai/dure
+gh secret set APPLE_CERTIFICATE_PASSWORD --env macos-release --repo hebbianai/dure   # prompts
+rm -P DeveloperID.p12
+```
+
+The build job imports the identity right before `tauri build`, from the
+protected workflow checkout, into a keychain it creates under `RUNNER_TEMP`
+(`scripts/manage-hosted-signing-keychain.sh prepare`). It deletes that
+keychain after the DMG is signed. Only that import step receives the two
+secrets. The build step never sees them, and the readiness check still refuses
+`APPLE_CERTIFICATE` in its environment, so the bundler never imports a
+certificate on its own. Before the tag exists, `host-preflight` or
+`verification` evaluates only whether both secrets are set. When either is
+missing, the run stops there and the version stays unused. Add the secrets, or
+dispatch again without `macos_runner=github-hosted`.
+
+Use the Apple ID notarization route on the hosted runner. The API-key route
+needs `APPLE_API_KEY_PATH` to name a key file that is already on the runner,
+and a fresh VM has none.
+
+### Self-hosted runner group
+
 Use a dedicated macOS ARM64 signing host with a logged-in Finder session.
 Do not register a maintainer's daily-driver host for public pull requests.
 Provision an organization runner group named `dure-release`, restricted to this
@@ -26,9 +72,12 @@ infrastructure first. Environment approval alone does not protect a persistent
 host from other workflows. See GitHub's
 [runner-group access policy](https://docs.github.com/en/enterprise-cloud@latest/actions/how-tos/manage-runners/self-hosted-runners/manage-access).
 
+### Signing environment
+
 Create the `macos-release` environment with a main-only deployment policy,
 `komojini` as its required reviewer, and administrator bypass disabled.
-Register these secrets in that environment:
+Register these secrets in that environment, in addition to the hosted
+certificate above:
 
 - `APPLE_SIGNING_IDENTITY`: the existing valid Developer ID Application identity.
 - One notarization route: `APPLE_ID`, app-specific `APPLE_PASSWORD` and
@@ -38,16 +87,23 @@ Register these secrets in that environment:
   Preserve the existing updater key: installed clients trust its shipped public
   key. Do not rotate it as a repository migration shortcut.
 
-Provision the certificate and its private key in the runner's signing keychain
-through its owner. Do not add `APPLE_CERTIFICATE` or automatic P12-import steps:
-the existing readiness check deliberately refuses shared-keychain mutation.
+On the self-hosted runner, the runner's owner provisions the certificate and
+its private key in that runner's signing keychain. The import helper refuses to
+run on a self-hosted runner, so a persistent host's keychains are never
+changed by a release.
 Keep credentials out of issues, shell arguments, logs and Git. Existing GitHub
 secret values cannot be read back for copying; use the original secure source or
 a narrowly scoped organization secret policy.
 
 Set environment variable `DURE_TELEMETRY_KEY` to the existing public telemetry
 project token. The build refuses an empty value and checks the compiled binary.
-Normal storage admission and isolated Cargo/process ownership are unchanged.
+Normal storage admission and isolated Cargo/process ownership are unchanged on
+the self-hosted runner. On a GitHub-hosted runner, storage admission keeps no
+floor and reserves nothing (`disposableRunnerAdmission` in
+`scripts/lib/build-storage-admission.mjs`): the VM is discarded after the job
+and shares its volume with no other build. A `macos-15` VM has about 46 GiB
+free. That is below the 60 GiB floor and the 50 GiB full-build reservation
+used on a shared host, but well above what the release build uses.
 After uploading the signed files, the build job removes the outputs it left in
 its own release checkout (`git clean -ffdx` in `source/`, about 8 GiB), even when
 an earlier step failed. It does not touch the runner-owned Cargo target
@@ -118,6 +174,9 @@ gh workflow run release.yml --repo hebbianai/dure --ref main \
   -f source_ref=main -f bump=patch -f verification=full
 ```
 
+Add `-f macos_runner=github-hosted` to run the macOS jobs on the hosted runner
+instead of the `dure-release` group.
+
 The selected source and protected workflow commits each need public CI evidence:
 a successful `public-repository.yml` run for that exact commit in which
 `Public repository checks` succeeded and the frontend and script suites ran:
@@ -141,23 +200,27 @@ Each emergency run needs fresh maintainer authorization for its selected version
 the option does not reuse a historical exception for a later release.
 
 No version ref is created before the signing host has been approved and has
-admitted the build. In full mode the verification job does this on the signing
-runner. In emergency mode a `host-preflight` job runs there instead: it waits for
+admitted the build. In full mode the verification job does this on the selected
+macOS runner. In emergency mode a `host-preflight` job runs there instead: it waits for
 the `macos-release` approval, checks the arm64 host and its Finder session,
-refuses an overloaded host, and runs the full build's storage admission without
-building (`run-with-build-storage.mjs full -- true`). It receives no publisher
-credentials or signing secrets. A rejected or cancelled approval, a load
-refusal or a storage refusal stops the run before `release/vX.Y.Z` and
-`vX.Y.Z` exist, so the version stays unused; fix the host, then re-run the
-failed jobs or start a new dispatch. The build job uses the same environment after the tag exists, so every
+and, on the hosted runner, that the certificate secrets are set. On the
+self-hosted runner it also refuses an overloaded host and runs the full build's
+storage admission without building (`run-with-build-storage.mjs full -- true`).
+It receives no publisher credentials or signing secrets. A rejected or
+cancelled approval, a missing hosted certificate, a load refusal or a storage
+refusal stops the run before `release/vX.Y.Z` and `vX.Y.Z` exist, so the
+version stays unused; fix the cause, then re-run the failed jobs or start a new
+dispatch. The build job uses the same environment after the tag exists, so every
 run asks for `macos-release` approval twice. The preflight is a point-in-time
 check: the build admits its storage again, and a volume that fills up in between
 still stops the build after tagging.
 
-Both pre-tag jobs run `check-release-host.mjs --max-load-per-core 16` and
-refuse with `release_host_overloaded` when the one-minute load average exceeds
-16 per logical core (256 on the 16-core signing host), or with
-`release_host_memory_critical`. The threshold comes from release run
+On the self-hosted runner, both pre-tag jobs run
+`check-release-host.mjs --max-load-per-core 16` and refuse with
+`release_host_overloaded` when the one-minute load average exceeds 16 per
+logical core (256 on the 16-core signing host), or with
+`release_host_memory_critical`. A hosted VM skips the check. Nothing else runs
+on it, and its boot alone measured a load of 48 on 3 cores. The threshold comes from release run
 41195693547 (#308): the DMG step succeeded at a load of about 155 and failed at
 400–935 while the host swapped. The check is a point-in-time refusal before the
 version is reserved; the build job never refuses after tagging.
@@ -263,8 +326,10 @@ How the packages are made:
    `usr/lib/Dure/resources/dure-cli`; the smoke requires the app to install
    that CLI and start its backend. Ubuntu 22.04 sets the glibc 2.35 floor.
    None of these jobs receive credentials.
-2. `linux-sign` runs on the `dure-release` signing host in the `macos-release`
-   environment. It builds nothing: it signs the four packages with the existing
+2. `linux-sign` runs on the same runner as `build`, in the `macos-release`
+   environment. That is the `dure-release` signing host unless the dispatch
+   selects `macos_runner=github-hosted`. It builds nothing: it signs the four
+   packages with the existing
    `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)
    through the pinned Tauri CLI, checks every signature against the tag's
    updater public key and keeps the eight files as `release-linux-assets-vX.Y.Z`

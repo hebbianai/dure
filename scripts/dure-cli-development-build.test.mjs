@@ -18,7 +18,8 @@ function invoke(arguments_, environment = {}) {
   // This fixture observes the installer's actual build invocation. It neither
   // compiles native code nor reserves storage for a compiler that cannot run.
   writeFileSync(join(repository, "scripts/lib/build-storage-admission.mjs"),
-    "export function ensureHeadroom() { return { ok: true }; }\n");
+    "export function ensureHeadroom() { return { ok: true }; }\n" +
+      "export function disposableRunnerAdmission() { return {}; }\n");
   const bin = join(home, "bin");
   mkdirSync(bin);
   const receipt = join(home, "cargo.json");

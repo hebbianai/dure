@@ -390,7 +390,8 @@ test.skipIf(process.platform === "win32")("CLI compilation and Hmux preparation 
     // The fixture compiler produces no artifacts, so disk admission is outside
     // this wiring proof. Keep the real installer and native slot execution.
     writeFileSync(join(repository, "scripts/lib/build-storage-admission.mjs"),
-      "export function ensureHeadroom() { return { ok: true, reservation: null }; }\n");
+      "export function ensureHeadroom() { return { ok: true, reservation: null }; }\n" +
+      "export function disposableRunnerAdmission() { return {}; }\n");
     writeFileSync(join(repository, ".test-bin/cargo"),
       `#!/usr/bin/env node\nimport ${JSON.stringify(pathToFileURL(setup.worker).href)};\n`, { mode: 0o700 });
     const environment = dureCliInstallerFixtureEnvironment(repository, setup.environment(setup.root));

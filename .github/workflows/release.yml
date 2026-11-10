@@ -20,6 +20,12 @@ on:
         default: full
         type: choice
         options: [full, emergency-0.2]
+      macos_runner:
+        description: Where the macOS jobs run; github-hosted needs the APPLE_CERTIFICATE secrets in macos-release
+        required: false
+        default: self-hosted
+        type: choice
+        options: [self-hosted, github-hosted]
 
 concurrency:
   group: official-macos-release
@@ -45,7 +51,23 @@ jobs:
       tag: ${{ steps.admission.outputs.tag }}
       source_sha: ${{ steps.admission.outputs.sourceSha }}
       source_ref: ${{ steps.admission.outputs.sourceRef }}
+      macos_runner: ${{ steps.runner.outputs.labels }}
     steps:
+      # One place maps the input to runs-on for host-preflight, verification
+      # and build. A dispatch without the input keeps the restricted
+      # self-hosted group; the hosted runner is opt-in.
+      - name: Select the macOS runner
+        id: runner
+        env:
+          MACOS_RUNNER: ${{ inputs.macos_runner }}
+        run: |
+          case "${MACOS_RUNNER:-self-hosted}" in
+            github-hosted) labels='"macos-15"' ;;
+            self-hosted) labels='{"group":"dure-release","labels":["self-hosted","macOS","ARM64","dure-release"]}' ;;
+            *) echo "unknown macOS runner: $MACOS_RUNNER" >&2; exit 1 ;;
+          esac
+          echo "labels=$labels" >> "$GITHUB_OUTPUT"
+          echo "macOS release jobs run on the ${MACOS_RUNNER:-self-hosted} runner." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -114,16 +136,27 @@ jobs:
   verification:
     needs: [source, candidate]
     if: inputs.verification == 'full'
-    # Restrict this dedicated group to this workflow on refs/heads/main.
-    # Never attach the public PR workflow or a maintainer's daily-driver host.
-    runs-on:
-      group: dure-release
-      labels: [self-hosted, macOS, ARM64, dure-release]
+    # A self-hosted group must be restricted to this workflow on
+    # refs/heads/main. Never attach the public PR workflow or a maintainer's
+    # daily-driver host.
+    runs-on: ${{ fromJSON(needs.source.outputs.macos_runner) }}
     environment: macos-release
     timeout-minutes: 180
     env:
       HEBBIAN_CI_TARGET_PROFILE: verify
     steps:
+      # The hosted build imports the Developer ID certificate from these
+      # secrets after the tag exists. Refuse now, while the version is unused,
+      # when they are missing. Only their presence is evaluated here.
+      - name: Require the hosted signing certificate
+        if: runner.environment == 'github-hosted'
+        env:
+          CERTIFICATE_CONFIGURED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' }}
+        run: |
+          test "$CERTIFICATE_CONFIGURED" = true || {
+            echo '::error::APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD are not configured in the macos-release environment. Add them, or dispatch again without macos_runner=github-hosted to use the self-hosted runner.'
+            exit 1
+          }
       - name: Isolate release tool state
         run: |
           printf '%s\n' \
@@ -141,7 +174,9 @@ jobs:
           package-manager-cache: false
       # Before hours of verification on the signing host, refuse the load at
       # which the later DMG step fails (#308) while the version is still unused.
+      # A hosted VM is never shared, and its boot alone exceeds this load.
       - name: Refuse an overloaded host
+        if: runner.environment != 'github-hosted'
         run: node scripts/check-release-host.mjs --max-load-per-core 16
       - name: Isolate Cargo home
         env:
@@ -156,6 +191,16 @@ jobs:
           toolchain: 1.97.1
           components: rustfmt, clippy
           targets: aarch64-apple-ios
+      # A fresh VM has no cached Ghostty VT proof, and the proof builder
+      # compiles with its reviewed Rust baseline.
+      - name: Install the Ghostty VT proof toolchain
+        if: runner.environment == 'github-hosted'
+        run: rustup toolchain install 1.85.0 --profile minimal
+      # Tauri's beforeBuildCommand and the push gates call `pnpm` directly; a
+      # hosted VM has no global pnpm, only Corepack.
+      - name: Enable the pinned package manager
+        if: runner.environment == 'github-hosted'
+        run: corepack enable
       - name: Lease isolated verification target
         env:
           CARGO_TARGET_DIR: ""
@@ -186,16 +231,27 @@ jobs:
 
   # Without full verification nothing reaches the signing host before the tag.
   # Approve signing and admit the build's storage first, so a cancelled
-  # approval or a full volume does not burn a version. No credentials here.
+  # approval, a full volume or a missing hosted certificate does not burn a
+  # version. No credentials here.
   host-preflight:
     needs: [source, candidate]
     if: inputs.verification == 'emergency-0.2'
-    runs-on:
-      group: dure-release
-      labels: [self-hosted, macOS, ARM64, dure-release]
+    runs-on: ${{ fromJSON(needs.source.outputs.macos_runner) }}
     environment: macos-release
     timeout-minutes: 30
     steps:
+      # The hosted build imports the Developer ID certificate from these
+      # secrets after the tag exists. Refuse now, while the version is unused,
+      # when they are missing. Only their presence is evaluated here.
+      - name: Require the hosted signing certificate
+        if: runner.environment == 'github-hosted'
+        env:
+          CERTIFICATE_CONFIGURED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' }}
+        run: |
+          test "$CERTIFICATE_CONFIGURED" = true || {
+            echo '::error::APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD are not configured in the macos-release environment. Add them, or dispatch again without macos_runner=github-hosted to use the self-hosted runner.'
+            exit 1
+          }
       - name: Isolate release tool state
         run: echo "NODE_COMPILE_CACHE=$RUNNER_TEMP/dure-node-cache" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -212,9 +268,13 @@ jobs:
           osascript -e 'tell application "Finder" to get version'
       # Refuse the point-in-time load at which the DMG step fails (#308) while
       # the version is still unused; rerun the failed jobs once the host is quiet.
+      # A disposable hosted VM shares neither its load nor its volume (its boot
+      # alone exceeds this load), so both checks apply to a self-hosted host only.
       - name: Refuse an overloaded host
+        if: runner.environment != 'github-hosted'
         run: node scripts/check-release-host.mjs --max-load-per-core 16
       - name: Admit the signed build's storage without building
+        if: runner.environment != 'github-hosted'
         run: node scripts/run-with-build-storage.mjs full -- true
 
   version:
@@ -268,11 +328,9 @@ jobs:
         run: gh workflow run public-repository.yml --repo hebbianai/dure --ref "$TAG"
 
   build:
-    needs: version
-    if: always() && !cancelled() && needs.version.result == 'success'
-    runs-on:
-      group: dure-release
-      labels: [self-hosted, macOS, ARM64, dure-release]
+    needs: [source, version]
+    if: always() && !cancelled() && needs.source.result == 'success' && needs.version.result == 'success'
+    runs-on: ${{ fromJSON(needs.source.outputs.macos_runner) }}
     environment: macos-release
     timeout-minutes: 120
     defaults:
@@ -315,8 +373,27 @@ jobs:
         with:
           toolchain: 1.97.1
           targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      # A fresh VM has no cached Ghostty VT proof, and the proof builder
+      # compiles with its reviewed Rust baseline.
+      - name: Install the Ghostty VT proof toolchain
+        if: runner.environment == 'github-hosted'
+        run: rustup toolchain install 1.85.0 --profile minimal
+      # Tauri's beforeBuildCommand and the push gates call `pnpm` directly; a
+      # hosted VM has no global pnpm, only Corepack.
+      - name: Enable the pinned package manager
+        if: runner.environment == 'github-hosted'
+        run: corepack enable
       - name: Install pinned dependencies
         run: corepack pnpm install --frozen-lockfile
+      # A disposable hosted runner has no signing identity: import it into a
+      # keychain owned by this job, from the protected workflow checkout. Only
+      # this step sees the certificate; a self-hosted host keeps its own.
+      - name: Import the signing certificate into a job keychain
+        if: runner.environment == 'github-hosted'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: sh ../scripts/manage-hosted-signing-keychain.sh prepare
       - name: Build signed and notarized beta
         env:
           DURE_TELEMETRY_KEY: ${{ vars.DURE_TELEMETRY_KEY }}
@@ -357,6 +434,11 @@ jobs:
           path: ${{ runner.temp }}/dure-dmg-logs
           if-no-files-found: ignore
           retention-days: 14
+      # Nothing after the DMG signs, so the job keychain goes first.
+      - name: Remove the job keychain
+        if: always() && runner.environment == 'github-hosted'
+        continue-on-error: true
+        run: sh ../scripts/manage-hosted-signing-keychain.sh remove
       - name: Verify compiled telemetry configuration
         env:
           DURE_TELEMETRY_KEY: ${{ vars.DURE_TELEMETRY_KEY }}
@@ -427,13 +509,12 @@ jobs:
   # nothing: it signs the hosted packages, checks every signature against the
   # tag's public key and keeps packages and signatures for the draft.
   linux-sign:
-    needs: [version, linux-packages]
+    needs: [source, version, linux-packages]
     if: >-
-      always() && !cancelled() && needs.version.result == 'success' &&
-      needs.linux-packages.result == 'success'
-    runs-on:
-      group: dure-release
-      labels: [self-hosted, macOS, ARM64, dure-release]
+      always() && !cancelled() && needs.source.result == 'success' &&
+      needs.version.result == 'success' && needs.linux-packages.result == 'success'
+    # The same selected runner as build, so the updater key reaches no other host.
+    runs-on: ${{ fromJSON(needs.source.outputs.macos_runner) }}
     environment: macos-release
     timeout-minutes: 30
     defaults:
