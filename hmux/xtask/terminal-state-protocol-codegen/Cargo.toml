@@ -12,7 +12,7 @@ fixtures = ["dep:terminal-state-protocol"]
 
 [dependencies]
 prost-build = "=0.14.4"
-protoc-bin-vendored = "=3.3.0"
+protoc-bin-vendored = "=3.2.0"
 terminal-state-protocol = { path = "../../crates/terminal-state-protocol", optional = true }
 
 [[bin]]
