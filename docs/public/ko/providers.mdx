@@ -26,7 +26,7 @@ Dure는 설치된 코딩 에이전트 CLI와 제공자 계정을 사용합니다
 
 Beta에서는 Claude Code, Codex, OpenCode, Pi에 구조화된 채팅 통합이 있으며 설치된 도구와 런타임에 따라 사용 가능 여부가 달라집니다. 다른 도구는 네이티브 터미널 화면에서 사용할 수 있습니다.
 
-에이전트 상태(작업 중, 입력이나 승인 대기, 유휴)는 도구 자체의 수명 주기 이벤트에서 옵니다. Claude Code와 Codex는 모든 플랫폼에서, Gemini CLI, Qwen Code, Pi, OpenClaude, OpenCode 터미널 페인은 macOS와 Linux에서 상태를 보고합니다. `OPENCODE_CONFIG_CONTENT`를 이미 설정한 OpenCode 실행은 그 값을 그대로 쓰고 상태를 보고하지 않습니다. 다른 도구는 프로세스 실행 여부만 보여 주므로 작업 중에도 유휴처럼 보일 수 있습니다.
+에이전트 상태(작업 중, 입력이나 승인 대기, 유휴)는 도구 자체의 수명 주기 이벤트에서 옵니다. Claude Code와 Codex는 모든 플랫폼에서, Gemini CLI, Qwen Code, Pi, OpenClaude, OpenCode, Kilo Code 터미널 페인은 macOS와 Linux에서 상태를 보고합니다. `OPENCODE_CONFIG_CONTENT`나 `KILO_CONFIG_CONTENT`를 이미 설정한 OpenCode·Kilo Code 실행은 그 값을 그대로 쓰고 상태를 보고하지 않습니다. 직접 시작한 `kilo daemon`에 연결된 Kilo Code 페인은 턴이 데몬에서 실행되므로 상태를 보고하지 않습니다. 다른 도구는 프로세스 실행 여부만 보여 주므로 작업 중에도 유휴처럼 보일 수 있습니다.
 
 <Tabs>
   <Tab title="Codex">

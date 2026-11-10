@@ -418,6 +418,15 @@ fn inject_provider_settings_from(
     }
 }
 
+/// The executable a terminal launch starts, for providers whose channel
+/// integration only reports activity.
+#[cfg(unix)]
+fn activity_reporter_executable(provider_id: &str) -> Option<String> {
+    matches!(provider_id, "openclaude" | "opencode" | "kilocode")
+        .then(|| crate::managed_provider_launch::executable(provider_id))
+        .flatten()
+}
+
 pub(crate) fn inject_provider_settings(
     provider_id: &str,
     command: &str,
@@ -434,9 +443,9 @@ pub(crate) fn inject_provider_settings(
         return integrations::inject_command_wrapper(provider_id, command, &channel);
     }
     #[cfg(unix)]
-    if matches!(provider_id, "openclaude" | "opencode")
-        && (command == provider_id || command.starts_with(&format!("{provider_id} ")))
-    {
+    if let Some(executable) = activity_reporter_executable(provider_id).filter(|executable| {
+        command == executable.as_str() || command.starts_with(&format!("{executable} "))
+    }) {
         // These integrations only report activity, so an unpublished one must
         // not stop the provider from starting.
         return Ok(crate::app_channel::current()
@@ -445,7 +454,7 @@ pub(crate) fn inject_provider_settings(
                 integrations::inject_command_wrapper(provider_id, command, &channel)
             })
             .unwrap_or_else(|error| {
-                eprintln!("starting {provider_id} without activity reporting: {error}");
+                eprintln!("starting {executable} without activity reporting: {error}");
                 command.to_string()
             }));
     }
@@ -662,6 +671,23 @@ mod tests {
         assert!(!serialized.contains("127.0.0.1"));
         assert!(settings.get("permissions").is_none());
         assert!(settings.get("env").is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn activity_reporters_wrap_the_executable_their_terminal_launch_starts() {
+        for (provider, executable) in [
+            ("openclaude", "openclaude"),
+            ("opencode", "opencode"),
+            ("kilocode", "kilo"),
+        ] {
+            assert_eq!(
+                activity_reporter_executable(provider).as_deref(),
+                Some(executable),
+                "{provider}"
+            );
+        }
+        assert_eq!(activity_reporter_executable("kimi"), None);
     }
 
     #[test]

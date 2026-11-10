@@ -6,25 +6,44 @@ import http from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
 
-// Native OpenCode activity smoke: a real OpenCode in a real Hmux session,
-// driven against a local model fixture, reports working, approval, input and
-// idle through the channel launcher Dure publishes. Run it through
-// scripts/run-hmux-tests.mjs with DURE_QA_HMUX_RUNTIME, DURE_QA_HMUX_BIN and
-// DURE_QA_OPENCODE_BIN naming exact executables.
+// Native activity smoke for OpenCode and Kilo Code, which is built on it: a
+// real provider in a real Hmux session, driven against a local model fixture,
+// reports working, approval, input and idle through the channel launcher Dure
+// publishes. Run it through scripts/run-hmux-tests.mjs with the provider ID as
+// its argument (default `opencode`), and DURE_QA_HMUX_RUNTIME, DURE_QA_HMUX_BIN
+// and the provider's binary variable below naming exact executables.
+const providers = {
+  opencode: {
+    label: "OpenCode", binary: "DURE_QA_OPENCODE_BIN", variable: "OPENCODE_CONFIG_CONTENT",
+    launcher: "managed-opencode-launch.sh", config: "opencode/opencode.json", versions: ["1.18.29", "1.19.5"],
+    environment: { OPENCODE_DISABLE_AUTOUPDATE: "1", OPENCODE_DISABLE_DEFAULT_PLUGINS: "1" },
+  },
+  kilocode: {
+    label: "Kilo Code", binary: "DURE_QA_KILO_BIN", variable: "KILO_CONFIG_CONTENT",
+    launcher: "managed-kilo-launch.sh", config: "kilo/kilo.json", versions: ["7.8.27"],
+    environment: {
+      KILO_DISABLE_AUTOUPDATE: "1", KILO_DISABLE_DEFAULT_PLUGINS: "1", KILO_DISABLE_MODELS_FETCH: "1",
+      KILO_DISABLE_SESSION_INGEST: "1", KILO_DISABLE_SHARE: "1", KILO_TELEMETRY_LEVEL: "off",
+    },
+  },
+};
+const providerId = process.argv[2] ?? "opencode";
+const provider = providers[providerId];
+assert(provider, `unknown provider ${providerId}; expected one of ${Object.keys(providers).join(", ")}`);
 const execute = promisify(execFile);
 const repository = fs.realpathSync(new URL("../..", import.meta.url));
-const root = path.join(fs.realpathSync(process.env.DURE_HMUX_TEST_STATE_ROOT), "opencode");
+const root = path.join(fs.realpathSync(process.env.DURE_HMUX_TEST_STATE_ROOT), providerId);
 const home = path.join(root, "home");
 const workspace = path.join(root, "workspace");
-// OpenCode must accept the channel's escaped plugin URL.
+// The provider must accept the channel's escaped plugin URL.
 const control = path.join(root, "control with space");
 for (const directory of [home, workspace, control]) fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
 const runtime = fs.realpathSync(process.env.DURE_QA_HMUX_RUNTIME);
 const cli = fs.realpathSync(process.env.DURE_QA_HMUX_BIN);
-const opencode = fs.realpathSync(process.env.DURE_QA_OPENCODE_BIN);
-const evidencePath = process.env.DURE_QA_OPENCODE_EVIDENCE ?? `/tmp/dure-opencode-activity-${process.pid}.json`;
-const evidence = { cases: [], modelRequests: [], binaries: {} };
-for (const [name, executable] of Object.entries({ runtime, cli, opencode })) {
+const binary = fs.realpathSync(process.env[provider.binary]);
+const evidencePath = process.env.DURE_QA_OPENCODE_EVIDENCE ?? `/tmp/dure-${providerId}-activity-${process.pid}.json`;
+const evidence = { provider: providerId, cases: [], modelRequests: [], binaries: {} };
+for (const [name, executable] of Object.entries({ runtime, cli, [providerId]: binary })) {
   evidence.binaries[name] = { executable, sha256: createHash("sha256").update(fs.readFileSync(executable)).digest("hex") };
 }
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -32,7 +51,7 @@ const writeEvidence = () => fs.writeFileSync(evidencePath, JSON.stringify(eviden
 const fileUrl = (file) => `file://${file.split("/").map(encodeURIComponent).join("/")}`;
 
 // Materialize the channel files exactly as src-tauri/src/managed_hooks/opencode.rs
-// publishes them: plugin, state, shared report helper and launcher.
+// publishes them: plugin, state, shared report helper and this provider's launcher.
 const resources = path.join(repository, "src-tauri/resources");
 const plugin = path.join(control, "managed-opencode-plugin.mjs");
 fs.writeFileSync(plugin, fs.readFileSync(path.join(resources, "managed-opencode-plugin.mjs"), "utf8")
@@ -40,14 +59,14 @@ fs.writeFileSync(plugin, fs.readFileSync(path.join(resources, "managed-opencode-
 for (const file of ["managed-opencode-state.mjs", "managed-hook-report.mjs"]) {
   fs.copyFileSync(path.join(resources, file), path.join(control, file));
 }
-const launcher = path.join(control, "managed-opencode-launch.sh");
+const launcher = path.join(control, provider.launcher);
 fs.writeFileSync(launcher, `#!/bin/sh
 set -eu
 provider=$1
 shift
-if [ -z "\${OPENCODE_CONFIG_CONTENT:-}" ]; then
-  OPENCODE_CONFIG_CONTENT=${quote(JSON.stringify({ plugin: [fileUrl(plugin)] }))}
-  export OPENCODE_CONFIG_CONTENT
+if [ -z "\${${provider.variable}:-}" ]; then
+  ${provider.variable}=${quote(JSON.stringify({ plugin: [fileUrl(plugin)] }))}
+  export ${provider.variable}
 fi
 unset DURE_OPENCODE_REPORTER_PID
 exec "$provider" "$@"
@@ -62,9 +81,8 @@ export const Observer = async () => ({ event: async ({ event }) => {
   fs.appendFileSync(${JSON.stringify(eventsPath)}, JSON.stringify({ type: event.type, properties: event.properties }) + "\\n");
 } });
 `);
-const configDirectory = path.join(home, ".config/opencode");
-fs.mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
-const configPath = path.join(configDirectory, "opencode.json");
+const configPath = path.join(home, ".config", provider.config);
+fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 });
 
 const environment = {
   HOME: home, DURE_HOME: path.join(home, ".dure"), TERM: "xterm-256color", LANG: "en_US.UTF-8",
@@ -72,7 +90,7 @@ const environment = {
   HMUX_DISCOVERY_ROOT: process.env.HMUX_DISCOVERY_ROOT, TMPDIR: root,
   XDG_CONFIG_HOME: path.join(home, ".config"), XDG_DATA_HOME: path.join(home, ".local/share"),
   XDG_CACHE_HOME: path.join(home, ".cache"), XDG_STATE_HOME: path.join(home, ".local/state"),
-  OPENCODE_DISABLE_AUTOUPDATE: "1", OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+  ...provider.environment,
 };
 const readEvents = () => fs.existsSync(eventsPath)
   ? fs.readFileSync(eventsPath, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) : [];
@@ -150,14 +168,14 @@ try {
     }, models: { "fixture-model": { name: "Fixture model", limit: { context: 8192, output: 1024 } } } } },
   }, null, 2)}\n`;
   fs.writeFileSync(configPath, personalConfig);
-  evidence.version = (await execute(opencode, ["--version"], { env: environment, cwd: workspace, timeout: 60_000 })).stdout.trim();
-  assert(["1.18.29", "1.19.5"].includes(evidence.version), "requalify explicitly when upgrading the fixture CLI");
+  evidence.version = (await execute(binary, ["--version"], { env: environment, cwd: workspace, timeout: 60_000 })).stdout.trim();
+  assert(provider.versions.includes(evidence.version), "requalify explicitly when upgrading the fixture CLI");
   const request = Buffer.from(JSON.stringify({
     schema: "hmux-managed-create-v1", schemaVersion: 1,
-    idempotencyKey: "native-opencode-activity", sessionId: "native-opencode-activity",
-    workspaceId: "native-opencode-workspace", providerId: "opencode", permissionMode: "default",
+    idempotencyKey: `native-${providerId}-activity`, sessionId: `native-${providerId}-activity`,
+    workspaceId: `native-${providerId}-workspace`, providerId, permissionMode: "default",
     providerCwd: workspace, initialRows: 40, initialColumns: 120,
-    command: ["python3", path.join(repository, "scripts/qa/fixtures/native-provider-input-bridge.py"), launcher, opencode],
+    command: ["python3", path.join(repository, "scripts/qa/fixtures/native-provider-input-bridge.py"), launcher, binary],
   }));
   const frame = Buffer.alloc(4 + request.length);
   frame.writeUInt32BE(request.length); request.copy(frame, 4);
@@ -169,7 +187,7 @@ try {
   });
   assert.equal(created.state, "completed", JSON.stringify(created));
   [session] = await command(["ls"]);
-  assert.equal(session.session_id, "native-opencode-activity");
+  assert.equal(session.session_id, `native-${providerId}-activity`);
   const fence = Object.fromEntries(["workspace_id", "session_id", "runner_principal", "runner_instance",
     "channel_epoch", "host_instance_id", "terminal_epoch"].map((key) => [key, session[key]]));
   const current = async () => (await command(["session", "show", session.session_id])).agentRuntimeState;
@@ -222,7 +240,7 @@ try {
     return state?.activity === "working" && state.attention === "none" && state;
   }, "attention cleared by the answer, before the next model reply");
   evidence.cases.push({ name: "after approval", state: resumed });
-  // The child inherits the reporter's process id, so a nested OpenCode stays quiet.
+  // The child inherits the reporter's process id, so a nested provider stays quiet.
   assert.match(fs.readFileSync(path.join(workspace, "approved.txt"), "utf8"), /^\d+$/u);
   release();
 
@@ -267,13 +285,13 @@ try {
   assert.equal(interrupted.turn_completed_count, "2", "an interrupted turn does not complete");
 
   assert(readEvents().some((event) => event.type === "session.status"), "the person's plugin keeps running");
-  // OpenCode may add its own $schema key; Dure must never add to this file.
+  // The provider may add its own $schema key; Dure must never add to this file.
   const configAfter = fs.readFileSync(configPath, "utf8");
   assert(!configAfter.includes("managed-opencode"), "the configuration must not reference the channel files");
   const { $schema: _schema, ...configFields } = JSON.parse(configAfter);
   assert.deepEqual(configFields, JSON.parse(personalConfig), "the person's configuration stays as it was");
   evidence.passed = true;
-  console.log("OpenCode activity smoke passed: working, approval, input, failure, interrupt and idle reached the Host");
+  console.log(`${provider.label} activity smoke passed: working, approval, input, failure, interrupt and idle reached the Host`);
 } catch (error) {
   evidence.error = String(error?.stack ?? error);
   if (session) {
@@ -288,7 +306,7 @@ try {
   if (fs.existsSync(path.join(workspace, "provider-child.json"))) {
     fs.writeFileSync(path.join(workspace, "stop-provider"), "stop");
     try {
-      await waitFor(() => fs.existsSync(path.join(workspace, "provider-exit.json")), "owned OpenCode child reaped", 15_000);
+      await waitFor(() => fs.existsSync(path.join(workspace, "provider-exit.json")), "owned provider child reaped", 15_000);
       evidence.exit = JSON.parse(fs.readFileSync(path.join(workspace, "provider-exit.json"), "utf8"));
     } catch (error) { evidence.cleanupError = String(error); }
   }

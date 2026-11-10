@@ -42,7 +42,14 @@ pub(crate) fn publish_native_runtimes(
                 "openclaude",
                 super::openclaude::publish(control_dir, &runtime),
             ),
-            ("opencode", super::opencode::publish(control_dir, &runtime)),
+            (
+                "opencode",
+                super::opencode::publish(control_dir, &runtime, &super::opencode::OPENCODE),
+            ),
+            (
+                "kilocode",
+                super::opencode::publish(control_dir, &runtime, &super::opencode::KILO),
+            ),
         ] {
             match result {
                 Ok(integration) => {

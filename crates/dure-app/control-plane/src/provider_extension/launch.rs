@@ -242,9 +242,9 @@ impl AgentProviderImplementation for BundledAgentProvider {
 
 impl NativeAgentProviders {
     /// The channel integration a native launch carries. Pi and Gemini need
-    /// theirs; OpenClaude's and OpenCode's only report activity, so their
-    /// launches proceed without one that is missing or no longer matches its
-    /// publication.
+    /// theirs; OpenClaude's, OpenCode's and Kilo Code's only report activity,
+    /// so their launches proceed without one that is missing or no longer
+    /// matches its publication.
     fn native_integration(
         &self,
         provider_id: &ProviderIdV1,
@@ -252,7 +252,7 @@ impl NativeAgentProviders {
         match provider_id.as_str() {
             "pi" => self.integrations.integration(provider_id).map(Some),
             "gemini" if cfg!(unix) => self.integrations.integration(provider_id).map(Some),
-            "openclaude" | "opencode" if cfg!(unix) => {
+            "openclaude" | "opencode" | "kilocode" if cfg!(unix) => {
                 Ok(self.integrations.integration(provider_id).ok())
             }
             _ => Ok(None),

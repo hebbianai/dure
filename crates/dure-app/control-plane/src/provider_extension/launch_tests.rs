@@ -276,53 +276,62 @@ fn openclaude_launches_carry_its_activity_reporter_when_published() {
 
 #[test]
 #[cfg(unix)]
-fn opencode_terminal_launches_carry_its_activity_reporter_when_published() {
-    let provider = ProviderIdV1::new("opencode").unwrap();
-    let published = NativeAgentProviders::new(
-        BTreeSet::new(),
-        Arc::new(StaticProviderRuntimeIntegrationSource {
-            integrations: BTreeMap::from([(
-                provider.clone(),
-                ProviderRuntimeIntegrationV1::CommandWrapper {
-                    path: "/fixture/managed-opencode-launch.sh".into(),
-                },
-            )]),
-        }),
-    );
-    let plan = published
-        .launch_plan(
-            &provider,
-            &ProviderPermissionModeV1::Default,
-            None,
-            None,
-            Some(CONVERSATION),
-        )
-        .unwrap();
-    assert_eq!(plan.executable, "/fixture/managed-opencode-launch.sh");
-    assert_eq!(plan.arguments[0], "opencode");
-    assert!(
-        plan.arguments
-            .windows(2)
-            .any(|pair| pair == ["--session", CONVERSATION])
-    );
-    // Activity reporting is optional: without it the provider still starts.
-    let unpublished = NativeAgentProviders::new(
-        BTreeSet::new(),
-        Arc::new(StaticProviderRuntimeIntegrationSource {
-            integrations: BTreeMap::new(),
-        }),
-    );
-    let plan = unpublished
-        .launch_plan(
-            &provider,
-            &ProviderPermissionModeV1::Default,
-            None,
-            None,
-            Some(CONVERSATION),
-        )
-        .unwrap();
-    assert_eq!(plan.executable, "opencode");
-    assert_eq!(plan.arguments, ["--session", CONVERSATION]);
+fn opencode_family_terminal_launches_carry_their_activity_reporter_when_published() {
+    for (provider, executable, launcher) in [
+        (
+            "opencode",
+            "opencode",
+            "/fixture/managed-opencode-launch.sh",
+        ),
+        ("kilocode", "kilo", "/fixture/managed-kilo-launch.sh"),
+    ] {
+        let provider = ProviderIdV1::new(provider).unwrap();
+        let published = NativeAgentProviders::new(
+            BTreeSet::new(),
+            Arc::new(StaticProviderRuntimeIntegrationSource {
+                integrations: BTreeMap::from([(
+                    provider.clone(),
+                    ProviderRuntimeIntegrationV1::CommandWrapper {
+                        path: launcher.into(),
+                    },
+                )]),
+            }),
+        );
+        let plan = published
+            .launch_plan(
+                &provider,
+                &ProviderPermissionModeV1::Default,
+                None,
+                None,
+                Some(CONVERSATION),
+            )
+            .unwrap();
+        assert_eq!(plan.executable, launcher);
+        assert_eq!(plan.arguments[0], executable);
+        assert!(
+            plan.arguments
+                .windows(2)
+                .any(|pair| pair == ["--session", CONVERSATION])
+        );
+        // Activity reporting is optional: without it the provider still starts.
+        let unpublished = NativeAgentProviders::new(
+            BTreeSet::new(),
+            Arc::new(StaticProviderRuntimeIntegrationSource {
+                integrations: BTreeMap::new(),
+            }),
+        );
+        let plan = unpublished
+            .launch_plan(
+                &provider,
+                &ProviderPermissionModeV1::Default,
+                None,
+                None,
+                Some(CONVERSATION),
+            )
+            .unwrap();
+        assert_eq!(plan.executable, executable);
+        assert_eq!(plan.arguments, ["--session", CONVERSATION]);
+    }
 }
 
 impl ProviderRuntimeIntegrationSource for NativeWrapperIntegration {
