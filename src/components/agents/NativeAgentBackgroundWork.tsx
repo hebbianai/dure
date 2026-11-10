@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Disclosure } from "@/components/ui/disclosure";
 import {
+	BACKGROUND_WORK_REFRESH_MS,
 	backgroundWorkHiddenCount,
 	backgroundWorkRows,
 	backgroundWorkSummary,
@@ -10,12 +11,6 @@ import {
 	type BackgroundWorkList,
 	readAgentBackgroundWork,
 } from "@/lib/ipc/conversations";
-
-/** How long the line waits after one read before the next, while the agent
- * works. Background work moves without turns, so the transcript's refresh
- * cursor cannot drive it; reads are incremental on the desktop, and one at a
- * time, so a slow read never piles up behind the next. */
-export const BACKGROUND_WORK_REFRESH_MS = 10_000;
 
 /** The agent's running subagents, workflows, shells and monitors, collapsed
  * to one line above the composer. The desktop decides what runs from the

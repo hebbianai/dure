@@ -43,6 +43,9 @@ export interface ProviderConversationSubagent {
 	kind?: string;
 	status: "running" | "completed" | "failed" | "unknown";
 	mtime: number;
+	/** The call that started a Claude subagent: the background work list
+	 *  names it by this id while the turn still waits on it. */
+	toolUseId?: string;
 }
 
 export type ProviderConversationInputAuthority =

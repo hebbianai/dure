@@ -4,12 +4,18 @@ import { useEffect, useState } from "react";
 import { DureLoader } from "@/components/ui/dure-loader";
 import { StatusDot } from "@/components/ui/status-dot";
 import {
+	BACKGROUND_WORK_REFRESH_MS,
+	type BackgroundWorkSession,
+	subagentsAsBackgroundWork,
+} from "@/lib/agents/chat/backgroundWork";
+import {
 	loadProviderConversationDetails,
 	type ProviderConversationDetails,
 	type ProviderConversationSubagent,
 	type ProviderConversationTurn,
 } from "@/lib/agents/providerConversationDiscovery";
 import { t } from "@/lib/i18n";
+import { readAgentBackgroundWork } from "@/lib/ipc/conversations";
 import { formatRelativeAge } from "@/lib/ui/relativeAge";
 import { cn } from "@/lib/utils";
 import { PROVIDERS, type Provider, type SshHostConfig } from "@/types";
@@ -43,6 +49,7 @@ export function ProviderConversationHistory({
 	recentTurns,
 	subagentCount,
 	sshHosts,
+	backgroundWorkSession,
 	className,
 }: {
 	provider: Provider;
@@ -52,6 +59,10 @@ export function ProviderConversationHistory({
 	recentTurns: readonly ProviderConversationTurn[];
 	subagentCount: number;
 	sshHosts: readonly SshHostConfig[];
+	/** The conversation's agent's local managed session, when it has one: a
+	 *  subagent row reads "running" exactly when that session's background
+	 *  work list, the chat line's own, names it. */
+	backgroundWorkSession?: BackgroundWorkSession | null;
 	className?: string;
 }) {
 	const [details, setDetails] = useState<ProviderConversationDetails | null>(
@@ -76,40 +87,70 @@ export function ProviderConversationHistory({
 		() => new Set(),
 	);
 
+	const workspaceId = backgroundWorkSession?.workspaceId;
+	const sessionId = backgroundWorkSession?.sessionId;
 	useEffect(() => {
 		if (subagentCount === 0) return;
 		let cancelled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let running = false;
 		setDetails(null);
 		setLoading(true);
 		setFailed(false);
-		void loadProviderConversationDetails(
-			{
-				provider,
-				conversationId,
-				executionLocation,
-				...(hostId ? { hostId } : {}),
-			},
-			sshHosts,
-		)
-			.then((next) => {
-				if (!cancelled) setDetails(next);
-			})
-			.catch(() => {
-				if (!cancelled) setFailed(true);
-			})
-			.finally(() => {
-				if (!cancelled) setLoading(false);
-			});
+		const target = {
+			provider,
+			conversationId,
+			executionLocation,
+			...(hostId ? { hostId } : {}),
+		};
+		// Whether a subagent runs is the Host-gated background work list's
+		// answer, not the rows' own; only Claude records it, and only for a
+		// local managed session. A failed read leaves the rows as recorded.
+		const readRunning =
+			provider === "claude" && workspaceId && sessionId
+				? () =>
+						readAgentBackgroundWork(workspaceId, sessionId).catch(() => null)
+				: () => Promise.resolve(null);
+		// The first read shows loading and failure; while a row runs, the rows
+		// are read again on the line's interval so they end when the line's do.
+		const read = (first: boolean) => {
+			Promise.all([
+				loadProviderConversationDetails(target, sshHosts),
+				readRunning(),
+			])
+				.then(([next, work]) => {
+					if (cancelled) return;
+					const subagents = subagentsAsBackgroundWork(next.subagents, work);
+					running =
+						work !== null &&
+						subagents.some((subagent) => subagent.status === "running");
+					setDetails({ ...next, subagents });
+				})
+				.catch(() => {
+					if (!cancelled && first) setFailed(true);
+				})
+				.finally(() => {
+					if (cancelled) return;
+					if (first) setLoading(false);
+					if (running) {
+						timer = setTimeout(() => read(false), BACKGROUND_WORK_REFRESH_MS);
+					}
+				});
+		};
+		read(true);
 		return () => {
 			cancelled = true;
+			if (timer !== undefined) clearTimeout(timer);
 		};
 	}, [
 		conversationId,
 		executionLocation,
 		hostId,
 		provider,
+		sessionId,
 		sshHosts,
 		subagentCount,
+		workspaceId,
 	]);
 
 	if (visibleTurns.length === 0 && subagentCount === 0) return null;

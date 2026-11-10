@@ -9,6 +9,7 @@ import type { ProviderConversationRecord } from "@/lib/agents/providerConversati
 import { readProviderConversationRecord } from "@/lib/agents/providerConversationRecordCache";
 import { providerConversationTargetForAgent } from "@/lib/agents/providerConversationTarget";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+import { backgroundWorkSession } from "@/lib/agents/chat/backgroundWork";
 import { t } from "@/lib/i18n";
 import type { RecentAgentActivity } from "@/lib/spaces/spacesDisplay";
 import { useStore } from "@/store";
@@ -115,6 +116,7 @@ export function UnopenedAgentDetails({
 						recentTurns={record.recentTurns ?? []}
 						subagentCount={record.subagentCount ?? 0}
 						sshHosts={sshHosts}
+						backgroundWorkSession={backgroundWorkSession(agent.runtimeBinding)}
 						className="mb-2"
 					/>
 				)}

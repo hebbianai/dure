@@ -11,6 +11,7 @@ import type { NativeAgentChatState } from "@/components/agents/useNativeAgentCha
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { Button } from "@/components/ui/button";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+import { backgroundWorkSession } from "@/lib/agents/chat/backgroundWork";
 import {
 	nativeAgentChatComposerReason,
 	nativeAgentChatComposerState,
@@ -56,11 +57,7 @@ export function NativeAgentChatView({
 	const { agentId, provider, conversationId } = source;
 	// The desktop reads background work for its own managed sessions; for a
 	// provider without readable records it answers an empty list.
-	const binding = agent.runtimeBinding;
-	const backgroundWorkTarget =
-		binding?.runtime === "hmux_managed_v1" && binding.source === "local"
-			? binding
-			: null;
+	const backgroundWorkTarget = backgroundWorkSession(agent.runtimeBinding);
 	const reasonId = useId();
 	const terminalEpoch = runtime.terminalEpoch;
 	const count = runtime.turnCompletedCount;
