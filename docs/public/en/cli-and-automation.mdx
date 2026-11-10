@@ -44,6 +44,8 @@ The parent doesn't have to wait to hear back. Each time a terminal child finishe
 
 `dure tui` lists your agents across Spaces with their state, account and project, including over SSH without the app. Select one and press Enter to attach. Press `Ctrl-\` then `d` to detach and return to the list; the agent keeps running. Without the app on that machine, the account reads `unknown` and the project is the name of the agent's working folder.
 
+If you also work on SSH backends, `dure tui --all-backends` lists the agents on every configured backend in one list with a `BACKEND` column, and Enter attaches through the agent's own backend. A backend that can't be reached is named below the list and doesn't hide the others.
+
 ## Claim what you are working on
 
 When several agents or bots share a repository, each can declare what it is working on so the others see overlaps before they start:

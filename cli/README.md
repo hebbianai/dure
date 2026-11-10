@@ -95,7 +95,9 @@ Moving a pane to another Space does not change its process's working directory.
 
 `dure tui` lists managed agents across Spaces from a terminal, including over SSH
 without the app, and attaches to the selected one. Press `Ctrl-\` then `d` to
-detach and return to the list. See `dure tui --help`.
+detach and return to the list. `dure tui --all-backends` lists every configured
+backend profile in one list with a BACKEND column and attaches through the
+agent's own backend. See `dure tui --help`.
 
 Agent-facing instructions are packaged in [the Dure skill](skills/dure/SKILL.md)
 and the separate [orchestration integration](../orchestration/integration/SKILL.md).

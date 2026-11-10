@@ -3026,9 +3026,13 @@ async function cmdAttach(opts) {
 }
 
 async function cmdTui(opts) {
-  if (opts.rest.length !== 0 || opts.workspace !== undefined) {
+  if (
+    opts.rest.length !== 0 ||
+    opts.workspace !== undefined ||
+    (opts.allBackends && opts.backendSpecified)
+  ) {
     process.stderr.write(
-      "\x1b[31mdure_tui_argument_invalid: usage: dure tui [--backend ID]\x1b[0m\n",
+      "\x1b[31mdure_tui_argument_invalid: usage: dure tui [--backend ID | --all-backends]\x1b[0m\n",
     );
     process.exitCode = 2;
     return;
@@ -3037,20 +3041,31 @@ async function cmdTui(opts) {
     attachAgentRow,
     collectManagedAgents,
     formatSessionTuiError,
+    rememberBackendContexts,
     runSessionTui,
   } = await import("./lib/session-tui.mjs");
   const { loadSessionClientProjection } = await import("./lib/client-registry.mjs");
-  const backendRequested =
-    opts.backendSpecified || Boolean(process.env.DURE_BACKEND_PROFILE?.trim());
+  // Across backends, as with dure ls, DURE_BACKEND_PROFILE does not narrow the list.
+  const allBackends = opts.allBackends === true;
+  const backendRequested = !allBackends &&
+    (opts.backendSpecified || Boolean(process.env.DURE_BACKEND_PROFILE?.trim()));
   const backend = backendRequested
     ? await backendProfileQueryContext(opts)
     : null;
+  const resolveBackend = allBackends
+    ? rememberBackendContexts((id) =>
+        backendProfileQueryContext({ backendSpecified: true, backend: id }),
+      )
+    : undefined;
   try {
     await runSessionTui({
-      attach: attachAgentRow({ backend, hmuxCommand: hmuxCommand() }),
+      allBackends,
+      attach: attachAgentRow({ backend, hmuxCommand: hmuxCommand(), resolveBackend }),
       collect: collectManagedAgents({
+        allBackends,
         backend,
         hmuxCommand: hmuxCommand(),
+        resolveBackend,
         loadRegistry: () =>
           loadSessionClientProjection({
             registryPath: REG,
@@ -3992,7 +4007,8 @@ Usage:
   dure logs <name> [-n N]          Dump scrollback (default 2000 lines)
   dure attach <session-id> --workspace <workspace-id> [--backend ID]
                                       Attach to an exact managed Hmux session without the app
-  dure tui [--backend ID]             List agents across Spaces and attach from a terminal
+  dure tui [--backend ID | --all-backends]
+                                      List agents across Spaces and attach from a terminal
   dure spawn preview (--project <id> | --path <path>) --provider <id> --name <name> --idempotency-key <key>
                                       Create or reuse a durable spawn plan without the app daemon
                                       Requires --no-worktree or --base-commit SHA --branch REF

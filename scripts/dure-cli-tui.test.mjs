@@ -14,9 +14,13 @@ import {
 } from "../cli/lib/session-tui-model.mjs";
 import {
   attachAgentRow,
+  collectManagedAgents,
+  rememberBackendContexts,
   runSessionTui,
   TUI_HELP,
 } from "../cli/lib/session-tui.mjs";
+import { LocalBackendError } from "../cli/lib/local-backend.mjs";
+import { sshBackendProfile } from "./lib/dure-cli-ssh-fixture.mjs";
 import { hmuxSession } from "./lib/dure-session-test-fixture.mjs";
 
 const cliPath = fileURLToPath(new URL("../cli/dure.mjs", import.meta.url));
@@ -265,6 +269,165 @@ describe("dure tui list rendering", () => {
   });
 });
 
+/** A listing across backends, shaped like `dure ls --all-backends --json`. */
+function allBackendsReport(entries) {
+  return listReport(
+    entries.flatMap(({ id, sessions = [] }) =>
+      sessions.map((session) => ({ backendProfileId: id, ...session })),
+    ),
+    {
+      backends: entries.map(({ id, error, local }) =>
+        error
+          ? { backendProfileId: id, status: "error", error: { code: error } }
+          : {
+              backendProfileId: id,
+              status: "ok",
+              source: local ? { kind: "local_hmux" } : { kind: "backend_profile", profileId: id },
+            },
+      ),
+    },
+  );
+}
+
+function allBackendsState(entries) {
+  return applySessionReport(initialTuiState({ allBackends: true }), allBackendsReport(entries));
+}
+
+describe("dure tui --all-backends list", () => {
+  it("shows where each agent runs in a BACKEND column", () => {
+    const state = allBackendsState([
+      { id: "remote-build", sessions: [agentSession(1)] },
+      { id: "laptop", sessions: [agentSession(2)] },
+    ]);
+    expect(plainFrame(state)[1]).toContain("BACKEND");
+    expect(rowLine(state, "session-1")).toContain("remote-build");
+    expect(rowLine(state, "session-2")).toContain("laptop");
+  });
+
+  it("shows the BACKEND heading before the first answer", () => {
+    expect(plainFrame(initialTuiState({ allBackends: true }))[1]).toContain("BACKEND");
+  });
+
+  it("leaves the BACKEND column out on one backend", () => {
+    expect(plainFrame(stateWith([agentSession(1)]))[1]).not.toContain("BACKEND");
+  });
+
+  it("keeps the same Session ID on two backends as two rows, each attaching through its own backend", () => {
+    const state = allBackendsState([
+      { id: "remote-a", sessions: [agentSession(1)] },
+      { id: "remote-b", sessions: [agentSession(1)] },
+    ]);
+    expect(state.rows.map((row) => [row.backend, row.sessionId])).toEqual([
+      ["remote-a", "session-1"],
+      ["remote-b", "session-1"],
+    ]);
+    const second = applyTuiKey(state, "down", 5).state;
+    expect(applyTuiKey(second, "enter", 5).effect.row).toMatchObject({
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      backendProfileId: "remote-b",
+    });
+  });
+
+  it("follows the selected agent's backend across a refresh", () => {
+    const entries = [
+      { id: "remote-a", sessions: [agentSession(1)] },
+      { id: "remote-b", sessions: [agentSession(1)] },
+    ];
+    const before = { ...allBackendsState(entries), selected: 1 };
+    const after = applySessionReport(before, allBackendsReport([
+      { id: "remote-0", sessions: [agentSession(1)] },
+      ...entries,
+    ]));
+    expect(after.rows[after.selected].backend).toBe("remote-b");
+  });
+
+  it("attaches through this machine's Hmux when no backend catalog exists", () => {
+    const state = allBackendsState([{ id: "local", local: true, sessions: [agentSession(1)] }]);
+    expect(rowLine(state, "session-1")).toContain("local");
+    expect(applyTuiKey(state, "enter", 5).effect.row).toMatchObject({
+      backend: "local",
+      backendProfileId: null,
+    });
+  });
+
+  it("names an unavailable backend and keeps the agents of the others", () => {
+    const text = plainFrame(allBackendsState([
+      { id: "remote-build", sessions: [agentSession(1)] },
+      { id: "remote-down", error: "backend_transport_ssh_failed" },
+    ])).join("\n");
+    expect(text).toContain("session-1");
+    expect(text).toContain("Backend remote-down unavailable (backend_transport_ssh_failed).");
+  });
+
+  it("names every unavailable backend", () => {
+    const text = plainFrame(allBackendsState([
+      { id: "remote-a", error: "backend_transport_ssh_failed" },
+      { id: "remote-b", error: "local_backend_unavailable" },
+    ]), { columns: 120, rows: 12 }).join("\n");
+    expect(text).toContain(
+      "Backends unavailable: remote-a (backend_transport_ssh_failed), remote-b (local_backend_unavailable).",
+    );
+  });
+
+  it("does not claim there are no agents while a backend is unavailable", () => {
+    const text = plainFrame(allBackendsState([
+      { id: "remote-build" },
+      { id: "remote-down", error: "backend_transport_ssh_failed" },
+    ])).join("\n");
+    expect(text).not.toContain("No agents");
+    expect(text).toContain("remote-down unavailable");
+  });
+
+  it("says there are no agents only when every backend answered", () => {
+    const text = plainFrame(allBackendsState([{ id: "remote-a" }, { id: "remote-b" }])).join("\n");
+    expect(text).toContain("No agents on any backend.");
+  });
+
+  it("drops a backend's failure once it answers again", () => {
+    const failed = allBackendsState([
+      { id: "remote-build", sessions: [agentSession(1)] },
+      { id: "remote-down", error: "backend_transport_ssh_failed" },
+    ]);
+    const recovered = applySessionReport(failed, allBackendsReport([
+      { id: "remote-build", sessions: [agentSession(1)] },
+      { id: "remote-down", sessions: [agentSession(2)] },
+    ]));
+    const text = plainFrame(recovered).join("\n");
+    expect(text).not.toContain("unavailable");
+    expect(text).toContain("session-2");
+  });
+
+  it("gives up the backend column last as the terminal narrows", () => {
+    const headings = (columns) =>
+      plainFrame(allBackendsState([{ id: "remote-build", sessions: [agentSession(1)] }]), {
+        columns,
+        rows: 12,
+      })[1];
+    expect(headings(110)).toMatch(/AGENT\s+BACKEND\s+PROVIDER\s+ACCOUNT\s+PROJECT/);
+    expect(headings(60)).toContain("BACKEND");
+    expect(headings(60)).not.toContain("PROJECT");
+    expect(headings(42)).toContain("BACKEND");
+    expect(headings(40)).not.toContain("BACKEND");
+  });
+
+  it.each([
+    [110, 12],
+    [80, 24],
+    [42, 8],
+  ])("fills exactly %i by %i cells", (columns, rows) => {
+    const frame = plainFrame(
+      allBackendsState([
+        { id: "a-very-long-backend-profile-name", sessions: [agentSession(1)] },
+        { id: "remote-down", error: "backend_transport_ssh_failed" },
+      ]),
+      { columns, rows },
+    );
+    expect(frame).toHaveLength(rows);
+    for (const line of frame) expect(displayWidth(line)).toBe(columns);
+  });
+});
+
 describe("dure tui key handling", () => {
   it.each([
     ["\x1b[A", ["up"]],
@@ -407,11 +570,12 @@ async function settled(condition) {
   await vi.waitFor(() => expect(condition()).toBe(true), { timeout: 5_000, interval: 2 });
 }
 
-function startTui({ attach = async () => null, collect, signals = new EventEmitter() } = {}) {
+function startTui({ allBackends, attach = async () => null, collect, signals = new EventEmitter() } = {}) {
   const input = new FakeInput();
   const output = new FakeOutput();
   const census = collect ?? vi.fn(async () => listReport([agentSession(1), agentSession(2)]));
   const running = runSessionTui({
+    allBackends,
     attach,
     collect: census,
     input,
@@ -485,6 +649,26 @@ describe("dure tui attach loop", () => {
     expect(tui.input.isRaw).toBe(false);
     expect(tui.input.flowing).toBe(false);
     expect(tui.input.listenerCount("data")).toBe(0);
+  });
+
+  it("hands the attach the selected row's backend across backends", async () => {
+    const attach = vi.fn(async () => null);
+    const tui = startTui({
+      allBackends: true,
+      attach,
+      collect: vi.fn(async () => allBackendsReport([
+        { id: "remote-a", sessions: [agentSession(1)] },
+        { id: "remote-b", sessions: [agentSession(1)] },
+      ])),
+    });
+    await settled(() => tui.output.lastScreen().includes("remote-b"));
+    expect(tui.output.lastScreen()).toContain("BACKEND");
+    tui.input.press("j\r");
+    await settled(() => attach.mock.calls.length === 1);
+    expect(attach.mock.calls[0][0]).toMatchObject({ sessionId: "session-1", backendProfileId: "remote-b" });
+    await settled(() => tui.input.flowing);
+    tui.input.press("q");
+    await tui.running;
   });
 
   it("shows why an attach failed and keeps the list usable", async () => {
@@ -699,6 +883,96 @@ describe("dure tui attach path", () => {
     expect(spawnProcess).not.toHaveBeenCalled();
   });
 
+  it("attaches a row read through a backend profile through that profile", async () => {
+    const resolveBackend = vi.fn(async () => ({
+      error: new LocalBackendError("local_backend_unavailable"),
+    }));
+    const spawnProcess = vi.fn();
+    const attach = attachAgentRow({
+      backend: null,
+      execute: hmuxExecute(),
+      hmuxCommand: "hmux",
+      resolveBackend,
+      spawnProcess,
+    });
+
+    const message = await attach({ ...row, backendProfileId: "remote-build" }, vi.fn());
+
+    expect(resolveBackend).toHaveBeenCalledWith("remote-build");
+    expect(message).toContain("dure_attach_session_unavailable");
+    expect(message).toContain("local_backend_unavailable");
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it("attaches a row on this machine through local Hmux without resolving a backend", async () => {
+    const child = fakeChild();
+    const spawnProcess = vi.fn(() => {
+      setImmediate(() => child.emit("close", 0, null));
+      return child;
+    });
+    const resolveBackend = vi.fn();
+    const attach = attachAgentRow({
+      backend: null,
+      execute: hmuxExecute(),
+      hmuxCommand: "hmux",
+      resolveBackend,
+      spawnProcess,
+    });
+
+    await expect(attach({ ...row, backend: "local", backendProfileId: null }, vi.fn())).resolves.toBeNull();
+
+    expect(resolveBackend).not.toHaveBeenCalled();
+    expect(spawnProcess).toHaveBeenCalledWith(
+      "hmux",
+      ["managed-attach", "session-1", "--workspace", "workspace-1"],
+      { stdio: ["inherit", "inherit", "pipe"] },
+    );
+  });
+
+  it("lists the managed agents on every backend and keeps a failed backend beside them", async () => {
+    const requestBackend = vi.fn(async () => ({
+      backend: { id: "remote-backend" },
+      result: {
+        schemaVersion: 1,
+        complete: true,
+        sessions: [hmuxSession(1), hmuxSession(2, { session_class: "standalone" })],
+      },
+    }));
+    const resolveBackend = vi.fn(async (id) =>
+      id === "remote-down"
+        ? { error: new LocalBackendError("local_backend_unavailable") }
+        : { profile: sshBackendProfile({ id }), transportOptions: {} },
+    );
+    const execute = vi.fn();
+    const collect = collectManagedAgents({
+      allBackends: true,
+      backend: null,
+      execute,
+      hmuxCommand: "hmux",
+      loadCatalog: () => ({ profiles: [{ id: "remote-build" }, { id: "remote-down" }] }),
+      loadRegistry: () => ({ state: "absent", clientId: null, updatedAtMs: null, agents: [] }),
+      requestBackend,
+      resolveBackend,
+    });
+
+    const state = applySessionReport(initialTuiState({ allBackends: true }), await collect());
+
+    expect(state.rows).toEqual([
+      expect.objectContaining({
+        sessionId: "session-1",
+        backend: "remote-build",
+        backendProfileId: "remote-build",
+      }),
+    ]);
+    expect(state.unavailableBackends).toEqual([{ id: "remote-down", code: "local_backend_unavailable" }]);
+    expect(requestBackend).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "remote-build" }),
+      expect.objectContaining({ operation: "sessions.list" }),
+      expect.anything(),
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("keeps a filter across every census page", async () => {
     const page = (ids, nextCursor) => listReport(
       ids.map((id) => agentSession(id, id % 2 ? {} : { runtime: { sessionClass: "standalone", agentRuntimeState: null } })),
@@ -726,6 +1000,35 @@ describe("dure tui attach path", () => {
   });
 });
 
+describe("dure tui backend resolution", () => {
+  it("resolves each backend once while the list is open", async () => {
+    const resolve = vi.fn(async (id) => ({ profile: { id }, transportOptions: {} }));
+    const remembered = rememberBackendContexts(resolve);
+
+    const [first, second] = await Promise.all([remembered("remote-a"), remembered("remote-a")]);
+    const third = await remembered("remote-a");
+    await remembered("remote-b");
+
+    expect(first).toBe(second);
+    expect(third).toBe(first);
+    expect(resolve.mock.calls).toEqual([["remote-a"], ["remote-b"]]);
+  });
+
+  it("tries a backend that failed again on the next refresh", async () => {
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce({ error: new LocalBackendError("local_backend_unavailable") })
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce({ profile: { id: "remote-a" }, transportOptions: {} });
+    const remembered = rememberBackendContexts(resolve);
+
+    expect((await remembered("remote-a")).error).toBeDefined();
+    await expect(remembered("remote-a")).rejects.toThrow("boom");
+    expect((await remembered("remote-a")).profile.id).toBe("remote-a");
+    expect(resolve).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe("dure tui command", () => {
   function runCli(args) {
     return spawnSync(process.execPath, [cliPath, ...args], {
@@ -740,10 +1043,24 @@ describe("dure tui command", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(TUI_HELP);
     expect(TUI_HELP).toContain("Ctrl-\\ then d");
+    expect(TUI_HELP).toContain("--all-backends");
   });
 
   it("appears in the command list", () => {
-    expect(runCli(["help"]).stdout).toContain("dure tui [--backend ID]");
+    expect(runCli(["help"]).stdout).toContain("dure tui [--backend ID | --all-backends]");
+  });
+
+  it("refuses --all-backends with --backend before contacting a backend", () => {
+    const result = runCli(["tui", "--all-backends", "--backend", "remote-build"]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("dure_tui_argument_invalid");
+    expect(result.stderr).toContain("--all-backends");
+  });
+
+  it("refuses to run across backends without a terminal", () => {
+    const result = runCli(["tui", "--all-backends"]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("dure_tui_terminal_required");
   });
 
   it("refuses to run without a terminal", () => {
