@@ -40,6 +40,8 @@ test("renders the cask from the published DMG digest, including prereleases", ()
   expect(cask).toContain("depends_on arch: :arm64");
   expect(cask).toContain("depends_on :macos");
   expect(cask).toContain('app "Dure.app"');
+  // Current Homebrew warns users to report a cask that passes `verified:`.
+  expect(cask).not.toContain("verified:");
 });
 
 test.each([

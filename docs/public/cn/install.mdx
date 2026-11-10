@@ -23,6 +23,19 @@ curl -fsSL https://raw.githubusercontent.com/hebbianai/dure/main/scripts/install
 
 脚本会将下载的文件与发行版公布的摘要进行比对，并确认 macOS 接受 Dure 的签名和公证，然后安装当前公开测试版。安装位置是“应用程序”文件夹；如果您的账户无法写入该文件夹，则使用主目录中的“Applications”文件夹。`dure` 命令会添加到 `~/.local/bin`。如需使用其他文件夹，请将 `DURE_APP_INSTALL_DIR` 设置为绝对路径。如果已安装 Dure，请先退出。检查失败时，现有应用会保持不变。再次运行脚本即可替换为当前测试版。
 
+### 通过 Homebrew 安装
+
+如果您使用 [Homebrew](https://brew.sh)，请先信任一次 Dure 的 tap，然后安装 cask：
+
+```sh
+brew trust hebbianai/tap
+brew install --cask hebbianai/tap/dure
+```
+
+对于官方仓库以外的 tap，Homebrew 只有在您信任该 tap 之后才会加载其中的 cask。如果 Homebrew 提示 `trust` 是未知命令，请先运行 `brew update`。cask 会将下载的文件与发行版公布的摘要进行比对，然后将当前公开测试版安装到“应用程序”文件夹。如果“应用程序”中已有 Dure，Homebrew 会停止而不会替换它；在安装命令中加上 `--adopt`，即可让 Homebrew 管理这个现有副本。
+
+Dure 有自己的更新流程（见下文），因此普通的 `brew upgrade` 会跳过它。如需改用 Homebrew 更新，请指定 cask 名称：`brew upgrade --cask hebbianai/tap/dure`。
+
 ## 准备一个编码智能体
 
 安装并登录你要使用的智能体。先在普通终端确认其命令可以启动，例如 `claude`、`codex` 或 `kimi`。Dure 的 **Settings → Agent CLI** 显示检测到的工具和可用设置操作。
