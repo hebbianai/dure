@@ -1212,6 +1212,26 @@ describe("local file pane opening", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ kind: "dure.client_pane.open", pane: { panelId: "file-pane", spaceId: "space-1", file: { path: resolve("reports/a b.md"), source: "local" }, mounted: true } });
   });
 
+  it("opens the file in the invoking pane's Space when no Space is named", async () => {
+    const fixture = await fixtureClient(({ body }) => ({ status: 200, body: receipt(body) }), ["file_pane.open_v1"]);
+    terminalSpaces(fixture);
+    const environment = { ...fixture.environment, HMUX_SESSION_ID: "source-1", HMUX_WORKSPACE_ID: "native-source" };
+    const result = await runCli(["client", "pane", "open", "file", "report.html", "--json"], environment);
+    expect(result.code, result.stderr).toBe(0);
+    expect(fixture.requests).toHaveLength(1);
+    expect(fixture.requests[0]).toMatchObject({ url: "/pane/open", body: { tool: "file", path: resolve("report.html"), spaceId: "space-1" } });
+  });
+
+  it("asks for a Space when the invoking pane is not open in the client", async () => {
+    const fixture = await fixtureClient(({ body }) => ({ status: 200, body: receipt(body) }), ["file_pane.open_v1"]);
+    terminalSpaces(fixture);
+    const environment = { ...fixture.environment, HMUX_SESSION_ID: "elsewhere", HMUX_WORKSPACE_ID: "native-source" };
+    const result = await runCli(["client", "pane", "open", "file", "report.html", "--json"], environment);
+    expect(result.code).toBe(2);
+    expect(JSON.parse(result.stderr).error).toMatchObject({ code: "invalid_request", message: expect.stringContaining("--space") });
+    expect(fixture.requests).toEqual([]);
+  });
+
   it("opens an HTML path in an exact Space without a projection and reports opened in human output", async () => {
     const fixture = await fixtureClient(({ body }) => ({ status: 200, body: receipt(body, { reused: true }) }), ["file_pane.open_v1"]);
     const result = await runCli(["client", "pane", "open", "file", resolve("page.html"), "--space-id", "exact"], fixture.environment);

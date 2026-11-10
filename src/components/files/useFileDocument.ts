@@ -3,6 +3,7 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { createFileDocument } from "@/lib/files/fileDocument";
 import { fileDocumentIO } from "@/lib/files/fileDocumentIO";
 import { subscribeFileDeletion } from "@/lib/files/fileDeletionEvents";
+import { subscribeFileReopen } from "@/lib/files/fileReopenEvents";
 import { t } from "@/lib/i18n";
 
 /** React owns the pane's observation lifetime and preferences, never a second draft. */
@@ -16,7 +17,9 @@ export function useFileDocument(
   useEffect(() => {
     document.attach();
     const unsubscribe = subscribeFileDeletion((notice) => document.deleted(notice, t("panels.fileViewer.deletedOnRemote")));
+    const unsubscribeReopen = subscribeFileReopen({ path, source, hostId, sessionId }, () => document.reopened());
     return () => {
+      unsubscribeReopen();
       // Deletion can still invalidate a queued close-flush while a native write drains.
       void document.detach().then(unsubscribe, unsubscribe);
     };

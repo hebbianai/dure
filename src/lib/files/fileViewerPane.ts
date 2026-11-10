@@ -24,6 +24,7 @@ import {
 } from "@/lib/workspace/pane/panePlacement";
 import { restorePanePreservingLayout } from "@/lib/workspace/pane/paneVisibility";
 import { recordRecentFileOpen } from "@/lib/files/recentFileOpensStore";
+import { publishFileReopen } from "@/lib/files/fileReopenEvents";
 import { isMockupPath, mockupPaneTitle } from "@/lib/design/mockupSrcdoc";
 
 export type OpenFileOpts = FileTarget;
@@ -133,7 +134,10 @@ export function openFileViewerOn(
 				: "fileviewer",
 			position,
 		);
-	if (existing) restorePanePreservingLayout(api, pane.id);
+	if (existing) {
+		restorePanePreservingLayout(api, pane.id);
+		publishFileReopen(opts);
+	}
 	recordFileOpen(opts);
 	return pane;
 }

@@ -169,6 +169,13 @@ export function createFileDocument(target: FileTarget, io: FileDocumentIO) {
       scheduler = enabled ? createAutoSaveScheduler({ delayMs: delay, onSave: () => { void save(); } }) : null;
       scheduleSave();
     },
+    /** The file was opened again: show what is on disk now, unless that would
+     * replace unsaved edits or a read or write is already under way. */
+    reopened() {
+      const current = state.get();
+      if (detached || current.loading || current.saving || documentIsDirty(current)) return;
+      void load(current.path);
+    },
     deleted(deletion: FileDeletionNotice, error: string) {
       if (!fileMatchesDeletion(at(state.get().path), deletion)) return;
       readRevision++;

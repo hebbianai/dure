@@ -156,6 +156,7 @@ export const panels: Record<string, string> = {
 	"panels.fileViewer.deletedOnRemote": "文件已从远程服务器删除",
 	"panels.fileViewer.editSource": "编辑源代码",
 	"panels.fileViewer.fileGone": "文件已不存在——可能在输出后被删除或移动了",
+	"panels.fileViewer.htmlScriptsBlocked": "此预览不运行脚本——交互内容可能无法使用",
 	"panels.fileViewer.mediaPreviewCap": "超过 25MB 预览上限——可能无法完整播放",
 	"panels.fileViewer.openInDefaultApp": "用默认应用打开",
 	"panels.fileViewer.pdfNotDisplayable": "无法显示此 PDF。",
