@@ -12,6 +12,7 @@ use hmux_client::{
 
 pub(crate) const RUNTIME_STATE_CAPABILITY: &str = "exact_session_probe_runtime_state_v1";
 pub(crate) const WORKING_DIRECTORY_CAPABILITY: &str = "exact_session_probe_working_directory_v1";
+pub(crate) const SEMANTIC_IDLE_CAPABILITY: &str = "exact_session_probe_semantic_idle_v1";
 
 #[derive(Args, Debug)]
 pub(crate) struct SessionProbeBatchArgs {
@@ -38,6 +39,13 @@ pub(crate) struct SessionProbeBatchArgs {
     /// older receipt readers refuse keys they did not request.
     #[arg(long)]
     pub(crate) include_working_directory: bool,
+
+    /// Include how long a healthy exact generation has been semantically
+    /// idle: the provider reported a quiet prompt and no input is pending.
+    /// Requires exact_session_probe_semantic_idle_v1. A separate flag for
+    /// the same reason as --include-working-directory.
+    #[arg(long)]
+    pub(crate) include_semantic_idle: bool,
 }
 
 /// Optional Host observations a probe batch receipt carries.
@@ -45,6 +53,7 @@ pub(crate) struct SessionProbeBatchArgs {
 pub(crate) struct ReceiptProjections {
     pub(crate) runtime_state: bool,
     pub(crate) working_directory: bool,
+    pub(crate) semantic_idle: bool,
 }
 
 impl From<&SessionProbeBatchArgs> for ReceiptProjections {
@@ -52,6 +61,7 @@ impl From<&SessionProbeBatchArgs> for ReceiptProjections {
         Self {
             runtime_state: args.include_runtime_state,
             working_directory: args.include_working_directory,
+            semantic_idle: args.include_semantic_idle,
         }
     }
 }
@@ -142,6 +152,10 @@ struct ExactSessionProbeReceipt {
     agent_runtime_state: Option<AgentRuntimeStateDescriptor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     working_directory: Option<WorkingDirectoryDescriptor>,
+    /// Age, at this observation, of the Host's current semantic idle
+    /// revision. Absent while the agent works or needs input, or is unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_idle_ms: Option<String>,
 }
 
 fn batch_receipt(
@@ -172,6 +186,7 @@ fn batch_receipt(
                 let healthy = inspection.health == SessionHealth::Healthy;
                 let include_runtime_state = projections.runtime_state && healthy;
                 let include_working_directory = projections.working_directory && healthy;
+                let include_semantic_idle = projections.semantic_idle && healthy;
                 ExactSessionProbeReceipt {
                     session_id: inspection.session_id.clone(),
                     workspace_id: inspection.workspace_id.clone(),
@@ -190,6 +205,9 @@ fn batch_receipt(
                         .flatten(),
                     working_directory: include_working_directory
                         .then(|| inspection.working_directory.clone())
+                        .flatten(),
+                    semantic_idle_ms: include_semantic_idle
+                        .then(|| inspection.semantic_idle_ms.clone())
                         .flatten(),
                 }
             }
@@ -232,6 +250,7 @@ fn receipt_without_generation(
         output_sequence: None,
         agent_runtime_state: None,
         working_directory: None,
+        semantic_idle_ms: None,
     }
 }
 

@@ -126,11 +126,13 @@ if (args.includes("probe-batch")) {
   const capabilities = ${JSON.stringify(capabilities)};
   const runtimeState = args.includes("--include-runtime-state");
   const workingDirectory = args.includes("--include-working-directory");
+  const semanticIdle = args.includes("--include-semantic-idle");
   // Like real Hmux: a predating binary refuses the flag, and each projection
   // follows only its own requested flag.
   if (
     (runtimeState && !capabilities.includes("exact_session_probe_runtime_state_v1")) ||
-    (workingDirectory && !capabilities.includes("exact_session_probe_working_directory_v1"))
+    (workingDirectory && !capabilities.includes("exact_session_probe_working_directory_v1")) ||
+    (semanticIdle && !capabilities.includes("exact_session_probe_semantic_idle_v1"))
   ) process.exit(2);
   const results = targets.map((target) => {
     const session = Array.isArray(payload)
@@ -167,6 +169,9 @@ if (args.includes("probe-batch")) {
         }
         if (runtimeState && session.agentRuntimeState) {
           result.agentRuntimeState = session.agentRuntimeState;
+        }
+        if (semanticIdle && session.semanticIdleMs) {
+          result.semanticIdleMs = session.semanticIdleMs;
         }
         if ((runtimeState || workingDirectory) && session.output_seq) {
           result.outputSequence = session.output_seq;
@@ -214,9 +219,11 @@ if (args.includes("probe-batch")) {
       identity(left) < identity(right) ? -1 : identity(left) > identity(right) ? 1 : 0,
     );
   const selected = [...prioritized, ...remaining].slice(0, query.maxItems);
-  // Real Hmux observes no working directory without a probe.
+  // Real Hmux observes no working directory or idle age without a probe.
   const unprobed = (session) =>
-    args.includes("--no-probe") ? { ...session, workingDirectory: null } : session;
+    args.includes("--no-probe")
+      ? { ...session, workingDirectory: null, semanticIdleMs: null }
+      : session;
   const serialize = () =>
     JSON.stringify({
       schemaVersion: 1,

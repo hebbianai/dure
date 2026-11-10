@@ -260,6 +260,92 @@ describe("dure ls canonical session projection", () => {
     expect(parsed.sessions[0].runtime.agentRuntimeState.activity).toBe("waiting");
   });
 
+  const IDLE_CAPABILITIES = [
+    "bounded_session_catalog_query_v1",
+    "exact_session_probe_runtime_state_v1",
+    "exact_session_probe_semantic_idle_v1",
+  ];
+  const waitingState = {
+    terminal_epoch: "terminal-1",
+    revision: "3",
+    observed_through_output_seq: "11",
+    lifecycle: "running",
+    activity: "waiting",
+    attention: "none",
+    attention_id: null,
+    source: "provider_event",
+    turn_completed_count: "1",
+  };
+
+  it("says since when a waiting agent has been idle", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, { agentRuntimeState: waitingState, semanticIdleMs: "125000" }),
+    ], { capabilities: IDLE_CAPABILITIES });
+
+    const json = runSessionCli(root, hmux, ["ls", "--json"]);
+    expect(json.status, `${json.stdout}\n${json.stderr}`).toBe(0);
+    const [session] = JSON.parse(json.stdout).sessions;
+    expect(session.runtime.semanticIdleMs).toBe("125000");
+    expect(session.idleSinceMs).toBe(session.liveness.observedAtMs - 125_000);
+    expect(session.fieldSources.idleSinceMs).toBe("hmux_host");
+
+    const table = runSessionCli(root, hmux, ["ls"]);
+    expect(table.status, `${table.stdout}\n${table.stderr}`).toBe(0);
+    const [header, row] = table.stdout.trim().split("\n");
+    const columns = header.split("\t");
+    expect(columns.indexOf("IDLE")).toBe(columns.indexOf("ACTIVITY") + 1);
+    expect(row.split("\t")[columns.indexOf("IDLE")]).toBe("2m 5s");
+  });
+
+  it("leaves the idle time unknown when Hmux predates the semantic idle probe", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, { agentRuntimeState: waitingState, semanticIdleMs: "125000" }),
+    ], {
+      capabilities: ["bounded_session_catalog_query_v1", "exact_session_probe_runtime_state_v1"],
+    });
+
+    const json = runSessionCli(root, hmux, ["ls", "--json"]);
+    expect(json.status, `${json.stdout}\n${json.stderr}`).toBe(0);
+    const [session] = JSON.parse(json.stdout).sessions;
+    // The older binary refuses the flag it does not know, so the probe still
+    // has to report the activity without it.
+    expect(session.runtime.agentRuntimeState.activity).toBe("waiting");
+    expect(session.runtime.semanticIdleMs).toBeNull();
+    expect(session.idleSinceMs).toBeNull();
+    expect(session.fieldSources.idleSinceMs).toBe("unavailable");
+
+    const table = runSessionCli(root, hmux, ["ls"]);
+    const [header, row] = table.stdout.trim().split("\n");
+    expect(row.split("\t")[header.split("\t").indexOf("IDLE")]).toBe("-");
+  });
+
+  it("never reports an idle time for an agent that is working or needs attention", () => {
+    const root = temporaryRoot();
+    const hmux = installHmuxStub(root, [
+      hmuxSession(1, {
+        agentRuntimeState: { ...waitingState, activity: "working" },
+        semanticIdleMs: "5000",
+      }),
+      hmuxSession(2, {
+        agentRuntimeState: {
+          ...waitingState,
+          attention: "input_required",
+          attention_id: "attention-2",
+        },
+        semanticIdleMs: "5000",
+      }),
+    ], { capabilities: IDLE_CAPABILITIES });
+
+    const json = runSessionCli(root, hmux, ["ls", "--json"]);
+    expect(json.status, `${json.stdout}\n${json.stderr}`).toBe(0);
+    for (const session of JSON.parse(json.stdout).sessions) {
+      expect(session.runtime.semanticIdleMs).toBeNull();
+      expect(session.idleSinceMs).toBeNull();
+    }
+  });
+
   it("filters sessions with --alive to show only live sessions", () => {
     const root = temporaryRoot();
     const hmux = installHmuxStub(root, [
