@@ -862,6 +862,7 @@ mod tests {
 
     struct FakeSinkState {
         calls: Vec<CheckpointVersion>,
+        call_started: Vec<Instant>,
         checkpoints: Vec<PresentationCheckpoint>,
         failures: VecDeque<CheckpointSinkError>,
         permanent_failure: Option<CheckpointSinkError>,
@@ -879,6 +880,7 @@ mod tests {
             let shared = Arc::new((
                 Mutex::new(FakeSinkState {
                     calls: Vec::new(),
+                    call_started: Vec::new(),
                     checkpoints: Vec::new(),
                     failures: failures.into_iter().collect(),
                     permanent_failure,
@@ -904,6 +906,7 @@ mod tests {
         ) -> std::result::Result<(), CheckpointSinkError> {
             let (state_lock, changed) = self.shared.as_ref();
             let mut state = state_lock.lock().unwrap();
+            state.call_started.push(Instant::now());
             state.calls.push(CheckpointVersion {
                 sequence_through: checkpoint.sequence_through(),
                 rows: checkpoint.rows(),
@@ -957,6 +960,10 @@ mod tests {
 
         fn calls(&self) -> Vec<CheckpointVersion> {
             self.shared.0.lock().unwrap().calls.clone()
+        }
+
+        fn call_started(&self) -> Vec<Instant> {
+            self.shared.0.lock().unwrap().call_started.clone()
         }
 
         fn checkpoints(&self) -> Vec<PresentationCheckpoint> {
@@ -1274,26 +1281,28 @@ mod tests {
 
     #[test]
     fn permanent_periodic_failure_backs_off_without_spinning() {
+        let backoff = Duration::from_millis(50);
         let source = SharedSource::new(Some(checkpoint(7, 24, 80)));
         let error = CheckpointSinkError::injected(
             CheckpointFailurePhase::Write,
             CheckpointFailureCode::NoSpace,
         );
         let (sink, handle) = FakeSink::new([], Some(error), false);
-        let writer = spawn_writer(
-            source,
-            sink,
-            config(Duration::from_millis(1), Duration::from_millis(50)),
-        );
-        handle.wait_for_calls(1);
-
-        thread::sleep(Duration::from_millis(15));
-        assert_eq!(
-            handle.calls().len(),
-            1,
-            "a permanent error must enter backoff instead of spinning"
-        );
+        let writer = spawn_writer(source, sink, config(Duration::from_millis(1), backoff));
+        // Measure each retry instead of sleeping and counting calls: a slow
+        // host can only lengthen the observed gap, while a writer that spins
+        // retries at the 1 ms periodic interval or sooner.
+        handle.wait_for_calls(3);
         writer.shutdown(RootRetired);
+
+        let started = handle.call_started();
+        for attempts in started.windows(2) {
+            let gap = attempts[1].duration_since(attempts[0]);
+            assert!(
+                gap >= backoff,
+                "a permanent error must enter backoff instead of spinning: retried after {gap:?}"
+            );
+        }
     }
 
     #[test]
