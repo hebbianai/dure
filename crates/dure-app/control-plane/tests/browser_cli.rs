@@ -202,6 +202,14 @@ async fn fixture_with_installation(
     }
     let hmux = root.join("unused-hmux");
     owner_file(&hmux, b"#!/bin/sh\nexit 1\n", 0o700);
+    // The backend records its launch executable's identity, which is capped at
+    // 256 MiB. The Linux debug test binary is close to that cap, so the fixture
+    // names a small stub rather than defaulting to the test binary.
+    owner_file(
+        &root.join("dure-control-plane"),
+        b"#!/bin/sh\nexit 1\n",
+        0o700,
+    );
     if let Some(installation) = installation {
         owner_file(
             &root.join("browser/installation.json"),
@@ -253,7 +261,7 @@ async fn serve_fixture(
             hmux_runtime_bin: hmux.clone(),
             hmux_discovery_root: root.join("discovery"),
             claude_structured_runtime: None,
-            launch_executable: None,
+            launch_executable: Some(root.join("dure-control-plane")),
             expected_generation,
             activation_source_generation: None,
             staged: false,
@@ -406,7 +414,7 @@ async fn real_cli_uses_backend_host_and_durable_operation_journal() {
             hmux_runtime_bin: hmux,
             hmux_discovery_root: root.join("discovery"),
             claude_structured_runtime: None,
-            launch_executable: None,
+            launch_executable: Some(root.join("dure-control-plane")),
             expected_generation: Some(endpoint.generation.clone()),
             activation_source_generation: None,
             staged: false,
