@@ -2671,6 +2671,7 @@ async function cmdHmux(sub, opts) {
         "dure hmux rehost publish <agent-id> --from-session <original-session-id> --workspace ID --operation-id ID [--backend ID] [--json]  # publish completion; never restarts a provider\n" +
         "Rehost keeps the original working folder; --project, --path and --cwd are unsupported.\n" +
         "start and retry wait up to a minute for an operation Hmux is still applying; if it is still running they exit 0 with state running and its status command.\n" +
+        "A confirmed --name restart is finished (exit 0) only after its binding is published; while Hmux is still applying it, it exits 75 with state running and its status/publish commands.\n" +
         "dure hmux convert --name <session> --target-panel-id ID --to <managed|standalone> [--agent-name NAME] [--confirm-restart]\n" +
         "dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] [--yes] [--json]  # alias for dure stop\n" +
         "dure hmux migrate ...  # adopt alias\n",
@@ -4426,7 +4427,7 @@ async function main() {
     return runProviderCapabilitiesCommand(cmd === "help" ? ["--help"] : rest, CLI_SCRIPT_PATH);
   }
   if (cmd === "runs" || (cmd === "help" && rest[0] === "runs")) {
-    const { RUNS_HELP, parseRunsOptions, collectRunsCommand, formatRunsCommand } = await import("./lib/runs-command.mjs");
+    const { RUNS_HELP, parseRunsOptions, collectRunsCommand, formatRunsCommand, runsCommandExitCode } = await import("./lib/runs-command.mjs");
     if (cmd === "help" || rest.length === 0 || rest.some((arg) => arg === "--help" || arg === "-h")) {
       process.stdout.write(`${RUNS_HELP}\n`);
       return;
@@ -4445,7 +4446,7 @@ async function main() {
       loadRegistry,
     });
     process.stdout.write(`${opts.json ? JSON.stringify(report) : formatRunsCommand(report)}\n`);
-    process.exitCode = report.ok ? 0 : 2;
+    process.exitCode = runsCommandExitCode(report);
     return;
   }
   if (cmd === "resume" || (cmd === "help" && rest[0] === "resume")) {
