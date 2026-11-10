@@ -178,7 +178,13 @@ pub(super) async fn load_or_admit_with_activation(
                 && !inspection.is_exited_exact()
                 && !inspection.is_agent_quiescent()
             {
-                return Err(source_busy(inspection.busy_reason()));
+                return Err(source_busy_refusal(
+                    state,
+                    &source,
+                    &inspection,
+                    provider_conversation_ref.as_option(),
+                )
+                .await);
             }
             if matches!(
                 body.source_stop_policy,
@@ -187,14 +193,20 @@ pub(super) async fn load_or_admit_with_activation(
                 if !inspection.supports_semantic_quiescent_stop() {
                     return Err("agent_runtime_semantic_idle_unavailable".into());
                 }
-                let observed = inspection
-                    .managed_stop_quiescence_fence()
-                    .map_err(|_| source_busy(inspection.busy_reason()))?;
+                let Ok(observed) = inspection.managed_stop_quiescence_fence() else {
+                    return Err(source_busy_refusal(
+                        state,
+                        &source,
+                        &inspection,
+                        provider_conversation_ref.as_option(),
+                    )
+                    .await);
+                };
                 if !body.source_stop_policy.accepts_observation(
                     observed.runtime_revision(),
                     observed.observed_through_output_seq(),
                 ) {
-                    return Err(source_busy(AgentBusyReason::ObservationChanged));
+                    return Err(source_busy(AgentBusyReason::ObservationChanged, None));
                 }
             }
             (

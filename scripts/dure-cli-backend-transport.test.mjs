@@ -754,6 +754,55 @@ describe("Dure backend profile transport", () => {
     },
   );
 
+  it("keeps a busy refusal's bounded background work and drops a malformed one", async () => {
+    const profile = localProfile();
+    const refusal = (backgroundWork) => {
+      const response = responseFor(profile, "request-background-work", {
+        kind: "dure.backend.error",
+        error: {
+          code: "agent_runtime_source_busy",
+          message: "busy",
+          details: { reasonCode: "agent_background_work", disposition: "retry_same", backgroundWork },
+        },
+      });
+      delete response.result;
+      try {
+        parseBackendTransportResponse(Buffer.from(JSON.stringify(response)), {
+          nowMs: 1_000, profile, requestId: "request-background-work",
+        });
+      } catch (error) {
+        return backendTransportErrorReport(error, profile).error;
+      }
+      throw new Error("expected a remote error");
+    };
+    const counts = { subagents: 1, workflows: 0, shells: 2, monitors: 0 };
+    const report = refusal({
+      items: [
+        { id: "shell-1", kind: "shell", label: "Run the\u001b[31m checks\n", startedUnixMs: 5,
+          steps: null, tokens: null, command: "must-not-escape" },
+        { id: "a7f3", kind: "subagent", label: null, startedUnixMs: 6, steps: { done: 1, total: 3 }, tokens: 9 },
+      ],
+      counts, truncated: false,
+    });
+    expect(report.backgroundWork).toEqual({
+      items: [
+        { id: "shell-1", kind: "shell", label: "Run the [31m checks", startedUnixMs: 5 },
+        { id: "a7f3", kind: "subagent", label: null, startedUnixMs: 6 },
+      ],
+      counts, truncated: true,
+    });
+    expect(JSON.stringify(report)).not.toContain("must-not-escape");
+    for (const malformed of [
+      undefined,
+      { items: [], counts, truncated: false },
+      { items: [{ id: "../x", kind: "shell", label: null, startedUnixMs: 1 }], counts },
+      { items: [{ id: "x", kind: "teammate", label: null, startedUnixMs: 1 }], counts },
+      { items: [{ id: "x", kind: "shell", label: null, startedUnixMs: 1 }], counts: { ...counts, shells: -1 } },
+    ]) {
+      expect(refusal(malformed)).not.toHaveProperty("backgroundWork");
+    }
+  });
+
   it("fails closed when SSH references or endpoint forwarding are unavailable", async () => {
     const profile = remoteProfile();
     await expectErrorCode(

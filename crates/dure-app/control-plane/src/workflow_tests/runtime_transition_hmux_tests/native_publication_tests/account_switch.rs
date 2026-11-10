@@ -135,6 +135,12 @@ async fn account_switch(provider: &str) {
     assert_eq!(hmux.requests().len(), 1);
     let mut confirmed = args.to_vec();
     confirmed.push("--confirm-restart");
+    // The source account's own records show a background shell this session
+    // started; the refusal names it so the person sees what exiting stops.
+    let recorded_background = provider == "claude";
+    if recorded_background {
+        record_background_shell(provider);
+    }
     let (ok, busy) = run_cli(&state, &hmux.root, &confirmed, None, None).await;
     assert!(!ok, "{busy}");
     assert_eq!(
@@ -143,6 +149,19 @@ async fn account_switch(provider: &str) {
     );
     assert_eq!(busy["error"]["reasonCode"], "agent_working", "{busy}");
     assert_eq!(busy["accountSwitch"]["state"], "refused", "{busy}");
+    if recorded_background {
+        let work = &busy["error"]["backgroundWork"];
+        assert_eq!(work["items"][0]["id"], "shell-qa-1", "{busy}");
+        assert_eq!(work["items"][0]["kind"], "shell", "{busy}");
+        assert_eq!(
+            work["items"][0]["label"], "Run the release checks",
+            "{busy}"
+        );
+        assert_eq!(work["counts"]["shells"], 1, "{busy}");
+        assert!(!busy.to_string().contains("sleep 600"), "{busy}");
+    } else {
+        assert!(busy["error"].get("backgroundWork").is_none(), "{busy}");
+    }
     assert_eq!(hmux.requests().len(), 1);
     assert_eq!(
         hmux.session(&source).lifecycle,
@@ -233,6 +252,51 @@ fn current_session(hmux: &RealHmux, provider: &str) -> WorkflowSessionGeneration
         host_instance_id: session.host_instance_id,
         terminal_epoch: session.terminal_epoch,
     }
+}
+
+/// Record a background shell, started now, in the source conversation under
+/// the provider-default account's own history.
+fn record_background_shell(provider: &str) {
+    let provider_id = ProviderIdV1::new(provider).unwrap();
+    let canonical =
+        crate::provider_credential_profile::provider_state_directory(&provider_id, None).unwrap();
+    let directory = canonical.join("projects/account-switch-background");
+    fs::create_dir_all(&directory).unwrap();
+    for ancestor in directory
+        .ancestors()
+        .take_while(|path| path.starts_with(&canonical))
+    {
+        fs::set_permissions(ancestor, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let at = |offset: i64| {
+        chrono::DateTime::from_timestamp_millis(now + offset)
+            .unwrap()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    };
+    let lines = [
+        json!({"type": "assistant", "sessionId": CONVERSATION, "timestamp": at(0),
+            "message": {"id": "message-qa-1", "role": "assistant", "content": [{
+                "type": "tool_use", "id": "tool-qa-1", "name": "Bash",
+                "input": {"command": "sleep 600", "description": "Run the release checks",
+                    "run_in_background": true}}]}}),
+        json!({"type": "user", "sessionId": CONVERSATION, "timestamp": at(10),
+            "message": {"role": "user", "content": [{"type": "tool_result",
+                "tool_use_id": "tool-qa-1", "content": "ok"}]},
+            "toolUseResult": {"backgroundTaskId": "shell-qa-1", "stdout": "", "stderr": "",
+                "interrupted": false}}),
+    ];
+    fs::write(
+        directory.join(format!("{CONVERSATION}.jsonl")),
+        lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
 }
 
 /// Record a turn that ran after an in-session model and effort change in the
