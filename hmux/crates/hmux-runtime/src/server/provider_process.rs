@@ -330,11 +330,58 @@ mod tests {
     use super::*;
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
     use std::fs;
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
-    use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
+    use std::sync::{Arc, PoisonError};
+
+    /// Bounds a natural provider completion on a loaded runner. A healthy run
+    /// finishes in well under a second, so a regression fails here instead of
+    /// holding the runner until the job timeout.
+    const PROVIDER_COMPLETION_DEADLINE: Duration = Duration::from_secs(30);
+
+    /// Reads a fixture PTY master for the whole test, as the runtime's output
+    /// loop does for a real provider. A macOS controlling process cannot finish
+    /// exiting while its terminal still holds unread output, and until then it
+    /// is not waitable, so an unread master would keep `wait_for_provider` from
+    /// ever observing the exit.
+    struct PtyOutputDrain {
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl PtyOutputDrain {
+        fn start(master: &dyn MasterPty) -> Self {
+            let mut reader = master
+                .try_clone_reader()
+                .expect("fixture PTY master must expose a reader");
+            let output = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&output);
+            // The reader ends with EOF or EIO once every slave descriptor has
+            // closed; it is detached so a surviving fixture cannot block the
+            // test past its own deadline.
+            thread::spawn(move || {
+                let mut buffer = [0_u8; 4096];
+                loop {
+                    match reader.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(count) => sink
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .extend_from_slice(&buffer[..count]),
+                        Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                        Err(_) => break,
+                    }
+                }
+            });
+            Self { output }
+        }
+
+        fn output(&self) -> String {
+            String::from_utf8_lossy(&self.output.lock().unwrap_or_else(PoisonError::into_inner))
+                .into_owned()
+        }
+    }
 
     #[derive(Debug)]
     struct ReapingKillChild {
@@ -778,6 +825,7 @@ mod tests {
         ]);
         let mut child = pair.slave.spawn_command(command).unwrap();
         drop(pair.slave);
+        let _terminal_output = PtyOutputDrain::start(&*pair.master);
         let provider_pid = child.process_id().unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         let descendant_pid = loop {
@@ -835,15 +883,23 @@ mod tests {
             })
             .unwrap();
         let mut command = CommandBuilder::new("/bin/sh");
+        // The provider exits naturally only after the test releases it through
+        // its terminal, so both session handles below are taken while it is
+        // still the live session leader.
         command.args([
             "-c",
             "set -m; (trap '' HUP TERM; while :; do sleep 30; done) & \
-             echo $! > \"$1\"; exit 0",
+             echo $! > \"$1\"; read -r _; exit 0",
             "hmux-natural-provider-exit",
             descendant_path.to_str().unwrap(),
         ]);
         let mut child = pair.slave.spawn_command(command).unwrap();
         drop(pair.slave);
+        let terminal_output = PtyOutputDrain::start(&*pair.master);
+        let mut release_provider = pair
+            .master
+            .take_writer()
+            .expect("fixture PTY master must expose a writer");
         let provider_pid = child.process_id().unwrap();
         let provider_session =
             OwnedProcessSession::new(provider_pid).expect("test provider must own its session");
@@ -865,27 +921,53 @@ mod tests {
         let descendant_generation = exact_local_process_generation(descendant_pid)
             .expect("surviving descendant generation must be observable");
 
-        let (_termination_tx, termination_rx) = mpsc::channel();
-        let provider_exit_observed = AtomicBool::new(false);
-        let pty_master = Mutex::new(pair.master);
-        let completion = wait_for_provider(
-            &mut child,
-            &termination_rx,
-            provider_runtime_session,
-            ProviderProcessControl::new(&Mutex::new(()), &provider_exit_observed, &pty_master),
-        )
-        .expect("natural provider completion must be observed");
+        let (completion_tx, completion_rx) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            let (_termination_tx, termination_rx) = mpsc::channel();
+            let provider_exit_observed = AtomicBool::new(false);
+            let pty_master = Mutex::new(pair.master);
+            let completion = wait_for_provider(
+                &mut child,
+                &termination_rx,
+                provider_runtime_session,
+                ProviderProcessControl::new(&Mutex::new(()), &provider_exit_observed, &pty_master),
+            );
+            let _ = completion_tx.send(completion.map(|completion| {
+                (completion, provider_exit_observed.load(Ordering::Acquire))
+            }));
+        });
+        release_provider
+            .write_all(b"\n")
+            .expect("test must release the provider through its terminal");
+        let (completion, provider_exit_observed) =
+            match completion_rx.recv_timeout(PROVIDER_COMPLETION_DEADLINE) {
+                Ok(completion) => completion.expect("natural provider completion must be observed"),
+                Err(error) => {
+                    // Contain the fixture before failing so it cannot outlive
+                    // the test; the worker then reaps the provider itself.
+                    let _ = provider_session.terminate(None);
+                    panic!(
+                        "natural provider completion was not published within \
+                         {PROVIDER_COMPLETION_DEADLINE:?} ({error:?}); provider terminal output: {:?}",
+                        terminal_output.output()
+                    );
+                }
+            };
+        worker.join().unwrap();
 
         let descendant_state = std::process::Command::new("/bin/ps")
-            .args(["-o", "state=", "-p", &descendant_pid.to_string()])
+            .args(["-o", "state=,ppid=,pgid=", "-p", &descendant_pid.to_string()])
             .output()
             .expect("descendant state must be observable");
         let writer_survived = descendant_state.status.success()
             && descendant_state
                 .stdout
-                .into_iter()
+                .iter()
                 .find(|byte| !byte.is_ascii_whitespace())
-                .is_some_and(|state| state != b'Z');
+                .is_some_and(|state| *state != b'Z');
+        let descendant_state = String::from_utf8_lossy(&descendant_state.stdout)
+            .trim()
+            .to_string();
         if exact_local_process_generation(descendant_pid)
             .is_ok_and(|current| current == descendant_generation)
         {
@@ -904,10 +986,13 @@ mod tests {
 
         assert!(
             !writer_survived,
-            "provider completion must not publish while a descendant can retain the conversation writer"
+            "provider completion must not publish while a descendant can retain the conversation \
+             writer (descendant state, parent, group: {descendant_state:?}; provider terminal \
+             output: {:?})",
+            terminal_output.output()
         );
         assert!(!completion.terminated);
-        assert!(provider_exit_observed.load(Ordering::Acquire));
+        assert!(provider_exit_observed);
     }
 
     #[test]
