@@ -18,6 +18,8 @@ import { scriptTestEnvironment } from "./lib/script-test-environment.mjs";
 
 const roots = [];
 const macosTest = it.skipIf(process.platform !== "darwin");
+// macOS app bundles and Linux packages both carry the CLI payload.
+const packagedTest = it.skipIf(!["darwin", "linux"].includes(process.platform));
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
@@ -136,17 +138,27 @@ function packageFixture({ olderManagedInstall = false, appBundleInHome = null } 
   execFileSync(process.execPath, ["scripts/install-dure-cli.mjs", "--bundle", bundle], {
     cwd: repository, env: buildEnvironment, stdio: "pipe", timeout: 30_000,
   });
-  const installedResources = appBundleInHome
-    ? path.join(home, appBundleInHome, "Contents", "Resources")
-    : path.join(root, "Dure with spaces.app", "Contents", "Resources");
-  fs.mkdirSync(path.dirname(installedResources), { recursive: true });
-  const configuration = JSON.parse(fs.readFileSync("src-tauri/tauri.macos.conf.json", "utf8"));
-  // Match Tauri's macOS copy_dir: preserve symlinks and executable modes,
-  // including under the restrictive umask used by isolated release fixtures.
-  for (const [destination, source] of Object.entries(configuration.bundle.macOS.files)) {
-    const target = path.join(path.dirname(installedResources), destination);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    execFileSync("/bin/cp", ["-pR", path.join(resources, source), target]);
+  let installedResources;
+  if (process.platform === "darwin") {
+    installedResources = appBundleInHome
+      ? path.join(home, appBundleInHome, "Contents", "Resources")
+      : path.join(root, "Dure with spaces.app", "Contents", "Resources");
+    fs.mkdirSync(path.dirname(installedResources), { recursive: true });
+    const configuration = JSON.parse(fs.readFileSync("src-tauri/tauri.macos.conf.json", "utf8"));
+    // Match Tauri's macOS copy_dir: preserve symlinks and executable modes,
+    // including under the restrictive umask used by isolated release fixtures.
+    for (const [destination, source] of Object.entries(configuration.bundle.macOS.files)) {
+      const target = path.join(path.dirname(installedResources), destination);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      execFileSync("/bin/cp", ["-pR", path.join(resources, source), target]);
+    }
+  } else {
+    // A Linux package's resource directory is usr/lib/<product>; the finish
+    // step of linux-release-packages.mjs adds the payload there with its
+    // symlinks and executable modes.
+    installedResources = path.join(root, "Dure with spaces", "usr", "lib", "Dure");
+    fs.mkdirSync(path.join(installedResources, "resources"), { recursive: true });
+    execFileSync("/bin/cp", ["-pR", bundle, path.join(installedResources, "resources", "dure-cli")]);
   }
   fs.rmSync(resources, { recursive: true });
   let startup;
@@ -179,7 +191,7 @@ function packageFixture({ olderManagedInstall = false, appBundleInHome = null } 
   return { root, home, environment, runStartup, installedResources, oldVersion };
 }
 
-macosTest("app startup activates its bundle while recovery follows the selected backend", () => {
+packagedTest("app startup activates its bundle while recovery follows the selected backend", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-backend-command-"));
   roots.push(root);
   const executable = compileStartupFixture(root);
@@ -198,7 +210,7 @@ macosTest("app startup activates its bundle while recovery follows the selected 
   expect(invalid.stderr.trim()).toBe("backend_reconcile_profile_invalid");
 }, 30_000);
 
-macosTest("bootstraps the actual stable startup from a relocated package into an empty home without PATH Node", () => {
+packagedTest("bootstraps the actual stable startup from a relocated package into an empty home without PATH Node", () => {
   const { home, environment, runStartup } = packageFixture();
   expect(fs.readdirSync(home)).toEqual([]);
   const result = runStartup();
@@ -239,7 +251,7 @@ macosTest("bootstraps the actual stable startup from a relocated package into an
   expect(runtime.claude.relayBin).toBe(path.join(versionRoot, "bin", "dure-claude-process-relay"));
 }, 60_000);
 
-macosTest("gives managed agents the packaged dure without its private Node or internal executables", () => {
+packagedTest("gives managed agents the packaged dure without its private Node or internal executables", () => {
   const { home, environment, installedResources } = packageFixture();
   const bundle = path.join(installedResources, "resources", "dure-cli", "current", "bin");
   const bootstrap = spawnSync(path.join(bundle, "node"), [path.join(bundle, "lib", "dure-cli-bootstrap.mjs"), home, "stable"], {
@@ -272,7 +284,7 @@ macosTest("gives managed agents the packaged dure without its private Node or in
   expect(JSON.parse(lines.slice(5).join("\n")).buildId).toBe(path.basename(versionRoot));
 }, 60_000);
 
-macosTest("preserves existing stable installs, development channels, global commands, and provider files", () => {
+packagedTest("preserves existing stable installs, development channels, global commands, and provider files", () => {
   const { home, environment, runStartup, installedResources } = packageFixture();
   const installRoot = path.join(home, ".local", "share", "hebbian-ide-cli");
   const protectedFiles = [
@@ -301,7 +313,7 @@ macosTest("preserves existing stable installs, development channels, global comm
   for (const filename of protectedFiles) expect(fs.readFileSync(filename, "utf8")).toBe("fixture-user-owned-data\n");
 }, 60_000);
 
-macosTest("advances an older managed stable install to the shipped payload and preserves its rollback version", () => {
+packagedTest("advances an older managed stable install to the shipped payload and preserves its rollback version", () => {
   const { home, environment, runStartup, oldVersion } = packageFixture({ olderManagedInstall: true });
   const oldMetadata = fs.readFileSync(path.join(oldVersion, "install.json"), "utf8");
   const result = runStartup();
@@ -354,7 +366,7 @@ macosTest("startup from the installed bundle reports retained backups without to
   expect(fs.readdirSync(backups).sort()).toEqual(["Dure-0.2.38-test.app-backup", "Other.app"]);
 }, 60_000);
 
-macosTest("refuses to replace an incomplete existing installation", () => {
+packagedTest("refuses to replace an incomplete existing installation", () => {
   const { home, runStartup } = packageFixture();
   const bin = path.join(home, ".local", "share", "hebbian-ide-cli", "bin");
   fs.mkdirSync(bin, { recursive: true });
@@ -367,7 +379,7 @@ macosTest("refuses to replace an incomplete existing installation", () => {
   expect(fs.existsSync(path.join(bin, "..", "current"))).toBe(false);
 }, 60_000);
 
-macosTest.each(["payload", "source-identity", "channel", "hmux-path"])("rejects a package with changed %s before promoting it", (change) => {
+packagedTest.each(["payload", "source-identity", "channel", "hmux-path"])("rejects a package with changed %s before promoting it", (change) => {
   const { home, runStartup, installedResources } = packageFixture();
   const versionRoot = fs.realpathSync(path.join(installedResources, "resources", "dure-cli", "current"));
   const metadataPath = path.join(versionRoot, "install.json");

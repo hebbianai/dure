@@ -1,9 +1,16 @@
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { collectLinuxPackages, repairAppImage, signLinuxPackages } from "./linux-release-packages.mjs";
+import {
+  collectLinuxPackages,
+  finishAppImage,
+  finishDeb,
+  signLinuxPackages,
+  stagedDureCli,
+} from "./linux-release-packages.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -34,7 +41,7 @@ function checkout(pubkey = "unused") {
   fs.mkdirSync(path.join(root, "src-tauri"));
   fs.writeFileSync(
     path.join(root, "src-tauri/tauri.conf.json"),
-    JSON.stringify({ version: "0.2.63", plugins: { updater: { pubkey } } }),
+    JSON.stringify({ productName: "Dure", version: "0.2.63", plugins: { updater: { pubkey } } }),
   );
   return root;
 }
@@ -119,6 +126,63 @@ test("refuses a signature from another key and an incomplete package set", () =>
 });
 
 const elf = (label) => Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.from(` ${label}`)]);
+/** An ELF header with this e_machine (62 x86_64, 183 aarch64). */
+const executable = (machine, label) => {
+  const header = Buffer.alloc(20);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46]).copy(header);
+  header.writeUInt16LE(machine, 18);
+  return Buffer.concat([header, Buffer.from(label)]);
+};
+
+/** The layout stage-dure-cli.mjs writes: one version behind a relative `current`. */
+function stageCli(root, machine = 62) {
+  const payload = path.join(root, "src-tauri/resources/dure-cli");
+  const bin = path.join(payload, "versions/0.2.63+fixture/bin");
+  fs.mkdirSync(path.join(bin, "lib"), { recursive: true });
+  for (const name of ["node", "dure-control-plane", "dure-claude-process-relay", "hmux", "hmux-runtime"]) {
+    fs.writeFileSync(path.join(bin, name), executable(machine, name));
+    fs.chmodSync(path.join(bin, name), 0o755);
+  }
+  fs.writeFileSync(path.join(bin, "dure.mjs"), "#!/bin/sh\n");
+  fs.chmodSync(path.join(bin, "dure.mjs"), 0o700);
+  fs.symlinkSync("dure.mjs", path.join(bin, "dure"));
+  // Staged under a restrictive umask: owner-only data and directories.
+  fs.writeFileSync(path.join(bin, "lib/dure-cli-bootstrap.mjs"), "export {};\n");
+  fs.chmodSync(path.join(bin, "lib/dure-cli-bootstrap.mjs"), 0o600);
+  fs.chmodSync(path.join(bin, "lib"), 0o700);
+  fs.writeFileSync(path.join(payload, "versions/0.2.63+fixture/install.json"), "{}\n");
+  fs.symlinkSync("versions/0.2.63+fixture", path.join(payload, "current"));
+  return payload;
+}
+
+/** Entries below a directory without following links, with their modes. */
+function listing(directory, prefix = "") {
+  return fs.readdirSync(path.join(directory, prefix)).sort().flatMap((name) => {
+    const relative = path.join(prefix, name);
+    const stat = fs.lstatSync(path.join(directory, relative));
+    if (stat.isSymbolicLink()) return [`${relative} -> ${fs.readlinkSync(path.join(directory, relative))}`];
+    const mode = (stat.mode & 0o777).toString(8);
+    if (stat.isDirectory()) return [`${relative}/ ${mode}`, ...listing(directory, relative)];
+    return [`${relative} ${mode} ${fs.statSync(path.join(directory, relative)).size}`];
+  });
+}
+
+const PACKAGED_CLI = [
+  "current -> versions/0.2.63+fixture",
+  "versions/ 755",
+  "versions/0.2.63+fixture/ 755",
+  "versions/0.2.63+fixture/bin/ 755",
+  "versions/0.2.63+fixture/bin/dure -> dure.mjs",
+  "versions/0.2.63+fixture/bin/dure-claude-process-relay 755 45",
+  "versions/0.2.63+fixture/bin/dure-control-plane 755 38",
+  "versions/0.2.63+fixture/bin/dure.mjs 755 10",
+  "versions/0.2.63+fixture/bin/hmux 755 24",
+  "versions/0.2.63+fixture/bin/hmux-runtime 755 32",
+  "versions/0.2.63+fixture/bin/lib/ 755",
+  "versions/0.2.63+fixture/bin/lib/dure-cli-bootstrap.mjs 644 11",
+  "versions/0.2.63+fixture/bin/node 755 24",
+  "versions/0.2.63+fixture/install.json 644 3",
+];
 
 function patchedBundle() {
   const root = checkout();
@@ -141,46 +205,124 @@ function patchedBundle() {
   put(`${appDir}/usr/lib/Dure/resources/${remote}/bin/hmux-runtime`, Buffer.concat([elf("remote runtime"), Buffer.from(" rpath")]));
   put(`${appDir}/usr/lib/Dure/resources/${remote}/install.json`, "{}\n");
   put("bundle/appimage/Dure_0.2.63_amd64.AppImage", "patched image");
+  stageCli(root);
   return { root, bundleRoot: path.join(root, "bundle"), appDir: path.join(root, appDir) };
 }
 
-/** A stand-in AppImage: the repacked image is a copy of the AppDir tree. */
+/** A stand-in AppImage: the repacked image is a copy of the AppDir tree, links included. */
 const imageOf = (appDir) => ({
   repack(directory, output) {
     expect(directory).toBe(appDir);
-    fs.cpSync(directory, `${output}.tree`, { recursive: true });
+    execFileSync("cp", ["-pR", directory, `${output}.tree`]);
     fs.writeFileSync(output, "repacked image");
   },
   extract(image, scratch) {
-    fs.cpSync(`${image}.tree`, path.join(scratch, "squashfs-root"), { recursive: true });
+    execFileSync("cp", ["-pR", `${image}.tree`, path.join(scratch, "squashfs-root")]);
     fs.rmSync(`${image}.tree`, { recursive: true });
     return path.join(scratch, "squashfs-root");
   },
 });
 
-test("restores the exact bundled executables linuxdeploy rewrote and repacks the AppImage", () => {
+test("restores the exact bundled executables linuxdeploy rewrote, adds the Dure CLI and repacks the AppImage", () => {
   const value = patchedBundle();
-  const restored = repairAppImage({ root: value.root, bundleRoot: value.bundleRoot, arch: "x86_64", ...imageOf(value.appDir) });
+  const { restored, addedDureCli } = finishAppImage({ root: value.root, bundleRoot: value.bundleRoot, arch: "x86_64", ...imageOf(value.appDir) });
   expect(restored).toEqual([
     "usr/bin/hmux-runtime",
     "usr/lib/Dure/resources/hmux-remote/x86_64-unknown-linux-musl/bin/hmux-runtime",
   ]);
+  expect(addedDureCli).toBe(true);
+  // The payload keeps its links and gets package modes for every user.
+  const cli = path.join(value.appDir, "usr/lib/Dure/resources/dure-cli");
+  expect(listing(cli)).toEqual(PACKAGED_CLI);
   expect(fs.readFileSync(path.join(value.appDir, "usr/bin/hmux-runtime"))).toEqual(elf("runtime"));
   expect(fs.statSync(path.join(value.appDir, "usr/bin/hmux-runtime")).mode & 0o777).toBe(0o755);
   expect(fs.readFileSync(path.join(value.appDir, "usr/bin/dure"))).toEqual(elf("app, linked against bundled libraries"));
   expect(fs.readFileSync(path.join(value.bundleRoot, "appimage/Dure_0.2.63_amd64.AppImage"), "utf8")).toBe("repacked image");
   expect(fs.readdirSync(path.join(value.bundleRoot, "appimage")).sort()).toEqual(["Dure.AppDir", "Dure_0.2.63_amd64.AppImage"]);
-  // A second run finds nothing to restore and leaves the image alone.
-  expect(repairAppImage({
+  // A second run finds nothing to restore or add and leaves the image alone.
+  expect(finishAppImage({
     root: value.root, bundleRoot: value.bundleRoot, arch: "x86_64",
     repack: () => { throw new Error("must not repack"); },
-  })).toEqual([]);
+  })).toEqual({ restored: [], addedDureCli: false });
+  // An AppDir holding another payload is refused.
+  fs.appendFileSync(path.join(cli, "current/install.json"), " ");
+  expect(() => finishAppImage({ root: value.root, bundleRoot: value.bundleRoot, arch: "x86_64" }))
+    .toThrow("holds a different Dure CLI payload");
+});
+
+test("refuses an unstaged Dure CLI or one built for the other architecture", () => {
+  const root = checkout();
+  expect(() => stagedDureCli(root, "x86_64")).toThrow("the Dure CLI payload is not staged");
+  stageCli(root, 183);
+  expect(stagedDureCli(root, "aarch64").buildId).toBe("0.2.63+fixture");
+  expect(() => stagedDureCli(root, "x86_64")).toThrow("the staged Dure CLI node is not an x86_64 executable");
+});
+
+test("checks the Dure CLI payload in the repacked AppImage", () => {
+  const value = patchedBundle();
+  const image = imageOf(value.appDir);
+  expect(() => finishAppImage({
+    root: value.root,
+    bundleRoot: value.bundleRoot,
+    arch: "x86_64",
+    repack: image.repack,
+    extract(repacked, scratch) {
+      const tree = image.extract(repacked, scratch);
+      const link = path.join(tree, "usr/lib/Dure/resources/dure-cli/current/bin/dure");
+      fs.rmSync(link);
+      fs.copyFileSync(path.join(path.dirname(link), "dure.mjs"), link);
+      return tree;
+    },
+  })).toThrow("the repacked AppImage does not hold the staged Dure CLI payload");
+});
+
+const dpkgDeb = spawnSync("dpkg-deb", ["--version"]).status === 0;
+
+test.skipIf(!dpkgDeb)("adds the Dure CLI to the Debian package with its links, modes and checksums", () => {
+  const root = checkout();
+  stageCli(root);
+  // A package shaped like Tauri's: resources below usr/lib/<product>.
+  const tree = path.join(root, "tree");
+  fs.mkdirSync(path.join(tree, "DEBIAN"), { recursive: true });
+  fs.mkdirSync(path.join(tree, "usr/lib/Dure/resources/hmux-remote"), { recursive: true });
+  fs.mkdirSync(path.join(tree, "usr/bin"), { recursive: true });
+  fs.writeFileSync(path.join(tree, "usr/bin/dure"), "app\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(tree, "usr/lib/Dure/resources/hmux-remote/install.json"), "{}\n");
+  fs.writeFileSync(path.join(tree, "DEBIAN/control"), [
+    "Package: dure", "Version: 0.2.63", "Architecture: amd64", "Installed-Size: 10",
+    "Maintainer: fixture", "Description: fixture", "",
+  ].join("\n"));
+  fs.writeFileSync(path.join(tree, "DEBIAN/md5sums"), `${createHash("md5").update("app\n").digest("hex")}  usr/bin/dure\n`);
+  const bundleRoot = path.join(root, "bundle");
+  fs.mkdirSync(path.join(bundleRoot, "deb"), { recursive: true });
+  const deb = path.join(bundleRoot, "deb/Dure_0.2.63_amd64.deb");
+  execFileSync("dpkg-deb", ["--root-owner-group", "--build", tree, deb], { stdio: "ignore" });
+
+  expect(finishDeb({ root, bundleRoot, arch: "x86_64" })).toBe(true);
+  const unpacked = path.join(root, "unpacked");
+  execFileSync("dpkg-deb", ["--raw-extract", deb, unpacked]);
+  const cli = path.join(unpacked, "usr/lib/Dure/resources/dure-cli");
+  expect(listing(cli)).toEqual(PACKAGED_CLI);
+  expect(fs.readFileSync(path.join(unpacked, "usr/bin/dure"), "utf8")).toBe("app\n");
+  const control = fs.readFileSync(path.join(unpacked, "DEBIAN/control"), "utf8");
+  expect(control).toMatch(/^Installed-Size: 11$/m);
+  const sums = fs.readFileSync(path.join(unpacked, "DEBIAN/md5sums"), "utf8").trim().split("\n");
+  expect(sums).toContain(`${createHash("md5").update("app\n").digest("hex")}  usr/bin/dure`);
+  expect(sums).toContain(`${createHash("md5").update(executable(62, "node")).digest("hex")}  usr/lib/Dure/resources/dure-cli/versions/0.2.63+fixture/bin/node`);
+  // md5sums lists regular files only; links travel as links.
+  expect(sums.some((line) => line.endsWith("/current") || line.endsWith("bin/dure"))).toBe(false);
+  const contents = execFileSync("dpkg-deb", ["--contents", deb], { encoding: "utf8" });
+  expect(contents).toMatch(/^lrwxrwxrwx root\/root .* \.\/usr\/lib\/Dure\/resources\/dure-cli\/current -> versions\/0\.2\.63\+fixture$/m);
+  // A finished package is left as it is.
+  const before = fs.readFileSync(deb);
+  expect(finishDeb({ root, bundleRoot, arch: "x86_64" })).toBe(false);
+  expect(fs.readFileSync(deb).equals(before)).toBe(true);
 });
 
 test("keeps the original AppImage when the repacked one does not hold the source bytes", () => {
   const value = patchedBundle();
   const image = imageOf(value.appDir);
-  expect(() => repairAppImage({
+  expect(() => finishAppImage({
     root: value.root,
     bundleRoot: value.bundleRoot,
     arch: "x86_64",
@@ -197,6 +339,6 @@ test("keeps the original AppImage when the repacked one does not hold the source
 test("refuses an AppDir without the bundled Hmux runtime", () => {
   const value = patchedBundle();
   fs.rmSync(path.join(value.appDir, "usr/bin/hmux-runtime"));
-  expect(() => repairAppImage({ root: value.root, bundleRoot: value.bundleRoot, arch: "x86_64", ...imageOf(value.appDir) }))
+  expect(() => finishAppImage({ root: value.root, bundleRoot: value.bundleRoot, arch: "x86_64", ...imageOf(value.appDir) }))
     .toThrow("no bundled hmux-runtime");
 });

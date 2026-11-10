@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "mainBinaryName": "dure-desktop",
   "build": {
-    "beforeBuildCommand": "pnpm build:linux"
+    "beforeBuildCommand": "pnpm build:linux && node scripts/run-with-build-storage.mjs cli -- node scripts/stage-dure-cli.mjs"
   },
   "bundle": {
     "targets": [

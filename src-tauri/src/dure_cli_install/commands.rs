@@ -2,9 +2,16 @@ use std::path::{Path, PathBuf};
 
 use super::{canonicalize_optional, channel_install_root, validate_executable_file};
 
+/// The CLI payload a stable app build carries in its resource directory.
+/// Every macOS app bundle has one. A Linux AppImage or Debian package has one;
+/// a Linux build run from its Cargo output has none and keeps using the
+/// installed CLI.
 pub(super) fn startup_bundle(channel: &str, resource_dir: &Path) -> Option<PathBuf> {
-    (channel == "stable" && cfg!(target_os = "macos"))
-        .then(|| resource_dir.join("resources/dure-cli/current"))
+    if channel != "stable" {
+        return None;
+    }
+    let bundle = resource_dir.join("resources/dure-cli/current");
+    (cfg!(target_os = "macos") || (cfg!(target_os = "linux") && bundle.exists())).then_some(bundle)
 }
 
 pub(crate) fn resolve_channel_dure_payload(
@@ -38,9 +45,15 @@ pub(crate) fn resolve_control_plane_companion(
     // Stable startup installs the CLI asynchronously. The same bundle that
     // owns that bootstrap already contains this companion, so publication does
     // not race first installation or select an older installed generation.
+    // A Linux AppImage is mounted at a new temporary path on every start, so
+    // Linux names the companion in the installation the startup bootstrap
+    // promoted; hooks are published only after that bootstrap succeeded.
+    #[cfg(target_os = "macos")]
     if let Some(bundle) = startup_bundle(channel, resource_dir) {
         return bundled_companion(&bundle);
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = resource_dir;
     let payload = resolve_channel_dure_payload(channel, home)?
         .ok_or_else(|| "managed provider runtime is not installed".to_string())?;
     let directory = payload
@@ -54,7 +67,7 @@ pub(crate) fn resolve_control_plane_companion(
 /// restarts. Validate the version `current` selects now, then name the
 /// companion through `current` so published hooks follow the installed bundle
 /// rather than a version directory the update removed.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn bundled_companion(current: &Path) -> Result<PathBuf, String> {
     const UNAVAILABLE: &str = "bundled managed provider runtime is unavailable";
     let root = current
@@ -170,6 +183,50 @@ mod tests {
             resolve_control_plane_companion("stable", home.path(), resources.path())
                 .unwrap_err()
                 .contains("escaped")
+        );
+    }
+
+    /// A Linux package carries the bundle the startup bootstrap promotes, but
+    /// an AppImage's resource directory is a per-start mount: hooks name the
+    /// companion in the promoted installation, never in the package.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_bootstraps_a_packaged_bundle_and_names_the_promoted_companion() {
+        let home = tempfile::tempdir().unwrap();
+        let resources = tempfile::tempdir().unwrap();
+        // A Linux build run from its Cargo output carries no bundle.
+        assert_eq!(startup_bundle("stable", resources.path()), None);
+
+        let bundle = resources.path().join("resources/dure-cli");
+        let bundled_bin = bundle.join("versions/0.1.0+package/bin");
+        fs::create_dir_all(&bundled_bin).unwrap();
+        symlink("versions/0.1.0+package", bundle.join("current")).unwrap();
+        assert_eq!(
+            startup_bundle("stable", resources.path()),
+            Some(bundle.join("current"))
+        );
+        assert_eq!(startup_bundle("dev-fixture", resources.path()), None);
+        let bundled_companion = bundled_bin.join("dure-control-plane");
+        fs::write(&bundled_companion, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&bundled_companion, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            resolve_control_plane_companion("stable", home.path(), resources.path())
+                .unwrap_err()
+                .contains("not installed")
+        );
+
+        let root = channel_install_root("stable", home.path());
+        let bin = root.join("versions/0.1.0+package/bin");
+        fs::create_dir_all(&bin).unwrap();
+        symlink("versions/0.1.0+package", root.join("current")).unwrap();
+        for name in ["dure", "dure-control-plane"] {
+            let executable = bin.join(name);
+            fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+            fs::set_permissions(executable, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        assert_eq!(
+            resolve_control_plane_companion("stable", home.path(), resources.path()).unwrap(),
+            bin.join("dure-control-plane").canonicalize().unwrap()
         );
     }
 

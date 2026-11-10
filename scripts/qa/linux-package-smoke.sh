@@ -1,15 +1,17 @@
 #!/bin/sh
 # Start a packaged Linux build on an existing (usually virtual) X display and
-# require its main window to appear and stay up. The app runs in a disposable
+# require its main window to appear and stay up, the Dure CLI it carries to be
+# installed into the home and its backend to start. The app runs in a disposable
 # HOME with its own DURE_HOME, XDG directories and HMUX_DISCOVERY_ROOT, so it
 # never sees or changes the caller's app, data or runtimes. Afterwards only the
 # processes started here (the app's process group and anything carrying this
-# run's discovery root) are stopped, and the disposable directories are removed.
+# run's home or discovery root) are stopped, and the disposable directories are
+# removed.
 #
 # With DURE_LINUX_SMOKE_TERMINAL=1 it also opens a terminal pane from the
-# first-run screen and runs a command there that writes a proof file. That step
-# clicks fixed positions of the 1480x940 window on a display without a window
-# manager, so a layout change can break it without a product defect.
+# first-run screen and runs a command and `dure ls` there, writing a proof file.
+# That step clicks fixed positions of the 1480x940 window on a display without a
+# window manager, so a layout change can break it without a product defect.
 #
 # usage: linux-package-smoke.sh <AppImage or installed dure executable>
 #   DISPLAY                     required, for example from `xvfb-run -a`
@@ -42,22 +44,38 @@ app_pid=
 discovery="$root/discovery"
 proof="$root/terminal-proof"
 
-# Processes of this user that carry this run's discovery root.
+# Processes of this user that carry this run's home or discovery root. The
+# backend detaches from the app and may run with a reduced environment, so its
+# command line (which names the discovery root) counts too.
 owned_processes() {
   for environ in /proc/[0-9]*/environ; do
     [ -r "$environ" ] || continue
-    if { tr '\0' '\n' <"$environ"; } 2>/dev/null | grep -Fqx "HMUX_DISCOVERY_ROOT=$discovery"; then
-      pid=${environ#/proc/}
-      echo "${pid%/environ}"
+    pid=${environ#/proc/}
+    pid=${pid%/environ}
+    if { tr '\0' '\n' <"$environ"; } 2>/dev/null |
+      grep -Fqx -e "HMUX_DISCOVERY_ROOT=$discovery" -e "HOME=$root/home"; then
+      echo "$pid"
+    elif { tr '\0' '\n' <"/proc/$pid/cmdline"; } 2>/dev/null | grep -Fqx "$discovery"; then
+      echo "$pid"
     fi
   done
 }
 
-owned_hmux_processes() {
+owned_backend_processes() {
   for pid in $(owned_processes); do
-    if { tr '\0' ' ' <"/proc/$pid/cmdline"; } 2>/dev/null | grep -q 'hmux'; then
+    if { tr '\0' ' ' <"/proc/$pid/cmdline"; } 2>/dev/null | grep -q 'dure-control-plane serve'; then
       echo "$pid"
     fi
+  done
+}
+
+# Hmux processes by executable name; the backend only names Hmux in its arguments.
+owned_hmux_processes() {
+  for pid in $(owned_processes); do
+    executable=$({ tr '\0' '\n' <"/proc/$pid/cmdline"; } 2>/dev/null | head -n 1)
+    case "${executable##*/}" in
+      hmux | hmux-runtime) echo "$pid" ;;
+    esac
   done
 }
 
@@ -128,9 +146,32 @@ while [ "$elapsed" -lt "$seconds" ]; do
 done
 [ -n "$window" ] || fail "no visible Dure window within ${seconds}s"
 
+# A stable build installs the Dure CLI it carries into the home, then starts
+# the backend from it.
+cli_install="$root/home/.local/share/hebbian-ide-cli"
+elapsed=0
+until [ -f "$cli_install/current/install.json" ]; do
+  kill -0 "$app_pid" 2>/dev/null || fail "the app exited before it installed its Dure CLI"
+  [ "$elapsed" -lt "$seconds" ] || fail "the app did not install its packaged Dure CLI within ${seconds}s"
+  sleep 2
+  elapsed=$((elapsed + 2))
+done
+cli_build=$(basename "$(readlink -f "$cli_install/current")")
+elapsed=0
+until [ -n "$(owned_backend_processes)" ]; do
+  kill -0 "$app_pid" 2>/dev/null || fail "the app exited before its backend started"
+  [ "$elapsed" -lt "$seconds" ] || fail "no Dure backend started within ${seconds}s"
+  sleep 2
+  elapsed=$((elapsed + 2))
+done
+
 # Let the interface load, then require the app to still be running.
 sleep 20
 kill -0 "$app_pid" 2>/dev/null || fail "the app exited after its window appeared"
+if grep -q 'backend reconcile failed' "$root/app.log"; then
+  grep 'backend reconcile failed' "$root/app.log" | tail -n 3 >&2
+  fail "the app reported a backend failure"
+fi
 geometry=$(xdotool getwindowgeometry "$window" | tr '\n' ' ')
 screenshot started
 
@@ -154,20 +195,30 @@ if [ "$terminal" = 1 ]; then
   done
   sleep 5
   click 880 400
-  xdotool type --delay 50 "echo \$((6*7)) > $proof"
+  # The shell, then the Dure CLI the app installed, as a user would run it.
+  xdotool type --delay 50 "{ echo \$((6*7)); command -v dure; dure ls; echo dure-exit=\$?; } > $proof 2>&1"
   xdotool key Return
   elapsed=0
-  until [ "$(cat "$proof" 2>/dev/null || true)" = 42 ]; do
+  until grep -q '^dure-exit=' "$proof" 2>/dev/null; do
     [ "$elapsed" -lt "$seconds" ] || fail "the terminal command did not write its proof"
     sleep 2
     elapsed=$((elapsed + 2))
   done
-  terminal_result="command ran in an Hmux terminal pane"
   screenshot terminal
+  if [ -n "$evidence" ]; then
+    cp "$proof" "$evidence/terminal-proof.txt"
+  fi
+  [ "$(head -n 1 "$proof")" = 42 ] || fail "the terminal did not run the shell command: $(cat "$proof")"
+  case "$(sed -n 2p "$proof")" in
+    "$root/home/.local/"*) ;;
+    *) fail "dure in the terminal is not the installed Dure CLI: $(cat "$proof")" ;;
+  esac
+  grep -qx 'dure-exit=0' "$proof" || fail "dure ls failed in the terminal: $(cat "$proof")"
+  terminal_result="command and dure ls ran in an Hmux terminal pane"
 fi
 
 hmux=$(owned_hmux_processes | wc -l | tr -d ' ')
-summary="window $window ($geometry); owned Hmux processes: $hmux; terminal: $terminal_result"
+summary="window $window ($geometry); Dure CLI $cli_build installed, backend running; owned Hmux processes: $hmux; terminal: $terminal_result"
 if [ -n "$evidence" ]; then
   {
     echo "app=$(basename "$app")"

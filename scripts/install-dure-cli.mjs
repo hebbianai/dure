@@ -221,10 +221,10 @@ if (
 }
 const requestedSourceRevision = process.env.DURE_CLI_SOURCE_REVISION;
 if (bundleDirectory && (
-  !requestedSourceRevision || process.platform !== "darwin" ||
+  !requestedSourceRevision || !["darwin", "linux"].includes(process.platform) ||
   (process.env.DURE_APP_CHANNEL || "stable") !== "stable"
 )) {
-  throw new Error("Dure CLI packaging requires a source-bound macOS build");
+  throw new Error("Dure CLI packaging requires a source-bound macOS or Linux build");
 }
 if (
   requestedSourceRevision !== undefined &&
