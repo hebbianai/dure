@@ -83,7 +83,11 @@ libc = "0.2"
 tokio = { version = "1", features = ["io-util", "net", "process", "sync", "time"] }
 tempfile = "3"
 sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "sqlite-unlock-notify"] }
-tauri-plugin-updater = "2.14.1"
+# 2.11부터 기본 feature에 `system-proxy`(reqwest/system-proxy)가 들어왔다.
+# feature 통합 때문에 켜면 이 바이너리의 모든 reqwest 클라이언트(허브 푸시,
+# 텔레메트리 포함)가 OS 프록시 설정을 따르게 되므로, 2.10의 기본값만 유지한다.
+# `zip` feature가 macOS `.app.tar.gz` 해제에 쓰는 tar/flate2도 함께 켠다.
+tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["rustls-tls", "zip"] }
 tauri-plugin-process = "2.3.1"
 memchr = "2.8.2"
 
