@@ -141,9 +141,15 @@ async fn plan(
             let policy = if inspection.is_exited_exact() {
                 AgentRuntimeSourceStopPolicyV1::Preserve
             } else {
-                let observed = inspection
-                    .managed_stop_quiescence_fence()
-                    .map_err(|_| source_busy(inspection.busy_reason()))?;
+                let Ok(observed) = inspection.managed_stop_quiescence_fence() else {
+                    return Err(source_busy_refusal(
+                        state,
+                        &source.selection,
+                        &inspection,
+                        authority.binding.provider_conversation_id.as_deref(),
+                    )
+                    .await);
+                };
                 AgentRuntimeSourceStopPolicyV1::PreserveObserved {
                     runtime_revision: observed.runtime_revision(),
                     observed_through_output_seq: observed.observed_through_output_seq(),

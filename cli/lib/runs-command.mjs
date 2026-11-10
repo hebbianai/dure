@@ -68,6 +68,7 @@ An unregistered account must first be prepared on that backend through Dure's
 account settings. Busy work is retained, never interrupted or silently resent.
 A busy refusal names its reason (a running turn, background work, a pending
 approval or unsent input) and changes nothing; retry the same command when idle.
+For Claude it also lists the background work still running in the session.
 Keep the returned exact runtime switch command for retries after response loss.
 Automatic account recovery is separate: see dure recovery --help; it is opt-in.`;
 

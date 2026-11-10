@@ -246,7 +246,10 @@ retrying that command; do not repeat the name-based command with a new key.
 The backend protects busy turns and unsubmitted input. A switch does not resend
 failed work or enable automatic switching. A busy refusal is `refused`: nothing
 changed, and `error.reasonCode` says why (`agent_working`, `agent_background_work`,
-`agent_attention_required`, `controller_input_pending`). Wait for that work,
+`agent_attention_required`, `controller_input_pending`). For Claude,
+`error.backgroundWork` lists the background shells, monitors, subagents and
+workflows its records show still running (kind, id and description; at most
+16, with complete counts). Wait for that work,
 then run the same retry command; never force-stop a source to change accounts.
 In Claude Code, exiting stops background tasks, and "Move to background and
 exit" keeps the conversation running without a pane on the old account.
