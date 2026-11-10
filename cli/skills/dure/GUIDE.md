@@ -158,6 +158,18 @@ that child with `dure wait <child>` instead. Chat-runtime children are
 `unobservable`; read them with `dure transcript AGENT_ID`. Links grant nothing:
 stopping a parent does not stop its children yet.
 
+The parent also hears from its terminal children without waiting. Each time a
+child finishes a turn and is idle, needs input or approval, stops on an error,
+exits or is stopped, the backend opens one inbox Message on the parent's Session
+and wakes it, as `dure send --track` does (`agent_spawn.child_result_delivery.v1`).
+Its title says what happened (`fix-12 finished a turn`, `fix-12 needs approval`,
+`fix-12 exited`). A finished turn or exit carries the child's final response and
+any GitHub pull request links in it; every Message names the child's Agent and Run.
+Read it with the installed dure-orchestration tools. Each outcome is sent once,
+also across a backend restart. Only a parent whose managed Session is still
+running and enrolled in the inbox receives Messages; a parent that restarted into
+a new Session, and chat-runtime children, are not covered yet.
+
 `--project` and `--path` are mutually exclusive. Both select an existing backend
 registration. `--path` selects the deepest registered project containing that
 directory; it does not register a project or change the Run's working directory

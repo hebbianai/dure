@@ -317,6 +317,7 @@ impl PreparedControlPlane {
         let mut background_tasks = JoinSet::new();
         background_tasks.spawn(crate::dispatch_deadlines::run_loop(Arc::clone(&state)));
         background_tasks.spawn(crate::interaction_wake::retry_loop(Arc::clone(&state)));
+        background_tasks.spawn(crate::child_result_delivery::run_loop(Arc::clone(&state)));
         background_tasks.spawn(schedule_runtime::run_loop(Arc::clone(&state)));
         background_tasks.spawn(schedule_runtime::lifecycle::run_loop(Arc::clone(&state)));
         background_tasks.spawn(crate::workflow_graph::runtime::run_loop(Arc::clone(&state)));

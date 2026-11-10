@@ -48,6 +48,7 @@ mod backend_scope;
 pub mod browser_engine;
 #[cfg(unix)]
 mod browser_service;
+mod child_result_delivery;
 #[cfg(unix)]
 pub mod claude_conversation_host;
 #[cfg(unix)]

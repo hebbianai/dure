@@ -57,6 +57,7 @@ use super::*;
 mod agent_conversation_recovery_tests;
 mod agent_goal_tests;
 mod agent_recovery_tests;
+mod child_result_delivery_tests;
 mod claude_goal_smoke;
 mod conversation_resume_tests;
 mod dispatch_stop_tests;
@@ -1107,9 +1108,12 @@ async fn fixture_with_source_launch_authority(
     fs::write(
         &hmux,
         format!(
-            "#!/bin/sh\nif [ \"${{4:-}}\" = managed-rehost-resolve ] && [ -f '{}' ]; then cat '{}'; exit 0; fi\nif [ \"${{4:-}}\" = session ] && [ -f '{}' ]; then cat '{}'; exit 0; fi\nprintf '%s' '{}'\n",
+            "#!/bin/sh\nif [ \"${{4:-}}\" = managed-rehost-resolve ] && [ -f '{}' ]; then cat '{}'; exit 0; fi\nif [ \"${{4:-}}\" = session ] && [ -f \"{}/session-${{6:-}}.json\" ]; then cat \"{}/session-${{6:-}}.json\"; exit 0; fi\nif [ \"${{4:-}}\" = session ] && [ -f '{}' ]; then cat '{}'; exit 0; fi\nprintf '%s' '{}'\n",
             discovery_root.join("rehost-resolution.json").display(),
             discovery_root.join("rehost-resolution.json").display(),
+            // A test can answer for one exact Session beside the coordinator.
+            discovery_root.display(),
+            discovery_root.display(),
             discovery_root.join("current-session.json").display(),
             discovery_root.join("current-session.json").display(),
             coordinator,

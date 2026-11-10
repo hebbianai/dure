@@ -2127,7 +2127,10 @@ agent's exact Session as its parent (summary.parent in --json). --no-parent reco
 --parent links another agent on the same backend by name, Agent ID or Session ID through
 the app's Agent list; with --parent-workspace it takes an exact Session ID. An explicit
 parent the backend can't record is refused before anything starts. The parent waits for
-its children with dure wait --children all|any. The link grants no control over either Run.
+its children with dure wait --children all|any. Each time a terminal child finishes a turn,
+needs input or approval, exits or is stopped, the backend also opens one inbox Message with
+its final response and pull request links on the parent's Session and wakes it. The link
+grants no control over either Run.
 spawn --reuse reuses an existing Agent without creating a new provider.`;
 
 function writeCliActionError(

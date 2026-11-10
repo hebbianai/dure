@@ -209,7 +209,11 @@ Workers you start from your own terminal pane are linked to you. To sleep until
 the first of them needs you, run `dure wait --children any --timeout 900 --json`;
 `observation.children` names each worker with its state. A worker that has
 finished a turn stays settled, so once you have handled it, go back to the
-per-worker `dure wait` above for the ones still working.
+per-worker `dure wait` above for the ones still working. Each linked worker's
+finished turn, request for input or approval, exit or stop also reaches your
+inbox as one Message (`fix-12 finished a turn`) with its final response and the
+pull request links in it. Treat it like a risen turn count: a reason to look,
+not proof that the item is done.
 
 **Completion is a GitHub fact, not a session state.** A worker is done when
 its pull request is merged (or open and handed back with a reason) **and** its

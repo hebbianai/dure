@@ -301,6 +301,9 @@ deadline, 130 interrupted; the last two stop only you.
 finished a turn and is idle, needs input or approval, exited, or failed to
 launch. Name another parent with `dure wait --children all <agent>` or
 `<session> --workspace ID`. The `dure` skill covers the states and exit codes.
+The parent does not have to wait: each finished turn, request for input or
+approval, exit or stop of a terminal child also arrives in its inbox as one
+Message with the child's final response and pull request links.
 
 ## If `dure` does not recognize something here
 

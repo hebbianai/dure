@@ -125,6 +125,33 @@ pub(crate) async fn list_receipts(
     finish_transaction(&mut connection, "list_agent_spawn_receipts", result).await
 }
 
+/// Succeeded Runs that recorded the agent Session that started them, in
+/// operation order. The parent link is part of the Run's immutable request.
+pub(crate) async fn parent_linked_operations(
+    pool: &SqlitePool,
+    after: Option<&OperationIdV1>,
+    limit: u32,
+) -> Result<Vec<OperationIdV1>, DomainStoreErrorV1> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        r#"SELECT operation_id FROM agent_spawn_receipts
+           WHERE state = 'succeeded'
+             AND json_extract(receipt_json, '$.plan.request.parent') IS NOT NULL
+             AND (?1 IS NULL OR operation_id > ?1)
+           ORDER BY operation_id LIMIT ?2"#,
+    )
+    .bind(after.map(OperationIdV1::as_str))
+    .bind(i64::from(limit))
+    .fetch_all(pool)
+    .await
+    .map_err(|error| map_sqlx("list_parent_linked_agent_spawns", error))?;
+    ids.into_iter()
+        .map(|id| {
+            OperationIdV1::new(id)
+                .map_err(|error| corrupt_identifier("agent_spawn_receipts.operation_id", error))
+        })
+        .collect()
+}
+
 pub(crate) async fn receipt(
     pool: &SqlitePool,
     operation_id: &OperationIdV1,

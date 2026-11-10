@@ -147,33 +147,43 @@ async fn read(
     // particular, switching from chat must not republish an older answer.
     if count > 0 && after != Some(&cursor) && observed.is_agent_quiescent() {
         if let Some(conversation) = conversation {
-            let resolved = state
-                .credential_profiles
-                .resolve(&selection.provider_id, &selection.execution_profile)
-                .await
-                .map_err(|error| error.code())?;
-            let provider = selection.provider_id.as_str().to_owned();
-            let home = provider_credential_profile::provider_state_directory(
-                &selection.provider_id,
-                resolved.as_ref(),
-            )
-            .ok_or("agent_runtime_native_history_unavailable")?;
-            let conversation = conversation.to_owned();
-            final_response = tokio::task::spawn_blocking(move || {
-                transcript::read_roots(
-                    &home.join("projects"),
-                    &home.join("sessions"),
-                    &provider,
-                    &conversation,
-                )
-                .map(|transcript| transcript.final_response)
-            })
-            .await
-            .map_err(|_| "agent_runtime_native_history_unavailable")?
-            .map_err(|_| "agent_runtime_native_history_unavailable")?;
+            final_response = native_final_response(state, selection, conversation).await?;
         }
     }
     Ok(json!({ "schemaVersion": 1, "cursor": cursor,
         "waiting": observed.is_agent_quiescent(), "exited": observed.is_exited_exact(),
         "finalResponse": final_response }))
+}
+
+/// The final response of a native conversation's newest completed turn, read
+/// from the provider's own history under the Agent's credential profile.
+pub(super) async fn native_final_response(
+    state: &ServiceState,
+    selection: &AgentRuntimeSelectionV1,
+    conversation_id: &str,
+) -> Result<Option<String>, BackendDispatchError> {
+    let resolved = state
+        .credential_profiles
+        .resolve(&selection.provider_id, &selection.execution_profile)
+        .await
+        .map_err(|error| error.code())?;
+    let provider = selection.provider_id.as_str().to_owned();
+    let home = provider_credential_profile::provider_state_directory(
+        &selection.provider_id,
+        resolved.as_ref(),
+    )
+    .ok_or("agent_runtime_native_history_unavailable")?;
+    let conversation = conversation_id.to_owned();
+    tokio::task::spawn_blocking(move || {
+        transcript::read_roots(
+            &home.join("projects"),
+            &home.join("sessions"),
+            &provider,
+            &conversation,
+        )
+        .map(|transcript| transcript.final_response)
+    })
+    .await
+    .map_err(|_| "agent_runtime_native_history_unavailable")?
+    .map_err(|_| "agent_runtime_native_history_unavailable".into())
 }
