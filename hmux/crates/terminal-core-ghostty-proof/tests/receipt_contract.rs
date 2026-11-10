@@ -137,6 +137,54 @@ fn packaged_adoption_target_matrix_is_explicit_and_host_only() {
     );
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn supply_pin(name: &str) -> &'static str {
+    let supply = include_str!("../src/supply.rs");
+    let declaration = format!("const {name}: &str =");
+    let after = &supply[supply
+        .find(&declaration)
+        .unwrap_or_else(|| panic!("src/supply.rs no longer declares {name}"))
+        + declaration.len()..];
+    let value = &after[after.find('"').expect("pin opens a string") + 1..];
+    &value[..value.find('"').expect("pin closes its string")]
+}
+
+/// The CI hosts only ever prepare the Unix artifacts, which compile the Zig
+/// seam from the checkout. Only the Windows supply pins it, so an edit that
+/// skips the pins goes unnoticed until a Windows build refuses its inputs or
+/// links a stale iterator that lacks the new exports.
+#[test]
+fn windows_history_iterator_pins_match_the_checked_in_zig_seam() {
+    let pins = [
+        (
+            "src/ghostty_history_iterator.zig",
+            sha256_hex(include_bytes!("../src/ghostty_history_iterator.zig")),
+            ghostty_proof_receipt::V5_HISTORY_ITERATOR_SOURCE_SHA256,
+            "HISTORY_ITERATOR_SOURCE_SHA256",
+        ),
+        (
+            "src/ghostty_history_iterator_build.zig",
+            sha256_hex(include_bytes!("../src/ghostty_history_iterator_build.zig")),
+            ghostty_proof_receipt::V5_HISTORY_ITERATOR_BUILD_SHA256,
+            "HISTORY_ITERATOR_BUILD_SHA256",
+        ),
+    ];
+    for (path, actual, receipt_pin, supply_name) in pins {
+        assert_eq!(
+            receipt_pin, actual,
+            "{path} changed: update the Windows receipt pin in ghostty_proof_receipt.rs"
+        );
+        assert_eq!(
+            supply_pin(supply_name),
+            actual,
+            "{path} changed: update {supply_name} in src/supply.rs"
+        );
+    }
+}
+
 #[test]
 fn staged_closure_rehash_rejects_source_mutation_after_validation() {
     let root = tempfile::tempdir().unwrap();
