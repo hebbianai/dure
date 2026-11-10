@@ -1993,8 +1993,8 @@ int hmux_ghostty_core_format(HmuxGhosttyCore *core,
     if (result != GHOSTTY_SUCCESS) return result;
     if (observation.columns == 0 || observation.rows == 0)
       return HMUX_GHOSTTY_SHIM_ERROR;
-    selection.start = (GhosttyGridRef)GHOSTTY_INIT_SIZED(GhosttyGridRef);
-    selection.end = (GhosttyGridRef)GHOSTTY_INIT_SIZED(GhosttyGridRef);
+    selection.start = GHOSTTY_INIT_SIZED(GhosttyGridRef);
+    selection.end = GHOSTTY_INIT_SIZED(GhosttyGridRef);
     GhosttyPoint start = {
         .tag = GHOSTTY_POINT_TAG_ACTIVE,
         .value = {.coordinate = {.x = 0, .y = 0}},
