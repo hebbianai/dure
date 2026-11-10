@@ -73,6 +73,9 @@ const SERVER_CAPABILITIES: &[&str] = &[
     "agent.launch_account_v1",
     "agent.run_background_v1",
     "hmux.input.draft_guard_v1",
+    // `/hmux/attach` accepts an Agent's current native runtime without a Run
+    // record (the `agent_runtime` identity) and never launches a provider.
+    "hmux.attach.agent_runtime_v1",
 ];
 fn claimed_request_timeout(action: &str) -> Duration {
     match action {
@@ -2663,7 +2666,8 @@ mod tests {
                 "agent.launch_preference_v1",
                 "agent.launch_account_v1",
                 "agent.run_background_v1",
-                "hmux.input.draft_guard_v1"
+                "hmux.input.draft_guard_v1",
+                "hmux.attach.agent_runtime_v1"
             ])
         );
         std::fs::remove_dir_all(directory).unwrap();
