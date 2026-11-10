@@ -100,18 +100,20 @@ test("the command writes the cask and reports a bad release", () => {
   expect(refused.stderr).toContain("homebrew_cask_release_not_published");
 });
 
-test("the workflow stays off until enabled and exposes the tap token only to its checkout", () => {
+test("the workflow stays off until enabled and exposes the tap deploy key only to its checkout", () => {
   const source = fs.readFileSync(".github/workflows/homebrew-cask.yml", "utf8");
   const workflow = YAML.parse(source);
 
   expect(workflow.on.release.types).toEqual(["published"]);
   expect(workflow.permissions).toEqual({ contents: "read" });
   expect(workflow.jobs.update.if).toContain("vars.HOMEBREW_TAP_ENABLED == 'true'");
-  expect(source.match(/secrets\.HOMEBREW_TAP_TOKEN/g)).toHaveLength(1);
+  expect(source.match(/secrets\.HOMEBREW_TAP_DEPLOY_KEY/g)).toHaveLength(1);
+  expect(source).not.toMatch(/secrets\.HOMEBREW_TAP_TOKEN/);
 
   const steps = workflow.jobs.update.steps;
   const tap = steps.find((step) => step.with?.repository === "hebbianai/homebrew-tap");
-  expect(tap.with.token).toBe("${{ secrets.HOMEBREW_TAP_TOKEN }}");
+  expect(tap.with["ssh-key"]).toBe("${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}");
+  expect(tap.with.token).toBeUndefined();
   expect(steps[0].with["persist-credentials"]).toBe(false);
   for (const step of steps.filter((candidate) => candidate.uses)) {
     expect(step.uses).toMatch(/@[0-9a-f]{40}$/);

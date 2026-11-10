@@ -247,9 +247,9 @@ cask.
 
 The job stays skipped until a maintainer switches it on:
 
-1. Create a fine-grained token with **Contents: read and write** on
-   `hebbianai/homebrew-tap` only, and store it as the repository secret
-   `HOMEBREW_TAP_TOKEN`.
+1. Add an SSH deploy key with write access to `hebbianai/homebrew-tap` only,
+   and store its private key as the repository secret `HOMEBREW_TAP_DEPLOY_KEY`.
+   A deploy key reaches that one repository and nothing else.
 2. Set the repository variable `HOMEBREW_TAP_ENABLED` to `true`.
 3. Create the cask for the current release:
 

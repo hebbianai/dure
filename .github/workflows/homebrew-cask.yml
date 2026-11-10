@@ -1,7 +1,8 @@
 name: Homebrew cask
 
-# Off until a maintainer adds the HOMEBREW_TAP_TOKEN secret and sets the
-# HOMEBREW_TAP_ENABLED variable to true. See docs/maintainers/releasing.md.
+# Off until a maintainer adds the HOMEBREW_TAP_DEPLOY_KEY secret (a write deploy
+# key on hebbianai/homebrew-tap only) and sets the HOMEBREW_TAP_ENABLED variable
+# to true. See docs/maintainers/releasing.md.
 on:
   release:
     types: [published]
@@ -42,7 +43,7 @@ jobs:
         with:
           repository: hebbianai/homebrew-tap
           ref: main
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
           path: tap
       - name: Write the cask
         run: node scripts/update-homebrew-cask.mjs "$RUNNER_TEMP/release.json" tap/Casks/dure.rb
@@ -57,4 +58,9 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m "dure ${TAG#v}"
-          git push origin HEAD:main
+          # the tap is shared with other casks; take their pushes and retry
+          for attempt in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            git pull --rebase origin main
+          done
+          exit 1
