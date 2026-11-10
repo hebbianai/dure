@@ -704,11 +704,42 @@ exact-session operation) and require resolving the current session again.
 ## Delegated workflows are not orchestration Dispatches
 
 ```sh
+dure workflow delegate --summary <text> (--file PATH | --stdin | --instructions <text>) \
+  [--provider ID] [--idempotency-key KEY] [--json]
 dure workflow done --task <id> --dispatch <id> --generation <n> [--result <text>] [--json]
 dure workflow show --task <id> --dispatch <id> --generation <n> [--backend ID] [--json]
 ```
 
-**Do not reach for this to finish a Dispatch.** Despite the shared
+A delegated task goes through three steps:
+
+1. The delegating Agent runs `delegate` from its own terminal. A new worker
+   starts and receives the task. `delegate` prints the task ID, dispatch ID and
+   generation.
+2. The worker finishes with `done --result "<summary>"`. Its prompt already
+   includes that exact command.
+3. The delegating Agent receives the result with
+   `dure wait --task … --dispatch … --generation … --json`, or reads it later
+   with `show`.
+
+`delegate` does the same thing as the app's Delegate task action. It works only
+inside a managed local Agent Session that the app lists. The CLI reads the
+Session from the `HMUX_*` variables, checks that it is live, and finds the Agent
+for it in the app's Agent list. It refuses `--backend`. The worker starts in
+that Agent's workspace with the same permission mode. `--provider` defaults to
+the delegating Agent's provider. A worker cannot delegate its own task again.
+
+Instructions come from a file, from stdin, or inline. They can be up to 16 KiB
+after trimming; CRLF line endings become LF. The summary is one line of up to
+512 bytes. The app does not open a pane for a worker started this way. Find it
+in `dure ls`, or watch it with the printed `dure read <session> --workspace <id>`
+line.
+
+After a timeout or a `workflow_delegate_start_uncertain` failure, run the same
+command again with the printed `--idempotency-key`. With that key, the backend
+returns the original task instead of starting another worker. Without it, a
+second worker starts.
+
+**Do not use `workflow done` to finish an orchestration Dispatch.** Despite the shared
 task/dispatch/generation vocabulary it is a different construct on a different
 protocol method: `workflow.delegate_once.complete`, not the `dispatch.complete`
 behind `orchestration_dispatch_complete`. An orchestration Dispatch still ends
@@ -728,7 +759,7 @@ already complete?" from anywhere. Both exit 2 on failure, printing
 `error.code: error.message` (or that pair as JSON with `--json`).
 
 Whoever delegated the work waits with `dure wait --task … --dispatch …
---generation …`; see the `dure-cli` skill.
+--generation …`, using the values `delegate` printed; see the `dure-cli` skill.
 
 ## Reading another agent's screen
 

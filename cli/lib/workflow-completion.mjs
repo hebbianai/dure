@@ -40,6 +40,35 @@ const WORKFLOW_DISPATCH_STATES = new Set([
 ]);
 
 const MESSAGES = Object.freeze({
+  workflow_delegate_backend_local_required:
+    "delegating a task requires the managed local backend",
+  workflow_delegate_coordinator_ambiguous:
+    "more than one Agent in the app's Agent list runs in the current Hmux Session",
+  workflow_delegate_coordinator_invalid:
+    "the app's Agent record for the current Hmux Session cannot coordinate a delegated task",
+  workflow_delegate_coordinator_unregistered:
+    "no Agent in the app's Agent list runs in the current Hmux Session",
+  workflow_delegate_environment_invalid:
+    "the current process does not identify one exact Hmux Session generation",
+  workflow_delegate_instructions_invalid:
+    "task instructions must be non-empty UTF-8 text of at most 16 KiB, with no control characters other than newline and tab",
+  workflow_delegate_instructions_unreadable: "the task instructions could not be read",
+  workflow_delegate_nested_unsupported:
+    "a delegated worker cannot delegate its task again",
+  workflow_delegate_provider_unsupported:
+    "the selected provider cannot run a delegated task",
+  workflow_delegate_receipt_invalid:
+    "the backend returned an invalid delegated task receipt",
+  workflow_delegate_request_invalid: "the delegation request is invalid",
+  workflow_delegate_session_mismatch:
+    "the live Hmux Session does not match the current Agent generation",
+  workflow_delegate_session_unavailable:
+    "the current Hmux Session could not be verified",
+  workflow_delegate_start_failed: "the delegated worker could not start",
+  workflow_delegate_start_uncertain:
+    "the delegated worker has not finished starting; retry the same request",
+  workflow_delegate_summary_invalid:
+    "the task summary must be non-empty single-line text of at most 512 bytes",
   workflow_done_backend_local_required:
     "workflow completion requires the managed local backend",
   workflow_done_environment_invalid:
@@ -109,12 +138,16 @@ function dispatchGeneration(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-export function currentHmuxSessionGeneration(environment = process.env) {
+/** `scope` names the command whose error codes a failure uses. */
+export function currentHmuxSessionGeneration(
+  environment = process.env,
+  scope = "workflow_done",
+) {
   const generation = {};
   for (const [field, variable] of SESSION_ENVIRONMENT_FIELDS) {
     const value = environment[variable];
     if (!domainId(value)) {
-      fail("workflow_done_environment_invalid", { variable });
+      fail(`${scope}_environment_invalid`, { variable });
     }
     generation[field] = value;
   }
@@ -125,9 +158,9 @@ function exactSession(left, right) {
   return SESSION_FIELDS.every((field) => left[field] === right[field]);
 }
 
-function verifiedLiveSession(report, environmentSession) {
+function verifiedLiveSession(report, environmentSession, scope) {
   if (report?.kind === "dure.sessions.error") {
-    fail("workflow_done_session_unavailable", {
+    fail(`${scope}_session_unavailable`, {
       sessionErrorCode: report.error?.code,
     });
   }
@@ -159,9 +192,39 @@ function verifiedLiveSession(report, environmentSession) {
       providerId: candidate.providerId,
     })
   ) {
-    fail("workflow_done_session_mismatch");
+    fail(`${scope}_session_mismatch`);
   }
   return candidate;
+}
+
+/** The exact Hmux Session generation this process runs in, confirmed live and
+ * healthy by the backend. Only the environment names the Session; the backend
+ * observation adds its provider and proves the generation is current. */
+export async function currentLiveHmuxSession({
+  environment = process.env,
+  backend,
+  deadlineMs = DEFAULT_WORKFLOW_COMPLETION_DEADLINE_MS,
+  collectSession = collectSessionQuery,
+  scope = "workflow_done",
+}) {
+  const environmentSession = currentHmuxSessionGeneration(environment, scope);
+  const sessionReport = await collectSession({
+    action: "show",
+    sessionId: environmentSession.sessionId,
+    workspaceId: environmentSession.workspaceId,
+    registry: {
+      state: "absent",
+      clientId: null,
+      updatedAtMs: null,
+      agents: [],
+    },
+    deadlineMs,
+    backend: {
+      profile: backend.profile,
+      transportOptions: backend.transportOptions,
+    },
+  });
+  return verifiedLiveSession(sessionReport, environmentSession, scope);
 }
 
 function verifiedIdentityReceipt(result, expected, invalidCode) {
@@ -227,24 +290,12 @@ export async function completeDelegatedWorkflow({
     fail("workflow_done_backend_local_required");
   }
 
-  const environmentSession = currentHmuxSessionGeneration(environment);
-  const sessionReport = await collectSession({
-    action: "show",
-    sessionId: environmentSession.sessionId,
-    workspaceId: environmentSession.workspaceId,
-    registry: {
-      state: "absent",
-      clientId: null,
-      updatedAtMs: null,
-      agents: [],
-    },
+  const session = await currentLiveHmuxSession({
+    environment,
+    backend,
     deadlineMs,
-    backend: {
-      profile: backend.profile,
-      transportOptions: backend.transportOptions,
-    },
+    collectSession,
   });
-  const session = verifiedLiveSession(sessionReport, environmentSession);
   const response = await requestBackend(
     backend.profile,
     {
