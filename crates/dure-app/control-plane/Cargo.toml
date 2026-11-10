@@ -13,7 +13,7 @@ description = "Standalone local Dure control plane"
 browser-development = []
 
 [dependencies]
-aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
+aes-gcm = { version = "0.11.1", default-features = false, features = ["aes", "alloc"] }
 agent-orchestration = { path = "../../../orchestration" }
 base64 = "0.22"
 chrono = { version = "0.4.42", default-features = false, features = ["std"] }
