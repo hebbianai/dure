@@ -10,10 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
-rust-version = "1.77.2"
+edition = "2024"
+rust-version = "1.90"
 name = "tauri-runtime"
-version = "2.11.3"
+version = "2.12.2"
 authors = ["Tauri Programme within The Commons Conservancy"]
 build = "build.rs"
 exclude = [
@@ -75,7 +75,7 @@ features = ["derive"]
 version = "1"
 
 [dependencies.tauri-utils]
-version = "2.9.3"
+version = "~2.10.2"
 
 [dependencies.thiserror]
 version = "2"
@@ -87,7 +87,7 @@ version = "2"
 version = "0.6"
 
 [target.'cfg(all(target_vendor = "apple", not(target_os = "macos")))'.dependencies.objc2-ui-kit]
-version = "0.3.0"
+version = "0.3.2"
 features = [
     "UIView",
     "UIResponder",
@@ -111,7 +111,7 @@ version = "0.21"
 version = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies.objc2-web-kit]
-version = "0.3"
+version = "0.3.2"
 features = [
     "objc2-app-kit",
     "WKWebView",
@@ -123,11 +123,17 @@ default-features = false
 version = "2"
 
 [target."cfg(windows)".dependencies.webview2-com]
-version = "0.38"
+version = "0.39"
 
 [target."cfg(windows)".dependencies.windows]
-version = "0.61"
+version = "0.62"
 features = [
     "Win32_Foundation",
     "Win32_System_WinRT",
 ]
+
+[lints.clippy]
+assigning_clones = "warn"
+collapsible_if = "allow"
+or_fun_call = "warn"
+redundant_clone = "warn"
