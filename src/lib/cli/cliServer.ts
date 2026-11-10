@@ -75,7 +75,10 @@ import { handleCliHmuxRehost } from "@/lib/cli/cliHmuxRehost";
 import { handleCliHmuxAttach } from "@/lib/cli/cliHmuxAttach";
 import { handleCliHmuxCreate } from "@/lib/cli/cliHmuxCreate";
 import { handleCliProjectRegistration } from "@/lib/cli/cliProjectRegistration";
-import { handleCliHostRegistration } from "@/lib/cli/cliHostRegistration";
+import {
+  handleCliHostLookup,
+  handleCliHostRegistration,
+} from "@/lib/cli/cliHostRegistration";
 import { installCliSpaceOwnerReporter, routeCliRequestToSpaceOwner } from "@/lib/cli/cliSpaceOwnerRouting";
 import { startCliServerObservers } from "@/lib/cli/cliServerObservers";
 import { handleCliManagedRunPresentation } from "@/lib/cli/cliManagedRunPresentation";
@@ -196,6 +199,9 @@ export async function startCliServer(
       }
       if (action === "ssh.host.add") {
         const result = await handleCliHostRegistration(params, reqId);
+        if (result) await completeCliRequest(reqId, result, action);
+      } else if (action === "ssh.host.get") {
+        const result = await handleCliHostLookup(params, reqId);
         if (result) await completeCliRequest(reqId, result, action);
       } else if (action === "project.add") {
         const result = await handleCliProjectRegistration(params, reqId);

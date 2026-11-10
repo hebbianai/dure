@@ -93,6 +93,10 @@ remain separate acceptance work.
 
 Moving a pane to another Space does not change its process's working directory.
 
+`dure tui` lists managed agents across Spaces from a terminal, including over SSH
+without the app, and attaches to the selected one. Press `Ctrl-\` then `d` to
+detach and return to the list. See `dure tui --help`.
+
 Agent-facing instructions are packaged in [the Dure skill](skills/dure/SKILL.md)
 and the separate [orchestration integration](../orchestration/integration/SKILL.md).
 The [lead skill](skills/dure-lead/SKILL.md) is the loop behind `dure run --lead`:
@@ -226,6 +230,13 @@ the canonical local backend ID and schedule arguments, or an exact quoted
 is reported as unchecked. SSH guidance is executed on the owning SSH host, since
 app host IDs are not backend profile IDs. Keep registration and schedule commands
 on the same backend; app project IDs alone do not register backend projects.
+
+To use a Dure backend already running on a registered SSH host from this machine,
+run the printed `dure profiles add ID --host APP_SSH_HOST_ID`. It connects with the
+key already trusted in `known_hosts` (an unknown host key is refused), confirms the
+backend answers, pins its identity and writes an owner-only SSH profile usable as
+`--backend ID`. It installs nothing: with no backend on the host it reports that and
+stops. Run it again to refresh the pin after that backend is upgraded.
 
 Add `--register-backend` to make a new local repository usable by `dure run` and
 `dure schedule` in the same command: when the local backend reports the folder as

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
-import { loadBackendProfiles, selectBackendProfile } from "./backend-profiles.mjs";
+import { backendProfileAddCommand, loadBackendProfiles, selectBackendProfile } from "./backend-profiles.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { validProjectId, validProjectPath } from "./project-contract.mjs";
 
@@ -71,7 +71,13 @@ export async function clientProjectBackendGuidance(registration, {
     state: "unavailable", backendProfileId: "local", registerCommand,
     executionHost: hostId === "local" ? "local" : hostId, registration: pending,
   };
-  if (hostId !== "local") return { ...guidance, reason: "run_registration_on_owning_ssh_host" };
+  if (hostId !== "local") {
+    const profileAddCommand = backendProfileAddCommand(hostId);
+    return {
+      ...guidance, reason: "run_registration_on_owning_ssh_host",
+      ...(profileAddCommand === undefined ? {} : { profileAddCommand }),
+    };
+  }
   let state = "unavailable";
   try {
     const { profile } = selectBackendProfile(loadProfiles({ environment }), { explicitId: "local", environment });
@@ -116,5 +122,8 @@ export function formatClientProjectBackendGuidance(backend) {
   const hint = backend.registration === "not_requested" && backend.state === "unregistered"
     ? "\nOr rerun client project add with --register-backend to do both in one step."
     : "";
-  return `\n${status}\n${location}, register the folder for dure run and schedules:\n  ${backend.registerCommand}${hint}\nUse the returned backend project ID with dure run --project ID --backend local or dure schedule create --project ID --backend local on that host.`;
+  const profile = backend.profileAddCommand
+    ? `\nTo use this SSH host as a backend from here, create its backend profile:\n  ${backend.profileAddCommand}`
+    : "";
+  return `\n${status}\n${location}, register the folder for dure run and schedules:\n  ${backend.registerCommand}${hint}\nUse the returned backend project ID with dure run --project ID --backend local or dure schedule create --project ID --backend local on that host.${profile}`;
 }

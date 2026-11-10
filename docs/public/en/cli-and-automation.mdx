@@ -38,6 +38,10 @@ dure wait --children any --json                 # the first child settles
 
 A child settles when it has finished a turn and is idle, needs input or approval, exited, or its launch failed. The JSON lists each child with its state; exit 1 means a settled child needs action. `dure runs show <agent>` shows a Run's parent. Pass `--no-parent` to start an unlinked Run, or `--parent <agent>` to link a Run to another agent on the same backend. Children on the chat runtime can't be waited on yet; read them with `dure transcript`.
 
+## Move between agents from a terminal
+
+`dure tui` lists your agents across Spaces with their state, account and project, including over SSH without the app. Select one and press Enter to attach. Press `Ctrl-\` then `d` to detach and return to the list; the agent keeps running. Without the app on that machine, the account reads `unknown` and the project is the name of the agent's working folder.
+
 ## Schedule recurring tasks
 
 From the project folder:
@@ -48,7 +52,7 @@ dure schedule show daily-review
 dure schedule runs daily-review
 ```
 
-Creation enables future weekday runs at 09:00 in the named timezone. Add `--disabled` if you want to save the schedule without enabling recurring execution. Scheduled runs use isolated Git worktrees. A scheduled agent hibernates after 30 minutes of confirmed idle and can be woken with its conversation intact. Once it has stopped, its worktree is removed only if it has no uncommitted or untracked changes and every commit on it is already on the default branch; otherwise it is kept. Use `dure schedule inspect` with a returned run key to read the retained report.
+Creation enables future weekday runs at 09:00 in the named timezone. Add `--disabled` if you want to save the schedule without enabling recurring execution. Scheduled runs use isolated Git worktrees. A scheduled agent hibernates after 30 minutes of confirmed idle and can be woken with its conversation intact. Once it has stopped, its worktree is removed only if it has no uncommitted or untracked changes and every commit on it is already on the default branch; otherwise it is kept. Use `dure schedule inspect` with a returned run key to read the retained report. On a machine with the Dure app, a scheduled run is a terminal session. On a host with only the Dure CLI, such as a server or VM, it starts on the provider's chat runtime when the provider has one there, like a headless run, and `dure schedule runs` shows the `dure runs show` command for it. Idle hibernation and worktree removal apply only to terminal sessions.
 
 To pause it later without losing its history, run `dure schedule set daily-review --disabled --expected-revision N` with the revision shown by `dure schedule show`; `--enabled` resumes it. The same command can change `--cron`, `--timezone`, `--name` or `--prompt`.
 

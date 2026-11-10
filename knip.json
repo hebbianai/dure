@@ -44,7 +44,9 @@
 				"where.exe",
 				"openssl",
 				"plutil",
-				"mkfifo"
+				"mkfifo",
+				"ssh-keygen",
+				"flock"
 			]
 		},
 		"tools/media-capture/compositor/remotion": {

@@ -23,6 +23,19 @@ curl -fsSL https://raw.githubusercontent.com/hebbianai/dure/main/scripts/install
 
 スクリプトは、ダウンロードしたファイルをリリースで公開されたダイジェストと照合し、Dure の署名と公証を macOS が受け入れることを確認してから、現在の公開ベータ版をインストールします。インストール先は「アプリケーション」フォルダです。アカウントにこのフォルダへの書き込み権限がない場合は、ホームディレクトリの「Applications」フォルダを使います。`dure` コマンドは `~/.local/bin` に追加されます。別のフォルダを使うには、`DURE_APP_INSTALL_DIR` に絶対パスを指定してください。すでにインストールしている場合は、先に Dure を終了してください。確認に失敗した場合、既存のアプリはそのまま残ります。スクリプトをもう一度実行すると、現在のベータ版に置き換わります。
 
+### Homebrew でインストールする
+
+[Homebrew](https://brew.sh) を使っている場合は、Dure の tap を一度信頼してから cask をインストールします。
+
+```sh
+brew trust hebbianai/tap
+brew install --cask hebbianai/tap/dure
+```
+
+Homebrew は、公式リポジトリ以外の tap にある cask を、その tap を信頼するまで読み込みません。`trust` が不明なコマンドだと表示された場合は、先に `brew update` を実行してください。cask は、ダウンロードしたファイルをリリースで公開されたダイジェストと照合してから、現在の公開ベータ版を「アプリケーション」フォルダにインストールします。「アプリケーション」に Dure がすでにある場合、Homebrew は置き換えずに停止します。インストールコマンドに `--adopt` を付けると、既存のアプリを Homebrew で管理できます。
+
+Dure には独自の更新手順（後述）があるため、通常の `brew upgrade` では Dure はスキップされます。Homebrew で更新する場合は、cask を指定して `brew upgrade --cask hebbianai/tap/dure` を実行してください。
+
 ## コーディングエージェントを準備する
 
 使うエージェントをインストールしてログインします。通常のターミナルで `claude`、`codex`、`kimi` などのコマンドが起動するか確認してください。Dure の **Settings → Agent CLI** に検出結果と設定操作が表示されます。

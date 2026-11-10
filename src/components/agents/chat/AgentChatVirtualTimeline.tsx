@@ -1,6 +1,5 @@
 import {
 	defaultRangeExtractor,
-	elementScroll,
 	measureElement,
 	observeElementOffset,
 	observeElementRect,
@@ -8,6 +7,7 @@ import {
 } from "@tanstack/react-virtual";
 import {
 	type ReactNode,
+	useCallback,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -20,6 +20,7 @@ import {
 } from "@/components/agents/chat/ChatToolBurst";
 import { ScrollToLatestButton } from "@/components/common/ScrollToLatestButton";
 import { t } from "@/lib/i18n";
+import { createGestureScrollDeviation } from "@/lib/ui/gestureScrollDeviation";
 
 export interface ChatTimelineContent {
 	key: string;
@@ -47,7 +48,7 @@ const observeChatViewport: typeof observeElementRect<HTMLDivElement> = (
 		if (initialize) {
 			instance.scrollToEnd();
 		} else if (wasAtEnd && rect.height > 0) {
-			elementScroll(
+			instance.options.scrollToFn(
 				Math.max(0, instance.getTotalSize() - rect.height),
 				{},
 				instance,
@@ -95,6 +96,22 @@ export function AgentChatVirtualTimeline({
 	};
 	const [focusedKey, setFocusedKey] = useState<string | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const contentRef = useRef<HTMLDivElement | null>(null);
+	// Size corrections while the user scrolls shift the content instead of
+	// writing the native position; see createGestureScrollDeviation.
+	const [deviation] = useState(() =>
+		createGestureScrollDeviation({
+			readScrollOffset: () => scrollRef.current?.scrollTop ?? 0,
+			writeScrollOffset: (offset) =>
+				scrollRef.current?.scrollTo?.({ top: offset }),
+			showDeviation: (value) => {
+				if (contentRef.current)
+					contentRef.current.style.transform =
+						value === 0 ? "" : `translateY(${-value}px)`;
+			},
+			isVisible: () => Boolean(scrollRef.current?.offsetHeight),
+		}),
+	);
 	const headerRef = useRef<HTMLDivElement>(null);
 	// Keep the history action outside the item list: a prepend must anchor the
 	// first durable row even when the action is visible at scroll offset zero.
@@ -114,7 +131,7 @@ export function AgentChatVirtualTimeline({
 			const height = element.getBoundingClientRect().height;
 			if (height === measuredHeight) return;
 			headerAdjustment.current = {
-				offset: scrollRef.current?.scrollTop ?? 0,
+				offset: deviation.offset(),
 				atEnd: isAtDomEnd(
 					scrollRef.current,
 					virtualizer.options.scrollEndThreshold,
@@ -136,6 +153,10 @@ export function AgentChatVirtualTimeline({
 		count: items.length,
 		// Ref measurements can run in React's layout phase.
 		useFlushSync: false,
+		// Row positions and the total size are written in the same task as a
+		// size correction, so no frame paints rows at their previous offsets.
+		directDomUpdates: true,
+		directDomUpdatesMode: "position",
 		getScrollElement: () => scrollRef.current,
 		getItemKey: (index) => items[index]!.key,
 		measureElement: (element, entry, instance) => {
@@ -166,16 +187,37 @@ export function AgentChatVirtualTimeline({
 		followOnAppend: true,
 		scrollEndThreshold: 70,
 		observeElementRect: observeChatViewport,
-		observeElementOffset: (instance, callback) =>
-			observeElementOffset(instance, (offset, scrolling) => {
-				// display:none can report zero without changing the saved native offset.
-				const visible = Boolean(instance.scrollElement?.offsetHeight);
-				callback(
-					visible ? offset : (instance.scrollOffset ?? 0),
-					visible && scrolling,
-				);
-			}),
+		observeElementOffset: (instance, callback) => {
+			const element = instance.scrollElement;
+			const input = () => deviation.input();
+			element?.addEventListener("wheel", input, { passive: true });
+			element?.addEventListener("touchmove", input, { passive: true });
+			const unsubscribe = observeElementOffset(
+				instance,
+				(offset, scrolling) => {
+					// display:none can report zero without changing the saved native offset.
+					if (!instance.scrollElement?.offsetHeight)
+						callback(instance.scrollOffset ?? 0, false);
+					else callback(deviation.scrolled(offset, scrolling), scrolling);
+				},
+			);
+			return () => {
+				element?.removeEventListener("wheel", input);
+				element?.removeEventListener("touchmove", input);
+				deviation.dispose();
+				unsubscribe?.();
+			};
+		},
+		scrollToFn: (offset, { adjustments = 0 }) =>
+			deviation.scrollTo(offset + adjustments),
 	});
+	const contentLayerRef = useCallback(
+		(node: HTMLDivElement | null) => {
+			contentRef.current = node;
+			virtualizer.containerRef(node);
+		},
+		[virtualizer],
+	);
 	useEffect(() => {
 		const retained = new Set(items.map((item) => item.key));
 		for (const key of disclosures.keys()) {
@@ -198,24 +240,18 @@ export function AgentChatVirtualTimeline({
 			adjustment.atEnd ||
 			isAtDomEnd(scrollRef.current, virtualizer.options.scrollEndThreshold)
 		) {
-			elementScroll(
+			deviation.scrollTo(
 				Math.max(
 					0,
 					virtualizer.getTotalSize() - (virtualizer.scrollRect?.height ?? 0),
 				),
-				{},
-				virtualizer,
 			);
 		} else if (adjustment.offset > 0) {
 			virtualizer.scrollToOffset(
-				Math.max(
-					0,
-					(scrollRef.current?.scrollTop ?? adjustment.offset) +
-						adjustment.delta,
-				),
+				Math.max(0, deviation.offset() + adjustment.delta),
 			);
 		}
-	}, [headerHeight, virtualizer]);
+	}, [headerHeight, virtualizer, deviation]);
 
 	return (
 		<div
@@ -230,8 +266,8 @@ export function AgentChatVirtualTimeline({
 				className="h-full overflow-y-auto [overflow-anchor:none]"
 			>
 				<div
+					ref={contentLayerRef}
 					className="relative mx-auto w-full max-w-3xl"
-					style={{ height: virtualizer.getTotalSize() }}
 				>
 					<div
 						ref={headerRef}
@@ -251,7 +287,6 @@ export function AgentChatVirtualTimeline({
 									setFocusedKey(null);
 							}}
 							style={{
-								transform: `translateY(${item.start}px)`,
 								// Include the end inset in measured content so native scroll
 								// bounds grow with an append before the sizer commits.
 								paddingBottom: item.index === items.length - 1 ? 10 : 0,
@@ -275,7 +310,10 @@ export function AgentChatVirtualTimeline({
 					<ScrollToLatestButton
 						visible={!virtualizer.isAtEnd()}
 						label={t("agents.chat.scrollToLatest")}
-						onClick={() => virtualizer.scrollToEnd()}
+						onClick={() => {
+							deviation.release();
+							virtualizer.scrollToEnd();
+						}}
 					/>
 				</div>
 			</div>

@@ -8,7 +8,7 @@ import {
 
 const API_VERSION = "dure.backend-profiles/v1";
 
-function validPingResult(result) {
+export function validPingResult(result) {
   return (
     result !== null &&
     typeof result === "object" &&

@@ -3,9 +3,9 @@ import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { collectAgentSpawnQuery } from "./agent-spawn-query.mjs";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
-import { collectManagedRehostNamed, MANAGED_REHOST_RUNNING_GUIDANCE } from "./managed-rehost-named.mjs";
+import { collectManagedRehostNamed, MANAGED_REHOST_RUNNING_GUIDANCE, managedRecoveryExitCode } from "./managed-rehost-named.mjs";
 import { collectManagedRehostPreview, formatManagedRecoveryCommands } from "./managed-rehost-preview.mjs";
-import { presentAgentRunRuntime } from "./run-presentation.mjs";
+import { appPresentsAgentRuntime, presentAgentRunRuntime, presentAgentRuntime } from "./run-presentation.mjs";
 import { collectRunAccountSwitch, formatRunAccountSwitch } from "./run-account-switch.mjs";
 import { collectAgentProjectMove, formatAgentProjectMove } from "./agent-project-move-command.mjs";
 import { assertNoConversationProjectOptions } from "./conversation-project-options.mjs";
@@ -25,11 +25,12 @@ Lists durable Run records, including headless Runs and earlier app/Host generati
 launchState describes the original launch, not current process liveness. List is
 bounded to 64 records; continue with nextCursor until null. A name shared by
 several Runs or Agents is refused with each candidate's exact retry command.
-Agents launched, resumed or imported by the app have no Run record. Show, resume,
-move and switch-account also select them by Agent ID, or by name or Session ID
-from the app's Agent list; the backend confirms each. Open needs a Run record.
-Show reads the current runtime selection. Open attaches that existing runtime and
-never launches a provider. Resume previews exact local recovery; add
+Agents launched, resumed or imported by the app have no Run record. Every action
+also selects them by Agent ID, or by name or Session ID from the app's Agent list;
+the backend confirms each. Show reads the current runtime selection. Open attaches
+that existing runtime and never launches a provider; without a Run record it needs
+a Terminal Agent and an app that supports it, and reattaches a live Session after
+the app lost its panes. Resume previews exact local recovery; add
 --confirm-restart to execute and publish it. A confirmed stopped source waiting
 for a deferred target uses backend wake; an existing native source uses native
 rehost; a closed, stopped Agent restarts through the app's backend transition.
@@ -49,8 +50,10 @@ Retain resume's exact status/retry commands after an uncertain response; do not
 repeat a name-based resume. Wake retains the operation ID, journal revision and
 request key, and publishes through the backend. Run a separate publish command
 only when returned for native rehost. Native rehost waits up to a minute for an
-operation Hmux is still applying; if it is still running, resume exits 0 with
-state running and its status/publish commands instead of an error.
+operation Hmux is still applying. A resume is finished, with ok true and exit 0,
+only after the native rehost and its binding publication both complete. If Hmux
+is still applying it, resume returns ok false, state running and exit 75 with its
+status/publish commands; do not act on the Agent until Publish succeeds.
 Use open after recovery to place the pane.
 For live Session observations use dure ls. Use the Session/workspace from show
 with dure read <session-id> --workspace ID or dure send <session-id> --workspace ID.
@@ -84,7 +87,7 @@ const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 export async function collectRunsCommand({
   opts, resolveBackend, resolveTarget, descriptor, command,
   requestBackend = performBackendProfileRequest, run, settle, present = presentAgentRunRuntime,
-  loadRegistry = () => ({ state: "absent", agents: [] }),
+  presentRuntime = presentAgentRuntime, loadRegistry = () => ({ state: "absent", agents: [] }),
 }) {
   const [action, selector] = opts.rest;
   const base = { schemaVersion: 1, apiVersion: "dure.runs/v1", action };
@@ -133,19 +136,24 @@ export async function collectRunsCommand({
       const recover = opts.confirmRestart ? collectManagedRehostNamed : collectManagedRehostPreview;
       const recovery = await recover({ opts: { rest: ["rehost", selector], confirmRestart: opts.confirmRestart },
         agentId: selected.agentId, resolveBackend: async () => backend, requestBackend, command, run, settle });
-      return { ...base, ok: recovery.ok && !recovery.publicationError, ...owner(), recovery,
-        ...(!recovery.ok || recovery.publicationError ? { error: recovery.error ?? recovery.publicationError } : {}) };
+      return { ...base, ok: recovery.ok, ...owner(), recovery, ...(!recovery.ok ? { error: recovery.error } : {}) };
     }
-    if (action === "open" && !selected.operationId) {
-      // Pane presentation is anchored on the Run's launch receipt; the app has
-      // no receipt-free presentation contract to place this runtime.
-      return failure({ code: "run_record_required", message: `${selected.agentId} has no Run record, so runs open ` +
-        "cannot place it. Open it from the app that launched it; show, resume and switch-account work by Agent ID." },
-      owner());
+    const app = action === "open" ? (typeof descriptor === "function" ? descriptor() : descriptor) : undefined;
+    if (action === "open" && !selected.operationId && !appPresentsAgentRuntime(app)) {
+      // An app without the receipt-free contract can only place a Run by its
+      // launch receipt; never fall back to launching a provider.
+      return failure({ code: "run_record_required", message: `${selected.agentId} has no Run record, and the ` +
+        "running Dure app cannot open an Agent without one. Update the app, or open the Agent from the app " +
+        "that launched it; show, resume and switch-account work by Agent ID." }, owner());
     }
     const runtime = observed ? { ok: true, result: observed } : await collectAgentRuntimeCommand({
       args: ["get", selected.agentId], resolveBackend: async () => backend, requestBackend });
     if (!runtime.ok) return failure(runtime.error, owner());
+    if (action === "open" && !selected.operationId) {
+      const presentation = await presentRuntime({ agent: selected, currentRuntime: runtime.result,
+        target: await resolveTarget(opts.space), profile: backend.profile, descriptor: app });
+      return { ...base, ok: true, agent: selected, presentation };
+    }
     if (action === "switch-account") {
       const accountSwitch = await collectRunAccountSwitch({ run: selected, observation: runtime.result,
         account: opts.account, confirmRestart: opts.confirmRestart, backend, requestBackend });
@@ -159,12 +167,16 @@ export async function collectRunsCommand({
     if (!report.receipt) return failure(report.error ?? { code: "run_receipt_unavailable" }, { run: selected });
     const presentation = await present({ report, currentRuntime: runtime.result, target,
       profile: backend.profile, projectPath: runtime.result.projectionContext?.project?.rootPath,
-      descriptor: typeof descriptor === "function" ? descriptor() : descriptor });
+      descriptor: app });
     return { ...base, ok: true, run: selected, presentation };
   } catch (error) {
     return failure(error?.code ? { code: error.code, message: error.message } : backendRequestFailure(error, backend?.profile));
   }
 }
+
+/** Resume is finished only after native execution and binding publication. */
+export const runsCommandExitCode = (report) =>
+  managedRecoveryExitCode({ ok: report.ok, state: report.recovery?.state }, 2);
 
 export function formatRunsCommand(report) {
   if (report.projectMove) return formatAgentProjectMove(report.projectMove);
@@ -178,7 +190,10 @@ export function formatRunsCommand(report) {
     ...(report.nextCursor ? [`Next cursor: ${report.nextCursor}`] : []),
   ].join("\n");
   if (report.action === "resume") return formatRecovery(report.recovery);
-  if (report.action === "open") return `${report.run.name}: ${report.presentation.state} ${report.presentation.pane?.spaceId}/${report.presentation.pane?.panelId}`;
+  if (report.action === "open") {
+    const opened = report.run ?? report.agent;
+    return `${opened.name ?? opened.agentId}: ${report.presentation.state} ${report.presentation.pane?.spaceId}/${report.presentation.pane?.panelId}`;
+  }
   const source = report.runtime.receipt?.authority?.authority;
   const selected = report.run ?? report.agent;
   return [
@@ -189,7 +204,8 @@ export function formatRunsCommand(report) {
       `Operation: ${report.run.operationId}`,
       ...(report.run.parent ? [`Parent: ${report.run.parent.sessionId} --workspace ${report.run.parent.workspaceId}`] : []),
       `Open: dure runs open ${report.run.agentId} --space <space-id>`,
-    ] : ["No Run record: launched, resumed or imported by the app. Open it from the app."]),
+    ] : ["No Run record: launched, resumed or imported by the app.",
+      `Open: dure runs open ${selected.agentId} --space <space-id>`]),
     `Switch account: dure runs switch-account ${selected.agentId} --account ACCOUNT_ID`,
     `Recover: dure runs resume ${selected.agentId}`,
   ].join("\n");

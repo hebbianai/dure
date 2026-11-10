@@ -6,6 +6,7 @@ import {
 import { resolveRunPresentationProject } from "@/lib/agents/runPresentationProject";
 import { resolveBackendPresentationSshHost } from "@/lib/cli/backendPresentationTarget";
 import { claimCliRequest } from "@/lib/cli/cliRequestBroker";
+import { resolveManagedRunLaunchKey } from "@/lib/cli/managedRunLaunchKey";
 import {
 	CliManagedRunPresentationError,
 	type CliManagedRunPresentationRequest,
@@ -135,8 +136,8 @@ function requireLocalManagedSession(
 export async function inspectManagedRunPresentationBinding(
 	request: ManagedRunProjectionInput,
 	state: CliManagedRunPresentationState,
+	resolveLaunchKey: typeof resolveManagedRunLaunchKey = resolveManagedRunLaunchKey,
 ): Promise<ManagedRunPresentationBinding> {
-	const createIdempotencyKey = request.launchIdempotencyKey;
 	if (request.source === "local") {
 		const session = requireLocalManagedSession(
 			await inspectHmuxSessionExact({
@@ -145,6 +146,7 @@ export async function inspectManagedRunPresentationBinding(
 			}),
 			request,
 		);
+		const createIdempotencyKey = await resolveLaunchKey(request);
 		return {
 			...hmuxManagedBinding(
 				request.sessionId,
@@ -162,6 +164,7 @@ export async function inspectManagedRunPresentationBinding(
 		state.sshHosts,
 		failCliManagedRunPresentation,
 	);
+	const createIdempotencyKey = await resolveLaunchKey(request);
 	const provisional = remoteHmuxManagedBinding(
 		request.sessionId,
 		request.workspaceId,
