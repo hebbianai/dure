@@ -57,6 +57,7 @@ export const ORCHESTRATION_PAYLOAD_NAMES = Object.freeze([
   "backend-ssh-material.mjs",
   "backend-ssh-stdio.mjs",
   "backend-transport.mjs",
+  "background-work-summary.mjs",
 ]);
 
 const DELIVERY_RUNNER = `import fs from "node:fs";
