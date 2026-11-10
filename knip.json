@@ -46,7 +46,9 @@
 				"plutil",
 				"mkfifo",
 				"ssh-keygen",
-				"flock"
+				"flock",
+				"dpkg-deb",
+				"readelf"
 			]
 		},
 		"tools/media-capture/compositor/remotion": {
