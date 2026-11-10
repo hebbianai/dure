@@ -58,6 +58,7 @@ mod agent_conversation_recovery_tests;
 mod agent_goal_tests;
 mod agent_recovery_tests;
 mod claude_goal_smoke;
+mod conversation_resume_tests;
 mod dispatch_stop_tests;
 mod event_canary_tests;
 pub(crate) mod goal_provider_smoke;

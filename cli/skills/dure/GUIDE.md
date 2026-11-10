@@ -296,6 +296,19 @@ backend wake; an existing native source uses the local recovery broker. Both wor
 without an open app and publish the new binding. A retained Run record alone does
 not prove reboot recovery is possible.
 
+When no Agent the backend holds can resume a conversation, for example after
+the Agent was removed, start a new one from its provider conversation ID:
+
+```sh
+dure runs resume --conversation ID --provider claude --project PROJECT --json   # preview
+```
+
+Run the returned Apply command; it also retries after an uncertain response.
+The new Agent runs as a terminal session in the project's root folder, which
+must be where the conversation started; pass `--account` for the account that
+owns it. A conversation another session still holds is refused and that
+session keeps running.
+
 Resume, Refresh and runtime/account switching keep the Agent's original project
 and working folder. Recovery still rejects `--project`, `--path` and `--cwd`.
 Use `dure runs move AGENT --project REGISTERED_ID --json` to preview moving an

@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from "node:path";
 import { parseArgs } from "node:util";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
@@ -10,12 +11,16 @@ import { collectRunAccountSwitch, formatRunAccountSwitch } from "./run-account-s
 import { collectAgentProjectMove, formatAgentProjectMove } from "./agent-project-move-command.mjs";
 import { assertNoConversationProjectOptions } from "./conversation-project-options.mjs";
 import { exactRunRetry, formatRunCandidates, listRunRecords, resolveAgentWithoutRun, selectRunRecord } from "./run-agent-selection.mjs";
+import { collectRunConversationResume, formatRunConversationResume } from "./run-conversation-resume.mjs";
 
 export const RUNS_HELP = `Usage:
   dure runs list [--cursor CURSOR] [--backend ID] [--json]
   dure runs show <agent-id|operation-id|name> [--backend ID] [--json]
   dure runs open <agent-id|operation-id|name> --space ID [--backend ID] [--json]
   dure runs resume <agent-id|operation-id|name> [--confirm-restart] [--backend ID] [--json]
+  dure runs resume --conversation ID --provider ID [--project ID | --path PATH] [--name NAME]
+                   [--account ACCOUNT_ID|default] [--idempotency-key KEY]
+                   [--confirm-restart] [--backend ID] [--json]
   dure runs move <agent-id|operation-id|name> --project ID [--backend ID] [--json]
   dure runs move <agent-id> --project ID --move-plan PLAN --confirm-restart [--backend ID] [--json]
   dure runs switch-account <agent-id|operation-id|name> --account ACCOUNT_ID|default
@@ -36,8 +41,8 @@ for a deferred target uses backend wake; an existing native source uses native
 rehost; a closed, stopped Agent restarts through the app's backend transition.
 All preserve the conversation without an open app. Remote resume is not
 supported here.
-Resume retains the original project and working folder, and refuses --project,
---path and --cwd. Use runs move for an idle or stopped Claude or Codex
+Resuming an Agent retains its original project and working folder, and refuses
+--project, --path and --cwd. Use runs move for an idle or stopped Claude or Codex
 conversation on the same backend. Move previews first and returns an exact Apply
 command requiring --confirm-restart. Live sources require the exact observed idle
 revision and output position; new activity invalidates the preview. Claude Terminal moves require
@@ -58,6 +63,17 @@ Use open after recovery to place the pane.
 For live Session observations use dure ls. Use the Session/workspace from show
 with dure read <session-id> --workspace ID or dure send <session-id> --workspace ID.
 
+Resume --conversation starts a new Agent on an exact provider conversation when
+no Agent the backend holds can resume it, for example after the Agent was removed.
+--provider names the provider that owns the conversation. --project or --path
+selects the registered project; without either the current directory selects it.
+It runs as a terminal session in the project's root folder, which must be the
+folder the conversation started in. --account selects the account that owns the
+conversation, as for dure run. The preview records the plan and returns an exact
+Apply command; --confirm-restart starts the Agent and prints its Agent ID. A
+conversation another session still holds is refused, and that session keeps
+running. Keep the Apply command: it is also the retry after an uncertain response.
+
 Switch-account previews by default; --confirm-restart executes the same backend
 transition as the UI account selector. It preserves the exact conversation and
 Chat/Terminal mode for Claude and Codex, on local and SSH backends, without an app.
@@ -76,11 +92,15 @@ export function parseRunsOptions(args) {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, strict: true,
     options: { backend: { type: "string" }, cursor: { type: "string" }, space: { type: "string" }, account: { type: "string" },
       project: { type: "string", short: "p" }, path: { type: "string" }, cwd: { type: "string" },
+      conversation: { type: "string" }, provider: { type: "string" }, name: { type: "string" },
+      "idempotency-key": { type: "string" },
       "move-plan": { type: "string" }, "confirm-restart": { type: "boolean" }, json: { type: "boolean" } } });
-  if (positionals[0] !== "move") assertNoConversationProjectOptions({ ...values,
+  // A conversation resume starts a new Agent, so the project selects where;
+  // every other resume keeps its original workspace.
+  if (positionals[0] !== "move" && values.conversation === undefined) assertNoConversationProjectOptions({ ...values,
     projectSpecified: Object.hasOwn(values, "project"), pathSpecified: Object.hasOwn(values, "path") });
-  return { ...values, movePlan: values["move-plan"], rest: positionals, confirmRestart: values["confirm-restart"],
-    backendSpecified: values.backend !== undefined };
+  return { ...values, movePlan: values["move-plan"], idempotencyKey: values["idempotency-key"], rest: positionals,
+    confirmRestart: values["confirm-restart"], backendSpecified: values.backend !== undefined };
 }
 
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
@@ -89,11 +109,16 @@ export async function collectRunsCommand({
   opts, resolveBackend, resolveTarget, descriptor, command,
   requestBackend = performBackendProfileRequest, run, settle, present = presentAgentRunRuntime,
   presentRuntime = presentAgentRuntime, loadRegistry = () => ({ state: "absent", agents: [] }),
+  currentDirectory = process.cwd,
 }) {
   const [action, selector] = opts.rest;
   const base = { schemaVersion: 1, apiVersion: "dure.runs/v1", action };
   const failure = (error, details = {}) => ({ ...base, ok: false, ...details, error });
-  if (!["list", "show", "open", "resume", "switch-account", "move"].includes(action) ||
+  if (opts.conversation !== undefined) {
+    return collectConversationResume({ opts, base, failure, resolveBackend, descriptor, requestBackend, currentDirectory });
+  }
+  if (opts.provider !== undefined || opts.name !== undefined || opts.idempotencyKey !== undefined ||
+      !["list", "show", "open", "resume", "switch-account", "move"].includes(action) ||
       opts.rest.length !== (action === "list" ? 1 : 2) ||
       (action !== "list" && !TOKEN.test(selector ?? "")) ||
       (opts.cursor !== undefined && (action !== "list" || !TOKEN.test(opts.cursor))) ||
@@ -175,11 +200,44 @@ export async function collectRunsCommand({
   }
 }
 
+async function collectConversationResume({ opts, base, failure, resolveBackend, descriptor, requestBackend, currentDirectory }) {
+  if (opts.rest.length !== 1 || opts.rest[0] !== "resume" || !TOKEN.test(opts.provider ?? "") ||
+      (opts.project !== undefined && (opts.path !== undefined || !TOKEN.test(opts.project))) ||
+      (opts.path !== undefined && !opts.path) || (opts.account !== undefined && !TOKEN.test(opts.account)) ||
+      opts.cwd !== undefined || opts.space !== undefined || opts.cursor !== undefined || opts.movePlan !== undefined) {
+    return failure({ code: "runs_request_invalid", message: RUNS_HELP });
+  }
+  let backend;
+  try {
+    backend = await resolveBackend();
+    if (!backend?.profile || backend.error) return failure(backendRequestFailure(backend?.error, backend?.profile));
+    const remote = backend.profile.transport?.kind === "ssh";
+    if (opts.project === undefined && opts.path === undefined && remote) {
+      return failure({ code: "runs_request_invalid",
+        message: "Select the project on this SSH backend with --project ID or an absolute --path." });
+    }
+    // Local paths resolve from here; an SSH backend resolves its own absolute path.
+    const projectPath = opts.project !== undefined ? undefined
+      : remote ? opts.path : resolvePath(currentDirectory(), opts.path ?? ".");
+    const conversationResume = await collectRunConversationResume({
+      conversationId: opts.conversation, providerId: opts.provider, projectId: opts.project, projectPath,
+      agentName: opts.name, account: opts.account, idempotencyKey: opts.idempotencyKey,
+      confirmRestart: opts.confirmRestart, backend, requestBackend,
+      descriptor: typeof descriptor === "function" ? descriptor() : descriptor,
+    });
+    return { ...base, ok: conversationResume.ok, conversationResume,
+      ...(!conversationResume.ok ? { error: conversationResume.error } : {}) };
+  } catch (error) {
+    return failure(error?.code ? { code: error.code, message: error.message } : backendRequestFailure(error, backend?.profile));
+  }
+}
+
 /** Resume is finished only after native execution and binding publication. */
 export const runsCommandExitCode = (report) =>
   managedRecoveryExitCode({ ok: report.ok, state: report.recovery?.state }, 2);
 
 export function formatRunsCommand(report) {
+  if (report.conversationResume) return formatRunConversationResume(report.conversationResume);
   if (report.projectMove) return formatAgentProjectMove(report.projectMove);
   if (report.accountSwitch) return formatRunAccountSwitch(report.accountSwitch);
   if (!report.ok) return [`${report.error.remoteCode ?? report.error.code}: ${report.error.message ?? "Run request failed"}`,

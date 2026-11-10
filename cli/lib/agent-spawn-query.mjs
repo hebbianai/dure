@@ -239,6 +239,7 @@ function validPreviewRequest(value) {
     ? []
     : ["includePresentationProject"];
   const interactionKeys = value.interactionPreference === undefined ? [] : ["interactionPreference"];
+  const conversationKeys = value.providerConversationRef === undefined ? [] : ["providerConversationRef"];
   return (
     hasProjectId !== hasProjectPath &&
     onlyKeys(value, [
@@ -251,10 +252,14 @@ function validPreviewRequest(value) {
       ...overrideKeys,
       ...presentationKeys,
       ...interactionKeys,
+      ...conversationKeys,
       "promptDigest",
       ...setupKeys,
       ...["model", "effort", "executionProfile", "parent"].filter((key) => value[key] !== undefined),
     ]) &&
+    (value.providerConversationRef === undefined ||
+      (typeof value.providerConversationRef === "string" &&
+        PROVIDER_CONVERSATION_REF.test(value.providerConversationRef))) &&
     (value.parent === undefined || validSpawnParent(value.parent)) &&
     value.schemaVersion === AGENT_SPAWN_QUERY_SCHEMA_VERSION &&
     validExecutionProfile(value.executionProfile, { allowMissing: true }) &&
@@ -1017,7 +1022,7 @@ function previewRequestMatches(plan, expectedRequest) {
     ...normalized,
     worktree: { ...normalized.worktree },
     executionProfile: normalizedExecutionProfile(expectedRequest.executionProfile),
-    providerConversationRef: null,
+    providerConversationRef: expectedRequest.providerConversationRef ?? null,
     permissionMode:
       expectedOverride === "require_approvals"
         ? "default"
@@ -1250,6 +1255,7 @@ function previewRequest(options) {
     ...(options.effort === undefined ? {} : { effort: options.effort }),
     ...(options.executionProfile === undefined ? {} : { executionProfile: options.executionProfile }),
     ...(options.interactionPreference === undefined ? {} : { interactionPreference: options.interactionPreference }),
+    ...(options.providerConversationRef === undefined ? {} : { providerConversationRef: options.providerConversationRef }),
     ...(options.parent === undefined ? {} : { parent: options.parent }),
     agentName: options.agentName,
     worktree: options.worktree,
@@ -1279,6 +1285,7 @@ export async function collectAgentSpawnQuery({
   executionProfile,
   includePresentationProject,
   interactionPreference,
+  providerConversationRef,
   parent,
   setupCommand,
   prompt,
@@ -1310,6 +1317,7 @@ export async function collectAgentSpawnQuery({
           effort,
           executionProfile,
           interactionPreference,
+          providerConversationRef,
           parent,
           includePresentationProject: presentationProjectSupported,
           setupCommand,
