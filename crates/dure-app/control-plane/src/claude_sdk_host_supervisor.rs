@@ -154,17 +154,16 @@ enum SupervisorState {
 /// old permanent Failed latch turned one bad spawn into a day-long global
 /// chat outage (2026-08-31). The latch still absorbs spawn storms, but after
 /// the cooldown the next caller attempts a fresh spawn.
-const HOST_RESPAWN_COOLDOWN: std::time::Duration = if cfg!(test) {
-    std::time::Duration::from_millis(50)
-} else {
-    std::time::Duration::from_secs(10)
-};
+const HOST_RESPAWN_COOLDOWN: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub struct ClaudeSdkHostSupervisor {
     configuration: ClaudeSdkHostSupervisorConfiguration,
     launch_count: u32,
     state: SupervisorState,
+    /// How long a failed spawn stays latched. Tests set it per case; a short
+    /// test-only window made the latch race the scheduler on loaded runners.
+    respawn_cooldown: Duration,
 }
 
 impl ClaudeSdkHostSupervisor {
@@ -174,6 +173,7 @@ impl ClaudeSdkHostSupervisor {
             configuration,
             launch_count: 0,
             state: SupervisorState::Empty,
+            respawn_cooldown: HOST_RESPAWN_COOLDOWN,
         }
     }
 
@@ -195,7 +195,7 @@ impl ClaudeSdkHostSupervisor {
                 observed_at,
                 detail,
             } => {
-                if observed_at.elapsed() < HOST_RESPAWN_COOLDOWN {
+                if observed_at.elapsed() < self.respawn_cooldown {
                     // The reason stays `host_exited` — callers match on it to
                     // know they are inside the latch rather than looking at a
                     // fresh attempt. The detail says what actually died.
@@ -799,6 +799,10 @@ mod tests {
         )
         .unwrap();
         let mut supervisor = ClaudeSdkHostSupervisor::new(configuration);
+        // A window no scheduler delay can outlast, so the latch is observed
+        // deterministically. A 50 ms window let a loaded CI runner reach the
+        // second call after it had already closed (#257).
+        supervisor.respawn_cooldown = Duration::from_secs(3600);
 
         let first = supervisor.ensure_started().unwrap_err();
         assert_ne!(first.reason(), "host_exited");
@@ -818,8 +822,10 @@ mod tests {
         );
 
         // After the cooldown the next caller really respawns - the error is
-        // the spawn failure again, never the latch.
-        thread::sleep(HOST_RESPAWN_COOLDOWN + Duration::from_millis(20));
+        // the spawn failure again, never the latch. Shortening the window
+        // stands in for waiting it out: the failure is already older than it.
+        supervisor.respawn_cooldown = Duration::from_millis(1);
+        thread::sleep(Duration::from_millis(2));
         let respawned = supervisor.ensure_started().unwrap_err();
         assert_ne!(respawned.reason(), "host_exited");
         assert_eq!(respawned.reason(), first.reason());

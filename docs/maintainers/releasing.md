@@ -4,7 +4,9 @@ Official builds default to the dispatch's exact `hebbianai/dure:main` commit.
 A repository administrator may instead select a reviewed branch, tag or full
 commit SHA in this repository. The [Release workflow](../../.github/workflows/release.yml)
 creates a version-only commit, signed build and four-asset **draft** in
-`hebbianai/dure`. It does not publish, install or restart a user's app.
+`hebbianai/dure`. With [Linux packages](#linux-packages) switched on, the same
+draft also carries Linux x86_64 and arm64 AppImage and Debian packages. It does
+not publish, install or restart a user's app.
 
 ## Provision once
 
@@ -237,19 +239,85 @@ protected-baseline comparison. Website routing is a separate integration:
 confirm its resolver accepts the new canonical `dure` release URLs before the
 first cutover; do not claim the website changed because the manifest changed.
 
+## Linux packages
+
+The Release workflow can add Linux x86_64 and arm64 AppImage and Debian
+packages to the same draft as the macOS app. It is off until a maintainer
+switches it on; with it off, the `linux-packages` and `linux-sign` jobs are
+skipped and the draft holds the four macOS files exactly as before. The macOS
+jobs never depend on the Linux jobs either way.
+
+How the packages are made:
+
+1. `linux-packages` calls [linux-desktop.yml](../../.github/workflows/linux-desktop.yml)
+   with the version-only tag commit. On a GitHub-hosted `macos-15` runner,
+   `scripts/linux-desktop-supply.mjs supply` cross-builds the Hmux sidecars,
+   the Linux SSH host runtimes and the remote checkout helper for both
+   architectures: they compile C code with the pinned Ghostty Zig toolchain,
+   which only runs on macOS ARM64. Hosted `ubuntu-22.04` and `ubuntu-22.04-arm`
+   runners stage that supply, build the packages with the beta updater
+   configuration and start each AppImage under a virtual display. Ubuntu 22.04
+   sets the glibc 2.35 floor. None of these jobs receive credentials.
+2. `linux-sign` runs on the `dure-release` signing host in the `macos-release`
+   environment. It builds nothing: it signs the four packages with the existing
+   `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)
+   through the pinned Tauri CLI, checks every signature against the tag's
+   updater public key and keeps the eight files as `release-linux-assets-vX.Y.Z`
+   for 90 days. No new secret is needed.
+3. `draft` waits for both platforms and stages twelve files: the four macOS
+   files with a `latest.json` that gains `linux-x86_64-appimage`,
+   `linux-x86_64-deb`, `linux-aarch64-appimage` and `linux-aarch64-deb`
+   entries, plus the four packages and their signatures. The macOS entry,
+   version and date keep the macOS build's bytes.
+
+To switch it on:
+
+1. Add a repository variable `DURE_TELEMETRY_KEY` with the same public
+   telemetry token as the `macos-release` environment variable. The hosted
+   Linux jobs cannot read environment variables, and an official Linux build
+   refuses an empty value as the macOS build does.
+2. Set the repository variable `DURE_RELEASE_LINUX` to `true`.
+
+A run with Linux on asks for `macos-release` approval once more, for
+`linux-sign`. If a Linux job fails after the tag exists, the draft does not
+run; fix the cause and use **Re-run failed jobs**, which repeats only the failed
+Linux jobs and the draft. The four macOS files stay in their own
+`release-assets-vX.Y.Z` artifact meanwhile; nothing is rebuilt or re-signed for
+macOS.
+
+`verify`, `publish`, `metadata-only` and `recover-draft` detect Linux from the
+run itself: when `linux-sign` succeeded they also download
+`release-linux-assets-vX.Y.Z`, rebuild the same `latest.json` from both
+artifacts and require all twelve files; otherwise they require exactly the four
+macOS files. Publication then writes that `latest.json` to the beta feed, which
+installed macOS clients read unchanged.
+
+Before publishing a Linux release, accept the unchanged packages natively in a
+disposable home on each architecture: install the `.deb` and start the
+AppImage, open a terminal pane and run a command. Updating from one published
+Linux build to the next can only be observed once two Linux releases exist.
+
+To get test packages for any commit without a release, run the workflow
+directly; it uploads unsigned packages as run artifacts for 14 days:
+
+```sh
+gh workflow run linux-desktop.yml --repo hebbianai/dure --ref main
+```
+
 ## Homebrew cask
 
 [homebrew-cask.yml](../../.github/workflows/homebrew-cask.yml) runs when a release
 is published, prereleases included. It writes `Casks/dure.rb` from that release's
 DMG digest and pushes it to `hebbianai/homebrew-tap`, so users can run
-`brew install --cask hebbianai/tap/dure`. An older release never replaces a newer
-cask.
+`brew install --cask hebbianai/tap/dure`. Current Homebrew loads casks from a
+third-party tap only after `brew trust hebbianai/tap`, so the install pages show
+both commands. An older release never replaces a newer cask.
 
 The job stays skipped until a maintainer switches it on:
 
-1. Create a fine-grained token with **Contents: read and write** on
-   `hebbianai/homebrew-tap` only, and store it as the repository secret
-   `HOMEBREW_TAP_TOKEN`.
+1. Add an SSH deploy key with write access to `hebbianai/homebrew-tap` only,
+   and store its private key as the repository secret `HOMEBREW_TAP_DEPLOY_KEY`.
+   A deploy key reaches that one repository and nothing else.
 2. Set the repository variable `HOMEBREW_TAP_ENABLED` to `true`.
 3. Create the cask for the current release:
 
@@ -257,8 +325,9 @@ The job stays skipped until a maintainer switches it on:
    gh workflow run homebrew-cask.yml --repo hebbianai/dure --ref main -f tag=v0.2.61
    ```
 
-4. Once `brew install --cask hebbianai/tap/dure` works, add it to the four install
-   pages under `docs/public/`.
+4. Run `brew trust hebbianai/tap` and `brew info --cask hebbianai/tap/dure`.
+   The cask should load without a Homebrew warning and show the release version.
+   The four install pages under `docs/public/` document the install.
 
 A published release runs the workflow file from its tagged commit, so automatic
 updates begin with the first release tagged after this workflow merged. A release

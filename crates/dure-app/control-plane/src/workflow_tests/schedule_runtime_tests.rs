@@ -53,6 +53,78 @@ async fn schedule_permission_defaults_are_inherited_only_without_an_override() {
 }
 
 #[tokio::test]
+async fn schedule_starts_on_the_chat_runtime_only_where_the_native_integration_is_missing() {
+    type Registry = fn() -> AgentProviderRegistry;
+    // Whether the launch is planned on the terminal; `None` means refused.
+    let cases: [(Registry, &str, Option<bool>); 3] = [
+        // Next to the app, a schedule keeps its terminal session.
+        (
+            provider_extension::test_codex_structured_agent_provider_registry,
+            "codex",
+            Some(true),
+        ),
+        // Without it, a provider with a chat runtime starts there instead of
+        // being refused at preflight.
+        (
+            provider_extension::test_unintegrated_provider_registry,
+            "codex",
+            Some(false),
+        ),
+        // A provider without one is still refused, for the same reason.
+        (
+            provider_extension::test_unintegrated_provider_registry,
+            "claude",
+            None,
+        ),
+    ];
+    for (registry, provider, native) in cases {
+        let (root, mut state, _, _) = fixture(vec![LaunchOutcome::Succeed]).await;
+        prepare_project(&root, &state).await;
+        state.agent_providers = Arc::new(registry());
+        let request: SchedulePutRequestV1 = serde_json::from_value(json!({
+            "schemaVersion": 1, "scheduleId": "headless", "expectedRevision": 0,
+            "idempotencyKey": "schedule-create", "name": "Headless", "enabled": true,
+            "expression": "* * * * *", "timezone": "UTC",
+            "runTemplate": {"projectId": "project-1", "providerId": provider, "prompt": "Run the scheduled task"},
+        }))
+        .unwrap();
+        state.store.put_schedule(&request, 60_000).await.unwrap();
+        schedule_runtime::tick(&state, 120_000).await.unwrap();
+        let occurrences = state.store.schedule_occurrences(None, 10).await.unwrap();
+        assert_eq!(occurrences.len(), 1, "{provider}");
+        let spawn = state
+            .store
+            .agent_spawn_receipt_by_idempotency_key(&occurrences[0].idempotency_key)
+            .await
+            .unwrap();
+        let Some(native) = native else {
+            assert_eq!(
+                occurrences[0].error_code.as_deref(),
+                Some("agent_spawn_provider_preflight_failed"),
+                "{provider}"
+            );
+            assert!(spawn.is_none(), "{provider}");
+            continue;
+        };
+        let spawn = spawn.unwrap_or_else(|| panic!("{provider}: {:?}", occurrences[0]));
+        assert_eq!(
+            occurrences[0].operation_id.as_deref(),
+            Some(spawn.operation_id.as_str())
+        );
+        assert_eq!(
+            matches!(spawn.plan.launch, AgentSpawnLaunchPlanV1::NativeCli { .. }),
+            native,
+            "{provider}: {:?}",
+            spawn.plan.launch
+        );
+        assert_eq!(
+            spawn.plan.request.interaction_preference,
+            native.then_some(AgentSpawnInteractionPreferenceV1::NativeCli)
+        );
+    }
+}
+
+#[tokio::test]
 #[ignore = "requires DURE_QA_HMUX_BIN and DURE_QA_HMUX_RUNTIME; run pnpm test:hmux-schedule"]
 async fn schedule_run_uses_real_hmux() {
     assert_schedule_run_uses_real_hmux(false).await;

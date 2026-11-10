@@ -93,7 +93,7 @@ dure ls
 | --- | --- |
 | macOS · Apple Silicon | [官方下载](https://www.dureai.dev/download/mac/) |
 | Windows | 源代码已公开；原生桌面验证和公开安装包尚待完成。 |
-| Linux | 源代码已公开；原生桌面验证和公开安装包尚待完成。 |
+| Linux · x86_64, arm64 | 发布工作流会构建 AppImage 和 Debian 软件包；首个公开版本尚待发布。终端窗格可用，但尚未包含 Dure CLI 及其代理后端。 |
 | iOS | 源代码已公开；设备验证和官方分发尚待完成。 |
 | Android · ARM64 | [下载预览版 APK](https://github.com/hebbianai/hebbian-releases/releases/download/android-v0.1.4/Dure_0.1.4_android_arm64.apk) · Android 7.0 及以上。已通过模拟器验证；尚未完成真机验证。 |
 

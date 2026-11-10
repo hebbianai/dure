@@ -52,7 +52,7 @@ client. Shared runtime and protocol changes can affect several platforms.
 | --- | --- | --- |
 | macOS, Apple Silicon | `pnpm app:dev`, `pnpm build:app` | Anonymous source app build and isolated background native smoke verified. Official desktop download available. |
 | Windows, x86_64 MSVC | `pnpm app:windows:doctor`, `pnpm app:windows:verify`, `pnpm app:windows:build` | Desktop source and NSIS packaging configuration included. Native desktop acceptance and a public installer remain separate from shared-code CI. |
-| Linux, x86_64 | `pnpm app:linux:doctor`, `pnpm app:linux:verify`, `pnpm app:linux:build` | Desktop source and Debian/AppImage packaging configuration included. Linux script/frontend CI does not establish desktop runtime acceptance. |
+| Linux, x86_64 and arm64 | `pnpm app:linux:doctor`, `pnpm app:linux:build` with a [prepared supply](#windows-and-linux-desktop) | The [Linux package workflow](.github/workflows/linux-desktop.yml) builds AppImage and Debian packages for both architectures on Ubuntu 22.04 and starts each one under a virtual display. On x86_64, installing the `.deb` on Ubuntu 24.04, starting the AppImage on Debian 12 and running a command in a terminal pane were verified natively. No public Linux release yet; Linux builds do not include the Dure CLI or its backend. |
 | iOS | `pnpm --dir mobile tauri ios dev` | Mobile source and Xcode project included. Web tests and shared protocol checks run in CI; device builds, signing and distribution require their own verification. |
 | Android | `pnpm --dir mobile android:dev` | Mobile source and Gradle project included. Web tests and shared protocol checks run in CI; emulator/device builds and distribution require their own verification. |
 
@@ -176,7 +176,7 @@ pnpm app:windows:doctor
 ```
 
 ```sh
-# Linux x86_64
+# Linux x86_64 or arm64
 pnpm app:linux:doctor
 ```
 
@@ -187,9 +187,20 @@ requires a macOS ARM64 build host; a cold Windows/Linux desktop build needs the
 matching prepared proof. Windows packaging also consumes prepared Linux remote
 checkout helpers. Preserve the artifact receipts and digest checks when supplying
 these inputs. Once those inputs are prepared, run the matching
-`pnpm app:windows:verify` / `pnpm app:windows:build` or
-`pnpm app:linux:verify` / `pnpm app:linux:build` commands. The build commands create
-NSIS or Debian/AppImage packages respectively; they do not install them.
+`pnpm app:windows:verify` / `pnpm app:windows:build` commands. The build command
+creates the NSIS installer; it does not install it.
+
+A Linux package needs its Hmux sidecars, Linux SSH host runtimes and remote
+checkout helper from a macOS ARM64 host. There, in a clean checkout, run
+`node scripts/linux-desktop-supply.mjs supply <new-directory>`. Copy that
+directory to the Linux host, check out the same commit cleanly and run
+`DURE_LINUX_SUPPLY_DIR=<directory> pnpm app:linux:build`. It checks the
+supply's receipt and digests, stages the static sidecars, builds the AppImage
+and Debian packages, and restores the static executables that the AppImage
+tooling rewrites. It does not install them. `pnpm app:linux:verify` still
+needs a Ghostty proof that a Linux host cannot prepare. A maintainer can get the
+same unsigned packages for any commit from the
+[Linux package workflow](.github/workflows/linux-desktop.yml) instead.
 
 The source entrypoints do not yet constitute a verified standalone Windows/Linux
 bootstrap; report missing prerequisites with the target and commit. Use the
@@ -343,7 +354,8 @@ same projects as separate jobs, one job per file where a project requires its
 own invocation. `verify:push:hmux-core` formats, tests and lints the Hmux workspace,
 including the exact-pin Ghostty terminal core, and `app:verify` checks the
 generated extension contracts and formats, tests and lints the `crates/dure-app`
-workspace and its provider driver. None of these commands proves a native app or
+workspace and its provider driver. `verify:push:desktop` stages the Hmux runtime
+sidecar, then tests and lints the desktop crate in `src-tauri`. None of these commands proves a native app or
 live provider workflow works. For Rust, terminal or process-lifecycle changes,
 also include the relevant crate checks and native smoke evidence. Runtime QA
 must use disposable HOME, DURE_HOME and a unique HMUX_DISCOVERY_ROOT through the
@@ -366,25 +378,30 @@ pushes to `main`, pull requests targeting `main`, and manual dispatches.
 Documentation-only changes run change classification and documentation checks;
 code suites are skipped. Code, dependency and CI changes, uncertain comparisons,
 and manual dispatches run the complete public checks, except that the Hmux job
-runs only when Hmux or the terminal-state protocol is affected and the app core
-job only when the app core is affected. Shared inputs, CI changes, uncertain
-comparisons and manual dispatches select both. The existing
+runs only when Hmux or the terminal-state protocol is affected, the app core job
+only when the app core is affected, and the desktop job only when `src-tauri` or
+a crate it links or tests against is affected. Shared inputs, CI changes,
+uncertain comparisons and manual dispatches select all three. The existing
 [scope classifier](scripts/lib/push-gate-scope.mjs) owns path classification.
 
 The required `Public repository checks` result runs for every pull request, push
 and manual dispatch. It requires successful classification and documentation
-checks, plus every selected frontend, script, mobile web, shared-protocol, Hmux
-and app core check. A failed classification or an unexpectedly skipped, failed or
+checks, plus every selected frontend, script, mobile web, shared-protocol, Hmux,
+app core and desktop check. A failed classification or an unexpectedly skipped, failed or
 cancelled required job cannot pass this result. A newer update to the same pull
 request cancels its older run, and that cancelled run fails this result. Pushes
 to `main` and manual dispatches are never cancelled, because each push is checked
 only over its own pushed range. Mobile web and app core
 checks run on Linux, and the shared desktop/mobile protocol is formatted, tested
-and linted on Linux, Windows and macOS. Hmux checks run on macOS ARM64, the only
-host on which the pinned Ghostty build inputs can prepare the terminal core they
-link. These jobs use hosted runners with read-only repository permissions; they do
+and linted on Linux, Windows and macOS. Hmux and desktop checks run on macOS
+ARM64, the only host on which the pinned Ghostty build inputs can prepare the
+terminal core that Hmux and the desktop's Hmux runtime sidecar link. These jobs use hosted runners with read-only repository permissions; they do
 not use publisher credentials or maintainer machines. Platform-native
 desktop/mobile packaging and device acceptance remain separate checks.
+Pull requests that change the Linux packaging path also run the
+[Linux package workflow](.github/workflows/linux-desktop.yml): it builds the
+AppImage and Debian packages for x86_64 and arm64 and starts each AppImage under
+a virtual display. It is not part of `Public repository checks`.
 
 Contributors submit changes to `main` through pull requests. Merging requires
 passing checks, an up-to-date branch, and resolved review conversations.

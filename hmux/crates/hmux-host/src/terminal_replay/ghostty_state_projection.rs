@@ -187,9 +187,10 @@ fn is_canonical_blank_grapheme(
 
 /// Ghostty can leave an incomplete wide pair in a live grid: shrinking the
 /// columns of a screen that does not reflow (the alternate screen) truncates
-/// a spacer tail but keeps its wide head in the new last column. Project the
-/// narrow repair Ghostty's own snapshot decoder applies, so every row stays
-/// column-aligned and its logical span never exceeds the grid.
+/// a spacer tail but keeps its wide head in the new last column. The proof
+/// shim repairs that case in engine state after each shrink; projecting the
+/// same narrow repair Ghostty's own snapshot decoder applies keeps every row
+/// column-aligned, with a logical span inside the grid, whatever the source.
 pub(super) fn projected_cell_width(
     cells: &[terminal_core_ghostty_proof::ProjectedCell],
     index: usize,

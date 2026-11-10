@@ -34,6 +34,28 @@ struct AgentSpawnPreviewBody {
     parent: Option<AgentSpawnParentV1>,
 }
 
+/// The interface a launch the backend starts by itself asks for: a schedule
+/// occurrence or a workflow agent step, where no app states a preference.
+/// Where this host carries the provider's native integration they keep the
+/// terminal, as they always have next to the Dure app. Where a native launch
+/// would be refused for that missing integration the interface stays unpinned,
+/// so a provider with a chat runtime starts there, as a headless `dure run`
+/// does (#348); a provider without one is still refused with the same reason.
+/// A replay returns its persisted plan whatever this answers now, because the
+/// preference is not part of the idempotency comparison.
+pub(crate) fn unattended_interaction_preference(
+    providers: &AgentProviderRegistry,
+    provider_id: &ProviderIdV1,
+) -> Option<AgentSpawnInteractionPreferenceV1> {
+    // The plain tuple leaves the integration as the only host-dependent check.
+    let integration_missing = matches!(
+        providers.launch_plan(provider_id, &ProviderPermissionModeV1::Default, None, None, None),
+        Err(error) if error.code.as_str()
+            == crate::provider_extension::PROVIDER_RUNTIME_INTEGRATION_UNAVAILABLE
+    );
+    (!integration_missing).then_some(AgentSpawnInteractionPreferenceV1::NativeCli)
+}
+
 pub(super) async fn preview_agent_spawn(
     state: &ServiceState,
     authority: &BackendRequestAuthority,

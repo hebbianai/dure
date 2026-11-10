@@ -19,6 +19,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import {
+  basename,
   delimiter,
   dirname,
   isAbsolute,
@@ -241,7 +242,7 @@ function ensureHome(environment) {
   return root;
 }
 
-function readOwnerFile(path, maximum) {
+export function readOwnerFile(path, maximum) {
   let descriptor;
   try {
     descriptor = openSync(
@@ -511,15 +512,22 @@ function replaceCanonicalLocalProfile(root, catalog, profile, environment) {
   document.profiles = document.profiles.map((candidate) =>
     candidate.id === LOCAL_PROFILE_ID ? profile : candidate,
   );
-  const temporary = join(root, `.backend-profiles-${randomUUID()}.tmp`);
+  replaceOwnerStateFile(path, `${JSON.stringify(document, null, 2)}\n`, source);
+}
+
+/** Atomically replace one owner-only Dure state file, refusing if it changed
+ * since `expectedSource` was read (`null` means it must still be absent). */
+export function replaceOwnerStateFile(path, source, expectedSource) {
+  const root = dirname(path);
+  const temporary = join(root, `.${basename(path, ".json")}-${randomUUID()}.tmp`);
   let descriptor;
   try {
     descriptor = openSync(temporary, "wx", 0o600);
-    writeSync(descriptor, `${JSON.stringify(document, null, 2)}\n`);
+    writeSync(descriptor, source);
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
-    if (readOwnerFile(path, MAX_BACKEND_PROFILES_BYTES) !== source) {
+    if (readOwnerFile(path, MAX_BACKEND_PROFILES_BYTES) !== expectedSource) {
       fail("local_backend_catalog_changed");
     }
     renameSync(temporary, path);

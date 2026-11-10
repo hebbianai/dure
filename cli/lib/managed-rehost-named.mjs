@@ -8,6 +8,16 @@ import { ManagedRuntimeRecoveryIncompleteError, wakeManagedRuntime } from "./man
 export const MANAGED_REHOST_RUNNING_GUIDANCE =
   "Hmux is still applying this rehost; nothing new was submitted. Check Status until it reports completed, then run Publish once. Do not start another operation.";
 
+/** Still applying is neither finished nor failed (sysexits EX_TEMPFAIL), so a
+ * caller that checks only the exit status cannot act on an unfinished restart. */
+export const MANAGED_REHOST_RUNNING_EXIT_CODE = 75;
+
+/** A restart is finished only after its native rehost and its binding publication. */
+export function managedRecoveryExitCode(report, failureCode) {
+  if (report.ok) return 0;
+  return report.state === "running" ? MANAGED_REHOST_RUNNING_EXIT_CODE : failureCode;
+}
+
 /** Compose the existing owners once; publication failure never repeats native execution. */
 export async function collectManagedRehostNamed({
   opts, registry, agentId, resolveBackend, requestBackend, command, run, settle,
@@ -79,8 +89,12 @@ export async function collectManagedRehostNamed({
   }
   if (execution.state === "running") {
     // Publication needs the native completion; the retained commands finish it.
-    return { ...prepared, state: "running", nativeExecution: "running",
-      publication: "not_requested", nativeObservation: execution.observation };
+    // Until then the Agent's binding still names the retired source, so this is
+    // not a finished restart.
+    return { ...prepared, ok: false, state: "running", nativeExecution: "running",
+      publication: "not_requested", nativeObservation: execution.observation,
+      error: { code: "rehost_still_running",
+        message: "The restart is not finished: Hmux is still applying the native rehost, and the Agent binding is not published yet." } };
   }
   const publication = await collectManagedRehostPublication({
     opts: {
@@ -89,12 +103,14 @@ export async function collectManagedRehostNamed({
     },
     resolveBackend: async () => backend, requestBackend,
   });
+  // The native rehost is complete either way; the restart is finished only
+  // once the Agent binding names its successor.
   return {
-    ...prepared, state: "completed", nativeExecution: "completed", receipt: execution.receipt,
+    ...prepared, ok: publication.ok, state: "completed", nativeExecution: "completed", receipt: execution.receipt,
     publication: publication.publication,
     ...(publication.ok
       ? { publicationResult: publication.result }
-      : { publicationError: publication.error }),
+      : { publicationError: publication.error, error: publication.error }),
   };
 }
 
@@ -118,6 +134,6 @@ export async function runManagedRehostNamed(opts, registryPath, resolveBackend, 
       : []),
     ...formatManagedRecoveryCommands(report.continuation),
   ].join("\n");
-  (report.ok ? process.stdout : process.stderr).write(`${output}\n`);
-  if (!report.ok) process.exitCode = 1;
+  (report.ok || report.state === "running" ? process.stdout : process.stderr).write(`${output}\n`);
+  process.exitCode = managedRecoveryExitCode(report, 1);
 }

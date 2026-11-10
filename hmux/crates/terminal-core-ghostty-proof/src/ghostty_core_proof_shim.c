@@ -194,6 +194,7 @@ extern int hmux_ghostty_tracked_grid_ref_move_rows(
     void *reference,
     int64_t delta,
     int64_t *moved_rows);
+extern void hmux_ghostty_repair_truncated_wide_heads(GhosttyTerminal terminal);
 extern int hmux_ghostty_history_archive_project_grid(
     void *archive,
     uint64_t logical_line_id,
@@ -1859,12 +1860,21 @@ int hmux_ghostty_core_resize(HmuxGhosttyCore *core,
     return HMUX_GHOSTTY_SHIM_ERROR;
   }
   memset(mutation, 0, sizeof(*mutation));
+  uint16_t previous_columns = 0;
+  GhosttyResult result = ghostty_terminal_get(
+      core->terminal, GHOSTTY_TERMINAL_DATA_COLS, &previous_columns);
+  if (result != GHOSTTY_SUCCESS) return result;
   hmux_begin_effects(core, reply_buffer, reply_capacity, clipboard_buffer,
                      clipboard_capacity);
-  GhosttyResult result =
-      ghostty_terminal_resize(core->terminal, columns, rows, 0, 0);
+  result = ghostty_terminal_resize(core->terminal, columns, rows, 0, 0);
   hmux_finish_effects(core, mutation);
   if (result != GHOSTTY_SUCCESS) return result;
+  /* A shrink without reflow can strand a wide head in the new last column,
+     which the snapshot encoder refuses. Repair the committed engine state
+     before anything projects or checkpoints it. */
+  if (columns < previous_columns) {
+    hmux_ghostty_repair_truncated_wide_heads(core->terminal);
+  }
   result = hmux_project(core, mutation);
   if (result != GHOSTTY_SUCCESS) {
     /* The native resize has already committed. Projection is presentation

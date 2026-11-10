@@ -391,6 +391,55 @@ fn concurrent_profile_prepares_share_one_manifest_and_are_idempotent() {
 }
 
 #[test]
+fn convergence_waits_for_an_installer_holding_the_shared_state_lock() {
+    use fs2::FileExt;
+    // cli/lib/orchestration-integration.mjs locks this exact path around its
+    // read-modify-write of the default config.
+    let relay = |version: &str| json!({ "command": "relay", "args": [version] });
+    let fixture = Fixture::new();
+    fixture.write(
+        "default",
+        identity(
+            "default",
+            json!({ "dure-orchestration": relay("previous") }),
+        ),
+    );
+    fixture.write("a", identity("a", json!({})));
+    fixture.write("b", identity("b", json!({})));
+    fixture.converge(&fixture.a).unwrap();
+
+    let installer = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(
+            fixture
+                .accounts
+                .join(".overlay-locks/claude-shared-state-v1.lock"),
+        )
+        .unwrap();
+    installer.lock_exclusive().unwrap();
+    std::thread::scope(|scope| {
+        let sync = scope.spawn(|| fixture.converge(&fixture.b));
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!sync.is_finished());
+        fixture.edit("default", |document| {
+            document["mcpServers"]["dure-orchestration"] = relay("current");
+        });
+        FileExt::unlock(&installer).unwrap();
+        sync.join().unwrap().unwrap();
+    });
+
+    for source in ["default", "a", "b"] {
+        assert_eq!(
+            fixture.read(source)["mcpServers"]["dure-orchestration"],
+            relay("current")
+        );
+    }
+}
+
+#[test]
 fn provider_launch_converges_shared_state_without_moving_identity_or_session() {
     let fixture = Fixture::new();
     let project = "/workspace/shared";

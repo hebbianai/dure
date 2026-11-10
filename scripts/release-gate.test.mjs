@@ -125,6 +125,7 @@ describe("release CI job evidence", () => {
     "Shared protocol (ubuntu-24.04)",
     "Hmux checks",
     "App core checks",
+    "Desktop checks",
     "Public repository checks",
   ];
   const codeJobs = names.filter((name) => /^(?:Frontend|Script) checks/.test(name));
@@ -142,7 +143,12 @@ describe("release CI job evidence", () => {
     // Mobile web and the Rust workspace jobs are not release evidence on their own.
     expect(
       ciEvidenceGaps(
-        listing({ "Mobile web checks": "skipped", "Hmux checks": "skipped", "App core checks": "skipped" }),
+        listing({
+          "Mobile web checks": "skipped",
+          "Hmux checks": "skipped",
+          "App core checks": "skipped",
+          "Desktop checks": "skipped",
+        }),
       ),
     ).toEqual([]);
   });

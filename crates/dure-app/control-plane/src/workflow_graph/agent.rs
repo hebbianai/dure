@@ -4,9 +4,9 @@ use agent_orchestration::domain::graph::{
     ActionState, ActionTask, ActionValues, ExecutingWorkflow,
 };
 use dure_app::{
-    AgentSpawnJournalReceiptV1, AgentSpawnJournalStateV1, AgentSpawnJournalStore,
-    AgentSpawnPermissionModeV1, AgentSpawnPromptDigestV1, OperationIdV1,
-    ProviderLaunchPermissionOverrideV1,
+    AgentSpawnInteractionPreferenceV1, AgentSpawnJournalReceiptV1, AgentSpawnJournalStateV1,
+    AgentSpawnJournalStore, AgentSpawnPermissionModeV1, AgentSpawnPromptDigestV1, OperationIdV1,
+    ProviderIdV1, ProviderLaunchPermissionOverrideV1,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -88,10 +88,15 @@ pub(super) async fn execute(
             .get("executionProfile")
             .cloned()
             .unwrap_or_else(|| json!(crate::default_agent_execution_profile()));
+        // An invalid provider keeps the pin; preview refuses it either way.
+        let interaction = ProviderIdV1::new(text("providerId")).map_or(
+            Some(AgentSpawnInteractionPreferenceV1::NativeCli),
+            |provider| crate::unattended_interaction_preference(&state.agent_providers, &provider),
+        );
         let preview = crate::preview_agent_spawn(state, &authority, &json!({
             "schemaVersion": 1, "idempotencyKey": task.dispatch_id, "projectId": text("projectId"), "providerId": text("providerId"),
             "agentName": format!("workflow-{}", &digest[..12]), "worktree": {"kind": "dedicated", "branch": format!("automation-{digest}")},
-            "executionProfile": profile, "interactionPreference": "native_cli",
+            "executionProfile": profile, "interactionPreference": interaction,
             "permissionOverride": permission.as_ref().map(ProviderLaunchPermissionOverrideV1::from_concrete), "promptDigest": AgentSpawnPromptDigestV1::sha256(&prompt),
         })).await.map_err(|_| failure("agent_preview_failed", false))?;
         let receipt = parse_receipt(preview)?;
