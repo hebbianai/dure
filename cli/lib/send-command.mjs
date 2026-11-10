@@ -26,6 +26,9 @@ Options:
 The recipient may be an agent name, project/name, or exact local managed Session ID.
 Unregistered Sessions are inspected through Hmux and input is fenced to that generation.
 Use --workspace to disambiguate. Remote input requires a registered Agent.
+When a local Agent's registered Session has exited after a restart or account switch,
+send asks the backend for the Agent's current Session and delivers there once; a note on
+stderr names both Sessions and --json reports the Session used in target.
 Messages after the recipient may include literal --help or -h text.
 Choose exactly one text source. Newlines and whitespace in file/stdin are preserved.
 Enter is sent by default; use --no-enter to insert without submitting.
@@ -177,9 +180,37 @@ export function trackedSendFailureMessage(error, registry, agent) {
   ].join("\n");
 }
 
+const SESSION_EXITED = "dure_send_session_exited";
+
+/** After a restart or account switch the app-written registry can still name
+ * the exited predecessor until a running app re-projects it. Only a send that
+ * the registered Session refused as exited, with nothing written, asks the
+ * backend where the Agent runs now. Unregistered Session targets, remote
+ * bindings and idempotent broker input never follow; a failed lookup keeps
+ * the original error. */
+async function successorAfterExit(error, agent, opts, findSuccessor) {
+  if (error?.code !== SESSION_EXITED || typeof agent === "string" ||
+    opts.idempotencyKey !== undefined || !findSuccessor) {
+    return null;
+  }
+  let found = null;
+  try {
+    found = await findSuccessor(agent);
+  } catch {
+    // The registered Session's own failure stays the answer.
+  }
+  if (typeof found?.sessionId !== "string" || typeof found.workspaceId !== "string") return null;
+  process.stderr.write(
+    `${agentDisplayName(agent)} now runs in Session ${found.sessionId} ` +
+      `(workspace ${found.workspaceId}); the app's agent registry still lists ` +
+      `${agent.sessionId}. Sending to the current Session.\n`,
+  );
+  return found;
+}
+
 export async function runSendCommand(
   args,
-  { parseOptions, loadRegistry, resolveAgent, send, sendExactSession, sendTracked, fail },
+  { parseOptions, loadRegistry, resolveAgent, send, sendExactSession, sendTracked, findSuccessor, fail },
 ) {
   if (args[0] === "--help" || args[0] === "-h") {
     process.stdout.write(SEND_HELP);
@@ -227,7 +258,14 @@ export async function runSendCommand(
     try {
       input = await sendTracked(agent, text, opts);
     } catch (error) {
-      return fail(trackedSendFailureMessage(error, registry, agent));
+      const successor = await successorAfterExit(error, agent, opts, findSuccessor);
+      if (!successor) return fail(trackedSendFailureMessage(error, registry, agent));
+      // A tracked message stays a durable message with its tracking file.
+      try {
+        input = await sendTracked(successor.sessionId, text, { ...opts, workspace: successor.workspaceId });
+      } catch (successorError) {
+        return fail(trackedSendFailureMessage(successorError, registry, successor.sessionId));
+      }
     }
     printDelivery(typeof agent === "string" ? { name: agent } : agent, input, opts);
     return;
@@ -237,14 +275,28 @@ export async function runSendCommand(
     printDelivery({ name: agent }, input, opts);
     return;
   }
-  const input = await send(
-    registry,
-    agent,
-    text,
-    opts.enter,
-    opts.windowLabel,
-    opts.idempotencyKey,
-    opts.draftGuard,
-  );
+  let input;
+  try {
+    input = await send(
+      registry,
+      agent,
+      text,
+      opts.enter,
+      opts.windowLabel,
+      opts.idempotencyKey,
+      opts.draftGuard,
+    );
+  } catch (error) {
+    const successor = await successorAfterExit(error, agent, opts, findSuccessor);
+    if (!successor) {
+      if (error?.code === SESSION_EXITED) return fail(error.message);
+      throw error;
+    }
+    // The exact-Session path derives the input fence from the successor
+    // itself. Direct input never used the app window label.
+    input = await sendExactSession(successor.sessionId, text, {
+      ...opts, workspace: successor.workspaceId, windowLabel: undefined,
+    });
+  }
   printDelivery(agent, input, opts);
 }

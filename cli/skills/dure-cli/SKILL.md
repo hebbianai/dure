@@ -235,6 +235,11 @@ draft for a human to Send, while a native PTY agent gets the bytes at once — s
 there a following `read` should change, and an unchanged screen means the send
 did not land. `send-keys` needs a local managed terminal, not SSH or chat.
 
+After a restart or `runs switch-account`, the app's registry can still list the
+Agent's exited Session until the app re-projects it. `read` and `send` by Agent
+name then follow the Agent's current Session from its backend, with a stderr
+note naming both; `send --json` reports the Session used in `target`.
+
 Terminal `send` never merges into text a person has typed but not submitted. It
 waits up to `--draft-wait` seconds (default 30) for them to submit; otherwise it
 fails with `hmux_input_draft_pending` and nothing written. Only their Enter clears
