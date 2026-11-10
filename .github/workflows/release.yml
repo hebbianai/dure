@@ -407,11 +407,106 @@ jobs:
             echo 'No release checkout from this job to clean'
           fi
 
+  # Linux x86_64 and arm64 packages stay off until a maintainer sets the
+  # repository variable DURE_RELEASE_LINUX to true (docs/maintainers/releasing.md).
+  # They build from the same version-only tag commit on GitHub-hosted runners
+  # that receive no credentials; the macOS jobs above are unchanged either way.
+  linux-packages:
+    needs: version
+    if: always() && !cancelled() && needs.version.result == 'success' && vars.DURE_RELEASE_LINUX == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/linux-desktop.yml
+    with:
+      ref: ${{ needs.version.outputs.release_sha }}
+      tauri-config: src-tauri/tauri.beta.conf.json
+      artifact-prefix: linux-packages-${{ needs.version.outputs.tag }}
+      telemetry: true
+
+  # The updater key never leaves the protected signing host. This job builds
+  # nothing: it signs the hosted packages, checks every signature against the
+  # tag's public key and keeps packages and signatures for the draft.
+  linux-sign:
+    needs: [version, linux-packages]
+    if: >-
+      always() && !cancelled() && needs.version.result == 'success' &&
+      needs.linux-packages.result == 'success'
+    runs-on:
+      group: dure-release
+      labels: [self-hosted, macOS, ARM64, dure-release]
+    environment: macos-release
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - name: Isolate release tool state
+        working-directory: ${{ github.workspace }}
+        run: echo "NODE_COMPILE_CACHE=$RUNNER_TEMP/dure-node-cache" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.release_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Check immutable version state
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: node ../scripts/verify-release-state.mjs "$TAG"
+      - name: Install the pinned Tauri CLI
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-packages-${{ needs.version.outputs.tag }}-x86_64
+          path: ${{ runner.temp }}/linux-packages
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-packages-${{ needs.version.outputs.tag }}-aarch64
+          path: ${{ runner.temp }}/linux-packages
+      - name: Sign the Linux packages
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node ../scripts/linux-release-packages.mjs sign "$RUNNER_TEMP/linux-packages" "$RUNNER_TEMP/release-linux-assets"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-linux-assets-${{ needs.version.outputs.tag }}
+          path: ${{ runner.temp }}/release-linux-assets
+          if-no-files-found: error
+          retention-days: 90
+      - name: Remove this job's checkout outputs
+        if: always()
+        continue-on-error: true
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_SHA: ${{ needs.version.outputs.release_sha }}
+        run: |
+          rm -rf -- "$RUNNER_TEMP/linux-packages" "$RUNNER_TEMP/release-linux-assets"
+          if [ -d source/.git ] && [ "$(git -C source rev-parse HEAD)" = "$RELEASE_SHA" ]; then
+            git -C source clean -ffdxq ||
+              echo '::warning::Some outputs could not be removed from the release checkout'
+          else
+            echo 'No release checkout from this job to clean'
+          fi
+
+  # With Linux switched on, the draft waits for both platforms and carries one
+  # latest.json for all of them; with it off, both Linux jobs are skipped and
+  # the draft holds the four macOS files exactly as before.
   draft:
-    needs: [source, version, build]
+    needs: [source, version, build, linux-packages, linux-sign]
     if: >-
       always() && !cancelled() && needs.source.result == 'success' &&
-      needs.version.result == 'success' && needs.build.result == 'success'
+      needs.version.result == 'success' && needs.build.result == 'success' &&
+      ((needs.linux-packages.result == 'success' && needs.linux-sign.result == 'success') ||
+       (needs.linux-packages.result == 'skipped' && needs.linux-sign.result == 'skipped'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
@@ -442,10 +537,16 @@ jobs:
         with:
           name: release-assets-${{ needs.version.outputs.tag }}
           path: ${{ runner.temp }}/release-assets
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.linux-sign.result == 'success'
+        with:
+          name: release-linux-assets-${{ needs.version.outputs.tag }}
+          path: ${{ runner.temp }}/release-linux-assets
       - name: Reconcile only missing draft assets
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
-        run: node ../scripts/release-public.mjs stage "$TAG" "$RUNNER_TEMP/release-assets" "$RELEASE_SOURCE_SHA" "$RELEASE_VERIFICATION"
+          LINUX_ASSETS: ${{ needs.linux-sign.result == 'success' && format('{0}/release-linux-assets', runner.temp) || '' }}
+        run: node ../scripts/release-public.mjs stage "$TAG" "$RUNNER_TEMP/release-assets" "$RELEASE_SOURCE_SHA" "$RELEASE_VERIFICATION" ${LINUX_ASSETS:+"$LINUX_ASSETS"}
       - name: Report the remaining operator acceptance
         run: echo 'Draft only. Accept the unchanged signed app in an isolated home, then use release-public.mjs publish. No user app is installed or restarted by this workflow.' >> "$GITHUB_STEP_SUMMARY"

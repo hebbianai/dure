@@ -706,3 +706,51 @@ test.each(["version", "stage"])("refuses a non-admin rerun of privileged %s", (c
   expect(value.git("rev-parse", "HEAD")).toBe(command === "stage" ? value.tagSha : value.sourceSha);
   expect(writes(value)).toEqual([]);
 });
+
+const stageWithLinux = (value) =>
+  value.run(script, "stage", "v0.2.29", value.original, value.sourceSha, "full", value.linuxOriginal);
+
+test("stages the macOS files, every signed Linux package and one feed for all of them", () => {
+  const value = fixture({ linux: true });
+  success(stageWithLinux(value));
+  const { release } = value.state();
+  expect(release.assets.map((asset) => asset.name).sort()).toEqual(fs.readdirSync(value.published).sort());
+  expect(release.assets).toHaveLength(12);
+  const staged = release.assets.find((asset) => asset.name === "latest.json");
+  const bytes = fs.readFileSync(path.join(value.published, "latest.json"));
+  expect(staged.digest).toBe(`sha256:${createHash("sha256").update(bytes).digest("hex")}`);
+  expect(Object.keys(JSON.parse(bytes).platforms)).toHaveLength(5);
+  expect(release.body).toContain("Public Beta for macOS Apple Silicon and Linux (x86_64, arm64).");
+  // A repeated stage of the same draft writes nothing.
+  const before = writes(value).length;
+  success(stageWithLinux(value));
+  expect(writes(value)).toHaveLength(before);
+});
+
+test("publication with Linux compares both signed artifacts and moves the feed to every platform", () => {
+  const value = fixture({ linux: true });
+  success(stageWithLinux(value));
+  success(value.run(script, "verify", "v0.2.29"));
+  success(value.run(script, "publish", "v0.2.29"));
+  expect(runDownloads(value)).toEqual(expect.arrayContaining(["release-assets-v0.2.29", "release-linux-assets-v0.2.29"]));
+  const feed = Buffer.from(value.state().previous.content, "base64");
+  expect(feed).toEqual(fs.readFileSync(path.join(value.published, "latest.json")));
+  expect(curls(value).filter((args) => args.includes("--output"))).toHaveLength(12);
+});
+
+test("a run that signed Linux packages cannot publish a draft without them", () => {
+  const value = fixture({ linux: true });
+  success(stage(value));
+  const result = value.run(script, "verify", "v0.2.29");
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toMatch(/release_asset_mismatch|release_assets_incomplete/);
+  expect(value.state().release.draft).toBe(true);
+});
+
+test("a run with its Linux jobs switched off verifies exactly the four macOS files", () => {
+  const value = fixture();
+  success(stage(value));
+  success(value.run(script, "verify", "v0.2.29"));
+  expect(runDownloads(value)).not.toContain("release-linux-assets-v0.2.29");
+  expect(value.state().release.assets).toHaveLength(4);
+});
