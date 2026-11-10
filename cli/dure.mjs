@@ -1782,6 +1782,10 @@ inspect accepts a Session ID, not a pane ID. For a pane use:
 Observe includes each pane's session/workspace binding; keep its backend for SSH.
 inspect --json includes conversationId and runtime.conversationIdentity when the
 Host has observed them. It does not guess a provider's conversation log path.
+IDLE and idleSinceMs say how long, and since when (Unix ms), the Host has seen an
+agent waiting at a quiet prompt; runtime.semanticIdleMs is the raw age. IDLE shows
+- and idleSinceMs is null while the agent works or needs input or approval, and
+when the Host cannot say.
 For durable Runs after restart, including headless Runs, use dure runs list.
 Use --cursor start for the first ordered page, then pagination.nextCursor until null.
 Pages are live observations ordered by workspace/session ID, not a frozen snapshot.

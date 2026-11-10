@@ -75,6 +75,26 @@ export function agentRuntimeState(value, generation, outputSequence) {
   };
 }
 
+// The Host measures semantic idle only while the provider reports a quiet
+// prompt: waiting, nothing to answer, no background work. Any other state with
+// an age is inconsistent, so the age is dropped rather than shown as idle.
+function semanticIdleMs(value, state, observedAtMs) {
+  if (
+    !decimal(value) ||
+    !Number.isSafeInteger(Number(value)) ||
+    Number(value) > observedAtMs ||
+    state?.lifecycle !== "running" ||
+    state.activity !== "waiting" ||
+    state.attention !== "none" ||
+    state.attentionId !== null ||
+    state.backgroundWork === true ||
+    !["provider_event", "orchestration_event"].includes(state.source)
+  ) {
+    return null;
+  }
+  return value;
+}
+
 const SESSION_HEALTH = new Set([
   "healthy",
   "stale_transport",
@@ -333,6 +353,14 @@ export function projectSession(value, observedAtMs) {
     ? sessionFailure(value.failure, value, generation)
     : undefined;
   if (failure === null) return null;
+  const runtimeState = exactGeneration
+    ? agentRuntimeState(value.agentRuntimeState, generation, value.output_seq)
+    : null;
+  // Only a live generation can be idle now; an exited one carries no age.
+  const idleMs = value.health === "healthy"
+    ? semanticIdleMs(value.semanticIdleMs, runtimeState, observedAtMs)
+    : null;
+  const idleSinceMs = idleMs === null ? null : observedAtMs - Number(idleMs);
   return {
     schemaVersion: SESSION_QUERY_SCHEMA_VERSION,
     sessionId: value.session_id,
@@ -340,10 +368,12 @@ export function projectSession(value, observedAtMs) {
     conversationId: conversation?.conversationId ?? null,
     forkedFrom: null,
     cwd: directory?.path ?? null,
+    idleSinceMs,
     fieldSources: {
       conversationId: conversation ? "hmux_host" : "unavailable",
       forkedFrom: "unavailable",
       cwd: directory ? "hmux_host" : "unavailable",
+      idleSinceMs: idleMs === null ? "unavailable" : "hmux_host",
     },
     provider: {
       id: value.provider_id,
@@ -367,9 +397,8 @@ export function projectSession(value, observedAtMs) {
       providerProcess,
       outputSequence: value.output_seq,
       workingDirectory: directory,
-      agentRuntimeState: exactGeneration
-        ? agentRuntimeState(value.agentRuntimeState, generation, value.output_seq)
-        : null,
+      agentRuntimeState: runtimeState,
+      semanticIdleMs: idleMs,
       executionLocation: exactGeneration
         ? executionLocation(value.executionLocation, generation, value.output_seq)
         : null,

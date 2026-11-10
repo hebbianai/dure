@@ -2,6 +2,7 @@ export { loadSessionClientProjection } from "./client-registry.mjs";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { runBoundedCommand } from "./bounded-command.mjs";
+import { formatDuration } from "./hub-run-records.mjs";
 import {
   findAgentPane,
   parseClientPresentation,
@@ -36,6 +37,7 @@ const BOUNDED_HMUX_SESSION_CATALOG_CAPABILITY =
   "bounded_session_catalog_query_v1";
 const HMUX_PROBE_RUNTIME_STATE_CAPABILITY = "exact_session_probe_runtime_state_v1";
 const HMUX_PROBE_WORKING_DIRECTORY_CAPABILITY = "exact_session_probe_working_directory_v1";
+const HMUX_PROBE_SEMANTIC_IDLE_CAPABILITY = "exact_session_probe_semantic_idle_v1";
 const HMUX_CAPABILITY_OUTPUT_BYTES = 64 * 1024;
 const LOCAL_HMUX_PROBE_PROCESS_GRACE_MS = 100;
 const MAX_SESSION_QUERY_TRANSPORT_BYTES =
@@ -375,6 +377,7 @@ function parseProbeBatchPayload(result, targets, projections) {
     ...(projections.runtimeState || projections.workingDirectory ? ["outputSequence"] : []),
     ...(projections.runtimeState ? ["agentRuntimeState"] : []),
     ...(projections.workingDirectory ? ["workingDirectory"] : []),
+    ...(projections.semanticIdle ? ["semanticIdleMs"] : []),
     ...GENERATION_FIELDS.map(([field]) => field),
   ]);
   for (let index = 0; index < payload.results.length; index += 1) {
@@ -397,7 +400,9 @@ function parseProbeBatchPayload(result, targets, projections) {
       (receipt.agentRuntimeState !== undefined &&
         (receipt.status !== "healthy" || !decimal(receipt.outputSequence))) ||
       (receipt.workingDirectory !== undefined &&
-        (receipt.status !== "healthy" || !decimal(receipt.outputSequence)))
+        (receipt.status !== "healthy" || !decimal(receipt.outputSequence))) ||
+      (receipt.semanticIdleMs !== undefined &&
+        (receipt.status !== "healthy" || !decimal(receipt.semanticIdleMs)))
     ) {
       return null;
     }
@@ -454,6 +459,7 @@ function applyProbeReceipt(session, receipt) {
     // Runtime facts and their output fence must come from the same exact Host
     // observation, never from the earlier no-probe catalog snapshot.
     agentRuntimeState: health === "healthy" ? receipt.agentRuntimeState ?? null : null,
+    semanticIdleMs: health === "healthy" ? receipt.semanticIdleMs ?? null : null,
     ...(health === "healthy" && receipt.workingDirectory !== undefined
       ? { workingDirectory: receipt.workingDirectory }
       : {}),
@@ -589,6 +595,7 @@ export async function collectSessionQuery({
   let bindingHostId = "local";
   let includeRuntimeState = false;
   let includeWorkingDirectory = false;
+  let includeSemanticIdle = false;
   if (backend) {
     const profile = backend.profile;
     if (backend.error || !profile) {
@@ -708,6 +715,7 @@ export async function collectSessionQuery({
       }
       includeRuntimeState = supportsHmuxCapability(manifest, HMUX_PROBE_RUNTIME_STATE_CAPABILITY);
       includeWorkingDirectory = supportsHmuxCapability(manifest, HMUX_PROBE_WORKING_DIRECTORY_CAPABILITY);
+      includeSemanticIdle = supportsHmuxCapability(manifest, HMUX_PROBE_SEMANTIC_IDLE_CAPABILITY);
     }
     const argv =
       action === "list"
@@ -800,6 +808,7 @@ export async function collectSessionQuery({
               String(probeWindowMs),
               ...(includeRuntimeState ? ["--include-runtime-state"] : []),
               ...(includeWorkingDirectory ? ["--include-working-directory"] : []),
+              ...(includeSemanticIdle ? ["--include-semantic-idle"] : []),
             ],
             {
               timeoutMs: Math.max(1, remainingMs),
@@ -812,6 +821,7 @@ export async function collectSessionQuery({
             const receipts = parseProbeBatchPayload(batchResult, targets, {
               runtimeState: includeRuntimeState,
               workingDirectory: includeWorkingDirectory,
+              semanticIdle: includeSemanticIdle,
             });
             if (!receipts) {
               parsed = { ...parsed, sessions: prioritized };
@@ -1024,7 +1034,7 @@ function activityColumn(state) {
 }
 
 export const SESSION_TABLE_HEADER =
-  "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS";
+  "SESSION\tWORKSPACE\tPROVIDER\tPID\tLIVE\tCWD\tACTIVITY\tIDLE\tAGENTS\tACCOUNT\tFAILURE\tPROGRESS";
 
 export function sessionTableRow(session) {
   return [
@@ -1035,6 +1045,8 @@ export function sessionTableRow(session) {
     session.liveness.state,
     session.cwd ?? "-",
     activityColumn(session.runtime?.agentRuntimeState),
+    // The age the Host measured, so the column does not grow while it is read.
+    session.runtime?.semanticIdleMs ? formatDuration(Number(session.runtime.semanticIdleMs)) : "-",
     session.clientProjection.agents
       .map((agent) => agent.displayName ?? agent.name ?? agent.id ?? "?")
       .join(",") || "-",

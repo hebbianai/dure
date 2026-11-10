@@ -193,6 +193,7 @@ The fields that matter, under `session.` in `inspect` and `sessions[].` in `ls`:
 | `runtime.agentRuntimeState.attention` | `none`, or `input_required` / an approval attention: read the screen |
 | `runtime.agentRuntimeState.turnCompletedCount` | rises once per finished turn; an autonomous worker usually needs one or two |
 | `runtime.agentRuntimeState.progress` | may say `progress_unconfirmed` after five quiet minutes of thinking: attention, not failure |
+| `idleSinceMs` | when a waiting worker went quiet (Unix ms); null while it works, needs input, or the Host cannot say |
 | `failure` | a Host-reported failure code, when there is one |
 | `cwd` | must be the worker's worktree |
 

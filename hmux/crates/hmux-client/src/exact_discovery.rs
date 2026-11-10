@@ -67,6 +67,8 @@ pub enum ExactDiscoveryLookupResponse {
         agent_runtime_state: Option<Box<crate::AgentRuntimeStateDescriptor>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         working_directory: Option<Box<crate::WorkingDirectoryDescriptor>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        semantic_idle_ms: Option<String>,
     },
     NotFound {
         schema_version: u8,
@@ -179,6 +181,7 @@ fn probe_result_to_response(result: ExactSessionProbeResult) -> ExactDiscoveryLo
                 probe_status,
                 agent_runtime_state: inspection.agent_runtime_state.map(Box::new),
                 working_directory: inspection.working_directory.map(Box::new),
+                semantic_idle_ms: inspection.semantic_idle_ms,
                 descriptor: Box::new(inspection.descriptor),
             }
         }
@@ -502,6 +505,7 @@ fn finalize_lookup(
             mut probe_status,
             mut agent_runtime_state,
             mut working_directory,
+            mut semantic_idle_ms,
         } if descriptor.session_id == selector.session_id
             && selector.workspace_id.as_deref() == Some(descriptor.workspace_id.as_str()) =>
         {
@@ -515,11 +519,13 @@ fn finalize_lookup(
                 probe_status = None;
                 agent_runtime_state = None;
                 working_directory = None;
+                semantic_idle_ms = None;
             }
             let mut inspection = inspection_from_probe(*descriptor, probe_status);
             if probe_status == Some(SessionProbeStatus::Healthy) {
                 inspection.agent_runtime_state = agent_runtime_state.map(|state| *state);
                 inspection.working_directory = working_directory.map(|directory| *directory);
+                inspection.semantic_idle_ms = semantic_idle_ms;
             }
             ExactSessionProbeResult::Inspection(Box::new(inspection))
         }
@@ -868,6 +874,7 @@ mod tests {
                 probe_status: Some(SessionProbeStatus::Healthy),
                 agent_runtime_state: None,
                 working_directory: None,
+                semantic_idle_ms: Some("5000".into()),
             },
             Some(Instant::now()),
         );
@@ -876,6 +883,7 @@ mod tests {
             panic!("a resolved descriptor should retain its generation")
         };
         assert_eq!(inspection.health, crate::SessionHealth::Unprobed);
+        assert_eq!(inspection.semantic_idle_ms, None);
     }
 
     #[test]
@@ -903,6 +911,7 @@ mod tests {
             path: "/repo/worktree".into(),
             source: crate::WorkingDirectorySource::ProcessInspection,
         });
+        observed.semantic_idle_ms = Some("125000".into());
 
         let result = finalize_lookup(
             selector,
@@ -927,6 +936,8 @@ mod tests {
                 .map(|directory| directory.path.as_str()),
             Some("/repo/worktree"),
         );
+        // `dure ls` reads how long the agent has been idle from this batch.
+        assert_eq!(inspection.semantic_idle_ms.as_deref(), Some("125000"));
     }
 
     #[test]

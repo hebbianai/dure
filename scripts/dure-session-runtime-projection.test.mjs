@@ -119,6 +119,34 @@ describe("Host runtime state in session inspection", () => {
     },
   );
 
+  const quiet = { ...state, attention: "none", attention_id: null };
+
+  it.each(["local", "ssh"])("says since when a quiet agent has been idle through the %s backend", async (transport) => {
+    const session = await query(hmuxSession(1, { agentRuntimeState: quiet, semanticIdleMs: "90000" }), transport);
+    expect(session.runtime.semanticIdleMs).toBe("90000");
+    expect(session.idleSinceMs).toBe(session.liveness.observedAtMs - 90_000);
+    expect(session.fieldSources.idleSinceMs).toBe("hmux_host");
+  });
+
+  it.each([
+    ["an older Host", { agentRuntimeState: quiet }],
+    ["a working agent", { agentRuntimeState: { ...quiet, activity: "working" }, semanticIdleMs: "1" }],
+    ["background work", { agentRuntimeState: { ...quiet, background_work: true, activity: "working" }, semanticIdleMs: "1" }],
+    ["a pending approval", { agentRuntimeState: state, semanticIdleMs: "1" }],
+    ["a controller-reported state", { agentRuntimeState: { ...quiet, source: "controller_input" }, semanticIdleMs: "1" }],
+    ["no runtime state", { semanticIdleMs: "1" }],
+    ["a malformed age", { agentRuntimeState: quiet, semanticIdleMs: "01" }],
+    ["a numeric age", { agentRuntimeState: quiet, semanticIdleMs: 1 }],
+    ["an age older than the epoch", { agentRuntimeState: quiet, semanticIdleMs: "18446744073709551615" }],
+    ["an exited generation", { agentRuntimeState: quiet, semanticIdleMs: "1", health: "exited" }],
+    ["an unprobed generation", { agentRuntimeState: quiet, semanticIdleMs: "1", health: "unprobed" }],
+  ])("reports no idle time for %s", async (_, overrides) => {
+    const session = await query(hmuxSession(1, overrides));
+    expect(session.runtime.semanticIdleMs).toBeNull();
+    expect(session.idleSinceMs).toBeNull();
+    expect(session.fieldSources.idleSinceMs).toBe("unavailable");
+  });
+
   it("retains large decimal counters exactly and allows the captured output boundary", async () => {
     const counter = "18446744073709551615";
     const session = await query(hmuxSession(1, {
