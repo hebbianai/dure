@@ -52,7 +52,7 @@ client. Shared runtime and protocol changes can affect several platforms.
 | --- | --- | --- |
 | macOS, Apple Silicon | `pnpm app:dev`, `pnpm build:app` | Anonymous source app build and isolated background native smoke verified. Official desktop download available. |
 | Windows, x86_64 MSVC | `pnpm app:windows:doctor`, `pnpm app:windows:verify`, `pnpm app:windows:build` | Desktop source and NSIS packaging configuration included. Native desktop acceptance and a public installer remain separate from shared-code CI. |
-| Linux, x86_64 and arm64 | `pnpm app:linux:doctor`, `pnpm app:linux:build` with a [prepared supply](#windows-and-linux-desktop) | The [Linux package workflow](.github/workflows/linux-desktop.yml) builds AppImage and Debian packages for both architectures on Ubuntu 22.04 and starts each one under a virtual display. On x86_64, installing the `.deb` on Ubuntu 24.04, starting the AppImage on Debian 12 and running a command in a terminal pane were verified natively. No public Linux release yet; Linux builds do not include the Dure CLI or its backend. |
+| Linux, x86_64 and arm64 | `pnpm app:linux:doctor`, `pnpm app:linux:build` with a [prepared supply](#windows-and-linux-desktop) | The [Linux package workflow](.github/workflows/linux-desktop.yml) builds AppImage and Debian packages for both architectures on Ubuntu 22.04 and starts each one under a virtual display. The packages carry the Dure CLI and its backend, which the app installs on first start. On x86_64, the `.deb` on Ubuntu 24.04 and the AppImage on Debian 12 were verified natively: the CLI installs, the backend starts, `dure ls` runs in a terminal pane and a managed agent starts with a test provider. No public Linux release yet. |
 | iOS | `pnpm --dir mobile tauri ios dev` | Mobile source and Xcode project included. Web tests and shared protocol checks run in CI; device builds, signing and distribution require their own verification. |
 | Android | `pnpm --dir mobile android:dev` | Mobile source and Gradle project included. Web tests and shared protocol checks run in CI; emulator/device builds and distribution require their own verification. |
 
@@ -67,7 +67,8 @@ xcode-select --install
 
 Use the [official Node macOS binary](https://nodejs.org/download/release/)
 matching `.node-version` for app packaging; the bundled executable must depend
-only on macOS system libraries. Complete the [shared setup](#development-installation).
+only on macOS system libraries (on Linux, the official Node Linux binary, which
+links only the C and C++ runtime). Complete the [shared setup](#development-installation).
 Install and sign in to a supported coding-agent CLI to use agents in the app;
 provider accounts and subscriptions are your own.
 
@@ -195,9 +196,12 @@ checkout helper from a macOS ARM64 host. There, in a clean checkout, run
 `node scripts/linux-desktop-supply.mjs supply <new-directory>`. Copy that
 directory to the Linux host, check out the same commit cleanly and run
 `DURE_LINUX_SUPPLY_DIR=<directory> pnpm app:linux:build`. It checks the
-supply's receipt and digests, stages the static sidecars, builds the AppImage
-and Debian packages, and restores the static executables that the AppImage
-tooling rewrites. It does not install them. `pnpm app:linux:verify` still
+supply's receipt and digests, stages the static sidecars, stages the Dure CLI
+payload (a release build of the control-plane backend plus the Node binary that
+runs the build), builds the AppImage and Debian packages, adds the CLI payload
+to both and restores the static executables that the AppImage tooling rewrites.
+It does not install them. The packaged desktop executable is `dure-desktop`;
+`dure` is the CLI the app installs into `~/.local/bin` on its first start. `pnpm app:linux:verify` still
 needs a Ghostty proof that a Linux host cannot prepare. A maintainer can get the
 same unsigned packages for any commit from the
 [Linux package workflow](.github/workflows/linux-desktop.yml) instead.

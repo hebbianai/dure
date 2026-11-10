@@ -183,6 +183,20 @@ until [ -n "$(owned_backend_processes)" ]; do
   elapsed=$((elapsed + 2))
 done
 
+# Provider hooks must run the backend companion from that installation: an
+# AppImage's own files are a mount that disappears when the app exits.
+elapsed=0
+hook=
+until [ -n "$hook" ]; do
+  hook=$(find "$root" -name 'managed-claude-hook-v2.sh' 2>/dev/null | head -n 1)
+  [ -n "$hook" ] && break
+  [ "$elapsed" -lt "$seconds" ] || fail "the app published no managed Claude hook within ${seconds}s"
+  sleep 2
+  elapsed=$((elapsed + 2))
+done
+grep -q "^exec '$cli_install/versions/[^/]*/bin/dure-control-plane' managed-claude-hook\$" "$hook" ||
+  fail "the managed Claude hook does not run the installed Dure CLI: $(cat "$hook")"
+
 # Let the interface load, then require the app to still be running.
 sleep 20
 kill -0 "$app_pid" 2>/dev/null || fail "the app exited after its window appeared"
@@ -227,9 +241,11 @@ if [ "$terminal" = 1 ]; then
     cp "$proof" "$evidence/terminal-proof.txt"
   fi
   [ "$(head -n 1 "$proof")" = 42 ] || fail "the terminal did not run the shell command: $(cat "$proof")"
+  # The app puts its own command bridge for the installed CLI on the
+  # terminal's PATH; either lives in this run's disposable roots.
   case "$(sed -n 2p "$proof")" in
-    "$root/home/.local/"*) ;;
-    *) fail "dure in the terminal is not the installed Dure CLI: $(cat "$proof")" ;;
+    "$root/"*) ;;
+    *) fail "dure in the terminal is not the Dure CLI the app installed: $(cat "$proof")" ;;
   esac
   grep -qx 'dure-exit=0' "$proof" || fail "dure ls failed in the terminal: $(cat "$proof")"
   terminal_result="command and dure ls ran in an Hmux terminal pane"
@@ -239,11 +255,16 @@ agent_result=skipped
 if [ "$agent" = 1 ]; then
   agent_proof="$root/agent-proof"
   project="$root/home/smoke-project"
+  # Claude asks whether to trust a new folder before it reads the prompt;
+  # record that this disposable project was trusted, as Claude itself does.
+  (umask 077 && printf '{"projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$project" >"$root/home/.claude.json")
   # Register a project and start a Run from the terminal pane, as a user would.
-  xdotool type --delay 30 "{ mkdir -p $project && git -C $project init -q && dure projects register smoke --path $project && dure run --project smoke --name smoke-agent ok; echo run-exit=\$?; dure ls; } > $agent_proof 2>&1"
+  # The backend refuses a group-writable project root, and Ubuntu logins use
+  # umask 002, so the project is created 0755 explicitly.
+  xdotool type --delay 30 "{ mkdir -m 755 $project && git -C $project init -q && dure projects register smoke --path $project && dure run --project smoke --name smoke-agent ok; echo run-exit=\$?; dure ls; echo ls-exit=\$?; } > $agent_proof 2>&1"
   xdotool key Return
   elapsed=0
-  until grep -q '^run-exit=' "$agent_proof" 2>/dev/null; do
+  until grep -q '^ls-exit=' "$agent_proof" 2>/dev/null; do
     [ "$elapsed" -lt "$seconds" ] || fail "dure run did not finish"
     sleep 2
     elapsed=$((elapsed + 2))

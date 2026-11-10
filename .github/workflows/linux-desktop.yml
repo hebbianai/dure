@@ -183,10 +183,19 @@ jobs:
       - name: Start the AppImage under a virtual display
         env:
           DURE_LINUX_SMOKE_EVIDENCE: ${{ runner.temp }}/linux-smoke
-          # Checks also run a command in a terminal pane. That step clicks fixed
-          # window positions, so a release build only requires a running window.
+          # Checks also run a command and `dure ls` in a terminal pane and start
+          # a managed agent there. That step clicks fixed window positions, so a
+          # release build only requires a running window, the installed Dure CLI
+          # and its backend.
           DURE_LINUX_SMOKE_TERMINAL: ${{ inputs.artifact-prefix == '' && '1' || '0' }}
+          DURE_LINUX_SMOKE_AGENT: ${{ inputs.artifact-prefix == '' && '1' || '0' }}
         run: |
+          if [ "$DURE_LINUX_SMOKE_AGENT" = 1 ]; then
+            # The agent runs the repository's QA fake provider as claude; the
+            # smoke refuses any other claude.
+            sudo install -m 755 scripts/qa/fake-provider/claude /usr/local/bin/claude
+            sudo install -m 644 scripts/qa/fake-provider/dure-qa-fake-provider-common.sh /usr/local/bin/
+          fi
           appimage=$(find "$RUNNER_TEMP/linux-packages" -name '*.AppImage')
           chmod 755 "$appimage"
           xvfb-run -a -s '-screen 0 1600x1000x24' \
