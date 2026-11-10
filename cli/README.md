@@ -170,6 +170,8 @@ Copyright (C) 2026 Hebbian AI. The Dure CLI is licensed under the
 
 Message tracking: `dure send NAME --track "message" --json` returns a private
 `receiptPath` for `dure wait --message PATH [--until observed|acknowledged|turn_started]`.
+Add `--from NAME` to tell the recipient who sent a message; it titles a tracked
+message `Message from NAME` and starts terminal input with `[from NAME] `.
 See `dure send --help` and `dure wait --help` for evidence limits. Native Codex
 progress also appears in `dure inspect --json`, `dure ls`, and pane headers after
 five quiet minutes of thinking. This is an observation, never an automatic stop.

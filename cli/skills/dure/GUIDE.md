@@ -5,12 +5,12 @@ the other agents, each running in its own session and worktree. Run it with the
 Bash tool. Inside your session your own identity is detected automatically.
 `hebbian-ade` and `hebbian-ide` are deprecated compatibility aliases; use `dure` in new commands.
 
-There is no `--from`/`--to` addressing here. `--to` belongs to
-`dure hmux convert` alone, and `--from` is parsed but read by nothing. The
-shared parser still swallows them: `dure send --to worker "run the tests"` eats
-`--to worker`, takes the message itself as the recipient, and fails with
+There is no `--to` addressing here. `--to` belongs to `dure hmux convert` alone,
+and the shared parser still swallows it: `dure send --to worker "run the tests"`
+eats `--to worker`, takes the message itself as the recipient, and fails with
 `Agent 'run the tests' was not found` — naming neither the flag nor the cause.
-Always name the recipient as the first positional argument.
+Always name the recipient as the first positional argument. `dure send --from
+NAME` labels the sender, not the recipient; see the send section below.
 
 ## Browser tasks
 
@@ -780,7 +780,15 @@ dure read <name> -f          # follow live
 # Read one exact local or SSH backend Session without an app registry.
 dure read <session-id> --workspace <workspace-id> --backend <id>
 dure send <name> "message"    # explicit terminal control only; never an orchestration transport
+dure send <name> --from ci-bot "build is green"  # recipient reads "[from ci-bot] build is green"
 ```
+
+`--from NAME` tells the recipient who sent a message, for example when a script
+or a bot on another machine sends on someone's behalf. Terminal and chat input
+start with `[from NAME] `; a `--track` message is titled `Message from NAME` and
+keeps its body exact. The name is a label the sender chooses, not an
+authenticated identity. Leave it off when the text is a provider command such
+as `/compact`, which must start the line.
 
 A terminal connection failure does not prove the session exited. If `dure client
 pane state <pane-id> --json` offers `reconnect`, invoke `dure client pane act

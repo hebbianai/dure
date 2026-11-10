@@ -28,7 +28,7 @@ export function readMessageTracking(file) {
 }
 
 /** The file retains only the exact read authority, never a second delivery state machine. */
-export async function sendTrackedMessage(target, text, { backend, hmuxCommand, environment = process.env, querySession = collectSessionQuery, request = invoke } = {}) {
+export async function sendTrackedMessage(target, text, { backend, hmuxCommand, title = "Agent message", environment = process.env, querySession = collectSessionQuery, request = invoke } = {}) {
   const report = await querySession({ action: "show", ...target, backend, hmuxCommand });
   const live = report.session;
   // An exited Session keeps its exact generation but can no longer resolve a message context.
@@ -56,7 +56,7 @@ export async function sendTrackedMessage(target, text, { backend, hmuxCommand, e
   try {
     const receipt = await request(backend, "interaction.message.open.exact-session", {
       schemaVersion: 1, session, expectedEndpointRef: context.endpointFence.endpointRef,
-      idempotencyKey: interactionId, interactionId, title: "Agent message", descriptionMarkdown: text, openedAtMs: Date.now(),
+      idempotencyKey: interactionId, interactionId, title, descriptionMarkdown: text, openedAtMs: Date.now(),
     });
     return { sessionId: session.sessionId, workspaceId: session.workspaceId,
       receipt: { kind: "durable_message", interactionId, receiptPath, delivery: "accepted", deliveries: receipt.deliveries } };

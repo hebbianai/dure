@@ -236,6 +236,7 @@ These commands require a connected app; `dure runs resume` also works headlessly
 dure read worker -n 80            # snapshot; -f follows until interrupted
 dure read worker -n 80 --json     # one snapshot with lines[] and sequenceThrough; not with -f
 dure send worker "run the tests"  # text plus Enter
+dure send worker --from ci-bot "build is green"  # arrives as "[from ci-bot] build is green"
 dure send worker --stdin --no-enter
 dure send-keys worker Escape Up Enter
 dure send-keys SESSION Down Enter --workspace WORKSPACE --json  # headless, no pane required
@@ -250,6 +251,11 @@ them. `--no-enter` differs by surface: structured chat leaves an unsubmitted
 draft for a human to Send, while a native PTY agent gets the bytes at once — so
 there a following `read` should change, and an unchanged screen means the send
 did not land. `send-keys` needs a local managed terminal, not SSH or chat.
+
+`--from NAME` tells the recipient who sent the message: terminal and chat input
+start with `[from NAME] `, and a `--track` message is titled `Message from NAME`
+with its body unchanged. The name is a self-chosen label, not an authenticated
+identity. Leave it off for provider commands such as `/compact`.
 
 After a restart or `runs switch-account`, the app's registry can still list the
 Agent's exited Session until the app re-projects it. `read` and `send` by Agent
