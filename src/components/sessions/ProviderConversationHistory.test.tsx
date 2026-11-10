@@ -139,13 +139,31 @@ describe("ProviderConversationHistory subagents", () => {
 		expect(statusOf("Finished survey")).toMatch(/^done/i);
 	});
 
-	it("reads no list without a managed session or for another provider", async () => {
+	it("reads no list without a managed session", async () => {
 		renderHistory({ backgroundWorkSession: null });
-		await screen.findByText("Quiet review");
-		cleanup();
-		renderHistory({ provider: "codex" });
 		await screen.findByText("Quiet review");
 
 		expect(mocks.work).not.toHaveBeenCalled();
+	});
+
+	it("keeps a provider's own rows when its list names no subagent", async () => {
+		// The desktop answers an empty list for a provider without background
+		// work records; its rows keep their own status, and an empty list is
+		// not read again.
+		mocks.details.mockResolvedValue(
+			details([
+				{ id: "codex-1", title: "Codex child", status: "running", mtime: 1 },
+			]),
+		);
+		mocks.work.mockResolvedValue(work([]));
+		renderHistory({ provider: "codex", subagentCount: 1 });
+		await screen.findByText("Codex child");
+		expect(statusOf("Codex child")).toMatch(/^running/i);
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(BACKGROUND_WORK_REFRESH_MS * 3);
+		});
+		expect(mocks.work).toHaveBeenCalledTimes(1);
+		expect(mocks.details).toHaveBeenCalledTimes(1);
 	});
 });

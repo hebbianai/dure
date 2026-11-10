@@ -29,7 +29,10 @@ import {
 	SessionStatusBadge,
 } from "@/components/sessions/SessionListRow";
 import type { RecentSessionsList } from "@/components/sessions/useRecentSessionsList";
-import { useRecentWorkSectionState } from "@/components/sessions/useRecentWorkSectionState";
+import {
+	useRecentWorkBackgroundWorkSession,
+	useRecentWorkSectionState,
+} from "@/components/sessions/useRecentWorkSectionState";
 import {
 	SectionHeaderRow,
 	sidebarSectionLabelTone,
@@ -45,7 +48,6 @@ import {
 } from "@/components/ui/context-menu";
 import { DisclosureChevron } from "@/components/ui/disclosure-chevron";
 import { IconButton } from "@/components/ui/icon-button";
-import { backgroundWorkSession } from "@/lib/agents/chat/backgroundWork";
 import { t } from "@/lib/i18n";
 import { copyTextToClipboard } from "@/lib/platform/clipboardWrite";
 import { encodeDureDragPayload } from "@/lib/platform/productDragPayload";
@@ -65,7 +67,6 @@ import { formatRelativeAge } from "@/lib/ui/relativeAge";
 import { cn } from "@/lib/utils";
 import { setPaneDragImage } from "@/lib/workspace/pane/paneDragImage";
 import { cwdName } from "@/lib/workspace/pane/paneTitle";
-import { useStore } from "@/store";
 import { PROVIDERS, type SshHostConfig } from "@/types";
 
 /** Where a remote session runs. Local is the default and says nothing, so
@@ -181,13 +182,8 @@ function RecentSessionHistoryCard({
 	const [expanded, setExpanded] = useState(false);
 	const [dragging, setDragging] = useState(false);
 	const detailsId = useId();
-	// The managed agent this conversation may still run in: its session's
-	// background work decides which subagents run.
-	const paneAgentBinding = useStore((state) =>
-		item.paneAgentIdCandidate
-			? state.agents.find((agent) => agent.id === item.paneAgentIdCandidate)
-					?.runtimeBinding
-			: undefined,
+	const agentSession = useRecentWorkBackgroundWorkSession(
+		item.paneAgentIdCandidate,
 	);
 	// "Did it open?" has to be answered by the card itself: the button spins
 	// while the pane is on its way, and the details fold the moment the pane
@@ -422,7 +418,7 @@ function RecentSessionHistoryCard({
 						recentTurns={item.recentTurns}
 						subagentCount={item.subagentCount}
 						sshHosts={sshHosts}
-						backgroundWorkSession={backgroundWorkSession(paneAgentBinding)}
+						backgroundWorkSession={agentSession}
 					/>
 					<div className="mt-2 border-t border-glass-hairline pt-2">
 						{actionButton}

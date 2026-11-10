@@ -104,15 +104,17 @@ export function ProviderConversationHistory({
 			...(hostId ? { hostId } : {}),
 		};
 		// Whether a subagent runs is the Host-gated background work list's
-		// answer, not the rows' own; only Claude records it, and only for a
-		// local managed session. A failed read leaves the rows as recorded.
+		// answer, not the rows' own, read for a local managed session; the
+		// desktop answers an empty list for a provider that records none. A
+		// failed read leaves the rows as recorded.
 		const readRunning =
-			provider === "claude" && workspaceId && sessionId
+			workspaceId && sessionId
 				? () =>
 						readAgentBackgroundWork(workspaceId, sessionId).catch(() => null)
 				: () => Promise.resolve(null);
-		// The first read shows loading and failure; while a row runs, the rows
-		// are read again on the line's interval so they end when the line's do.
+		// The first read shows loading and failure; while the line lists
+		// subagents, the rows are read again on its interval so they end when
+		// the line's do.
 		const read = (first: boolean) => {
 			Promise.all([
 				loadProviderConversationDetails(target, sshHosts),
@@ -120,11 +122,11 @@ export function ProviderConversationHistory({
 			])
 				.then(([next, work]) => {
 					if (cancelled) return;
-					const subagents = subagentsAsBackgroundWork(next.subagents, work);
-					running =
-						work !== null &&
-						subagents.some((subagent) => subagent.status === "running");
-					setDetails({ ...next, subagents });
+					running = (work?.counts.subagents ?? 0) > 0;
+					setDetails({
+						...next,
+						subagents: subagentsAsBackgroundWork(next.subagents, work),
+					});
 				})
 				.catch(() => {
 					if (!cancelled && first) setFailed(true);
