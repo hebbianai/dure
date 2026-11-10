@@ -45,7 +45,7 @@ const HISTORY_ITERATOR_BUILD_SHA256: &str =
     "e10884bb48a704f5e42ce2fe9ff32b297e526d18c1be3595a1c919a1335b8608";
 const HISTORY_ITERATOR_SOURCE: &[u8] = include_bytes!("ghostty_history_iterator.zig");
 const HISTORY_ITERATOR_SOURCE_SHA256: &str =
-    "f81a7642bebef6a1f3e21b9eaa43f69819cf98fd0aa93ce9a49734a5bbeda0dc";
+    "ad361ed90dd9e68a7952bd36f4bad7bc0c359bfe048af41589cc78583d2444da";
 const BUILD_FLAGS: &str = "-Demit-lib-vt=true,-Demit-xcframework=false,-Dsimd=true,-Doptimize=ReleaseFast,-Dstrip=true,-Dversion-string=1.3.2-dev";
 
 const ZIG_VERSION: &str = "0.16.0";
@@ -1897,7 +1897,7 @@ mod tests {
     fn windows_recipe_identity_is_reviewed_and_stable() {
         assert_eq!(
             sha256(recipe_text(WINDOWS_TARGET).as_bytes()),
-            "3be79c8512bfecbecfe2850b7ee872f2cd4c79ef3c06c915bd7d4babe91a58f1"
+            "77035e121059a368c09d1199e9efcca29ab00a56c0a4d4d81cbf566d3da6377f"
         );
     }
 

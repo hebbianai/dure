@@ -214,6 +214,14 @@ const V3_PATH_HASH_FIELDS: &[(&str, &str)] = &[
 ];
 
 const V5_SCHEMA: &str = "hmux-ghostty-vt-artifact-v5";
+// The Windows artifact links a history iterator that the supply builder
+// compiled from the checked-in Zig seam, so its recipe pins those exact
+// sources. Update these with `src/supply.rs` whenever either Zig file changes;
+// `receipt_contract` fails until all three agree.
+pub(crate) const V5_HISTORY_ITERATOR_BUILD_SHA256: &str =
+    "e10884bb48a704f5e42ce2fe9ff32b297e526d18c1be3595a1c919a1335b8608";
+pub(crate) const V5_HISTORY_ITERATOR_SOURCE_SHA256: &str =
+    "ad361ed90dd9e68a7952bd36f4bad7bc0c359bfe048af41589cc78583d2444da";
 const V5_EXACT_FIELDS: &[(&str, &str)] = &[
     ("schema", V5_SCHEMA),
     ("zig_target", "x86_64-windows-gnu"),
@@ -239,11 +247,11 @@ const V5_EXACT_FIELDS: &[(&str, &str)] = &[
     ("archive_member_count", "11"),
     (
         "history_iterator_build_sha256",
-        "e10884bb48a704f5e42ce2fe9ff32b297e526d18c1be3595a1c919a1335b8608",
+        V5_HISTORY_ITERATOR_BUILD_SHA256,
     ),
     (
         "history_iterator_source_sha256",
-        "f81a7642bebef6a1f3e21b9eaa43f69819cf98fd0aa93ce9a49734a5bbeda0dc",
+        V5_HISTORY_ITERATOR_SOURCE_SHA256,
     ),
     ("history_iterator_archive_member_count", "5"),
     (
@@ -595,7 +603,7 @@ fn packaged_v3_recipe_id(target: &str) -> String {
 fn packaged_v5_recipe_id(target: &str) -> String {
     sha256(
         format!(
-            "schema=hmux-ghostty-vt-recipe-v4\ntarget={target}\nzig_target=x86_64-windows-gnu\nghostty_commit=47147324cee9d12b537f0ea204bf16449d706b3a\nghostty_source_tree=f351e4e0e21c89ca8240e8f6d10f514aec129afe\nghostty_source_sha256=60ed33a2bd972394cc55db5b90e948442c3fb3a8f6b46b52e89f176e9ff20ed7\nghostty_build_zig_sha256=55ec6138c803afba0e8235156360a2e828e0023066e0bebb45956b8750812775\nghostty_build_overlay_sha256={V3_BUILD_OVERLAY_SHA256}\nghostty_build_flags={V2_BUILD_FLAGS}\narchive_normalizer=rust-1.85-llvm-19-objcopy-strip-debug-remove-addrsig-zig-ar-crsD-ranlib-D-lld-v3\narchive_member_count=11\nhistory_iterator_build_sha256=e10884bb48a704f5e42ce2fe9ff32b297e526d18c1be3595a1c919a1335b8608\nhistory_iterator_source_sha256=f81a7642bebef6a1f3e21b9eaa43f69819cf98fd0aa93ce9a49734a5bbeda0dc\nhistory_iterator_archive_member_count=5\nrust_objcopy_sha256=17e49737796f7f4c90a2884d6fb1f35c680f5025ce1f589a546a326713f1eebb\nbuild_environment={V3_BUILD_ENVIRONMENT}\ninput_staging={V3_INPUT_STAGING}\nzig_version=0.16.0\nzig_archive_sha256=b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489\nzig_executable_sha256=e6cd688d25664983833aae272f501d4bceeae304875b8f1741209d15fd13a4ec\nuucode_package=uucode-0.2.0-ZZjBPlK5VADj7fdoq7G8LIHzD5o6FSkcBXXrRWr4jnrA\nuucode_archive_sha256=3c571e2e2c1dd6d67d59e7a29322c718a90465ccb0df362e14feafcdde555ed0\nhighway_package={V2_HIGHWAY_PACKAGE}\nhighway_archive_sha256={V2_HIGHWAY_ARCHIVE_SHA256}\n"
+            "schema=hmux-ghostty-vt-recipe-v4\ntarget={target}\nzig_target=x86_64-windows-gnu\nghostty_commit=47147324cee9d12b537f0ea204bf16449d706b3a\nghostty_source_tree=f351e4e0e21c89ca8240e8f6d10f514aec129afe\nghostty_source_sha256=60ed33a2bd972394cc55db5b90e948442c3fb3a8f6b46b52e89f176e9ff20ed7\nghostty_build_zig_sha256=55ec6138c803afba0e8235156360a2e828e0023066e0bebb45956b8750812775\nghostty_build_overlay_sha256={V3_BUILD_OVERLAY_SHA256}\nghostty_build_flags={V2_BUILD_FLAGS}\narchive_normalizer=rust-1.85-llvm-19-objcopy-strip-debug-remove-addrsig-zig-ar-crsD-ranlib-D-lld-v3\narchive_member_count=11\nhistory_iterator_build_sha256={V5_HISTORY_ITERATOR_BUILD_SHA256}\nhistory_iterator_source_sha256={V5_HISTORY_ITERATOR_SOURCE_SHA256}\nhistory_iterator_archive_member_count=5\nrust_objcopy_sha256=17e49737796f7f4c90a2884d6fb1f35c680f5025ce1f589a546a326713f1eebb\nbuild_environment={V3_BUILD_ENVIRONMENT}\ninput_staging={V3_INPUT_STAGING}\nzig_version=0.16.0\nzig_archive_sha256=b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489\nzig_executable_sha256=e6cd688d25664983833aae272f501d4bceeae304875b8f1741209d15fd13a4ec\nuucode_package=uucode-0.2.0-ZZjBPlK5VADj7fdoq7G8LIHzD5o6FSkcBXXrRWr4jnrA\nuucode_archive_sha256=3c571e2e2c1dd6d67d59e7a29322c718a90465ccb0df362e14feafcdde555ed0\nhighway_package={V2_HIGHWAY_PACKAGE}\nhighway_archive_sha256={V2_HIGHWAY_ARCHIVE_SHA256}\n"
         )
         .as_bytes(),
     )
@@ -1031,7 +1039,7 @@ mod tests {
     fn packaged_windows_recipe_identity_matches_the_supply_contract() {
         assert_eq!(
             packaged_v5_recipe_id("x86_64-pc-windows-msvc"),
-            "3be79c8512bfecbecfe2850b7ee872f2cd4c79ef3c06c915bd7d4babe91a58f1"
+            "77035e121059a368c09d1199e9efcca29ab00a56c0a4d4d81cbf566d3da6377f"
         );
     }
 }
