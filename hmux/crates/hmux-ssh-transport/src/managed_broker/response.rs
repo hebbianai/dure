@@ -75,6 +75,7 @@ mod tests {
             assert_eq!(
                 codes(|| CatalogError::CommandFailed(ChannelCompletion {
                     exit_status: Some(status),
+                    signalled: false,
                     diagnostic: "fixture command unavailable".into(),
                 })),
                 ["hmux_remote_runtime_update_required"; 5]
@@ -88,6 +89,7 @@ mod tests {
             assert!(
                 codes(|| CatalogError::CommandFailed(ChannelCompletion {
                     exit_status: status,
+                    signalled: false,
                     diagnostic: "fixture command failed".into(),
                 }))
                 .iter()

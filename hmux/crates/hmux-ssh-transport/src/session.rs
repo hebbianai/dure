@@ -621,7 +621,7 @@ fn collect_exec_event(
 ) -> Result<(), SshTransportError> {
     match event {
         ChannelEvent::Data(bytes) => append_bounded(stdout, &bytes, "stdout", maximum_output_bytes),
-        ChannelEvent::Diagnostic(bytes) => {
+        ChannelEvent::Diagnostic(bytes) | ChannelEvent::Signalled(bytes) => {
             append_bounded(stderr, &bytes, "stderr", maximum_output_bytes)
         }
         ChannelEvent::Exited(status) => {
@@ -665,7 +665,7 @@ fn classify(message: ChannelMsg) -> Option<ChannelEvent> {
             signal_name,
             error_message,
             ..
-        } => Some(ChannelEvent::Diagnostic(
+        } => Some(ChannelEvent::Signalled(
             format!("the remote command died on {signal_name:?}: {error_message}").into_bytes(),
         )),
         ChannelMsg::Eof => Some(ChannelEvent::EndOfData),

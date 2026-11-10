@@ -101,16 +101,37 @@ function exactCreateReceipt(
 	}
 }
 
+/** Delays before each replay of a `retry_same` create. The first replay is
+ * immediate and absorbs response-loss/pending boundaries; the later ones give
+ * a busy backend store time to release its lock. They add at most 1.75 s on
+ * top of the attempts themselves. */
+const EXACT_RESUME_REPLAY_DELAYS_MS = [0, 250, 500, 1000] as const;
+
+function backsOff(
+	resolution: Awaited<ReturnType<typeof hmux.advanceManagedCreate>>,
+): boolean {
+	return (
+		resolution.state === "retry_same" &&
+		(resolution.reason === "pending" ||
+			resolution.reason === "create_retryable")
+	);
+}
+
 async function launchExactResume(
 	request: Parameters<typeof hmux.advanceManagedCreate>[0],
 	diagnostics?: Parameters<typeof hmux.advanceManagedCreate>[1],
 ): Promise<HmuxExactManagedCreateReceipt> {
 	diagnostics?.timing?.mark("launch.ready");
 	let resolution = await hmux.advanceManagedCreate(request, diagnostics);
-	if (resolution.state === "retry_same") {
-		// The broker explicitly promises that replaying this exact source identity
-		// is safe. One in-action replay absorbs response-loss/pending boundaries
-		// without ever inventing another target.
+	// The broker explicitly promises that replaying this exact source identity
+	// is safe, so every replay sends the same request and never invents another
+	// target. An unavailable authority keeps its single immediate replay.
+	for (const [replay, delayMs] of EXACT_RESUME_REPLAY_DELAYS_MS.entries()) {
+		if (resolution.state !== "retry_same") break;
+		if (replay > 0 && !backsOff(resolution)) break;
+		if (delayMs > 0) {
+			await new Promise((resolve) => setTimeout(resolve, delayMs));
+		}
 		resolution = await hmux.advanceManagedCreate(request, diagnostics);
 	}
 	return exactCreateReceipt(resolution);

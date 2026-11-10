@@ -28,6 +28,11 @@ pub enum ChannelEvent {
     Diagnostic(Vec<u8>),
     /// The remote command's exit status.
     Exited(u32),
+    /// The remote command died on a signal (`exit-signal`); the bytes say
+    /// which. Kept apart from [`Self::Diagnostic`] because a close that reports
+    /// neither this nor [`Self::Exited`] is a lost connection, not a command
+    /// outcome.
+    Signalled(Vec<u8>),
     /// The remote closed its write half. No further [`Self::Data`] is coming,
     /// but the channel may still report an exit status.
     EndOfData,
