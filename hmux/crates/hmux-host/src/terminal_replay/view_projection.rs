@@ -1628,6 +1628,73 @@ mod tests {
         assert_eq!(row_text(frame, 0), format!("x{}", "가".repeat(12)));
     }
 
+    /// Both screens shrink without reflow here: the alternate screen always,
+    /// the primary screen while autowrap is off. The truncated wide pair must
+    /// be repaired in the engine itself, or every presentation checkpoint
+    /// fails while the cell exists.
+    #[cfg(feature = "ghostty-core-proof")]
+    #[test]
+    fn column_shrink_through_a_wide_pair_still_checkpoints_and_restores() {
+        for (screen, mode) in [
+            (BufferId::Alternate, &b"\x1b[?1049h"[..]),
+            (BufferId::Normal, &b"\x1b[?7l"[..]),
+        ] {
+            let mut source = replay();
+            source.resize(4, 25).unwrap();
+            let mut output = mode.to_vec();
+            output.extend(b"\x1b[Hx");
+            output.extend("가".repeat(12).as_bytes());
+            source.ingest_output(&output).unwrap();
+            source.resize(4, 24).unwrap();
+
+            let checkpoint = source.checkpoint().unwrap_or_else(|error| {
+                panic!(
+                    "{}: a truncated wide pair must not block checkpoints: {error}",
+                    screen.as_str_name()
+                )
+            });
+            let source_fence = checkpoint.fence.clone();
+            let mut successor_fence = source_fence.clone();
+            successor_fence.host_instance_id = "host-2".into();
+            successor_fence.terminal_epoch = "terminal-successor".into();
+            let mut successor =
+                TerminalReplay::new(successor_fence, 4, 24, TerminalReplayLimits::default())
+                    .unwrap();
+            successor
+                .restore_checkpoint(
+                    crate::local_protocol::RecoveredPresentation {
+                        source_fence,
+                        sequence_through: checkpoint.sequence_through,
+                        captured_unix_ms: 1,
+                        truncated: false,
+                    },
+                    checkpoint,
+                )
+                .unwrap();
+
+            for replay in [&mut source, &mut successor] {
+                let mut projection = replay.attach_view_projection().unwrap();
+                let record = protocol_round_trip(take_frame(replay, &mut projection), 1);
+                let frame = frame(&record);
+                let tables = frame.tables.as_ref().unwrap();
+                let row = frame
+                    .rows
+                    .iter()
+                    .position(|row| row.logical_cell_span > 0)
+                    .expect("the written row stays visible");
+                let widths = frame.rows[row]
+                    .cells
+                    .iter()
+                    .map(|cell| tables.graphemes[cell.grapheme_index as usize].display_width)
+                    .collect::<Vec<_>>();
+                assert_eq!(frame.active_buffer, screen as i32);
+                assert_eq!(frame.rows[row].logical_cell_span, 24);
+                assert_eq!(&widths[21..], &[2, 0, 1]);
+                assert_eq!(row_text(frame, row), format!("x{}", "가".repeat(12)));
+            }
+        }
+    }
+
     /// Deterministic xorshift64, so a failing seed reproduces exactly.
     struct SequenceRng(u64);
 
@@ -1717,6 +1784,8 @@ mod tests {
 
     /// Any state output and resizes can reach must project to a record the
     /// protocol accepts; one invalid row otherwise refuses every new attach.
+    /// The same state must also checkpoint, or the durable presentation
+    /// silently ages while it exists.
     #[test]
     fn randomized_output_and_resizes_always_project_protocol_valid_viewports() {
         const SEEDS: u64 = 300;
@@ -1750,6 +1819,9 @@ mod tests {
                 terminal_state_protocol::validate_record(&record)
                     .unwrap_or_else(|error| panic!("seed {seed} step {step}: {error}"));
                 replay.detach_view_projection(&mut projection).unwrap();
+                replay
+                    .checkpoint()
+                    .unwrap_or_else(|error| panic!("seed {seed} step {step}: checkpoint: {error}"));
             }
         }
     }
