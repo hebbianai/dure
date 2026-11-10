@@ -172,6 +172,14 @@ jobs:
         run: node scripts/linux-release-packages.mjs finish src-tauri/target/release/bundle "${{ matrix.arch }}"
       - name: Collect the packages
         run: node scripts/linux-release-packages.mjs collect src-tauri/target/release/bundle "${{ matrix.arch }}" "$RUNNER_TEMP/linux-packages"
+      # Uploaded before the smoke so a failed smoke still leaves the packages
+      # to inspect; the release's signing job requires this whole job to pass.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/linux-packages
+          if-no-files-found: error
+          retention-days: 14
       - name: Start the AppImage under a virtual display
         env:
           DURE_LINUX_SMOKE_EVIDENCE: ${{ runner.temp }}/linux-smoke
@@ -189,10 +197,4 @@ jobs:
           name: ${{ env.ARTIFACT_PREFIX }}-${{ matrix.arch }}-smoke
           path: ${{ runner.temp }}/linux-smoke
           if-no-files-found: ignore
-          retention-days: 14
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ env.ARTIFACT_PREFIX }}-${{ matrix.arch }}
-          path: ${{ runner.temp }}/linux-packages
-          if-no-files-found: error
           retention-days: 14

@@ -18,6 +18,9 @@
 #   DURE_LINUX_SMOKE_EVIDENCE   directory for the log, screenshots and summary
 #   DURE_LINUX_SMOKE_SECONDS    seconds to wait for each step (default 120)
 #   DURE_LINUX_SMOKE_TERMINAL   1 to require a terminal command (default 0)
+#   DURE_LINUX_SMOKE_AGENT      1 to also start a managed agent from that
+#                               terminal; `claude` on PATH must be the QA fake
+#                               provider (scripts/qa/fake-provider/claude)
 set -eu
 
 app=${1:-}
@@ -39,6 +42,21 @@ done
 seconds=${DURE_LINUX_SMOKE_SECONDS:-120}
 evidence=${DURE_LINUX_SMOKE_EVIDENCE:-}
 terminal=${DURE_LINUX_SMOKE_TERMINAL:-0}
+agent=${DURE_LINUX_SMOKE_AGENT:-0}
+if [ "$agent" = 1 ]; then
+  [ "$terminal" = 1 ] || {
+    echo "the agent step runs in the terminal pane; set DURE_LINUX_SMOKE_TERMINAL=1" >&2
+    exit 2
+  }
+  # Never start a real provider with whatever account the caller has.
+  case "$(claude --version 2>/dev/null || true)" in
+    *-dure-qa) ;;
+    *)
+      echo "the agent step needs the QA fake provider as claude on PATH" >&2
+      exit 2
+      ;;
+  esac
+fi
 root=$(mktemp -d "${TMPDIR:-/tmp}/dure-linux-smoke.XXXXXX")
 app_pid=
 discovery="$root/discovery"
@@ -217,8 +235,45 @@ if [ "$terminal" = 1 ]; then
   terminal_result="command and dure ls ran in an Hmux terminal pane"
 fi
 
+agent_result=skipped
+if [ "$agent" = 1 ]; then
+  agent_proof="$root/agent-proof"
+  project="$root/home/smoke-project"
+  # Register a project and start a Run from the terminal pane, as a user would.
+  xdotool type --delay 30 "{ mkdir -p $project && git -C $project init -q && dure projects register smoke --path $project && dure run --project smoke --name smoke-agent ok; echo run-exit=\$?; dure ls; } > $agent_proof 2>&1"
+  xdotool key Return
+  elapsed=0
+  until grep -q '^run-exit=' "$agent_proof" 2>/dev/null; do
+    [ "$elapsed" -lt "$seconds" ] || fail "dure run did not finish"
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  grep -qx 'run-exit=0' "$agent_proof" || fail "dure run failed: $(cat "$agent_proof")"
+  provider=
+  elapsed=0
+  while [ -z "$provider" ]; do
+    for pid in $(owned_processes); do
+      if { tr '\0' ' ' <"/proc/$pid/cmdline"; } 2>/dev/null | grep -q 'bin/claude'; then
+        provider=$pid
+      fi
+    done
+    [ -n "$provider" ] && break
+    [ "$elapsed" -lt "$seconds" ] || fail "no provider process started for the managed agent"
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  sed -n '/^run-exit=/,$p' "$agent_proof" | grep -q 'smoke-agent' ||
+    fail "dure ls does not list the started agent: $(cat "$agent_proof")"
+  sleep 5
+  screenshot agent
+  if [ -n "$evidence" ]; then
+    cp "$agent_proof" "$evidence/agent-proof.txt"
+  fi
+  agent_result="managed agent smoke-agent started (provider pid $provider)"
+fi
+
 hmux=$(owned_hmux_processes | wc -l | tr -d ' ')
-summary="window $window ($geometry); Dure CLI $cli_build installed, backend running; owned Hmux processes: $hmux; terminal: $terminal_result"
+summary="window $window ($geometry); Dure CLI $cli_build installed, backend running; owned Hmux processes: $hmux; terminal: $terminal_result; agent: $agent_result"
 if [ -n "$evidence" ]; then
   {
     echo "app=$(basename "$app")"

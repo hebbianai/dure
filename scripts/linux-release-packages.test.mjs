@@ -310,7 +310,7 @@ test.skipIf(!dpkgDeb)("adds the Dure CLI to the Debian package with its links, m
   expect(sums).toContain(`${createHash("md5").update("app\n").digest("hex")}  usr/bin/dure`);
   expect(sums).toContain(`${createHash("md5").update(executable(62, "node")).digest("hex")}  usr/lib/Dure/resources/dure-cli/versions/0.2.63+fixture/bin/node`);
   // md5sums lists regular files only; links travel as links.
-  expect(sums.some((line) => line.endsWith("/current") || line.endsWith("bin/dure"))).toBe(false);
+  expect(sums.some((line) => line.endsWith("dure-cli/current") || line.endsWith("fixture/bin/dure"))).toBe(false);
   const contents = execFileSync("dpkg-deb", ["--contents", deb], { encoding: "utf8" });
   expect(contents).toMatch(/^lrwxrwxrwx root\/root .* \.\/usr\/lib\/Dure\/resources\/dure-cli\/current -> versions\/0\.2\.63\+fixture$/m);
   // A finished package is left as it is.
