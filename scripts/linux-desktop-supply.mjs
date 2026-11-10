@@ -103,6 +103,17 @@ export function supplyLinuxDesktop({
   }
   const sourceCommit = cleanCommit(root);
   fs.mkdirSync(output);
+  // Prepare each target's Ghostty proof first: its supply builder is a host
+  // tool and must not inherit the sidecar build's CARGO_BUILD_TARGET below.
+  const hostEnvironment = { ...environment };
+  delete hostEnvironment.CARGO_BUILD_TARGET;
+  for (const linux of LINUX_ARCHITECTURES) {
+    execute("node", ["scripts/ensure-ghostty-vt-proof.mjs", "--target", muslTarget(linux)], {
+      cwd: root,
+      env: hostEnvironment,
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+  }
   for (const linux of LINUX_ARCHITECTURES) {
     const target = muslTarget(linux);
     const directory = path.join(output, "sidecars", target);
@@ -110,7 +121,7 @@ export function supplyLinuxDesktop({
     execute("sh", ["scripts/stage-hmux-runtime.sh", "release"], {
       cwd: root,
       env: {
-        ...environment,
+        ...hostEnvironment,
         CARGO_BUILD_TARGET: target,
         HMUX_SKIP_TAURI_STAGE: "1",
         HMUX_STAGE_ARTIFACT_DIR: directory,
@@ -120,7 +131,7 @@ export function supplyLinuxDesktop({
   const targets = LINUX_ARCHITECTURES.map(muslTarget);
   execute("sh", ["scripts/stage-hmux-remote-resources.sh", "release"], {
     cwd: root,
-    env: { ...environment, HMUX_REMOTE_TRIPLES: targets.join(" ") },
+    env: { ...hostEnvironment, HMUX_REMOTE_TRIPLES: targets.join(" ") },
   });
   for (const target of targets) {
     copyTree(
