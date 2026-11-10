@@ -15,6 +15,12 @@ export function isScheduleRuntime(value) {
       ["none", "input_required", "approval_required", "error"].includes(value.attention);
 }
 
+// The backend observes only terminal runtimes. A schedule started on a host
+// without the app's provider integration runs on the chat runtime instead.
+export function isScheduleChatRuntime(runtime) {
+  return runtime?.state === "unavailable" && runtime.errorCode === "schedule_runtime_not_native";
+}
+
 export function scheduleRuntimeStatus(runtime) {
   if (!runtime) return undefined;
   if (runtime.state === "unavailable") return "runtimeUnavailable";

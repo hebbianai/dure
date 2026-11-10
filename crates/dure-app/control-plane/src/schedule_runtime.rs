@@ -18,8 +18,8 @@ use tokio::time::{Duration, MissedTickBehavior};
 
 use crate::{
     BackendDispatchError, BackendRequestAuthority, ServiceState, agent_spawn_apply,
-    apply_agent_spawn, now_ms, preview_agent_spawn, projects_catalog, valid_project_id,
-    valid_project_path,
+    apply_agent_spawn, now_ms, preview_agent_spawn, projects_catalog,
+    unattended_interaction_preference, valid_project_id, valid_project_path,
 };
 
 const MAX_SCHEDULE_ITEMS: usize = 128;
@@ -425,7 +425,10 @@ pub(super) async fn execute_occurrence(
         "agentName": &agent_name[..22],
         "worktree": worktree,
         "executionProfile": template.execution_profile,
-        "interactionPreference": "native_cli",
+        "interactionPreference": unattended_interaction_preference(
+            &state.agent_providers,
+            &template.provider_id,
+        ),
         "permissionOverride": permission_override,
         "promptDigest": AgentSpawnPromptDigestV1::sha256(&template.prompt),
     });

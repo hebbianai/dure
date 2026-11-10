@@ -3,7 +3,7 @@ import { isProviderEffortSelection, isProviderModelSelection } from "./contracts
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { validProjectId, validProjectPath } from "./project-contract.mjs";
-import { isScheduleRuntime, scheduleRuntimeStatus, SCHEDULE_RUNTIME_CAPABILITY } from "./contracts/schedule-runtime.mjs";
+import { isScheduleChatRuntime, isScheduleRuntime, scheduleRuntimeStatus, SCHEDULE_RUNTIME_CAPABILITY } from "./contracts/schedule-runtime.mjs";
 
 export const SCHEDULE_CLIENT_SCHEMA_VERSION = 1;
 export const DEFAULT_SCHEDULE_COMMAND_DEADLINE_MS = 2_500;
@@ -564,6 +564,9 @@ function occurrenceStatus(occurrence) {
     return `Start failed: ${occurrence.errorCode}`;
   }
   if (occurrence.launchState === "pending") return "Queued";
+  if (isScheduleChatRuntime(occurrence.runtime)) {
+    return `Started on the chat runtime; inspect with dure runs show ${occurrence.operationId}; awaiting report`;
+  }
   const runtimeStatus = scheduleRuntimeStatus(occurrence.runtime);
   if (runtimeStatus) return {
     runtimeUnavailable: "Runtime status unavailable; awaiting report",
