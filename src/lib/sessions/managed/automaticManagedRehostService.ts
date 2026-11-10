@@ -44,7 +44,15 @@ import {
 	type ManagedControlPlaneObservation,
 	observeManagedControlPlane,
 } from "@/lib/sessions/managed/managedControlPlaneObservation";
-import { automaticManagedRebootRecoveryCandidates } from "@/lib/sessions/managed/managedRebootRecovery";
+import {
+	type AutomaticManagedRebootRecoveryCandidate,
+	assessManagedRebootRecovery,
+	type ManagedRebootRecoveryAssessment,
+} from "@/lib/sessions/managed/managedRebootRecovery";
+import {
+	publishRestoreAllOffer,
+	restoreAllOffer,
+} from "@/lib/sessions/managed/managedRestoreAllOffer";
 import { projectRemoteAutomaticManagedRehostSession } from "@/lib/sessions/managed/remoteAutomaticManagedRehost";
 import { agentPaneLocations } from "@/lib/workspace/layout/agentPaneLocations";
 import { mountedDockviewEntries } from "@/lib/workspace/dock/dockRegistry";
@@ -444,43 +452,140 @@ function automaticManagedRehostDependencies(): AutomaticManagedRehostCoordinator
 	};
 }
 
+/** Show a pane's reboot recovery on its own health, wherever its Space is. */
+export function publishRebootRecoveryPaneState(
+	candidate: AutomaticManagedRebootRecoveryCandidate,
+	state: "recovering" | "error",
+	reason: string,
+): void {
+	publishHmuxPaneHealthObservation(
+		hmuxPaneHealthId(candidate.desktopId, candidate.panelId),
+		{ kind: "connection", state, reason },
+	);
+}
+
+function rebootRecoverySnapshot(sessions: readonly HmuxSessionSummary[]) {
+	const state = useStore.getState();
+	return {
+		agents: state.agents,
+		projects: state.projects,
+		layouts: state.layouts,
+		mounted: mountedDockviewEntries(),
+		sessions,
+	};
+}
+
+/** Every local Agent whose exact Host is gone, in every Space. */
+export async function observeManagedRebootRecovery(): Promise<
+	ManagedRebootRecoveryAssessment[] | undefined
+> {
+	const observation = await observeAutomaticManagedRehost({ maxAgeMs: 0 });
+	return observation
+		? assessManagedRebootRecovery(rebootRecoverySnapshot(observation.sessions))
+		: undefined;
+}
+
+export interface RebootRecoveryProgress {
+	/** Set once a successor exists, so a later failure is not a failed restore. */
+	replacement?: HmuxSessionSummary;
+}
+
+/** Restore one Agent whose Host is gone into its own pane and conversation.
+ * A journaled restore is finished first; otherwise eligibility is recomputed
+ * from a fresh exact observation at the destructive boundary. `scope` names
+ * the Spaces whose panes may restore: the visible ones unattended, every
+ * Space after an explicit Restore all. Resolves false when the Agent is no
+ * longer eligible, and throws when the restore fails. */
+export async function recoverRebootStaleManagedAgent(
+	candidate: AutomaticManagedRebootRecoveryCandidate,
+	scope: "visible" | "all",
+	progress: RebootRecoveryProgress = {},
+): Promise<boolean> {
+	const reconciled = await reconcileManagedAgentRehost(
+		candidate.agentId,
+		candidate.panelId,
+	);
+	if (reconciled) {
+		progress.replacement = reconciled.replacement;
+		const committed = await commitReconciledManagedAgentRehostReceipt(
+			reconciled,
+			{ activate: false },
+		);
+		publishManagedAgentRehostProjection(committed.payload);
+		return true;
+	}
+
+	const observation = await observeAutomaticManagedRehost({ maxAgeMs: 0 });
+	if (!observation) return false;
+	const assessment = assessManagedRebootRecovery(
+		rebootRecoverySnapshot(observation.sessions),
+		scope === "visible" ? observation.visibleDesktopIds : undefined,
+	).find(
+		(current) =>
+			current.outcome === "restorable" &&
+			current.candidate.identity === candidate.identity,
+	);
+	if (assessment?.outcome !== "restorable") return false;
+	const stillEligible = assessment.candidate;
+	const inspection = await inspectDisconnectedManagedAgentRecovery(
+		stillEligible.agentId,
+		stillEligible.conversationId,
+		stillEligible.panelId,
+	);
+	if (
+		inspection.sourceLifecycle !== "unavailable" ||
+		inspection.desktopId !== stillEligible.desktopId ||
+		inspection.sourceBinding.sessionId !==
+			useStore
+				.getState()
+				.agents.find((agent) => agent.id === stillEligible.agentId)?.sessionId
+	) {
+		return false;
+	}
+	const execution = await executeUnavailableManagedAgentRecovery(inspection, {
+		requireSocketOwnerAbsent: stillEligible.requireSocketOwnerAbsent,
+	});
+	progress.replacement = execution.recovery.replacement;
+	const payload = managedAgentRehostSyncPayload(inspection, execution);
+	useStore.getState().setHmuxSessionMetadata(execution.recovery.replacement);
+	const committed = await commitManagedAgentRehostReceipt(payload, {
+		activate: false,
+	});
+	if (!committed) {
+		throw new Error("automatic_managed_reboot_commit_deferred");
+	}
+	publishManagedAgentRehostProjection(committed.payload);
+	return true;
+}
+
 function createAutomaticManagedRebootConvergence(): () => Promise<boolean> {
 	const cooldownUntil = new Map<string, number>();
-	const publishPaneRecoveryState = (
-		candidate: ReturnType<
-			typeof automaticManagedRebootRecoveryCandidates
-		>[number],
-		state: "recovering" | "error",
-		reason: string,
-	) => {
-		const paneHealthId = hmuxPaneHealthId(
-			candidate.desktopId,
-			candidate.panelId,
-		);
-		publishHmuxPaneHealthObservation(paneHealthId, {
-			kind: "connection",
-			state,
-			reason,
-		});
-	};
 	return async () => {
 		const observation = await observeAutomaticManagedRehost({
 			maxAgeMs: MANAGED_OBSERVATION_SHARE_MS,
 		});
 		if (!observation) return false;
-		const snapshot = useStore.getState();
-		const candidates = automaticManagedRebootRecoveryCandidates({
-			agents: snapshot.agents,
-			projects: snapshot.projects,
-			layouts: snapshot.layouts,
-			mounted: mountedDockviewEntries(),
-			sessions: observation.sessions,
-			visibleDesktopIds: observation.visibleDesktopIds,
-		}).sort((left, right) => left.identity.localeCompare(right.identity));
+		const snapshot = rebootRecoverySnapshot(observation.sessions);
+		// Background Spaces wait for an explicit Restore all; offer it here.
+		publishRestoreAllOffer(
+			restoreAllOffer(
+				assessManagedRebootRecovery(snapshot),
+				observation.visibleDesktopIds,
+				snapshot.agents,
+			),
+		);
+		const candidates = assessManagedRebootRecovery(
+			snapshot,
+			observation.visibleDesktopIds,
+		)
+			.flatMap((assessment) =>
+				assessment.outcome === "restorable" ? [assessment.candidate] : [],
+			)
+			.sort((left, right) => left.identity.localeCompare(right.identity));
 		const now = Date.now();
 		for (const candidate of candidates) {
 			if ((cooldownUntil.get(candidate.identity) ?? 0) > now) continue;
-			publishPaneRecoveryState(
+			publishRebootRecoveryPaneState(
 				candidate,
 				"recovering",
 				"automatic_reboot_recovery",
@@ -489,78 +594,19 @@ function createAutomaticManagedRebootConvergence(): () => Promise<boolean> {
 		let changed = false;
 		for (const candidate of candidates) {
 			if ((cooldownUntil.get(candidate.identity) ?? 0) > Date.now()) continue;
-			let replacement: HmuxSessionSummary | undefined;
+			const progress: RebootRecoveryProgress = {};
 			try {
-				const reconciled = await reconcileManagedAgentRehost(
-					candidate.agentId,
-					candidate.panelId,
-				);
-				if (reconciled) {
-					replacement = reconciled.replacement;
-					const committed = await commitReconciledManagedAgentRehostReceipt(
-						reconciled,
-						{
-							activate: false,
-						},
-					);
-					publishManagedAgentRehostProjection(committed.payload);
+				if (
+					await recoverRebootStaleManagedAgent(candidate, "visible", progress)
+				) {
 					cooldownUntil.delete(candidate.identity);
 					changed = true;
-					continue;
 				}
-
-				const freshObservation = await observeAutomaticManagedRehost({
-					maxAgeMs: 0,
-				});
-				if (!freshObservation) continue;
-				const freshState = useStore.getState();
-				const stillEligible = automaticManagedRebootRecoveryCandidates({
-					agents: freshState.agents,
-					projects: freshState.projects,
-					layouts: freshState.layouts,
-					mounted: mountedDockviewEntries(),
-					sessions: freshObservation.sessions,
-					visibleDesktopIds: freshObservation.visibleDesktopIds,
-				}).find((current) => current.identity === candidate.identity);
-				if (!stillEligible) continue;
-				const inspection = await inspectDisconnectedManagedAgentRecovery(
-					stillEligible.agentId,
-					stillEligible.conversationId,
-					stillEligible.panelId,
-				);
-				if (
-					inspection.sourceLifecycle !== "unavailable" ||
-					inspection.desktopId !== stillEligible.desktopId ||
-					inspection.sourceBinding.sessionId !==
-						freshState.agents.find(
-							(agent) => agent.id === stillEligible.agentId,
-						)?.sessionId
-				) {
-					continue;
-				}
-				const execution = await executeUnavailableManagedAgentRecovery(
-					inspection,
-					{
-						requireSocketOwnerAbsent: stillEligible.requireSocketOwnerAbsent,
-					},
-				);
-				replacement = execution.recovery.replacement;
-				const payload = managedAgentRehostSyncPayload(inspection, execution);
-				useStore.getState().setHmuxSessionMetadata(replacement);
-				const committed = await commitManagedAgentRehostReceipt(payload, {
-					activate: false,
-				});
-				if (!committed) {
-					throw new Error("automatic_managed_reboot_commit_deferred");
-				}
-				publishManagedAgentRehostProjection(committed.payload);
-				cooldownUntil.delete(candidate.identity);
-				changed = true;
 			} catch (error) {
 				// A completed successor is not a failed recovery. Leave attachment
 				// health with its owner, including any live frame received meanwhile.
-				if (!replacement) {
-					publishPaneRecoveryState(
+				if (!progress.replacement) {
+					publishRebootRecoveryPaneState(
 						candidate,
 						"error",
 						"automatic_reboot_recovery_failed",
@@ -572,8 +618,8 @@ function createAutomaticManagedRebootConvergence(): () => Promise<boolean> {
 				);
 				console.warn("[automatic managed reboot recovery]", {
 					error,
-					phase: replacement ? "synchronization" : "replacement",
-					replacementSessionId: replacement?.sessionId,
+					phase: progress.replacement ? "synchronization" : "replacement",
+					replacementSessionId: progress.replacement?.sessionId,
 					agentId: candidate.agentId,
 					identity: candidate.identity,
 				});

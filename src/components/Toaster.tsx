@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { UpdateNoticeQueue } from "@/components/common/UpdateNoticeQueue";
 import { RestartPreparationNotice } from "@/components/common/RestartPreparationNotice";
+import {
+  RestoreAllAgentsNotice,
+  useRestoreAllState,
+} from "@/components/common/RestoreAllAgentsNotice";
 import { TelemetryNotice } from "@/components/common/TelemetryNotice";
 import { useOnboardingPending } from "@/components/panels/useOnboardingPanelState";
 import { Alert } from "@/components/ui/alert";
@@ -114,6 +118,9 @@ export function Toaster({ brief = true }: { brief?: boolean } = {}) {
   const mainWindow = isMainWindow();
   // The first-run guide has the corner before the telemetry question does.
   const onboarding = useOnboardingPending();
+  // Agents to restore outrank the telemetry question; an update outranks both.
+  const restoreAllPhase = useRestoreAllState().phase;
+  const restoreAll = mainWindow && restoreAllPhase !== "idle";
   return (
     <>
       <RestartPreparationNotice />
@@ -126,11 +133,18 @@ export function Toaster({ brief = true }: { brief?: boolean } = {}) {
         </div>
       ) : null}
       {mainWindow ? (
+        <RestoreAllAgentsNotice
+          hidden={modalOpen || visibleNotice !== undefined}
+        />
+      ) : null}
+      {mainWindow ? (
         // The same corner and the same hold-while-modal rule as the update
         // card; an update outranks the question, which waits its turn. Kept
         // mounted so the window asks the native side once, not per toggle.
         <TelemetryNotice
-          hidden={modalOpen || visibleNotice !== undefined || onboarding}
+          hidden={
+            modalOpen || visibleNotice !== undefined || onboarding || restoreAll
+          }
         />
       ) : null}
       {brief ? <BriefToasts className="fixed inset-x-0 bottom-4" /> : null}

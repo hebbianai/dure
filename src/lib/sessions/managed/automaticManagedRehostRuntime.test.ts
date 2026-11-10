@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	AutomaticManagedRehostCoordinator,
 	type AutomaticManagedRehostCoordinatorDependencies,
+	runExclusiveOfAutomaticManagedRehost,
 } from "@/lib/sessions/managed/automaticManagedRehostRuntime";
 
 const idleReplacementGuard = {
@@ -129,5 +130,56 @@ describe("automatic managed rehost coordinator", () => {
 		expect(deps.convergeInterrupted).toHaveBeenCalledOnce();
 		expect(deps.findEligible).not.toHaveBeenCalled();
 		expect(deps.execute).not.toHaveBeenCalled();
+	});
+});
+
+describe("explicit recovery beside the unattended pass", () => {
+	it("waits for a pass in flight, and holds the next pass until it settles", async () => {
+		const deps = dependencies();
+		let releasePass!: () => void;
+		vi.mocked(deps.inspect).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					releasePass = () =>
+						resolve({
+							agentId: "agent-1",
+							desktopId: "desktop-offscreen",
+							panelId: "agent:agent-1",
+							sourceBinding: {
+								sessionId: "session-old",
+								workspaceId: "workspace-1",
+							},
+						});
+				}),
+		);
+		const coordinator = new AutomaticManagedRehostCoordinator(deps, {
+			eligibilityDwellMs: 0,
+			failureCooldownMs: 1000,
+		});
+		const order: string[] = [];
+
+		const pass = coordinator.runPass().then(() => order.push("pass"));
+		await vi.waitFor(() => expect(deps.inspect).toHaveBeenCalledOnce());
+		let releaseExplicit!: () => void;
+		const explicit = runExclusiveOfAutomaticManagedRehost(async () => {
+			order.push("explicit started");
+			await new Promise<void>((resolve) => {
+				releaseExplicit = resolve;
+			});
+			order.push("explicit finished");
+			return "report";
+		});
+		await Promise.resolve();
+		expect(order).toEqual([]);
+		releasePass();
+		await vi.waitFor(() => expect(order).toEqual(["pass", "explicit started"]));
+
+		const heldPass = coordinator.runPass();
+		releaseExplicit();
+		await expect(explicit).resolves.toBe("report");
+		await heldPass;
+		expect(deps.findEligible).toHaveBeenCalledOnce();
+		expect(order).toEqual(["pass", "explicit started", "explicit finished"]);
+		await pass;
 	});
 });

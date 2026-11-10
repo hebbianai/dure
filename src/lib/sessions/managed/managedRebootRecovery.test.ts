@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { HmuxSessionSummary } from "@/lib/ipc";
+import type { Agent } from "@/types";
 import {
+	assessManagedRebootRecovery,
 	automaticManagedRebootRecoveryCandidates,
 	automaticManagedShellRebootRecoveryCandidates,
 	automaticStandaloneRebootRecoveryCandidates,
@@ -251,6 +253,193 @@ describe("managed reboot recovery classification", () => {
 				desktopId: "desktop-1",
 				panelId: "term:shell-1",
 			},
+		]);
+	});
+});
+
+describe("restore-all assessment across every Space", () => {
+	const stopFence = stopFenceFixture({
+		terminalEpoch: "terminal-before-reboot",
+	});
+	const project = {
+		id: "project-1",
+		name: "Repo",
+		path: "/repo",
+		kind: "local" as const,
+		isRepo: true,
+	};
+	const identity = JSON.stringify([
+		"workspace-1",
+		"managed-1",
+		"terminal-before-reboot",
+	]);
+
+	function agent(patch: Partial<Agent> = {}): Agent {
+		return managedAgentFixture({
+			id: "agent-1",
+			projectId: "project-1",
+			sessionId: "managed-1",
+			conversationId: "conversation-1",
+			runtimeBinding: managedBindingFixture({
+				sessionId: "managed-1",
+				workspaceId: "workspace-1",
+				stopFence,
+			}),
+			...patch,
+		});
+	}
+
+	function pane(desktopId: string, panelId = "agent:agent-1") {
+		return {
+			[desktopId]: {
+				panels: {
+					[panelId]: {
+						contentComponent: "agent",
+						params: { agentRef: { agentId: "agent-1" } },
+					},
+				},
+			},
+		};
+	}
+
+	function assess(
+		patch: {
+			agents?: Agent[];
+			layouts?: Record<string, unknown>;
+			sessions?: HmuxSessionSummary[];
+		} = {},
+		desktopIds?: ReadonlySet<string>,
+	) {
+		return assessManagedRebootRecovery(
+			{
+				agents: patch.agents ?? [agent()],
+				projects: [project],
+				layouts: patch.layouts ?? pane("background"),
+				sessions: patch.sessions ?? [summary({ stopFence })],
+			},
+			desktopIds,
+		);
+	}
+
+	it("restores a pane in a Space no window shows only when every Space is in scope", () => {
+		expect(assess({}, new Set(["visible"]))).toEqual([
+			{
+				outcome: "skipped",
+				identity,
+				agentId: "agent-1",
+				reason: "pane_missing",
+			},
+		]);
+		expect(assess()).toEqual([
+			{
+				outcome: "restorable",
+				candidate: {
+					identity,
+					agentId: "agent-1",
+					desktopId: "background",
+					panelId: "agent:agent-1",
+					conversationId: "conversation-1",
+				},
+			},
+		]);
+		expect(
+			automaticManagedRebootRecoveryCandidates({
+				agents: [agent()],
+				projects: [project],
+				layouts: pane("background"),
+				sessions: [summary({ stopFence })],
+				visibleDesktopIds: new Set(["visible"]),
+			}),
+		).toEqual([]);
+	});
+
+	it("leaves out agents whose Host still runs, Chat agents and remote agents", () => {
+		expect(
+			assess({ sessions: [summary({ stopFence, hostProcessAlive: true })] }),
+		).toEqual([]);
+		expect(
+			assess({
+				sessions: [
+					summary({
+						stopFence,
+						health: "current_healthy",
+						lifecycle: "ready",
+					}),
+				],
+			}),
+		).toEqual([]);
+		expect(
+			assess({
+				agents: [
+					agent({
+						interactionProfile: {
+							schemaVersion: 1,
+							kind: "structured_protocol",
+							backendProfileId: "local",
+							interactionSessionId: "interaction-1",
+						} as Agent["interactionProfile"],
+					}),
+				],
+			}),
+		).toEqual([]);
+		expect(
+			assess({
+				agents: [
+					agent({
+						runtimeBinding: {
+							...managedBindingFixture({
+								sessionId: "managed-1",
+								workspaceId: "workspace-1",
+								stopFence,
+							}),
+							source: "ssh",
+							hostId: "ssh-1",
+						} as Agent["runtimeBinding"],
+					}),
+				],
+			}),
+		).toEqual([]);
+	});
+
+	it.each([
+		{
+			reason: "runtime_generation_changed",
+			patch: {
+				sessions: [
+					summary({
+						stopFence: stopFenceFixture({ terminalEpoch: "a-later-terminal" }),
+					}),
+				],
+			},
+		},
+		{
+			reason: "transition_in_progress",
+			patch: {
+				agents: [
+					agent({
+						pendingCredentialSwitch: {
+							targetCredentialId: "account-2",
+						} as Agent["pendingCredentialSwitch"],
+					}),
+				],
+			},
+		},
+		{
+			reason: "no_conversation_id",
+			patch: { agents: [agent({ conversationId: undefined })] },
+		},
+		{
+			reason: "provider_without_exact_resume",
+			patch: { agents: [agent({ provider: "rovo-dev" })] },
+		},
+		{ reason: "pane_missing", patch: { layouts: {} } },
+		{
+			reason: "pane_ambiguous",
+			patch: { layouts: { ...pane("first"), ...pane("second", "slot") } },
+		},
+	])("lists an agent it can't restore with $reason", ({ reason, patch }) => {
+		expect(assess(patch as Parameters<typeof assess>[0])).toEqual([
+			{ outcome: "skipped", identity, agentId: "agent-1", reason },
 		]);
 	});
 });

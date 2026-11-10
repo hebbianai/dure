@@ -9,6 +9,11 @@ import { installAutomaticManagedRehostService } from "@/lib/sessions/managed/aut
 import { HMUX_MANAGED_IDLE_REPLACEMENT_GUARD_CAPABILITY } from "@/lib/sessions/managed/automaticManagedRehostPolicy";
 import { MANAGED_AGENT_REHOSTED_EVENT } from "@/lib/sessions/managed/managedAgentRehostSynchronization";
 import { resetManagedControlPlaneObservationForTest } from "@/lib/sessions/managed/managedControlPlaneObservation";
+import { restoreAllManagedAgents } from "@/lib/sessions/managed/managedRestoreAll";
+import {
+	getRestoreAllState,
+	resetRestoreAllForTest,
+} from "@/lib/sessions/managed/managedRestoreAllOffer";
 import {
 	clearHmuxPaneHealth,
 	getHmuxPaneHealth,
@@ -153,6 +158,7 @@ function replacementSession() {
 beforeEach(() => {
 	vi.useFakeTimers();
 	resetFrameBudgetSchedulerForTest();
+	resetRestoreAllForTest();
 	vi.setSystemTime(new Date("2026-08-30T01:00:00Z"));
 	resetManagedControlPlaneObservationForTest();
 	Object.defineProperty(document, "visibilityState", {
@@ -432,6 +438,89 @@ describe("automatic managed rehost service", () => {
 			);
 		},
 	);
+
+	it("offers a pane in a background Space and restores it there only after Restore all", async () => {
+		const desktopId = "desktop-offscreen";
+		const panelId = "agent:agent-reboot";
+		const healthId = `${desktopId}:${panelId}`;
+		useStore.setState({
+			spaces: [
+				{ id: "desktop-1", name: "Desktop" },
+				{ id: desktopId, name: "Background" },
+			],
+			layouts: {
+				"desktop-1": { panels: {} },
+				[desktopId]: {
+					panels: {
+						[panelId]: {
+							contentComponent: "agent",
+							params: { agentRef: { agentId: "agent-reboot" } },
+						},
+					},
+				},
+			},
+		});
+		mocks.inspectDisconnectedRecovery.mockImplementation(
+			async (agentId, conversationId, requestedPanelId) => ({
+				agentId,
+				conversationId,
+				desktopId,
+				panelId: requestedPanelId,
+				sourceBinding: sourceAgent().runtimeBinding,
+				sourceLifecycle: "unavailable",
+			}),
+		);
+		clearHmuxPaneHealth(healthId);
+		const dispose = installAutomaticManagedRehostService();
+		try {
+			await vi.advanceTimersByTimeAsync(2_300);
+			expect(mocks.executeUnavailableRecovery).not.toHaveBeenCalled();
+			expect(getRestoreAllState()).toEqual({
+				phase: "offer",
+				restorable: [
+					{
+						identity: JSON.stringify([
+							"workspace-1",
+							"session-before-reboot",
+							sourceFence.terminalEpoch,
+						]),
+						agentId: "agent-reboot",
+						name: "reboot-pane",
+					},
+				],
+				skipped: [],
+			});
+
+			await restoreAllManagedAgents();
+
+			expect(mocks.inspectDisconnectedRecovery).toHaveBeenCalledExactlyOnceWith(
+				"agent-reboot",
+				"conversation-exact",
+				panelId,
+			);
+			expect(mocks.executeUnavailableRecovery).toHaveBeenCalledExactlyOnceWith(
+				expect.objectContaining({ desktopId, panelId }),
+				{ requireSocketOwnerAbsent: undefined },
+			);
+			expect(mocks.synchronizeRehost).toHaveBeenCalledExactlyOnceWith(
+				expect.anything(),
+				{ activate: false },
+			);
+			expect(useStore.getState().agents[0].sessionId).toBe(
+				"session-after-reboot",
+			);
+			expect(getHmuxPaneHealth(healthId)?.state).toBe("recovering");
+			expect(getRestoreAllState()).toMatchObject({
+				phase: "report",
+				restored: [{ agentId: "agent-reboot", name: "reboot-pane" }],
+				skipped: [],
+				failed: [],
+			});
+		} finally {
+			dispose();
+			clearHmuxPaneHealth(healthId);
+		}
+	});
 
 	it.each(["closed", "retargeted", "invalid-ref"])(
 		"does not recover a saved Agent pane that is currently %s",

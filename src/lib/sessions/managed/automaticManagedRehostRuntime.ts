@@ -57,6 +57,28 @@ interface PendingCompletion<Payload> {
 
 let automaticManagedRehostGlobalInFlight: Promise<boolean> | undefined;
 
+/** Run an explicitly requested recovery once no unattended pass is running,
+ * and hold later passes off until it settles: both replace the same sources. */
+export async function runExclusiveOfAutomaticManagedRehost<T>(
+	operation: () => Promise<T>,
+): Promise<T> {
+	while (automaticManagedRehostGlobalInFlight) {
+		await automaticManagedRehostGlobalInFlight.catch(() => false);
+	}
+	const run = operation();
+	const slot = run.then(
+		() => true,
+		() => false,
+	);
+	automaticManagedRehostGlobalInFlight = slot;
+	void slot.finally(() => {
+		if (automaticManagedRehostGlobalInFlight === slot) {
+			automaticManagedRehostGlobalInFlight = undefined;
+		}
+	});
+	return run;
+}
+
 /** One main-window coordinator owns unattended replacements. Overlapping timer,
  * focus, and store wakes share the same promise, which makes concurrency one
  * even when a pass crosses multiple async preflight boundaries. */
