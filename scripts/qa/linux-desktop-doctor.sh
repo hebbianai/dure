@@ -6,10 +6,14 @@ if [ "$(uname -s)" != "Linux" ]; then
   exit 1
 fi
 
-if [ "$(uname -m)" != "x86_64" ]; then
-  echo "linux desktop bootstrap currently supports x86_64 only" >&2
-  exit 1
-fi
+linux_machine=$(uname -m)
+case "$linux_machine" in
+  x86_64 | aarch64) ;;
+  *)
+    echo "linux desktop builds support x86_64 and aarch64, not $linux_machine" >&2
+    exit 1
+    ;;
+esac
 
 missing=""
 require_command() {
@@ -38,4 +42,4 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 
-echo "linux desktop prerequisites ready: target=x86_64-unknown-linux-gnu"
+echo "linux desktop prerequisites ready: target=$linux_machine-unknown-linux-gnu"

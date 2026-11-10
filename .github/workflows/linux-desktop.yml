@@ -1,0 +1,188 @@
+name: Linux desktop packages
+
+# Builds unsigned Linux x86_64 and arm64 AppImage and Debian packages and starts
+# each one under a virtual display. The release workflow calls this with the
+# version-only tag commit; its own signing job adds the updater signatures.
+# Pull requests that change the Linux packaging path run it as a check, and a
+# maintainer can dispatch it for any commit to get test packages.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact commit to build
+        required: true
+        type: string
+      tauri-config:
+        description: Additional Tauri configuration file merged for the build
+        required: false
+        default: ""
+        type: string
+      artifact-prefix:
+        description: Prefix of the per-architecture package artifacts
+        required: true
+        type: string
+      telemetry:
+        description: Compile the public telemetry project token, as official builds do
+        required: false
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, branch or tag to build (defaults to the dispatch commit)
+        required: false
+        default: ""
+        type: string
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/linux-desktop.yml
+      - scripts/linux-desktop-supply.mjs
+      - scripts/linux-release-packages.mjs
+      - scripts/qa/linux-package-smoke.sh
+      - scripts/stage-hmux-runtime.sh
+      - src-tauri/tauri.linux.conf.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-desktop-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BUILD_REF: ${{ inputs.ref || github.sha }}
+  ARTIFACT_PREFIX: ${{ inputs.artifact-prefix || format('linux-packages-{0}', github.run_id) }}
+
+jobs:
+  supply:
+    name: Hmux for Linux
+    # The Hmux sidecars, the Linux SSH host runtimes and the checkout helper
+    # compile C code with the pinned Ghostty Zig toolchain, a macOS ARM64
+    # executable. Build them here for both Linux architectures.
+    runs-on: macos-15
+    timeout-minutes: 150
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BUILD_REF }}
+          persist-credentials: false
+      # Every later job builds this exact commit, even if a branch moves.
+      - name: Record the exact commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Prepare repository-pinned Rust
+        run: |
+          rustup show active-toolchain
+          rustup toolchain install 1.85.0 --profile minimal
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Restore the pinned Ghostty VT build inputs
+        # The proof script hash-checks these inputs on every run; the cache only
+        # saves the anonymous release download.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/dure-ghostty-vt/inputs/v2
+          key: hmux-ghostty-vt-provenance-v2-${{ runner.os }}-${{ runner.arch }}
+      - name: Build the Linux supply
+        env:
+          DURE_GHOSTTY_VT_CACHE_ROOT: ${{ runner.temp }}/dure-ghostty-vt
+        run: |
+          node scripts/linux-desktop-supply.mjs supply "$RUNNER_TEMP/linux-supply"
+          tar -C "$RUNNER_TEMP/linux-supply" -czf "$RUNNER_TEMP/linux-supply.tar.gz" .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}-supply
+          path: ${{ runner.temp }}/linux-supply.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Linux package (${{ matrix.arch }})
+    needs: supply
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu LTS sets the glibc and WebKitGTK floor
+          # (glibc 2.35), so the packages also start on newer distributions.
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.supply.outputs.sha }}
+          persist-credentials: false
+      - name: Install Linux build and smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl wget file pkg-config patchelf libdbus-1-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            xvfb xdotool imagemagick dbus-x11
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.97.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Install pinned dependencies
+        run: |
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}-supply
+          path: ${{ runner.temp }}/linux-supply-archive
+      - name: Stage the Linux supply
+        run: |
+          mkdir "$RUNNER_TEMP/linux-supply"
+          tar -C "$RUNNER_TEMP/linux-supply" -xzf "$RUNNER_TEMP/linux-supply-archive/linux-supply.tar.gz"
+          node scripts/linux-desktop-supply.mjs stage "$RUNNER_TEMP/linux-supply"
+      - name: Build the AppImage and Debian packages
+        env:
+          DURE_TELEMETRY_KEY: ${{ inputs.telemetry && vars.DURE_TELEMETRY_KEY || '' }}
+          TAURI_CONFIG_FILE: ${{ inputs.tauri-config }}
+          REQUIRE_TELEMETRY: ${{ inputs.telemetry && 'true' || 'false' }}
+        run: |
+          if [ "$REQUIRE_TELEMETRY" = true ] && [ -z "$DURE_TELEMETRY_KEY" ]; then
+            echo 'DURE_TELEMETRY_KEY is required for an official build'
+            exit 1
+          fi
+          [ -n "$DURE_TELEMETRY_KEY" ] || unset DURE_TELEMETRY_KEY
+          set -- --bundles appimage,deb
+          if [ -n "$TAURI_CONFIG_FILE" ]; then set -- --config "$TAURI_CONFIG_FILE" "$@"; fi
+          corepack pnpm tauri build "$@"
+      - name: Collect the packages
+        run: node scripts/linux-release-packages.mjs collect src-tauri/target/release/bundle "${{ matrix.arch }}" "$RUNNER_TEMP/linux-packages"
+      - name: Start the AppImage under a virtual display
+        env:
+          DURE_LINUX_SMOKE_EVIDENCE: ${{ runner.temp }}/linux-smoke
+        run: |
+          appimage=$(find "$RUNNER_TEMP/linux-packages" -name '*.AppImage')
+          chmod 755 "$appimage"
+          xvfb-run -a -s '-screen 0 1600x1000x24' \
+            dbus-run-session -- sh scripts/qa/linux-package-smoke.sh "$appimage"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}-${{ matrix.arch }}-smoke
+          path: ${{ runner.temp }}/linux-smoke
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ARTIFACT_PREFIX }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/linux-packages
+          if-no-files-found: error
+          retention-days: 14
