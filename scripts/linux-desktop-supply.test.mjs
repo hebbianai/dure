@@ -31,6 +31,7 @@ function repository() {
     "src-tauri/resources/remote-git-checkout-helper/*/",
     "",
   ].join("\n"));
+  write(path.join(root, "hmux/Cargo.toml"), '[workspace.package]\nversion = "0.2.63"\n');
   git(parent, "init", "-q", root);
   git(root, "add", ".");
   git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "-c", "commit.gpgsign=false", "commit", "-qm", "source");
@@ -50,6 +51,7 @@ function supply(root, output, calls = []) {
         command: [command, ...args].join(" "),
         target: options.env.CARGO_BUILD_TARGET ?? null,
         triples: options.env.HMUX_REMOTE_TRIPLES ?? null,
+        ...(options.env.HMUX_BUILD_ID ? { buildId: options.env.HMUX_BUILD_ID } : {}),
       });
       if (args[0] === "scripts/stage-hmux-runtime.sh") {
         for (const name of ["hmux-runtime", "hmux"])
@@ -94,7 +96,13 @@ test("supply builds every Linux binary on the macOS host and records the source 
     // Ghostty's proof builder is a host tool: it never sees a cross target.
     ...targets.map((target) => ({ command: `node scripts/ensure-ghostty-vt-proof.mjs --target ${target}`, target: null, triples: null })),
     ...targets.map((target) => ({ command: "sh scripts/stage-hmux-runtime.sh release", target, triples: null })),
-    { command: "sh scripts/stage-hmux-remote-resources.sh release", target: null, triples: targets.join(" ") },
+    // The SSH host runtimes carry their own id beside the macOS app's `.dure` trees.
+    {
+      command: "sh scripts/stage-hmux-remote-resources.sh release",
+      target: null,
+      triples: targets.join(" "),
+      buildId: `0.2.63+${git(root, "rev-parse", "HEAD").slice(0, 12)}.dure-linux`,
+    },
   ]);
   const receipt = JSON.parse(fs.readFileSync(path.join(output, "receipt.json"), "utf8"));
   expect(receipt.sourceCommit).toBe(git(root, "rev-parse", "HEAD"));

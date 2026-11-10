@@ -163,6 +163,10 @@ jobs:
           set -- --bundles appimage,deb
           if [ -n "$TAURI_CONFIG_FILE" ]; then set -- --config "$TAURI_CONFIG_FILE" "$@"; fi
           corepack pnpm tauri build "$@"
+      # linuxdeploy rewrites every ELF file in the AppDir, which breaks the
+      # static Hmux executables; put their exact bytes back and repack.
+      - name: Restore the bundled static executables in the AppImage
+        run: node scripts/linux-release-packages.mjs repair-appimage src-tauri/target/release/bundle "${{ matrix.arch }}"
       - name: Collect the packages
         run: node scripts/linux-release-packages.mjs collect src-tauri/target/release/bundle "${{ matrix.arch }}" "$RUNNER_TEMP/linux-packages"
       - name: Start the AppImage under a virtual display

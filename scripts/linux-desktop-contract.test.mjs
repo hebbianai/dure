@@ -52,6 +52,10 @@ describe("Linux desktop configuration boundary", () => {
     expect(scripts["app:linux:build:implementation"]).toContain(
       'node scripts/linux-desktop-supply.mjs stage "$DURE_LINUX_SUPPLY_DIR"',
     );
+    // linuxdeploy rewrites the static Hmux executables inside the AppImage.
+    expect(scripts["app:linux:build:implementation"]).toMatch(
+      /tauri build --bundles deb,appimage && node scripts\/linux-release-packages\.mjs repair-appimage src-tauri\/target\/release\/bundle "\$\(uname -m\)"$/,
+    );
   });
 
   // tauri-build validates raw Cargo commands against the common configuration

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { collectLinuxPackages, signLinuxPackages } from "./linux-release-packages.mjs";
+import { collectLinuxPackages, repairAppImage, signLinuxPackages } from "./linux-release-packages.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -116,4 +116,87 @@ test("refuses a signature from another key and an incomplete package set", () =>
   expect(() => signLinuxPackages({
     root: partial, input: packages(partial, PACKAGES.slice(1)), output: path.join(partial, "signed"), sign: other.signFile,
   })).toThrow("must be exactly");
+});
+
+const elf = (label) => Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.from(` ${label}`)]);
+
+function patchedBundle() {
+  const root = checkout();
+  const put = (relative, bytes) => {
+    fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+    fs.writeFileSync(path.join(root, relative), bytes);
+  };
+  const remote = "hmux-remote/x86_64-unknown-linux-musl";
+  put("src-tauri/binaries/hmux-runtime-x86_64-unknown-linux-gnu", elf("runtime"));
+  put("src-tauri/binaries/hmux-x86_64-unknown-linux-gnu", elf("cli"));
+  put("src-tauri/binaries/README.md", "not bundled");
+  put(`src-tauri/resources/${remote}/bin/hmux-runtime`, elf("remote runtime"));
+  put(`src-tauri/resources/${remote}/install.json`, "{}\n");
+  put("src-tauri/resources/mobile-runtime/serve-sim-native.dylib", elf("not bundled on Linux"));
+  const appDir = "bundle/appimage/Dure.AppDir";
+  // linuxdeploy rewrote two executables and left the CLI and data alone.
+  put(`${appDir}/usr/bin/hmux-runtime`, Buffer.concat([elf("runtime"), Buffer.from(" rpath")]));
+  put(`${appDir}/usr/bin/hmux`, elf("cli"));
+  put(`${appDir}/usr/bin/dure`, elf("app, linked against bundled libraries"));
+  put(`${appDir}/usr/lib/Dure/resources/${remote}/bin/hmux-runtime`, Buffer.concat([elf("remote runtime"), Buffer.from(" rpath")]));
+  put(`${appDir}/usr/lib/Dure/resources/${remote}/install.json`, "{}\n");
+  put("bundle/appimage/Dure_0.2.63_amd64.AppImage", "patched image");
+  return { root, bundleRoot: path.join(root, "bundle"), appDir: path.join(root, appDir) };
+}
+
+/** A stand-in AppImage: the repacked image is a copy of the AppDir tree. */
+const imageOf = (appDir) => ({
+  repack(directory, output) {
+    expect(directory).toBe(appDir);
+    fs.cpSync(directory, `${output}.tree`, { recursive: true });
+    fs.writeFileSync(output, "repacked image");
+  },
+  extract(image, scratch) {
+    fs.cpSync(`${image}.tree`, path.join(scratch, "squashfs-root"), { recursive: true });
+    fs.rmSync(`${image}.tree`, { recursive: true });
+    return path.join(scratch, "squashfs-root");
+  },
+});
+
+test("restores the exact bundled executables linuxdeploy rewrote and repacks the AppImage", () => {
+  const value = patchedBundle();
+  const restored = repairAppImage({ root: value.root, bundleRoot: value.bundleRoot, arch: "x86_64", ...imageOf(value.appDir) });
+  expect(restored).toEqual([
+    "usr/bin/hmux-runtime",
+    "usr/lib/Dure/resources/hmux-remote/x86_64-unknown-linux-musl/bin/hmux-runtime",
+  ]);
+  expect(fs.readFileSync(path.join(value.appDir, "usr/bin/hmux-runtime"))).toEqual(elf("runtime"));
+  expect(fs.statSync(path.join(value.appDir, "usr/bin/hmux-runtime")).mode & 0o777).toBe(0o755);
+  expect(fs.readFileSync(path.join(value.appDir, "usr/bin/dure"))).toEqual(elf("app, linked against bundled libraries"));
+  expect(fs.readFileSync(path.join(value.bundleRoot, "appimage/Dure_0.2.63_amd64.AppImage"), "utf8")).toBe("repacked image");
+  expect(fs.readdirSync(path.join(value.bundleRoot, "appimage")).sort()).toEqual(["Dure.AppDir", "Dure_0.2.63_amd64.AppImage"]);
+  // A second run finds nothing to restore and leaves the image alone.
+  expect(repairAppImage({
+    root: value.root, bundleRoot: value.bundleRoot, arch: "x86_64",
+    repack: () => { throw new Error("must not repack"); },
+  })).toEqual([]);
+});
+
+test("keeps the original AppImage when the repacked one does not hold the source bytes", () => {
+  const value = patchedBundle();
+  const image = imageOf(value.appDir);
+  expect(() => repairAppImage({
+    root: value.root,
+    bundleRoot: value.bundleRoot,
+    arch: "x86_64",
+    repack: image.repack,
+    extract(repacked, scratch) {
+      const tree = image.extract(repacked, scratch);
+      fs.appendFileSync(path.join(tree, "usr/bin/hmux-runtime"), " rpath again");
+      return tree;
+    },
+  })).toThrow("the repacked AppImage changed usr/bin/hmux-runtime");
+  expect(fs.readFileSync(path.join(value.bundleRoot, "appimage/Dure_0.2.63_amd64.AppImage"), "utf8")).toBe("patched image");
+});
+
+test("refuses an AppDir without the bundled Hmux runtime", () => {
+  const value = patchedBundle();
+  fs.rmSync(path.join(value.appDir, "usr/bin/hmux-runtime"));
+  expect(() => repairAppImage({ root: value.root, bundleRoot: value.bundleRoot, arch: "x86_64", ...imageOf(value.appDir) }))
+    .toThrow("no bundled hmux-runtime");
 });

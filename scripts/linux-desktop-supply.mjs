@@ -88,6 +88,13 @@ function verifyProductRuntime(root, binary) {
   run("sh", [path.join(root, "scripts/verify-hmux-product-runtime.sh"), "execute", binary], { cwd: root });
 }
 
+export function linuxRemoteBuildBase(root, sourceCommit) {
+  const version = fs.readFileSync(path.join(root, "hmux/Cargo.toml"), "utf8")
+    .match(/^version = "([^"]+)"/m)?.[1];
+  if (!version) throw new Error("could not read the Hmux package version");
+  return `${version}+${sourceCommit.slice(0, 12)}.dure-linux`;
+}
+
 export function supplyLinuxDesktop({
   root = repositoryRoot,
   output,
@@ -129,9 +136,17 @@ export function supplyLinuxDesktop({
     });
   }
   const targets = LINUX_ARCHITECTURES.map(muslTarget);
+  // An SSH host keeps each Hmux build id immutable. The macOS app ships its
+  // own build of these runtimes under `<version>+<revision>.dure`, and builds
+  // on two hosts are not byte-identical, so the Linux app's trees get their
+  // own id and both apps can install on the same host.
   execute("sh", ["scripts/stage-hmux-remote-resources.sh", "release"], {
     cwd: root,
-    env: { ...hostEnvironment, HMUX_REMOTE_TRIPLES: targets.join(" ") },
+    env: {
+      ...hostEnvironment,
+      HMUX_REMOTE_TRIPLES: targets.join(" "),
+      HMUX_BUILD_ID: linuxRemoteBuildBase(root, sourceCommit),
+    },
   });
   for (const target of targets) {
     copyTree(
