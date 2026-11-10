@@ -2,14 +2,24 @@ import { describe, expect, it } from "vitest";
 import {
 	type AppCommandContext,
 	appCommandApplies,
+	appCommandSpaceTargets,
 	appCommands,
 } from "@/lib/commands/appCommands";
+import { t } from "@/lib/i18n";
 import { rankNativeSearchItems } from "@/lib/search/nativeSearch";
 import { appCommandSearchItems } from "@/lib/search/nativeSearchAppCommands";
 import { resolveShortcuts } from "@/lib/settings/shortcutBindings";
 import { allShortcuts } from "@/lib/settings/settingsShortcuts";
 
+const SPACES = [
+	{ id: "desk-main", name: "Main" },
+	{ id: "desk-api", name: "api-server" },
+	{ id: "desk-plan", name: "planner" },
+];
+
 const EVERYTHING: AppCommandContext = {
+	spaces: SPACES,
+	activeSpaceId: "desk-main",
 	hasActivePane: true,
 	canBalancePanes: true,
 	canUndoPaneMove: true,
@@ -19,6 +29,8 @@ const EVERYTHING: AppCommandContext = {
 };
 
 const NOTHING: AppCommandContext = {
+	spaces: [SPACES[0]],
+	activeSpaceId: "desk-main",
 	hasActivePane: false,
 	canBalancePanes: false,
 	canUndoPaneMove: false,
@@ -33,6 +45,12 @@ function itemFor(id: string, context = EVERYTHING, overrides = {}) {
 	);
 }
 
+function spaceRows(context = EVERYTHING) {
+	return appCommandSearchItems(context, {}).filter((item) =>
+		item.id.startsWith("command:app:switch-desktop:"),
+	);
+}
+
 describe("app command registry", () => {
 	it("has one entry per command id", () => {
 		const ids = appCommands().map((command) => command.id);
@@ -43,16 +61,16 @@ describe("app command registry", () => {
 		const resolved = resolveShortcuts({});
 		expect(resolved.length).toBeGreaterThan(0);
 		for (const shortcut of resolved) {
+			if (shortcut.id === "switch-desktop") {
+				// The range is listed once per Space, each row with its own step.
+				expect(spaceRows().map((item) => item.shortcut)).toEqual([
+					[["⌘", "2"]],
+					[["⌘", "3"]],
+				]);
+				continue;
+			}
 			expect(itemFor(shortcut.id)?.shortcut).toEqual(shortcut.keys);
 		}
-	});
-
-	it("shows a range shortcut in the page's notation", () => {
-		expect(itemFor("switch-desktop")?.shortcut).toEqual([
-			["⌘", "1"],
-			["…"],
-			["⌘", "9"],
-		]);
 	});
 
 	it("follows a remapped shortcut and drops a cleared one", () => {
@@ -112,13 +130,74 @@ describe("app command context", () => {
 	});
 
 	it("lists keyboard-only commands without a runnable action", () => {
-		for (const id of ["term-kill-line", "switch-desktop", "native-search"]) {
+		for (const id of ["term-kill-line", "native-search"]) {
 			expect(itemFor(id, NOTHING)?.action, id).toEqual({ type: "unavailable" });
 		}
 		expect(itemFor("new-terminal")?.action).toEqual({
 			type: "app-command",
 			command: "new-terminal",
 		});
+	});
+});
+
+describe("Space commands", () => {
+	it("offers a switch to every other Space, in tab-strip order", () => {
+		const rows = spaceRows();
+		expect(rows.map(({ title }) => title)).toEqual([
+			t("search.appCommand.switchToSpace", { name: "api-server" }),
+			t("search.appCommand.switchToSpace", { name: "planner" }),
+		]);
+		expect(rows.map(({ action }) => action)).toEqual([
+			{ type: "app-command", command: "switch-desktop", spaceId: "desk-api" },
+			{ type: "app-command", command: "switch-desktop", spaceId: "desk-plan" },
+		]);
+	});
+
+	it("keeps each Space's ⌘n when the active Space is not first", () => {
+		const rows = spaceRows({ ...EVERYTHING, activeSpaceId: "desk-api" });
+		expect(
+			rows.map(({ action, shortcut }) => [
+				action.type === "app-command" && "spaceId" in action
+					? action.spaceId
+					: undefined,
+				shortcut,
+			]),
+		).toEqual([
+			["desk-main", [["⌘", "1"]]],
+			["desk-plan", [["⌘", "3"]]],
+		]);
+	});
+
+	it("has no Space to switch to in a one-Space app", () => {
+		expect(spaceRows(NOTHING)).toEqual([]);
+	});
+
+	it("lists Spaces past the ninth without keys", () => {
+		const spaces = Array.from({ length: 11 }, (_, index) => ({
+			id: `desk-${index + 1}`,
+			name: `Space ${index + 1}`,
+		}));
+		const rows = spaceRows({ ...EVERYTHING, spaces, activeSpaceId: "desk-1" });
+		expect(rows.map(({ shortcut }) => shortcut?.[0]?.[1])).toEqual([
+			"2",
+			"3",
+			"4",
+			"5",
+			"6",
+			"7",
+			"8",
+			"9",
+			undefined,
+			undefined,
+		]);
+	});
+
+	it("counts a target's position across the whole strip", () => {
+		const targets = appCommandSpaceTargets(EVERYTHING);
+		expect(targets.map(({ space, position }) => [space.id, position])).toEqual([
+			["desk-api", 2],
+			["desk-plan", 3],
+		]);
 	});
 });
 
@@ -138,6 +217,11 @@ describe("app command matching", () => {
 		expect(
 			rankNativeSearchItems(items, "> equalize").map(({ id }) => id),
 		).toContain("command:app:balance-panes");
+	});
+
+	it("finds a Space by its name", () => {
+		expect(firstId("> plan")).toBe("command:app:switch-desktop:desk-plan");
+		expect(firstId("> switch api")).toBe("command:app:switch-desktop:desk-api");
 	});
 
 	it("does not start the list on a row Enter cannot run", () => {

@@ -35,6 +35,18 @@ function terminalShortcut(
 	return shortcut("terminal", command, ...keys);
 }
 
+/** ⌘1…⌘9 pick a Space by its place in the tab strip (DesktopBar). */
+const SWITCH_DESKTOP_MODIFIERS = ["⌘"] as const;
+const SWITCH_DESKTOP_POSITIONS = 9;
+
+/** The keys that switch to the Space at a 1-based tab-strip position, in the
+ * Shortcuts page's notation: ⌘3 for the third tab. Undefined past the range. */
+export function switchDesktopKeys(position: number): readonly string[] | undefined {
+	if (!Number.isInteger(position)) return undefined;
+	if (position < 1 || position > SWITCH_DESKTOP_POSITIONS) return undefined;
+	return [...SWITCH_DESKTOP_MODIFIERS, String(position)];
+}
+
 const SHORTCUT_DEFINITIONS = Object.freeze({
 	"native-search": appShortcut("common.unifiedSearch", ["⌘", "P"]),
 	"quick-dispatch": appShortcut("agents.quickDispatch.command", ["⌘", "N"]),
@@ -47,9 +59,9 @@ const SHORTCUT_DEFINITIONS = Object.freeze({
 	"new-desktop": appShortcut("common.newDesktop", ["⌘", "⇧", "T"]),
 	"switch-desktop": appShortcut(
 		"settings.shortcuts.cmd.switchDesktop",
-		["⌘", "1"],
+		[...SWITCH_DESKTOP_MODIFIERS, "1"],
 		["…"],
-		["⌘", "9"],
+		[...SWITCH_DESKTOP_MODIFIERS, String(SWITCH_DESKTOP_POSITIONS)],
 	),
 	"focus-pane-previous": appShortcut(
 		"settings.shortcuts.cmd.focusPanePrevious",

@@ -7,7 +7,7 @@ import { balancePaneSizes } from "@/lib/workspace/pane/paneBalance";
 import { commitExplicitDockviewMutation } from "@/lib/workspace/dock/explicitDockviewCommit";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
 import { focusPanelContent, navigateToPanel } from "@/lib/workspace/dock/panelFocusHandoff";
-import { orderDesktopTabs } from "@/lib/workspace/desktop/desktopTabOrder";
+import { desktopStripTabs } from "@/lib/workspace/desktop/desktopTabOrder";
 import {
 	openSplitLauncherPanel,
 	paneSplitTargetForPanel,
@@ -84,8 +84,8 @@ function focusPaneDirection(
 		) {
 			return false;
 		}
-		const spaces = orderDesktopTabs(
-			state.spaces.filter((space) => space.kind !== "popout"),
+		const spaces = desktopStripTabs(
+			state.spaces,
 			state.uiPrefs?.tabOrder ?? DEFAULT_UI_PREFS.tabOrder,
 			state.spaceVisits,
 		);

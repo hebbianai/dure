@@ -3,7 +3,9 @@
 
 import type {
 	AppCommandContext,
-	RunnableAppCommandId,
+	AppCommandRequest,
+	PlainAppCommandId,
+	SpaceCommandId,
 } from "@/lib/commands/appCommands";
 import { hasNextUp, goToNextUp } from "@/lib/agents/nextUpNavigation";
 import { requestQuickDispatch } from "@/lib/agents/quickDispatch/quickDispatchActivation";
@@ -13,10 +15,13 @@ import { openTokenInspectorPanel } from "@/lib/design/tokenInspectorPane";
 import { requestFeedback } from "@/lib/feedback/feedbackActivation";
 import { openOnboardingPanel } from "@/lib/onboarding/onboardingEntry";
 import { openSettingsPage } from "@/lib/settings/settingsBus";
+import { DEFAULT_UI_PREFS } from "@/lib/settings/uiPrefs";
 import { useWindowSidebarStore } from "@/lib/sidebar/windowSidebarStore";
 import { DEFAULT_TERMINAL_FONT_SIZE } from "@/lib/terminal/renderer/terminalFont";
 import { openInheritedTerminalPanel } from "@/lib/workspace/dock";
 import { getDockview } from "@/lib/workspace/dock/dockRegistry";
+import { requestNewDesktop } from "@/lib/workspace/desktop/newDesktopActivation";
+import { desktopStripTabs } from "@/lib/workspace/desktop/desktopTabOrder";
 import { openBrowserPanelOnDesktop } from "@/lib/workspace/dock/openBrowserPanel";
 import { openMobileSimulatorPanelOnDesktop } from "@/lib/workspace/dock/openMobileSimulatorPanel";
 import { resolveEffectiveInterfaceMode } from "@/lib/workspace/pane/interfaceMode";
@@ -34,6 +39,12 @@ import { useStore } from "@/store";
 export function readAppCommandContext(): AppCommandContext {
 	const state = useStore.getState();
 	return {
+		spaces: desktopStripTabs(
+			state.spaces,
+			state.uiPrefs?.tabOrder ?? DEFAULT_UI_PREFS.tabOrder,
+			state.spaceVisits,
+		).map(({ id, name }) => ({ id, name })),
+		activeSpaceId: state.activeSpaceId,
 		hasActivePane: Boolean(getDockview(state.activeSpaceId)?.activePanel),
 		canBalancePanes: canBalanceActiveSpacePanes(),
 		canUndoPaneMove: canUndoActivePaneMove(),
@@ -52,12 +63,21 @@ function changeTerminalFontSize(size: number | ((current: number) => number)) {
 	useStore.getState().setTerminalFontSize(size);
 }
 
-const RUNNERS: Record<RunnableAppCommandId, () => void> = {
+/** What ⌘n does with the Space it picked. The Space can have closed while the
+ * palette was closing; then there is nothing to switch to. */
+function switchToSpace(spaceId: string) {
+	const state = useStore.getState();
+	if (state.spaces.some((space) => space.id === spaceId)) {
+		state.setActiveSpace(spaceId);
+	}
+}
+
+const RUNNERS: Record<PlainAppCommandId, () => void> = {
 	"quick-dispatch": () => requestQuickDispatch(),
 	"toggle-sidebar": () => useWindowSidebarStore.getState().toggle(),
 	"open-settings": () => openSettingsPage(),
 	"close-pane": () => closeActivePane(),
-	"new-desktop": () => useStore.getState().addSpace(),
+	"new-desktop": () => requestNewDesktop(),
 	"focus-pane-previous": () => runPaneShortcutAction("focus-pane-previous"),
 	"focus-pane-next": () => runPaneShortcutAction("focus-pane-next"),
 	"go-to-next-up": () => goToNextUp(),
@@ -84,6 +104,11 @@ const RUNNERS: Record<RunnableAppCommandId, () => void> = {
 	"open-token-inspector": () => openTokenInspectorPanel(activeSpaceId()),
 };
 
-export function runAppCommand(id: RunnableAppCommandId): void {
-	RUNNERS[id]();
+const SPACE_RUNNERS: Record<SpaceCommandId, (spaceId: string) => void> = {
+	"switch-desktop": switchToSpace,
+};
+
+export function runAppCommand(request: AppCommandRequest): void {
+	if ("spaceId" in request) SPACE_RUNNERS[request.command](request.spaceId);
+	else RUNNERS[request.command]();
 }

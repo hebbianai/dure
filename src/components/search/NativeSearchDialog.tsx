@@ -54,7 +54,10 @@ import {
 	readAppCommandContext,
 	runAppCommand,
 } from "@/lib/commands/appCommandRunner";
-import type { RunnableAppCommandId } from "@/lib/commands/appCommands";
+import type {
+	AppCommandContext,
+	AppCommandRequest,
+} from "@/lib/commands/appCommands";
 import { chordToLabels, shortcutChord } from "@/lib/settings/shortcutBindings";
 import { runWorkspaceCommand } from "@/lib/workspace/workspaceCommand";
 import { showToast } from "@/lib/toast";
@@ -111,7 +114,9 @@ function snapshotLivePanels(): NativeSearchPanelSnapshot[] {
 }
 
 /** Nothing applies while closed; the facts are read when the palette opens. */
-const NO_APP_COMMAND_CONTEXT = {
+const NO_APP_COMMAND_CONTEXT: AppCommandContext = {
+	spaces: [],
+	activeSpaceId: "",
 	hasActivePane: false,
 	canBalancePanes: false,
 	canUndoPaneMove: false,
@@ -166,7 +171,7 @@ export function NativeSearchDialog({
 	// the palette; focus moves and other dialogs would race its focus scope.
 	// Rather than guess at a delay, the command waits for onCloseAutoFocus below,
 	// Radix's own signal that the close animation and unmount have finished.
-	const pendingAppCommand = useRef<RunnableAppCommandId | null>(null);
+	const pendingAppCommand = useRef<AppCommandRequest | null>(null);
 
 	useEffect(() => {
 		if (!request) return;
@@ -312,7 +317,7 @@ export function NativeSearchDialog({
 			showToast(t("common.copiedToClipboard"));
 			return;
 		}
-		pendingAppCommand.current = action.command;
+		pendingAppCommand.current = action;
 	}, []);
 
 	const moveSelection = (delta: number) => {

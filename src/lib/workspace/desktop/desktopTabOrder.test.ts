@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allowsManualReorder,
+  desktopStripTabs,
   orderDesktopTabs,
   recordDesktopVisit,
 } from "@/lib/workspace/desktop/desktopTabOrder";
@@ -40,6 +41,23 @@ describe("orderDesktopTabs", () => {
   it("기록에만 있고 목록에 없는 id는 무시한다", () => {
     const out = orderDesktopTabs(spaces, "recent", { zzz: 999, c: 1 });
     expect(out.map((d) => d.id)).toEqual(["c", "a", "b"]);
+  });
+});
+
+describe("desktopStripTabs", () => {
+  it("leaves popout Spaces out and orders the rest like the strip", () => {
+    const withPopout = [
+      { id: "a" },
+      { id: "pop", kind: "popout" as const },
+      { id: "b" },
+    ];
+    expect(
+      desktopStripTabs(withPopout, "recent", { b: 2, pop: 9 }).map((d) => d.id),
+    ).toEqual(["b", "a"]);
+    expect(desktopStripTabs(withPopout, "manual", {}).map((d) => d.id)).toEqual([
+      "a",
+      "b",
+    ]);
   });
 });
 

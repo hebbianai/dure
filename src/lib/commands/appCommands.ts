@@ -8,10 +8,20 @@
 import {
 	allShortcuts,
 	type ShortcutId,
+	switchDesktopKeys,
 } from "@/lib/settings/settingsShortcuts";
+
+/** A Space a command can act on, as the tab strip names it. */
+interface AppCommandSpace {
+	readonly id: string;
+	readonly name: string;
+}
 
 /** What the app looks like at the moment the palette opens. */
 export interface AppCommandContext {
+	/** The Spaces the tab strip shows, in its order (desktopStripTabs). */
+	readonly spaces: readonly AppCommandSpace[];
+	readonly activeSpaceId: string;
 	readonly hasActivePane: boolean;
 	readonly canBalancePanes: boolean;
 	readonly canUndoPaneMove: boolean;
@@ -27,8 +37,7 @@ type Applies = (context: AppCommandContext) => boolean;
 const hasActivePane: Applies = (context) => context.hasActivePane;
 
 /** Why a listed command cannot be run from the palette itself.
- * - keyboard-only: it acts on a focused terminal's input, or needs a digit
- *   the palette has no way to ask for.
+ * - keyboard-only: it acts on a focused terminal's input.
  * - already-open: it opens the palette. */
 export type AppCommandUnavailable = "keyboard-only" | "already-open";
 
@@ -38,6 +47,16 @@ interface AppCommandBehavior {
 	/** Hides the command when it would have nothing to act on. */
 	readonly applies?: Applies;
 	readonly unavailable?: AppCommandUnavailable;
+	/** Acts on one Space. The palette offers it once per Space it could act
+	 * on, and the request names that Space. */
+	readonly perSpace?: AppCommandPerSpace;
+}
+
+interface AppCommandPerSpace {
+	/** Message id of one Space's row; it is given the Space's `{name}`. */
+	readonly title: string;
+	/** The keys that run it on the Space at this 1-based tab-strip position. */
+	readonly keys?: (position: number) => readonly string[] | undefined;
 }
 
 const KEYBOARD_ONLY = "keyboard-only" as const;
@@ -53,8 +72,11 @@ const SHORTCUT_COMMANDS = {
 	"close-pane": { keywords: ["tab"], applies: hasActivePane },
 	"new-desktop": { keywords: ["space", "workspace"] },
 	"switch-desktop": {
-		keywords: ["space", "workspace", "tab"],
-		unavailable: KEYBOARD_ONLY,
+		keywords: ["space", "workspace", "tab", "go"],
+		perSpace: {
+			title: "search.appCommand.switchToSpace",
+			keys: switchDesktopKeys,
+		},
 	},
 	"focus-pane-previous": { keywords: ["history", "back"], applies: hasActivePane },
 	"focus-pane-next": { keywords: ["history", "forward"], applies: hasActivePane },
@@ -140,8 +162,25 @@ type UnavailableCommandId = {
 		: never;
 }[keyof typeof SHORTCUT_COMMANDS];
 
-/** Commands the palette can run. The runner's table is keyed by this. */
-export type RunnableAppCommandId = Exclude<AppCommandId, UnavailableCommandId>;
+/** Commands the palette can run. */
+type RunnableAppCommandId = Exclude<AppCommandId, UnavailableCommandId>;
+
+export type SpaceCommandId = {
+	[Id in keyof typeof SHORTCUT_COMMANDS]: (typeof SHORTCUT_COMMANDS)[Id] extends {
+		perSpace: AppCommandPerSpace;
+	}
+		? Id
+		: never;
+}[keyof typeof SHORTCUT_COMMANDS];
+
+/** Commands the palette runs with nothing more than their id. */
+export type PlainAppCommandId = Exclude<RunnableAppCommandId, SpaceCommandId>;
+
+/** What the palette asks the runner to do: a command, plus the Space it acts
+ * on when it acts on one. The runner's tables are keyed by these ids. */
+export type AppCommandRequest =
+	| { readonly command: PlainAppCommandId }
+	| { readonly command: SpaceCommandId; readonly spaceId: string };
 
 export interface AppCommand extends AppCommandBehavior {
 	readonly id: AppCommandId;
@@ -173,4 +212,21 @@ export function appCommandApplies(
 	context: AppCommandContext,
 ): boolean {
 	return command.applies?.(context) ?? true;
+}
+
+/** A Space a Space command is offered for, with its 1-based place in the tab
+ * strip: the digit ⌘n counts by. */
+interface AppCommandSpaceTarget {
+	readonly space: AppCommandSpace;
+	readonly position: number;
+}
+
+/** Every Space in the strip but the active one. Switching to the Space
+ * already shown has nothing to act on. */
+export function appCommandSpaceTargets(
+	context: AppCommandContext,
+): AppCommandSpaceTarget[] {
+	return context.spaces.flatMap((space, index) =>
+		space.id === context.activeSpaceId ? [] : [{ space, position: index + 1 }],
+	);
 }

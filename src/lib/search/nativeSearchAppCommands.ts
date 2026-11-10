@@ -6,8 +6,10 @@ import {
 	type AppCommandContext,
 	type AppCommandUnavailable,
 	appCommandApplies,
+	appCommandSpaceTargets,
 	appCommands,
-	type RunnableAppCommandId,
+	type PlainAppCommandId,
+	type SpaceCommandId,
 } from "@/lib/commands/appCommands";
 import { t } from "@/lib/i18n";
 import type { NativeSearchItem } from "@/lib/search/nativeSearch";
@@ -16,14 +18,25 @@ import {
 	type ShortcutOverrides,
 } from "@/lib/settings/shortcutBindings";
 
+type Keys = readonly (readonly string[])[];
+
 const UNAVAILABLE_DETAIL: Record<AppCommandUnavailable, string> = {
 	"keyboard-only": "search.appCommand.keyboardOnly",
 	"already-open": "search.appCommand.alreadyOpen",
 };
 
+/** The id keeps every command findable in English under any UI language. */
+function commandKeywords(command: AppCommand): string[] {
+	return [command.id.replace(/-/g, " "), ...(command.keywords ?? [])];
+}
+
+function withKeys(keys: Keys | undefined) {
+	return keys && keys.length > 0 ? { shortcut: keys } : {};
+}
+
 function commandItem(
 	command: AppCommand,
-	keys: readonly (readonly string[])[] | undefined,
+	keys: Keys | undefined,
 ): NativeSearchItem {
 	const { unavailable } = command;
 	return {
@@ -33,13 +46,40 @@ function commandItem(
 		detail: t(
 			unavailable ? UNAVAILABLE_DETAIL[unavailable] : "search.appCommand.label",
 		),
-		// The id keeps every command findable in English under any UI language.
-		keywords: [command.id.replace(/-/g, " "), ...(command.keywords ?? [])],
-		...(keys && keys.length > 0 ? { shortcut: keys } : {}),
+		keywords: commandKeywords(command),
+		...withKeys(keys),
 		action: unavailable
 			? { type: "unavailable" }
-			: { type: "app-command", command: command.id as RunnableAppCommandId },
+			: {
+					type: "app-command",
+					command: command.id as PlainAppCommandId,
+				},
 	};
+}
+
+/** One row per Space the command can act on, each with the keys that run it
+ * on that Space: for Switch desktop, its tab's step of the ⌘1…⌘9 range. */
+function spaceCommandItems(
+	command: AppCommand,
+	perSpace: NonNullable<AppCommand["perSpace"]>,
+	context: AppCommandContext,
+): NativeSearchItem[] {
+	return appCommandSpaceTargets(context).map(({ space, position }) => {
+		const step = perSpace.keys?.(position);
+		return {
+			id: `command:app:${command.id}:${space.id}`,
+			kind: "command",
+			title: t(perSpace.title, { name: space.name }),
+			detail: t("search.appCommand.label"),
+			keywords: commandKeywords(command),
+			...withKeys(step ? [step] : undefined),
+			action: {
+				type: "app-command",
+				command: command.id as SpaceCommandId,
+				spaceId: space.id,
+			},
+		};
+	});
 }
 
 export function appCommandSearchItems(
@@ -51,10 +91,14 @@ export function appCommandSearchItems(
 	);
 	return appCommands()
 		.filter((command) => appCommandApplies(command, context))
-		.map((command) =>
-			commandItem(
-				command,
-				command.shortcutId ? keysById.get(command.shortcutId) : undefined,
-			),
+		.flatMap((command) =>
+			command.perSpace
+				? spaceCommandItems(command, command.perSpace, context)
+				: [
+						commandItem(
+							command,
+							command.shortcutId ? keysById.get(command.shortcutId) : undefined,
+						),
+					],
 		);
 }
