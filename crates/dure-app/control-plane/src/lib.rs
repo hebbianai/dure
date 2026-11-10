@@ -31,7 +31,7 @@ mod agent_runtime_transition_apply;
 mod agent_spawn_api;
 mod agent_spawn_preview;
 mod agent_spawn_worktree;
-use agent_spawn_preview::preview_agent_spawn;
+use agent_spawn_preview::{preview_agent_spawn, unattended_interaction_preference};
 #[cfg(unix)]
 mod agent_goal;
 #[cfg(unix)]

@@ -398,6 +398,12 @@ worktree is removed only when it has no uncommitted or untracked changes and eve
 commit on it is on the default branch; ignored files go with it. Otherwise it is
 kept. The branch always stays, and a wake restores a removed worktree at its path.
 
+On a host without the Dure app, such as a server or VM, a schedule occurrence
+starts on the provider's chat runtime when the provider has one there, like a
+headless `dure run`. It has no terminal Session: `dure schedule runs` names the
+`dure runs show <operation-id>` command, and `dure transcript <agent-id>` reads
+it. Idle hibernation and worktree removal apply only to terminal runs.
+
 Project-root runs share files; they provide no per-run Git isolation. Do not
 combine `--no-worktree` with `--base-commit`, `--branch` or `--setup-command`.
 This opt-in requires `schedule.worktree_project_root_v1` on the selected backend;
