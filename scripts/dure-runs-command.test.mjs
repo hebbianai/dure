@@ -4,7 +4,7 @@ import { MANAGED_REHOST_RUNNING_EXIT_CODE } from "../cli/lib/managed-rehost-name
 import { collectRunsCommand, formatRunsCommand, parseRunsOptions, runsCommandExitCode } from "../cli/lib/runs-command.mjs";
 import { AGENT_RUNTIME_PRESENTATION_CAPABILITY, agentRuntimePresentationRequest, currentRunPresentationPlan,
   presentAgentRuntime } from "../cli/lib/run-presentation.mjs";
-import { succeededNativeReceipt } from "./fixtures/agent-spawn-receipts.mjs";
+import { canonicalNativeReceipt, request as spawnRequest, succeededNativeReceipt } from "./fixtures/agent-spawn-receipts.mjs";
 
 function fixture() {
   const receipt = succeededNativeReceipt();
@@ -732,5 +732,135 @@ describe("Closed Agents", () => {
     expect(accountSwitch).toMatchObject({ ok: false, error: { code: "account_switch_source_unavailable" } });
     expect(accountSwitch.error.message).toContain("close is still in progress");
     expect(f.requestBackend.mock.calls.map((call) => call[1].operation)).not.toContain("agent_runtime.transition");
+  });
+});
+
+describe("Resume from a provider conversation ID", () => {
+  const CONVERSATION = "019a4c2e-7d3b-7f00-9c11-conversation";
+  const CONFLICT = "hmux_managed_conversation_writer_conflict";
+
+  /** Receipts the backend returns for the exact resume request the CLI sends. */
+  function conversationFixture({ apply = "succeeded", previewState = "applying", transport = "local", plannedConversation = CONVERSATION } = {}) {
+    const planned = canonicalNativeReceipt(spawnRequest({ idempotencyKey: "resume-key-1", agentName: "claude-resume",
+      providerId: "claude", worktree: { kind: "project_root" }, interactionPreference: "native_cli",
+      providerConversationRef: plannedConversation, promptDigest: null }));
+    const plan = planned.plan;
+    const launchInputs = { stage: "runtime_launch", agent_id: plan.agentId, workspace_id: plan.workspaceId,
+      session_id: plan.launch.sessionId, runtime_kind_id: plan.launch.runtime.runtimeKindId,
+      provider_id: "claude", provider_conversation_ref: plannedConversation, permission_mode: plan.request.permissionMode };
+    const worktree = { stage: "worktree", attempt: 1, inputs: { stage: "worktree", workspace_id: plan.workspaceId,
+      project_root_id: plan.authority.rootId, repository_id: plan.authority.repositoryId, policy: plan.request.worktree },
+    evidence: { stage: "worktree", workspace_id: plan.workspaceId, disposition: "adopted_existing" } };
+    const succeeded = { ...structuredClone(planned), state: "succeeded", lastSequence: 5, recovery: { kind: "none" },
+      completed: [worktree, { stage: "runtime_launch", attempt: 1, inputs: launchInputs, evidence: {
+        stage: "runtime_launch", launch_idempotency_key: `spawn-runtime:${plan.operationId}`, session: {
+          sessionId: plan.launch.sessionId, workspaceId: plan.workspaceId, providerId: "claude",
+          runnerPrincipal: "runner-principal-1", runnerInstance: "runner-instance-1", channelEpoch: "1",
+          hostInstanceId: "host-instance-1", terminalEpoch: "terminal-epoch-1" } } }] };
+    const refused = { ...structuredClone(planned), state: "retry_required", lastSequence: 4, completed: [worktree],
+      recovery: { kind: "retry_required", stage: "runtime_launch", failed_attempt: 1, error_code: CONFLICT, inputs: launchInputs } };
+    const receipts = { applying: planned, succeeded, refused };
+    const requestBackend = vi.fn(async (_profile, request) => ({ result: { schemaVersion: 1,
+      receipt: request.operation === "agent_spawn.preview" ? receipts[previewState] : receipts[apply] } }));
+    const backend = { profile: { id: "local", transport: { kind: transport } } };
+    const opts = { rest: ["resume"], conversation: CONVERSATION, provider: "claude", project: "dure",
+      name: "claude-resume", idempotencyKey: "resume-key-1" };
+    return { planned, requestBackend, backend, resolveBackend: async () => backend, opts, currentDirectory: () => "/work/dure" };
+  }
+
+  it("previews a new terminal Agent on the exact conversation without launching it", async () => {
+    const f = conversationFixture();
+    const report = await collectRunsCommand(f);
+    expect(report).toMatchObject({ ok: true, conversationResume: { state: "preview", agentId: f.planned.plan.agentId,
+      conversationId: CONVERSATION, providerId: "claude", projectId: "dure", account: "default" } });
+    expect(f.requestBackend.mock.calls.map((call) => call[1].operation)).toEqual(["agent_spawn.preview"]);
+    expect(f.requestBackend.mock.calls[0][1].body).toEqual({ schemaVersion: 1, idempotencyKey: "resume-key-1",
+      projectId: "dure", providerId: "claude", executionProfile: { kind: "provider_default" },
+      interactionPreference: "native_cli", providerConversationRef: CONVERSATION, agentName: "claude-resume",
+      worktree: { kind: "project_root" }, promptDigest: null });
+    expect(report.conversationResume.continuation.apply).toEqual(["runs", "resume", "--conversation", CONVERSATION,
+      "--provider", "claude", "--project", "dure", "--name", "claude-resume", "--account", "default",
+      "--idempotency-key", "resume-key-1", "--confirm-restart", "--backend", "local", "--json"]);
+    const text = formatRunsCommand(report);
+    expect(text).toContain("Apply: dure 'runs' 'resume' '--conversation'");
+    expect(text).toContain("never stops that session");
+    expect(runsCommandExitCode(report)).toBe(0);
+  });
+
+  it("confirmed resume applies that plan once and prints the new Agent and Session", async () => {
+    const f = conversationFixture();
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: true, conversationResume: { state: "completed", execution: "completed",
+      agentId: f.planned.plan.agentId, sessionId: f.planned.plan.launch.sessionId } });
+    expect(f.requestBackend.mock.calls.map((call) => call[1].operation)).toEqual(["agent_spawn.preview", "agent_spawn.apply"]);
+    expect(f.requestBackend.mock.calls[1][1].body).toEqual({ schemaVersion: 1, operationId: f.planned.operationId,
+      planToken: f.planned.plan.planToken, expectedLastSequence: f.planned.lastSequence, prompt: null });
+    const text = formatRunsCommand(report);
+    expect(text).toContain(`Agent: ${f.planned.plan.agentId}`);
+    expect(text).toContain(`Open: dure runs open ${f.planned.plan.agentId} --space <space-id>`);
+    expect(runsCommandExitCode(report)).toBe(0);
+  });
+
+  it("reports a replayed successful plan without launching again", async () => {
+    const f = conversationFixture({ previewState: "succeeded" });
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report.conversationResume.state).toBe("completed");
+    expect(f.requestBackend).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a conversation another session holds and keeps the same Apply as the retry", async () => {
+    const f = conversationFixture({ apply: "refused" });
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report).toMatchObject({ ok: false, error: { code: CONFLICT },
+      conversationResume: { state: "refused", execution: "refused" } });
+    expect(report.conversationResume.error.message).toContain("left running");
+    const text = formatRunsCommand(report);
+    expect(text).toContain("Retry: dure 'runs' 'resume' '--conversation'");
+    expect(text).toContain("'--idempotency-key' 'resume-key-1'");
+    expect(runsCommandExitCode(report)).toBe(2);
+  });
+
+  it("never applies a plan the backend did not bind to the requested conversation", async () => {
+    const f = conversationFixture({ plannedConversation: "another-conversation" });
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report.ok).toBe(false);
+    expect(f.requestBackend.mock.calls.map((call) => call[1].operation)).toEqual(["agent_spawn.preview"]);
+  });
+
+  it("selects the project from the current directory on a local backend only", async () => {
+    const local = conversationFixture();
+    const { project: _project, ...withoutProject } = local.opts;
+    await collectRunsCommand({ ...local, opts: withoutProject });
+    expect(local.requestBackend.mock.calls[0][1].body).toMatchObject({ projectPath: "/work/dure" });
+    expect(local.requestBackend.mock.calls[0][1].body.projectId).toBeUndefined();
+    const remote = conversationFixture({ transport: "ssh" });
+    const refused = await collectRunsCommand({ ...remote, opts: withoutProject });
+    expect(refused).toMatchObject({ ok: false, error: { code: "runs_request_invalid" } });
+    expect(remote.requestBackend).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { provider: undefined }, { rest: ["resume", "worker"] }, { rest: ["show"] }, { cwd: "/work" },
+    { path: "/work", project: "dure" }, { space: "desk" }, { conversation: "bad conversation" },
+  ])("refuses an incomplete or mixed request before contacting the backend: %j", async (change) => {
+    const f = conversationFixture();
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, ...change } });
+    expect(report.ok).toBe(false);
+    expect(report.error.code).toBe("runs_request_invalid");
+    expect(f.requestBackend).not.toHaveBeenCalled();
+  });
+
+  it("keeps resume of an existing Agent in its own workspace", () => {
+    expect(parseRunsOptions(["resume", "--conversation", CONVERSATION, "--provider", "claude", "--project", "dure"]))
+      .toMatchObject({ conversation: CONVERSATION, provider: "claude", project: "dure", rest: ["resume"] });
+    expect(() => parseRunsOptions(["resume", "worker", "--project", "dure"]))
+      .toThrow(expect.objectContaining({ code: "conversation_project_move_unsupported" }));
+  });
+
+  it("refuses conversation options on other Run actions", async () => {
+    const f = fixture();
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, provider: "claude" } });
+    expect(report).toMatchObject({ ok: false, error: { code: "runs_request_invalid" } });
+    expect(f.requestBackend).not.toHaveBeenCalled();
   });
 });
