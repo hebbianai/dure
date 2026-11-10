@@ -1742,6 +1742,124 @@ fn terminal_surface_routes_touch_wheel_to_a_full_screen_pty() {
 
 #[cfg(feature = "terminal-state-stream")]
 #[test]
+fn an_active_terminal_find_follows_output_written_after_it() {
+    use hmux_runtime_contract::TERMINAL_HISTORY_FIND_PROTOCOL_VERSION;
+    use terminal_state_protocol::{
+        FindInHistory, FindStatus, FindStep, ViewportFind, ViewportIntent, viewport_intent,
+    };
+
+    fn find_answer(
+        surface: &mut TerminalSurfaceAttachment,
+        expectation: &str,
+        accept: impl Fn(&ViewportFind) -> bool,
+    ) -> TerminalSurfaceFrame {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if surface
+                .current_frame()
+                .viewport()
+                .find
+                .as_ref()
+                .is_some_and(&accept)
+            {
+                return surface.current_frame().clone();
+            }
+            match surface.read_event_before(deadline) {
+                Ok(TerminalSurfaceEvent::Control(body))
+                    if matches!(*body, FrameBody::Exit(_) | FrameBody::Error(_)) =>
+                {
+                    panic!("terminal surface ended before {expectation}: {body:?}")
+                }
+                Ok(_) => {}
+                Err(error) => panic!("no frame carried {expectation}: {error}"),
+            }
+        }
+    }
+
+    let state = tempfile::tempdir().unwrap();
+    let mut fixture = IdleRetirementFixture::create(
+        &state,
+        "standalone-live-find",
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf 'needle one\\r\\n'; i=0; while [ $i -lt 60 ]; do printf 'filler-%03d\\r\\n' \"$i\"; i=$((i+1)); done; printf 'FIND_READY'; read go; printf 'needle two\\r\\nneedle three\\r\\nFIND_DONE'; sleep 60".into(),
+        ],
+    );
+    wait_for_replay_snapshot(&fixture.session, b"FIND_READY");
+    let connection = fixture
+        .session
+        .connect_with_options(TerminalSurfaceAttachment::connection_options(
+            TerminalSurfaceAccess::Writer,
+            None,
+        ))
+        .unwrap();
+    let mut surface = TerminalSurfaceAttachment::from_connection(connection).unwrap();
+
+    let find_minor = TERMINAL_HISTORY_FIND_PROTOCOL_VERSION.envelope_minor;
+    let frame = surface.current_frame();
+    let record = TerminalStateRecord {
+        schema_minor: u32::from(find_minor),
+        terminal_epoch: frame.terminal_epoch().into(),
+        through_output_seq: frame.through_output_seq(),
+        state_revision: frame.state_revision(),
+        body: Some(terminal_state_record::Body::ViewportIntent(
+            ViewportIntent {
+                observed_projection_revision: frame.viewport().projection_revision,
+                intent_seq: 1,
+                intent: Some(viewport_intent::Intent::FindInHistory(FindInHistory {
+                    query: "needle".into(),
+                    case_sensitive: false,
+                    regex: false,
+                    step: FindStep::Restart as i32,
+                })),
+            },
+        )),
+    };
+    surface
+        .upstream_handles()
+        .send_envelope(&encode_record_for_minor(find_minor, 1, &record).unwrap())
+        .unwrap();
+    let revealed = find_answer(&mut surface, "the first find answer", |find| {
+        find.find_intent_seq == 1
+    });
+    let summary = revealed.viewport().find.as_ref().unwrap();
+    assert_eq!(summary.status, FindStatus::Matched as i32);
+    assert_eq!((summary.match_count, summary.current_match), (1, 1));
+    assert!(
+        !revealed.viewport().follow_tail,
+        "the match scrolled out of the tail viewport and was revealed"
+    );
+    assert!(revealed.text().starts_with("needle one"));
+
+    // The shell prints two more matches only after this input, so the count
+    // can only grow if the Host refreshes the find as output arrives.
+    surface
+        .send_text_confirmed("go\r".into(), Duration::from_secs(3))
+        .unwrap();
+    let followed = find_answer(&mut surface, "the refreshed find answer", |find| {
+        find.match_count == 3
+    });
+    let summary = followed.viewport().find.as_ref().unwrap();
+    assert_eq!(summary.find_intent_seq, 1, "no new find intent was sent");
+    assert_eq!(
+        summary.current_match, 3,
+        "the revealed match stays selected"
+    );
+    assert!(summary.match_count_complete);
+    assert!(!followed.viewport().follow_tail);
+    assert_eq!(
+        followed.text(),
+        revealed.text(),
+        "a refresh does not move the viewport"
+    );
+
+    surface.detach().unwrap();
+    fixture.terminate_and_verify();
+}
+
+#[cfg(feature = "terminal-state-stream")]
+#[test]
 fn terminal_surface_attaches_to_a_complete_viewport_larger_than_one_envelope() {
     use terminal_state_protocol::{MAX_PAYLOAD_BYTES, ProtocolError};
 
