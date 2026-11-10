@@ -8,8 +8,9 @@ description: Coordinate with other Dure agents through the `dure` CLI — see wh
 For website inspection and interaction in Dure, load the Browser guide with
 `dure skills get dure-browser`. It owns existing-tab discovery and shared
 control. For coordination, sessions and pane commands, read the guide below.
-For local Markdown or HTML documents, the guide covers `dure client pane open file`
-using the GUI file viewer and its existing HTML isolation. It also covers
+To show the person a page, report or image you produced, open the local file with
+`dure client pane open file`. It renders in Dure without a sign-in, unlike a
+hosted link tied to one account. The guide covers it. It also covers
 `dispatch.deadline.set` / `dispatch.deadline.get` for durable coordinator attention.
 
 Use the `dure` executable selected for this session for both the guide and later

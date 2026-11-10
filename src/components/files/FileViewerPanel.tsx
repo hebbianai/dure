@@ -6,18 +6,19 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
-import { Eye, ExternalLink, FileWarning, Pencil, Save, Undo2 } from "lucide-react";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { Eye, FileWarning, Pencil, Save, Undo2 } from "lucide-react";
 import type { FileContent } from "@/lib/ipc/files";
 import { t } from "@/lib/i18n";
 import { documentIsDirty, isTextFile, canEditFile } from "@/lib/files/fileDocument";
 import { useFileDocument } from "@/components/files/useFileDocument";
 import { languageLabel } from "@/lib/editor/codeLang";
-import { showToast } from "@/lib/toast";
 import { workspacePerformance } from "@/lib/workspace/performance/workspacePerformance";
 import { LazyCodeEditor } from "@/components/editor/LazyCodeEditor";
+import { HtmlFileBody } from "@/components/files/HtmlFileBody";
 import { ImageViewerBody } from "@/components/files/ImageViewerBody";
 import { MarkdownFileImage } from "@/components/files/MarkdownFileImage";
+import { OpenExternallyButton } from "@/components/files/OpenExternallyButton";
+import { hasRenderedView, isHtmlFileName } from "@/lib/files/htmlPreview";
 import { useFileViewerPanelState } from "@/components/files/useFileViewerPanelState";
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { Button } from "@/components/ui/button";
@@ -40,12 +41,14 @@ export function FileViewerPanel(props: IDockviewPanelProps<FileViewerParams>) {
   const { autoSaveDelayMs, autoSaveEnabled, minimap } = useFileViewerPanelState();
   const { path: activePath, file, error, candidates, loading, saving, draft, restoredDraft, document } = useFileDocument(props.params, autoSaveEnabled, autoSaveDelayMs);
   const dirty = documentIsDirty({ file, draft });
-  const [mdSource, setMdSource] = useState(false);
+  // Markdown and HTML open rendered; this toggles them to their source.
+  const [sourceMode, setSourceMode] = useState(false);
   const [cursor, setCursor] = useState<{ line: number; col: number }>({ line: 1, col: 1 });
-  useEffect(() => setMdSource(false), [document]);
+  const renderedView = file !== null && hasRenderedView(file);
+  useEffect(() => setSourceMode(false), [document]);
   useEffect(() => {
-    if (restoredDraft && file?.kind === "markdown") setMdSource(true);
-  }, [restoredDraft, file?.kind]);
+    if (restoredDraft && renderedView) setSourceMode(true);
+  }, [restoredDraft, renderedView]);
   // pane-open 지연 계측: 마운트 → 파일 로드 + 에디터(lazy CodeMirror) 준비까지.
   const paneId = props.api.id;
   useEffect(() => {
@@ -59,15 +62,16 @@ export function FileViewerPanel(props: IDockviewPanelProps<FileViewerParams>) {
   }, [file, dirty, props.api]);
 
   const editable = canEditFile(file);
-  const showEditor = editable && (file.kind === "text" || mdSource);
+  const showEditor = editable && (!renderedView || sourceMode);
   const body = draft ?? file?.content ?? "";
+  const kindLabel = file && (showEditor || isHtmlFileName(file.name)) ? languageLabel(file.name) : file?.kind;
 
   return (
     <div className="flex h-full flex-col text-foreground">
       <div className="flex h-7 shrink-0 items-center gap-2 border-b border-border/60 px-2">
         {file && (
           <span className="text-[10px] text-muted-foreground">
-            {showEditor ? languageLabel(file.name) : file.kind} · {fmtSize(file.size)}
+            {kindLabel} · {fmtSize(file.size)}
             {file.truncated && ` · ${t("panels.fileViewer.truncated")}`}
           </span>
         )}
@@ -110,12 +114,12 @@ export function FileViewerPanel(props: IDockviewPanelProps<FileViewerParams>) {
               </Button>
             </>
           )}
-          {file?.kind === "markdown" && editable && (
+          {renderedView && editable && (
             <IconButton
-              title={mdSource ? t("common.preview") : t("panels.fileViewer.editSource")}
-              onClick={() => setMdSource((v) => !v)}
+              title={sourceMode ? t("common.preview") : t("panels.fileViewer.editSource")}
+              onClick={() => setSourceMode((v) => !v)}
             >
-              {mdSource ? <Eye /> : <Pencil />}
+              {sourceMode ? <Eye /> : <Pencil />}
             </IconButton>
           )}
           <RefreshButton
@@ -171,7 +175,7 @@ export function FileViewerPanel(props: IDockviewPanelProps<FileViewerParams>) {
           </Suspense>
         ) : (
           <div className="h-full overflow-auto">
-            <FileBody paneId={paneId} file={file} target={props.params} />
+            <FileBody paneId={paneId} file={file} text={body} target={props.params} />
           </div>
         )}
       </div>
@@ -214,27 +218,6 @@ function CandidatePicker({
   );
 }
 
-/** 로컬 파일을 OS 기본 앱으로 연다 — 뷰어가 못 여는/잘린 매체의 탈출구. */
-function OpenExternallyButton({ path, paneId }: { path: string; paneId?: string }) {
-  return (
-    <button
-      type="button"
-      className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-      onClick={() => {
-        void openPath(path).catch(() =>
-          showToast(
-            t("common.openFailedPathMissing"),
-            paneId ? { paneId } : undefined,
-          ),
-        );
-      }}
-    >
-      <ExternalLink className="size-3" />
-      {t("panels.fileViewer.openInDefaultApp")}
-    </button>
-  );
-}
-
 /** Rendered Markdown whose relative images load from beside the file. */
 function MarkdownFileBody({ content, document }: { content: string; document: FileTarget }) {
   const { path, source, hostId, sessionId } = document;
@@ -263,10 +246,13 @@ function MarkdownFileBody({ content, document }: { content: string; document: Fi
 
 function FileBody({
   file,
+  text,
   target,
   paneId,
 }: {
   file: FileContent;
+  /** The document text shown rendered: the unsaved draft when there is one. */
+  text: string;
   /** Where the pane reads the file from; `file.path` is the path actually read. */
   target: FileTarget;
   /** The pane showing the file, so its reports land there. */
@@ -274,7 +260,10 @@ function FileBody({
 }) {
   const local = target.source === "local";
   if (file.kind === "markdown") {
-    return <MarkdownFileBody content={file.content} document={{ ...target, path: file.path }} />;
+    return <MarkdownFileBody content={text} document={{ ...target, path: file.path }} />;
+  }
+  if (file.kind === "text" && !file.truncated && isHtmlFileName(file.name)) {
+    return <HtmlFileBody content={text} document={{ ...target, path: file.path }} name={file.name} paneId={paneId} />;
   }
   if (file.kind === "image" && file.mime) {
     return (

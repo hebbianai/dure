@@ -1,7 +1,8 @@
 // Markdown documents reference images beside them (`![](shots/a.png)`). The
 // webview resolves such a reference against its own origin, not the file, so
 // the file viewer resolves it here and reads the asset through the same local
-// or SSH route as the document.
+// or SSH route as the document. HTML previews resolve `<img>` references the
+// same way.
 
 const WINDOWS_ROOT = /^(?:[a-zA-Z]:[\\/]?|[\\/]{2}[^\\/]+[\\/][^\\/]+[\\/]?|[\\/])/;
 const POSIX_ROOT = /^(?:\/+|~(?=\/|$))/;

@@ -535,21 +535,38 @@ dure client host add --hostname example.com --user ec2-user --identity-file ~/.s
 Open a local report or document with the same file viewer as the GUI:
 
 ```sh
+dure client pane open file ./report.html --json
 dure client pane open file ./report.md --space-id SPACE --json
-dure client pane open file "/path/to/report.html" --space Review --json
+dure client pane open file "/path/to/chart.png" --space Review --json
 ```
 
-Use `client observe` to discover the exact Space ID or a unique name. Opening
-selects that Space in its owning window without OS foreground focus. Relative
-paths resolve against the CLI's working directory; run this on the connected
-app host. This operation does not use `DURE_BACKEND_PROFILE`, copy remote files,
-or accept `--host`, `--backend` or URLs (including `file://`). An SSH file remains
-an SSH file in the GUI; an identical local path does not reuse its pane.
+To show the person a page, report, chart or image you produced, write it to a
+local file and open it this way. It renders inside Dure next to your pane and
+needs no sign-in, so it works whichever account the person's browser uses. A
+hosted link can open only for the account that published it.
 
-Markdown uses the rendered viewer. Ordinary HTML opens as source, while
-`design/mockups/<cluster>/<Name>/<state>.html` uses the existing static preview
-whose sandbox blocks scripts. Browser's URL restrictions still apply.
+Without `--space` or `--space-id`, the file opens in the Space of the pane that
+runs the command. Outside a Dure pane, or when that pane is open in several
+Spaces, use `client observe` to find the exact Space ID or a unique name.
+Opening selects that Space in its owning window without OS foreground focus.
+Relative paths resolve against the CLI's working directory; run this on the
+connected app host. This operation does not use `DURE_BACKEND_PROFILE`, copy
+remote files, or accept `--host`, `--backend` or URLs (including `file://`). An
+SSH file remains an SSH file in the GUI; an identical local path does not reuse
+its pane.
+
+Markdown and HTML open rendered, and the pane's toolbar switches them to their
+editable source. An HTML preview does not run scripts, submit forms or follow
+links to other pages: `#section` links scroll the page, and other links show
+their destination on hover. When the page has scripts, the preview says so and,
+for local files, offers to open the page in the default app. Put everything a
+page needs (styles, tables, inline SVG charts) in the one file; only `<img>`
+references beside it are read from disk.
+`design/mockups/<cluster>/<Name>/<state>.html` opens the mockup preview with the
+app's design tokens. Browser's URL restrictions still apply.
 The GUI opener reuses or restores the document pane and preserves its draft.
+A reused pane without unsaved edits reloads the file, so after you change a
+page, open it again to show the new version.
 The receipt's `pane.panelId`, `pane.spaceId`, `pane.file` and `mounted: true`
 confirm placement, not successful file loading. Missing/unreadable files show
 the same error or candidate picker as a GUI open. After an uncertain response,

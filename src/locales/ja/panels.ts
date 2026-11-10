@@ -156,6 +156,7 @@ export const panels: Record<string, string> = {
 	"panels.fileViewer.deletedOnRemote": "ファイルはリモートサーバーから削除されました",
 	"panels.fileViewer.editSource": "ソースを編集",
 	"panels.fileViewer.fileGone": "ファイルが見つかりません — 出力後に削除・移動された可能性があります",
+	"panels.fileViewer.htmlScriptsBlocked": "このプレビューではスクリプトを実行しないため、操作できる部分が動かない場合があります",
 	"panels.fileViewer.mediaPreviewCap": "プレビュー上限(25MB)を超えているため、全体を再生できない場合があります",
 	"panels.fileViewer.openInDefaultApp": "既定のアプリで開く",
 	"panels.fileViewer.pdfNotDisplayable": "この PDF を表示できません。",

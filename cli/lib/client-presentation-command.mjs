@@ -31,7 +31,7 @@ Usage:
   dure client host add --hostname HOST --user USER [--port PORT]
                        [--identity-file PATH] [--name NAME] [--json]
   dure client pane open mobile (--space ID_OR_NAME | --space-id ID) [--json]
-  dure client pane open file PATH (--space ID_OR_NAME | --space-id ID) [--json]
+  dure client pane open file PATH [--space ID_OR_NAME | --space-id ID] [--json]
   dure client pane create [--space ID_OR_NAME | --space-id ID]
                           [--cwd PATH] [--host local|SSH_HOST_ID] [--json]
   dure client pane split <reference-session-id> [--reference-panel-id ID]
@@ -70,9 +70,14 @@ Registration creates no session. The first terminal open installs Hmux if it is 
 Open mobile reuses the mobile simulator pane in the explicitly selected Space.
 Use its returned panelId with pane state to discover device, profile, preview and report actions.
 Open file selects the Space and uses the GUI file opener, reusing an existing document pane.
+A reused pane without unsaved edits reloads the file, so open it again after changing it.
+Without --space it uses the invoking pane's Space; outside a Dure pane, name the Space.
 PATH is local to the CLI and connected app host; relative paths resolve from CLI cwd.
 URLs, --host and --backend are not supported; no SSH file is copied or opened as local.
-Markdown renders in the viewer; ordinary HTML opens as source. Design mockup HTML keeps its script-blocking sandbox.
+Markdown and HTML render in the viewer, which can switch to the source. HTML previews do not run
+scripts or follow links to other pages; relative images load from beside the file.
+Design mockup HTML opens the mockup preview.
+Use it to show a person a page, report or image you produced: it needs no sign-in or hosted link.
 The receipt confirms pane placement, not file loading; missing/unreadable files show the GUI's read error.
 Pane create uses the invoking pane's Space when known, otherwise the app's active Space.
 Local cwd defaults to the CLI working directory; SSH cwd defaults to the remote home.
@@ -272,7 +277,7 @@ function parsePaneOpenCommand(tail) {
   if (target !== "mobile" && target !== "file") throw invalidRequest("Supported tools: mobile, file PATH.");
   if (target === "mobile" && targets.length !== 1) throw invalidRequest("open mobile takes no PATH.");
   const path = target === "file" ? localFilePanePath(targets[1]) : undefined;
-  if (options.space === undefined && options.spaceId === undefined) throw invalidRequest("pane open requires --space or --space-id.");
+  if (target === "mobile" && options.space === undefined && options.spaceId === undefined) throw invalidRequest("pane open mobile requires --space or --space-id.");
   const selection = locationSelection(options);
   return { domain: "pane", action: "open", path: "/pane/open", ...selection,
     body: { tool: target, ...(path === undefined ? {} : { path }), ...(selection.body.spaceId ? { spaceId: selection.body.spaceId } : {}) } };
@@ -592,6 +597,9 @@ export async function runClientPresentationCommand(
       command.body[field] = resolve(command.body[field] ?? process.cwd());
     }
     if (command.body.tool === "file") {
+      if (descriptor && command.body.spaceId === undefined) {
+        throw invalidRequest("pane open file requires --space or --space-id when the invoking pane's Space is unknown.");
+      }
       command.body.path = localFilePanePath(resolve(command.body.path), { absolute: true });
     }
   }

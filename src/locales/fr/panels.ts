@@ -157,6 +157,7 @@ export const panels: Record<string, string> = {
 	"panels.fileViewer.deletedOnRemote": "Le fichier a été supprimé du serveur distant",
 	"panels.fileViewer.editSource": "Modifier la source",
 	"panels.fileViewer.fileGone": "Le fichier n'existe plus — il a pu être supprimé ou déplacé après affichage",
+	"panels.fileViewer.htmlScriptsBlocked": "Cet aperçu n'exécute pas les scripts — les éléments interactifs peuvent ne pas fonctionner",
 	"panels.fileViewer.mediaPreviewCap": "Dépasse la limite d'aperçu (25 Mo) — la lecture peut être incomplète",
 	"panels.fileViewer.openInDefaultApp": "Ouvrir dans l'app par défaut",
 	"panels.fileViewer.pdfNotDisplayable": "Ce PDF ne peut pas être affiché.",

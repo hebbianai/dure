@@ -333,3 +333,53 @@ it("reads relative Markdown images of a remote file over the same SSH host", asy
   expect(mocks.sshReadFile).toHaveBeenCalledWith({ id: undefined, connectOpts: { host: "example.com", user: "dev" }, path: "/srv/media/logo.png" });
   expect(readFile).not.toHaveBeenCalled();
 });
+
+describe("HTML pages", () => {
+  const frame = () => screen.getByTitle("report.html") as HTMLIFrameElement;
+
+  it("opens a local page rendered with scripts blocked and toggles to its editable source", async () => {
+    const page = '<!doctype html><html><body><h1>Results</h1><img src="charts/a.png" alt="Chart"><script>run()</script></body></html>';
+    vi.mocked(readFile).mockImplementation(async (path) =>
+      path === "/work/report.html"
+        ? textFile(path, page)
+        : { path, name: "a.png", kind: "image", content: "iVBORw0K", size: 6, mime: "image/png", truncated: false },
+    );
+    render(<FileViewerPanel {...panelProps({ path: "/work/report.html", source: "local" })} />);
+    await waitFor(() => expect(frame().getAttribute("srcdoc")).toContain("<h1>Results</h1>"));
+    expect(frame().getAttribute("sandbox")).toBe("allow-same-origin");
+    expect(frame().getAttribute("srcdoc")).toContain('src="data:image/png;base64,iVBORw0K"');
+    expect(readFile).toHaveBeenCalledWith("/work/charts/a.png");
+    expect(screen.queryByRole("textbox", { name: "code editor" })).toBeNull();
+    expect(screen.getByText(t("panels.fileViewer.htmlScriptsBlocked"))).toBeTruthy();
+    expect(screen.getByRole("button", { name: t("panels.fileViewer.openInDefaultApp") })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: t("panels.fileViewer.editSource") }));
+    expect(editor().value).toBe(page);
+    fireEvent.change(editor(), { target: { value: "<h1>Edited</h1>" } });
+    fireEvent.click(screen.getByRole("button", { name: t("common.preview") }));
+    await waitFor(() => expect(frame().getAttribute("srcdoc")).toContain("<h1>Edited</h1>"));
+    expect(screen.queryByText(t("panels.fileViewer.htmlScriptsBlocked"))).toBeNull();
+  });
+
+  it("restores unsaved HTML edits in source mode", async () => {
+    vi.mocked(readFile).mockResolvedValue(textFile("/work/report.html", "<p>Disk</p>"));
+    useStore.setState({ fileDrafts: { "local::/work/report.html": "<p>Restored</p>" } });
+    render(<FileViewerPanel {...panelProps({ path: "/work/report.html", source: "local" })} />);
+    await screen.findByRole("textbox", { name: "code editor" });
+    expect(editor().value).toBe("<p>Restored</p>");
+  });
+
+  it("reads a remote page's images over the same SSH host and offers no local opener", async () => {
+    mocks.sshReadFile.mockImplementation(async ({ path }: { path: string }) =>
+      path === "/srv/out/report.html"
+        ? textFile(path, '<img src="../media/logo.png"><button onclick="go()">Go</button>')
+        : { path, name: "logo.png", kind: "image", content: "AAAA", size: 3, mime: "image/png", truncated: false },
+    );
+    render(<FileViewerPanel {...panelProps({ path: "/srv/out/report.html", source: "ssh", hostId: "ssh-1" })} />);
+    await waitFor(() => expect(frame().getAttribute("srcdoc")).toContain('src="data:image/png;base64,AAAA"'));
+    expect(mocks.sshReadFile).toHaveBeenCalledWith({ id: undefined, connectOpts: { host: "example.com", user: "dev" }, path: "/srv/media/logo.png" });
+    expect(screen.getByText(t("panels.fileViewer.htmlScriptsBlocked"))).toBeTruthy();
+    expect(screen.queryByRole("button", { name: t("panels.fileViewer.openInDefaultApp") })).toBeNull();
+    expect(readFile).not.toHaveBeenCalled();
+  });
+});

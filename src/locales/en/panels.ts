@@ -156,6 +156,7 @@ export const panelsEnglishTranslations: Record<string, string> = {
 	"panels.fileViewer.deletedOnRemote": "The file was deleted from the remote server",
 	"panels.fileViewer.editSource": "Edit source",
 	"panels.fileViewer.fileGone": "The file is gone — it may have been deleted or moved after it was printed",
+	"panels.fileViewer.htmlScriptsBlocked": "Scripts don't run in this preview, so interactive parts may not work",
 	"panels.fileViewer.mediaPreviewCap": "Larger than the 25 MB preview cap — playback may be incomplete",
 	"panels.fileViewer.openInDefaultApp": "Open in default app",
 	"panels.fileViewer.pdfNotDisplayable": "This PDF cannot be displayed.",

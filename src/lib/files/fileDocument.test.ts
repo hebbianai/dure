@@ -120,3 +120,17 @@ it("does not retry unchanged failed autosave content just because the pane close
   expect(io.write).toHaveBeenCalledTimes(1);
   expect(drafts.get("local::/repo/file.txt")).toBe("retain after failure");
 });
+
+it("reloads a clean document when its file is opened again and keeps unsaved edits", async () => {
+  const { io, document } = setup();
+  await document.load();
+  vi.mocked(io.read).mockResolvedValueOnce({ ...file, content: "rewritten", size: 9 });
+  document.reopened();
+  await vi.waitFor(() => expect(document.getSnapshot().file?.content).toBe("rewritten"));
+  expect(io.read).toHaveBeenCalledTimes(2);
+  document.change("my edit");
+  document.reopened();
+  await Promise.resolve();
+  expect(io.read).toHaveBeenCalledTimes(2);
+  expect(document.getSnapshot()).toMatchObject({ draft: "my edit", file: { content: "rewritten" } });
+});

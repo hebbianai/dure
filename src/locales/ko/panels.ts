@@ -156,6 +156,7 @@ export const panels: Record<string, string> = {
 	"panels.fileViewer.deletedOnRemote": "파일이 원격 서버에서 삭제되었습니다",
 	"panels.fileViewer.editSource": "소스 편집",
 	"panels.fileViewer.fileGone": "파일이 지금은 없습니다 — 화면에 찍힌 뒤 지워졌거나 옮겨졌을 수 있어요",
+	"panels.fileViewer.htmlScriptsBlocked": "이 미리보기에서는 스크립트를 실행하지 않아 상호작용 요소가 동작하지 않을 수 있습니다",
 	"panels.fileViewer.mediaPreviewCap": "미리보기 상한(25MB)을 넘어 전체를 재생하지 못할 수 있습니다",
 	"panels.fileViewer.openInDefaultApp": "기본 앱으로 열기",
 	"panels.fileViewer.pdfNotDisplayable": "이 PDF를 표시할 수 없습니다.",
