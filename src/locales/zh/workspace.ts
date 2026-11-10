@@ -7,6 +7,7 @@ export const workspace: Record<string, string> = {
 	"workspace.refresh.identityUnavailable": "暂时无法获取对话 ID",
 	"workspace.refresh.success": "已在新 Host 中恢复同一对话",
 	"workspace.refresh.failed": "刷新失败：{error}",
+	"workspace.refresh.retryable": "刷新暂时无法完成（{code}）。对话没有任何更改 — 请再次刷新。",
 	"workspace.quickCommands.invalidText": "请输入非空文本，最多 16,000 个字符，且不含终端控制字符。",
 	"workspace.quickCommands.moveUp": "上移 {label}",
 	"workspace.quickCommands.moveDown": "下移 {label}",

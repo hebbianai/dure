@@ -10,6 +10,7 @@ export const workspaceEnglishTranslations = {
 	"workspace.refresh.identityUnavailable": "Conversation ID is not available yet",
 	"workspace.refresh.success": "Resumed the same conversation in a new Host",
 	"workspace.refresh.failed": "Refresh failed: {error}",
+	"workspace.refresh.retryable": "Refresh could not finish yet ({code}). The conversation was not changed — try Refresh again.",
 	"workspace.quickCommands.invalidText": "Enter nonempty text up to 16,000 characters, without terminal control characters.",
 	"workspace.quickCommands.moveUp": "Move {label} up",
 	"workspace.quickCommands.moveDown": "Move {label} down",

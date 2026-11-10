@@ -7,6 +7,7 @@ export const workspace: Record<string, string> = {
 	"workspace.refresh.identityUnavailable": "아직 대화 ID를 확인할 수 없습니다",
 	"workspace.refresh.success": "새 Host에서 같은 대화를 재개했습니다",
 	"workspace.refresh.failed": "새로고침 실패: {error}",
+	"workspace.refresh.retryable": "아직 새로고침을 마치지 못했어요 ({code}). 대화는 바뀌지 않았어요 — 새로고침을 다시 시도해 주세요.",
 	"workspace.quickCommands.invalidText": "터미널 제어 문자를 제외한 16,000자 이내의 텍스트를 입력하세요.",
 	"workspace.quickCommands.moveUp": "{label} 위로 이동",
 	"workspace.quickCommands.moveDown": "{label} 아래로 이동",

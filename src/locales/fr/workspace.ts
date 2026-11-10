@@ -7,6 +7,7 @@ export const workspace: Record<string, string> = {
 	"workspace.refresh.identityUnavailable": "L’identifiant de conversation n’est pas encore disponible",
 	"workspace.refresh.success": "La même conversation a repris dans un nouveau Host",
 	"workspace.refresh.failed": "Échec de l’actualisation : {error}",
+	"workspace.refresh.retryable": "L’actualisation n’a pas encore pu aboutir ({code}). La conversation n’a pas été modifiée — relancez Actualiser.",
 	"workspace.quickCommands.invalidText": "Saisissez un texte non vide de 16 000 caractères maximum, sans caractères de contrôle du terminal.",
 	"workspace.quickCommands.moveUp": "Monter {label}",
 	"workspace.quickCommands.moveDown": "Descendre {label}",
