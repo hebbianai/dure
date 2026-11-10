@@ -5,12 +5,10 @@ async fn saved_slack_ingress_starts_only_after_canonical_authority_and_uses_back
     let (root, mut state, _, _) = fixture(Vec::new()).await;
     make_fixture_mutation_authority(&mut state);
     let cli = root.path().join("dure.mjs");
-    fs::write(
+    crate::fixture_executable::write_fixture_executable(
         &cli,
         "#!/bin/sh\nprintf '%s\\n' '{\"event\":\"slack.connected\"}'\ncat > /dev/null\n",
-    )
-    .unwrap();
-    fs::set_permissions(&cli, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let state = Arc::new(state);
     let connected = request_over_test_connection(Arc::clone(&state), "slack.connector", "slack.connector.v1",
         json!({ "schemaVersion": 1, "kind": "connect", "config": { "schemaVersion": 1, "teamId": "T1", "channels": [] } })).await;

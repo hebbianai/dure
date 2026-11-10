@@ -68,17 +68,15 @@ fn runtime_fixture(
     let executable = root.join("hmux-runtime-fixture");
     let calls = root.join("runtime-calls.txt");
     let requests = root.join("advance-requests.bin");
-    fs::write(
+    crate::fixture_executable::write_fixture_executable(
         &executable,
-        format!(
+        &format!(
             "#!/bin/sh\nprintf '%s\\n' \"$2\" >> '{}'\ncase \"$2\" in\n  {MANAGED_CREATE_ADVANCE_BROKER_SUBCOMMAND}) cat >> '{}'; cat '{}' ;;\n  *) exit 64 ;;\nesac\n",
             calls.display(),
             requests.display(),
             response_path.display(),
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     RuntimeFixture {
         executable,
         calls,

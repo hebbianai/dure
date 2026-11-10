@@ -72,6 +72,8 @@ mod codex_structured_connection;
 #[cfg(unix)]
 mod codex_timeline_bridge;
 mod dispatch_deadlines;
+#[cfg(all(test, unix))]
+mod fixture_executable;
 mod hmux_session_inspection;
 mod hub_run_record;
 mod interaction_wake;
