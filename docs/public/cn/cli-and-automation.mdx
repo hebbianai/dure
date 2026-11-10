@@ -68,7 +68,7 @@ dure schedule show daily-review
 dure schedule runs daily-review
 ```
 
-创建后会启用指定时区工作日 09:00 的后续运行。只想保存而不启用重复执行时，添加 `--disabled`。调度运行使用独立 Git worktree。由调度启动的代理在确认空闲 30 分钟后进入休眠，对话会保留，可以再次唤醒。代理停止后，仅当没有未提交或未跟踪的更改，且所有提交都已在默认分支上时，才会移除其 worktree，否则保留。用返回的运行键调用 `dure schedule inspect` 可读取保留的报告。在装有 Dure 应用的机器上，调度运行是终端会话。在只有 Dure CLI 的主机（例如服务器或 VM）上，如果提供商在那里有聊天运行时，它会像无界面任务一样在聊天运行时上启动，`dure schedule runs` 会显示对应的 `dure runs show` 命令。空闲休眠和 worktree 移除只适用于终端会话。
+创建后会启用指定时区工作日 09:00 的后续运行。只想保存而不启用重复执行时，添加 `--disabled`。调度运行使用独立 Git worktree。由调度启动的代理在确认空闲 30 分钟后进入休眠，对话会保留，可以再次唤醒。代理停止后，仅当没有未提交或未跟踪的更改，且所有提交都已在默认分支上时，才会移除其 worktree，否则保留。用返回的运行键调用 `dure schedule inspect` 可读取保留的报告。在装有 Dure 应用的机器上，调度运行是终端会话。在只有 Dure CLI 的主机（例如服务器或 VM）上，如果提供商在那里有聊天运行时，它会像无界面任务一样在聊天运行时上启动，`dure schedule runs` 会显示对应的 `dure runs show` 命令。空闲休眠和 worktree 移除只适用于终端会话。如果提供商未在该主机上登录，运行会显示 `Start blocked`；请在该主机上用提供商的 CLI 登录，然后再次运行。
 
 之后若要暂停且不丢失历史，请使用 `dure schedule show` 显示的修订号运行 `dure schedule set daily-review --disabled --expected-revision N`；`--enabled` 可恢复。同一命令也可修改 `--cron`、`--timezone`、`--name` 或 `--prompt`。
 
