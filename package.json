@@ -165,6 +165,7 @@
     "test:hmux-qwen": "node scripts/run-hmux-tests.mjs -- node scripts/qa/hmux-qwen-conformance-smoke.mjs",
     "test:hmux-openclaude": "node scripts/run-hmux-tests.mjs -- node scripts/qa/hmux-openclaude-activity-smoke.mjs",
     "test:hmux-opencode-activity": "node scripts/run-hmux-tests.mjs -- node scripts/qa/hmux-opencode-activity-smoke.mjs",
+    "test:hmux-kilo-activity": "node scripts/run-hmux-tests.mjs -- node scripts/qa/hmux-opencode-activity-smoke.mjs kilocode",
     "test:qwen-hooks": "node --test scripts/qa/managed-qwen-hooks.test.mjs",
     "test:gemini-hooks": "node --test scripts/qa/managed-gemini-hooks.test.mjs",
     "test:openclaude-hooks": "node --test scripts/qa/managed-openclaude-hooks.test.mjs",
