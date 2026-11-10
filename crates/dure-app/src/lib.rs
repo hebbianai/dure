@@ -54,6 +54,7 @@ mod registry;
 mod runtime_adapter_registry;
 mod schedule;
 mod session_checkout;
+mod work_claim;
 mod workflow;
 
 pub use agent_bootstrap::{
@@ -344,6 +345,7 @@ pub use session_checkout::{
     SessionCheckoutBindingV1, SessionCheckoutIdentityV1, SessionCheckoutOwnerV1,
     SessionCheckoutRecordV1,
 };
+pub use work_claim::*;
 pub use workflow::{
     DELEGATE_ONCE_SCHEMA_VERSION_V1, DelegateOnceCompletionRequestV1, DelegateOncePreparedV1,
     DelegateOncePromptActivityRequestV1, DelegateOncePromptClaimRequestV1,

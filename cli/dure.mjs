@@ -4030,6 +4030,11 @@ Usage:
                                       Install, inspect, update or remove the shared orchestration client
                                       Identifies the current agent automatically; use --agent <name> outside a pane
   dure whoami [--json]              Print this agent's latest display name/identity
+  dure claim [HOLDER] [--issue N] [--branch NAME] [--paths PATTERN...] [--check] [--json]
+                                      Declare advisory work and report overlapping claims (Beta)
+                                      --release drops a claim; see dure claim --help
+  dure claims [--repo PATH | --all] [--json]
+                                      List who claimed which issue, branch and paths
   dure resume --all [--dry-run] [--include-exited] [--backend ID] [--json]
                                       Restore every agent whose Host is gone, each into its own conversation
   dure hmux attach --name <name> [--space-id <id>]
@@ -4527,6 +4532,16 @@ async function main() {
     const { runGoalCommand } = await import("./lib/goal-command.mjs");
     try {
       process.exitCode = await runGoalCommand(cmd === "help" ? ["--help"] : rest, { resolveBackend: backendProfileQueryContext }) ? 0 : 2;
+    } catch (error) {
+      process.stderr.write(`${error.message}\n`);
+      process.exitCode = 2;
+    }
+    return;
+  }
+  if (cmd === "claim" || cmd === "claims" || (cmd === "help" && (rest[0] === "claim" || rest[0] === "claims"))) {
+    const { runClaimCommand } = await import("./lib/claim-command.mjs");
+    try {
+      process.exitCode = await runClaimCommand(cmd === "help" ? rest[0] : cmd, cmd === "help" ? ["--help"] : rest, { resolveBackend: backendProfileQueryContext });
     } catch (error) {
       process.stderr.write(`${error.message}\n`);
       process.exitCode = 2;

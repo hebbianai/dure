@@ -653,7 +653,7 @@ async fn schema_52_upgrade_preserves_legacy_move_and_fences_old_journal_readers(
             schema.min_reader_version,
             schema.min_writer_version
         ),
-        (53, 53, 53)
+        (54, 53, 53)
     );
     // These are the exact persisted admission checks used by a schema52 host.
     assert!(schema.min_reader_version > 52 && schema.min_writer_version > 52);

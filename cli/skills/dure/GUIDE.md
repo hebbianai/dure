@@ -46,6 +46,33 @@ Session with its workspace and owning backend. `inspect --json` exposes
 `conversationId` and `runtime.conversationIdentity` when observed by the Host;
 it does not infer the provider's conversation log path.
 
+## Claim what you are working on
+
+Before editing shared files, declare your scope so other agents and bots can
+see overlaps before they start. Claims are advisory and lock nothing.
+
+```sh
+# Inside a Dure session: the holder is this Session, and the branch and
+# worktree default to the current checkout. Quote patterns.
+dure claim --issue 245 --paths 'cli/lib/claim*' 'crates/dure-app/**'
+dure claim --check --paths 'src/lib/**'      # report overlaps, record nothing
+dure claims                                  # this repository's claims
+dure claims --all --json                     # every repository on the backend
+dure claim --release                         # when the work has merged
+```
+
+A claim belongs to one Git repository, shared by all of its worktrees, and
+replaces the holder's previous claim there. Outside a Session, name the holder:
+`dure claim engine-2 --issue 2 --paths 'Sources/Engine/**'`; only what you pass
+is recorded. Paths are relative to the current directory inside the repository;
+a folder covers everything below it, and `*`, `?` and `**` are wildcards.
+`dure claim` lists other holders' claims with the same issue, branch or
+worktree, or with paths that can name the same file, and exits 3 when there is
+any overlap (0 none, 2 not claimed). The overlap check errs toward reporting:
+a character class or `**` counts as a possible match. A claim stays until its
+holder or anyone else runs `dure claim --release HOLDER`; it does not expire
+with its Session.
+
 ## Stop and clean up an agent
 
 ```sh
