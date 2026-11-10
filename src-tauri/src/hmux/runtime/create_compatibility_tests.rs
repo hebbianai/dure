@@ -25,6 +25,43 @@ pub(super) fn runtime_script(path: &Path, build_id: &str, capabilities: &[&str])
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
+fn cli_script(path: &Path, build_id: &str) {
+    let receipt = serde_json::json!({
+        "schemaVersion": 2,
+        "buildInfo": {
+            "buildId": build_id, "source": "hmux_cli",
+            "protocol": {"minimum": "1.0", "maximum": "1.0"},
+        },
+        "capabilities": [],
+    });
+    fs::write(
+        path,
+        format!(
+            "#!/bin/sh\n[ \"$1 $2\" = 'capabilities --json' ] || exit 47\nprintf '%s' '{}'\n",
+            receipt
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+/// The app's two sidecars, named as they sit in the bundle.
+fn bundled_pair(directory: &Path, runtime_build: &str, cli_build: &str) -> PathBuf {
+    fs::create_dir_all(directory).unwrap();
+    let runtime = directory.join(runtime_file_name());
+    runtime_script(&runtime, runtime_build, APP_CAPABILITIES);
+    cli_script(&directory.join(cli_file_name()), cli_build);
+    runtime
+}
+
+/// The command links `install-hmux.sh` leaves in `~/.local/bin`.
+fn command_links(root: &Path, directory: &Path) {
+    fs::create_dir_all(directory).unwrap();
+    for name in [cli_file_name(), runtime_file_name()] {
+        symlink(root.join("current/bin").join(&name), directory.join(&name)).unwrap();
+    }
+}
+
 fn install(root: &Path, build_id: &str, capabilities: &[&str]) -> PathBuf {
     super::tests::installed_build(root, build_id, true);
     let runtime = root
@@ -80,6 +117,53 @@ fn bundled_activation_upgrades_a_protocol_compatible_but_create_incompatible_cur
         .join("versions/old-build/bin")
         .join(cli_file_name())
         .is_file());
+}
+
+/// A Mac that runs this app and is also provisioned over SSH by another
+/// desktop. The SSH install owns `~/.local/bin/hmux`; the other desktop's
+/// catalog, attach and gateway calls and a paired phone all run that command.
+#[test]
+fn bundled_activation_keeps_the_hmux_command_resolving() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("install");
+    install(&root, "ssh-installed", &[]);
+    let commands = temp.path().join("home/.local/bin");
+    command_links(&root, &commands);
+    let app = temp.path().join("Dure.app/Contents/MacOS");
+    let source = bundled_pair(&app, "local-app", "local-app");
+
+    let selected = activate_bundled_runtime_at(&root, &source, BUILD_INFO_TIMEOUT).unwrap();
+
+    assert_eq!(selected.build_id, "local-app");
+    assert_eq!(resolve_current_at(&root).unwrap().build_id, "local-app");
+    assert_eq!(
+        fs::read(commands.join(cli_file_name())).expect("hmux still resolves"),
+        fs::read(app.join(cli_file_name())).unwrap()
+    );
+    assert_eq!(
+        fs::read(commands.join(runtime_file_name())).unwrap(),
+        fs::read(&source).unwrap()
+    );
+    let metadata = read_install_metadata_at(&root.join("versions/local-app"), "local-app").unwrap();
+    assert_eq!(metadata.activation_source.as_deref(), Some("local_bundled"));
+    assert_eq!(metadata.cli_available, Some(true));
+    // Still the app's own copy, so pairing keeps choosing the bundled CLI.
+    assert_eq!(resolve_independent_cli_at(&root).unwrap(), None);
+}
+
+#[test]
+fn a_bundled_cli_from_another_build_is_not_published() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("install");
+    install(&root, "ssh-installed", &[]);
+    let source = bundled_pair(&temp.path().join("app"), "local-app", "stale-cli");
+
+    activate_bundled_runtime_at(&root, &source, BUILD_INFO_TIMEOUT).unwrap();
+
+    assert_eq!(resolve_current_at(&root).unwrap().build_id, "local-app");
+    assert_eq!(version_cli_at(&root, "local-app").unwrap(), None);
+    let metadata = read_install_metadata_at(&root.join("versions/local-app"), "local-app").unwrap();
+    assert_eq!(metadata.cli_available, Some(false));
 }
 
 #[test]
