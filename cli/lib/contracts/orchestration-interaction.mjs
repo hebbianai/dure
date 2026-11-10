@@ -1,5 +1,5 @@
 import { completionRequestSchema } from "./orchestration-completion.mjs";
-import { identity, object, validateOrchestrationRequest } from "./orchestration-request-schema.mjs";
+import { identity, object, revision, validateOrchestrationRequest } from "./orchestration-request-schema.mjs";
 
 // Wire shape of agent_orchestration::OpenInteractionRequest (schemaVersion 1).
 const count = { type: "integer", minimum: 0 };
@@ -73,5 +73,49 @@ export function validateInteractionOpenRequest(body) {
   validateOrchestrationRequest(body, interactionOpenRequestSchema, {
     method: "interaction.open", tool: "orchestration_interaction_open",
     subject: "interaction.open", renamedFields,
+  });
+}
+
+// Wire shape of agent_orchestration::AnswerDecisionRequest (schemaVersion 1).
+// The answerer is the Decision's audience, which is the coordinator grant.
+export const answerDecisionRequestSchema = object({
+  schemaVersion: { type: "integer", const: 1 },
+  idempotencyKey: completionRequestSchema.properties.idempotencyKey,
+  interactionId: { ...identity, description: "Copy the Decision's common.id." },
+  target: { ...completionRequestSchema.properties.target, description: "Copy the Decision's Dispatch context.target verbatim." },
+  expectedRevision: { ...revision, description: "Copy the Decision's common.revision; do not guess or increment it." },
+  expectedDispatchRevision: {
+    ...revision,
+    description: "Copy context.dispatchRevision of the Dispatch the Decision blocks; do not guess or increment it.",
+  },
+  answeredBy: { ...identity, description: "Copy context.coordinatorGrant.participant, the Decision's audience." },
+  replyCapability: { ...identity, description: "Copy context.coordinatorReplyCapability; keep it private." },
+  answer: {
+    type: "object",
+    description: "Text: { kind: \"text\", value }. Select: { kind: \"select\", optionIds } with ids from the Decision's response.options.",
+    oneOf: [
+      tagged("text", { value: { type: "string" } }),
+      tagged("select", { optionIds: { type: "array", items: identity } }),
+    ],
+  },
+  answeredAtMs: { type: "integer", minimum: 0, description: "Current Unix time in milliseconds, fixed across retries." },
+});
+
+const answerRenamedFields = {
+  body: {
+    decisionId: "interactionId", id: "interactionId",
+    revision: "expectedRevision", dispatchRevision: "expectedDispatchRevision",
+    participant: "answeredBy", author: "answeredBy",
+    interactionCapability: "replyCapability", writeCapability: "replyCapability",
+    coordinatorReplyCapability: "replyCapability",
+    kind: "answer.kind", value: "answer.value", optionIds: "answer.optionIds",
+  },
+  "body.answer": { optionId: "optionIds", options: "optionIds", text: "value" },
+};
+
+export function validateAnswerDecisionRequest(body) {
+  validateOrchestrationRequest(body, answerDecisionRequestSchema, {
+    method: "interaction.answer", tool: "orchestration_decision_answer",
+    subject: "interaction.answer", renamedFields: answerRenamedFields,
   });
 }

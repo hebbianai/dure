@@ -165,6 +165,21 @@ function coordinatorUpdateBody(context, stem) {
   };
 }
 
+function decisionAnswerBody(context, stem) {
+  return {
+    schemaVersion: 1,
+    idempotencyKey: stem,
+    interactionId: `${stem}-decision`,
+    target: context.target,
+    expectedRevision: 1,
+    expectedDispatchRevision: context.dispatchRevision,
+    answeredBy: context.coordinatorGrant.participant,
+    replyCapability: context.coordinatorReplyCapability,
+    answer: { kind: "select", optionIds: ["unify-lifecycle"] },
+    answeredAtMs: 1_500,
+  };
+}
+
 function mcpToolCall(name, body, nextWorkCandidates) {
   return {
     jsonrpc: "2.0",
@@ -2583,6 +2598,168 @@ with open(lock_path, "a+") as lock:
       field: "body.expectedDispatchRevision",
       disposition: "terminal",
       message: expect.stringContaining("interaction.open: body.expectedDispatchRevision is required."),
+    });
+  });
+
+  it("publishes the v1 interaction.answer schema and accepts the skill's next-work answer unchanged", async () => {
+    const { environment, context, receiptPath } = currentMcpContextFixture(fixture());
+    const catalogue = await handleMcpRequest({ jsonrpc: "2.0", method: "tools/list" });
+    const tool = catalogue.tools.find((entry) => entry.name === "orchestration_decision_answer");
+    expect(tool.inputSchema.additionalProperties).toBe(false);
+    const schema = tool.inputSchema.properties.body;
+    expect(schema.required).toEqual([
+      "schemaVersion", "idempotencyKey", "interactionId", "target", "expectedRevision",
+      "expectedDispatchRevision", "answeredBy", "replyCapability", "answer", "answeredAtMs",
+    ]);
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties.target.properties.authority.required).toEqual(["workspaceId"]);
+    expect(schema.properties.answeredBy.description).toContain("context.coordinatorGrant.participant");
+    expect(schema.properties.replyCapability.description).toContain("context.coordinatorReplyCapability");
+    expect(schema.properties.expectedRevision.description).toContain("common.revision");
+    expect(schema.properties.expectedDispatchRevision.description).toContain("context.dispatchRevision");
+    const [text, select] = schema.properties.answer.oneOf;
+    expect([text, select].map((variant) => variant.properties.kind.const)).toEqual(["text", "select"]);
+    expect(text.required).toEqual(["kind", "value"]);
+    expect(select.required).toEqual(["kind", "optionIds"]);
+
+    // The successor Dispatch is blocked by the Decision, so its revision moved.
+    const blocked = { ...context, dispatchState: "blocked", dispatchRevision: 2 };
+    const expected = decisionAnswerBody(blocked, "answer-from-skill");
+    const nextWork = {
+      state: "opened",
+      interactionId: expected.interactionId,
+      interaction: {
+        kind: "decision",
+        common: {
+          id: expected.interactionId, target: blocked.target, author: blocked.participant,
+          audience: { grants: [blocked.coordinatorGrant] }, title: "Choose what to work on next",
+          descriptionMarkdown: "Choose.", revision: 1, createdAtMs: 1_400,
+        },
+        response: {
+          kind: "select", minSelections: 1, maxSelections: 1,
+          options: [{ id: "unify-lifecycle", label: "Unify" }, { id: "stop", label: "Stop here" }],
+        },
+        replyCapability: blocked.coordinatorReplyCapability,
+        state: { state: "open" },
+      },
+      context: blocked,
+      candidateIds: ["unify-lifecycle"],
+    };
+    const skill = fs.readFileSync(new URL("../orchestration/integration/SKILL.md", import.meta.url), "utf8");
+    const example = skill.split("## Next-work Decisions")[1].match(/```js\n([\s\S]*?)\n```/)[1];
+    const args = runInNewContext(`${example}\nargumentsForAnswer`, {
+      nextWork, answerKey: "answer-from-skill", selectedOptionId: "unify-lifecycle",
+      Date: { now: () => 1_500 },
+    });
+    expect(JSON.parse(JSON.stringify(args.body))).toEqual(expected);
+    const request = vi.fn(async (_endpoint, operation) => {
+      expect(operation.method).toBe("interaction.answer");
+      expect(operation.body).toBe(args.body);
+      return { receipt: { dispatchState: "active", idempotent: false } };
+    });
+    const result = await handleMcpRequest(
+      { jsonrpc: "2.0", method: "tools/call", params: { name: tool.name, arguments: args } },
+      environment, { receiptPath, request },
+    );
+    expect(result.structuredContent.receipt.dispatchState).toBe("active");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("names each misplaced field of a flat interaction.answer body before contacting the backend", async () => {
+    const { environment, context, receiptPath } = currentMcpContextFixture(fixture());
+    const body = {
+      schemaVersion: 1, idempotencyKey: "flat-answer", decisionId: "next-work-decision",
+      target: context.target, participant: context.participant,
+      interactionCapability: context.interactionCapability, dispatchRevision: 2,
+      optionIds: ["unify-lifecycle"], answeredAtMs: 1_500,
+    };
+    const request = vi.fn();
+    const error = await handleMcpRequest(mcpToolCall("orchestration_decision_answer", body),
+      environment, { receiptPath, request }).catch((rejection) => rejection);
+    expect(error).toMatchObject({
+      code: "orchestration_request_invalid", disposition: "terminal", field: "body.interactionId",
+    });
+    for (const detail of [
+      "interaction.answer: body.interactionId is required.",
+      "body.expectedRevision is required.",
+      "body.expectedDispatchRevision is required.",
+      "body.answeredBy is required.",
+      "body.replyCapability is required.",
+      "body.answer is required.",
+      "body uses decisionId; the interaction.answer field is interactionId.",
+      "body uses participant; the interaction.answer field is answeredBy.",
+      "body uses interactionCapability; the interaction.answer field is replyCapability.",
+      "body uses dispatchRevision; the interaction.answer field is expectedDispatchRevision.",
+      "body uses optionIds; the interaction.answer field is answer.optionIds.",
+      "Correct the body using orchestration_decision_answer's input schema",
+    ]) expect(error.message).toContain(detail);
+    expect(error.message).not.toContain(context.interactionCapability);
+    expect(error.message).not.toContain(context.participant);
+    expect(error.message).not.toContain("next-work-decision");
+    expect(() => parseOrchestrationInvoke(["interaction.answer", JSON.stringify(body)]))
+      .toThrow("body.answer is required");
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("reports interaction.answer variant and nested field errors by path", () => {
+    const { context } = currentMcpContextFixture(fixture());
+    const draft = (mutate) => {
+      const body = structuredClone(decisionAnswerBody(context, "nested-answer"));
+      mutate(body);
+      return body;
+    };
+    const answer = (body) => () => createOrchestrationRequest({ method: "interaction.answer", body });
+    expect(answer(draft((body) => { delete body.expectedRevision; })))
+      .toThrow("body.expectedRevision is required");
+    expect(answer(draft((body) => { body.expectedRevision = 0; })))
+      .toThrow("body.expectedRevision must be at least 1");
+    expect(answer(draft((body) => { delete body.target.dispatchId; })))
+      .toThrow("body.target.dispatchId is required");
+    expect(answer(draft((body) => { body.answer = { optionIds: ["a"] }; })))
+      .toThrow('body.answer.kind is required ("text" or "select")');
+    expect(answer(draft((body) => { body.answer.kind = "choice"; })))
+      .toThrow('body.answer.kind must be "text" or "select"');
+    expect(answer(draft((body) => { body.answer.optionIds = "unify-lifecycle"; })))
+      .toThrow("body.answer.optionIds must be array");
+    expect(answer(draft((body) => { body.answer.optionIds = [""]; })))
+      .toThrow("body.answer.optionIds[0] must not be empty");
+    expect(answer(draft((body) => { body.answer = { kind: "select", optionId: "a" }; })))
+      .toThrow("body.answer uses optionId; the interaction.answer field is optionIds");
+    expect(answer(draft((body) => { body.answer = { kind: "text", value: 1 }; })))
+      .toThrow("body.answer.value must be string");
+    expect(answer(draft((body) => { body.answer = { kind: "text", value: "a", optionIds: ["a"] }; })))
+      .toThrow("body.answer contains an unknown field (allowed: kind, value)");
+
+    const select = draft(() => {});
+    expect(createOrchestrationRequest({ method: "interaction.answer", body: select }).body).toBe(select);
+    const text = draft((body) => { body.answer = { kind: "text", value: "Ship the local option." }; });
+    expect(createOrchestrationRequest({ method: "interaction.answer", body: text }).body).toBe(text);
+    text.target.authority.tenantRef = null;
+    expect(createOrchestrationRequest({ method: "interaction.answer", body: text }).body).toBe(text);
+  });
+
+  it("prints the interaction.answer field path from the real orchestration CLI without contacting a backend", () => {
+    const root = fixture();
+    const { context } = currentMcpContextFixture(root);
+    const body = decisionAnswerBody(context, "cli-answer");
+    delete body.expectedRevision;
+    const result = spawnSync(process.execPath, [
+      CLI, "orchestration", "invoke", "interaction.answer", JSON.stringify(body),
+      "--backend", "qa-unconfigured", "--json",
+    ], {
+      cwd: root, encoding: "utf8",
+      env: {
+        PATH: process.env.PATH, HOME: path.join(root, "home"),
+        DURE_HOME: path.join(root, "dure-home"), HMUX_DISCOVERY_ROOT: path.join(root, "hmux-discovery"),
+      },
+    });
+    expect(result.status).toBe(2);
+    // No backend profile exists, so reaching selection would fail differently.
+    expect(JSON.parse(result.stderr).error).toEqual({
+      code: "orchestration_request_invalid",
+      field: "body.expectedRevision",
+      disposition: "terminal",
+      message: expect.stringContaining("interaction.answer: body.expectedRevision is required."),
     });
   });
 
