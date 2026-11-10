@@ -119,8 +119,10 @@ async fn parent_message(state: &ServiceState, context: &Value, interaction_id: &
             "schemaVersion": 1,
             "authority": context["target"]["authority"],
             "interactionId": interaction_id,
-            "participant": context["coordinatorGrant"]["participant"],
-            "readCapability": context["coordinatorGrant"]["deliveryCapability"],
+            // Read as the parent's inbox does.
+            "participant": context["participant"],
+            "readCapability": context["deliveryCapability"],
+            "endpointFence": context["endpointFence"],
         }),
     )
     .await["receipt"]
