@@ -3290,6 +3290,7 @@ async function cmdIntegration(sub, opts) {
       cliScriptPath: CLI_SCRIPT_PATH,
       channel: APP_CHANNEL,
       homeDirectory: homedir(),
+      dureHome: DURE_ROOT,
       global: Boolean(opts.global),
       provider: opts.provider,
       installRoot: opts.installRoot,
