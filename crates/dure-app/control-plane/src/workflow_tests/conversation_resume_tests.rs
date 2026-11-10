@@ -227,6 +227,9 @@ async fn conversation_resume_uses_real_hmux() {
     let (_, holder) = preview_and_apply(&state, "resume-holder").await;
     assert_eq!(holder["receipt"]["state"], "succeeded", "{holder}");
     let (holder_generation, holder_session) = generation(&hmux.requests()[0]);
+    // A created session's provider process is live before its script runs, so
+    // contend only once the holder's provider has really started.
+    started_providers(&arguments, 1).await;
 
     let (contender_preview, refused) = preview_and_apply(&state, "resume-contender").await;
     assert_eq!(
@@ -255,24 +258,27 @@ async fn conversation_resume_uses_real_hmux() {
     );
     let launches = hmux.requests();
     let (contender_generation, contender_session) = generation(launches.last().unwrap());
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while fs::read_to_string(&arguments)
-            .unwrap_or_default()
-            .lines()
-            .count()
-            < 2
-        {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("the resumed provider must actually start");
     // Both started providers were handed the exact conversation to resume.
-    let started = fs::read_to_string(&arguments).unwrap();
+    let started = started_providers(&arguments, 2).await;
     assert!(
         started.lines().all(|line| line.contains(CONVERSATION)),
         "{started}"
     );
     hmux.stop(&contender_generation);
     real_hmux::RealHmux::assert_exited(&contender_session).await;
+}
+
+/// Wait until `count` fixture providers have recorded their arguments.
+async fn started_providers(arguments: &Path, count: usize) -> String {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let started = fs::read_to_string(arguments).unwrap_or_default();
+            if started.lines().count() >= count {
+                return started;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("provider {count} must actually start"))
 }
