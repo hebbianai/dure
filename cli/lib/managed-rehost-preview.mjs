@@ -3,6 +3,7 @@ import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { agentDisplayName, loadSessionClientProjection, matchingAgents } from "./client-registry.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
+import { collectManagedRehostStatus, observeManagedRehostSource } from "./managed-rehost-status.mjs";
 import {
   agentRuntimeRestartableClosedSource,
   agentRuntimeSourceUnavailableReason,
@@ -36,8 +37,43 @@ export function isManagedRehostNameRequest(opts) {
     );
 }
 
+/** Wait on one exact operation Hmux holds, then publish it once; never admits another operation. */
+export const managedRehostFinishCommand = ({ agentId, operationId, sourceSessionId, sourceWorkspaceId, backendId }) => [
+  "hmux", "rehost", "finish", agentId, "--from-session", sourceSessionId, "--workspace", sourceWorkspaceId,
+  "--operation-id", operationId, "--confirm-restart", "--backend", backendId, "--json"];
+
+/**
+ * The rehost Hmux already holds for this exact source. Hmux refuses a second
+ * operation for a source, and the Agent's binding names that source until the
+ * held operation is published, so recovery continues it instead of proposing
+ * another. Undefined when Hmux holds none or gave no exact answer; its own
+ * admission fence still refuses a second operation then.
+ */
+async function heldManagedRehost({ sessionId, workspaceId, command, run }) {
+  const held = await observeManagedRehostSource({ sessionId, workspaceId, command, run });
+  if (!held || held.state === "not_found") return undefined;
+  const unconfirmed = { unconfirmed: held.state === "resolved" ? held.operationIds : [held.operationId] };
+  // A completed edge from this source that its binding never named.
+  if (held.state === "resolved") {
+    return held.operationIds.length === 1 ? { operationId: held.operationIds[0], nativeState: "completed" } : unconfirmed;
+  }
+  // Latest-successor resolution stops at the first pending edge, which may
+  // belong to a later generation. Continue only this source's own operation.
+  try {
+    const exact = await collectManagedRehostStatus({ sessionId, workspaceId, operationId: held.operationId, command, run });
+    if (exact.ok && exact.result.state !== "not_found") {
+      return { operationId: held.operationId, nativeState: exact.result.state === "resolved" ? "completed" : "running" };
+    }
+  } catch {
+    /* Refuse below: an unconfirmed operation is never replaced. */
+  }
+  return unconfirmed;
+}
+
 /** The client owns the name; the backend supplies the source. This does not admit an operation. */
-export async function collectManagedRehostPreview({ opts, registry, agentId: durableAgentId, resolveBackend, requestBackend }) {
+export async function collectManagedRehostPreview({
+  opts, registry, agentId: durableAgentId, resolveBackend, requestBackend, command, run,
+}) {
   const name = (opts.name || opts.rest[1]).trim();
   const base = { schemaVersion: 1, name, nativeExecution: "not_requested" };
   const failure = (error, details = {}) => ({ ...base, ok: false, error, ...details });
@@ -112,19 +148,34 @@ export async function collectManagedRehostPreview({ opts, registry, agentId: dur
       message: `This observation does not provide a native source. ${agentRuntimeSourceUnavailableReason(observation)}` },
     { agentId, observation });
   }
-  const operationId = randomUUID();
   const sourceSessionId = binding.sessionId;
   const sourceWorkspaceId = source.runtimeWorkspaceId;
+  const held = await heldManagedRehost({ sessionId: sourceSessionId, workspaceId: sourceWorkspaceId, command, run });
+  if (held?.unconfirmed) {
+    return failure({ code: "rehost_source_operation_unconfirmed",
+      message: `Hmux already holds a restart for this Agent's source (operation ${held.unconfirmed.join(", ")}) ` +
+        "that this command cannot continue exactly. Nothing was started or published. Inspect it with " +
+        `dure hmux rehost status --operation-id ${held.unconfirmed[0]} and dure runtime get ${agentId}; ` +
+        "do not start another operation." }, { agentId, observation });
+  }
+  const operationId = held?.operationId ?? randomUUID();
   const identity = [sourceSessionId, "--workspace", sourceWorkspaceId, "--operation-id", operationId];
+  const retry = ["hmux", "rehost", "retry", ...identity, "--confirm-restart", "--json"];
   return {
     ...base, ok: true, state: "preview", agentId, backend: report.backend, observation,
     continuation: {
       operationId, sourceSessionId, sourceWorkspaceId,
-      start: ["hmux", "rehost", "start", ...identity, "--confirm-restart", "--json"],
-      retry: ["hmux", "rehost", "retry", ...identity, "--confirm-restart", "--json"],
+      // Continuing a held operation never admits another one.
+      start: held ? [...retry] : ["hmux", "rehost", "start", ...identity, "--confirm-restart", "--json"],
+      retry,
       status: ["hmux", "rehost", "status", ...identity, "--json"],
       publish: ["hmux", "rehost", "publish", agentId, "--from-session", ...identity,
         "--backend", backend.profile.id, "--json"],
+      ...(held ? {
+        retained: held,
+        finish: managedRehostFinishCommand({ agentId, operationId, sourceSessionId, sourceWorkspaceId,
+          backendId: backend.profile.id }),
+      } : {}),
     },
   };
 }
@@ -137,13 +188,20 @@ export function formatManagedRecoveryCommands(continuation) {
   if (!continuation) return [];
   const wake = continuation.kind === "runtime_wake";
   const restart = continuation.kind === "runtime_restart";
+  const held = continuation.retained;
   return [
     wake
       ? "The backend owns wake and binding publication. Retain this exact operation, revision and request key."
       : restart
         ? "This Agent is stopped. The backend restarts it with its retained conversation through the app's transition. Retain this exact revision and request key."
-        : "Retain these exact commands for this attempt; another name request proposes a different operation.",
-    `${wake ? "Wake" : restart ? "Restart" : "Start"}: ${rehostCommandLine(continuation.start)}`,
+        : held?.nativeState === "running"
+          ? `Hmux is still applying a restart of this Agent (operation ${held.operationId}). Finish waits for it and publishes it once; do not start another operation.`
+          : held
+            ? `Hmux already restarted this Agent (operation ${held.operationId}), but its binding is not published yet. Finish publishes it once without restarting again.`
+            : "Retain these exact commands for this attempt; another name request proposes a different operation.",
+    ...(continuation.finish ? [`Finish: ${rehostCommandLine(continuation.finish)}`] : []),
+    // A held operation's start is its retry; print it once.
+    ...(held ? [] : [`${wake ? "Wake" : restart ? "Restart" : "Start"}: ${rehostCommandLine(continuation.start)}`]),
     `Status: ${rehostCommandLine(continuation.status)}`,
     `Retry the original request after inspection: ${rehostCommandLine(continuation.retry)}`,
     ...(continuation.publish ? [`Publish: ${rehostCommandLine(continuation.publish)}`] : []),
@@ -157,9 +215,9 @@ export function formatNameCandidates(candidates = []) {
   ]);
 }
 
-export async function runManagedRehostPreview(opts, registryPath, resolveBackend) {
+export async function runManagedRehostPreview(opts, registryPath, resolveBackend, command) {
   const report = await collectManagedRehostPreview({
-    opts, registry: loadSessionClientProjection({ registryPath }), resolveBackend,
+    opts, registry: loadSessionClientProjection({ registryPath }), resolveBackend, command,
   });
   const output = opts.json ? JSON.stringify(report) : report.ok
     ? [
