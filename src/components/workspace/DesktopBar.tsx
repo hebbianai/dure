@@ -25,7 +25,8 @@ import { markDesktopStartsEmpty } from "@/lib/workspace/dock";
 import { canDropPaneOnSpace, dropPanesOnSpace } from "@/lib/spaces/spacesPaneTabDrop";
 import { setDragState } from "@/lib/workspace/pane/paneDragState";
 import { requestDesktopPrewarm } from "@/lib/workspace/desktop/desktopPrewarm";
-import { allowsManualReorder, orderDesktopTabs } from "@/lib/workspace/desktop/desktopTabOrder";
+import { onNewDesktopRequest } from "@/lib/workspace/desktop/newDesktopActivation";
+import { allowsManualReorder, desktopStripTabs } from "@/lib/workspace/desktop/desktopTabOrder";
 import { matchesChord, shortcutChord } from "@/lib/settings/shortcutBindings";
 import { Titled, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { armDesktopTearOut } from "@/lib/workspace/desktop/desktopTearOut";
@@ -129,7 +130,7 @@ export function DesktopBar() {
   } = useDesktopBarState();
   const manualReorder = allowsManualReorder(tabOrder);
   const visibleDesktops = useMemo(
-    () => orderDesktopTabs(spaces.filter((d) => d.kind !== "popout"), tabOrder, spaceVisits),
+    () => desktopStripTabs(spaces, tabOrder, spaceVisits),
     [spaces, tabOrder, spaceVisits],
   );
 
@@ -147,6 +148,9 @@ export function DesktopBar() {
     setNewDesktopName("");
     setNamingNewDesktop(true);
   };
+  // The palette's "New desktop" asks for this same step rather than making
+  // the Space itself (lib/workspace/desktop/newDesktopActivation).
+  useEffect(() => onNewDesktopRequest(beginNewDesktop), []);
   const commitNewDesktop = () => {
     setNamingNewDesktop(false);
     const name = newDesktopName.trim();
@@ -298,8 +302,8 @@ export function DesktopBar() {
       if (!e.shiftKey && n >= 1 && n <= 9) {
         // 표시 순서와 같은 규칙으로 센다 — 탭 위 "⌘{n}" 안내가 거짓이 되지 않게.
         const state = readDesktopTabOrderState();
-        const d = orderDesktopTabs(
-          state.spaces.filter((x) => x.kind !== "popout"),
+        const d = desktopStripTabs(
+          state.spaces,
           state.tabOrder,
           state.spaceVisits,
         )[n - 1];

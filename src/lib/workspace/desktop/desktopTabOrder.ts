@@ -35,6 +35,21 @@ export function orderDesktopTabs<T extends { id: string }>(
   return [...visited, ...unvisited];
 }
 
+/** The Spaces the tab strip shows, in the order it shows them — the order
+ *  ⌘1…⌘9, sideways pane focus and the palette's Space rows all count by. A
+ *  popout Space has its own window and no tab in the strip. */
+export function desktopStripTabs<T extends { id: string; kind?: string }>(
+  spaces: readonly T[],
+  order: TabOrder,
+  visits: DesktopVisitTimes,
+): readonly T[] {
+  return orderDesktopTabs(
+    spaces.filter((space) => space.kind !== "popout"),
+    order,
+    visits,
+  );
+}
+
 /** 활성 데스크탑이 바뀔 때 기록을 갱신한다. 사라진 데스크탑의 기록은 함께
  *  버려 영구 저장소가 계속 자라지 않게 한다. */
 export function recordDesktopVisit(

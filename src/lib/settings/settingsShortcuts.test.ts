@@ -9,6 +9,7 @@ import {
 	allShortcuts,
 	shortcutDefinition,
 	shortcutGroups,
+	switchDesktopKeys,
 } from "@/lib/settings/settingsShortcuts";
 
 describe("shortcut definitions", () => {
@@ -47,5 +48,16 @@ describe("shortcut definitions", () => {
 		expect(
 			conflictingShortcutIds(resolveShortcuts({})).has("toggle-maximize-pane"),
 		).toBe(false);
+	});
+
+	it("spells each step of the Space range the way the range itself does", () => {
+		const range = shortcutDefinition("switch-desktop")?.keys;
+		expect(range).toEqual([["⌘", "1"], ["…"], ["⌘", "9"]]);
+		expect(switchDesktopKeys(1)).toEqual(range?.[0]);
+		expect(switchDesktopKeys(3)).toEqual(["⌘", "3"]);
+		expect(switchDesktopKeys(9)).toEqual(range?.[2]);
+		for (const outside of [0, 10, 2.5, -1]) {
+			expect(switchDesktopKeys(outside), String(outside)).toBeUndefined();
+		}
 	});
 });

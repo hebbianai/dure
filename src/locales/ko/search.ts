@@ -4,6 +4,7 @@ export const search: Record<string, string> = {
 	"search.appCommand.label": "앱 명령",
 	"search.appCommand.newTerminal": "새 터미널 열기",
 	"search.appCommand.openTokenInspector": "토큰 인스펙터 열기",
+	"search.appCommand.switchToSpace": "{name}(으)로 전환",
 	"search.dialog.minChars": "검색하려면 2자 이상 입력하세요",
 	"search.dialog.placeholder": "worktree, 파일, agent/session, 명령, 저장소 검색",
 	"search.filters.excludeLabel": "제외할 파일",

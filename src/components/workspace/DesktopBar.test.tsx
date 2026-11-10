@@ -8,13 +8,18 @@ vi.mock("@/components/usage/ResourceMonitor", () => ({
 vi.mock("@/components/usage/UsageBadge", () => ({
 	UsageBadge: () => null,
 }));
+vi.mock("@/lib/ipc/process", () => ({
+	runShell: vi.fn(async () => ({ stdout: "", stderr: "", code: 0 })),
+}));
 vi.mock("@/lib/workspace/dock", async (importOriginal) => {
 	const original = await importOriginal<typeof import("@/lib/workspace/dock")>();
 	return { ...original, markDesktopStartsEmpty: vi.fn() };
 });
 
+import { NativeSearchDialog } from "@/components/search/NativeSearchDialog";
 import { DesktopBar } from "@/components/workspace/DesktopBar";
 import { markDesktopStartsEmpty } from "@/lib/workspace/dock";
+import { requestNewDesktop } from "@/lib/workspace/desktop/newDesktopActivation";
 import { setLang } from "@/lib/i18n";
 import { beginSpacesRowDrag, endSpacesRowDrag, spacesDragPayload } from "@/lib/spaces/spacesDrag";
 import {
@@ -456,6 +461,55 @@ describe("DesktopBar new-desktop affordance", () => {
 
 		expect(useStore.getState().spaces.length).toBe(before);
 		expect(markDesktopStartsEmpty).not.toHaveBeenCalled();
+	});
+
+	it("opens the same naming step when the palette asks for a new desktop", () => {
+		const before = useStore.getState().spaces.length;
+		render(<DesktopBar />);
+
+		act(() => requestNewDesktop());
+		const input = screen.getByLabelText("Workspace name");
+		expect(document.activeElement).toBe(input);
+		expect(useStore.getState().spaces.length).toBe(before);
+
+		fireEvent.change(input, { target: { value: "review" } });
+		fireEvent.keyDown(input, { key: "Enter" });
+		const spaces = useStore.getState().spaces;
+		expect(spaces.length).toBe(before + 1);
+		expect(spaces[spaces.length - 1]?.name).toBe("review");
+		expect(markDesktopStartsEmpty).toHaveBeenCalledWith(
+			spaces[spaces.length - 1]?.id,
+		);
+	});
+
+	it("keeps the name input focused once the palette has closed onto it", async () => {
+		const before = useStore.getState().spaces.length;
+		const { rerender } = render(
+			<>
+				<DesktopBar />
+				<NativeSearchDialog />
+			</>,
+		);
+		// The request runs from the palette's close-focus step. Anything that
+		// took focus after the name input mounted would blur the still-empty
+		// input and drop the naming step, so focus starts somewhere else.
+		screen.getAllByRole("tab")[0]?.focus();
+		rerender(
+			<>
+				<DesktopBar />
+				<NativeSearchDialog request={{ revision: 1, initialQuery: "> new desktop" }} />
+			</>,
+		);
+		const search = await screen.findByRole("combobox");
+		await screen.findByRole("option", { selected: true, name: /New desktop/ });
+		fireEvent.keyDown(search, { key: "Enter" });
+
+		const input = await screen.findByLabelText("Workspace name");
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+		expect(document.activeElement).toBe(input);
+		expect(screen.getByLabelText("Workspace name")).toBe(input);
+		expect(useStore.getState().spaces.length).toBe(before);
 	});
 
 	/** 셸을 고르는 메뉴는 사라졌다 — SSH 호스트가 있어도 이름 입력 하나다. */

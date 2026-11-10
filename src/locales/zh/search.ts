@@ -4,6 +4,7 @@ export const search: Record<string, string> = {
 	"search.appCommand.label": "应用命令",
 	"search.appCommand.newTerminal": "打开新终端",
 	"search.appCommand.openTokenInspector": "打开令牌检查器",
+	"search.appCommand.switchToSpace": "切换到 {name}",
 	"search.dialog.minChars": "请输入至少 2 个字符进行搜索",
 	"search.dialog.placeholder": "搜索工作树、文件、代理/会话、命令和仓库",
 	"search.filters.excludeLabel": "要排除的文件",

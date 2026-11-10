@@ -1,4 +1,4 @@
-import type { RunnableAppCommandId } from "@/lib/commands/appCommands";
+import type { AppCommandRequest } from "@/lib/commands/appCommands";
 import type { AgentActivity } from "@/types";
 
 const NATIVE_SEARCH_KINDS = [
@@ -53,10 +53,7 @@ type NativeSearchAction =
 			type: "copy-command";
 			command: string;
 	  }
-	| {
-			type: "app-command";
-			command: RunnableAppCommandId;
-	  }
+	| ({ type: "app-command" } & AppCommandRequest)
 	| {
 			/** Listed so it can be found; selecting it does nothing. */
 			type: "unavailable";

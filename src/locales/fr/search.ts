@@ -4,6 +4,7 @@ export const search: Record<string, string> = {
 	"search.appCommand.label": "Commande de l'application",
 	"search.appCommand.newTerminal": "Ouvrir un nouveau terminal",
 	"search.appCommand.openTokenInspector": "Ouvrir l’inspecteur de tokens",
+	"search.appCommand.switchToSpace": "Passer à {name}",
 	"search.dialog.minChars": "Saisissez au moins 2 caractères pour rechercher",
 	"search.dialog.placeholder": "Rechercher worktrees, fichiers, agents/sessions, commandes et dépôts",
 	"search.filters.excludeLabel": "Fichiers à exclure",

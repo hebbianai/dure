@@ -70,6 +70,11 @@ import { resolveShortcuts } from "@/lib/settings/shortcutBindings";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import { useStore } from "@/store";
 
+/** Matches an accessible name that contains this text literally. */
+function containing(text: string): RegExp {
+	return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+}
+
 describe("NativeSearchDialog", () => {
 	beforeEach(async () => {
 		vi.clearAllMocks();
@@ -207,6 +212,12 @@ describe("NativeSearchDialog", () => {
 
 	describe("app commands", () => {
 		const EVERYTHING = {
+			spaces: [
+				{ id: "desk-1", name: "Main" },
+				{ id: "desk-2", name: "planner" },
+				{ id: "desk-3", name: "api-server" },
+			],
+			activeSpaceId: "desk-1",
 			hasActivePane: true,
 			canBalancePanes: true,
 			canUndoPaneMove: true,
@@ -221,18 +232,29 @@ describe("NativeSearchDialog", () => {
 			const input = await screen.findByRole("combobox");
 			fireEvent.change(input, { target: { value: ">" } });
 
+			const keysOf = (row: HTMLElement) =>
+				Array.from(row.querySelectorAll("kbd"), (cap) => cap.textContent);
 			for (const shortcut of resolveShortcuts({})) {
+				if (shortcut.id === "switch-desktop") {
+					// The range is one row per other Space, each with its own ⌘n.
+					for (const [name, digit] of [
+						["planner", "2"],
+						["api-server", "3"],
+					]) {
+						const row = await screen.findByRole("option", {
+							name: containing(t("search.appCommand.switchToSpace", { name })),
+						});
+						expect(keysOf(row)).toEqual(["⌘", digit]);
+					}
+					continue;
+				}
 				const rows = await screen.findAllByRole("option", {
-					name: new RegExp(t(shortcut.command).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+					name: containing(t(shortcut.command)),
 				});
-				const expected = shortcut.keys.flat().filter((key) => key !== "…");
+				const expected = shortcut.keys.flat();
 				expect(
 					rows.some((row) =>
-						expected.every((key) =>
-							Array.from(row.querySelectorAll("kbd")).some(
-								(cap) => cap.textContent === key,
-							),
-						),
+						expected.every((key) => keysOf(row).includes(key)),
 					),
 					shortcut.id,
 				).toBe(true);
@@ -251,9 +273,54 @@ describe("NativeSearchDialog", () => {
 			fireEvent.keyDown(input, { key: "Enter" });
 
 			await waitFor(() =>
-				expect(mocks.runAppCommand).toHaveBeenCalledWith("split-right"),
+				expect(mocks.runAppCommand).toHaveBeenCalledWith(
+					expect.objectContaining({ command: "split-right" }),
+				),
 			);
 			expect(closedWhenRun).toEqual([true]);
+		});
+
+		it("switches to the Space a row names once the palette has closed", async () => {
+			mocks.readAppCommandContext.mockReturnValue(EVERYTHING);
+			const closedWhenRun: boolean[] = [];
+			mocks.runAppCommand.mockImplementation(() => {
+				closedWhenRun.push(screen.queryByRole("dialog") === null);
+			});
+			render(<NativeSearchDialog request={{ revision: 1, initialQuery: "" }} />);
+			const input = await screen.findByRole("combobox");
+			fireEvent.change(input, { target: { value: "> planner" } });
+			await screen.findByRole("option", {
+				selected: true,
+				name: containing(
+					t("search.appCommand.switchToSpace", { name: "planner" }),
+				),
+			});
+			fireEvent.keyDown(input, { key: "Enter" });
+
+			await waitFor(() =>
+				expect(mocks.runAppCommand).toHaveBeenCalledWith(
+					expect.objectContaining({
+						command: "switch-desktop",
+						spaceId: "desk-2",
+					}),
+				),
+			);
+			expect(closedWhenRun).toEqual([true]);
+		});
+
+		it("offers no switch to the Space already shown", async () => {
+			mocks.readAppCommandContext.mockReturnValue(EVERYTHING);
+			render(<NativeSearchDialog request={{ revision: 1, initialQuery: "" }} />);
+			const input = await screen.findByRole("combobox");
+			fireEvent.change(input, { target: { value: ">" } });
+			await screen.findAllByRole("option");
+			expect(
+				screen.queryByRole("option", {
+					name: containing(
+						t("search.appCommand.switchToSpace", { name: "Main" }),
+					),
+				}),
+			).toBeNull();
 		});
 
 		it("keeps the palette open on a keyboard-only command", async () => {

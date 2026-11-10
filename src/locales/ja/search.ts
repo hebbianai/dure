@@ -4,6 +4,7 @@ export const search: Record<string, string> = {
 	"search.appCommand.label": "アプリコマンド",
 	"search.appCommand.newTerminal": "新しいターミナルを開く",
 	"search.appCommand.openTokenInspector": "トークンインスペクタを開く",
+	"search.appCommand.switchToSpace": "{name} に切り替え",
 	"search.dialog.minChars": "2 文字以上入力して検索してください",
 	"search.dialog.placeholder": "ワークツリー、ファイル、エージェント/セッション、コマンド、リポジトリを検索",
 	"search.filters.excludeLabel": "除外するファイル",
