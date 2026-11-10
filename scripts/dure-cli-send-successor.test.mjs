@@ -246,3 +246,22 @@ describe("runSendCommand after the registered Session exited", () => {
     expect(c.sendExactSession).not.toHaveBeenCalled();
   });
 });
+
+describe("dure send --from through the CLI", () => {
+  it("writes the sender label ahead of the text the Session receives", () => {
+    const f = fixture({ predecessor: "live" });
+    const result = f.send(["--from", "ci-bot", "hello", "--json"]);
+    expect(result.status, result.stderr).toBe(0);
+    const [input, ...rest] = f.inputs();
+    expect(rest).toEqual([]);
+    expect(input[input.indexOf("--text") + 1]).toBe("[from ci-bot] hello");
+  });
+
+  it("refuses a missing sender name before any input", () => {
+    const f = fixture({ predecessor: "live" });
+    const result = f.send(["hello", "--from"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("--from requires a sender name");
+    expect(f.inputs()).toEqual([]);
+  });
+});

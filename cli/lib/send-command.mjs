@@ -17,6 +17,7 @@ Options:
   --draft-wait SECONDS   Wait up to SECONDS (0-60, default 30) for unsubmitted user input to clear
   --ignore-draft         Write even while the terminal holds unsubmitted user input
   --track                Send through the durable inbox; retain a private message tracking file
+  --from NAME            Tell the recipient who sent the message (up to 64 characters)
   --json                 Print the delivery receipt as JSON, without prompt text
   --window-label LABEL   Select the app window for input delivery
   --idempotency-key KEY   Reuse an input key through the running app broker
@@ -40,6 +41,9 @@ erases every typed character with Backspace; input Dure cannot count (completion
 recall, a word erase) stays a draft until Enter. Retry later, use --track, or --ignore-draft
 to write anyway. A session started before the guard existed receives ordinary input, with
 a warning on stderr; restart that session to guard it.
+--from starts terminal and chat input with "[from NAME] " and titles a tracked message
+"Message from NAME", keeping its body exact. NAME is a label the sender chooses,
+not an authenticated identity. Leave it off for provider commands such as "/compact".
 Tracked messages require a managed Session and support 'dure wait --message <receiptPath>'.
 Tracked send cannot be combined with --no-enter or --idempotency-key.
 Terminal receipts prove bytes were written to the PTY, not provider acceptance.
@@ -76,6 +80,39 @@ function extractSource(args) {
     }
   }
   return { source, remaining };
+}
+
+const MAX_SENDER_CHARACTERS = 64;
+
+function senderName(value) {
+  const name = value?.startsWith("-") ? "" : value?.trim();
+  if (!name) throw new Error("--from requires a sender name");
+  if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(name)) throw new Error("--from must be one line without control characters");
+  if ([...name].length > MAX_SENDER_CHARACTERS) {
+    throw new Error(`--from accepts at most ${MAX_SENDER_CHARACTERS} characters`);
+  }
+  return name;
+}
+
+/** `--from NAME` precedes `--` like the other send flags. The shared option
+ * parser would otherwise consume it silently, so send reads it first. */
+function extractSender(args) {
+  const remaining = [];
+  let sender;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--") {
+      remaining.push(...args.slice(index));
+      break;
+    }
+    if (argument !== "--from") {
+      remaining.push(argument);
+      continue;
+    }
+    if (sender !== undefined) throw new Error("Choose --from once");
+    sender = senderName(args[++index]);
+  }
+  return { sender, remaining };
 }
 
 const DEFAULT_DRAFT_WAIT_SECONDS = 30;
@@ -216,10 +253,13 @@ export async function runSendCommand(
     process.stdout.write(SEND_HELP);
     return;
   }
+  let sender;
   let parsed;
   let guard;
   try {
-    parsed = extractSource(args);
+    const attributed = extractSender(args);
+    sender = attributed.sender;
+    parsed = extractSource(attributed.remaining);
     guard = extractDraftGuard(parsed.remaining);
   } catch (error) {
     return fail(error.message);
@@ -253,6 +293,9 @@ export async function runSendCommand(
     return fail(error.message);
   }
   if (!text) return fail("Input text must not be empty");
+  // The sender is a label for the recipient to read, not an authenticated
+  // identity. An inbox message carries it in the title and keeps its body exact.
+  if (sender !== undefined) opts.messageTitle = `Message from ${sender}`;
   if (track) {
     let input;
     try {
@@ -270,6 +313,8 @@ export async function runSendCommand(
     printDelivery(typeof agent === "string" ? { name: agent } : agent, input, opts);
     return;
   }
+  // Terminal and chat input have no title, so the label leads the text.
+  if (sender !== undefined) text = `[from ${sender}] ${text}`;
   if (typeof agent === "string") {
     const input = await sendExactSession(agent, text, opts);
     printDelivery({ name: agent }, input, opts);
