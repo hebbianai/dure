@@ -280,6 +280,12 @@ async fn prepare_orchestration_context(
     bind_orchestration_context(store, &active, suffix, 1_800).await
 }
 
+/// Bounds a hung Event read, not its latency. A read that waits for a held
+/// writer fails at the store's 5 s busy timeout, and one blocked until the
+/// writer releases resumes at the busy handler's next retry, up to 100 ms
+/// later. A loaded runner can take far longer than that retry interval.
+const READ_HANG_DEADLINE: Duration = Duration::from_secs(30);
+
 async fn held_writer(path: &std::path::Path) -> SqliteConnection {
     let mut connection = SqliteConnection::connect_with(&writable_connect_options(path))
         .await
@@ -438,21 +444,23 @@ async fn event_read_batch_empty_snapshot_does_not_reserve_writer() {
     let cursor = observed.next_cursor;
     let mut writer = held_writer(&path).await;
 
+    // The writer stays held until both reads return, so a read that waited for
+    // it would fail with the store's busy error rather than finish late.
     let batch_read = tokio::time::timeout(
-        Duration::from_millis(250),
+        READ_HANG_DEADLINE,
         service.read_events_batch(coordinator_event_read_batch(&context, cursor)),
     )
     .await;
     let scalar_read = tokio::time::timeout(
-        Duration::from_millis(250),
+        READ_HANG_DEADLINE,
         service.read_events(coordinator_event_read(&context, cursor)),
     )
     .await;
     sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
 
     let receipt = batch_read
-        .expect("an empty Event read must not wait for an unrelated writer")
-        .unwrap();
+        .expect("an empty Event read must not hang")
+        .expect("an empty Event read must not wait for an unrelated writer");
     let ReadEventsBatchItemOutcome::Read(empty) = &receipt.results[0].outcome else {
         panic!("the empty Event read must succeed");
     };
@@ -460,8 +468,8 @@ async fn event_read_batch_empty_snapshot_does_not_reserve_writer() {
     assert!(empty.deliveries.is_empty());
     assert_eq!(empty.next_cursor, cursor);
     let empty = scalar_read
-        .expect("an empty scalar Event read must not wait for an unrelated writer")
-        .unwrap();
+        .expect("an empty scalar Event read must not hang")
+        .expect("an empty scalar Event read must not wait for an unrelated writer");
     assert!(empty.events.is_empty());
     assert_eq!(empty.next_cursor, cursor);
 }
@@ -492,7 +500,7 @@ async fn event_read_batch_state_change_waits_for_writer_and_persists() {
     );
     sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
 
-    let receipt = tokio::time::timeout(Duration::from_millis(250), read.as_mut())
+    let receipt = tokio::time::timeout(READ_HANG_DEADLINE, read.as_mut())
         .await
         .expect("the state-changing Event read must resume after the writer releases")
         .unwrap();
