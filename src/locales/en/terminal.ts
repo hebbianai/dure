@@ -45,6 +45,7 @@ export const terminalEnglishTranslations = {
 	"terminal.recovery.resume": "Resume session",
 	"terminal.recovery.resuming": "Reopening the session…",
 	"terminal.recovery.resumeFailed": "That did not work — it is safe to try again.",
+	"terminal.recovery.resumeBusy": "Dure was busy and could not start the session yet. Nothing changed — try again in a moment.",
 	"terminal.recovery.worktreeMissingTitle": "Worktree missing",
 	"terminal.recovery.worktreeMissingBody": "The conversation is safe, but the saved worktree for {branch} was removed. Recreate it, or resume in the repository root.",
 	"terminal.recovery.recreateWorktree": "Recreate worktree and resume",

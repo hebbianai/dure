@@ -1,5 +1,6 @@
 import { exchangeSshStdio } from "./backend-ssh-stdio.mjs";
 import { MAX_BACKEND_CAPABILITIES_V1 } from "./backend-capabilities.mjs";
+import { normalizeBackgroundWork } from "./background-work-summary.mjs";
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { createConnection } from "node:net";
@@ -415,6 +416,9 @@ export function parseBackendTransportResponse(
     if (disposition !== undefined && !validOperationDisposition(disposition)) {
       fail("backend_transport_malformed_response");
     }
+    const backgroundWork = normalizeBackgroundWork(
+      response.error.details?.backgroundWork,
+    );
     fail("backend_transport_remote_error", {
       details: {
         code: response.error.code,
@@ -422,6 +426,7 @@ export function parseBackendTransportResponse(
         ...(validToken(response.error.details?.reasonCode)
           ? { reasonCode: response.error.details.reasonCode }
           : {}),
+        ...(backgroundWork ? { backgroundWork } : {}),
       },
     });
   }
@@ -833,6 +838,9 @@ export function backendTransportErrorReport(error, profile) {
         : {}),
       ...(validOperationDisposition(typed.details?.disposition)
         ? { disposition: typed.details.disposition }
+        : {}),
+      ...(typed.details?.backgroundWork
+        ? { backgroundWork: typed.details.backgroundWork }
         : {}),
     },
   };

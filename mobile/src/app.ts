@@ -578,8 +578,12 @@ interface State {
    */
   notificationPermission?: NotificationPermission;
   pushSync?: PushSyncState;
-  /** Projection of the current terminal surface's failure, not a session runtime fact. */
-  terminalUnavailable?: { attachmentId: string; detail: string };
+  /**
+   * Projection of the current terminal surface's failure, not a session
+   * runtime fact. `connectionLost` marks a failure the app reconnects from by
+   * itself (`reconnectLostTerminal`).
+   */
+  terminalUnavailable?: { attachmentId: string; detail: string; connectionLost: boolean };
   /** Host runtime projection, replaced by each observation and scoped to its attachment. */
   terminalRuntime?: { attachmentId: string; runtime: AgentRuntimeState };
   /** A failure, shown as a destructive toast until it is closed. */
@@ -681,6 +685,8 @@ async function biometricBridge(): Promise<BiometricBridge> {
 const KEYBOARD_MIN_HEIGHT = 120;
 /** How long a plain report stays up: the desktop toast's own clock. */
 const REPORT_MS = 2500;
+/** The least time between two reconnects a lost connection starts on its own (`reconnectLostTerminal`). */
+const AUTOMATIC_RECONNECT_SPACING_MS = 10_000;
 
 /**
  * How much of the window the OS keyboard is covering, or 0 when it is down.
@@ -757,6 +763,35 @@ export function startApp(root: HTMLElement): () => void {
     if (document.visibilityState === "visible") syncPush();
   };
   document.addEventListener("visibilitychange", refreshPushOnForeground);
+  /**
+   * Reconnects the terminal on screen whose connection was lost, exactly as
+   * "Reconnect now" does, once the phone can reach the computer again: at
+   * once when the loss lands with the app in front and online, otherwise when
+   * the app returns to the foreground or the network comes back. A phone in
+   * the background loses its SSH connection as a matter of course, and the
+   * loss usually surfaces only after the app is back in front.
+   *
+   * One attempt per signal, never a loop: a failed attempt makes no new
+   * attachment to lose, and leaves the button. A foreground or network event
+   * is a fresh sign the way back may be open; a loss alone is not, so a
+   * connection that drops again as soon as it is made is not redialled more
+   * than once per `AUTOMATIC_RECONNECT_SPACING_MS`.
+   */
+  let lastAutomaticReconnectAt = Number.NEGATIVE_INFINITY;
+  const reconnectLostTerminal = (signal?: Event) => {
+    const screen = state.screen;
+    const lost = state.terminalUnavailable;
+    if (disposed || screen.kind !== "terminal" || !lost?.connectionLost ||
+      lost.attachmentId !== screen.attached.terminal.attachment_id ||
+      state.opening === screen.session.session_id ||
+      document.visibilityState !== "visible" || !navigator.onLine) return;
+    const now = Date.now();
+    if (signal === undefined && now - lastAutomaticReconnectAt < AUTOMATIC_RECONNECT_SPACING_MS) return;
+    lastAutomaticReconnectAt = now;
+    void openSession(screen.source, screen.session, screen.returnTo, "reconnect");
+  };
+  document.addEventListener("visibilitychange", reconnectLostTerminal);
+  window.addEventListener("online", reconnectLostTerminal);
   // Phone-local input history, scoped to the attachment rather than its renders.
   // ponytail: this records typed attempts, not the provider's line editor state.
   let commandDraft = "";
@@ -4389,12 +4424,13 @@ export function startApp(root: HTMLElement): () => void {
           return ipc.hubStageSessionFile(hubId, session.session_id, file);
         },
         onPasteText: text => { commandDraft += text; },
-        onUnavailable: (detail) => {
+        onUnavailable: (detail, connectionLost) => {
           if (transcriptAttachment !== terminal.attachment_id ||
             liveAttachment(state.screen) !== terminal.attachment_id) return;
           gate.reset();
           chat?.observe(undefined);
-          setState({ terminalUnavailable: { attachmentId: terminal.attachment_id, detail } });
+          setState({ terminalUnavailable: { attachmentId: terminal.attachment_id, detail, connectionLost } });
+          reconnectLostTerminal();
         },
         onAgentRuntimeState: (runtime) => {
           if (transcriptAttachment !== terminal.attachment_id ||
@@ -4592,6 +4628,8 @@ export function startApp(root: HTMLElement): () => void {
     nativeBack.dispose();
     pushSync.dispose();
     document.removeEventListener("visibilitychange", refreshPushOnForeground);
+    document.removeEventListener("visibilitychange", reconnectLostTerminal);
+    window.removeEventListener("online", reconnectLostTerminal);
     connectionEpoch += 1;
     sessionCensus.dispose();
     window.removeEventListener("resize", refit);

@@ -49,6 +49,7 @@ struct InboundState {
     ended: bool,
     interrupted: bool,
     exit_status: Option<u32>,
+    signalled: bool,
     diagnostic: String,
 }
 
@@ -98,6 +99,7 @@ impl InboundState {
     fn completion(&self) -> ChannelCompletion {
         ChannelCompletion {
             exit_status: self.exit_status,
+            signalled: self.signalled,
             diagnostic: self.diagnostic.clone(),
         }
     }
@@ -272,6 +274,13 @@ impl Inbound {
         self.lock().exit_status = Some(status);
     }
 
+    /// The command died on a signal. Its description is remote text like any
+    /// stderr, so it is admitted the same narrowed way.
+    pub(crate) fn set_exit_signal(&self, description: &[u8]) {
+        self.push_diagnostic(description);
+        self.lock().signalled = true;
+    }
+
     /// The remote closed its write half: no more frames, but what is already
     /// buffered is still delivered.
     pub(crate) fn mark_end_of_data(&self) {
@@ -371,6 +380,7 @@ mod tests {
 
         inbound.push_diagnostic(b"bash: line 1: hmux: command not found\n");
         inbound.push_diagnostic(b"\x1b[2J\x07");
+        inbound.set_exit_status(127);
 
         let detail = inbound
             .lock()
@@ -393,6 +403,7 @@ mod tests {
         let inbound = Inbound::default();
 
         inbound.push_diagnostic(&vec![b'x'; DIAGNOSTIC_LIMIT * 4]);
+        inbound.set_exit_status(1);
 
         let detail = inbound
             .lock()
@@ -415,6 +426,35 @@ mod tests {
         inbound.set_exit_status(0);
 
         assert!(inbound.lock().completion().failure_detail().is_none());
+    }
+
+    /// The startup line a serving gateway leaves on stderr is not why the
+    /// connection went away, so a lost connection does not quote it.
+    #[test]
+    fn a_lost_connection_is_not_explained_with_the_running_commands_stderr() {
+        let inbound = Inbound::default();
+
+        inbound.push_diagnostic(b"hmux: mobile-gateway: serving session fixture\n");
+        let completion = inbound.lock().completion();
+
+        assert!(completion.connection_lost());
+        let detail = completion
+            .failure_detail()
+            .expect("a lost connection is reported");
+        assert!(detail.contains("SSH connection closed"), "{detail}");
+        assert!(!detail.contains("serving session"), "{detail}");
+    }
+
+    #[test]
+    fn a_signal_is_a_command_outcome_rather_than_a_lost_connection() {
+        let inbound = Inbound::default();
+
+        inbound.set_exit_signal(b"the remote command died on KILL: ");
+        let completion = inbound.lock().completion();
+
+        assert!(!completion.connection_lost());
+        let detail = completion.failure_detail().expect("a signal is reported");
+        assert!(detail.contains("KILL"), "{detail}");
     }
 
     #[test]

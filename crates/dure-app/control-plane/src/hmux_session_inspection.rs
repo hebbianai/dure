@@ -79,6 +79,10 @@ pub(crate) struct HmuxSessionInspection {
     pub(crate) terminal_epoch: String,
     #[serde(default)]
     pub(crate) output_seq: String,
+    /// When the Host created this session, on the wall clock provider
+    /// records use. Its provider process started no earlier.
+    #[serde(default)]
+    created_unix_ms: Option<String>,
     pub(crate) health: String,
     #[serde(default, rename = "workingDirectory")]
     pub(crate) working_directory: Option<hmux_session_protocol::WorkingDirectoryProjection>,
@@ -114,6 +118,10 @@ impl HmuxSessionInspection {
         self.capabilities.iter().any(|capability| {
             capability == hmux_session_protocol::MANAGED_PROVIDER_SEMANTIC_QUIESCENT_STOP_CAPABILITY
         })
+    }
+
+    pub(crate) fn created_unix_ms(&self) -> Option<u64> {
+        self.created_unix_ms.as_deref().and_then(canonical_u64)
     }
 
     pub(crate) fn turn_completed_count(&self) -> Option<u64> {

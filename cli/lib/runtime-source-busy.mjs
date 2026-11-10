@@ -1,5 +1,8 @@
-/** Guidance for an `agent_runtime_source_busy` refusal. The backend sends only
- * a typed `reasonCode` naming its Host evidence; this CLI owns the copy.
+import { formatBackgroundWork } from "./background-work-summary.mjs";
+
+/** Guidance for an `agent_runtime_source_busy` refusal. The backend sends a
+ * typed `reasonCode` naming its Host evidence and, when the provider's records
+ * show it, the background work still running; this CLI owns the copy.
  * The refusal happens before admission, so nothing was stopped or switched
  * and the same exact command can be retried once the session is idle. */
 const REASONS = {
@@ -27,17 +30,18 @@ export function isSourceBusyRefusal(error) {
 /** Replace the transport's generic text on a busy refusal; other errors pass. */
 export function withSourceBusyGuidance(error, providerId) {
   return isSourceBusyRefusal(error)
-    ? { ...error, message: sourceBusyMessage({ reasonCode: error.reasonCode, providerId }) }
+    ? { ...error, message: sourceBusyMessage({ reasonCode: error.reasonCode, providerId,
+      backgroundWork: error.backgroundWork }) }
     : error;
 }
 
-export function sourceBusyMessage({ reasonCode, providerId } = {}) {
-  return [
+export function sourceBusyMessage({ reasonCode, providerId, backgroundWork } = {}) {
+  return [[
     REASONS[reasonCode] ?? "The session is busy or has unsent input.",
     "Nothing was stopped or switched.",
     "Wait for that work to finish, or finish, answer or stop it inside the session, then run the same command again.",
     ...(providerId === "claude" && BACKGROUND_REASONS.has(reasonCode) ? [
       "In Claude Code, exiting stops its background tasks, and \"Move to background and exit\" keeps the conversation running without a pane on the current account.",
     ] : []),
-  ].join(" ");
+  ].join(" "), ...(backgroundWork ? formatBackgroundWork(backgroundWork) : [])].join("\n");
 }

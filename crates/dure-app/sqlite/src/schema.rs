@@ -3348,11 +3348,11 @@ pub(crate) async fn read_metadata(
 
 pub(crate) async fn execute_statements(
     connection: &mut SqliteConnection,
-    statements: &[&str],
+    statements: &[&'static str],
     operation: &'static str,
 ) -> Result<(), DomainStoreErrorV1> {
     for statement in statements {
-        sqlx::query(statement)
+        sqlx::query(*statement)
             .execute(&mut *connection)
             .await
             .map_err(|error| map_sqlx(operation, error))?;

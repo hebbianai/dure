@@ -49,8 +49,10 @@ pub(super) use request_replay::{apply, apply_locked};
 pub(super) mod native;
 mod replacement;
 mod session_settings;
+mod source_background_work;
 use admission::{load_or_admit, validate_replay};
 use replacement::corrected_successor_intent;
+use source_background_work::source_busy_refusal;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1169,15 +1171,24 @@ fn repair_store_error(error: DomainStoreErrorV1) -> super::BackendDispatchError 
 
 /// An idle-only stop refused before admission: nothing was stopped, switched
 /// or recorded, so the same request may be retried once the source is idle.
-/// The reason code names the Host evidence; clients own the guidance.
-fn source_busy(reason: AgentBusyReason) -> super::BackendDispatchError {
+/// The reason code names the Host evidence; clients own the guidance. The
+/// background work the provider records as running, when known, says what
+/// stopping the session would interrupt.
+fn source_busy(
+    reason: AgentBusyReason,
+    background_work: Option<&dure_provider_profile::background_work::BackgroundWorkList>,
+) -> super::BackendDispatchError {
+    let mut details = serde_json::json!({ "reasonCode": reason.code() });
+    if let Some(work) = background_work.and_then(|work| serde_json::to_value(work).ok()) {
+        details["backgroundWork"] = work;
+    }
     super::BackendDispatchError {
         code: "agent_runtime_source_busy".into(),
         message: format!(
             "The current session is not idle ({}). Nothing was stopped or changed; retry the same request once it is idle.",
             reason.code()
         ),
-        details: Some(serde_json::json!({ "reasonCode": reason.code() })),
+        details: Some(details),
         disposition: super::BackendFailureDispositionV1::RetrySame,
     }
 }

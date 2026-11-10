@@ -2207,11 +2207,13 @@ async fn fresh_backend_adopts_one_exact_legacy_runtime_with_its_bootstrap_identi
         "session_bindings",
         "agents",
     ] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE agent_id = ?1"))
-            .bind(agent_id.as_str())
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE agent_id = ?1"
+        )))
+        .bind(agent_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
     }
     pool.close().await;
     // One Hmux runtime workspace may contain Agent worktrees below a different
@@ -5751,7 +5753,7 @@ async fn event_read_route_batch_preserves_order_and_isolates_authority_failures(
     .await
     .unwrap();
     let failed_dispatch = contexts[1]["target"]["dispatchId"].as_str().unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"
         CREATE TRIGGER fail_middle_route_batch_authority
         BEFORE UPDATE ON workflow_interaction_authorities
@@ -5760,7 +5762,7 @@ async fn event_read_route_batch_preserves_order_and_isolates_authority_failures(
             SELECT RAISE(ABORT, 'fault-injected routed Event batch authority write');
         END
         "#,
-    ))
+    )))
     .execute(&fault_pool)
     .await
     .unwrap();

@@ -348,6 +348,32 @@ describe("Run account switching", () => {
     expect(f.requestBackend).toHaveBeenCalledTimes(4);
   });
 
+  it("lists the background work a busy refusal protects, in text and JSON", async () => {
+    const f = accountFixture("claude");
+    const request = f.requestBackend.getMockImplementation();
+    const backgroundWork = {
+      items: [
+        { id: "shell-1", kind: "shell", label: "Run the release checks", startedUnixMs: 5 },
+        { id: "a7f3", kind: "subagent", label: null, startedUnixMs: 6 },
+      ],
+      counts: { subagents: 1, workflows: 0, shells: 3, monitors: 0 }, truncated: true,
+    };
+    f.requestBackend.mockImplementation(async (backend, r) => {
+      if (r.operation !== "agent_runtime.transition") return request(backend, r);
+      throw new BackendTransportError("backend_transport_remote_error", { details: {
+        code: "agent_runtime_source_busy", disposition: "retry_same", reasonCode: "agent_background_work",
+        backgroundWork } });
+    });
+    const report = await collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true } });
+    expect(report.accountSwitch).toMatchObject({ state: "refused", execution: "refused",
+      error: { remoteCode: "agent_runtime_source_busy", reasonCode: "agent_background_work", backgroundWork } });
+    const text = formatRunsCommand(report);
+    expect(text).toContain("Nothing was stopped or switched.");
+    expect(text).toContain("Still running in the session (1 subagent, 3 shells):\n" +
+      "  shell shell-1: Run the release checks\n  subagent a7f3\n  …and 2 more");
+    expect(text).toContain("Retry: dure 'runtime' 'switch'");
+  });
+
   it.each([
     ["claude", "agent_working", "a running turn, or background shells, subagents or scheduled wakeups", true],
     ["claude", "agent_background_work", "turn ended, but background work it started", true],

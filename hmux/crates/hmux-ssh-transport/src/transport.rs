@@ -114,6 +114,12 @@ impl FrameReader for SshFrameReader {
                     source,
                 })
                 .and_then(|completion| match completion.failure_detail() {
+                    // A lost connection ended the stream on a frame boundary
+                    // without the gateway failing: the same end of stream a
+                    // clean close is, which callers already reconnect from.
+                    // The stderr it carries is the gateway's startup line, and
+                    // reported as a failure it reads as the gateway's fault.
+                    _ if completion.connection_lost() => Ok(None),
                     None => Ok(None),
                     Some(detail) => Err(TransportError::Io {
                         operation: READ_OPERATION,
@@ -564,6 +570,52 @@ mod tests {
             .with_reader_within(PATIENCE, |reader| reader.read_frame(&codec()))
             .unwrap();
         assert!(outcome.is_none());
+    }
+
+    /// The SSH connection dropping under a serving gateway closes the channel
+    /// with neither an exit status nor an exit signal. The gateway's stderr
+    /// then holds only its startup line, and reported as a failure that reads
+    /// as the gateway's: it is an end of stream callers reconnect from.
+    #[test]
+    fn a_lost_connection_ends_the_stream_instead_of_failing_the_gateway() {
+        let harness = Harness::new(vec![]);
+
+        harness
+            .events
+            .send(ChannelEvent::Diagnostic(
+                b"hmux: mobile-gateway: serving session fixture as Controller\n".to_vec(),
+            ))
+            .unwrap();
+        harness.events.send(ChannelEvent::Ended).unwrap();
+
+        let outcome = harness
+            .with_reader_within(PATIENCE, |reader| reader.read_frame(&codec()))
+            .unwrap();
+        assert!(outcome.is_none());
+    }
+
+    /// A gateway killed by a signal did fail, and losing that to the lost
+    /// connection reading would hide a crash behind a reconnect.
+    #[test]
+    fn a_signalled_remote_command_is_still_a_failure() {
+        let harness = Harness::new(vec![]);
+
+        harness
+            .events
+            .send(ChannelEvent::Signalled(
+                b"the remote command died on KILL: ".to_vec(),
+            ))
+            .unwrap();
+        harness.events.send(ChannelEvent::Ended).unwrap();
+
+        let error = harness
+            .with_reader_within(PATIENCE, |reader| reader.read_frame(&codec()))
+            .unwrap_err();
+        let TransportError::Io { source, .. } = error else {
+            panic!("expected an I/O error carrying the signal, got {error:?}");
+        };
+        let message = source.to_string();
+        assert!(message.contains("KILL"), "unexpected message {message}");
     }
 
     /// `hmux-cli`'s interactive attach polls with a short budget and treats a

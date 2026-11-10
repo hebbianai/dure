@@ -3,7 +3,8 @@ use crate::relay::RelayTerminalAttachment;
 use crate::CommandError;
 use hmux_client::transport::TransportInterrupt;
 use hmux_client::{
-    ConnectionRecord, TerminalSurfaceAccess, TerminalSurfaceAttachment, TerminalUpstreamHandles,
+    ConnectionRecord, RetryDirective, TerminalSurfaceAccess, TerminalSurfaceAttachment,
+    TerminalUpstreamHandles,
 };
 use hmux_host::local_protocol::FrameBody;
 use serde::Serialize;
@@ -279,8 +280,30 @@ fn access_name(access: TerminalSurfaceAccess) -> &'static str {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum AdapterRecord<'a> {
-    Control { body: &'a FrameBody },
-    Closed { code: &'a str, message: String },
+    Control {
+        body: &'a FrameBody,
+    },
+    /// The read ended. `retryDirective` is the client boundary's posture, as
+    /// the desktop's closed record carries it, so the screen decides whether
+    /// to reconnect without reading codes or prose.
+    Closed {
+        code: &'a str,
+        message: String,
+        #[serde(rename = "retryDirective")]
+        retry_directive: RetryDirective,
+    },
+}
+
+fn closed_record(error: &hmux_client::ClientError) -> Result<Vec<u8>, CommandError> {
+    serde_json::to_vec(&AdapterRecord::Closed {
+        code: error.code(),
+        message: error.to_string(),
+        retry_directive: error.retry_directive(),
+    })
+    .map_err(|error| CommandError {
+        code: "terminal_record_encode_failed".to_string(),
+        message: error.to_string(),
+    })
 }
 
 struct PulledRecord {
@@ -308,16 +331,8 @@ fn pull_terminal_record(
     let record = match pull.surface.read_delivery_record() {
         Ok(record) => record,
         Err(error) => {
-            let encoded = serde_json::to_vec(&AdapterRecord::Closed {
-                code: error.code(),
-                message: error.to_string(),
-            })
-            .map_err(|error| CommandError {
-                code: "terminal_record_encode_failed".to_string(),
-                message: error.to_string(),
-            })?;
             return Ok(PulledRecord {
-                encoded,
+                encoded: closed_record(&error)?,
                 closed: true,
             });
         }
@@ -504,6 +519,30 @@ mod tests {
             background_work: false,
         });
         serde_json::to_value(AdapterRecord::Control { body: &body }).unwrap()
+    }
+
+    /// A lost connection reaches the screen as a close it may reconnect from;
+    /// an ordinary failure does not, whatever its prose says.
+    #[test]
+    fn a_closed_record_carries_the_clients_retry_posture() {
+        let closed = |error: hmux_client::ClientError| -> serde_json::Value {
+            serde_json::from_slice(&closed_record(&error).unwrap()).unwrap()
+        };
+
+        let lost = closed(hmux_client::ClientError::Transport {
+            code: "hmux_transport_closed",
+            message: "Hmux transport closed".into(),
+        });
+        assert_eq!(lost["kind"], "closed");
+        assert_eq!(lost["code"], "hmux_transport_closed");
+        assert_eq!(lost["retryDirective"], "reconnect");
+
+        let failed = closed(hmux_client::ClientError::Io {
+            operation: "read Hmux frame over SSH",
+            source: std::io::Error::new(std::io::ErrorKind::BrokenPipe, "fixture failure"),
+        });
+        assert_eq!(failed["code"], "hmux_io_failed");
+        assert_eq!(failed["retryDirective"], "never");
     }
 
     #[test]

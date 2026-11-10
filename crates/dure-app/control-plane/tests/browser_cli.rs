@@ -202,9 +202,9 @@ async fn fixture_with_installation(
     }
     let hmux = root.join("unused-hmux");
     owner_file(&hmux, b"#!/bin/sh\nexit 1\n", 0o700);
-    // The backend records its launch executable's identity, which is capped at
-    // 256 MiB. The Linux debug test binary is close to that cap, so the fixture
-    // names a small stub rather than defaulting to the test binary.
+    // The backend records its launch executable's identity. A small stand-in
+    // keeps that independent of this debug test binary, whose size can pass
+    // the backend's executable limit.
     owner_file(
         &root.join("dure-control-plane"),
         b"#!/bin/sh\nexit 1\n",

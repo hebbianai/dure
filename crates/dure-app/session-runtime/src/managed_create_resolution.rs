@@ -79,6 +79,10 @@ pub fn project_managed_create_advance(
     }
 }
 
+/// Code of the `retry_same` resolution for a store write that could not take
+/// the database lock in time, after the store's own retries.
+const SESSION_CHECKOUT_STORE_BUSY_CODE: &str = "session_checkout_store_busy";
+
 pub fn project_checkout_advance(
     resolution: Result<ManagedCreateAdvanceResolution, crate::SessionCheckoutError>,
 ) -> Result<ManagedCreateAdvanceCommandResolution<CreatedManagedSession>, String> {
@@ -87,6 +91,16 @@ pub fn project_checkout_advance(
         Err(crate::SessionCheckoutError::Create(error)) => {
             Ok(project_managed_create_advance(Err(error)))
         }
+        // A busy store refused its write before applying it, and the exact
+        // idempotent request stays safe to replay. Name that outcome instead of
+        // a bare error string, which a client can only read as unknown.
+        Err(crate::SessionCheckoutError::Store(
+            error @ dure_app::DomainStoreErrorV1::Busy { .. },
+        )) => Ok(retry_same(
+            ManagedCreateRetrySameReason::CreateRetryable,
+            SESSION_CHECKOUT_STORE_BUSY_CODE,
+            error.to_string(),
+        )),
         Err(error) => Err(error.to_string()),
     }
 }
@@ -132,5 +146,45 @@ impl<T> ManagedCreateAdvanceCommandResolution<T> {
             code: code.into(),
             message: message.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SessionCheckoutError;
+    use dure_app::DomainStoreErrorV1;
+
+    fn project_store_error(
+        error: DomainStoreErrorV1,
+    ) -> Result<ManagedCreateAdvanceCommandResolution<()>, String> {
+        project_checkout_advance(Err(SessionCheckoutError::Store(error)))
+            .map(|resolution| resolution.map(|_| ()))
+    }
+
+    #[test]
+    fn a_busy_checkout_store_is_a_replayable_resolution_not_an_error_string() {
+        let resolution = project_store_error(DomainStoreErrorV1::Busy {
+            operation: "prepare_session_checkout",
+        });
+
+        assert_eq!(
+            resolution,
+            Ok(ManagedCreateAdvanceCommandResolution::RetrySame {
+                reason: ManagedCreateRetrySameReason::CreateRetryable,
+                code: "session_checkout_store_busy".into(),
+                message: "store is busy during prepare_session_checkout".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn other_checkout_store_failures_keep_their_error() {
+        let error = DomainStoreErrorV1::Storage {
+            code: "sqlite_io",
+            detail: "disk I/O error".into(),
+        };
+
+        assert_eq!(project_store_error(error.clone()), Err(error.to_string()));
     }
 }

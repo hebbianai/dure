@@ -223,7 +223,7 @@ async fn schema_49_migration_adds_recovery_without_enabling_any_provider() {
         "provider_recovery_usage",
         "agent_recoveries",
     ] {
-        sqlx::query(&format!("DROP TABLE {table}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {table}")))
             .execute(&mut connection)
             .await
             .unwrap();

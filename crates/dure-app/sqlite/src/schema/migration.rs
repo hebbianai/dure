@@ -5,7 +5,7 @@ use sqlx::Connection;
 mod tests;
 
 struct SchemaChange<'a> {
-    statements: &'a [&'a str],
+    statements: &'a [&'static str],
     rebuild_referenced_tables: bool,
 }
 
@@ -15,7 +15,7 @@ pub(super) async fn migrate_schema(
     existing_marker: Option<MigrationMarker>,
     from_version: u32,
     to_version: u32,
-    statements: &[&str],
+    statements: &[&'static str],
     operation: &'static str,
 ) -> Result<(), DomainStoreErrorV1> {
     migrate_change(

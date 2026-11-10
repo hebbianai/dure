@@ -25,7 +25,7 @@ pub(crate) async fn downgrade_dispatch_stop_fixture_to_v33(
         "agent_dispatch_stops_spawn_history_idx",
         "agent_dispatch_stops_recovery_idx",
     ] {
-        sqlx::query(&format!("DROP INDEX {index}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP INDEX {index}")))
             .execute(pool)
             .await?;
     }

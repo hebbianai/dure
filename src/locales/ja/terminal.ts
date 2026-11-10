@@ -42,6 +42,7 @@ export const terminal: Record<string, string> = {
 	"terminal.recovery.resume": "セッションを再開",
 	"terminal.recovery.resuming": "セッションを開き直しています…",
 	"terminal.recovery.resumeFailed": "今回はうまくいきませんでした — もう一度試しても安全です。",
+	"terminal.recovery.resumeBusy": "Dure が混み合っていて、まだセッションを開始できませんでした。何も変更されていません — 少し待ってからもう一度お試しください。",
 	"terminal.recovery.worktreeMissingTitle": "ワークツリーがありません",
 	"terminal.recovery.worktreeMissingBody": "会話は安全ですが、{branch} の保存済みワークツリーは削除されています。再作成するか、リポジトリのルートで再開できます。",
 	"terminal.recovery.recreateWorktree": "ワークツリーを再作成して再開",
