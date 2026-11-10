@@ -25,8 +25,9 @@ tauri-build = { version = "2", features = [] }
 # 읽고 target별 섹션은 보지 않는다. 따라서 이 feature를
 # `[target.'cfg(target_os = "macos")'.dependencies]`로만 옮기면 빌드가
 # "features does not match the allowlist"로 패닉한다(2026-07-30 main 파괴).
-# Linux에서도 무해하다: 이 feature는 wry/fullscreen·wry/transparent로만 매핑되고
-# 둘 다 크로스플랫폼이다(tauri 2.11.5 Cargo.toml:108).
+# Linux에서도 무해하다: tauri 2.12.1부터 이 feature는 아무것도 켜지 않는다 —
+# 투명 창·전체 화면 API가 항상 켜져 있다(tauri 2.12.5 src/lib.rs:40,
+# Cargo.toml:108).
 tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
@@ -82,7 +83,7 @@ libc = "0.2"
 tokio = { version = "1", features = ["io-util", "net", "process", "sync", "time"] }
 tempfile = "3"
 sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "sqlite-unlock-notify"] }
-tauri-plugin-updater = "2.10.1"
+tauri-plugin-updater = "2.14.1"
 tauri-plugin-process = "2.3.1"
 memchr = "2.8.2"
 

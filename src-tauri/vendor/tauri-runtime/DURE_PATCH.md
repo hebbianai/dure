@@ -1,9 +1,9 @@
 # Pinned Tauri runtime patch
 
-Source: `tauri-runtime` 2.11.3 from crates.io, crate SHA-256
-`b0b4bc95aed361b0019067d189a1174a603d460d0f6c72606512d59fc9c12ec8`.
+Source: `tauri-runtime` 2.12.2 from crates.io, crate SHA-256
+`7c55766d99cea69055904d1735b93c2049302b2e09effd462120deb5581d78e9`.
 Upstream commit from the crate's VCS metadata:
-<https://github.com/tauri-apps/tauri/tree/6f6ab1207bb3923c2721fbc67d2fdb1c8deb0c7a/crates/tauri-runtime>.
+<https://github.com/tauri-apps/tauri/tree/59b63ab500da9859f12d8888c3298bc29bba0b92/crates/tauri-runtime>.
 Original normalized manifest, source, README and MIT/Apache-2.0 licenses are
 retained. Cargo.lock remains owned by the consuming desktop application.
 
