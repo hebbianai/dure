@@ -138,14 +138,26 @@ pub(crate) async fn list_provider_conversations() -> Vec<conv::ProviderConversat
 }
 
 /// Read one exact provider-owned transcript into the provider-neutral entry
-/// shape shared by pane copy and the local CLI server.
+/// shape shared by pane copy and the local CLI server. `include_tools` adds
+/// the tool calls between the messages (`tools`) for the conversation view;
+/// the entries are the same either way.
 #[tauri::command(async)]
 pub(crate) async fn read_provider_conversation_transcript(
     provider: String,
     conversation_id: String,
-) -> Result<conv::ProviderConversationTranscript, String> {
+    include_tools: Option<bool>,
+) -> Result<conv::ProviderConversationActivity, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        conv::transcript_global(&provider, &conversation_id)
+        if include_tools == Some(true) {
+            conv::transcript_activity_global(&provider, &conversation_id)
+        } else {
+            conv::transcript_global(&provider, &conversation_id).map(|transcript| {
+                conv::ProviderConversationActivity {
+                    transcript,
+                    tools: Vec::new(),
+                }
+            })
+        }
     })
     .await
     .map_err(|error| format!("provider transcript task failed: {error}"))?

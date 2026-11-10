@@ -8,6 +8,11 @@ import {
 	isCanonicalDecimalString,
 } from "@/lib/decimalString";
 import { t } from "@/lib/i18n";
+import type {
+	ProviderConversationActivity,
+	ProviderToolCall,
+	ProviderToolCallState,
+} from "@/lib/ipc/conversations";
 import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
 import type { Agent } from "@/types";
 import {
@@ -25,7 +30,7 @@ const PENDING_ITEM_ID = "native-pending-prompt";
 
 /** One transcript read, fenced to the Host completion count it was read at. */
 export interface NativeAgentChatSnapshot {
-	readonly transcript: ProviderConversationTranscriptV1;
+	readonly transcript: ProviderConversationActivity;
 	readonly turnCompletedCount: string | undefined;
 	/** The refresh cursor this read answered; a view that mounts again at the
 	 * same cursor reuses the read instead of repeating it. */
@@ -307,6 +312,63 @@ export function presentNativeAgentInputError({
 		: { message: code };
 }
 
+const TOOL_CALL_STATES: ReadonlySet<string> = new Set<ProviderToolCallState>([
+	"running",
+	"completed",
+	"failed",
+	"canceled",
+]);
+const MAX_TOOL_ID_LENGTH = 256;
+
+function boundedToolText(value: unknown): value is string {
+	return (
+		typeof value === "string" &&
+		value.length > 0 &&
+		value.length <= MAX_TOOL_ID_LENGTH
+	);
+}
+
+/** The tool calls of one transcript read, checked at the boundary: a call
+ * that is malformed, repeats an earlier call's id or sits outside the read's
+ * messages is left out on its own, so one bad record never costs the
+ * conversation. Kept in transcript order. */
+export function nativeTranscriptToolCalls(
+	tools: unknown,
+	entryCount: number,
+): ProviderToolCall[] {
+	if (!Array.isArray(tools)) return [];
+	const calls: ProviderToolCall[] = [];
+	const seen = new Set<string>();
+	for (const candidate of tools) {
+		if (typeof candidate !== "object" || candidate === null) continue;
+		const { afterEntries, callId, name, state, input } = candidate as Record<
+			string,
+			unknown
+		>;
+		if (
+			!Number.isSafeInteger(afterEntries) ||
+			(afterEntries as number) < 0 ||
+			(afterEntries as number) > entryCount ||
+			!boundedToolText(callId) ||
+			!boundedToolText(name) ||
+			typeof state !== "string" ||
+			!TOOL_CALL_STATES.has(state) ||
+			seen.has(callId)
+		) {
+			continue;
+		}
+		seen.add(callId);
+		calls.push({
+			afterEntries: afterEntries as number,
+			callId,
+			name,
+			state: state as ProviderToolCallState,
+			input: input ?? null,
+		});
+	}
+	return calls.sort((left, right) => left.afterEntries - right.afterEntries);
+}
+
 function row(
 	sequence: number,
 	item: Omit<AgentTimelineRowV1["item"], "providerMessageId">,
@@ -323,8 +385,12 @@ function row(
  * does not yet hold closes that turn and opens a pending one, which stays
  * open until the prompt is released (then it reads as a sent message). A
  * prompt the transcript already ends with (see `nativeAgentChatPendingEchoed`)
- * is shown once. Provider entries carry no timestamps, so durations stay
- * unset rather than invented. */
+ * is shown once. Tool calls read with the transcript sit between the
+ * messages they were made between, so the shared rows collapse each run of
+ * them into one burst line; a call without a recorded result reads as
+ * running only in the newest turn and as canceled in an earlier one. Provider
+ * entries carry no timestamps, so durations stay unset rather than
+ * invented. */
 export function nativeAgentChatPage({
 	source,
 	transcript,
@@ -333,7 +399,7 @@ export function nativeAgentChatPage({
 	pending,
 }: {
 	source: NativeAgentTranscriptSource;
-	transcript: ProviderConversationTranscriptV1;
+	transcript: ProviderConversationActivity;
 	terminalEpoch: string;
 	working: boolean;
 	pending?: NativeAgentChatPendingPrompt;
@@ -386,7 +452,41 @@ export function nativeAgentChatPage({
 			createdAtMs: 0,
 		});
 	}
+	const tools = nativeTranscriptToolCalls(transcript.tools, entries.length);
+	// Only the newest turn can still have a call running in it (or waiting on
+	// an approval); an earlier turn's call without a result was cut off.
+	let newestTurnStart = 0;
 	entries.forEach((entry, index) => {
+		if (entry.kind === "message" && entry.role === "user") {
+			newestTurnStart = index + 1;
+		}
+	});
+	let nextTool = 0;
+	const pushToolsThrough = (position: number) => {
+		for (; nextTool < tools.length; nextTool += 1) {
+			const tool = tools[nextTool] as ProviderToolCall;
+			if (tool.afterEntries > position) return;
+			push({
+				itemId: `native-tool:${tool.callId}`,
+				turnId,
+				clientMessageId: turnId,
+				body: {
+					type: "tool",
+					toolCallId: tool.callId,
+					name: tool.name,
+					state:
+						tool.state === "running" && tool.afterEntries < newestTurnStart
+							? "canceled"
+							: tool.state,
+					input: tool.input,
+					output: null,
+				},
+				createdAtMs: 0,
+			});
+		}
+	};
+	entries.forEach((entry, index) => {
+		pushToolsThrough(index);
 		if (entry.kind !== "message" || !entry.text.trim()) return;
 		if (entry.role === "user") openTurn(`native-turn:${index + 1}`, 0);
 		push({
@@ -397,6 +497,7 @@ export function nativeAgentChatPage({
 			createdAtMs: 0,
 		});
 	});
+	pushToolsThrough(entries.length);
 	const pendingRow =
 		pending && !nativeAgentChatPendingEchoed(pending, transcript)
 			? pending

@@ -44,6 +44,33 @@ export interface ProviderConversationMetadata {
 
 export type ProviderConversationTranscript = ProviderConversationTranscriptV1;
 
+export type ProviderToolCallState =
+	| "running"
+	| "completed"
+	| "failed"
+	| "canceled";
+
+/** One tool call the agent made between the transcript's messages, as this
+ * desktop read it from the provider's own records. The input is bounded and
+ * the output stays in the terminal. */
+export interface ProviderToolCall {
+	/** How many of the transcript's `entries` come before this call. */
+	afterEntries: number;
+	callId: string;
+	/** The provider's tool name (`Bash`, `Read`…), or a Codex item kind
+	 * (`commandExecution`, `fileChange`…). */
+	name: string;
+	state: ProviderToolCallState;
+	input: unknown;
+}
+
+/** A transcript read with `includeTools`. Older desktops answer without
+ * `tools`, and so does a conversation without tool calls. */
+export interface ProviderConversationActivity
+	extends ProviderConversationTranscriptV1 {
+	tools?: unknown;
+}
+
 export const listConversations = (
 	cwd: string,
 	provider: string,
@@ -78,17 +105,29 @@ export const sshProviderConversationMetadata = (
 		{ opts, targets },
 	);
 
-export const readProviderConversationTranscript = (
+export function readProviderConversationTranscript(
 	provider: string,
 	conversationId: string,
-) =>
-	invoke<ProviderConversationTranscript>(
+): Promise<ProviderConversationTranscript>;
+/** With `includeTools`, the answer also carries the tool calls between the
+ * messages; the entries are the same either way. */
+export function readProviderConversationTranscript(
+	provider: string,
+	conversationId: string,
+	options: { includeTools: true },
+): Promise<ProviderConversationActivity>;
+export function readProviderConversationTranscript(
+	provider: string,
+	conversationId: string,
+	options?: { includeTools: true },
+) {
+	return invoke<ProviderConversationActivity>(
 		"read_provider_conversation_transcript",
-		{
-			provider,
-			conversationId,
-		},
+		options?.includeTools
+			? { provider, conversationId, includeTools: true }
+			: { provider, conversationId },
 	);
+}
 
 export type BackgroundWorkKind = "subagent" | "workflow" | "shell" | "monitor";
 

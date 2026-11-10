@@ -32,9 +32,10 @@ import type { NativeAgentTranscriptSource } from "../../../cli/lib/agent-transcr
 
 const noOlderHistory = async () => {};
 
-/** The conversation view of a native terminal Agent: the provider transcript
- * rendered with the shared chat rows, plus the shared composer on the Host's
- * idle prompt path. The terminal stays mounted underneath and owns
+/** The conversation view of a native terminal Agent: the provider transcript,
+ * with the tool calls between its messages as collapsed bursts, rendered with
+ * the shared chat rows, plus the shared composer on the Host's idle prompt
+ * path. The terminal stays mounted underneath and owns
  * everything the transcript cannot show (approvals, slash commands, trust
  * prompts). The pane owns the runtime state (`chat`) and the draft lives in
  * the shared chat draft store, so neither is lost when this view unmounts. */
@@ -95,7 +96,9 @@ export function NativeAgentChatView({
 	useEffect(() => {
 		if (readCursor === cursor) return;
 		let current = true;
-		void readProviderConversationTranscript(provider, conversationId).then(
+		void readProviderConversationTranscript(provider, conversationId, {
+			includeTools: true,
+		}).then(
 			(transcript) => {
 				if (!current) return;
 				setSnapshot({ transcript, turnCompletedCount: count, cursor });

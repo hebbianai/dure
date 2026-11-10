@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { projectAgentChatTranscript } from "@/lib/agents/chat/agentChatProjection";
+import {
+	projectAgentChatTranscript,
+	segmentAgentChatRows,
+} from "@/lib/agents/chat/agentChatProjection";
 import {
 	NATIVE_AGENT_PENDING_IDLE_GRACE_MS,
 	type NativeAgentChatPendingPrompt,
@@ -14,6 +17,7 @@ import {
 	nativeAgentChatRefreshCursor,
 	nativeAgentInputFailure,
 	nativeAgentPromptBackendProfileId,
+	nativeTranscriptToolCalls,
 	nativeTranscriptUserEntries,
 	presentNativeAgentInputError,
 } from "@/lib/agents/chat/nativeAgentChat";
@@ -249,6 +253,156 @@ describe("native conversation timeline", () => {
 				}),
 			).toThrow();
 		}
+	});
+});
+
+const call = (
+	afterEntries: number,
+	callId: string,
+	name: string,
+	state: string,
+	input: unknown = null,
+) => ({ afterEntries, callId, name, state, input });
+
+/** A message, or one collapsed burst of calls as `name:state` each. */
+type Turn = (string | string[])[];
+
+/** Each turn as its segments: a message, or one collapsed burst of calls. */
+function turnSegments(page: ReturnType<typeof nativeAgentChatPage>) {
+	return projectAgentChatTranscript(page.rows).map((block) =>
+		block.kind === "turn"
+			? segmentAgentChatRows(block.rows).flatMap((segment): Turn => {
+					if (segment.kind === "tools") {
+						return [
+							segment.rows.map(({ timeline }) =>
+								timeline.item.body.type === "tool"
+									? `${timeline.item.body.name}:${timeline.item.body.state}`
+									: "?",
+							),
+						];
+					}
+					const body = segment.row.timeline.item.body;
+					return body.type === "message"
+						? [`${body.role}:${body.markdown}`]
+						: [];
+				})
+			: block.row.timeline.item.body.type,
+	);
+}
+
+describe("native conversation tool activity", () => {
+	it("places tool calls between the messages they were made between, one burst per run", () => {
+		const page = nativeAgentChatPage({
+			source,
+			transcript: {
+				...conversation,
+				tools: [
+					call(2, "toolu_1", "Read", "completed", { file_path: "/repo/a.ts" }),
+					call(2, "toolu_2", "Bash", "failed", { command: "pnpm test" }),
+					call(4, "toolu_3", "Edit", "completed"),
+				],
+			},
+			terminalEpoch: "epoch-one",
+			working: false,
+		});
+		expect(turnSegments(page)).toEqual([
+			[
+				"user:First question",
+				"assistant:Looking.",
+				["Read:completed", "Bash:failed"],
+				"assistant:First answer",
+			],
+			["user:Second question", ["Edit:completed"], "assistant:Second answer"],
+		]);
+		const read = page.rows.find(
+			(row) => row.item.itemId === "native-tool:toolu_1",
+		);
+		expect(read?.item.body).toEqual({
+			type: "tool",
+			toolCallId: "toolu_1",
+			name: "Read",
+			state: "completed",
+			input: { file_path: "/repo/a.ts" },
+			output: null,
+		});
+		// The answer text the turn reads as is the messages' alone.
+		expect(blocks(page)[0]).toMatchObject({
+			assistantMarkdown: "Looking.\n\nFirst answer",
+		});
+	});
+
+	it("reads a call without a result as running in the newest turn only", () => {
+		const page = nativeAgentChatPage({
+			source,
+			transcript: {
+				...conversation,
+				tools: [
+					call(2, "toolu_cut", "Bash", "running"),
+					call(5, "toolu_waiting", "Bash", "running"),
+				],
+			},
+			terminalEpoch: "epoch-one",
+			working: false,
+		});
+		expect(turnSegments(page)).toEqual([
+			[
+				"user:First question",
+				"assistant:Looking.",
+				["Bash:canceled"],
+				"assistant:First answer",
+			],
+			["user:Second question", "assistant:Second answer", ["Bash:running"]],
+		]);
+	});
+
+	it("leaves out a malformed, repeated or out-of-range call on its own", () => {
+		const long = "x".repeat(257);
+		expect(
+			nativeTranscriptToolCalls(
+				[
+					call(2, "late", "Bash", "completed"),
+					call(0, "early", "Read", "completed", { path: "a" }),
+					call(-1, "negative", "Bash", "completed"),
+					call(6, "past-the-end", "Bash", "completed"),
+					call(1.5, "fraction", "Bash", "completed"),
+					call(1, "", "Bash", "completed"),
+					call(1, "long-name", long, "completed"),
+					call(1, "unknown-state", "Bash", "paused"),
+					call(3, "late", "Read", "failed"),
+					null,
+					"call",
+					{
+						afterEntries: 1,
+						callId: "no-input",
+						name: "Glob",
+						state: "running",
+					},
+				],
+				5,
+			),
+		).toEqual([
+			call(0, "early", "Read", "completed", { path: "a" }),
+			call(1, "no-input", "Glob", "running"),
+			call(2, "late", "Bash", "completed"),
+		]);
+		expect(nativeTranscriptToolCalls(undefined, 5)).toEqual([]);
+		expect(nativeTranscriptToolCalls({ length: 1 }, 5)).toEqual([]);
+	});
+
+	it("reads a transcript without tool calls exactly as before", () => {
+		const withoutTools = nativeAgentChatPage({
+			source,
+			transcript: conversation,
+			terminalEpoch: "epoch-one",
+			working: false,
+		});
+		const emptyTools = nativeAgentChatPage({
+			source,
+			transcript: { ...conversation, tools: [] },
+			terminalEpoch: "epoch-one",
+			working: false,
+		});
+		expect(emptyTools).toEqual(withoutTools);
 	});
 });
 
