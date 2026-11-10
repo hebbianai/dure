@@ -396,8 +396,13 @@ fence, update that backend instead of removing the flag.
 Keep the returned status/retry commands if a response is uncertain. Inspect first,
 then retry the exact request instead of repeating a name-based resume. Wake must
 retain its operation ID, journal revision and idempotency key; no separate publish
-is needed. Native rehost returns a separate publish command. Then use `open` to
-place the recovered Run. Remote resume requires execution on its host.
+is needed. Native rehost returns a separate publish command. If it exits 75
+because Hmux is still applying the rehost, or its publication was lost, run the
+returned `continuation.finish` (`dure hmux rehost finish ...`): it waits on that
+exact operation and publishes it once, never starts another, and is safe to
+repeat until it exits 0. Resuming an Agent whose source Hmux already holds a
+restart for continues that operation. Then use `open` to place the recovered
+Run. Remote resume requires execution on its host.
 For headless input/output, use the Session/workspace pair from `show` with
 `read`, local `send`, and `send-keys`; an Agent name requires client registration. Direct Session
 input verifies the current Host generation without requiring an app registry.

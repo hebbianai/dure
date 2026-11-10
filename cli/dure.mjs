@@ -2758,6 +2758,10 @@ async function cmdHmux(sub, opts) {
     const { runManagedRehostPublication } = await import("./lib/managed-rehost-publication.mjs");
     return runManagedRehostPublication(opts, () => backendProfileQueryContext(opts));
   }
+  if (action === "rehost" && opts.rest[1] === "finish") {
+    const { runManagedRehostFinish } = await import("./lib/managed-rehost-named.mjs");
+    return runManagedRehostFinish(opts, () => backendProfileQueryContext(opts), hmuxCommand());
+  }
   if (action === "rehost" && opts.rest[1] === "status") {
     const { runManagedRehostStatus } = await import("./lib/managed-rehost-status.mjs");
     return runManagedRehostStatus(opts, hmuxCommand());
@@ -2773,7 +2777,7 @@ async function cmdHmux(sub, opts) {
         const { runManagedRehostNamed } = await import("./lib/managed-rehost-named.mjs");
         return runManagedRehostNamed(opts, REG, () => backendProfileQueryContext(opts), hmuxCommand());
       }
-      return runManagedRehostPreview(opts, REG, () => backendProfileQueryContext(opts));
+      return runManagedRehostPreview(opts, REG, () => backendProfileQueryContext(opts), hmuxCommand());
     }
     if (opts.backendSpecified || process.env.DURE_BACKEND_PROFILE?.trim()) {
       fail("rehost_backend_execution_unavailable: legacy named execution cannot use a selected backend. Use the saved exact start/status/publish commands; this request was not sent to the app.");
@@ -2798,9 +2802,12 @@ async function cmdHmux(sub, opts) {
         "dure hmux rehost start <original-session-id> --workspace ID --operation-id ID --confirm-restart [--json]  # local, same conversation and settings\n" +
         "dure hmux rehost retry [<original-session-id> --workspace ID] --operation-id ID --confirm-restart [--json]  # resume an existing local operation\n" +
         "dure hmux rehost publish <agent-id> --from-session <original-session-id> --workspace ID --operation-id ID [--backend ID] [--json]  # publish completion; never restarts a provider\n" +
+        "dure hmux rehost finish <agent-id> --from-session <original-session-id> --workspace ID --operation-id ID --confirm-restart [--backend ID] [--json]  # wait on that local operation, then publish it once\n" +
         "Rehost keeps the original working folder; --project, --path and --cwd are unsupported.\n" +
         "start and retry wait up to a minute for an operation Hmux is still applying; if it is still running they exit 0 with state running and its status command.\n" +
-        "A confirmed --name restart is finished (exit 0) only after its binding is published; while Hmux is still applying it, it exits 75 with state running and its status/publish commands.\n" +
+        "A confirmed --name restart is finished (exit 0) only after its binding is published; while Hmux is still applying it, it exits 75 with state running and its finish/status/publish commands.\n" +
+        "A preview or confirmed restart of an Agent whose source Hmux already holds a restart for continues that operation instead of starting another.\n" +
+        "finish never starts an operation: it exits 0 once published, 75 while Hmux is still applying it, and 1 otherwise; repeat it until it exits 0.\n" +
         "dure hmux convert --name <session> --target-panel-id ID --to <managed|standalone> [--agent-name NAME] [--confirm-restart]\n" +
         "dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] [--yes] [--json]  # alias for dure stop\n" +
         "dure hmux migrate ...  # adopt alias\n",
@@ -4081,6 +4088,8 @@ Usage:
                                        Resume only the journaled local operation; never create a fresh one
   dure hmux rehost publish <agent-id> --from-session <original-session-id> --workspace ID --operation-id ID [--backend ID] [--json]
                                        Publish native completion to the Agent binding without running recovery
+  dure hmux rehost finish <agent-id> --from-session <original-session-id> --workspace ID --operation-id ID --confirm-restart [--backend ID] [--json]
+                                       Wait on that local operation, then publish it once; never start another
   dure hmux convert --name <session> --target-panel-id <pane> --to <managed|standalone> [--agent-name <name>]
                                       Convert the Hmux session class using its exact conversation ID (preview by default)
   dure hmux stop --name <project/agent> [--target-panel-id <pane>] [--yes] [--json]

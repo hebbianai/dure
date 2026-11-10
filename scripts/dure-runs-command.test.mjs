@@ -38,6 +38,56 @@ function fakeClock() {
   return { now: () => time, sleep: async (ms) => { time += Math.max(1, ms); } };
 }
 
+/**
+ * A native broker over one in-memory recovery journal, keyed by source. Like
+ * Hmux it refuses a second operation for a source that already holds one, and
+ * an operation another executor is applying stays pending (`applying`) until
+ * the test completes it.
+ */
+function fakeHmuxJournal() {
+  const journal = new Map();
+  const calls = [];
+  const resolution = (fields) => ({ kind: "success", stdout: JSON.stringify({
+    schema: "hmux-managed-rehost-resolution-v1", schemaVersion: 1, ...fields }) });
+  const refused = (code) => ({ kind: "nonzero", stdout: JSON.stringify({ schema: "hmux-managed-rehost-v1",
+    schemaVersion: 1, state: "refused", error: { code, message: `${code}: refused` } }) });
+  const run = vi.fn(async (argv) => {
+    calls.push(argv.slice(1));
+    const value = (flag) => argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined;
+    const source = { sessionId: value("--session"), workspaceId: value("--workspace") };
+    const key = `${source.workspaceId}\0${source.sessionId}`;
+    const operationId = value("--operation-id");
+    const entry = journal.get(key);
+    const successor = { sessionId: `successor-of-${source.sessionId}`, workspaceId: source.workspaceId };
+    const receipt = (replayed) => ({ kind: "success", stdout: JSON.stringify({ schema: "hmux-managed-rehost-v1",
+      schemaVersion: 1, operationId, replayed, sourceStopReceipt: source, replacementReceipt: successor }) });
+    switch (argv[1]) {
+      case "managed-rehost-resolve":
+        if (!entry || (operationId && entry.operationId !== operationId)) return resolution({ state: "not_found", source });
+        return entry.state === "completed"
+          ? resolution({ state: "resolved", operationIds: [entry.operationId], sourceGeneration: source,
+            currentGeneration: successor })
+          : resolution({ state: "retry_required", code: "hmux_managed_rehost_retry_required",
+            operationId: entry.operationId, source });
+      case "managed-rehost-start":
+        if (entry && entry.operationId !== operationId) return refused("hmux_managed_rehost_source_changed");
+        if (!entry) {
+          journal.set(key, { operationId, state: "applying" });
+          return { kind: "timeout" };
+        }
+      // A replayed start of the same operation behaves like reconcile.
+      // falls through
+      case "managed-rehost-reconcile":
+        if (!entry || entry.operationId !== operationId) return refused("hmux_managed_rehost_retry_required");
+        return entry.state === "completed" ? receipt(true) : refused("hmux_recovery_busy");
+      default:
+        throw new Error(`Unexpected native command: ${argv[1]}`);
+    }
+  });
+  return { run, calls, journal,
+    complete: () => { for (const entry of journal.values()) entry.state = "completed"; } };
+}
+
 function dormantFixture() {
   const f = fixture();
   const asleep = { schemaVersion: 1, state: "transitioning", agentId: f.entry.agentId,
@@ -151,10 +201,12 @@ describe("durable Run commands", () => {
   });
   it("previews recovery from durable Agent identity without a client name projection", async () => {
     const f = fixture();
-    const run = vi.fn();
-    const report = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name] }, run });
+    const hmux = fakeHmuxJournal();
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name] }, command: "hmux", run: hmux.run });
     expect(report).toMatchObject({ ok: true, recovery: { state: "preview", agentId: f.entry.agentId } });
-    expect(run).not.toHaveBeenCalled();
+    // Preview only asks the native journal whether the source already has a restart.
+    expect(hmux.calls.map(([subcommand]) => subcommand)).toEqual(["managed-rehost-resolve"]);
+    expect(report.recovery.continuation.retained).toBeUndefined();
     expect(report.recovery.continuation.start).toContain(f.runtime.receipt.authority.authority.binding.sessionId);
   });
   it("retains exact recovery commands after uncertain execution without another launch", async () => {
@@ -216,14 +268,127 @@ describe("durable Run commands", () => {
     expect(finished).toMatchObject({ ok: true, recovery: { state: "completed", nativeExecution: "completed",
       publication: "published" } });
     expect(runsCommandExitCode(finished)).toBe(0);
-    expect(run.mock.calls[0][0].slice(0, 5)).toEqual(["hmux", "managed-rehost-start",
-      "--session", source.binding.sessionId, "--workspace"]);
+    // Besides read-only journal lookups, the only native call admits the operation.
+    expect(run.mock.calls.map(([argv]) => argv).filter((argv) => argv[1] !== "managed-rehost-resolve")
+      .map((argv) => argv.slice(0, 5))).toEqual([["hmux", "managed-rehost-start",
+      "--session", source.binding.sessionId, "--workspace"]]);
     // The last step is the binding publication; without it the restart is not finished.
     publication = "lost";
     const unpublished = await resume();
     expect(unpublished).toMatchObject({ ok: false, recovery: { state: "completed", nativeExecution: "completed",
       publication: "unconfirmed" } });
     expect(runsCommandExitCode(unpublished)).toBe(2);
+  });
+  describe("a restart Hmux already holds", () => {
+    function retainedFixture() {
+      const f = fixture();
+      const hmux = fakeHmuxJournal();
+      const published = { schemaVersion: 1, receipt: { ...f.runtime.receipt, selectionRevision: 2 } };
+      f.requestBackend.mockImplementation(async (_profile, request) => {
+        if (request.operation === "agent_spawn.list") return { result: f.page };
+        if (request.operation === "agent_runtime.projection.inspect") return { result: f.runtime };
+        if (request.operation === "agent_runtime.native_rehost.reconcile") return { result: published };
+        throw new Error(`Unexpected operation: ${request.operation}`);
+      });
+      const source = f.runtime.receipt.authority.authority;
+      const resume = (confirmRestart) => collectRunsCommand({ ...f,
+        opts: { rest: ["resume", f.entry.name], ...(confirmRestart ? { confirmRestart } : {}) },
+        command: "hmux", run: hmux.run, settle: fakeClock() });
+      const publications = () => f.requestBackend.mock.calls.map(([, request]) => request)
+        .filter((request) => request.operation === "agent_runtime.native_rehost.reconcile");
+      const native = (subcommand) => hmux.calls.filter((argv) => argv[0] === subcommand);
+      return { ...f, hmux, resume, publications, native,
+        sessionId: source.binding.sessionId, workspaceId: source.runtimeWorkspaceId };
+    }
+
+    it("finishes a restart that was still applying with the same command, publishing it once", async () => {
+      const f = retainedFixture();
+      const first = await f.resume(true);
+      expect(first.recovery).toMatchObject({ state: "running", error: { code: "rehost_still_running" } });
+      expect(runsCommandExitCode(first)).toBe(MANAGED_REHOST_RUNNING_EXIT_CODE);
+      const operationId = first.recovery.continuation.operationId;
+      expect(first.recovery.continuation.finish).toEqual(["hmux", "rehost", "finish", f.entry.agentId,
+        "--from-session", f.sessionId, "--workspace", f.workspaceId, "--operation-id", operationId,
+        "--confirm-restart", "--backend", "local", "--json"]);
+      expect(formatRunsCommand(first)).toContain(`Finish: dure 'hmux' 'rehost' 'finish' '${f.entry.agentId}'`);
+      // Hmux finishes applying it after the first command stopped waiting.
+      f.hmux.complete();
+      const finished = await f.resume(true);
+      expect(finished).toMatchObject({ ok: true, recovery: { ok: true, state: "completed",
+        nativeExecution: "completed", publication: "published",
+        continuation: { operationId, retained: { operationId, nativeState: "completed" } } } });
+      expect(runsCommandExitCode(finished)).toBe(0);
+      // One admission in total; the second command only continued it.
+      expect(f.native("managed-rehost-start")).toHaveLength(1);
+      expect(f.native("managed-rehost-reconcile")).toEqual([["managed-rehost-reconcile", "--session", f.sessionId,
+        "--workspace", f.workspaceId, "--operation-id", operationId, "--confirm-restart", "--json"]]);
+      expect(f.publications().map((request) => request.body)).toEqual([{ schemaVersion: 1,
+        agentId: f.entry.agentId, operationId, sourceSessionId: f.sessionId, sourceWorkspaceId: f.workspaceId }]);
+    });
+
+    it("keeps waiting on the retained operation, never a new one, while Hmux still applies it", async () => {
+      const f = retainedFixture();
+      const first = await f.resume(true);
+      const operationId = first.recovery.continuation.operationId;
+      const again = await f.resume(true);
+      expect(again).toMatchObject({ ok: false, error: { code: "rehost_still_running" }, recovery: {
+        state: "running", nativeExecution: "running", publication: "not_requested",
+        continuation: { operationId, retained: { operationId, nativeState: "running" } } } });
+      expect(runsCommandExitCode(again)).toBe(MANAGED_REHOST_RUNNING_EXIT_CODE);
+      expect(f.native("managed-rehost-start")).toHaveLength(1);
+      expect(f.native("managed-rehost-reconcile").map((argv) => argv[6])).toEqual([operationId]);
+      expect(f.publications()).toEqual([]);
+    });
+
+    it("previews the restart in progress instead of proposing another operation", async () => {
+      const f = retainedFixture();
+      const operationId = (await f.resume(true)).recovery.continuation.operationId;
+      const preview = await f.resume(false);
+      expect(preview).toMatchObject({ ok: true, recovery: { state: "preview", nativeExecution: "not_requested",
+        continuation: { operationId, retained: { operationId, nativeState: "running" } } } });
+      const { continuation } = preview.recovery;
+      expect(continuation.start).toEqual(continuation.retry);
+      expect(continuation.retry).toEqual(["hmux", "rehost", "retry", f.sessionId, "--workspace", f.workspaceId,
+        "--operation-id", operationId, "--confirm-restart", "--json"]);
+      const text = formatRunsCommand(preview);
+      expect(text).toContain(`Hmux is still applying a restart of this Agent (operation ${operationId})`);
+      expect(text).toContain(`Finish: dure 'hmux' 'rehost' 'finish' '${f.entry.agentId}'`);
+      expect(continuation.finish).toContain(operationId);
+      expect(text).not.toContain("Start:");
+      // The preview only read the journal.
+      expect(f.native("managed-rehost-start")).toHaveLength(1);
+      expect(f.native("managed-rehost-reconcile")).toEqual([]);
+    });
+
+    it("publishes a natively completed restart whose binding publication was lost, without rehosting again", async () => {
+      const f = retainedFixture();
+      const operationId = "operation-held-by-hmux";
+      f.hmux.journal.set(`${f.workspaceId}\0${f.sessionId}`, { operationId, state: "completed" });
+      const preview = await f.resume(false);
+      expect(formatRunsCommand(preview)).toContain(
+        `Hmux already restarted this Agent (operation ${operationId}), but its binding is not published yet.`);
+      const finished = await f.resume(true);
+      expect(finished).toMatchObject({ ok: true, recovery: { state: "completed", publication: "published",
+        receipt: { operationId, replayed: true } } });
+      expect(f.native("managed-rehost-start")).toEqual([]);
+      expect(f.publications().map((request) => request.body.operationId)).toEqual([operationId]);
+    });
+
+    it("refuses an operation it cannot match to this exact source instead of starting another", async () => {
+      const f = retainedFixture();
+      // Latest-successor resolution names a pending operation that does not belong to this source.
+      f.hmux.run.mockImplementationOnce(async () => ({ kind: "success", stdout: JSON.stringify({
+        schema: "hmux-managed-rehost-resolution-v1", schemaVersion: 1, state: "retry_required",
+        code: "hmux_managed_rehost_retry_required", operationId: "later-operation",
+        source: { sessionId: f.sessionId, workspaceId: f.workspaceId } }) }));
+      const report = await f.resume(true);
+      expect(report).toMatchObject({ ok: false, error: { code: "rehost_source_operation_unconfirmed" } });
+      expect(report.error.message).toContain("later-operation");
+      expect(runsCommandExitCode(report)).toBe(2);
+      expect(f.native("managed-rehost-start")).toEqual([]);
+      expect(f.native("managed-rehost-reconcile")).toEqual([]);
+      expect(f.publications()).toEqual([]);
+    });
   });
   it("uses a published successor, and refuses incomplete or unrelated current authority", () => {
     const f = fixture();

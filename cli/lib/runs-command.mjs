@@ -58,7 +58,10 @@ only when returned for native rehost. Native rehost waits up to a minute for an
 operation Hmux is still applying. A resume is finished, with ok true and exit 0,
 only after the native rehost and its binding publication both complete. If Hmux
 is still applying it, resume returns ok false, state running and exit 75 with its
-status/publish commands; do not act on the Agent until Publish succeeds.
+finish/status/publish commands; do not act on the Agent until it is finished.
+Finish waits on that exact operation and publishes it once; it never starts
+another, so repeat it until it exits 0. While Hmux holds a restart for the
+Agent's source, resume previews and continues that operation instead.
 Use open after recovery to place the pane.
 For live Session observations use dure ls. Use the Session/workspace from show
 with dure read <session-id> --workspace ID or dure send <session-id> --workspace ID.

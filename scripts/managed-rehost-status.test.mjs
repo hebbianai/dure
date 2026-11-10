@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   collectManagedRehostStatus,
   formatManagedRehostStatus,
+  observeManagedRehostSource,
 } from "../cli/lib/managed-rehost-status.mjs";
 
 const args = {
@@ -107,5 +108,35 @@ describe("operation-only status boundary", () => {
     const run = vi.fn().mockResolvedValue({ kind: "success", stdout: JSON.stringify(result) });
     expect(await collectManagedRehostStatus({ ...operation, run })).toMatchObject({ ok: false });
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("source lookup boundary", () => {
+  const source = { sessionId: args.sessionId, workspaceId: args.workspaceId, command: "hmux" };
+  const pending = { ...missing, state: "retry_required", code: "hmux_managed_rehost_retry_required",
+    operationId: "operation-held" };
+  const resolved = { ...missing, state: "resolved", operationIds: ["operation-held"],
+    sourceGeneration: missing.source, currentGeneration: { sessionId: "successor-1", workspaceId: args.workspaceId } };
+  it.each([missing, pending, resolved])("reads the latest edge for the exact source only: %j", async (result) => {
+    const run = vi.fn().mockResolvedValue({ kind: "success", stdout: JSON.stringify(result) });
+    expect(await observeManagedRehostSource({ ...source, run })).toEqual(result);
+    expect(run.mock.calls).toEqual([[["hmux", "managed-rehost-resolve", "--session", args.sessionId,
+      "--workspace", args.workspaceId, "--json"], { timeoutMs: 5_000, maxCaptureBytes: 1024 * 1024 }]]);
+  });
+  it.each([
+    { kind: "timeout" },
+    { kind: "success", stdout: "not JSON" },
+    { kind: "success", stdout: JSON.stringify({ ...pending, schemaVersion: 2 }) },
+    { kind: "success", stdout: JSON.stringify({ ...pending, source: { ...missing.source, sessionId: "other" } }) },
+    { kind: "success", stdout: JSON.stringify({ ...pending, operationId: "" }) },
+    { kind: "success", stdout: JSON.stringify({ ...resolved, operationIds: [] }) },
+    { kind: "success", stdout: JSON.stringify({ ...resolved, currentGeneration: undefined }) },
+  ])("gives no answer for an unavailable or inexact observation: %j", async (response) => {
+    const run = vi.fn().mockResolvedValue(response);
+    expect(await observeManagedRehostSource({ ...source, run })).toBeUndefined();
+  });
+  it("gives no answer when the native command cannot run", async () => {
+    const run = vi.fn().mockRejectedValue(new Error("spawn failed"));
+    expect(await observeManagedRehostSource({ ...source, run })).toBeUndefined();
   });
 });

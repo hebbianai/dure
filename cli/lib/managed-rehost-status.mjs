@@ -71,6 +71,41 @@ export async function collectManagedRehostStatus({
   return { ok: true, operationId, result };
 }
 
+/**
+ * Ask the native journal whether an exact source already has a rehost, without
+ * knowing its operation. Latest-successor resolution follows completed edges
+ * and stops at the first pending one, so a `retry_required` operation may
+ * belong to a later generation; callers confirm it with an exact observation.
+ * Read-only, like status. Resolves to undefined when Hmux gave no exact answer.
+ */
+export async function observeManagedRehostSource({ sessionId, workspaceId, command, run = runBoundedCommand }) {
+  let response;
+  try {
+    response = await run(
+      [command, "managed-rehost-resolve", "--session", sessionId, "--workspace", workspaceId, "--json"],
+      { timeoutMs: 5_000, maxCaptureBytes: 1024 * 1024 },
+    );
+  } catch {
+    return undefined;
+  }
+  if (response?.kind !== "success") return undefined;
+  let result;
+  try {
+    result = JSON.parse(response.stdout);
+  } catch {
+    return undefined;
+  }
+  if (result?.schema !== "hmux-managed-rehost-resolution-v1" || result.schemaVersion !== 1) return undefined;
+  const source = result.state === "resolved" ? result.sourceGeneration : result.source;
+  if (source?.sessionId !== sessionId || source?.workspaceId !== workspaceId) return undefined;
+  const exact = result.state === "not_found" ||
+    (result.state === "retry_required" && typeof result.operationId === "string" && result.operationId.length > 0) ||
+    (result.state === "resolved" && Array.isArray(result.operationIds) && result.operationIds.length > 0 &&
+      result.operationIds.every((id) => typeof id === "string" && id.length > 0) &&
+      typeof result.currentGeneration?.sessionId === "string" && typeof result.currentGeneration?.workspaceId === "string");
+  return exact ? result : undefined;
+}
+
 export function formatManagedRehostStatus(report) {
   if (!report.ok) return `${report.error.code}: ${report.error.message}`;
   const { result, operationId } = report;
