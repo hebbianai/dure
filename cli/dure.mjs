@@ -783,7 +783,10 @@ function sendManagedInputDirect(binding, text, enter, draftGuard) {
       : result.stderr?.trim() ||
         result.error?.message ||
         `Managed Hmux input command exited with status ${result.status ?? "unknown"}`;
-    return { kind: "failed", detail };
+    // Only Hmux's own exit verdict, before anything was written, lets a
+    // caller follow the Agent elsewhere; see failDirectInput.
+    const exited = code === "hmux_session_exited" && failure.error.deliveryState === "not_written";
+    return { kind: "failed", detail, ...(exited ? { sessionExited: true } : {}) };
   }
   let payload;
   try {
@@ -910,6 +913,19 @@ function delay(milliseconds, signal) {
   });
 }
 
+/** Registry input that Hmux refused because the Session exited is thrown
+ * with tracked send's exit code, so `dure send` can follow the Agent to its
+ * current Session. Every other failure ends the command. */
+function failDirectInput(direct, binding) {
+  if (direct.sessionExited) {
+    throw Object.assign(new Error(direct.detail), {
+      code: "dure_send_session_exited",
+      sessionId: binding.sessionId,
+    });
+  }
+  fail(direct.detail);
+}
+
 async function sendExactSession(sessionId, text, opts) {
   if (opts.backendSpecified || process.env.DURE_BACKEND_PROFILE?.trim()) {
     fail("Exact Session input currently requires the local Hmux runtime; --backend is not supported.");
@@ -977,7 +993,7 @@ async function sendText(
       if (managedInputDirectCompatible(compatibility, draftGuard)) {
         const direct = sendManagedInputDirect(binding, text, enter, draftGuard);
         if (direct.kind === "success") return direct.input;
-        fail(direct.detail);
+        failDirectInput(direct, binding);
       }
     }
     const srv = loadServer();
@@ -1008,7 +1024,7 @@ async function sendText(
         inspectManagedInputCompatibility().managedInputCompatible
       ) {
         const direct = sendManagedInputDirect(binding, text, enter, null);
-        if (direct.kind !== "success") fail(direct.detail);
+        if (direct.kind !== "success") failDirectInput(direct, binding);
         return { ...direct.input, unguardedReason: "hmux" };
       }
       fail("The app server was not found. Reopen or migrate this legacy Hmux binding.");
@@ -1248,6 +1264,21 @@ function writeScreenRead({ text, notice }) {
   if (notice) process.stderr.write(`${notice}\n`);
 }
 
+/** The Session the backend now binds to a registry Agent, when the app's
+ * registry still lists an earlier one (see agent-current-session.mjs). */
+async function findAgentSessionSuccessor(agent) {
+  const { currentAgentSessionSuccessor } = await import("./lib/agent-current-session.mjs");
+  return currentAgentSessionSuccessor({
+    agent,
+    resolveBackend: () =>
+      backendProfileQueryContext(
+        typeof agent.runtimeBinding?.backendProfileId === "string"
+          ? { backendSpecified: true, backend: agent.runtimeBinding.backendProfileId }
+          : {},
+      ),
+  });
+}
+
 async function cmdRead(query, opts) {
   if (opts.json && opts.follow) fail("--json cannot be combined with --follow. Request a one-shot JSON snapshot instead.");
   const backendRequested =
@@ -1288,9 +1319,7 @@ async function cmdRead(query, opts) {
     const reg = loadRegistryOptional() ?? { agents: [] };
     const target = resolveReadTarget(reg, query);
     readLabel = target;
-    const { agentScreenReader, currentAgentSessionSuccessor } = await import(
-      "./lib/agent-current-session.mjs"
-    );
+    const { agentScreenReader } = await import("./lib/agent-current-session.mjs");
     readScreen = agentScreenReader({
       agent: target,
       capture: (session, signal) =>
@@ -1300,16 +1329,7 @@ async function cmdRead(query, opts) {
               ...opts,
               workspace: session.workspaceId,
             }),
-      findSuccessor: (agent) =>
-        currentAgentSessionSuccessor({
-          agent,
-          resolveBackend: () =>
-            backendProfileQueryContext(
-              typeof agent.runtimeBinding?.backendProfileId === "string"
-                ? { backendSpecified: true, backend: agent.runtimeBinding.backendProfileId }
-                : {},
-            ),
-        }),
+      findSuccessor: findAgentSessionSuccessor,
       onSuccessor: (session) => {
         readLabel = session.sessionId;
         process.stderr.write(
@@ -4533,6 +4553,7 @@ async function main() {
       resolveAgent: resolveReadTarget,
       send: sendText,
       sendExactSession,
+      findSuccessor: findAgentSessionSuccessor,
       sendTracked: async (agent, text, opts) => {
         const { sendTrackedMessage } = await import("./lib/tracked-message.mjs");
         const binding = typeof agent === "string" ? null : agent.runtimeBinding;
@@ -4755,7 +4776,10 @@ async function main() {
         true,
         opts.windowLabel,
         opts.idempotencyKey,
-      );
+      ).catch((error) => {
+        if (error?.code !== "dure_send_session_exited") throw error;
+        fail(error.message);
+      });
       process.stdout.write(`\x1b[32m✓\x1b[0m Sent Enter to ${agent.name}\n`);
       break;
     }
