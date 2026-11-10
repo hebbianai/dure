@@ -121,6 +121,40 @@ const EncodedArchive = struct {
     next_logical_line_id: u64,
 };
 
+/// Repairs the incomplete wide pairs a column shrink leaves in live engine
+/// state. Ghostty shrinks a screen it does not reflow (the alternate screen,
+/// and the primary screen while autowrap is off) by truncating every row at
+/// the new width, so a wide head in the new last column loses its spacer
+/// tail. The pinned snapshot encoder refuses that page with InvalidWideCell,
+/// and no presentation checkpoint can be written until the application
+/// rewrites the cell. A wide head can never legitimately occupy a row's last
+/// column, so each one found there gets the repair Ghostty's own snapshot
+/// decoder applies: it becomes narrow and keeps its text and style.
+pub export fn hmux_ghostty_repair_truncated_wide_heads(
+    terminal: vt.hmux_c_api.terminal.Terminal,
+) void {
+    const wrapper = terminal orelse return;
+    const screens = &wrapper.terminal.screens;
+    if (screens.get(.primary)) |screen| repairTruncatedWideHeads(&screen.pages);
+    if (screens.get(.alternate)) |screen| repairTruncatedWideHeads(&screen.pages);
+}
+
+fn repairTruncatedWideHeads(list: *PageList) void {
+    var node = list.pages.first;
+    while (node) |current| : (node = current.next) {
+        // A shrink without reflow restores every node it truncates, so a
+        // node that is still compressed was not truncated and stays so.
+        const page = current.pageIfResident() orelse continue;
+        for (page.rows.ptr(page.memory)[0..page.size.rows]) |*row| {
+            const cells = page.getCells(row);
+            const last = &cells[cells.len - 1];
+            if (last.wide != .wide) continue;
+            last.wide = .narrow;
+            row.dirty = true;
+        }
+    }
+}
+
 /// Moves the complete primary viewport into normal scrollback on an isolated
 /// generation-sealing clone. The live terminal never calls this operation:
 /// Hmux uses the clone only to transfer the predecessor's remaining hot rows
