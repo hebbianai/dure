@@ -1,6 +1,6 @@
 ---
 name: dure
-description: Coordinate with other Dure agents through the `dure` CLI — see who is running, start another agent on a project or Space, schedule durable runs, read or send to a teammate's terminal, place and close client panes, and reach the orchestration contract for dispatched work. Use when working as part of a multi-agent Dure session, when asked to check for instructions, hand work to another agent, run something on a schedule, or open work in a pane.
+description: Coordinate with other Dure agents through the `dure` CLI — see who is running, start another agent on a project or Space, schedule durable runs, read or send to a teammate's terminal, place and close client panes, claim the issue, branch and paths you work on and check for overlaps, and reach the orchestration contract for dispatched work. Use when working as part of a multi-agent Dure session, when asked to check for instructions, declare or check who works on what, hand work to another agent, run something on a schedule, or open work in a pane.
 ---
 
 # Dure CLI

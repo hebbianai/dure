@@ -135,6 +135,7 @@ mod service_lifecycle;
 mod structured_provider_composition;
 #[cfg(unix)]
 mod structured_provider_runtime;
+mod work_claim;
 mod workspace_git;
 
 #[cfg(unix)]
@@ -3774,6 +3775,9 @@ async fn dispatch_authorized(
         }
         "agent_goal.get" | "agent_goal.put" => {
             boxed_operation(|| agent_goal::invoke(state, &request.operation, &request.body)).await
+        }
+        "work_claim.put" | "work_claim.list" | "work_claim.release" => {
+            boxed_operation(|| work_claim::invoke(state, &request.operation, &request.body)).await
         }
         "backend.scope" => {
             if request.body != json!({ "schemaVersion": 1 }) {

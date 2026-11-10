@@ -2181,6 +2181,7 @@ const CURRENT_SCHEMA_STATEMENTS: &[&str] = &[
     crate::workflow_graph::execution_schema::EFFECTS,
     crate::workflow_graph::execution_schema::EVENTS,
     crate::workflow_graph::execution_schema::ACTIVE_INDEX,
+    crate::work_claims::CREATE_CLAIMS,
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3119,6 +3120,18 @@ async fn initialize_or_migrate(pool: &SqlitePool, path: &Path) -> Result<(), Dom
                     53,
                     &[],
                     "migrate_v52_to_v53",
+                )
+                .await?;
+            }
+            53 => {
+                migrate_schema(
+                    pool,
+                    path,
+                    metadata.migration,
+                    53,
+                    54,
+                    &[crate::work_claims::CREATE_CLAIMS],
+                    "migrate_v53_to_v54",
                 )
                 .await?;
             }

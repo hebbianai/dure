@@ -97,6 +97,7 @@
       "slack.connector.v1",
       "backend.scope.v1",
       "agent_goal.v1",
+      "work_claim.v1",
       "workspace_environment.v1",
       "workflow.delegate_once",
       "workflow.delegate_once.complete",

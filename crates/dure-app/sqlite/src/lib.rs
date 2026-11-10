@@ -64,6 +64,7 @@ mod schedule_schema;
 mod schedules;
 mod schema;
 mod session_checkout;
+mod work_claims;
 mod workflow;
 mod workflow_effect_bindings;
 mod workflow_graph;

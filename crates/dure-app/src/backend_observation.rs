@@ -12,6 +12,7 @@ pub fn is_durable_agent_observation(operation: &str) -> bool {
             | "agent_runtime.inspect"
             | "agent_runtime.projection.inspect"
             | "agent_runtime.repair_intent.inspect.v1"
+            | "work_claim.list"
     )
 }
 
@@ -29,6 +30,7 @@ mod tests {
             "agent_runtime.inspect",
             "agent_runtime.projection.inspect",
             "agent_runtime.repair_intent.inspect.v1",
+            "work_claim.list",
         ] {
             assert!(is_durable_agent_observation(operation), "{operation}");
         }
@@ -39,6 +41,8 @@ mod tests {
             "agent_goal.put",
             "agent_runtime.transition",
             "provider_credential_profile.register",
+            "work_claim.put",
+            "work_claim.release",
         ] {
             assert!(!is_durable_agent_observation(operation), "{operation}");
         }

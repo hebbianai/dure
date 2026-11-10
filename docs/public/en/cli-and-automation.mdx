@@ -42,6 +42,18 @@ A child settles when it has finished a turn and is idle, needs input or approval
 
 `dure tui` lists your agents across Spaces with their state, account and project, including over SSH without the app. Select one and press Enter to attach. Press `Ctrl-\` then `d` to detach and return to the list; the agent keeps running. Without the app on that machine, the account reads `unknown` and the project is the name of the agent's working folder.
 
+## Claim what you are working on
+
+When several agents or bots share a repository, each can declare what it is working on so the others see overlaps before they start:
+
+```sh
+dure claim --issue 245 --paths 'src/auth/**' 'docs/auth.md'
+dure claims
+dure claim --release
+```
+
+Inside a Dure terminal pane the claim belongs to that session and records its branch and worktree. Outside a pane, name the holder: `dure claim engine-2 --issue 2 --paths 'Sources/Engine/**'`. `dure claim` lists other claims in the same repository that share the issue, branch or worktree, or whose paths can name the same file, and exits with 3 when it finds any. `--check` reports overlaps without recording a claim, so a bot can test before it starts. Claims are advisory: nothing is locked, and a claim stays until it's released. Quote path patterns so your shell doesn't expand them.
+
 ## Schedule recurring tasks
 
 From the project folder:
