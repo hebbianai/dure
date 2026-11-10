@@ -795,7 +795,7 @@ mod tests {
         assert_eq!(lines(&after), [(12, 0), (9, 0), (5, 3), (1, 0)]);
         assert_eq!(after.current_match(), Some(found(5, 3)));
         assert_eq!(after.current, Some(2));
-        assert_eq!(after.status, FindStatus::Matched);
+        assert!(after.status == FindStatus::Matched);
         assert!(after.complete);
         assert_eq!(after.intent_seq, 4, "a refresh answers the same intent");
         assert_eq!(after.live.as_ref().unwrap().scanned.floor_line, 11);
@@ -844,14 +844,14 @@ mod tests {
             Some(9),
             live(9),
         );
-        assert_eq!(after.status, FindStatus::NoMatch);
+        assert!(after.status == FindStatus::NoMatch);
         assert_eq!(after.current, None);
     }
 
     #[test]
     fn a_refresh_of_a_find_without_matches_selects_the_newest_new_one() {
         let before = state(Vec::new(), None, FindStep::Restart);
-        assert_eq!(before.status, FindStatus::NoMatch);
+        assert!(before.status == FindStatus::NoMatch);
         let after = before.refreshed(
             FindOutcome {
                 matches: vec![found(7, 0), found(6, 2)],
@@ -860,7 +860,7 @@ mod tests {
             Some(5),
             live(7),
         );
-        assert_eq!(after.status, FindStatus::Matched);
+        assert!(after.status == FindStatus::Matched);
         assert_eq!(after.current, Some(0));
     }
 
