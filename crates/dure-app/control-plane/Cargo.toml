@@ -45,7 +45,7 @@ tokio-tungstenite = { version = "0.27", default-features = false, features = ["h
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
-sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "sqlite-bundled", "sqlite-unlock-notify"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 mach2 = "0.6"

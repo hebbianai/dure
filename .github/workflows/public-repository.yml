@@ -544,11 +544,13 @@ jobs:
         #   update archives; the fix is the updater 2.14 bump (zip 9) together
         #   with the matching npm plugin, tracked as its own change.
         # - RUSTSEC-2026-0459: SQLite before 3.54 bundled by libsqlite3-sys
-        #   0.30 under sqlx 0.8 can return stale memory for a database opened
-        #   with a crafted -wal file. Dure opens only the user's own local
-        #   databases (its own, and a provider CLI's state read-only), never
-        #   files a less trusted party wrote; the fix is the sqlx 0.9 upgrade
-        #   (libsqlite3-sys 0.39), tracked as its own change.
+        #   0.37 (SQLite 3.51) under sqlx 0.9.0 can return stale memory for a
+        #   database opened with a crafted -wal file. Dure opens only the
+        #   user's own local databases (its own, and a provider CLI's state
+        #   read-only), never files a less trusted party wrote. sqlx 0.9.0
+        #   admits libsqlite3-sys below 0.38 only; the fix is the next sqlx
+        #   release, which admits the patched 0.39 (SQLite 3.54), tracked in
+        #   issue 442.
         run: |
           status=0
           audit() {

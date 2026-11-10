@@ -1625,7 +1625,7 @@ async fn rewrite_current_stop_table_as_schema_34(store: &SqliteDomainStore) {
         "agent_dispatch_stops_spawn_history_idx",
         "agent_dispatch_stops_recovery_idx",
     ] {
-        sqlx::query(&format!("DROP INDEX {index}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP INDEX {index}")))
             .execute(&store.pool)
             .await
             .unwrap();
