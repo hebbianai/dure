@@ -16,12 +16,10 @@ import {
 	it,
 	vi,
 } from "vitest";
+import { BACKGROUND_WORK_REFRESH_MS } from "@/lib/agents/chat/backgroundWork";
 import { setLang } from "@/lib/i18n";
 import type { BackgroundWorkList } from "@/lib/ipc/conversations";
-import {
-	BACKGROUND_WORK_REFRESH_MS,
-	NativeAgentBackgroundWork,
-} from "./NativeAgentBackgroundWork";
+import { NativeAgentBackgroundWork } from "./NativeAgentBackgroundWork";
 
 const mocks = vi.hoisted(() => ({ read: vi.fn() }));
 vi.mock("@/lib/ipc/conversations", () => ({

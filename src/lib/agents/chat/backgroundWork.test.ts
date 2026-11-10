@@ -2,8 +2,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	backgroundWorkHiddenCount,
 	backgroundWorkRows,
+	backgroundWorkSession,
 	backgroundWorkSummary,
+	subagentsAsBackgroundWork,
 } from "@/lib/agents/chat/backgroundWork";
+import type { ProviderConversationSubagent } from "@/lib/agents/providerConversationDiscovery";
 import { setLang } from "@/lib/i18n";
 import type {
 	BackgroundWorkItem,
@@ -155,5 +158,94 @@ describe("backgroundWorkHiddenCount", () => {
 			68,
 		);
 		expect(backgroundWorkHiddenCount(list(items, { shells: 2 }))).toBe(0);
+	});
+});
+
+describe("backgroundWorkSession", () => {
+	it("reads only an agent's own local managed session", () => {
+		expect(
+			backgroundWorkSession({
+				schemaVersion: 1,
+				runtime: "hmux_managed_v1",
+				source: "local",
+				hostId: "local",
+				workspaceId: "workspace-1",
+				sessionId: "session-1",
+			}),
+		).toEqual({ workspaceId: "workspace-1", sessionId: "session-1" });
+		expect(
+			backgroundWorkSession({
+				schemaVersion: 1,
+				runtime: "hmux_managed_v1",
+				source: "ssh",
+				hostId: "box",
+				workspaceId: "workspace-1",
+				sessionId: "session-1",
+				createIdempotencyKey: "create-1",
+				commandBridgeNonce: "nonce-1",
+			}),
+		).toBeNull();
+		expect(backgroundWorkSession(undefined)).toBeNull();
+	});
+});
+
+describe("subagentsAsBackgroundWork", () => {
+	const row = (
+		id: string,
+		status: ProviderConversationSubagent["status"],
+		toolUseId?: string,
+	): ProviderConversationSubagent => ({
+		id,
+		title: id,
+		status,
+		mtime: 1,
+		...(toolUseId ? { toolUseId } : {}),
+	});
+	const subagent = (id: string): BackgroundWorkItem => ({
+		id,
+		kind: "subagent",
+		startedUnixMs: NOW,
+	});
+
+	it("runs exactly the rows the line's list names", () => {
+		const rows = subagentsAsBackgroundWork(
+			[
+				// A background subagent the line lists by its agent id, though
+				// its file has been quiet for longer than any activity window.
+				row("agent-a1", "unknown"),
+				// A foreground subagent the turn still waits on, listed by the
+				// call that started it.
+				row("agent-a2", "unknown", "toolu_02"),
+				// Its meta says finished, so the line no longer lists it.
+				row("agent-a3", "completed", "toolu_03"),
+				row("agent-a4", "failed"),
+			],
+			list([subagent("a1"), subagent("toolu_02")], { subagents: 2 }),
+		);
+		expect(rows.map((entry) => [entry.id, entry.status])).toEqual([
+			["agent-a1", "running"],
+			["agent-a2", "running"],
+			["agent-a3", "completed"],
+			["agent-a4", "failed"],
+		]);
+	});
+
+	it("does not take another kind's id for a subagent", () => {
+		const rows = subagentsAsBackgroundWork(
+			[row("agent-a1", "unknown", "toolu_01")],
+			list(
+				[
+					{ id: "toolu_01", kind: "shell", startedUnixMs: NOW },
+					{ id: "a1", kind: "workflow", startedUnixMs: NOW },
+				],
+				{ shells: 1, workflows: 1 },
+			),
+		);
+		expect(rows[0]?.status).toBe("unknown");
+	});
+
+	it("keeps the recorded rows without a list", () => {
+		const rows = [row("agent-a1", "unknown"), row("agent-a2", "completed")];
+		expect(subagentsAsBackgroundWork(rows, null)).toEqual(rows);
 	});
 });

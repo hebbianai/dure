@@ -29,7 +29,10 @@ import {
 	SessionStatusBadge,
 } from "@/components/sessions/SessionListRow";
 import type { RecentSessionsList } from "@/components/sessions/useRecentSessionsList";
-import { useRecentWorkSectionState } from "@/components/sessions/useRecentWorkSectionState";
+import {
+	useRecentWorkBackgroundWorkSession,
+	useRecentWorkSectionState,
+} from "@/components/sessions/useRecentWorkSectionState";
 import {
 	SectionHeaderRow,
 	sidebarSectionLabelTone,
@@ -179,6 +182,9 @@ function RecentSessionHistoryCard({
 	const [expanded, setExpanded] = useState(false);
 	const [dragging, setDragging] = useState(false);
 	const detailsId = useId();
+	const agentSession = useRecentWorkBackgroundWorkSession(
+		item.paneAgentIdCandidate,
+	);
 	// "Did it open?" has to be answered by the card itself: the button spins
 	// while the pane is on its way, and the details fold the moment the pane
 	// is showing, so the row's "shown in pane" status is what remains. Dimming
@@ -412,6 +418,7 @@ function RecentSessionHistoryCard({
 						recentTurns={item.recentTurns}
 						subagentCount={item.subagentCount}
 						sshHosts={sshHosts}
+						backgroundWorkSession={agentSession}
 					/>
 					<div className="mt-2 border-t border-glass-hairline pt-2">
 						{actionButton}

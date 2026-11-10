@@ -1,8 +1,57 @@
+import type { ProviderConversationSubagent } from "@/lib/agents/providerConversationDiscovery";
 import { t } from "@/lib/i18n";
 import type {
 	BackgroundWorkKind,
 	BackgroundWorkList,
 } from "@/lib/ipc/conversations";
+import type { AgentRuntimeBindingV1 } from "@/types";
+
+/** How long a view of the background work waits after one read before the
+ * next, while something runs. Background work moves without turns, so the
+ * transcript's refresh cursor cannot drive it; reads are incremental on the
+ * desktop, and one at a time, so a slow read never piles up behind the next. */
+export const BACKGROUND_WORK_REFRESH_MS = 10_000;
+
+/** The session the desktop reads an agent's background work for. */
+export interface BackgroundWorkSession {
+	workspaceId: string;
+	sessionId: string;
+}
+
+/** The agent's own local managed session, or null: the desktop reads
+ * background work only for those, behind their Host's facts. */
+export function backgroundWorkSession(
+	binding: AgentRuntimeBindingV1 | undefined,
+): BackgroundWorkSession | null {
+	return binding?.runtime === "hmux_managed_v1" && binding.source === "local"
+		? { workspaceId: binding.workspaceId, sessionId: binding.sessionId }
+		: null;
+}
+
+/** Subagent rows as the chat line sees them. A row runs exactly when the
+ * line's list names it: by its agent id, or by the call that started it
+ * while the turn still waits on it. The rows' own records never say
+ * "running", so a row the list leaves out keeps what its records say: done,
+ * failed, or unknown. Without a list (no session, or the read failed) the
+ * rows are the records. */
+export function subagentsAsBackgroundWork(
+	subagents: readonly ProviderConversationSubagent[],
+	list: BackgroundWorkList | null,
+): ProviderConversationSubagent[] {
+	const running = new Set(
+		list?.items
+			.filter((item) => item.kind === "subagent")
+			.map((item) => item.id) ?? [],
+	);
+	return subagents.map((subagent) => {
+		const agentId = subagent.id.replace(/^agent-/, "");
+		const named =
+			running.has(agentId) ||
+			running.has(subagent.id) ||
+			(subagent.toolUseId !== undefined && running.has(subagent.toolUseId));
+		return named ? { ...subagent, status: "running" } : subagent;
+	});
+}
 
 export interface BackgroundWorkRow {
 	id: string;

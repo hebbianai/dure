@@ -56,7 +56,11 @@ const MAX_REMOTE_AGE_SECONDS: u64 = 30 * 24 * 60 * 60;
 const MAX_RECENT_TURNS: usize = 5;
 const MAX_TURN_PREVIEW_CHARS: usize = 360;
 const MAX_SUBAGENT_PREVIEWS: usize = 8;
-const SUBAGENT_ACTIVE_AGE_SECONDS: u64 = 5 * 60;
+/// A Codex subagent's file written this recently reads as running. Codex has
+/// no background work record to read; Claude subagents never use this.
+const CODEX_SUBAGENT_ACTIVE_AGE_SECONDS: u64 = 5 * 60;
+/// The longest provider task id a subagent row carries.
+const MAX_PROVIDER_TASK_ID_CHARS: usize = 128;
 const MAX_BRANCH_CHARS: usize = 256;
 const MAX_SESSION_SETTING_CHARS: usize = 128;
 
@@ -151,6 +155,10 @@ pub struct ConversationSubagentPreview {
     pub kind: Option<String>,
     pub status: ConversationSubagentStatus,
     pub mtime: u64,
+    /// The provider call that started a Claude subagent. The background work
+    /// list names a subagent by this id while the turn still waits on it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
 }
 
 #[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq)]
@@ -1505,25 +1513,49 @@ fn collect_claude_parent_facts(
     }
 }
 
-fn status_with_freshness(
+/// What a Claude subagent's own records say: done or failed from the parent's
+/// end facts, done when its meta says `finished`, as the background work
+/// reader decides it. Whether it still runs is not a record fact: a view
+/// reads that from the Host-gated background work list, so the row and the
+/// chat line give one answer. A launch record or recent file activity is not
+/// proof that the subagent runs.
+fn claude_recorded_status(
     explicit: Option<ConversationSubagentStatus>,
-    modified: u64,
+    metadata: Option<&Value>,
 ) -> ConversationSubagentStatus {
-    if let Some(
-        status @ (ConversationSubagentStatus::Completed | ConversationSubagentStatus::Failed),
-    ) = explicit
-    {
-        return status;
+    let finished = metadata
+        .and_then(|meta| meta.get("finished"))
+        .is_some_and(|flag| flag.as_bool() == Some(true) || flag.as_str() == Some("true"));
+    match explicit {
+        Some(
+            status @ (ConversationSubagentStatus::Completed | ConversationSubagentStatus::Failed),
+        ) => status,
+        _ if finished => ConversationSubagentStatus::Completed,
+        _ => ConversationSubagentStatus::Unknown,
     }
+}
+
+/// A Codex subagent is read as running while its file was written recently.
+fn codex_status_from_activity(modified: u64) -> ConversationSubagentStatus {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    if now.saturating_sub(modified) <= SUBAGENT_ACTIVE_AGE_SECONDS {
+    if now.saturating_sub(modified) <= CODEX_SUBAGENT_ACTIVE_AGE_SECONDS {
         ConversationSubagentStatus::Running
     } else {
         ConversationSubagentStatus::Unknown
     }
+}
+
+/// A provider task or call id as the provider writes it (`toolu_…`).
+fn provider_task_id(value: &str) -> Option<String> {
+    (!value.is_empty()
+        && value.len() <= MAX_PROVIDER_TASK_ID_CHARS
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_-".contains(character)))
+    .then(|| value.to_string())
 }
 
 fn claude_subagent_preview(
@@ -1546,12 +1578,17 @@ fn claude_subagent_preview(
         .and_then(|value| value.get("agentType"))
         .and_then(Value::as_str)
         .and_then(|value| bounded_label(value, 48));
+    let tool_use_id = metadata
+        .and_then(|value| value.get("toolUseId"))
+        .and_then(Value::as_str)
+        .and_then(provider_task_id);
     ConversationSubagentPreview {
         id,
         title,
         kind,
-        status: status_with_freshness(parent.and_then(|fact| fact.status), modified),
+        status: claude_recorded_status(parent.and_then(|fact| fact.status), metadata),
         mtime: modified,
+        tool_use_id,
     }
 }
 
@@ -1839,8 +1876,9 @@ fn codex_subagent_preview(
         id,
         title,
         kind,
-        status: status_with_freshness(None, modified),
+        status: codex_status_from_activity(modified),
         mtime: modified,
+        tool_use_id: None,
     }
 }
 
@@ -3208,6 +3246,50 @@ pub fn list_remote(
 mod tests {
     use super::*;
     use sqlx::{Connection, SqliteConnection};
+
+    #[test]
+    fn claude_subagent_rows_take_their_status_from_records_not_file_activity() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let row = |metadata: Option<&Value>, status: Option<ConversationSubagentStatus>| {
+            let fact = ClaudeSubagentParentFact { title: None, status };
+            claude_subagent_preview("agent-a1".to_string(), now, None, None, metadata, Some(&fact))
+        };
+
+        // A file written a moment ago is not proof the subagent still runs;
+        // neither is its launch record.
+        assert_eq!(row(None, None).status, ConversationSubagentStatus::Unknown);
+        assert_eq!(
+            row(None, Some(ConversationSubagentStatus::Running)).status,
+            ConversationSubagentStatus::Unknown
+        );
+
+        // The meta's `finished` ends it without a notification, as the
+        // background work reader ends it.
+        let finished = serde_json::json!({"finished": true, "toolUseId": "toolu_01AbC-9"});
+        let finished_row = row(Some(&finished), None);
+        assert_eq!(finished_row.status, ConversationSubagentStatus::Completed);
+        assert_eq!(finished_row.tool_use_id.as_deref(), Some("toolu_01AbC-9"));
+        assert_eq!(
+            serde_json::to_value(&finished_row).unwrap()["toolUseId"],
+            "toolu_01AbC-9"
+        );
+
+        // A recorded failure stays a failure.
+        assert_eq!(
+            row(Some(&finished), Some(ConversationSubagentStatus::Failed)).status,
+            ConversationSubagentStatus::Failed
+        );
+
+        // An id the provider would not write is not carried.
+        let odd = serde_json::json!({"toolUseId": "toolu/../x"});
+        assert_eq!(row(Some(&odd), None).tool_use_id, None);
+        let long = serde_json::json!({"toolUseId": "t".repeat(MAX_PROVIDER_TASK_ID_CHARS + 1)});
+        assert_eq!(row(Some(&long), None).tool_use_id, None);
+        assert!(serde_json::to_value(row(None, None)).unwrap().get("toolUseId").is_none());
+    }
 
     #[test]
     fn native_final_response_requires_provider_final_markers() {
