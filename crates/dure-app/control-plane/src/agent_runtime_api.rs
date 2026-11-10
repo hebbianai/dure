@@ -89,6 +89,13 @@ pub(super) async fn dispatch(
             serde_json::to_value(observation)
                 .map_err(|_| "agent_runtime_projection_inspect_response_invalid".into())
         }
+        agent_runtime_session_lookup::OPERATION => {
+            let body: agent_runtime_session_lookup::NativeSessionResolveBodyV1 =
+                serde_json::from_value(request.body.clone()).map_err(|_| {
+                    "agent_runtime_native_session_resolve_request_invalid".to_string()
+                })?;
+            Ok(boxed_operation(|| agent_runtime_session_lookup::resolve(state, body)).await?)
+        }
         "agent_runtime.native_rehost.reconcile" => {
             let body: agent_runtime_native_rehost::request::RequestV1 =
                 serde_json::from_value(request.body.clone()).map_err(|_| {

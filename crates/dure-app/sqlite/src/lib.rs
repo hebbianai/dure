@@ -135,6 +135,25 @@ impl SqliteDomainStore {
         Ok(store)
     }
 
+    /// Current native binding authorities that name one runtime Session,
+    /// optionally narrowed to its runtime workspace, at most `limit` rows.
+    pub async fn session_binding_authorities(
+        &self,
+        runtime_kind_id: &dure_app::RuntimeKindIdV1,
+        session_id: &str,
+        runtime_workspace_id: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<AgentCheckpointBindingAuthorityV1>, DomainStoreErrorV1> {
+        checkpoint_bindings::authorities_for_session(
+            &self.pool,
+            runtime_kind_id,
+            session_id,
+            runtime_workspace_id,
+            limit,
+        )
+        .await
+    }
+
     pub async fn list_agent_spawn_receipts(
         &self,
         after: Option<&OperationIdV1>,

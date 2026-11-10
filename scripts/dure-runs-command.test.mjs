@@ -5,6 +5,7 @@ import { collectRunsCommand, formatRunsCommand, parseRunsOptions, runsCommandExi
 import { AGENT_RUNTIME_PRESENTATION_CAPABILITY, agentRuntimePresentationRequest, currentRunPresentationPlan,
   presentAgentRuntime } from "../cli/lib/run-presentation.mjs";
 import { canonicalNativeReceipt, request as spawnRequest, succeededNativeReceipt } from "./fixtures/agent-spawn-receipts.mjs";
+import { NATIVE_SESSION_RESOLVE_CAPABILITY } from "../cli/lib/run-agent-selection.mjs";
 
 function fixture() {
   const receipt = succeededNativeReceipt();
@@ -786,6 +787,97 @@ describe("Agents without a Run record", () => {
         hostInstanceId: source.hostInstanceId, terminalEpoch: source.terminalEpoch },
       permissionMode: f.runtime.receipt.permissionMode, spaceId: "space-1", windowLabel: "main",
     });
+  });
+
+  // After the app lost its state, its Agent list no longer names the Session,
+  // but the backend binding still does.
+  function lostAppStateFixture({ owners, capability = true, lookupError } = {}) {
+    const f = appAgentFixture();
+    f.registry.agents = [];
+    if (capability) f.backend.profile.expected = { capabilities: [NATIVE_SESSION_RESOLVE_CAPABILITY] };
+    const inspect = f.requestBackend.getMockImplementation();
+    f.requestBackend.mockImplementation(async (profile, request) => {
+      if (request.operation !== NATIVE_SESSION_RESOLVE_CAPABILITY) return inspect(profile, request);
+      if (lookupError) throw lookupError;
+      return { result: { schemaVersion: 1, sessionId: request.body.sessionId, workspaceId: null, complete: true,
+        agents: request.body.sessionId === f.sessionId
+          ? (owners ?? [f.agentId]).map((agentId) => ({ agentId, workspaceId: "proj-app", bindingGeneration: 3 }))
+          : [] } };
+    });
+    return f;
+  }
+
+  it("reattaches a live Session by its Session ID after the app lost its Agent list, without a launch", async () => {
+    const f = lostAppStateFixture();
+    const presentRuntime = vi.fn(async () => ({ state: "opened", pane: { spaceId: "space-1", panelId: "panel-9" } }));
+    const descriptor = appWith(AGENT_RUNTIME_PRESENTATION_CAPABILITY);
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["open", f.sessionId], space: "space-1" },
+      resolveTarget: openTarget, descriptor, presentRuntime });
+    expect(report).toMatchObject({ ok: true, agent: { agentId: f.agentId, name: null, providerId: "claude",
+      projectId: f.projectId }, presentation: { state: "opened" } });
+    expect(presentRuntime).toHaveBeenCalledWith({ agent: report.agent, currentRuntime: f.runtime,
+      target: await openTarget(), profile: f.backend.profile, descriptor });
+    // One read-only lookup; no spawn receipt, transition or provider launch.
+    expect(operations(f)).toEqual(["agent_spawn.list", "agent_runtime.projection.inspect",
+      NATIVE_SESSION_RESOLVE_CAPABILITY, "agent_runtime.projection.inspect"]);
+    expect(f.requestBackend.mock.calls[2][1]).toMatchObject({ operation: NATIVE_SESSION_RESOLVE_CAPABILITY,
+      requiredCapabilities: [NATIVE_SESSION_RESOLVE_CAPABILITY], body: { schemaVersion: 1, sessionId: f.sessionId } });
+    expect(f.requestBackend.mock.calls.map((call) => call[1].body.agentId).filter(Boolean))
+      .toEqual([f.sessionId, f.agentId]);
+
+    const shown = await collectRunsCommand({ ...f, opts: { rest: ["show", f.sessionId] } });
+    expect(shown).toMatchObject({ ok: true, agent: { agentId: f.agentId }, runtime: f.runtime });
+  });
+
+  it("resolves an exact Agent ID first, without the Session lookup", async () => {
+    const f = lostAppStateFixture();
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["show", f.agentId] } });
+    expect(report).toMatchObject({ ok: true, agent: { agentId: f.agentId } });
+    expect(operations(f)).toEqual(["agent_spawn.list", "agent_runtime.projection.inspect"]);
+  });
+
+  it.each([
+    ["the profile does not declare the lookup", { capability: false }],
+    ["the running backend predates the lookup",
+      { lookupError: new BackendTransportError("backend_transport_capability_missing") }],
+  ])("keeps resolving Agent IDs only when %s", async (_case, options) => {
+    const f = lostAppStateFixture(options);
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["show", f.sessionId] } });
+    expect(report).toMatchObject({ ok: false, error: { code: "run_not_found" } });
+    expect(report.error.message).toContain(`Agent ${f.sessionId} has no managed runtime`);
+  });
+
+  it("refuses a Session no Agent is bound to, and points to the live Session list", async () => {
+    const f = lostAppStateFixture();
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["open", "session-unbound"], space: "space-1" },
+      resolveTarget: openTarget, descriptor: appWith(AGENT_RUNTIME_PRESENTATION_CAPABILITY), presentRuntime: vi.fn() });
+    expect(report).toMatchObject({ ok: false, error: { code: "run_not_found" } });
+    expect(report.error.message).toContain("bound Session on backend local matches session-unbound");
+    expect(report.error.message).toContain("dure ls --alive");
+  });
+
+  it("lists every Agent bound to one Session with an exact retry command, without opening it", async () => {
+    const f = lostAppStateFixture({ owners: ["agent-app-resumed", "agent-app-duplicate"] });
+    const presentRuntime = vi.fn();
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["open", f.sessionId], space: "space-1" },
+      resolveTarget: openTarget, descriptor: appWith(AGENT_RUNTIME_PRESENTATION_CAPABILITY), presentRuntime });
+    expect(report).toMatchObject({ ok: false, error: { code: "run_selector_ambiguous", candidates: [
+      { agentId: f.agentId, state: "stable", retry: ["runs", "open", f.agentId, "--space", "space-1", "--backend", "local"] },
+      { agentId: "agent-app-duplicate", state: "unmanaged",
+        retry: ["runs", "open", "agent-app-duplicate", "--space", "space-1", "--backend", "local"] },
+    ] } });
+    expect(report.error.message).toContain(`2 Agents are bound to Session ${f.sessionId}`);
+    expect(presentRuntime).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed Session lookup instead of guessing an Agent", async () => {
+    const f = lostAppStateFixture();
+    const inspect = f.requestBackend.getMockImplementation();
+    f.requestBackend.mockImplementation(async (profile, request) => request.operation === NATIVE_SESSION_RESOLVE_CAPABILITY
+      ? { result: { schemaVersion: 1, sessionId: "another-session", complete: true, agents: [] } }
+      : inspect(profile, request));
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["show", f.sessionId] } });
+    expect(report).toMatchObject({ ok: false, error: { code: "runs_response_invalid" } });
   });
 
   it("refuses a Chat Agent without a Run record before contacting the app", async () => {

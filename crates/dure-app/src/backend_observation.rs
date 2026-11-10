@@ -11,6 +11,7 @@ pub fn is_durable_agent_observation(operation: &str) -> bool {
             | "agent_recovery.read"
             | "agent_runtime.inspect"
             | "agent_runtime.projection.inspect"
+            | "agent_runtime.native_session.resolve.v1"
             | "agent_runtime.repair_intent.inspect.v1"
             | "work_claim.list"
     )
@@ -29,6 +30,7 @@ mod tests {
             "agent_goal.get",
             "agent_runtime.inspect",
             "agent_runtime.projection.inspect",
+            "agent_runtime.native_session.resolve.v1",
             "agent_runtime.repair_intent.inspect.v1",
             "work_claim.list",
         ] {

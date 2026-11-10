@@ -25,6 +25,8 @@ mod agent_runtime_recovery;
 #[cfg(unix)]
 mod agent_runtime_remove_apply;
 #[cfg(unix)]
+mod agent_runtime_session_lookup;
+#[cfg(unix)]
 mod agent_runtime_stop_boundary;
 #[cfg(unix)]
 mod agent_runtime_transition_apply;
@@ -3899,6 +3901,7 @@ async fn dispatch_authorized(
         | "agent_runtime.repair_intent.inspect.v1"
         | "agent_runtime.inspect"
         | "agent_runtime.projection.inspect"
+        | "agent_runtime.native_session.resolve.v1"
         | "agent_runtime.native.read"
         | "agent_runtime.native.input"
         | "agent_runtime.native_rehost.reconcile"

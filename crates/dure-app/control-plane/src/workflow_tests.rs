@@ -66,6 +66,7 @@ pub(crate) mod goal_provider_smoke;
 mod graph_runtime_tests;
 mod managed_create_reconcile_tests;
 mod native_default_profile_tests;
+mod native_session_lookup_tests;
 mod orchestration_completion_tests;
 mod orchestration_interaction_answer_tests;
 mod orchestration_interaction_open_tests;

@@ -627,6 +627,88 @@ async fn bulk_observation_returns_checkpoint_and_exact_binding_from_one_snapshot
     assert_eq!(observations[0].checkpoint, Some(receipt.record));
 }
 
+async fn session_owners(
+    store: &SqliteDomainStore,
+    runtime_kind_id: &str,
+    session_id: &str,
+    runtime_workspace_id: Option<&str>,
+    limit: u32,
+) -> Vec<String> {
+    store
+        .session_binding_authorities(
+            &RuntimeKindIdV1::new(runtime_kind_id).unwrap(),
+            session_id,
+            runtime_workspace_id,
+            limit,
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|authority| authority.binding.agent_id.as_str().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn session_lookup_names_only_the_current_owners_of_that_session() {
+    let root = TempDir::new().unwrap();
+    let store = SqliteDomainStore::open(root.path().join("domain.sqlite"))
+        .await
+        .unwrap();
+    seed(&store).await;
+    store
+        .upsert_agent_checkpoint_binding_authority(&authority(1))
+        .await
+        .unwrap();
+    let hmux = RuntimeKindIdV1::new("runtime.hmux").unwrap();
+    assert_eq!(
+        store
+            .session_binding_authorities(&hmux, "session-1", None, 8)
+            .await
+            .unwrap(),
+        vec![authority(1)]
+    );
+    let owners = |session, workspace| session_owners(&store, "runtime.hmux", session, workspace, 8);
+    assert_eq!(
+        owners("session-1", Some("hmux-workspace-1")).await,
+        ["agent-1"]
+    );
+    assert!(
+        owners("session-1", Some("hmux-workspace-2"))
+            .await
+            .is_empty()
+    );
+    assert!(owners("session-2", None).await.is_empty());
+    assert!(
+        session_owners(&store, "runtime.other", "session-1", None, 8)
+            .await
+            .is_empty()
+    );
+
+    // A rehost advances the binding; the replaced Session no longer names it.
+    store
+        .upsert_agent_checkpoint_binding_authority(&authority(2))
+        .await
+        .unwrap();
+    assert!(owners("session-1", None).await.is_empty());
+    assert_eq!(owners("session-2", None).await, ["agent-1"]);
+
+    let mut duplicate_agent = agent();
+    duplicate_agent.agent_id = AgentIdV1::new("agent-0").unwrap();
+    store.upsert_agent(&duplicate_agent).await.unwrap();
+    let mut duplicate = authority(2);
+    duplicate.binding.agent_id = duplicate_agent.agent_id;
+    duplicate.terminal_epoch = "terminal-duplicate".into();
+    store
+        .upsert_agent_checkpoint_binding_authority(&duplicate)
+        .await
+        .unwrap();
+    assert_eq!(owners("session-2", None).await, ["agent-0", "agent-1"]);
+    assert_eq!(
+        session_owners(&store, "runtime.hmux", "session-2", None, 1).await,
+        ["agent-0"]
+    );
+}
+
 // Live defect (2026-08-13): after a rehost advanced the binding authority
 // without a new checkpoint write, the generation-scoped LEFT JOIN stopped
 // serving the agent's last checkpoint entirely — the sidebar froze on old
