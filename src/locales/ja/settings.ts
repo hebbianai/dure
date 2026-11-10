@@ -465,6 +465,7 @@ export const settings: Record<string, string> = {
 	"settings.appearance.scheme.darkCollapsedHint": "ダークモード時に適用されます — 展開して変更",
 	"settings.appearance.scheme.darkDesc": "ダークモード時にターミナル・UI 全体に適用されます。",
 	"settings.shortcuts.cmd.termKillWord": "単語を削除 (^W)",
+	"settings.shortcuts.cmd.termFind": "ターミナル内を検索",
 	"settings.shortcuts.title": "ショートカット",
 	"settings.providers.capability.conversationList": "会話一覧",
 	"settings.providers.capability.fork": "会話の分岐",

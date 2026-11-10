@@ -337,11 +337,14 @@ test("only the protected build step receives signing credentials and offers the 
   expect(build.run).not.toMatch(/--bundles\s+\S*dmg/);
   expect(build.env).not.toHaveProperty("TAURI_BUNDLER_DMG_IGNORE_CI");
   expect(build.env).not.toHaveProperty("APPLE_CERTIFICATE");
+  const linuxSigning = workflow.jobs["linux-sign"].steps.find(
+    (step) => step.name === "Sign the Linux packages",
+  );
   for (const [name, job] of Object.entries(workflow.jobs)) {
-    for (const step of job.steps) {
-      if (name !== "build")
+    for (const step of job.steps ?? []) {
+      if (name !== "build" && step !== linuxSigning)
         expect(JSON.stringify(step)).not.toContain("secrets.");
-      if (step !== build)
+      if (step !== build && step !== linuxSigning)
         expect(JSON.stringify(step)).not.toContain(
           "secrets.TAURI_SIGNING_PRIVATE_KEY",
         );
@@ -359,7 +362,12 @@ test.each(["build", "draft"])(
     // A status function opts out of GitHub's implicit success() over ancestors.
     // See https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-jobs
     expect(job.if).toMatch(/always\(\)/);
-    const evaluate = new Function("needs", "always", "cancelled", `return (${job.if});`);
+    const evaluate = new Function(
+      "needs",
+      "always",
+      "cancelled",
+      `return (${job.if.replaceAll(/needs\.([a-z]+(?:-[a-z]+)+)/g, 'needs["$1"]')});`,
+    );
     const dependencies = Array.isArray(job.needs) ? job.needs : [job.needs];
     const needs = Object.fromEntries(dependencies.map((dependency) => [dependency, { result: "success" }]));
     expect(evaluate(needs, () => true, () => false)).toBe(true);
@@ -373,14 +381,14 @@ test.each(["build", "draft"])(
 );
 
 test("the workflow stops at immutable draft staging and never changes the client feed", () => {
-  expect(workflow.jobs.draft.needs).toEqual(["source", "version", "build"]);
+  expect(workflow.jobs.draft.needs).toEqual(["source", "version", "build", "linux-packages", "linux-sign"]);
   const staging = workflow.jobs.draft.steps.find(
     (step) => step.name === "Reconcile only missing draft assets",
   );
   expect(staging.run).toContain("release-public.mjs stage");
   expect(JSON.stringify(workflow)).not.toContain("--clobber");
   const commands = Object.values(workflow.jobs).flatMap((job) =>
-    job.steps.map((step) => step.run ?? ""),
+    (job.steps ?? []).map((step) => step.run ?? ""),
   );
   expect(
     commands.some((run) =>
@@ -392,7 +400,7 @@ test("the workflow stops at immutable draft staging and never changes the client
 
 test("separates protected workflow helpers from the immutable selected application checkout", () => {
   const checks = (name) => workflow.jobs[name].steps.filter((step) => step.uses?.startsWith("actions/checkout@"));
-  for (const name of ["candidate", "version", "build", "draft"]) {
+  for (const name of ["candidate", "version", "build", "linux-sign", "draft"]) {
     const [control, source] = checks(name);
     expect(control.with.ref).toBe("${{ github.sha }}");
     expect(control.with.path).toBeUndefined();
@@ -401,7 +409,7 @@ test("separates protected workflow helpers from the immutable selected applicati
       ? "${{ needs.source.outputs.source_sha }}" : "${{ needs.version.outputs.release_sha }}");
     expect(workflow.jobs[name].defaults.run["working-directory"]).toBe("source");
     for (const step of workflow.jobs[name].steps) {
-      if (/node .*\/(?:release-public|prepare-release-candidate|validate-release-assets|build-latest-json|bundle-release-dmg)\.mjs/.test(step.run ?? ""))
+      if (/node .*\/(?:release-public|prepare-release-candidate|validate-release-assets|build-latest-json|bundle-release-dmg|linux-release-packages|verify-release-state)\.mjs/.test(step.run ?? ""))
         expect(step.run).toMatch(/node \.\.\/scripts\//);
     }
   }
@@ -461,4 +469,122 @@ test("an overloaded signing host is refused before any version ref exists, never
   // After the tag exists a refusal would only burn the version; the DMG
   // packager waits for the load to drop instead.
   expect(workflow.jobs.build.steps.some((step) => /check-release-host/.test(step.run ?? ""))).toBe(false);
+});
+
+const linuxWorkflow = YAML.parse(
+  fs.readFileSync(".github/workflows/linux-desktop.yml", "utf8"),
+);
+const evaluateIf = (expression, needs, vars = {}) =>
+  new Function(
+    "needs",
+    "vars",
+    "always",
+    "cancelled",
+    `return (${expression.replaceAll(/needs\.([a-z]+(?:-[a-z]+)+)/g, 'needs["$1"]')});`,
+  )(needs, vars, () => true, () => false);
+
+test("Linux packages stay off until the repository variable switches them on", () => {
+  const packages = workflow.jobs["linux-packages"];
+  expect(packages.needs).toBe("version");
+  expect(packages.uses).toBe("./.github/workflows/linux-desktop.yml");
+  expect(packages.with).toEqual({
+    ref: "${{ needs.version.outputs.release_sha }}",
+    "tauri-config": "src-tauri/tauri.beta.conf.json",
+    "artifact-prefix": "linux-packages-${{ needs.version.outputs.tag }}",
+    telemetry: true,
+  });
+  expect(packages.permissions).toEqual({ contents: "read" });
+  const version = { result: "success" };
+  expect(evaluateIf(packages.if, { version }, { DURE_RELEASE_LINUX: "true" })).toBe(true);
+  for (const value of [undefined, "", "false", "1"])
+    expect(evaluateIf(packages.if, { version }, { DURE_RELEASE_LINUX: value })).toBe(false);
+  expect(evaluateIf(packages.if, { version: { result: "failure" } }, { DURE_RELEASE_LINUX: "true" })).toBe(false);
+  // The macOS jobs never wait for, or depend on, the Linux jobs.
+  for (const name of ["source", "candidate", "verification", "host-preflight", "version", "build"]) {
+    const needs = [workflow.jobs[name].needs ?? []].flat();
+    expect(needs.some((need) => need.startsWith("linux-")), name).toBe(false);
+  }
+});
+
+test("Linux packages build on hosted runners that receive no credentials", () => {
+  expect(linuxWorkflow.permissions).toEqual({ contents: "read" });
+  expect(Object.keys(linuxWorkflow.on).sort()).toEqual(["pull_request", "workflow_call", "workflow_dispatch"]);
+  for (const [name, job] of Object.entries(linuxWorkflow.jobs)) {
+    expect(JSON.stringify(job["runs-on"]), name).not.toContain("self-hosted");
+    expect(JSON.stringify(job), name).not.toMatch(/secrets\.|TAURI_SIGNING|APPLE_/);
+    expect(job.environment, name).toBeUndefined();
+    for (const step of job.steps) {
+      if (step.uses) expect(step.uses).toMatch(/@[0-9a-f]{40}$/);
+      if (step.uses?.startsWith("actions/checkout@"))
+        expect(step.with["persist-credentials"]).toBe(false);
+    }
+  }
+  expect(linuxWorkflow.jobs.supply["runs-on"]).toBe("macos-15");
+  expect(linuxWorkflow.jobs.package.strategy.matrix.include).toEqual([
+    { arch: "x86_64", runner: "ubuntu-22.04" },
+    { arch: "aarch64", runner: "ubuntu-22.04-arm" },
+  ]);
+  // Each package starts under a virtual display; checks also run a terminal
+  // command, while a release only requires the window (fixed-position clicks).
+  const smoke = linuxWorkflow.jobs.package.steps.find((step) => step.name === "Start the AppImage under a virtual display");
+  expect(smoke.run).toContain("dbus-run-session -- sh scripts/qa/linux-package-smoke.sh");
+  expect(smoke.env.DURE_LINUX_SMOKE_TERMINAL).toBe("${{ inputs.artifact-prefix == '' && '1' || '0' }}");
+  // Every package job builds the commit the supply recorded, not a moving ref.
+  const checkout = linuxWorkflow.jobs.package.steps.find((step) => step.uses?.startsWith("actions/checkout@"));
+  expect(checkout.with.ref).toBe("${{ needs.supply.outputs.sha }}");
+});
+
+test("only the protected Linux signing step receives the updater key, and nothing else", () => {
+  const job = workflow.jobs["linux-sign"];
+  expect(job.needs).toEqual(["version", "linux-packages"]);
+  expect(job["runs-on"]).toEqual(workflow.jobs.build["runs-on"]);
+  expect(job.environment).toBe("macos-release");
+  const signing = job.steps.find((step) => step.name === "Sign the Linux packages");
+  expect(signing.env).toEqual({
+    TAURI_SIGNING_PRIVATE_KEY: "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}",
+    TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}",
+  });
+  expect(signing.run).toBe(
+    'node ../scripts/linux-release-packages.mjs sign "$RUNNER_TEMP/linux-packages" "$RUNNER_TEMP/release-linux-assets"',
+  );
+  // It signs prebuilt packages only: no compiler, bundler or Apple credential.
+  expect(JSON.stringify(job)).not.toMatch(/tauri build|cargo |APPLE_|GH_TOKEN|github\.token/);
+  const install = job.steps.find((step) => step.name === "Install the pinned Tauri CLI");
+  expect(install.run).toBe("corepack pnpm install --frozen-lockfile --ignore-scripts");
+  const upload = job.steps.find((step) => step.uses?.startsWith("actions/upload-artifact@"));
+  expect(upload.with).toMatchObject({
+    name: "release-linux-assets-${{ needs.version.outputs.tag }}",
+    "retention-days": 90,
+  });
+  expect(job.steps.at(-1)).toMatchObject({ if: "always()", "continue-on-error": true });
+  const success = { result: "success" };
+  expect(evaluateIf(job.if, { version: success, "linux-packages": success })).toBe(true);
+  for (const result of ["failure", "cancelled", "skipped"])
+    expect(evaluateIf(job.if, { version: success, "linux-packages": { result } })).toBe(false);
+});
+
+test("the draft carries Linux only after it was signed, and is unchanged with Linux off", () => {
+  const draft = workflow.jobs.draft;
+  const ok = { result: "success" }, skipped = { result: "skipped" };
+  const macos = { source: ok, version: ok, build: ok };
+  expect(evaluateIf(draft.if, { ...macos, "linux-packages": skipped, "linux-sign": skipped })).toBe(true);
+  expect(evaluateIf(draft.if, { ...macos, "linux-packages": ok, "linux-sign": ok })).toBe(true);
+  for (const [packages, signing] of [["failure", "skipped"], ["success", "failure"], ["success", "skipped"], ["cancelled", "skipped"]])
+    expect(evaluateIf(draft.if, { ...macos, "linux-packages": { result: packages }, "linux-sign": { result: signing } })).toBe(false);
+  const download = draft.steps.find((step) => step.with?.name === "release-linux-assets-${{ needs.version.outputs.tag }}");
+  expect(download.if).toBe("needs.linux-sign.result == 'success'");
+  const staging = draft.steps.find((step) => step.name === "Reconcile only missing draft assets");
+  expect(staging.env.LINUX_ASSETS).toBe(
+    "${{ needs.linux-sign.result == 'success' && format('{0}/release-linux-assets', runner.temp) || '' }}",
+  );
+  // An empty LINUX_ASSETS passes no fifth argument: the macOS-only stage call.
+  const argv = (linuxAssets) => execFileSync(
+    "bash",
+    ["--noprofile", "--norc", "-c", `set -- ${staging.run.replace(/^node \.\.\/scripts\/release-public\.mjs /, "")}; printf '%s\\n' "$@"`],
+    { env: { PATH: "/usr/bin:/bin", TAG: "v1.2.3", RUNNER_TEMP: "/runner temp", RELEASE_SOURCE_SHA: "a".repeat(40), RELEASE_VERIFICATION: "full", LINUX_ASSETS: linuxAssets }, encoding: "utf8" },
+  ).trim().split("\n");
+  expect(argv("")).toEqual(["stage", "v1.2.3", "/runner temp/release-assets", "a".repeat(40), "full"]);
+  expect(argv("/runner temp/release-linux-assets")).toEqual([
+    "stage", "v1.2.3", "/runner temp/release-assets", "a".repeat(40), "full", "/runner temp/release-linux-assets",
+  ]);
 });

@@ -120,6 +120,110 @@ async fn failed_worktree_creation_preserves_owned_refs_and_allows_a_fresh_regist
     );
 }
 
+/// Commits a file whose checkout runs `smudge`. Only the attribute is committed;
+/// the filter itself is local configuration a later attempt can drop.
+async fn install_checkout_filter(root: &Path, smudge: &str) {
+    std::fs::write(root.join(".gitattributes"), "payload filter=dure-fixture\n").unwrap();
+    std::fs::write(root.join("payload"), "payload\n").unwrap();
+    for arguments in [
+        vec!["add", ".gitattributes", "payload"],
+        vec!["commit", "-m", "add filtered payload"],
+        vec!["config", "filter.dure-fixture.smudge", smudge],
+    ] {
+        assert!(
+            git_output(root, arguments, None)
+                .await
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+}
+
+async fn remove_checkout_filter(root: &Path) {
+    assert!(
+        git_output(
+            root,
+            ["config", "--unset", "filter.dure-fixture.smudge"],
+            None
+        )
+        .await
+        .unwrap()
+        .status
+        .success()
+    );
+}
+
+fn another_run(mut request: WorkspaceAcquireRequest) -> WorkspaceAcquireRequest {
+    request.workspace_id = WorkspaceIdV1::new("workspace-next-run").unwrap();
+    request.registration_id = OperationIdV1::new("spawn-next-run").unwrap();
+    request
+}
+
+async fn assert_rolled_back_and_the_name_is_free(root: &Path, request: WorkspaceAcquireRequest) {
+    assert!(
+        !root.join(".worktrees/feature-x").exists(),
+        "the partial checkout was left behind"
+    );
+    assert_eq!(list_worktrees(root).await.unwrap().len(), 1);
+    assert!(
+        read_ref(root, &lease_ref(&request.workspace_id))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        read_ref(root, "refs/heads/agent/feature-x")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    remove_checkout_filter(root).await;
+    let created = GitWorkspaceAcquirer::default()
+        .acquire(another_run(request))
+        .await
+        .expect("the same worktree name must be usable after a rollback");
+    assert_eq!(
+        std::fs::read(created.root.join("payload")).unwrap(),
+        b"payload\n"
+    );
+}
+
+#[tokio::test]
+async fn killed_checkout_is_never_adopted_and_rolls_back() {
+    let root = repository().await;
+    // Killing Git's whole group leaves what the bounded timeout leaves: Git
+    // gets no chance to clean up and stays locked `initializing`.
+    install_checkout_filter(root.path(), "kill -9 0").await;
+    let request = request(root.path()).await;
+
+    let failure = GitWorkspaceAcquirer::default()
+        .acquire(request.clone())
+        .await
+        .expect_err("a checkout Git never finished must not be adopted");
+
+    assert_eq!(failure.code, "workspace_checkout_interrupted");
+    assert_rolled_back_and_the_name_is_free(root.path(), request).await;
+}
+
+#[tokio::test]
+async fn timed_out_checkout_reports_the_timeout_and_rolls_back() {
+    let root = repository().await;
+    // Outlasts the real 20 second limit; the runner kills the filter with Git.
+    install_checkout_filter(root.path(), "sleep 40").await;
+    let request = request(root.path()).await;
+
+    let failure = GitWorkspaceAcquirer::default()
+        .acquire(request.clone())
+        .await
+        .unwrap_err();
+
+    assert_eq!(failure.code, "workspace_git_timeout");
+    assert_eq!(failure.detail, None);
+    assert_rolled_back_and_the_name_is_free(root.path(), request).await;
+}
+
 #[tokio::test]
 async fn failed_creation_without_physical_effects_does_not_block_a_fresh_registration() {
     rejected_preflight_allows_a_fresh_registration(false).await;
@@ -204,6 +308,84 @@ async fn rejected_preflight_allows_a_fresh_registration(recovering: bool) {
         result.is_ok(),
         "an effect-free failed creator left a permanent reservation: {result:?}"
     );
+}
+
+struct FinishedOwners(&'static [&'static str]);
+
+impl CreationOwnerLedger for FinishedOwners {
+    fn has_finished<'a>(&'a self, operation: &'a OperationIdV1) -> CreationOwnerFuture<'a> {
+        Box::pin(async move { self.0.contains(&operation.as_str()) })
+    }
+}
+
+/// `git worktree add` can fail after writing the directory. The creator's own
+/// abort is then refused, so the reservation outlives it. A later run reuses
+/// the name only once that directory is gone and the creator has ended.
+#[tokio::test]
+async fn partial_creation_yields_its_name_only_to_a_run_that_can_prove_it_ended() {
+    let root = repository().await;
+    let first = request(root.path()).await;
+    let hooks = root.path().join("hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    let hook = hooks.join("post-checkout");
+    std::fs::write(
+        &hook,
+        b"#!/bin/sh\nrm -rf \"$(git rev-parse --absolute-git-dir)\"\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        git_output(
+            root.path(),
+            ["config", "core.hooksPath", hooks.to_str().unwrap()],
+            None
+        )
+        .await
+        .unwrap()
+        .status
+        .success()
+    );
+    assert_eq!(
+        GitWorkspaceAcquirer::default()
+            .acquire(first.clone())
+            .await
+            .unwrap_err()
+            .code,
+        "workspace_checkout_identity_mismatch"
+    );
+    let partial = root.path().join(".worktrees/feature-x");
+    assert!(partial.is_dir());
+    std::fs::remove_dir_all(&partial).unwrap();
+    std::fs::rename(&hook, hook.with_extension("disabled")).unwrap();
+
+    let mut later = first;
+    later.workspace_id = WorkspaceIdV1::new("workspace-later-run").unwrap();
+    later.registration_id = OperationIdV1::new("spawn-later-run").unwrap();
+    let AgentSpawnWorktreePolicyV1::Dedicated { branch_mode, .. } = &mut later.policy else {
+        panic!("dedicated fixture required");
+    };
+    *branch_mode = AgentSpawnBranchModeV1::Existing;
+
+    for unproven in [
+        GitWorkspaceAcquirer::default(),
+        GitWorkspaceAcquirer::with_creation_owners(Arc::new(FinishedOwners(&["spawn-other"]))),
+    ] {
+        assert_eq!(
+            unproven.acquire(later.clone()).await.unwrap_err().code,
+            "checkout_use_phase_conflict"
+        );
+        assert!(!partial.exists());
+    }
+
+    let result =
+        GitWorkspaceAcquirer::with_creation_owners(Arc::new(FinishedOwners(&["spawn-fixture"])))
+            .acquire(later)
+            .await;
+    assert!(
+        result.is_ok(),
+        "a finished creator stranded its path: {result:?}"
+    );
+    assert!(partial.is_dir());
 }
 
 #[tokio::test]

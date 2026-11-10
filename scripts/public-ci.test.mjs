@@ -41,6 +41,7 @@ const codeResults = {
   DEPENDENCY_ADVISORIES_RESULT: "RUN_CODE_CHECKS",
   HMUX_RESULT: "RUN_HMUX_CHECKS",
   APP_RESULT: "RUN_APP_CHECKS",
+  DESKTOP_RESULT: "RUN_DESKTOP_CHECKS",
 };
 const fixtures = [];
 
@@ -89,8 +90,16 @@ function repositoryFixture() {
   return { cwd, git, write, commit, base };
 }
 
-function results(runCodeChecks, { hmux = runCodeChecks, app = runCodeChecks } = {}) {
-  const plans = { RUN_CODE_CHECKS: runCodeChecks, RUN_HMUX_CHECKS: hmux, RUN_APP_CHECKS: app };
+function results(
+  runCodeChecks,
+  { hmux = runCodeChecks, app = runCodeChecks, desktop = runCodeChecks } = {},
+) {
+  const plans = {
+    RUN_CODE_CHECKS: runCodeChecks,
+    RUN_HMUX_CHECKS: hmux,
+    RUN_APP_CHECKS: app,
+    RUN_DESKTOP_CHECKS: desktop,
+  };
   return {
     PLAN_RESULT: "success",
     DOCUMENTATION_RESULT: "success",
@@ -244,6 +253,7 @@ describe("public CI workflow wiring", () => {
   it.each([
     ["hmux", "run_hmux_checks", "verify:push:hmux-core", "hmux -> target"],
     ["app", "run_app_checks", "app:verify", "crates/dure-app -> target"],
+    ["desktop", "run_desktop_checks", "verify:push:desktop", "src-tauri -> target"],
   ])("runs the existing %s workspace gate when its plan output selects it", (name, output, gate, workspace) => {
     const job = workflow.jobs[name];
     expect(job.needs).toBe("plan");
@@ -258,14 +268,29 @@ describe("public CI workflow wiring", () => {
     expect(toolchain).toBeLessThan(job.steps.indexOf(cache));
   });
 
-  it("prepares the pinned Ghostty proof on the only host that can build it", () => {
-    const job = workflow.jobs.hmux;
+  // The desktop gate stages the product Hmux runtime sidecar, which links the
+  // same exact-pin Ghostty core as the Hmux suite.
+  it.each(["hmux", "desktop"])("prepares the pinned Ghostty proof for %s on the only host that can build it", (name) => {
+    const job = workflow.jobs[name];
     expect(job["runs-on"]).toBe("macos-15");
     const proof = job.steps.findIndex((step) => step.run?.includes("ensure-ghostty-vt-proof.mjs"));
     expect(job.steps[proof].run).toContain("--target aarch64-apple-darwin");
     expect(job.steps[proof].run).toContain("HMUX_GHOSTTY_VT_PROOF_PREFIX=");
     expect(proof).toBeLessThan(job.steps.length - 1);
     expect(workflow.jobs.app["runs-on"]).toBe("ubuntu-24.04");
+  });
+
+  it.each(["hmux", "desktop"])("restores the pinned Ghostty build inputs for %s from the Actions cache before preparing the proof", (name) => {
+    // The inputs are hash-checked by ensure-ghostty-vt-proof.mjs on every run, so
+    // a cached copy saves an anonymous release download without trusting the cache.
+    const job = workflow.jobs[name];
+    const proof = job.steps.findIndex((step) => step.run?.includes("ensure-ghostty-vt-proof.mjs"));
+    const cache = job.steps.findIndex((step) => step.uses?.startsWith("actions/cache@"));
+    expect(cache).toBeGreaterThan(-1);
+    expect(cache).toBeLessThan(proof);
+    const proofRoot = job.steps[proof].env.DURE_GHOSTTY_VT_CACHE_ROOT;
+    expect(job.steps[cache].with.path).toBe(`${proofRoot}/inputs/v2`);
+    expect(job.steps[cache].with.key).toContain("hmux-ghostty-vt-provenance-v2");
   });
 });
 
@@ -359,11 +384,16 @@ describe("public CI required result", () => {
   });
 
   it("holds each Rust workspace job to its own plan output", () => {
-    for (const plan of [{ hmux: false, app: false }, { hmux: true, app: false }, { hmux: false, app: true }]) {
+    for (const plan of [
+      { hmux: false, app: false, desktop: false },
+      { hmux: true, app: false, desktop: false },
+      { hmux: false, app: true, desktop: false },
+      { hmux: false, app: false, desktop: true },
+    ]) {
       const environment = results(true, plan);
       const result = runRequiredCheck(environment);
       expect(result.status, `${JSON.stringify(plan)}: ${result.stderr}`).toBe(0);
-      for (const key of ["HMUX_RESULT", "APP_RESULT"]) {
+      for (const key of ["HMUX_RESULT", "APP_RESULT", "DESKTOP_RESULT"]) {
         const swapped = environment[key] === "success" ? "skipped" : "success";
         expect(runRequiredCheck({ ...environment, [key]: swapped }).status, key).toBe(1);
       }
@@ -419,6 +449,7 @@ describe("public CI change planning", () => {
       runCodeChecks: false,
       runHmuxChecks: false,
       runAppChecks: false,
+      runDesktopChecks: false,
       changedPathCount: 5,
       scopes: [],
     });
@@ -446,20 +477,24 @@ describe("public CI change planning", () => {
   });
 
   it.each([
-    ["hmux/crates/hmux-host/src/lib.rs", { runHmuxChecks: true, runAppChecks: true }],
-    ["hmux/crates/hmux-client/src/lib.rs", { runHmuxChecks: true, runAppChecks: true }],
-    ["hmux/crates/hmux-ssh-transport/src/lib.rs", { runHmuxChecks: true, runAppChecks: false }],
-    ["hmux/xtask/terminal-state-protocol-codegen/src/main.rs", { runHmuxChecks: true, runAppChecks: false }],
-    ["src/contracts/terminalStateProtocol.ts", { runHmuxChecks: true, runAppChecks: false }],
-    ["crates/hebbian-process-sampler/src/lib.rs", { runHmuxChecks: true, runAppChecks: false }],
-    ["crates/dure-app/src/lib.rs", { runHmuxChecks: false, runAppChecks: true }],
-    ["src/contracts/generated/extensionContracts.ts", { runHmuxChecks: false, runAppChecks: true }],
-    ["cli/lib/control-plane-build-identity.json", { runHmuxChecks: false, runAppChecks: true }],
-    ["src/app.ts", { runHmuxChecks: false, runAppChecks: false }],
-    ["crates/dure-hub-protocol/src/lib.rs", { runHmuxChecks: false, runAppChecks: false }],
-    ["mobile/src/App.tsx", { runHmuxChecks: false, runAppChecks: false }],
-    [".github/workflows/public-repository.yml", { runHmuxChecks: true, runAppChecks: true }],
-    ["unrecognized/input.bin", { runHmuxChecks: true, runAppChecks: true }],
+    ["hmux/crates/hmux-host/src/lib.rs", { runHmuxChecks: true, runAppChecks: true, runDesktopChecks: true }],
+    ["hmux/crates/hmux-client/src/lib.rs", { runHmuxChecks: true, runAppChecks: true, runDesktopChecks: true }],
+    ["hmux/crates/hmux-ssh-transport/src/lib.rs", { runHmuxChecks: true, runAppChecks: false, runDesktopChecks: true }],
+    ["hmux/xtask/terminal-state-protocol-codegen/src/main.rs", { runHmuxChecks: true, runAppChecks: false, runDesktopChecks: false }],
+    ["src/contracts/terminalStateProtocol.ts", { runHmuxChecks: true, runAppChecks: false, runDesktopChecks: false }],
+    ["crates/hebbian-process-sampler/src/lib.rs", { runHmuxChecks: true, runAppChecks: false, runDesktopChecks: true }],
+    ["crates/dure-app/src/lib.rs", { runHmuxChecks: false, runAppChecks: true, runDesktopChecks: true }],
+    ["src/contracts/generated/extensionContracts.ts", { runHmuxChecks: false, runAppChecks: true, runDesktopChecks: true }],
+    ["cli/lib/control-plane-build-identity.json", { runHmuxChecks: false, runAppChecks: true, runDesktopChecks: true }],
+    ["src-tauri/src/lib.rs", { runHmuxChecks: false, runAppChecks: false, runDesktopChecks: true }],
+    ["src-tauri/Cargo.lock", { runHmuxChecks: false, runAppChecks: false, runDesktopChecks: true }],
+    ["crates/dure-relay/src/lib.rs", { runHmuxChecks: false, runAppChecks: false, runDesktopChecks: true }],
+    ["src/app.ts", { runHmuxChecks: false, runAppChecks: false, runDesktopChecks: false }],
+    ["crates/dure-hub-protocol/src/lib.rs", { runHmuxChecks: false, runAppChecks: false, runDesktopChecks: true }],
+    ["mobile/src/App.tsx", { runHmuxChecks: false, runAppChecks: false, runDesktopChecks: false }],
+    ["mobile/src-tauri/src/lib.rs", { runHmuxChecks: false, runAppChecks: false, runDesktopChecks: false }],
+    [".github/workflows/public-repository.yml", { runHmuxChecks: true, runAppChecks: true, runDesktopChecks: true }],
+    ["unrecognized/input.bin", { runHmuxChecks: true, runAppChecks: true, runDesktopChecks: true }],
   ])("selects the Rust workspace jobs that verify %s", (path, rust) => {
     const fixture = repositoryFixture();
     fixture.write(path);
@@ -548,6 +583,7 @@ describe("public CI change planning", () => {
         runCodeChecks: true,
         runHmuxChecks: true,
         runAppChecks: true,
+        runDesktopChecks: true,
       });
     }
   });
@@ -599,7 +635,7 @@ describe("public CI change planning", () => {
     );
     expect(JSON.parse(stdout).runCodeChecks).toBe(false);
     expect(readFileSync(output, "utf8")).toBe(
-      "run_code_checks=false\nrun_hmux_checks=false\nrun_app_checks=false\n",
+      "run_code_checks=false\nrun_hmux_checks=false\nrun_app_checks=false\nrun_desktop_checks=false\n",
     );
     execFileSync(process.execPath, [join(fixture.cwd, "scripts/public-ci.mjs"), "check"], {
       cwd: fixture.cwd,

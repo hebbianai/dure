@@ -94,8 +94,12 @@ finally:
             break
         if time.monotonic() >= deadline:
             os.kill(pid, signal.SIGKILL)
+            # A killed child cannot finish exiting while its output is undrained.
+            os.close(master)
+            master = None
             waited_pid, status = os.waitpid(pid, 0)
             break
         time.sleep(0.01)
     publish_receipt("provider-exit.json", {"waitedPid": waited_pid, "status": status})
-    os.close(master)
+    if master is not None:
+        os.close(master)

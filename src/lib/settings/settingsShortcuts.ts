@@ -140,9 +140,12 @@ const SHORTCUT_DEFINITIONS = Object.freeze({
 		"⌥",
 		"⌫",
 	]),
+	// ⌘F on macOS; Ctrl+Shift+F elsewhere so the shell keeps Ctrl+F
+	// (lib/terminal/interaction/terminalFind).
+	"term-find": terminalShortcut("settings.shortcuts.cmd.termFind", ["⌘", "F"]),
 } satisfies Record<string, ShortcutDefinition>);
 
-type ShortcutId = keyof typeof SHORTCUT_DEFINITIONS;
+export type ShortcutId = keyof typeof SHORTCUT_DEFINITIONS;
 
 interface ShortcutGroupDefinition {
 	group: string;
@@ -165,6 +168,7 @@ const SHORTCUT_GROUPS = [
 			"go-to-next-up",
 			"split-right",
 			"split-below",
+			"balance-panes",
 			"focus-pane-left",
 			"focus-pane-right",
 			"focus-pane-up",
@@ -176,7 +180,7 @@ const SHORTCUT_GROUPS = [
 	},
 	{
 		group: "settings.shortcuts.group.terminalDisplay",
-		items: ["font-inc", "font-dec", "font-reset"],
+		items: ["font-inc", "font-dec", "font-reset", "term-find"],
 	},
 	{
 		group: "Pinpoint",

@@ -13,7 +13,7 @@ dure run --provider codex --worktree docs-review "对照代码审查 README。�
 
 专用 worktree 将此任务的文件分开。选择在执行主机已安装并登录的提供商。不指定 `--project` 或 `--path` 时，后端解析当前工作目录。
 
-在能被识别为 Dure 面板的终端内，省略 `--space` 会把新面板放到当前 Space。从没有该面板上下文的普通终端或 CI 启动时，任务无界面运行。需要明确目的地时，用 `--space` 指定已连接 Space 的准确名称或 ID。
+在能被识别为 Dure 面板的终端内，省略 `--space` 会把新面板放到当前 Space。从没有该面板上下文的普通终端或 CI 启动时，任务无界面运行。执行主机有提供商的聊天运行时时，无界面任务会使用它，因此该主机不需要 Dure 应用；用任务输出的 `agentId` 运行 `dure transcript <agent-id>` 即可读取。如果同一台机器上已连接的应用接管了该任务，它会保持为终端会话。需要明确目的地时，用 `--space` 指定已连接 Space 的准确名称或 ID。
 
 ## 追加输入前检查工作
 
@@ -25,6 +25,23 @@ dure schedule --help
 
 `dure read` 读取会话屏幕，`dure transcript` 读取可用的对话记录。用列表返回的会话和工作区标识选择受管理会话。启动成功或输入送达的回执不代表任务已完成。
 
+如果还使用 SSH 后端，`dure ls --all-backends` 会在一张带 `BACKEND` 列的表中列出所有已配置后端的会话。无法连接的后端会连同错误一起报告，不会影响其他后端的结果。使用 `--json` 时，每个会话都带有 `backendProfileId`。
+
+## 等待你启动的智能体
+
+智能体在自己的 Dure 终端面板中运行 `dure run` 时，新的 Run 会把该智能体记录为父级。之后调用方可以一次等待它的所有子级，而不必逐个轮询：
+
+```sh
+dure wait --children all --timeout 900 --json   # 所有子级都已就绪
+dure wait --children any --json                 # 第一个子级就绪
+```
+
+子级在完成一个回合并空闲、需要输入或批准、已退出或启动失败时视为就绪。JSON 会列出每个子级及其状态；退出码 1 表示某个已就绪的子级需要处理。`dure runs show <agent>` 显示 Run 的父级。使用 `--no-parent` 启动不关联的 Run，或用 `--parent <agent>` 将 Run 关联到同一后端上的另一个智能体。目前还不能等待聊天运行时上的子级；请用 `dure transcript` 读取。
+
+## 在终端中切换智能体
+
+`dure tui` 会列出所有 Space 中的智能体及其状态、账户和项目，无需应用，也可通过 SSH 使用。选择一个智能体并按 Enter 即可连接。按 `Ctrl-\` 后再按 `d` 可断开连接并返回列表，智能体会继续运行。该计算机上没有应用时，账户显示为 `unknown`，项目显示为智能体工作文件夹的名称。
+
 ## 调度重复任务
 
 在项目目录执行：
@@ -35,7 +52,7 @@ dure schedule show daily-review
 dure schedule runs daily-review
 ```
 
-创建后会启用指定时区工作日 09:00 的后续运行。只想保存而不启用重复执行时，添加 `--disabled`。调度运行使用独立 Git worktree。由调度启动的代理在确认空闲 30 分钟后进入休眠，对话会保留，可以再次唤醒。代理停止后，仅当没有未提交或未跟踪的更改，且所有提交都已在默认分支上时，才会移除其 worktree，否则保留。用返回的运行键调用 `dure schedule inspect` 可读取保留的报告。
+创建后会启用指定时区工作日 09:00 的后续运行。只想保存而不启用重复执行时，添加 `--disabled`。调度运行使用独立 Git worktree。由调度启动的代理在确认空闲 30 分钟后进入休眠，对话会保留，可以再次唤醒。代理停止后，仅当没有未提交或未跟踪的更改，且所有提交都已在默认分支上时，才会移除其 worktree，否则保留。用返回的运行键调用 `dure schedule inspect` 可读取保留的报告。在装有 Dure 应用的机器上，调度运行是终端会话。在只有 Dure CLI 的主机（例如服务器或 VM）上，如果提供商在那里有聊天运行时，它会像无界面任务一样在聊天运行时上启动，`dure schedule runs` 会显示对应的 `dure runs show` 命令。空闲休眠和 worktree 移除只适用于终端会话。
 
 之后若要暂停且不丢失历史，请使用 `dure schedule show` 显示的修订号运行 `dure schedule set daily-review --disabled --expected-revision N`；`--enabled` 可恢复。同一命令也可修改 `--cron`、`--timezone`、`--name` 或 `--prompt`。
 

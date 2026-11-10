@@ -36,6 +36,7 @@ local-runtime = ["dep:alacritty_terminal", "dep:base64"]
 ghostty-core-proof = [
     "local-runtime",
     "dep:prost",
+    "dep:regex",
     "dep:terminal-core-ghostty-proof",
     "dep:terminal-state-protocol",
     "terminal-core-ghostty-proof/external-proof",
@@ -49,6 +50,7 @@ hmux-local-platform = { path = "../hmux-local-platform" }
 hmux-session-protocol = { path = "../hmux-session-protocol" }
 libc.workspace = true
 prost = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

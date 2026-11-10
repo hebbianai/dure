@@ -26,6 +26,17 @@ function heldByAnotherExecutor(response) {
   }
 }
 
+/** The broker's definite refusal, when it returned one, so callers can name a reason. */
+function nativeRefusal(response) {
+  if (response.kind !== "nonzero") return undefined;
+  try {
+    const refusal = JSON.parse(response.stdout);
+    return refusal?.state === "refused" && typeof refusal.error?.code === "string" ? refusal.error : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Read the operation's journal until it records completion or the budget ends.
  * Observation never executes recovery, so waiting cannot run the operation twice.
@@ -54,6 +65,8 @@ export async function collectManagedRehostCommand({
   workspaceId,
   operationId,
   confirmRestart,
+  expectedConversationId,
+  requireHostAbsent = false,
   command,
   runtime = process.env.DURE_HMUX_RUNTIME_BIN?.trim(),
   run = runBoundedCommand,
@@ -77,6 +90,8 @@ export async function collectManagedRehostCommand({
       subcommand,
       ...identity.args,
       ...(confirmRestart ? ["--confirm-restart"] : []),
+      ...(subcommand === commands.start && expectedConversationId ? ["--expected-conversation", expectedConversationId] : []),
+      ...(subcommand === commands.start && requireHostAbsent ? ["--require-host-absent"] : []),
       ...(runtime ? ["--runtime", runtime] : []),
       "--json",
     ],
@@ -106,10 +121,12 @@ export async function collectManagedRehostCommand({
     }
   }
   if (response.kind !== "success") {
-    return failure(
+    const result = failure(
       `rehost_${action}_${response.kind}`,
       `Operation outcome is unknown; no additional operation was submitted. ${inspect}\n${(response.stderr || response.message || "").trim()}`,
     );
+    const refusal = nativeRefusal(response);
+    return refusal ? { ...result, error: { ...result.error, native: refusal } } : result;
   }
   let receipt;
   try {

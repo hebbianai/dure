@@ -12,4 +12,5 @@ export type ScheduleRuntime = { observedAtMs: number } & ({
   errorCode: string;
 });
 export function isScheduleRuntime(value: unknown): value is ScheduleRuntime;
+export function isScheduleChatRuntime(runtime: ScheduleRuntime | undefined): boolean;
 export function scheduleRuntimeStatus(runtime: ScheduleRuntime | undefined): "runtimeUnavailable" | "exitedWithoutReport" | "inputRequired" | "approvalRequired" | "providerError" | "providerStarting" | "providerWorking" | "providerWaiting" | undefined;

@@ -5,6 +5,7 @@ import {
 } from "./app-control-client.mjs";
 import {
   agentSpawnLaunchProjection,
+  validSpawnParent,
 } from "./agent-spawn-query.mjs";
 export { resolveClientSpaceTarget as resolveRunPresentationTarget } from "./space-selection.mjs";
 import { parseAgentRuntimeInspectionEnvelope } from "./contracts/agent-runtime.mjs";
@@ -293,6 +294,7 @@ export function runReceiptSummary(report, presentation = null) {
     state: token(receipt?.state),
     presentation: token(presentation?.state),
     interactionProfile,
+    parent: validSpawnParent(plan?.request?.parent) ? plan.request.parent : null,
   };
 }
 
@@ -404,6 +406,92 @@ export function structuredRunPresentationRequest(options) {
     fail("client_run_receipt_invalid", "Run does not own a structured runtime.");
   }
   return structuredRunPresentationRequestFromPlan(projected, options);
+}
+
+/** App capability: `/hmux/attach` places a native Agent's current runtime
+ * without a Run record (an Agent the app launched, resumed or imported). */
+export const AGENT_RUNTIME_PRESENTATION_CAPABILITY = "hmux.attach.agent_runtime_v1";
+
+export function appPresentsAgentRuntime(descriptor) {
+  return descriptor?.capabilities?.includes(AGENT_RUNTIME_PRESENTATION_CAPABILITY) === true;
+}
+
+/** Build the receipt-free presentation of an Agent's current native runtime.
+ * The backend's runtime projection is the only identity source; the app
+ * re-verifies the live Hmux generation and never launches a provider. */
+export function agentRuntimePresentationRequest({ agent, currentRuntime, target, profile }) {
+  if (target?.state !== "requested") {
+    fail("client_space_target_invalid", "A Space is required to open the pane.");
+  }
+  const current = currentRuntime?.receipt;
+  const context = currentRuntime?.projectionContext;
+  const selected = current?.authority;
+  if (currentRuntime?.state !== "stable" || !SAFE_TOKEN.test(agent?.agentId ?? "") ||
+      current?.agentId !== agent.agentId || context?.agent?.agentId !== agent.agentId ||
+      context.agent.providerId !== current.providerId || !SAFE_TOKEN.test(current.providerId ?? "") ||
+      !SAFE_TOKEN.test(context.project?.projectId ?? "") ||
+      !validProjectPath(context.project?.rootPath) || !validProjectPath(context.workspace?.rootPath)) {
+    fail("client_run_runtime_unavailable", "Inspect this Agent's current runtime before opening it.");
+  }
+  if (selected?.interactionProfile !== "native_cli") {
+    fail("agent_runtime_presentation_unsupported",
+      "Only Terminal Agents without a Run record can be opened from the CLI. Open this Chat Agent from the app.");
+  }
+  const source = selected.authority;
+  const binding = source?.binding;
+  const generationKeys = ["runnerPrincipal", "runnerInstance", "channelEpoch", "hostInstanceId", "terminalEpoch"];
+  const launchIdempotencyKey = current.launchIdempotencyKey ?? undefined;
+  if (binding?.agentId !== agent.agentId || binding.runtimeKindId !== "runtime.hmux" ||
+      !SAFE_TOKEN.test(binding.sessionId ?? "") || !SAFE_TOKEN.test(source.runtimeWorkspaceId ?? "") ||
+      generationKeys.some((key) => !SAFE_TOKEN.test(source[key] ?? "")) ||
+      (launchIdempotencyKey !== undefined && !SAFE_TOKEN.test(launchIdempotencyKey)) ||
+      !["default", "auto_edit", "skip_permissions"].includes(current.permissionMode)) {
+    fail("client_run_runtime_invalid", "The current native runtime binding is invalid.");
+  }
+  const workspaceRoot = context.workspace.rootPath;
+  return {
+    schemaVersion: 1,
+    runtime: "hmux_managed_v1",
+    identity: "agent_runtime",
+    ...runtimeSource(profile),
+    backendProfileId: profile.id,
+    agentId: agent.agentId,
+    // The backend keeps no display name; the Agent ID is a unique fallback.
+    agentName: SAFE_TOKEN.test(agent.name ?? "") ? agent.name : agent.agentId,
+    projectId: context.project.projectId,
+    projectPath: context.project.rootPath,
+    providerId: current.providerId,
+    executionProfile: current.executionProfile,
+    providerConversationRef: current.providerConversationRef ?? null,
+    sessionId: binding.sessionId,
+    ...(launchIdempotencyKey === undefined ? {} : { launchIdempotencyKey }),
+    workspaceId: source.runtimeWorkspaceId,
+    workspaceRootPath: workspaceRoot,
+    generation: Object.fromEntries(generationKeys.map((key) => [key, source[key]])),
+    permissionMode: current.permissionMode,
+    spaceId: target.spaceId,
+    windowLabel: target.windowLabel,
+    ...(target.referencePanelId ? { referencePanelId: target.referencePanelId } : {}),
+  };
+}
+
+/** Place an Agent's current native runtime in a pane through an app that
+ * advertises the receipt-free contract. Callers check the capability first. */
+export async function presentAgentRuntime({ agent, currentRuntime, target, profile, descriptor,
+  fetchImpl = globalThis.fetch } = {}) {
+  if (target?.state === "headless") {
+    return { schemaVersion: 1, apiVersion: API_VERSION, state: "headless", reason: target.reason };
+  }
+  const body = agentRuntimePresentationRequest({ agent, currentRuntime, target, profile });
+  const payload = await requestAppControl({ descriptor, path: "/hmux/attach", body, fetchImpl });
+  return {
+    schemaVersion: 1,
+    apiVersion: API_VERSION,
+    state: "opened",
+    reason: target.reason,
+    client: publicAppControlIdentity(descriptor),
+    pane: publicPane(payload, body),
+  };
 }
 
 function publicPane(payload, expected) {

@@ -11,6 +11,11 @@ This read-only command does not inspect an app, backend, credentials or provider
 Declarations describe product adapters; they do not certify a live runtime tuple.
 Use dure version or diagnostics separately to compare installed runtime builds.`;
 
+/** Whether a provider can continue one exact conversation, only its latest, or neither. */
+export function providerResumeSupport(spec) {
+  return typeof spec.resumeId === "function" ? "exact" : spec.resumeCmd ? "latest_only" : "none";
+}
+
 /** Project declarations only. Backend admission owns actual route availability. */
 export function projectProviderCapabilities(catalog = PROVIDERS) {
   return Object.keys(catalog).sort().map((id) => {
@@ -20,7 +25,7 @@ export function projectProviderCapabilities(catalog = PROVIDERS) {
       label: spec.label,
       command: spec.cmd,
       core: spec.core === true,
-      resume: typeof spec.resumeId === "function" ? "exact" : spec.resumeCmd ? "latest_only" : "none",
+      resume: providerResumeSupport(spec),
       conversationList: spec.conversationList ?? "none",
       conversationFork: spec.conversationFork ?? "none",
       accountProfiles: Boolean(spec.configEnv),

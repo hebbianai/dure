@@ -4,10 +4,12 @@ use super::*;
 use hmux_client::ProcessDescriptor;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::io::Read;
+use std::ops::Deref;
 use std::os::fd::AsRawFd;
 
 pub(super) const LAUNCH: &str = "native-launch.json";
 pub(super) const RESTART: &str = "native-recovery.json";
+pub(super) const RECOVERY_BUSY: &str = "browser_profile_recovery_in_progress";
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -42,15 +44,50 @@ pub(super) fn unconfirmed(reason: impl std::fmt::Debug) -> BrowserEngineError {
     BrowserEngineError::before("browser_profile_recovery_unconfirmed")
 }
 
-pub(super) fn lock(file: &File) -> Result<(), BrowserEngineError> {
+pub(super) fn lock(file: &File, busy: &'static str) -> Result<(), BrowserEngineError> {
     // An OS lock complements the durable name. It fences live owners and
     // concurrent recovery; losing it alone never proves writer retirement.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
         Ok(())
     } else {
-        Err(BrowserEngineError::before(
-            "browser_profile_recovery_in_progress",
-        ))
+        Err(BrowserEngineError::before(busy))
+    }
+}
+
+/// A file whose exclusive `flock` ends when this guard drops.
+///
+/// The lock belongs to the open file description, which a child spawned by any
+/// backend thread shares until it execs. Closing this handle alone would leave
+/// the lock with that child, and the next caller would see a busy state nobody
+/// holds, so dropping the guard releases it explicitly. A backend crash skips
+/// this and the kernel still releases the lock when the descriptor closes.
+pub(super) struct LockedFile(File);
+
+impl LockedFile {
+    pub(super) fn acquire(file: File, busy: &'static str) -> Result<Self, BrowserEngineError> {
+        lock(&file, busy)?;
+        Ok(Self(file))
+    }
+
+    /// Takes over a file that already holds the lock, for a claim that had to
+    /// be locked before its name became visible to other callers.
+    pub(super) fn held(file: File) -> Self {
+        Self(file)
+    }
+}
+
+impl Deref for LockedFile {
+    type Target = File;
+
+    fn deref(&self) -> &File {
+        &self.0
+    }
+}
+
+impl Drop for LockedFile {
+    fn drop(&mut self) {
+        // SAFETY: this guard owns the open descriptor.
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
     }
 }
 

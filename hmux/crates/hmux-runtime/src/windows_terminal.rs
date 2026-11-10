@@ -30,6 +30,7 @@ pub(crate) struct WindowsTerminalSurface {
     input: bool,
     wheel: bool,
     default_colors: bool,
+    history_find: bool,
     agent_prompt: Option<AgentPromptCapabilitySelection>,
     process_observed_agent_prompt: bool,
     draft_guarded_input: bool,
@@ -52,6 +53,8 @@ impl WindowsTerminalSurface {
             .any(|capability| capability == TERMINAL_INPUT_INTENT_CAPABILITY);
         let wheel = terminal_viewport_wheel_permitted(selected_capabilities);
         let default_colors = terminal_default_colors_permitted(selected_capabilities);
+        let history_find =
+            hmux_runtime_contract::terminal_history_find_permitted(selected_capabilities);
         let process_observed_agent_prompt = selected_capabilities
             .iter()
             .any(|capability| capability == PROCESS_OBSERVED_AGENT_PROMPT_CAPABILITY);
@@ -65,6 +68,7 @@ impl WindowsTerminalSurface {
             input,
             wheel,
             default_colors,
+            history_find,
             agent_prompt,
             process_observed_agent_prompt,
             draft_guarded_input,
@@ -142,6 +146,7 @@ impl WindowsTerminalSurface {
                 draft_guarded_input: self.draft_guarded_input,
                 wheel: self.wheel,
                 default_colors: self.default_colors,
+                history_find: self.history_find,
                 base_protocol_minor: self.base_protocol_minor,
                 host_provider_id,
             },

@@ -783,7 +783,10 @@ function sendManagedInputDirect(binding, text, enter, draftGuard) {
       : result.stderr?.trim() ||
         result.error?.message ||
         `Managed Hmux input command exited with status ${result.status ?? "unknown"}`;
-    return { kind: "failed", detail };
+    // Only Hmux's own exit verdict, before anything was written, lets a
+    // caller follow the Agent elsewhere; see failDirectInput.
+    const exited = code === "hmux_session_exited" && failure.error.deliveryState === "not_written";
+    return { kind: "failed", detail, ...(exited ? { sessionExited: true } : {}) };
   }
   let payload;
   try {
@@ -910,6 +913,19 @@ function delay(milliseconds, signal) {
   });
 }
 
+/** Registry input that Hmux refused because the Session exited is thrown
+ * with tracked send's exit code, so `dure send` can follow the Agent to its
+ * current Session. Every other failure ends the command. */
+function failDirectInput(direct, binding) {
+  if (direct.sessionExited) {
+    throw Object.assign(new Error(direct.detail), {
+      code: "dure_send_session_exited",
+      sessionId: binding.sessionId,
+    });
+  }
+  fail(direct.detail);
+}
+
 async function sendExactSession(sessionId, text, opts) {
   if (opts.backendSpecified || process.env.DURE_BACKEND_PROFILE?.trim()) {
     fail("Exact Session input currently requires the local Hmux runtime; --backend is not supported.");
@@ -977,7 +993,7 @@ async function sendText(
       if (managedInputDirectCompatible(compatibility, draftGuard)) {
         const direct = sendManagedInputDirect(binding, text, enter, draftGuard);
         if (direct.kind === "success") return direct.input;
-        fail(direct.detail);
+        failDirectInput(direct, binding);
       }
     }
     const srv = loadServer();
@@ -1008,7 +1024,7 @@ async function sendText(
         inspectManagedInputCompatibility().managedInputCompatible
       ) {
         const direct = sendManagedInputDirect(binding, text, enter, null);
-        if (direct.kind !== "success") fail(direct.detail);
+        if (direct.kind !== "success") failDirectInput(direct, binding);
         return { ...direct.input, unguardedReason: "hmux" };
       }
       fail("The app server was not found. Reopen or migrate this legacy Hmux binding.");
@@ -1248,6 +1264,21 @@ function writeScreenRead({ text, notice }) {
   if (notice) process.stderr.write(`${notice}\n`);
 }
 
+/** The Session the backend now binds to a registry Agent, when the app's
+ * registry still lists an earlier one (see agent-current-session.mjs). */
+async function findAgentSessionSuccessor(agent) {
+  const { currentAgentSessionSuccessor } = await import("./lib/agent-current-session.mjs");
+  return currentAgentSessionSuccessor({
+    agent,
+    resolveBackend: () =>
+      backendProfileQueryContext(
+        typeof agent.runtimeBinding?.backendProfileId === "string"
+          ? { backendSpecified: true, backend: agent.runtimeBinding.backendProfileId }
+          : {},
+      ),
+  });
+}
+
 async function cmdRead(query, opts) {
   if (opts.json && opts.follow) fail("--json cannot be combined with --follow. Request a one-shot JSON snapshot instead.");
   const backendRequested =
@@ -1288,9 +1319,7 @@ async function cmdRead(query, opts) {
     const reg = loadRegistryOptional() ?? { agents: [] };
     const target = resolveReadTarget(reg, query);
     readLabel = target;
-    const { agentScreenReader, currentAgentSessionSuccessor } = await import(
-      "./lib/agent-current-session.mjs"
-    );
+    const { agentScreenReader } = await import("./lib/agent-current-session.mjs");
     readScreen = agentScreenReader({
       agent: target,
       capture: (session, signal) =>
@@ -1300,16 +1329,7 @@ async function cmdRead(query, opts) {
               ...opts,
               workspace: session.workspaceId,
             }),
-      findSuccessor: (agent) =>
-        currentAgentSessionSuccessor({
-          agent,
-          resolveBackend: () =>
-            backendProfileQueryContext(
-              typeof agent.runtimeBinding?.backendProfileId === "string"
-                ? { backendSpecified: true, backend: agent.runtimeBinding.backendProfileId }
-                : {},
-            ),
-        }),
+      findSuccessor: findAgentSessionSuccessor,
       onSuccessor: (session) => {
         readLabel = session.sessionId;
         process.stderr.write(
@@ -1653,8 +1673,8 @@ async function sessionQueryContext(opts, loadSessionClientProjection) {
     registryPath: REG,
     clientId: sessionQueryClientId(),
   });
-  const backendRequested =
-    opts.backendSpecified || Boolean(process.env.DURE_BACKEND_PROFILE?.trim());
+  const backendRequested = !opts.allBackends &&
+    (opts.backendSpecified || Boolean(process.env.DURE_BACKEND_PROFILE?.trim()));
   return {
     registry,
     backend: backendRequested ? await backendProfileQueryContext(opts) : null,
@@ -1687,9 +1707,20 @@ async function emitSessionQuery(action, sessionId, opts) {
     backend,
   };
   // --alive (only alive sessions) filters every page of the census.
-  const report = action === "list" && opts.alive
-    ? await collectAliveSessionQuery(query)
-    : await collectSessionQuery(query);
+  const collect = action === "list" && opts.alive
+    ? collectAliveSessionQuery
+    : collectSessionQuery;
+  const allBackends = opts.allBackends
+    ? await import("./lib/session-query-all-backends.mjs")
+    : null;
+  const report = allBackends
+    ? await allBackends.collectAllBackendsSessionQuery({
+        query,
+        collect,
+        resolveBackend: (backend) =>
+          backendProfileQueryContext({ backendSpecified: true, backend }),
+      })
+    : await collect(query);
 
   // Apply client-side filtering for ls command
   if (action === "list" && report.kind === "dure.sessions.list") {
@@ -1704,22 +1735,28 @@ async function emitSessionQuery(action, sessionId, opts) {
     report.sessions = filtered;
   }
 
-  process.stdout.write(
-    (opts.json ? JSON.stringify(report) : formatSessionQuery(report)) + "\n",
-  );
+  const text = report.backends
+    ? allBackends.formatAllBackendsSessionQuery(report)
+    : formatSessionQuery(report);
+  process.stdout.write((opts.json ? JSON.stringify(report) : text) + "\n");
   process.exitCode = sessionQueryExitCode(report);
 }
 
+const LS_USAGE =
+  "dure ls [--cursor start|CURSOR] [--backend ID | --all-backends] [--json] [--deadline-ms N] [--probe-budget-ms N] [--alive] [--hide-provider ID...]";
+
 async function cmdLs(opts) {
-  if (opts.rest.length !== 0 || opts.workspace !== undefined) {
-    fail(
-      "Usage: dure ls [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N] [--alive] [--hide-provider ID...]",
-    );
+  if (
+    opts.rest.length !== 0 ||
+    opts.workspace !== undefined ||
+    (opts.allBackends && (opts.backendSpecified || opts.cursor !== undefined))
+  ) {
+    fail(`Usage: ${LS_USAGE}`);
   }
   return emitSessionQuery("list", undefined, opts);
 }
 
-const SESSION_QUERY_HELP = `Usage: dure ls [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N] [--alive] [--hide-provider ID...]
+const SESSION_QUERY_HELP = `Usage: ${LS_USAGE}
        dure sessions list [--cursor start|CURSOR] [--backend ID] [--json] [--deadline-ms N] [--probe-budget-ms N]
        dure inspect <session-id> [--workspace ID] [--backend ID] [--json]
        dure sessions show <session-id> [--workspace ID] [--backend ID] [--json]
@@ -1742,11 +1779,19 @@ Recent lists provider history through the connected app.
 Filtering options (dure ls only):
   --alive                   Show only alive sessions from every census page (exclude exited and unknown)
   --hide-provider ID        Hide sessions from the specified provider ID (can be repeated)
+  --all-backends            List every configured backend profile in one table with a
+                            BACKEND column; --json adds backendProfileId to each row
+                            and a backends array with each backend's status. A backend
+                            that cannot be reached is reported with its error and does
+                            not hide the others. --deadline-ms applies to each backend.
+                            Exits 2 only when no backend answered. To page one backend,
+                            use --backend ID with --cursor. Not with --backend or --cursor.
 
 Use --help or -h to show this help without contacting a backend.
 `;
 
 async function cmdSessions(sub, opts) {
+  if (opts.allBackends) fail("--all-backends is only supported by dure ls.");
   if (sub === undefined || sub === "recent") {
     if (opts.rest.length !== (sub === undefined ? 0 : 1)) {
       fail("Usage: dure sessions recent [--json]");
@@ -2022,7 +2067,8 @@ Usage:
            [--permission-override require_approvals|auto_edit|bypass_approvals]
            [--skip-permissions]
            [--space ID|NAME] [--idempotency-key KEY] [--backend ID] [--json] [--verbose]
-           [--lead [--merge-policy auto|review]] <prompt>
+           [--lead [--merge-policy auto|review]]
+           [--parent AGENT | --parent SESSION_ID --parent-workspace ID | --no-parent] <prompt>
   dure spawn [run options] [prompt]
   dure spawn --reuse --project ID|NAME --name AGENT
              [--agent PROVIDER | --provider PROVIDER]
@@ -2047,8 +2093,8 @@ runs switch-account accepts; dure recovery get PROVIDER lists registered IDs.
 Without account-selection support, omitted --account uses the provider default.
 The Run receipt executionProfile identifies the credential reference and generation.
 With --json the receipt starts with summary: agentId, sessionId, workspaceId, panelId,
-spaceId, state (the Run receipt state), presentation (the pane outcome) and
-interactionProfile; a value the receipt cannot vouch for is null. The full receipt,
+spaceId, state (the Run receipt state), presentation (the pane outcome),
+interactionProfile and parent; a value the receipt cannot vouch for is null. The full receipt,
 presentation and registration follow unchanged. source.backend carries the backend
 identity, protocol and capabilityCount; --verbose adds its full capabilities list.
 --lead starts a lead Run: the prompt is the goal, and the CLI prepends the bundled lead
@@ -2059,6 +2105,12 @@ and report. Only the prompt changes; no other state is created. spawn rejects --
 its own green pull request; review holds every one for a person's approval (a GitHub
 approval, or the lead:approved label on the pull request) before the lead merges it, and
 puts that rule in every worker brief from the first dispatch. It requires --lead.
+Run from inside an agent's terminal pane on the local backend, the new Run records that
+agent's exact Session as its parent (summary.parent in --json). --no-parent records none.
+--parent links another agent on the same backend by name, Agent ID or Session ID through
+the app's Agent list; with --parent-workspace it takes an exact Session ID. An explicit
+parent the backend can't record is refused before anything starts. The parent waits for
+its children with dure wait --children all|any. The link grants no control over either Run.
 spawn --reuse reuses an existing Agent without creating a new provider.`;
 
 function writeCliActionError(
@@ -2105,7 +2157,9 @@ async function cmdLegacySpawnReuse(opts, prompt, positionalPrompt, providerId) {
     opts.permissionOverride !== undefined ||
     opts.setupCommand !== undefined ||
     opts.backendSpecified === true || opts.account !== undefined ||
-    opts.mergePolicy !== undefined
+    opts.mergePolicy !== undefined ||
+    opts.parent !== undefined || opts.parentWorkspace !== undefined ||
+    opts.noParent === true
   ) {
     fail(RUN_HELP);
   }
@@ -2199,6 +2253,10 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     opts.operationId !== undefined ||
     opts.planToken !== undefined ||
     opts.expectedSequence !== undefined ||
+    (opts.parent !== undefined && !opts.parent) ||
+    (opts.parentWorkspace !== undefined &&
+      (!opts.parentWorkspace || opts.parent === undefined)) ||
+    (opts.noParent === true && opts.parent !== undefined) ||
     (opts.skipPermissions === true && opts.permissionOverride !== undefined) ||
     (opts.permissionOverride !== undefined &&
       !["require_approvals", "auto_edit", "bypass_approvals"].includes(
@@ -2226,15 +2284,16 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
   const { loadSessionClientProjection } = await import(
     "./lib/session-query.mjs"
   );
+  const clientRegistry = loadSessionClientProjection({
+    registryPath: REG,
+    clientId: sessionQueryClientId(),
+  });
   let presentationTarget;
   try {
     presentationTarget = resolveRunPresentationTarget({
       spaceSelector: opts.spaceSpecified ? opts.space : undefined,
       environment: process.env,
-      registry: loadSessionClientProjection({
-        registryPath: REG,
-        clientId: sessionQueryClientId(),
-      }),
+      registry: clientRegistry,
     });
   } catch (error) {
     writeCliActionError(
@@ -2261,6 +2320,21 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     resolveAgentRunAccount,
   } = await import("./lib/agent-run.mjs");
   const backend = await backendProfileQueryContext(opts);
+  let runParent;
+  try {
+    const { resolveRunParent } = await import("./lib/run-parent.mjs");
+    runParent = resolveRunParent({
+      selector: opts.parent,
+      workspaceId: opts.parentWorkspace,
+      noParent: opts.noParent === true,
+      environment: process.env,
+      registry: clientRegistry,
+      backend,
+    });
+  } catch (error) {
+    writeCliActionError(error, opts, "dure.run-parent/v1", "dure.run.error", "run_parent_invalid");
+    return;
+  }
   const explicitWorktreeName =
     typeof opts.worktree === "string" ? opts.worktree : undefined;
   const agentName =
@@ -2321,6 +2395,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     includePresentationProject: presentationTarget.state === "requested" || loadServer()?.capabilities?.includes("agent.run_background_v1"),
     executionProfile,
     interactionPreference,
+    parent: runParent.parent,
     backend,
     deadlineMs,
     verbose: opts.verbose === true,
@@ -2616,6 +2691,7 @@ async function cmdHmux(sub, opts) {
         "dure hmux rehost publish <agent-id> --from-session <original-session-id> --workspace ID --operation-id ID [--backend ID] [--json]  # publish completion; never restarts a provider\n" +
         "Rehost keeps the original working folder; --project, --path and --cwd are unsupported.\n" +
         "start and retry wait up to a minute for an operation Hmux is still applying; if it is still running they exit 0 with state running and its status command.\n" +
+        "A confirmed --name restart is finished (exit 0) only after its binding is published; while Hmux is still applying it, it exits 75 with state running and its status/publish commands.\n" +
         "dure hmux convert --name <session> --target-panel-id ID --to <managed|standalone> [--agent-name NAME] [--confirm-restart]\n" +
         "dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] [--yes] [--json]  # alias for dure stop\n" +
         "dure hmux migrate ...  # adopt alias\n",
@@ -2838,6 +2914,48 @@ async function cmdAttach(opts) {
     process.stderr.write(`\x1b[31m${formatSessionAttachError(error)}\x1b[0m\n`);
     process.exitCode = 2;
   }
+}
+
+async function cmdTui(opts) {
+  if (opts.rest.length !== 0 || opts.workspace !== undefined) {
+    process.stderr.write(
+      "\x1b[31mdure_tui_argument_invalid: usage: dure tui [--backend ID]\x1b[0m\n",
+    );
+    process.exitCode = 2;
+    return;
+  }
+  const {
+    attachAgentRow,
+    collectManagedAgents,
+    formatSessionTuiError,
+    runSessionTui,
+  } = await import("./lib/session-tui.mjs");
+  const { loadSessionClientProjection } = await import("./lib/client-registry.mjs");
+  const backendRequested =
+    opts.backendSpecified || Boolean(process.env.DURE_BACKEND_PROFILE?.trim());
+  const backend = backendRequested
+    ? await backendProfileQueryContext(opts)
+    : null;
+  try {
+    await runSessionTui({
+      attach: attachAgentRow({ backend, hmuxCommand: hmuxCommand() }),
+      collect: collectManagedAgents({
+        backend,
+        hmuxCommand: hmuxCommand(),
+        loadRegistry: () =>
+          loadSessionClientProjection({
+            registryPath: REG,
+            clientId: sessionQueryClientId(),
+          }),
+      }),
+    });
+  } catch (error) {
+    process.stderr.write(`\x1b[31m${formatSessionTuiError(error)}\x1b[0m\n`);
+    process.exitCode = 2;
+    return;
+  }
+  // A refresh still in flight must not hold the shell after the list closes.
+  process.exit();
 }
 
 // ---------- durable orchestration client ----------
@@ -3193,6 +3311,7 @@ async function cmdIntegration(sub, opts) {
       cliScriptPath: CLI_SCRIPT_PATH,
       channel: APP_CHANNEL,
       homeDirectory: homedir(),
+      dureHome: DURE_ROOT,
       global: Boolean(opts.global),
       provider: opts.provider,
       installRoot: opts.installRoot,
@@ -3749,6 +3868,7 @@ Usage:
   dure logs <name> [-n N]          Dump scrollback (default 2000 lines)
   dure attach <session-id> --workspace <workspace-id> [--backend ID]
                                       Attach to an exact managed Hmux session without the app
+  dure tui [--backend ID]             List agents across Spaces and attach from a terminal
   dure spawn preview (--project <id> | --path <path>) --provider <id> --name <name> --idempotency-key <key>
                                       Create or reuse a durable spawn plan without the app daemon
                                       Requires --no-worktree or --base-commit SHA --branch REF
@@ -3793,6 +3913,8 @@ Usage:
                                       Install, inspect, update or remove the shared orchestration client
                                       Identifies the current agent automatically; use --agent <name> outside a pane
   dure whoami [--json]              Print this agent's latest display name/identity
+  dure resume --all [--dry-run] [--include-exited] [--backend ID] [--json]
+                                      Restore every agent whose Host is gone, each into its own conversation
   dure hmux attach --name <name> [--space-id <id>]
                                       Find a named Hmux session and attach it to a pane in a Space
   dure hmux upgrade --name <name> --target-panel-id <pane> --confirm-restart
@@ -3918,6 +4040,8 @@ Usage:
                                       Live backend/session health requires the reported read-only checks
   dure profiles <list|show|resolve|test> [ID] [--backend ID] [--json]
                                       Inspect, select and test backend profiles independently of the app
+  dure profiles add <ID> --host <APP_SSH_HOST_ID> [--json]
+                                      Pin a Dure backend already running on a registered app SSH host; installs nothing
 
 <name> is an agent name, project/name to disambiguate, or a session ID.
 Deprecated compatibility aliases: hebbian-ade, hebbian-ide (same executable)
@@ -4026,6 +4150,46 @@ async function cmdDoctor(opts) {
   }
 }
 
+const PROFILES_ADD_USAGE = "dure profiles add <ID> --host <APP_SSH_HOST_ID> [--json]";
+const PROFILES_USAGE = `dure profiles <list|show|resolve|test> [ID] [--backend ID] [--json]\n       ${PROFILES_ADD_USAGE}`;
+
+/** Unlike the read actions below, this reads the host from the connected app. */
+async function cmdProfilesAdd(opts) {
+  const {
+    addSshBackendProfile,
+    backendProfileAddErrorReport,
+    formatBackendProfileAddReport,
+    lookupAppSshHost,
+    parseBackendProfileAddArguments,
+  } = await import("./lib/backend-profile-add.mjs");
+  const { loadBackendProfilesWithDefault } = await import("./lib/local-backend.mjs");
+  const request = parseBackendProfileAddArguments(opts.rest.slice(1));
+  if (!request || opts.backendSpecified) fail(`Usage: ${PROFILES_ADD_USAGE}`);
+  try {
+    const report = await addSshBackendProfile(request, {
+      loadCatalog: () =>
+        loadBackendProfilesWithDefault({
+          bootstrapMissing: true,
+          cliScriptPath: CLI_SCRIPT_PATH,
+        }),
+      lookupHost: (hostId) => lookupAppSshHost(hostId, { descriptor: loadServer() }),
+    });
+    process.stdout.write(
+      `${opts.json ? JSON.stringify(report) : formatBackendProfileAddReport(report)}\n`,
+    );
+  } catch (error) {
+    const report = backendProfileAddErrorReport(error);
+    if (opts.json) {
+      process.stdout.write(`${JSON.stringify(report)}\n`);
+    } else {
+      process.stderr.write(
+        `\x1b[31m${report.error.code}: ${report.error.message}\x1b[0m\n`,
+      );
+    }
+    process.exitCode = 2;
+  }
+}
+
 /** backend profile 조회 — 앱 레지스트리나 app daemon이 없어도 동작한다. */
 async function cmdProfiles(opts) {
   const {
@@ -4044,15 +4208,12 @@ async function cmdProfiles(opts) {
     action === "-h" ||
     action === "--help"
   ) {
-    process.stdout.write(
-      "dure profiles <list|show|resolve|test> [ID] [--backend ID] [--json]\n",
-    );
+    process.stdout.write(`${PROFILES_USAGE}\n`);
     return;
   }
+  if (action === "add") return await cmdProfilesAdd(opts);
   if (!new Set(["list", "show", "resolve", "test"]).has(action)) {
-    fail(
-      "Usage: dure profiles <list|show|resolve|test> [ID] [--backend ID] [--json]",
-    );
+    fail(`Usage: ${PROFILES_USAGE}`);
   }
   if (action === "show" && !profileId) {
     fail("Usage: dure profiles show <ID> [--json]");
@@ -4158,6 +4319,15 @@ async function main() {
     // Offline, registry-free, like `dure feedback --help` below.
     const { FEEDBACK_HELP } = await import("./lib/feedback-command.mjs");
     process.stdout.write(`${FEEDBACK_HELP}\n`);
+    return;
+  }
+  if (
+    (cmd === "help" && rest[0] === "tui") ||
+    (cmd === "tui" &&
+      (optionEnd < 0 ? rest : rest.slice(0, optionEnd)).some((arg) => arg === "--help" || arg === "-h"))
+  ) {
+    const { TUI_HELP } = await import("./lib/session-tui.mjs");
+    process.stdout.write(TUI_HELP);
     return;
   }
   const sessionCommands = ["ls", "list", "inspect", "sessions"];
@@ -4278,7 +4448,7 @@ async function main() {
     return runProviderCapabilitiesCommand(cmd === "help" ? ["--help"] : rest, CLI_SCRIPT_PATH);
   }
   if (cmd === "runs" || (cmd === "help" && rest[0] === "runs")) {
-    const { RUNS_HELP, parseRunsOptions, collectRunsCommand, formatRunsCommand } = await import("./lib/runs-command.mjs");
+    const { RUNS_HELP, parseRunsOptions, collectRunsCommand, formatRunsCommand, runsCommandExitCode } = await import("./lib/runs-command.mjs");
     if (cmd === "help" || rest.length === 0 || rest.some((arg) => arg === "--help" || arg === "-h")) {
       process.stdout.write(`${RUNS_HELP}\n`);
       return;
@@ -4297,6 +4467,26 @@ async function main() {
       loadRegistry,
     });
     process.stdout.write(`${opts.json ? JSON.stringify(report) : formatRunsCommand(report)}\n`);
+    process.exitCode = runsCommandExitCode(report);
+    return;
+  }
+  if (cmd === "resume" || (cmd === "help" && rest[0] === "resume")) {
+    const { RESUME_HELP, parseResumeOptions, collectResumeAll, formatResumeAll } = await import("./lib/resume-all-command.mjs");
+    if (cmd === "help" || rest.length === 0 || rest.some((arg) => arg === "--help" || arg === "-h")) {
+      process.stdout.write(`${RESUME_HELP}\n`);
+      return;
+    }
+    let opts;
+    try { opts = parseResumeOptions(rest); } catch (error) {
+      writeCliActionError(error, { json: rest.includes("--json") }, "dure.resume/v1", "dure.resume.error", "resume_request_invalid");
+      return;
+    }
+    const { loadSessionClientProjection } = await import("./lib/client-registry.mjs");
+    const report = await collectResumeAll({ opts, command: hmuxCommand(),
+      resolveBackend: () => backendProfileQueryContext(opts),
+      loadRegistry: () => loadSessionClientProjection({ registryPath: REG, clientId: sessionQueryClientId() }),
+    });
+    process.stdout.write(`${opts.json ? JSON.stringify(report) : formatResumeAll(report)}\n`);
     process.exitCode = report.ok ? 0 : 2;
     return;
   }
@@ -4341,9 +4531,14 @@ async function main() {
     try {
       process.exitCode = await runWaitCommand(cmd === "help" ? ["--help"] : rest, {
         hmuxCommand: hmuxCommand(), signal: interruption.signal,
-        resolveContext: async (options) => options.subject === "response"
-          ? sessionQueryContext(options, loadSessionClientProjection)
-          : { backend: await backendProfileQueryContext(options) },
+        resolveContext: async (options) => {
+          if (options.subject === "response") return sessionQueryContext(options, loadSessionClientProjection);
+          if (options.subject !== "children") return { backend: await backendProfileQueryContext(options) };
+          // Children are listed from the backend's Run records; their Sessions
+          // are read the way a single response wait reads one.
+          const context = await sessionQueryContext(options, loadSessionClientProjection);
+          return { ...context, sessionBackend: context.backend, backend: context.backend ?? await backendProfileQueryContext(options) };
+        },
       });
     } finally {
       interruption.dispose();
@@ -4358,6 +4553,7 @@ async function main() {
       resolveAgent: resolveReadTarget,
       send: sendText,
       sendExactSession,
+      findSuccessor: findAgentSessionSuccessor,
       sendTracked: async (agent, text, opts) => {
         const { sendTrackedMessage } = await import("./lib/tracked-message.mjs");
         const binding = typeof agent === "string" ? null : agent.runtimeBinding;
@@ -4563,6 +4759,7 @@ async function main() {
     return;
   }
   if (cmd === "attach") return await cmdAttach(opts);
+  if (cmd === "tui") return await cmdTui(opts);
   const reg = loadRegistry();
   switch (cmd) {
     case "logs":
@@ -4579,7 +4776,10 @@ async function main() {
         true,
         opts.windowLabel,
         opts.idempotencyKey,
-      );
+      ).catch((error) => {
+        if (error?.code !== "dure_send_session_exited") throw error;
+        fail(error.message);
+      });
       process.stdout.write(`\x1b[32m✓\x1b[0m Sent Enter to ${agent.name}\n`);
       break;
     }

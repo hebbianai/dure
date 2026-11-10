@@ -93,7 +93,7 @@ Claude Code, Codex, OpenCode and Pi have structured-chat integrations where the 
 | --- | --- |
 | macOS · Apple Silicon | [Official download](https://www.dureai.dev/download/mac/) |
 | Windows | Source available; native desktop validation and public installer pending. |
-| Linux | Source available; native desktop validation and public installer pending. |
+| Linux · x86_64, arm64 | The release workflow builds AppImage and Debian packages; the first public release is pending. Terminal panes work; the Dure CLI and its agent backend are not included yet. |
 | iOS | [App Store](https://apps.apple.com/app/id6813029287) (iPhone; pairs with the macOS app). |
 | Android · ARM64 | [Download APK preview](https://github.com/hebbianai/hebbian-releases/releases/download/android-v0.1.4/Dure_0.1.4_android_arm64.apk) · Android 7.0+. Emulator-tested; physical-device validation pending. |
 

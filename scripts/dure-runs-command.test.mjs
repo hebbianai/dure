@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
-import { collectRunsCommand, formatRunsCommand, parseRunsOptions } from "../cli/lib/runs-command.mjs";
-import { currentRunPresentationPlan } from "../cli/lib/run-presentation.mjs";
+import { MANAGED_REHOST_RUNNING_EXIT_CODE } from "../cli/lib/managed-rehost-named.mjs";
+import { collectRunsCommand, formatRunsCommand, parseRunsOptions, runsCommandExitCode } from "../cli/lib/runs-command.mjs";
+import { AGENT_RUNTIME_PRESENTATION_CAPABILITY, agentRuntimePresentationRequest, currentRunPresentationPlan,
+  presentAgentRuntime } from "../cli/lib/run-presentation.mjs";
 import { succeededNativeReceipt } from "./fixtures/agent-spawn-receipts.mjs";
 
 function fixture() {
@@ -165,7 +167,7 @@ describe("durable Run commands", () => {
     expect(report.recovery.continuation.retry).toContain(report.recovery.continuation.operationId);
     expect(f.requestBackend).toHaveBeenCalledTimes(2);
   });
-  it("returns a running handle, not an error, while Hmux still applies the confirmed rehost", async () => {
+  it("does not report a restart as finished while Hmux still applies the confirmed rehost", async () => {
     const f = fixture();
     const source = f.runtime.receipt.authority.authority;
     const pending = { schema: "hmux-managed-rehost-resolution-v1", schemaVersion: 1, state: "retry_required",
@@ -176,9 +178,11 @@ describe("durable Run commands", () => {
       : { kind: "timeout" });
     const report = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name], confirmRestart: true },
       command: "hmux", run, settle: fakeClock() });
-    expect(report).toMatchObject({ ok: true,
-      recovery: { ok: true, state: "running", nativeExecution: "running", publication: "not_requested" } });
-    expect(report.error).toBeUndefined();
+    // Still applying is not success: the binding is unpublished, so the Agent still names the retired source.
+    expect(report).toMatchObject({ ok: false, error: { code: "rehost_still_running" },
+      recovery: { ok: false, state: "running", nativeExecution: "running", publication: "not_requested" } });
+    expect(runsCommandExitCode(report)).toBe(MANAGED_REHOST_RUNNING_EXIT_CODE);
+    expect(MANAGED_REHOST_RUNNING_EXIT_CODE).not.toBe(0);
     expect(run.mock.calls.filter(([argv]) => argv[1] !== "managed-rehost-resolve")).toHaveLength(1);
     // Publication waits for completion; nothing was published yet.
     expect(f.requestBackend).toHaveBeenCalledTimes(2);
@@ -187,6 +191,39 @@ describe("durable Run commands", () => {
     expect(text).toContain("Hmux is still applying this rehost");
     expect(text).toContain(`Status: ${"dure 'hmux' 'rehost' 'status'"}`);
     expect(text).toContain("Publish: dure 'hmux' 'rehost' 'publish'");
+  });
+  it("reports a restart as finished once the native rehost and its binding publication complete", async () => {
+    const f = fixture();
+    const source = f.runtime.receipt.authority.authority;
+    const run = vi.fn(async (argv) => {
+      const value = (flag) => argv[argv.indexOf(flag) + 1];
+      return { kind: "success", stdout: JSON.stringify({ schema: "hmux-managed-rehost-v1", schemaVersion: 1,
+        operationId: value("--operation-id"), replayed: false,
+        sourceStopReceipt: { sessionId: value("--session"), workspaceId: value("--workspace") },
+        replacementReceipt: { sessionId: "successor-1", workspaceId: value("--workspace") } }) };
+    });
+    const published = { schemaVersion: 1, receipt: { ...f.runtime.receipt, selectionRevision: 2 } };
+    let publication = "published";
+    f.requestBackend.mockImplementation(async (_profile, request) => {
+      if (request.operation === "agent_spawn.list") return { result: f.page };
+      if (request.operation === "agent_runtime.projection.inspect") return { result: f.runtime };
+      if (publication === "lost") throw new BackendTransportError("backend_response_lost");
+      return { result: published };
+    });
+    const resume = () => collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name], confirmRestart: true },
+      command: "hmux", run, settle: fakeClock() });
+    const finished = await resume();
+    expect(finished).toMatchObject({ ok: true, recovery: { state: "completed", nativeExecution: "completed",
+      publication: "published" } });
+    expect(runsCommandExitCode(finished)).toBe(0);
+    expect(run.mock.calls[0][0].slice(0, 5)).toEqual(["hmux", "managed-rehost-start",
+      "--session", source.binding.sessionId, "--workspace"]);
+    // The last step is the binding publication; without it the restart is not finished.
+    publication = "lost";
+    const unpublished = await resume();
+    expect(unpublished).toMatchObject({ ok: false, recovery: { state: "completed", nativeExecution: "completed",
+      publication: "unconfirmed" } });
+    expect(runsCommandExitCode(unpublished)).toBe(2);
   });
   it("uses a published successor, and refuses incomplete or unrelated current authority", () => {
     const f = fixture();
@@ -499,12 +536,88 @@ describe("Agents without a Run record", () => {
     expect(text).toContain(`dure 'runs' 'switch-account' '${f.agentId}' '--account' 'work' '--backend' 'local'`);
   });
 
-  it("refuses to open an Agent without a Run record and names the gap", async () => {
+  const openTarget = async () => ({ state: "requested", spaceId: "space-1", windowLabel: "main" });
+  const appWith = (...capabilities) => ({ capabilities });
+
+  it.each([[undefined], [appWith("agent.run_background_v1")]])(
+    "keeps refusing to open an Agent without a Run record when the app lacks the contract (%j)", async (descriptor) => {
+      const f = appAgentFixture();
+      const presentRuntime = vi.fn();
+      const report = await collectRunsCommand({ ...f, opts: { rest: ["open", f.agentId], space: "space-1" },
+        resolveTarget: openTarget, descriptor, presentRuntime });
+      expect(report).toMatchObject({ ok: false, agent: { agentId: f.agentId }, error: { code: "run_record_required" } });
+      expect(report.error.message).toContain("Update the app");
+      expect(presentRuntime).not.toHaveBeenCalled();
+      expect(operations(f)).toEqual(["agent_spawn.list", "agent_runtime.projection.inspect"]);
+    });
+
+  it("opens an app-launched Agent's live runtime through an app with the contract, without a launch", async () => {
     const f = appAgentFixture();
-    const report = await collectRunsCommand({ ...f, opts: { rest: ["open", f.agentId], space: "space-1" },
-      resolveTarget: async () => ({ state: "requested", spaceId: "space-1", windowLabel: "main" }) });
-    expect(report).toMatchObject({ ok: false, agent: { agentId: f.agentId }, error: { code: "run_record_required" } });
+    const presentRuntime = vi.fn(async () => ({ state: "opened", pane: { spaceId: "space-1", panelId: "panel-9" } }));
+    const descriptor = appWith(AGENT_RUNTIME_PRESENTATION_CAPABILITY);
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["open", "worker-resumed"], space: "space-1" },
+      resolveTarget: openTarget, descriptor: () => descriptor, presentRuntime });
+    expect(report).toMatchObject({ ok: true, agent: { agentId: f.agentId, name: "worker-resumed" },
+      presentation: { state: "opened" } });
+    expect(presentRuntime).toHaveBeenCalledWith({ agent: report.agent, currentRuntime: f.runtime,
+      target: await openTarget(), profile: f.backend.profile, descriptor });
+    // No spawn receipt read, no runtime transition, no provider launch.
     expect(operations(f)).toEqual(["agent_spawn.list", "agent_runtime.projection.inspect"]);
+    expect(formatRunsCommand(report)).toBe("worker-resumed: opened space-1/panel-9");
+  });
+
+  it("builds the receipt-free request from the backend runtime alone and verifies the pane receipt", async () => {
+    const f = appAgentFixture({ registryState: "absent" });
+    const fetchImpl = vi.fn(async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return new Response(JSON.stringify({ ok: true, pane: { spaceId: "space-1", panelId: "panel-9",
+        agentId: body.agentId, sessionId: body.sessionId, workspaceId: body.workspaceId,
+        runtime: "hmux_managed_v1", outcome: "created" } }), { status: 200 });
+    });
+    const descriptor = { schemaVersion: 1, apiVersion: 1, port: 6767, token: "token",
+      packageVersion: "0.2.62", buildId: "0.2.62+test", channel: "stable", generation: "generation-1",
+      processId: 42, startedAtUnixMs: 1, capabilities: [AGENT_RUNTIME_PRESENTATION_CAPABILITY] };
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["open", f.agentId], space: "space-1" },
+      resolveTarget: openTarget, descriptor,
+      presentRuntime: (options) => presentAgentRuntime({ ...options, fetchImpl }) });
+    expect(report).toMatchObject({ ok: true, presentation: { state: "opened",
+      pane: { panelId: "panel-9", sessionId: f.sessionId, outcome: "created" } } });
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toContain("/hmux/attach");
+    const source = f.runtime.receipt.authority.authority;
+    expect(JSON.parse(init.body)).toEqual({
+      schemaVersion: 1, runtime: "hmux_managed_v1", identity: "agent_runtime", source: "local", hostId: "local",
+      backendProfileId: "local", agentId: f.agentId, agentName: f.agentId, projectId: f.projectId,
+      projectPath: "/repo", providerId: "claude", executionProfile: f.runtime.receipt.executionProfile,
+      providerConversationRef: "conversation-7", sessionId: f.sessionId, workspaceId: source.runtimeWorkspaceId,
+      workspaceRootPath: "/repo", generation: { runnerPrincipal: source.runnerPrincipal,
+        runnerInstance: source.runnerInstance, channelEpoch: source.channelEpoch,
+        hostInstanceId: source.hostInstanceId, terminalEpoch: source.terminalEpoch },
+      permissionMode: f.runtime.receipt.permissionMode, spaceId: "space-1", windowLabel: "main",
+    });
+  });
+
+  it("refuses a Chat Agent without a Run record before contacting the app", async () => {
+    const f = appAgentFixture();
+    f.runtime.receipt.authority = { interactionProfile: "structured_protocol",
+      binding: { agentId: f.agentId, providerId: "claude", interactionSessionId: "interaction-1" } };
+    const fetchImpl = vi.fn();
+    const report = await collectRunsCommand({ ...f, opts: { rest: ["open", f.agentId], space: "space-1" },
+      resolveTarget: openTarget, descriptor: appWith(AGENT_RUNTIME_PRESENTATION_CAPABILITY),
+      presentRuntime: (options) => presentAgentRuntime({ ...options, fetchImpl }) });
+    expect(report).toMatchObject({ ok: false, error: { code: "agent_runtime_presentation_unsupported" } });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("refuses a runtime that is not stable or whose binding names another Agent", () => {
+    const f = appAgentFixture();
+    const options = { agent: { agentId: f.agentId, name: null }, target: { state: "requested", spaceId: "s", windowLabel: "main" },
+      profile: f.backend.profile };
+    expect(() => agentRuntimePresentationRequest({ ...options,
+      currentRuntime: { ...f.runtime, state: "transitioning" } })).toThrow(expect.objectContaining({ code: "client_run_runtime_unavailable" }));
+    f.runtime.receipt.authority.authority.binding.agentId = "agent-other";
+    expect(() => agentRuntimePresentationRequest({ ...options, currentRuntime: f.runtime }))
+      .toThrow(expect.objectContaining({ code: "client_run_runtime_invalid" }));
   });
 });
 

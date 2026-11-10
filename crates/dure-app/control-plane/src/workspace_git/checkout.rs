@@ -1,8 +1,11 @@
 use super::*;
-use dure_git_checkout::AdmittedGitCheckoutCreation;
+use dure_git_checkout::{
+    AdmittedGitCheckoutCreation, GitCheckoutCreationOperation, GitCheckoutUseError,
+};
 
 pub(super) async fn acquire_workspace(
     request: WorkspaceAcquireRequest,
+    creation_owners: Option<&dyn CreationOwnerLedger>,
 ) -> Result<WorkspaceHandle, WorkspaceFailure> {
     // A frozen registration identifies an existing checkout incarnation.
     // Resolving it can claim that checkout, but cannot create another.
@@ -82,13 +85,10 @@ pub(super) async fn acquire_workspace(
     let plan = match prepare_checkout(&request, &target, &lease).await {
         Ok(plan) => plan,
         Err(failure) => {
-            tokio::task::spawn_blocking(move || creation.abort())
-                .await
-                .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
-                .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
-            return Err(failure);
+            return Err(roll_back_creation(move || creation.abort(), &request, failure).await);
         }
     };
+    let creation = retire_finished_creation_owner(creation, creation_owners).await?;
     let creation = tokio::task::spawn_blocking(move || creation.admit())
         .await
         .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
@@ -96,11 +96,9 @@ pub(super) async fn acquire_workspace(
     let handle = match materialize_workspace(plan, &request, &target, &lease, &creation).await {
         Ok(handle) => handle,
         Err(failure) => {
-            tokio::task::spawn_blocking(move || creation.abort_if_absent())
-                .await
-                .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
-                .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
-            return Err(failure);
+            return Err(
+                roll_back_creation(move || creation.abort_if_absent(), &request, failure).await,
+            );
         }
     };
     tokio::task::spawn_blocking(move || creation.activate())
@@ -108,6 +106,111 @@ pub(super) async fn acquire_workspace(
         .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
         .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
     Ok(handle)
+}
+
+/// A creator can die, or have its abort refused over a partial directory,
+/// leaving a reservation only its own operation could retire. `creation` holds
+/// the execution lease throughout, so no writer of that reservation remains
+/// while the ledger is asked whether its operation has ended.
+async fn retire_finished_creation_owner(
+    creation: GitCheckoutCreationOperation,
+    creation_owners: Option<&dyn CreationOwnerLedger>,
+) -> Result<GitCheckoutCreationOperation, WorkspaceFailure> {
+    let Some(creation_owners) = creation_owners else {
+        return Ok(creation);
+    };
+    let (creation, owner) = tokio::task::spawn_blocking(move || {
+        let owner = creation.retirable_owner();
+        (creation, owner)
+    })
+    .await
+    .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?;
+    let owner = owner.map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
+    let Some(owner) = owner else {
+        return Ok(creation);
+    };
+    if !creation_owners.has_finished(&owner).await {
+        return Ok(creation);
+    }
+    tokio::task::spawn_blocking(move || creation.retire_finished_owner(&owner).map(|_| creation))
+        .await
+        .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
+        .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))
+}
+
+/// Retire a failed creator without letting its cleanup hide why it failed.
+/// Returns that failure and whether an interrupted checkout was discarded.
+async fn retire_creation(
+    retire: impl FnOnce() -> Result<bool, GitCheckoutUseError> + Send + 'static,
+    failure: WorkspaceFailure,
+) -> (WorkspaceFailure, bool) {
+    match tokio::task::spawn_blocking(retire).await {
+        Ok(Ok(discarded)) => (failure, discarded),
+        Ok(Err(error)) => (
+            failure.with_cleanup_problem(&format!("{}: {}", error.code, error.message)),
+            false,
+        ),
+        Err(_) => (
+            failure.with_cleanup_problem("workspace_claim_unavailable"),
+            false,
+        ),
+    }
+}
+
+/// A checkout Git was killed while creating takes the refs it needed with it,
+/// which leaves its worktree name free for the next Run.
+async fn roll_back_creation(
+    retire: impl FnOnce() -> Result<bool, GitCheckoutUseError> + Send + 'static,
+    request: &WorkspaceAcquireRequest,
+    failure: WorkspaceFailure,
+) -> WorkspaceFailure {
+    let (failure, discarded) = retire_creation(retire, failure).await;
+    if !discarded {
+        return failure;
+    }
+    match release_ownership_refs(request).await {
+        Ok(()) => failure,
+        Err(problem) => {
+            failure.with_cleanup_problem(problem.detail.as_deref().unwrap_or(&problem.code))
+        }
+    }
+}
+
+/// Each delete compares against the launch commit, so a branch that moved
+/// stays, and a branch the Run adopted was never this attempt's to remove.
+async fn release_ownership_refs(request: &WorkspaceAcquireRequest) -> Result<(), WorkspaceFailure> {
+    let AgentSpawnWorktreePolicyV1::Dedicated {
+        base_commit_sha,
+        branch,
+        branch_mode,
+        ..
+    } = &request.policy
+    else {
+        return Err(WorkspaceFailure::new("workspace_policy_invalid"));
+    };
+    let lease_ref = lease_ref(&request.workspace_id);
+    let branch_delete = match branch_mode {
+        AgentSpawnBranchModeV1::Create => {
+            format!("delete refs/heads/{branch} {base_commit_sha}\n")
+        }
+        AgentSpawnBranchModeV1::Existing => String::new(),
+    };
+    let transaction =
+        format!("start\ndelete {lease_ref} {base_commit_sha}\n{branch_delete}prepare\ncommit\n");
+    let output = git_output(
+        &request.project_root,
+        ["update-ref", "--stdin"],
+        Some(transaction.as_bytes()),
+    )
+    .await?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(WorkspaceFailure::with_detail(
+            "workspace_ref_release_failed",
+            &String::from_utf8_lossy(&output.stderr),
+        ))
+    }
 }
 
 enum CheckoutPlan {
@@ -282,12 +385,11 @@ pub(super) async fn restore_workspace(
         .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
     let handle = match acquire_owned_checkout(&request, &target, &lease, &creation, None).await {
         Ok(handle) => handle,
+        // The branch may hold work from before its checkout was removed.
         Err(failure) => {
-            tokio::task::spawn_blocking(move || creation.abort_if_absent())
+            return Err(retire_creation(move || creation.abort_if_absent(), failure)
                 .await
-                .map_err(|_| WorkspaceFailure::new("workspace_claim_unavailable"))?
-                .map_err(|error| WorkspaceFailure::with_detail(error.code, &error.message))?;
-            return Err(failure);
+                .0);
         }
     };
     tokio::task::spawn_blocking(move || creation.activate())
@@ -421,6 +523,10 @@ async fn inspect_owned_checkout(
         ));
     }
     if let Some(entry) = entries.iter().find(|entry| entry.path == target) {
+        // A killed `worktree add` still lists a valid branch and HEAD.
+        if entry.initializing {
+            return Err(WorkspaceFailure::new("workspace_checkout_interrupted"));
+        }
         if entry.branch_ref.as_deref() != Some(branch_ref)
             || expected_head.is_some_and(|head| entry.head != head)
             || current_branch.as_deref() != Some(entry.head.as_str())

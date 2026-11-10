@@ -7745,6 +7745,102 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
         .unwrap();
 }
 
+#[test]
+fn a_turn_end_after_a_submit_that_started_no_turn_publishes_waiting() {
+    let state = tempfile::tempdir().unwrap();
+    let discovery_root = state.path().join("discovery");
+    let created = StandaloneSessionCreator::new(env!("CARGO_BIN_EXE_hmux-runtime"))
+        .with_discovery_root(&discovery_root)
+        .create(
+            StandaloneCreateRequest::new(
+                std::env::current_dir().unwrap().canonicalize().unwrap(),
+                Some("submit-without-turn-smoke".into()),
+                vec!["/bin/sleep".into(), "30".into()],
+                24,
+                80,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let session = created.session().clone();
+    let catalog = LocalSessionCatalog::new(&discovery_root);
+    let selector = SessionSelector::new(
+        session.descriptor().session_id.clone(),
+        Some(session.descriptor().workspace_id.clone()),
+    );
+    // A fresh attachment cannot block on a projection that never arrives.
+    let current_state = || {
+        let snapshot =
+            LocalSessionObserver::connect(&catalog, &selector, ObserverAttachOptions::default())
+                .unwrap();
+        let state = snapshot
+            .attachment()
+            .initial_snapshot
+            .agent_runtime_state
+            .clone()
+            .unwrap();
+        snapshot.detach().unwrap();
+        state
+    };
+    let report = |sequence, activity, completed: bool| AgentStateReport {
+        progress: None,
+        identity_only: false,
+        activity,
+        attention: hmux_client::AgentRuntimeAttention::None,
+        turn_completed: completed,
+        turn_completion_id: completed.then(|| "fixture-turn".to_string()),
+        causality: Some(hmux_client::AgentStateReportCausality {
+            sequence,
+            work_id: Some("fixture-turn".into()),
+        }),
+        working_ttl_ms: None,
+        conversation_identity: None,
+        expected_observation: None,
+        background_work: false,
+    };
+
+    assert_eq!(
+        session
+            .report_agent_state(
+                report(1, hmux_client::AgentRuntimeActivity::Working, false),
+                None
+            )
+            .unwrap(),
+        AgentStateReportOutcome::Applied
+    );
+    let working = current_state();
+    assert_eq!(working.activity, hmux_client::AgentRuntimeActivity::Working);
+
+    let submit = session.send_input(b"left as a draft\r".to_vec()).unwrap();
+    assert_eq!(submit.state, InputReceiptState::WrittenToPty);
+
+    session
+        .report_agent_state(
+            report(2, hmux_client::AgentRuntimeActivity::Waiting, true),
+            None,
+        )
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let settled = loop {
+        let state = current_state();
+        if state.activity == hmux_client::AgentRuntimeActivity::Waiting
+            || Instant::now() >= deadline
+        {
+            break state;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(settled.activity, hmux_client::AgentRuntimeActivity::Waiting);
+    assert_eq!(
+        settled.turn_completed_count, working.turn_completed_count,
+        "a turn end followed by unanswered input is not a completed prompt"
+    );
+
+    session
+        .terminate_standalone(&catalog, Duration::from_secs(3))
+        .unwrap();
+}
+
 fn wait_for_provider_event_state(
     observer: &mut LocalSessionObserver,
 ) -> hmux_client::AgentRuntimeStateDescriptor {
@@ -8027,6 +8123,54 @@ fn verified_recipe_recovers_a_ready_manifest_after_abrupt_host_loss() {
         .session()
         .terminate_standalone(&catalog, Duration::from_secs(3))
         .unwrap();
+}
+
+/// A column shrink that a screen does not reflow strands the wide head of a
+/// pair that spanned the old last two columns. The Host must still durably
+/// checkpoint the new geometry, or every later rehost restores a presentation
+/// from before the resize.
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn ghostty_column_shrink_through_a_wide_pair_keeps_checkpointing() {
+    let state = tempfile::tempdir().unwrap();
+    let discovery_root = state.path().join("discovery");
+    // At 80 columns, `x` in column 56 puts the last of twelve wide characters
+    // in the final two columns. The provider never redraws after the resize.
+    let provider = format!(
+        "printf '\\033[?1049h\\033[1;56Hx{}\\033[3;1HWIDE_EDGE_READY'; sleep 30",
+        "\u{AC00}".repeat(12)
+    );
+    let mut fixture = IdleRetirementFixture::create_with_runtime_and_policy(
+        &state,
+        "ghostty-wide-shrink-checkpoint",
+        vec!["/bin/sh".into(), "-c".into(), provider],
+        std::path::Path::new(env!("CARGO_BIN_EXE_hmux-runtime")),
+        None,
+    );
+    let written = wait_for_replay_snapshot(&fixture.session, b"WIDE_EDGE_READY");
+    assert!(written.alternate_screen);
+    let before = wait_for_presentation_checkpoint_at_least(
+        &discovery_root,
+        &fixture.descriptor,
+        written.sequence_through,
+    );
+    assert_eq!(before.columns(), 80);
+
+    let receipt = fixture.session.send_resize(24, 79).unwrap();
+    assert_eq!(receipt.columns, Some(79));
+    let after = wait_for_presentation_checkpoint_matching(
+        &discovery_root,
+        &fixture.descriptor,
+        |checkpoint| checkpoint.columns() == 79,
+    );
+    assert!(after.sequence_through() >= written.sequence_through);
+    assert!(after.terminal_checkpoint().alternate_screen);
+    assert!(matches!(
+        after.terminal_checkpoint().encoding,
+        TerminalCheckpointEncoding::EngineNativeV1 { .. }
+    ));
+
+    fixture.terminate_and_verify();
 }
 
 #[cfg(feature = "terminal-state-stream")]
@@ -8990,10 +9134,22 @@ fn wait_for_presentation_checkpoint(
     wait_for_presentation_checkpoint_at_least(discovery_root, descriptor, 1)
 }
 
+#[track_caller]
 fn wait_for_presentation_checkpoint_at_least(
     discovery_root: &std::path::Path,
     descriptor: &SessionDescriptor,
     sequence_through: u64,
+) -> PresentationCheckpoint {
+    wait_for_presentation_checkpoint_matching(discovery_root, descriptor, |checkpoint| {
+        checkpoint.sequence_through() >= sequence_through
+    })
+}
+
+#[track_caller]
+fn wait_for_presentation_checkpoint_matching(
+    discovery_root: &std::path::Path,
+    descriptor: &SessionDescriptor,
+    accepts: impl Fn(&PresentationCheckpoint) -> bool,
 ) -> PresentationCheckpoint {
     let root = DiscoveryRoot::open(discovery_root).unwrap();
     let found = root
@@ -9009,7 +9165,7 @@ fn wait_for_presentation_checkpoint_at_least(
         if let Some(checkpoint) = discovery
             .read_presentation_checkpoint(&source)
             .unwrap()
-            .filter(|checkpoint| checkpoint.sequence_through() >= sequence_through)
+            .filter(|checkpoint| accepts(checkpoint))
         {
             return checkpoint;
         }

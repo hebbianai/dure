@@ -13,6 +13,29 @@ Dure's public beta is available for **macOS on Apple silicon**. Bring an install
 
 This link stays up to date with the latest public Mac beta. See the [release notes](https://github.com/hebbianai/dure/releases) for your downloaded version's supported features, signing and notarization details, and known limitations.
 
+### Install from the command line
+
+To install the same beta without opening the DMG, run this in Terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hebbianai/dure/main/scripts/install-macos.sh | sh
+```
+
+The script checks the download against the digest published with the release and confirms that macOS accepts Dure's signature and notarization before it installs the current public beta. It installs into **Applications**, or the **Applications** folder in your home directory if your account can't write to the system one, and adds the `dure` command to `~/.local/bin`. To choose another folder, set `DURE_APP_INSTALL_DIR` to an absolute path. If Dure is already installed, quit it first. If a check fails, your existing app stays in place. Run the script again to replace Dure with the current beta.
+
+### Install with Homebrew
+
+If you use [Homebrew](https://brew.sh), trust the Dure tap once, then install the cask:
+
+```sh
+brew trust hebbianai/tap
+brew install --cask hebbianai/tap/dure
+```
+
+Homebrew loads casks from a tap outside its own repositories only after you trust that tap. If Homebrew reports that `trust` is an unknown command, run `brew update` first. The cask installs the current public beta into **Applications** after checking the download against the digest published with the release. If Dure is already in **Applications**, Homebrew stops instead of replacing it; add `--adopt` to the install command to let Homebrew manage that copy.
+
+Dure has its own update flow, described below, so a plain `brew upgrade` skips it. To update through Homebrew instead, name the cask: `brew upgrade --cask hebbianai/tap/dure`.
+
 ## Prepare one coding agent
 
 Install and sign in to the agent you want to use. Check that its command starts in your regular terminal, for example `claude`, `codex` or `kimi`. In Dure, **Settings → Agent CLI** shows detected tools and available setup actions.

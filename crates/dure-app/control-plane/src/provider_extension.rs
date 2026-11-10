@@ -191,8 +191,13 @@ fn require_owner_file(
     Ok(metadata)
 }
 
+/// The refusal of a native launch on a host where no Dure app published the
+/// provider's managed integration for this channel.
+pub(crate) const PROVIDER_RUNTIME_INTEGRATION_UNAVAILABLE: &str =
+    "provider_runtime_integration_unavailable";
+
 fn integration_unavailable() -> ExtensionFailureCodeV1 {
-    ExtensionFailureCodeV1::new("provider_runtime_integration_unavailable")
+    ExtensionFailureCodeV1::new(PROVIDER_RUNTIME_INTEGRATION_UNAVAILABLE)
         .expect("static failure code is valid")
 }
 
@@ -425,6 +430,12 @@ fn test_integration_source() -> Arc<dyn ProviderRuntimeIntegrationSource> {
                 ProviderIdV1::new("gemini").unwrap(),
                 ProviderRuntimeIntegrationV1::CommandWrapper {
                     path: "/fixture/managed-gemini-launch.sh".into(),
+                },
+            ),
+            (
+                ProviderIdV1::new("openclaude").unwrap(),
+                ProviderRuntimeIntegrationV1::CommandWrapper {
+                    path: "/fixture/managed-openclaude-launch.sh".into(),
                 },
             ),
         ]),

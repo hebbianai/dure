@@ -31,7 +31,7 @@ mod agent_runtime_transition_apply;
 mod agent_spawn_api;
 mod agent_spawn_preview;
 mod agent_spawn_worktree;
-use agent_spawn_preview::preview_agent_spawn;
+use agent_spawn_preview::{preview_agent_spawn, unattended_interaction_preference};
 #[cfg(unix)]
 mod agent_goal;
 #[cfg(unix)]
@@ -168,10 +168,11 @@ use dure_app::{
     AgentCheckpointWriteRequestV1, AgentExecutionProfileV1, AgentIdV1,
     AgentProviderConversationPlanV1, AgentProviderRegistry, AgentRuntimeTransitionStore,
     AgentSpawnEffortSelectionV1, AgentSpawnInteractionPreferenceV1, AgentSpawnLaunchPlanV1,
-    AgentSpawnModelSelectionV1, AgentSpawnPreviewIntentV1, AgentSpawnPromptDigestV1,
-    AgentSpawnWorktreePolicyV1, AgentTimelineStore, CLIENT_VIEW_STATE_SCHEMA_VERSION_V1,
-    ClientViewGenerationAdvanceRequestV1, ClientViewIdentityV1, ClientViewNamespaceV1,
-    ClientViewWriteRequestV1, DELEGATE_ONCE_SCHEMA_VERSION_V1, DelegateOnceCompletionRequestV1,
+    AgentSpawnModelSelectionV1, AgentSpawnParentV1, AgentSpawnPreviewIntentV1,
+    AgentSpawnPromptDigestV1, AgentSpawnWorktreePolicyV1, AgentTimelineStore,
+    CLIENT_VIEW_STATE_SCHEMA_VERSION_V1, ClientViewGenerationAdvanceRequestV1,
+    ClientViewIdentityV1, ClientViewNamespaceV1, ClientViewWriteRequestV1,
+    DELEGATE_ONCE_SCHEMA_VERSION_V1, DelegateOnceCompletionRequestV1,
     DelegateOncePromptActivityRequestV1, DelegateOncePromptClaimRequestV1,
     DelegateOncePromptOutcomeRequestV1, DelegateOnceReceiptV1, DelegateOnceRequestV1,
     DelegateOnceSessionBindingRequestV1, DelegateOnceStartFailureRequestV1, DispatchIdV1,

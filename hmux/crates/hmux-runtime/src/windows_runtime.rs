@@ -192,6 +192,7 @@ fn advertised_capabilities() -> Vec<String> {
             TERMINAL_VIEWPORT_WHEEL_CAPABILITY,
             TERMINAL_VIEWPORT_MULTIPART_CAPABILITY,
             hmux_runtime_contract::TERMINAL_PREFERRED_WIDTH_CAPABILITY,
+            hmux_runtime_contract::TERMINAL_HISTORY_FIND_CAPABILITY,
             // The shared input transaction rechecks the draft under the Host
             // lock before the first byte; this Host refuses without waiting
             // and the client retries within its own bounded budget.

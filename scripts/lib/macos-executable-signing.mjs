@@ -16,6 +16,16 @@ export function signMacosExecutables(files, identity) {
 	}
 }
 
+/** Sealing changes bytes, so an already sealed copy must be recognized, not re-sealed. */
+export function isDeveloperIdSigned(file) {
+	try {
+		execFileSync("codesign", ["--verify", "--strict", "--test-requirement", developerId, file], { stdio: "ignore" });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function isMachOExecutable(file) {
 	const descriptor = fs.openSync(file, "r");
 	try {

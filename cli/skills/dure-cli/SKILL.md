@@ -44,6 +44,13 @@ over the live catalog, not a frozen snapshot: restart from `start` to reconcile
 sessions created behind the cursor while traversing. Older runtimes without
 pagination support return an explicit capability error.
 
+To see every configured backend at once, use `dure ls --all-backends [--json]`.
+The table gains a `BACKEND` column; JSON rows carry `backendProfileId`, and
+`backends[]` gives each backend's `status` and `error`. Exit status is 2 only
+when no backend answered, so check `backends[]` or `complete`: an unreachable
+backend's sessions are unobserved, not gone. Page one backend with
+`--backend ID --cursor`.
+
 ## Where `dure run` puts the files
 
 ```sh
@@ -228,6 +235,11 @@ draft for a human to Send, while a native PTY agent gets the bytes at once — s
 there a following `read` should change, and an unchanged screen means the send
 did not land. `send-keys` needs a local managed terminal, not SSH or chat.
 
+After a restart or `runs switch-account`, the app's registry can still list the
+Agent's exited Session until the app re-projects it. `read` and `send` by Agent
+name then follow the Agent's current Session from its backend, with a stderr
+note naming both; `send --json` reports the Session used in `target`.
+
 Terminal `send` never merges into text a person has typed but not submitted. It
 waits up to `--draft-wait` seconds (default 30) for them to submit; otherwise it
 fails with `hmux_input_draft_pending` and nothing written. Only their Enter clears
@@ -241,9 +253,10 @@ guard gets ordinary input and a stderr warning; restarting it enables the guard.
 dure wait worker --timeout 900 --json  # seconds, default 600
 dure wait --operation-id <id> --json   # the run request, not its answer
 dure wait --task <id> --dispatch <id> --generation <n> --json  # delegated task
+dure wait --children all --json        # every Run this agent started has settled
 ```
 
-The three targets are exclusive, and each rejects the others' flags: with
+The targets are exclusive, and each rejects the others' flags: with
 `--task` only `--backend`, `--timeout`, `--deadline-ms` and `--json` are
 allowed, all three of `--task`, `--dispatch` and `--generation` are required,
 and the generation must be a positive integer. That target completes when the
@@ -259,6 +272,12 @@ one session, so both fields nest under it:
 `session.runtime.generation.terminalEpoch`. A rehost changes the generation and
 the old wait then can never complete. Exit 0 met, 1 failure, 2 unknown, 124
 deadline, 130 interrupted; the last two stop only you.
+
+`--children all|any` waits for the Runs started from this agent's terminal
+(`dure run` records the caller as their parent) until every child, or the first,
+finished a turn and is idle, needs input or approval, exited, or failed to
+launch. Name another parent with `dure wait --children all <agent>` or
+`<session> --workspace ID`. The `dure` skill covers the states and exit codes.
 
 ## If `dure` does not recognize something here
 

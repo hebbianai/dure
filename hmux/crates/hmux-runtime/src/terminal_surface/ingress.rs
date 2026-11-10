@@ -350,6 +350,7 @@ mod tests {
             draft_guarded_input: false,
             wheel,
             default_colors: false,
+            history_find: false,
             base_protocol_minor: hmux_runtime_contract::TERMINAL_STATE_BASE_PROTOCOL_MINOR,
             host_provider_id: "codex",
         }
@@ -513,6 +514,56 @@ mod tests {
         assert_eq!(record.metadata.protocol_minor, 6);
         assert_eq!(record.record.schema_minor, 6);
         assert_eq!(record.metadata.record_id, 8);
+    }
+
+    fn history_find_envelope() -> Vec<u8> {
+        let minor = hmux_runtime_contract::TERMINAL_HISTORY_FIND_PROTOCOL_VERSION.envelope_minor;
+        encode_record_for_minor(
+            minor,
+            9,
+            &TerminalStateRecord {
+                schema_minor: u32::from(minor),
+                terminal_epoch: "terminal-a".into(),
+                through_output_seq: 3,
+                state_revision: 4,
+                body: Some(terminal_state_record::Body::ViewportIntent(
+                    ViewportIntent {
+                        observed_projection_revision: 2,
+                        intent_seq: 1,
+                        intent: Some(viewport_intent::Intent::FindInHistory(
+                            terminal_state_protocol::FindInHistory {
+                                query: "error".into(),
+                                case_sensitive: false,
+                                regex: false,
+                                step: terminal_state_protocol::FindStep::Restart as i32,
+                            },
+                        )),
+                    },
+                )),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn history_find_requires_its_capability_and_exact_additive_minor() {
+        let refused = decode_upstream(&history_find_envelope(), permissions(false)).unwrap();
+        assert!(matches!(
+            refused,
+            StructuredUpstream::Unauthorized(
+                hmux_runtime_contract::TERMINAL_HISTORY_FIND_CAPABILITY
+            )
+        ));
+
+        let mut selected = permissions(false);
+        selected.history_find = true;
+        let decoded = decode_upstream(&history_find_envelope(), selected).unwrap();
+        let StructuredUpstream::ViewportIntent { record } = decoded else {
+            panic!("selected history find capability must preserve viewport ingress");
+        };
+        assert_eq!(record.metadata.protocol_minor, 7);
+        assert_eq!(record.record.schema_minor, 7);
+        assert_eq!(record.metadata.record_id, 9);
     }
 
     #[test]

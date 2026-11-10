@@ -420,6 +420,109 @@ try {
   await toolViewport.evaluate(el => { el.scrollTop = el.scrollHeight; });
   await expect(burst.getByText(/New tool failure/)).toBeVisible();
   console.log("PASS: small burst growth retains disclosures and newly mounted failures open");
+
+  // A wheel-driven scroll up through rows that have never been measured. Each
+  // row entering above the viewport replaces its estimate with a measurement.
+  // WebKit cancels trackpad momentum on a programmatic scroll write, so the
+  // gesture itself must not write the scroll position, and no resize callback
+  // may leave the visible rows displaced when the frame paints.
+  const gestureTab = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+  gestureTab.on("pageerror", error => { errors.push(error.message); console.error(error.message); });
+  await gestureTab.addInitScript(() => {
+    const probe = { gesture: false, writes: [], jumps: [], longTasks: [] };
+    window.scrollProbe = probe;
+    const scroller = () => document.querySelector('[role="log"] > div');
+    probe.anchor = () => {
+      const el = scroller();
+      if (!el) return null;
+      const box = el.getBoundingClientRect();
+      const middle = box.top + box.height / 2;
+      const row = [...el.querySelectorAll("[data-agent-chat-row-anchors]")]
+        .find(row => { const rect = row.getBoundingClientRect(); return rect.top <= middle && rect.bottom > middle; });
+      return row ? { key: row.dataset.agentChatRowAnchors, y: row.getBoundingClientRect().top - box.top } : null;
+    };
+    const NativeResizeObserver = window.ResizeObserver;
+    window.ResizeObserver = class extends NativeResizeObserver {
+      constructor(callback) {
+        super((entries, observer) => {
+          const before = probe.gesture ? probe.anchor() : null;
+          callback(entries, observer);
+          const after = before && probe.anchor();
+          if (after && after.key === before.key && Math.abs(after.y - before.y) > 0.5) probe.jumps.push(after.y - before.y);
+        });
+      }
+    };
+    const record = kind => probe.writes.push({ kind, gesture: probe.gesture });
+    for (const name of ["scrollTo", "scrollBy"]) {
+      const native = Element.prototype[name];
+      Element.prototype[name] = function (...args) {
+        if (this === scroller()) record(name);
+        return native.apply(this, args);
+      };
+    }
+    const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+    Object.defineProperty(Element.prototype, "scrollTop", {
+      configurable: true,
+      get() { return scrollTop.get.call(this); },
+      set(value) { if (this === scroller()) record("scrollTop"); scrollTop.set.call(this, value); },
+    });
+    if (PerformanceObserver.supportedEntryTypes?.includes("longtask")) {
+      new PerformanceObserver(list => {
+        for (const entry of list.getEntries()) if (probe.gesture) probe.longTasks.push(Math.round(entry.duration));
+      }).observe({ type: "longtask" });
+    }
+  });
+  await gestureTab.goto(`${server.resolvedUrls.local[0]}__chat_qa`);
+  const gestureScroller = gestureTab.getByRole("log").locator(":scope > div").first();
+  const gestureFrame = () => gestureTab.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(gestureTab.getByText("Message 1999", { exact: true })).toBeVisible();
+  await expect.poll(() => gestureScroller.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeLessThan(2);
+  await gestureFrame();
+  await gestureTab.waitForTimeout(300);
+  const scrollerBox = await gestureScroller.boundingBox();
+  await gestureTab.mouse.move(scrollerBox.x + scrollerBox.width / 2, scrollerBox.y + scrollerBox.height / 2);
+  await gestureTab.evaluate(() => { window.scrollProbe.gesture = true; });
+  const steps = [];
+  for (let i = 0; i < 40; i++) {
+    const before = await gestureTab.evaluate(() => window.scrollProbe.anchor());
+    await gestureTab.mouse.wheel(0, -80);
+    await gestureFrame();
+    const after = await gestureTab.evaluate(() => window.scrollProbe.anchor());
+    steps.push(before && after && before.key === after.key ? Math.round(after.y - before.y) : null);
+  }
+  const duringGesture = await gestureTab.evaluate(() => ({
+    writes: window.scrollProbe.writes.filter(write => write.gesture).length,
+    jumps: window.scrollProbe.jumps.slice(),
+    longTasks: window.scrollProbe.longTasks.slice(),
+    anchor: window.scrollProbe.anchor(),
+  }));
+  const writesBeforeSettle = await gestureTab.evaluate(() => {
+    window.scrollProbe.gesture = false;
+    return window.scrollProbe.writes.length;
+  });
+  await gestureTab.waitForTimeout(400);
+  await gestureFrame();
+  const afterSettle = await gestureTab.evaluate(() => window.scrollProbe.anchor());
+  const settleWrites = await gestureTab.evaluate(() => window.scrollProbe.writes.length) - writesBeforeSettle;
+  const gestureMetrics = {
+    gestureWrites: duringGesture.writes,
+    settleWrites,
+    paintedJumps: duringGesture.jumps.length,
+    largestJump: Math.max(0, ...duringGesture.jumps.map(Math.abs)),
+    longTasks: duringGesture.longTasks.length,
+    longestTask: Math.max(0, ...duringGesture.longTasks),
+    unevenSteps: steps.filter(step => step !== null && step !== 80).length,
+    measuredSteps: steps.filter(step => step !== null).length,
+    settleShift: duringGesture.anchor && afterSettle && duringGesture.anchor.key === afterSettle.key
+      ? Math.round(afterSettle.y - duringGesture.anchor.y) : null,
+  };
+  console.log(JSON.stringify({ scrollUpGesture: gestureMetrics }));
+  await gestureTab.close();
+  assert.equal(gestureMetrics.gestureWrites, 0, "A user scroll gesture must not write the scroll position");
+  assert.equal(gestureMetrics.paintedJumps, 0, "Measuring rows above the viewport must not displace visible rows");
+  assert.equal(gestureMetrics.unevenSteps, 0, "Visible rows must move exactly with the wheel");
+  assert.equal(gestureMetrics.settleShift, 0, "Settling the gesture must not move visible rows");
+  console.log("PASS: wheel scroll up through unmeasured history keeps momentum-safe, jump-free geometry");
   assert.deepEqual(errors, []);
   console.log("PASS: bounded DOM, pagination anchors, live tail, resize, disclosure/focus, pending answers and visibility transitions");
 } finally {

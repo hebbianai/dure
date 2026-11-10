@@ -42,6 +42,9 @@ export function parseOpts(args) {
     else if (a === "--setup-command") opts.setupCommand = args[++i];
     else if (a === "--skip-permissions") opts.skipPermissions = true;
     else if (a === "--lead") opts.lead = true;
+    else if (a === "--parent") opts.parent = args[++i] ?? "";
+    else if (a === "--parent-workspace") opts.parentWorkspace = args[++i] ?? "";
+    else if (a === "--no-parent") opts.noParent = true;
     else if (a === "--merge-policy") opts.mergePolicy = args[++i] ?? "";
     else if (a === "--permission-override") opts.permissionOverride = args[++i] ?? "";
     else if (a === "--idle") opts.idle = true;
@@ -135,6 +138,7 @@ export function parseOpts(args) {
     else if (a === "--deadline-ms") opts.deadlineMs = args[++i];
     else if (a === "--probe-budget-ms") opts.probeBudgetMs = args[++i];
     else if (a === "--alive") opts.alive = true;
+    else if (a === "--all-backends") opts.allBackends = true;
     else if (a === "--hide-provider") {
       if (!opts.hideProvider) opts.hideProvider = [];
       opts.hideProvider.push(args[++i]);

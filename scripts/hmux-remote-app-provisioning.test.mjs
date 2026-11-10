@@ -19,7 +19,7 @@ describe("Dure remote Hmux provisioning bundle", () => {
       "scripts/build-remote-git-checkout-helper.sh",
     );
     expect(stage).toContain(
-      "for hmux_remote_triple in x86_64-unknown-linux-musl aarch64-unknown-linux-musl",
+      "for hmux_remote_triple in ${HMUX_REMOTE_TRIPLES:-x86_64-unknown-linux-musl aarch64-unknown-linux-musl}",
     );
     expect(stage).toContain("scripts/package-hmux-prebuilt.sh");
     expect(stage).toContain("RUSTUP_TOOLCHAIN=1.97.1");
@@ -46,6 +46,11 @@ describe("Dure remote Hmux provisioning bundle", () => {
       "pnpm git-checkout:remote:stage",
     );
     expect(read("package.json")).toContain("hmux:remote:stage:release");
+    for (const profile of ["dev", "release"]) {
+      expect(scripts[`remote-tools:stage:${profile}`]).toContain(
+        `node scripts/stage-macos-remote-tools.mjs ${profile === "dev" ? "debug" : "release"}`,
+      );
+    }
   });
 
   test("bundles the existing immutable installer and generated trees", () => {

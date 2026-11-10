@@ -17,6 +17,8 @@ mod execution_location;
 mod ghostty_core_proof;
 #[cfg(feature = "ghostty-core-proof")]
 mod ghostty_state_projection;
+#[cfg(feature = "ghostty-core-proof")]
+mod history_find;
 mod osc_scanner;
 mod program_status;
 mod tab_stop_repaint;
@@ -421,6 +423,9 @@ pub struct TerminalReplay {
     accepted_turn_completion_id_order: VecDeque<String>,
     accepted_turn_completion_ids: HashSet<String>,
     report_causality: Option<crate::local_protocol::AgentStateReportCausality>,
+    /// The turn a controller submit landed in, until the turn's own end or
+    /// newer work is reported. See `completion_ends_submitted_over_turn`.
+    submitted_over_work_id: Option<String>,
     provider_conversation_identity: Option<ProviderConversationIdentityProjection>,
     recovered_presentation: Option<RecoveredPresentation>,
     #[cfg(feature = "ghostty-core-proof")]
@@ -751,6 +756,7 @@ impl TerminalReplay {
             accepted_turn_completion_id_order: VecDeque::new(),
             accepted_turn_completion_ids: HashSet::new(),
             report_causality: None,
+            submitted_over_work_id: None,
             provider_conversation_identity: None,
             recovered_presentation: None,
             recovered_history_boundary: None,
@@ -797,6 +803,7 @@ impl TerminalReplay {
             accepted_turn_completion_id_order: VecDeque::new(),
             accepted_turn_completion_ids: HashSet::new(),
             report_causality: None,
+            submitted_over_work_id: None,
             provider_conversation_identity: None,
             recovered_presentation: None,
             pending_controller_input: PendingControllerInput::None,
@@ -1349,7 +1356,9 @@ impl TerminalReplay {
                     // extending its deadline or double-counting it.
                     return Ok(AgentStateReportFold::NoOp);
                 }
-                let acknowledges_input = report.expected_observation.is_none();
+                let ends_submitted_over_turn = self.completion_ends_submitted_over_turn(&report);
+                let acknowledges_input =
+                    !ends_submitted_over_turn && report.expected_observation.is_none();
                 let input_projection = if acknowledges_input
                     && self.pending_controller_input == PendingControllerInput::Submitted
                 {
@@ -1380,6 +1389,14 @@ impl TerminalReplay {
                 // produced while the provider settles is presentation, not a
                 // second authority over whether this turn completed.
                 report.expected_observation = None;
+                if ends_submitted_over_turn {
+                    // The turn is over, but it says nothing about the input
+                    // submitted during it: settle to waiting without counting
+                    // a completion a waiter could mistake for that input's.
+                    report.turn_completed = false;
+                    report.turn_completion_id = None;
+                    self.submitted_over_work_id = None;
+                }
                 self.pending_turn_completion = Some(PendingTurnCompletion {
                     expires_at: now
                         .checked_add(Duration::from_millis(IDENTIFIED_TURN_COMPLETION_SETTLE_MS))
@@ -1646,6 +1663,7 @@ impl TerminalReplay {
         let previous_completion_id_order = self.accepted_turn_completion_id_order.clone();
         let previous_completion_ids = self.accepted_turn_completion_ids.clone();
         let previous_report_causality = self.report_causality.clone();
+        let previous_submitted_over_work_id = self.submitted_over_work_id.clone();
         // A newer report may retire a pending completion before its fallible
         // state fold. Snapshot the bounded identity index with the projections
         // so a late failure cannot leave a partial duplicate-suppression write.
@@ -1676,6 +1694,7 @@ impl TerminalReplay {
             self.accepted_turn_completion_id_order = previous_completion_id_order;
             self.accepted_turn_completion_ids = previous_completion_ids;
             self.report_causality = previous_report_causality;
+            self.submitted_over_work_id = previous_submitted_over_work_id;
             self.provider_conversation_identity = previous_conversation_identity;
         }
         result

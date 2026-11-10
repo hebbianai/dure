@@ -212,6 +212,14 @@ function downloadReleaseAsset(destination, environment, runCommand) {
       "=https",
       "--silent",
       "--show-error",
+      // The release CDN returns an occasional 504; retry it (and dropped
+      // connections) a few times instead of failing the whole check. The
+      // asset hash is still verified after the download.
+      "--retry",
+      "4",
+      "--retry-delay",
+      "10",
+      "--retry-all-errors",
       "--output",
       destination,
       `https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/${RELEASE_ASSET}`,

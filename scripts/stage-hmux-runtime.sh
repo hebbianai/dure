@@ -128,8 +128,15 @@ if [ "$hmux_profile" = debug ]; then
   esac
 fi
 
+# A cross build (for example Linux musl sidecars made on the macOS ARM64 host
+# that owns the Ghostty toolchain) cannot run here; check its marker instead.
+hmux_verify_mode=execute
+if [ -n "${CARGO_BUILD_TARGET:-}" ] &&
+  [ "$hmux_target_triple" != "$(rustc -vV | sed -n 's/^host: //p')" ]; then
+  hmux_verify_mode=marker
+fi
 "${DURE_POSIX_SHELL:-sh}" "$hmux_stage_script_directory/verify-hmux-product-runtime.sh" \
-  execute "$hmux_stage_artifact_directory/hmux-runtime$hmux_suffix"
+  "$hmux_verify_mode" "$hmux_stage_artifact_directory/hmux-runtime$hmux_suffix"
 
 if [ -n "$hmux_dev_channel" ]; then
   if ! printf '%s\n' "$hmux_dev_channel" |

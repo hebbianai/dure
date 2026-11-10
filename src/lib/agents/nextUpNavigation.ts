@@ -112,6 +112,11 @@ function readNextUp(): NextUp {
 	});
 }
 
+/** Whether anything is waiting in the next-up order. */
+export function hasNextUp(): boolean {
+	return nextUpEntries(readNextUp()).length > 0;
+}
+
 /** Goes to the agent after the focused one in the next-up order. False when
  * nothing is waiting, so the caller can leave the key alone. */
 export function goToNextUp(): boolean {

@@ -102,6 +102,35 @@ creates no new state. `--merge-policy review` keeps workers from merging: each
 pull request waits for a GitHub approval or the `lead:approved` label before the
 lead merges it, and that rule is in every worker brief from the first dispatch.
 
+### Parent and child Runs
+
+A Run started by `dure run` from inside an agent's Dure terminal pane records
+that agent's exact Session as its parent, on the local backend. The receipt's
+`summary.parent` and `dure runs list/show --json` (`parent`) show the link.
+`--no-parent` starts an unlinked Run; `--parent AGENT` links it to another agent
+on the same backend by name, Agent ID or Session ID, and
+`--parent SESSION_ID --parent-workspace ID` needs no app. An explicit parent
+the backend can't record is refused before anything starts; the automatic link
+is skipped on such a backend.
+
+```sh
+dure run --worktree fix-12 "fix #12"
+dure run --worktree fix-13 "fix #13"
+dure wait --children all --timeout 900 --json   # every child settled
+dure wait --children any --json                 # first child settled
+```
+
+A child settles when it finished a turn and is idle, needs input or approval,
+exited, or its launch failed or stopped short. `observation.children` lists each
+child with `state` (`turn_completed`, `attention_required`, `exited`,
+`launch_failed`, `launch_incomplete`, `working`, `launching`, `unobservable`).
+Exit 0 met, 1 met but a settled child needs action, 2 unknown (no linked
+children, or the rest can't be observed), 124 deadline. An idle child that has
+finished a turn counts as settled, so after you send a child more work, wait on
+that child with `dure wait <child>` instead. Chat-runtime children are
+`unobservable`; read them with `dure transcript AGENT_ID`. Links grant nothing:
+stopping a parent does not stop its children yet.
+
 `--project` and `--path` are mutually exclusive. Both select an existing backend
 registration. `--path` selects the deepest registered project containing that
 directory; it does not register a project or change the Run's working directory
@@ -253,6 +282,10 @@ dure runs resume worker --json                 # preview only
 dure runs resume worker --confirm-restart --json
 ```
 
+After a reboot, `dure resume --all --json` restores every agent whose Host is
+proven gone and lists the rest with reasons; add `--dry-run` to preview. It never
+replaces a running or unresponsive Host.
+
 Use the exact Agent or operation ID when names are ambiguous. `open` places the
 current existing runtime without launching another provider. `resume` preserves
 the conversation: a confirmed stopped source with a waiting deferred target uses
@@ -364,6 +397,12 @@ not cover scheduled agents. Once a scheduled agent has stopped, its `automation-
 worktree is removed only when it has no uncommitted or untracked changes and every
 commit on it is on the default branch; ignored files go with it. Otherwise it is
 kept. The branch always stays, and a wake restores a removed worktree at its path.
+
+On a host without the Dure app, such as a server or VM, a schedule occurrence
+starts on the provider's chat runtime when the provider has one there, like a
+headless `dure run`. It has no terminal Session: `dure schedule runs` names the
+`dure runs show <operation-id>` command, and `dure transcript <agent-id>` reads
+it. Idle hibernation and worktree removal apply only to terminal runs.
 
 Project-root runs share files; they provide no per-run Git isolation. Do not
 combine `--no-worktree` with `--base-commit`, `--branch` or `--setup-command`.
@@ -558,8 +597,10 @@ works right away; `backendProject.registration` then reads `created`, `existing`
 `not_requested` or `failed` (exit 1, reason included, manual command kept). The
 flag is opt-in because it writes a durable backend project.
 An unavailable/older backend is reported as unchecked, not unregistered. For an
-SSH app project, run the printed command on its owning host; an app host ID is
-not a backend profile ID. The app project ID is never a schedule project selector.
+SSH app project, run the printed command on its owning host, or run the printed
+`dure profiles add ID --host APP_SSH_HOST_ID` to use a Dure backend already running
+there as `--backend ID`; it installs nothing and stops if none answers. An app host
+ID is not a backend profile ID. The app project ID is never a schedule project selector.
 `split` creates the pane through the app's existing correlated transaction.
 
 `host add` imports an SSH config alias or registers explicit connection fields

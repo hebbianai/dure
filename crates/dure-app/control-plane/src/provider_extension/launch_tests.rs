@@ -214,6 +214,117 @@ fn gemini_fresh_and_exact_resume_share_the_published_native_hook() {
     );
 }
 
+#[test]
+#[cfg(unix)]
+fn openclaude_launches_carry_its_activity_reporter_when_published() {
+    let registry = test_local_agent_provider_registry();
+    let provider = ProviderIdV1::new("openclaude").unwrap();
+    for conversation in [None, Some(CONVERSATION)] {
+        let plan = registry
+            .session_launch_plan(
+                &provider,
+                &ProviderPermissionModeV1::Default,
+                None,
+                None,
+                conversation,
+                MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            plan.launch.executable,
+            "/fixture/managed-openclaude-launch.sh"
+        );
+        assert_eq!(plan.launch.arguments[0], "openclaude");
+        let recipe = ManagedRehostRecipe::new(
+            std::iter::once(plan.launch.executable)
+                .chain(plan.resume_arguments.unwrap())
+                .collect(),
+            None,
+        )
+        .unwrap();
+        let resumed = recipe.render_command(CONVERSATION).unwrap();
+        assert_eq!(
+            &resumed[..2],
+            ["/fixture/managed-openclaude-launch.sh", "openclaude"]
+        );
+        assert!(
+            resumed
+                .windows(2)
+                .any(|pair| pair == ["--resume", CONVERSATION])
+        );
+    }
+    // Activity reporting is optional: without it the provider still starts.
+    let unpublished = NativeAgentProviders::new(
+        BTreeSet::new(),
+        Arc::new(StaticProviderRuntimeIntegrationSource {
+            integrations: BTreeMap::new(),
+        }),
+    );
+    let plan = unpublished
+        .launch_plan(
+            &provider,
+            &ProviderPermissionModeV1::Default,
+            None,
+            None,
+            Some(CONVERSATION),
+        )
+        .unwrap();
+    assert_eq!(plan.executable, "openclaude");
+    assert_eq!(plan.arguments, ["--resume", CONVERSATION]);
+}
+
+#[test]
+#[cfg(unix)]
+fn opencode_terminal_launches_carry_its_activity_reporter_when_published() {
+    let provider = ProviderIdV1::new("opencode").unwrap();
+    let published = NativeAgentProviders::new(
+        BTreeSet::new(),
+        Arc::new(StaticProviderRuntimeIntegrationSource {
+            integrations: BTreeMap::from([(
+                provider.clone(),
+                ProviderRuntimeIntegrationV1::CommandWrapper {
+                    path: "/fixture/managed-opencode-launch.sh".into(),
+                },
+            )]),
+        }),
+    );
+    let plan = published
+        .launch_plan(
+            &provider,
+            &ProviderPermissionModeV1::Default,
+            None,
+            None,
+            Some(CONVERSATION),
+        )
+        .unwrap();
+    assert_eq!(plan.executable, "/fixture/managed-opencode-launch.sh");
+    assert_eq!(plan.arguments[0], "opencode");
+    assert!(
+        plan.arguments
+            .windows(2)
+            .any(|pair| pair == ["--session", CONVERSATION])
+    );
+    // Activity reporting is optional: without it the provider still starts.
+    let unpublished = NativeAgentProviders::new(
+        BTreeSet::new(),
+        Arc::new(StaticProviderRuntimeIntegrationSource {
+            integrations: BTreeMap::new(),
+        }),
+    );
+    let plan = unpublished
+        .launch_plan(
+            &provider,
+            &ProviderPermissionModeV1::Default,
+            None,
+            None,
+            Some(CONVERSATION),
+        )
+        .unwrap();
+    assert_eq!(plan.executable, "opencode");
+    assert_eq!(plan.arguments, ["--session", CONVERSATION]);
+}
+
 impl ProviderRuntimeIntegrationSource for NativeWrapperIntegration {
     fn integration(
         &self,

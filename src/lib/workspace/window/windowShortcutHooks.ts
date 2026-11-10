@@ -38,6 +38,22 @@ export function useTerminalFontShortcut() {
   }, []);
 }
 
+/** Close a Space's active pane through the pin and session-end confirmations
+ *  the pane's X button uses. False when there is no active pane. */
+export function closeActivePane(targetDesktopId?: string): boolean {
+  const desktopId = targetDesktopId ?? useStore.getState().activeSpaceId;
+  const active = getDockview(desktopId)?.activePanel;
+  if (!active) return false;
+  void closePaneWithPinGuard({
+    id: active.api.id,
+    pinKey: panePinKey(desktopId, active.api.id),
+    title: active.api.title,
+    params: active.params,
+    close: () => closePanelById(active.api.id, desktopId),
+  });
+  return true;
+}
+
 /** Ctrl/Cmd+W → 활성 pane(패널) 닫기. 명시적 Hmux departure receipt를 먼저
  *  받은 뒤 Dockview를 제거하고, Workspace는 view detach/legacy cleanup만 한다.
  *
@@ -52,19 +68,7 @@ export function useClosePaneShortcut(targetDesktopId?: string) {
       }
       // 설정: 'Terminal 먼저'면 터미널 포커스 중 Cmd+W를 터미널로 넘긴다
       if (shouldYieldToTerminal()) return;
-      const desktopId = targetDesktopId ?? useStore.getState().activeSpaceId;
-      const api = getDockview(desktopId);
-      const active = api?.activePanel;
-      if (!active) return;
-      e.preventDefault();
-      // 고정·세션 종료 확인을 거친다 (설정 › 일반 › 탐색). X 버튼과 같은 경로.
-      void closePaneWithPinGuard({
-        id: active.api.id,
-        pinKey: panePinKey(desktopId, active.api.id),
-        title: active.api.title,
-        params: active.params,
-        close: () => closePanelById(active.api.id, desktopId),
-      });
+      if (closeActivePane(targetDesktopId)) e.preventDefault();
     };
     // 캡처 단계 — 터미널(xterm)이 키를 먼저 삼키기 전에 가로챈다.
     window.addEventListener("keydown", onKey, true);

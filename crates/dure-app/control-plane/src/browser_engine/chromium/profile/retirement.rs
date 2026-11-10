@@ -1,8 +1,12 @@
 //! A durable retirement occupies the native claim name before stored data is removed.
 use super::*;
+use evidence::LockedFile;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Seek, SeekFrom};
-use std::os::fd::AsRawFd;
+
+// This lock coordinates retirement attempts only. Native startup is fenced
+// by the same exclusive claim pathname, including after a process crash.
+const RETIREMENT_BUSY: &str = "browser_profile_deletion_in_progress";
 
 #[derive(Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -18,19 +22,7 @@ enum RetirementKind {
     StorageRetirement,
 }
 
-fn lock(file: &File) -> Result<(), BrowserEngineError> {
-    // This lock coordinates retirement attempts only. Native startup is fenced
-    // by the same exclusive claim pathname, including after a process crash.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-        Ok(())
-    } else {
-        Err(BrowserEngineError::before(
-            "browser_profile_deletion_in_progress",
-        ))
-    }
-}
-
-fn claim(root: &Path, id: &BrowserProfileIdV1) -> Result<File, BrowserEngineError> {
+fn claim(root: &Path, id: &BrowserProfileIdV1) -> Result<LockedFile, BrowserEngineError> {
     let error = |_| BrowserEngineError::before("browser_profile_storage_unavailable");
     let path = root.join("native-claim.json");
     let expected = RetirementClaim {
@@ -46,9 +38,9 @@ fn claim(root: &Path, id: &BrowserProfileIdV1) -> Result<File, BrowserEngineErro
         )
         .map_err(error)?;
     staged.as_file().sync_all().map_err(error)?;
-    lock(staged.as_file())?;
-    let mut file = match staged.persist_noclobber(&path) {
-        Ok(file) => file,
+    evidence::lock(staged.as_file(), RETIREMENT_BUSY)?;
+    let file = match staged.persist_noclobber(&path) {
+        Ok(file) => LockedFile::held(file),
         Err(failure) if failure.error.kind() == std::io::ErrorKind::AlreadyExists => {
             drop(failure);
             let file = OpenOptions::new()
@@ -57,8 +49,7 @@ fn claim(root: &Path, id: &BrowserProfileIdV1) -> Result<File, BrowserEngineErro
                 .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
                 .open(&path)
                 .map_err(error)?;
-            lock(&file)?;
-            file
+            LockedFile::acquire(file, RETIREMENT_BUSY)?
         }
         Err(_) => {
             return Err(BrowserEngineError::before(
@@ -79,12 +70,10 @@ fn claim(root: &Path, id: &BrowserProfileIdV1) -> Result<File, BrowserEngineErro
             "browser_profile_storage_unavailable",
         ));
     }
-    file.seek(SeekFrom::Start(0)).map_err(error)?;
+    let mut reader: &File = &file;
+    reader.seek(SeekFrom::Start(0)).map_err(error)?;
     let mut bytes = Vec::new();
-    (&mut file)
-        .take(4097)
-        .read_to_end(&mut bytes)
-        .map_err(error)?;
+    reader.take(4097).read_to_end(&mut bytes).map_err(error)?;
     if bytes.len() > 4096
         || serde_json::from_slice::<RetirementClaim>(&bytes)
             .ok()

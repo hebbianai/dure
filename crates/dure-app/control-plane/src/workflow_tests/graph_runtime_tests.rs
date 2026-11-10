@@ -341,6 +341,31 @@ async fn complete_agent_graph(
 }
 
 #[tokio::test]
+async fn workflow_graph_agent_plans_the_chat_runtime_without_the_provider_integration() {
+    // Before #350 the step pinned the terminal and preview refused it on a
+    // host where no Dure app published the provider integration.
+    let (root, mut state, launcher, _) = fixture(Vec::new()).await;
+    make_fixture_mutation_authority(&mut state);
+    schedule_runtime_tests::prepare_project(&root, &state).await;
+    state.agent_providers = Arc::new(provider_extension::test_unintegrated_provider_registry());
+    let id = admit_agent_graph(&state, root.path()).await;
+    let _ = crate::workflow_graph::runtime::advance(&state, &id, "executor").await;
+    let run = state.store.workflow_run(&id).await.unwrap().unwrap().0;
+    let spawn = state
+        .store
+        .agent_spawn_receipt_by_idempotency_key(run.tasks[0].dispatch_id.as_str())
+        .await
+        .unwrap()
+        .unwrap_or_else(|| panic!("agent step was refused before planning: {run:?}"));
+    assert!(matches!(
+        spawn.plan.launch,
+        AgentSpawnLaunchPlanV1::StructuredProtocol
+    ));
+    assert_eq!(spawn.plan.request.interaction_preference, None);
+    assert!(launcher.requests().is_empty());
+}
+
+#[tokio::test]
 async fn workflow_graph_agent_waits_for_exact_report_and_resumes_without_launching_again() {
     let (root, mut state, launcher, _) = fixture(vec![LaunchOutcome::Succeed]).await;
     make_fixture_mutation_authority(&mut state);

@@ -1,11 +1,20 @@
 use super::{
-    CursorShape, MAX_EVENT_TEXT_BYTES, MAX_PAGE_ROWS, MAX_STATE_REVISION, MAX_URI_BYTES,
-    ProtocolError, TerminalColorOverrides, TerminalStateRecord, ViewportAnchorStatus,
-    ViewportFrame, ViewportIntent, WheelFailureReason, WheelReceipt, WheelRefusalReason,
-    terminal_state_record, validate_buffer_id, validate_geometry, validate_input_modes,
-    validate_rows, validate_tables, validate_text, validate_unicode_width, viewport_intent,
-    wheel_receipt,
+    CursorShape, FindStatus, FindStep, MAX_EVENT_TEXT_BYTES, MAX_PAGE_ROWS, MAX_STATE_REVISION,
+    MAX_URI_BYTES, ProtocolError, TerminalColorOverrides, TerminalStateRecord,
+    ViewportAnchorStatus, ViewportFind, ViewportFrame, ViewportIntent, WheelFailureReason,
+    WheelReceipt, WheelRefusalReason, terminal_state_record, validate_buffer_id, validate_geometry,
+    validate_input_modes, validate_rows, validate_tables, validate_text, validate_unicode_width,
+    viewport_intent, wheel_receipt,
 };
+
+/// Schema minor that introduced connection-local history find.
+pub const FIND_PROTOCOL_MINOR: u32 = 7;
+/// Largest find query, in UTF-8 bytes, a peer may send or a Host must accept.
+pub const MAX_FIND_QUERY_BYTES: usize = 1024;
+/// Upper bound on matches one find reports; the Host stops collecting there.
+pub const MAX_FIND_MATCHES: u32 = 10_000;
+/// Upper bound on highlight segments in one frame.
+pub const MAX_FIND_HIGHLIGHTS: usize = 4096;
 
 pub fn validate_viewport_frame(
     schema_minor: u32,
@@ -149,6 +158,56 @@ pub fn validate_viewport_frame(
         }
         previous = Some(*index);
     }
+    if let Some(find) = frame.find.as_ref() {
+        validate_viewport_find(find, frame.rows.len(), frame.canonical_columns)?;
+    }
+    Ok(())
+}
+
+fn validate_viewport_find(
+    find: &ViewportFind,
+    rows: usize,
+    columns: u32,
+) -> Result<(), ProtocolError> {
+    if find.find_intent_seq == 0 || find.find_intent_seq > MAX_STATE_REVISION {
+        return Err(ProtocolError::InvalidRecord(
+            "viewport find intent sequence is invalid",
+        ));
+    }
+    let status = FindStatus::try_from(find.status)
+        .map_err(|_| ProtocolError::InvalidRecord("viewport find status is invalid"))?;
+    let matched = match status {
+        FindStatus::Matched => true,
+        FindStatus::NoMatch | FindStatus::InvalidPattern => false,
+        FindStatus::Unspecified => {
+            return Err(ProtocolError::InvalidRecord(
+                "viewport find status is required",
+            ));
+        }
+    };
+    let consistent = if matched {
+        find.match_count > 0
+            && find.match_count <= MAX_FIND_MATCHES
+            && find.current_match > 0
+            && find.current_match <= find.match_count
+    } else {
+        find.match_count == 0 && find.current_match == 0 && find.highlights.is_empty()
+    };
+    if !consistent || find.highlights.len() > MAX_FIND_HIGHLIGHTS {
+        return Err(ProtocolError::InvalidRecord(
+            "viewport find counts and highlights disagree",
+        ));
+    }
+    for highlight in &find.highlights {
+        if highlight.row as usize >= rows
+            || highlight.start_column >= highlight.end_column
+            || highlight.end_column > columns
+        {
+            return Err(ProtocolError::InvalidRecord(
+                "viewport find highlight is outside its frame",
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -234,6 +293,25 @@ pub(crate) fn validate_viewport_intent_for_minor(
             if wheel.kind != super::PointerKind::Wheel as i32 {
                 return Err(ProtocolError::InvalidRecord(
                     "wheel viewport intent requires a wheel pointer",
+                ));
+            }
+            Ok(())
+        }
+        Some(viewport_intent::Intent::FindInHistory(find)) => {
+            if schema_minor < FIND_PROTOCOL_MINOR {
+                return Err(ProtocolError::InvalidRecord(
+                    "history find requires schema minor 7",
+                ));
+            }
+            let step = FindStep::try_from(find.step)
+                .map_err(|_| ProtocolError::InvalidRecord("history find step is invalid"))?;
+            if intent.observed_projection_revision == 0
+                || step == FindStep::Unspecified
+                || find.query.len() > MAX_FIND_QUERY_BYTES
+                || find.query.contains('\0')
+            {
+                return Err(ProtocolError::InvalidRecord(
+                    "history find query, step or observed revision is invalid",
                 ));
             }
             Ok(())
@@ -450,7 +528,7 @@ mod tests {
                 6,
                 &ViewportIntent {
                     observed_projection_revision: 0,
-                    ..intent
+                    ..intent.clone()
                 },
             )
             .is_err()
@@ -470,5 +548,94 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    fn find_intent(query: &str, step: FindStep) -> ViewportIntent {
+        ViewportIntent {
+            observed_projection_revision: 2,
+            intent_seq: 1,
+            intent: Some(viewport_intent::Intent::FindInHistory(
+                crate::FindInHistory {
+                    query: query.to_string(),
+                    case_sensitive: false,
+                    regex: false,
+                    step: step as i32,
+                },
+            )),
+        }
+    }
+
+    #[test]
+    fn history_find_requires_minor_seven_a_step_and_a_bounded_query() {
+        let intent = find_intent("error", FindStep::Restart);
+        assert!(validate_viewport_intent_for_minor(6, &intent).is_err());
+        validate_viewport_intent_for_minor(FIND_PROTOCOL_MINOR, &intent).unwrap();
+        // An empty query is how a peer ends the find.
+        validate_viewport_intent_for_minor(
+            FIND_PROTOCOL_MINOR,
+            &find_intent("", FindStep::Restart),
+        )
+        .unwrap();
+        for invalid in [
+            find_intent("error", FindStep::Unspecified),
+            find_intent(&"x".repeat(MAX_FIND_QUERY_BYTES + 1), FindStep::Older),
+            find_intent("a\0b", FindStep::Newer),
+            ViewportIntent {
+                observed_projection_revision: 0,
+                ..intent
+            },
+        ] {
+            assert!(validate_viewport_intent_for_minor(FIND_PROTOCOL_MINOR, &invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn viewport_find_counts_and_highlights_must_agree_with_the_frame() {
+        let matched = ViewportFind {
+            find_intent_seq: 3,
+            status: FindStatus::Matched as i32,
+            match_count: 2,
+            match_count_complete: true,
+            current_match: 1,
+            highlights: vec![crate::FindHighlight {
+                row: 1,
+                start_column: 4,
+                end_column: 9,
+                current: true,
+            }],
+        };
+        validate_viewport_find(&matched, 2, 80).unwrap();
+        let no_match = ViewportFind {
+            find_intent_seq: 3,
+            status: FindStatus::NoMatch as i32,
+            match_count: 0,
+            match_count_complete: true,
+            current_match: 0,
+            highlights: Vec::new(),
+        };
+        validate_viewport_find(&no_match, 2, 80).unwrap();
+
+        let mut row_outside = matched.clone();
+        row_outside.highlights[0].row = 2;
+        let mut empty_segment = matched.clone();
+        empty_segment.highlights[0].end_column = 4;
+        let mut past_columns = matched.clone();
+        past_columns.highlights[0].end_column = 81;
+        let mut current_past_count = matched.clone();
+        current_past_count.current_match = 3;
+        let mut no_match_with_highlight = no_match.clone();
+        no_match_with_highlight.highlights = matched.highlights.clone();
+        let mut unspecified = no_match.clone();
+        unspecified.status = FindStatus::Unspecified as i32;
+        for invalid in [
+            row_outside,
+            empty_segment,
+            past_columns,
+            current_past_count,
+            no_match_with_highlight,
+            unspecified,
+        ] {
+            assert!(validate_viewport_find(&invalid, 2, 80).is_err());
+        }
     }
 }

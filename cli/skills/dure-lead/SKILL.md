@@ -177,6 +177,7 @@ Observe; do not steer by typing into terminals unless §5 says so.
 ```sh
 dure inspect SESSION_ID --workspace WORKSPACE_ID --json     # one worker, exact
 dure ls --json                        # everyone on this backend; page with --cursor start, then pagination.nextCursor
+dure ls --all-backends --json         # everyone on every configured backend; backends[] says which ones answered
 dure wait SESSION_ID --workspace WORKSPACE_ID --timeout 900 --json
 dure read SESSION_ID --workspace WORKSPACE_ID -n 80         # the screen, when a state needs explaining
 gh pr list --repo OWNER/REPO --head agent/work-123 --state all \
@@ -202,6 +203,12 @@ required action (read the screen), 2 unknown. Pass `--after-turn` and
 `--terminal-epoch` from `inspect` (`session.runtime.agentRuntimeState.turnCompletedCount`,
 `session.runtime.generation.terminalEpoch`) to resume a wait exactly. A
 timeout never stops the worker.
+
+Workers you start from your own terminal pane are linked to you. To sleep until
+the first of them needs you, run `dure wait --children any --timeout 900 --json`;
+`observation.children` names each worker with its state. A worker that has
+finished a turn stays settled, so once you have handled it, go back to the
+per-worker `dure wait` above for the ones still working.
 
 **Completion is a GitHub fact, not a session state.** A worker is done when
 its pull request is merged (or open and handed back with a reason) **and** its

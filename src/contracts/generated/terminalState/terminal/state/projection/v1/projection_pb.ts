@@ -27,7 +27,7 @@ import { file_terminal_state_input_v1_input } from "../../input/v1/input_pb";
 export const file_terminal_state_projection_v1_projection: GenFile =
 	/*@__PURE__*/
 	fileDesc(
-		"Ci10ZXJtaW5hbC9zdGF0ZS9wcm9qZWN0aW9uL3YxL3Byb2plY3Rpb24ucHJvdG8SHHRlcm1pbmFsLnN0YXRlLnByb2plY3Rpb24udjEiyAcKDVZpZXdwb3J0RnJhbWUSGwoTcHJvamVjdGlvbl9yZXZpc2lvbhgBIAEoBBInCh9kYW1hZ2VfYmFzZV9wcm9qZWN0aW9uX3JldmlzaW9uGAIgASgEEhkKEWNhbm9uaWNhbF9jb2x1bW5zGAMgASgNEhUKDXZpZXdwb3J0X3Jvd3MYBCABKA0SOQoNYWN0aXZlX2J1ZmZlchgFIAEoDjIiLnRlcm1pbmFsLnN0YXRlLmNvbW1vbi52MS5CdWZmZXJJZBIzCgRyb3dzGAYgAygLMiUudGVybWluYWwuc3RhdGUuY29tbW9uLnYxLlRlcm1pbmFsUm93EjgKBnRhYmxlcxgHIAEoCzIoLnRlcm1pbmFsLnN0YXRlLmNvbW1vbi52MS5UZXJtaW5hbFRhYmxlcxI1CgZjdXJzb3IYCCABKAsyJS50ZXJtaW5hbC5zdGF0ZS5jb21tb24udjEuQ3Vyc29yU3RhdGUSOQoLaW5wdXRfbW9kZXMYCSABKAsyJC50ZXJtaW5hbC5zdGF0ZS5jb21tb24udjEuSW5wdXRNb2RlcxJNCg9jb2xvcl9vdmVycmlkZXMYCiABKAsyNC50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLlRlcm1pbmFsQ29sb3JPdmVycmlkZXMSRAoNdW5pY29kZV93aWR0aBgLIAEoCzItLnRlcm1pbmFsLnN0YXRlLmNvbW1vbi52MS5Vbmljb2RlV2lkdGhQcm9maWxlEhgKEHRocm91Z2hfZXZlbnRfaWQYDCABKAQSDQoFdGl0bGUYDSABKAkSHQoVd29ya2luZ19kaXJlY3RvcnlfdXJpGA4gASgJEhMKC2ZvbGxvd190YWlsGA8gASgIEhcKD2hhc19tb3JlX2JlZm9yZRgQIAEoCBIWCg5oYXNfbW9yZV9hZnRlchgRIAEoCBIbChNjaGFuZ2VkX3Jvd19pbmRpY2VzGBIgAygNEhoKEmFwcGxpZWRfaW50ZW50X3NlcRgTIAEoBBJJCg1hbmNob3Jfc3RhdHVzGBQgASgOMjIudGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5WaWV3cG9ydEFuY2hvclN0YXR1cxIbCg5yb3dzX2Zyb21fdGFpbBgVIAEoBEgAiAEBEkwKE2lucHV0X291dHB1dF90aW1pbmcYFiABKAsyLy50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLklucHV0T3V0cHV0VGltaW5nQhEKD19yb3dzX2Zyb21fdGFpbCK+AQoRSW5wdXRPdXRwdXRUaW1pbmcSJgoeaW5wdXRfYmFzZWxpbmVfb3V0cHV0X3NlcXVlbmNlGAEgASgEEh0KFWZpcnN0X291dHB1dF9zZXF1ZW5jZRgCIAEoBBIeChZpbnB1dF90b19vdXRwdXRfbWljcm9zGAMgASgEEikKIW91dHB1dF90b19wcm9qZWN0aW9uX3N0YXJ0X21pY3JvcxgEIAEoBBIXCg9pbnB1dF9yZWNvcmRfaWQYBSABKAQitgEKEVZpZXdwb3J0RnJhbWVQYXJ0EhAKCGJhdGNoX2lkGAEgASgMEhIKCnBhcnRfaW5kZXgYAiABKA0SEgoKcGFydF9jb3VudBgDIAEoDRIZChF0b3RhbF9mcmFtZV9ieXRlcxgEIAEoDRITCgtmcmFtZV9jaHVuaxgFIAEoDBIbChNwcm9qZWN0aW9uX3JldmlzaW9uGAYgASgEEhoKEmFwcGxpZWRfaW50ZW50X3NlcRgHIAEoBCKFAgoWVGVybWluYWxDb2xvck92ZXJyaWRlcxJDCgdpbmRleGVkGAEgAygLMjIudGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5JbmRleGVkQ29sb3JPdmVycmlkZRIjChZkZWZhdWx0X2ZvcmVncm91bmRfcmdiGAIgASgNSACIAQESIwoWZGVmYXVsdF9iYWNrZ3JvdW5kX3JnYhgDIAEoDUgBiAEBEhcKCmN1cnNvcl9yZ2IYBCABKA1IAogBAUIZChdfZGVmYXVsdF9mb3JlZ3JvdW5kX3JnYkIZChdfZGVmYXVsdF9iYWNrZ3JvdW5kX3JnYkINCgtfY3Vyc29yX3JnYiIyChRJbmRleGVkQ29sb3JPdmVycmlkZRINCgVpbmRleBgBIAEoDRILCgNyZ2IYAiABKA0iuAMKDlZpZXdwb3J0SW50ZW50EiQKHG9ic2VydmVkX3Byb2plY3Rpb25fcmV2aXNpb24YASABKAQSEgoKaW50ZW50X3NlcRgCIAEoBBI/CgtzY3JvbGxfcm93cxgKIAEoCzIoLnRlcm1pbmFsLnN0YXRlLnByb2plY3Rpb24udjEuU2Nyb2xsUm93c0gAEj8KC2ZvbGxvd190YWlsGAsgASgLMigudGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5Gb2xsb3dUYWlsSAASSgoRc2V0X3ZpZXdwb3J0X3Jvd3MYDCABKAsyLS50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLlNldFZpZXdwb3J0Um93c0gAEjwKBXdoZWVsGA0gASgLMisudGVybWluYWwuc3RhdGUuaW5wdXQudjEuUG9pbnRlcklucHV0SW50ZW50SAASVgoXdGVybWluYWxfZGVmYXVsdF9jb2xvcnMYDiABKAsyMy50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLlRlcm1pbmFsRGVmYXVsdENvbG9yc0gAQggKBmludGVudCJHChVUZXJtaW5hbERlZmF1bHRDb2xvcnMSFgoOZm9yZWdyb3VuZF9yZ2IYASABKA0SFgoOYmFja2dyb3VuZF9yZ2IYAiABKA0iGgoKU2Nyb2xsUm93cxIMCgRyb3dzGAEgASgRIgwKCkZvbGxvd1RhaWwiHwoPU2V0Vmlld3BvcnRSb3dzEgwKBHJvd3MYASABKA0i1AIKDFdoZWVsUmVjZWlwdBIdChVpbl9yZXBseV90b19yZWNvcmRfaWQYASABKAQSSQoOd3JpdHRlbl90b19wdHkYCiABKAsyLy50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLldoZWVsV3JpdHRlblRvUHR5SAASUwoTYXBwbGllZF90b192aWV3cG9ydBgLIAEoCzI0LnRlcm1pbmFsLnN0YXRlLnByb2plY3Rpb24udjEuV2hlZWxBcHBsaWVkVG9WaWV3cG9ydEgAEj0KB3JlZnVzZWQYDCABKAsyKi50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLldoZWVsUmVmdXNlZEgAEjsKBmZhaWxlZBgNIAEoCzIpLnRlcm1pbmFsLnN0YXRlLnByb2plY3Rpb24udjEuV2hlZWxGYWlsZWRIAEIJCgdvdXRjb21lIi8KEVdoZWVsV3JpdHRlblRvUHR5EhoKEmFwcGxpZWRfaW50ZW50X3NlcRgBIAEoBCI0ChZXaGVlbEFwcGxpZWRUb1ZpZXdwb3J0EhoKEmFwcGxpZWRfaW50ZW50X3NlcRgBIAEoBCJQCgxXaGVlbFJlZnVzZWQSQAoGcmVhc29uGAEgASgOMjAudGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5XaGVlbFJlZnVzYWxSZWFzb24iTwoLV2hlZWxGYWlsZWQSQAoGcmVhc29uGAEgASgOMjAudGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5XaGVlbEZhaWx1cmVSZWFzb24qiQIKFFZpZXdwb3J0QW5jaG9yU3RhdHVzEiYKIlZJRVdQT1JUX0FOQ0hPUl9TVEFUVVNfVU5TUEVDSUZJRUQQABImCiJWSUVXUE9SVF9BTkNIT1JfU1RBVFVTX0ZPTExPV19UQUlMEAESIwofVklFV1BPUlRfQU5DSE9SX1NUQVRVU19BTkNIT1JFRBACEigKJFZJRVdQT1JUX0FOQ0hPUl9TVEFUVVNfQ0xBTVBFRF9TVEFSVBADEicKI1ZJRVdQT1JUX0FOQ0hPUl9TVEFUVVNfQ0xBTVBFRF9UQUlMEAQSKQolVklFV1BPUlRfQU5DSE9SX1NUQVRVU19QUlVORURfVE9fVEFJTBAFKpABChJXaGVlbFJlZnVzYWxSZWFzb24SJAogV0hFRUxfUkVGVVNBTF9SRUFTT05fVU5TUEVDSUZJRUQQABItCilXSEVFTF9SRUZVU0FMX1JFQVNPTl9BVVRIT1JJWkFUSU9OX0RFTklFRBABEiUKIVdIRUVMX1JFRlVTQUxfUkVBU09OX0hPU1RfRVhJVElORxACKo8BChJXaGVlbEZhaWx1cmVSZWFzb24SJAogV0hFRUxfRkFJTFVSRV9SRUFTT05fVU5TUEVDSUZJRUQQABIpCiVXSEVFTF9GQUlMVVJFX1JFQVNPTl9QVFlfV1JJVEVfRkFJTEVEEAESKAokV0hFRUxfRkFJTFVSRV9SRUFTT05fVklFV1BPUlRfRkFJTEVEEAJiBnByb3RvMw",
+		"Ci10ZXJtaW5hbC9zdGF0ZS9wcm9qZWN0aW9uL3YxL3Byb2plY3Rpb24ucHJvdG8SHHRlcm1pbmFsLnN0YXRlLnByb2plY3Rpb24udjEigggKDVZpZXdwb3J0RnJhbWUSGwoTcHJvamVjdGlvbl9yZXZpc2lvbhgBIAEoBBInCh9kYW1hZ2VfYmFzZV9wcm9qZWN0aW9uX3JldmlzaW9uGAIgASgEEhkKEWNhbm9uaWNhbF9jb2x1bW5zGAMgASgNEhUKDXZpZXdwb3J0X3Jvd3MYBCABKA0SOQoNYWN0aXZlX2J1ZmZlchgFIAEoDjIiLnRlcm1pbmFsLnN0YXRlLmNvbW1vbi52MS5CdWZmZXJJZBIzCgRyb3dzGAYgAygLMiUudGVybWluYWwuc3RhdGUuY29tbW9uLnYxLlRlcm1pbmFsUm93EjgKBnRhYmxlcxgHIAEoCzIoLnRlcm1pbmFsLnN0YXRlLmNvbW1vbi52MS5UZXJtaW5hbFRhYmxlcxI1CgZjdXJzb3IYCCABKAsyJS50ZXJtaW5hbC5zdGF0ZS5jb21tb24udjEuQ3Vyc29yU3RhdGUSOQoLaW5wdXRfbW9kZXMYCSABKAsyJC50ZXJtaW5hbC5zdGF0ZS5jb21tb24udjEuSW5wdXRNb2RlcxJNCg9jb2xvcl9vdmVycmlkZXMYCiABKAsyNC50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLlRlcm1pbmFsQ29sb3JPdmVycmlkZXMSRAoNdW5pY29kZV93aWR0aBgLIAEoCzItLnRlcm1pbmFsLnN0YXRlLmNvbW1vbi52MS5Vbmljb2RlV2lkdGhQcm9maWxlEhgKEHRocm91Z2hfZXZlbnRfaWQYDCABKAQSDQoFdGl0bGUYDSABKAkSHQoVd29ya2luZ19kaXJlY3RvcnlfdXJpGA4gASgJEhMKC2ZvbGxvd190YWlsGA8gASgIEhcKD2hhc19tb3JlX2JlZm9yZRgQIAEoCBIWCg5oYXNfbW9yZV9hZnRlchgRIAEoCBIbChNjaGFuZ2VkX3Jvd19pbmRpY2VzGBIgAygNEhoKEmFwcGxpZWRfaW50ZW50X3NlcRgTIAEoBBJJCg1hbmNob3Jfc3RhdHVzGBQgASgOMjIudGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5WaWV3cG9ydEFuY2hvclN0YXR1cxIbCg5yb3dzX2Zyb21fdGFpbBgVIAEoBEgAiAEBEkwKE2lucHV0X291dHB1dF90aW1pbmcYFiABKAsyLy50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLklucHV0T3V0cHV0VGltaW5nEjgKBGZpbmQYFyABKAsyKi50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLlZpZXdwb3J0RmluZEIRCg9fcm93c19mcm9tX3RhaWwivgEKEUlucHV0T3V0cHV0VGltaW5nEiYKHmlucHV0X2Jhc2VsaW5lX291dHB1dF9zZXF1ZW5jZRgBIAEoBBIdChVmaXJzdF9vdXRwdXRfc2VxdWVuY2UYAiABKAQSHgoWaW5wdXRfdG9fb3V0cHV0X21pY3JvcxgDIAEoBBIpCiFvdXRwdXRfdG9fcHJvamVjdGlvbl9zdGFydF9taWNyb3MYBCABKAQSFwoPaW5wdXRfcmVjb3JkX2lkGAUgASgEIrYBChFWaWV3cG9ydEZyYW1lUGFydBIQCghiYXRjaF9pZBgBIAEoDBISCgpwYXJ0X2luZGV4GAIgASgNEhIKCnBhcnRfY291bnQYAyABKA0SGQoRdG90YWxfZnJhbWVfYnl0ZXMYBCABKA0SEwoLZnJhbWVfY2h1bmsYBSABKAwSGwoTcHJvamVjdGlvbl9yZXZpc2lvbhgGIAEoBBIaChJhcHBsaWVkX2ludGVudF9zZXEYByABKAQihQIKFlRlcm1pbmFsQ29sb3JPdmVycmlkZXMSQwoHaW5kZXhlZBgBIAMoCzIyLnRlcm1pbmFsLnN0YXRlLnByb2plY3Rpb24udjEuSW5kZXhlZENvbG9yT3ZlcnJpZGUSIwoWZGVmYXVsdF9mb3JlZ3JvdW5kX3JnYhgCIAEoDUgAiAEBEiMKFmRlZmF1bHRfYmFja2dyb3VuZF9yZ2IYAyABKA1IAYgBARIXCgpjdXJzb3JfcmdiGAQgASgNSAKIAQFCGQoXX2RlZmF1bHRfZm9yZWdyb3VuZF9yZ2JCGQoXX2RlZmF1bHRfYmFja2dyb3VuZF9yZ2JCDQoLX2N1cnNvcl9yZ2IiMgoUSW5kZXhlZENvbG9yT3ZlcnJpZGUSDQoFaW5kZXgYASABKA0SCwoDcmdiGAIgASgNIoAECg5WaWV3cG9ydEludGVudBIkChxvYnNlcnZlZF9wcm9qZWN0aW9uX3JldmlzaW9uGAEgASgEEhIKCmludGVudF9zZXEYAiABKAQSPwoLc2Nyb2xsX3Jvd3MYCiABKAsyKC50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLlNjcm9sbFJvd3NIABI/Cgtmb2xsb3dfdGFpbBgLIAEoCzIoLnRlcm1pbmFsLnN0YXRlLnByb2plY3Rpb24udjEuRm9sbG93VGFpbEgAEkoKEXNldF92aWV3cG9ydF9yb3dzGAwgASgLMi0udGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5TZXRWaWV3cG9ydFJvd3NIABI8CgV3aGVlbBgNIAEoCzIrLnRlcm1pbmFsLnN0YXRlLmlucHV0LnYxLlBvaW50ZXJJbnB1dEludGVudEgAElYKF3Rlcm1pbmFsX2RlZmF1bHRfY29sb3JzGA4gASgLMjMudGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5UZXJtaW5hbERlZmF1bHRDb2xvcnNIABJGCg9maW5kX2luX2hpc3RvcnkYDyABKAsyKy50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLkZpbmRJbkhpc3RvcnlIAEIICgZpbnRlbnQiewoNRmluZEluSGlzdG9yeRINCgVxdWVyeRgBIAEoCRIWCg5jYXNlX3NlbnNpdGl2ZRgCIAEoCBINCgVyZWdleBgDIAEoCBI0CgRzdGVwGAQgASgOMiYudGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5GaW5kU3RlcCLsAQoMVmlld3BvcnRGaW5kEhcKD2ZpbmRfaW50ZW50X3NlcRgBIAEoBBI4CgZzdGF0dXMYAiABKA4yKC50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLkZpbmRTdGF0dXMSEwoLbWF0Y2hfY291bnQYAyABKA0SHAoUbWF0Y2hfY291bnRfY29tcGxldGUYBCABKAgSFQoNY3VycmVudF9tYXRjaBgFIAEoDRI/CgpoaWdobGlnaHRzGAYgAygLMisudGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5GaW5kSGlnaGxpZ2h0IlcKDUZpbmRIaWdobGlnaHQSCwoDcm93GAEgASgNEhQKDHN0YXJ0X2NvbHVtbhgCIAEoDRISCgplbmRfY29sdW1uGAMgASgNEg8KB2N1cnJlbnQYBCABKAgiRwoVVGVybWluYWxEZWZhdWx0Q29sb3JzEhYKDmZvcmVncm91bmRfcmdiGAEgASgNEhYKDmJhY2tncm91bmRfcmdiGAIgASgNIhoKClNjcm9sbFJvd3MSDAoEcm93cxgBIAEoESIMCgpGb2xsb3dUYWlsIh8KD1NldFZpZXdwb3J0Um93cxIMCgRyb3dzGAEgASgNItQCCgxXaGVlbFJlY2VpcHQSHQoVaW5fcmVwbHlfdG9fcmVjb3JkX2lkGAEgASgEEkkKDndyaXR0ZW5fdG9fcHR5GAogASgLMi8udGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5XaGVlbFdyaXR0ZW5Ub1B0eUgAElMKE2FwcGxpZWRfdG9fdmlld3BvcnQYCyABKAsyNC50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLldoZWVsQXBwbGllZFRvVmlld3BvcnRIABI9CgdyZWZ1c2VkGAwgASgLMioudGVybWluYWwuc3RhdGUucHJvamVjdGlvbi52MS5XaGVlbFJlZnVzZWRIABI7CgZmYWlsZWQYDSABKAsyKS50ZXJtaW5hbC5zdGF0ZS5wcm9qZWN0aW9uLnYxLldoZWVsRmFpbGVkSABCCQoHb3V0Y29tZSIvChFXaGVlbFdyaXR0ZW5Ub1B0eRIaChJhcHBsaWVkX2ludGVudF9zZXEYASABKAQiNAoWV2hlZWxBcHBsaWVkVG9WaWV3cG9ydBIaChJhcHBsaWVkX2ludGVudF9zZXEYASABKAQiUAoMV2hlZWxSZWZ1c2VkEkAKBnJlYXNvbhgBIAEoDjIwLnRlcm1pbmFsLnN0YXRlLnByb2plY3Rpb24udjEuV2hlZWxSZWZ1c2FsUmVhc29uIk8KC1doZWVsRmFpbGVkEkAKBnJlYXNvbhgBIAEoDjIwLnRlcm1pbmFsLnN0YXRlLnByb2plY3Rpb24udjEuV2hlZWxGYWlsdXJlUmVhc29uKokCChRWaWV3cG9ydEFuY2hvclN0YXR1cxImCiJWSUVXUE9SVF9BTkNIT1JfU1RBVFVTX1VOU1BFQ0lGSUVEEAASJgoiVklFV1BPUlRfQU5DSE9SX1NUQVRVU19GT0xMT1dfVEFJTBABEiMKH1ZJRVdQT1JUX0FOQ0hPUl9TVEFUVVNfQU5DSE9SRUQQAhIoCiRWSUVXUE9SVF9BTkNIT1JfU1RBVFVTX0NMQU1QRURfU1RBUlQQAxInCiNWSUVXUE9SVF9BTkNIT1JfU1RBVFVTX0NMQU1QRURfVEFJTBAEEikKJVZJRVdQT1JUX0FOQ0hPUl9TVEFUVVNfUFJVTkVEX1RPX1RBSUwQBSpmCghGaW5kU3RlcBIZChVGSU5EX1NURVBfVU5TUEVDSUZJRUQQABIVChFGSU5EX1NURVBfUkVTVEFSVBABEhMKD0ZJTkRfU1RFUF9PTERFUhACEhMKD0ZJTkRfU1RFUF9ORVdFUhADKn0KCkZpbmRTdGF0dXMSGwoXRklORF9TVEFUVVNfVU5TUEVDSUZJRUQQABIXChNGSU5EX1NUQVRVU19NQVRDSEVEEAESGAoURklORF9TVEFUVVNfTk9fTUFUQ0gQAhIfChtGSU5EX1NUQVRVU19JTlZBTElEX1BBVFRFUk4QAyqQAQoSV2hlZWxSZWZ1c2FsUmVhc29uEiQKIFdIRUVMX1JFRlVTQUxfUkVBU09OX1VOU1BFQ0lGSUVEEAASLQopV0hFRUxfUkVGVVNBTF9SRUFTT05fQVVUSE9SSVpBVElPTl9ERU5JRUQQARIlCiFXSEVFTF9SRUZVU0FMX1JFQVNPTl9IT1NUX0VYSVRJTkcQAiqPAQoSV2hlZWxGYWlsdXJlUmVhc29uEiQKIFdIRUVMX0ZBSUxVUkVfUkVBU09OX1VOU1BFQ0lGSUVEEAASKQolV0hFRUxfRkFJTFVSRV9SRUFTT05fUFRZX1dSSVRFX0ZBSUxFRBABEigKJFdIRUVMX0ZBSUxVUkVfUkVBU09OX1ZJRVdQT1JUX0ZBSUxFRBACYgZwcm90bzM",
 		[file_terminal_state_common_v1_common, file_terminal_state_input_v1_input],
 	);
 
@@ -168,6 +168,14 @@ export type ViewportFrame =
 		 * @generated from field: terminal.state.projection.v1.InputOutputTiming input_output_timing = 22;
 		 */
 		inputOutputTiming?: InputOutputTiming | undefined;
+
+		/**
+		 * Present only while this connection has an active find. Highlights are
+		 * relative to this frame's rows; counts describe the Host's last search.
+		 *
+		 * @generated from field: terminal.state.projection.v1.ViewportFind find = 23;
+		 */
+		find?: ViewportFind | undefined;
 	};
 
 /**
@@ -398,6 +406,16 @@ export type ViewportIntent =
 					value: TerminalDefaultColors;
 					case: "terminalDefaultColors";
 			  }
+			| {
+					/**
+					 * Search this connection's retained history and reveal one match. An
+					 * empty query ends the find. Never changes PTY state or other viewports.
+					 *
+					 * @generated from field: terminal.state.projection.v1.FindInHistory find_in_history = 15;
+					 */
+					value: FindInHistory;
+					case: "findInHistory";
+			  }
 			| { case: undefined; value?: undefined };
 	};
 
@@ -408,6 +426,132 @@ export type ViewportIntent =
 export const ViewportIntentSchema: GenMessage<ViewportIntent> =
 	/*@__PURE__*/
 	messageDesc(file_terminal_state_projection_v1_projection, 5);
+
+/**
+ * @generated from message terminal.state.projection.v1.FindInHistory
+ */
+export type FindInHistory =
+	Message<"terminal.state.projection.v1.FindInHistory"> & {
+		/**
+		 * @generated from field: string query = 1;
+		 */
+		query: string;
+
+		/**
+		 * @generated from field: bool case_sensitive = 2;
+		 */
+		caseSensitive: boolean;
+
+		/**
+		 * @generated from field: bool regex = 3;
+		 */
+		regex: boolean;
+
+		/**
+		 * @generated from field: terminal.state.projection.v1.FindStep step = 4;
+		 */
+		step: FindStep;
+	};
+
+/**
+ * Describes the message terminal.state.projection.v1.FindInHistory.
+ * Use `create(FindInHistorySchema)` to create a new message.
+ */
+export const FindInHistorySchema: GenMessage<FindInHistory> =
+	/*@__PURE__*/
+	messageDesc(file_terminal_state_projection_v1_projection, 6);
+
+/**
+ * The Host's answer to the newest applied find on this connection.
+ *
+ * @generated from message terminal.state.projection.v1.ViewportFind
+ */
+export type ViewportFind =
+	Message<"terminal.state.projection.v1.ViewportFind"> & {
+		/**
+		 * Intent sequence of the find this result answers.
+		 *
+		 * @generated from field: uint64 find_intent_seq = 1;
+		 */
+		findIntentSeq: bigint;
+
+		/**
+		 * @generated from field: terminal.state.projection.v1.FindStatus status = 2;
+		 */
+		status: FindStatus;
+
+		/**
+		 * Matches found, counted from the newest output.
+		 *
+		 * @generated from field: uint32 match_count = 3;
+		 */
+		matchCount: number;
+
+		/**
+		 * False when a scan or match bound stopped before the oldest retained row.
+		 *
+		 * @generated from field: bool match_count_complete = 4;
+		 */
+		matchCountComplete: boolean;
+
+		/**
+		 * One-based position of the selected match counted from the newest; zero
+		 * when nothing matched.
+		 *
+		 * @generated from field: uint32 current_match = 5;
+		 */
+		currentMatch: number;
+
+		/**
+		 * @generated from field: repeated terminal.state.projection.v1.FindHighlight highlights = 6;
+		 */
+		highlights: FindHighlight[];
+	};
+
+/**
+ * Describes the message terminal.state.projection.v1.ViewportFind.
+ * Use `create(ViewportFindSchema)` to create a new message.
+ */
+export const ViewportFindSchema: GenMessage<ViewportFind> =
+	/*@__PURE__*/
+	messageDesc(file_terminal_state_projection_v1_projection, 7);
+
+/**
+ * One match segment on one physical row of the frame. Columns are canonical
+ * cells; the end is exclusive.
+ *
+ * @generated from message terminal.state.projection.v1.FindHighlight
+ */
+export type FindHighlight =
+	Message<"terminal.state.projection.v1.FindHighlight"> & {
+		/**
+		 * @generated from field: uint32 row = 1;
+		 */
+		row: number;
+
+		/**
+		 * @generated from field: uint32 start_column = 2;
+		 */
+		startColumn: number;
+
+		/**
+		 * @generated from field: uint32 end_column = 3;
+		 */
+		endColumn: number;
+
+		/**
+		 * @generated from field: bool current = 4;
+		 */
+		current: boolean;
+	};
+
+/**
+ * Describes the message terminal.state.projection.v1.FindHighlight.
+ * Use `create(FindHighlightSchema)` to create a new message.
+ */
+export const FindHighlightSchema: GenMessage<FindHighlight> =
+	/*@__PURE__*/
+	messageDesc(file_terminal_state_projection_v1_projection, 8);
 
 /**
  * @generated from message terminal.state.projection.v1.TerminalDefaultColors
@@ -431,7 +575,7 @@ export type TerminalDefaultColors =
  */
 export const TerminalDefaultColorsSchema: GenMessage<TerminalDefaultColors> =
 	/*@__PURE__*/
-	messageDesc(file_terminal_state_projection_v1_projection, 6);
+	messageDesc(file_terminal_state_projection_v1_projection, 9);
 
 /**
  * @generated from message terminal.state.projection.v1.ScrollRows
@@ -451,7 +595,7 @@ export type ScrollRows = Message<"terminal.state.projection.v1.ScrollRows"> & {
  */
 export const ScrollRowsSchema: GenMessage<ScrollRows> =
 	/*@__PURE__*/
-	messageDesc(file_terminal_state_projection_v1_projection, 7);
+	messageDesc(file_terminal_state_projection_v1_projection, 10);
 
 /**
  * @generated from message terminal.state.projection.v1.FollowTail
@@ -465,7 +609,7 @@ export type FollowTail =
  */
 export const FollowTailSchema: GenMessage<FollowTail> =
 	/*@__PURE__*/
-	messageDesc(file_terminal_state_projection_v1_projection, 8);
+	messageDesc(file_terminal_state_projection_v1_projection, 11);
 
 /**
  * @generated from message terminal.state.projection.v1.SetViewportRows
@@ -484,7 +628,7 @@ export type SetViewportRows =
  */
 export const SetViewportRowsSchema: GenMessage<SetViewportRows> =
 	/*@__PURE__*/
-	messageDesc(file_terminal_state_projection_v1_projection, 9);
+	messageDesc(file_terminal_state_projection_v1_projection, 12);
 
 /**
  * Final lifecycle outcome for one wheel interaction. A complete frame remains
@@ -540,7 +684,7 @@ export type WheelReceipt =
  */
 export const WheelReceiptSchema: GenMessage<WheelReceipt> =
 	/*@__PURE__*/
-	messageDesc(file_terminal_state_projection_v1_projection, 10);
+	messageDesc(file_terminal_state_projection_v1_projection, 13);
 
 /**
  * @generated from message terminal.state.projection.v1.WheelWrittenToPty
@@ -559,7 +703,7 @@ export type WheelWrittenToPty =
  */
 export const WheelWrittenToPtySchema: GenMessage<WheelWrittenToPty> =
 	/*@__PURE__*/
-	messageDesc(file_terminal_state_projection_v1_projection, 11);
+	messageDesc(file_terminal_state_projection_v1_projection, 14);
 
 /**
  * @generated from message terminal.state.projection.v1.WheelAppliedToViewport
@@ -578,7 +722,7 @@ export type WheelAppliedToViewport =
  */
 export const WheelAppliedToViewportSchema: GenMessage<WheelAppliedToViewport> =
 	/*@__PURE__*/
-	messageDesc(file_terminal_state_projection_v1_projection, 12);
+	messageDesc(file_terminal_state_projection_v1_projection, 15);
 
 /**
  * @generated from message terminal.state.projection.v1.WheelRefused
@@ -597,7 +741,7 @@ export type WheelRefused =
  */
 export const WheelRefusedSchema: GenMessage<WheelRefused> =
 	/*@__PURE__*/
-	messageDesc(file_terminal_state_projection_v1_projection, 13);
+	messageDesc(file_terminal_state_projection_v1_projection, 16);
 
 /**
  * @generated from message terminal.state.projection.v1.WheelFailed
@@ -616,7 +760,7 @@ export type WheelFailed =
  */
 export const WheelFailedSchema: GenMessage<WheelFailed> =
 	/*@__PURE__*/
-	messageDesc(file_terminal_state_projection_v1_projection, 14);
+	messageDesc(file_terminal_state_projection_v1_projection, 17);
 
 /**
  * @generated from enum terminal.state.projection.v1.ViewportAnchorStatus
@@ -661,6 +805,76 @@ export const ViewportAnchorStatusSchema: GenEnum<ViewportAnchorStatus> =
 	enumDesc(file_terminal_state_projection_v1_projection, 0);
 
 /**
+ * @generated from enum terminal.state.projection.v1.FindStep
+ */
+export enum FindStep {
+	/**
+	 * @generated from enum value: FIND_STEP_UNSPECIFIED = 0;
+	 */
+	UNSPECIFIED = 0,
+
+	/**
+	 * A new or edited query selects the newest match.
+	 *
+	 * @generated from enum value: FIND_STEP_RESTART = 1;
+	 */
+	RESTART = 1,
+
+	/**
+	 * Select the next match toward older output, wrapping to the newest.
+	 *
+	 * @generated from enum value: FIND_STEP_OLDER = 2;
+	 */
+	OLDER = 2,
+
+	/**
+	 * Select the next match toward newer output, wrapping to the oldest.
+	 *
+	 * @generated from enum value: FIND_STEP_NEWER = 3;
+	 */
+	NEWER = 3,
+}
+
+/**
+ * Describes the enum terminal.state.projection.v1.FindStep.
+ */
+export const FindStepSchema: GenEnum<FindStep> =
+	/*@__PURE__*/
+	enumDesc(file_terminal_state_projection_v1_projection, 1);
+
+/**
+ * @generated from enum terminal.state.projection.v1.FindStatus
+ */
+export enum FindStatus {
+	/**
+	 * @generated from enum value: FIND_STATUS_UNSPECIFIED = 0;
+	 */
+	UNSPECIFIED = 0,
+
+	/**
+	 * @generated from enum value: FIND_STATUS_MATCHED = 1;
+	 */
+	MATCHED = 1,
+
+	/**
+	 * @generated from enum value: FIND_STATUS_NO_MATCH = 2;
+	 */
+	NO_MATCH = 2,
+
+	/**
+	 * @generated from enum value: FIND_STATUS_INVALID_PATTERN = 3;
+	 */
+	INVALID_PATTERN = 3,
+}
+
+/**
+ * Describes the enum terminal.state.projection.v1.FindStatus.
+ */
+export const FindStatusSchema: GenEnum<FindStatus> =
+	/*@__PURE__*/
+	enumDesc(file_terminal_state_projection_v1_projection, 2);
+
+/**
  * @generated from enum terminal.state.projection.v1.WheelRefusalReason
  */
 export enum WheelRefusalReason {
@@ -685,7 +899,7 @@ export enum WheelRefusalReason {
  */
 export const WheelRefusalReasonSchema: GenEnum<WheelRefusalReason> =
 	/*@__PURE__*/
-	enumDesc(file_terminal_state_projection_v1_projection, 1);
+	enumDesc(file_terminal_state_projection_v1_projection, 3);
 
 /**
  * @generated from enum terminal.state.projection.v1.WheelFailureReason
@@ -712,4 +926,4 @@ export enum WheelFailureReason {
  */
 export const WheelFailureReasonSchema: GenEnum<WheelFailureReason> =
 	/*@__PURE__*/
-	enumDesc(file_terminal_state_projection_v1_projection, 2);
+	enumDesc(file_terminal_state_projection_v1_projection, 4);

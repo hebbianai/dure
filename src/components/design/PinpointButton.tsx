@@ -16,6 +16,7 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { openDesignModeBrowser } from "@/lib/design/designModeBrowser";
+import { onPinpointBrowserRequest } from "@/lib/design/pinpointBrowserActivation";
 import { toggleDesignMode } from "@/lib/design/designModeRuntime";
 import { t } from "@/lib/i18n";
 import {
@@ -58,6 +59,11 @@ export function PinpointButton() {
 		window.addEventListener("keydown", onKey, true);
 		return () => window.removeEventListener("keydown", onKey, true);
 	}, [basic]);
+
+	useEffect(
+		() => (basic ? undefined : onPinpointBrowserRequest(() => setBrowserOpen(true))),
+		[basic],
+	);
 
 	const dialog = (
 		<DesignModeBrowserDialog

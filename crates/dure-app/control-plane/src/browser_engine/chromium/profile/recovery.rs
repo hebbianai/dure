@@ -20,7 +20,7 @@ pub(crate) enum RecoveryState {
 }
 
 struct Recovery {
-    file: File,
+    file: evidence::LockedFile,
     path: PathBuf,
     digest: String,
     state: RecoveryState,
@@ -37,7 +37,7 @@ impl Recovery {
         let Some(file) = evidence::open(&path)? else {
             return Ok(None);
         };
-        evidence::lock(&file)?;
+        let file = evidence::LockedFile::acquire(file, evidence::RECOVERY_BUSY)?;
         evidence::same_file(&file, &path)?;
         let bytes = evidence::bytes(&file)?;
         let claim: NativeClaim = serde_json::from_slice(&bytes).map_err(unconfirmed)?;

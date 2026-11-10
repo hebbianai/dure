@@ -63,6 +63,10 @@ pub struct ViewportFrame {
     /// the input fence it dispatched; it has no rendering semantics.
     #[prost(message, optional, tag = "22")]
     pub input_output_timing: ::core::option::Option<InputOutputTiming>,
+    /// Present only while this connection has an active find. Highlights are
+    /// relative to this frame's rows; counts describe the Host's last search.
+    #[prost(message, optional, tag = "23")]
+    pub find: ::core::option::Option<ViewportFind>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 #[prost(skip_debug)]
@@ -122,7 +126,7 @@ pub struct IndexedColorOverride {
     pub rgb: u32,
 }
 /// Connection-local presentation input. It never changes PTY geometry.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 #[prost(skip_debug)]
 pub struct ViewportIntent {
     #[prost(uint64, tag = "1")]
@@ -131,12 +135,12 @@ pub struct ViewportIntent {
     /// consecutive deltas and acknowledges the highest applied value in a frame.
     #[prost(uint64, tag = "2")]
     pub intent_seq: u64,
-    #[prost(oneof = "viewport_intent::Intent", tags = "10, 11, 12, 13, 14")]
+    #[prost(oneof = "viewport_intent::Intent", tags = "10, 11, 12, 13, 14, 15")]
     pub intent: ::core::option::Option<viewport_intent::Intent>,
 }
 /// Nested message and enum types in `ViewportIntent`.
 pub mod viewport_intent {
-    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     #[prost(skip_debug)]
     pub enum Intent {
         #[prost(message, tag = "10")]
@@ -153,7 +157,59 @@ pub mod viewport_intent {
         /// queries OSC 10/11. This does not create terminal-origin color overrides.
         #[prost(message, tag = "14")]
         TerminalDefaultColors(super::TerminalDefaultColors),
+        /// Search this connection's retained history and reveal one match. An
+        /// empty query ends the find. Never changes PTY state or other viewports.
+        #[prost(message, tag = "15")]
+        FindInHistory(super::FindInHistory),
     }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
+pub struct FindInHistory {
+    #[prost(string, tag = "1")]
+    pub query: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub case_sensitive: bool,
+    #[prost(bool, tag = "3")]
+    pub regex: bool,
+    #[prost(enumeration = "FindStep", tag = "4")]
+    pub step: i32,
+}
+/// The Host's answer to the newest applied find on this connection.
+#[derive(Clone, PartialEq, ::prost::Message)]
+#[prost(skip_debug)]
+pub struct ViewportFind {
+    /// Intent sequence of the find this result answers.
+    #[prost(uint64, tag = "1")]
+    pub find_intent_seq: u64,
+    #[prost(enumeration = "FindStatus", tag = "2")]
+    pub status: i32,
+    /// Matches found, counted from the newest output.
+    #[prost(uint32, tag = "3")]
+    pub match_count: u32,
+    /// False when a scan or match bound stopped before the oldest retained row.
+    #[prost(bool, tag = "4")]
+    pub match_count_complete: bool,
+    /// One-based position of the selected match counted from the newest; zero
+    /// when nothing matched.
+    #[prost(uint32, tag = "5")]
+    pub current_match: u32,
+    #[prost(message, repeated, tag = "6")]
+    pub highlights: ::prost::alloc::vec::Vec<FindHighlight>,
+}
+/// One match segment on one physical row of the frame. Columns are canonical
+/// cells; the end is exclusive.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[prost(skip_debug)]
+pub struct FindHighlight {
+    #[prost(uint32, tag = "1")]
+    pub row: u32,
+    #[prost(uint32, tag = "2")]
+    pub start_column: u32,
+    #[prost(uint32, tag = "3")]
+    pub end_column: u32,
+    #[prost(bool, tag = "4")]
+    pub current: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 #[prost(skip_debug)]
@@ -262,6 +318,73 @@ impl ViewportAnchorStatus {
             "VIEWPORT_ANCHOR_STATUS_CLAMPED_START" => Some(Self::ClampedStart),
             "VIEWPORT_ANCHOR_STATUS_CLAMPED_TAIL" => Some(Self::ClampedTail),
             "VIEWPORT_ANCHOR_STATUS_PRUNED_TO_TAIL" => Some(Self::PrunedToTail),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum FindStep {
+    Unspecified = 0,
+    /// A new or edited query selects the newest match.
+    Restart = 1,
+    /// Select the next match toward older output, wrapping to the newest.
+    Older = 2,
+    /// Select the next match toward newer output, wrapping to the oldest.
+    Newer = 3,
+}
+impl FindStep {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "FIND_STEP_UNSPECIFIED",
+            Self::Restart => "FIND_STEP_RESTART",
+            Self::Older => "FIND_STEP_OLDER",
+            Self::Newer => "FIND_STEP_NEWER",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "FIND_STEP_UNSPECIFIED" => Some(Self::Unspecified),
+            "FIND_STEP_RESTART" => Some(Self::Restart),
+            "FIND_STEP_OLDER" => Some(Self::Older),
+            "FIND_STEP_NEWER" => Some(Self::Newer),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum FindStatus {
+    Unspecified = 0,
+    Matched = 1,
+    NoMatch = 2,
+    InvalidPattern = 3,
+}
+impl FindStatus {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "FIND_STATUS_UNSPECIFIED",
+            Self::Matched => "FIND_STATUS_MATCHED",
+            Self::NoMatch => "FIND_STATUS_NO_MATCH",
+            Self::InvalidPattern => "FIND_STATUS_INVALID_PATTERN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "FIND_STATUS_UNSPECIFIED" => Some(Self::Unspecified),
+            "FIND_STATUS_MATCHED" => Some(Self::Matched),
+            "FIND_STATUS_NO_MATCH" => Some(Self::NoMatch),
+            "FIND_STATUS_INVALID_PATTERN" => Some(Self::InvalidPattern),
             _ => None,
         }
     }

@@ -1,4 +1,6 @@
 export const search: Record<string, string> = {
+	"search.appCommand.alreadyOpen": "已打开",
+	"search.appCommand.keyboardOnly": "仅限键盘快捷键",
 	"search.appCommand.label": "应用命令",
 	"search.appCommand.newTerminal": "打开新终端",
 	"search.appCommand.openTokenInspector": "打开令牌检查器",

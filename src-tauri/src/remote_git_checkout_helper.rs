@@ -37,17 +37,17 @@ fn read_bundled_helper(path: &Path) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(unavailable)
 }
 
-fn bundled_helper<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    triple: &str,
-) -> Result<(Vec<u8>, String), String> {
-    let resource_dir = app.path().resource_dir().map_err(unavailable)?;
-    let bytes = read_bundled_helper(
-        &resource_dir
-            .join("resources/remote-git-checkout-helper")
-            .join(triple)
-            .join(HELPER_NAME),
-    )?;
+fn bundled_helper(resource_dir: &Path, triple: &str) -> Result<(Vec<u8>, String), String> {
+    let helper = resource_dir
+        .join("resources/remote-git-checkout-helper")
+        .join(triple)
+        .join(HELPER_NAME);
+    if !helper.exists() {
+        return Err(unavailable(format!(
+            "this Dure build does not carry a checkout helper for {triple}"
+        )));
+    }
+    let bytes = read_bundled_helper(&helper)?;
     let digest = format!("{:x}", Sha256::digest(&bytes));
     Ok((bytes, digest))
 }
@@ -176,13 +176,22 @@ pub(crate) fn ensure_on<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     session: &ssh2::Session,
 ) -> Result<String, String> {
-    let triple = crate::remote_platform::detect_linux_triple_on(session).map_err(|error| match error {
-        crate::remote_platform::RemotePlatformError::Probe(detail) => unavailable(detail),
-        crate::remote_platform::RemotePlatformError::Unsupported { system, machine } => {
-            unavailable(format!("unsupported remote platform {system} {machine}"))
-        }
-    })?;
-    let (bytes, digest) = bundled_helper(app, triple)?;
+    let resource_dir = app.path().resource_dir().map_err(unavailable)?;
+    ensure_from_resources(&resource_dir, session)
+}
+
+pub(crate) fn ensure_from_resources(
+    resource_dir: &Path,
+    session: &ssh2::Session,
+) -> Result<String, String> {
+    let triple =
+        crate::remote_platform::detect_remote_triple_on(session).map_err(|error| match error {
+            crate::remote_platform::RemotePlatformError::Probe(detail) => unavailable(detail),
+            crate::remote_platform::RemotePlatformError::Unsupported { system, machine } => {
+                unavailable(format!("unsupported remote platform {system} {machine}"))
+            }
+        })?;
+    let (bytes, digest) = bundled_helper(resource_dir, triple)?;
     ensure_inner(session, &bytes, &digest)
 }
 
@@ -218,6 +227,28 @@ mod tests {
             ..exact
         })
         .is_err());
+    }
+
+    #[test]
+    fn a_build_without_the_target_says_so_instead_of_a_file_error() {
+        let resources = tempfile::tempdir().unwrap();
+        let error = bundled_helper(resources.path(), "aarch64-apple-darwin").unwrap_err();
+        assert!(error.starts_with("remote_git_checkout_capability_unavailable: "));
+        assert!(error.contains("does not carry a checkout helper for aarch64-apple-darwin"));
+    }
+
+    #[test]
+    fn reads_the_helper_for_exactly_the_selected_target() {
+        let resources = tempfile::tempdir().unwrap();
+        let target = resources
+            .path()
+            .join("resources/remote-git-checkout-helper/aarch64-apple-darwin");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join(HELPER_NAME), b"mach-o").unwrap();
+        let (bytes, digest) = bundled_helper(resources.path(), "aarch64-apple-darwin").unwrap();
+        assert_eq!(bytes, b"mach-o");
+        assert_eq!(digest, format!("{:x}", Sha256::digest(b"mach-o")));
+        assert!(bundled_helper(resources.path(), "x86_64-unknown-linux-musl").is_err());
     }
 
     #[test]

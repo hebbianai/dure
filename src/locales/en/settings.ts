@@ -496,6 +496,7 @@ export const settingsEnglishTranslations = {
 	"settings.appearance.scheme.darkCollapsedHint": "Applied in dark mode — expand to change",
 	"settings.appearance.scheme.darkDesc": "Applied to the terminal and UI in dark mode.",
 	"settings.shortcuts.cmd.termKillWord": "Delete word (^W)",
+	"settings.shortcuts.cmd.termFind": "Find in terminal",
 	"settings.shortcuts.title": "Shortcuts",
 	"settings.providers.capability.conversationList": "Conversation list",
 	"settings.providers.capability.fork": "Fork a conversation",

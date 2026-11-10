@@ -279,6 +279,7 @@ fn request() -> AgentSpawnPreviewIntentV1 {
         model: None,
         effort: None,
         interaction_preference: None,
+        parent: None,
     }
 }
 
@@ -599,6 +600,37 @@ async fn native_preflight_rejection_names_the_failed_provider_check() {
         planned.plan.launch,
         AgentSpawnLaunchPlanV1::StructuredProtocol
     ));
+}
+
+#[test]
+fn unattended_launches_unpin_the_terminal_only_without_the_native_integration() {
+    let codex = ProviderIdV1::new("codex").unwrap();
+    let pinned = Some(AgentSpawnInteractionPreferenceV1::NativeCli);
+    assert_eq!(
+        crate::unattended_interaction_preference(
+            &crate::provider_extension::test_codex_structured_agent_provider_registry(),
+            &codex,
+        ),
+        pinned
+    );
+    for provider in ["codex", "claude"] {
+        assert_eq!(
+            crate::unattended_interaction_preference(
+                &crate::provider_extension::test_unintegrated_provider_registry(),
+                &ProviderIdV1::new(provider).unwrap(),
+            ),
+            None,
+            "{provider}"
+        );
+    }
+    // An unknown provider keeps the pin, so preview refuses it as before.
+    assert_eq!(
+        crate::unattended_interaction_preference(
+            &crate::provider_extension::test_unintegrated_provider_registry(),
+            &ProviderIdV1::new("unknown-provider").unwrap(),
+        ),
+        pinned
+    );
 }
 
 #[tokio::test]

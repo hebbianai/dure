@@ -21,6 +21,7 @@ pub use interaction::{
 };
 pub use types::*;
 pub use viewport::{
+    FIND_PROTOCOL_MINOR, MAX_FIND_HIGHLIGHTS, MAX_FIND_MATCHES, MAX_FIND_QUERY_BYTES,
     ViewportIngressAuthority, validate_viewport_frame, validate_viewport_ingress,
     validate_viewport_intent, validate_wheel_receipt,
 };
@@ -34,7 +35,7 @@ use validation_primitives::{
 
 pub const ENVELOPE_MAGIC: [u8; 4] = *b"TSPB";
 pub const PROTOCOL_MAJOR: u8 = 1;
-pub const PROTOCOL_MINOR: u8 = 6;
+pub const PROTOCOL_MINOR: u8 = 7;
 pub const ENVELOPE_HEADER_BYTES: usize = 20;
 pub const MAX_PAYLOAD_BYTES: usize = 1024 * 1024;
 pub const MAX_ENVELOPE_BYTES: usize = ENVELOPE_HEADER_BYTES + MAX_PAYLOAD_BYTES;

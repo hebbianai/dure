@@ -417,6 +417,7 @@ async fn seed_dispatch_stop_with_runtime(
             model: None,
             effort: None,
             interaction_preference: None,
+            parent: None,
         },
         agent_id: agent_id.clone(),
         workspace_id: workspace_id.clone(),
@@ -2226,7 +2227,10 @@ async fn restart_recovery_drives_the_authorized_parent_before_its_child_projecti
     let recovery = tokio::spawn(agent_runtime_recovery::run(Arc::clone(&reopened)));
     let observation_started = std::time::Instant::now();
     let mut last_parent = None;
-    let recovered = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+    // The deadline bounds a hang, not latency. Removing the owned checkout
+    // runs about 60 Git processes in one recovery pass; under parallel test
+    // load that took 2-4 s with no retry, while the window was 2 s (#257).
+    let recovered = tokio::time::timeout(std::time::Duration::from_secs(30), async {
         loop {
             let stop = reopened
                 .store

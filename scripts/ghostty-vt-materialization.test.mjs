@@ -102,6 +102,36 @@ test("a failed public download leaves no cache or authenticated fallback", () =>
   expect(fs.readdirSync(cache)).toEqual([]);
 });
 
+test("the public download retries transient server errors such as a 504", () => {
+  const cache = path.join(temporaryDirectory(), "cache");
+  let curlArguments;
+
+  expect(() =>
+    ensureGhosttyVtProof({
+      arch: "arm64",
+      platform: "darwin",
+      target: "aarch64-apple-darwin",
+      environment: { DURE_GHOSTTY_VT_CACHE_ROOT: cache },
+      runCommand(program, arguments_) {
+        if (path.basename(program) !== "curl") {
+          throw new Error("unverified input reached extraction or compilation");
+        }
+        curlArguments = arguments_;
+        throw new Error("The requested URL returned error: 504");
+      },
+    }),
+  ).toThrow("504");
+
+  // curl itself retries: a gateway timeout from the release CDN is retried
+  // with a delay instead of failing the whole check on the first attempt.
+  const retries = Number(curlArguments[curlArguments.indexOf("--retry") + 1]);
+  expect(retries).toBeGreaterThanOrEqual(3);
+  expect(curlArguments).toContain("--retry-all-errors");
+  expect(curlArguments.at(-1)).toBe(
+    "https://github.com/hebbianai/dure/releases/download/hmux-ghostty-vt-provenance-v2/hmux-ghostty-vt-provenance-v2.tar.gz",
+  );
+});
+
 test.each([
   ["build-hmux-product-runtime.sh", ["--features", "hmux-runtime/terminal-state-stream"]],
   ["with-hmux-build-environment.sh", []],

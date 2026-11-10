@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
 	writeText: vi.fn(),
 	runShell: vi.fn(),
 	requestFeedback: vi.fn(),
+	runAppCommand: vi.fn(),
+	readAppCommandContext: vi.fn(),
 	panels: [] as Array<{
 		id: string;
 		params: Record<string, unknown>;
@@ -57,13 +59,25 @@ vi.mock("@/lib/feedback/feedbackActivation", () => ({
 	requestFeedback: mocks.requestFeedback,
 }));
 
+vi.mock("@/lib/commands/appCommandRunner", () => ({
+	readAppCommandContext: mocks.readAppCommandContext,
+	runAppCommand: mocks.runAppCommand,
+}));
+
 import { NativeSearchDialog } from "@/components/search/NativeSearchDialog";
+import { t } from "@/lib/i18n";
+import { resolveShortcuts } from "@/lib/settings/shortcutBindings";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
 import { useStore } from "@/store";
 
 describe("NativeSearchDialog", () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks();
+		const actual = await vi.importActual<
+			typeof import("@/lib/commands/appCommandRunner")
+		>("@/lib/commands/appCommandRunner");
+		mocks.readAppCommandContext.mockImplementation(actual.readAppCommandContext);
+		mocks.runAppCommand.mockImplementation(actual.runAppCommand);
 		mocks.panels = [
 			{
 				id: "agent:alpha",
@@ -189,6 +203,95 @@ describe("NativeSearchDialog", () => {
 		await waitFor(() => expect(mocks.requestFeedback).toHaveBeenCalledTimes(1));
 		expect(paletteStillPresentWhenCalled).toEqual([false]);
 		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	describe("app commands", () => {
+		const EVERYTHING = {
+			hasActivePane: true,
+			canBalancePanes: true,
+			canUndoPaneMove: true,
+			hasNextUp: true,
+			devBuild: true,
+			proInterface: true,
+		};
+
+		it("shows every shortcut on the Shortcuts page with its keys", async () => {
+			mocks.readAppCommandContext.mockReturnValue(EVERYTHING);
+			render(<NativeSearchDialog request={{ revision: 1, initialQuery: "" }} />);
+			const input = await screen.findByRole("combobox");
+			fireEvent.change(input, { target: { value: ">" } });
+
+			for (const shortcut of resolveShortcuts({})) {
+				const rows = await screen.findAllByRole("option", {
+					name: new RegExp(t(shortcut.command).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+				});
+				const expected = shortcut.keys.flat().filter((key) => key !== "…");
+				expect(
+					rows.some((row) =>
+						expected.every((key) =>
+							Array.from(row.querySelectorAll("kbd")).some(
+								(cap) => cap.textContent === key,
+							),
+						),
+					),
+					shortcut.id,
+				).toBe(true);
+			}
+		});
+
+		it("runs a command only after the palette has closed", async () => {
+			mocks.readAppCommandContext.mockReturnValue(EVERYTHING);
+			const closedWhenRun: boolean[] = [];
+			mocks.runAppCommand.mockImplementation(() => {
+				closedWhenRun.push(screen.queryByRole("dialog") === null);
+			});
+			render(<NativeSearchDialog request={{ revision: 1, initialQuery: "" }} />);
+			const input = await screen.findByRole("combobox");
+			fireEvent.change(input, { target: { value: "> split right" } });
+			fireEvent.keyDown(input, { key: "Enter" });
+
+			await waitFor(() =>
+				expect(mocks.runAppCommand).toHaveBeenCalledWith("split-right"),
+			);
+			expect(closedWhenRun).toEqual([true]);
+		});
+
+		it("keeps the palette open on a keyboard-only command", async () => {
+			mocks.readAppCommandContext.mockReturnValue(EVERYTHING);
+			render(<NativeSearchDialog request={{ revision: 1, initialQuery: "" }} />);
+			const input = await screen.findByRole("combobox");
+			fireEvent.change(input, { target: { value: "> term kill line" } });
+			const row = await screen.findByRole("option", { selected: true });
+			expect(row.getAttribute("aria-disabled")).toBe("true");
+			fireEvent.keyDown(input, { key: "Enter" });
+
+			expect(screen.getByRole("dialog")).toBeTruthy();
+			expect(mocks.runAppCommand).not.toHaveBeenCalled();
+		});
+
+		it("hides pane commands when no pane is active", async () => {
+			mocks.readAppCommandContext.mockReturnValue({
+				...EVERYTHING,
+				hasActivePane: false,
+			});
+			render(<NativeSearchDialog request={{ revision: 1, initialQuery: "" }} />);
+			const input = await screen.findByRole("combobox");
+			fireEvent.change(input, { target: { value: "> split right" } });
+			await waitFor(() =>
+				expect(screen.queryByRole("option", { selected: true })).toBeNull(),
+			);
+		});
+
+		it("shows the palette's own shortcut as the user bound it", async () => {
+			useStore.setState({
+				shortcutOverrides: {
+					"native-search": { mod: true, shift: true, alt: false, key: "k" },
+				},
+			});
+			render(<NativeSearchDialog request={{ revision: 1, initialQuery: "" }} />);
+			expect(await screen.findByText("⌘⇧K")).toBeTruthy();
+			useStore.setState({ shortcutOverrides: {} });
+		});
 	});
 
 	// The pending flag is only ever consumed by onCloseAutoFocus, which

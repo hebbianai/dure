@@ -63,6 +63,16 @@ const REQUEST_KEYS = new Set([
 	"windowLabel",
 	"referencePanelId",
 ]);
+/** Receipt-free identity: the backend's current runtime of an Agent that the
+ * app launched, resumed or imported. It has no spawn operation or worktree
+ * receipt, only the runtime workspace root. */
+const AGENT_RUNTIME_REQUEST_KEYS = new Set([
+	...[...REQUEST_KEYS].filter(
+		(key) => !["operationId", "preparedSessionId", "worktree"].includes(key),
+	),
+	"identity",
+	"workspaceRootPath",
+]);
 const SAFE_TOKEN = /^[A-Za-z0-9._:+-]{1,512}$/;
 const WINDOW_LABEL = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_PATH_LENGTH = 4096;
@@ -71,12 +81,32 @@ export type ManagedRunPresentationBinding =
 	| HmuxManagedPaneBindingV1
 	| RemoteHmuxManagedPaneBindingV1;
 
+/** A spawned Run: the launch receipt names the operation and prepared Session. */
+interface ManagedRunSpawnIdentity {
+	identity?: undefined;
+	operationId: string;
+	/** Immutable Session preference from the prepared spawn plan. */
+	preparedSessionId: string;
+	/** Exact effective managed-create key, normalized at the wire boundary. */
+	launchIdempotencyKey: string;
+}
+
+/** An Agent without a Run record. Presenting it never records a canonical
+ * spawn, so stop and removal keep their app-launched semantics. */
+interface ManagedRunAgentRuntimeIdentity {
+	identity: "agent_runtime";
+	operationId?: undefined;
+	preparedSessionId?: undefined;
+	/** Reported by the backend after a transition or rehost; otherwise read
+	 * from the exact live Host's create receipt before presentation. */
+	launchIdempotencyKey?: string;
+}
+
 interface CliManagedRunPresentationRequestFields {
 	schemaVersion: 1;
 	runtime: "hmux_managed_v1";
 	/** Exact control-plane route. Missing only on legacy presentation requests. */
 	backendProfileId?: string;
-	operationId: string;
 	agentId: string;
 	agentName: string;
 	projectId: string;
@@ -85,11 +115,7 @@ interface CliManagedRunPresentationRequestFields {
 	/** Backend-owned credential selection for this exact runtime. Missing only
 	 * on legacy CLI presentation requests. */
 	executionProfile?: AgentExecutionProfileV1;
-	/** Immutable Session preference from the prepared spawn plan. */
-	preparedSessionId: string;
 	sessionId: string;
-	/** Exact effective managed-create key, normalized at the wire boundary. */
-	launchIdempotencyKey: string;
 	workspaceId: string;
 	providerConversationRef?: string | null;
 	worktree: AgentRunReceiptWorktree;
@@ -101,7 +127,9 @@ interface CliManagedRunPresentationRequestFields {
 }
 
 export type CliManagedRunPresentationRequest =
-	CliManagedRunPresentationRequestFields & BackendPresentationTarget;
+	CliManagedRunPresentationRequestFields &
+		(ManagedRunSpawnIdentity | ManagedRunAgentRuntimeIdentity) &
+		BackendPresentationTarget;
 
 export type CliManagedRunPresentationState = Pick<
 	AppState,
@@ -125,6 +153,13 @@ export type ManagedRunProjectionInput =
 				}
 			: never
 		: never;
+
+/** A spawned Run's projection input, the only identity background
+ * registration accepts because it records the Run's canonical spawn. */
+export type ManagedRunSpawnProjectionInput = Extract<
+	ManagedRunProjectionInput,
+	{ identity?: undefined }
+>;
 
 export class CliManagedRunPresentationError extends Error {
 	constructor(
@@ -174,20 +209,20 @@ function windowLabel(value: unknown): string {
 	return value;
 }
 
-export function parseManagedRunProjectionInput(
+type ManagedRunProjectionCommon = Omit<
+	CliManagedRunPresentationRequestFields,
+	"worktree" | "spaceId" | "windowLabel" | "referencePanelId"
+> &
+	BackendPresentationTarget;
+
+/** Fields both identities share, validated against one exact key set. */
+function parseManagedRunProjectionCommon(
 	value: unknown,
-): ManagedRunProjectionInput {
+	allowed: Set<string>,
+): ManagedRunProjectionCommon & { raw: Record<string, unknown> } {
 	if (
 		!isRecord(value) ||
-		!exactKeys(
-			value,
-			new Set(
-				[...REQUEST_KEYS].filter(
-					(key) =>
-						!["spaceId", "windowLabel", "referencePanelId"].includes(key),
-				),
-			),
-		) ||
+		!exactKeys(value, allowed) ||
 		value.schemaVersion !== 1 ||
 		value.runtime !== "hmux_managed_v1" ||
 		(value.source !== "local" && value.source !== "ssh") ||
@@ -242,41 +277,6 @@ export function parseManagedRunProjectionInput(
 			"backend profile identity is inconsistent",
 		);
 	}
-	const operationId = token(value.operationId, "operationId");
-	if (!isDureDomainIdV1(operationId)) {
-		failCliManagedRunPresentation("invalid_request", "operationId is invalid");
-	}
-	const sessionId = token(value.sessionId, "sessionId");
-	const legacyPreparedSessionId = operationId.startsWith("spawn-")
-		? `session-${operationId.slice("spawn-".length)}`
-		: undefined;
-	const preparedSessionId =
-		value.preparedSessionId === undefined
-			? legacyPreparedSessionId
-			: token(value.preparedSessionId, "preparedSessionId");
-	if (!preparedSessionId) {
-		failCliManagedRunPresentation(
-			"invalid_request",
-			"preparedSessionId is required for this managed Run identity",
-		);
-	}
-	const preparedLaunchIdempotencyKey = `spawn-runtime:${operationId}`;
-	const launchIdempotencyKey =
-		value.launchIdempotencyKey === undefined
-			? sessionId === preparedSessionId
-				? preparedLaunchIdempotencyKey
-				: undefined
-			: token(value.launchIdempotencyKey, "launchIdempotencyKey");
-	if (
-		!launchIdempotencyKey ||
-		(sessionId === preparedSessionId) !==
-			(launchIdempotencyKey === preparedLaunchIdempotencyKey)
-	) {
-		failCliManagedRunPresentation(
-			"invalid_request",
-			"managed Run effective Session and create key do not form one identity",
-		);
-	}
 	const providerConversationRef =
 		value.providerConversationRef === undefined ||
 		value.providerConversationRef === null
@@ -292,11 +292,11 @@ export function parseManagedRunProjectionInput(
 		);
 	}
 	return {
+		raw: value,
 		schemaVersion: 1,
 		runtime: "hmux_managed_v1",
 		...executionTarget,
 		...(backendProfileId ? { backendProfileId } : {}),
-		operationId,
 		agentId: token(value.agentId, "agentId"),
 		agentName: token(value.agentName, "agentName"),
 		projectId: token(value.projectId, "projectId"),
@@ -305,17 +305,128 @@ export function parseManagedRunProjectionInput(
 			: {}),
 		providerId: providerId as Provider,
 		...(executionProfile ? { executionProfile } : {}),
-		preparedSessionId,
-		sessionId,
-		launchIdempotencyKey,
+		sessionId: token(value.sessionId, "sessionId"),
 		workspaceId: token(value.workspaceId, "workspaceId"),
 		providerConversationRef,
-		worktree:
-			parseRunPresentationWorktree(value.worktree) ??
-			failCliManagedRunPresentation("invalid_request", "worktree is invalid"),
 		generation: value.generation,
 		permissionMode: value.permissionMode,
 	};
+}
+
+/** A spawned Run's projection input. Background registration accepts only
+ * this identity: it records the Run's canonical spawn. */
+export function parseManagedRunProjectionInput(
+	value: unknown,
+): ManagedRunSpawnProjectionInput {
+	const { raw, ...common } = parseManagedRunProjectionCommon(
+		value,
+		new Set(
+			[...REQUEST_KEYS].filter(
+				(key) => !["spaceId", "windowLabel", "referencePanelId"].includes(key),
+			),
+		),
+	);
+	const operationId = token(raw.operationId, "operationId");
+	if (!isDureDomainIdV1(operationId)) {
+		failCliManagedRunPresentation("invalid_request", "operationId is invalid");
+	}
+	const sessionId = common.sessionId;
+	const legacyPreparedSessionId = operationId.startsWith("spawn-")
+		? `session-${operationId.slice("spawn-".length)}`
+		: undefined;
+	const preparedSessionId =
+		raw.preparedSessionId === undefined
+			? legacyPreparedSessionId
+			: token(raw.preparedSessionId, "preparedSessionId");
+	if (!preparedSessionId) {
+		failCliManagedRunPresentation(
+			"invalid_request",
+			"preparedSessionId is required for this managed Run identity",
+		);
+	}
+	const preparedLaunchIdempotencyKey = `spawn-runtime:${operationId}`;
+	const launchIdempotencyKey =
+		raw.launchIdempotencyKey === undefined
+			? sessionId === preparedSessionId
+				? preparedLaunchIdempotencyKey
+				: undefined
+			: token(raw.launchIdempotencyKey, "launchIdempotencyKey");
+	if (
+		!launchIdempotencyKey ||
+		(sessionId === preparedSessionId) !==
+			(launchIdempotencyKey === preparedLaunchIdempotencyKey)
+	) {
+		failCliManagedRunPresentation(
+			"invalid_request",
+			"managed Run effective Session and create key do not form one identity",
+		);
+	}
+	return {
+		...common,
+		operationId,
+		preparedSessionId,
+		launchIdempotencyKey,
+		worktree:
+			parseRunPresentationWorktree(raw.worktree) ??
+			failCliManagedRunPresentation("invalid_request", "worktree is invalid"),
+	};
+}
+
+/** An Agent without a Run record, identified only by the backend's current
+ * runtime. Its workspace is the project root or an existing checkout; the
+ * backend carries no branch, so a new projection shows none. */
+function parseAgentRuntimeProjectionInput(
+	value: unknown,
+): Extract<ManagedRunProjectionInput, { identity: "agent_runtime" }> {
+	const { raw, ...common } = parseManagedRunProjectionCommon(
+		value,
+		new Set(
+			[...AGENT_RUNTIME_REQUEST_KEYS].filter(
+				(key) => !["spaceId", "windowLabel", "referencePanelId"].includes(key),
+			),
+		),
+	);
+	if (
+		raw.identity !== "agent_runtime" ||
+		common.backendProfileId === undefined ||
+		!common.projectPath
+	) {
+		failCliManagedRunPresentation(
+			"invalid_request",
+			"Agent runtime presentation requires its backend profile and project root",
+		);
+	}
+	const workspaceRootPath = optionalPath(raw.workspaceRootPath);
+	if (!workspaceRootPath?.startsWith("/")) {
+		failCliManagedRunPresentation(
+			"invalid_request",
+			"workspaceRootPath is invalid",
+		);
+	}
+	return {
+		...common,
+		identity: "agent_runtime",
+		...(raw.launchIdempotencyKey === undefined
+			? {}
+			: {
+					launchIdempotencyKey: token(
+						raw.launchIdempotencyKey,
+						"launchIdempotencyKey",
+					),
+				}),
+		worktree:
+			normalizedRoot(workspaceRootPath) === normalizedRoot(common.projectPath)
+				? { kind: "project_root" }
+				: {
+						kind: "existing_checkout",
+						branch: "",
+						rootPath: workspaceRootPath,
+					},
+	};
+}
+
+function normalizedRoot(path: string): string {
+	return path.replace(/\/+$/u, "") || path;
 }
 
 export function parseCliManagedRunPresentationRequest(
@@ -333,7 +444,9 @@ export function parseCliManagedRunPresentationRequest(
 		...projection
 	} = value;
 	return {
-		...parseManagedRunProjectionInput(projection),
+		...(projection.identity === "agent_runtime"
+			? parseAgentRuntimeProjectionInput(projection)
+			: parseManagedRunProjectionInput(projection)),
 		spaceId: token(spaceId, "spaceId"),
 		windowLabel: windowLabel(label),
 		...(referencePanelId === undefined
@@ -405,7 +518,7 @@ export function projectManagedRunPresentationAgent(
 	outcome: "created" | "reused";
 } {
 	const canonicalSpawn: AgentCanonicalSpawnV1 | undefined =
-		request.backendProfileId === undefined
+		request.backendProfileId === undefined || request.operationId === undefined
 			? undefined
 			: {
 					schemaVersion: 1,
@@ -420,10 +533,8 @@ export function projectManagedRunPresentationAgent(
 			project,
 			request.providerId,
 		);
-	const { path: worktreePath, branch } = projectAgentRunWorkspace(
-		presentationWorktree,
-		project.path,
-	);
+	const { path: worktreePath, branch: receiptBranch } =
+		projectAgentRunWorkspace(presentationWorktree, project.path);
 	const credential = credentialProjection(request.executionProfile);
 	const projectedBinding = bindingWithCredential(
 		binding,
@@ -440,6 +551,13 @@ export function projectManagedRunPresentationAgent(
 	}
 	const idOwner = state.agents.find((agent) => agent.id === request.agentId);
 	const existing = runtimeOwners[0];
+	// A runtime-only identity carries no branch; an existing projection of the
+	// same runtime and checkout keeps the branch it was launched with.
+	const branch =
+		request.identity === "agent_runtime" &&
+		existing?.worktreePath === worktreePath
+			? existing.branch
+			: receiptBranch;
 	if (idOwner && idOwner !== existing) {
 		failCliManagedRunPresentation(
 			"client_agent_identity_conflict",

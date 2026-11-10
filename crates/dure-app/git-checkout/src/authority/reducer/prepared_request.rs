@@ -28,19 +28,32 @@ impl PreparedRequest {
         operation_id: OperationIdV1,
         reservation_token: &str,
     ) -> Result<Self, GitCheckoutUseError> {
+        let quiescent_start = match self.action {
+            PreparedAction::StartCreation { .. } => {
+                Some((self.operation_id.clone(), self.request_digest.clone()))
+            }
+            PreparedAction::Reserve { .. } => None,
+            _ => {
+                return Err(state_error(
+                    "creation abort requires a reservation or bound start",
+                ));
+            }
+        };
+        self.creation_abort_of(operation_id, reservation_token, quiescent_start)
+    }
+
+    /// Abort the exact reservation and start named by the caller, which must
+    /// already hold the proof that the start's execution has ended.
+    #[cfg(unix)]
+    pub(in crate::authority) fn creation_abort_of(
+        &self,
+        operation_id: OperationIdV1,
+        reservation_token: &str,
+        quiescent_start: Option<(OperationIdV1, String)>,
+    ) -> Result<Self, GitCheckoutUseError> {
         let action = PreparedAction::AbortCreation {
             reservation_token: reservation_token.to_owned(),
-            quiescent_start: match self.action {
-                PreparedAction::StartCreation { .. } => {
-                    Some((self.operation_id.clone(), self.request_digest.clone()))
-                }
-                PreparedAction::Reserve { .. } => None,
-                _ => {
-                    return Err(state_error(
-                        "creation abort requires a reservation or bound start",
-                    ));
-                }
-            },
+            quiescent_start,
         };
         Ok(Self {
             authority: self.authority.clone(),
@@ -79,6 +92,11 @@ impl PreparedRequest {
             operation_id,
             action,
         })
+    }
+
+    #[cfg(unix)]
+    pub(in crate::authority) fn is_operation(&self, id: &str) -> bool {
+        self.operation_id.as_str() == id
     }
 
     #[cfg(unix)]
