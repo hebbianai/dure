@@ -3633,7 +3633,7 @@ mod tests {
         assert_eq!(row_text(followed, 0), top_row);
         assert!(current_find_row(followed).starts_with("alpha needle"));
 
-        apply_find_intent(&mut replay, &mut projection, 4, "needle", FindStep::Newer);
+        apply_find_intent(&mut replay, &mut projection, 3, "needle", FindStep::Newer);
         let stepped = take_frame(&mut replay, &mut projection);
         let stepped = frame(&stepped);
         assert_eq!(find_counts(stepped), (3, 2));
