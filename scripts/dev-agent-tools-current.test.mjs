@@ -59,7 +59,8 @@ for (const name of ["hmux", "hmux-runtime"]) {
     `#!/bin/sh\nexec "${process.execPath}" "${join(scripts, "stage-fixture.mjs")}"\n`);
   // Model the source-build invocation without compiling or reserving native storage.
   writeFileSync(join(scripts, "lib/build-storage-admission.mjs"),
-    "export function ensureHeadroom() { return { ok: true }; }\n");
+    "export function ensureHeadroom() { return { ok: true }; }\n" +
+      "export function disposableRunnerAdmission() { return {}; }\n");
   writeFileSync(join(root, ".test-bin/cargo"), `#!/usr/bin/env node
 const assert = require("node:assert/strict");
 const { copyFileSync, mkdirSync } = require("node:fs");

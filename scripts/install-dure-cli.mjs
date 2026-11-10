@@ -22,7 +22,10 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { corepackInstallInvocation } from "./lib/corepack-install.mjs";
-import { ensureHeadroom } from "./lib/build-storage-admission.mjs";
+import {
+  disposableRunnerAdmission,
+  ensureHeadroom,
+} from "./lib/build-storage-admission.mjs";
 import { buildStorageBudget } from "./lib/disk-space.mjs";
 import { resolveBuiltDureControlPlane } from "./lib/dure-cli-install-paths.mjs";
 import { signMacosExecutables } from "./lib/macos-executable-signing.mjs";
@@ -162,6 +165,7 @@ if (controlPlaneSource) {
     cwd: repositoryRoot,
     label: "Dure CLI control-plane build",
     requestedBytes: buildStorageBudget("cli"),
+    ...disposableRunnerAdmission(),
   });
   if (!headroom.ok) throw new Error(headroom.message);
   try {

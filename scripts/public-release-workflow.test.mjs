@@ -9,6 +9,28 @@ import { RELEASE_HOST_MAX_LOAD_PER_CORE } from "./lib/release-host-admission.mjs
 const workflow = YAML.parse(
   fs.readFileSync(".github/workflows/release.yml", "utf8"),
 );
+// Every job that runs on the selected signing runner.
+const SIGNING_RUNNER_JOBS = ["verification", "host-preflight", "build", "linux-sign"];
+const SELF_HOSTED_RUNNER = {
+  group: "dure-release",
+  labels: ["self-hosted", "macOS", "ARM64", "dure-release"],
+};
+const HOSTED_ONLY = "runner.environment == 'github-hosted'";
+const CERTIFICATE_PRESENCE =
+  "${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' }}";
+const isCertificatePresenceCheck = (step) =>
+  step.name === "Require the hosted signing certificate" &&
+  step.if === HOSTED_ONLY &&
+  JSON.stringify(step.env) === JSON.stringify({ CERTIFICATE_CONFIGURED: CERTIFICATE_PRESENCE });
+const isCertificateImport = (step) =>
+  step.name === "Import the signing certificate into a job keychain";
+
+function runStep(run, env = {}) {
+  return spawnSync("bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", run], {
+    env: { PATH: "/usr/bin:/bin", ...env },
+    encoding: "utf8",
+  });
+}
 
 test.each([true, false])(
   "full verification stages the native library before Cargo checks (input present: %s)",
@@ -158,12 +180,110 @@ test("public PR checks remain on hosted runners with no signing secrets", () => 
     expect(JSON.stringify(job["runs-on"])).not.toContain("self-hosted");
     expect(JSON.stringify(job)).not.toContain("secrets.");
   }
-  for (const name of ["verification", "host-preflight", "build"]) {
-    expect(workflow.jobs[name]["runs-on"]).toEqual({
-      group: "dure-release",
-      labels: ["self-hosted", "macOS", "ARM64", "dure-release"],
-    });
+  for (const name of SIGNING_RUNNER_JOBS) {
+    expect(workflow.jobs[name]["runs-on"]).toBe(
+      "${{ fromJSON(needs.source.outputs.macos_runner) }}",
+    );
+    expect(workflow.jobs[name].needs).toContain("source");
     expect(workflow.jobs[name].environment).toBe("macos-release");
+  }
+});
+
+test("a dispatch keeps the restricted self-hosted group unless it opts into the hosted runner", () => {
+  expect(workflow.on.workflow_dispatch.inputs.macos_runner).toMatchObject({
+    type: "choice",
+    required: false,
+    default: "self-hosted",
+    options: ["self-hosted", "github-hosted"],
+  });
+  expect(workflow.jobs.source.outputs.macos_runner).toBe(
+    "${{ steps.runner.outputs.labels }}",
+  );
+  const selection = workflow.jobs.source.steps.find((step) => step.id === "runner");
+  expect(selection.env).toEqual({ MACOS_RUNNER: "${{ inputs.macos_runner }}" });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-release-runner-"));
+  try {
+    const select = (runner) => {
+      const output = path.join(root, `output-${runner}`);
+      const summary = path.join(root, `summary-${runner}`);
+      const result = runStep(selection.run, {
+        MACOS_RUNNER: runner,
+        GITHUB_OUTPUT: output,
+        GITHUB_STEP_SUMMARY: summary,
+      });
+      const labels = fs.existsSync(output)
+        ? fs.readFileSync(output, "utf8").trim().replace(/^labels=/, "")
+        : null;
+      return { status: result.status, labels: labels && JSON.parse(labels) };
+    };
+    expect(select("github-hosted")).toEqual({ status: 0, labels: "macos-15" });
+    expect(select("self-hosted")).toEqual({ status: 0, labels: SELF_HOSTED_RUNNER });
+    // A dispatch that predates the input, or omits it, selects the same group.
+    expect(select("")).toEqual({ status: 0, labels: SELF_HOSTED_RUNNER });
+    expect(select("ubuntu-24.04")).toMatchObject({ status: 1, labels: null });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a missing hosted certificate is refused before any version ref exists, from presence alone", () => {
+  for (const name of ["verification", "host-preflight"]) {
+    const steps = workflow.jobs[name].steps;
+    const presence = steps.find((step) => step.name === "Require the hosted signing certificate");
+    expect(isCertificatePresenceCheck(presence), name).toBe(true);
+    expect(steps.indexOf(presence), name).toBe(0);
+    expect(runStep(presence.run, { CERTIFICATE_CONFIGURED: "true" }).status).toBe(0);
+    const refused = runStep(presence.run, { CERTIFICATE_CONFIGURED: "false" });
+    expect(refused.status).toBe(1);
+    expect(refused.stdout).toContain("APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD are not configured");
+  }
+  expect(workflow.jobs.version.needs).toEqual(
+    expect.arrayContaining(["verification", "host-preflight"]),
+  );
+});
+
+test("only a hosted build imports the certificate, from the protected helper, and removes it after the DMG", () => {
+  const steps = workflow.jobs.build.steps;
+  const imports = steps.filter(isCertificateImport);
+  expect(imports).toHaveLength(1);
+  const [certificate] = imports;
+  expect(certificate).toMatchObject({
+    if: HOSTED_ONLY,
+    env: {
+      APPLE_CERTIFICATE: "${{ secrets.APPLE_CERTIFICATE }}",
+      APPLE_CERTIFICATE_PASSWORD: "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}",
+    },
+    run: "sh ../scripts/manage-hosted-signing-keychain.sh prepare",
+  });
+  const index = (name) => steps.findIndex((step) => step.name === name);
+  // Dependency install scripts run before the identity exists.
+  expect(steps.indexOf(certificate)).toBeGreaterThan(index("Install pinned dependencies"));
+  expect(steps.indexOf(certificate)).toBe(index("Build signed and notarized beta") - 1);
+  const removal = steps[index("Remove the job keychain")];
+  expect(removal).toMatchObject({
+    if: `always() && ${HOSTED_ONLY}`,
+    "continue-on-error": true,
+    run: "sh ../scripts/manage-hosted-signing-keychain.sh remove",
+  });
+  expect(steps.indexOf(removal)).toBeGreaterThan(index("Package the signed app into a DMG"));
+  expect(steps.indexOf(removal)).toBeLessThan(steps.findIndex((step) => step.id === "assets"));
+  for (const name of ["verification", "build"]) {
+    const toolchain = workflow.jobs[name].steps.find(
+      (step) => step.name === "Install the Ghostty VT proof toolchain",
+    );
+    expect(toolchain, name).toMatchObject({
+      if: HOSTED_ONLY,
+      run: "rustup toolchain install 1.85.0 --profile minimal",
+    });
+    // Tauri's beforeBuildCommand and the push gates call a bare `pnpm`.
+    const jobSteps = workflow.jobs[name].steps;
+    const corepack = jobSteps.find((step) => step.name === "Enable the pinned package manager");
+    expect(corepack, name).toMatchObject({ if: HOSTED_ONLY, run: "corepack enable" });
+    expect(jobSteps.indexOf(corepack), name).toBeLessThan(
+      jobSteps.findIndex((step) =>
+        step.name === "Build signed and notarized beta" || step.run === "corepack pnpm verify:release",
+      ),
+    );
   }
 });
 
@@ -211,7 +331,11 @@ test("an emergency release approves and admits the signing host before any versi
   const runs = preflight.steps.map((step) => step.run ?? "");
   expect(runs).toContain("node scripts/run-with-build-storage.mjs full -- true");
   expect(runs.join("\n")).not.toMatch(/tauri|cargo|pnpm|release-public/);
-  expect(JSON.stringify(preflight)).not.toMatch(/secrets\.|GH_TOKEN|github\.token/);
+  const withoutPresence = preflight.steps.filter((step) => !isCertificatePresenceCheck(step));
+  expect(withoutPresence).toHaveLength(preflight.steps.length - 1);
+  expect(JSON.stringify({ ...preflight, steps: withoutPresence })).not.toMatch(
+    /secrets\.|GH_TOKEN|github\.token/,
+  );
   const build = workflow.jobs.build.steps.find(
     (step) => step.name === "Build signed and notarized beta",
   ).run;
@@ -337,13 +461,17 @@ test("only the protected build step receives signing credentials and offers the 
   expect(build.run).not.toMatch(/--bundles\s+\S*dmg/);
   expect(build.env).not.toHaveProperty("TAURI_BUNDLER_DMG_IGNORE_CI");
   expect(build.env).not.toHaveProperty("APPLE_CERTIFICATE");
+  expect(build.env).not.toHaveProperty("APPLE_CERTIFICATE_PASSWORD");
   const linuxSigning = workflow.jobs["linux-sign"].steps.find(
     (step) => step.name === "Sign the Linux packages",
   );
   for (const [name, job] of Object.entries(workflow.jobs)) {
     for (const step of job.steps ?? []) {
-      if (name !== "build" && step !== linuxSigning)
+      // Before the tag a job may learn only whether the certificate exists.
+      if (name !== "build" && step !== linuxSigning && !isCertificatePresenceCheck(step))
         expect(JSON.stringify(step)).not.toContain("secrets.");
+      if (!isCertificateImport(step))
+        expect(JSON.stringify(step)).not.toMatch(/secrets\.APPLE_CERTIFICATE(?:_PASSWORD)? }}/);
       if (step !== build && step !== linuxSigning)
         expect(JSON.stringify(step)).not.toContain(
           "secrets.TAURI_SIGNING_PRIVATE_KEY",
@@ -466,6 +594,15 @@ test("an overloaded signing host is refused before any version ref exists, never
   expect(preflight.findIndex((step) => step.run === check)).toBeGreaterThan(
     preflight.findIndex((step) => step.name === "Check the signing host session"),
   );
+  // A disposable hosted VM is never shared and its boot alone exceeds the
+  // load limit; an unknown runner environment still gets both refusals.
+  const selfHostedOnly = "runner.environment != 'github-hosted'";
+  for (const name of ["verification", "host-preflight"])
+    expect(workflow.jobs[name].steps.find((step) => step.run === check).if, name).toBe(selfHostedOnly);
+  expect(
+    preflight.find((step) => step.run === "node scripts/run-with-build-storage.mjs full -- true").if,
+  ).toBe(selfHostedOnly);
+  expect(preflight.find((step) => step.name === "Check the signing host session").if).toBeUndefined();
   // After the tag exists a refusal would only burn the version; the DMG
   // packager waits for the load to drop instead.
   expect(workflow.jobs.build.steps.some((step) => /check-release-host/.test(step.run ?? ""))).toBe(false);
@@ -536,7 +673,7 @@ test("Linux packages build on hosted runners that receive no credentials", () =>
 
 test("only the protected Linux signing step receives the updater key, and nothing else", () => {
   const job = workflow.jobs["linux-sign"];
-  expect(job.needs).toEqual(["version", "linux-packages"]);
+  expect(job.needs).toEqual(["source", "version", "linux-packages"]);
   expect(job["runs-on"]).toEqual(workflow.jobs.build["runs-on"]);
   expect(job.environment).toBe("macos-release");
   const signing = job.steps.find((step) => step.name === "Sign the Linux packages");
@@ -558,9 +695,11 @@ test("only the protected Linux signing step receives the updater key, and nothin
   });
   expect(job.steps.at(-1)).toMatchObject({ if: "always()", "continue-on-error": true });
   const success = { result: "success" };
-  expect(evaluateIf(job.if, { version: success, "linux-packages": success })).toBe(true);
-  for (const result of ["failure", "cancelled", "skipped"])
-    expect(evaluateIf(job.if, { version: success, "linux-packages": { result } })).toBe(false);
+  expect(evaluateIf(job.if, { source: success, version: success, "linux-packages": success })).toBe(true);
+  for (const result of ["failure", "cancelled", "skipped"]) {
+    expect(evaluateIf(job.if, { source: success, version: success, "linux-packages": { result } })).toBe(false);
+    expect(evaluateIf(job.if, { source: { result }, version: success, "linux-packages": success })).toBe(false);
+  }
 });
 
 test("the draft carries Linux only after it was signed, and is unchanged with Linux off", () => {
