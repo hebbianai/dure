@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use dure_control_plane::{
-    ActivateStagedOptions, ClaudeStructuredRuntimeOptions, GatewayOptions, ServeOptions,
-    activate_staged, codex_connection_driver, control_plane_identity, decode_gateway_socket_hex,
-    gateway, preflight, serve,
+    ActivateStagedOptions, ClaudeStructuredRuntimeOptions, GatewayOptions, HubLaunch,
+    LAUNCH_REASON_ENVIRONMENT, ServeOptions, activate_staged, codex_connection_driver,
+    control_plane_identity, decode_gateway_socket_hex, gateway, preflight, serve,
 };
 
 enum Command {
@@ -19,7 +19,7 @@ enum Command {
     Gateway(GatewayOptions),
     Identity,
     Preflight(ServeOptions),
-    Serve(ServeOptions),
+    Serve(ServeOptions, HubLaunch),
 }
 
 fn usage() -> ! {
@@ -172,7 +172,12 @@ fn parse_args() -> Command {
     if command == "preflight" {
         Command::Preflight(options)
     } else {
-        Command::Serve(options)
+        let launch = HubLaunch::observed(std::env::var(LAUNCH_REASON_ENVIRONMENT).ok().as_deref());
+        // SAFETY: arguments are parsed before the runtime starts any thread.
+        // The reason describes this launch only; processes the hub starts must
+        // not inherit it.
+        unsafe { std::env::remove_var(LAUNCH_REASON_ENVIRONMENT) };
+        Command::Serve(options, launch)
     }
 }
 
@@ -238,7 +243,7 @@ async fn execute(command: Command) -> Result<(), dure_control_plane::ControlPlan
             }
             Err(error) => Err(error),
         },
-        Command::Serve(options) => serve(options).await,
+        Command::Serve(options, launch) => serve(options, launch).await,
     }
 }
 

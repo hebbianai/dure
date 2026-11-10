@@ -72,6 +72,7 @@ mod codex_structured_connection;
 mod codex_timeline_bridge;
 mod dispatch_deadlines;
 mod hmux_session_inspection;
+mod hub_run_record;
 mod interaction_wake;
 #[cfg(unix)]
 mod json_rpc_socket_client;
@@ -223,6 +224,7 @@ use hmux_session_inspection::{
     ExpectedHmuxSession, HmuxSessionInspection, HmuxSessionInspectionFailure,
     parse_exact_hmux_session, parse_exact_hmux_session_for_transition,
 };
+pub use hub_run_record::{HubLaunch, HubLaunchReason, LAUNCH_REASON_ENVIRONMENT};
 use orchestration_session_observation::verify_exact_orchestration_session;
 pub use service_lifecycle::{
     ActivateStagedOptions, ControlPlaneEndpoint, PreparedControlPlane, activate_staged,

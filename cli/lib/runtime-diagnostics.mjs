@@ -14,6 +14,7 @@ import {
   resolve,
 } from "node:path";
 import { runtimeIdentityFindings } from "./app-bundle-identity.mjs";
+import { formatHubRunLines } from "./hub-run-records.mjs";
 import { comparePackageVersions } from "./package-version.mjs";
 import { resolveChannelCommand } from "./dure-cli-channel-launcher.mjs";
 import { parseWebviewDiagnostics } from "./contracts/webview-diagnostics.mjs";
@@ -471,6 +472,7 @@ export function createDiagnosticReport({
   cli,
   app,
   hmux,
+  hub = null,
   runtimeIdentity = null,
   selectedChannel = app.channel ?? null,
   now = Date.now(),
@@ -497,6 +499,7 @@ export function createDiagnosticReport({
     cli: { ...cli, freshness },
     app,
     hmux,
+    ...(hub ? { hub } : {}),
     ...(runtimeIdentity ? { runtimeIdentity } : {}),
     selectedChannel,
     recovery: {
@@ -646,6 +649,7 @@ export function formatDiagnosticReport(report) {
     `  command: ${label(report.hmux.command)}`,
     `  version: ${label(report.hmux.version)}`,
     `  compatible: ${label(report.hmux.compatible)}`,
+    ...formatHubRunLines(report.hub),
     ...formatRuntimeIdentity(report.runtimeIdentity),
     ...checkLines,
     "issues:",

@@ -39,7 +39,7 @@ serde_json = "1"
 sha2 = "0.10"
 similar = "=3.2.1"
 tempfile = "3"
-tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 # 0.27 bounds partial-read initialization for large provider/history frames.
 tokio-tungstenite = { version = "0.27", default-features = false, features = ["handshake"] }
 

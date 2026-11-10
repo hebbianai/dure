@@ -611,6 +611,12 @@ fi
       },
       app: { state: "not_running" },
       hmux: { version: "0.1.4", compatible: true },
+      hub: {
+        state: "not_running",
+        recordsDirectory: path.join(home, ".dure", "backend", "hub-runs"),
+        current: null,
+        lastExit: null,
+      },
       selectedChannel: "dev-fixture",
       recovery: { backendHealth: "not_inspected", sessionState: "not_inspected" },
     });
