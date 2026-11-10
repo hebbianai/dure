@@ -41,6 +41,7 @@
       "agent_runtime.transition",
       "agent_runtime.wake",
       "agent_spawn.apply",
+      "agent_spawn.child_result_delivery.v1",
       "agent_spawn.list",
       "agent_spawn.parent_link.v1",
       "agent_spawn.presentation_project.v1",

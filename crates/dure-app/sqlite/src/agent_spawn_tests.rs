@@ -44,7 +44,24 @@ fn spawn_plan_for(
     agent_id: &str,
     worktree: AgentSpawnWorktreePolicyV1,
 ) -> AgentSpawnPlanV1 {
-    create_agent_spawn_plan_v1(AgentSpawnPlanDraftV1 {
+    create_agent_spawn_plan_v1(spawn_draft(
+        operation,
+        idempotency_key,
+        prompt,
+        agent_id,
+        worktree,
+    ))
+    .unwrap()
+}
+
+fn spawn_draft(
+    operation: &str,
+    idempotency_key: &str,
+    prompt: bool,
+    agent_id: &str,
+    worktree: AgentSpawnWorktreePolicyV1,
+) -> AgentSpawnPlanDraftV1 {
+    AgentSpawnPlanDraftV1 {
         schema_version: AGENT_SPAWN_SCHEMA_VERSION_V1,
         operation_id: OperationIdV1::new(operation).unwrap(),
         authority: AgentSpawnAuthorityV1 {
@@ -81,8 +98,7 @@ fn spawn_plan_for(
             },
         },
         provider_launch_defaults: None,
-    })
-    .unwrap()
+    }
 }
 
 fn native_launch(plan: &AgentSpawnPlanV1) -> (&str, &AgentSpawnRuntimePlanV1) {
@@ -870,4 +886,57 @@ async fn durable_run_catalog_survives_reopen_and_pages_without_client_or_runtime
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn parent_linked_operations_list_only_succeeded_runs_with_a_parent() {
+    let root = tempfile::tempdir().unwrap();
+    let store = SqliteDomainStore::open(database_path(&root)).await.unwrap();
+    let linked = |id: &str| {
+        let mut draft = spawn_draft(
+            id,
+            id,
+            false,
+            &format!("agent-{id}"),
+            AgentSpawnWorktreePolicyV1::ProjectRoot,
+        );
+        draft.request.parent = Some(dure_app::AgentSpawnParentV1 {
+            session_id: "parent-session".into(),
+            workspace_id: "parent-workspace".into(),
+        });
+        create_agent_spawn_plan_v1(draft).unwrap()
+    };
+    for plan in [
+        linked("child-a"),
+        spawn_plan("unlinked", "unlinked", false),
+        linked("child-b"),
+    ] {
+        for event in successful_events(&plan) {
+            store.append_agent_spawn_event(&event).await.unwrap();
+        }
+    }
+    // A linked Run that is still launching is not a child to report on yet.
+    store
+        .append_agent_spawn_event(&planned(&linked("child-c")))
+        .await
+        .unwrap();
+
+    let all = store
+        .parent_linked_agent_spawn_operations(None, 16)
+        .await
+        .unwrap();
+    assert_eq!(
+        all.iter().map(OperationIdV1::as_str).collect::<Vec<_>>(),
+        ["child-a", "child-b"]
+    );
+    let first = store
+        .parent_linked_agent_spawn_operations(None, 1)
+        .await
+        .unwrap();
+    assert_eq!(first, all[..1]);
+    let rest = store
+        .parent_linked_agent_spawn_operations(Some(&first[0]), 16)
+        .await
+        .unwrap();
+    assert_eq!(rest, all[1..]);
 }

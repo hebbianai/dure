@@ -143,6 +143,15 @@ impl SqliteDomainStore {
         agent_spawn::list_receipts(&self.pool, after, selector).await
     }
 
+    /// Succeeded Runs with a recorded parent, paged by operation ID.
+    pub async fn parent_linked_agent_spawn_operations(
+        &self,
+        after: Option<&OperationIdV1>,
+        limit: u32,
+    ) -> Result<Vec<OperationIdV1>, DomainStoreErrorV1> {
+        agent_spawn::parent_linked_operations(&self.pool, after, limit).await
+    }
+
     pub fn database_path(&self) -> &Path {
         &self.path
     }
