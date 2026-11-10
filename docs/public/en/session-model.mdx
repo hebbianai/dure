@@ -32,7 +32,9 @@ When an agent's session process has ended, its pane shows the recovery actions i
 
 If the task's worktree is missing, **Recreate worktree and resume** restores it before resuming. To find earlier work that no longer has a pane, open **Sessions** in the sidebar, search by session name, ID or folder, and select the session to continue it in a pane. Provider resume support and the saved conversation determine what can be restored.
 
-To restore every agent at once after a reboot, run `dure resume --all` in a terminal. Each agent whose session host is gone continues its own conversation, in its original worktree and account. Agents that are still running are left alone, and any agent that cannot be restored is listed with the reason. Add `--dry-run` to see the plan first.
+After a reboot, panes in the Space on screen resume on their own. If agents in other Spaces stopped too, the app shows a notice with **Restore all**: one click continues each of them in its own conversation, pane, worktree and account, and the notice lists any agent it can't restore with the reason.
+
+To restore every agent at once from a terminal, with no app open, run `dure resume --all`. Each agent whose session host is gone continues its own conversation, in its original worktree and account. Agents that are still running are left alone, and any agent that cannot be restored is listed with the reason. Add `--dry-run` to see the plan first.
 
 After recovery, check the conversation, working folder, changed files and any external effects before repeating a command. Recovery cannot undo an already completed deployment or guarantee every provider conversation can resume.
 

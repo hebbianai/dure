@@ -1,3 +1,4 @@
+import { providerSupportsExplicitResume } from "@/lib/agents/providers";
 import { sameHmuxManagedGeneration } from "@/lib/hmux/identity/hmuxManagedGeneration";
 import { isHmuxLocalShellBinding } from "@/lib/hmux/identity/hmuxProviderSessionSource";
 import type { HmuxSessionSummary } from "@/lib/ipc";
@@ -60,82 +61,144 @@ export interface AutomaticManagedRebootRecoveryCandidate {
 	requireSocketOwnerAbsent?: true;
 }
 
-interface AutomaticManagedRebootRecoverySnapshot {
+/** Why an Agent whose Host is gone cannot be restored without its pane. */
+export type ManagedRebootRecoverySkipReason =
+	| "runtime_generation_changed"
+	| "transition_in_progress"
+	| "no_conversation_id"
+	| "provider_without_exact_resume"
+	| "pane_missing"
+	| "pane_ambiguous";
+
+export type ManagedRebootRecoveryAssessment =
+	| {
+			outcome: "restorable";
+			candidate: AutomaticManagedRebootRecoveryCandidate;
+	  }
+	| {
+			outcome: "skipped";
+			identity: string;
+			agentId: string;
+			reason: ManagedRebootRecoverySkipReason;
+	  };
+
+interface ManagedRebootRecoverySnapshot {
 	agents: readonly Agent[];
 	projects: readonly Project[];
 	layouts: Readonly<Record<string, unknown>>;
 	mounted?: Parameters<typeof agentPaneLocations>[1];
 	sessions: readonly HmuxSessionSummary[];
+}
+
+interface AutomaticManagedRebootRecoverySnapshot
+	extends ManagedRebootRecoverySnapshot {
 	visibleDesktopIds: ReadonlySet<string>;
 }
 
-/** Select visible native panes whose exact Host is absent or socket-free.
- * The latter requires a broker recheck. Provider identity and a durable stop fence are
- * mandatory; ambiguous or background presentation never starts a provider. */
-export function automaticManagedRebootRecoveryCandidates(
-	snapshot: AutomaticManagedRebootRecoverySnapshot,
-): AutomaticManagedRebootRecoveryCandidate[] {
-	const visiblePanes = agentPaneLocations(
-		snapshot.layouts,
-		snapshot.mounted,
-	).filter((pane) => snapshot.visibleDesktopIds.has(pane.desktopId));
+/** The exact Host is absent, or socket-free; the latter needs a broker recheck. */
+function findHostGoneManagedSource(
+	sessions: readonly HmuxSessionSummary[],
+	identity: ManagedSessionIdentity,
+): HmuxSessionSummary | undefined {
+	return (
+		findRebootStaleManagedSource(sessions, identity) ??
+		sessions.find(
+			(session) =>
+				session.sessionId === identity.sessionId &&
+				session.workspaceId === identity.workspaceId &&
+				session.sessionClass === "managed" &&
+				session.manifestLifecycle === "ready" &&
+				session.lifecycle === "unavailable" &&
+				session.health === "stale_transport" &&
+				session.hostSocketOwnerAbsent === true,
+		)
+	);
+}
 
-	return snapshot.agents.flatMap((agent) => {
+/** Assess every local native Agent whose exact Host is gone, in the panes of
+ * `desktopIds` (every Space when omitted). Agents whose Host still runs, Chat
+ * agents and remote agents are not part of the result. Provider identity, an
+ * exact-resume provider, a matching durable stop fence and exactly one pane
+ * are mandatory: ambiguous presentation never starts a provider. */
+export function assessManagedRebootRecovery(
+	snapshot: ManagedRebootRecoverySnapshot,
+	desktopIds?: ReadonlySet<string>,
+): ManagedRebootRecoveryAssessment[] {
+	const panes = agentPaneLocations(snapshot.layouts, snapshot.mounted).filter(
+		(pane) => !desktopIds || desktopIds.has(pane.desktopId),
+	);
+	return snapshot.agents.flatMap((agent): ManagedRebootRecoveryAssessment[] => {
 		const binding = agent.runtimeBinding;
-		const panes = visiblePanes.filter((pane) => pane.agentId === agent.id);
 		const project = snapshot.projects.find(
 			(candidate) => candidate.id === agent.projectId,
 		);
-		const conversationId = managedConversationId(agent);
 		if (
 			agent.interactionProfile !== undefined ||
-			agent.pendingCredentialSwitch !== undefined ||
 			project?.kind !== "local" ||
 			binding?.runtime !== "hmux_managed_v1" ||
 			binding.source !== "local" ||
 			binding.hostId !== "local" ||
-			binding.sessionId !== agent.sessionId ||
-			!binding.stopFence ||
-			!conversationId ||
-			panes.length !== 1
+			binding.sessionId !== agent.sessionId
 		) {
 			return [];
 		}
-		const source =
-			findRebootStaleManagedSource(snapshot.sessions, binding) ??
-			snapshot.sessions.find(
-				(session) =>
-					session.sessionId === binding.sessionId &&
-					session.workspaceId === binding.workspaceId &&
-					session.sessionClass === "managed" &&
-					session.manifestLifecycle === "ready" &&
-					session.lifecycle === "unavailable" &&
-					session.health === "stale_transport" &&
-					session.hostSocketOwnerAbsent === true,
-			);
+		const source = findHostGoneManagedSource(snapshot.sessions, binding);
+		if (!source) return [];
+		const identity = JSON.stringify([
+			binding.workspaceId,
+			binding.sessionId,
+			source.terminalEpoch,
+		]);
+		const skipped = (reason: ManagedRebootRecoverySkipReason) => [
+			{ outcome: "skipped" as const, identity, agentId: agent.id, reason },
+		];
 		if (
-			!source?.stopFence ||
+			!binding.stopFence ||
+			!source.stopFence ||
 			!sameHmuxManagedGeneration(source.stopFence, binding.stopFence)
 		) {
-			return [];
+			return skipped("runtime_generation_changed");
 		}
+		if (agent.pendingCredentialSwitch !== undefined) {
+			return skipped("transition_in_progress");
+		}
+		const conversationId = managedConversationId(agent);
+		if (!conversationId) return skipped("no_conversation_id");
+		if (!providerSupportsExplicitResume(agent.provider)) {
+			return skipped("provider_without_exact_resume");
+		}
+		const agentPanes = panes.filter((pane) => pane.agentId === agent.id);
+		if (agentPanes.length === 0) return skipped("pane_missing");
+		if (agentPanes.length > 1) return skipped("pane_ambiguous");
 		return [
 			{
-				identity: JSON.stringify([
-					binding.workspaceId,
-					binding.sessionId,
-					source.terminalEpoch,
-				]),
-				agentId: agent.id,
-				desktopId: panes[0].desktopId,
-				panelId: panes[0].panelId,
-				conversationId,
-				...(source.hostProcessAlive !== false
-					? { requireSocketOwnerAbsent: true as const }
-					: {}),
+				outcome: "restorable",
+				candidate: {
+					identity,
+					agentId: agent.id,
+					desktopId: agentPanes[0].desktopId,
+					panelId: agentPanes[0].panelId,
+					conversationId,
+					...(source.hostProcessAlive !== false
+						? { requireSocketOwnerAbsent: true as const }
+						: {}),
+				},
 			},
 		];
 	});
+}
+
+/** Select visible native panes whose exact Host is absent or socket-free.
+ * Background presentation waits for an explicit Restore all. */
+export function automaticManagedRebootRecoveryCandidates(
+	snapshot: AutomaticManagedRebootRecoverySnapshot,
+): AutomaticManagedRebootRecoveryCandidate[] {
+	return assessManagedRebootRecovery(
+		snapshot,
+		snapshot.visibleDesktopIds,
+	).flatMap((assessment) =>
+		assessment.outcome === "restorable" ? [assessment.candidate] : [],
+	);
 }
 
 export interface AutomaticStandaloneRebootRecoveryCandidate {
