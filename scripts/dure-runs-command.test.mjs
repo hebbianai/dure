@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
-import { collectRunsCommand, formatRunsCommand, parseRunsOptions } from "../cli/lib/runs-command.mjs";
+import { MANAGED_REHOST_RUNNING_EXIT_CODE } from "../cli/lib/managed-rehost-named.mjs";
+import { collectRunsCommand, formatRunsCommand, parseRunsOptions, runsCommandExitCode } from "../cli/lib/runs-command.mjs";
 import { currentRunPresentationPlan } from "../cli/lib/run-presentation.mjs";
 import { succeededNativeReceipt } from "./fixtures/agent-spawn-receipts.mjs";
 
@@ -165,7 +166,7 @@ describe("durable Run commands", () => {
     expect(report.recovery.continuation.retry).toContain(report.recovery.continuation.operationId);
     expect(f.requestBackend).toHaveBeenCalledTimes(2);
   });
-  it("returns a running handle, not an error, while Hmux still applies the confirmed rehost", async () => {
+  it("does not report a restart as finished while Hmux still applies the confirmed rehost", async () => {
     const f = fixture();
     const source = f.runtime.receipt.authority.authority;
     const pending = { schema: "hmux-managed-rehost-resolution-v1", schemaVersion: 1, state: "retry_required",
@@ -176,9 +177,11 @@ describe("durable Run commands", () => {
       : { kind: "timeout" });
     const report = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name], confirmRestart: true },
       command: "hmux", run, settle: fakeClock() });
-    expect(report).toMatchObject({ ok: true,
-      recovery: { ok: true, state: "running", nativeExecution: "running", publication: "not_requested" } });
-    expect(report.error).toBeUndefined();
+    // Still applying is not success: the binding is unpublished, so the Agent still names the retired source.
+    expect(report).toMatchObject({ ok: false, error: { code: "rehost_still_running" },
+      recovery: { ok: false, state: "running", nativeExecution: "running", publication: "not_requested" } });
+    expect(runsCommandExitCode(report)).toBe(MANAGED_REHOST_RUNNING_EXIT_CODE);
+    expect(MANAGED_REHOST_RUNNING_EXIT_CODE).not.toBe(0);
     expect(run.mock.calls.filter(([argv]) => argv[1] !== "managed-rehost-resolve")).toHaveLength(1);
     // Publication waits for completion; nothing was published yet.
     expect(f.requestBackend).toHaveBeenCalledTimes(2);
@@ -187,6 +190,39 @@ describe("durable Run commands", () => {
     expect(text).toContain("Hmux is still applying this rehost");
     expect(text).toContain(`Status: ${"dure 'hmux' 'rehost' 'status'"}`);
     expect(text).toContain("Publish: dure 'hmux' 'rehost' 'publish'");
+  });
+  it("reports a restart as finished once the native rehost and its binding publication complete", async () => {
+    const f = fixture();
+    const source = f.runtime.receipt.authority.authority;
+    const run = vi.fn(async (argv) => {
+      const value = (flag) => argv[argv.indexOf(flag) + 1];
+      return { kind: "success", stdout: JSON.stringify({ schema: "hmux-managed-rehost-v1", schemaVersion: 1,
+        operationId: value("--operation-id"), replayed: false,
+        sourceStopReceipt: { sessionId: value("--session"), workspaceId: value("--workspace") },
+        replacementReceipt: { sessionId: "successor-1", workspaceId: value("--workspace") } }) };
+    });
+    const published = { schemaVersion: 1, receipt: { ...f.runtime.receipt, selectionRevision: 2 } };
+    let publication = "published";
+    f.requestBackend.mockImplementation(async (_profile, request) => {
+      if (request.operation === "agent_spawn.list") return { result: f.page };
+      if (request.operation === "agent_runtime.projection.inspect") return { result: f.runtime };
+      if (publication === "lost") throw new BackendTransportError("backend_response_lost");
+      return { result: published };
+    });
+    const resume = () => collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name], confirmRestart: true },
+      command: "hmux", run, settle: fakeClock() });
+    const finished = await resume();
+    expect(finished).toMatchObject({ ok: true, recovery: { state: "completed", nativeExecution: "completed",
+      publication: "published" } });
+    expect(runsCommandExitCode(finished)).toBe(0);
+    expect(run.mock.calls[0][0].slice(0, 5)).toEqual(["hmux", "managed-rehost-start",
+      "--session", source.binding.sessionId, "--workspace"]);
+    // The last step is the binding publication; without it the restart is not finished.
+    publication = "lost";
+    const unpublished = await resume();
+    expect(unpublished).toMatchObject({ ok: false, recovery: { state: "completed", nativeExecution: "completed",
+      publication: "unconfirmed" } });
+    expect(runsCommandExitCode(unpublished)).toBe(2);
   });
   it("uses a published successor, and refuses incomplete or unrelated current authority", () => {
     const f = fixture();

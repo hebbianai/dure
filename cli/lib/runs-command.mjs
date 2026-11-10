@@ -3,7 +3,7 @@ import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { collectAgentSpawnQuery } from "./agent-spawn-query.mjs";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
-import { collectManagedRehostNamed, MANAGED_REHOST_RUNNING_GUIDANCE } from "./managed-rehost-named.mjs";
+import { collectManagedRehostNamed, MANAGED_REHOST_RUNNING_GUIDANCE, managedRecoveryExitCode } from "./managed-rehost-named.mjs";
 import { collectManagedRehostPreview, formatManagedRecoveryCommands } from "./managed-rehost-preview.mjs";
 import { presentAgentRunRuntime } from "./run-presentation.mjs";
 import { collectRunAccountSwitch, formatRunAccountSwitch } from "./run-account-switch.mjs";
@@ -49,8 +49,10 @@ Retain resume's exact status/retry commands after an uncertain response; do not
 repeat a name-based resume. Wake retains the operation ID, journal revision and
 request key, and publishes through the backend. Run a separate publish command
 only when returned for native rehost. Native rehost waits up to a minute for an
-operation Hmux is still applying; if it is still running, resume exits 0 with
-state running and its status/publish commands instead of an error.
+operation Hmux is still applying. A resume is finished, with ok true and exit 0,
+only after the native rehost and its binding publication both complete. If Hmux
+is still applying it, resume returns ok false, state running and exit 75 with its
+status/publish commands; do not act on the Agent until Publish succeeds.
 Use open after recovery to place the pane.
 For live Session observations use dure ls. Use the Session/workspace from show
 with dure read <session-id> --workspace ID or dure send <session-id> --workspace ID.
@@ -133,8 +135,7 @@ export async function collectRunsCommand({
       const recover = opts.confirmRestart ? collectManagedRehostNamed : collectManagedRehostPreview;
       const recovery = await recover({ opts: { rest: ["rehost", selector], confirmRestart: opts.confirmRestart },
         agentId: selected.agentId, resolveBackend: async () => backend, requestBackend, command, run, settle });
-      return { ...base, ok: recovery.ok && !recovery.publicationError, ...owner(), recovery,
-        ...(!recovery.ok || recovery.publicationError ? { error: recovery.error ?? recovery.publicationError } : {}) };
+      return { ...base, ok: recovery.ok, ...owner(), recovery, ...(!recovery.ok ? { error: recovery.error } : {}) };
     }
     if (action === "open" && !selected.operationId) {
       // Pane presentation is anchored on the Run's launch receipt; the app has
@@ -165,6 +166,10 @@ export async function collectRunsCommand({
     return failure(error?.code ? { code: error.code, message: error.message } : backendRequestFailure(error, backend?.profile));
   }
 }
+
+/** Resume is finished only after native execution and binding publication. */
+export const runsCommandExitCode = (report) =>
+  managedRecoveryExitCode({ ok: report.ok, state: report.recovery?.state }, 2);
 
 export function formatRunsCommand(report) {
   if (report.projectMove) return formatAgentProjectMove(report.projectMove);

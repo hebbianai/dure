@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { agentRuntimeProjectionContext, nativeRuntimeReceipt } from "../src/test/dureAgentRuntimeFixtures.ts";
+import {
+  collectManagedRehostNamed, MANAGED_REHOST_RUNNING_EXIT_CODE, managedRecoveryExitCode,
+} from "../cli/lib/managed-rehost-named.mjs";
 import { collectManagedRehostPreview } from "../cli/lib/managed-rehost-preview.mjs";
 
 const execute = promisify(execFile);
@@ -322,7 +325,37 @@ it("retains the exact operation after an uncertain native reply without publishi
   expect(calls.map((request) => request.operation)).toEqual(["agent_runtime.projection.inspect"]);
 });
 
-it("keeps native success on publication response loss and retries only the saved publication", async () => {
+it("does not report a named restart as finished while Hmux still applies it", async () => {
+  const value = (argv, flag) => argv[argv.indexOf(flag) + 1];
+  const run = vi.fn(async (argv) => argv[1] === "managed-rehost-resolve"
+    ? { kind: "success", stdout: JSON.stringify({ schema: "hmux-managed-rehost-resolution-v1", schemaVersion: 1,
+        state: "retry_required", code: "hmux_managed_rehost_retry_required",
+        operationId: value(argv, "--operation-id"),
+        source: { sessionId: value(argv, "--session"), workspaceId: value(argv, "--workspace") } }) }
+    : { kind: "timeout" });
+  const requestBackend = vi.fn(async (_profile, request) => {
+    if (request.operation === "agent_runtime.projection.inspect") return { result: projection() };
+    throw new Error(`Unexpected operation: ${request.operation}`);
+  });
+  let time = 0;
+  const report = await collectManagedRehostNamed({
+    opts: { rest: ["rehost"], name: "project/worker", confirmRestart: true },
+    registry: { state: "absent", agents: [] }, agentId: "agent-1",
+    resolveBackend: async () => ({ profile: { id: "fixture", transport: { kind: "local" } } }),
+    requestBackend, command: "hmux", run,
+    settle: { now: () => time, sleep: async (ms) => { time += Math.max(1, ms); } },
+  });
+  expect(report).toMatchObject({ ok: false, state: "running", nativeExecution: "running",
+    publication: "not_requested", error: { code: "rehost_still_running" } });
+  expect(managedRecoveryExitCode(report, 1)).toBe(MANAGED_REHOST_RUNNING_EXIT_CODE);
+  expect(managedRecoveryExitCode({ ...report, ok: true, state: "completed" }, 1)).toBe(0);
+  expect(managedRecoveryExitCode({ ...report, state: "unknown" }, 1)).toBe(1);
+  expect(run.mock.calls.filter(([argv]) => argv[1] !== "managed-rehost-resolve")).toHaveLength(1);
+  expect(requestBackend.mock.calls.map(([, request]) => request.operation)).toEqual([
+    "agent_runtime.projection.inspect"]);
+});
+
+it("does not report a named restart as finished when its binding publication is lost", async () => {
   let publicationAttempts = 0;
   const { root, calls, runCommand, installNative, nativeCalls } = await fixture((request) => {
     if (request.operation === "agent_runtime.projection.inspect") return { result: projection() };
@@ -331,9 +364,11 @@ it("keeps native success on publication response loss and retries only the saved
   writeRegistry(root);
   installNative();
   const output = await runCommand([...previewArgs, "--confirm-restart"]);
-  expect(output.code, output.stderr).toBe(0);
-  const report = JSON.parse(output.stdout);
-  expect(report).toMatchObject({ ok: true, nativeExecution: "completed", publication: "unconfirmed" });
+  expect(output.code, output.stdout).toBe(1);
+  const report = JSON.parse(output.stderr);
+  expect(report).toMatchObject({ ok: false, state: "completed", nativeExecution: "completed",
+    publication: "unconfirmed" });
+  expect(report.error).toEqual(report.publicationError);
   expect(report.receipt.operationId).toBe(report.continuation.operationId);
   writeRegistry(root, [{ ...projectedAgent, id: "different-agent" }]);
   const published = await runCommand(report.continuation.publish);
