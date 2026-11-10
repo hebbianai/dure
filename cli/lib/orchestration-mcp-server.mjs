@@ -12,7 +12,7 @@ import {
 import { BackendTransportError } from "./backend-transport.mjs";
 import { orchestrationFailureDetail } from "./orchestration-failure.mjs";
 import { completionRequestSchema } from "./contracts/orchestration-completion.mjs";
-import { interactionOpenRequestSchema } from "./contracts/orchestration-interaction.mjs";
+import { answerDecisionRequestSchema, interactionOpenRequestSchema } from "./contracts/orchestration-interaction.mjs";
 import {
   currentOrchestrationCheckpointPath,
   parseOrchestrationIntegrationReceipt,
@@ -143,13 +143,15 @@ const tools = [
   },
   {
     name: "orchestration_decision_answer",
-    description: "Answer one exact Decision revision with Text or Select.",
+    description:
+      "Answer one exact Decision revision with Text or Select. Copy the Decision's id and revision, and the context of the Dispatch it blocks (for a next-work Decision, nextWork.interaction and nextWork.context from orchestration_dispatch_complete), as described in body. The answer belongs in body.answer.",
     inputSchema: {
       type: "object",
       required: ["body"],
       properties: {
-        body: { type: "object" },
+        body: answerDecisionRequestSchema,
       },
+      additionalProperties: false,
     },
   },
   {

@@ -256,7 +256,36 @@ a retry reuses that one Decision instead of opening a second.
 
 Present the returned options in the current user conversation and commit the
 user's choice with `orchestration_decision_answer`; the chat reply alone is not
-the durable answer.
+the durable answer. The tool publishes the full v1 input schema. Construct its
+arguments from the completion result's `nextWork` as below (JavaScript
+notation; pass the resulting object). Generate `answerKey` once for this answer
+and set `selectedOptionId` to the chosen option's `id`:
+
+```js
+const { interaction, context } = nextWork;
+const body = {
+  schemaVersion: 1,
+  idempotencyKey: answerKey,
+  interactionId: interaction.common.id,
+  target: context.target,
+  expectedRevision: interaction.common.revision,
+  expectedDispatchRevision: context.dispatchRevision,
+  answeredBy: context.coordinatorGrant.participant,
+  replyCapability: context.coordinatorReplyCapability,
+  answer: { kind: "select", optionIds: [selectedOptionId] },
+  answeredAtMs: Date.now(),
+};
+const argumentsForAnswer = { body };
+```
+
+`nextWork.context` is the blocked successor Dispatch, so its `dispatchRevision`
+already includes the Decision. The answerer is the Decision's audience, the
+coordinator grant, not `context.participant`. A Text Decision takes
+`answer: { kind: "text", value }`. Answer any other Decision the same way from
+its interaction record and the context of the Dispatch it blocks. The CLI
+fallback is `dure orchestration invoke interaction.answer '<body-json>' --json`.
+An `orchestration_request_invalid` rejection names each failing field path.
+After an uncertain result, reuse the exact body and idempotency key.
 Before starting selected work, revalidate it against its authoritative source
 and satisfy that project's prerequisites and coordination requirements. If it
 is stale, publish one explanatory Message and open a refreshed Decision from
