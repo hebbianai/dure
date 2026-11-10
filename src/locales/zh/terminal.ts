@@ -41,6 +41,7 @@ export const terminal: Record<string, string> = {
 	"terminal.recovery.resume": "恢复会话",
 	"terminal.recovery.resuming": "正在重新打开会话…",
 	"terminal.recovery.resumeFailed": "这次没有成功 — 可以放心再试一次。",
+	"terminal.recovery.resumeBusy": "Dure 正忙，暂时无法启动会话。没有任何更改 — 请稍后再试。",
 	"terminal.recovery.worktreeMissingTitle": "工作树已缺失",
 	"terminal.recovery.worktreeMissingBody": "对话安然无恙，但 {branch} 的已保存工作树已被删除。可以重新创建，或从仓库根目录恢复。",
 	"terminal.recovery.recreateWorktree": "重新创建工作树并恢复",
