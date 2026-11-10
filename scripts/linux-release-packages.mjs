@@ -104,6 +104,9 @@ function copyPackaged(source, target) {
 }
 
 const sameListing = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+// The AppImage runtime's --appimage-extract creates every directory 0700; the
+// image itself keeps the AppDir's modes, which are checked before repacking.
+const withoutDirectoryModes = (listing) => listing.map((line) => line.replace(/\/ [0-7]+$/, "/"));
 
 /** The Dure CLI payload staged for this architecture, with its listing. */
 export function stagedDureCli(root, arch) {
@@ -242,7 +245,10 @@ export function finishAppImage({
       }
     }
     const extractedCli = path.join(extracted, path.relative(appDir, cliTarget));
-    if (!fs.existsSync(extractedCli) || !sameListing(treeListing(extractedCli), cli.listing)) {
+    if (!fs.existsSync(extractedCli) || !sameListing(
+      withoutDirectoryModes(treeListing(extractedCli)),
+      withoutDirectoryModes(cli.listing),
+    )) {
       throw new Error("the repacked AppImage does not hold the staged Dure CLI payload");
     }
   } finally {

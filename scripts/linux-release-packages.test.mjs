@@ -209,7 +209,18 @@ function patchedBundle() {
   return { root, bundleRoot: path.join(root, "bundle"), appDir: path.join(root, appDir) };
 }
 
-/** A stand-in AppImage: the repacked image is a copy of the AppDir tree, links included. */
+function chmodDirectories(directory, mode) {
+  fs.chmodSync(directory, mode);
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) chmodDirectories(path.join(directory, entry.name), mode);
+  }
+}
+
+/**
+ * A stand-in AppImage: the repacked image is a copy of the AppDir tree, links
+ * and file modes included. Like the AppImage runtime's --appimage-extract, the
+ * extraction creates every directory 0700.
+ */
 const imageOf = (appDir) => ({
   repack(directory, output) {
     expect(directory).toBe(appDir);
@@ -219,6 +230,7 @@ const imageOf = (appDir) => ({
   extract(image, scratch) {
     execFileSync("cp", ["-pR", `${image}.tree`, path.join(scratch, "squashfs-root")]);
     fs.rmSync(`${image}.tree`, { recursive: true });
+    chmodDirectories(path.join(scratch, "squashfs-root"), 0o700);
     return path.join(scratch, "squashfs-root");
   },
 });
