@@ -148,7 +148,13 @@ fn hub_runs_record_signal_unrecorded_and_shutdown_endings() {
     fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let root = temporary.path();
     write_owner_file(&root.join("hmux"), b"#!/bin/sh\nexit 1\n", true);
+    // The managed runtime accepts only an owner-only discovery root.
     fs::create_dir(root.join("hmux-discovery")).unwrap();
+    fs::set_permissions(
+        root.join("hmux-discovery"),
+        fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
 
     // A first start records why it was launched and by whom.
     let mut first = start_hub(root, None, "first_start");
