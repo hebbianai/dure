@@ -84,6 +84,11 @@ impl WindowsTerminalSurface {
         host: &mut SessionHost,
         fence: &SessionFence,
     ) -> Result<Option<Vec<Vec<u8>>>> {
+        // An active find follows new output; a failed refresh keeps the
+        // previous answer and still publishes the frame.
+        if let Err(error) = host.refresh_view_find(fence, &mut self.projection) {
+            eprintln!("hmux-runtime: kept the previous terminal find answer: {error}");
+        }
         let Some(frame) = host.capture_latest_viewport_frame(fence, &mut self.projection)? else {
             return Ok(None);
         };

@@ -803,6 +803,25 @@ impl SessionHost {
         Ok(replay.capture_latest_viewport_frame(projection)?)
     }
 
+    /// Carries the attachment's active find forward after output advanced.
+    /// Returns whether the find changed. On error the previous answer is kept
+    /// and no longer refreshed; a frame can still be captured.
+    #[cfg(feature = "ghostty-core-proof")]
+    pub fn refresh_view_find(
+        &mut self,
+        expected_fence: &SessionFence,
+        projection: &mut ViewProjection,
+    ) -> Result<bool, SessionHostError> {
+        // An exited session writes no more output to follow.
+        let ProviderEpoch::Running { replay, .. } = &mut self.current else {
+            return Ok(false);
+        };
+        expected_fence
+            .ensure_matches(replay.fence())
+            .map_err(|_| SessionHostError::FenceMismatch)?;
+        Ok(replay.refresh_view_find(projection)?)
+    }
+
     #[cfg(feature = "ghostty-core-proof")]
     pub fn capture_viewport_source(
         &mut self,

@@ -6,7 +6,9 @@ use terminal_state_protocol::{
 
 use super::cold_history::LogicalCellAnchor;
 use super::composite_viewport_source::CompositeViewportSource;
-use super::history_find::{FindQuery, FindRequest, FindScan, FindScanControl, FindState};
+use super::history_find::{
+    FindQuery, FindRequest, FindScan, FindScanControl, FindScanPoint, FindState, LiveFind,
+};
 use super::viewport_source::{
     BoundedViewportRows, TerminalViewportAnchor, TerminalViewportMetrics, ViewportAnchorError,
     ViewportProjectionGeometry, ViewportSource,
@@ -528,6 +530,16 @@ fn row_logical_anchor(row: &terminal_state_protocol::TerminalRow) -> LogicalCell
 /// Cold rows one find step projects; each step takes the cold store lock once.
 const FIND_COLD_CHUNK_ROWS: u16 = 256;
 
+/// How far one find scan walked through retained history.
+struct FindWalk {
+    /// The oldest retained row was offered.
+    reached_oldest: bool,
+    /// The alternate screen, which has no history, was searched.
+    alternate_screen: bool,
+    /// The screen's top line when the scan ran; see [`FindScanPoint`].
+    screen_top_line: Option<u64>,
+}
+
 pub struct CapturedViewportFrame {
     terminal_epoch: String,
     through_output_seq: u64,
@@ -768,14 +780,16 @@ impl TerminalReplay {
             projection.find = Some(Arc::new(FindState::invalid(request, intent_seq)));
             return Ok(ViewportIntentDisposition::Applied);
         };
-        let mut scan = FindScan::new(query);
-        let (reached_oldest, alternate_screen) = self.scan_history_for_find(&mut scan)?;
+        let mut scan = FindScan::new(query.clone());
+        let walk = self.scan_history_for_find(&mut scan)?;
+        let live = self.live_find(query, &walk);
         let state = FindState::from_outcome(
             request,
             intent_seq,
-            scan.finish(reached_oldest),
+            scan.finish(walk.reached_oldest),
             previous,
             step,
+            Some(live),
         );
         if let Some(found) = state.current_match() {
             // Anchor on the match row, then move half a viewport toward older
@@ -785,7 +799,7 @@ impl TerminalReplay {
             projection.rows_from_tail = None;
             projection.anchor = None;
             projection.anchor_logical = Some(found.row_anchor);
-            projection.anchor_buffer = Some(if alternate_screen {
+            projection.anchor_buffer = Some(if walk.alternate_screen {
                 BufferId::Alternate
             } else {
                 BufferId::Normal
@@ -796,19 +810,93 @@ impl TerminalReplay {
         Ok(ViewportIntentDisposition::Applied)
     }
 
+    /// Carries this attachment's active find forward once output advanced.
+    ///
+    /// The lines from the screen the previous scan saw onward are searched
+    /// again and merged with the older matches, so the count and highlights
+    /// follow new output. The selected match stays selected and the viewport
+    /// does not move. A buffer switch, or history that no longer reaches the
+    /// previous screen, is searched again in full, within the usual bound.
+    /// On failure the previous answer is kept, no longer refreshed, so a
+    /// broken source is not rescanned on every frame. Returns whether the
+    /// find changed.
+    pub fn refresh_view_find(
+        &mut self,
+        projection: &mut ViewProjection,
+    ) -> Result<bool, TerminalReplayError> {
+        let Some(state) = projection.find.clone() else {
+            return Ok(false);
+        };
+        let Some(live) = state.live.as_ref() else {
+            return Ok(false);
+        };
+        if live.scanned.terminal_revision == self.terminal_state_revision {
+            return Ok(false);
+        }
+        if !self.owns_view_projection(projection) {
+            return Err(TerminalReplayError::InvalidStructuredProjection {
+                reason: "find refresh targets a projection this replay does not own",
+            });
+        }
+        match self.rescan_find(&state, live) {
+            Ok(refreshed) => {
+                projection.find = Some(Arc::new(refreshed));
+                Ok(true)
+            }
+            Err(error) => {
+                projection.find = Some(Arc::new(state.frozen()));
+                Err(error)
+            }
+        }
+    }
+
+    fn rescan_find(
+        &mut self,
+        state: &FindState,
+        live: &LiveFind,
+    ) -> Result<FindState, TerminalReplayError> {
+        let floor_line = live.scanned.floor_line;
+        let mut scan = FindScan::lines_from(live.query.clone(), floor_line);
+        let walk = self.scan_history_for_find(&mut scan)?;
+        if walk.alternate_screen == live.scanned.alternate_screen && scan.offered_rows() {
+            let next = self.live_find(live.query.clone(), &walk);
+            return Ok(state.refreshed(scan.finish(walk.reached_oldest), Some(floor_line), next));
+        }
+        let mut scan = FindScan::new(live.query.clone());
+        let walk = self.scan_history_for_find(&mut scan)?;
+        let next = self.live_find(live.query.clone(), &walk);
+        Ok(state.refreshed(scan.finish(walk.reached_oldest), None, next))
+    }
+
+    fn live_find(&self, query: FindQuery, walk: &FindWalk) -> LiveFind {
+        LiveFind {
+            query,
+            scanned: FindScanPoint {
+                terminal_revision: self.terminal_state_revision,
+                // An empty terminal has no screen yet; everything is new.
+                floor_line: walk.screen_top_line.unwrap_or(0),
+                alternate_screen: walk.alternate_screen,
+            },
+        }
+    }
+
     /// Offers retained rows newest first: the hot terminal, then cold history
-    /// below its seam. Returns whether the oldest retained row was reached and
-    /// whether the alternate screen (which has no history) was searched.
+    /// below its seam, until the scan stops.
     fn scan_history_for_find(
         &mut self,
         scan: &mut FindScan,
-    ) -> Result<(bool, bool), TerminalReplayError> {
+    ) -> Result<FindWalk, TerminalReplayError> {
         let hot = self.terminal.scan_hot_rows_for_find(scan)?;
+        let walk = |reached_oldest| FindWalk {
+            reached_oldest,
+            alternate_screen: hot.alternate_screen,
+            screen_top_line: hot.screen_top_line,
+        };
         if hot.stopped {
-            return Ok((false, hot.alternate_screen));
+            return Ok(walk(false));
         }
         if hot.alternate_screen {
-            return Ok((true, true));
+            return Ok(walk(true));
         }
         let cold = match self.recovered_history_boundary.as_ref() {
             Some(boundary) => Some(boundary.projection_cold.clone()),
@@ -819,7 +907,7 @@ impl TerminalReplay {
                 .transpose()?,
         };
         let Some(cold) = cold else {
-            return Ok((true, false));
+            return Ok(walk(true));
         };
         let source = self.cached_viewport_source(TerminalViewportMetrics {
             total_rows: None,
@@ -836,7 +924,7 @@ impl TerminalReplay {
                 .move_rows(-i64::from(FIND_COLD_CHUNK_ROWS), &geometry)
                 .map_err(ViewportAnchorError::into_terminal_error)?;
             if moved == 0 {
-                return Ok((true, false));
+                return Ok(walk(true));
             }
             let projected = anchor
                 .project_rows(&geometry)
@@ -850,11 +938,11 @@ impl TerminalReplay {
                     continue;
                 }
                 if scan.push_terminal_row(row, &projected.tables) == FindScanControl::Stop {
-                    return Ok((false, false));
+                    return Ok(walk(false));
                 }
             }
             if !projected.has_more_before {
-                return Ok((true, false));
+                return Ok(walk(true));
             }
         }
     }
@@ -3483,6 +3571,212 @@ mod tests {
             .unwrap();
         let cleared = take_frame(&mut replay, &mut projection);
         assert!(frame(&cleared).find.is_none());
+    }
+
+    fn apply_find_intent(
+        replay: &mut TerminalReplay,
+        projection: &mut ViewProjection,
+        record_id: u64,
+        query: &str,
+        step: FindStep,
+    ) {
+        let input = ingress(
+            replay,
+            record_id,
+            projection.projection_revision,
+            find(query, step),
+        );
+        replay.apply_viewport_intent(projection, &input).unwrap();
+    }
+
+    fn find_counts(frame: &ViewportFrame) -> (u32, u32) {
+        let find = frame.find.as_ref().expect("an active find rides the frame");
+        (find.match_count, find.current_match)
+    }
+
+    #[test]
+    fn an_active_find_follows_new_output_and_keeps_its_selection_and_viewport() {
+        let mut replay = replay();
+        replay.ingest_output(b"alpha needle\r\n").unwrap();
+        populate(&mut replay, "line", 20);
+        let mut projection = replay.attach_view_projection().unwrap();
+        configure(&mut replay, &mut projection, 1, 4);
+        let _tail = take_frame(&mut replay, &mut projection);
+
+        apply_find_intent(&mut replay, &mut projection, 2, "needle", FindStep::Restart);
+        let revealed = take_frame(&mut replay, &mut projection);
+        let revealed = frame(&revealed);
+        assert_eq!(find_counts(revealed), (1, 1));
+        assert!(!revealed.follow_tail);
+        let top_row = row_text(revealed, 0);
+
+        replay
+            .ingest_output(b"beta needle\r\ngamma needle\r\n")
+            .unwrap();
+        populate(&mut replay, "more", 3);
+        assert!(replay.refresh_view_find(&mut projection).unwrap());
+        assert!(
+            !replay.refresh_view_find(&mut projection).unwrap(),
+            "without new output there is nothing to refresh"
+        );
+        let followed = protocol_round_trip(take_frame(&mut replay, &mut projection), 3);
+        let followed = frame(&followed);
+        let summary = followed.find.as_ref().unwrap();
+        assert_eq!(
+            summary.find_intent_seq, 2,
+            "a refresh answers the same find"
+        );
+        assert!(summary.match_count_complete);
+        // Two newer matches arrived; the selected match is now the oldest.
+        assert_eq!(find_counts(followed), (3, 3));
+        assert!(!followed.follow_tail, "a refresh never moves the viewport");
+        assert_eq!(row_text(followed, 0), top_row);
+        assert!(current_find_row(followed).starts_with("alpha needle"));
+
+        apply_find_intent(&mut replay, &mut projection, 4, "needle", FindStep::Newer);
+        let stepped = take_frame(&mut replay, &mut projection);
+        let stepped = frame(&stepped);
+        assert_eq!(find_counts(stepped), (3, 2));
+        assert!(current_find_row(stepped).starts_with("beta needle"));
+    }
+
+    #[test]
+    fn a_find_without_a_match_picks_up_one_that_output_writes_at_the_tail() {
+        let mut replay = replay();
+        populate(&mut replay, "line", 10);
+        let mut projection = replay.attach_view_projection().unwrap();
+        configure(&mut replay, &mut projection, 1, 4);
+        let _tail = take_frame(&mut replay, &mut projection);
+
+        apply_find_intent(&mut replay, &mut projection, 2, "late", FindStep::Restart);
+        let none = take_frame(&mut replay, &mut projection);
+        let none = frame(&none);
+        assert_eq!(
+            none.find.as_ref().unwrap().status,
+            terminal_state_protocol::FindStatus::NoMatch as i32
+        );
+        assert!(none.follow_tail);
+
+        replay.ingest_output(b"late arrival\r\n").unwrap();
+        assert!(replay.refresh_view_find(&mut projection).unwrap());
+        let found = take_frame(&mut replay, &mut projection);
+        let found = frame(&found);
+        assert_eq!(
+            found.find.as_ref().unwrap().status,
+            terminal_state_protocol::FindStatus::Matched as i32
+        );
+        assert_eq!(find_counts(found), (1, 1));
+        assert!(found.follow_tail, "the tail keeps following output");
+        assert!(current_find_row(found).starts_with("late arrival"));
+    }
+
+    #[test]
+    fn a_refresh_drops_a_match_that_output_rewrote_on_the_screen() {
+        let mut replay = replay();
+        populate(&mut replay, "line", 10);
+        replay.ingest_output(b"building needle").unwrap();
+        let mut projection = replay.attach_view_projection().unwrap();
+        configure(&mut replay, &mut projection, 1, 4);
+        let _tail = take_frame(&mut replay, &mut projection);
+        apply_find_intent(&mut replay, &mut projection, 2, "needle", FindStep::Restart);
+        let matched = take_frame(&mut replay, &mut projection);
+        assert_eq!(find_counts(frame(&matched)), (1, 1));
+
+        // A status line redraws itself in place.
+        replay.ingest_output(b"\r\x1b[2Kdone").unwrap();
+        assert!(replay.refresh_view_find(&mut projection).unwrap());
+        let rewritten = take_frame(&mut replay, &mut projection);
+        let summary = frame(&rewritten).find.as_ref().unwrap();
+        assert_eq!(
+            summary.status,
+            terminal_state_protocol::FindStatus::NoMatch as i32
+        );
+        assert!(summary.highlights.is_empty());
+    }
+
+    #[test]
+    fn a_refresh_reaches_new_output_that_moved_into_cold_history() {
+        let mut replay = replay();
+        replay.ingest_output(b"zero needle\r\n").unwrap();
+        populate(&mut replay, "line", 30);
+        let mut projection = replay.attach_view_projection().unwrap();
+        configure(&mut replay, &mut projection, 1, 4);
+        let _tail = take_frame(&mut replay, &mut projection);
+        apply_find_intent(&mut replay, &mut projection, 2, "needle", FindStep::Restart);
+        let first = take_frame(&mut replay, &mut projection);
+        assert_eq!(find_counts(frame(&first)), (1, 1));
+
+        // More than the hot terminal retains: the screen the find saw, and
+        // the next match, end up in cold history.
+        for batch_start in (0..5_000).step_by(500) {
+            let mut output = String::new();
+            for index in batch_start..batch_start + 500 {
+                match index {
+                    10 => output.push_str("H000010 needle\r\n"),
+                    4_990 => output.push_str("H004990 needle\r\n"),
+                    _ => output.push_str(&format!("H{index:06}\r\n")),
+                }
+            }
+            replay.ingest_output(output.as_bytes()).unwrap();
+        }
+        wait_for_cold_storage(&mut replay);
+        assert!(replay.refresh_view_find(&mut projection).unwrap());
+        let followed = take_frame(&mut replay, &mut projection);
+        let followed = frame(&followed);
+        assert!(followed.find.as_ref().unwrap().match_count_complete);
+        assert_eq!(find_counts(followed), (3, 3));
+        assert!(current_find_row(followed).starts_with("zero needle"));
+
+        apply_find_intent(&mut replay, &mut projection, 3, "needle", FindStep::Newer);
+        let stepped = take_frame(&mut replay, &mut projection);
+        let stepped = frame(&stepped);
+        assert_eq!(find_counts(stepped), (3, 2));
+        assert!(current_find_row(stepped).starts_with("H000010 needle"));
+        let current_row = stepped
+            .find
+            .as_ref()
+            .unwrap()
+            .highlights
+            .iter()
+            .find(|highlight| highlight.current)
+            .unwrap()
+            .row as usize;
+        assert_ne!(
+            stepped.rows[current_row].row_id
+                & crate::terminal_replay::cold_history::COLD_ROW_ID_MASK,
+            0,
+            "the match the refresh found is projected from cold history"
+        );
+    }
+
+    #[test]
+    fn a_buffer_switch_searches_the_new_screen_again() {
+        let mut replay = replay();
+        replay.ingest_output(b"normal needle\r\n").unwrap();
+        populate(&mut replay, "line", 10);
+        let mut projection = replay.attach_view_projection().unwrap();
+        configure(&mut replay, &mut projection, 1, 4);
+        let _tail = take_frame(&mut replay, &mut projection);
+        apply_find_intent(&mut replay, &mut projection, 2, "needle", FindStep::Restart);
+        let normal = take_frame(&mut replay, &mut projection);
+        assert_eq!(find_counts(frame(&normal)), (1, 1));
+
+        replay
+            .ingest_output(b"\x1b[?1049h\x1b[Halt needle one\r\nalt needle two")
+            .unwrap();
+        assert!(replay.refresh_view_find(&mut projection).unwrap());
+        let alternate = take_frame(&mut replay, &mut projection);
+        let alternate = frame(&alternate);
+        // The alternate screen has no history; only its own rows match.
+        assert_eq!(find_counts(alternate).0, 2);
+        assert_eq!(alternate.find.as_ref().unwrap().highlights.len(), 2);
+
+        replay.ingest_output(b"\x1b[?1049l").unwrap();
+        assert!(replay.refresh_view_find(&mut projection).unwrap());
+        let restored = take_frame(&mut replay, &mut projection);
+        let restored = frame(&restored);
+        assert_eq!(find_counts(restored), (1, 1));
+        assert!(restored.find.as_ref().unwrap().match_count_complete);
     }
 
     #[test]

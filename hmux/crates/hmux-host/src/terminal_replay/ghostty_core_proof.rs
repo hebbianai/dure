@@ -172,6 +172,9 @@ pub(super) struct HotFindScan {
     pub stopped: bool,
     /// Logical start of the oldest hot row; older rows live in cold history.
     pub oldest: Option<LogicalCellAnchor>,
+    /// The logical line of the screen's top row. Output can still rewrite it
+    /// and every newer line; older rows are settled scrollback.
+    pub screen_top_line: Option<u64>,
     pub alternate_screen: bool,
 }
 
@@ -864,6 +867,7 @@ impl GhosttyProofAdapter {
             return Ok(HotFindScan {
                 stopped: false,
                 oldest: None,
+                screen_top_line: None,
                 alternate_screen: observation.alternate_screen,
             });
         }
@@ -896,9 +900,22 @@ impl GhosttyProofAdapter {
         }
         let rows = index_rows(first_logical_line_id, observation.columns, &row_index.rows)?;
         let oldest = rows.first().map(|row| row.anchor);
+        // The alternate screen has no scrollback; all of it is the screen.
+        let screen_top = if observation.alternate_screen {
+            0
+        } else {
+            observation.scrollback_rows.min(total_rows - 1)
+        };
+        let screen_top_line = rows.get(screen_top).map(|row| row.anchor.logical_line_id);
+        // A refresh needs only the lines from its floor on, plus one older row
+        // that tells the scan it reached the floor.
+        let first = scan.floor_line().map_or(0, |floor_line| {
+            rows.partition_point(|row| row.anchor.logical_line_id < floor_line)
+                .saturating_sub(1)
+        });
         let mut end = total_rows;
-        while end > 0 {
-            let start = end.saturating_sub(FIND_HOT_CHUNK_ROWS);
+        while end > first {
+            let start = end.saturating_sub(FIND_HOT_CHUNK_ROWS).max(first);
             let projection = self
                 .core
                 .track_screen_row(start)
@@ -917,6 +934,7 @@ impl GhosttyProofAdapter {
                     return Ok(HotFindScan {
                         stopped: true,
                         oldest,
+                        screen_top_line,
                         alternate_screen: observation.alternate_screen,
                     });
                 }
@@ -926,6 +944,7 @@ impl GhosttyProofAdapter {
         Ok(HotFindScan {
             stopped: false,
             oldest,
+            screen_top_line,
             alternate_screen: observation.alternate_screen,
         })
     }

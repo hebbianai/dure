@@ -4,6 +4,10 @@
 //! so it searches here and returns stable logical-cell positions. Rows arrive
 //! newest first; soft-wrapped rows of one logical line are joined before
 //! matching, so a match may cross a physical row boundary.
+//!
+//! An active find stays live: when output advances, only the lines output
+//! could still change (the screen the previous scan saw, and anything newer)
+//! are searched again and merged with the older, settled matches.
 
 use std::sync::Arc;
 
@@ -30,6 +34,7 @@ pub(super) struct FindRequest {
     pub regex: bool,
 }
 
+#[derive(Clone)]
 pub(super) struct FindQuery {
     pattern: Regex,
 }
@@ -90,6 +95,9 @@ pub(super) struct FindScan {
     pending: Vec<RowSegment>,
     rows_visited: usize,
     bounded: bool,
+    /// Lines older than this are not searched; see [`FindScan::lines_from`].
+    floor_line: Option<u64>,
+    reached_floor: bool,
 }
 
 impl FindScan {
@@ -101,7 +109,29 @@ impl FindScan {
             pending: Vec::new(),
             rows_visited: 0,
             bounded: false,
+            floor_line: None,
+            reached_floor: false,
         }
+    }
+
+    /// A scan of logical lines `floor_line` and newer only. It stops at the
+    /// first older row, so a refresh revisits new output, not all history.
+    pub(super) fn lines_from(query: FindQuery, floor_line: u64) -> Self {
+        Self {
+            floor_line: Some(floor_line),
+            ..Self::new(query)
+        }
+    }
+
+    pub(super) fn floor_line(&self) -> Option<u64> {
+        self.floor_line
+    }
+
+    /// Whether any row at or after the floor was offered. A refresh that
+    /// finds none has lost the lines its floor named (the history was
+    /// cleared or rewound), so its older matches no longer describe output.
+    pub(super) fn offered_rows(&self) -> bool {
+        self.rows_visited > 0
     }
 
     /// Offers the next older physical row. `cells` yields each cell's text and
@@ -112,7 +142,15 @@ impl FindScan {
         logical_cell_offset: u32,
         cells: impl Iterator<Item = (&'a str, u32)>,
     ) -> FindScanControl {
-        if self.bounded {
+        if self.bounded || self.reached_floor {
+            return FindScanControl::Stop;
+        }
+        if self
+            .floor_line
+            .is_some_and(|floor_line| logical_line_id < floor_line)
+        {
+            self.finish_line();
+            self.reached_floor = true;
             return FindScanControl::Stop;
         }
         if self.pending_line != Some(logical_line_id) {
@@ -160,12 +198,13 @@ impl FindScan {
         )
     }
 
-    /// `reached_oldest` says the caller offered every retained row.
+    /// `reached_oldest` says the caller offered every retained row. A scan
+    /// with a floor is complete once it reached a line below that floor.
     pub(super) fn finish(mut self, reached_oldest: bool) -> FindOutcome {
         self.finish_line();
         self.matches.truncate(max_matches());
         FindOutcome {
-            complete: reached_oldest && !self.bounded,
+            complete: (reached_oldest || self.reached_floor) && !self.bounded,
             matches: self.matches,
         }
     }
@@ -225,6 +264,14 @@ fn max_matches() -> usize {
     usize::try_from(MAX_FIND_MATCHES).unwrap_or(usize::MAX)
 }
 
+fn match_status(matches: &[FindMatch]) -> FindStatus {
+    if matches.is_empty() {
+        FindStatus::NoMatch
+    } else {
+        FindStatus::Matched
+    }
+}
+
 /// Logical cells covering bytes `[start, end)` of a joined line.
 fn cell_range(cells: &[(usize, u32, u32)], start: usize, end: usize) -> Option<(u32, u32)> {
     let first = cells
@@ -244,6 +291,24 @@ pub(super) struct FindOutcome {
     pub complete: bool,
 }
 
+/// Where one scan stood in the terminal's output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct FindScanPoint {
+    /// The terminal state revision the matches describe.
+    pub terminal_revision: u64,
+    /// The top line of the screen when the scan ran. Output can rewrite that
+    /// line and anything newer; older lines are settled history.
+    pub floor_line: u64,
+    pub alternate_screen: bool,
+}
+
+/// What a refresh needs to carry a find forward as output arrives.
+#[derive(Clone)]
+pub(super) struct LiveFind {
+    pub query: FindQuery,
+    pub scanned: FindScanPoint,
+}
+
 /// The connection's answer to its newest applied find.
 #[derive(Clone)]
 pub(super) struct FindState {
@@ -254,6 +319,9 @@ pub(super) struct FindState {
     pub matches: Arc<[FindMatch]>,
     pub complete: bool,
     pub current: Option<usize>,
+    /// `None` when output cannot change the answer (an invalid pattern) or a
+    /// refresh failed and the answer is kept as it was.
+    pub live: Option<LiveFind>,
 }
 
 impl FindState {
@@ -265,6 +333,7 @@ impl FindState {
             matches: Arc::from(Vec::new()),
             complete: true,
             current: None,
+            live: None,
         }
     }
 
@@ -274,19 +343,62 @@ impl FindState {
         outcome: FindOutcome,
         previous: Option<FindMatch>,
         step: FindStep,
+        live: Option<LiveFind>,
     ) -> Self {
         let current = select_match(previous, &outcome.matches, step);
         Self {
             request,
             intent_seq,
-            status: if outcome.matches.is_empty() {
-                FindStatus::NoMatch
-            } else {
-                FindStatus::Matched
-            },
+            status: match_status(&outcome.matches),
             matches: Arc::from(outcome.matches),
             complete: outcome.complete,
             current,
+            live,
+        }
+    }
+
+    /// This answer after output advanced. `rescanned_from` is the oldest line
+    /// the refresh searched again; older matches are kept as they were. `None`
+    /// means all history was searched again. The selected match stays
+    /// selected, and one that output rewrote continues from where it was. A
+    /// refresh answers the same intent and never moves the viewport.
+    pub(super) fn refreshed(
+        &self,
+        outcome: FindOutcome,
+        rescanned_from: Option<u64>,
+        live: LiveFind,
+    ) -> Self {
+        let FindOutcome {
+            mut matches,
+            mut complete,
+        } = outcome;
+        // A bounded rescan stopped short of the floor and leaves a gap; it
+        // already covers as much history as a fresh find would.
+        if let Some(floor_line) = rescanned_from.filter(|_| complete) {
+            let settled = self
+                .matches
+                .partition_point(|found| found.logical_line_id >= floor_line);
+            matches.extend_from_slice(&self.matches[settled..]);
+            complete = self.complete && matches.len() <= max_matches();
+            matches.truncate(max_matches());
+        }
+        let current = retain_match(self.current_match(), &matches);
+        Self {
+            request: self.request.clone(),
+            intent_seq: self.intent_seq,
+            status: match_status(&matches),
+            matches: Arc::from(matches),
+            complete,
+            current,
+            live: Some(live),
+        }
+    }
+
+    /// The same answer, no longer refreshed by output.
+    pub(super) fn frozen(&self) -> Self {
+        Self {
+            live: None,
+            ..self.clone()
         }
     }
 
@@ -361,6 +473,22 @@ pub(super) fn select_match(
     })
 }
 
+/// The match a refresh keeps selected: the same one, or the nearest older one
+/// when output rewrote it. A find that had no match selects the newest.
+fn retain_match(previous: Option<FindMatch>, matches: &[FindMatch]) -> Option<usize> {
+    let last = matches.len().checked_sub(1)?;
+    let Some(previous) = previous else {
+        return Some(0);
+    };
+    let key = previous.order_key();
+    // Descending order: the first match not newer than the previous one.
+    Some(
+        matches
+            .partition_point(|candidate| candidate.order_key() > key)
+            .min(last),
+    )
+}
+
 /// Highlight segments for the rows of one frame. Matches are newest first,
 /// which is descending logical order.
 fn frame_highlights(
@@ -425,8 +553,7 @@ mod tests {
 
     /// Pushes `(line id, cell offset, text)` rows given oldest first, the way
     /// a reader sees them, in the newest-first order the Host scans.
-    fn run(request: &FindRequest, rows: &[(u64, u32, &str)]) -> FindOutcome {
-        let mut find = scan(request);
+    fn offer(find: &mut FindScan, rows: &[(u64, u32, &str)]) {
         for (line, offset, text) in rows.iter().rev() {
             let cells = text
                 .chars()
@@ -436,12 +563,20 @@ mod tests {
                 .iter()
                 .map(|(character, width)| (character.to_string(), *width))
                 .collect::<Vec<_>>();
-            find.push_row(
+            if find.push_row(
                 *line,
                 *offset,
                 strings.iter().map(|(text, width)| (text.as_str(), *width)),
-            );
+            ) == FindScanControl::Stop
+            {
+                return;
+            }
         }
+    }
+
+    fn run(request: &FindRequest, rows: &[(u64, u32, &str)]) -> FindOutcome {
+        let mut find = scan(request);
+        offer(&mut find, rows);
         find.finish(true)
     }
 
@@ -575,6 +710,212 @@ mod tests {
         assert_eq!(select_match(None, &[], FindStep::Restart), None);
     }
 
+    #[test]
+    fn a_scan_from_a_floor_line_stops_below_it_and_is_complete() {
+        let query = FindQuery::compile(&request("needle")).unwrap();
+        let mut find = FindScan::lines_from(query, 5);
+        // Line 5 wraps; its two rows are joined before matching.
+        offer(
+            &mut find,
+            &[
+                (3, 0, "needle settled"),
+                (5, 0, "abc nee"),
+                (5, 7, "dle"),
+                (6, 0, "needle new"),
+            ],
+        );
+        assert!(find.offered_rows());
+        let outcome = find.finish(false);
+        assert!(outcome.complete, "reaching the floor completes a refresh");
+        assert_eq!(ranges(&outcome), [(6, 0, 6), (5, 4, 10)]);
+    }
+
+    #[test]
+    fn a_floor_scan_whose_newest_row_is_older_than_the_floor_offers_nothing() {
+        let query = FindQuery::compile(&request("x")).unwrap();
+        let mut find = FindScan::lines_from(query, 9);
+        assert_eq!(
+            find.push_row(4, 0, [("x", 1)].into_iter()),
+            FindScanControl::Stop
+        );
+        assert!(!find.offered_rows());
+        assert!(find.finish(false).matches.is_empty());
+    }
+
+    fn live(floor_line: u64) -> LiveFind {
+        LiveFind {
+            query: FindQuery::compile(&request("x")).unwrap(),
+            scanned: FindScanPoint {
+                terminal_revision: 9,
+                floor_line,
+                alternate_screen: false,
+            },
+        }
+    }
+
+    fn state(matches: Vec<FindMatch>, previous: Option<FindMatch>, step: FindStep) -> FindState {
+        FindState::from_outcome(
+            request("x"),
+            4,
+            FindOutcome {
+                matches,
+                complete: true,
+            },
+            previous,
+            step,
+            Some(live(5)),
+        )
+    }
+
+    fn lines(state: &FindState) -> Vec<(u64, u32)> {
+        state
+            .matches
+            .iter()
+            .map(|found| (found.logical_line_id, found.start_cell))
+            .collect()
+    }
+
+    #[test]
+    fn a_refresh_replaces_rescanned_lines_and_keeps_settled_ones_and_the_selection() {
+        let before = state(
+            vec![found(9, 0), found(5, 3), found(5, 0), found(1, 0)],
+            Some(found(9, 0)),
+            FindStep::Older,
+        );
+        assert_eq!(before.current_match(), Some(found(5, 3)));
+        let after = before.refreshed(
+            FindOutcome {
+                matches: vec![found(12, 0), found(9, 0), found(5, 3)],
+                complete: true,
+            },
+            Some(5),
+            live(11),
+        );
+        // Lines 5 and newer come from the rescan; line 1 is settled history.
+        assert_eq!(lines(&after), [(12, 0), (9, 0), (5, 3), (1, 0)]);
+        assert_eq!(after.current_match(), Some(found(5, 3)));
+        assert_eq!(after.current, Some(2));
+        assert_eq!(after.status, FindStatus::Matched);
+        assert!(after.complete);
+        assert_eq!(after.intent_seq, 4, "a refresh answers the same intent");
+        assert_eq!(after.live.as_ref().unwrap().scanned.floor_line, 11);
+    }
+
+    #[test]
+    fn a_refresh_that_rewrote_the_selected_match_continues_from_its_position() {
+        let before = state(
+            vec![found(9, 0), found(5, 3), found(5, 0), found(1, 0)],
+            Some(found(9, 0)),
+            FindStep::Older,
+        );
+        let after = before.refreshed(
+            FindOutcome {
+                matches: vec![found(12, 0), found(9, 0)],
+                complete: true,
+            },
+            Some(5),
+            live(11),
+        );
+        assert_eq!(lines(&after), [(12, 0), (9, 0), (1, 0)]);
+        assert_eq!(after.current_match(), Some(found(1, 0)));
+
+        // With nothing older left, the nearest newer match is selected.
+        let before = state(
+            vec![found(9, 0), found(5, 0)],
+            Some(found(9, 0)),
+            FindStep::Older,
+        );
+        let after = before.refreshed(
+            FindOutcome {
+                matches: vec![found(9, 0)],
+                complete: true,
+            },
+            Some(5),
+            live(9),
+        );
+        assert_eq!(after.current_match(), Some(found(9, 0)));
+
+        // Output that rewrote every match leaves none.
+        let after = after.refreshed(
+            FindOutcome {
+                matches: Vec::new(),
+                complete: true,
+            },
+            Some(9),
+            live(9),
+        );
+        assert_eq!(after.status, FindStatus::NoMatch);
+        assert_eq!(after.current, None);
+    }
+
+    #[test]
+    fn a_refresh_of_a_find_without_matches_selects_the_newest_new_one() {
+        let before = state(Vec::new(), None, FindStep::Restart);
+        assert_eq!(before.status, FindStatus::NoMatch);
+        let after = before.refreshed(
+            FindOutcome {
+                matches: vec![found(7, 0), found(6, 2)],
+                complete: true,
+            },
+            Some(5),
+            live(7),
+        );
+        assert_eq!(after.status, FindStatus::Matched);
+        assert_eq!(after.current, Some(0));
+    }
+
+    #[test]
+    fn a_bounded_or_full_rescan_replaces_the_answer() {
+        let before = state(vec![found(9, 0), found(1, 0)], None, FindStep::Restart);
+        let bounded = before.refreshed(
+            FindOutcome {
+                matches: vec![found(30, 0)],
+                complete: false,
+            },
+            Some(5),
+            live(30),
+        );
+        assert_eq!(lines(&bounded), [(30, 0)]);
+        assert!(!bounded.complete);
+
+        let full = before.refreshed(
+            FindOutcome {
+                matches: vec![found(2, 0)],
+                complete: true,
+            },
+            None,
+            live(2),
+        );
+        assert_eq!(lines(&full), [(2, 0)]);
+        assert!(full.complete);
+        assert!(full.frozen().live.is_none());
+    }
+
+    #[test]
+    fn a_refresh_keeps_the_newest_matches_within_the_bound() {
+        let bound = u64::from(MAX_FIND_MATCHES);
+        let before = state(
+            (1..=bound).rev().map(|line| found(line, 0)).collect(),
+            None,
+            FindStep::Restart,
+        );
+        assert!(before.complete);
+        let after = before.refreshed(
+            FindOutcome {
+                matches: vec![found(bound + 10, 0)],
+                complete: true,
+            },
+            Some(bound + 1),
+            live(bound + 10),
+        );
+        assert_eq!(after.matches.len(), max_matches());
+        assert_eq!(after.matches[0].logical_line_id, bound + 10);
+        assert_eq!(after.matches[max_matches() - 1].logical_line_id, 2);
+        assert!(!after.complete, "the oldest match fell past the bound");
+        // The newest match stays selected, now one step from the newest.
+        assert_eq!(after.current, Some(1));
+    }
+
     fn frame_row(line: u64, offset: u32, span: u32, wraps: bool) -> TerminalRow {
         TerminalRow {
             row_id: line,
@@ -613,6 +954,7 @@ mod tests {
             },
             None,
             FindStep::Restart,
+            None,
         );
         let rows = [
             frame_row(3, 0, 4, false),

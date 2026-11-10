@@ -761,6 +761,18 @@ impl ServerState {
                 let Ok(mut host) = self.host.lock() else {
                     return Err("terminal viewport Host actor is unavailable".into());
                 };
+                // An active find follows new output. The refreshed answer
+                // rides the forked projection and commits with its frame.
+                for candidate in &mut batch {
+                    if let Err(error) =
+                        host.refresh_view_find(&self.fence, &mut candidate.projected)
+                    {
+                        eprintln!(
+                            "hmux-runtime: kept the previous terminal find answer for client {}: {error}",
+                            candidate.client_id
+                        );
+                    }
+                }
                 host.capture_viewport_source(&self.fence, &requests, VIEWPORT_SOURCE_CAPTURE_BYTES)
             };
             // A rejected union is split outside the Host actor. Give queued
