@@ -222,11 +222,18 @@ impl<T: Clone> OverlappingCallCoalescer<T> {
     }
 }
 
-pub(super) fn map_bounded_with_budget<T, R, F, P, G>(
+/// Probes items on `maximum_workers` threads (clamped to one through eight)
+/// until `total_budget` is spent. A probe starts only when its whole
+/// `probe_quantum` still fits in the budget; every other item takes the
+/// fallback. `now` is the clock the budget is measured on (`Instant::now`
+/// outside tests).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn map_bounded_with_budget<T, R, N, F, P, G>(
     items: Vec<T>,
     maximum_workers: usize,
     total_budget: Duration,
     probe_quantum: Duration,
+    now: N,
     should_probe: P,
     probe: F,
     fallback: G,
@@ -234,6 +241,7 @@ pub(super) fn map_bounded_with_budget<T, R, F, P, G>(
 where
     T: Sync,
     R: Send,
+    N: Fn() -> Instant + Sync,
     F: Fn(&T, Instant) -> R + Sync,
     P: Fn(&T) -> bool + Sync,
     G: Fn(T) -> R,
@@ -242,7 +250,7 @@ where
         return Vec::new();
     }
     let worker_count = maximum_workers.clamp(1, 8).min(items.len());
-    let deadline = Instant::now() + total_budget;
+    let deadline = now() + total_budget;
     let next = AtomicUsize::new(0);
     let results = Mutex::new(
         std::iter::repeat_with(|| None)
@@ -256,6 +264,7 @@ where
             let results = &results;
             let should_probe = &should_probe;
             let probe = &probe;
+            let now = &now;
             scope.spawn(move || {
                 loop {
                     let index = next.fetch_add(1, Ordering::Relaxed);
@@ -265,7 +274,7 @@ where
                     if !should_probe(item) {
                         continue;
                     }
-                    let Some(probe_deadline) = Instant::now().checked_add(probe_quantum) else {
+                    let Some(probe_deadline) = now().checked_add(probe_quantum) else {
                         break;
                     };
                     if probe_deadline > deadline {
@@ -300,6 +309,7 @@ pub(super) fn project_sessions_with_structured_health(
         maximum_workers,
         total_budget,
         probe_quantum,
+        Instant::now,
         |session| session.lifecycle == SessionLifecycle::Ready,
         move |session, deadline| {
             if probing_manager.has_live_structured_terminal_generation(session) {
@@ -471,32 +481,112 @@ mod tests {
         );
     }
 
+    /// Census time that moves only when a probe spends its quantum, so budget
+    /// tests do not depend on how quickly the host schedules threads.
+    struct VirtualClock {
+        origin: Instant,
+        elapsed: Mutex<Duration>,
+    }
+
+    impl VirtualClock {
+        fn new() -> Self {
+            Self {
+                origin: Instant::now(),
+                elapsed: Mutex::new(Duration::ZERO),
+            }
+        }
+
+        fn now(&self) -> Instant {
+            self.origin + *self.elapsed.lock().unwrap()
+        }
+
+        fn advance_to(&self, instant: Instant) {
+            let mut elapsed = self.elapsed.lock().unwrap();
+            *elapsed = (*elapsed).max(instant.saturating_duration_since(self.origin));
+        }
+    }
+
+    /// A reusable barrier that fails instead of hanging when fewer workers
+    /// than expected reach a probing round.
+    struct ProbeRound {
+        workers: usize,
+        state: Mutex<(usize, usize)>,
+        released: Condvar,
+    }
+
+    impl ProbeRound {
+        fn new(workers: usize) -> Self {
+            Self {
+                workers,
+                state: Mutex::new((0, 0)),
+                released: Condvar::new(),
+            }
+        }
+
+        fn wait(&self) {
+            let mut state = self.state.lock().unwrap();
+            let generation = state.1;
+            state.0 += 1;
+            if state.0 == self.workers {
+                *state = (0, generation + 1);
+                self.released.notify_all();
+                return;
+            }
+            let (state, timeout) = self
+                .released
+                .wait_timeout_while(state, Duration::from_secs(10), |state| {
+                    state.1 == generation
+                })
+                .unwrap();
+            let arrived = state.0;
+            drop(state);
+            assert!(
+                !timeout.timed_out(),
+                "only {arrived} of {} workers reached the probing round",
+                self.workers
+            );
+        }
+    }
+
     #[test]
     fn silent_catalog_stops_at_the_global_budget_and_worker_bound() {
+        // Every session stays silent for its whole 20 ms quantum. Probes move
+        // a virtual clock to their deadline instead of sleeping, and each round
+        // waits until all four workers are probing, so the outcome is exact.
+        let clock = VirtualClock::new();
+        let total_budget = Duration::from_millis(50);
+        let budget_deadline = clock.now() + total_budget;
+        let round = ProbeRound::new(4);
         let active = AtomicUsize::new(0);
         let maximum_active = AtomicUsize::new(0);
-        let started = Instant::now();
+        let late_probes = AtomicUsize::new(0);
         let results = map_bounded_with_budget(
             (0..128).collect::<Vec<_>>(),
             4,
-            Duration::from_millis(50),
+            total_budget,
             Duration::from_millis(20),
+            || clock.now(),
             |_| true,
             |_item, deadline| {
+                if deadline > budget_deadline {
+                    late_probes.fetch_add(1, Ordering::SeqCst);
+                }
                 let current = active.fetch_add(1, Ordering::SeqCst) + 1;
                 maximum_active.fetch_max(current, Ordering::SeqCst);
-                thread::sleep(deadline.saturating_duration_since(Instant::now()));
+                round.wait();
                 active.fetch_sub(1, Ordering::SeqCst);
+                clock.advance_to(deadline);
                 true
             },
             |_| false,
         );
 
+        // Two 20 ms rounds fit in the 50 ms budget; a third would end at 60 ms.
         let probed = results.iter().filter(|result| **result).count();
-        assert!(started.elapsed() < Duration::from_millis(150));
-        assert!((1..=8).contains(&probed), "{probed}");
-        assert!(maximum_active.load(Ordering::SeqCst) <= 4);
-        assert!(results.iter().skip(probed).all(|result| !result));
+        assert_eq!(probed, 8);
+        assert!(results[..8].iter().all(|result| *result));
+        assert_eq!(late_probes.load(Ordering::SeqCst), 0);
+        assert_eq!(maximum_active.load(Ordering::SeqCst), 4);
     }
 
     #[test]
@@ -506,6 +596,7 @@ mod tests {
             4,
             Duration::ZERO,
             Duration::from_millis(20),
+            Instant::now,
             |_| true,
             |_item, _deadline| panic!("zero budget must not start a probe"),
             |item| format!("unprobed-{item}"),
