@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -694,6 +694,108 @@ describe("immutable generic orchestration integration", () => {
         .toThrow(/already owned/);
       expect(fs.readFileSync(configPath)).toEqual(before);
     });
+  });
+
+  describe("a global Claude config that the desktop shared-state sync also writes", () => {
+    // The desktop app's Claude shared-state sync replace-writes ~/.claude.json
+    // while it holds this flock (crates/dure-app/provider-profile). It reads
+    // the file, takes the lock-protected decision, then writes the whole file.
+    const SYNC_STAND_IN = `
+import fcntl, json, os, sys, time
+lock_path, config_path, hold = sys.argv[1], sys.argv[2], float(sys.argv[3])
+with open(lock_path, "a+") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    with open(config_path) as source:
+        config = json.load(source)
+    print("locked", flush=True)
+    time.sleep(hold)
+    config.setdefault("mcpServers", {})["synced"] = {"command": "synced"}
+    with open(config_path + ".sync", "w") as staged:
+        json.dump(config, staged)
+    os.replace(config_path + ".sync", config_path)
+`;
+
+    function sharedClaudeHome() {
+      const root = fixture();
+      const homeDirectory = path.join(root, "provider-home");
+      const accounts = path.join(homeDirectory, ".dure", "accounts");
+      fs.mkdirSync(accounts, { recursive: true });
+      const configPath = path.join(homeDirectory, ".claude.json");
+      fs.writeFileSync(configPath, JSON.stringify({ mcpServers: { keep: { command: "keep" } } }));
+      return {
+        configPath,
+        lockPath: path.join(accounts, ".overlay-locks", "claude-shared-state-v1.lock"),
+        options: { provider: "claude", homeDirectory, global: true, approval: true, channel: "test", cliScriptPath: CLI },
+        readServers: () => JSON.parse(fs.readFileSync(configPath, "utf8")).mcpServers ?? {},
+      };
+    }
+
+    async function holdSyncLock(lockPath, configPath, seconds) {
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+      const holder = spawn("python3", ["-c", SYNC_STAND_IN, lockPath, configPath, String(seconds)], {
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      const exited = new Promise((resolve) => holder.once("exit", resolve));
+      await new Promise((resolve, reject) => {
+        holder.stdout.once("data", resolve);
+        holder.once("error", reject);
+      });
+      return { exited };
+    }
+
+    it("keeps a config write that lands while the payload is being staged", () => {
+      const { configPath, options, readServers } = sharedClaudeHome();
+      const copyFileSync = fs.copyFileSync;
+      let synced = false;
+      const copy = vi.spyOn(fs, "copyFileSync").mockImplementation((...args) => {
+        if (!synced) {
+          synced = true;
+          const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+          config.mcpServers.synced = { command: "synced" };
+          fs.writeFileSync(`${configPath}.sync`, JSON.stringify(config));
+          fs.renameSync(`${configPath}.sync`, configPath);
+        }
+        return copyFileSync(...args);
+      });
+      try {
+        mutateOrchestrationIntegrations({ ...options, action: "install" });
+      } finally {
+        copy.mockRestore();
+      }
+      expect(synced).toBe(true);
+      const servers = readServers();
+      expect(servers.synced).toEqual({ command: "synced" });
+      expect(servers.keep).toEqual({ command: "keep" });
+      expect(servers["dure-orchestration"]).toBeDefined();
+    });
+
+    it.skipIf(process.platform === "win32").each(["install", "uninstall"])(
+      "waits for the sync's lock during %s and keeps what the sync wrote under it",
+      async (action) => {
+        const { configPath, lockPath, options, readServers } = sharedClaudeHome();
+        if (action === "uninstall") mutateOrchestrationIntegrations({ ...options, action: "install" });
+        const sync = await holdSyncLock(lockPath, configPath, 0.5);
+        mutateOrchestrationIntegrations({ ...options, action });
+        expect(await sync.exited).toBe(0);
+        const servers = readServers();
+        expect(servers.synced).toEqual({ command: "synced" });
+        expect(servers.keep).toEqual({ command: "keep" });
+        if (action === "install") expect(servers["dure-orchestration"]).toBeDefined();
+        else expect(servers["dure-orchestration"]).toBeUndefined();
+      },
+      20_000,
+    );
+
+    it.skipIf(process.platform === "win32")("fails without touching the config when the sync keeps its lock", async () => {
+      const { configPath, lockPath, options } = sharedClaudeHome();
+      const sync = await holdSyncLock(lockPath, configPath, 3);
+      const before = fs.readFileSync(configPath);
+      expect(() => mutateOrchestrationIntegrations({ ...options, action: "install", sharedStateLockTimeoutMs: 200 }))
+        .toThrow(/Claude shared state is busy/);
+      expect(fs.readFileSync(configPath)).toEqual(before);
+      expect(inspectOrchestrationIntegrations(options)[0].status).toBe("missing");
+      expect(await sync.exited).toBe(0);
+    }, 20_000);
   });
 
   it("keeps managed Session enrollment identity stable across app and payload clients", () => {

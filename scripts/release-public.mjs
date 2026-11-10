@@ -20,6 +20,7 @@ import {
 import {
   COMPATIBILITY_REPOSITORY,
   RELEASE_REPOSITORY,
+  assembleReleaseFiles,
   expectedVersionFiles,
   inspectReleaseFiles,
   missingReleaseAssets,
@@ -584,13 +585,16 @@ function reviewedRecoveryTooling(sha, operator) {
   exactCi(sha);
 }
 
+/** Jobs of the release run whose signed Linux packages belong to its draft. */
+const LINUX_SIGNING_JOB = "linux-sign";
+const LINUX_PACKAGE_JOB_PREFIX = "linux-packages / ";
+
 function stage() {
-  assert.equal(
-    args.length,
-    4,
-    "stage requires TAG ASSET_DIRECTORY SOURCE_SHA VERIFICATION",
+  assert(
+    args.length === 4 || args.length === 5,
+    "stage requires TAG ASSET_DIRECTORY SOURCE_SHA VERIFICATION [LINUX_ASSET_DIRECTORY]",
   );
-  const [tag, directory, rawSource, verification] = args;
+  const [tag, macosDirectory, rawSource, verification, linuxDirectory] = args;
   requireReleaseAdmin();
   const sourceSha = normalizeFullCommitSha(rawSource);
   const tagSha = git("rev-parse", "HEAD");
@@ -614,12 +618,26 @@ function stage() {
   const publicKey = JSON.parse(
     run("git", ["show", `${tagSha}:src-tauri/tauri.conf.json`]),
   ).plugins.updater.pubkey;
-  const { assets } = inspectReleaseFiles(directory, tag, publicKey);
+  const directory = linuxDirectory
+    ? assembleReleaseFiles({
+        tag,
+        macos: path.resolve(macosDirectory),
+        linux: path.resolve(linuxDirectory),
+        output: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "dure-release-stage-")), "assets"),
+      })
+    : macosDirectory;
+  const { assets, linux } = inspectReleaseFiles(directory, tag, publicKey);
   const notice =
     verification === "full"
       ? "Full release regression completed."
       : "Full regression is DEFERRED for this emergency 0.2.x beta; no full-suite success is claimed. Focused and packaged checks do not certify every provider, platform or previously reported incident.";
-  const notes = `Dure ${tag} Public Beta for macOS Apple Silicon.\n\nBasic and Beta interfaces. Developer ID signed; the app is notarized and stapled. Installation and restart require your explicit action.\n\n${notice}\n\nCorresponding source: https://github.com/${RELEASE_REPOSITORY}/tree/${tagSha}\nBuild: https://github.com/${RELEASE_REPOSITORY}/actions/runs/${proof.runId}\nProtected workflow: https://github.com/${RELEASE_REPOSITORY}/tree/${proof.workflowSha}\n\n<!-- dure-release-v2 ${JSON.stringify(proof)} -->`;
+  const platforms = linux
+    ? "macOS Apple Silicon and Linux (x86_64, arm64)"
+    : "macOS Apple Silicon";
+  const signing = linux
+    ? "The macOS app is Developer ID signed, notarized and stapled. The Linux AppImage and Debian packages carry the same updater signature as the macOS archive; they are not signed by a Linux distribution."
+    : "Developer ID signed; the app is notarized and stapled.";
+  const notes = `Dure ${tag} Public Beta for ${platforms}.\n\nBasic and Beta interfaces. ${signing} Installation and restart require your explicit action.\n\n${notice}\n\nCorresponding source: https://github.com/${RELEASE_REPOSITORY}/tree/${tagSha}\nBuild: https://github.com/${RELEASE_REPOSITORY}/actions/runs/${proof.runId}\nProtected workflow: https://github.com/${RELEASE_REPOSITORY}/tree/${proof.workflowSha}\n\n<!-- dure-release-v2 ${JSON.stringify(proof)} -->`;
   provenance({ body: notes, tag_name: tag });
   let current = release(tag);
   if (!current) {
@@ -776,7 +794,9 @@ function promote() {
   assert.equal(draftJobs[0].conclusion, failedDraft ? "failure" : "success",
     "release_job_not_successful: draft");
   if (failedDraft) {
-    assert.deepEqual(jobs.jobs.filter((job) => !["source", "candidate", "verification", "host-preflight", "version", "build", "draft"].includes(job.name)),
+    assert.deepEqual(jobs.jobs.filter((job) =>
+      ![...["source", "candidate", "verification", "host-preflight", "version", "build", "draft"], LINUX_SIGNING_JOB].includes(job.name) &&
+      !job.name.startsWith(LINUX_PACKAGE_JOB_PREFIX)),
       [], "release_recovery_unexpected_job");
     if (recovery) reviewedRecoveryTooling(recovery.toolingSha, recovery.operator);
   }
@@ -788,6 +808,11 @@ function promote() {
     assert.equal(git("status", "--porcelain", "--untracked-files=no"), "", "release_recovery_tooling_dirty");
     reviewedRecoveryTooling(recoveryToolingSha, recoveryOperator);
   }
+  // A run whose Linux jobs were switched off skips them; only a successful
+  // signing job contributes Linux packages to the draft.
+  const linuxSigning = jobs.jobs.filter((job) => job.name === LINUX_SIGNING_JOB);
+  assert(linuxSigning.length <= 1, "release_job_ambiguous: linux-sign");
+  const linux = linuxSigning[0]?.conclusion === "success";
   const verificationJobs = jobs.jobs.filter(
     (job) => job.name === "verification",
   );
@@ -835,11 +860,12 @@ function promote() {
     selectionRecord(proof, tag, proof.runId),
     "release_selection_mismatch",
   );
-  const original = path.join(work, "original"),
+  const macosOriginal = path.join(work, "original"),
+    linuxOriginal = path.join(work, "original-linux"),
     downloaded = path.join(work, "downloaded"),
     publicDirectory = path.join(work, "anonymous");
-  download(
-    `release-assets-${tag} artifact`,
+  const artifact = (name, directory) => download(
+    `${name} artifact`,
     () => gh(
       "run",
       "download",
@@ -847,13 +873,22 @@ function promote() {
       "--repo",
       RELEASE_REPOSITORY,
       "--name",
-      `release-assets-${tag}`,
+      name,
       "--dir",
-      original,
+      directory,
     ),
-    { reset: emptyDirectory(original) },
+    { reset: emptyDirectory(directory) },
   );
+  artifact(`release-assets-${tag}`, macosOriginal);
+  let original = macosOriginal;
+  if (linux) {
+    artifact(`release-linux-assets-${tag}`, linuxOriginal);
+    original = assembleReleaseFiles({
+      tag, macos: macosOriginal, linux: linuxOriginal, output: path.join(work, "assembled"),
+    });
+  }
   const expected = inspectReleaseFiles(original, tag, publicKey);
+  assert.equal(expected.linux, linux, "release_linux_assets_mismatch");
   if (recovery) assert.deepEqual(recovery.assets, expected.assets, "release_recovery_asset_mismatch");
   if (recovering) current = completeDraft(tag, original, expected.assets, proof, current);
   else missingReleaseAssets(expected.assets, current.assets, { complete: true });
@@ -958,7 +993,7 @@ function promote() {
   // Each copy matched and the receipt keeps every asset's size and digest, so
   // drop the roughly 1 GB of downloads. Any failure above has already thrown
   // and left them in place.
-  for (const copy of [original, downloaded, publicDirectory]) {
+  for (const copy of [macosOriginal, linuxOriginal, original, downloaded, publicDirectory]) {
     try {
       fs.rmSync(copy, { recursive: true, force: true });
     } catch (error) {
@@ -975,7 +1010,7 @@ try {
   else if (["verify", "publish", "metadata-only", "recover-draft"].includes(command)) promote();
   else
     throw new Error(
-      "usage: release-public.mjs preflight | version CANDIDATE_DIRECTORY | stage TAG ASSETS SOURCE VERIFICATION | verify|publish|metadata-only|recover-draft TAG",
+      "usage: release-public.mjs preflight | version CANDIDATE_DIRECTORY | stage TAG ASSETS SOURCE VERIFICATION [LINUX_ASSETS] | verify|publish|metadata-only|recover-draft TAG",
     );
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

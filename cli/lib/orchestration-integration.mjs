@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -39,6 +40,15 @@ const RECEIPT = "install-receipt.json";
 const MCP_NAME = "dure-orchestration";
 const CODEX_BLOCK_BEGIN = "# BEGIN DURE ORCHESTRATION MCP";
 const CODEX_BLOCK_END = "# END DURE ORCHESTRATION MCP";
+// The desktop app's Claude shared-state sync replace-writes the global Claude
+// config while it holds this flock (lock_profile in
+// crates/dure-app/provider-profile). The installer takes the same lock around
+// its own read-modify-write of that file, so neither writer can put back a
+// copy it read before the other one wrote.
+const CLAUDE_SHARED_STATE_LOCK = ["accounts", ".overlay-locks", "claude-shared-state-v1.lock"];
+const CLAUDE_SHARED_STATE_LOCK_TIMEOUT_MS = 15_000;
+const DARWIN_O_EXLOCK = 0x20;
+const LOCK_POLL = new Int32Array(new SharedArrayBuffer(4));
 const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._:+/@-]{0,255}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const PUBLIC_RECEIPT_KEYS = new Set([
@@ -365,7 +375,7 @@ export function mutateOrchestrationIntegrations(options) {
   return providers.map(([provider, adapter]) => {
     const target = targetFor({ ...options, provider, adapter });
     if (options.action === "uninstall") {
-      removeOwnedPayload(target, options.installRoot !== undefined);
+      removeOwnedPayload(target, options);
       return publicStatus(target, {
         status: "removed",
         scope: options.global ? "global" : "workspace",
@@ -445,7 +455,6 @@ function installPayload(target, payload, identity, options) {
   if (mcpIdleWorker) receipt.mcpIdleWorker = mcpIdleWorker;
   const providerFiles = prepareProviderInstall(canonicalTarget, receipt, previousReceipt);
   const snapshots = snapshotFiles([
-    canonicalTarget.nativeConfigPath,
     canonicalTarget.hookPath,
     path.join(canonicalTarget.skillRoot, "SKILL.md"),
   ]);
@@ -488,9 +497,15 @@ function installPayload(target, payload, identity, options) {
       path.join(canonicalTarget.skillRoot, "SKILL.md"),
       fs.readFileSync(path.join(canonicalRoot, "SKILL.md")),
     );
-    writeFileAtomic(canonicalTarget.nativeConfigPath, providerFiles.nativeConfig);
-    writeFileAtomic(canonicalTarget.hookPath, providerFiles.hooks);
-    if (hadPreviousRoot) fs.rmSync(backup, { recursive: true });
+    commitNativeConfig(
+      canonicalTarget,
+      options,
+      () => prepareNativeConfig(canonicalTarget, receipt, previousReceipt),
+      () => {
+        writeFileAtomic(canonicalTarget.hookPath, providerFiles.hooks);
+        if (hadPreviousRoot) fs.rmSync(backup, { recursive: true });
+      },
+    );
     return publicStatus(canonicalTarget, { ...receipt, status: "current" });
   } catch (error) {
     restoreFiles(snapshots);
@@ -549,18 +564,10 @@ function preflightSkill(target, payload, previousReceipt) {
 }
 
 function prepareProviderInstall(target, receipt, previousReceipt) {
+  const nativeConfig = prepareNativeConfig(target, receipt, previousReceipt);
   if (target.staged) {
     return {
-      nativeConfig: `${JSON.stringify(
-        {
-          schemaVersion: 1,
-          servers: {
-            [MCP_NAME]: claudeMcpEntry(receipt),
-          },
-        },
-        null,
-        2,
-      )}\n`,
+      nativeConfig,
       hooks: `${JSON.stringify(
         {
           schemaVersion: 1,
@@ -577,13 +584,25 @@ function prepareProviderInstall(target, receipt, previousReceipt) {
       )}\n`,
     };
   }
-  return {
-    nativeConfig:
-      target.adapter.nativeConfig === "claude-json"
-        ? prepareClaudeMcp(target.nativeConfigPath, receipt, previousReceipt)
-        : prepareCodexMcp(target.nativeConfigPath, receipt),
-    hooks: prepareLifecycleHook(target, receipt, previousReceipt),
-  };
+  return { nativeConfig, hooks: prepareLifecycleHook(target, receipt, previousReceipt) };
+}
+
+function prepareNativeConfig(target, receipt, previousReceipt) {
+  if (target.staged) {
+    return `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        servers: {
+          [MCP_NAME]: claudeMcpEntry(receipt),
+        },
+      },
+      null,
+      2,
+    )}\n`;
+  }
+  return target.adapter.nativeConfig === "claude-json"
+    ? prepareClaudeMcp(target.nativeConfigPath, receipt, previousReceipt)
+    : prepareCodexMcp(target.nativeConfigPath, receipt);
 }
 
 function prepareClaudeMcp(configPath, receipt, previousReceipt) {
@@ -828,8 +847,8 @@ function providerAdapterCurrent(target, receipt, { acceptInstalledRelay = false 
   return nativeCurrent && hookCommandRegistered(hooks, receipt.lifecycleCommand);
 }
 
-function removeOwnedPayload(target, explicitRoot) {
-  assertSafeTarget(target.installRoot, target.providerRoot, explicitRoot);
+function removeOwnedPayload(target, options) {
+  assertSafeTarget(target.installRoot, target.providerRoot, options.installRoot !== undefined);
   const receiptPath = path.join(target.installRoot, RECEIPT);
   if (!fs.existsSync(receiptPath)) return;
   const canonicalRoot = fs.realpathSync(target.installRoot);
@@ -841,26 +860,27 @@ function removeOwnedPayload(target, explicitRoot) {
   ) {
     throw new Error(`refusing to remove unowned integration root: ${target.installRoot}`);
   }
-  const nativeConfigPath = path.resolve(target.nativeConfigPath);
   const hookPath = path.resolve(target.hookPath);
-  const nativeConfig = prepareProviderRemoval(target, receipt);
+  // Refuse an unreadable config before anything moves; the commit re-reads it.
+  prepareProviderRemoval(target, receipt);
   const hookSettings = readJsonObject(hookPath, "provider lifecycle hook config");
   removeHookCommand(hookSettings, receipt.lifecycleCommand);
   const hooks = `${JSON.stringify(hookSettings, null, 2)}\n`;
   const installedSkill = path.join(target.skillRoot, "SKILL.md");
-  const snapshots = snapshotFiles([nativeConfigPath, hookPath, installedSkill]);
+  const snapshots = snapshotFiles([hookPath, installedSkill]);
   const tombstone = `${canonicalRoot}.remove-${process.pid}-${crypto.randomUUID()}`;
   try {
     fs.renameSync(canonicalRoot, tombstone);
-    writeFileAtomic(nativeConfigPath, nativeConfig);
-    writeFileAtomic(hookPath, hooks);
-    if (
-      fs.existsSync(installedSkill) &&
-      fs.readFileSync(installedSkill).equals(fs.readFileSync(path.join(tombstone, "SKILL.md")))
-    ) {
-      fs.rmSync(target.skillRoot, { recursive: true });
-    }
-    fs.rmSync(tombstone, { recursive: true });
+    commitNativeConfig(target, options, () => prepareProviderRemoval(target, receipt), () => {
+      writeFileAtomic(hookPath, hooks);
+      if (
+        fs.existsSync(installedSkill) &&
+        fs.readFileSync(installedSkill).equals(fs.readFileSync(path.join(tombstone, "SKILL.md")))
+      ) {
+        fs.rmSync(target.skillRoot, { recursive: true });
+      }
+      fs.rmSync(tombstone, { recursive: true });
+    });
   } catch (error) {
     restoreFiles(snapshots);
     if (!fs.existsSync(canonicalRoot) && fs.existsSync(tombstone)) {
@@ -914,6 +934,86 @@ function removeHookCommand(settings, command) {
 
 function lifecycleHookCommand(runtimeExecutable, lifecycleScript) {
   return `${shellQuote(runtimeExecutable)} ${shellQuote(lifecycleScript)} --event session_start`;
+}
+
+// Rewrites the provider's native config from its contents at commit time, then
+// runs the rest of the commit. A global Claude config is a source of the
+// desktop Claude shared-state sync, so the read, the write and any rollback of
+// it happen under the sync's lock: a sync write that lands while the payload is
+// staged is kept, and a rollback puts back exactly the file it replaced.
+function commitNativeConfig(target, options, prepare, rest) {
+  const nativeConfigPath = path.resolve(target.nativeConfigPath);
+  const sharedWithSync =
+    !target.staged && target.adapter.nativeConfig === "claude-json" && Boolean(options.global);
+  const release = sharedWithSync
+    ? acquireClaudeSharedStateLock(
+        options.dureHome ?? path.join(options.homeDirectory, ".dure"),
+        options.sharedStateLockTimeoutMs ?? CLAUDE_SHARED_STATE_LOCK_TIMEOUT_MS,
+      )
+    : () => {};
+  try {
+    const snapshot = snapshotFiles([nativeConfigPath]);
+    let written = false;
+    try {
+      writeFileAtomic(nativeConfigPath, prepare());
+      written = true;
+      rest();
+    } catch (error) {
+      if (written) restoreFiles(snapshot);
+      throw error;
+    }
+  } finally {
+    release();
+  }
+}
+
+function acquireClaudeSharedStateLock(dureHome, timeoutMs) {
+  // The sync runs on macOS and Linux, and only for an account root the app
+  // created. Without one there is no sync to serialize with.
+  if (process.platform !== "darwin" && process.platform !== "linux") return () => {};
+  if (!fs.lstatSync(path.join(dureHome, "accounts"), { throwIfNoEntry: false })?.isDirectory()) {
+    return () => {};
+  }
+  const lockPath = path.join(dureHome, ...CLAUDE_SHARED_STATE_LOCK);
+  const lockDirectory = path.dirname(lockPath);
+  try {
+    fs.mkdirSync(lockDirectory, { mode: 0o700 });
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+  }
+  const directory = fs.lstatSync(lockDirectory);
+  if (!directory.isDirectory() || directory.uid !== process.getuid()) {
+    throw new Error(`refusing untrusted Claude shared state lock directory: ${lockDirectory}`);
+  }
+  const flags = fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW;
+  const busy = () => new Error(`Claude shared state is busy; try again: ${lockPath}`);
+  if (process.platform === "darwin") {
+    // O_EXLOCK takes the same flock(2) lock the sync holds.
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        const descriptor = fs.openSync(lockPath, flags | DARWIN_O_EXLOCK | fs.constants.O_NONBLOCK, 0o600);
+        return () => fs.closeSync(descriptor);
+      } catch (error) {
+        if (error?.code !== "EAGAIN" && error?.code !== "EWOULDBLOCK") throw error;
+      }
+      if (Date.now() >= deadline) throw busy();
+      Atomics.wait(LOCK_POLL, 0, 0, 25);
+    }
+  }
+  const descriptor = fs.openSync(lockPath, flags, 0o600);
+  // flock(2) locks belong to the open file description, so the lock flock(1)
+  // takes on the inherited descriptor stays held until this process closes it.
+  const locked = spawnSync("flock", ["-x", "-w", String(timeoutMs / 1000), "3"], {
+    stdio: ["ignore", "ignore", "pipe", descriptor],
+    encoding: "utf8",
+  });
+  if (locked.status === 0) return () => fs.closeSync(descriptor);
+  fs.closeSync(descriptor);
+  // Without flock(1) the installer keeps its previous unlocked behaviour.
+  if (locked.error?.code === "ENOENT") return () => {};
+  if (locked.status === 1) throw busy();
+  throw new Error(`could not lock Claude shared state: ${locked.error?.message ?? locked.stderr.trim()}`);
 }
 
 function readJsonObject(filePath, label) {

@@ -20,6 +20,10 @@ const STATE_FILE: &str = ".claude.json";
 const MANIFEST_FILE: &str = ".claude-shared-state-v1.json";
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_ATTEMPTS: usize = 3;
+/// `<account root>/.overlay-locks/<LOCK_NAME>.lock`. The orchestration
+/// integration installer (`cli/lib/orchestration-integration.mjs`) takes this
+/// same flock around its read-modify-write of the default `.claude.json`.
+const LOCK_NAME: &str = "claude-shared-state-v1";
 
 /// Observe a prior user decision without granting trust or rewriting provider state.
 /// Claude accepts trusted ancestors; a nearer explicit refusal remains a refusal.
@@ -650,7 +654,7 @@ pub(super) fn converge(
             Ok(profile)
         })
         .transpose()?;
-    let _lock = lock_profile(&account_root, "claude-shared-state-v1")?;
+    let _lock = lock_profile(&account_root, LOCK_NAME)?;
     let mut retry = None;
     for _ in 0..MAX_ATTEMPTS {
         match converge_once(home, &account_root, current_profile.as_deref(), fail_after) {

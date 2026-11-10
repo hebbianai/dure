@@ -25,6 +25,10 @@ for (const directory of [environment.HOME, environment.DURE_HOME]) mkdirSync(dir
 const cli = join(repository, "cli/dure.mjs");
 const captureLimit = 1024 * 1024;
 const catalogLimit = 960 * 1024;
+// Direct catalog reads measure bounded output, not the default 1.5 s census
+// budget; keep the census inside the 15 s spawn bound so a slow census still
+// reports its typed timeout.
+const censusBudget = ["--probe-budget-ms", "10000"];
 const registryPath = join(environment.DURE_HOME, "agents.json");
 
 function command(file, args, expectedStatus = 0, maxBuffer = captureLimit) {
@@ -116,7 +120,7 @@ const before = manifestWitness();
 const results = [];
 let passed = false;
 try {
-  const full = command(hmux, ["--discovery-root", discovery, "--json", "session", "list", "--no-probe"], 0, 4 * captureLimit);
+  const full = command(hmux, ["--discovery-root", discovery, "--json", "session", "list", "--no-probe", ...censusBudget], 0, 4 * captureLimit);
   assert.equal(JSON.parse(full).length, 160);
   assert.ok(Buffer.byteLength(full) > captureLimit, "actual catalog exceeds the original capture cap");
   await backend.start();
@@ -138,7 +142,7 @@ try {
 
   const query = { schemaVersion: 1, maxItems: 128, maxOutputBytes: catalogLimit,
     prioritized: [{ workspaceId: "workspace", sessionId: "session-159" }, { workspaceId: "workspace", sessionId: "session-158" }] };
-  const raw = command(hmux, ["--discovery-root", discovery, "--json", "session", "list", "--no-probe", "--catalog-query-json", JSON.stringify(query)]);
+  const raw = command(hmux, ["--discovery-root", discovery, "--json", "session", "list", "--no-probe", ...censusBudget, "--catalog-query-json", JSON.stringify(query)]);
   const catalog = JSON.parse(raw);
   assert.ok(Buffer.byteLength(raw) <= catalogLimit);
   assert.equal(catalog.prioritizedItems, 2);

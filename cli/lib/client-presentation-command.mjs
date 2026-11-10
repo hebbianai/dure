@@ -62,7 +62,8 @@ same step (projects.register under a path-derived ID), so dure run --path works 
 It is opt-in because it writes a durable backend project; without it the app registration
 leaves the backend untouched and the receipt prints the register command. When requested
 but not performed, backendProject.registration is "failed" with a reason and the exit code is 1.
-For SSH projects, run the printed registration command on the owning host.
+For SSH projects, run the printed registration command on the owning host, or run the printed
+dure profiles add command to use a Dure backend already running on that host from here.
 Host add uses the app's durable SSH registration; the returned host.id works with --host.
 An alias imports ~/.ssh/config. Explicit destinations use a key file or normal SSH authentication.
 Registration creates no session. The first terminal open installs Hmux if it is missing.

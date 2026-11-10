@@ -65,6 +65,7 @@ const SERVER_CAPABILITIES: &[&str] = &[
     "file_pane.open_v1",
     "project_registration.add_v1",
     "ssh_hosts.add_v1",
+    "ssh_hosts.get_v1",
     "worktree.presentation_export_v1",
     "browser.presentation_v1",
     "unopened_agents.visibility_v1",
@@ -72,6 +73,9 @@ const SERVER_CAPABILITIES: &[&str] = &[
     "agent.launch_account_v1",
     "agent.run_background_v1",
     "hmux.input.draft_guard_v1",
+    // `/hmux/attach` accepts an Agent's current native runtime without a Run
+    // record (the `agent_runtime` identity) and never launches a provider.
+    "hmux.attach.agent_runtime_v1",
 ];
 fn claimed_request_timeout(action: &str) -> Duration {
     match action {
@@ -423,6 +427,14 @@ const FRONTEND_ROUTES: &[FrontendRoute] = &[
         method: Method::Post,
         path: "/ssh/hosts/add",
         action: "ssh.host.add",
+        waits_for_receipt: true,
+        scope: RouteScope::Control,
+        destructive: false,
+    },
+    FrontendRoute {
+        method: Method::Post,
+        path: "/ssh/hosts/get",
+        action: "ssh.host.get",
         waits_for_receipt: true,
         scope: RouteScope::Control,
         destructive: false,
@@ -1982,6 +1994,20 @@ mod tests {
     }
 
     #[test]
+    fn ssh_host_get_is_an_authenticated_correlated_read() {
+        assert_eq!(
+            frontend_action(&Method::Post, "/ssh/hosts/get"),
+            Some(("ssh.host.get", true))
+        );
+        assert_eq!(
+            required_scope(&Method::Post, "/ssh/hosts/get"),
+            Some(RouteScope::Control)
+        );
+        assert_eq!(frontend_action(&Method::Get, "/ssh/hosts/get"), None);
+        assert!(SERVER_CAPABILITIES.contains(&"ssh_hosts.get_v1"));
+    }
+
+    #[test]
     fn project_add_uses_authenticated_correlated_app_control() {
         assert_eq!(
             frontend_action(&Method::Post, "/project/add"),
@@ -2633,13 +2659,15 @@ mod tests {
                 "file_pane.open_v1",
                 "project_registration.add_v1",
                 "ssh_hosts.add_v1",
+                "ssh_hosts.get_v1",
                 "worktree.presentation_export_v1",
                 "browser.presentation_v1",
                 "unopened_agents.visibility_v1",
                 "agent.launch_preference_v1",
                 "agent.launch_account_v1",
                 "agent.run_background_v1",
-                "hmux.input.draft_guard_v1"
+                "hmux.input.draft_guard_v1",
+                "hmux.attach.agent_runtime_v1"
             ])
         );
         std::fs::remove_dir_all(directory).unwrap();

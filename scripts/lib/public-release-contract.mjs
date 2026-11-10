@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { planBetaMetadataUpdate } from "./beta-release-metadata.mjs";
+import {
+  LINUX_UPDATER_PACKAGES,
+  planBetaMetadataUpdate,
+  withLinuxPlatforms,
+} from "./beta-release-metadata.mjs";
 import {
   RELEASE_CANDIDATE_FILES,
   RELEASE_CARGO_WORKSPACES,
@@ -96,13 +100,32 @@ export function expectedVersionFiles(read, current, next) {
   return files;
 }
 
-export function releaseAssetNames(tag) {
+const MACOS_ARCHIVE = "Dure.app.tar.gz";
+
+/** The macOS app's four files; `linux` adds every Linux package and its
+ * updater signature. latest.json always describes exactly the files present. */
+export function releaseAssetNames(tag, { linux = false } = {}) {
+  return [
+    ...macosReleaseAssetNames(tag),
+    ...(linux ? linuxReleaseAssetNames(tag) : []),
+  ].sort();
+}
+
+function macosReleaseAssetNames(tag) {
   return [
     `Dure_${releaseVersion(tag)}_aarch64.dmg`,
-    "Dure.app.tar.gz",
-    "Dure.app.tar.gz.sig",
+    MACOS_ARCHIVE,
+    `${MACOS_ARCHIVE}.sig`,
     "latest.json",
   ].sort();
+}
+
+export function linuxReleaseAssetNames(tag) {
+  const version = releaseVersion(tag);
+  return LINUX_UPDATER_PACKAGES.flatMap((entry) => [
+    entry.file(version),
+    `${entry.file(version)}.sig`,
+  ]).sort();
 }
 
 function hashFile(file, algorithm = "sha256") {
@@ -176,12 +199,10 @@ export function verifyUpdaterSignature(file, encodedKey, encodedSignature) {
 }
 
 export function inspectReleaseFiles(directory, tag, publicKey) {
-  const names = releaseAssetNames(tag);
-  assert.deepEqual(
-    fs.readdirSync(directory).sort(),
-    names,
-    "release_four_assets_required",
-  );
+  const present = fs.readdirSync(directory).sort();
+  const linux = present.length !== macosReleaseAssetNames(tag).length;
+  const names = releaseAssetNames(tag, { linux });
+  assert.deepEqual(present, names, "release_asset_set_required");
   const assets = names.map((name) => {
     const file = path.join(directory, name);
     const stat = fs.lstatSync(file);
@@ -190,23 +211,59 @@ export function inspectReleaseFiles(directory, tag, publicKey) {
     return { name, size: stat.size, digest: `sha256:${hashFile(file)}` };
   });
   const bytes = fs.readFileSync(path.join(directory, "latest.json"));
-  const signature = fs
-    .readFileSync(path.join(directory, "Dure.app.tar.gz.sig"), "utf8")
-    .trim();
+  const read = (name) => fs.readFileSync(path.join(directory, name), "utf8").trim();
+  const signature = read(`${MACOS_ARCHIVE}.sig`);
   planBetaMetadataUpdate({ tag, bytes, signature, previous: null });
   const manifest = JSON.parse(bytes);
   if (
     manifest.platforms["darwin-aarch64"].url !==
-    `https://github.com/${RELEASE_REPOSITORY}/releases/download/${tag}/Dure.app.tar.gz`
+    `https://github.com/${RELEASE_REPOSITORY}/releases/download/${tag}/${MACOS_ARCHIVE}`
   ) {
     throw new Error("release_manifest_source_repository_mismatch");
   }
+  if ((Object.keys(manifest.platforms).length > 1) !== linux)
+    throw new Error("release_manifest_platform_set_mismatch");
   verifyUpdaterSignature(
-    path.join(directory, "Dure.app.tar.gz"),
+    path.join(directory, MACOS_ARCHIVE),
     publicKey,
     signature,
   );
-  return { assets, bytes, signature };
+  if (linux) {
+    const version = releaseVersion(tag);
+    for (const entry of LINUX_UPDATER_PACKAGES) {
+      const file = entry.file(version);
+      const packageSignature = read(`${file}.sig`);
+      if (manifest.platforms[entry.platform].signature !== packageSignature)
+        throw new Error(`release_manifest_linux_binding_mismatch: ${entry.platform}`);
+      verifyUpdaterSignature(path.join(directory, file), publicKey, packageSignature);
+    }
+  }
+  return { assets, bytes, signature, linux };
+}
+
+/** One release directory from the macOS build's four files and the signed
+ * Linux packages. The macOS manifest gains the Linux entries deterministically,
+ * so staging and later verification derive identical latest.json bytes. */
+export function assembleReleaseFiles({ tag, macos, linux, output }) {
+  const macosNames = macosReleaseAssetNames(tag);
+  const linuxNames = linuxReleaseAssetNames(tag);
+  assert.deepEqual(fs.readdirSync(macos).sort(), macosNames, "release_macos_assets_required");
+  assert.deepEqual(fs.readdirSync(linux).sort(), linuxNames, "release_linux_assets_required");
+  fs.mkdirSync(output);
+  const copy = (from, name) => {
+    const source = path.join(from, name);
+    if (!fs.lstatSync(source).isFile()) throw new Error("release_asset_not_regular");
+    fs.copyFileSync(source, path.join(output, name), fs.constants.COPYFILE_EXCL);
+  };
+  for (const name of macosNames.filter((name) => name !== "latest.json")) copy(macos, name);
+  for (const name of linuxNames) copy(linux, name);
+  fs.writeFileSync(
+    path.join(output, "latest.json"),
+    withLinuxPlatforms(fs.readFileSync(path.join(macos, "latest.json")), (file) =>
+      fs.readFileSync(path.join(linux, `${file}.sig`), "utf8")),
+    { flag: "wx" },
+  );
+  return output;
 }
 
 /** Missing-only reconciliation: neither a draft nor a retry permits replacement. */

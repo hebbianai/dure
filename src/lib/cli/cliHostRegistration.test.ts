@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SshConfigScan } from "@/types";
+import type { SshConfigScan, SshHostConfig } from "@/types";
+import type { CliHostLookupDependencies } from "./cliHostRegistration";
 
 const scan: SshConfigScan = {
 	defaultUser: "local-user",
@@ -164,5 +165,72 @@ describe("CLI SSH registration through the GUI durable owner", () => {
 		expect(await run.add({ sshConfigAlias: "ec2-106" })).toBeNull();
 		expect(run.deps.scan).not.toHaveBeenCalled();
 		expect(run.deps.registerConfig).not.toHaveBeenCalled();
+	});
+});
+
+describe("CLI read of one registered SSH Host", () => {
+	const host: SshHostConfig = {
+		id: "host-vm1",
+		name: "VM",
+		host: "vm.example.test",
+		port: 2222,
+		user: "dure",
+		auth: "key",
+		keyPath: "~/.ssh/id_vm",
+		secretId: "secret-not-for-the-cli",
+		password: "legacy-password",
+	};
+
+	async function lookup(
+		params: Record<string, unknown>,
+		overrides: Partial<CliHostLookupDependencies> = {},
+	) {
+		const { handleCliHostLookup } = await import("./cliHostRegistration");
+		return handleCliHostLookup(params, "lookup", {
+			isMainWindow: () => true,
+			claim: vi.fn(async () => true),
+			hosts: () => [host],
+			...overrides,
+		});
+	}
+
+	it("returns that Host's connection fields and none of its secrets", async () => {
+		const result = await lookup({ hostId: "host-vm1" });
+
+		expect(result).toEqual({
+			ok: true,
+			host: {
+				id: "host-vm1",
+				name: "VM",
+				host: "vm.example.test",
+				port: 2222,
+				user: "dure",
+				auth: "key",
+				keyPath: "~/.ssh/id_vm",
+			},
+		});
+		expect(JSON.stringify(result)).not.toContain("secret-not-for-the-cli");
+		expect(JSON.stringify(result)).not.toContain("legacy-password");
+	});
+
+	it("reports a Host that is not registered", async () => {
+		await expect(lookup({ hostId: "host-missing" })).resolves.toEqual({
+			ok: false,
+			error: {
+				code: "ssh_host_not_found",
+				message: "SSH host host-missing is not registered in this app",
+			},
+		});
+	});
+
+	it("lets only the claiming main window answer", async () => {
+		const claim = vi.fn(async () => true);
+		await expect(
+			lookup({ hostId: "host-vm1" }, { isMainWindow: () => false, claim }),
+		).resolves.toBeNull();
+		expect(claim).not.toHaveBeenCalled();
+		await expect(
+			lookup({ hostId: "host-vm1" }, { claim: vi.fn(async () => false) }),
+		).resolves.toBeNull();
 	});
 });

@@ -197,6 +197,21 @@ describe("dure schedule", () => {
       expect(formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence: { ...occurrence, run: { completed: true } } })).toContain("Report received");
     }
   });
+  it("points a chat-runtime run at its Run record instead of a terminal session", () => {
+    const occurrence = { idempotencyKey: "run", launchState: "started", operationId: "spawn-1",
+      runtime: { state: "unavailable", observedAtMs: 2, errorCode: "schedule_runtime_not_native" } };
+    const inspected = formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence });
+    expect(inspected).toContain("Started on the chat runtime; inspect with dure runs show spawn-1; awaiting report");
+    expect(inspected).not.toContain("Session:");
+    expect(formatScheduleCommand({ kind: "dure.schedules.occurrences", occurrences: [{ ...occurrence, scheduleId: "daily",
+      trigger: { kind: "manual" }, createdAtMs: 1 }] })).toContain("dure runs show spawn-1");
+    // Any other unavailable observation keeps the generic status.
+    expect(formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence: { ...occurrence,
+      runtime: { ...occurrence.runtime, errorCode: "schedule_runtime_not_stable" } } })).toContain("Runtime status unavailable");
+    expect(formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence: { ...occurrence, run: { completed: true } } }))
+      .toContain("Report received");
+  });
+
   it("requires exactly one project selector at the client boundary", async () => {
     const report = await collectScheduleCommand({
       action: "put",

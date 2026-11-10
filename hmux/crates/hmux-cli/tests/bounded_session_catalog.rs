@@ -80,13 +80,22 @@ fn publish_ready(root: &DiscoveryRoot, index: usize) {
         .unwrap();
 }
 
-fn hmux(root: &DiscoveryRoot, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_hmux"))
+/// These tests measure bounded output, not the census budget; the default
+/// 1.5 s budget does not always fit a 160-session census on a loaded runner.
+/// `discovery_census_budget.rs` owns the timeout path itself.
+const CENSUS_BUDGET_MS: &str = "30000";
+
+fn session_list(root: &DiscoveryRoot, query: Option<&Value>) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hmux"));
+    command
         .arg("--discovery-root")
         .arg(root.path())
-        .args(arguments)
-        .output()
-        .unwrap()
+        .args(["--json", "session", "list", "--no-probe"])
+        .args(["--probe-budget-ms", CENSUS_BUDGET_MS]);
+    if let Some(query) = query {
+        command.arg("--catalog-query-json").arg(query.to_string());
+    }
+    command.output().unwrap()
 }
 
 #[test]
@@ -97,7 +106,7 @@ fn bounded_query_serializes_client_priority_before_the_capture_limit() {
         publish_ready(&root, index);
     }
 
-    let full = hmux(&root, &["--json", "session", "list", "--no-probe"]);
+    let full = session_list(&root, None);
     assert!(full.status.success());
     assert!(
         full.stdout.len() > CAPTURE_LIMIT_BYTES,
@@ -113,17 +122,7 @@ fn bounded_query_serializes_client_priority_before_the_capture_limit() {
             "workspaceId": "workspace",
         }],
     });
-    let bounded = hmux(
-        &root,
-        &[
-            "--json",
-            "session",
-            "list",
-            "--no-probe",
-            "--catalog-query-json",
-            &query.to_string(),
-        ],
-    );
+    let bounded = session_list(&root, Some(&query));
     assert!(
         bounded.status.success(),
         "stderr={}",
@@ -171,17 +170,7 @@ fn ordered_pages_enumerate_every_session_without_client_priorities() {
             "schemaVersion": 1, "maxItems": 128, "maxOutputBytes": CATALOG_LIMIT_BYTES,
             "prioritized": [], "page": { "after": after },
         });
-        let output = hmux(
-            &root,
-            &[
-                "--json",
-                "session",
-                "list",
-                "--no-probe",
-                "--catalog-query-json",
-                &query.to_string(),
-            ],
-        );
+        let output = session_list(&root, Some(&query));
         assert!(
             output.status.success(),
             "{}",

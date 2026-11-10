@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 import {
+  assembleReleaseFiles,
   expectedVersionFiles,
   inspectReleaseFiles,
   missingReleaseAssets,
@@ -152,7 +153,44 @@ function signedFiles() {
     },
   };
   fs.writeFileSync(path.join(root, "latest.json"), JSON.stringify(manifest));
-  return { root, key, encoded, text, manifest };
+  const signFile = (bytes, name) => {
+    const prehashed = sign(null, createHash("blake2b512").update(bytes).digest(), privateKey);
+    const trusted = `timestamp:1\tfile:${name}`;
+    const comment = sign(null, Buffer.concat([prehashed, Buffer.from(trusted)]), privateKey);
+    return Buffer.from(
+      `untrusted comment: fixture\n${Buffer.concat([Buffer.from("ED"), keyId, prehashed]).toString("base64")}\ntrusted comment: ${trusted}\n${comment.toString("base64")}\n`,
+    ).toString("base64");
+  };
+  return { root, key, encoded, text, manifest, signFile };
+}
+
+const LINUX_FILES = [
+  "Dure_0.2.29_aarch64.AppImage",
+  "Dure_0.2.29_amd64.AppImage",
+  "Dure_0.2.29_amd64.deb",
+  "Dure_0.2.29_arm64.deb",
+];
+
+function signedLinuxPackages(fixture) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-release-linux-"));
+  roots.push(root);
+  for (const name of LINUX_FILES) {
+    const bytes = Buffer.from(`test ${name}, not a native package`);
+    fs.writeFileSync(path.join(root, name), bytes);
+    fs.writeFileSync(path.join(root, `${name}.sig`), fixture.signFile(bytes, name));
+  }
+  return root;
+}
+
+function assembled(fixture, linux = signedLinuxPackages(fixture)) {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "dure-release-assembled-"));
+  roots.push(parent);
+  return assembleReleaseFiles({
+    tag: "v0.2.29",
+    macos: fixture.root,
+    linux,
+    output: path.join(parent, "assets"),
+  });
 }
 
 test("binds all four files to the exact-tag updater key and immutable public URL", () => {
@@ -254,4 +292,76 @@ test("returns only missing files, refusing duplicate, changed, incomplete or unk
   ]) {
     expect(() => missingReleaseAssets(expected, remote)).toThrow();
   }
+});
+
+test("assembles every signed Linux package and one deterministic manifest into the release", () => {
+  const fixture = signedFiles();
+  const linux = signedLinuxPackages(fixture);
+  const first = assembled(fixture, linux);
+  const inspected = inspectReleaseFiles(first, "v0.2.29", fixture.key);
+  expect(inspected.linux).toBe(true);
+  expect(inspected.assets.map((asset) => asset.name)).toEqual([
+    "Dure.app.tar.gz",
+    "Dure.app.tar.gz.sig",
+    ...LINUX_FILES.flatMap((name) => [name, `${name}.sig`]),
+    "Dure_0.2.29_aarch64.dmg",
+    "latest.json",
+  ].sort());
+  const manifest = JSON.parse(fs.readFileSync(path.join(first, "latest.json"), "utf8"));
+  expect(Object.keys(manifest.platforms)).toEqual([
+    "darwin-aarch64",
+    "linux-aarch64-appimage",
+    "linux-aarch64-deb",
+    "linux-x86_64-appimage",
+    "linux-x86_64-deb",
+  ]);
+  // The macOS entry, version and date are the macOS build's own bytes.
+  expect(manifest.platforms["darwin-aarch64"]).toEqual(fixture.manifest.platforms["darwin-aarch64"]);
+  expect(manifest.pub_date).toBe(fixture.manifest.pub_date);
+  expect(manifest.platforms["linux-x86_64-deb"]).toEqual({
+    signature: fs.readFileSync(path.join(linux, "Dure_0.2.29_amd64.deb.sig"), "utf8"),
+    url: "https://github.com/hebbianai/dure/releases/download/v0.2.29/Dure_0.2.29_amd64.deb",
+  });
+  // Verification later derives the same bytes from the same two artifacts.
+  expect(fs.readFileSync(path.join(assembled(fixture, linux), "latest.json")))
+    .toEqual(fs.readFileSync(path.join(first, "latest.json")));
+  // The macOS-only set is still accepted and reports no Linux packages.
+  expect(inspectReleaseFiles(fixture.root, "v0.2.29", fixture.key).linux).toBe(false);
+});
+
+test.each([
+  ["a changed Linux package", (root) => fs.appendFileSync(path.join(root, "Dure_0.2.29_arm64.deb"), "changed")],
+  ["a missing Linux signature", (root) => fs.rmSync(path.join(root, "Dure_0.2.29_amd64.AppImage.sig"))],
+  ["an extra Linux file", (root) => fs.writeFileSync(path.join(root, "Dure_0.2.29_x86_64.rpm"), "rpm")],
+  ["a Linux signature bound to another package", (root) => {
+    const file = path.join(root, "latest.json");
+    const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+    const appimage = manifest.platforms["linux-x86_64-appimage"].signature;
+    manifest.platforms["linux-x86_64-appimage"].signature = manifest.platforms["linux-x86_64-deb"].signature;
+    manifest.platforms["linux-x86_64-deb"].signature = appimage;
+    fs.writeFileSync(file, JSON.stringify(manifest));
+  }],
+  ["a partial Linux manifest", (root) => {
+    const file = path.join(root, "latest.json");
+    const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+    delete manifest.platforms["linux-aarch64-deb"];
+    fs.writeFileSync(file, JSON.stringify(manifest));
+  }],
+])("refuses %s in a release with Linux packages", (_name, change) => {
+  const fixture = signedFiles();
+  const root = assembled(fixture);
+  change(root);
+  expect(() => inspectReleaseFiles(root, "v0.2.29", fixture.key)).toThrow();
+});
+
+test("refuses Linux manifest entries without their packages, and incomplete Linux inputs", () => {
+  const fixture = signedFiles();
+  const linuxManifest = fs.readFileSync(path.join(assembled(fixture), "latest.json"));
+  fs.writeFileSync(path.join(fixture.root, "latest.json"), linuxManifest);
+  expect(() => inspectReleaseFiles(fixture.root, "v0.2.29", fixture.key))
+    .toThrow("release_manifest_platform_set_mismatch");
+  const other = signedFiles();
+  const linux = signedLinuxPackages(other);
+  fs.rmSync(path.join(linux, "Dure_0.2.29_aarch64.AppImage"));
+  expect(() => assembled(other, linux)).toThrow("release_linux_assets_required");
 });

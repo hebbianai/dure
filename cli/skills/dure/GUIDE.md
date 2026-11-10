@@ -398,6 +398,12 @@ worktree is removed only when it has no uncommitted or untracked changes and eve
 commit on it is on the default branch; ignored files go with it. Otherwise it is
 kept. The branch always stays, and a wake restores a removed worktree at its path.
 
+On a host without the Dure app, such as a server or VM, a schedule occurrence
+starts on the provider's chat runtime when the provider has one there, like a
+headless `dure run`. It has no terminal Session: `dure schedule runs` names the
+`dure runs show <operation-id>` command, and `dure transcript <agent-id>` reads
+it. Idle hibernation and worktree removal apply only to terminal runs.
+
 Project-root runs share files; they provide no per-run Git isolation. Do not
 combine `--no-worktree` with `--base-commit`, `--branch` or `--setup-command`.
 This opt-in requires `schedule.worktree_project_root_v1` on the selected backend;
@@ -591,8 +597,10 @@ works right away; `backendProject.registration` then reads `created`, `existing`
 `not_requested` or `failed` (exit 1, reason included, manual command kept). The
 flag is opt-in because it writes a durable backend project.
 An unavailable/older backend is reported as unchecked, not unregistered. For an
-SSH app project, run the printed command on its owning host; an app host ID is
-not a backend profile ID. The app project ID is never a schedule project selector.
+SSH app project, run the printed command on its owning host, or run the printed
+`dure profiles add ID --host APP_SSH_HOST_ID` to use a Dure backend already running
+there as `--backend ID`; it installs nothing and stops if none answers. An app host
+ID is not a backend profile ID. The app project ID is never a schedule project selector.
 `split` creates the pane through the app's existing correlated transaction.
 
 `host add` imports an SSH config alias or registers explicit connection fields

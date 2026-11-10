@@ -6,7 +6,7 @@ import {
 import { inspectManagedRunPresentationBinding } from "@/lib/cli/cliManagedRunPresentation";
 import {
 	type CliManagedRunPresentationState,
-	type ManagedRunProjectionInput,
+	type ManagedRunSpawnProjectionInput,
 	projectManagedRunPresentationAgent,
 } from "@/lib/cli/managedRunPresentationModel";
 import { sameHmuxManagedGeneration } from "@/lib/hmux/identity/hmuxManagedGeneration";
@@ -34,7 +34,7 @@ const defaultDependencies: BackgroundManagedRunPresentationDependencies = {
 
 function exactExistingProjection(
 	state: CliManagedRunPresentationState,
-	request: ManagedRunProjectionInput,
+	request: ManagedRunSpawnProjectionInput,
 ): Agent | undefined {
 	if (!request.backendProfileId) return undefined;
 	const agent = state.agents.find(
@@ -67,7 +67,7 @@ function exactExistingProjection(
 export function projectionInput(
 	run: DureNativeAgentRunResultV1,
 	projectPath: string,
-): ManagedRunProjectionInput {
+): ManagedRunSpawnProjectionInput {
 	return {
 		schemaVersion: 1,
 		runtime: "hmux_managed_v1",
@@ -118,7 +118,7 @@ export async function presentManagedRunInBackground(
 }
 
 export async function presentManagedRunProjectionInBackground(
-	request: ManagedRunProjectionInput,
+	request: ManagedRunSpawnProjectionInput,
 	dependencies: BackgroundManagedRunPresentationDependencies = defaultDependencies,
 ): Promise<Agent> {
 	if (request.source !== "local" || !request.projectPath)

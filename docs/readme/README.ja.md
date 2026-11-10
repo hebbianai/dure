@@ -93,7 +93,7 @@ Claude Code、Codex、OpenCode、Pi は、インストールされたランタ�
 | --- | --- |
 | macOS · Apple Silicon | [公式ダウンロード](https://www.dureai.dev/download/mac/) |
 | Windows | ソース公開済み。ネイティブデスクトップの検証と公開インストーラーは準備中です。 |
-| Linux | ソース公開済み。ネイティブデスクトップの検証と公開インストーラーは準備中です。 |
+| Linux · x86_64, arm64 | リリースワークフローで AppImage と Debian パッケージをビルドします。最初の公開リリースは準備中です。ターミナルペインは動作しますが、Dure CLI とエージェントのバックエンドはまだ含まれていません。 |
 | iOS | ソース公開済み。実機検証と公式配布は準備中です。 |
 | Android · ARM64 | [プレビュー版 APK をダウンロード](https://github.com/hebbianai/hebbian-releases/releases/download/android-v0.1.4/Dure_0.1.4_android_arm64.apk) · Android 7.0 以降。エミュレーターで検証済み。実機検証は未実施です。 |
 

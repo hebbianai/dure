@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { withoutLocalGitOverrides } from "../lib/git-environment.mjs";
+import { assembleReleaseFiles } from "../lib/public-release-contract.mjs";
 import {
   RELEASE_CARGO_WORKSPACES,
   prepareReleaseCandidate,
@@ -26,6 +27,7 @@ export const PUBLIC_CI_JOB_NAMES = Object.freeze([
   "Shared protocol (ubuntu-24.04)",
   "Hmux checks",
   "App core checks",
+  "Desktop checks",
   "Public repository checks",
 ]);
 
@@ -94,7 +96,10 @@ if(argv[0]==='api'){
       answer({total_count:ciJobNames.length,jobs:ciJobNames.map(name=>({name,status:'completed',conclusion:run.jobs[name]??'success'}))});
     }else{
       const verification=state.actualVerification??'success',preflight=verification==='success'?'skipped':'success';
-      answer({total_count:7,jobs:['source','candidate','verification','host-preflight','version','build','draft'].map(name=>({name,conclusion:state.jobConclusions?.[name]??(name==='verification'?verification:name==='host-preflight'?preflight:'success')}))});
+      const linuxJobs=['linux-packages / Hmux for Linux','linux-packages / Linux package (x86_64)','linux-packages / Linux package (aarch64)','linux-sign'];
+      const names=['source','candidate','verification','host-preflight','version','build',...linuxJobs,'draft'];
+      const linuxConclusion=state.linuxOriginal?'success':'skipped';
+      answer({total_count:names.length,jobs:names.map(name=>({name,conclusion:state.jobConclusions?.[name]??(name==='verification'?verification:name==='host-preflight'?preflight:linuxJobs.includes(name)?linuxConclusion:'success')}))});
     }
   }else if(route.includes('/actions/runs/')){
     answer({repository:{full_name:'hebbianai/dure'},path:'.github/workflows/release.yml',event:'workflow_dispatch',head_branch:state.headBranch??'main',head_sha:state.workflowSha??state.sourceSha,status:'completed',conclusion:state.runConclusion??'success'});
@@ -108,7 +113,10 @@ if(argv[0]==='api'){
   if(state.expiredArtifacts){save();console.error('no valid artifacts found to download');process.exit(1);}
   if(arg('--name')==='release-selection'){
     fs.writeFileSync(path.join(arg('--dir'),'selection.json'),JSON.stringify(state.selection??{schemaVersion:1,runId:'239',sourceRef:'main',workflowSha:state.workflowSha??state.sourceSha,sourceSha:state.sourceSha,tag:'v0.2.29',verification:'full'}));
-  }else for(const name of fs.readdirSync(state.original))fs.copyFileSync(path.join(state.original,name),path.join(arg('--dir'),name));
+  }else{
+    const source=arg('--name').startsWith('release-linux-assets-')?state.linuxOriginal:state.original;
+    for(const name of fs.readdirSync(source))fs.copyFileSync(path.join(source,name),path.join(arg('--dir'),name));
+  }
 }else if(argv[0]==='release'&&argv[1]==='create'){
   if(state.release)fail(422);
   state.release={id:91,tag_name:argv[2],body:arg('--notes'),draft:true,prerelease:true,assets:[]};
@@ -127,7 +135,7 @@ if(argv[0]==='api'){
   timeout('release-download');
   for(const asset of state.release.assets){
     const dest=path.join(arg('--dir'),asset.name);
-    fs.copyFileSync(path.join(state.original,asset.name),dest);
+    fs.copyFileSync(path.join(state.published??state.original,asset.name),dest);
     if(state.tamperDownload&&asset.name==='Dure.app.tar.gz')fs.appendFileSync(dest,'changed');
   }
 }else if(argv[0]==='release'&&argv[1]==='edit'){
@@ -154,7 +162,7 @@ if(state.flakyDownloads?.[key]>0){
   if(output)fs.writeFileSync(output,'partial');
   console.error('curl: (28) Operation timed out after 30000 milliseconds with 0 bytes received');process.exit(28);
 }
-if(output)fs.copyFileSync(path.join(state.original,key),output);
+if(output)fs.copyFileSync(path.join(state.published??state.original,key),output);
 else{
   // true keeps the raw cache stale; a number goes stale for that many reads.
   const stale=state.staleReadback===true||state.staleReadback>0;
@@ -170,7 +178,16 @@ const result=cp.spawnSync('/usr/bin/git',argv,{env:process.env,stdio:'inherit'})
 process.exit(result.status??1);
 `;
 
-export function createPublicReleaseFixture({ remoteVersion = true } = {}) {
+export const LINUX_FIXTURE_PACKAGES = Object.freeze([
+  "Dure_0.2.29_aarch64.AppImage",
+  "Dure_0.2.29_amd64.AppImage",
+  "Dure_0.2.29_amd64.deb",
+  "Dure_0.2.29_arm64.deb",
+]);
+
+/** `linux` adds a signed Linux package artifact; the release then serves the
+ * assembled macOS and Linux set, as the draft job stages it. */
+export function createPublicReleaseFixture({ remoteVersion = true, linux = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-release-cli-"));
   const repo = path.join(root, "repo"),
     bin = path.join(root, "bin"),
@@ -262,15 +279,18 @@ export function createPublicReleaseFixture({ remoteVersion = true } = {}) {
   const archive = Buffer.from(
     "signed test payload, not a real native application",
   );
-  const signed = sign(
-    null,
-    createHash("blake2b512").update(archive).digest(),
-    privateKey,
-  );
-  const comment = "timestamp:1\tfile:Dure.app.tar.gz";
-  const signature = Buffer.from(
-    `untrusted comment: fixture\n${Buffer.concat([Buffer.from("ED"), id, signed]).toString("base64")}\ntrusted comment: ${comment}\n${sign(null, Buffer.concat([signed, Buffer.from(comment)]), privateKey).toString("base64")}\n`,
-  ).toString("base64");
+  const signFile = (bytes, name) => {
+    const signed = sign(
+      null,
+      createHash("blake2b512").update(bytes).digest(),
+      privateKey,
+    );
+    const comment = `timestamp:1\tfile:${name}`;
+    return Buffer.from(
+      `untrusted comment: fixture\n${Buffer.concat([Buffer.from("ED"), id, signed]).toString("base64")}\ntrusted comment: ${comment}\n${sign(null, Buffer.concat([signed, Buffer.from(comment)]), privateKey).toString("base64")}\n`,
+    ).toString("base64");
+  };
+  const signature = signFile(archive, "Dure.app.tar.gz");
   const manifest = {
     channel: "beta",
     version: "0.2.29",
@@ -307,9 +327,27 @@ export function createPublicReleaseFixture({ remoteVersion = true } = {}) {
       .update(prior)
       .digest("hex"),
   };
+  let linuxOriginal, published;
+  if (linux) {
+    linuxOriginal = path.join(root, "original-linux");
+    fs.mkdirSync(linuxOriginal);
+    for (const name of LINUX_FIXTURE_PACKAGES) {
+      const bytes = Buffer.from(`${name}: signed test payload, not a native package`);
+      fs.writeFileSync(path.join(linuxOriginal, name), bytes);
+      fs.writeFileSync(path.join(linuxOriginal, `${name}.sig`), signFile(bytes, name));
+    }
+    published = assembleReleaseFiles({
+      tag: "v0.2.29",
+      macos: original,
+      linux: linuxOriginal,
+      output: path.join(root, "published"),
+    });
+  }
   const statePath = path.join(root, "state.json"),
     calls = path.join(root, "calls.jsonl");
   const initial = {
+    linuxOriginal,
+    published,
     sourceSha,
     tagSha,
     original,
@@ -363,6 +401,8 @@ export function createPublicReleaseFixture({ remoteVersion = true } = {}) {
     repo,
     bare,
     original,
+    linuxOriginal,
+    published,
     candidate,
     sourceSha,
     tagSha,
