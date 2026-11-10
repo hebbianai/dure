@@ -24,8 +24,7 @@ export function renderCask({ version, sha256 }) {
   version "${version}"
   sha256 "${sha256}"
 
-  url "https://github.com/hebbianai/dure/releases/download/v#{version}/Dure_#{version}_aarch64.dmg",
-      verified: "github.com/hebbianai/dure/"
+  url "https://github.com/hebbianai/dure/releases/download/v#{version}/Dure_#{version}_aarch64.dmg"
   name "Dure"
   desc "Workspace for AI coding agents"
   homepage "https://www.dureai.dev/"

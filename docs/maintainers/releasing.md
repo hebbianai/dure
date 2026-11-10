@@ -242,8 +242,9 @@ first cutover; do not claim the website changed because the manifest changed.
 [homebrew-cask.yml](../../.github/workflows/homebrew-cask.yml) runs when a release
 is published, prereleases included. It writes `Casks/dure.rb` from that release's
 DMG digest and pushes it to `hebbianai/homebrew-tap`, so users can run
-`brew install --cask hebbianai/tap/dure`. An older release never replaces a newer
-cask.
+`brew install --cask hebbianai/tap/dure`. Current Homebrew loads casks from a
+third-party tap only after `brew trust hebbianai/tap`, so the install pages show
+both commands. An older release never replaces a newer cask.
 
 The job stays skipped until a maintainer switches it on:
 
@@ -257,8 +258,9 @@ The job stays skipped until a maintainer switches it on:
    gh workflow run homebrew-cask.yml --repo hebbianai/dure --ref main -f tag=v0.2.61
    ```
 
-4. Once `brew install --cask hebbianai/tap/dure` works, add it to the four install
-   pages under `docs/public/`.
+4. Run `brew trust hebbianai/tap` and `brew info --cask hebbianai/tap/dure`.
+   The cask should load without a Homebrew warning and show the release version.
+   The four install pages under `docs/public/` document the install.
 
 A published release runs the workflow file from its tagged commit, so automatic
 updates begin with the first release tagged after this workflow merged. A release
