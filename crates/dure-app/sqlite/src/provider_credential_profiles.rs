@@ -2,14 +2,15 @@ use dure_app::{
     DomainStoreErrorV1, ProviderCredentialProfileDirectoryNameV1,
     ProviderCredentialProfileRegistrationV1, ProviderCredentialProfileV1, ProviderIdV1,
 };
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{AssertSqlSafe, Row, SqliteConnection, SqlitePool};
 
 use crate::error::{corrupt_identifier, corrupt_row, identity_conflict, map_sqlx, storage};
 use crate::schema::{begin_immediate, finish_transaction};
 
 // Client-local account IDs can name the same backend profile. Keep a single
 // private directory/generation owner and project each admitted public reference
-// from it; aliases never own independent credential generations.
+// from it; aliases never own independent credential generations. Queries embed
+// this constant as their only formatted text, so they are audited SQL.
 const PROFILE_REFERENCES: &str = r#"
     SELECT p.schema_version, p.provider_id, p.reference_id, p.profile_directory_name,
            p.credential_generation, p.profile_device, p.profile_inode,
@@ -219,7 +220,7 @@ async fn reject_cross_namespace_launch_reference(
     connection: &mut SqliteConnection,
     registration: &ProviderCredentialProfileRegistrationV1,
 ) -> Result<(), DomainStoreErrorV1> {
-    let collision = sqlx::query_scalar::<_, String>(&format!(
+    let collision = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
         r#"
         SELECT reference_id
         FROM ({PROFILE_REFERENCES})
@@ -230,7 +231,7 @@ async fn reject_cross_namespace_launch_reference(
         ORDER BY reference_id
         LIMIT 1
         "#
-    ))
+    )))
     .bind(registration.profile.provider_id.as_str())
     .bind(&registration.profile.reference_id)
     .bind(registration.profile_directory_name.as_str())
@@ -251,9 +252,9 @@ pub(crate) async fn profiles(
     pool: &SqlitePool,
     provider_id: &ProviderIdV1,
 ) -> Result<Vec<ProviderCredentialProfileV1>, DomainStoreErrorV1> {
-    sqlx::query(&format!(
+    sqlx::query(AssertSqlSafe(format!(
         "SELECT * FROM ({PROFILE_REFERENCES}) WHERE provider_id = ?1 ORDER BY reference_id"
-    ))
+    )))
     .bind(provider_id.as_str())
     .fetch_all(pool)
     .await
@@ -281,13 +282,13 @@ pub(crate) async fn profile_for_launch_reference(
     launch_reference: &str,
 ) -> Result<Option<ProviderCredentialProfileRegistrationV1>, DomainStoreErrorV1> {
     let rows = sqlx::query(
-        &format!(r#"
+        AssertSqlSafe(format!(r#"
         SELECT schema_version, provider_id, reference_id, profile_directory_name,
                credential_generation, profile_device, profile_inode
         FROM ({PROFILE_REFERENCES})
         WHERE provider_id = ?1
           AND (reference_id = ?2 OR (reference_id = canonical_reference_id AND profile_directory_name = ?2))
-        "#),
+        "#)),
     )
     .bind(provider_id.as_str())
     .bind(launch_reference)
@@ -309,14 +310,14 @@ async fn profile_on(
     provider_id: &ProviderIdV1,
     reference_id: &str,
 ) -> Result<Option<ProviderCredentialProfileRegistrationV1>, DomainStoreErrorV1> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(AssertSqlSafe(format!(
         r#"
         SELECT schema_version, provider_id, reference_id, profile_directory_name,
                credential_generation, profile_device, profile_inode
         FROM ({PROFILE_REFERENCES})
         WHERE provider_id = ?1 AND reference_id = ?2
         "#
-    ))
+    )))
     .bind(provider_id.as_str())
     .bind(reference_id)
     .fetch_optional(&mut *connection)

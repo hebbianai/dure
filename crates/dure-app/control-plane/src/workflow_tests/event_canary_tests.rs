@@ -14,11 +14,11 @@ async fn prohibit_domain_writes(root: &TempDir) -> sqlx::SqlitePool {
     .unwrap();
     for (index, table) in tables.iter().enumerate() {
         for action in ["INSERT", "UPDATE", "DELETE"] {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "CREATE TRIGGER canary_guard_{index}_{action} BEFORE {action} ON \"{}\" \
                  BEGIN SELECT RAISE(ABORT, 'event canary attempted a domain write'); END",
                 table.replace('"', "\"\"")
-            ))
+            )))
             .execute(&pool)
             .await
             .unwrap();

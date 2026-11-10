@@ -1107,7 +1107,7 @@ async fn create_is_atomic_idempotent_and_survives_reopen() {
         "workflow_delegate_once_receipts",
     ] {
         let query = format!("SELECT COUNT(*) FROM {table}");
-        let count: i64 = sqlx::query_scalar(&query)
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
             .fetch_one(&store.pool)
             .await
             .unwrap();
@@ -1394,7 +1394,7 @@ async fn dispatch_insert_failure_rolls_back_the_whole_creation() {
         "workflow_delegate_once_receipts",
     ] {
         let query = format!("SELECT COUNT(*) FROM {table}");
-        let count: i64 = sqlx::query_scalar(&query)
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
             .fetch_one(&store.pool)
             .await
             .unwrap();
@@ -1642,7 +1642,7 @@ async fn schema_seventeen_migrates_additively_to_durable_orchestration_store() {
         "workflow_interactions",
         "workflow_interaction_authorities",
     ] {
-        sqlx::query(&format!("DROP TABLE {table}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {table}")))
             .execute(&mut previous)
             .await
             .unwrap();
