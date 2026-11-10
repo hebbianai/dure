@@ -8,12 +8,17 @@ const COLUMN_GAP = "  ";
 const SELECTION_MARKER = "> ";
 const STATE_WIDTH = "needs input".length;
 const MIN_AGENT_WIDTH = 12;
-// Listed in the order the narrowest terminals give them up.
+const QUERY_UNAVAILABLE = "dure_session_query_unavailable";
+// The narrowest terminals give these up from the end of the list first. The
+// backend is kept longest: the same Session ID can run on two backends.
 const OPTIONAL_COLUMNS = Object.freeze([
+  { key: "backend", label: "BACKEND", width: 12 },
   { key: "project", label: "PROJECT", width: 18 },
   { key: "account", label: "ACCOUNT", width: 14 },
   { key: "provider", label: "PROVIDER", width: 8 },
 ]);
+// Left to right after the agent.
+const COLUMN_ORDER = Object.freeze(["backend", "provider", "account", "project"]);
 const HELP_LINE =
   "\u2191\u2193 select \u00b7 Enter attach \u00b7 r refresh \u00b7 q quit \u00b7 Ctrl-\\ then d returns here";
 
@@ -101,13 +106,19 @@ function accountLabel(reference) {
   return reference === "provider_default" ? "default" : reference;
 }
 
-export function agentRow(session) {
+/** `profileBackends` names the backends this listing read through a backend
+ * profile. A row from any other backend, or from a single-backend listing,
+ * attaches the way the listing was read. */
+export function agentRow(session, profileBackends = new Set()) {
   const { agents, state } = session.clientProjection;
   const current = state === "current" ? agents[0] : undefined;
+  const backend = session.backendProfileId ?? null;
   return {
-    key: `${session.workspaceId}\u0000${session.sessionId}`,
+    key: [backend ?? "", session.workspaceId, session.sessionId].join("\u0000"),
     sessionId: session.sessionId,
     workspaceId: session.workspaceId,
+    backend,
+    backendProfileId: profileBackends.has(backend) ? backend : null,
     state: agentState(session),
     agent:
       agents
@@ -140,14 +151,16 @@ function clampIndex(index, rows) {
   return Math.max(0, Math.min(index, rows.length - 1));
 }
 
-export function initialTuiState() {
+export function initialTuiState({ allBackends = false } = {}) {
   return {
+    allBackends,
     loaded: false,
     message: null,
     omitted: false,
     refreshError: null,
     rows: [],
     selected: 0,
+    unavailableBackends: [],
   };
 }
 
@@ -156,11 +169,20 @@ export function applySessionReport(state, report) {
     return {
       ...state,
       loaded: true,
-      refreshError: report.error?.code ?? "dure_session_query_unavailable",
+      refreshError: report.error?.code ?? QUERY_UNAVAILABLE,
     };
   }
+  // Only a listing across backends has entries; each answered or failed alone.
+  const backends = report.backends ?? [];
+  const profileBackends = new Set(
+    backends
+      .filter((backend) => backend.source?.kind === "backend_profile")
+      .map((backend) => backend.backendProfileId),
+  );
   const selectedKey = state.rows[state.selected]?.key;
-  const rows = report.sessions.map(agentRow).sort(compareRows);
+  const rows = report.sessions
+    .map((session) => agentRow(session, profileBackends))
+    .sort(compareRows);
   const kept = rows.findIndex((row) => row.key === selectedKey);
   return {
     ...state,
@@ -169,6 +191,12 @@ export function applySessionReport(state, report) {
     refreshError: null,
     rows,
     selected: kept >= 0 ? kept : clampIndex(state.selected, rows),
+    unavailableBackends: backends
+      .filter((backend) => backend.status === "error")
+      .map((backend) => ({
+        id: backend.backendProfileId,
+        code: backend.error?.code ?? QUERY_UNAVAILABLE,
+      })),
   };
 }
 
@@ -254,19 +282,20 @@ export function applyTuiKey(state, key, pageSize) {
   }
 }
 
-function visibleColumns(columns) {
+function visibleColumns(columns, allBackends) {
   const fixed = SELECTION_MARKER.length + STATE_WIDTH + COLUMN_GAP.length + MIN_AGENT_WIDTH;
   let available = columns - fixed;
-  const shown = new Set();
+  const shown = new Map();
   for (const column of OPTIONAL_COLUMNS) {
+    if (column.key === "backend" && !allBackends) continue;
     const cost = column.width + COLUMN_GAP.length;
     if (available < cost) break;
     available -= cost;
-    shown.add(column.key);
+    shown.set(column.key, column);
   }
   return {
     agentWidth: MIN_AGENT_WIDTH + Math.max(0, available),
-    optional: [...OPTIONAL_COLUMNS].reverse().filter((column) => shown.has(column.key)),
+    optional: COLUMN_ORDER.filter((key) => shown.has(key)).map((key) => shown.get(key)),
   };
 }
 
@@ -285,9 +314,20 @@ function summary(rows) {
   return waiting > 0 ? `${agents} \u00b7 ${waiting} needs input` : agents;
 }
 
+// A backend that did not answer may still run agents, so an empty list only
+// means "none" when every backend answered.
 function emptyListText(state) {
   if (!state.loaded) return "Loading agents\u2026";
-  return state.refreshError ? "" : "No agents on this backend.";
+  if (state.refreshError || state.unavailableBackends.length > 0) return "";
+  return state.allBackends ? "No agents on any backend." : "No agents on this backend.";
+}
+
+function unavailableText(backends) {
+  if (backends.length === 0) return "";
+  if (backends.length === 1) {
+    return `Backend ${backends[0].id} unavailable (${backends[0].code}).`;
+  }
+  return `Backends unavailable: ${backends.map(({ id, code }) => `${id} (${code})`).join(", ")}.`;
 }
 
 function statusText(state) {
@@ -297,15 +337,16 @@ function statusText(state) {
       ? `Could not refresh (${state.refreshError}). Showing the last list.`
       : `Could not read agents (${state.refreshError}). Press r to retry.`;
   }
-  return state.omitted
+  const omitted = state.omitted
     ? `Showing ${state.rows.length} agents. More exist but are not listed.`
     : "";
+  return [unavailableText(state.unavailableBackends), omitted].filter(Boolean).join(" ");
 }
 
 /** One string per terminal row, each exactly `columns` cells wide. */
 export function renderTuiFrame(state, { columns, rows }) {
   const height = listHeight(rows);
-  const layout = visibleColumns(columns);
+  const layout = visibleColumns(columns, state.allBackends);
   // The selection stays visible, including after a refresh shortens the list.
   const offset = Math.max(0, state.selected - height + 1);
   const headings = { state: "STATE", agent: "AGENT" };

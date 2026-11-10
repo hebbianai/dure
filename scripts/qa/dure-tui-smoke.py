@@ -220,6 +220,36 @@ try:
         assert back.index(ENTER_LIST) < back.index(b"STATE"), "list painted before re-entering its screen"
         assert not (root / "exited").exists(), "detaching stopped the agent"
 
+    # Across backends: without a backend catalog this machine is listed as local,
+    # read through the same Hmux, and the list does not write a catalog.
+    every = Terminal([shutil.which("node"), str(repo / "cli/dure.mjs"), "tui", "--all-backends"])
+    try:
+        listed = every.expect([ENTER_LIST, b"BACKEND", b"local", SESSION_ID.encode(), b"1 agent"],
+                              "the list across backends did not show the agent")
+        screen = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"\n", listed).decode(errors="replace")
+        row = next(line.strip() for line in screen.splitlines() if SESSION_ID in line)
+        assert " local " in f" {row} ", f"the row does not name its backend: {row!r}"
+        print(f"DURE_TUI_ALL_BACKENDS_ROW: {' '.join(row.split())}", flush=True)
+        mark = len(every.data)
+        every.send(b"\r")
+        every.expect([LEAVE_LIST, b"GOT-78"], "attach across backends did not show the agent", mark)
+        mark = len(every.data)
+        every.send(b"y")
+        every.expect([b"GOT-79"], "the agent did not echo input attached across backends", mark)
+        assert wait_file("received") == "7879", "input attached across backends did not reach the agent"
+        mark = len(every.data)
+        every.send(DETACH)
+        every.expect([ENTER_LIST, b"BACKEND", SESSION_ID.encode()],
+                     "detach across backends did not return to the list", mark)
+        assert not (root / "exited").exists(), "detaching across backends stopped the agent"
+        mark = len(every.data)
+        every.send(b"q")
+        assert every.wait_exit() == 0, every.data[-2000:]
+        assert LEAVE_LIST in every.data[mark:], "quitting across backends did not restore the terminal"
+        assert not (home / ".dure" / "backend-profiles.json").exists(), "listing across backends wrote a catalog"
+    finally:
+        every.stop()
+
     mark = len(terminal.data)
     (root / "stop").write_text("stop")
     wait_file("exited")
@@ -234,7 +264,8 @@ try:
     assert terminal.wait_exit() == 0, terminal.data[-2000:]
     assert LEAVE_LIST in terminal.data[mark:], "quitting did not restore the terminal"
     assert not (home / ".dure" / "agents.json").exists(), "the smoke must run without an app registry"
-    print("DURE_TUI_PASS: every state, attach, input, detach, return and reattach on a real managed session")
+    print("DURE_TUI_PASS: every state, attach, input, detach, return and reattach on a real managed session, "
+          "on one backend and across backends")
 finally:
     if terminal is not None:
         terminal.stop()

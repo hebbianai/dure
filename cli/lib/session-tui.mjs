@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { attachManagedSession, formatSessionAttachError } from "./session-attach.mjs";
 import { collectFilteredSessionQuery } from "./session-query.mjs";
+import { collectAllBackendsSessionQuery } from "./session-query-all-backends.mjs";
 import {
   applySessionReport,
   applyTuiKey,
@@ -10,7 +11,7 @@ import {
   renderTuiFrame,
 } from "./session-tui-model.mjs";
 
-export const TUI_HELP = `Usage: dure tui [--backend ID]
+export const TUI_HELP = `Usage: dure tui [--backend ID | --all-backends]
 
 See every managed agent across Spaces and attach to one from a terminal. It does
 not need the app. The list shows each agent's state, account and project, and
@@ -28,8 +29,12 @@ leaves the agent running.
 Account and project come from this machine's app. Without it, the account reads
 unknown and the project is the name of the agent's working folder.
 
-  --backend ID   Select the backend (otherwise DURE_BACKEND_PROFILE or default).
-  --help, -h     Print this help without contacting a backend.
+  --backend ID     Select the backend (otherwise DURE_BACKEND_PROFILE or default).
+  --all-backends   List the agents on every configured backend profile in one
+                   list with a BACKEND column. Enter attaches through the agent's
+                   own backend. A backend that cannot be reached is named below
+                   the list and does not hide the others. Not with --backend.
+  --help, -h       Print this help without contacting a backend.
 `;
 
 const REFRESH_INTERVAL_MS = 3_000;
@@ -58,13 +63,53 @@ export function formatSessionTuiError(error) {
   return `${error?.code ?? "dure_tui_failed"}: ${error?.message ?? String(error)}`;
 }
 
-/** The census behind the list: managed sessions, the only ones `dure attach` can open. */
-export function collectManagedAgents({ backend, execute, hmuxCommand, loadRegistry }) {
-  return () =>
-    collectFilteredSessionQuery(
-      { backend, execute, hmuxCommand, registry: loadRegistry() },
-      (session) => session.runtime.sessionClass === "managed",
-    );
+const isManaged = (session) => session.runtime.sessionClass === "managed";
+
+/** The census behind the list: managed sessions, the only ones `dure attach`
+ * can open. Across backends it is the `dure ls --all-backends` listing. */
+export function collectManagedAgents({
+  allBackends = false,
+  backend,
+  execute,
+  hmuxCommand,
+  loadCatalog,
+  loadRegistry,
+  requestBackend,
+  resolveBackend,
+}) {
+  const collectManaged = (query) => collectFilteredSessionQuery(query, isManaged);
+  return () => {
+    const query = { backend, execute, hmuxCommand, registry: loadRegistry(), requestBackend };
+    return allBackends
+      ? collectAllBackendsSessionQuery({ query, collect: collectManaged, loadCatalog, resolveBackend })
+      : collectManaged(query);
+  };
+}
+
+/** Resolves each backend profile once while the list is open, as a list on one
+ * backend does at startup, instead of on every refresh. A failure is not kept,
+ * so the next refresh tries again. */
+export function rememberBackendContexts(resolve) {
+  const contexts = new Map();
+  const forget = (id) => contexts.delete(id);
+  return (id) => {
+    if (!contexts.has(id)) {
+      const pending = Promise.resolve()
+        .then(() => resolve(id))
+        .then(
+          (context) => {
+            if (!context || context.error) forget(id);
+            return context;
+          },
+          (error) => {
+            forget(id);
+            throw error;
+          },
+        );
+      contexts.set(id, pending);
+    }
+    return contexts.get(id);
+  };
 }
 
 function attachFailureMessage(error, diagnostic) {
@@ -76,13 +121,15 @@ function attachFailureMessage(error, diagnostic) {
   return `Attach failed: ${hmuxError || formatSessionAttachError(error)}`;
 }
 
-/** Resolves to null after a detach or agent exit, or to the reason it failed. */
-export function attachAgentRow({ backend, execute, hmuxCommand, spawnProcess = spawn }) {
+/** Resolves to null after a detach or agent exit, or to the reason it failed.
+ * A row read through a backend profile attaches through that profile; any
+ * other row attaches the way the list was read. */
+export function attachAgentRow({ backend, execute, hmuxCommand, resolveBackend, spawnProcess = spawn }) {
   return async (row, onChild) => {
     let diagnostic = "";
     try {
       await attachManagedSession({
-        backend,
+        backend: row.backendProfileId ? await resolveBackend(row.backendProfileId) : backend,
         execute,
         hmuxCommand,
         sessionId: row.sessionId,
@@ -112,6 +159,7 @@ function writeOutput(output, text) {
 }
 
 export async function runSessionTui({
+  allBackends = false,
   attach,
   collect,
   input = process.stdin,
@@ -125,7 +173,7 @@ export async function runSessionTui({
       "dure tui needs an interactive terminal; use dure ls to list agents from a script",
     );
   }
-  let state = initialTuiState();
+  let state = initialTuiState({ allBackends });
   let attached = false;
   let onListScreen = false;
   let stopped = false;
