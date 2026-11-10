@@ -911,6 +911,25 @@ fn activate_bundled_runtime_at(
     fs::copy(source, &runtime)
         .map_err(|_| "hmux_activation_failed: bundled runtime could not be copied".to_string())?;
     make_executable(&runtime)?;
+    // `~/.local/bin/hmux` resolves through `current/bin/hmux`. A version
+    // without the CLI leaves that command dangling once `current` moves here,
+    // and every SSH desktop and paired phone that reaches this account runs
+    // it. Publish the CLI that shipped beside the runtime, but only when it
+    // reports this build: a published version can never be corrected.
+    let cli_source = bundled_cli_beside(source).filter(|cli| {
+        probe_pairing_cli_at(
+            cli,
+            &info.build_id,
+            build_info_timeout.max(CAPABILITY_PROBE_TIMEOUT),
+        )
+        .is_ok()
+    });
+    if let Some(cli_source) = &cli_source {
+        let cli = staging.join("bin").join(cli_file_name());
+        fs::copy(cli_source, &cli)
+            .map_err(|_| "hmux_activation_failed: bundled CLI could not be copied".to_string())?;
+        make_executable(&cli)?;
+    }
     let metadata = InstallMetadata {
         schema_version: 1,
         build_id: info.build_id.clone(),
@@ -918,7 +937,7 @@ fn activate_bundled_runtime_at(
         target_triple: format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
         protocol: info.protocol,
         activation_source: Some("local_bundled".to_string()),
-        cli_available: Some(false),
+        cli_available: Some(cli_source.is_some()),
     };
     let metadata_file = File::create(staging.join("install.json"))
         .map_err(|_| "hmux_activation_failed: install metadata could not be created".to_string())?;
@@ -958,6 +977,19 @@ fn safe_version_link(install_root: &Path, link_name: &str) -> bool {
         && build_component
             .to_str()
             .is_some_and(safe_build_id)
+}
+
+/// The CLI sidecar beside a bundled runtime. Both come from one build and are
+/// staged under matching names (`hmux-runtime` and `hmux`, or
+/// `hmux-runtime-<triple>` and `hmux-<triple>`), so the name is enough to find it.
+fn bundled_cli_beside(runtime: &Path) -> Option<PathBuf> {
+    let name = runtime.file_name()?.to_str()?;
+    let cli = name.replacen("hmux-runtime", "hmux", 1);
+    if cli == name {
+        return None;
+    }
+    let candidate = runtime.with_file_name(cli);
+    is_executable_file(&candidate).then_some(candidate)
 }
 
 fn bundled_runtime_candidates<R: Runtime>(app: &AppHandle<R>) -> Vec<PathBuf> {
