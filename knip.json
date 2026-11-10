@@ -45,7 +45,8 @@
 				"openssl",
 				"plutil",
 				"mkfifo",
-				"ssh-keygen"
+				"ssh-keygen",
+				"flock"
 			]
 		},
 		"tools/media-capture/compositor/remotion": {
