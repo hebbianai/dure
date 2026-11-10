@@ -275,7 +275,8 @@ dure wait --children all --json        # every Run this agent started has settle
 The targets are exclusive, and each rejects the others' flags: with
 `--task` only `--backend`, `--timeout`, `--deadline-ms` and `--json` are
 allowed, all three of `--task`, `--dispatch` and `--generation` are required,
-and the generation must be a positive integer. That target completes when the
+and the generation must be a positive integer. `dure workflow delegate` prints
+all three values when it starts a worker. That target completes when the
 worker calls `dure workflow done` for the same three values — see the `dure`
 skill.
 

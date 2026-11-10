@@ -2465,9 +2465,98 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
   process.exitCode = presentation.state === "failed" ? 2 : runExitCode;
 }
 
+const WORKFLOW_DELEGATE_FIELDS = Object.freeze([
+  "summary",
+  "file",
+  "instructions",
+  "provider",
+  "idempotencyKey",
+]);
+
+async function cmdWorkflowDelegate(opts) {
+  const sources = [opts.file !== undefined, opts.stdin, opts.instructions !== undefined];
+  if (
+    opts.rest.length !== 1 ||
+    opts.summary === undefined ||
+    sources.filter(Boolean).length !== 1 ||
+    opts.backendSpecified ||
+    ["task", "dispatch", "generation", "result"].some((field) => opts[field] !== undefined)
+  ) {
+    fail(WORKFLOW_HELP);
+  }
+  let profile;
+  try {
+    const {
+      currentHmuxSessionGeneration,
+      WorkflowCompletionError,
+    } = await import("./lib/workflow-completion.mjs");
+    const { delegateWorkflowTask, formatWorkflowDelegation, MAX_TASK_INSTRUCTIONS_BYTES } =
+      await import("./lib/workflow-delegation.mjs");
+    // Refuse a non-Hmux caller before reading input or starting a backend.
+    currentHmuxSessionGeneration(process.env, "workflow_delegate");
+    let instructions = opts.instructions;
+    if (instructions === undefined) {
+      const { readUtf8Input, readUtf8Stdin } = await import("./lib/text-input.mjs");
+      // CRLF folding can shrink the text; the exact bound is checked after it.
+      const readLimit = MAX_TASK_INSTRUCTIONS_BYTES * 2;
+      try {
+        instructions = opts.stdin
+          ? await readUtf8Stdin(readLimit)
+          : readUtf8Input(opts.file, readLimit);
+      } catch (error) {
+        throw new WorkflowCompletionError(
+          /exceeds/u.test(error?.message ?? "")
+            ? "workflow_delegate_instructions_invalid"
+            : "workflow_delegate_instructions_unreadable",
+          { cause: error },
+        );
+      }
+    }
+    const { selectBackendProfileForRequest } = await import("./lib/local-backend.mjs");
+    const { loadSessionClientProjection } = await import("./lib/client-registry.mjs");
+    const selection = await selectBackendProfileForRequest({
+      cliScriptPath: CLI_SCRIPT_PATH,
+      environment: process.env,
+    });
+    profile = selection.profile;
+    const report = await delegateWorkflowTask({
+      summary: opts.summary,
+      instructions,
+      providerId: opts.provider,
+      idempotencyKey: opts.idempotencyKey,
+      environment: process.env,
+      backend: selection,
+      registry: loadSessionClientProjection({ registryPath: REG }),
+    });
+    process.stdout.write(
+      `${opts.json ? JSON.stringify(report) : formatWorkflowDelegation(report)}\n`,
+    );
+  } catch (error) {
+    const { LocalBackendError, localBackendErrorReport } = await import(
+      "./lib/local-backend.mjs"
+    );
+    const { formatWorkflowDelegationError, workflowDelegationErrorReport } = await import(
+      "./lib/workflow-delegation.mjs"
+    );
+    const report =
+      error instanceof LocalBackendError
+        ? localBackendErrorReport(error)
+        : workflowDelegationErrorReport(error, profile);
+    process.stderr.write(
+      opts.json
+        ? `${JSON.stringify(report)}\n`
+        : `\x1b[31m${formatWorkflowDelegationError(report)}\x1b[0m\n`,
+    );
+    process.exitCode = 2;
+  }
+}
+
 async function cmdWorkflow(sub, opts) {
+  if (sub === "delegate") return await cmdWorkflowDelegate(opts);
   if (
     !["done", "show"].includes(sub) ||
+    opts.stdin ||
+    WORKFLOW_DELEGATE_FIELDS.some((field) => opts[field] !== undefined) ||
     opts.rest.length !== 1 ||
     !opts.task ||
     !opts.dispatch ||
@@ -3817,11 +3906,16 @@ async function cmdInstall(opts) {
 }
 
 function parseWorkflowOpts(args) {
-  const opts = { rest: [], json: false, backendSpecified: false };
+  const opts = { rest: [], json: false, backendSpecified: false, stdin: false };
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
     if (argument === "--json") {
       opts.json = true;
+      continue;
+    }
+    if (argument === "--stdin") {
+      if (opts.stdin) fail(WORKFLOW_HELP);
+      opts.stdin = true;
       continue;
     }
     if (argument === "--backend") {
@@ -3843,7 +3937,17 @@ function parseWorkflowOpts(args) {
             ? "generation"
             : argument === "--result"
               ? "result"
-              : null;
+              : argument === "--summary"
+                ? "summary"
+                : argument === "--file"
+                  ? "file"
+                  : argument === "--instructions"
+                    ? "instructions"
+                    : argument === "--provider"
+                      ? "provider"
+                      : argument === "--idempotency-key"
+                        ? "idempotencyKey"
+                        : null;
     if (field) {
       const value = args[index + 1];
       if (opts[field] !== undefined || value === undefined || value.startsWith("--")) {
@@ -3962,6 +4066,8 @@ Usage:
                                       Call the same versioned API on local, SSH or hosted backends
   dure orchestration tool <tool-name> [<arguments-json>] [--provider claude|codex] [--json]
                                       Run a dure-orchestration MCP tool when the MCP server is unavailable
+  dure workflow delegate --summary <text> (--file PATH | --stdin | --instructions <text>)
+                                      Hand a task to a new worker; wait for its result with dure wait --task
   dure workflow done --task <id> --dispatch <id> --generation <n> [--result <text>]
                                       Complete work as the current exact Hmux worker session
   dure workflow show --task <id> --dispatch <id> --generation <n>
@@ -4096,13 +4202,23 @@ Backend transcripts use the agent's backend profile unless --backend is specifie
 const WORKFLOW_HELP = `dure workflow — delegated workflow control
 
 Usage:
+  dure workflow delegate --summary <text> (--file PATH | --stdin | --instructions <text>)
+      [--provider ID] [--idempotency-key KEY] [--json]
   dure workflow done --task <id> --dispatch <id> --generation <n> [--result <text>] [--json]
   dure workflow show --task <id> --dispatch <id> --generation <n> [--backend ID] [--json]
 
+delegate starts one new worker for the Agent this command runs in, the same as the
+app's Delegate task action. Run it from a managed local Agent Session the app lists.
+The worker starts in that Agent's workspace with its permission mode, receives the
+summary and up to 16 KiB of instructions, and finishes with 'dure workflow done'.
+--provider defaults to the calling Agent's provider. delegate prints the task,
+dispatch and generation for 'dure wait --task' and 'show'. After an uncertain
+outcome, rerun the same command with the printed --idempotency-key; a new key
+starts another worker.
 done resolves the exact generation of the current managed Hmux worker Session and completes it.
 --result records up to 16 KiB of result text in the same canonical receipt.
 show reads existing receipts without inferring Hmux Session state.
-Session and provider identities are not accepted as flags.`;
+done and show accept no Session or provider identities as flags.`;
 
 const WHOAMI_HELP = `dure whoami — print the current agent's latest IDE identity
 
