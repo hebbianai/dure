@@ -89,6 +89,7 @@ pub(crate) fn apply_event(event: ChannelEvent, shared: &SessionShared) -> bool {
         ChannelEvent::Data(bytes) => shared.inbound.push_data(bytes),
         ChannelEvent::Diagnostic(bytes) => shared.inbound.push_diagnostic(&bytes),
         ChannelEvent::Exited(status) => shared.inbound.set_exit_status(status),
+        ChannelEvent::Signalled(bytes) => shared.inbound.set_exit_signal(&bytes),
         // Deliberately not a reason to stop reading. The exit status and the
         // last of stderr usually arrive *after* the remote closes its write
         // half, and they are the only things that distinguish "the gateway is
