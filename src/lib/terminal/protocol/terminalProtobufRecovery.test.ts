@@ -33,9 +33,9 @@ function brokenEncoding() {
 	const decodeUtf8 = vi.fn(() => {
 		throw new TypeError("private decoder detail");
 	});
-	const broken = { ...encoding, decodeUtf8 };
-	configureTextEncoding(broken);
-	return broken;
+	configureTextEncoding({ ...encoding, decodeUtf8 });
+	// protobuf installs its own copy; compare against the codec in use.
+	return getTextEncoding();
 }
 
 it("repairs a persistently failed shared decoder without recreating attachments", () => {
@@ -55,12 +55,13 @@ it("repairs a persistently failed shared decoder without recreating attachments"
 });
 
 it("does not replace a working codec when the record contains invalid UTF-8", () => {
+	const installed = getTextEncoding();
 	const invalid = valid.slice();
 	invalid[invalid.indexOf(0xed, 20)] = 0xff;
 	expect(() => decodeTerminalStateRecord(invalid)).toThrow(
 		/could not be decoded/,
 	);
-	expect(getTextEncoding()).toBe(encoding);
+	expect(getTextEncoding()).toBe(installed);
 	expect(decodeTerminalStateRecord(valid).record).toEqual(record);
 });
 
