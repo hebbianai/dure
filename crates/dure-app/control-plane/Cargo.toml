@@ -41,7 +41,7 @@ similar = "=3.2.1"
 tempfile = "3"
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 # 0.27 bounds partial-read initialization for large provider/history frames.
-tokio-tungstenite = { version = "0.27", default-features = false, features = ["handshake"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
