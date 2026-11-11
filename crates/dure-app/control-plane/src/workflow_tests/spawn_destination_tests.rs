@@ -56,9 +56,16 @@ async fn unregistered_spawn_path_requires_explicit_project_registration() {
     assert!(launcher.requests().is_empty());
 }
 
-#[test]
-fn provider_preflight_preview_failure_names_the_refused_check_on_the_wire() {
+#[tokio::test]
+async fn provider_preflight_preview_failure_names_the_refused_check_on_the_wire() {
+    let (root, mut state, _, _) = fixture(Vec::new()).await;
+    // A host where no Dure app published the managed integration.
+    state.provider_runtime_integrations =
+        provider_extension::test_provider_runtime_integrations("stable", root.path().join("app"));
+    let body = json!({ "providerId": "claude" });
     let wire = backend_error_body(agent_spawn_preview_failure(
+        &state,
+        &body,
         "agent_spawn_provider_preflight_failed:provider_runtime_integration_unavailable".into(),
     ));
     assert_eq!(wire["code"], "agent_spawn_provider_preflight_failed");
@@ -67,14 +74,40 @@ fn provider_preflight_preview_failure_names_the_refused_check_on_the_wire() {
         "provider_runtime_integration_unavailable"
     );
     assert_eq!(wire["details"]["disposition"], "retry_same");
+    // The unmet requirement and the document, relative to the Dure home,
+    // tell the caller what to fix without exposing host paths.
+    assert_eq!(
+        wire["details"]["requirement"],
+        "integration_document_missing"
+    );
+    assert_eq!(
+        wire["details"]["integrationFile"],
+        "managed-provider-integrations-v1.json"
+    );
+    assert!(!wire.to_string().contains(root.path().to_str().unwrap()));
+
+    // Other provider checks carry no integration detail.
+    let executable = backend_error_body(agent_spawn_preview_failure(
+        &state,
+        &body,
+        "agent_spawn_provider_preflight_failed:provider_executable_unavailable".into(),
+    ));
+    assert_eq!(
+        executable["details"]["reasonCode"],
+        "provider_executable_unavailable"
+    );
+    assert!(executable["details"].get("requirement").is_none());
 
     // Other preview failures keep their existing projection.
     let bare = backend_error_body(agent_spawn_preview_failure(
+        &state,
+        &body,
         "agent_spawn_runtime_unavailable".into(),
     ));
     assert_eq!(bare["code"], "agent_spawn_runtime_unavailable");
     assert!(bare["details"].get("reasonCode").is_none());
-    let missing = agent_spawn_preview_failure("agent_spawn_project_not_found".into());
+    let missing =
+        agent_spawn_preview_failure(&state, &body, "agent_spawn_project_not_found".into());
     assert_eq!(missing.disposition, BackendFailureDispositionV1::Terminal);
 }
 

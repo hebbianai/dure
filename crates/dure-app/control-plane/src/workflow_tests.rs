@@ -1265,6 +1265,9 @@ async fn fixture_with_source_launch_authority(
         agent_providers: Arc::new(provider_extension::test_agent_provider_registry(
             provider.to_str().unwrap(),
         )),
+        provider_runtime_integrations: provider_extension::local_provider_runtime_integrations(
+            root.path(),
+        ),
         runtime_adapters: Arc::new(runtime_extension::local_hmux_runtime_registry(
             hmux_identity.clone(),
         )),
@@ -1537,6 +1540,7 @@ async fn reopen_fixture_service_state_with_prompt_observation(
         canonical_descriptor_path: state.canonical_descriptor_path.clone(),
         projects_catalog_path: state.projects_catalog_path.clone(),
         agent_providers: Arc::clone(&state.agent_providers),
+        provider_runtime_integrations: Arc::clone(&state.provider_runtime_integrations),
         runtime_adapters: Arc::new(runtime_extension::local_hmux_runtime_registry(
             state.hmux_identity.clone(),
         )),

@@ -754,6 +754,40 @@ describe("Dure backend profile transport", () => {
     },
   );
 
+  it.each([
+    ["integration_document_missing", "managed-provider-integrations-v1.json", true],
+    ["integration_document_missing", "channels/dev-a1/managed-provider-integrations-v1.json", true],
+    ["integration_document_missing", "/Users/name/.dure/managed-provider-integrations-v1.json", false],
+    ["integration_document_missing", "channels/../../etc/managed-provider-integrations-v1.json", false],
+    ["private /Users/name/path", "other-file.json", false],
+  ])("only exposes a bounded integration requirement %s and relative document %s", async (requirement, integrationFile, kept) => {
+    const profile = localProfile();
+    const response = responseFor(profile, "request-integration-refusal", {
+      kind: "dure.backend.error",
+      error: {
+        code: "agent_spawn_provider_preflight_failed",
+        message: "private backend diagnostic",
+        details: {
+          reasonCode: "provider_runtime_integration_unavailable",
+          requirement,
+          integrationFile,
+          disposition: "retry_same",
+        },
+      },
+    });
+    delete response.result;
+    const error = await expectErrorCode(() => Promise.resolve(
+      parseBackendTransportResponse(Buffer.from(JSON.stringify(response)), {
+        nowMs: 1_000, profile, requestId: "request-integration-refusal",
+      }),
+    ), "backend_transport_remote_error");
+    const report = backendTransportErrorReport(error, profile).error;
+    expect(report.reasonCode).toBe("provider_runtime_integration_unavailable");
+    expect(report.requirement).toBe(requirement.startsWith("private") ? undefined : requirement);
+    expect(report.integrationFile).toBe(kept ? integrationFile : undefined);
+    expect(JSON.stringify(report)).not.toContain("/Users/name");
+  });
+
   it("keeps a busy refusal's bounded background work and drops a malformed one", async () => {
     const profile = localProfile();
     const refusal = (backgroundWork) => {

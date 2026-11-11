@@ -30,11 +30,13 @@ const PROVIDER_INTEGRATION_MAX_BYTES: u64 = 64 * 1024;
 const APP_CHANNEL_ENV: &str = "DURE_APP_CHANNEL";
 const STABLE_CHANNEL: &str = "stable";
 
+#[cfg(test)]
+mod integration_requirement_tests;
 mod launch;
 #[cfg(test)]
 mod launch_tests;
 
-trait ProviderRuntimeIntegrationSource: Send + Sync {
+pub(crate) trait ProviderRuntimeIntegrationSource: Send + Sync {
     fn app_channel(&self) -> Option<&str> {
         None
     }
@@ -43,6 +45,59 @@ trait ProviderRuntimeIntegrationSource: Send + Sync {
         &self,
         provider_id: &ProviderIdV1,
     ) -> Result<ProviderRuntimeIntegrationV1, ExtensionFailureCodeV1>;
+
+    /// The requirement a refused integration did not meet, when this source
+    /// can name it. The refusal code itself stays
+    /// `provider_runtime_integration_unavailable`.
+    fn refusal(&self, _provider_id: &ProviderIdV1) -> Option<ProviderRuntimeIntegrationRefusal> {
+        None
+    }
+}
+
+/// The managed-integration requirement a native launch did not meet.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProviderRuntimeIntegrationRequirement {
+    /// `DURE_APP_CHANNEL` does not name a valid channel.
+    Channel,
+    /// The channel directory is not an owner-only directory.
+    Directory,
+    /// No Dure app published the integration document for this channel.
+    DocumentMissing,
+    /// The document is not an owner-only regular file within the size limit.
+    DocumentUnsafe,
+    /// The document does not parse or validate.
+    DocumentInvalid,
+    /// The document was published for another channel.
+    DocumentChannel,
+    /// The document does not list this provider.
+    Provider,
+    /// A file the provider's entry references is missing, unsafe or outside
+    /// the channel directory.
+    Reference,
+}
+
+impl ProviderRuntimeIntegrationRequirement {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Channel => "integration_channel_invalid",
+            Self::Directory => "integration_directory_unsafe",
+            Self::DocumentMissing => "integration_document_missing",
+            Self::DocumentUnsafe => "integration_document_unsafe",
+            Self::DocumentInvalid => "integration_document_invalid",
+            Self::DocumentChannel => "integration_channel_mismatch",
+            Self::Provider => "integration_provider_unpublished",
+            Self::Reference => "integration_reference_unavailable",
+        }
+    }
+}
+
+/// What a refused native launch can tell its caller about the managed
+/// integration: the unmet requirement and the document's path relative to
+/// the Dure home. Absolute host paths stay on the host.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProviderRuntimeIntegrationRefusal {
+    pub(crate) requirement: ProviderRuntimeIntegrationRequirement,
+    pub(crate) document: String,
 }
 
 struct ChannelProviderRuntimeIntegrationSource {
@@ -81,24 +136,62 @@ impl ChannelProviderRuntimeIntegrationSource {
         }
     }
 
-    fn load(&self) -> Result<ProviderRuntimeIntegrationsV1, ExtensionFailureCodeV1> {
-        let channel = self.channel.as_ref().ok_or_else(integration_unavailable)?;
-        let control_dir = self
-            .control_dir
-            .as_ref()
-            .ok_or_else(integration_unavailable)?;
-        require_owner_directory(control_dir)?;
-        let path = control_dir.join(PROVIDER_RUNTIME_INTEGRATIONS_FILE_V1);
-        let metadata = require_owner_file(&path, false)?;
-        if metadata.len() > PROVIDER_INTEGRATION_MAX_BYTES {
-            return Err(integration_unavailable());
+    /// The integration document's path relative to the Dure home.
+    fn document_reference(&self) -> String {
+        match self.channel.as_deref() {
+            Some(channel) if channel != STABLE_CHANNEL => {
+                format!("channels/{channel}/{PROVIDER_RUNTIME_INTEGRATIONS_FILE_V1}")
+            }
+            _ => PROVIDER_RUNTIME_INTEGRATIONS_FILE_V1.into(),
         }
-        let source = fs::read(&path).map_err(|_| integration_unavailable())?;
+    }
+
+    pub(crate) fn document_path(&self) -> Option<PathBuf> {
+        self.control_dir
+            .as_ref()
+            .map(|control_dir| control_dir.join(PROVIDER_RUNTIME_INTEGRATIONS_FILE_V1))
+    }
+
+    /// The provider's published integration, or the first requirement a
+    /// native launch of it does not meet on this host.
+    pub(crate) fn inspect(
+        &self,
+        provider_id: &ProviderIdV1,
+    ) -> Result<ProviderRuntimeIntegrationV1, ProviderRuntimeIntegrationRequirement> {
+        let integration = self
+            .load()?
+            .integration(provider_id)
+            .cloned()
+            .ok_or(ProviderRuntimeIntegrationRequirement::Provider)?;
+        self.validate_references(&integration)?;
+        Ok(integration)
+    }
+
+    fn load(&self) -> Result<ProviderRuntimeIntegrationsV1, ProviderRuntimeIntegrationRequirement> {
+        use ProviderRuntimeIntegrationRequirement as Requirement;
+        let channel = self.channel.as_ref().ok_or(Requirement::Channel)?;
+        let control_dir = self.control_dir.as_ref().ok_or(Requirement::Channel)?;
+        require_owner_directory(control_dir).map_err(|failure| match failure {
+            // A channel the app never ran for has no directory and no document.
+            OwnerEntryFailure::Missing => Requirement::DocumentMissing,
+            OwnerEntryFailure::Unsafe => Requirement::Directory,
+        })?;
+        let path = control_dir.join(PROVIDER_RUNTIME_INTEGRATIONS_FILE_V1);
+        let metadata = require_owner_file(&path, false).map_err(|failure| match failure {
+            OwnerEntryFailure::Missing => Requirement::DocumentMissing,
+            OwnerEntryFailure::Unsafe => Requirement::DocumentUnsafe,
+        })?;
+        if metadata.len() > PROVIDER_INTEGRATION_MAX_BYTES {
+            return Err(Requirement::DocumentUnsafe);
+        }
+        let source = fs::read(&path).map_err(|_| Requirement::DocumentUnsafe)?;
         let document: ProviderRuntimeIntegrationsV1 =
-            serde_json::from_slice(&source).map_err(|_| integration_unavailable())?;
-        document.validate().map_err(|_| integration_unavailable())?;
+            serde_json::from_slice(&source).map_err(|_| Requirement::DocumentInvalid)?;
+        document
+            .validate()
+            .map_err(|_| Requirement::DocumentInvalid)?;
         if document.channel != *channel {
-            return Err(integration_unavailable());
+            return Err(Requirement::DocumentChannel);
         }
         Ok(document)
     }
@@ -106,13 +199,10 @@ impl ChannelProviderRuntimeIntegrationSource {
     fn validate_references(
         &self,
         integration: &ProviderRuntimeIntegrationV1,
-    ) -> Result<(), ExtensionFailureCodeV1> {
-        let control_dir = self
-            .control_dir
-            .as_ref()
-            .ok_or_else(integration_unavailable)?;
-        let canonical_control =
-            fs::canonicalize(control_dir).map_err(|_| integration_unavailable())?;
+    ) -> Result<(), ProviderRuntimeIntegrationRequirement> {
+        let unavailable = ProviderRuntimeIntegrationRequirement::Reference;
+        let control_dir = self.control_dir.as_ref().ok_or(unavailable)?;
+        let canonical_control = fs::canonicalize(control_dir).map_err(|_| unavailable)?;
         let paths: Vec<(&str, bool)> = match integration {
             ProviderRuntimeIntegrationV1::NotificationCommand { command } => {
                 command.iter().map(|path| (path.as_str(), true)).collect()
@@ -126,10 +216,10 @@ impl ChannelProviderRuntimeIntegrationSource {
         };
         for (path, executable) in paths {
             let path = Path::new(path);
-            require_owner_file(path, executable)?;
-            let canonical = fs::canonicalize(path).map_err(|_| integration_unavailable())?;
+            require_owner_file(path, executable).map_err(|_| unavailable)?;
+            let canonical = fs::canonicalize(path).map_err(|_| unavailable)?;
             if !canonical.starts_with(&canonical_control) {
-                return Err(integration_unavailable());
+                return Err(unavailable);
             }
         }
         Ok(())
@@ -145,13 +235,17 @@ impl ProviderRuntimeIntegrationSource for ChannelProviderRuntimeIntegrationSourc
         &self,
         provider_id: &ProviderIdV1,
     ) -> Result<ProviderRuntimeIntegrationV1, ExtensionFailureCodeV1> {
-        let integration = self
-            .load()?
-            .integration(provider_id)
-            .cloned()
-            .ok_or_else(integration_unavailable)?;
-        self.validate_references(&integration)?;
-        Ok(integration)
+        self.inspect(provider_id)
+            .map_err(|_| integration_unavailable())
+    }
+
+    fn refusal(&self, provider_id: &ProviderIdV1) -> Option<ProviderRuntimeIntegrationRefusal> {
+        self.inspect(provider_id)
+            .err()
+            .map(|requirement| ProviderRuntimeIntegrationRefusal {
+                requirement,
+                document: self.document_reference(),
+            })
     }
 }
 
@@ -163,30 +257,43 @@ fn valid_channel(value: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
-fn require_owner_directory(path: &Path) -> Result<(), ExtensionFailureCodeV1> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| integration_unavailable())?;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OwnerEntryFailure {
+    Missing,
+    Unsafe,
+}
+
+fn owner_entry_metadata(path: &Path) -> Result<fs::Metadata, OwnerEntryFailure> {
+    fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            OwnerEntryFailure::Missing
+        } else {
+            OwnerEntryFailure::Unsafe
+        }
+    })
+}
+
+fn require_owner_directory(path: &Path) -> Result<(), OwnerEntryFailure> {
+    let metadata = owner_entry_metadata(path)?;
     if metadata.file_type().is_symlink()
         || !metadata.is_dir()
         || metadata.uid() != unsafe { libc::geteuid() }
         || metadata.permissions().mode() & 0o077 != 0
     {
-        return Err(integration_unavailable());
+        return Err(OwnerEntryFailure::Unsafe);
     }
     Ok(())
 }
 
-fn require_owner_file(
-    path: &Path,
-    executable: bool,
-) -> Result<fs::Metadata, ExtensionFailureCodeV1> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| integration_unavailable())?;
+fn require_owner_file(path: &Path, executable: bool) -> Result<fs::Metadata, OwnerEntryFailure> {
+    let metadata = owner_entry_metadata(path)?;
     if metadata.file_type().is_symlink()
         || !metadata.is_file()
         || metadata.uid() != unsafe { libc::geteuid() }
         || metadata.permissions().mode() & 0o077 != 0
         || (executable && metadata.permissions().mode() & 0o100 == 0)
     {
-        return Err(integration_unavailable());
+        return Err(OwnerEntryFailure::Unsafe);
     }
     Ok(metadata)
 }
@@ -380,9 +487,67 @@ pub(crate) fn local_agent_provider_registry(
     structured_providers: BTreeSet<ProviderIdV1>,
 ) -> AgentProviderRegistry {
     provider_registry(
-        Arc::new(ChannelProviderRuntimeIntegrationSource::new(app_root)),
+        local_provider_runtime_integrations(app_root),
         structured_providers,
     )
+}
+
+/// The managed integrations this host's native launches read, for naming a
+/// refused requirement. Reads the same channel and document as the registry.
+pub(crate) fn local_provider_runtime_integrations(
+    app_root: &Path,
+) -> Arc<dyn ProviderRuntimeIntegrationSource> {
+    Arc::new(ChannelProviderRuntimeIntegrationSource::new(app_root))
+}
+
+/// `dure doctor`'s view of the managed integration document: the same checks
+/// a native launch of each provider runs on this host.
+pub fn provider_runtime_integration_status(
+    app_root: &Path,
+    provider_ids: &[String],
+) -> serde_json::Value {
+    integration_status(
+        &ChannelProviderRuntimeIntegrationSource::new(app_root),
+        provider_ids,
+    )
+}
+
+fn integration_status(
+    source: &ChannelProviderRuntimeIntegrationSource,
+    provider_ids: &[String],
+) -> serde_json::Value {
+    let providers: Vec<_> = provider_ids
+        .iter()
+        .map(|provider_id| {
+            let requirement = match ProviderIdV1::new(provider_id.clone()) {
+                Ok(provider_id) => source.inspect(&provider_id).err(),
+                Err(_) => Some(ProviderRuntimeIntegrationRequirement::Provider),
+            };
+            serde_json::json!({
+                "providerId": provider_id,
+                "status": if requirement.is_none() { "current" } else { "unavailable" },
+                "requirement": requirement.map(ProviderRuntimeIntegrationRequirement::as_str),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "schemaVersion": 1,
+        "kind": "dure.provider_runtime_integration_status",
+        "channel": source.channel,
+        "document": source.document_path(),
+        "providers": providers,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn test_provider_runtime_integrations(
+    channel: &str,
+    control_dir: PathBuf,
+) -> Arc<dyn ProviderRuntimeIntegrationSource> {
+    Arc::new(ChannelProviderRuntimeIntegrationSource::at(
+        channel,
+        control_dir,
+    ))
 }
 
 #[cfg(test)]

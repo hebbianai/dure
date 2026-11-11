@@ -3365,7 +3365,53 @@ function cmdHooks(sub, opts) {
 // 설정 UI가 이 JSON을 읽어 설치 체크리스트를 그린다. 각 항목은 fix 명령을
 // 함께 실어 UI 버튼이 그대로 실행할 수 있게 한다(단일 출처: CLI).
 
-function cmdEnvironmentDoctor(opts) {
+/**
+ * Native terminal launches of Claude and Codex need the managed integration
+ * document a Dure app publishes. The control plane runs the same check its
+ * preflight runs; null state means this CLI's control plane cannot run it.
+ */
+async function terminalLaunchIntegrationDependency() {
+  const { inspectProviderRuntimeIntegrations, integrationRequirementText } =
+    await import("./lib/provider-runtime-integration.mjs");
+  const { resolveLocalBackendExecutable } = await import("./lib/local-backend.mjs");
+  let report = null;
+  try {
+    report = inspectProviderRuntimeIntegrations({
+      controlPlanePath: resolveLocalBackendExecutable(CLI_SCRIPT_PATH),
+      dureHome: DURE_ROOT,
+    });
+  } catch {
+    report = null;
+  }
+  const state =
+    report === null
+      ? "unknown"
+      : report.providers.every((provider) => provider.status === "current")
+        ? "current"
+        : "unavailable";
+  return {
+    id: "terminal-launch-integration",
+    label: "terminal-session launch integration",
+    ok: state === "current",
+    state,
+    document: report?.document ?? null,
+    guidance:
+      state === "unknown"
+        ? "This CLI's control plane could not run the check."
+        : "Terminal-session Runs need it; chat Runs (dure run --runtime chat) do not. Open the Dure app on this host once to publish it.",
+    details: (report?.providers ?? []).map((provider) => ({
+      provider: provider.providerId,
+      status: provider.status,
+      requirement: provider.requirement,
+      reason:
+        provider.requirement === null
+          ? null
+          : integrationRequirementText(provider.requirement),
+    })),
+  };
+}
+
+async function cmdEnvironmentDoctor(opts) {
   // Checkpoint discipline hooks retired 2026-08-27 — the SessionStart hook
   // now emits a no-op; doctor no longer nags anyone to install it.
   const hookDependencies = [];
@@ -3442,6 +3488,7 @@ function cmdEnvironmentDoctor(opts) {
         })),
       },
       ...hookDependencies,
+      await terminalLaunchIntegrationDependency(),
       {
         id: "dure-skills",
         label: "Dure skills",
@@ -3457,10 +3504,26 @@ function cmdEnvironmentDoctor(opts) {
     return;
   }
   for (const dep of report.dependencies) {
+    const mark = dep.ok
+      ? "\x1b[32m✓\x1b[0m"
+      : dep.state === "unknown"
+        ? "\x1b[33m?\x1b[0m"
+        : "\x1b[31m✗\x1b[0m";
     process.stdout.write(
-      `${dep.ok ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m"} ${dep.label}` +
-        (dep.ok ? "\n" : ` — ${dep.fixCommand}\n`),
+      `${mark} ${dep.label}` +
+        (dep.ok ? "\n" : ` — ${dep.fixCommand ?? dep.guidance}\n`),
     );
+    if (!dep.ok && dep.id === "terminal-launch-integration") {
+      for (const detail of dep.details) {
+        if (detail.status !== "current") {
+          process.stdout.write(
+            `    ${detail.provider} — ${detail.requirement}` +
+              `${detail.reason === null ? "" : `: ${detail.reason}`}` +
+              `${dep.document === null ? "" : ` (${dep.document})`}\n`,
+          );
+        }
+      }
+    }
     if (!dep.ok && dep.id === "dure-skills") {
       for (const detail of dep.details) {
         if (detail.state !== "current") {
@@ -4362,7 +4425,7 @@ Without --check, diagnostic findings do not change the exit status.`;
 async function cmdDoctor(opts) {
   if (!opts.rest[0]) {
     // 인자 없음 = 에이전트 환경 의존성 점검(훅·스킬). migrate-home은 유지.
-    cmdEnvironmentDoctor(opts);
+    await cmdEnvironmentDoctor(opts);
     return;
   }
   if (opts.rest[0] !== "migrate-home") {

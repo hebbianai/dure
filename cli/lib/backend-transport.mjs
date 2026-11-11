@@ -1,6 +1,7 @@
 import { exchangeSshStdio } from "./backend-ssh-stdio.mjs";
 import { MAX_BACKEND_CAPABILITIES_V1 } from "./backend-capabilities.mjs";
 import { normalizeBackgroundWork } from "./background-work-summary.mjs";
+import { validIntegrationFile } from "./provider-runtime-integration.mjs";
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { createConnection } from "node:net";
@@ -83,6 +84,16 @@ function assertOnlyKeys(value, allowed) {
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) fail("backend_transport_malformed_response");
   }
+}
+
+/** A refused managed integration names its unmet requirement and document. */
+function integrationRefusalDetails(details) {
+  return {
+    ...(validToken(details?.requirement) ? { requirement: details.requirement } : {}),
+    ...(validIntegrationFile(details?.integrationFile)
+      ? { integrationFile: details.integrationFile }
+      : {}),
+  };
 }
 
 function validToken(value) {
@@ -426,6 +437,7 @@ export function parseBackendTransportResponse(
         ...(validToken(response.error.details?.reasonCode)
           ? { reasonCode: response.error.details.reasonCode }
           : {}),
+        ...integrationRefusalDetails(response.error.details),
         ...(backgroundWork ? { backgroundWork } : {}),
       },
     });
@@ -836,6 +848,7 @@ export function backendTransportErrorReport(error, profile) {
       ...(validToken(typed.details?.reasonCode)
         ? { reasonCode: typed.details.reasonCode }
         : {}),
+      ...integrationRefusalDetails(typed.details),
       ...(validOperationDisposition(typed.details?.disposition)
         ? { disposition: typed.details.disposition }
         : {}),

@@ -179,6 +179,56 @@ it.each(["preview", "apply"])("says how to learn the refused check when the back
 });
 
 it.each([
+  [
+    "integration_document_missing",
+    "managed-provider-integrations-v1.json",
+    "Failed check: integration_document_missing for managed-provider-integrations-v1.json in that host's Dure home " +
+      "(no Dure app has published it). dure doctor on that host reports the same check.",
+  ],
+  [
+    "integration_provider_unpublished",
+    "channels/dev-a1/managed-provider-integrations-v1.json",
+    "Failed check: integration_provider_unpublished for channels/dev-a1/managed-provider-integrations-v1.json " +
+      "in that host's Dure home (it does not list this provider).",
+  ],
+  [
+    "integration_future_check",
+    undefined,
+    "Failed check: integration_future_check for managed-provider-integrations-v1.json in that host's Dure home. " +
+      "dure doctor on that host reports the same check.",
+  ],
+])("names the unmet integration requirement %s and its document", async (requirement, integrationFile, named) => {
+  const report = await collectAgentSpawnQuery({
+    action: "preview",
+    projectId: "dure",
+    providerId: "claude",
+    agentName: "claude-1",
+    idempotencyKey: "spawn-request-1",
+    worktree: { kind: "dedicated", branch: "agent/claude-1" },
+    backend: backend(),
+    requestBackend: async () => {
+      throw new BackendTransportError("backend_transport_remote_error", {
+        details: {
+          code: "agent_spawn_provider_preflight_failed",
+          reasonCode: "provider_runtime_integration_unavailable",
+          requirement,
+          ...(integrationFile === undefined ? {} : { integrationFile }),
+          disposition: "retry_same",
+        },
+      });
+    },
+  });
+  expect(report.error).toMatchObject({
+    reasonCode: "provider_runtime_integration_unavailable",
+    requirement,
+    ...(integrationFile === undefined ? {} : { integrationFile }),
+  });
+  expect(report.error.message).toContain(named);
+  expect(report.error.message).toContain("Open the Dure app on that host once");
+  expect(formatAgentSpawnQuery(report)).toContain(named);
+});
+
+it.each([
   ["a terminal preference", { interactionPreference: "native_cli" }, ["run it with --runtime chat"]],
   ["a setup command", { setupCommand: "pnpm install" }, ["remove --setup-command"]],
   ["both", { interactionPreference: "native_cli", setupCommand: "pnpm install" }, ["remove --setup-command", "run it with --runtime chat"]],

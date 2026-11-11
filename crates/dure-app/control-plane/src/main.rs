@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use dure_control_plane::{
     ActivateStagedOptions, ClaudeStructuredRuntimeOptions, GatewayOptions, HubLaunch,
     LAUNCH_REASON_ENVIRONMENT, ServeOptions, activate_staged, codex_connection_driver,
-    control_plane_identity, decode_gateway_socket_hex, gateway, preflight, serve,
+    control_plane_identity, decode_gateway_socket_hex, gateway, preflight,
+    provider_runtime_integration_status, serve,
 };
 
 enum Command {
@@ -18,13 +19,17 @@ enum Command {
     PiConnectionDriver(Vec<String>),
     Gateway(GatewayOptions),
     Identity,
+    ProviderIntegrationStatus {
+        home: PathBuf,
+        providers: Vec<String>,
+    },
     Preflight(ServeOptions),
     Serve(ServeOptions, HubLaunch),
 }
 
 fn usage() -> ! {
     eprintln!(
-        "usage: dure-control-plane identity\n       dure-control-plane preflight --home <DURE_HOME> --hmux-bin <PATH> --hmux-runtime-bin <PATH> --hmux-discovery-root <PATH> [--claude-node-bin <PATH> --claude-host-entrypoint <PATH> --claude-relay-bin <PATH> --claude-runtime-root <PATH>]\n       dure-control-plane serve --home <DURE_HOME> [--launch-executable <PATH>] --hmux-bin <PATH> --hmux-runtime-bin <PATH> --hmux-discovery-root <PATH> [--claude-node-bin <PATH> --claude-host-entrypoint <PATH> --claude-relay-bin <PATH> --claude-runtime-root <PATH>] [--expected-generation <GENERATION>] [--activation-source-generation <GENERATION>] [--staged]\n       dure-control-plane activate-staged --home <DURE_HOME> --source-generation <GENERATION> --target-generation <GENERATION>\n       dure-control-plane gateway --socket-hex <HEX> --expected-generation <GENERATION>\n       dure-control-plane codex-connection-driver --endpoint <PATH> --upstream <PATH> -- <CODEX> app-server --listen unix://<PATH>\n       dure-control-plane codex-native-driver --runtime <PATH> -- <CODEX> [ARGS...]\n       dure-control-plane opencode-connection-driver --endpoint <PATH> --session <SESSION_ID> --permission-mode <MODE> -- <OPENCODE>\n       dure-control-plane pi-connection-driver --endpoint <PATH> -- <PI> --mode rpc"
+        "usage: dure-control-plane identity\n       dure-control-plane provider-integration-status --home <DURE_HOME> --provider <ID> [--provider <ID>...]\n       dure-control-plane preflight --home <DURE_HOME> --hmux-bin <PATH> --hmux-runtime-bin <PATH> --hmux-discovery-root <PATH> [--claude-node-bin <PATH> --claude-host-entrypoint <PATH> --claude-relay-bin <PATH> --claude-runtime-root <PATH>]\n       dure-control-plane serve --home <DURE_HOME> [--launch-executable <PATH>] --hmux-bin <PATH> --hmux-runtime-bin <PATH> --hmux-discovery-root <PATH> [--claude-node-bin <PATH> --claude-host-entrypoint <PATH> --claude-relay-bin <PATH> --claude-runtime-root <PATH>] [--expected-generation <GENERATION>] [--activation-source-generation <GENERATION>] [--staged]\n       dure-control-plane activate-staged --home <DURE_HOME> --source-generation <GENERATION> --target-generation <GENERATION>\n       dure-control-plane gateway --socket-hex <HEX> --expected-generation <GENERATION>\n       dure-control-plane codex-connection-driver --endpoint <PATH> --upstream <PATH> -- <CODEX> app-server --listen unix://<PATH>\n       dure-control-plane codex-native-driver --runtime <PATH> -- <CODEX> [ARGS...]\n       dure-control-plane opencode-connection-driver --endpoint <PATH> --session <SESSION_ID> --permission-mode <MODE> -- <OPENCODE>\n       dure-control-plane pi-connection-driver --endpoint <PATH> -- <PI> --mode rpc"
     );
     eprintln!(
         "       dure-control-plane mcp-stdio-relay --node <PATH> --worker <PATH> --catalogue <PATH> --receipt-json <JSON> [--idle-ms <MS>]"
@@ -50,6 +55,24 @@ fn parse_args() -> Command {
             usage();
         }
         return Command::Identity;
+    }
+    if command == "provider-integration-status" {
+        let mut home = None;
+        let mut providers = Vec::new();
+        while let Some(argument) = arguments.next() {
+            match argument.as_str() {
+                "--home" => home = arguments.next().map(PathBuf::from),
+                "--provider" => providers.push(arguments.next().unwrap_or_else(|| usage())),
+                _ => usage(),
+            }
+        }
+        if providers.is_empty() {
+            usage();
+        }
+        return Command::ProviderIntegrationStatus {
+            home: home.unwrap_or_else(|| usage()),
+            providers,
+        };
     }
     if command == "mcp-stdio-relay" {
         return Command::McpStdioRelay(arguments.collect());
@@ -231,6 +254,10 @@ async fn execute(command: Command) -> Result<(), dure_control_plane::ControlPlan
                 serde_json::to_string(&control_plane_identity())
                     .expect("control-plane identity is serializable")
             );
+            Ok(())
+        }
+        Command::ProviderIntegrationStatus { home, providers } => {
+            println!("{}", provider_runtime_integration_status(&home, &providers));
             Ok(())
         }
         Command::Preflight(options) => match preflight(&options).await {
