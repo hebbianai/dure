@@ -429,7 +429,7 @@ function installPayload(target, payload, identity, options) {
 
   const runtimeExecutable = fs.realpathSync(process.execPath);
   const lifecycleCommand = lifecycleHookCommand(
-    runtimeExecutable,
+    lifecycleRuntimeExecutable(runtimeExecutable),
     path.join(canonicalRoot, "orchestration-lifecycle.mjs"),
   );
   const receipt = {
@@ -795,9 +795,14 @@ function replaceCodexBlock(content, replacement) {
 
 function prepareLifecycleHook(target, receipt, previousReceipt) {
   const settings = readJsonObject(target.hookPath, "provider lifecycle hook config");
+  // Codex keys hook trust by group position, so a changed command keeps the
+  // owned hook's place: moving it to the end would re-key every later hook.
   // Removing the last owned hook can remove SessionStart and its hooks map.
   // Recreate the insertion containers after cleanup when the Node path changes.
   if (previousReceipt?.lifecycleCommand && previousReceipt.lifecycleCommand !== receipt.lifecycleCommand) {
+    if (!hookCommandRegistered(settings, receipt.lifecycleCommand)) {
+      replaceFirstHookCommand(settings, previousReceipt.lifecycleCommand, receipt.lifecycleCommand);
+    }
     removeHookCommand(settings, previousReceipt.lifecycleCommand);
   }
   settings.hooks = settings.hooks ?? {};
@@ -932,8 +937,46 @@ function removeHookCommand(settings, command) {
   if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
 }
 
+function replaceFirstHookCommand(settings, command, replacement) {
+  for (const group of Array.isArray(settings?.hooks?.SessionStart) ? settings.hooks.SessionStart : []) {
+    const hook = Array.isArray(group?.hooks) ? group.hooks.find((entry) => entry?.command === command) : undefined;
+    if (hook) {
+      hook.command = replacement;
+      return;
+    }
+  }
+}
+
 function lifecycleHookCommand(runtimeExecutable, lifecycleScript) {
   return `${shellQuote(runtimeExecutable)} ${shellQuote(lifecycleScript)} --event session_start`;
+}
+
+/**
+ * The Node path the provider lifecycle hook names. Codex trusts a hook by its
+ * command text, so a command naming one immutable CLI build
+ * (`versions/<build>/bin/node`) needs another review after every update, and
+ * unattended sessions stop at that review. When the running Node is the build
+ * the install's `current` pointer selects, name it through that pointer: the
+ * command then stays the same across updates. Any other runtime keeps its
+ * resolved path.
+ */
+export function lifecycleRuntimeExecutable(runtimeExecutable) {
+  const binaryDirectory = path.dirname(runtimeExecutable);
+  const versionsRoot = path.dirname(path.dirname(binaryDirectory));
+  if (path.basename(binaryDirectory) !== "bin" || path.basename(versionsRoot) !== "versions") {
+    return runtimeExecutable;
+  }
+  const stable = path.join(
+    path.dirname(versionsRoot),
+    "current",
+    "bin",
+    path.basename(runtimeExecutable),
+  );
+  try {
+    return fs.realpathSync(stable) === runtimeExecutable ? stable : runtimeExecutable;
+  } catch {
+    return runtimeExecutable;
+  }
 }
 
 // Rewrites the provider's native config from its contents at commit time, then
