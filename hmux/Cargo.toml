@@ -54,7 +54,7 @@ semver = "1"
 # of the two, and aws-lc-rs needs cmake plus bindgen, which no mobile toolchain
 # is guaranteed to have. `rsa` keeps servers whose only host key is RSA
 # reachable. Verified against aarch64-apple-ios and aarch64-linux-android.
-russh = { version = "0.62", default-features = false, features = [
+russh = { version = "0.65", default-features = false, features = [
     "flate2",
     "ring",
     "rsa",
