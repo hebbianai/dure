@@ -179,7 +179,7 @@ async fn claim_workspace(
 
 /// The existing receipt accepts one line of evidence, at most 1024 UTF-8
 /// bytes. Diagnostic prose never determines the machine code.
-fn bounded_detail(message: &str) -> Option<String> {
+pub(crate) fn bounded_detail(message: &str) -> Option<String> {
     let mut detail = String::new();
     for word in message.split(|character: char| character.is_whitespace() || character.is_control())
     {

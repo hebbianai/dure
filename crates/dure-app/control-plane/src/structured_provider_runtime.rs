@@ -391,10 +391,10 @@ impl StructuredProviderRuntime for ClaudeStructuredRuntimeManager<SqliteDomainSt
         request: StructuredProviderOpenRequestV1,
     ) -> StructuredProviderRuntimeFuture<'_, AgentInteractionBindingV1> {
         Box::pin(async move {
-            ClaudeStructuredRuntimeManager::open(self, claude_request(request))
+            ClaudeStructuredRuntimeManager::open_with_detail(self, claude_request(request))
                 .await
                 .map(|receipt| receipt.binding)
-                .map_err(claude_error)
+                .map_err(|failure| claude_error(failure.error).with_detail(failure.detail))
         })
     }
 

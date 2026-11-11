@@ -11,6 +11,7 @@ use crate::agent_spawn_apply::{
 use crate::structured_provider_runtime::{
     StructuredProviderOpenRequestV1, StructuredProviderRuntime,
 };
+use crate::workspace_git::bounded_detail;
 
 /// Composition between the provider-neutral spawn journal and one registered
 /// structured provider runtime.
@@ -76,12 +77,38 @@ fn failure(code: impl Into<String>) -> StructuredAgentLaunchFailure {
     }
 }
 
+/// Provider evidence (a host's stderr tail may carry terminal escapes) is
+/// reduced to the one bounded line a spawn receipt accepts.
 fn failure_with_detail(
     code: impl Into<String>,
     detail: Option<String>,
 ) -> StructuredAgentLaunchFailure {
     StructuredAgentLaunchFailure {
         code: code.into(),
-        detail,
+        detail: detail.as_deref().and_then(bounded_detail),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_evidence_becomes_one_receipt_line() {
+        let failure = failure_with_detail(
+            "claude_conversation_host_attach_failed",
+            Some(format!(
+                "\u{1b}[31mboom\u{1b}[0m\nnext\u{2028}{}",
+                "\u{fffd}".repeat(600)
+            )),
+        );
+        let detail = failure.detail.unwrap();
+        assert!(detail.starts_with("[31mboom [0m next "), "{detail}");
+        assert!(detail.len() <= 1024);
+        assert!(!detail.chars().any(char::is_control));
+        assert_eq!(
+            failure_with_detail("code", Some(" \n ".into())).detail,
+            None
+        );
     }
 }

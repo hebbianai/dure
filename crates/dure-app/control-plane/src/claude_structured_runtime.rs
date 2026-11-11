@@ -45,6 +45,8 @@ use crate::structured_provider_runtime::{
 };
 
 #[cfg(test)]
+mod credential_detail_tests;
+#[cfg(test)]
 mod dormant_recovery_tests;
 mod journal;
 #[cfg(test)]
@@ -975,7 +977,7 @@ where
         &self,
         request: ClaudeStructuredLaunchRequestV1,
         launch_options: ClaudeStructuredLaunchOptionsV1,
-    ) -> Result<ClaudeStructuredLaunchReceiptV1, ClaudeStructuredRuntimeErrorV1> {
+    ) -> Result<ClaudeStructuredLaunchReceiptV1, ClaudeStructuredReplacementFailureV1> {
         let context = self
             .runtime_context(&request.interaction_session_id)
             .await?
@@ -985,11 +987,9 @@ where
             .await?
             .is_some_and(|committed| committed != launch_options)
         {
-            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict);
+            return Err(ClaudeStructuredRuntimeErrorV1::RuntimeConflict.into());
         }
-        self.launch_context(context, launch_options, None)
-            .await
-            .map_err(|failure| failure.error)
+        self.launch_context(context, launch_options, None).await
     }
 
     async fn launch_with_transition_options(
@@ -1061,20 +1061,25 @@ where
         )))
     }
 
+    /// A refused credential keeps what it lacked (the account and the failed
+    /// check), so the Run receipt says what to fix instead of a bare code.
     async fn prepared_environment(
         &self,
         provider_id: &ProviderIdV1,
         execution_profile: &AgentExecutionProfileV1,
-    ) -> Result<BTreeMap<String, String>, ClaudeStructuredRuntimeErrorV1> {
+    ) -> Result<BTreeMap<String, String>, ClaudeStructuredReplacementFailureV1> {
         let prepared_profile = self
             .credential_profiles
-            .prepare_for_launch(provider_id, execution_profile)
+            .prepare_for_launch_with_detail(provider_id, execution_profile)
             .await
-            .map_err(map_credential_error)?;
-        prepared_claude_environment(
+            .map_err(|failure| ClaudeStructuredReplacementFailureV1 {
+                detail: failure.detail,
+                ..ClaudeStructuredReplacementFailureV1::from(map_credential_error(failure.error))
+            })?;
+        Ok(prepared_claude_environment(
             &self.configuration.environment,
             &prepared_profile.environment(),
-        )
+        )?)
     }
 
     /// Returns the replacement carrier rather than the bare error: this is the
@@ -1448,9 +1453,17 @@ where
         &self,
         request: ClaudeStructuredOpenRequestV1,
     ) -> Result<ClaudeStructuredOpenReceiptV1, ClaudeStructuredRuntimeErrorV1> {
-        self.open_with_native_replacement(request, None, None)
+        self.open_with_detail(request)
             .await
             .map_err(|failure| failure.error)
+    }
+
+    /// `open`, keeping the failing layer's evidence for the spawn receipt.
+    pub(crate) async fn open_with_detail(
+        &self,
+        request: ClaudeStructuredOpenRequestV1,
+    ) -> Result<ClaudeStructuredOpenReceiptV1, ClaudeStructuredReplacementFailureV1> {
+        self.open_with_native_replacement(request, None, None).await
     }
 
     pub(crate) async fn open_replacement(

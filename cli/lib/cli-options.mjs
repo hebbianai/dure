@@ -40,6 +40,7 @@ export function parseOpts(args) {
     else if (a === "--credential-generation") opts.credentialGeneration = args[++i];
     else if (a === "--branch") opts.branch = args[++i];
     else if (a === "--setup-command") opts.setupCommand = args[++i];
+    else if (a === "--runtime") opts.runtime = args[++i] ?? "";
     else if (a === "--skip-permissions") opts.skipPermissions = true;
     else if (a === "--lead") opts.lead = true;
     else if (a === "--parent") opts.parent = args[++i] ?? "";
