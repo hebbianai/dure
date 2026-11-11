@@ -18,13 +18,6 @@ const REQUIREMENT_TEXT = Object.freeze({
     "a file it lists for this provider is missing, not owner-only, or outside the Dure directory",
 });
 
-const INTEGRATION_FILE =
-  /^(?:channels\/[a-z0-9-]{1,64}\/)?managed-provider-integrations-v1\.json$/;
-
-export function validIntegrationFile(value) {
-  return typeof value === "string" && INTEGRATION_FILE.test(value);
-}
-
 /** Why the integration check failed, for a known requirement token. */
 export function integrationRequirementText(requirement) {
   return Object.hasOwn(REQUIREMENT_TEXT, requirement)

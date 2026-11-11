@@ -2,11 +2,10 @@ import { isProviderModelSelection, isProviderEffortSelection } from "./contracts
 import { backendSourceSummary } from "./backend-source.mjs";
 import { createHash } from "node:crypto";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
-import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { performBackendProfileRequest, validIntegrationFile } from "./backend-transport.mjs";
 import {
   PROVIDER_RUNTIME_INTEGRATION_FILE,
   integrationRequirementText,
-  validIntegrationFile,
 } from "./provider-runtime-integration.mjs";
 import { validProjectId, validProjectPath } from "./project-contract.mjs";
 import { validWorktree, selectedCheckoutReference, checkoutRegistrationMatches } from "./contracts/agent-spawn-worktree.mjs";

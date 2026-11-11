@@ -1,7 +1,6 @@
 import { exchangeSshStdio } from "./backend-ssh-stdio.mjs";
 import { MAX_BACKEND_CAPABILITIES_V1 } from "./backend-capabilities.mjs";
 import { normalizeBackgroundWork } from "./background-work-summary.mjs";
-import { validIntegrationFile } from "./provider-runtime-integration.mjs";
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { createConnection } from "node:net";
@@ -84,6 +83,14 @@ function assertOnlyKeys(value, allowed) {
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) fail("backend_transport_malformed_response");
   }
+}
+
+// The managed integration document, relative to the execution host's Dure home.
+const INTEGRATION_FILE =
+  /^(?:channels\/[a-z0-9-]{1,64}\/)?managed-provider-integrations-v1\.json$/;
+
+export function validIntegrationFile(value) {
+  return typeof value === "string" && INTEGRATION_FILE.test(value);
 }
 
 /** A refused managed integration names its unmet requirement and document. */
