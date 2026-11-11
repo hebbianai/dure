@@ -1176,6 +1176,12 @@ const PROVIDER_PREFLIGHT_GUIDANCE = Object.freeze({
     "(dure provider-defaults get shows saved defaults), then retry this request.",
 });
 
+// Backends report the refused check as details.reasonCode since 0.2.58.
+const PROVIDER_PREFLIGHT_UNNAMED =
+  "The execution host refused the provider preflight but did not name the failed check. " +
+  "Dure backends before 0.2.58 do not report it. Update Dure on that host, " +
+  "then retry this request to see which check failed and how to fix it.";
+
 function backendErrorReport(action, error, profile, startedAt, deadlineMs, request) {
   const observedAtMs = Date.now();
   const { code, ...detail } = backendRequestFailure(error, profile);
@@ -1202,8 +1208,11 @@ function backendErrorReport(action, error, profile, startedAt, deadlineMs, reque
   }
   // A refused provider plan names its check with a typed failure code. Codes
   // without reviewed advice are still named rather than reported bare.
-  if (detail.remoteCode === "agent_spawn_provider_preflight_failed" && typeof detail.reasonCode === "string") {
-    if (detail.reasonCode === "provider_runtime_integration_unavailable") {
+  if (detail.remoteCode === "agent_spawn_provider_preflight_failed") {
+    if (typeof detail.reasonCode !== "string") {
+      // Every current refusal carries the check; only an older backend omits it.
+      detail.message = PROVIDER_PREFLIGHT_UNNAMED;
+    } else if (detail.reasonCode === "provider_runtime_integration_unavailable") {
       detail.message = terminalIntegrationGuidance(request);
     } else {
       detail.message = Object.hasOwn(PROVIDER_PREFLIGHT_GUIDANCE, detail.reasonCode)

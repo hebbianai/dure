@@ -140,6 +140,44 @@ it.each([
   expect(JSON.stringify(report)).not.toContain("/Users/someone");
 });
 
+it.each(["preview", "apply"])("says how to learn the refused check when the backend names none on %s", async (action) => {
+  // Backends before 0.2.58 refuse a provider plan with the bare code.
+  const report = await collectAgentSpawnQuery({
+    ...(action === "preview"
+      ? {
+          action,
+          projectId: "dure",
+          providerId: "claude",
+          agentName: "claude-1",
+          idempotencyKey: "spawn-request-1",
+          worktree: { kind: "dedicated", branch: "agent/claude-1" },
+        }
+      : {
+          action,
+          operationId: "operation-1",
+          planToken: `sha256:${"a".repeat(64)}`,
+          expectedLastSequence: 1,
+        }),
+    backend: backend(),
+    requestBackend: async () => {
+      throw new BackendTransportError("backend_transport_remote_error", {
+        details: {
+          code: "agent_spawn_provider_preflight_failed",
+          disposition: "retry_same",
+          message: "private /Users/someone/provider",
+        },
+      });
+    },
+  });
+  expect(report.error).toMatchObject({ remoteCode: "agent_spawn_provider_preflight_failed", disposition: "retry_same" });
+  expect(report.error).not.toHaveProperty("reasonCode");
+  expect(report.error.message).toContain("did not name the failed check");
+  expect(report.error.message).toContain("Update Dure on that host");
+  expect(formatAgentSpawnQuery(report)).toContain(report.error.message);
+  expect(agentSpawnQueryExitCode(report)).toBe(2);
+  expect(JSON.stringify(report)).not.toContain("/Users/someone");
+});
+
 it.each([
   ["a terminal preference", { interactionPreference: "native_cli" }, ["run it with --runtime chat"]],
   ["a setup command", { setupCommand: "pnpm install" }, ["remove --setup-command"]],
