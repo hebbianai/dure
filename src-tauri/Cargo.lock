@@ -1449,7 +1449,7 @@ dependencies = [
  "terminal-state-protocol",
  "tiny_http",
  "tokio",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.2+spec-1.1.0",
  "windows 0.61.3",
 ]
 
@@ -6428,7 +6428,7 @@ dependencies = [
  "serde_with",
  "swift-rs",
  "thiserror 2.0.21",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.2+spec-1.1.0",
  "url",
  "urlpattern",
  "uuid",
