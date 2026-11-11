@@ -35,7 +35,7 @@ base64 = "0.22"
 chacha20poly1305 = "0.11"
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.29"
-dirs = "6.0"
+dirs = "7.0"
 ed25519-dalek = { version = "3", features = ["rand_core"] }
 flate2 = "1"
 fs2 = "0.4"
