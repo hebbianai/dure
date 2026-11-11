@@ -35,7 +35,7 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 # codex 오버레이 config.toml의 notify 합성 — 문자열 수술 대신 파싱해 사용자
 # 설정을 비파괴로 보존한다(오버레이 사본은 앱 소유라 재직렬화가 무해하다).
-toml = "0.9"
+toml = "1.1"
 portable-pty = "0.9"
 ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 base64 = "0.22"
