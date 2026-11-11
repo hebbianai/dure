@@ -38,7 +38,7 @@ serde_json = "1"
 toml = "1.1"
 portable-pty = "0.9"
 ssh2 = { version = "0.9", features = ["vendored-openssl"] }
-base64 = "0.22"
+base64 = "0.23"
 tiny_http = "0.12"
 getrandom = "0.4"
 tauri-plugin-clipboard-manager = "2.3.2"
@@ -77,7 +77,7 @@ terminal-state-protocol = { path = "../hmux/crates/terminal-state-protocol" }
 # 같은 `ring`)이므로 새 암호 구현이 들어오지 않는다.
 ring = "0.17"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls-no-provider"] }
-dirs = "6"
+dirs = "7"
 keyring = "4.1.5"
 libc = "0.2"
 tokio = { version = "1", features = ["io-util", "net", "process", "sync", "time"] }

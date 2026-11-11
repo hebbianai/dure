@@ -314,18 +314,42 @@ describe("public CI dependency advisories", () => {
     // Every lockfile is audited before the job fails, and failures fail it.
     expect(audit).toMatch(/\|\| status=1/);
     expect(audit.trim().endsWith('exit "$status"')).toBe(true);
-    expect([...directories("cargo")].sort()).toEqual(workspaces.map((workspace) => `/${workspace}`).sort());
+    expect(directories("cargo")).toEqual(
+      expect.arrayContaining(workspaces.map((workspace) => `/${workspace}`)),
+    );
   });
 
-  it("schedules grouped weekly minor and patch updates for every npm and Cargo tree", () => {
+  it("keeps every Cargo lockfile under one Dependabot update", () => {
+    // The workspaces path-depend on one another, so a bump that refreshes
+    // only some lockfiles leaves the others failing `--locked` builds.
+    const lockfiles = execFileSync("git", ["ls-files", "*Cargo.lock"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      env: withoutLocalGitOverrides(),
+    })
+      .trim()
+      .split("\n")
+      .map((lockfile) => `/${dirname(lockfile)}`);
+    expect(updates("cargo")).toHaveLength(1);
+    expect([...directories("cargo")].sort()).toEqual(lockfiles.sort());
+  });
+
+  it("schedules grouped weekly updates for every npm and Cargo tree", () => {
     for (const ecosystem of ["npm", "cargo"]) {
       expect(updates(ecosystem).length).toBeGreaterThan(0);
       for (const update of updates(ecosystem)) {
         expect(update.schedule.interval).toBe("weekly");
-        const groups = Object.values(update.groups ?? {});
-        expect(groups.length).toBeGreaterThan(0);
-        for (const group of groups) expect(group["update-types"]).toEqual(["minor", "patch"]);
+        expect(Object.keys(update.groups ?? {}).length).toBeGreaterThan(0);
       }
+    }
+    for (const update of updates("npm")) {
+      expect(update.groups["npm-minor-and-patch"]["update-types"]).toEqual(["minor", "patch"]);
+      // Mobile type-checks against the desktop's generated protobuf code.
+      expect(update.groups.bufbuild.patterns).toEqual(["@bufbuild/*"]);
+    }
+    // One pull request per dependency, spanning every Cargo workspace.
+    for (const update of updates("cargo")) {
+      expect(Object.values(update.groups)).toEqual([{ "group-by": "dependency-name" }]);
     }
     const npm = directories("npm");
     expect(npm).toEqual(expect.arrayContaining(["/", "/cli", "/mobile"]));

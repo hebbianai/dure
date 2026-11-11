@@ -18,24 +18,72 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # The mobile client type-checks against the desktop's generated
+      # terminal-state code, and protoc-gen-es requires the exact
+      # @bufbuild/protobuf release it generates for, so every @bufbuild
+      # package moves together in both trees. After a protoc-gen-es bump,
+      # regenerate with `pnpm terminal-state-protocol:generate`.
+      bufbuild:
+        patterns:
+          - "@bufbuild/*"
       npm-minor-and-patch:
         update-types:
           - minor
           - patch
-  # The Cargo workspaces whose lockfiles ship: the desktop adapter, the app
-  # core, Hmux and the mobile adapter. The public CI "Dependency advisories"
-  # job audits the same lockfiles. Major updates stay separate pull requests.
+    ignore:
+      # See the matching Tauri rule in the cargo entry below.
+      - dependency-name: "@tauri-apps/api"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: "@tauri-apps/plugin-*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+  # Every Cargo workspace with its own Cargo.lock. The workspaces path-depend
+  # on one another (the desktop and mobile adapters link Hmux and app-core
+  # crates, and Hmux's [workspace.dependencies] reach every lockfile holding an
+  # Hmux crate), so a bump has to refresh every lockfile in one change or the
+  # `--locked` builds fail. Grouping by dependency name gives one pull request
+  # per dependency across all of these directories. The public CI "Dependency
+  # advisories" job audits the shipped lockfiles among them.
   - package-ecosystem: cargo
     directories:
       - /src-tauri
       - /crates/dure-app
       - /hmux
       - /mobile/src-tauri
+      - /orchestration
+      - /crates/dure-relay
+      - /crates/dure-hub-protocol
+      - /crates/dure-feedback-intake
+      - /crates/hebbian-bounded-process
+      - /crates/hebbian-process-sampler
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      cargo-minor-and-patch:
+      cargo-across-workspaces:
+        group-by: dependency-name
+    ignore:
+      # Hmux keeps its Rust 1.85 baseline (rust-version in hmux/Cargo.toml;
+      # the Ghostty VT proof and the Windows Hmux clippy gate build with
+      # 1.85.0). idna_adapter is pinned for that reason in hmux/Cargo.toml
+      # (1.2.2 requires Rust 1.86), and uuid 1.27 and later require Rust 1.89.
+      - dependency-name: idna_adapter
+      - dependency-name: uuid
+        versions:
+          - ">= 1.27"
+      # A Tauri crate and its @tauri-apps npm package must share a
+      # major.minor release or the Tauri CLI refuses to build, and one
+      # Dependabot pull request cannot span cargo and npm. Patch updates stay
+      # automatic; minor and major Tauri updates are made by hand, crate and
+      # npm package together.
+      - dependency-name: tauri
         update-types:
-          - minor
-          - patch
+          - version-update:semver-minor
+          - version-update:semver-major
+      - dependency-name: "tauri-plugin-*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major

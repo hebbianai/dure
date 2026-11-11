@@ -10,7 +10,7 @@ description = "Exact Git checkout instance authority for Dure"
 [dependencies]
 dure-app-protocol = { path = "../protocol" }
 dunce = "1.0.5"
-dirs = "6"
+dirs = "7"
 fs2 = "0.4"
 getrandom = "0.4"
 hebbian-bounded-process = { path = "../../hebbian-bounded-process" }
