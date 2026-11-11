@@ -62,7 +62,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
 ]
 
 [[package]]
@@ -1423,7 +1423,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "sqlx",
  "ssh2",
  "subtle",
@@ -1452,7 +1452,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "ts-rs",
 ]
 
@@ -1471,7 +1471,7 @@ dependencies = [
  "dure-app",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "sqlx",
  "tokio",
 ]
@@ -1499,7 +1499,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
 ]
 
 [[package]]
@@ -1522,7 +1522,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "toml 1.2.1+spec-1.1.0",
 ]
 
@@ -2517,7 +2517,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "socket2",
  "terminal-state-protocol",
  "windows-sys 0.61.2",
@@ -2535,7 +2535,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "windows-sys 0.61.2",
 ]
 
