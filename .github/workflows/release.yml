@@ -516,7 +516,7 @@ jobs:
     # The same selected runner as build, so the updater key reaches no other host.
     runs-on: ${{ fromJSON(needs.source.outputs.macos_runner) }}
     environment: macos-release
-    timeout-minutes: 30
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: source
