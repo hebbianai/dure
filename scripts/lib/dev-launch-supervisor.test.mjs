@@ -2157,6 +2157,30 @@ it.runIf(
     const childScript = join(fixtureRoot, "exec-abort-replacement.mjs");
     const stopFile = join(fixtureRoot, "exec-abort-replacement-stop");
     writeControlledExitScript(childScript);
+    // A witness alone in its group retires itself within milliseconds of the
+    // wrapper's abort, so without another member the owned group asserted below
+    // is a race a slow runner loses. A second group member, started by a preload
+    // before the wrapper's own code runs, keeps the aborted group owned until
+    // the supervisor retires it through the exact witness.
+    const groupMemberPidFile = join(fixtureRoot, "exec-abort-group-member-pid");
+    const groupMemberPreload = join(fixtureRoot, "exec-abort-group-member.cjs");
+    writeFileSync(
+      groupMemberPreload,
+      `const { spawn } = require("node:child_process");
+const { writeFileSync } = require("node:fs");
+const inheritedNodeOptions = ${JSON.stringify(process.env.NODE_OPTIONS ?? null)};
+if (inheritedNodeOptions === null) delete process.env.NODE_OPTIONS;
+else process.env.NODE_OPTIONS = inheritedNodeOptions;
+const member = spawn(process.execPath, ["-e", "setInterval(() => {}, 1_000)"], {
+  stdio: "ignore",
+});
+member.unref();
+member.once("spawn", () => {
+  writeFileSync(${JSON.stringify(groupMemberPidFile)}, String(member.pid), { mode: 0o600 });
+});
+`,
+      { mode: 0o600 },
+    );
     const wrapperPath = fileURLToPath(
       new URL("../run-dev-launch-child.mjs", import.meta.url),
     );
@@ -2173,6 +2197,10 @@ it.runIf(
           ...process.env,
           DURE_APP_CHANNEL: channel,
           [DEV_LAUNCH_CHILD_GENERATION_ENV]: generation,
+          NODE_OPTIONS: [
+            process.env.NODE_OPTIONS,
+            `--require=${groupMemberPreload}`,
+          ].filter(Boolean).join(" "),
         },
         stdio: ["ignore", "ignore", "ignore", "ipc"],
       },
@@ -2192,6 +2220,26 @@ it.runIf(
     });
     const witness = await witnessReady;
     await candidateReady;
+    const groupMemberPid = await waitFor(() => {
+      if (!existsSync(groupMemberPidFile)) return null;
+      const pid = Number(readFileSync(groupMemberPidFile, "utf8"));
+      return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+    });
+    const groupMember = await waitForAsync(async () => {
+      const census = await observeProcessMembers({
+        kind: "group_census",
+        groupId: wrapper.pid,
+      });
+      return census.status === "complete"
+        ? census.members.find(({ pid, state }) =>
+            pid === groupMemberPid && state === "live"
+          ) ?? null
+        : null;
+    });
+    fixtureProcesses.registerIdentity({
+      pid: groupMember.pid,
+      processIdentity: groupMember.processIdentity,
+    });
     const identity = {
       pid: wrapper.pid,
       processIdentity: await waitFor(() => processIdentity(wrapper.pid)),
@@ -2275,6 +2323,9 @@ it.runIf(
       signal: null,
     });
     expect(processIdentity(identity.processGroup.witness.pid)).toBeNull();
+    await expect(observeOwnedProcessGroup(identity)).resolves.toMatchObject({
+      state: "retired",
+    });
   },
 );
 
