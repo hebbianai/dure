@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   approvedOrchestrationIntegrationRefreshProviders,
   inspectOrchestrationIntegrations,
+  lifecycleRuntimeExecutable,
   mutateOrchestrationIntegrations,
   orchestrationPayloadIdentity,
 } from "../cli/lib/orchestration-integration.mjs";
@@ -422,6 +423,7 @@ describe("immutable generic orchestration integration", () => {
     [provider, "update", "owned-only"],
     [provider, "update", "other-event"],
     [provider, "update", "shared-start-group"],
+    [provider, "update", "later-start-group"],
     [provider, "refresh", "other-event"],
   ]))("replaces %s lifecycle hooks after a Node path change during %s with %s", (provider, action, layout) => {
     const root = fixture();
@@ -438,6 +440,7 @@ describe("immutable generic orchestration integration", () => {
     hooks.hooks.SessionStart[0].hooks[0].command = previousCommand;
     if (layout === "other-event") hooks.hooks.Stop = [{ hooks: [userHook] }];
     if (layout === "shared-start-group") hooks.hooks.SessionStart[0].hooks.push(userHook);
+    if (layout === "later-start-group") hooks.hooks.SessionStart.push({ hooks: [userHook] });
     fs.writeFileSync(installed.lifecycleHookPath, JSON.stringify(hooks));
     // Model the intact receipt/config produced by a previous bundled Node.
     // Existing tests update payload versions but keep the same runtime path.
@@ -474,6 +477,14 @@ describe("immutable generic orchestration integration", () => {
     expect(updatedHooks.userSetting).toBe("preserve");
     if (layout === "other-event") expect(updatedHooks.hooks.Stop).toEqual(hooks.hooks.Stop);
     if (layout === "shared-start-group") expect(startCommands).toContain(userHook.command);
+    // Codex keys hook trust by group position: the owned hook keeps its place
+    // so the user's later hook keeps its key.
+    if (layout === "later-start-group") {
+      expect(updatedHooks.hooks.SessionStart).toEqual([
+        { ...hooks.hooks.SessionStart[0], hooks: [{ ...hooks.hooks.SessionStart[0].hooks[0], command: currentCommand }] },
+        { hooks: [userHook] },
+      ]);
+    }
     mutateOrchestrationIntegrations({ ...options, action, approval: action === "update" });
     expect(readHooks()).toEqual(updatedHooks);
     mutateOrchestrationIntegrations({ ...options, action: "uninstall", approval: true });
@@ -484,6 +495,74 @@ describe("immutable generic orchestration integration", () => {
     if (layout === "shared-start-group") {
       expect(remaining.hooks.SessionStart).toEqual([{ ...hooks.hooks.SessionStart[0], hooks: [userHook] }]);
     }
+    if (layout === "later-start-group") expect(remaining.hooks.SessionStart).toEqual([{ hooks: [userHook] }]);
+  });
+
+  it("names the selected CLI build's Node through the install's current pointer", () => {
+    const install = fs.realpathSync(fixture());
+    const nodeOf = (build) => path.join(install, "versions", build, "bin", "node");
+    for (const build of ["0.2.62+previous", "0.2.63+selected"]) {
+      fs.mkdirSync(path.dirname(nodeOf(build)), { recursive: true });
+      fs.writeFileSync(nodeOf(build), "");
+    }
+    // Without a current pointer there is no stable name for the build.
+    expect(lifecycleRuntimeExecutable(nodeOf("0.2.63+selected"))).toBe(nodeOf("0.2.63+selected"));
+    fs.symlinkSync(path.join("versions", "0.2.63+selected"), path.join(install, "current"));
+    expect(lifecycleRuntimeExecutable(nodeOf("0.2.63+selected")))
+      .toBe(path.join(install, "current", "bin", "node"));
+    // A build the pointer does not select keeps naming itself.
+    expect(lifecycleRuntimeExecutable(nodeOf("0.2.62+previous"))).toBe(nodeOf("0.2.62+previous"));
+    const unversioned = path.join(install, "bin", "node");
+    expect(lifecycleRuntimeExecutable(unversioned)).toBe(unversioned);
+  });
+
+  it.each(["codex", "claude"])("keeps the %s lifecycle hook unchanged when the CLI updates to another build", (provider) => {
+    const root = fixture();
+    const install = path.join(fs.realpathSync(root), "cli");
+    const node = (build) => {
+      const binary = path.join(install, "versions", build, "bin", path.basename(process.execPath));
+      fs.mkdirSync(path.dirname(binary), { recursive: true });
+      try {
+        fs.linkSync(process.execPath, binary);
+      } catch {
+        fs.copyFileSync(process.execPath, binary);
+        fs.chmodSync(binary, 0o755);
+      }
+      return binary;
+    };
+    const select = (build) => {
+      fs.rmSync(path.join(install, "current"), { force: true });
+      fs.symlinkSync(path.join("versions", build), path.join(install, "current"));
+    };
+    const integrate = (executable) => spawnSync(executable, [CLI, "integration", "update", "--global",
+      "--provider", provider, "--approve-global-config", "--json"], {
+      cwd: root, encoding: "utf8", timeout: 20_000,
+      env: {
+        PATH: process.env.PATH, HOME: root, USERPROFILE: root, CODEX_HOME: path.join(root, ".codex"),
+        DURE_HOME: path.join(root, ".dure"), DURE_APP_CHANNEL: "stable",
+        HMUX_DISCOVERY_ROOT: path.join(root, "discovery"),
+      },
+    });
+    const previous = node("0.2.62+previous");
+    const next = node("0.2.63+next");
+    select("0.2.62+previous");
+    const installed = integrate(previous);
+    expect(installed.status, installed.stderr).toBe(0);
+    const [receipt] = JSON.parse(installed.stdout).receipts;
+    const hooks = fs.readFileSync(receipt.lifecycleHookPath, "utf8");
+    const stableNode = path.join(install, "current", "bin", path.basename(process.execPath));
+    expect(JSON.parse(hooks).hooks.SessionStart.flatMap((group) => group.hooks.map((hook) => hook.command)))
+      .toContain(`'${stableNode}' '${path.join(receipt.installRoot, "orchestration-lifecycle.mjs")}' --event session_start`);
+
+    // Codex trusts a hook by its command text. Updating the CLI moves the
+    // current pointer; the hook must not change, or Codex asks for review again.
+    select("0.2.63+next");
+    const updated = integrate(next);
+    expect(updated.status, updated.stderr).toBe(0);
+    expect(JSON.parse(updated.stdout).receipts[0].status).toBe("current");
+    expect(fs.readFileSync(receipt.lifecycleHookPath, "utf8")).toBe(hooks);
+    const updatedReceipt = JSON.parse(fs.readFileSync(path.join(receipt.installRoot, "install-receipt.json"), "utf8"));
+    expect(updatedReceipt.runtimeExecutable).toBe(next);
   });
 
   it.each(["codex", "claude"])("refreshes an intact older %s payload when the new bundle adds a file", (provider) => {
