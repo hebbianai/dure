@@ -168,6 +168,8 @@ export async function runConcurrentTerminalDelivery(
 				activeDecoderFault = fault;
 				pendingDecoderFault = undefined;
 				configureTextEncoding(fault.encoding);
+				// protobuf installs its own copy; recovery replaces that one.
+				fault.encoding = getTextEncoding();
 			}
 			return raw;
 		};

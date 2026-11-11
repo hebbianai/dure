@@ -15,7 +15,7 @@ browser-development = []
 [dependencies]
 aes-gcm = { version = "0.11.1", default-features = false, features = ["aes", "alloc"] }
 agent-orchestration = { path = "../../../orchestration" }
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4.42", default-features = false, features = ["std"] }
 chrono-tz = "0.10.4"
 dure-app = { path = ".." }

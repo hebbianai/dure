@@ -45,8 +45,9 @@ function repairFailedTextDecoder(): boolean {
 	// replace shared state when it cannot decode our fixed, known-valid probe.
 	if (canDecode(previous.decodeUtf8)) return false;
 	try {
-		const strict = new TextDecoder("utf-8", { fatal: true });
-		const loose = new TextDecoder();
+		// As in protobuf's own decoders, a leading U+FEFF is text, not a BOM.
+		const strict = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+		const loose = new TextDecoder("utf-8", { ignoreBOM: true });
 		const decodeUtf8 = (bytes: Uint8Array, fatal?: boolean) =>
 			(fatal ? strict : loose).decode(bytes);
 		if (!canDecode(decodeUtf8)) return false;
