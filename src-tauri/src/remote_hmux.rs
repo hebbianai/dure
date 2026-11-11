@@ -2008,34 +2008,79 @@ fn known_host_fingerprints(host: &str, port: u16) -> Result<Vec<String>, String>
     {
         return Err("remote_hmux_target_invalid: host and port are required".into());
     }
-    let known_hosts = dirs::home_dir()
-        .ok_or_else(|| "remote_hmux_host_untrusted: home directory is unavailable".to_string())?
-        .join(".ssh")
-        .join("known_hosts");
+    let home = dirs::home_dir()
+        .ok_or_else(|| "remote_hmux_host_untrusted: home directory is unavailable".to_string())?;
     let lookup = if port == 22 {
         host.to_string()
     } else {
         format!("[{host}]:{port}")
     };
-    let output = Command::new("ssh-keygen")
-        .args(["-F", &lookup, "-f"])
-        .arg(&known_hosts)
-        .output()
-        .map_err(|error| {
-            format!("remote_hmux_host_untrusted: could not inspect known_hosts: {error}")
-        })?;
-    if !output.status.success() {
+    let config = fs::read_to_string(home.join(".ssh").join("config")).ok();
+    let mut enrolled = false;
+    let mut fingerprints = BTreeSet::new();
+    for known_hosts in user_known_hosts_files(&home, config.as_deref()) {
+        if !known_hosts.is_file() {
+            continue;
+        }
+        let output = Command::new("ssh-keygen")
+            .args(["-F", &lookup, "-f"])
+            .arg(&known_hosts)
+            .output()
+            .map_err(|error| {
+                format!("remote_hmux_host_untrusted: could not inspect known_hosts: {error}")
+            })?;
+        if !output.status.success() {
+            continue;
+        }
+        enrolled = true;
+        fingerprints.extend(fingerprints_from_known_hosts_search(&output.stdout)?);
+    }
+    if !enrolled {
         return Err(format!(
             "remote_hmux_host_untrusted: {lookup} has no enrolled known_hosts key"
         ));
     }
-    let fingerprints = fingerprints_from_known_hosts_search(&output.stdout)?;
     if fingerprints.is_empty() {
         return Err(format!(
             "remote_hmux_host_untrusted: {lookup} has no usable known_hosts key"
         ));
     }
-    Ok(fingerprints)
+    Ok(fingerprints.into_iter().collect())
+}
+
+/// The known_hosts files OpenSSH trusts on this machine: its defaults plus
+/// every `UserKnownHostsFile` the user's ssh config names. A host pinned in a
+/// per-host file, such as a local forward with its own `UserKnownHostsFile`,
+/// connects strictly with `ssh` and must not read as unenrolled here. Entries
+/// are still matched by the exact host and port name, so a file only vouches
+/// for the names it pins.
+fn user_known_hosts_files(home: &Path, config: Option<&str>) -> Vec<PathBuf> {
+    let ssh = home.join(".ssh");
+    let mut files = vec![ssh.join("known_hosts"), ssh.join("known_hosts2")];
+    for line in config.unwrap_or_default().lines() {
+        let line = line.trim();
+        let keyword_end = line
+            .find(|c: char| c.is_whitespace() || c == '=')
+            .unwrap_or(line.len());
+        if !line[..keyword_end].eq_ignore_ascii_case("UserKnownHostsFile") {
+            continue;
+        }
+        let value = line[keyword_end..].trim_start_matches(|c: char| c.is_whitespace() || c == '=');
+        for entry in value.split_whitespace() {
+            let entry = entry.trim_matches('"');
+            if entry.eq_ignore_ascii_case("none") || entry.contains('%') {
+                continue;
+            }
+            let path = match entry.strip_prefix("~/") {
+                Some(rest) => home.join(rest),
+                None => PathBuf::from(entry),
+            };
+            if path.is_absolute() && !files.contains(&path) {
+                files.push(path);
+            }
+        }
+    }
+    files
 }
 
 fn fingerprints_from_known_hosts_search(output: &[u8]) -> Result<Vec<String>, String> {
@@ -2565,6 +2610,26 @@ mod tests {
         let request = serde_json::from_value::<RemoteHmuxManagedCreateCommand>(value).unwrap();
         let error = remote_managed_create_request(&request, vec!["codex".into()]).unwrap_err();
         assert!(error.starts_with("remote_hmux_conversation_invalid:"));
+    }
+
+    #[test]
+    fn known_hosts_lookup_includes_files_named_by_ssh_config() {
+        let home = Path::new("/home/fixture");
+        let config = "Host forward\n    HostName 127.0.0.1\n    UserKnownHostsFile ~/.ssh/known_hosts_forward /etc/ssh/pinned \"~/.ssh/known_hosts\"\nHost other\n  userknownhostsfile=/dev/null\nHost off\n    UserKnownHostsFile none ~/.ssh/%h_hosts\n";
+        assert_eq!(
+            user_known_hosts_files(home, Some(config)),
+            vec![
+                home.join(".ssh/known_hosts"),
+                home.join(".ssh/known_hosts2"),
+                home.join(".ssh/known_hosts_forward"),
+                PathBuf::from("/etc/ssh/pinned"),
+                PathBuf::from("/dev/null"),
+            ]
+        );
+        assert_eq!(
+            user_known_hosts_files(home, None),
+            vec![home.join(".ssh/known_hosts"), home.join(".ssh/known_hosts2")]
+        );
     }
 
     #[test]
