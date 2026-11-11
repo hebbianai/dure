@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -1070,6 +1071,63 @@ process.stdout.write(JSON.stringify({
   return { bin, log, identity, knownHosts };
 }
 
+/** A preview backend that also lists one registered account, `work`. */
+function installAccountRemoteFixture(root) {
+  const remote = installRemoteFixture(root);
+  const profilesPath = join(root, "backend-profiles.json");
+  const profiles = JSON.parse(readFileSync(profilesPath, "utf8"));
+  profiles.profiles[0].expected.capabilities.push("account_recovery.v1");
+  writeFileSync(profilesPath, JSON.stringify(profiles), { mode: 0o600 });
+  const ssh = join(remote.bin, "ssh");
+  renameSync(ssh, join(remote.bin, "ssh-preview"));
+  writeFileSync(
+    ssh,
+    `#!/usr/bin/env node
+const { execFileSync } = require("node:child_process");
+const { appendFileSync, readFileSync } = require("node:fs");
+const { join } = require("node:path");
+const input = readFileSync(0, "utf8");
+const request = JSON.parse(input);
+appendFileSync(process.env.DURE_AGENT_SPAWN_LOG + ".operations", request.operation + "\\n");
+const response = request.operation === "provider_recovery.get"
+  ? {
+      schemaVersion: 1,
+      apiVersion: "dure.backend-transport/v1",
+      kind: "dure.backend.response",
+      requestId: request.requestId,
+      backend: {
+        id: request.expected.backendId,
+        generation: request.expected.generation,
+        protocol: { major: 1, minor: 0 },
+        capabilities: [],
+        observedAtMs: Date.now()
+      },
+      result: {
+        schemaVersion: 1,
+        profiles: [{
+          schemaVersion: 1,
+          providerId: request.body.providerId,
+          referenceId: "work",
+          credentialGeneration: "generation-2"
+        }]
+      }
+    }
+  : JSON.parse(execFileSync(join(__dirname, "ssh-preview"), process.argv.slice(2), { input }));
+// The backend resolves the base of a dedicated checkout when none was given.
+const worktree = response.result?.receipt?.plan.request.worktree;
+if (worktree?.kind === "dedicated" && worktree.base_commit_sha === undefined) {
+  worktree.base_commit_sha = "${"c".repeat(40)}";
+}
+response.backend.capabilities = [
+  "agent_spawn.preview.v2", "agent_spawn.status", "account_recovery.v1"
+];
+process.stdout.write(JSON.stringify(response));
+`,
+  );
+  chmodSync(ssh, 0o755);
+  return remote;
+}
+
 function installRunRemoteFixture(root) {
   const remote = installRemoteFixture(root);
   const profilesPath = join(root, "backend-profiles.json");
@@ -1624,6 +1682,99 @@ describe("dure run and spawn CLI", () => {
     expect(result.stdout).not.toContain(remote.identity);
     expect(existsSync(join(root, "server.json"))).toBe(false);
     expect(existsSync(join(root, "agents.json"))).toBe(false);
+  });
+
+  it("previews the dedicated worktree and account dure run would use", () => {
+    const root = temporaryRoot();
+    const remote = installAccountRemoteFixture(root);
+    const preview = (extra) =>
+      runCli(
+        root,
+        [
+          "spawn",
+          "preview",
+          "--project",
+          "dure",
+          "--provider",
+          "claude",
+          "--name",
+          "web-ui",
+          "--idempotency-key",
+          "spawn-request-1",
+          "--worktree",
+          "web-ui",
+          ...extra,
+          "--backend",
+          "remote-a",
+          "--json",
+        ],
+        {
+          DURE_AGENT_SPAWN_LOG: remote.log,
+          PATH: `${remote.bin}:${process.env.PATH}`,
+        },
+      );
+
+    const pinned = preview(["--base-commit", "a".repeat(40), "--account", "work"]);
+    expect(pinned.status, `${pinned.stdout}\n${pinned.stderr}`).toBe(0);
+    expect(JSON.parse(readFileSync(remote.log, "utf8")).request.body).toMatchObject({
+      worktree: { kind: "dedicated", base_commit_sha: "a".repeat(40), branch: "agent/web-ui" },
+      executionProfile: {
+        kind: "credential_reference",
+        reference_id: "work",
+        credential_generation: "generation-2",
+      },
+    });
+    expect(readFileSync(`${remote.log}.operations`, "utf8").trim().split("\n")).toEqual([
+      "provider_recovery.get",
+      "agent_spawn.preview",
+    ]);
+
+    const defaults = preview(["--branch", "feature/web", "--account", "default"]);
+    expect(defaults.status, `${defaults.stdout}\n${defaults.stderr}`).toBe(0);
+    const body = JSON.parse(readFileSync(remote.log, "utf8")).request.body;
+    expect(body.worktree).toEqual({ kind: "dedicated", branch: "feature/web" });
+    expect(body.executionProfile).toEqual({ kind: "provider_default" });
+
+    const unknown = preview(["--account", "personal"]);
+    expect(unknown.status).toBe(2);
+    expect(JSON.parse(unknown.stderr).error).toMatchObject({
+      code: "agent_launch_account_unavailable",
+      message: expect.stringContaining("Usable account IDs: work"),
+    });
+    expect(readFileSync(`${remote.log}.operations`, "utf8").trim().split("\n").at(-1))
+      .toBe("provider_recovery.get");
+  });
+
+  it.each([
+    ["an invalid worktree name", ["--worktree", "Web UI"]],
+    ["an empty account", ["--no-worktree", "--account", ""]],
+  ])("refuses a spawn preview with %s before any backend request", (_label, extra) => {
+    const root = temporaryRoot();
+    const remote = installAccountRemoteFixture(root);
+    const result = runCli(
+      root,
+      ["spawn", "preview", "--project", "dure", "--provider", "claude", "--name", "web-ui",
+        "--idempotency-key", "spawn-request-1", ...extra, "--backend", "remote-a", "--json"],
+      { DURE_AGENT_SPAWN_LOG: remote.log, PATH: `${remote.bin}:${process.env.PATH}` },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Usage: dure spawn preview");
+    expect(existsSync(`${remote.log}.operations`)).toBe(false);
+  });
+
+  it.each(["apply", "status"])("refuses --account on spawn %s", (action) => {
+    const root = temporaryRoot();
+    const result = runCli(root, [
+      "spawn",
+      action,
+      "--operation-id",
+      "spawn-0123456789abcdef0123456789abcdef",
+      ...(action === "apply" ? ["--plan-token", `sha256:${"b".repeat(64)}`, "--expected-sequence", "1"] : []),
+      "--account",
+      "work",
+    ]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Usage: dure spawn preview");
   });
 
   it("runs one prompt through preview and apply without app-owned state", () => {

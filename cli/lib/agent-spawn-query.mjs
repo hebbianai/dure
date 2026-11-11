@@ -2,7 +2,11 @@ import { isProviderModelSelection, isProviderEffortSelection } from "./contracts
 import { backendSourceSummary } from "./backend-source.mjs";
 import { createHash } from "node:crypto";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
-import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { performBackendProfileRequest, validIntegrationFile } from "./backend-transport.mjs";
+import {
+  PROVIDER_RUNTIME_INTEGRATION_FILE,
+  integrationRequirementText,
+} from "./provider-runtime-integration.mjs";
 import { validProjectId, validProjectPath } from "./project-contract.mjs";
 import { validWorktree, selectedCheckoutReference, checkoutRegistrationMatches } from "./contracts/agent-spawn-worktree.mjs";
 
@@ -1147,8 +1151,20 @@ function errorReport(action, code, observedAtMs, durationMs, details = {}) {
 const TERMINAL_INTEGRATION_MISSING =
   "The execution host has no Dure-managed integration for this provider's terminal sessions.";
 
+/** The unmet requirement a current backend names, and where to look. */
+function terminalIntegrationRequirement(detail) {
+  if (typeof detail.requirement !== "string") return "";
+  const file = validIntegrationFile(detail.integrationFile)
+    ? detail.integrationFile
+    : PROVIDER_RUNTIME_INTEGRATION_FILE;
+  const text = integrationRequirementText(detail.requirement);
+  return ` Failed check: ${detail.requirement} for ${file} in that host's Dure home` +
+    `${text === null ? "" : ` (${text})`}. dure doctor on that host reports the same check.`;
+}
+
 /** Only the Dure app publishes this integration, and many hosts cannot run one. */
-function terminalIntegrationGuidance(request) {
+function terminalIntegrationGuidance(request, detail) {
+  const missing = `${TERMINAL_INTEGRATION_MISSING}${terminalIntegrationRequirement(detail)}`;
   const changes = [
     ...(request.setupCommand === undefined
       ? []
@@ -1159,8 +1175,8 @@ function terminalIntegrationGuidance(request) {
       : []),
   ];
   return changes.length > 0
-    ? `${TERMINAL_INTEGRATION_MISSING} To use chat instead, ${changes.join(" and ")}, then retry this request.`
-    : `${TERMINAL_INTEGRATION_MISSING} Open the Dure app on that host once if it can run there, or choose a provider with a chat runtime, then retry this request.`;
+    ? `${missing} To use chat instead, ${changes.join(" and ")}, then retry this request.`
+    : `${missing} Open the Dure app on that host once if it can run there, or choose a provider with a chat runtime, then retry this request.`;
 }
 
 const PROVIDER_PREFLIGHT_GUIDANCE = Object.freeze({
@@ -1175,6 +1191,12 @@ const PROVIDER_PREFLIGHT_GUIDANCE = Object.freeze({
     "The selected provider does not accept an effort selection for this launch. Remove the effort selection " +
     "(dure provider-defaults get shows saved defaults), then retry this request.",
 });
+
+// Backends report the refused check as details.reasonCode since 0.2.58.
+const PROVIDER_PREFLIGHT_UNNAMED =
+  "The execution host refused the provider preflight but did not name the failed check. " +
+  "Dure backends before 0.2.58 do not report it. Update Dure on that host, " +
+  "then retry this request to see which check failed and how to fix it.";
 
 function backendErrorReport(action, error, profile, startedAt, deadlineMs, request) {
   const observedAtMs = Date.now();
@@ -1202,9 +1224,12 @@ function backendErrorReport(action, error, profile, startedAt, deadlineMs, reque
   }
   // A refused provider plan names its check with a typed failure code. Codes
   // without reviewed advice are still named rather than reported bare.
-  if (detail.remoteCode === "agent_spawn_provider_preflight_failed" && typeof detail.reasonCode === "string") {
-    if (detail.reasonCode === "provider_runtime_integration_unavailable") {
-      detail.message = terminalIntegrationGuidance(request);
+  if (detail.remoteCode === "agent_spawn_provider_preflight_failed") {
+    if (typeof detail.reasonCode !== "string") {
+      // Every current refusal carries the check; only an older backend omits it.
+      detail.message = PROVIDER_PREFLIGHT_UNNAMED;
+    } else if (detail.reasonCode === "provider_runtime_integration_unavailable") {
+      detail.message = terminalIntegrationGuidance(request, detail);
     } else {
       detail.message = Object.hasOwn(PROVIDER_PREFLIGHT_GUIDANCE, detail.reasonCode)
         ? PROVIDER_PREFLIGHT_GUIDANCE[detail.reasonCode]

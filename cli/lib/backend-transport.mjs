@@ -85,6 +85,24 @@ function assertOnlyKeys(value, allowed) {
   }
 }
 
+// The managed integration document, relative to the execution host's Dure home.
+const INTEGRATION_FILE =
+  /^(?:channels\/[a-z0-9-]{1,64}\/)?managed-provider-integrations-v1\.json$/;
+
+export function validIntegrationFile(value) {
+  return typeof value === "string" && INTEGRATION_FILE.test(value);
+}
+
+/** A refused managed integration names its unmet requirement and document. */
+function integrationRefusalDetails(details) {
+  return {
+    ...(validToken(details?.requirement) ? { requirement: details.requirement } : {}),
+    ...(validIntegrationFile(details?.integrationFile)
+      ? { integrationFile: details.integrationFile }
+      : {}),
+  };
+}
+
 function validToken(value) {
   return (
     typeof value === "string" &&
@@ -426,6 +444,7 @@ export function parseBackendTransportResponse(
         ...(validToken(response.error.details?.reasonCode)
           ? { reasonCode: response.error.details.reasonCode }
           : {}),
+        ...integrationRefusalDetails(response.error.details),
         ...(backgroundWork ? { backgroundWork } : {}),
       },
     });
@@ -836,6 +855,7 @@ export function backendTransportErrorReport(error, profile) {
       ...(validToken(typed.details?.reasonCode)
         ? { reasonCode: typed.details.reasonCode }
         : {}),
+      ...integrationRefusalDetails(typed.details),
       ...(validOperationDisposition(typed.details?.disposition)
         ? { disposition: typed.details.disposition }
         : {}),

@@ -218,6 +218,7 @@ use project_catalog::{
 };
 mod control_plane_build_identity;
 mod provider_extension;
+pub use provider_extension::provider_runtime_integration_status;
 mod runtime_extension;
 mod workflow_launch;
 
@@ -723,6 +724,7 @@ struct ServiceState {
     hmux_identity: HmuxToolchainIdentity,
     projects_catalog_path: PathBuf,
     agent_providers: Arc<AgentProviderRegistry>,
+    provider_runtime_integrations: Arc<dyn provider_extension::ProviderRuntimeIntegrationSource>,
     runtime_adapters: Arc<RuntimeAdapterRegistry>,
     credential_aware_workflow_launcher:
         Arc<dyn workflow_launch::CredentialAwareWorkflowSessionLauncher>,
@@ -753,6 +755,28 @@ struct ServiceState {
 }
 
 impl ServiceState {
+    /// A provider refused to plan a launch. When the refused check is the
+    /// managed integration, also name the unmet requirement and the document
+    /// (relative to the Dure home) so the caller can fix the host.
+    fn provider_preflight_failure(
+        &self,
+        code: &str,
+        provider_id: &ProviderIdV1,
+        reason: &str,
+    ) -> BackendDispatchError {
+        let mut error = BackendDispatchError::provider_preflight(code, reason);
+        if reason == provider_extension::PROVIDER_RUNTIME_INTEGRATION_UNAVAILABLE {
+            if let (Some(refusal), Some(Value::Object(details))) = (
+                self.provider_runtime_integrations.refusal(provider_id),
+                error.details.as_mut(),
+            ) {
+                details.insert("requirement".into(), refusal.requirement.as_str().into());
+                details.insert("integrationFile".into(), refusal.document.into());
+            }
+        }
+        error
+    }
+
     async fn wait_for_mutation_authority(&self) {
         // Staged activation is published by another process. Both persisted
         // Slack ingress and goal continuation wait for this same authority.
@@ -2119,16 +2143,32 @@ fn provider_launch_defaults_error(error: DomainStoreErrorV1) -> BackendDispatchE
     }
 }
 
-fn agent_spawn_preview_failure(code: String) -> BackendDispatchError {
+fn agent_spawn_preview_failure(
+    state: &ServiceState,
+    body: &Value,
+    code: String,
+) -> BackendDispatchError {
     if code == "agent_spawn_project_not_found" {
         return BackendDispatchError::terminal(&code);
     }
-    match agent_spawn_api::provider_preflight_reason(&code) {
-        Some(reason) => BackendDispatchError::provider_preflight(
+    let Some(reason) = agent_spawn_api::provider_preflight_reason(&code) else {
+        return code.into();
+    };
+    // A preflight refusal follows a validated request, so its provider parses.
+    match body
+        .get("providerId")
+        .and_then(Value::as_str)
+        .and_then(|provider_id| ProviderIdV1::new(provider_id).ok())
+    {
+        Some(provider_id) => state.provider_preflight_failure(
+            agent_spawn_api::PROVIDER_PREFLIGHT_FAILED,
+            &provider_id,
+            reason,
+        ),
+        None => BackendDispatchError::provider_preflight(
             agent_spawn_api::PROVIDER_PREFLIGHT_FAILED,
             reason,
         ),
-        None => code.into(),
     }
 }
 
@@ -2196,8 +2236,9 @@ async fn apply_agent_spawn(
                         hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
                     )
                     .map_err(|error| {
-                        BackendDispatchError::provider_preflight(
+                        state.provider_preflight_failure(
                             agent_spawn_api::PROVIDER_PREFLIGHT_FAILED,
+                            &receipt.plan.request.provider_id,
                             error.code.as_str(),
                         )
                     })?
@@ -2448,11 +2489,13 @@ async fn workflow_launch_request(
             hmux_client::MANAGED_REHOST_EXACT_CONVERSATION_PLACEHOLDER,
         )
         .map_err(|error| {
-            BackendDispatchError::provider_preflight(
-                "workflow_provider_preflight_failed",
-                error.code.as_str(),
-            )
-            .with_disposition(BackendFailureDispositionV1::Terminal)
+            state
+                .provider_preflight_failure(
+                    "workflow_provider_preflight_failed",
+                    &request.provider_id,
+                    error.code.as_str(),
+                )
+                .with_disposition(BackendFailureDispositionV1::Terminal)
         })?
         .ok_or_else(|| BackendDispatchError::terminal("workflow_provider_unavailable"))?;
     let executable = resolve_provider_executable(&plan.launch.executable)?;
@@ -3825,7 +3868,7 @@ async fn dispatch_authorized(
         "agent_spawn.preview" => {
             boxed_operation(|| preview_agent_spawn(state, &authority, &request.body))
                 .await
-                .map_err(agent_spawn_preview_failure)
+                .map_err(|code| agent_spawn_preview_failure(state, &request.body, code))
         }
         "agent_spawn.apply" => {
             let body: agent_spawn_apply::AgentSpawnApplyBody =

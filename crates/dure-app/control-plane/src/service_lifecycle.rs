@@ -641,6 +641,9 @@ pub async fn prepare_with_agent_conversation_runtimes(
         descriptor,
         canonical_descriptor_path: descriptor_path,
         agent_providers: Arc::clone(&agent_providers),
+        provider_runtime_integrations: provider_extension::local_provider_runtime_integrations(
+            &options.home,
+        ),
         runtime_adapters: Arc::new(runtime_extension::local_hmux_runtime_registry(
             hmux_identity.clone(),
         )),

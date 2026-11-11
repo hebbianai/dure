@@ -1952,16 +1952,25 @@ async function cmdAgentSpawn(sub, opts) {
   const action = sub;
   const operationId = opts.operationId;
   const idempotencyKey = opts.idempotencyKey;
+  // --worktree NAME selects the same dedicated checkout `dure run` does.
+  const namedWorktree =
+    typeof opts.worktree === "string" ? opts.worktree : undefined;
   const dedicatedWorktree =
-    !opts.worktreeSpecified && opts.baseCommit && opts.branch
+    namedWorktree !== undefined
       ? {
           kind: "dedicated",
-          base_commit_sha: opts.baseCommit,
-          branch: opts.branch,
+          ...(opts.baseCommit ? { base_commit_sha: opts.baseCommit } : {}),
+          branch: opts.branch || `agent/${namedWorktree}`,
         }
-      : opts.worktree === false
-        ? { kind: "project_root" }
-        : null;
+      : !opts.worktreeSpecified && opts.baseCommit && opts.branch
+        ? {
+            kind: "dedicated",
+            base_commit_sha: opts.baseCommit,
+            branch: opts.branch,
+          }
+        : opts.worktree === false
+          ? { kind: "project_root" }
+          : null;
   const invalidPreview =
     action === "preview" &&
     ((Boolean(opts.project) ? 1 : 0) + (opts.pathSpecified ? 1 : 0) !== 1 ||
@@ -1970,6 +1979,11 @@ async function cmdAgentSpawn(sub, opts) {
       !opts.name ||
       !idempotencyKey ||
       !dedicatedWorktree ||
+      (namedWorktree !== undefined &&
+        !/^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/.test(namedWorktree)) ||
+      (opts.baseCommit !== undefined && !opts.baseCommit) ||
+      (opts.branch !== undefined && !opts.branch) ||
+      (opts.account !== undefined && !opts.account) ||
       (opts.setupCommand !== undefined &&
         (!opts.setupCommand || dedicatedWorktree?.kind !== "dedicated")) ||
       (opts.skipPermissions === true && opts.permissionOverride !== undefined) ||
@@ -1993,7 +2007,8 @@ async function cmdAgentSpawn(sub, opts) {
       opts.branch !== undefined ||
       opts.setupCommand !== undefined ||
       opts.skipPermissions === true ||
-      opts.permissionOverride !== undefined);
+      opts.permissionOverride !== undefined ||
+      opts.account !== undefined);
   const invalidApply =
     action === "apply" &&
     (!operationId ||
@@ -2009,7 +2024,8 @@ async function cmdAgentSpawn(sub, opts) {
       opts.branch !== undefined ||
       opts.setupCommand !== undefined ||
       opts.skipPermissions === true ||
-      opts.permissionOverride !== undefined);
+      opts.permissionOverride !== undefined ||
+      opts.account !== undefined);
   if (
     !["preview", "apply", "status"].includes(action) ||
     opts.rest.length !== 1 ||
@@ -2019,7 +2035,7 @@ async function cmdAgentSpawn(sub, opts) {
   ) {
     fail(
       "Usage: dure spawn preview (--project ID | --path PATH) --provider ID --name NAME --idempotency-key KEY " +
-        "(--no-worktree | --base-commit SHA --branch REF) [--setup-command COMMAND] [--prompt TEXT] [--permission-override require_approvals|auto_edit|bypass_approvals] [--skip-permissions] [--backend ID] [--json] [--verbose]\n" +
+        "(--no-worktree | --worktree NAME [--base-commit SHA] [--branch REF] | --base-commit SHA --branch REF) [--account ACCOUNT_ID|default] [--setup-command COMMAND] [--prompt TEXT] [--permission-override require_approvals|auto_edit|bypass_approvals] [--skip-permissions] [--backend ID] [--json] [--verbose]\n" +
         "        dure spawn apply --operation-id ID --plan-token TOKEN --expected-sequence N [--prompt TEXT] [--backend ID] [--json] [--verbose]\n" +
         "        dure spawn status (--operation-id ID | --idempotency-key KEY) [--backend ID] [--json] [--verbose]",
     );
@@ -2030,6 +2046,29 @@ async function cmdAgentSpawn(sub, opts) {
     formatAgentSpawnQuery,
   } = await import("./lib/agent-spawn-query.mjs");
   const backend = await backendProfileQueryContext(opts);
+  // --account binds the plan to the same execution profile `dure run` would.
+  let executionProfile;
+  if (opts.account !== undefined) {
+    const { resolveAgentRunAccount } = await import("./lib/agent-run.mjs");
+    try {
+      executionProfile = await resolveAgentRunAccount({
+        descriptor: loadServer(),
+        providerId: opts.provider,
+        backendProfileId: backend.profile?.id ?? "local",
+        account: opts.account,
+        backend,
+      });
+    } catch (error) {
+      writeCliActionError(
+        error,
+        opts,
+        "dure.agent-spawn/v1",
+        "dure.agent_spawn.error",
+        "agent_launch_account_unavailable",
+      );
+      return;
+    }
+  }
   const report = await collectAgentSpawnQuery({
     action,
     projectId: opts.project || undefined,
@@ -2037,6 +2076,7 @@ async function cmdAgentSpawn(sub, opts) {
     providerId: opts.provider,
     agentName: opts.name,
     worktree: dedicatedWorktree,
+    executionProfile,
     permissionOverride: opts.skipPermissions
       ? "bypass_approvals"
       : opts.permissionOverride,
@@ -3325,7 +3365,53 @@ function cmdHooks(sub, opts) {
 // 설정 UI가 이 JSON을 읽어 설치 체크리스트를 그린다. 각 항목은 fix 명령을
 // 함께 실어 UI 버튼이 그대로 실행할 수 있게 한다(단일 출처: CLI).
 
-function cmdEnvironmentDoctor(opts) {
+/**
+ * Native terminal launches of Claude and Codex need the managed integration
+ * document a Dure app publishes. The control plane runs the same check its
+ * preflight runs; null state means this CLI's control plane cannot run it.
+ */
+async function terminalLaunchIntegrationDependency() {
+  const { inspectProviderRuntimeIntegrations, integrationRequirementText } =
+    await import("./lib/provider-runtime-integration.mjs");
+  const { resolveLocalBackendExecutable } = await import("./lib/local-backend.mjs");
+  let report = null;
+  try {
+    report = inspectProviderRuntimeIntegrations({
+      controlPlanePath: resolveLocalBackendExecutable(CLI_SCRIPT_PATH),
+      dureHome: DURE_ROOT,
+    });
+  } catch {
+    report = null;
+  }
+  const state =
+    report === null
+      ? "unknown"
+      : report.providers.every((provider) => provider.status === "current")
+        ? "current"
+        : "unavailable";
+  return {
+    id: "terminal-launch-integration",
+    label: "terminal-session launch integration",
+    ok: state === "current",
+    state,
+    document: report?.document ?? null,
+    guidance:
+      state === "unknown"
+        ? "This CLI's control plane could not run the check."
+        : "Terminal-session Runs need it; chat Runs (dure run --runtime chat) do not. Open the Dure app on this host once to publish it.",
+    details: (report?.providers ?? []).map((provider) => ({
+      provider: provider.providerId,
+      status: provider.status,
+      requirement: provider.requirement,
+      reason:
+        provider.requirement === null
+          ? null
+          : integrationRequirementText(provider.requirement),
+    })),
+  };
+}
+
+async function cmdEnvironmentDoctor(opts) {
   // Checkpoint discipline hooks retired 2026-08-27 — the SessionStart hook
   // now emits a no-op; doctor no longer nags anyone to install it.
   const hookDependencies = [];
@@ -3402,6 +3488,7 @@ function cmdEnvironmentDoctor(opts) {
         })),
       },
       ...hookDependencies,
+      await terminalLaunchIntegrationDependency(),
       {
         id: "dure-skills",
         label: "Dure skills",
@@ -3417,10 +3504,26 @@ function cmdEnvironmentDoctor(opts) {
     return;
   }
   for (const dep of report.dependencies) {
+    const mark = dep.ok
+      ? "\x1b[32m✓\x1b[0m"
+      : dep.state === "unknown"
+        ? "\x1b[33m?\x1b[0m"
+        : "\x1b[31m✗\x1b[0m";
     process.stdout.write(
-      `${dep.ok ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m"} ${dep.label}` +
-        (dep.ok ? "\n" : ` — ${dep.fixCommand}\n`),
+      `${mark} ${dep.label}` +
+        (dep.ok ? "\n" : ` — ${dep.fixCommand ?? dep.guidance}\n`),
     );
+    if (!dep.ok && dep.id === "terminal-launch-integration") {
+      for (const detail of dep.details) {
+        if (detail.status !== "current") {
+          process.stdout.write(
+            `    ${detail.provider} — ${detail.requirement}` +
+              `${detail.reason === null ? "" : `: ${detail.reason}`}` +
+              `${dep.document === null ? "" : ` (${dep.document})`}\n`,
+          );
+        }
+      }
+    }
     if (!dep.ok && dep.id === "dure-skills") {
       for (const detail of dep.details) {
         if (detail.state !== "current") {
@@ -4034,7 +4137,8 @@ Usage:
                                       List agents across Spaces and attach from a terminal
   dure spawn preview (--project <id> | --path <path>) --provider <id> --name <name> --idempotency-key <key>
                                       Create or reuse a durable spawn plan without the app daemon
-                                      Requires --no-worktree or --base-commit SHA --branch REF
+                                      Requires --no-worktree, --worktree NAME (as dure run) or --base-commit SHA --branch REF
+                                      --account ACCOUNT_ID|default binds the plan to that account, as dure run does
                                       Dedicated checkouts support --setup-command COMMAND
   dure spawn apply --operation-id <id> --plan-token <token> --expected-sequence <n>
                                       Apply or resume the reviewed plan without the app
@@ -4321,7 +4425,7 @@ Without --check, diagnostic findings do not change the exit status.`;
 async function cmdDoctor(opts) {
   if (!opts.rest[0]) {
     // 인자 없음 = 에이전트 환경 의존성 점검(훅·스킬). migrate-home은 유지.
-    cmdEnvironmentDoctor(opts);
+    await cmdEnvironmentDoctor(opts);
     return;
   }
   if (opts.rest[0] !== "migrate-home") {
