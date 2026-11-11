@@ -680,7 +680,7 @@ where
         match marker_generation.as_deref() {
             Some(generation)
                 if generation == registration.profile.credential_generation.as_str() => {}
-            Some(_) => return Err(ProviderCredentialProfileErrorV1::StaleGeneration),
+            Some(_) => return Err(ProviderCredentialProfileErrorV1::StaleGeneration.into()),
             None if observation.inode == registration.profile_inode => {
                 publish_profile_generation(
                     &observation,
@@ -690,7 +690,7 @@ where
                     ProviderCredentialProfileErrorV1::StaleGeneration,
                 )?;
             }
-            None => return Err(ProviderCredentialProfileErrorV1::StaleGeneration),
+            None => return Err(ProviderCredentialProfileErrorV1::StaleGeneration.into()),
         }
         let final_observation = reobserve_same_profile_directory(
             &self.home,

@@ -220,10 +220,12 @@ impl provider_credential_profile::ProviderCredentialProfileLaunchPreparer
         directory: &Path,
     ) -> Result<
         dure_provider_profile::PreparedProviderProfileLaunch,
-        provider_credential_profile::ProviderCredentialProfileErrorV1,
+        provider_credential_profile::ProviderCredentialLaunchFailureV1,
     > {
         if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
-            return Err(provider_credential_profile::ProviderCredentialProfileErrorV1::Unavailable);
+            return Err(
+                provider_credential_profile::ProviderCredentialProfileErrorV1::Unavailable.into(),
+            );
         }
         self.delegate.prepare(provider_id, directory)
     }
