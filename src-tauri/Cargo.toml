@@ -38,7 +38,7 @@ serde_json = "1"
 toml = "1.1"
 portable-pty = "0.9"
 ssh2 = { version = "0.9", features = ["vendored-openssl"] }
-base64 = "0.22"
+base64 = "0.23"
 tiny_http = "0.12"
 getrandom = "0.4"
 tauri-plugin-clipboard-manager = "2.3.2"

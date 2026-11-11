@@ -1395,7 +1395,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 name = "dure"
 version = "0.2.63"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "block2",
  "dirs 6.0.0",
  "dure-app",
@@ -2537,7 +2537,7 @@ name = "hmux-host"
 version = "0.2.63"
 dependencies = [
  "alacritty_terminal",
- "base64 0.22.1",
+ "base64 0.23.1",
  "fs2",
  "hmux-local-platform",
  "hmux-session-protocol",
@@ -2570,7 +2570,7 @@ dependencies = [
 name = "hmux-session-protocol"
 version = "0.2.63"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "serde",
  "serde_json",
 ]
