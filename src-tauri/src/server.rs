@@ -940,8 +940,12 @@ pub fn start(
                     }
                 };
                 let presentation = report.presentation;
-                let (status, value) =
-                    dispatch_claude_hook_request(&app, report.host_request, report.transcript_path);
+                let (status, value) = dispatch_claude_hook_request(
+                    &app,
+                    report.host_request,
+                    report.transcript_path,
+                    report.cleared_conversation_id,
+                );
                 if (200..300).contains(&status) {
                     emit_claude_activity_projection(&app, &presentation);
                     let _ = req.respond(json_response(status, serde_json::json!({})));
@@ -1688,6 +1692,7 @@ fn dispatch_claude_hook_request(
     app: &AppHandle,
     request: crate::hmux::AgentStateReportRequest,
     transcript_path: Option<std::path::PathBuf>,
+    cleared_conversation_id: Option<String>,
 ) -> (u16, Value) {
     let hmux = {
         let state = app.state::<crate::AppState>();
@@ -1700,6 +1705,7 @@ fn dispatch_claude_hook_request(
             &dispatch_app,
             request,
             transcript_path.as_deref(),
+            cleared_conversation_id,
         ));
     });
     match receiver.recv_timeout(Duration::from_millis(1500)) {

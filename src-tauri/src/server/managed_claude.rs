@@ -8,6 +8,11 @@ pub(super) struct ClaudeHookReport {
     pub(super) presentation: Value,
     pub(super) host_request: crate::hmux::AgentStateReportRequest,
     pub(super) transcript_path: Option<std::path::PathBuf>,
+    /// The conversation Claude started in place with `/clear`. Only an
+    /// interactive `/clear` reports `SessionStart` with source `clear`; a
+    /// child Claude process that inherits the hook environment starts with
+    /// `startup`, so it can never claim the pane's conversation this way.
+    pub(super) cleared_conversation_id: Option<String>,
 }
 
 fn claude_transcript_exists(transcript_path: Option<&Value>) -> bool {
@@ -185,8 +190,12 @@ pub(super) fn normalize_hook_report(
             None,
         ),
     };
+    let cleared_conversation_id = (event == "SessionStart"
+        && object.get("source").and_then(Value::as_str) == Some("clear"))
+    .then(|| conversation_id.to_string());
     Ok(Some(ClaudeHookReport {
         presentation,
+        cleared_conversation_id,
         transcript_path: object
             .get("transcript_path")
             .and_then(Value::as_str)
@@ -246,6 +255,35 @@ mod tests {
             );
             assert_eq!(report.turn_completed, event == "Stop");
         }
+    }
+
+    #[test]
+    fn only_an_interactive_clear_names_a_successor_conversation() {
+        let header = |name: &str| {
+            (name != "X-Hebbian-Hmux-Source-Sequence").then(|| "fixture-id".to_string())
+        };
+        for (source, expected) in [
+            (Some("clear"), Some("fixture-cleared")),
+            (Some("startup"), None),
+            (Some("resume"), None),
+            (Some("compact"), None),
+            (None, None),
+        ] {
+            let mut input = serde_json::json!({
+                "hook_event_name": "SessionStart", "session_id": "fixture-cleared",
+            });
+            if let Some(source) = source {
+                input["source"] = source.into();
+            }
+            let report = normalize_hook_report(input, header).unwrap().unwrap();
+            assert_eq!(report.cleared_conversation_id.as_deref(), expected, "{source:?}");
+        }
+        let prompt = serde_json::json!({
+            "hook_event_name": "UserPromptSubmit", "session_id": "fixture-cleared",
+            "source": "clear",
+        });
+        let report = normalize_hook_report(prompt, header).unwrap().unwrap();
+        assert_eq!(report.cleared_conversation_id, None);
     }
 
     #[test]

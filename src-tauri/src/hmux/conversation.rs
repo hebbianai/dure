@@ -6,8 +6,54 @@ use super::{
 };
 use hmux_client::{recovery_journal::managed_create_ledger, PermissionMode};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use std::{
+    collections::HashMap,
+    fs,
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 use tauri::AppHandle;
+
+/// Conversations Claude started in place with `/clear`, by the exact Host
+/// generation that reported them. `/clear` writes no forward link from the
+/// old transcript, so this provider-announced successor is the only
+/// evidence that the same native process moved to the new conversation.
+/// The report naming it often arrives before the new transcript exists, so
+/// the successor is held until a report carries its conversation identity.
+fn cleared_successors() -> &'static Mutex<HashMap<String, String>> {
+    static SUCCESSORS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    SUCCESSORS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const MAX_CLEARED_SUCCESSORS: usize = 256;
+
+fn cleared_successor_key(fence: &super::ReportedSessionFence) -> String {
+    [
+        fence.session_id.as_str(),
+        fence.workspace_id.as_str(),
+        fence.host_instance_id.as_str(),
+        fence.terminal_epoch.as_str(),
+    ]
+    .join("\n")
+}
+
+fn record_cleared_successor(fence: &super::ReportedSessionFence, conversation_id: String) {
+    let Ok(mut successors) = cleared_successors().lock() else {
+        return;
+    };
+    if successors.len() >= MAX_CLEARED_SUCCESSORS {
+        successors.clear();
+    }
+    successors.insert(cleared_successor_key(fence), conversation_id);
+}
+
+fn is_cleared_successor(fence: &super::ReportedSessionFence, conversation_id: &str) -> bool {
+    cleared_successors().lock().is_ok_and(|successors| {
+        successors
+            .get(&cleared_successor_key(fence))
+            .is_some_and(|successor| successor == conversation_id)
+    })
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,14 +89,23 @@ pub struct ExistingManagedWriterInspection {
 
 impl HmuxManager {
     /// Claude may rotate its transcript ID without replacing the native
-    /// process. Verify its forward link against the live Host identity before
-    /// proposing an atomic, causally ordered continuation to that same Host.
+    /// process, by continuing a transcript or by an interactive `/clear`.
+    /// Verify its forward link, or the successor `/clear` announced for this
+    /// exact Host generation, against the live Host identity before proposing
+    /// an atomic, causally ordered continuation to that same Host.
     pub(crate) fn report_claude_agent_state<R: tauri::Runtime>(
         &self,
         app: &AppHandle<R>,
         mut request: super::AgentStateReportRequest,
         transcript: Option<&Path>,
+        cleared_conversation_id: Option<String>,
     ) -> Result<super::AgentStateReportReceiptSummary, super::AgentStateReportFailure> {
+        if let (Some(cleared), Some(fence)) = (
+            cleared_conversation_id,
+            request.expected_session_fence.as_ref(),
+        ) {
+            record_cleared_successor(fence, cleared);
+        }
         if let (Some(transcript), Some(identity), Some(expected)) = (
             transcript,
             request.conversation_identity.as_mut(),
@@ -75,11 +130,16 @@ impl HmuxManager {
                                 && current.conversation_id != identity.conversation_id
                         })
                     {
-                        if dure_provider_adapter::claude_continuation::claude_transcript_continues(
-                            transcript,
-                            &current.conversation_id,
-                            &identity.conversation_id,
-                        ) {
+                        let cleared = request.expected_session_fence.as_ref().is_some_and(
+                            |fence| is_cleared_successor(fence, &identity.conversation_id),
+                        );
+                        if cleared
+                            || dure_provider_adapter::claude_continuation::claude_transcript_continues(
+                                transcript,
+                                &current.conversation_id,
+                                &identity.conversation_id,
+                            )
+                        {
                             identity.previous_conversation_id = Some(current.conversation_id);
                         }
                     }
