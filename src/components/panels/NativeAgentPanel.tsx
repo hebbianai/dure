@@ -44,10 +44,7 @@ import {
   supportsAccounts,
   supportsStructuredChat,
 } from "@/lib/agents/providers";
-import { isHmuxSignInFailure } from "@/lib/hmux/failure/sessionFailure";
-import { hmuxSessionMetadataKey } from "@/lib/hmux/identity/hmuxSessionMetadata";
 import { openCommandTerminalOn } from "@/lib/workspace/dock/openCommandTerminal";
-import { useStore } from "@/store";
 import { isRemoteCredentialUnavailable } from "@/lib/agents/remoteAccountOverlay";
 import { AccountsDialog } from "@/components/agents/AccountsDialog";
 import {
@@ -133,6 +130,7 @@ export function NativeAgentPanel({
     terminalTitle,
     activity,
     agentRuntimeState,
+    exitedAtSignIn,
     setAgentActivity,
     accounts,
     sshHosts,
@@ -144,17 +142,6 @@ export function NativeAgentPanel({
   } = useNativeAgentPanelState(agent);
   const binding = agent.runtimeBinding;
   const isHmux = isHmuxPaneBinding(binding);
-  // The runtime's typed failure for this exact session generation: its
-  // provider exited at the sign-in screen. Never read from terminal output.
-  const exitedAtSignIn = useStore((state) =>
-    binding?.runtime === "hmux_managed_v1"
-      ? isHmuxSignInFailure(
-          state.hmuxSessionMetadata[
-            hmuxSessionMetadataKey(binding.workspaceId, binding.sessionId)
-          ]?.failure,
-        )
-      : false,
-  );
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const conversationTitle = useConversationTitle(agent.id);
   // pane-open 계측: mount → 첫 터미널 paint (프론트 표면 비용, provider별 분해).

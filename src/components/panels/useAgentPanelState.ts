@@ -25,6 +25,8 @@ import {
 	transitionAgentRuntime,
 } from "@/lib/agents/agentRuntimeTransitionAction";
 import type { DureAgentRuntimeSourceStopPolicyV1 } from "@/lib/ipc/dureAgentRuntime";
+import { isHmuxSignInFailure } from "@/lib/hmux/failure/sessionFailure";
+import { hmuxSessionMetadataKey } from "@/lib/hmux/identity/hmuxSessionMetadata";
 import { sameDureBackendRouteAuthority } from "@/lib/ipc/dureBackendRoute";
 import {
 	applyDeferredCredentialSwitchNow,
@@ -352,11 +354,24 @@ export function useNativeAgentPanelState(agent: Agent) {
 		state.projects.find((candidate) => candidate.id === agent.projectId),
 	);
 	const restartReq = useStore((state) => state.restartRequests[agentId] ?? 0);
+	const binding = agent.runtimeBinding;
+	// The runtime's typed failure for this exact session generation: its
+	// provider exited at the sign-in screen. Never read from terminal output.
+	const exitedAtSignIn = useStore((state) =>
+		binding?.runtime === "hmux_managed_v1"
+			? isHmuxSignInFailure(
+					state.hmuxSessionMetadata[
+						hmuxSessionMetadataKey(binding.workspaceId, binding.sessionId)
+					]?.failure,
+				)
+			: false,
+	);
 	return {
 		agentCwd,
 		terminalTitle,
 		activity,
 		agentRuntimeState,
+		exitedAtSignIn,
 		sshError,
 		setAgentActivity,
 		accounts,
