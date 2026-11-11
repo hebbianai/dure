@@ -1952,16 +1952,25 @@ async function cmdAgentSpawn(sub, opts) {
   const action = sub;
   const operationId = opts.operationId;
   const idempotencyKey = opts.idempotencyKey;
+  // --worktree NAME selects the same dedicated checkout `dure run` does.
+  const namedWorktree =
+    typeof opts.worktree === "string" ? opts.worktree : undefined;
   const dedicatedWorktree =
-    !opts.worktreeSpecified && opts.baseCommit && opts.branch
+    namedWorktree !== undefined
       ? {
           kind: "dedicated",
-          base_commit_sha: opts.baseCommit,
-          branch: opts.branch,
+          ...(opts.baseCommit ? { base_commit_sha: opts.baseCommit } : {}),
+          branch: opts.branch || `agent/${namedWorktree}`,
         }
-      : opts.worktree === false
-        ? { kind: "project_root" }
-        : null;
+      : !opts.worktreeSpecified && opts.baseCommit && opts.branch
+        ? {
+            kind: "dedicated",
+            base_commit_sha: opts.baseCommit,
+            branch: opts.branch,
+          }
+        : opts.worktree === false
+          ? { kind: "project_root" }
+          : null;
   const invalidPreview =
     action === "preview" &&
     ((Boolean(opts.project) ? 1 : 0) + (opts.pathSpecified ? 1 : 0) !== 1 ||
@@ -1970,6 +1979,11 @@ async function cmdAgentSpawn(sub, opts) {
       !opts.name ||
       !idempotencyKey ||
       !dedicatedWorktree ||
+      (namedWorktree !== undefined &&
+        !/^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/.test(namedWorktree)) ||
+      (opts.baseCommit !== undefined && !opts.baseCommit) ||
+      (opts.branch !== undefined && !opts.branch) ||
+      (opts.account !== undefined && !opts.account) ||
       (opts.setupCommand !== undefined &&
         (!opts.setupCommand || dedicatedWorktree?.kind !== "dedicated")) ||
       (opts.skipPermissions === true && opts.permissionOverride !== undefined) ||
@@ -1993,7 +2007,8 @@ async function cmdAgentSpawn(sub, opts) {
       opts.branch !== undefined ||
       opts.setupCommand !== undefined ||
       opts.skipPermissions === true ||
-      opts.permissionOverride !== undefined);
+      opts.permissionOverride !== undefined ||
+      opts.account !== undefined);
   const invalidApply =
     action === "apply" &&
     (!operationId ||
@@ -2009,7 +2024,8 @@ async function cmdAgentSpawn(sub, opts) {
       opts.branch !== undefined ||
       opts.setupCommand !== undefined ||
       opts.skipPermissions === true ||
-      opts.permissionOverride !== undefined);
+      opts.permissionOverride !== undefined ||
+      opts.account !== undefined);
   if (
     !["preview", "apply", "status"].includes(action) ||
     opts.rest.length !== 1 ||
@@ -2019,7 +2035,7 @@ async function cmdAgentSpawn(sub, opts) {
   ) {
     fail(
       "Usage: dure spawn preview (--project ID | --path PATH) --provider ID --name NAME --idempotency-key KEY " +
-        "(--no-worktree | --base-commit SHA --branch REF) [--setup-command COMMAND] [--prompt TEXT] [--permission-override require_approvals|auto_edit|bypass_approvals] [--skip-permissions] [--backend ID] [--json] [--verbose]\n" +
+        "(--no-worktree | --worktree NAME [--base-commit SHA] [--branch REF] | --base-commit SHA --branch REF) [--account ACCOUNT_ID|default] [--setup-command COMMAND] [--prompt TEXT] [--permission-override require_approvals|auto_edit|bypass_approvals] [--skip-permissions] [--backend ID] [--json] [--verbose]\n" +
         "        dure spawn apply --operation-id ID --plan-token TOKEN --expected-sequence N [--prompt TEXT] [--backend ID] [--json] [--verbose]\n" +
         "        dure spawn status (--operation-id ID | --idempotency-key KEY) [--backend ID] [--json] [--verbose]",
     );
@@ -2030,6 +2046,29 @@ async function cmdAgentSpawn(sub, opts) {
     formatAgentSpawnQuery,
   } = await import("./lib/agent-spawn-query.mjs");
   const backend = await backendProfileQueryContext(opts);
+  // --account binds the plan to the same execution profile `dure run` would.
+  let executionProfile;
+  if (opts.account !== undefined) {
+    const { resolveAgentRunAccount } = await import("./lib/agent-run.mjs");
+    try {
+      executionProfile = await resolveAgentRunAccount({
+        descriptor: loadServer(),
+        providerId: opts.provider,
+        backendProfileId: backend.profile?.id ?? "local",
+        account: opts.account,
+        backend,
+      });
+    } catch (error) {
+      writeCliActionError(
+        error,
+        opts,
+        "dure.agent-spawn/v1",
+        "dure.agent_spawn.error",
+        "agent_launch_account_unavailable",
+      );
+      return;
+    }
+  }
   const report = await collectAgentSpawnQuery({
     action,
     projectId: opts.project || undefined,
@@ -2037,6 +2076,7 @@ async function cmdAgentSpawn(sub, opts) {
     providerId: opts.provider,
     agentName: opts.name,
     worktree: dedicatedWorktree,
+    executionProfile,
     permissionOverride: opts.skipPermissions
       ? "bypass_approvals"
       : opts.permissionOverride,
@@ -4034,7 +4074,8 @@ Usage:
                                       List agents across Spaces and attach from a terminal
   dure spawn preview (--project <id> | --path <path>) --provider <id> --name <name> --idempotency-key <key>
                                       Create or reuse a durable spawn plan without the app daemon
-                                      Requires --no-worktree or --base-commit SHA --branch REF
+                                      Requires --no-worktree, --worktree NAME (as dure run) or --base-commit SHA --branch REF
+                                      --account ACCOUNT_ID|default binds the plan to that account, as dure run does
                                       Dedicated checkouts support --setup-command COMMAND
   dure spawn apply --operation-id <id> --plan-token <token> --expected-sequence <n>
                                       Apply or resume the reviewed plan without the app
