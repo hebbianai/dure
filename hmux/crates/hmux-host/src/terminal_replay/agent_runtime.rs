@@ -99,6 +99,9 @@ pub struct AgentStateReportObservation {
     /// Background work the provider started is in flight; see
     /// `AgentStateReport::background_work`.
     pub background_work: bool,
+    /// The first-run prompt the provider is stopped at; see
+    /// `AgentStateReport::startup_gate`.
+    pub startup_gate: Option<crate::local_protocol::AgentStartupGate>,
 }
 
 impl AgentStateReportObservation {

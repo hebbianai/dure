@@ -25,6 +25,7 @@ pub(crate) struct Permissions {
     pub(crate) identity_only_conversation: bool,
     pub(crate) conversation_continuation: bool,
     pub(crate) background_work: bool,
+    pub(crate) startup_gate: bool,
 }
 
 pub(crate) struct Application {
@@ -78,6 +79,13 @@ pub(crate) fn apply(
             ErrorCode::UnsupportedCapability,
             "agent state report background work was not negotiated",
             Some(hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY),
+        );
+    }
+    if report.startup_gate.is_some() && !permissions.startup_gate {
+        return error(
+            ErrorCode::UnsupportedCapability,
+            "agent state report startup gate was not negotiated",
+            Some(hmux_host::local_protocol::AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY),
         );
     }
     if report.causality.is_some() && !permissions.causality {
@@ -208,6 +216,7 @@ pub(crate) fn apply(
                 working_ttl_ms: report.working_ttl_ms,
                 expected_observation: report.expected_observation,
                 background_work: report.background_work,
+                startup_gate: report.startup_gate,
             },
             conversation_identity,
         ) {

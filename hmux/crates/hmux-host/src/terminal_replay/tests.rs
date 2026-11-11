@@ -2,6 +2,7 @@ mod background_work;
 mod causal_reports;
 mod controller_input;
 mod interrupt_request;
+mod startup_gate;
 
 use super::*;
 use crate::local_protocol::{ScreenSnapshotProfile, WorkingDirectorySource};
@@ -1411,6 +1412,7 @@ fn state_report(
         working_ttl_ms: None,
         expected_observation: None,
         background_work: false,
+        startup_gate: None,
     }
 }
 

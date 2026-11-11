@@ -134,6 +134,7 @@ async fn run_then_rehost(conversation: Option<&str>) {
                     }),
                     expected_observation: None,
                     background_work: false,
+                    startup_gate: None,
                 },
                 source_fence,
             )

@@ -280,6 +280,7 @@ export function StructuredTerminalView({
 		errorMessageId: terminalErrorMessageId,
 		dismissError: dismissTerminalError,
 		recoveryAvailable: terminalRecoveryAvailable,
+		signInRequired: terminalSignInRequired,
 		observerIdRef,
 		attachedObserverRef,
 		sendInput,
@@ -886,6 +887,7 @@ export function StructuredTerminalView({
 					context: attachRecovery?.context ?? `session=${binding.sessionId}`,
 					transitioning: attachRecovery?.transitioning,
 				} : terminalRecoveryAvailable ? attachRecovery : undefined}
+				signInRequired={terminalSignInRequired}
 				onPresentationChange={onAttachRecoveryPresentationChange}
 			/>
 			<StructuredTerminalFindBar find={terminalFind} />

@@ -39,7 +39,15 @@ import {
   type Conversation,
 } from "@/lib/ipc";
 import { workspacePerformance } from "@/lib/workspace/performance/workspacePerformance";
-import { supportsAccounts, supportsStructuredChat } from "@/lib/agents/providers";
+import {
+  providerLoginCmd,
+  supportsAccounts,
+  supportsStructuredChat,
+} from "@/lib/agents/providers";
+import { isHmuxSignInFailure } from "@/lib/hmux/failure/sessionFailure";
+import { hmuxSessionMetadataKey } from "@/lib/hmux/identity/hmuxSessionMetadata";
+import { openCommandTerminalOn } from "@/lib/workspace/dock/openCommandTerminal";
+import { useStore } from "@/store";
 import { isRemoteCredentialUnavailable } from "@/lib/agents/remoteAccountOverlay";
 import { AccountsDialog } from "@/components/agents/AccountsDialog";
 import {
@@ -59,7 +67,10 @@ import {
   hmuxPaneConversationId,
   isHmuxPaneBinding,
 } from "@/lib/terminal/terminalBinding";
-import type { TerminalAttachRecovery } from "@/lib/terminal/terminalAttachRecovery";
+import type {
+  TerminalAttachRecovery,
+  TerminalAttachSignInRecovery,
+} from "@/lib/terminal/terminalAttachRecovery";
 import { evaluateAgentProviderMutation } from "@/lib/agents/agentProviderMutationPolicy";
 import { conversationHistoryCredentialProfile } from "@/lib/agents/agentConversationHistory";
 import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
@@ -133,6 +144,18 @@ export function NativeAgentPanel({
   } = useNativeAgentPanelState(agent);
   const binding = agent.runtimeBinding;
   const isHmux = isHmuxPaneBinding(binding);
+  // The runtime's typed failure for this exact session generation: its
+  // provider exited at the sign-in screen. Never read from terminal output.
+  const exitedAtSignIn = useStore((state) =>
+    binding?.runtime === "hmux_managed_v1"
+      ? isHmuxSignInFailure(
+          state.hmuxSessionMetadata[
+            hmuxSessionMetadataKey(binding.workspaceId, binding.sessionId)
+          ]?.failure,
+        )
+      : false,
+  );
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const conversationTitle = useConversationTitle(agent.id);
   // pane-open 계측: mount → 첫 터미널 paint (프론트 표면 비용, provider별 분해).
   // 지배 비용(provider-ready)은 ensureManagedAgentRuntime이 별도 기록한다 (bd 6gy).
@@ -345,6 +368,38 @@ export function NativeAgentPanel({
       : [];
   };
 
+  // --- 계정 스위처 ---
+  const accountPool = supportsAccounts(agent.provider)
+    ? accounts.filter((a) => a.provider === agent.provider)
+    : [];
+  const followsGlobal = false;
+  const effectiveAccountId = agentCredentialReferenceId(agent) ?? null;
+  const currentAccount = effectiveAccountId
+    ? accountPool.find((a) => a.id === effectiveAccountId)
+    : undefined;
+  // A provider that exited at its sign-in screen recovers the way a chat turn
+  // with a sign-in failure does: sign the pane's account in again, or choose
+  // another account for this pane.
+  const signInRecovery: TerminalAttachSignInRecovery | undefined =
+    supportsAccounts(agent.provider)
+      ? {
+          ...(currentAccount ? { accountName: currentAccount.name } : {}),
+          ...(isSshSession
+            ? remoteAgentHost && currentAccount
+              ? { signIn: () => void openRemoteLogin(currentAccount) }
+              : {}
+            : {
+                signIn: () =>
+                  openCommandTerminalOn(props.containerApi, {
+                    title: t("agents.chat.recovery.signIn"),
+                    command: providerLoginCmd(agent.provider, currentAccount),
+                    closeOnSuccess: true,
+                  }),
+              }),
+          switchAccount: () => setAccountMenuOpen(true),
+        }
+      : undefined;
+
   const recoveryConversationId = (
     hmuxPaneConversationId(binding) ?? agent.conversationId
   )?.trim();
@@ -355,6 +410,7 @@ export function NativeAgentPanel({
     transitioning: runtimeTransitioning,
     intent: recoveryConversationId ? "resume" : "start_fresh",
     worktree: managedAgentWorktreeRecovery(agent, project),
+    ...(signInRecovery ? { signIn: signInRecovery } : {}),
     resume: async () => {
       setConversationFailure(undefined);
       setResuming(true);
@@ -416,15 +472,6 @@ export function NativeAgentPanel({
     }
   };
 
-  // --- 계정 스위처 ---
-  const accountPool = supportsAccounts(agent.provider)
-    ? accounts.filter((a) => a.provider === agent.provider)
-    : [];
-  const followsGlobal = false;
-  const effectiveAccountId = agentCredentialReferenceId(agent) ?? null;
-  const currentAccount = effectiveAccountId
-    ? accountPool.find((a) => a.id === effectiveAccountId)
-    : undefined;
   const pendingCredentialSwitch =
     binding?.runtime === "hmux_managed_v1" &&
     (!agent.pendingCredentialSwitch?.targetLaunchSelection ||
@@ -548,13 +595,16 @@ export function NativeAgentPanel({
         {/* 계정 스위처 — 이 pane에서만 바뀌고, 대화는 이어서 재시작된다 */}
         {supportsAccounts(agent.provider) &&
           toolbarControls.visible("account", {
-            mustShow: !!pendingCredentialSwitch || !!accountFailure,
+            mustShow:
+              !!pendingCredentialSwitch || !!accountFailure || accountMenuOpen,
           }) &&
           toolbarControls.slot(
             "account",
             <AgentCredentialSwitcher
             agentId={agent.id}
             provider={agent.provider}
+            open={accountMenuOpen}
+            onOpenChange={setAccountMenuOpen}
             accounts={accountPool}
             currentAccount={currentAccount}
             recoveryAccount={remoteRecoveryAccount}
@@ -719,6 +769,7 @@ export function NativeAgentPanel({
           onOpenShell={terminalFallback.onOpenShell}
           resuming={runtimeTransitioning}
           structuredAttachRecoveryVisible={structuredAttachRecoveryVisible}
+          signInRequired={exitedAtSignIn}
           onTransitioningChange={setResuming}
           onRecoveryAvailabilityChange={(_available, deadInput) =>
             setStaleManagedRecoveryVisible(deadInput)

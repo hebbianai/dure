@@ -56,6 +56,7 @@ async fn close_after_conversation_report(bound_conversation: Option<&str>) {
                     }),
                     expected_observation: None,
                     background_work: false,
+                    startup_gate: None,
                 },
                 fence,
             )

@@ -162,6 +162,26 @@ pub enum AgentRuntimeAttention {
     Error,
 }
 
+/// A first-run prompt the provider is stopped at before it starts any
+/// conversation. The provider adapter reads it from the provider's own state;
+/// it is never inferred from terminal output.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStartupGate {
+    /// The provider found no usable sign-in for its account, missing or
+    /// expired, and shows its sign-in screen.
+    Login,
+}
+
+impl AgentStartupGate {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Login => "login",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRuntimeStateSource {
@@ -768,6 +788,12 @@ pub struct AgentStateReport {
     /// Capability-gated: older Hosts receive the plain `working` report.
     #[serde(default, skip_serializing_if = "is_false")]
     pub background_work: bool,
+    /// The provider is stopped at this first-run prompt before any
+    /// conversation, as its adapter read from provider state. Only beside
+    /// `waiting` with `input_required`. Capability-gated: older Hosts receive
+    /// the report without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_gate: Option<AgentStartupGate>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

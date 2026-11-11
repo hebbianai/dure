@@ -2,8 +2,8 @@
 
 use super::CodexConnectionDriverError;
 use hmux_client::{
-    AgentRuntimeActivity, AgentRuntimeAttention, AgentStateReport, ProviderConversationIdentity,
-    SessionFence,
+    AgentRuntimeActivity, AgentRuntimeAttention, AgentStartupGate, AgentStateReport,
+    ProviderConversationIdentity, SessionFence,
 };
 use serde_json::{Value, json};
 use std::{collections::HashMap, path::PathBuf};
@@ -352,6 +352,8 @@ impl Lifecycle {
             report.turn_completed = false;
             report.turn_completion_id = None;
             report.working_ttl_ms = Some(86_400_000);
+            // A first-run gate is reported only while the provider waits.
+            report.startup_gate = None;
         }
         report
     }
@@ -597,6 +599,8 @@ impl Lifecycle {
     /// for a person and reads no input, including a prompt its launch command
     /// carried. Only an explicit signed-out reading before any conversation
     /// exists claims that; the first turn after sign-in clears the attention.
+    /// The report names the sign-in gate, so a Codex that exits from that
+    /// screen leaves the Host a typed cause instead of a bare exit status.
     fn sign_in_report(&self, message: &Value, fence: &SessionFence) -> Option<AgentStateReport> {
         let signed_out = self.thread.is_none()
             && message.pointer("/result/account") == Some(&Value::Null)
@@ -606,6 +610,7 @@ impl Lifecycle {
                 == Some(true);
         signed_out.then(|| AgentStateReport {
             attention: AgentRuntimeAttention::InputRequired,
+            startup_gate: Some(AgentStartupGate::Login),
             ..self.report(fence, AgentRuntimeActivity::Waiting, None, false)
         })
     }
@@ -748,6 +753,7 @@ impl Lifecycle {
             conversation_identity: self.conversation_identity(fence),
             expected_observation: None,
             background_work: false,
+            startup_gate: None,
         }
     }
 }

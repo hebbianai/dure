@@ -437,6 +437,9 @@ fn signed_out_account_before_a_session_reports_that_codex_needs_a_person() {
         .expect("the sign-in screen must reach the Host");
     assert_eq!(report.activity, AgentRuntimeActivity::Waiting);
     assert_eq!(report.attention, AgentRuntimeAttention::InputRequired);
+    // The typed gate is what lets the Host name a sign-in exit; nothing here
+    // reads the terminal.
+    assert_eq!(report.startup_gate, Some(AgentStartupGate::Login));
     assert!(!report.identity_only);
     assert!(!report.turn_completed);
     assert!(report.conversation_identity.is_none());
@@ -463,6 +466,7 @@ fn signed_out_account_before_a_session_reports_that_codex_needs_a_person() {
         .unwrap();
     assert_eq!(report.activity, AgentRuntimeActivity::Working);
     assert_eq!(report.attention, AgentRuntimeAttention::None);
+    assert_eq!(report.startup_gate, None);
 }
 
 #[test]

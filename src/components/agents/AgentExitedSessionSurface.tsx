@@ -20,6 +20,7 @@ export function AgentExitedSessionSurface({
 	onOpenShell,
 	resuming,
 	structuredAttachRecoveryVisible,
+	signInRequired = false,
 	onTransitioningChange,
 	onRecoveryAvailabilityChange,
 }: {
@@ -32,6 +33,9 @@ export function AgentExitedSessionSurface({
 	onOpenShell?: () => Promise<void>;
 	resuming: boolean;
 	structuredAttachRecoveryVisible: boolean;
+	/** The exited session's typed failure says its provider stopped at the
+	 *  sign-in screen. */
+	signInRequired?: boolean;
 	onTransitioningChange?(transitioning: boolean): void;
 	onRecoveryAvailabilityChange?(available: boolean, deadInput: boolean): void;
 }) {
@@ -90,6 +94,7 @@ export function AgentExitedSessionSurface({
 								paneId={panelId}
 								error="session_exited"
 								attachRecovery={attachRecovery}
+								signInRequired={signInRequired}
 								// The chat pane paints the group's surface, not the terminal's.
 								surface="pane"
 							/>

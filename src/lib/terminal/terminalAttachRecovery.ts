@@ -16,6 +16,18 @@ export interface TerminalAttachWorktreeRecovery {
 	readonly recreate: () => Promise<unknown>;
 }
 
+/** Sign-in recovery the owning pane offers when its provider exited at the
+ * sign-in screen (the runtime's typed `provider_exited_at_sign_in` failure).
+ * Shown only for that failure; never inferred from terminal output. */
+export interface TerminalAttachSignInRecovery {
+	/** The pane's account, named in the notice when known. */
+	readonly accountName?: string;
+	/** Sign the pane's account in again. Absent where the pane cannot. */
+	readonly signIn?: () => void;
+	/** Choose another account for this pane. */
+	readonly switchAccount?: () => void;
+}
+
 export interface TerminalAttachRecovery {
 	/** Exact source and chosen recovery target, independent of display text. */
 	readonly ownerKey: string;
@@ -30,4 +42,6 @@ export interface TerminalAttachRecovery {
 	 * self-healing so the user can choose restoration or fallback placement. */
 	readonly automatic?: boolean;
 	readonly worktree?: TerminalAttachWorktreeRecovery;
+	/** Offered instead of self-healing after a sign-in exit. */
+	readonly signIn?: TerminalAttachSignInRecovery;
 }

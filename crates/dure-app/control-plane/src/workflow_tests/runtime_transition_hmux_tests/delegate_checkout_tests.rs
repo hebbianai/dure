@@ -644,6 +644,7 @@ fn report_worker_state(
             }),
             expected_observation: None,
             background_work: false,
+            startup_gate: None,
         },
         fence,
     )

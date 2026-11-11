@@ -42,6 +42,9 @@ interface AgentCredentialSwitcherProps {
 	onRemoteLogin: (account: AccountProfile) => void;
 	onCopyToHost: (account: AccountProfile) => void;
 	onManageAccounts: () => void;
+	/** Lets the owning pane open the menu, e.g. from a sign-in recovery. */
+	open?: boolean;
+	onOpenChange?: (open: boolean) => void;
 }
 
 export function AgentCredentialSwitcher({
@@ -64,8 +67,12 @@ export function AgentCredentialSwitcher({
 	onRemoteLogin,
 	onCopyToHost,
 	onManageAccounts,
+	open: controlledOpen,
+	onOpenChange,
 }: AgentCredentialSwitcherProps) {
-	const [open, setOpen] = useState(false);
+	const [ownOpen, setOwnOpen] = useState(false);
+	const open = controlledOpen ?? ownOpen;
+	const setOpen = onOpenChange ?? setOwnOpen;
 	const replacing = useManagedCredentialSwitchTransition(agentId);
 	const switching = accountBusy || replacing;
 	const mutationDisabled = disabled || switching;

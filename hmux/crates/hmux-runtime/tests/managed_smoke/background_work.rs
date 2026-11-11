@@ -15,6 +15,7 @@ fn turn_ended_with_background_work() -> AgentStateReport {
         conversation_identity: None,
         expected_observation: None,
         background_work: true,
+        startup_gate: None,
     }
 }
 

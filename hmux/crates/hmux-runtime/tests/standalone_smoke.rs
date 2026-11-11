@@ -7434,6 +7434,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 conversation_identity: None,
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
             None,
         )
@@ -7467,6 +7468,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 conversation_identity: None,
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
             None,
         )
@@ -7494,6 +7496,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 conversation_identity: None,
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
             None,
         )
@@ -7515,6 +7518,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                 conversation_identity: None,
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
             None,
         )
@@ -7554,6 +7558,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                     conversation_identity: None,
                     expected_observation: None,
                     background_work: false,
+                    startup_gate: None,
                 },
                 None,
             )
@@ -7576,6 +7581,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                     conversation_identity: None,
                     expected_observation: Some(stale_boundary),
                     background_work: false,
+                    startup_gate: None,
                 },
                 None,
             )
@@ -7621,6 +7627,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
                         output_sequence: current_snapshot.sequence_through.parse().unwrap(),
                     }),
                     background_work: false,
+                    startup_gate: None,
                 },
                 None,
             )
@@ -7683,6 +7690,7 @@ fn bounded_working_report_retains_work_until_a_typed_provider_report() {
                     conversation_identity: None,
                     expected_observation: None,
                     background_work: false,
+                    startup_gate: None,
                 },
                 None,
             )
@@ -7732,6 +7740,7 @@ fn bounded_working_report_retains_work_until_a_typed_provider_report() {
                     conversation_identity: None,
                     expected_observation: None,
                     background_work: false,
+                    startup_gate: None,
                 },
                 None,
             )
@@ -7793,6 +7802,7 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
                     conversation_identity: None,
                     expected_observation: None,
                     background_work: false,
+                    startup_gate: None,
                 },
                 None,
             )
@@ -7831,6 +7841,7 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
                     conversation_identity: None,
                     expected_observation: None,
                     background_work: false,
+                    startup_gate: None,
                 },
                 None,
             )
@@ -7915,6 +7926,7 @@ fn a_turn_end_after_a_submit_that_started_no_turn_publishes_waiting() {
         conversation_identity: None,
         expected_observation: None,
         background_work: false,
+        startup_gate: None,
     };
 
     assert_eq!(
@@ -9444,6 +9456,7 @@ fn agent_progress_native_deadline_survives_observer_reconnect() {
         conversation_identity: None,
         expected_observation: None,
         background_work: false,
+        startup_gate: None,
     };
     assert_eq!(
         session.report_agent_state(report.clone(), None).unwrap(),
