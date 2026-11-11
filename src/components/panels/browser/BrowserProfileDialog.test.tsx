@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { BrowserPaneSession } from "@/lib/browser/browserPaneSession";
 import { createDureBrowserClient } from "@/lib/ipc/dureBrowser";
@@ -420,12 +426,17 @@ it("keeps interrupted retirement manageable while refusing it as a page destinat
 		fireEvent.click(
 			screen.getByRole("button", { name: "panels.browser.deleteProfile" }),
 		);
-		fireEvent.click(
-			screen.getByRole("button", {
-				name: "panels.browser.confirmDeleteProfile",
-			}),
-		);
-		await screen.findByText("ipc.browser.requestFailed");
+		// Settle the failed retirement inside act. Radix refreshes the dialog's
+		// Escape handler in a passive effect, so waiting only for the error text
+		// let a slow runner press Escape while the busy handler still refused it.
+		await act(async () => {
+			fireEvent.click(
+				screen.getByRole("button", {
+					name: "panels.browser.confirmDeleteProfile",
+				}),
+			);
+		});
+		expect(screen.getByText("ipc.browser.requestFailed")).toBeDefined();
 		expect(state.actions).toHaveLength(1);
 		fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
