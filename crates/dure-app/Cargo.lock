@@ -630,7 +630,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "agent-orchestration",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "chrono-tz",
  "dure-app",
@@ -1119,7 +1119,7 @@ name = "hmux-host"
 version = "0.2.63"
 dependencies = [
  "alacritty_terminal",
- "base64 0.22.1",
+ "base64 0.23.1",
  "fs2",
  "hmux-local-platform",
  "hmux-session-protocol",
@@ -1152,7 +1152,7 @@ dependencies = [
 name = "hmux-session-protocol"
 version = "0.2.63"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "serde",
  "serde_json",
 ]
