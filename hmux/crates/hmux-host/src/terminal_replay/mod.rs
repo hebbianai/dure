@@ -449,6 +449,11 @@ pub struct TerminalReplay {
     // provider report or accepted submit clears it. See
     // `record_controller_interrupt_request`.
     interrupt_requested: bool,
+    // The first-run prompt (a sign-in screen) the provider last reported it
+    // is stopped at. Host-owned and not on the wire: it lives exactly as long
+    // as the attention episode it arrived with, so a provider that exits
+    // there leaves a typed cause. See `agent_startup_gate`.
+    agent_startup_gate: Option<crate::local_protocol::AgentStartupGate>,
     limits: TerminalReplayLimits,
 }
 
@@ -764,6 +769,7 @@ impl TerminalReplay {
             unsubmitted_controller_draft: ControllerDraft::Empty,
             fresh_agent_prompt_consumed: false,
             interrupt_requested: false,
+            agent_startup_gate: None,
             limits,
         })
     }
@@ -810,6 +816,7 @@ impl TerminalReplay {
             unsubmitted_controller_draft: ControllerDraft::Empty,
             fresh_agent_prompt_consumed: false,
             interrupt_requested: false,
+            agent_startup_gate: None,
             limits,
         })
     }
@@ -817,6 +824,14 @@ impl TerminalReplay {
     #[must_use]
     pub fn fence(&self) -> &SessionFence {
         &self.fence
+    }
+
+    /// The first-run prompt the provider last reported it is stopped at, such
+    /// as its sign-in screen. It is kept for the attention episode it arrived
+    /// with and never inferred from terminal output.
+    #[must_use]
+    pub fn agent_startup_gate(&self) -> Option<crate::local_protocol::AgentStartupGate> {
+        self.agent_startup_gate
     }
 
     #[must_use]
@@ -1410,6 +1425,8 @@ impl TerminalReplay {
                 if acknowledges_input {
                     self.acknowledge_controller_submit();
                 }
+                // A completed turn is past any first-run prompt.
+                self.agent_startup_gate = None;
                 return Ok(input_projection
                     .map_or(AgentStateReportFold::NoOp, AgentStateReportFold::Applied));
             }
@@ -1471,6 +1488,17 @@ impl TerminalReplay {
         if settle_identified_completion {
             self.remember_report_causality(&report);
         }
+        // The gate belongs to the attention episode it arrived with: a
+        // waiting report without attention keeps both, as it keeps the
+        // attention above, and every other report ends both.
+        let keeps_attention_episode = activity == AgentRuntimeActivity::Waiting
+            && report.attention == AgentRuntimeAttention::None
+            && !report.turn_completed;
+        self.agent_startup_gate = report.startup_gate.or(if keeps_attention_episode {
+            self.agent_startup_gate
+        } else {
+            None
+        });
         // Every later report supersedes a pending candidate, even when its
         // activity is unchanged. Retire only after the fallible fold succeeds.
         self.retire_pending_turn_completion();

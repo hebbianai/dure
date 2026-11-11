@@ -117,6 +117,7 @@ fn startup_gate_report() -> hmux_client::AgentStateReport {
         conversation_identity: None,
         expected_observation: None,
         background_work: false,
+        startup_gate: None,
     }
 }
 

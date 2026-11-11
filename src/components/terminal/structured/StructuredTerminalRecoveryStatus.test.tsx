@@ -115,3 +115,70 @@ it.each([
 		).toContain("session_exited");
 	},
 );
+
+it("a sign-in exit does not self-heal and offers the pane's sign-in recovery", async () => {
+	const resume = vi.fn(async () => {});
+	const signIn = vi.fn();
+	const switchAccount = vi.fn();
+	render(
+		<StructuredTerminalRecoveryStatus
+			paneId="agent:sign-in"
+			error="Managed provider exited with status 1 at its sign-in screen."
+			signInRequired
+			attachRecovery={{
+				intent: "start_fresh" as const,
+				ownerKey: "fixture-runtime",
+				context: "pane=agent:sign-in",
+				resume,
+				automatic: true,
+				transitioning: false,
+				signIn: { accountName: "Work", signIn, switchAccount },
+			}}
+		/>,
+	);
+	// Starting the same signed-out account again would park on the same
+	// sign-in screen, so the one-shot self-heal stays off.
+	expect(resume).not.toHaveBeenCalled();
+	expect(screen.getByText(t("terminal.recovery.signInTitle"))).toBeTruthy();
+	expect(
+		screen.getByText(t("terminal.recovery.signInBody", { account: "Work" })),
+	).toBeTruthy();
+	expect(paneActionSnapshot("agent:sign-in")?.actions).toEqual(
+		expect.arrayContaining(["start_fresh", "sign_in", "switch_account"]),
+	);
+	await act(async () =>
+		screen.getByRole("button", { name: t("agents.chat.recovery.signIn") }).click(),
+	);
+	expect(signIn).toHaveBeenCalledOnce();
+	await act(async () =>
+		screen
+			.getByRole("button", { name: t("agents.chat.recovery.chooseAccount") })
+			.click(),
+	);
+	expect(switchAccount).toHaveBeenCalledOnce();
+	expect(resume).not.toHaveBeenCalled();
+});
+
+it("a sign-in exit without pane recovery still skips self-healing", () => {
+	const resume = vi.fn(async () => {});
+	render(
+		<StructuredTerminalRecoveryStatus
+			paneId="terminal:sign-in"
+			error="Managed provider exited at its sign-in screen."
+			signInRequired
+			attachRecovery={{
+				intent: "start_fresh" as const,
+				ownerKey: "fixture-runtime",
+				context: "pane=terminal:sign-in",
+				resume,
+				automatic: true,
+				transitioning: false,
+			}}
+		/>,
+	);
+	expect(resume).not.toHaveBeenCalled();
+	expect(screen.getByText(t("terminal.recovery.signInBodyUnnamed"))).toBeTruthy();
+	expect(
+		screen.queryByRole("button", { name: t("agents.chat.recovery.signIn") }),
+	).toBeNull();
+});

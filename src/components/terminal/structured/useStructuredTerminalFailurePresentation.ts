@@ -198,6 +198,8 @@ export function useStructuredTerminalFailurePresentation({
 			presentation?.kind === "general" && presentation.recoveryAvailable,
 		errorMessageId:
 			presentation?.kind === "general" ? presentation.messageId : undefined,
+		signInRequired:
+			presentation?.kind === "general" && presentation.signInRequired === true,
 		controller,
 	};
 }

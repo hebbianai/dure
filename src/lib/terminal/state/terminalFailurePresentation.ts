@@ -1,4 +1,7 @@
-import { isHmuxSessionFailureError } from "@/lib/hmux/failure/sessionFailure";
+import {
+	isHmuxSessionFailureError,
+	isHmuxSignInFailure,
+} from "@/lib/hmux/failure/sessionFailure";
 import type { TerminalIntentReceiptKind } from "./terminalIntentReceiptSequence";
 
 export const TERMINAL_CONNECTION_FAILURE_MESSAGE_ID =
@@ -19,6 +22,12 @@ export type TerminalFailurePresentation =
 			 * still needs after the pane resumes serving frames.
 			 */
 			readonly retiredByCompleteFrame: boolean;
+			/**
+			 * The runtime's typed failure says the provider exited at its sign-in
+			 * screen. Recovery offers signing in or another account instead of
+			 * starting the same signed-out account again.
+			 */
+			readonly signInRequired?: true;
 	  }
 	| {
 			/**
@@ -46,6 +55,9 @@ export function presentTerminalFailure(
 		message: isHmuxSessionFailureError(cause) ? cause.message : String(cause),
 		...(messageId ? { messageId } : {}),
 		retiredByCompleteFrame,
+		...(isHmuxSessionFailureError(cause) && isHmuxSignInFailure(cause.failure)
+			? { signInRequired: true as const }
+			: {}),
 	};
 }
 

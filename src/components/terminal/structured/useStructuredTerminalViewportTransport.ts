@@ -193,7 +193,7 @@ export function useStructuredTerminalViewportTransport({
 		error,
 		errorMessageId,
 		dismissError,
-		recoveryAvailable,
+		recoveryAvailable, signInRequired,
 		connectionFailed,
 		controller: failure,
 	} = useStructuredTerminalFailurePresentation({
@@ -885,7 +885,7 @@ export function useStructuredTerminalViewportTransport({
 		error,
 		errorMessageId,
 		dismissError,
-		recoveryAvailable,
+		recoveryAvailable, signInRequired,
 		reconnect: connectionFailed ? reconnect : undefined,
 		observerIdRef,
 		attachedObserverRef,

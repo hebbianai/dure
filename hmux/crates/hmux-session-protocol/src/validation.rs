@@ -708,6 +708,15 @@ fn validate_agent_state_report(
     {
         return Err(inconsistent("agent_state_report.background_work"));
     }
+    if frame.startup_gate.is_some()
+        && (frame.identity_only
+            || frame.turn_completed
+            || frame.background_work
+            || frame.activity != AgentRuntimeActivity::Waiting
+            || frame.attention != AgentRuntimeAttention::InputRequired)
+    {
+        return Err(inconsistent("agent_state_report.startup_gate"));
+    }
     if let Some(causality) = &frame.causality {
         if causality.sequence == 0 {
             return Err(out_of_range("agent_state_report.causality.sequence"));
@@ -1998,6 +2007,7 @@ mod tests {
             working_ttl_ms: None,
             expected_observation: None,
             background_work: false,
+            startup_gate: None,
             conversation_identity: Some(crate::ProviderConversationIdentityReport {
                 provider_id: "claude".into(),
                 conversation_id: "next".into(),
@@ -2057,6 +2067,7 @@ mod tests {
             conversation_identity: None,
             expected_observation: None,
             background_work: true,
+            startup_gate: None,
         };
         let codec = FrameCodec::new(FrameLimits::default());
         let wire = frame(FrameBody::AgentStateReport(report.clone()));
@@ -2133,6 +2144,65 @@ mod tests {
     }
 
     #[test]
+    fn agent_state_report_startup_gate_is_valid_only_while_waiting_for_input() {
+        use crate::{
+            AgentRuntimeActivity, AgentRuntimeAttention, AgentStartupGate, AgentStateReport,
+        };
+
+        let codec = FrameCodec::new(FrameLimits::default());
+        let valid = AgentStateReport {
+            progress: None,
+            request_id: "report-1".into(),
+            identity_only: false,
+            activity: AgentRuntimeActivity::Waiting,
+            attention: AgentRuntimeAttention::InputRequired,
+            turn_completed: false,
+            turn_completion_id: None,
+            causality: None,
+            working_ttl_ms: None,
+            conversation_identity: None,
+            expected_observation: None,
+            background_work: false,
+            startup_gate: Some(AgentStartupGate::Login),
+        };
+        let wire = frame(FrameBody::AgentStateReport(valid.clone()));
+        let encoded = codec.encode(&wire).unwrap();
+        assert!(String::from_utf8_lossy(&encoded).contains(r#""startup_gate":"login""#));
+        assert_eq!(codec.decode(&encoded).unwrap(), wire);
+
+        for invalid in [
+            AgentStateReport {
+                attention: AgentRuntimeAttention::None,
+                ..valid.clone()
+            },
+            AgentStateReport {
+                attention: AgentRuntimeAttention::ApprovalRequired,
+                ..valid.clone()
+            },
+            AgentStateReport {
+                activity: AgentRuntimeActivity::Working,
+                attention: AgentRuntimeAttention::None,
+                ..valid.clone()
+            },
+            AgentStateReport {
+                turn_completed: true,
+                ..valid.clone()
+            },
+        ] {
+            let result =
+                frame(FrameBody::AgentStateReport(invalid)).validate(&FrameLimits::default());
+            assert!(
+                matches!(
+                    result,
+                    Err(FrameValidationError::Inconsistent { field })
+                        if field == "agent_state_report.startup_gate"
+                ),
+                "unexpected validation result: {result:?}"
+            );
+        }
+    }
+
+    #[test]
     fn agent_state_reports_are_bounded_consistent_and_round_trip() {
         use crate::{
             AGENT_STATE_REPORT_MAX_WORKING_TTL_MS, AgentStateReport,
@@ -2154,6 +2224,7 @@ mod tests {
             conversation_identity: None,
             expected_observation: None,
             background_work: false,
+            startup_gate: None,
         };
         for report in [
             valid.clone(),

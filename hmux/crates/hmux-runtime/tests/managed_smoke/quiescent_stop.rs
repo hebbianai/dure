@@ -40,6 +40,7 @@ fn quiescent_managed_stop_refuses_after_a_reserved_crash_and_controller_input() 
         conversation_identity: None,
         expected_observation: None,
         background_work: false,
+        startup_gate: None,
     };
     assert!(matches!(
         reporter

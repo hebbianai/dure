@@ -111,6 +111,8 @@ fn into_client_report(
         // The reporter replaces it with the plain working report for a Host
         // that does not negotiate background work.
         background_work: report.background_work,
+        // The reporter drops it for a Host that does not negotiate it.
+        startup_gate: report.startup_gate,
     }
 }
 

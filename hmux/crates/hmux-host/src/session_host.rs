@@ -714,6 +714,16 @@ impl SessionHost {
         }
     }
 
+    /// The first-run prompt the running provider last reported it is stopped
+    /// at. An exited epoch keeps no gate: its tombstone carries the outcome.
+    #[must_use]
+    pub fn current_agent_startup_gate(&self) -> Option<crate::local_protocol::AgentStartupGate> {
+        match &self.current {
+            ProviderEpoch::Running { replay, .. } => replay.agent_startup_gate(),
+            ProviderEpoch::Exited(_) | ProviderEpoch::Transitioning => None,
+        }
+    }
+
     pub fn current_snapshot(
         &self,
         profile: ScreenSnapshotProfile,
@@ -1246,6 +1256,7 @@ mod tests {
             working_ttl_ms: None,
             expected_observation: None,
             background_work: false,
+            startup_gate: None,
         };
         assert!(matches!(
             host.apply_agent_state_report(&current, report.clone())

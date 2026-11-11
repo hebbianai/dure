@@ -1221,6 +1221,7 @@ fn remote_waiting_fence(
                 conversation_identity: None,
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
         )
         .unwrap();

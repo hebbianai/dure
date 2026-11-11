@@ -20,6 +20,7 @@ use hmux_session_protocol::{
     MANAGED_AUTHORIZATION_GRANT_CAPABILITY, PROVIDER_CONVERSATION_IDENTITY_CAPABILITY,
     PROVIDER_CONVERSATION_IDENTITY_ONLY_REPORT_CAPABILITY, ProviderConversationIdentityReport,
 };
+use hmux_session_protocol::{AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY, AgentStartupGate};
 use serde::Serialize;
 use std::fmt;
 #[cfg(feature = "local-runtime")]
@@ -56,6 +57,11 @@ pub struct AgentStateReport {
     /// `agent_state_report_background_work_v1` receive the plain working
     /// report instead, see [`AgentStateReport::without_background_work`].
     pub background_work: bool,
+    /// The provider is stopped at this first-run prompt before any
+    /// conversation, as the adapter read from provider state. Only beside
+    /// `waiting` with `input_required`. Hosts without
+    /// `agent_state_report_startup_gate_v1` receive the report without it.
+    pub startup_gate: Option<AgentStartupGate>,
 }
 
 impl AgentStateReport {
@@ -243,6 +249,18 @@ impl LocalSession {
                 "turn completion identity requires a completed turn",
             ));
         }
+        if report.startup_gate.is_some()
+            && (report.identity_only
+                || report.turn_completed
+                || report.background_work
+                || report.activity != AgentRuntimeActivity::Waiting
+                || report.attention != AgentRuntimeAttention::InputRequired)
+        {
+            return Err(ClientError::transport(
+                "hmux_invalid_agent_state_report",
+                "a startup gate is reported only while waiting for input",
+            ));
+        }
         // Refuse before connecting when discovery already proves the Host
         // predates the capability. The authoritative check below still runs
         // because discovery can be stale.
@@ -274,6 +292,16 @@ impl LocalSession {
             .any(|capability| capability == AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY)
         {
             report = report.without_background_work();
+        }
+        // The gate only names why the provider waits; a Host that predates it
+        // still receives the same waiting, input-required report.
+        if !self
+            .descriptor()
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY)
+        {
+            report.startup_gate = None;
         }
         let identified_completion = report.turn_completion_id.is_some();
         let causal = report.causality.is_some();
@@ -401,6 +429,9 @@ impl LocalSession {
         if report.background_work {
             optional_capabilities.push(AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY);
         }
+        if report.startup_gate.is_some() {
+            optional_capabilities.push(AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY);
+        }
         let mut connection = self.connect_with_options(
             ConnectionOptions::new(LocalAttachRole::Observer, authorization_proof_reference)
                 .with_optional_capabilities(&optional_capabilities),
@@ -459,6 +490,9 @@ impl LocalSession {
         if !connection.supports(AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY) {
             report = report.without_background_work();
         }
+        if !connection.supports(AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY) {
+            report.startup_gate = None;
+        }
         let request_id = next_report_request_id();
         let identity_only = report.identity_only;
         let expected_conversation_identity = report.conversation_identity.clone();
@@ -508,6 +542,7 @@ impl LocalSession {
                     }
                 }),
                 background_work: report.background_work,
+                startup_gate: report.startup_gate,
             }))?;
 
         let receipt_started = Instant::now();
@@ -679,6 +714,7 @@ mod tests {
                 conversation_identity: None,
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
             None,
         );
@@ -705,6 +741,7 @@ mod tests {
             conversation_identity: None,
             expected_observation: None,
             background_work: true,
+            startup_gate: None,
         };
         let older = ended.clone().without_background_work();
         assert_eq!(older.activity, AgentRuntimeActivity::Working);
@@ -741,6 +778,7 @@ mod tests {
                     output_sequence: 0,
                 }),
                 background_work: false,
+                startup_gate: None,
             },
             None,
         );
@@ -770,6 +808,7 @@ mod tests {
                 conversation_identity: None,
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
             None,
         );
@@ -801,6 +840,7 @@ mod tests {
                 conversation_identity: None,
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
             None,
         );
@@ -839,6 +879,7 @@ mod tests {
                 }),
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
             None,
         );
@@ -891,6 +932,7 @@ mod tests {
                 }),
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
             None,
         );
@@ -928,6 +970,7 @@ mod tests {
                 }),
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
             None,
         );

@@ -1497,6 +1497,7 @@ impl HmuxManager {
             conversation_identity,
             expected_observation,
             background_work,
+            startup_gate: None,
         };
         if report
             .conversation_identity
@@ -1624,6 +1625,7 @@ impl HmuxManager {
                     }),
                     expected_observation: None,
                     background_work: false,
+                    startup_gate: None,
                 },
                 expected_fence,
             )

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { HmuxSessionFailureError } from "@/lib/hmux/failure/sessionFailure";
+import {
+	HMUX_PROVIDER_EXITED_AT_SIGN_IN,
+	HmuxSessionFailureError,
+} from "@/lib/hmux/failure/sessionFailure";
 import {
 	presentTerminalFailure,
 	presentTerminalReceiptFailure,
@@ -34,6 +37,38 @@ describe("terminal failure presentation authority", () => {
 				"Managed provider exited before conversation identity was established. Correlation: failure_0123456789abcdef",
 			retiredByCompleteFrame: false,
 		});
+	});
+
+	it("marks only the runtime's typed sign-in exit as needing sign-in recovery", () => {
+		const failure = (code: string) =>
+			new HmuxSessionFailureError({
+				correlationId: "failure_0123456789abcdef",
+				sessionId: "session-1",
+				workspaceId: "workspace-1",
+				terminalEpoch: "terminal-1",
+				code,
+				phase: "conversation_identity",
+				summary:
+					"Managed provider exited with status 1 at its sign-in screen: its account is signed out or its sign-in expired.",
+				exitKind: "provider_error",
+				exitCode: 1,
+				occurredUnixMs: "3000",
+				retryPosture: "never",
+			});
+
+		expect(
+			presentTerminalFailure(failure(HMUX_PROVIDER_EXITED_AT_SIGN_IN)),
+		).toMatchObject({ kind: "general", signInRequired: true, recoveryAvailable: true });
+		// The same prose under another code is not a sign-in exit: recovery keys
+		// on the typed code, never on the summary.
+		expect(
+			presentTerminalFailure(
+				failure("provider_exited_before_conversation_identity"),
+			),
+		).not.toHaveProperty("signInRequired");
+		expect(
+			presentTerminalFailure(new Error(HMUX_PROVIDER_EXITED_AT_SIGN_IN)),
+		).not.toHaveProperty("signInRequired");
 	});
 
 	it("retires an older resize failure after a newer exact-attachment success", () => {

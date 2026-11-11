@@ -36,6 +36,11 @@ interface StructuredTerminalRecoveryStatusProps {
 	readonly errorMessageId?: TerminalFailureMessageId;
 	readonly onDismiss?: () => void;
 	readonly attachRecovery?: TerminalAttachRecovery;
+	/** The session's typed failure says its provider exited at the sign-in
+	 *  screen: starting the same signed-out account again would park on that
+	 *  screen, so the cover offers the pane's sign-in recovery instead of
+	 *  self-healing. */
+	readonly signInRequired?: boolean;
 	readonly onPresentationChange?: (visible: boolean) => void;
 	/** The surface the covered pane paints, so the cover paints the same one
 	 *  and the pane does not change colour when its session drops: a terminal
@@ -59,6 +64,7 @@ export function StructuredTerminalRecoveryStatus({
 	errorMessageId,
 	onDismiss,
 	attachRecovery,
+	signInRequired = false,
 	onPresentationChange,
 	surface = "terminal",
 }: StructuredTerminalRecoveryStatusProps) {
@@ -87,6 +93,7 @@ export function StructuredTerminalRecoveryStatus({
 	// the automatic effect starts. Inspection alone keeps its manual escape.
 	const automaticResumeReady = Boolean(
 		attachRecovery?.automatic &&
+			!signInRequired &&
 			resumeState === "idle" &&
 			(worktreePath === undefined ||
 				worktreeStatus === "present" ||
@@ -178,6 +185,10 @@ export function StructuredTerminalRecoveryStatus({
 	// The button's exact handler doubles as the pane's named action so UI and
 	// `dure client pane act` stay one authority with honest action semantics.
 	const worktreeMissing = worktreeStatus === "missing";
+	const signInVisible = signInRequired && !worktreeMissing;
+	const signInRecovery = signInVisible ? attachRecovery?.signIn : undefined;
+	const signInAction = signInRecovery?.signIn;
+	const switchAccountAction = signInRecovery?.switchAccount;
 	usePaneActions(
 		JSON.stringify([attachRecovery?.ownerKey, attachRecovery?.intent, worktreePath, worktreeBranch]),
 		paneId ? {
@@ -191,6 +202,12 @@ export function StructuredTerminalRecoveryStatus({
 							[primaryActionName]: reconnects ? reconnectAction : resumeAction,
 							...(worktreeMissing
 								? { recreate_worktree: recreateWorktreeAction }
+								: {}),
+							...(signInAction
+								? { sign_in: async () => signInAction() }
+								: {}),
+							...(switchAccountAction
+								? { switch_account: async () => switchAccountAction() }
 								: {}),
 						}
 					: {},
@@ -298,7 +315,9 @@ export function StructuredTerminalRecoveryStatus({
 					{t(
 						worktreeMissing
 							? "terminal.recovery.worktreeMissingTitle"
-							: reconnects ? "terminal.failure.connection" : "terminal.recovery.title",
+							: signInVisible
+								? "terminal.recovery.signInTitle"
+								: reconnects ? "terminal.failure.connection" : "terminal.recovery.title",
 					)}
 				</p>
 				<p className="text-center text-xs leading-5 text-muted-foreground">
@@ -306,11 +325,17 @@ export function StructuredTerminalRecoveryStatus({
 						? t("terminal.recovery.worktreeMissingBody", {
 								branch: attachRecovery.worktree?.branch ?? "",
 							})
-						: t(
-								startsFresh
-									? "agents.conversation.sessionEnded"
-									: reconnects ? "terminal.recovery.connectionBody" : "terminal.recovery.body",
-							)}
+						: signInVisible
+							? signInRecovery?.accountName
+								? t("terminal.recovery.signInBody", {
+										account: signInRecovery.accountName,
+									})
+								: t("terminal.recovery.signInBodyUnnamed")
+							: t(
+									startsFresh
+										? "agents.conversation.sessionEnded"
+										: reconnects ? "terminal.recovery.connectionBody" : "terminal.recovery.body",
+								)}
 				</p>
 				{worktreeMissing && attachRecovery.worktree && (
 					<Titled title={attachRecovery.worktree.path}>
@@ -327,9 +352,27 @@ export function StructuredTerminalRecoveryStatus({
 							{t("terminal.recovery.recreateWorktree")}
 						</Button>
 					)}
+					{signInAction && (
+						<Button size="sm" onClick={signInAction}>
+							{t("agents.chat.recovery.signIn")}
+						</Button>
+					)}
+					{switchAccountAction && (
+						<Button
+							size="sm"
+							variant={signInAction ? "outline" : "default"}
+							onClick={switchAccountAction}
+						>
+							{t("agents.chat.recovery.chooseAccount")}
+						</Button>
+					)}
 					<Button
 						size="sm"
-						variant={worktreeMissing ? "outline" : "default"}
+						variant={
+							worktreeMissing || signInAction || switchAccountAction
+								? "outline"
+								: "default"
+						}
 						onClick={onRecoveryResume}
 					>
 						{t(

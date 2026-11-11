@@ -310,6 +310,7 @@ const HOST_CAPABILITIES: &[&str] = &[
     hmux_host::local_protocol::AGENT_PROGRESS_CAPABILITY,
     hmux_host::local_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY,
     hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY,
+    hmux_host::local_protocol::AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY,
     "screen_snapshot",
     "live_output",
     "terminal_input",
@@ -2650,6 +2651,7 @@ fn run_host(packet: HostLaunchPacket) -> Result<()> {
             &exit_status,
             completion.terminated,
             conversation_identity_present,
+            host.current_agent_startup_gate(),
         );
         let completed = host.complete_provider(&fence, exit_status)?;
         let broadcasts = completed
@@ -2769,17 +2771,37 @@ fn run_host(packet: HostLaunchPacket) -> Result<()> {
     Ok(())
 }
 
+/// Failure code for a managed provider that exited at its sign-in screen. The
+/// cause comes only from the provider adapter's typed `login` startup gate,
+/// never from terminal output; clients key sign-in recovery on this code.
+const PROVIDER_EXITED_AT_SIGN_IN: &str = "provider_exited_at_sign_in";
+
 fn managed_session_failure(
     session_class: SessionClass,
     fence: &SessionFence,
     status: &ProviderExitStatus,
     terminated: bool,
     conversation_identity_present: bool,
+    startup_gate: Option<hmux_host::local_protocol::AgentStartupGate>,
 ) -> Option<SessionFailureCapsule> {
     if session_class != SessionClass::Managed || terminated {
         return None;
     }
-    let (code, phase, summary) = if !conversation_identity_present {
+    let (code, phase, summary) = if !conversation_identity_present
+        && startup_gate == Some(hmux_host::local_protocol::AgentStartupGate::Login)
+    {
+        let summary = match status.exit_code {
+            Some(exit_code) => format!(
+                "Managed provider exited with status {exit_code} at its sign-in screen: its account is signed out or its sign-in expired."
+            ),
+            None => "Managed provider exited at its sign-in screen: its account is signed out or its sign-in expired.".to_string(),
+        };
+        (
+            PROVIDER_EXITED_AT_SIGN_IN,
+            SessionFailurePhase::ConversationIdentity,
+            summary,
+        )
+    } else if !conversation_identity_present {
         let summary = match status.exit_code {
             Some(exit_code) => format!(
                 "Managed provider exited with status {exit_code} before conversation identity was established."
@@ -4814,6 +4836,9 @@ fn serve_client(
     let agent_state_report_background_work = selected_capabilities.iter().any(|v| {
         v == hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY
     });
+    let agent_state_report_startup_gate = selected_capabilities.iter().any(|v| {
+        v == hmux_host::local_protocol::AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY
+    });
     let reconnect_cursor = selected_capabilities
         .iter()
         .any(|capability| capability == RECONNECT_RESUME_CAPABILITY)
@@ -5120,6 +5145,7 @@ fn serve_client(
             agent_state_report_completion_id,
             agent_state_report_progress,
             agent_state_report_background_work,
+            agent_state_report_startup_gate,
             agent_state_report_causality,
             agent_state_report_observation_fence,
             provider_conversation_identity,
@@ -5182,6 +5208,7 @@ struct ClientPermissions {
     agent_state_report_completion_id: bool,
     agent_state_report_progress: bool,
     agent_state_report_background_work: bool,
+    agent_state_report_startup_gate: bool,
     agent_state_report_causality: bool,
     agent_state_report_observation_fence: bool,
     provider_conversation_identity: bool,
@@ -5563,6 +5590,7 @@ fn client_read_loop(
                             .provider_conversation_identity_only_report,
                         conversation_continuation: permissions.provider_conversation_continuation,
                         background_work: permissions.agent_state_report_background_work,
+                        startup_gate: permissions.agent_state_report_startup_gate,
                     },
                     report,
                 );
@@ -6031,6 +6059,89 @@ mod tests {
         OutputDelta, WireFrame,
     };
     use subscriber_delivery::{FrameQueue, OutboundRecord};
+
+    fn managed_failure_fence() -> SessionFence {
+        SessionFence {
+            workspace_id: "workspace-1".into(),
+            session_id: "session-1".into(),
+            runner_principal: "local-user".into(),
+            runner_instance: "runner-1".into(),
+            channel_epoch: 1,
+            host_instance_id: "host-1".into(),
+            terminal_epoch: "terminal-1".into(),
+        }
+    }
+
+    fn provider_error_exit(exit_code: i32) -> ProviderExitStatus {
+        ProviderExitStatus {
+            exit_code: Some(exit_code),
+            platform_status: None,
+            kind: ProviderExitKind::ProviderError,
+            reason: format!("provider exited with status {exit_code}"),
+            created_unix_ms: 3_000,
+            failure: None,
+        }
+    }
+
+    #[test]
+    fn a_provider_that_exits_at_its_reported_sign_in_screen_names_that_cause() {
+        let fence = managed_failure_fence();
+        let failure = managed_session_failure(
+            SessionClass::Managed,
+            &fence,
+            &provider_error_exit(1),
+            false,
+            false,
+            Some(hmux_host::local_protocol::AgentStartupGate::Login),
+        )
+        .unwrap();
+        assert_eq!(failure.code, PROVIDER_EXITED_AT_SIGN_IN);
+        assert_eq!(failure.phase, SessionFailurePhase::ConversationIdentity);
+        assert_eq!(failure.exit_kind, ProviderExitKind::ProviderError);
+        assert_eq!(failure.exit_code, Some(1));
+        assert!(failure.summary.contains("sign-in screen"), "{}", failure.summary);
+        assert!(failure.summary.len() <= 512);
+    }
+
+    #[test]
+    fn a_sign_in_cause_needs_the_typed_gate_and_no_conversation() {
+        let fence = managed_failure_fence();
+        let without_gate = managed_session_failure(
+            SessionClass::Managed,
+            &fence,
+            &provider_error_exit(1),
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            without_gate.code,
+            "provider_exited_before_conversation_identity"
+        );
+        let after_conversation = managed_session_failure(
+            SessionClass::Managed,
+            &fence,
+            &provider_error_exit(1),
+            false,
+            true,
+            Some(hmux_host::local_protocol::AgentStartupGate::Login),
+        )
+        .unwrap();
+        assert_eq!(after_conversation.code, "provider_exited");
+        assert!(
+            managed_session_failure(
+                SessionClass::Managed,
+                &fence,
+                &provider_error_exit(1),
+                true,
+                false,
+                Some(hmux_host::local_protocol::AgentStartupGate::Login),
+            )
+            .is_none(),
+            "a Host-requested stop is not a failure"
+        );
+    }
 
     /// Red-first contract for the socket root: the default must be
     /// home-anchored (the runtime's own lifetime), never the OS-reaped temp

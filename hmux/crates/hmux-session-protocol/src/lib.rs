@@ -51,7 +51,7 @@ pub use terminal_default_colors::{InvalidRgbColor, TerminalDefaultColors};
 pub use terminal_frames::{
     AGENT_STATE_REPORT_MAX_WORKING_TTL_MS, AgentIdentityProjection, AgentIdentitySource,
     AgentProvider, AgentRuntimeActivity, AgentRuntimeAttention, AgentRuntimeLifecycle,
-    AgentRuntimeStateProjection, AgentRuntimeStateSource, AgentStateReport,
+    AgentRuntimeStateProjection, AgentRuntimeStateSource, AgentStartupGate, AgentStateReport,
     AgentStateReportCausality, AgentStateReportObservationFence, AgentStateReportOutcome,
     AgentStateReportReceipt, ControlReceipt, ControlReceiptState, ControlRelease, ControlRequest,
     Detach, ErrorCode, ErrorFrame, ExecutionLocation, ExecutionLocationProjection,
@@ -218,6 +218,11 @@ pub const AGENT_STATE_REPORT_CAUSALITY_CAPABILITY: &str = "agent_state_report_ca
 /// that do not select it.
 pub const AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY: &str =
     "agent_state_report_background_work_v1";
+/// Lets a reporter name the first-run prompt (such as a sign-in screen) a
+/// provider is stopped at before any conversation. The Host keeps it with the
+/// attention episode it arrived with, so a provider that exits there leaves a
+/// typed failure cause. Reporters omit it for Hosts that do not select it.
+pub const AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY: &str = "agent_state_report_startup_gate_v1";
 /// Lets a local same-user runtime broker obtain one short-lived, single-use
 /// proof for a managed attach. It is never relayed or written to discovery.
 pub const MANAGED_AUTHORIZATION_GRANT_CAPABILITY: &str = "managed_authorization_grant_v1";

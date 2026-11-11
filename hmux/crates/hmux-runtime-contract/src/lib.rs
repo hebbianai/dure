@@ -5860,6 +5860,7 @@ mod tests {
                 ),
                 expected_observation: None,
                 background_work: false,
+                startup_gate: None,
             },
         )
         .unwrap();
