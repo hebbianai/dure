@@ -2081,6 +2081,7 @@ Usage:
   dure run [--project ID | --path PATH] [--provider ID] [--name NAME]
            [--worktree NAME [--base-commit SHA] [--branch REF]]
            [--setup-command COMMAND] [--account ACCOUNT_ID|default]
+           [--runtime chat|terminal]
            [--permission-override require_approvals|auto_edit|bypass_approvals]
            [--skip-permissions]
            [--space ID|NAME] [--idempotency-key KEY] [--backend ID] [--json] [--verbose]
@@ -2102,7 +2103,12 @@ When --space is omitted inside an exact Hmux pane, the new pane opens in the sam
 In a terminal or CI environment without a verified calling pane, the Run executes headlessly.
 A pane follows the connected app's Default agent pane setting. A headless Run uses the provider's
 chat runtime when the host has one (read it with dure transcript AGENT_ID) and a terminal session
-otherwise. A local Run the connected app adopts stays a terminal session.
+otherwise. A local Run the connected app adopts stays a terminal session. When that default is a
+terminal session but the execution host has no Dure-managed terminal integration for the provider,
+the Run starts in the provider's chat runtime instead and says so on stderr.
+--runtime chat|terminal chooses the interface wherever the command runs, overriding those defaults.
+chat stops before anything starts when the host has no chat runtime for the provider (it cannot
+be combined with --setup-command); terminal never falls back to chat.
 A connected current app supplies its selected provider account, including headless Runs.
 --account selects an exact account ID; --account default uses the provider default.
 It accepts app account IDs and the IDs registered on the backend, the same IDs
@@ -2176,6 +2182,7 @@ async function cmdLegacySpawnReuse(opts, prompt, positionalPrompt, providerId) {
     opts.skipPermissions === true ||
     opts.permissionOverride !== undefined ||
     opts.setupCommand !== undefined ||
+    opts.runtime !== undefined ||
     opts.backendSpecified === true || opts.account !== undefined ||
     opts.mergePolicy !== undefined ||
     opts.parent !== undefined || opts.parentWorkspace !== undefined ||
@@ -2265,6 +2272,8 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
       typeof opts.worktree !== "string") ||
     (opts.setupCommand !== undefined &&
       (!opts.setupCommand || typeof opts.worktree !== "string")) ||
+    (opts.runtime !== undefined && !["chat", "terminal"].includes(opts.runtime)) ||
+    (opts.runtime === "chat" && opts.setupCommand !== undefined) ||
     (opts.baseCommit !== undefined && !opts.baseCommit) ||
     (opts.branch !== undefined && !opts.branch) ||
     opts.spaceId !== undefined ||
@@ -2336,7 +2345,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     collectAgentRun,
     defaultAgentRunName,
     formatAgentRun,
-    resolveAgentRunInteractionPreference,
+    resolveAgentRunInterface,
     resolveAgentRunAccount,
   } = await import("./lib/agent-run.mjs");
   const backend = await backendProfileQueryContext(opts);
@@ -2381,11 +2390,12 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     : backendProjectPathSelector(opts, backend, true);
   const deadlineMs =
     opts.deadlineMs === undefined ? undefined : Number(opts.deadlineMs);
-  let interactionPreference;
+  let runInterface;
   let executionProfile;
   try {
     executionProfile = await resolveAgentRunAccount({ descriptor: loadServer(), providerId, backendProfileId: backend.profile?.id ?? "local", account: opts.account, backend });
-    interactionPreference = await resolveAgentRunInteractionPreference({
+    runInterface = await resolveAgentRunInterface({
+      runtime: opts.runtime,
       descriptor: loadServer(),
       presenting: presentationTarget.state === "requested",
       profile: backend.profile,
@@ -2400,7 +2410,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     );
     return;
   }
-  const { report, presentationProject } = await collectAgentRun({
+  const { report, presentationProject, interactionFallback } = await collectAgentRun({
     projectId: opts.project || undefined,
     projectPath,
     providerId,
@@ -2414,12 +2424,18 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     setupCommand: opts.setupCommand,
     includePresentationProject: presentationTarget.state === "requested" || loadServer()?.capabilities?.includes("agent.run_background_v1"),
     executionProfile,
-    interactionPreference,
+    ...runInterface,
     parent: runParent.parent,
     backend,
     deadlineMs,
     verbose: opts.verbose === true,
   });
+  if (interactionFallback) {
+    process.stderr.write(
+      `The execution host has no Dure-managed terminal integration for ${providerId}, ` +
+        "so this Run uses its chat runtime instead. Pass --runtime terminal to require a terminal session.\n",
+    );
+  }
   const runExitCode = agentRunExitCode(report);
   if (runExitCode !== 0 && !hasPresentableAgentRuntime(report)) {
     // A receipt that did not succeed still gets the compact head when there

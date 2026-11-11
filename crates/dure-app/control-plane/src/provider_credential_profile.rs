@@ -76,13 +76,15 @@ pub(crate) trait ProviderCredentialProfileLaunchPreparer: Send + Sync {
         }
     }
 
+    /// Prepare one profile directory. A refusal's detail names only the failed
+    /// check, never the directory, which stays private to this backend.
     fn prepare(
         &self,
         provider_id: &ProviderIdV1,
         directory: &Path,
     ) -> Result<
         dure_provider_profile::PreparedProviderProfileLaunch,
-        ProviderCredentialProfileErrorV1,
+        ProviderCredentialLaunchFailureV1,
     >;
 
     fn prepare_default(
@@ -126,12 +128,13 @@ impl ProviderCredentialProfileLaunchPreparer for NativeProviderCredentialProfile
         directory: &Path,
     ) -> Result<
         dure_provider_profile::PreparedProviderProfileLaunch,
-        ProviderCredentialProfileErrorV1,
+        ProviderCredentialLaunchFailureV1,
     > {
-        let platform_home = self
-            .platform_home
-            .as_deref()
-            .ok_or(ProviderCredentialProfileErrorV1::Unavailable)?;
+        let platform_home = self.platform_home.as_deref().ok_or_else(|| {
+            ProviderCredentialLaunchFailureV1::unavailable(
+                "HOME is not set for the backend service".into(),
+            )
+        })?;
         dure_provider_profile::prepare_provider_profile_launch(
             provider_id.as_str(),
             &self.dure_home,
@@ -140,12 +143,15 @@ impl ProviderCredentialProfileLaunchPreparer for NativeProviderCredentialProfile
             None,
         )
         .map_err(|error| {
-            let code = error
-                .split(':')
-                .next()
-                .unwrap_or("provider_profile_prepare_failed");
-            eprintln!("dure-control-plane: provider profile preparation failed: {code}");
-            ProviderCredentialProfileErrorV1::Unavailable
+            let check = public_preparation_check(&error);
+            eprintln!(
+                "dure-control-plane: provider profile preparation failed: {}",
+                check
+                    .split(':')
+                    .next()
+                    .unwrap_or("provider_profile_prepare_failed")
+            );
+            ProviderCredentialLaunchFailureV1::unavailable(check)
         })
     }
 
@@ -304,6 +310,74 @@ pub enum ProviderCredentialProfileErrorV1 {
     Conflict,
     StaleGeneration,
     StoreFailed,
+}
+
+/// A refused launch preparation and what the backend looked for. The detail
+/// names the public account reference and the failed check so the account can
+/// be fixed; the profile directory locator stays private to this backend.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProviderCredentialLaunchFailureV1 {
+    pub(crate) error: ProviderCredentialProfileErrorV1,
+    pub(crate) detail: Option<String>,
+}
+
+impl ProviderCredentialLaunchFailureV1 {
+    fn unavailable(detail: String) -> Self {
+        Self {
+            error: ProviderCredentialProfileErrorV1::Unavailable,
+            detail: Some(detail),
+        }
+    }
+
+    fn for_account(mut self, provider_id: &ProviderIdV1, reference_id: &str) -> Self {
+        self.detail = self.detail.map(|check| {
+            format!(
+                "{} account {reference_id} could not be prepared for launch: {check}",
+                provider_id.as_str()
+            )
+        });
+        self
+    }
+}
+
+impl From<ProviderCredentialProfileErrorV1> for ProviderCredentialLaunchFailureV1 {
+    fn from(error: ProviderCredentialProfileErrorV1) -> Self {
+        Self {
+            error,
+            detail: None,
+        }
+    }
+}
+
+const MAX_PREPARATION_CHECK_BYTES: usize = 240;
+
+/// The provider-profile layer reports `code: message`, with messages naming
+/// the checked item ("profile directory must be owned by the current user").
+/// Keep that message only while it is one short line without a path, so a
+/// future message cannot carry a private locator into a client receipt.
+fn public_preparation_check(error: &str) -> String {
+    let (code, message) = error.split_once(':').unwrap_or((error, ""));
+    let code = code.trim();
+    let code = if !code.is_empty()
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+    {
+        code
+    } else {
+        "provider_profile_prepare_failed"
+    };
+    let message = message.trim();
+    if message.is_empty()
+        || message.len() > MAX_PREPARATION_CHECK_BYTES
+        || message
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '/' | '\\' | '~'))
+    {
+        code.to_string()
+    } else {
+        format!("{code}: {message}")
+    }
 }
 
 impl ProviderCredentialProfileErrorV1 {
@@ -544,6 +618,18 @@ where
         provider_id: &ProviderIdV1,
         execution_profile: &AgentExecutionProfileV1,
     ) -> Result<Option<ResolvedProviderCredentialProfileV1>, ProviderCredentialProfileErrorV1> {
+        self.resolve_with_detail(provider_id, execution_profile)
+            .await
+            .map_err(|failure| failure.error)
+    }
+
+    /// `resolve`, keeping what an unavailable credential lacked.
+    async fn resolve_with_detail(
+        &self,
+        provider_id: &ProviderIdV1,
+        execution_profile: &AgentExecutionProfileV1,
+    ) -> Result<Option<ResolvedProviderCredentialProfileV1>, ProviderCredentialLaunchFailureV1>
+    {
         let AgentExecutionProfileV1::CredentialReference {
             reference_id,
             credential_generation: Some(expected_generation),
@@ -552,7 +638,7 @@ where
             return match execution_profile {
                 AgentExecutionProfileV1::ProviderDefault => Ok(None),
                 AgentExecutionProfileV1::CredentialReference { .. } => {
-                    Err(ProviderCredentialProfileErrorV1::StaleGeneration)
+                    Err(ProviderCredentialProfileErrorV1::StaleGeneration.into())
                 }
             };
         };
@@ -561,15 +647,30 @@ where
             .provider_credential_profile(provider_id, reference_id)
             .await
             .map_err(map_store_error)?
-            .ok_or(ProviderCredentialProfileErrorV1::Unavailable)?;
+            .ok_or_else(|| {
+                ProviderCredentialLaunchFailureV1::unavailable(format!(
+                    "{provider} account {reference_id} is not registered on this backend; \
+                     dure recovery get {provider} lists the registered account IDs",
+                    provider = provider_id.as_str()
+                ))
+            })?;
         if registration.profile.credential_generation != *expected_generation {
-            return Err(ProviderCredentialProfileErrorV1::StaleGeneration);
+            return Err(ProviderCredentialProfileErrorV1::StaleGeneration.into());
         }
         let observation = observe_profile_directory(
             &self.home,
             &registration.profile_directory_name,
             ProviderCredentialProfileErrorV1::Unavailable,
-        )?;
+        )
+        .map_err(|_| {
+            ProviderCredentialLaunchFailureV1::unavailable(format!(
+                "the profile directory registered for {provider} account {reference_id} is \
+                 missing from accounts/ in this backend's Dure home, or is not a real directory \
+                 owned by the backend user; sign in to that directory again and rerun \
+                 dure accounts register {provider}",
+                provider = provider_id.as_str()
+            ))
+        })?;
         let marker_generation = read_profile_generation(
             &observation,
             provider_id,
@@ -606,7 +707,7 @@ where
         .as_deref()
             != Some(registration.profile.credential_generation.as_str())
         {
-            return Err(ProviderCredentialProfileErrorV1::StaleGeneration);
+            return Err(ProviderCredentialProfileErrorV1::StaleGeneration.into());
         }
         let final_registration = self
             .store
@@ -618,7 +719,7 @@ where
             || final_registration.profile.credential_generation
                 != registration.profile.credential_generation
         {
-            return Err(ProviderCredentialProfileErrorV1::StaleGeneration);
+            return Err(ProviderCredentialProfileErrorV1::StaleGeneration.into());
         }
         Ok(Some(ResolvedProviderCredentialProfileV1 {
             profile: final_registration.profile,
@@ -672,15 +773,34 @@ where
         provider_id: &ProviderIdV1,
         execution_profile: &AgentExecutionProfileV1,
     ) -> Result<PreparedProviderCredentialLaunchV1, ProviderCredentialProfileErrorV1> {
-        let resolved = self.resolve(provider_id, execution_profile).await?;
+        self.prepare_for_launch_with_detail(provider_id, execution_profile)
+            .await
+            .map_err(|failure| failure.error)
+    }
+
+    /// `prepare_for_launch`, keeping what an unavailable credential lacked so
+    /// a refused launch can say which account and check to fix.
+    pub(crate) async fn prepare_for_launch_with_detail(
+        &self,
+        provider_id: &ProviderIdV1,
+        execution_profile: &AgentExecutionProfileV1,
+    ) -> Result<PreparedProviderCredentialLaunchV1, ProviderCredentialLaunchFailureV1> {
+        let resolved = self
+            .resolve_with_detail(provider_id, execution_profile)
+            .await?;
         let prepared_launch = match resolved.as_ref() {
             Some(profile) => Some(
                 self.launch_preparer
-                    .prepare(provider_id, profile.directory())?,
+                    .prepare(provider_id, profile.directory())
+                    .map_err(|failure| {
+                        failure.for_account(provider_id, &profile.profile().reference_id)
+                    })?,
             ),
             None => None,
         };
-        let prepared = self.resolve(provider_id, execution_profile).await?;
+        let prepared = self
+            .resolve_with_detail(provider_id, execution_profile)
+            .await?;
         if resolved.as_ref().map(|profile| profile.profile())
             != prepared.as_ref().map(|profile| profile.profile())
             || resolved.as_ref().map(|profile| profile.directory())
@@ -692,7 +812,7 @@ where
                     .as_ref()
                     .map(|profile| (profile.directory_device, profile.directory_inode))
         {
-            return Err(ProviderCredentialProfileErrorV1::StaleGeneration);
+            return Err(ProviderCredentialProfileErrorV1::StaleGeneration.into());
         }
         let environment = match (prepared.as_ref(), prepared_launch) {
             (Some(profile), Some(launch))
@@ -703,7 +823,7 @@ where
                 launch.into_environment()
             }
             (None, None) => self.launch_preparer.prepare_default(provider_id)?,
-            _ => return Err(ProviderCredentialProfileErrorV1::StaleGeneration),
+            _ => return Err(ProviderCredentialProfileErrorV1::StaleGeneration.into()),
         };
         Ok(PreparedProviderCredentialLaunchV1 {
             resolved: prepared,
@@ -1023,6 +1143,114 @@ mod tests {
             resolved.directory().to_str()
         );
         assert!(!format!("{environment:?}").contains("claude-work"));
+    }
+
+    /// A refused account names the reference and the failed check, so the
+    /// person can fix the setup, while the directory locator stays private.
+    #[tokio::test]
+    async fn unavailable_account_says_what_was_missing_without_its_directory() {
+        let temporary = tempfile::tempdir().unwrap();
+        let platform_home = temporary.path().canonicalize().unwrap();
+        let dure_home = platform_home.join(".dure");
+        owner_directory_at(&dure_home);
+        owner_directory_at(&dure_home.join("accounts"));
+        let profile_path = dure_home.join("accounts/claude-work");
+        owner_directory_at(&profile_path);
+        let store = Arc::new(
+            SqliteDomainStore::open(dure_home.join("application-state.sqlite3"))
+                .await
+                .unwrap(),
+        );
+        let registry = ProviderCredentialProfileRegistry::with_platform_home(
+            dure_home.clone(),
+            Some(platform_home.clone()),
+            store,
+        );
+        let private_locators = ["claude-work", platform_home.to_str().unwrap()];
+        let failure = |reference_id: &'static str, generation: String| {
+            let registry = &registry;
+            async move {
+                let Err(failure) = registry
+                    .prepare_for_launch_with_detail(
+                        &ProviderIdV1::new("claude").unwrap(),
+                        &AgentExecutionProfileV1::CredentialReference {
+                            reference_id: reference_id.into(),
+                            credential_generation: Some(generation),
+                        },
+                    )
+                    .await
+                else {
+                    panic!("{reference_id} should be refused");
+                };
+                assert_eq!(failure.error, ProviderCredentialProfileErrorV1::Unavailable);
+                let detail = failure.detail.expect("an unavailable account says why");
+                for locator in private_locators {
+                    assert!(!detail.contains(locator), "{detail}");
+                }
+                detail
+            }
+        };
+
+        let unregistered = failure("acc-missing", "credential-v1-missing".into()).await;
+        assert!(
+            unregistered.contains("claude account acc-missing is not registered on this backend"),
+            "{unregistered}"
+        );
+        assert!(unregistered.contains("dure recovery get claude"));
+
+        let profile = registry
+            .register(RegisterProviderCredentialProfileBodyV1 {
+                schema_version: PROVIDER_CREDENTIAL_PROFILE_SCHEMA_VERSION_V1,
+                provider_id: "claude".into(),
+                reference_id: "acc-profile-a".into(),
+                profile_directory_name: "claude-work".into(),
+            })
+            .await
+            .unwrap();
+        let credential = profile_path.join(".credentials.json");
+        std::os::unix::fs::symlink(platform_home.join("elsewhere.json"), &credential).unwrap();
+        let untrusted = failure("acc-profile-a", profile.credential_generation.clone()).await;
+        assert_eq!(
+            untrusted,
+            "claude account acc-profile-a could not be prepared for launch: \
+             credential_file_untrusted: Claude credential must be a real file owned by the \
+             current user"
+        );
+
+        fs::remove_dir_all(&profile_path).unwrap();
+        let missing = failure("acc-profile-a", profile.credential_generation.clone()).await;
+        assert!(
+            missing.contains("profile directory registered for claude account acc-profile-a"),
+            "{missing}"
+        );
+        assert!(
+            missing.contains("dure accounts register claude"),
+            "{missing}"
+        );
+    }
+
+    #[test]
+    fn preparation_checks_keep_only_path_free_messages() {
+        assert_eq!(
+            public_preparation_check(
+                "credential_overlay_io: secure account root: Permission denied (os error 13)"
+            ),
+            "credential_overlay_io: secure account root: Permission denied (os error 13)"
+        );
+        for leaky in [
+            "credential_directory_untrusted: profile at /home/someone/.dure is shared",
+            "credential_directory_untrusted: profile at ~/.dure is shared",
+            "credential_directory_untrusted: line one\nline two",
+        ] {
+            assert_eq!(
+                public_preparation_check(leaky),
+                "credential_directory_untrusted"
+            );
+        }
+        assert_eq!(
+            public_preparation_check("Some Unexpected: text"),
+            "provider_profile_prepare_failed: text"
+        );
     }
 
     #[test]

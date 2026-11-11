@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { AppControlClientError, requestAppControl } from "./app-control-client.mjs";
 import {
+  agentSpawnErrorReport,
   agentSpawnQueryExitCode,
   collectAgentSpawnQuery,
   formatAgentSpawnQuery,
@@ -57,6 +58,44 @@ export async function resolveAgentRunInteractionPreference(
     );
   }
   return preference.interactionPreference ?? undefined;
+}
+
+/**
+ * Resolve a new Run's interface. An explicit runtime wins wherever the command
+ * runs: terminal pins a terminal session and chat requires the provider's chat
+ * runtime. Without one, the app's preference applies, and a Terminal default
+ * may start in chat when the execution host has no terminal integration, unless
+ * the presenting app is too old to show a chat Run.
+ */
+export async function resolveAgentRunInterface(
+  { runtime, descriptor, presenting, profile },
+  requestClient = requestAppControl,
+) {
+  if (runtime === "terminal") return { runtime, interactionPreference: "native_cli", chatFallback: false };
+  if (runtime === "chat") return { runtime, interactionPreference: undefined, chatFallback: false };
+  const interactionPreference = await resolveAgentRunInteractionPreference(
+    { descriptor, presenting, profile },
+    requestClient,
+  );
+  return {
+    runtime: undefined,
+    interactionPreference,
+    chatFallback: interactionPreference === "native_cli" &&
+      (!presenting || descriptor?.capabilities?.includes("agent.launch_preference_v1") === true),
+  };
+}
+
+function refusedForTerminalIntegration(report) {
+  return report.kind === "dure.agent_spawn.error" &&
+    report.error?.remoteCode === "agent_spawn_provider_preflight_failed" &&
+    report.error.reasonCode === "provider_runtime_integration_unavailable";
+}
+
+function plannedInteractionProfile(receipt) {
+  const plan = receipt?.plan;
+  if (plan?.launch?.interactionProfile !== undefined) return plan.launch.interactionProfile;
+  // Backends before canonical launch plans only planned terminal sessions.
+  return plan?.sessionId !== undefined ? "native_cli" : null;
 }
 
 /** Resolve a non-secret, generation-pinned credential before Run preview. */
@@ -124,10 +163,13 @@ export async function collectAgentRun({
   deadlineMs,
   requestBackend,
   interactionPreference,
+  runtime,
+  chatFallback = false,
   parent,
   verbose = false,
 } = {}) {
-  const preview = await collectAgentSpawnQuery({
+  const startedAt = Date.now();
+  const preview = (selectedPreference) => collectAgentSpawnQuery({
     action: "preview",
     projectId,
     projectPath,
@@ -138,7 +180,7 @@ export async function collectAgentRun({
     model,
     effort,
     executionProfile,
-    interactionPreference,
+    interactionPreference: selectedPreference,
     parent,
     setupCommand,
     includePresentationProject,
@@ -149,9 +191,33 @@ export async function collectAgentRun({
     requestBackend,
     verbose,
   });
-  const { presentationProject, ...previewReport } = preview;
+  let planned = await preview(interactionPreference);
+  // A refused plan records nothing, so the same key can ask the backend for
+  // its default interface: the provider's chat runtime when it has one.
+  const fellBackToChat = chatFallback && interactionPreference === "native_cli" &&
+    setupCommand === undefined && refusedForTerminalIntegration(planned);
+  if (fellBackToChat) planned = await preview(undefined);
+  const interactionFallback = fellBackToChat
+    ? { from: "native_cli", to: "structured_protocol", reasonCode: "provider_runtime_integration_unavailable" }
+    : undefined;
+  const { presentationProject, ...previewReport } = planned;
   if (agentSpawnQueryExitCode(previewReport) !== 0 || !previewReport.receipt) {
-    return { report: previewReport, presentationProject: null };
+    return { report: previewReport, presentationProject: null, interactionFallback };
+  }
+  if (runtime === "chat" && plannedInteractionProfile(previewReport.receipt) !== "structured_protocol") {
+    const observedAtMs = Date.now();
+    return {
+      report: agentSpawnErrorReport("preview", "agent_run_chat_runtime_unavailable", observedAtMs,
+        Math.max(0, observedAtMs - startedAt), {
+          ...(deadlineMs === undefined ? {} : { deadlineMs }),
+          ...(backend?.profile ? { profileId: backend.profile.id } : {}),
+          disposition: "terminal",
+          message: `The execution host has no chat runtime for ${providerId} with these options, so nothing was started. ` +
+            "Retry with --runtime terminal to start a terminal session instead.",
+        }),
+      presentationProject: null,
+      interactionFallback,
+    };
   }
 
   const report = await collectAgentSpawnQuery({
@@ -165,7 +231,7 @@ export async function collectAgentRun({
     requestBackend,
     verbose,
   });
-  return { report, presentationProject: presentationProject ?? null };
+  return { report, presentationProject: presentationProject ?? null, interactionFallback };
 }
 
 export const agentRunExitCode = agentSpawnQueryExitCode;

@@ -1122,6 +1122,9 @@ function backendPayload(value, action, expectedRequest) {
   };
 }
 
+/** The error report shape every agent spawn client prints and exits 2 on. */
+export { errorReport as agentSpawnErrorReport };
+
 function errorReport(action, code, observedAtMs, durationMs, details = {}) {
   const { deadlineMs = DEFAULT_AGENT_SPAWN_DEADLINE_MS, ...error } = details;
   return {
@@ -1150,8 +1153,9 @@ function terminalIntegrationGuidance(request) {
     ...(request.setupCommand === undefined
       ? []
       : ["remove --setup-command, which needs a terminal session"]),
-    ...(request.interactionPreference === "native_cli"
-      ? ["set Default agent pane to Chat in the connected Dure app's Settings (Pro interface)"]
+    // A conversation resume needs the terminal; only a new Run can choose chat.
+    ...(request.interactionPreference === "native_cli" && request.providerConversationRef === undefined
+      ? ["run it with --runtime chat"]
       : []),
   ];
   return changes.length > 0

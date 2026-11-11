@@ -141,9 +141,9 @@ it.each([
 });
 
 it.each([
-  ["a terminal preference", { interactionPreference: "native_cli" }, ["Default agent pane to Chat"]],
+  ["a terminal preference", { interactionPreference: "native_cli" }, ["run it with --runtime chat"]],
   ["a setup command", { setupCommand: "pnpm install" }, ["remove --setup-command"]],
-  ["both", { interactionPreference: "native_cli", setupCommand: "pnpm install" }, ["remove --setup-command", "Default agent pane to Chat"]],
+  ["both", { interactionPreference: "native_cli", setupCommand: "pnpm install" }, ["remove --setup-command", "run it with --runtime chat"]],
 ])("says how to reach chat instead of opening an app for %s", async (_label, selection, steps) => {
   const report = await collectAgentSpawnQuery({
     action: "preview",
@@ -167,6 +167,32 @@ it.each([
   expect(report.error.reasonCode).toBe("provider_runtime_integration_unavailable");
   for (const step of steps) expect(report.error.message).toContain(step);
   expect(report.error.message).not.toMatch(/(open|start) the Dure app/i);
+});
+
+it("does not offer chat for a conversation resume, which needs the terminal", async () => {
+  const report = await collectAgentSpawnQuery({
+    action: "preview",
+    projectId: "dure",
+    providerId: "claude",
+    agentName: "claude-1",
+    idempotencyKey: "spawn-request-1",
+    worktree: { kind: "project_root" },
+    interactionPreference: "native_cli",
+    providerConversationRef: "0123456789abcdef0123456789abcdef",
+    backend: backend(),
+    requestBackend: async () => {
+      throw new BackendTransportError("backend_transport_remote_error", {
+        details: {
+          code: "agent_spawn_provider_preflight_failed",
+          reasonCode: "provider_runtime_integration_unavailable",
+          disposition: "retry_same",
+        },
+      });
+    },
+  });
+  expect(report.error.reasonCode).toBe("provider_runtime_integration_unavailable");
+  expect(report.error.message).toContain("Open the Dure app on that host once");
+  expect(report.error.message).not.toContain("--runtime chat");
 });
 
 describe.each(clients)("$name backend failure projection", ({ action, collect, kind }) => {
