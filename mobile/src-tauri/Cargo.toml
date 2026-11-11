@@ -20,7 +20,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # Pairing payloads carry binary key material through text-only QR and JSON
 # boundaries. TerminalSurface records remain binary and never use this codec.
-base64 = "0.22"
+base64 = "0.23"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }

@@ -1220,7 +1220,7 @@ dependencies = [
 name = "dure-mobile"
 version = "0.1.7"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "dure-hub-protocol",
  "hmux-client",
  "hmux-host",
@@ -2090,7 +2090,7 @@ name = "hmux-client"
 version = "0.2.63"
 dependencies = [
  "argon2 0.5.3",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chacha20poly1305",
  "fs2",
  "hmux-host",
@@ -2141,7 +2141,7 @@ dependencies = [
 name = "hmux-session-protocol"
 version = "0.2.63"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "serde",
  "serde_json",
 ]
