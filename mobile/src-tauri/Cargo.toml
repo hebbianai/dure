@@ -137,6 +137,6 @@ tokio = { version = "1", features = ["net", "rt", "time"] }
 # "rustls 가 그 검증자를 실제로 부르는가" 와 "설정이 실제로 서는가" 가 시험되지
 # 않는다 — 그 둘은 기기에서만 드러나는 부류다. 데스크탑 허브와 같은 버전·같은
 # 백엔드라, 픽스처가 만드는 인증서가 진짜와 같은 모양이다.
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 # `tests/pairing_exchange.rs` owns a one-handshake SSH endpoint so host-key
 # observation never reads or depends on the developer's sshd.

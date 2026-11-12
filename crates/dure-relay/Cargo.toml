@@ -36,7 +36,7 @@ ring = "0.17"
 [dev-dependencies]
 # 통합 시험이 진짜 허브(자체 서명 인증서 + rustls 서버)와 진짜 폰(지문 고정
 # 클라이언트)을 세워 이 릴레이를 통과시킨다. 데스크탑 허브와 같은 버전이다.
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 rustls = { version = "0.23", default-features = false, features = [
   "ring",
   "std",

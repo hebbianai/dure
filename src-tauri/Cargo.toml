@@ -57,7 +57,7 @@ qrcode = { version = "0.14", default-features = false }
 # 허브 리스너의 신원. `ring` 백엔드는 이미 트리에 있다(russh 경유)라 새로 들어오는
 # 것은 인증서를 만드는 코드뿐이다. `aws-lc-rs` 는 cmake+bindgen 을 요구해서 고르지
 # 않는다 — hmux 워크스페이스가 russh 에서 같은 이유로 ring 을 고른다.
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 subtle = "2"
 hebbian-bounded-process = { path = "../crates/hebbian-bounded-process" }
