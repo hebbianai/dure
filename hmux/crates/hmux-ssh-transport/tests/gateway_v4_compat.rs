@@ -15,7 +15,7 @@ use hmux_ssh_transport::{
     SshExecConfig, attach_observer_over_ssh, list_sessions_over_ssh, write_session_input_over_ssh,
 };
 use russh::keys::{Algorithm, HashAlg, PrivateKey, ssh_key};
-use russh::server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session};
+use russh::server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session, VerifiedPublicKey};
 use russh::{Channel, ChannelId, Pty};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -298,7 +298,7 @@ impl Handler for FrozenGateway {
     async fn auth_publickey(
         &mut self,
         _user: &str,
-        _key: &ssh_key::PublicKey,
+        _key: VerifiedPublicKey<'_>,
     ) -> Result<Auth, Self::Error> {
         Ok(Auth::Accept)
     }

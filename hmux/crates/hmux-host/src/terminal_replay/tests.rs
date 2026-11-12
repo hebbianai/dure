@@ -7,6 +7,15 @@ mod startup_gate;
 use super::*;
 use crate::local_protocol::{ScreenSnapshotProfile, WorkingDirectorySource};
 
+/// A vt100 reference terminal; vt100 0.18 takes nonzero dimensions.
+fn vt100_parser(rows: u16, columns: u16, scrollback: usize) -> vt100::Parser {
+    vt100::Parser::new(
+        std::num::NonZeroU16::new(rows).expect("a vt100 screen has at least one row"),
+        std::num::NonZeroU16::new(columns).expect("a vt100 screen has at least one column"),
+        scrollback,
+    )
+}
+
 fn fence() -> SessionFence {
     SessionFence {
         workspace_id: "workspace".into(),
@@ -173,7 +182,7 @@ fn snapshot_through_n_is_followed_by_delta_n_plus_one() {
 
     assert_eq!(snapshot.sequence_through, 1);
     assert_eq!(next.output_seq, snapshot.sequence_through + 1);
-    let mut restored = vt100::Parser::new(snapshot.rows, snapshot.columns, 0);
+    let mut restored = vt100_parser(snapshot.rows, snapshot.columns, 0);
     restored.process(&snapshot.repaint_bytes);
     assert!(restored.screen().contents().contains("first"));
     assert!(!restored.screen().contents().contains("second"));
@@ -218,7 +227,7 @@ fn recovered_presentation_seeds_successor_without_consuming_output_sequence() {
     let combined = successor.snapshot(ScreenSnapshotProfile::Full).unwrap();
     assert_eq!(combined.recovered_presentation, Some(Box::new(recovered)));
     assert_eq!(combined.sequence_through, 1);
-    let mut restored = vt100::Parser::new(combined.rows, combined.columns, DEFAULT_SCROLLBACK_ROWS);
+    let mut restored = vt100_parser(combined.rows, combined.columns, DEFAULT_SCROLLBACK_ROWS);
     restored.process(&combined.repaint_bytes);
     let contents = restored.screen().contents();
     assert!(contents.contains("before-reboot"));
@@ -230,7 +239,7 @@ fn canonical_snapshot_preserves_styled_visible_screen() {
     let mut replay = replay_with_limits(TerminalReplayLimits::default());
     replay.ingest_output(b"plain \x1b[31mred\x1b[0m").unwrap();
     let snapshot = replay.snapshot(ScreenSnapshotProfile::Full).unwrap();
-    let mut restored = vt100::Parser::new(snapshot.rows, snapshot.columns, 0);
+    let mut restored = vt100_parser(snapshot.rows, snapshot.columns, 0);
     restored.process(&snapshot.repaint_bytes);
 
     assert_eq!(restored.screen().contents(), "plain red");
@@ -251,7 +260,7 @@ fn canonical_snapshot_preserves_styled_scrollback_rows() {
     }
 
     let snapshot = replay.snapshot(ScreenSnapshotProfile::Full).unwrap();
-    let mut restored = vt100::Parser::new(snapshot.rows, snapshot.columns, 100);
+    let mut restored = vt100_parser(snapshot.rows, snapshot.columns, 100);
     restored.process(&snapshot.repaint_bytes);
     restored.screen_mut().set_scrollback(usize::MAX);
 
@@ -275,7 +284,7 @@ fn canonical_snapshot_resets_style_between_formatted_history_rows() {
     }
 
     let snapshot = replay.snapshot(ScreenSnapshotProfile::Full).unwrap();
-    let mut restored = vt100::Parser::new(snapshot.rows, snapshot.columns, 100);
+    let mut restored = vt100_parser(snapshot.rows, snapshot.columns, 100);
     restored.process(&snapshot.repaint_bytes);
     restored.screen_mut().set_scrollback(usize::MAX);
 
@@ -306,7 +315,7 @@ fn canonical_snapshot_restores_bounded_scrollback_before_the_visible_screen() {
     let visible_screen = replay.screen_contents();
 
     let snapshot = replay.snapshot(ScreenSnapshotProfile::Full).unwrap();
-    let mut restored = vt100::Parser::new(snapshot.rows, snapshot.columns, 100);
+    let mut restored = vt100_parser(snapshot.rows, snapshot.columns, 100);
     restored.process(&snapshot.repaint_bytes);
 
     assert_eq!(restored.screen().contents(), visible_screen);
@@ -348,7 +357,7 @@ fn viewport_only_snapshot_skips_scrollback_and_advertises_its_profile() {
     assert!(!snapshot.truncated);
     assert_eq!(snapshot.sequence_through, full.sequence_through);
 
-    let mut restored = vt100::Parser::new(snapshot.rows, snapshot.columns, 100);
+    let mut restored = vt100_parser(snapshot.rows, snapshot.columns, 100);
     restored.process(&snapshot.repaint_bytes);
     assert_eq!(restored.screen().contents(), visible_screen);
     restored.screen_mut().set_scrollback(usize::MAX);
@@ -433,7 +442,7 @@ fn shrinking_viewport_preserves_the_canonical_bottom_and_scrollback() {
             .windows(marker.len())
             .any(|window| window == marker)
     );
-    let mut restored = vt100::Parser::new(19, 67, 1_000);
+    let mut restored = vt100_parser(19, 67, 1_000);
     restored.process(&resized.repaint_bytes);
     restored.screen_mut().set_scrollback(usize::MAX);
     assert!(restored.screen().scrollback() >= 500);
@@ -461,12 +470,12 @@ fn repeated_resize_preserves_soft_wrapped_history_as_one_logical_line() {
     }
 
     let snapshot = replay.snapshot(ScreenSnapshotProfile::Full).unwrap();
-    let mut restored = vt100::Parser::new(snapshot.rows, snapshot.columns, 5_000);
+    let mut restored = vt100_parser(snapshot.rows, snapshot.columns, 5_000);
     restored.process(&snapshot.repaint_bytes);
     let mut view = restored.screen().clone();
     view.set_scrollback(usize::MAX);
     let retained_rows = view.scrollback();
-    let columns = view.size().1;
+    let columns = view.size().1.get();
     let mut logical_history = String::new();
     for offset in (1..=retained_rows).rev() {
         view.set_scrollback(offset);
@@ -526,7 +535,7 @@ fn widening_a_codex_like_transcript_does_not_create_physical_history_rows() {
     let snapshot = replay.snapshot(ScreenSnapshotProfile::Full).unwrap();
     let canonical_viewport = replay.screen_contents();
     let canonical_cursor = replay.terminal.cursor_position();
-    let mut restored = vt100::Parser::new(snapshot.rows, snapshot.columns, 5_000);
+    let mut restored = vt100_parser(snapshot.rows, snapshot.columns, 5_000);
     restored.process(&snapshot.repaint_bytes);
     assert_eq!(restored.screen().contents(), canonical_viewport);
     assert_eq!(restored.screen().cursor_position(), canonical_cursor);

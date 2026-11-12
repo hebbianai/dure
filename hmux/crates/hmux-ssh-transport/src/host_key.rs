@@ -2,7 +2,7 @@
 
 use crate::error::SshTransportError;
 use crate::session::{SshEndpoint, client_config};
-use russh::keys::HashAlg;
+use russh::keys::{HashAlg, PublicKeyOrCertificate};
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -40,8 +40,17 @@ impl russh::client::Handler for Observer {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::ssh_key::PublicKey,
+        server_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // The client never advertises host-certificate algorithms (russh's
+        // default), so a conforming server offers a plain key.
+        let PublicKeyOrCertificate::PublicKey {
+            key: server_public_key,
+            ..
+        } = server_key
+        else {
+            return Ok(false);
+        };
         let fingerprint_sha256 = server_public_key
             .fingerprint(HashAlg::Sha256)
             .sha256()

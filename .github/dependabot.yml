@@ -45,8 +45,11 @@ updates:
   # crates, and Hmux's [workspace.dependencies] reach every lockfile holding an
   # Hmux crate), so a bump has to refresh every lockfile in one change or the
   # `--locked` builds fail. Grouping by dependency name gives one pull request
-  # per dependency across all of these directories. The public CI "Dependency
-  # advisories" job audits the shipped lockfiles among them.
+  # per dependency across all of these directories. Dependabot can still leave
+  # a path-dependent workspace's Cargo.lock stale, so the "Dependabot Cargo
+  # lockfiles" workflow re-resolves every Cargo.lock on its pull requests. The
+  # public CI "Dependency advisories" job audits the shipped lockfiles among
+  # them.
   - package-ecosystem: cargo
     directories:
       - /src-tauri
@@ -74,6 +77,14 @@ updates:
       - dependency-name: uuid
         versions:
           - ">= 1.27"
+      # sha2 0.11 and hmac 0.13 move to digest 0.11, whose hash outputs no
+      # longer format with `{:x}`; ~180 call sites need a hand migration.
+      - dependency-name: sha2
+        versions:
+          - ">= 0.11"
+      - dependency-name: hmac
+        versions:
+          - ">= 0.13"
       # A Tauri crate and its @tauri-apps npm package must share a
       # major.minor release or the Tauri CLI refuses to build, and one
       # Dependabot pull request cannot span cargo and npm. Patch updates stay

@@ -35,7 +35,7 @@ use hmux_ssh_transport::{
 };
 use rand::rng;
 use russh::keys::{Algorithm, HashAlg, PrivateKey, ssh_key};
-use russh::server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session};
+use russh::server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session, VerifiedPublicKey};
 use russh::{Channel, ChannelId, Pty};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
@@ -101,7 +101,7 @@ impl Handler for RuntimeBrokerSshServer {
     async fn auth_publickey(
         &mut self,
         _user: &str,
-        _key: &ssh_key::PublicKey,
+        _key: VerifiedPublicKey<'_>,
     ) -> Result<Auth, Self::Error> {
         Ok(Auth::Accept)
     }
