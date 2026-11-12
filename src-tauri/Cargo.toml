@@ -49,7 +49,7 @@ fs2 = "0.4"
 # 상태 표시줄 자원 위젯의 CPU·메모리·볼륨 표본. 기본 기능은 프로세스·네트워크
 # 수집까지 켜므로 필요한 컴포넌트만 남긴다 — 프로세스 census는 이미
 # hebbian-process-sampler가 담당한다.
-sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] }
+sysinfo = { version = "0.40", default-features = false, features = ["system", "disk"] }
 # QR 매트릭스만 만든다. `default-features = false`가 `image`/`svg`를 떼어내므로
 # 전이 의존성이 없고, 그리는 것은 웹뷰가 한다 — hmux-cli가 터미널에 반각
 # 블록으로 그리는 것과 같은 인코더를 쓰되 출력만 다르다.
