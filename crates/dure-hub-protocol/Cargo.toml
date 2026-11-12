@@ -14,7 +14,7 @@ base64 = "0.23"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 인증서 지문. 폰과 노트북이 같은 값을 계산해야 하므로 계산도 여기 산다.
-sha2 = "0.10"
+sha2 = "0.11"
 # Only `tls` uses it. A consumer that speaks the documents over another
 # carrier — `hmux mobile-gateway` answers a conversation over SSH — takes this
 # crate with `default-features = false` and links no TLS stack.

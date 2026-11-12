@@ -61,7 +61,7 @@ russh = { version = "0.62", default-features = false, features = [
 ] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sha2 = "0.10"
+sha2 = "0.11"
 socket2 = "0.6"
 tar = "0.4"
 tempfile = "3"
