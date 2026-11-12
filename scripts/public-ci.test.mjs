@@ -359,6 +359,41 @@ describe("public CI dependency advisories", () => {
   });
 });
 
+describe("Dependabot Cargo lockfile refresh", () => {
+  const refresh = parse(
+    readFileSync(
+      resolve(repositoryRoot, ".github/workflows/dependabot-cargo-lockfiles.yml"),
+      "utf8",
+    ),
+  );
+  const job = refresh.jobs.refresh;
+  const script = job.steps.map((step) => step.run ?? "").join("\n");
+
+  it("writes only for Dependabot's own pushes to its cargo branches", () => {
+    expect(refresh.on.pull_request.branches).toEqual(["main"]);
+    expect(refresh.permissions).toEqual({ contents: "read" });
+    expect(job.if).toContain("github.actor == 'dependabot[bot]'");
+    expect(job.if).toContain("startsWith(github.head_ref, 'dependabot/cargo/')");
+    expect(job.permissions).toEqual({ contents: "write", actions: "write" });
+    expect(job["timeout-minutes"]).toBeGreaterThan(0);
+  });
+
+  it("re-resolves every tracked lockfile without building and reruns the required checks", () => {
+    for (const step of job.steps.filter((step) => step.uses)) {
+      expect(step.uses).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+      if (step.uses.startsWith("actions/checkout@")) {
+        expect(step.with["persist-credentials"], step.uses).toBe(false);
+      }
+    }
+    expect(script).toContain("git ls-files -z -- '*Cargo.lock'");
+    expect(script).toContain("cargo update --workspace");
+    expect(script).not.toMatch(/cargo (build|check|clippy|run|test)\b/);
+    // A push made with the workflow token starts no pull request workflow.
+    expect(script).toContain("gh workflow run public-repository.yml");
+    expect(Object.keys(workflow.on)).toContain("workflow_dispatch");
+  });
+});
+
 describe("public CI required result", () => {
   it("accepts a successful documentation-only plan with intentionally skipped code jobs", () => {
     const result = runRequiredCheck(results(false));

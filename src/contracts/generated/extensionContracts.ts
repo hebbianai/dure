@@ -116,7 +116,7 @@ export type AgentNativePluginCliPlanRequestV2 = { adapter: AgentAdapterIdV2, sou
 
 export type AgentIntegrationDescriptorV2 = { id: AgentIntegrationIdV2, adapter: AgentAdapterIdV2, required: boolean, resource: PluginResourcePathV2, selector: AgentNativePluginSelectorV2, };
 
-export type PermissionRequestV2 = { kind: PermissionKindIdV2, parameters?: { [key in string]?: Array<string> }, };
+export type PermissionRequestV2 = { kind: PermissionKindIdV2, parameters?: { [key in string]: Array<string> }, };
 
 export type PluginManifestV2 = { schema_version: number, id: PluginIdV2, publisher: PluginPublisherIdV2, version: PluginVersionV2, display_name: string, description?: string | null, host_api: ContractVersionRangeV2, activation?: Array<PluginActivationEventV2>, contributions?: Array<ContributionDescriptorV2>, agent_integrations?: Array<AgentIntegrationDescriptorV2>, permissions?: Array<PermissionRequestV2>, };
 
@@ -204,7 +204,7 @@ export type PluginViewContainerIdV1 = string;
 
 export type PluginViewIdV1 = string;
 
-export type PluginLocalizedTextV1 = { default: string, translations?: { [key in string]?: string }, };
+export type PluginLocalizedTextV1 = { default: string, translations?: { [key in string]: string }, };
 
 export type PluginViewContainerLocationV1 = "primary_sidebar";
 

@@ -2294,7 +2294,11 @@ fn recent_visible_lines(
     // tab-stop restoration displaces the first row; read them faithfully too.
     let mut repaint = repaint_bytes.to_vec();
     home_column_after_tab_stops(&mut repaint);
-    let mut parser = vt100::Parser::new(rows.max(1), columns.max(1), 0);
+    let mut parser = vt100::Parser::new(
+        std::num::NonZeroU16::new(rows).unwrap_or(std::num::NonZeroU16::MIN),
+        std::num::NonZeroU16::new(columns).unwrap_or(std::num::NonZeroU16::MIN),
+        0,
+    );
     parser.process(&repaint);
     let contents = parser.screen().contents();
     let mut lines = contents

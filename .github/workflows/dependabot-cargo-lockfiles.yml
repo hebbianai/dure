@@ -1,0 +1,71 @@
+name: Dependabot Cargo lockfiles
+
+# The Cargo workspaces path-depend on one another, but a Dependabot cargo pull
+# request refreshes only the lockfiles Dependabot itself resolves. Another
+# workspace's Cargo.lock can be left stale, and then every `--locked` build
+# fails. This job re-resolves every tracked Cargo.lock against the pull
+# request's manifests without building anything, pushes any change to the
+# Dependabot branch and starts the required checks for that commit: a push made
+# with the workflow token does not trigger pull request workflows.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-cargo-lockfiles-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    name: Refresh dependent Cargo lockfiles
+    # Only Dependabot's own pushes to its cargo branches. A push by anyone else
+    # (including this job's own commit) does not run this job.
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      startsWith(github.head_ref, 'dependabot/cargo/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write # push the refreshed lockfiles to the Dependabot branch
+      actions: write # start the required checks for the pushed commit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
+      - name: Prepare repository-pinned Rust
+        run: rustup show active-toolchain
+      - name: Re-resolve every Cargo lockfile
+        # `--workspace` keeps every locked version the manifests still allow
+        # and resolves only what they no longer do. The fallback resolver keeps
+        # those new picks within each workspace's rust-version.
+        env:
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+        run: |
+          git ls-files -z -- '*Cargo.lock' | while IFS= read -r -d '' lock; do
+            cargo update --workspace --manifest-path "${lock%Cargo.lock}Cargo.toml"
+          done
+      - name: Push the refreshed lockfiles and start the required checks
+        env:
+          BRANCH: ${{ github.head_ref }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- '*Cargo.lock'; then
+            echo "Every Cargo.lock already matches its manifests."
+            exit 0
+          fi
+          git diff --stat -- '*Cargo.lock'
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet -m "chore(deps): refresh dependent Cargo lockfiles" -- '*Cargo.lock'
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git" "HEAD:refs/heads/${BRANCH}"
+          gh workflow run public-repository.yml --ref "$BRANCH"

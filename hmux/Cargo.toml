@@ -54,7 +54,11 @@ semver = "1"
 # of the two, and aws-lc-rs needs cmake plus bindgen, which no mobile toolchain
 # is guaranteed to have. `rsa` keeps servers whose only host key is RSA
 # reachable. Verified against aarch64-apple-ios and aarch64-linux-android.
-russh = { version = "0.62", default-features = false, features = [
+# russh 0.63.1 and later carry the RUSTSEC-2026-0492 and RUSTSEC-2026-0495
+# fixes and require Rust 1.89, above the rust-version declared here, so the
+# crates that link russh build only with the repository-pinned toolchain. None
+# of the Rust 1.85 gates builds them.
+russh = { version = "0.65", default-features = false, features = [
     "flate2",
     "ring",
     "rsa",
@@ -70,5 +74,5 @@ tokio = { version = "1", features = ["io-util", "net", "rt", "sync", "time"] }
 tough = { version = "=0.24.0", default-features = false }
 url = "=2.5.8"
 uuid = { version = "1.23", features = ["v4"] }
-vt100 = "0.16"
+vt100 = "0.18"
 windows-sys = "0.61.2"

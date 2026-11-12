@@ -40,7 +40,7 @@ use hmux_ssh_transport::{
     attach_over_ssh, attach_terminal_surface_over_ssh, depart_gracefully_over_ssh, relay_output,
 };
 use russh::keys::{Algorithm, HashAlg, PrivateKey, ssh_key};
-use russh::server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session};
+use russh::server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session, VerifiedPublicKey};
 use russh::{Channel, ChannelId};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -236,7 +236,7 @@ impl Handler for ScriptedHost {
     async fn auth_publickey(
         &mut self,
         _user: &str,
-        _key: &ssh_key::PublicKey,
+        _key: VerifiedPublicKey<'_>,
     ) -> Result<Auth, Self::Error> {
         Ok(Auth::Accept)
     }

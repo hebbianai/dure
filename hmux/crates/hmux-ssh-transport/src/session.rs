@@ -15,7 +15,9 @@
 use crate::channel::{ChannelEvent, ExecChannelReader, ExecChannelWriter};
 use crate::error::SshTransportError;
 use russh::client::{Handle, Msg};
-use russh::keys::{Algorithm, HashAlg, PrivateKeyWithHashAlg, decode_secret_key};
+use russh::keys::{
+    Algorithm, HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate, decode_secret_key,
+};
 use russh::{ChannelMsg, ChannelReadHalf, ChannelWriteHalf};
 use std::borrow::Cow;
 use std::fmt;
@@ -278,8 +280,18 @@ impl russh::client::Handler for ClientHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::ssh_key::PublicKey,
+        server_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // The client never advertises host-certificate algorithms (russh's
+        // default), so a conforming server offers a plain key. Trust is a
+        // pinned key fingerprint; there is no certificate authority to check.
+        let PublicKeyOrCertificate::PublicKey {
+            key: server_public_key,
+            ..
+        } = server_key
+        else {
+            return Ok(false);
+        };
         let fingerprint = server_public_key.fingerprint(HashAlg::Sha256).to_string();
         let accepted = self.host_key.accepts(&fingerprint);
         // Recorded even when accepted, so a rejection can name what the host

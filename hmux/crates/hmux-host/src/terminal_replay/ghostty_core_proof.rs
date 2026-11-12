@@ -2100,6 +2100,16 @@ fn output_free_resize_advances_only_state_revision() {
     assert_eq!(actor.terminal.size(), (9, 72));
 }
 
+/// A vt100 reference terminal; vt100 0.18 takes nonzero dimensions.
+#[cfg(test)]
+fn vt100_parser(rows: u16, columns: u16, scrollback: usize) -> vt100::Parser {
+    vt100::Parser::new(
+        std::num::NonZeroU16::new(rows).expect("a vt100 screen has at least one row"),
+        std::num::NonZeroU16::new(columns).expect("a vt100 screen has at least one column"),
+        scrollback,
+    )
+}
+
 #[test]
 fn proof_viewport_request_omits_history_and_preserves_active_screen() {
     let mut adapter = GhosttyProofAdapter::new(3, 20, 256, 20_000, "proof-terminal").unwrap();
@@ -2121,8 +2131,8 @@ fn proof_viewport_request_omits_history_and_preserves_active_screen() {
         Some(ScreenSnapshotProfile::ViewportOnly)
     );
     assert!(!String::from_utf8_lossy(&viewport.bytes).contains("one"));
-    let mut full_parser = vt100::Parser::new(3, 20, 256);
-    let mut viewport_parser = vt100::Parser::new(3, 20, 256);
+    let mut full_parser = vt100_parser(3, 20, 256);
+    let mut viewport_parser = vt100_parser(3, 20, 256);
     full_parser.process(&full.bytes);
     viewport_parser.process(
         b"\x1b[1;32mold cells that must disappear\r\nstale second line\r\nstale third line",
@@ -2172,7 +2182,7 @@ fn full_screen_repaint_starts_the_first_row_at_column_one_after_tab_stops() {
         ScreenSnapshotProfile::ViewportOnly,
     ] {
         let repaint = adapter.repaint(profile, 1024 * 1024).unwrap();
-        let mut restored = vt100::Parser::new(4, 40, 0);
+        let mut restored = vt100_parser(4, 40, 0);
         restored.process(&repaint.bytes);
         let rows = restored
             .screen()
@@ -2210,7 +2220,7 @@ fn proof_viewport_matches_canonical_cells_after_soft_wrap_and_resize() {
             Some(ScreenSnapshotProfile::ViewportOnly)
         );
         let canonical = adapter.core.project_active().unwrap();
-        let mut actual = vt100::Parser::new(rows, columns, 256);
+        let mut actual = vt100_parser(rows, columns, 256);
         actual.process(&viewport.bytes);
         for (row, expected_row) in canonical.projected_rows.iter().enumerate() {
             for (column, expected_cell) in expected_row.cells.iter().enumerate() {
@@ -2282,7 +2292,7 @@ fn oversized_styled_repaint_falls_back_to_a_bounded_plain_terminal_redraw() {
     assert!(repaint.bytes.len() <= MAXIMUM);
     assert_eq!(repaint.actual_profile, None);
 
-    let mut restored = vt100::Parser::new(ROWS, COLUMNS, 256);
+    let mut restored = vt100_parser(ROWS, COLUMNS, 256);
     restored.process(&repaint.bytes);
     let screen = restored.screen();
     assert!(screen.alternate_screen());
