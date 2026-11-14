@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { parseArgs } from "node:util";
@@ -13,9 +12,11 @@ import { PROVIDERS } from "./contracts/provider-catalog.mjs";
 import { collectManagedRehostCommand } from "./managed-rehost-command.mjs";
 import { rehostCommandLine } from "./managed-rehost-preview.mjs";
 import { collectManagedRehostPublication } from "./managed-rehost-publication.mjs";
+import {
+  classifySourceSession, hostAbsentOperationId, readSourceSession, supportsHostAbsentStart,
+} from "./managed-rehost-source-host.mjs";
 import { providerResumeSupport } from "./provider-capabilities.mjs";
 import { listRunRecords } from "./run-agent-selection.mjs";
-import { supportsHmuxCapability } from "./runtime-diagnostics.mjs";
 
 export const RESUME_HELP = `Usage:
   dure resume --all [--dry-run] [--include-exited] [--backend ID] [--json]
@@ -36,11 +37,9 @@ exited on its own. --dry-run reports the plan and changes nothing.
 
 Local backends only. Exits 2 when any restore fails; skipped agents do not fail it.`;
 
-const HOST_ABSENT_CAPABILITY = "managed_rehost_host_absent_start_v1";
 const RESTORE_CONCURRENCY = 4;
 const INSPECT_CONCURRENCY = 8;
 const MAX_RUN_PAGES = 64;
-const NATIVE_QUERY_TIMEOUT_MS = 5_000;
 /** Bulk historical outcomes: counted in text output, listed in full by --json. */
 const QUIET_SKIP_REASONS = new Set(["not_managed", "closed"]);
 
@@ -146,43 +145,9 @@ export function classifyRuntime(observation, resumeSupport = (id) => {
 }
 
 /** Classify Hmux's current observation of the exact selected session. */
-export function classifySession(session, target, { includeExited }) {
-  if (session.host_instance_id !== target.source.hostInstanceId ||
-      session.terminal_epoch !== target.source.terminalEpoch) {
-    return session.health === "healthy" ? { outcome: "running" } : skip("runtime_generation_changed");
-  }
-  const conversationId = target.conversationId ?? session.providerConversationIdentity?.conversation_id ?? null;
-  const restore = (extra) => conversationId
-    ? { outcome: "restore", conversationId, ...extra }
-    : skip("no_conversation_id");
-  switch (session.health) {
-    case "healthy": return { outcome: "running" };
-    case "stale_transport": return restore({ requireHostAbsent: true });
-    // An exited tombstone is the Host's own proof, and its generation cannot
-    // satisfy the live-Host socket check.
-    case "exited": return includeExited ? restore({ requireHostAbsent: false }) : skip("provider_exited");
-    case "incompatible_protocol": return skip("host_incompatible");
-    default: return skip("host_state_unknown");
-  }
-}
-
-function restoreOperationId({ source, workspaceId, sessionId }) {
-  const digest = createHash("sha256")
-    .update(["dure-resume-all-v1", workspaceId, sessionId, source.hostInstanceId, source.terminalEpoch].join("\0"))
-    .digest("hex");
-  return `resume-all-${digest.slice(0, 48)}`;
-}
-
-async function readSession({ command, run, sessionId, workspaceId }) {
-  const response = await run([command, "--json", "session", "show", sessionId, "--workspace", workspaceId],
-    { timeoutMs: NATIVE_QUERY_TIMEOUT_MS, maxCaptureBytes: 1024 * 1024 });
-  if (response.kind !== "success") return undefined;
-  try {
-    const parsed = JSON.parse(response.stdout);
-    return parsed && typeof parsed === "object" ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
+export function classifySession(session, target, options) {
+  const decision = classifySourceSession(session, target, options);
+  return decision.outcome === "skipped" ? skip(decision.reason) : decision;
 }
 
 async function planAgent(agent, { backend, requestBackend, command, run, includeExited, worktreeExists }) {
@@ -197,7 +162,7 @@ async function planAgent(agent, { backend, requestBackend, command, run, include
   const described = { ...identity, providerId };
   const runtime = classifyRuntime(inspected.result);
   if (runtime.outcome !== "candidate") return { ...described, ...runtime };
-  const session = await readSession({ command, run, sessionId: runtime.sessionId, workspaceId: runtime.workspaceId });
+  const session = await readSourceSession({ command, run, sessionId: runtime.sessionId, workspaceId: runtime.workspaceId });
   if (!session) return { ...described, ...skip("host_state_unknown") };
   const decision = classifySession(session, runtime, { includeExited });
   if (decision.outcome !== "restore") return { ...described, ...decision };
@@ -208,7 +173,7 @@ async function planAgent(agent, { backend, requestBackend, command, run, include
 }
 
 async function restoreAgent(target, { backend, requestBackend, command, run, settle }) {
-  const operationId = restoreOperationId(target);
+  const operationId = hostAbsentOperationId(target);
   const described = { agentId: target.agentId, name: target.name, providerId: target.providerId,
     conversationId: target.conversationId, previousSessionId: target.sessionId, workspaceId: target.workspaceId, operationId };
   const status = ["hmux", "rehost", "status", target.sessionId, "--workspace", target.workspaceId, "--operation-id", operationId, "--json"];
@@ -263,10 +228,7 @@ export async function collectResumeAll({
     if (backend.profile.transport.kind !== "local") {
       return failure({ code: "resume_all_local_only", message: "dure resume --all restores agents on this machine. Run it on the remote host itself." });
     }
-    const manifest = await run([command, "capabilities", "--json"], { timeoutMs: NATIVE_QUERY_TIMEOUT_MS });
-    let capabilities;
-    try { capabilities = manifest.kind === "success" ? JSON.parse(manifest.stdout) : undefined; } catch { /* Refused below. */ }
-    if (!supportsHmuxCapability(capabilities, HOST_ABSENT_CAPABILITY)) {
+    if (!await supportsHostAbsentStart({ command, run })) {
       return failure({ code: "resume_all_runtime_update_required",
         message: "This Hmux runtime cannot prove a Host is gone before replacing it. Update Dure and retry; no agent was changed." });
     }
