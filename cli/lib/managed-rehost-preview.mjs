@@ -3,6 +3,9 @@ import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { agentDisplayName, loadSessionClientProjection, matchingAgents } from "./client-registry.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
+import {
+  classifySourceSession, hostAbsentOperationId, readSourceSession, supportsHostAbsentStart,
+} from "./managed-rehost-source-host.mjs";
 import { collectManagedRehostStatus, observeManagedRehostSource } from "./managed-rehost-status.mjs";
 import {
   agentRuntimeRestartableClosedSource,
@@ -68,6 +71,20 @@ async function heldManagedRehost({ sessionId, workspaceId, command, run }) {
     /* Refuse below: an unconfirmed operation is never replaced. */
   }
   return unconfirmed;
+}
+
+/**
+ * The selected source's Host when Hmux observes that exact generation no
+ * longer answering, with the conversation to continue (null when none was
+ * recorded). Undefined for a running, replaced or unobservable Host: the
+ * native rehost then asks the Host itself, as before.
+ */
+async function absentSourceHost({ source, sessionId, workspaceId, conversationId, command, run }) {
+  const session = await readSourceSession({ command, run, sessionId, workspaceId });
+  if (!session) return undefined;
+  const decision = classifySourceSession(session, { source, conversationId }, { includeExited: false });
+  if (decision.outcome === "restore" && decision.requireHostAbsent) return { conversationId: decision.conversationId };
+  return decision.reason === "no_conversation_id" ? { conversationId: null } : undefined;
 }
 
 /** The client owns the name; the backend supplies the source. This does not admit an operation. */
@@ -158,15 +175,39 @@ export async function collectManagedRehostPreview({
         `dure hmux rehost status --operation-id ${held.unconfirmed[0]} and dure runtime get ${agentId}; ` +
         "do not start another operation." }, { agentId, observation });
   }
-  const operationId = held?.operationId ?? randomUUID();
+  // A held operation already carries its own inputs. Otherwise a Host that is
+  // gone, as after a reboot, cannot report its conversation, so the restart
+  // carries the recorded one behind the native Host-absence fence.
+  const hostAbsent = held ? undefined : await absentSourceHost({
+    source, sessionId: sourceSessionId, workspaceId: sourceWorkspaceId,
+    conversationId: binding.providerConversationId ?? observation.receipt?.providerConversationRef ?? null,
+    command, run,
+  });
+  if (hostAbsent && !hostAbsent.conversationId) {
+    return failure({ code: "rehost_conversation_unknown",
+      message: "This Agent's Hmux Host is gone, for example after a reboot, and no provider conversation ID was " +
+        "saved, so it cannot be resumed exactly. Nothing was started. Open its pane to choose a conversation, or " +
+        "start one with dure runs resume --conversation ID --provider ID." }, { agentId, observation });
+  }
+  if (hostAbsent && !await supportsHostAbsentStart({ command, run })) {
+    return failure({ code: "rehost_runtime_update_required",
+      message: "This Agent's Hmux Host is gone, and this Hmux runtime cannot prove that before replacing it. " +
+        "Update Dure and retry; nothing was started." }, { agentId, observation });
+  }
+  const operationId = held?.operationId ??
+    (hostAbsent ? hostAbsentOperationId({ source, sessionId: sourceSessionId, workspaceId: sourceWorkspaceId }) : randomUUID());
   const identity = [sourceSessionId, "--workspace", sourceWorkspaceId, "--operation-id", operationId];
   const retry = ["hmux", "rehost", "retry", ...identity, "--confirm-restart", "--json"];
   return {
     ...base, ok: true, state: "preview", agentId, backend: report.backend, observation,
     continuation: {
       operationId, sourceSessionId, sourceWorkspaceId,
-      // Continuing a held operation never admits another one.
-      start: held ? [...retry] : ["hmux", "rehost", "start", ...identity, "--confirm-restart", "--json"],
+      ...(hostAbsent ? { sourceHost: "absent", expectedConversationId: hostAbsent.conversationId } : {}),
+      // Continuing a held operation never admits another one. The Host-absent
+      // inputs are not hmux rehost start options; resume derives the same operation.
+      start: held ? [...retry] : hostAbsent
+        ? ["runs", "resume", agentId, "--confirm-restart", "--backend", backend.profile.id, "--json"]
+        : ["hmux", "rehost", "start", ...identity, "--confirm-restart", "--json"],
       retry,
       status: ["hmux", "rehost", "status", ...identity, "--json"],
       publish: ["hmux", "rehost", "publish", agentId, "--from-session", ...identity,
@@ -198,7 +239,9 @@ export function formatManagedRecoveryCommands(continuation) {
           ? `Hmux is still applying a restart of this Agent (operation ${held.operationId}). Finish waits for it and publishes it once; do not start another operation.`
           : held
             ? `Hmux already restarted this Agent (operation ${held.operationId}), but its binding is not published yet. Finish publishes it once without restarting again.`
-            : "Retain these exact commands for this attempt; another name request proposes a different operation.",
+            : continuation.sourceHost === "absent"
+              ? `This Agent's Hmux Host is gone, for example after a reboot. The restart starts a replacement on conversation ${continuation.expectedConversationId} once Hmux proves the old Host is gone; it never contacts that Host.`
+              : "Retain these exact commands for this attempt; another name request proposes a different operation.",
     ...(continuation.finish ? [`Finish: ${rehostCommandLine(continuation.finish)}`] : []),
     // A held operation's start is its retry; print it once.
     ...(held ? [] : [`${wake ? "Wake" : restart ? "Restart" : "Start"}: ${rehostCommandLine(continuation.start)}`]),

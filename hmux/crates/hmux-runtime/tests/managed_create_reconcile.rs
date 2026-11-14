@@ -69,6 +69,14 @@ fn managed_create_reconcile_fixture_provider() {
     if let Some(root) = std::env::var_os(FIXTURE_STATE_DIR_ENV) {
         let root = std::path::Path::new(&root);
         fs::write(root.join("provider-spawns"), b"x").unwrap();
+        if root.join("survive-host").exists() {
+            // SAFETY: a test that outlives its Host's PTY closure retires this
+            // exact fixture process itself.
+            assert_ne!(
+                unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN) },
+                libc::SIG_ERR
+            );
+        }
         let hold_open = root.join("hold-open");
         if hold_open.exists() {
             while hold_open.try_exists().unwrap() {

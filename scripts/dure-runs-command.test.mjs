@@ -39,6 +39,9 @@ function fakeClock() {
   return { now: () => time, sleep: async (ms) => { time += Math.max(1, ms); } };
 }
 
+/** Read-only native lookups: the recovery journal and the source session's Host. */
+const readOnlyNative = (argv) => argv[1] === "managed-rehost-resolve" || (argv[2] === "session" && argv[3] === "show");
+
 /**
  * A native broker over one in-memory recovery journal, keyed by source. Like
  * Hmux it refuses a second operation for a source that already holds one, and
@@ -205,8 +208,10 @@ describe("durable Run commands", () => {
     const hmux = fakeHmuxJournal();
     const report = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name] }, command: "hmux", run: hmux.run });
     expect(report).toMatchObject({ ok: true, recovery: { state: "preview", agentId: f.entry.agentId } });
-    // Preview only asks the native journal whether the source already has a restart.
-    expect(hmux.calls.map(([subcommand]) => subcommand)).toEqual(["managed-rehost-resolve"]);
+    // Preview only asks the native journal whether the source already has a restart,
+    // and Hmux whether the source's Host still answers.
+    expect(hmux.calls.every((argv) => readOnlyNative(["hmux", ...argv]))).toBe(true);
+    expect(hmux.calls.map(([subcommand]) => subcommand)).toContain("managed-rehost-resolve");
     expect(report.recovery.continuation.retained).toBeUndefined();
     expect(report.recovery.continuation.start).toContain(f.runtime.receipt.authority.authority.binding.sessionId);
   });
@@ -216,7 +221,7 @@ describe("durable Run commands", () => {
     const report = await collectRunsCommand({ ...f, opts: { rest: ["resume", f.entry.name], confirmRestart: true },
       command: "hmux", run, settle: fakeClock() });
     expect(report).toMatchObject({ ok: false, recovery: { state: "unknown", publication: "not_requested" } });
-    expect(run.mock.calls.filter(([argv]) => argv[1] !== "managed-rehost-resolve")).toHaveLength(1);
+    expect(run.mock.calls.filter(([argv]) => !readOnlyNative(argv))).toHaveLength(1);
     expect(report.recovery.continuation.retry).toContain(report.recovery.continuation.operationId);
     expect(f.requestBackend).toHaveBeenCalledTimes(2);
   });
@@ -236,7 +241,7 @@ describe("durable Run commands", () => {
       recovery: { ok: false, state: "running", nativeExecution: "running", publication: "not_requested" } });
     expect(runsCommandExitCode(report)).toBe(MANAGED_REHOST_RUNNING_EXIT_CODE);
     expect(MANAGED_REHOST_RUNNING_EXIT_CODE).not.toBe(0);
-    expect(run.mock.calls.filter(([argv]) => argv[1] !== "managed-rehost-resolve")).toHaveLength(1);
+    expect(run.mock.calls.filter(([argv]) => !readOnlyNative(argv))).toHaveLength(1);
     // Publication waits for completion; nothing was published yet.
     expect(f.requestBackend).toHaveBeenCalledTimes(2);
     const text = formatRunsCommand(report);
@@ -270,7 +275,7 @@ describe("durable Run commands", () => {
       publication: "published" } });
     expect(runsCommandExitCode(finished)).toBe(0);
     // Besides read-only journal lookups, the only native call admits the operation.
-    expect(run.mock.calls.map(([argv]) => argv).filter((argv) => argv[1] !== "managed-rehost-resolve")
+    expect(run.mock.calls.map(([argv]) => argv).filter((argv) => !readOnlyNative(argv))
       .map((argv) => argv.slice(0, 5))).toEqual([["hmux", "managed-rehost-start",
       "--session", source.binding.sessionId, "--workspace"]]);
     // The last step is the binding publication; without it the restart is not finished.
@@ -391,6 +396,105 @@ describe("durable Run commands", () => {
       expect(f.publications()).toEqual([]);
     });
   });
+  describe("after a reboot ended the Agent's Hmux Host", () => {
+    /**
+     * Hmux as it behaves after a reboot: the selected session's Host is gone,
+     * so a rehost that has to ask it for its conversation cannot connect, and
+     * one carrying the conversation behind the Host-absence fence succeeds.
+     */
+    function rebootFixture({ conversation = "conversation-before-reboot", health = "stale_transport",
+      capabilities = ["managed_rehost_host_absent_start_v1"] } = {}) {
+      const f = fixture();
+      const source = f.runtime.receipt.authority.authority;
+      Object.assign(source, { hostInstanceId: "host-before-reboot", terminalEpoch: "terminal-before-reboot" });
+      if (conversation) source.binding.providerConversationId = conversation;
+      const started = [];
+      const run = vi.fn(async (argv) => {
+        const value = (flag) => argv[argv.indexOf(flag) + 1];
+        if (argv[1] === "managed-rehost-resolve") {
+          return { kind: "success", stdout: JSON.stringify({ schema: "hmux-managed-rehost-resolution-v1",
+            schemaVersion: 1, state: "not_found", source: { sessionId: value("--session"), workspaceId: value("--workspace") } }) };
+        }
+        if (argv[1] === "capabilities") return { kind: "success", stdout: JSON.stringify({ schemaVersion: 1, capabilities }) };
+        if (argv[2] === "session" && argv[3] === "show") {
+          return { kind: "success", stdout: JSON.stringify({ health,
+            host_instance_id: "host-before-reboot", terminal_epoch: "terminal-before-reboot" }) };
+        }
+        if (argv[1] === "managed-rehost-start") {
+          started.push(argv);
+          if (!argv.includes("--require-host-absent") || value("--expected-conversation") !== conversation) {
+            return { kind: "nonzero", stderr: "hmux: error: hmux_managed_rehost_unavailable: source conversation " +
+              "handshake failed: connect to Hmux Host failed: Connection refused (os error 61)" };
+          }
+          return { kind: "success", stdout: JSON.stringify({ schema: "hmux-managed-rehost-v1", schemaVersion: 1,
+            operationId: value("--operation-id"), replayed: false,
+            sourceStopReceipt: { sessionId: value("--session"), workspaceId: value("--workspace") },
+            replacementReceipt: { sessionId: "session-after-reboot", workspaceId: value("--workspace") } }) };
+        }
+        throw new Error(`Unexpected native command: ${argv.join(" ")}`);
+      });
+      const published = { schemaVersion: 1, receipt: { ...f.runtime.receipt, selectionRevision: 2 } };
+      f.requestBackend.mockImplementation(async (_profile, request) => {
+        if (request.operation === "agent_spawn.list") return { result: f.page };
+        if (request.operation === "agent_runtime.projection.inspect") return { result: f.runtime };
+        if (request.operation === "agent_runtime.native_rehost.reconcile") return { result: published };
+        throw new Error(`Unexpected operation: ${request.operation}`);
+      });
+      const resume = (confirmRestart) => collectRunsCommand({ ...f,
+        opts: { rest: ["resume", f.entry.name], ...(confirmRestart ? { confirmRestart } : {}) },
+        command: "hmux", run, settle: fakeClock() });
+      return { ...f, run, started, resume };
+    }
+
+    it("resumes the saved conversation behind the Host-absence fence instead of dialing the dead Host", async () => {
+      const f = rebootFixture();
+      const report = await f.resume(true);
+      expect(report).toMatchObject({ ok: true, recovery: { state: "completed", nativeExecution: "completed",
+        publication: "published" } });
+      expect(f.started).toHaveLength(1);
+      expect(f.started[0]).toContain("--require-host-absent");
+      expect(f.started[0][f.started[0].indexOf("--expected-conversation") + 1]).toBe("conversation-before-reboot");
+    });
+
+    it("says in the preview that the Host is gone and which conversation resumes, with the same operation", async () => {
+      const f = rebootFixture();
+      const preview = await f.resume(false);
+      expect(preview).toMatchObject({ ok: true, recovery: { state: "preview",
+        continuation: { sourceHost: "absent", expectedConversationId: "conversation-before-reboot" } } });
+      expect(f.started).toEqual([]);
+      expect(formatRunsCommand(preview)).toContain("conversation-before-reboot");
+      const confirmed = await f.resume(true);
+      expect(f.started[0][f.started[0].indexOf("--operation-id") + 1]).toBe(preview.recovery.continuation.operationId);
+      expect(confirmed.recovery.operationId ?? confirmed.recovery.continuation.operationId)
+        .toBe(preview.recovery.continuation.operationId);
+    });
+
+    it("refuses in the preview when the Host is gone and no conversation ID was saved", async () => {
+      const f = rebootFixture({ conversation: null });
+      for (const confirmRestart of [false, true]) {
+        const report = await f.resume(confirmRestart);
+        expect(report).toMatchObject({ ok: false, error: { code: "rehost_conversation_unknown" } });
+      }
+      expect(f.started).toEqual([]);
+    });
+
+    it("refuses instead of starting when the runtime cannot prove the Host is gone", async () => {
+      const f = rebootFixture({ capabilities: [] });
+      const report = await f.resume(true);
+      expect(report).toMatchObject({ ok: false, error: { code: "rehost_runtime_update_required" } });
+      expect(f.started).toEqual([]);
+    });
+
+    it("keeps asking a running Host for its own conversation", async () => {
+      const f = rebootFixture({ health: "healthy" });
+      const preview = await f.resume(false);
+      expect(preview.recovery.continuation.sourceHost).toBeUndefined();
+      await f.resume(true);
+      expect(f.started[0]).not.toContain("--require-host-absent");
+      expect(f.started[0]).not.toContain("--expected-conversation");
+    });
+  });
+
   it("uses a published successor, and refuses incomplete or unrelated current authority", () => {
     const f = fixture();
     const report = { kind: "dure.agent_spawn.status", receipt: f.receipt };
