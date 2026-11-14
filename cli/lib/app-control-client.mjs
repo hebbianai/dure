@@ -72,6 +72,13 @@ function responseError(payload, status) {
     error.nextAction = serverError.nextAction;
   }
   if (serverError?.execution === "not_started") error.execution = "not_started";
+  // A frontend route timeout says whether a window took the request.
+  if (
+    serverError?.deliveryState === "claimed" ||
+    serverError?.deliveryState === "unclaimed"
+  ) {
+    error.deliveryState = serverError.deliveryState;
+  }
   return error;
 }
 
