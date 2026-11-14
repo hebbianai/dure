@@ -1791,7 +1791,10 @@ Use --cursor start for the first ordered page, then pagination.nextCursor until 
 Pages are live observations ordered by workspace/session ID, not a frozen snapshot.
 complete means the census succeeded; inventoryComplete means no more rows remain
 after this page, and observationComplete means every returned row was probed.
-Recent lists provider history through the connected app.
+Recent lists provider history through the connected app. It is not a liveness
+check; use dure ls --alive for live sessions. With --json, a failure prints one
+{kind: "dure.sessions.recent.error", error: {code, message, nextAction}} object
+on stderr.
 
 Filtering options (dure ls only):
   --alive                   Show only alive sessions from every census page (exclude exited and unknown)
@@ -1813,8 +1816,24 @@ async function cmdSessions(sub, opts) {
     if (opts.rest.length !== (sub === undefined ? 0 : 1)) {
       fail("Usage: dure sessions recent [--json]");
     }
-    const payload = await requestAppControl("/sessions/recent");
-    const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+    const {
+      collectRecentSessions,
+      formatRecentSessionsError,
+      recentSessionsErrorReport,
+    } = await import("./lib/sessions-recent-command.mjs");
+    let sessions;
+    try {
+      sessions = await collectRecentSessions({ descriptor: loadServer() });
+    } catch (error) {
+      const report = recentSessionsErrorReport(error);
+      process.stderr.write(
+        opts.json
+          ? `${JSON.stringify(report)}\n`
+          : `${formatRecentSessionsError(report, { color: process.stderr.isTTY })}\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
     if (opts.json) {
       process.stdout.write(`${JSON.stringify(sessions)}\n`);
       return;
