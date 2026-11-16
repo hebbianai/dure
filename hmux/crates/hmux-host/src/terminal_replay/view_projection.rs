@@ -556,7 +556,40 @@ pub struct CapturedViewportFrame {
 }
 
 impl CapturedViewportFrame {
+    /// Builds the frame this capture describes. A frame the Host produced
+    /// itself that breaks a protocol invariant is a Host projection defect,
+    /// not a reason to refuse the peer: attach, input delivery, stop and
+    /// rehost all wait on this frame. Such a frame is replaced by a degraded
+    /// one that keeps the geometry and terminal metadata but carries empty
+    /// rows, and the broken invariant is logged. The next capture projects
+    /// the content again.
     pub fn finish(self) -> Result<TerminalStateRecord, TerminalReplayError> {
+        let degraded = DegradedViewportFrame {
+            terminal_epoch: self.terminal_epoch.clone(),
+            through_output_seq: self.through_output_seq,
+            state_revision: self.state_revision,
+            projection_revision: self.projection_revision,
+            rows: self.geometry.viewport_rows,
+            source: self.source.clone(),
+            follow_tail: self.follow_tail,
+            applied_intent_seq: self.applied_intent_seq,
+            anchor_status: self.anchor_status,
+            rows_from_tail: self.rows_from_tail,
+        };
+        match self.finish_exact() {
+            Err(TerminalReplayError::InvalidStructuredProjection { reason }) => {
+                let record = degraded.finish().ok_or(
+                    TerminalReplayError::InvalidStructuredProjection { reason },
+                )?;
+                // The reason is a static invariant, never terminal content.
+                eprintln!("hmux-host: sent a degraded terminal viewport frame: {reason}");
+                Ok(record)
+            }
+            exact => exact,
+        }
+    }
+
+    fn finish_exact(self) -> Result<TerminalStateRecord, TerminalReplayError> {
         let viewport = build_viewport_frame(
             ViewportFrameMetadata {
                 projection_revision: self.projection_revision,
@@ -579,15 +612,109 @@ impl CapturedViewportFrame {
         };
         terminal_state_protocol::validate_record(&record).map_err(|error| {
             TerminalReplayError::InvalidStructuredProjection {
-                // Record validation supplies a static invariant, never terminal
-                // content. Preserve it for the attachment's existing error path.
-                reason: match error {
-                    terminal_state_protocol::ProtocolError::InvalidRecord(reason) => reason,
-                    _ => "encoded viewport record failed protocol validation",
-                },
+                reason: protocol_error_reason(&error),
             }
         })?;
         Ok(record)
+    }
+}
+
+/// The static invariant a protocol error names, never terminal content.
+fn protocol_error_reason(error: &terminal_state_protocol::ProtocolError) -> &'static str {
+    use terminal_state_protocol::ProtocolError;
+    match error {
+        ProtocolError::InvalidRecord(reason) | ProtocolError::InvalidEnvelope(reason) => *reason,
+        ProtocolError::FrameTooLarge { .. } => "viewport record exceeds the protocol frame size",
+        ProtocolError::Decode(_) => "viewport record does not decode",
+    }
+}
+
+/// What a viewport frame needs besides its rows, kept so a frame whose rows
+/// cannot be projected validly can still be sent.
+struct DegradedViewportFrame {
+    terminal_epoch: String,
+    through_output_seq: u64,
+    state_revision: u64,
+    projection_revision: u64,
+    rows: u16,
+    source: CachedViewportSource,
+    follow_tail: bool,
+    applied_intent_seq: u64,
+    anchor_status: ViewportAnchorStatus,
+    rows_from_tail: Option<u64>,
+}
+
+impl DegradedViewportFrame {
+    /// The first valid record among: empty rows under this capture's anchor
+    /// and terminal metadata; then empty rows following the tail without the
+    /// snapshot's free-form metadata. `None` only when the capture's identity
+    /// or geometry is itself out of range.
+    fn finish(self) -> Option<TerminalStateRecord> {
+        let snapshot = &self.source.snapshot;
+        let rows = (1..=u64::from(self.rows.max(1)))
+            .map(|id| terminal_state_protocol::TerminalRow {
+                row_id: id,
+                logical_line_id: id,
+                termination: terminal_state_protocol::RowTermination::HardBreak as i32,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        let tables = terminal_state_protocol::TerminalTables {
+            graphemes: vec![terminal_state_protocol::Grapheme {
+                text: String::new(),
+                display_width: 0,
+            }],
+            styles: vec![terminal_state_protocol::CellStyle {
+                underline: terminal_state_protocol::UnderlineKind::None as i32,
+                ..Default::default()
+            }],
+            hyperlinks: Vec::new(),
+        };
+        let anchored = ViewportFrame {
+            projection_revision: self.projection_revision,
+            damage_base_projection_revision: 0,
+            canonical_columns: snapshot.columns,
+            viewport_rows: u32::from(self.rows.max(1)),
+            active_buffer: snapshot.active_buffer,
+            rows,
+            tables: Some(tables),
+            cursor: None,
+            input_modes: snapshot.input_modes,
+            color_overrides: Some(Default::default()),
+            unicode_width: snapshot.unicode_width.clone(),
+            through_event_id: snapshot.through_event_id,
+            title: snapshot.title.clone(),
+            working_directory_uri: snapshot.working_directory_uri.clone(),
+            follow_tail: self.follow_tail,
+            has_more_before: false,
+            has_more_after: false,
+            changed_row_indices: Vec::new(),
+            applied_intent_seq: self.applied_intent_seq,
+            anchor_status: self.anchor_status as i32,
+            rows_from_tail: self.rows_from_tail,
+            input_output_timing: None,
+            find: None,
+        };
+        let tail = ViewportFrame {
+            title: String::new(),
+            working_directory_uri: String::new(),
+            follow_tail: true,
+            anchor_status: ViewportAnchorStatus::FollowTail as i32,
+            rows_from_tail: Some(0),
+            ..anchored.clone()
+        };
+        [anchored, tail].into_iter().find_map(|frame| {
+            let record = TerminalStateRecord {
+                schema_minor: u32::from(terminal_state_protocol::PROTOCOL_MINOR),
+                terminal_epoch: self.terminal_epoch.clone(),
+                through_output_seq: self.through_output_seq,
+                state_revision: self.state_revision,
+                body: Some(terminal_state_record::Body::ViewportFrame(frame)),
+            };
+            terminal_state_protocol::validate_record(&record)
+                .is_ok()
+                .then_some(record)
+        })
     }
 }
 
@@ -1596,7 +1723,7 @@ mod tests {
                 .unwrap();
             invalidate(&mut capture);
 
-            let error = capture.finish().unwrap_err();
+            let error = capture.finish_exact().unwrap_err();
 
             assert_eq!(error.class_token(), "invalid_structured_projection");
             assert_eq!(
@@ -1605,6 +1732,63 @@ mod tests {
             );
             assert!(!error.to_string().contains("diagnostic-content-sentinel"));
         }
+    }
+
+    #[test]
+    fn a_self_produced_frame_that_breaks_an_invariant_degrades_instead_of_refusing() {
+        // Attach, input delivery, stop and rehost wait on this frame. A Host
+        // projection defect must reach the peer as a valid frame, not refuse it.
+        let cases: [fn(&mut CapturedViewportFrame); 5] = [
+            |capture| {
+                capture.viewport.rows[0].logical_cell_span = u32::from(capture.geometry.columns) + 1
+            },
+            |capture| capture.viewport.rows[0].logical_line_id = 0,
+            |capture| capture.viewport.rows[0].cells[0].grapheme_index = u32::MAX,
+            |capture| capture.viewport.cursor = Some((0, capture.geometry.columns)),
+            |capture| capture.rows_from_tail = Some(1),
+        ];
+        for invalidate in cases {
+            let mut replay = replay();
+            replay
+                .ingest_output(b"diagnostic-content-sentinel")
+                .unwrap();
+            let mut projection = replay.attach_view_projection().unwrap();
+            let mut capture = replay
+                .capture_latest_viewport_frame(&mut projection)
+                .unwrap()
+                .unwrap();
+            let rows = capture.geometry.viewport_rows;
+            invalidate(&mut capture);
+
+            let record = capture.finish().unwrap();
+
+            terminal_state_protocol::validate_record(&record).unwrap();
+            terminal_state_protocol::encode_record(1, &record).unwrap();
+            let degraded = frame(&record);
+            assert_eq!(degraded.viewport_rows, u32::from(rows));
+            assert_eq!(degraded.rows.len(), usize::from(rows));
+            assert!(degraded.rows.iter().all(|row| row.cells.is_empty()));
+            assert!(degraded.cursor.is_none());
+        }
+    }
+
+    #[test]
+    fn a_frame_without_a_valid_identity_still_reports_its_invariant() {
+        let mut replay = replay();
+        replay.ingest_output(b"content").unwrap();
+        let mut projection = replay.attach_view_projection().unwrap();
+        let mut capture = replay
+            .capture_latest_viewport_frame(&mut projection)
+            .unwrap()
+            .unwrap();
+        capture.state_revision = 0;
+
+        let error = capture.finish().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "structured terminal projection is inconsistent: state revision must be nonzero"
+        );
     }
 
     #[test]

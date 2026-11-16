@@ -415,7 +415,18 @@ fn spawn_target_transport_is_ready(
         .with_terminal_viewport_projection()
         .with_terminal_viewport_wheel()
         .with_terminal_viewport_multipart();
-    let Ok(connection) = session.connect_with_options(options) else {
+    // Readiness is the retirement capability, not a viewport. A Host that
+    // cannot seed its viewport is still ready.
+    #[cfg(feature = "terminal-state-stream")]
+    let connected = match session.connect_with_options(options.clone()) {
+        Err(error) if error.is_terminal_viewport_seed_refusal() => {
+            session.connect_with_options(options.without_terminal_viewport_projection())
+        }
+        result => result,
+    };
+    #[cfg(not(feature = "terminal-state-stream"))]
+    let connected = session.connect_with_options(options);
+    let Ok(connection) = connected else {
         return false;
     };
     let ready = connection.supports(SESSION_RETIREMENT_ADMIN_CAPABILITY);

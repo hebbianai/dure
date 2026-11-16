@@ -291,6 +291,26 @@ impl ConnectionOptions {
         self
     }
 
+    /// The same attach without any viewport projection. Only callers that do
+    /// not render or write through the viewport may use it, as a fallback when
+    /// a Host cannot seed the projection.
+    #[cfg(feature = "terminal-state-stream")]
+    #[must_use]
+    pub fn without_terminal_viewport_projection(mut self) -> Self {
+        self.terminal_viewport_projection = false;
+        self.terminal_viewport_wheel = false;
+        self.terminal_viewport_multipart = false;
+        self.terminal_input = TerminalInputRequest::None;
+        self.terminal_default_colors = false;
+        self.terminal_history_find = false;
+        self
+    }
+
+    #[cfg(feature = "terminal-state-stream")]
+    pub(crate) fn requests_terminal_viewport_projection(&self) -> bool {
+        self.terminal_viewport_projection
+    }
+
     /// Selects the Host-owned typed agent runtime projection on a structured
     /// connection. Relay adapters call this only when their outer peer asked
     /// for the same capability, so `HelloAck` cannot over-grant it.

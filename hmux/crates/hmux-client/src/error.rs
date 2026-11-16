@@ -359,6 +359,22 @@ impl ClientError {
         matches!(self, Self::Discovery(DiscoveryError::GenerationMismatch))
     }
 
+    /// True when the Host admitted the attach but could not seed its initial
+    /// terminal viewport. Hosts before the degraded-frame fallback refuse the
+    /// whole attach when their own frame breaks a protocol invariant; callers
+    /// that only use the projection as a cheaper seed can attach without it.
+    pub fn is_terminal_viewport_seed_refusal(&self) -> bool {
+        match self {
+            Self::TerminalViewportAttachTransportClosed => true,
+            Self::HostRefused {
+                code: HostErrorCode::TransportClosed,
+                message,
+                ..
+            } => message.contains("the initial terminal viewport"),
+            _ => false,
+        }
+    }
+
     pub(crate) fn is_manifest_process_mismatch(&self) -> bool {
         matches!(
             self,

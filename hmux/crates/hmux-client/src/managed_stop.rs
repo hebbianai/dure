@@ -429,6 +429,20 @@ impl LocalSession {
             // serve. Rolling no-stream Hosts retain the legacy control path.
             options
         };
+        // The viewport is only a cheaper seed than a raw snapshot here; stop
+        // never renders it. A Host that cannot seed its viewport must still be
+        // stoppable, so attach again without the projection.
+        #[cfg(feature = "terminal-state-stream")]
+        let mut connection = match self.connect_with_options(options.clone()) {
+            Err(error)
+                if options.requests_terminal_viewport_projection()
+                    && error.is_terminal_viewport_seed_refusal() =>
+            {
+                self.connect_with_options(options.without_terminal_viewport_projection())?
+            }
+            result => result?,
+        };
+        #[cfg(not(feature = "terminal-state-stream"))]
         let mut connection = self.connect_with_options(options)?;
         if !connection.supports(MANAGED_PROVIDER_STOP_CAPABILITY) {
             return Err(ClientError::MissingCapability {

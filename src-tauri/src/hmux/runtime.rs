@@ -1,7 +1,7 @@
 use super::bounded_process::{self, CommandFailure, CommandSpec};
 use super::runtime_install_health::{
     assess_independent_install, with_missing_capability, with_probe_failure,
-    with_unsafe_install, IndependentInstallHealth, IndependentInstallReadiness,
+    with_unsafe_install, IndependentInstallHealth, IndependentInstallReadiness, LOCAL_BUNDLED_SOURCE,
 };
 use hmux_client::{ProtocolVersion, SessionDescriptor, VersionRange};
 use serde::{Deserialize, Serialize};
@@ -188,31 +188,77 @@ fn ensure_current_build_at<R: Runtime>(
     build_info_timeout: Duration,
 ) -> Result<InstalledBuild, String> {
     let install_root = install_root()?;
-    let current_error = match fs::symlink_metadata(install_root.join("current")) {
-        Ok(_) => match resolve_current_at(&install_root) {
-            Ok(current) => {
-                if installed_supports_app_sessions(&current, build_info_timeout)? {
+    let bundled = bundled_runtime_candidates(app)
+        .into_iter()
+        .find(|candidate| is_executable_file(candidate));
+    ensure_current_build_from(&install_root, bundled.as_deref(), build_info_timeout)
+}
+
+/// Dure-managed sessions run the Hmux runtime this app shipped with. An
+/// installed `current` from another build is never selected while the app
+/// carries its own runtime: an app-activated copy belongs to the app build that
+/// published it, and running it would keep every desktop session on the Host of
+/// the first app version that ran on this machine. The installed `current` is
+/// used only when it is this build, or when the app carries no runtime (a
+/// source build without staged binaries).
+fn ensure_current_build_from(
+    install_root: &Path,
+    bundled: Option<&Path>,
+    build_info_timeout: Duration,
+) -> Result<InstalledBuild, String> {
+    if let Some(source) = bundled {
+        if let Some(build_id) = bundled_build_id(source, build_info_timeout) {
+            if let Ok(current) = resolve_current_at(install_root) {
+                if current.build_id == build_id
+                    && installed_supports_app_sessions(&current, build_info_timeout)?
+                {
                     return Ok(current);
                 }
-                "hmux_create_runtime_incompatible: installed runtime does not support this app's session contract".to_string()
             }
-            Err(error) => {
-                if !safe_version_link(&install_root, "current") {
-                    return Err(error);
-                }
-                error
-            }
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            "hmux_current_unavailable: no installed current build or local bundled runtime".to_string()
         }
-        Err(_) => return Err("hmux_current_invalid: current build metadata is unreadable".to_string()),
-    };
-    let source = bundled_runtime_candidates(app)
-        .into_iter()
-        .find(|candidate| is_executable_file(candidate))
-        .ok_or(current_error)?;
-    activate_bundled_runtime_at(&install_root, &source, build_info_timeout)
+        return activate_bundled_runtime_at(install_root, source, build_info_timeout);
+    }
+    match fs::symlink_metadata(install_root.join("current")) {
+        Ok(_) => {
+            let current = resolve_current_at(install_root)?;
+            if installed_supports_app_sessions(&current, build_info_timeout)? {
+                Ok(current)
+            } else {
+                Err("hmux_create_runtime_incompatible: installed runtime does not support this app's session contract".to_string())
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err("hmux_current_unavailable: no installed current build or local bundled runtime".to_string())
+        }
+        Err(_) => Err("hmux_current_invalid: current build metadata is unreadable".to_string()),
+    }
+}
+
+/// The build a bundled runtime reports, probed once per app process: the
+/// bundle does not change while the app runs, and every session operation
+/// resolves the runtime. Activation still inspects the source itself.
+fn bundled_build_id(source: &Path, timeout: Duration) -> Option<String> {
+    static BUNDLED_BUILD: OnceLock<Mutex<Option<(PathBuf, String)>>> = OnceLock::new();
+    let cache = BUNDLED_BUILD.get_or_init(|| Mutex::new(None));
+    if let Ok(cached) = cache.lock() {
+        if let Some((path, build_id)) = cached.as_ref() {
+            if path == source {
+                return Some(build_id.clone());
+            }
+        }
+    }
+    let build_id = inspect_runtime_at(source, timeout).ok()?.build_id;
+    if let Ok(mut cached) = cache.lock() {
+        *cached = Some((source.to_path_buf(), build_id.clone()));
+    }
+    Some(build_id)
+}
+
+/// `current` was published by an app from its own bundle rather than
+/// installed independently.
+fn app_activated(install_root: &Path, build: &InstalledBuild) -> bool {
+    read_install_metadata_at(&install_root.join("versions").join(&build.build_id), &build.build_id)
+        .is_ok_and(|metadata| metadata.activation_source.as_deref() == Some(LOCAL_BUNDLED_SOURCE))
 }
 
 pub(super) fn current_build_id() -> Option<String> {
@@ -863,15 +909,20 @@ fn activate_bundled_runtime_at(
     validate_directory(&versions, "hmux_versions_invalid")?;
 
     let lock = MutationLock::acquire(install_root)?;
+    // Reobserve under the install lock. `current` moves to this build unless
+    // it already is this build, or it is a compatible runtime the user
+    // installed independently: that one keeps serving the `hmux` command and
+    // SSH peers while this app's sessions run the build published beside it.
+    let mut keep_current = false;
     let repairing_current = match fs::symlink_metadata(install_root.join("current")) {
         Ok(_) => match resolve_current_at(install_root) {
             Ok(installed) => {
-                // Reobserve under the install lock: another app may have
-                // already promoted a compatible independent runtime.
-                if installed_supports_app_sessions(&installed, build_info_timeout)? {
+                let compatible = installed_supports_app_sessions(&installed, build_info_timeout)?;
+                if compatible && installed.build_id == info.build_id {
                     drop(lock);
                     return Ok(installed);
                 }
+                keep_current = compatible && !app_activated(install_root, &installed);
                 false
             }
             Err(_) if safe_version_link(install_root, "current") => true,
@@ -890,7 +941,7 @@ fn activate_bundled_runtime_at(
         }
         if repairing_current {
             replace_version_link(install_root, "current", &info.build_id)?;
-        } else {
+        } else if !keep_current {
             activate_current_symlink(install_root, &info.build_id)?;
         }
         drop(lock);
@@ -936,7 +987,7 @@ fn activate_bundled_runtime_at(
         package_version: env!("CARGO_PKG_VERSION").to_string(),
         target_triple: format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
         protocol: info.protocol,
-        activation_source: Some("local_bundled".to_string()),
+        activation_source: Some(LOCAL_BUNDLED_SOURCE.to_string()),
         cli_available: Some(cli_source.is_some()),
     };
     let metadata_file = File::create(staging.join("install.json"))
@@ -948,7 +999,7 @@ fn activate_bundled_runtime_at(
     staging_guard.published = true;
     if repairing_current {
         replace_version_link(install_root, "current", &info.build_id)?;
-    } else {
+    } else if !keep_current {
         activate_current_symlink(install_root, &info.build_id)?;
     }
     drop(lock);

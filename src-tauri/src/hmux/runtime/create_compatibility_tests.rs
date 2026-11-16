@@ -259,19 +259,69 @@ fn native_terminal_creation_upgrades_legacy_current_before_request_bound_create(
     );
 }
 
+/// A compatible runtime the user installed keeps `current` (the `hmux`
+/// command and SSH peers use it), but this app's sessions run its own build.
 #[test]
-fn compatible_independent_current_is_preserved_across_bundle_revisions() {
+fn compatible_independent_current_is_preserved_while_the_app_runs_its_own_build() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("install");
     let current = install(&root, "independent-newer", APP_CAPABILITIES);
     let before = fs::read(&current).unwrap();
     let source = temp.path().join("bundled");
     runtime_script(&source, "bundled-older", APP_CAPABILITIES);
-    let selected = activate_bundled_runtime_at(&root, &source, BUILD_INFO_TIMEOUT).unwrap();
-    assert_eq!(selected.runtime, current);
+
+    let selected = ensure_current_build_from(&root, Some(&source), BUILD_INFO_TIMEOUT).unwrap();
+
+    assert_eq!(selected.build_id, "bundled-older");
+    assert!(selected.runtime.starts_with(root.join("versions/bundled-older")));
+    assert_eq!(resolve_current_at(&root).unwrap().build_id, "independent-newer");
     assert_eq!(fs::read(current).unwrap(), before);
     assert!(!root.join("previous").exists());
-    assert!(!root.join("versions/bundled-older").exists());
+}
+
+fn mark_app_activated(root: &Path, build_id: &str) {
+    let path = root.join("versions").join(build_id).join("install.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    metadata["activationSource"] = serde_json::json!("local_bundled");
+    fs::write(path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+}
+
+/// A runtime an earlier app version activated from its own bundle still
+/// supports every session capability. A newer app must not keep running it:
+/// its Host lacks every fix since, and rehosts and recoveries would carry the
+/// stale binary forward.
+#[test]
+fn a_newer_app_replaces_the_runtime_an_older_app_activated() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("install");
+    let old = install(&root, "app-0.2.26", APP_CAPABILITIES);
+    mark_app_activated(&root, "app-0.2.26");
+    let old_bytes = fs::read(&old).unwrap();
+    let source = temp.path().join("bundled");
+    runtime_script(&source, "app-0.2.63", APP_CAPABILITIES);
+
+    let selected = ensure_current_build_from(&root, Some(&source), BUILD_INFO_TIMEOUT).unwrap();
+
+    assert_eq!(selected.build_id, "app-0.2.63");
+    assert_eq!(resolve_current_at(&root).unwrap().build_id, "app-0.2.63");
+    assert_eq!(previous_build_id_at(&root).as_deref(), Some("app-0.2.26"));
+    // Hosts still running the old build keep their executable.
+    assert_eq!(fs::read(old).unwrap(), old_bytes);
+    // Once current is this build, it is selected as is.
+    let again = ensure_current_build_from(&root, Some(&source), BUILD_INFO_TIMEOUT).unwrap();
+    assert_eq!(again.runtime, selected.runtime);
+}
+
+#[test]
+fn without_a_bundled_runtime_the_installed_current_is_used() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("install");
+    let current = install(&root, "installed", APP_CAPABILITIES);
+
+    let selected = ensure_current_build_from(&root, None, BUILD_INFO_TIMEOUT).unwrap();
+
+    assert_eq!(selected.runtime, current);
 }
 
 #[test]
