@@ -2229,17 +2229,14 @@ pub(crate) fn resolve_runtime_executable(configured: Option<PathBuf>) -> Result<
                 .ok()
                 .and_then(|path| path.parent().map(|parent| parent.join("hmux-runtime"))),
         )
+        // No fallback to `~/.local/share/hmux/current` or `~/.local/bin`: every
+        // installed `hmux` ships beside the runtime of its own build, and a
+        // runtime found elsewhere can be a different build. Sessions created
+        // through it would run a Host this CLI was never built against.
         .chain([
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/hmux-runtime"),
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/hmux-runtime"),
-        ])
-        .chain(dirs::home_dir().map(|home| {
-            home.join(".local/share/hmux")
-                .join("current")
-                .join("bin")
-                .join(format!("hmux-runtime{}", std::env::consts::EXE_SUFFIX))
-        }))
-        .chain(dirs::home_dir().map(|home| home.join(".local/bin/hmux-runtime")));
+        ]);
     for candidate in candidates {
         if candidate.is_file() {
             return Ok(candidate);
