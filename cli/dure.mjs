@@ -2821,6 +2821,21 @@ async function cmdWorkspace(opts) {
   );
 }
 
+/** Reports `dure stop` from the app's answer. An Agent the app does not
+ * present, or any Agent on a host without the app, continues through its
+ * backend Run record. */
+async function reportAgentStop(name, opts, receipt, httpOk) {
+  const { agentStopReport, collectRunRecordStop, formatAgentStopReport, stopsRunRecord } =
+    await import("./lib/agent-stop-command.mjs");
+  const report = stopsRunRecord(receipt, opts)
+    ? agentStopReport(await collectRunRecordStop({ selector: name, appReceipt: receipt,
+      resolveBackend: () => backendProfileQueryContext({}) }), true)
+    : agentStopReport(receipt, httpOk);
+  const output = opts.json ? JSON.stringify(report) : formatAgentStopReport(report, name);
+  (opts.json || report.ok ? process.stdout : process.stderr).write(`${output}\n`);
+  if (!report.ok) process.exitCode = 1;
+}
+
 async function cmdHmux(sub, opts) {
   const action = sub === "migrate" ? "adopt" : sub;
   if (action === "rehost") {
@@ -2921,7 +2936,35 @@ async function cmdHmux(sub, opts) {
   ) {
     fail("--permission-mode must be default or skip_permissions.");
   }
+  // A3: stop은 파괴적 라우트 — 서버가 confirm 없이는 428로 거절한다.
+  // 대화형이면 확인을 받고, 스크립트에서는 --yes 를 명시하게 한다.
+  if (action === "stop" && !opts.yes) {
+    if (process.stdin.isTTY && process.stdout.isTTY) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      // Ctrl-D(close)는 question promise가 영원히 안 풀리고, Ctrl-C(SIGINT)는
+      // 리스너가 없으면 readline이 삼킨다 — 둘 다 빈 답(=취소)으로 수렴시킨다.
+      const answer = await new Promise((resolve) => {
+        rl.on("close", () => resolve(""));
+        rl.on("SIGINT", () => {
+          rl.close();
+          resolve("");
+        });
+        void rl
+          .question(`Stop the provider for session '${name}'? [y/N] `)
+          .then(resolve);
+      });
+      rl.close();
+      if (!/^y(es)?$/i.test(String(answer).trim())) fail("Stopping was cancelled.");
+    } else {
+      fail("hmux stop is destructive. Non-interactive execution requires --yes.");
+    }
+  }
   const srv = loadServer();
+  if (!srv && action === "stop") {
+    // A headless host runs no app, so nothing there presents the Agent.
+    const { appServerMissingReceipt } = await import("./lib/agent-stop-command.mjs");
+    return await reportAgentStop(name, opts, appServerMissingReceipt(), false);
+  }
   if (!srv) {
     fail(`The app server was not found. Hmux pane ${action} requires the Dure app to be running.`);
   }
@@ -2945,32 +2988,7 @@ async function cmdHmux(sub, opts) {
   if (opts.provider) body.providerId = opts.provider;
   if (opts.confirmRestart) body.confirmRestart = true;
 
-  // A3: stop은 파괴적 라우트 — 서버가 confirm 없이는 428로 거절한다.
-  // 대화형이면 확인을 받고, 스크립트에서는 --yes 를 명시하게 한다.
-  if (action === "stop") {
-    if (!opts.yes) {
-      if (process.stdin.isTTY && process.stdout.isTTY) {
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
-        // Ctrl-D(close)는 question promise가 영원히 안 풀리고, Ctrl-C(SIGINT)는
-        // 리스너가 없으면 readline이 삼킨다 — 둘 다 빈 답(=취소)으로 수렴시킨다.
-        const answer = await new Promise((resolve) => {
-          rl.on("close", () => resolve(""));
-          rl.on("SIGINT", () => {
-            rl.close();
-            resolve("");
-          });
-          void rl
-            .question(`Stop the provider for session '${name}'? [y/N] `)
-            .then(resolve);
-        });
-        rl.close();
-        if (!/^y(es)?$/i.test(String(answer).trim())) fail("Stopping was cancelled.");
-      } else {
-        fail("hmux stop is destructive. Non-interactive execution requires --yes.");
-      }
-    }
-    body.confirm = true;
-  }
+  if (action === "stop") body.confirm = true;
 
   const res = await fetch(`http://127.0.0.1:${srv.port}/hmux/${action}`, {
     method: "POST",
@@ -2981,18 +2999,7 @@ async function cmdHmux(sub, opts) {
     body: JSON.stringify(body),
   }).catch((error) => fail(`App server request failed: ${error.message}`));
   const receipt = await res.json().catch(() => null);
-  if (action === "stop") {
-    const { agentStopReport, collectRunRecordStop, formatAgentStopReport, stopsRunRecord } =
-      await import("./lib/agent-stop-command.mjs");
-    const report = stopsRunRecord(receipt, opts)
-      ? agentStopReport(await collectRunRecordStop({ selector: name, appReceipt: receipt,
-        resolveBackend: () => backendProfileQueryContext({}) }), true)
-      : agentStopReport(receipt, res.ok);
-    const output = opts.json ? JSON.stringify(report) : formatAgentStopReport(report, name);
-    (opts.json || report.ok ? process.stdout : process.stderr).write(`${output}\n`);
-    if (!report.ok) process.exitCode = 1;
-    return;
-  }
+  if (action === "stop") return await reportAgentStop(name, opts, receipt, res.ok);
   const permissionRelaunch = receipt?.permissionModeRelaunch;
   if (permissionRelaunch?.outcome === "preview") {
     if (opts.json) {
