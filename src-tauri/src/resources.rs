@@ -31,9 +31,9 @@ static SYSTEM: Mutex<Option<System>> = Mutex::new(None);
 /// 경로를 담고 있는 마운트 중 가장 긴(=가장 구체적인) 것을 고른다.
 /// `/Users/me/x`는 `/`와 `/Users` 양쪽에 매치될 수 있고, 답은 후자다.
 fn volume_for(path: &str) -> Option<(u64, u64)> {
-    let disks = Disks::new_with_refreshed_list();
+    let disks = Disks::new_with_refreshed_list().ok()?;
     let mut best: Option<(usize, u64, u64)> = None;
-    for disk in disks.list() {
+    for disk in disks.iter() {
         let mount = disk.mount_point().to_string_lossy().into_owned();
         if !path.starts_with(&mount) {
             continue;
@@ -54,12 +54,22 @@ pub fn sample(path: Option<&str>) -> SystemResources {
         // 표본 하나 때문에 앱을 죽이지 않는다 — 다음 호출이 다시 시도한다.
         Err(poisoned) => poisoned.into_inner(),
     };
-    let system = guard.get_or_insert_with(System::new);
-    system.refresh_cpu_usage();
-    system.refresh_memory();
-    let cpu_percent = system.global_cpu_usage();
-    let memory_used_bytes = system.used_memory();
-    let memory_total_bytes = system.total_memory();
+    if guard.is_none() {
+        // 만들지 못하면 다음 호출이 다시 시도한다.
+        *guard = System::new().ok();
+    }
+    let (cpu_percent, memory_used_bytes, memory_total_bytes) = match guard.as_mut() {
+        Some(system) => {
+            system.refresh_cpu_usage();
+            system.refresh_memory();
+            (
+                system.global_cpu_usage(),
+                system.used_memory(),
+                system.total_memory(),
+            )
+        }
+        None => (0.0, 0, 0),
+    };
     drop(guard);
 
     let (disk_free_bytes, disk_total_bytes) = match path.and_then(volume_for) {

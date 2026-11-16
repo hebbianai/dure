@@ -40,7 +40,7 @@ fn entry(id: &SecretId) -> Result<keyring::Entry, String> {
 #[cfg(not(windows))]
 fn process_start_time(pid: u32) -> Option<u64> {
     let pid = Pid::from_u32(pid);
-    let mut system = System::new();
+    let mut system = System::new().ok()?;
     system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
     system.process(pid).map(|process| process.start_time())
 }
