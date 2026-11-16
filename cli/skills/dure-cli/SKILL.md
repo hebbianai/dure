@@ -227,7 +227,9 @@ receipts; do not reset sessions or resend an uncertain message automatically.
 To stop and clean up an Agent, use `dure stop <agent-name-or-id> --yes --json`.
 The selected running Dure app routes the stop to the Agent's owning backend,
 then removes its registration and panes while preserving its workspace and
-conversation history. `dure hmux stop --name ... --yes --json` uses the same path.
+conversation history. On a host without the app, the stop goes through the Run
+record by Agent ID, operation ID or Run name. `dure hmux stop --name ... --yes --json`
+uses the same path.
 Do not substitute `/exit`, Ctrl-C or PID killing for the lifecycle command.
 On uncertain results, retry the same Agent ID; success is `ok: true` and exit 0.
 See `dure stop --help`. This client-scoped command does not accept `--backend`.

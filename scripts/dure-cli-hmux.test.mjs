@@ -135,13 +135,16 @@ function homeWithServer(prefix, port, token, capabilities) {
   return { home, dureDir };
 }
 
-// DURE_HOME pointing at the fixture app plus an SSH backend profile whose
-// `ssh` is a fake backend holding one scheduled Run record and its stop
-// journal. Each backend request is logged as one JSON line.
+// DURE_HOME pointing at the fixture app (none without `appPort`, like a
+// headless host) plus an SSH backend profile whose `ssh` is a fake backend
+// holding one scheduled Run record and its stop journal. With
+// DURE_FAKE_BACKEND_STALE_PLAN=1 the journal starts with a saved plan that
+// names an earlier runtime generation, which apply refuses as stale. Each
+// backend request is logged as one JSON line.
 function scheduledRunBackendFixture(appPort) {
   const root = mkdtempSync(join(tmpdir(), "dure-stop-run-record-"));
   temporaryRoots.push(root);
-  writeServerConfig(root, appPort, "stop-token");
+  if (appPort !== undefined) writeServerConfig(root, appPort, "stop-token");
   const capabilities = ["agent_spawn.list", "dispatch.stop.apply", "dispatch.stop.preview", "dispatch.stop.status"];
   writeFileSync(join(root, "backend-profiles.json"), JSON.stringify({
     schemaVersion: 1, kind: "dure.backend_profiles", profiles: [{
@@ -176,24 +179,30 @@ appendFileSync(process.env.DURE_FAKE_BACKEND_LOG, JSON.stringify({ operation: re
 const run = { agentId: "agent-scheduled-1", operationId: "spawn-scheduled-1", name: "nightly-review",
   providerId: "codex", workspaceId: "workspace-1", projectId: "dure", launchState: "succeeded",
   createdAtMs: 1700000000000, updatedAtMs: 1700000000000 };
-const stop = (state, journalRevision) => ({ schemaVersion: 1, receipt: {
-  plan: { schemaVersion: 1, operationId: "dispatch-stop-1", agentId: run.agentId,
-    planToken: "sha256:${"a".repeat(64)}", workspaceDisposition: "preserve",
+const stop = (state, journalRevision, operationId = "dispatch-stop-1") => ({ schemaVersion: 1, receipt: {
+  plan: { schemaVersion: 1, operationId, agentId: run.agentId,
+    planToken: "sha256:" + (operationId === "dispatch-stop-1" ? "a" : "0").repeat(64), workspaceDisposition: "preserve",
     spawn: { operationId: run.operationId } },
   state, journalRevision, createdAtMs: 1700000000000, updatedAtMs: 1700000000000 } });
+const stalePlan = process.env.DURE_FAKE_BACKEND_STALE_PLAN === "1";
 const selector = request.body.selector;
 const result = {
   "agent_spawn.list": () => ({ schemaVersion: 1, nextCursor: null,
     runs: [run.agentId, run.operationId, run.name].includes(selector) ? [run] : [] }),
-  "dispatch.stop.status": () => ({ schemaVersion: 1, receipt: null }),
+  "dispatch.stop.status": () => stalePlan ? stop({ status: "planned" }, 1, "dispatch-stop-0")
+    : { schemaVersion: 1, receipt: null },
   "dispatch.stop.preview": () => stop({ status: "planned" }, 1),
-  "dispatch.stop.apply": () => stop({ status: "workspace_preserved", runtime: {} }, 3),
+  "dispatch.stop.apply": () => request.body.operationId === "dispatch-stop-0" ? undefined
+    : stop({ status: "workspace_preserved", runtime: {} }, 3),
 }[request.operation]();
-process.stdout.write(JSON.stringify({ schemaVersion: 1, apiVersion: "dure.backend-transport/v1",
-  kind: "dure.backend.response", requestId: request.requestId,
-  backend: { id: request.expected.backendId, generation: request.expected.generation,
-    protocol: { major: 1, minor: 0 }, capabilities: ${JSON.stringify(capabilities)}, observedAtMs: Date.now() },
-  result }));
+const backend = { id: request.expected.backendId, generation: request.expected.generation,
+  protocol: { major: 1, minor: 0 }, capabilities: ${JSON.stringify(capabilities)}, observedAtMs: Date.now() };
+process.stdout.write(JSON.stringify(result === undefined
+  ? { schemaVersion: 1, apiVersion: "dure.backend-transport/v1", kind: "dure.backend.error",
+    requestId: request.requestId, backend, error: { code: "agent_dispatch_stop_conflict",
+      message: "agent_dispatch_stop_conflict", details: { disposition: "stale_generation" } } }
+  : { schemaVersion: 1, apiVersion: "dure.backend-transport/v1", kind: "dure.backend.response",
+    requestId: request.requestId, backend, result }));
 `);
   chmodSync(join(bin, "ssh"), 0o755);
   return { root, bin, log: join(root, "backend-requests.jsonl") };
@@ -739,6 +748,71 @@ describe("Dure Hmux IDE CLI", () => {
         { operation: "dispatch.stop.apply", body: { schemaVersion: 1, operationId: "dispatch-stop-1",
           planToken: `sha256:${"a".repeat(64)}`, expectedJournalRevision: 1 } },
       ]);
+    },
+  );
+
+  it.each([["stop", "agent-scheduled-1"], ["hmux", "stop", "--name", "nightly-review"]].map((args) => [args]))(
+    "stops a Run through its backend Run record on a host without the Dure app via %j", async (args) => {
+      const root = scheduledRunBackendFixture();
+      const result = await runCli([...args, "--yes", "--json"], isolatedEnvironment({
+        HOME: root.root, DURE_HOME: root.root, DURE_BACKEND_PROFILE: "remote-a",
+        PATH: `${root.bin}:${process.env.PATH}`, DURE_FAKE_BACKEND_LOG: root.log,
+      }));
+      expect(result.stderr).toBe("");
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ apiVersion: "dure.agent-stop/v1", ok: true,
+        agent: { id: "agent-scheduled-1", name: "nightly-review" },
+        dispatchStop: { status: "workspace_preserved", workspaceDisposition: "preserve" } });
+      expect(readFileSync(root.log, "utf8").trim().split("\n").map((line) => JSON.parse(line).operation))
+        .toEqual(["agent_spawn.list", "dispatch.stop.status", "dispatch.stop.preview", "dispatch.stop.apply"]);
+    },
+  );
+
+  it("re-plans a saved stop that names an earlier runtime generation", async () => {
+    const root = scheduledRunBackendFixture();
+    const result = await runCli(["stop", "agent-scheduled-1", "--yes", "--json"], isolatedEnvironment({
+      HOME: root.root, DURE_HOME: root.root, DURE_BACKEND_PROFILE: "remote-a",
+      PATH: `${root.bin}:${process.env.PATH}`, DURE_FAKE_BACKEND_LOG: root.log, DURE_FAKE_BACKEND_STALE_PLAN: "1",
+    }));
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true,
+      dispatchStop: { operationId: "dispatch-stop-1", status: "workspace_preserved" } });
+    expect(readFileSync(root.log, "utf8").trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      { operation: "agent_spawn.list", body: { schemaVersion: 1, selector: "agent-scheduled-1" } },
+      { operation: "dispatch.stop.status", body: { schemaVersion: 1, spawnOperationId: "spawn-scheduled-1" } },
+      { operation: "dispatch.stop.apply", body: { schemaVersion: 1, operationId: "dispatch-stop-0",
+        planToken: `sha256:${"0".repeat(64)}`, expectedJournalRevision: 1 } },
+      { operation: "dispatch.stop.preview", body: { schemaVersion: 1, spawnOperationId: "spawn-scheduled-1",
+        workspaceDisposition: "preserve" } },
+      { operation: "dispatch.stop.apply", body: { schemaVersion: 1, operationId: "dispatch-stop-1",
+        planToken: `sha256:${"a".repeat(64)}`, expectedJournalRevision: 1 } },
+    ]);
+  });
+
+  it("names the missing app as JSON when no app or Run record matches", async () => {
+    const root = scheduledRunBackendFixture();
+    const result = await runCli(["stop", "ghost", "--yes", "--json"], isolatedEnvironment({
+      HOME: root.root, DURE_HOME: root.root, DURE_BACKEND_PROFILE: "remote-a",
+      PATH: `${root.bin}:${process.env.PATH}`, DURE_FAKE_BACKEND_LOG: root.log,
+    }));
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({ apiVersion: "dure.agent-stop/v1", ok: false,
+      error: { code: "app_server_not_found" } });
+    expect(readFileSync(root.log, "utf8").trim().split("\n").map((line) => JSON.parse(line).operation))
+      .toEqual(["agent_spawn.list"]);
+  });
+
+  it.each([[["stop", "project/worker"]], [["stop", "agent-scheduled-1", "--target-panel-id", "pane-1"]]])(
+    "still requires the app for %j and contacts no backend", async (args) => {
+      const root = scheduledRunBackendFixture();
+      const result = await runCli([...args, "--yes", "--json"], isolatedEnvironment({
+        HOME: root.root, DURE_HOME: root.root, DURE_BACKEND_PROFILE: "remote-a",
+        PATH: `${root.bin}:${process.env.PATH}`, DURE_FAKE_BACKEND_LOG: root.log,
+      }));
+      expect(result.code).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: "app_server_not_found" } });
+      expect(existsSync(root.log)).toBe(false);
     },
   );
 

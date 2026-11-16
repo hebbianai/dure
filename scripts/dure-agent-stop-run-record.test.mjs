@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { collectRunRecordStop, formatAgentStopReport, stopsRunRecord } from "../cli/lib/agent-stop-command.mjs";
+import { appServerMissingReceipt, collectRunRecordStop, formatAgentStopReport, stopsRunRecord }
+  from "../cli/lib/agent-stop-command.mjs";
+import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
 
 const backend = { profile: { id: "local", transport: { kind: "local" } } };
 const run = { agentId: "agent-scheduled-1", operationId: "spawn-scheduled-1", name: "nightly-review",
@@ -15,15 +17,21 @@ function stopResult(state, journalRevision, { agentId = run.agentId, disposition
     state, journalRevision, createdAtMs: 1, updatedAtMs: 1 } };
 }
 
+function staleStopConflict() {
+  return new BackendTransportError("backend_transport_remote_error",
+    { details: { code: "agent_dispatch_stop_conflict", disposition: "stale_generation" } });
+}
+
 function stopWith(results, runs = [run]) {
   const requestBackend = vi.fn(async (_profile, request) => {
     if (request.operation === "agent_spawn.list") return { result: { schemaVersion: 1, runs, nextCursor: null } };
     const result = results[request.operation];
     if (!result) throw new Error(`Unexpected operation: ${request.operation}`);
-    return { result };
+    return { result: typeof result === "function" ? result(request.body) : result };
   });
   const operations = () => requestBackend.mock.calls.map(([, request]) => request.operation);
-  return { requestBackend, operations,
+  const bodies = () => requestBackend.mock.calls.map(([, request]) => request.body);
+  return { requestBackend, operations, bodies,
     stop: (selector = run.agentId) => collectRunRecordStop({ selector, appReceipt,
       resolveBackend: async () => backend, requestBackend }) };
 }
@@ -38,6 +46,14 @@ describe("stopping a Run the app has not opened", () => {
     expect(stopsRunRecord(appReceipt, { ...options, targetPanelId: "pane-1" })).toBe(false);
     expect(stopsRunRecord(appReceipt, { rest: ["stop", "project/worker"] })).toBe(false);
     expect(stopsRunRecord(null, options)).toBe(false);
+  });
+
+  it("continues on a host without the app only for a selector a Run record can match", () => {
+    const options = { rest: ["stop", "agent-scheduled-1"] };
+    expect(stopsRunRecord(appServerMissingReceipt(), options)).toBe(true);
+    expect(stopsRunRecord(appServerMissingReceipt(), { rest: ["stop"], name: "nightly-review" })).toBe(true);
+    expect(stopsRunRecord(appServerMissingReceipt(), { rest: ["stop", "project/worker"] })).toBe(false);
+    expect(stopsRunRecord(appServerMissingReceipt(), { ...options, targetPanelId: "pane-1" })).toBe(false);
   });
 
   it("resumes an authorized stop at its recorded revision without planning another", async () => {
@@ -92,6 +108,50 @@ describe("stopping a Run the app has not opened", () => {
       runtimeCloseOperationId: "close-1" }, 2, { disposition: "remove_owned" }) });
     expect(await f.stop()).toMatchObject({ ok: false, error: { code: "agent_dispatch_stop_failed" } });
     expect(f.operations()).toEqual(["agent_spawn.list", "dispatch.stop.status"]);
+  });
+
+  it("re-plans a saved stop the backend refuses because the Agent's runtime moved on", async () => {
+    const stale = stopResult({ status: "planned" }, 1);
+    const fresh = stopResult({ status: "planned" }, 1);
+    fresh.receipt.plan = { ...fresh.receipt.plan, operationId: "dispatch-stop-2", planToken: `sha256:${"b".repeat(64)}` };
+    const preserved = structuredClone(fresh);
+    preserved.receipt.state = { status: "workspace_preserved", runtime: {} };
+    preserved.receipt.journalRevision = 3;
+    const f = stopWith({
+      "dispatch.stop.status": stale,
+      "dispatch.stop.preview": fresh,
+      "dispatch.stop.apply": (body) => {
+        if (body.operationId === "dispatch-stop-1") throw staleStopConflict();
+        return preserved;
+      },
+    });
+    expect(await f.stop()).toMatchObject({ ok: true, agent: { id: run.agentId },
+      dispatchStop: { operationId: "dispatch-stop-2", status: "workspace_preserved" } });
+    expect(f.operations()).toEqual(["agent_spawn.list", "dispatch.stop.status", "dispatch.stop.apply",
+      "dispatch.stop.preview", "dispatch.stop.apply"]);
+    expect(f.bodies().at(-1)).toEqual({ schemaVersion: 1, operationId: "dispatch-stop-2",
+      planToken: `sha256:${"b".repeat(64)}`, expectedJournalRevision: 1 });
+  });
+
+  it("reports a stale refusal of its own fresh plan without planning again", async () => {
+    const f = stopWith({
+      "dispatch.stop.status": { schemaVersion: 1, receipt: null },
+      "dispatch.stop.preview": stopResult({ status: "planned" }, 1),
+      "dispatch.stop.apply": () => { throw staleStopConflict(); },
+    });
+    expect(await f.stop()).toMatchObject({ ok: false, agent: { id: run.agentId },
+      error: { remoteCode: "agent_dispatch_stop_conflict", disposition: "stale_generation" } });
+    expect(f.operations()).toEqual(["agent_spawn.list", "dispatch.stop.status", "dispatch.stop.preview",
+      "dispatch.stop.apply"]);
+  });
+
+  it("never re-plans an authorized stop the backend refuses", async () => {
+    const f = stopWith({
+      "dispatch.stop.status": stopResult({ status: "authorized", runtimeCloseOperationId: "close-1" }, 2),
+      "dispatch.stop.apply": () => { throw staleStopConflict(); },
+    });
+    expect(await f.stop()).toMatchObject({ ok: false, error: { remoteCode: "agent_dispatch_stop_conflict" } });
+    expect(f.operations()).toEqual(["agent_spawn.list", "dispatch.stop.status", "dispatch.stop.apply"]);
   });
 
   it("refuses a receipt for another Agent before applying it", async () => {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
-import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { BackendTransportError, performBackendProfileRequest } from "./backend-transport.mjs";
 import {
   canonicalAgentStopApplyRevisionV1,
   parseCanonicalAgentStopResultV1,
@@ -15,11 +15,12 @@ export const AGENT_STOP_HELP = `Usage:
 
 Stop one Agent and remove its registration and panes. Workspaces, worktrees and
 conversation history are preserved. Use project/name for ambiguous names.
-Requires the Dure app selected by DURE_APP_CHANNEL; the app routes each Agent to
-its owning backend. --backend is not supported by this client-scoped command.
-A Run the app has not opened, such as a schedule occurrence, is stopped through
-its Run record on DURE_BACKEND_PROFILE or the local backend; select it by its
-Agent ID, operation ID or Run name.
+The Dure app selected by DURE_APP_CHANNEL routes each Agent it presents to its
+owning backend. --backend is not supported by this client-scoped command.
+A Run the app has not opened, such as a schedule occurrence, or any Run on a
+host without the Dure app, is stopped through its Run record on
+DURE_BACKEND_PROFILE or the local backend; select it by its Agent ID, operation
+ID or Run name. project/name and --target-panel-id need the app.
 Omit --yes only in an interactive terminal to confirm there.
 Uses dispatch.stop for backend-owned Agents; no /exit or terminal key injection.
 After an uncertain response, retry the same Agent ID to reconcile the recorded
@@ -56,11 +57,22 @@ export function parseAgentStopCommand(args) {
   return options;
 }
 
-/** The app presents no Agent for this selector. A Run launched without the app,
- * such as a schedule occurrence, is owned by its backend Run record until
- * `dure runs open` presents it, so the stop continues there. */
+const NO_APP_PRESENTATION = new Set(["pane_not_found", "app_server_not_found"]);
+
+/** Stands in for the app's answer on a host that runs no Dure app, such as a
+ * headless remote host: nothing there presents the Agent. */
+export function appServerMissingReceipt() {
+  return { ok: false, error: { code: "app_server_not_found",
+    message: "The Dure app server was not found. Without the app, dure stop reaches only a Run record " +
+      "selected by Agent ID, operation ID or Run name on DURE_BACKEND_PROFILE or the local backend." } };
+}
+
+/** The app presents no Agent for this selector, or no app runs here. A Run
+ * launched without the app, such as a schedule occurrence, is owned by its
+ * backend Run record until `dure runs open` presents it, so the stop continues
+ * there. */
 export function stopsRunRecord(receipt, options) {
-  return receipt?.ok === false && receipt.error?.code === "pane_not_found" &&
+  return receipt?.ok === false && NO_APP_PRESENTATION.has(receipt.error?.code) &&
     !options.targetPanelId && isDureDomainIdV1(options.name ?? options.rest[1]);
 }
 
@@ -80,6 +92,13 @@ function invalidStopReceipt() {
 function appliesPreservingWorkspace(receipt) {
   const { kind } = projectCanonicalAgentStopV1(receipt);
   return receipt?.workspaceDisposition === "preserve" && (kind === "pending_confirmation" || kind === "resume_apply");
+}
+
+/** The backend refused a plan that no longer names the Agent's current
+ * runtime, for example after the Agent moved to another Session generation. */
+function refusedAsStalePlan(error) {
+  return error instanceof BackendTransportError && error.code === "backend_transport_remote_error" &&
+    error.details?.code === "agent_dispatch_stop_conflict" && error.details?.disposition === "stale_generation";
 }
 
 /** Stops one unpresented Run through its backend's dispatch.stop journal,
@@ -113,27 +132,43 @@ export async function collectRunRecordStop({
       return parsed;
     };
 
+    const preview = async () => {
+      const planned = await request("dispatch.stop.preview", {
+        schemaVersion: 1, spawnOperationId: run.operationId, workspaceDisposition: "preserve",
+      });
+      if (planned?.workspaceDisposition !== "preserve") throw invalidStopReceipt();
+      return planned;
+    };
+    const apply = async (planned) => {
+      const applied = await request("dispatch.stop.apply", {
+        schemaVersion: 1, operationId: planned.operationId, planToken: planned.planToken,
+        expectedJournalRevision: canonicalAgentStopApplyRevisionV1(planned),
+      });
+      if (!applied || applied.operationId !== planned.operationId || applied.planToken !== planned.planToken ||
+          applied.workspaceDisposition !== planned.workspaceDisposition) {
+        throw invalidStopReceipt();
+      }
+      return applied;
+    };
+
     receipt = await request("dispatch.stop.status", { schemaVersion: 1, spawnOperationId: run.operationId });
     const observed = projectCanonicalAgentStopV1(receipt).kind;
     if (observed === "resume_apply" && receipt.workspaceDisposition !== "preserve") {
       throw new RunRecordStopError("agent_dispatch_stop_failed",
         "An existing stop removes the workspace; resume it through its original cleanup flow");
     }
-    if (observed !== "forget_presentation" && !appliesPreservingWorkspace(receipt)) {
-      receipt = await request("dispatch.stop.preview", {
-        schemaVersion: 1, spawnOperationId: run.operationId, workspaceDisposition: "preserve",
-      });
-      if (receipt?.workspaceDisposition !== "preserve") throw invalidStopReceipt();
-    }
+    const savedPlan = observed === "pending_confirmation" && appliesPreservingWorkspace(receipt);
+    if (observed !== "forget_presentation" && !appliesPreservingWorkspace(receipt)) receipt = await preview();
     if (appliesPreservingWorkspace(receipt)) {
-      const planned = receipt;
-      receipt = await request("dispatch.stop.apply", {
-        schemaVersion: 1, operationId: planned.operationId, planToken: planned.planToken,
-        expectedJournalRevision: canonicalAgentStopApplyRevisionV1(planned),
-      });
-      if (!receipt || receipt.operationId !== planned.operationId || receipt.planToken !== planned.planToken ||
-          receipt.workspaceDisposition !== planned.workspaceDisposition) {
-        throw invalidStopReceipt();
+      try {
+        receipt = await apply(receipt);
+      } catch (error) {
+        // A saved plan that was never authorized admitted no effects. When the
+        // Agent's runtime has moved on since it was planned, a fresh preview
+        // supersedes it; a refused fresh plan or an authorized stop is reported.
+        if (!savedPlan || !refusedAsStalePlan(error)) throw error;
+        receipt = await preview();
+        if (appliesPreservingWorkspace(receipt)) receipt = await apply(receipt);
       }
     }
     if (projectCanonicalAgentStopV1(receipt).kind !== "forget_presentation") {
