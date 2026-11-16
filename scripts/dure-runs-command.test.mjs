@@ -417,6 +417,10 @@ describe("durable Run commands", () => {
         }
         if (argv[1] === "capabilities") return { kind: "success", stdout: JSON.stringify({ schemaVersion: 1, capabilities }) };
         if (argv[2] === "session" && argv[3] === "show") {
+          if (health === "missing") {
+            return { kind: "nonzero", code: 1, stdout: "", stderr: `hmux: error: Hmux session "${argv[4]}" was not ` +
+              `found in workspace "${value("--workspace")}"\n` };
+          }
           return { kind: "success", stdout: JSON.stringify({ health,
             host_instance_id: "host-before-reboot", terminal_epoch: "terminal-before-reboot" }) };
         }
@@ -474,6 +478,16 @@ describe("durable Run commands", () => {
       for (const confirmRestart of [false, true]) {
         const report = await f.resume(confirmRestart);
         expect(report).toMatchObject({ ok: false, error: { code: "rehost_conversation_unknown" } });
+      }
+      expect(f.started).toEqual([]);
+    });
+
+    it("refuses in the preview, naming the conversation to continue, when Hmux has no record of the session", async () => {
+      const f = rebootFixture({ health: "missing" });
+      for (const confirmRestart of [false, true]) {
+        const report = await f.resume(confirmRestart);
+        expect(report).toMatchObject({ ok: false, error: { code: "rehost_source_session_missing" } });
+        expect(report.error.message).toContain("dure runs resume --conversation conversation-before-reboot --provider");
       }
       expect(f.started).toEqual([]);
     });

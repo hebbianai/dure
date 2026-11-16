@@ -212,8 +212,18 @@ fn remove_registered(
     })
 }
 
-/// A woken agent resumes in its original folder, so bring back a checkout this
-/// module removed. Commits and branch are intact because removal required that.
+/// Whether this module removed the agent's checkout, which a wake or restart
+/// brings back through [`restore_checkout_for_wake`].
+pub(crate) async fn checkout_restorable(state: &ServiceState, agent_id: &AgentIdV1) -> bool {
+    let Ok(Some(operation)) = state.store.scheduled_spawn_for_agent(agent_id).await else {
+        return false;
+    };
+    matches!(owned_checkout(state, &operation).await, Some((_, _, checkout)) if !checkout.exists())
+}
+
+/// A woken or restarted agent resumes in its original folder, so bring back a
+/// checkout this module removed. Commits and branch are intact because removal
+/// required that.
 pub(crate) async fn restore_checkout_for_wake(
     state: &ServiceState,
     agent_id: &AgentIdV1,

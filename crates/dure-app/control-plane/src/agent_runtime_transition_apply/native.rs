@@ -267,9 +267,10 @@ pub(crate) async fn stop_current(
 
 fn source_context_failure(error: String) -> SourceStopFailure {
     match error.as_str() {
-        "agent_runtime_agent_unavailable"
-        | "agent_runtime_selection_stale"
-        | "agent_runtime_workspace_unavailable" => SourceStopFailure::SourceRetained,
+        "agent_runtime_agent_unavailable" | "agent_runtime_selection_stale" => {
+            SourceStopFailure::SourceRetained
+        }
+        _ if super::is_workspace_unavailable(&error) => SourceStopFailure::SourceRetained,
         _ => SourceStopFailure::Failed(error),
     }
 }
@@ -537,18 +538,16 @@ fn structured_replacement_retirement_failure(
     }
 }
 
-/// A scheduled agent's checkout may have been removed while it slept. Only a
-/// wake pays for this lookup, and only once the folder is known to be missing.
+/// A scheduled agent's checkout may have been removed once it slept or
+/// stopped. A wake or restart pays for this lookup only once the folder is
+/// known to be missing.
 async fn wake_workspace(
     state: &ServiceState,
     transition: &AgentRuntimeTransitionRecordV1,
     source: &AgentRuntimeSelectionV1,
 ) -> Result<(String, std::path::PathBuf), String> {
     match runtime_workspace(state, source).await {
-        Err(code)
-            if code == "agent_runtime_workspace_unavailable"
-                && transition.deferred_target.is_some() =>
-        {
+        Err(code) if super::is_workspace_unavailable(&code) => {
             crate::schedule_runtime::lifecycle::restore_checkout_for_wake(
                 state,
                 &source.agent_id,
@@ -626,7 +625,13 @@ pub(super) async fn start_target(
     };
     let working_directory = workspace
         .to_str()
-        .ok_or_else(|| TargetStartFailure::retryable("agent_runtime_workspace_unavailable"))?
+        .ok_or_else(|| {
+            TargetStartFailure::retryable(format!(
+                "{}: the Agent's folder {} is not valid UTF-8",
+                super::WORKSPACE_UNAVAILABLE,
+                workspace.display()
+            ))
+        })?
         .to_owned();
     let identity = target_identity(target_attempt_operation_id(transition));
     let launch = WorkflowSessionLaunchRequestV1 {
@@ -1126,6 +1131,7 @@ mod tests {
             "agent_runtime_agent_unavailable",
             "agent_runtime_selection_stale",
             "agent_runtime_workspace_unavailable",
+            "agent_runtime_workspace_unavailable: the Agent's folder /gone no longer exists",
         ] {
             assert!(matches!(
                 source_context_failure(code.into()),

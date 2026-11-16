@@ -16,7 +16,10 @@ export async function supportsHostAbsentStart({ command, run }) {
   return supportsHmuxCapability(manifest, HOST_ABSENT_CAPABILITY);
 }
 
-/** Hmux's current observation of one exact session, or undefined when it gave none. */
+/**
+ * Hmux's current observation of one exact session: null when Hmux reports it
+ * has no record of that session, undefined when it gave no answer.
+ */
 export async function readSourceSession({ command, run, sessionId, workspaceId }) {
   let response;
   try {
@@ -25,6 +28,9 @@ export async function readSourceSession({ command, run, sessionId, workspaceId }
   } catch {
     return undefined;
   }
+  // hmux-client's SessionNotFound, which session show prints as text even with --json.
+  if (response?.kind === "nonzero" && typeof response.stderr === "string" &&
+      response.stderr.includes(`Hmux session ${JSON.stringify(sessionId)} was not found`)) return null;
   if (response?.kind !== "success") return undefined;
   try {
     const parsed = JSON.parse(response.stdout);

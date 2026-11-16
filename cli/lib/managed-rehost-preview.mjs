@@ -81,6 +81,7 @@ async function heldManagedRehost({ sessionId, workspaceId, command, run }) {
  */
 async function absentSourceHost({ source, sessionId, workspaceId, conversationId, command, run }) {
   const session = await readSourceSession({ command, run, sessionId, workspaceId });
+  if (session === null) return { missing: true, conversationId };
   if (!session) return undefined;
   const decision = classifySourceSession(session, { source, conversationId }, { includeExited: false });
   if (decision.outcome === "restore" && decision.requireHostAbsent) return { conversationId: decision.conversationId };
@@ -183,6 +184,17 @@ export async function collectManagedRehostPreview({
     conversationId: binding.providerConversationId ?? observation.receipt?.providerConversationRef ?? null,
     command, run,
   });
+  if (hostAbsent?.missing) {
+    // Without its record Hmux can neither stop nor replace the source.
+    const providerId = observation.receipt?.providerId;
+    return failure({ code: "rehost_source_session_missing",
+      message: `Hmux has no record of this Agent's session ${sourceSessionId} in workspace ${sourceWorkspaceId}, ` +
+        "so it cannot be restarted in place. Nothing was started." +
+        (hostAbsent.conversationId && providerId
+          ? ` Continue its conversation in a new Agent with dure runs resume --conversation ${hostAbsent.conversationId} ` +
+            `--provider ${providerId}.`
+          : "") }, { agentId, observation });
+  }
   if (hostAbsent && !hostAbsent.conversationId) {
     return failure({ code: "rehost_conversation_unknown",
       message: "This Agent's Hmux Host is gone, for example after a reboot, and no provider conversation ID was " +

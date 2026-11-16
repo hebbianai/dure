@@ -156,6 +156,43 @@ async fn a_checkout_is_kept_until_nothing_on_it_can_be_lost_and_a_wake_restores_
     assert!(launched.checkout.is_dir());
 }
 
+/// A stopped schedule-started Agent loses its checkout like a sleeping one, and
+/// a restart resumes it in the same folder (#544). Until then the refusal names
+/// the missing folder instead of only a code.
+#[tokio::test]
+async fn a_removed_checkout_is_named_and_restorable_for_a_restart() {
+    let (root, state, _, _) = fixture(vec![LaunchOutcome::Succeed]).await;
+    let launched = launch(&root, &state).await;
+    let selection = state
+        .store
+        .agent_runtime_selection(&launched.agent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!lifecycle::checkout_restorable(&state, &launched.agent).await);
+    assert!(remove(&state, &launched).await);
+
+    let refused = agent_runtime_transition_apply::runtime_workspace(&state, &selection)
+        .await
+        .unwrap_err();
+    assert!(
+        refused.starts_with("agent_runtime_workspace_unavailable: ")
+            && refused.contains(&launched.checkout.display().to_string()),
+        "the refusal names the missing folder: {refused}"
+    );
+    assert!(lifecycle::checkout_restorable(&state, &launched.agent).await);
+
+    let restart = OperationIdV1::new("restart").unwrap();
+    lifecycle::restore_checkout_for_wake(&state, &launched.agent, &restart)
+        .await
+        .unwrap();
+    assert!(!lifecycle::checkout_restorable(&state, &launched.agent).await);
+    let (_, folder) = agent_runtime_transition_apply::runtime_workspace(&state, &selection)
+        .await
+        .unwrap();
+    assert_eq!(folder, launched.checkout);
+}
+
 #[tokio::test]
 async fn a_checkout_is_kept_while_its_agent_has_no_recorded_stop() {
     let (root, mut state, _, _) = fixture(vec![LaunchOutcome::Succeed]).await;
@@ -175,11 +212,9 @@ async fn a_checkout_is_kept_while_its_agent_has_no_recorded_stop() {
 #[tokio::test]
 async fn waking_an_agent_no_schedule_started_never_creates_a_checkout() {
     let (_root, state, _, _) = fixture(Vec::new()).await;
-    lifecycle::restore_checkout_for_wake(
-        &state,
-        &AgentIdV1::new("started-by-a-person").unwrap(),
-        &OperationIdV1::new("wake").unwrap(),
-    )
-    .await
-    .unwrap();
+    let person = AgentIdV1::new("started-by-a-person").unwrap();
+    assert!(!lifecycle::checkout_restorable(&state, &person).await);
+    lifecycle::restore_checkout_for_wake(&state, &person, &OperationIdV1::new("wake").unwrap())
+        .await
+        .unwrap();
 }

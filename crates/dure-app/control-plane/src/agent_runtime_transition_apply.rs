@@ -966,7 +966,17 @@ fn validate_source_observation(
     Ok(())
 }
 
-pub(super) async fn runtime_workspace(
+pub(crate) const WORKSPACE_UNAVAILABLE: &str = "agent_runtime_workspace_unavailable";
+
+/// Whether `error` refuses the Agent's workspace, with or without the detail
+/// naming what is missing.
+pub(crate) fn is_workspace_unavailable(error: &str) -> bool {
+    error.split(':').next() == Some(WORKSPACE_UNAVAILABLE)
+}
+
+/// The Agent's runtime workspace and folder. A refusal names the missing
+/// record or folder after the stable `agent_runtime_workspace_unavailable` code.
+pub(crate) async fn runtime_workspace(
     state: &ServiceState,
     source: &AgentRuntimeSelectionV1,
 ) -> Result<(String, PathBuf), String> {
@@ -984,13 +994,23 @@ pub(super) async fn runtime_workspace(
         .workspace(&agent.workspace_id)
         .await
         .map_err(store_error)?
-        .ok_or_else(|| "agent_runtime_workspace_unavailable".to_string())?;
+        .ok_or_else(|| {
+            format!(
+                "{WORKSPACE_UNAVAILABLE}: the backend has no record of workspace {}",
+                agent.workspace_id.as_str()
+            )
+        })?;
     let project = state
         .store
         .project(&workspace.project_id)
         .await
         .map_err(store_error)?
-        .ok_or_else(|| "agent_runtime_workspace_unavailable".to_string())?;
+        .ok_or_else(|| {
+            format!(
+                "{WORKSPACE_UNAVAILABLE}: the backend has no record of project {}",
+                workspace.project_id.as_str()
+            )
+        })?;
     let runtime_workspace_id = dure_app::agent_bootstrap_runtime_workspace(
         &agent.agent_id,
         &workspace.workspace_id,
@@ -1000,7 +1020,10 @@ pub(super) async fn runtime_workspace(
     .unwrap_or(workspace.workspace_id);
     let root = PathBuf::from(workspace.root_path);
     if !root.is_absolute() || !root.is_dir() {
-        return Err("agent_runtime_workspace_unavailable".into());
+        return Err(format!(
+            "{WORKSPACE_UNAVAILABLE}: the Agent's folder {} no longer exists",
+            root.display()
+        ));
     }
     Ok((runtime_workspace_id.as_str().into(), root))
 }
