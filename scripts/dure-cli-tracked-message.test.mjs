@@ -45,6 +45,18 @@ test("only the exact receipt and Host generation associate a wake turn", async (
   expect((await queryTrackedMessage(options)).receipt.observed).toBe(true);
 });
 
+test("a wake turn that names the short receipt reference belongs to that delivery", async () => {
+  const receiptId = "delivery-b9d71327b933c911e868b53b44d0cbee1c1c5d42d6bb4e2a541efd1f3ede9044";
+  const tracking = { session: { ...generation, sessionId: "session", workspaceId: "workspace" }, backendId: "local", query: { interactionId: "message" } };
+  const receipt = { interactionId: "message", deliveries: [{ delivery: { receiptId }, observedAtMs: null, acknowledgedAtMs: null }] };
+  const turns = [{ delivery_receipt_id: "b9d71327b934", turn_id: "other" }];
+  const runtime = { ...live.session.runtime, agentRuntimeState: { progress: { report: { message_turns: turns } } } };
+  const options = { tracking, backend, request: async () => receipt, querySession: async () => ({ session: { ...live.session, runtime } }) };
+  expect((await queryTrackedMessage(options)).receipt.wakeTurnStarted).toBe(false);
+  turns.push({ delivery_receipt_id: "b9d71327b933", turn_id: "turn" });
+  expect((await queryTrackedMessage(options)).receipt.wakeTurns).toEqual([{ delivery_receipt_id: "b9d71327b933", turn_id: "turn" }]);
+});
+
 test("message waits select one condition, time out without replay and never count an unrelated response", async () => {
   const options = parseWaitArguments(["--message", "/private/receipt.json", "--until", "observed", "--timeout", "1"]);
   let time = 0;

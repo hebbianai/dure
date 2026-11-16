@@ -66,6 +66,13 @@ export async function sendTrackedMessage(target, text, { backend, hmuxCommand, t
   }
 }
 
+// A wake prompt names the first 12 characters of its receipt digest
+// (control-plane interaction_wake.rs); wakes from older runtimes named the whole receipt.
+function namesReceipt(reference, receiptId) {
+  if (typeof reference !== "string" || typeof receiptId !== "string") return false;
+  return reference === receiptId || reference === receiptId.replace(/^delivery-/, "").slice(0, 12);
+}
+
 export async function queryTrackedMessage({ tracking, backend, hmuxCommand, deadlineMs, signal, request = invoke, querySession = collectSessionQuery }) {
   if (backend.profile.id !== tracking.backendId) throw new Error("Message receipt belongs to a different backend.");
   const receipt = await request(backend, "interaction.progress", tracking.query, { deadlineMs, signal });
@@ -76,7 +83,7 @@ export async function queryTrackedMessage({ tracking, backend, hmuxCommand, dead
   const runtime = report.session?.runtime;
   const exact = report.session?.liveness?.exactGeneration && sameGeneration(tracking.session, runtime?.generation);
   const progress = exact ? runtime.agentRuntimeState?.progress : undefined;
-  const turns = (progress?.report.message_turns ?? []).filter(t => receipt.deliveries.some(d => d.delivery.receiptId === t.delivery_receipt_id));
+  const turns = (progress?.report.message_turns ?? []).filter(t => receipt.deliveries.some(d => namesReceipt(t.delivery_receipt_id, d.delivery.receiptId)));
   return { receipt: { interactionId: receipt.interactionId, acceptedAtMs: receipt.acceptedAtMs, observed, acknowledged,
     wakeTurnStarted: turns.length > 0, wakeTurns: turns, dispatchState: receipt.dispatchState,
     deliveries: receipt.deliveries, pendingDeliveryCount: receipt.deliveries.filter(d => d.observedAtMs == null).length,

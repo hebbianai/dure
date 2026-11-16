@@ -194,10 +194,18 @@ async fn prepare_wake_request(
         },
         handoff: format!(
             "Dure inbox message: {}\n{INBOX_WAKE_HANDOFF}",
-            delivery.receipt_id
+            wake_reference(delivery.receipt_id.as_str())
         ),
     };
     Ok(request)
+}
+
+/// The short delivery reference a wake prompt names. Agents read the inbox
+/// itself; only Codex progress echoes this back, and `dure wait --message`
+/// matches it to the delivery's receipt.
+fn wake_reference(receipt_id: &str) -> &str {
+    let digest = receipt_id.strip_prefix("delivery-").unwrap_or(receipt_id);
+    digest.get(..12).unwrap_or(digest)
 }
 
 fn wake_effect_ref<'a>(

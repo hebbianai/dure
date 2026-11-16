@@ -8433,7 +8433,11 @@ async fn exact_session_decision_answer_derives_authority_after_validating_opaque
         wake_requests[0].handoff,
         format!(
             "Dure inbox message: {}\nRead and acknowledge it with the installed dure-orchestration tools.",
-            worker_delivery["receiptId"].as_str().unwrap()
+            &worker_delivery["receiptId"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("delivery-")
+                .unwrap()[..12]
         )
     );
     let exact_replay = invoke_orchestration(
@@ -8542,9 +8546,11 @@ async fn exact_existing_session_persists_then_wakes_once_without_replaying_messa
         wake_requests[0].handoff,
         format!(
             "Dure inbox message: {}\nRead and acknowledge it with the installed dure-orchestration tools.",
-            opened["receipt"]["deliveries"][0]["receiptId"]
+            &opened["receipt"]["deliveries"][0]["receiptId"]
                 .as_str()
                 .unwrap()
+                .strip_prefix("delivery-")
+                .unwrap()[..12]
         )
     );
     assert!(
