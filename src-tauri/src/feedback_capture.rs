@@ -147,7 +147,7 @@ fn capture_main_window<R: Runtime>(_app: AppHandle<R>) -> Result<CapturedPng, St
 #[tauri::command]
 pub fn feedback_environment() -> FeedbackEnvironment {
     FeedbackEnvironment {
-        os: sysinfo::System::long_os_version().unwrap_or_else(|| "unknown".to_string()),
+        os: sysinfo::System::long_os_version().unwrap_or_else(|_| "unknown".to_string()),
         arch: std::env::consts::ARCH.to_string(),
     }
 }
