@@ -182,7 +182,8 @@ impl HmuxWorkflowSessionLauncher {
                     Err(error) => Err(match error.disposition() {
                         ManagedCreateFailureDisposition::Rejected => rejected_failure(error.code()),
                         ManagedCreateFailureDisposition::Retryable => failure(error.code()),
-                    }),
+                    }
+                    .with_detail(crate::workspace_git::bounded_detail(&error.to_string()))),
                 }
             })
             .await

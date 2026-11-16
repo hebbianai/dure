@@ -875,6 +875,9 @@ impl WorkflowSessionLaunchRequestV1 {
 pub struct WorkflowSessionLaunchFailureV1 {
     pub code: String,
     pub disposition: WorkflowSessionLaunchFailureDispositionV1,
+    /// One line naming what blocked the launch (for example the session that
+    /// already holds a conversation), so a refused launch is never opaque.
+    pub detail: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -898,7 +901,16 @@ impl WorkflowSessionLaunchFailureV1 {
     ) -> Result<Self, DomainStoreErrorV1> {
         let code = code.into();
         validate_token("launchFailure.code", &code)?;
-        Ok(Self { code, disposition })
+        Ok(Self {
+            code,
+            disposition,
+            detail: None,
+        })
+    }
+
+    pub fn with_detail(mut self, detail: Option<String>) -> Self {
+        self.detail = detail;
+        self
     }
 }
 

@@ -692,7 +692,7 @@ async fn execute_prepared_stage(
                             stage: AgentSpawnStageV1::RuntimeLaunch,
                             attempt,
                             error_code: failure.code,
-                            error_detail: None,
+                            error_detail: failure.detail,
                             may_have_written: None,
                         },
                     )
