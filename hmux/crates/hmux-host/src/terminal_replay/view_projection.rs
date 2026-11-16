@@ -578,9 +578,9 @@ impl CapturedViewportFrame {
         };
         match self.finish_exact() {
             Err(TerminalReplayError::InvalidStructuredProjection { reason }) => {
-                let record = degraded.finish().ok_or(
-                    TerminalReplayError::InvalidStructuredProjection { reason },
-                )?;
+                let record = degraded
+                    .finish()
+                    .ok_or(TerminalReplayError::InvalidStructuredProjection { reason })?;
                 // The reason is a static invariant, never terminal content.
                 eprintln!("hmux-host: sent a degraded terminal viewport frame: {reason}");
                 Ok(record)
