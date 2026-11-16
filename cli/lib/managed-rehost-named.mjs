@@ -33,11 +33,11 @@ export function managedRecoveryExitCode(report, failureCode) {
  */
 async function completeManagedRehost({
   action, agentId, operationId, sourceSessionId, sourceWorkspaceId, confirmRestart,
-  command, run, settle, backend, requestBackend,
+  expectedConversationId, requireHostAbsent, command, run, settle, backend, requestBackend,
 }) {
   const execution = await collectManagedRehostCommand({
     action, sessionId: sourceSessionId, workspaceId: sourceWorkspaceId,
-    operationId, confirmRestart, command, run, settle,
+    operationId, confirmRestart, expectedConversationId, requireHostAbsent, command, run, settle,
   });
   if (!execution.ok) {
     return { ok: false, state: "unknown", nativeExecution: "unknown",
@@ -129,10 +129,13 @@ export async function collectManagedRehostNamed({
         publication: "unconfirmed", error };
     }
   }
-  const { operationId, sourceSessionId, sourceWorkspaceId, retained } = prepared.continuation;
+  const { operationId, sourceSessionId, sourceWorkspaceId, retained, sourceHost, expectedConversationId } =
+    prepared.continuation;
   const outcome = await completeManagedRehost({
     action: retained ? "retry" : "start", agentId: prepared.agentId, operationId,
     sourceSessionId, sourceWorkspaceId, confirmRestart: opts.confirmRestart,
+    // A gone Host cannot report its conversation; Hmux proves its absence first.
+    ...(sourceHost === "absent" ? { expectedConversationId, requireHostAbsent: true } : {}),
     command, run, settle, backend, requestBackend,
   });
   // Hmux holds this operation now: Finish waits on exactly it and publishes once.

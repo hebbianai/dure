@@ -1,8 +1,8 @@
 use super::{ManagedCreateLedgerRecord, ManagedCreateLedgerRecordState};
 use hmux_host::local_discovery::{
-    DiscoveryError, DiscoveryKey, DiscoveryManifest, DiscoveryRoot, SessionClass,
+    DiscoveryError, DiscoveryKey, DiscoveryManifest, DiscoveryRoot, ReadyManifest, SessionClass,
 };
-use hmux_runtime_contract::ManagedCreateReceipt;
+use hmux_runtime_contract::{ManagedCreateGenerationFence, ManagedCreateReceipt};
 use hmux_session_protocol::SessionFence;
 use std::path::Path;
 
@@ -63,6 +63,10 @@ pub(super) fn completed_conversation_writer_has_exited(
         .map_err(discovery_error)?
     {
         Some(DiscoveryManifest::Exited(exited)) => exited,
+        // A reboot or crash ends the Host before it can publish its tombstone.
+        Some(DiscoveryManifest::Ready(ready)) => {
+            return Ok(ready_writer_is_gone(record, &receipt, fence, &ready));
+        }
         Some(_) => return Ok(false),
         None => {
             let expected = SessionFence {
@@ -103,4 +107,60 @@ pub(super) fn completed_conversation_writer_has_exited(
         );
     }
     Ok(true)
+}
+
+/// A Ready manifest is the writer's own generation until its Host publishes an
+/// exit. When that Host died without one, as every Host does in a reboot, the
+/// writer is gone only if the OS proves both the exact Host generation and the
+/// provider's whole process session are gone. Anything less, including a
+/// different generation or an unobservable process table, keeps the claim.
+fn ready_writer_is_gone(
+    record: &ManagedCreateLedgerRecord,
+    receipt: &ManagedCreateReceipt,
+    fence: &ManagedCreateGenerationFence,
+    ready: &ReadyManifest,
+) -> bool {
+    let common = &ready.common;
+    if common.session_class != SessionClass::Managed
+        || common.provider_id != receipt.provider_id()
+        || common.claim_linkage.kickoff_action_id.as_deref()
+            != Some(record.idempotency_key.as_str())
+        || !fence.matches_generation(
+            &common.lifetime.runner_principal,
+            &common.lifetime.runner_instance,
+            &common.lifetime.channel_epoch.to_string(),
+            &common.host_instance_id,
+            &ready.terminal_epoch,
+        )
+    {
+        return false;
+    }
+    host_and_provider_session_are_gone(ready)
+}
+
+#[cfg(all(unix, feature = "local-runtime"))]
+fn host_and_provider_session_are_gone(ready: &ReadyManifest) -> bool {
+    use crate::{
+        LocalProcessGenerationStatus, ProcessDescriptor, local_process_session_is_stably_empty,
+        probe_local_process_generation,
+    };
+    let host = ProcessDescriptor {
+        process_id: ready.common.host_process.process_id,
+        start_marker: ready.common.host_process.start_marker.clone(),
+    };
+    let provider = ProcessDescriptor {
+        process_id: ready.provider_process.process_id,
+        start_marker: ready.provider_process.start_marker.clone(),
+    };
+    matches!(
+        probe_local_process_generation(&host),
+        Ok(LocalProcessGenerationStatus::Absent)
+    ) && local_process_session_is_stably_empty(&provider).unwrap_or(false)
+}
+
+/// Without a POSIX session census the provider cannot be proven gone; such a
+/// writer is released only by its Host's own exit tombstone.
+#[cfg(not(all(unix, feature = "local-runtime")))]
+fn host_and_provider_session_are_gone(_ready: &ReadyManifest) -> bool {
+    false
 }
