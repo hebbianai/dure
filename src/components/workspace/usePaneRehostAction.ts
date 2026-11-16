@@ -45,12 +45,20 @@ export interface PaneRehostAction {
 
 /** `retry_same` promises that replaying the exact request is safe: the backend
  * ledger resolves the same idempotent identity. Refresh derives that request
- * from the unchanged pane, so the user can simply run it again; the code names
- * the cause for a report. */
+ * from the unchanged pane, so the user can simply run it again. The code alone
+ * cannot tell a busy store from a source Host that refuses attach, so the
+ * backend's detail travels with it. */
 function refreshFailureMessage(error: unknown): string {
 	return error instanceof ManagedCreateRetrySameError
-		? t("workspace.refresh.retryable", { code: error.backendCode })
+		? t("workspace.refresh.retryable", { cause: retrySameCause(error) })
 		: t("workspace.refresh.failed", { error: String(error) });
+}
+
+function retrySameCause(error: ManagedCreateRetrySameError): string {
+	const code = error.backendCode;
+	const detail = error.message.trim();
+	if (!detail || detail === code) return code;
+	return detail.startsWith(code) ? detail : `${code}: ${detail}`;
 }
 
 export function usePaneRehostAction<Params extends LocalHmuxPaneParameters>({

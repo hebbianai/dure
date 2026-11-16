@@ -233,16 +233,34 @@ describe("Refresh failure toast", () => {
 			);
 			const { result } = renderRefresh();
 			act(() => result.current.refreshConversation?.());
-			const message = t("workspace.refresh.retryable", { code: backendCode });
+			await waitFor(() => expect(mocks.error).toHaveBeenCalledOnce());
+			const [message, options] = mocks.error.mock.calls[0];
 			expect(message).toContain(backendCode);
-			await waitFor(() =>
-				expect(mocks.error).toHaveBeenCalledExactlyOnceWith(message, {
-					paneId: "agent:agent-1",
-				}),
-			);
+			expect(message).toContain("store is busy during prepare_session_checkout");
+			expect(options).toEqual({ paneId: "agent:agent-1" });
 			expect(mocks.recovery).not.toHaveBeenCalled();
 		},
 	);
+
+	it("names the cause once when the backend detail already starts with its code", async () => {
+		const detail =
+			"hmux_managed_create_advance_authority_unavailable: Hmux Host refused attach (TransportClosed)";
+		mocks.resume.mockRejectedValueOnce(
+			new ManagedCreateRetrySameError(
+				"authority_unavailable",
+				"hmux_managed_create_advance_authority_unavailable",
+				detail,
+			),
+		);
+		const { result } = renderRefresh();
+		act(() => result.current.refreshConversation?.());
+		await waitFor(() =>
+			expect(mocks.error).toHaveBeenCalledExactlyOnceWith(
+				t("workspace.refresh.retryable", { cause: detail }),
+				{ paneId: "agent:agent-1" },
+			),
+		);
+	});
 
 	it("keeps the raw cause for any other Refresh failure", async () => {
 		mocks.resume.mockRejectedValueOnce(new Error("hmux_launch_failed: boom"));
