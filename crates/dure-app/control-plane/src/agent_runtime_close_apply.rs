@@ -119,8 +119,9 @@ pub(super) async fn drive_locked(
                 Err(SourceStopFailure::SourceRetained) => {
                     return retain_source(state, close).await;
                 }
-                Err(SourceStopFailure::Failed(_)) => {
-                    return Err(retry("agent_runtime_stop_failed"));
+                Err(SourceStopFailure::Failed(error)) => {
+                    return Err(BackendDispatchError::from(error)
+                        .with_disposition(BackendFailureDispositionV1::RetrySame));
                 }
             }
         }

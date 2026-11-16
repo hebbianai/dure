@@ -318,8 +318,8 @@ async fn stop_managed_request(
             Err(error) if error.is_definitive_managed_stop_refusal() => {
                 return Err(ExactStopFailure::Refused);
             }
-            Err(_) => {
-                return Err(ExactStopFailure::Failed("agent_runtime_stop_failed".into()));
+            Err(error) => {
+                return Err(ExactStopFailure::Failed(stop_failed_detail(&error)));
             }
         }
     };
@@ -327,9 +327,22 @@ async fn stop_managed_request(
         receipt.outcome(),
         ManagedStopOutcome::Stopped | ManagedStopOutcome::AlreadyExited
     ) {
-        return Err(ExactStopFailure::Failed("agent_runtime_stop_failed".into()));
+        return Err(ExactStopFailure::Failed(stop_failed_detail(&format!(
+            "Hmux reported {:?} instead of a stop",
+            receipt.outcome()
+        ))));
     }
     Ok(())
+}
+
+/// Name Hmux's own cause and the way out, so a session Hmux cannot stop never
+/// leaves the user with only a bare code to retry.
+fn stop_failed_detail(cause: &dyn std::fmt::Display) -> String {
+    format!(
+        "agent_runtime_stop_failed: Hmux could not stop the session: {cause}. \
+         If its provider process is still running, end that process (dure ls shows its PID) \
+         and run the same stop again; it then completes as already exited."
+    )
 }
 
 fn target_cleanup_identity(operation_id: &OperationIdV1) -> String {

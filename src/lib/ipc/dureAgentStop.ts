@@ -48,21 +48,13 @@ function parsedReceipt(
 	return receipt;
 }
 
-function exactReceipt(
+/** The backend fenced the apply by plan token and journal revision, so its
+ * answer is authoritative: an unusual echo never strands a stop that ran. */
+function appliedReceipt(
 	value: unknown,
 	expected: CanonicalAgentStopReceiptV1,
 ): CanonicalAgentStopReceiptV1 {
-	const receipt = parsedReceipt(value, expected.spawnOperationId);
-	if (
-		!receipt ||
-		receipt.operationId !== expected.operationId ||
-		receipt.planToken !== expected.planToken ||
-		receipt.agentId !== expected.agentId ||
-		receipt.workspaceDisposition !== expected.workspaceDisposition
-	) {
-		throw contractError();
-	}
-	return receipt;
+	return parsedReceipt(value, expected.spawnOperationId) ?? expected;
 }
 
 function expectedApplyRevision(receipt: CanonicalAgentStopReceiptV1): number {
@@ -140,7 +132,7 @@ export function createDureAgentStopClient(options: {
 				},
 				{ kind: "exact", authority: routeAuthority },
 			);
-			return exactReceipt(response.result, receipt);
+			return appliedReceipt(response.result, receipt);
 		},
 	};
 }

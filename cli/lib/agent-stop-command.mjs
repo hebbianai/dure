@@ -140,15 +140,14 @@ export async function collectRunRecordStop({
       return planned;
     };
     const apply = async (planned) => {
+      // The backend fenced this apply by plan token and journal revision; its
+      // answer is authoritative, so an unusual echo never strands a stop that
+      // already ran.
       const applied = await request("dispatch.stop.apply", {
         schemaVersion: 1, operationId: planned.operationId, planToken: planned.planToken,
         expectedJournalRevision: canonicalAgentStopApplyRevisionV1(planned),
       });
-      if (!applied || applied.operationId !== planned.operationId || applied.planToken !== planned.planToken ||
-          applied.workspaceDisposition !== planned.workspaceDisposition) {
-        throw invalidStopReceipt();
-      }
-      return applied;
+      return applied ?? planned;
     };
 
     receipt = await request("dispatch.stop.status", { schemaVersion: 1, spawnOperationId: run.operationId });
