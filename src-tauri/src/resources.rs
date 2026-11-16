@@ -33,7 +33,7 @@ static SYSTEM: Mutex<Option<System>> = Mutex::new(None);
 fn volume_for(path: &str) -> Option<(u64, u64)> {
     let disks = Disks::new_with_refreshed_list().ok()?;
     let mut best: Option<(usize, u64, u64)> = None;
-    for disk in disks.list() {
+    for disk in disks.iter() {
         let mount = disk.mount_point().to_string_lossy().into_owned();
         if !path.starts_with(&mount) {
             continue;
