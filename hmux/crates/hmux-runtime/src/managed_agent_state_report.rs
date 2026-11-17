@@ -113,6 +113,8 @@ fn into_client_report(
         background_work: report.background_work,
         // The reporter drops it for a Host that does not negotiate it.
         startup_gate: report.startup_gate,
+        // The reporter drops it for a Host that does not negotiate it.
+        approval_request: report.approval_request,
     }
 }
 

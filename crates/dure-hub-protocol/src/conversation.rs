@@ -174,6 +174,9 @@ pub enum ConversationRefusal {
     /// The request itself is unusable (an empty or too long prompt, for
     /// example).
     InvalidRequest,
+    /// The approval an answer named was already answered, in the terminal or
+    /// elsewhere, or another took its place; nothing was written.
+    AttentionChanged,
     /// The desktop could not observe or attach to the session's Host in time,
     /// or its transport did not answer. The agent may well be alive — on a
     /// busy desktop this happens — so ask again; nothing was written.

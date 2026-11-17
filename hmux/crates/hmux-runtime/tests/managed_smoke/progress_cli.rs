@@ -19,6 +19,7 @@ fn list_and_inspect_preserve_the_same_host_progress() {
         .unwrap();
     let descriptor = created.session().descriptor().clone();
     let report = AgentStateReport {
+        approval_request: None,
         progress: Some(hmux_client::AgentProgressReport {
             source_id: "native-progress-fixture".into(),
             sequence: 1,
@@ -191,6 +192,7 @@ fn list_and_inspect_report_how_long_a_quiet_agent_has_been_idle() {
                 ManagedAttachRequest::new(&descriptor.session_id, &descriptor.workspace_id)
                     .unwrap(),
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,

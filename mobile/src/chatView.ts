@@ -31,6 +31,7 @@
  */
 
 import "./chatView.css";
+import { type AgentApprovalChoice, approvalShown, pendingApproval } from "@/lib/agents/approvalRequest";
 import type { AgentRuntimeState } from "./agentRuntimeState";
 import {
   type BackgroundWorkAnswer,
@@ -39,8 +40,11 @@ import {
   backgroundWorkSummary,
 } from "./backgroundWork";
 import {
+  type ApprovalAnswer,
   agentReadiness,
   applyTranscriptAnswer,
+  approvalAnswerProblem,
+  approvalButtons,
   CHAT_POLL_INTERVAL_MS,
   type ChatFallback,
   type ChatTranscript,
@@ -96,6 +100,17 @@ export interface ChatViewOptions {
    * the catalog entry carries `background_work`; without it there is no line.
    */
   readonly backgroundWork?: () => Promise<BackgroundWorkAnswer>;
+  /**
+   * Answer the agent's pending approval on the computer. Given only when the
+   * catalog entry carries `approval_answer`; without it the chat says the
+   * agent is asking in the terminal, as before. Resolves `undefined` when
+   * nothing was sent (the owner did not pass the approval sheet).
+   */
+  readonly answerApproval?: (
+    attentionId: string,
+    choice: AgentApprovalChoice,
+    terminalEpoch: string,
+  ) => Promise<AgentPromptAnswer | undefined>;
 }
 
 export interface ChatController {
@@ -259,6 +274,22 @@ export function createChatView(options: ChatViewOptions): ChatController {
   openTerminal.addEventListener("click", () => options.openTerminal());
   attention.append(attentionText, openTerminal);
 
+  // The approval the agent waits on, answered here: what it asks, and the
+  // answers its provider offers. The terminal stays one tap away.
+  let approvalAnswer: ApprovalAnswer | undefined;
+  const approval = element("section", "chat__approval");
+  approval.setAttribute("aria-live", "polite");
+  const approvalTitle = element("h3", "chat__approval-title");
+  const approvalSummary = element("pre", "chat__approval-summary");
+  const approvalProblem = element("p", "chat__approval-problem");
+  approvalProblem.setAttribute("role", "alert");
+  const approvalActions = element("div", "chat__approval-actions");
+  const approvalTerminal = element("button", "chat__approval-terminal", t("chat.openTerminal"));
+  approvalTerminal.type = "button";
+  approvalTerminal.addEventListener("click", () => options.openTerminal());
+  approval.append(approvalTitle, approvalSummary, approvalProblem, approvalActions);
+  approval.hidden = true;
+
   // The agent's subagents, workflows, shells and monitors: one line, collapsed.
   const background = element("details", "chat__background");
   background.hidden = true;
@@ -268,7 +299,7 @@ export function createChatView(options: ChatViewOptions): ChatController {
   background.append(backgroundSummary, backgroundRows);
   const frame = createChatFrame({
     top: older,
-    aboveComposer: [attention, background],
+    aboveComposer: [approval, attention, background],
     refresh: () => void refresh(true),
   });
   const { list, outgoing, status, note: composerNote, input, send, followEnd, fitInput } = frame;
@@ -392,8 +423,60 @@ export function createChatView(options: ChatViewOptions): ChatController {
     status.hidden = parts.length === 0;
   };
 
+  const shownApproval = () => {
+    const pending = options.answerApproval ? pendingApproval(runtime) : undefined;
+    return approvalShown(pending, approvalAnswer) ? pending : undefined;
+  };
+
+  const answerApproval = async (attentionId: string, choice: AgentApprovalChoice) => {
+    const answer = options.answerApproval;
+    if (!answer || (approvalAnswer?.attentionId === attentionId && approvalAnswer.state === "sending")) return;
+    approvalAnswer = { attentionId, state: "sending" };
+    paint();
+    let next: ApprovalAnswer | undefined;
+    try {
+      const result = await answer(attentionId, choice, target().terminalEpoch);
+      const problem = result && approvalAnswerProblem(result);
+      next = result === undefined
+        ? undefined
+        : problem
+          ? { attentionId, state: "failed", problem }
+          : { attentionId, state: "sent" };
+    } catch {
+      next = { attentionId, state: "failed", problem: "chat.approval.failed" };
+    }
+    if (disposed) return;
+    approvalAnswer = next;
+    paint();
+  };
+
+  const paintApproval = () => {
+    const pending = shownApproval();
+    approval.hidden = pending === undefined;
+    if (!pending) return;
+    const answer = approvalAnswer?.attentionId === pending.attentionId ? approvalAnswer : undefined;
+    approvalTitle.textContent = t("chat.approval.title", { tool: pending.request.toolName });
+    approvalSummary.textContent = pending.request.summary ?? "";
+    approvalSummary.hidden = !pending.request.summary;
+    approvalProblem.textContent = answer?.problem ? t(answer.problem) : "";
+    approvalProblem.hidden = !answer?.problem;
+    const buttons = approvalButtons(pending.request).map((choice) => {
+      const button = element(
+        "button",
+        `chat__approval-action${choice === "approve" ? " chat__approval-action--primary" : ""}`,
+        t(`chat.approval.${choice}`),
+      );
+      button.type = "button";
+      button.disabled = answer?.state === "sending";
+      button.addEventListener("click", () => void answerApproval(pending.attentionId, choice));
+      return button;
+    });
+    approvalActions.replaceChildren(approvalTerminal, ...buttons);
+  };
+
   const paintAttention = () => {
-    const showing = readiness() === "attention";
+    paintApproval();
+    const showing = readiness() === "attention" && approval.hidden;
     attention.hidden = !showing;
     attentionText.textContent = runtime?.attention === "error"
       ? t("chat.attention.error") : t("chat.attention.asking");

@@ -18,6 +18,10 @@
 //!   what the Host observes once it has refused. It never re-decides what the
 //!   Host admits.
 //!
+//! - **An approval answer** is admitted by the Hmux Host too, as an attention
+//!   response: it writes the provider's keys only while that exact approval
+//!   is pending and no one has typed into the terminal since it was raised.
+//!
 //! Sessions on remote hosts are refused `remote_unsupported` for now: their
 //! transcript lives on the remote machine.
 
@@ -79,6 +83,19 @@ pub fn offers_background_work(
     provider_id == "claude" && offers_conversation(session_class, provider_id, lifecycle)
 }
 
+/// Whether the catalog offers answering a session's approvals from the chat:
+/// a chat this desktop serves whose provider's approval prompt it knows.
+#[must_use]
+pub fn offers_approval_answer(
+    session_class: &SessionClass,
+    provider_id: &str,
+    lifecycle: &SessionLifecycle,
+) -> bool {
+    dure_provider_adapter::native_approval::native_approval_answer_keys(provider_id, "approve")
+        .is_some()
+        && offers_conversation(session_class, provider_id, lifecycle)
+}
+
 /// Where the request's box is, from this hub's point of view.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BoxRoute {
@@ -113,11 +130,50 @@ pub struct BackgroundWorkRequest {
     pub session_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApprovalAnswerRequest {
+    pub workspace_id: String,
+    pub session_id: String,
+    pub expected_terminal_epoch: String,
+    pub attention_id: String,
+    pub choice: String,
+}
+
 /// The side that reads and writes this desktop's agent sessions.
 pub trait ConversationSink: Send + Sync {
     fn transcript(&self, request: TranscriptRequest) -> HubConversationTranscriptResult;
     fn prompt(&self, request: PromptRequest) -> HubAgentPromptResult;
     fn background_work(&self, request: BackgroundWorkRequest) -> HubAgentBackgroundWorkResult;
+    fn approval_answer(&self, request: ApprovalAnswerRequest) -> HubAgentPromptResult;
+}
+
+/// Answer one session's pending approval, if it is this desktop's to write.
+pub fn answer_approval(
+    sink: Option<&dyn ConversationSink>,
+    route: BoxRoute,
+    request: ApprovalAnswerRequest,
+) -> HubAgentPromptResult {
+    let sink = match admit(route, sink, &request.workspace_id, &request.session_id) {
+        Ok(sink) => sink,
+        Err((code, detail)) => return HubAgentPromptResult::refused(code, detail),
+    };
+    if !bounded_identifier(&request.expected_terminal_epoch)
+        || !bounded_identifier(&request.attention_id)
+        || hmux_client::AgentApprovalChoice::parse(&request.choice).is_none()
+    {
+        return HubAgentPromptResult::refused(
+            ConversationRefusal::InvalidRequest,
+            "The answer does not name a valid process, approval or choice",
+        );
+    }
+    sink.approval_answer(request)
+}
+
+fn attention_changed() -> HubAgentPromptResult {
+    HubAgentPromptResult::refused(
+        ConversationRefusal::AttentionChanged,
+        "This approval was already answered. Open the terminal to see where the agent is",
+    )
 }
 
 /// List one session's running background work, if it is this desktop's to
@@ -652,6 +708,27 @@ fn attach_refusal(error: &ClientError) -> HubAgentPromptResult {
     }
 }
 
+/// Name what an answer that did not land says about the approval; any other
+/// failure is named as for any attach (`attach_refusal`). Only an outcome
+/// the Host could not report may have reached the terminal.
+fn approval_answer_refusal(code: &str) -> Option<HubAgentPromptResult> {
+    match code {
+        "hmux_attention_response_changed" => Some(attention_changed()),
+        "hmux_attention_response_unavailable" | "hmux_attention_response_requires_managed" => {
+            Some(HubAgentPromptResult::refused(
+                ConversationRefusal::UnsupportedRuntime,
+                "This session's Host cannot take an answer from here. Open the terminal",
+            ))
+        }
+        "hmux_terminal_input_outcome_unknown" | "hmux_terminal_input_failed" => {
+            Some(HubAgentPromptResult::unknown(
+                "The answer may have reached the terminal. Check it before answering again",
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// This desktop's own Hmux sessions.
 pub struct LocalConversations;
 
@@ -715,6 +792,37 @@ impl LocalConversations {
         }
         Ok((catalog, descriptor))
     }
+
+    /// The session to write to, fenced to the provider process the person was
+    /// looking at: the rest of the fence comes from the catalog, and the
+    /// attach refuses a Host that moved since.
+    fn exact_session(
+        workspace_id: &str,
+        session_id: &str,
+        expected_terminal_epoch: &str,
+    ) -> Result<(LocalSessionCatalog, SessionDescriptor, SessionFence), HubAgentPromptResult> {
+        let (catalog, descriptor) = Self::session(workspace_id, session_id)
+            .map_err(|(code, detail)| HubAgentPromptResult::refused(code, detail))?;
+        if descriptor.terminal_epoch != expected_terminal_epoch {
+            return Err(identity_changed());
+        }
+        let Ok(channel_epoch) = descriptor.channel_epoch.parse() else {
+            return Err(HubAgentPromptResult::refused(
+                ConversationRefusal::Unavailable,
+                "The session reported an unreadable generation",
+            ));
+        };
+        let fence = SessionFence {
+            workspace_id: descriptor.workspace_id.clone(),
+            session_id: descriptor.session_id.clone(),
+            runner_principal: descriptor.runner_principal.clone(),
+            runner_instance: descriptor.runner_instance.clone(),
+            channel_epoch,
+            host_instance_id: descriptor.host_instance_id.clone(),
+            terminal_epoch: expected_terminal_epoch.to_string(),
+        };
+        Ok((catalog, descriptor, fence))
+    }
 }
 
 impl ConversationSink for LocalConversations {
@@ -745,30 +853,56 @@ impl ConversationSink for LocalConversations {
         }
     }
 
-    fn prompt(&self, request: PromptRequest) -> HubAgentPromptResult {
-        let (catalog, descriptor) = match Self::session(&request.workspace_id, &request.session_id) {
+    fn approval_answer(&self, request: ApprovalAnswerRequest) -> HubAgentPromptResult {
+        let (catalog, descriptor, fence) = match Self::exact_session(
+            &request.workspace_id,
+            &request.session_id,
+            &request.expected_terminal_epoch,
+        ) {
             Ok(found) => found,
-            Err((code, detail)) => return HubAgentPromptResult::refused(code, detail),
+            Err(refusal) => return refusal,
         };
-        // The person's view of the process is the fence: the rest of it comes
-        // from the catalog, and the attach refuses a Host that moved since.
-        if descriptor.terminal_epoch != request.expected_terminal_epoch {
-            return identity_changed();
-        }
-        let Ok(channel_epoch) = descriptor.channel_epoch.parse() else {
+        let Some(choice) = hmux_client::AgentApprovalChoice::parse(&request.choice) else {
             return HubAgentPromptResult::refused(
-                ConversationRefusal::Unavailable,
-                "The session reported an unreadable generation",
+                ConversationRefusal::InvalidRequest,
+                "The answer does not name a valid choice",
             );
         };
-        let fence = SessionFence {
-            workspace_id: descriptor.workspace_id.clone(),
-            session_id: descriptor.session_id.clone(),
-            runner_principal: descriptor.runner_principal.clone(),
-            runner_instance: descriptor.runner_instance.clone(),
-            channel_epoch,
-            host_instance_id: descriptor.host_instance_id.clone(),
-            terminal_epoch: request.expected_terminal_epoch.clone(),
+        let Some(keys) = dure_provider_adapter::native_approval::native_approval_answer_keys(
+            &descriptor.provider_id,
+            choice.as_str(),
+        ) else {
+            return HubAgentPromptResult::refused(
+                ConversationRefusal::UnsupportedRuntime,
+                "This agent's approvals are answered in the terminal",
+            );
+        };
+        match TerminalSurfaceAttachment::answer_local_approval(
+            &catalog,
+            &fence,
+            &request.attention_id,
+            choice,
+            keys,
+            PROMPT_TIMEOUT,
+        ) {
+            Ok(receipt) => HubAgentPromptResult::written(
+                fence.terminal_epoch,
+                receipt.in_reply_to_record_id.to_string(),
+            ),
+            Err(error) => {
+                approval_answer_refusal(error.code()).unwrap_or_else(|| attach_refusal(&error))
+            }
+        }
+    }
+
+    fn prompt(&self, request: PromptRequest) -> HubAgentPromptResult {
+        let (catalog, descriptor, fence) = match Self::exact_session(
+            &request.workspace_id,
+            &request.session_id,
+            &request.expected_terminal_epoch,
+        ) {
+            Ok(found) => found,
+            Err(refusal) => return refusal,
         };
         let mut surface = match TerminalSurfaceAttachment::connect_local_agent_prompt(&catalog, &fence)
         {
@@ -849,6 +983,7 @@ mod tests {
         transcripts: Mutex<Vec<TranscriptRequest>>,
         prompts: Mutex<Vec<PromptRequest>>,
         background: Mutex<Vec<BackgroundWorkRequest>>,
+        answers: Mutex<Vec<ApprovalAnswerRequest>>,
     }
 
     impl ConversationSink for Recorder {
@@ -866,6 +1001,47 @@ mod tests {
             self.background.lock().unwrap().push(request);
             hub_background_work(shell_list())
         }
+
+        fn approval_answer(&self, request: ApprovalAnswerRequest) -> HubAgentPromptResult {
+            self.answers.lock().unwrap().push(request);
+            HubAgentPromptResult::written("terminal-1", "9")
+        }
+    }
+
+    fn answer_request(choice: &str) -> ApprovalAnswerRequest {
+        ApprovalAnswerRequest {
+            workspace_id: "workspace-1".into(),
+            session_id: "session-1".into(),
+            expected_terminal_epoch: "terminal-1".into(),
+            attention_id: "attention-4".into(),
+            choice: choice.into(),
+        }
+    }
+
+    #[test]
+    fn an_approval_answer_is_routed_and_checked_like_a_prompt() {
+        let sink = Recorder::default();
+        assert_eq!(
+            answer_approval(Some(&sink), BoxRoute::Remote, answer_request("approve")).code,
+            Some(ConversationRefusal::RemoteUnsupported)
+        );
+        assert_eq!(
+            answer_approval(Some(&sink), BoxRoute::Local, answer_request("maybe")).code,
+            Some(ConversationRefusal::InvalidRequest)
+        );
+        let written = answer_approval(Some(&sink), BoxRoute::Local, answer_request("deny"));
+        assert_eq!(written.state, AgentPromptState::WrittenToPty);
+        assert_eq!(*sink.answers.lock().unwrap(), vec![answer_request("deny")]);
+    }
+
+    #[test]
+    fn an_answer_the_terminal_already_gave_is_named_as_such() {
+        let changed = approval_answer_refusal("hmux_attention_response_changed").unwrap();
+        assert_eq!(changed.code, Some(ConversationRefusal::AttentionChanged));
+        let lost = approval_answer_refusal("hmux_terminal_input_outcome_unknown").unwrap();
+        assert_eq!(lost.state, AgentPromptState::Unknown);
+        // Anything else is an attach failure, named as for a prompt.
+        assert!(approval_answer_refusal("hmux_read_deadline_exceeded").is_none());
     }
 
     fn background_request() -> BackgroundWorkRequest {
@@ -974,6 +1150,7 @@ mod tests {
             turn_completed_count: "3".into(),
             program_status: None,
             background_work: false,
+            approval_request: None,
         }
     }
 

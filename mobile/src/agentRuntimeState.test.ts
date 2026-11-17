@@ -51,6 +51,31 @@ describe("parseAgentRuntimeRecord", () => {
     });
   });
 
+  it("reads what a pending approval asks, and leaves malformed content out", () => {
+    const request = { tool_name: "Bash", summary: "cargo test\n  --all", choices: ["approve", "approve_always", "deny"] };
+    expect(parseAgentRuntimeRecord(runtimeRecord({ ...FULL_PAYLOAD, approval_request: request }))?.approvalRequest).toEqual({
+      toolName: "Bash",
+      summary: "cargo test\n  --all",
+      choices: ["approve", "approve_always", "deny"],
+    });
+    for (const malformed of [
+      "Bash",
+      { ...request, tool_name: "" },
+      { ...request, summary: "a\u001b[2J" },
+      { ...request, choices: ["approve"] },
+      { ...request, choices: ["approve", "maybe", "deny"] },
+    ]) {
+      const parsed = parseAgentRuntimeRecord(runtimeRecord({ ...FULL_PAYLOAD, approval_request: malformed }));
+      expect(parsed?.attention).toBe("approval_required");
+      expect(parsed?.approvalRequest).toBeUndefined();
+    }
+    // Only an approval carries one.
+    const { attention_id: _id, ...rest } = FULL_PAYLOAD;
+    expect(
+      parseAgentRuntimeRecord(runtimeRecord({ ...rest, attention: "none", approval_request: request }))?.approvalRequest,
+    ).toBeUndefined();
+  });
+
   it("returns null for viewport bytes", () => {
     const record = viewportFrameRecord({
       terminalEpoch: "epoch-1",

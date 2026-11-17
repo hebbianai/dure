@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo } from "react";
 import { NativeAgentBackgroundWork } from "@/components/agents/NativeAgentBackgroundWork";
+import { AgentPendingRequestCard } from "@/components/agents/chat/AgentPendingRequestCard";
 import { TranscriptContents } from "@/components/agents/chat/AgentChatTimelineRows";
 import { ChatAlert } from "@/components/agents/chat/ChatAlert";
 import {
@@ -11,7 +12,14 @@ import type { NativeAgentChatState } from "@/components/agents/useNativeAgentCha
 import { PanelStatus } from "@/components/common/PanelStatus";
 import { Button } from "@/components/ui/button";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
+import { approvalShown, pendingApproval } from "@/lib/agents/approvalRequest";
 import { backgroundWorkSession } from "@/lib/agents/chat/backgroundWork";
+import {
+	nativeAgentApprovalCardRequest,
+	nativeAgentApprovalChoice,
+	nativeAgentApprovalDecisions,
+	presentNativeAgentApprovalError,
+} from "@/lib/agents/chat/nativeAgentApproval";
 import {
 	nativeAgentChatComposerReason,
 	nativeAgentChatComposerState,
@@ -26,7 +34,10 @@ import {
 } from "@/lib/agents/chat/nativeAgentChat";
 import { t } from "@/lib/i18n";
 import { readProviderConversationTranscript } from "@/lib/ipc/conversations";
-import { sendNativeAgentPrompt } from "@/lib/ipc/dureAgentNativeInput";
+import {
+	answerNativeAgentApproval,
+	sendNativeAgentPrompt,
+} from "@/lib/ipc/dureAgentNativeInput";
 import type { HmuxAgentRuntimeState } from "@/lib/ipc/hmuxContracts";
 import type { Agent } from "@/types";
 import type { NativeAgentTranscriptSource } from "../../../cli/lib/agent-transcript.mjs";
@@ -36,10 +47,12 @@ const noOlderHistory = async () => {};
 /** The conversation view of a native terminal Agent: the provider transcript,
  * with the tool calls between its messages as collapsed bursts, rendered with
  * the shared chat rows, plus the shared composer on the Host's idle prompt
- * path. The terminal stays mounted underneath and owns
- * everything the transcript cannot show (approvals, slash commands, trust
- * prompts). The pane owns the runtime state (`chat`) and the draft lives in
- * the shared chat draft store, so neither is lost when this view unmounts. */
+ * path. An approval whose provider said what it asks shows as the shared
+ * pending-request card and is answered through the Host's attention
+ * response. The terminal stays mounted underneath and owns everything else
+ * the transcript cannot show (other prompts, slash commands, trust prompts).
+ * The pane owns the runtime state (`chat`) and the draft lives in the shared
+ * chat draft store, so neither is lost when this view unmounts. */
 export function NativeAgentChatView({
 	agent,
 	source,
@@ -74,6 +87,8 @@ export function NativeAgentChatView({
 		setSendError,
 		sending,
 		setSending,
+		approvalAnswer,
+		setApprovalAnswer,
 	} = chat;
 	const chatDraft = useAgentChatDraft(nativeAgentChatDraftIdentity(agent));
 	const draft = chatDraft.draft.text;
@@ -137,11 +152,22 @@ export function NativeAgentChatView({
 		livePending,
 	]);
 
+	const approval = pendingApproval(runtime);
+	const showsApproval = approvalShown(approval, approvalAnswer);
+	const approvalAnswerHere =
+		approval && approvalAnswer?.attentionId === approval.attentionId
+			? approvalAnswer
+			: undefined;
+	const approvalError =
+		approvalAnswerHere?.state === "failed" && approvalAnswerHere.failure
+			? presentNativeAgentApprovalError(approvalAnswerHere.failure)
+			: undefined;
 	const composer = nativeAgentChatComposerState({
 		runtime,
 		state,
 		sending,
 		pending: livePending !== undefined && !livePending.released,
+		approvalShown: showsApproval,
 	});
 	const reason = nativeAgentChatComposerReason(composer);
 	const error = sendError ? presentNativeAgentInputError(sendError) : undefined;
@@ -186,6 +212,35 @@ export function NativeAgentChatView({
 		}
 	};
 
+	// One answer per approval: the Host refuses a second one anyway, and the
+	// card stays answerable after a failure only to say why and offer the
+	// terminal.
+	const answer = async (value: unknown) => {
+		if (!approval || approvalAnswerHere?.state === "sending") return;
+		const choice = nativeAgentApprovalChoice(approval.request, value);
+		if (!choice) return;
+		const { attentionId } = approval;
+		setApprovalAnswer({ attentionId, state: "sending" });
+		try {
+			await answerNativeAgentApproval(
+				{
+					agentId: agent.id,
+					backendProfileId: nativeAgentPromptBackendProfileId(agent),
+					expectedTerminalEpoch: terminalEpoch,
+				},
+				attentionId,
+				choice,
+			);
+			setApprovalAnswer({ attentionId, state: "sent" });
+		} catch (cause) {
+			setApprovalAnswer({
+				attentionId,
+				state: "failed",
+				failure: nativeAgentInputFailure(cause),
+			});
+		}
+	};
+
 	return (
 		<section
 			aria-label={t("agents.nativeChat.conversation")}
@@ -217,6 +272,41 @@ export function NativeAgentChatView({
 				onSubmit={() => void submit()}
 				notices={
 					<>
+						{showsApproval && (
+							<div className="mb-2">
+								<AgentPendingRequestCard
+									pending={nativeAgentApprovalCardRequest(approval, {
+										agentId,
+										terminalEpoch,
+									})}
+									permissionDecisions={nativeAgentApprovalDecisions(
+										approval.request,
+									)}
+									busy={approvalAnswerHere?.state === "sending"}
+									onAnswer={(value) => void answer(value)}
+									notice={
+										approvalError && (
+											<ChatAlert className="items-center" role="alert">
+												<span data-selectable className="min-w-0 flex-1">
+													{approvalError.message}
+													<span className="ml-1 font-mono text-[0.85em] opacity-70">
+														{approvalError.detail}
+													</span>
+												</span>
+												<Button
+													type="button"
+													variant="ghost"
+													size="xs"
+													onClick={onContinueInTerminal}
+												>
+													{t("agents.nativeChat.approval.openTerminal")}
+												</Button>
+											</ChatAlert>
+										)
+									}
+								/>
+							</div>
+						)}
 						{page && readFailed && (
 							<ChatAlert className="mb-2 items-center">
 								<span className="min-w-0 flex-1">

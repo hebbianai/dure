@@ -348,6 +348,7 @@ mod tests {
             agent_prompt: Some(AgentPromptCapabilitySelection::Targeted),
             process_observed_agent_prompt: true,
             draft_guarded_input: false,
+            attention_response_input: false,
             wheel,
             default_colors: false,
             history_find: false,

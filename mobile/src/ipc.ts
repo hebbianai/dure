@@ -1,6 +1,7 @@
 import type { SessionPresentation } from "@/lib/hub/sessionPresentation";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { demoInvoke } from "./demo/demoInvoke";
+import type { AgentApprovalChoice } from "@/lib/agents/approvalRequest";
 import type { BackgroundWorkAnswer } from "./backgroundWork";
 import type { ServerReport } from "./census";
 import type { ServerEntry } from "./servers";
@@ -207,6 +208,7 @@ export type ConversationRefusal =
   | "identity_changed"
   | "input_draft_pending"
   | "invalid_request"
+  | "attention_changed"
   | "probe_timeout"
   | "unavailable"
   | "unknown";
@@ -655,6 +657,11 @@ export interface HubProbeSession extends RemoteSession {
    * attach. Missing from phones' older Rust halves.
    */
   agent_chat?: boolean;
+  /**
+   * The computer answers this session's approvals from the chat card
+   * (`AgentApprovalAnswerV1`). Missing from older computers.
+   */
+  approval_answer?: boolean;
   box_id: string;
   box_label: string;
 }
@@ -986,6 +993,26 @@ export const ipc = {
         expectedTerminalEpoch,
         expectedConversationId: expectedConversationId ?? null,
       },
+    }),
+
+  /**
+   * Answer the agent's pending approval with one offered choice
+   * (`AgentApprovalAnswerV1`). The computer's Host writes the provider's keys
+   * only while that exact approval is pending and no one has typed into the
+   * terminal since it was raised; otherwise the answer is refused
+   * `attention_changed` with nothing written. As for a prompt, an error means
+   * nothing was written and a lost answer is the state `unknown`.
+   */
+  hubAgentApprovalAnswer: (
+    hubId: string,
+    session: ConversationSession,
+    expectedTerminalEpoch: string,
+    attentionId: string,
+    choice: AgentApprovalChoice,
+  ) =>
+    invoke<AgentPromptAnswer>("hub_agent_approval_answer", {
+      id: hubId,
+      input: { ...session, expectedTerminalEpoch, attentionId, choice },
     }),
 
   /**

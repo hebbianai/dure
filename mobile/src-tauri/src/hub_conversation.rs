@@ -1,7 +1,8 @@
 //! The observer chat's two questions to the paired computer (#361).
 //!
 //! `ConversationTranscriptV1` reads the newest messages of one local agent
-//! session; `AgentPromptV1` types one prompt into it while it waits for input.
+//! session; `AgentPromptV1` types one prompt into it while it waits for input;
+//! `AgentApprovalAnswerV1` answers the approval it waits on.
 //! Both ride a fresh TLS connection over the paired relay, the way the account
 //! sheet's questions do: the greeting carries the request, the ack comes back,
 //! then one answer document (`dure_hub_protocol::conversation`).
@@ -524,6 +525,45 @@ pub async fn hub_agent_chat_action(
     };
     exchange(&app, &id, move |stream, token| {
         agent_chat_action_on_stream(stream, token, request)
+    })
+    .await
+}
+
+/// One answer to the agent's pending approval, as its chat card shows it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalAnswerInput {
+    box_id: String,
+    workspace_id: String,
+    session_id: String,
+    expected_terminal_epoch: String,
+    attention_id: String,
+    choice: String,
+}
+
+fn approval_answer_request(input: ApprovalAnswerInput) -> HubRequest {
+    HubRequest::AgentApprovalAnswerV1 {
+        box_id: input.box_id,
+        workspace_id: input.workspace_id,
+        session_id: input.session_id,
+        expected_terminal_epoch: input.expected_terminal_epoch,
+        attention_id: input.attention_id,
+        choice: input.choice,
+    }
+}
+
+/// Deliver one approval answer. Like a prompt: a refusal is an answer, an
+/// error means nothing was written, and once the greeting is written a lost
+/// answer is `unknown` ("look at the terminal before answering again").
+#[tauri::command]
+pub async fn hub_agent_approval_answer(
+    app: tauri::AppHandle,
+    id: String,
+    input: ApprovalAnswerInput,
+) -> Result<HubAgentPromptResult, CommandError> {
+    let request = approval_answer_request(input);
+    exchange(&app, &id, move |stream, token| {
+        prompt_on_stream(stream, token, request)
     })
     .await
 }

@@ -18,7 +18,18 @@ struct Request {
     after: Option<Value>,
     #[serde(default)]
     text: Option<String>,
+    /// `agent_runtime.native.answer`: the Host attention identity of the
+    /// approval being answered, and the offered choice that answers it.
+    #[serde(default)]
+    attention_id: Option<String>,
+    #[serde(default)]
+    choice: Option<String>,
 }
+
+/// The longest Host attention identity an answer may name.
+const MAX_ATTENTION_ID_BYTES: usize = 256;
+/// How long one answer may wait for the Host's receipt.
+const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub(super) async fn dispatch(
     state: &ServiceState,
@@ -27,6 +38,7 @@ pub(super) async fn dispatch(
     let body: Request = serde_json::from_value(request.body.clone())
         .map_err(|_| "agent_runtime_native_request_invalid")?;
     let input = request.operation == "agent_runtime.native.input";
+    let answer = request.operation == "agent_runtime.native.answer";
     if body.schema_version != 1
         || body.expected_selection_revision < 1
         || !valid_token(&body.expected_terminal_epoch)
@@ -36,6 +48,19 @@ pub(super) async fn dispatch(
                     text.is_empty() || text.len() > 64 * 1024 || text.contains('\0')
                 })))
         || (!input && body.text.is_some())
+        || (answer
+            && (body.after.is_some()
+                || body.attention_id.as_deref().is_none_or(|id| {
+                    id.is_empty()
+                        || id.len() > MAX_ATTENTION_ID_BYTES
+                        || !id.bytes().all(|byte| byte.is_ascii_graphic())
+                })
+                || body
+                    .choice
+                    .as_deref()
+                    .and_then(hmux_client::AgentApprovalChoice::parse)
+                    .is_none()))
+        || (!answer && (body.attention_id.is_some() || body.choice.is_some()))
     {
         return Err("agent_runtime_native_request_invalid".into());
     }
@@ -59,16 +84,26 @@ pub(super) async fn dispatch(
     if input {
         return send(state, &selection, &authority, body.text.as_deref().unwrap()).await;
     }
+    if answer {
+        return answer_approval(
+            state,
+            &selection,
+            &authority,
+            body.attention_id.unwrap(),
+            body.choice
+                .as_deref()
+                .and_then(hmux_client::AgentApprovalChoice::parse)
+                .unwrap(),
+        )
+        .await;
+    }
     read(state, &selection, &authority, body.after.as_ref()).await
 }
 
-async fn send(
-    state: &ServiceState,
-    selection: &AgentRuntimeSelectionV1,
+fn authority_fence(
     authority: &AgentCheckpointBindingAuthorityV1,
-    text: &str,
-) -> Result<Value, BackendDispatchError> {
-    let fence = SessionFence {
+) -> Result<SessionFence, BackendDispatchError> {
+    Ok(SessionFence {
         workspace_id: authority.runtime_workspace_id.clone(),
         session_id: authority.binding.session_id.clone(),
         runner_principal: authority.runner_principal.clone(),
@@ -79,7 +114,62 @@ async fn send(
             .map_err(|_| "agent_runtime_native_changed")?,
         host_instance_id: authority.host_instance_id.clone(),
         terminal_epoch: authority.terminal_epoch.clone(),
-    };
+    })
+}
+
+/// Answers the native agent's pending approval with one offered choice. The
+/// Host writes the provider's keys only while that exact approval is pending
+/// and no one has typed into the terminal since it was raised, so a card that
+/// is already stale can never type into the provider. There is no retry.
+async fn answer_approval(
+    state: &ServiceState,
+    selection: &AgentRuntimeSelectionV1,
+    authority: &AgentCheckpointBindingAuthorityV1,
+    attention_id: String,
+    choice: hmux_client::AgentApprovalChoice,
+) -> Result<Value, BackendDispatchError> {
+    let keys = dure_provider_adapter::native_approval::native_approval_answer_keys(
+        selection.provider_id.as_str(),
+        choice.as_str(),
+    )
+    .ok_or("agent_runtime_native_answer_unsupported")?;
+    let fence = authority_fence(authority)?;
+    let root = state.hmux_identity.discovery_root.clone();
+    tokio::task::spawn_blocking(move || {
+        TerminalSurfaceAttachment::answer_local_approval(
+            &LocalSessionCatalog::new(root),
+            &fence,
+            &attention_id,
+            choice,
+            keys,
+            ANSWER_TIMEOUT,
+        )
+        .map_err(|error| {
+            BackendDispatchError::from(match error.code() {
+                "hmux_attention_response_changed" => "agent_runtime_native_answer_changed",
+                "hmux_attention_response_unavailable" => "agent_runtime_native_answer_unavailable",
+                code => code,
+            })
+        })
+        .map(|_| {
+            json!({ "schemaVersion": 1, "receipt": {
+                "terminalEpoch": fence.terminal_epoch,
+                "attentionId": attention_id,
+                "state": "written_to_pty",
+            } })
+        })
+    })
+    .await
+    .map_err(|_| "agent_runtime_native_answer_unconfirmed")?
+}
+
+async fn send(
+    state: &ServiceState,
+    selection: &AgentRuntimeSelectionV1,
+    authority: &AgentCheckpointBindingAuthorityV1,
+    text: &str,
+) -> Result<Value, BackendDispatchError> {
+    let fence = authority_fence(authority)?;
     let expected = ProviderConversationIdentitySeed::new(
         selection.provider_id.as_str(),
         authority

@@ -4900,6 +4900,7 @@ mod tests {
         };
 
         let expected_runtime = AgentRuntimeStateProjection {
+            approval_request: None,
             progress: None,
             terminal_epoch: fence().terminal_epoch,
             revision: 5,
@@ -5081,6 +5082,7 @@ mod tests {
         let (gateway_connection, mut local_host) =
             structured_connection(false, &[], false, true, None, None);
         let runtime = AgentRuntimeStateProjection {
+            approval_request: None,
             progress: None,
             terminal_epoch: fence().terminal_epoch,
             revision: 1,
@@ -7475,6 +7477,7 @@ mod tests {
         assert!(matches!(
             upstream_decision(
                 &FrameBody::AgentStateReport(AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     request_id: "r2".into(),
                     identity_only: false,

@@ -3,6 +3,7 @@
 // hmux.ts 1069줄에서 분리(2026-08-01, ipc 분할 2단계). 소비자 호환을 위해
 // hmux.ts가 전량 재-export한다 — 계약을 고칠 때는 이 파일만 보면 된다.
 
+import type { AgentApprovalRequest } from "@/lib/agents/approvalRequest";
 import type { HmuxManagedGenerationV1 } from "@/lib/hmux/identity/hmuxManagedGeneration";
 import type { ManagedCreateChainStopReceiptV2 } from "@/lib/hmux/managed/managedCreateChainStopReceipt";
 import type { ManagedCreateAdvanceResolution } from "@/lib/hmux/managed/managedCreateResolution";
@@ -71,6 +72,10 @@ export interface HmuxAgentRuntimeState {
 	/** Working only on background work after the provider's turn ended; the
 	 * prompt accepts input. Older Hosts omit it. */
 	backgroundWork?: true;
+	/** What the pending approval asks, when its provider reported it. Only
+	 * beside `approval_required`; a new request has a new `attentionId`.
+	 * Older Hosts omit it. */
+	approvalRequest?: AgentApprovalRequest;
 }
 
 export interface HmuxProviderConversationIdentity

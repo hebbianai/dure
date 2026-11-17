@@ -73,6 +73,11 @@ pub struct HubCatalogEntry {
     /// desktop that predates the request, which would close without a word.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub background_work: bool,
+    /// This desktop answers `AgentApprovalAnswerV1` for this session: the
+    /// chat may show a pending approval's buttons. Its own flag, so a phone
+    /// never sends the answer to a desktop that predates it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub approval_answer: bool,
     /// 이 세션이 어느 상자에 있는지. 허브가 여러 상자를 합쳐 보여주므로, 폰은
     /// 같은 목록에서 노트북 세션과 서버 세션을 구별할 수 있어야 한다.
     pub box_id: String,
@@ -377,6 +382,21 @@ mod tests {
         assert!(!older.background_work);
     }
 
+    /// Like `background_work`: optional both ways.
+    #[test]
+    fn the_approval_answer_flag_is_optional_both_ways() {
+        let mut served = catalog();
+        served.sessions[0].conversation = true;
+        served.sessions[0].approval_answer = true;
+        let encoded = encode(&served).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), served);
+
+        let without = serde_json::to_value(entry()).unwrap();
+        assert!(without.get("approval_answer").is_none());
+        let older: HubCatalogEntry = serde_json::from_value(without).unwrap();
+        assert!(!older.approval_answer);
+    }
+
     /// 구조체 리터럴인 것이 의도다: 매니페스트에 필드가 늘면 컴파일이 깨져
     /// 허용 목록을 다시 보게 된다.
     fn entry() -> HubCatalogEntry {
@@ -398,6 +418,7 @@ mod tests {
             launch_program: Some("zsh".to_string()),
             conversation: false,
             background_work: false,
+            approval_answer: false,
             box_id: "box-1".to_string(),
             box_label: "노트북".to_string(),
         }

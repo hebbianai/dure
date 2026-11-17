@@ -357,3 +357,74 @@ html[data-keyboard="on"] .chat__composer {
 .chat__pull {
   margin: -12px -16px 0;
 }
+
+/* The approval the agent waits on, answered here: what it asks, then the answers. */
+.chat__approval {
+  flex: none;
+  margin: 0 12px 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--warn-surface);
+  color: var(--warn-ink);
+  font: 400 13px/18px var(--font-ui);
+}
+
+.chat__approval[hidden],
+.chat__approval-summary[hidden],
+.chat__approval-problem[hidden] {
+  display: none;
+}
+
+.chat__approval-title {
+  margin: 0;
+  font: 600 13px/18px var(--font-ui);
+}
+
+.chat__approval-summary {
+  max-height: 120px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  color: var(--foreground);
+  font: 400 12px/16px var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat__approval-problem {
+  margin: 6px 0 0;
+}
+
+.chat__approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.chat__approval-terminal {
+  margin-right: auto;
+}
+
+.chat__approval-action,
+.chat__approval-terminal {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--glass-chip);
+  color: var(--foreground);
+  font: 500 13px/18px var(--font-ui);
+}
+
+.chat__approval-action--primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.chat__approval-action:disabled {
+  opacity: 0.5;
+}

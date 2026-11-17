@@ -329,6 +329,7 @@ fn report_activity(
                 ManagedAttachRequest::new(&descriptor.session_id, &descriptor.workspace_id)
                     .unwrap(),
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: false,
                     activity,

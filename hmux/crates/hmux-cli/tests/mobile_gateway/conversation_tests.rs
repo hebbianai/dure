@@ -133,6 +133,7 @@ impl AgentFixture {
             .report_agent_state(
                 ManagedAttachRequest::new(SESSION, WORKSPACE).unwrap(),
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: false,
                     activity,

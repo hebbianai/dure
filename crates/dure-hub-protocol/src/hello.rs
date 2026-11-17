@@ -383,6 +383,29 @@ pub enum HubRequest {
         request_id: String,
         answer: crate::agent_chat::AgentChatAnswer,
     },
+    /// Answer the agent's pending approval with one of the choices it
+    /// offers, as the chat card shows them.
+    ///
+    /// The Host writes the provider's keys only while that exact approval is
+    /// pending and no one has typed into the terminal since it was raised;
+    /// otherwise nothing is written and the answer is refused
+    /// `attention_changed`. Answered with a
+    /// `conversation::HubAgentPromptResult`. A desktop that predates it reads
+    /// it as [`Self::Unsupported`]; the phone sends it only where the catalog
+    /// entry carries `approval_answer`.
+    AgentApprovalAnswerV1 {
+        /// The catalog entry's box, as `Attach` names it.
+        box_id: String,
+        /// The catalog entry's workspace, as for `ConversationTranscriptV1`.
+        workspace_id: String,
+        session_id: String,
+        /// The provider process the person was looking at.
+        expected_terminal_epoch: String,
+        /// The Host's identity of the approval the card shows.
+        attention_id: String,
+        /// `approve`, `approve_always` or `deny`, as the approval offers it.
+        choice: String,
+    },
     /// 이 노트북이 모르는 요청.
     ///
     /// # 왜 갈래가 하나 더 있는가
@@ -696,7 +719,19 @@ mod tests {
             expected_terminal_epoch: "terminal-1".to_string(),
             expected_conversation_id: Some("conversation-1".to_string()),
         };
-        for request in [read, prompt] {
+        let answer = HubRequest::AgentApprovalAnswerV1 {
+            box_id: "this-laptop".to_string(),
+            workspace_id: "workspace-1".to_string(),
+            session_id: "session-1".to_string(),
+            expected_terminal_epoch: "terminal-1".to_string(),
+            attention_id: "attention-7".to_string(),
+            choice: "approve".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_value(&answer).expect("to value")["kind"],
+            "agent_approval_answer_v1"
+        );
+        for request in [read, prompt, answer] {
             let framed = encode_hello_for("token-1", request.clone()).expect("encodes");
             assert_eq!(
                 read_hello(&mut framed.as_slice()).expect("reads").request,

@@ -182,22 +182,26 @@ export type NativeAgentChatComposerState =
 				| "pending"
 				| "working"
 				| "attention"
+				| "approval"
 				| "unavailable";
 	  };
 
 /** Input is offered only while the Host reports an idle prompt with no
  * attention. The Host still decides admission; this only explains why the
- * composer is closed. */
+ * composer is closed: an approval the chat shows is answered there, any
+ * other attention in the terminal. */
 export function nativeAgentChatComposerState({
 	runtime,
 	state,
 	sending,
 	pending,
+	approvalShown = false,
 }: {
 	runtime: Pick<HmuxAgentRuntimeState, "lifecycle" | "attention"> | undefined;
 	state: AgentDisplayState;
 	sending: boolean;
 	pending: boolean;
+	approvalShown?: boolean;
 }): NativeAgentChatComposerState {
 	if (runtime?.lifecycle !== "running") {
 		return { kind: "disabled", reason: "unavailable" };
@@ -209,7 +213,10 @@ export function nativeAgentChatComposerState({
 		state === "input" ||
 		state === "error"
 	) {
-		return { kind: "disabled", reason: "attention" };
+		return {
+			kind: "disabled",
+			reason: approvalShown ? "approval" : "attention",
+		};
 	}
 	if (state === "working") return { kind: "disabled", reason: "working" };
 	if (pending) return { kind: "disabled", reason: "pending" };
@@ -246,6 +253,7 @@ const COMPOSER_REASON_COPY: Record<
 	pending: "agents.nativeChat.reason.pending",
 	working: "agents.nativeChat.reason.working",
 	attention: "agents.nativeChat.reason.attention",
+	approval: "agents.nativeChat.reason.approval",
 	unavailable: "agents.nativeChat.reason.unavailable",
 };
 

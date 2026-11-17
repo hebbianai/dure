@@ -67,6 +67,17 @@ impl ControllerInputEffect {
         }
     }
 
+    /// Whether this write may answer a raised attention: every keypress,
+    /// typed text or submit does; terminal control traffic cannot.
+    #[must_use]
+    pub(crate) fn may_answer_attention(self) -> bool {
+        #[cfg(feature = "terminal-state-stream")]
+        if self == Self::ControlOnly {
+            return false;
+        }
+        true
+    }
+
     /// Whether a person waits for this write's echo, so the next output is
     /// published without the projection throttle.
     #[cfg(feature = "terminal-state-stream")]
@@ -101,6 +112,10 @@ impl ControllerInputEffect {
             input_intent::Intent::Text(_)
             | input_intent::Intent::AgentPrompt(_)
             | input_intent::Intent::DraftGuarded(_) => Some(Self::DraftCapable),
+            // An answer chooses an option in the provider's prompt; it puts
+            // no text into the line editor, so it neither creates a draft nor
+            // submits one.
+            input_intent::Intent::AttentionResponse(_) => Some(Self::NonInsertingKey),
             input_intent::Intent::Paste(paste) if !paste.utf8.is_empty() => {
                 Some(Self::DraftCapable)
             }

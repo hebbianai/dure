@@ -97,8 +97,7 @@ use hmux_runtime_contract::{
     write_managed_create_response, write_managed_stop_response, write_standalone_create_response,
 };
 use hmux_runtime_contract::{
-    TERMINAL_DEFAULT_COLORS_CAPABILITY, TERMINAL_INPUT_INTENT_CAPABILITY,
-    terminal_capability_permitted_for_agent_prompt,
+    TERMINAL_INPUT_INTENT_CAPABILITY, terminal_capability_permitted_for_agent_prompt,
 };
 #[cfg(feature = "terminal-state-stream")]
 use hmux_runtime_contract::{
@@ -197,6 +196,9 @@ fn advertised_capabilities() -> Vec<String> {
             // lock before the first byte; this Host refuses without waiting
             // and the client retries within its own bounded budget.
             hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY,
+            // The same shared transaction rechecks the attention under the
+            // Host lock before an answer's first byte.
+            hmux_runtime_contract::TERMINAL_ATTENTION_RESPONSE_INPUT_CAPABILITY,
         ]
         .map(str::to_string),
     );
@@ -212,6 +214,7 @@ fn managed_host_capabilities(process_observed_agent_prompt: bool) -> Vec<String>
         hmux_host::local_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY,
         hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY,
         hmux_host::local_protocol::AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY,
+        hmux_host::local_protocol::AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY,
         AGENT_RUNTIME_STATE_CAPABILITY,
         AGENT_STATE_REPORT_CAPABILITY,
         AGENT_STATE_REPORT_COMPLETION_ID_CAPABILITY,
@@ -2647,13 +2650,7 @@ fn serve_client(
                     managed_agent_prompt_selection,
                     requested,
                 )
-                && (requested.as_str() != TERMINAL_DEFAULT_COLORS_CAPABILITY
-                    || hello
-                        .requested_capabilities
-                        .iter()
-                        .any(|capability| capability == TERMINAL_INPUT_INTENT_CAPABILITY))
-                && (requested.as_str()
-                    != hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY
+                && (!hmux_runtime_contract::terminal_capability_requires_input(requested)
                     || hello
                         .requested_capabilities
                         .iter()
@@ -2678,6 +2675,9 @@ fn serve_client(
     });
     let agent_state_report_startup_gate = selected_capabilities.iter().any(|v| {
         v == hmux_host::local_protocol::AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY
+    });
+    let agent_state_report_approval_request = selected_capabilities.iter().any(|v| {
+        v == hmux_host::local_protocol::AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY
     });
     let termination = selected_capabilities
         .iter()
@@ -2985,6 +2985,7 @@ fn serve_client(
                             conversation_continuation: provider_conversation_continuation,
                             background_work: agent_state_report_background_work,
                             startup_gate: agent_state_report_startup_gate,
+                            approval_request: agent_state_report_approval_request,
                         },
                         report,
                     );

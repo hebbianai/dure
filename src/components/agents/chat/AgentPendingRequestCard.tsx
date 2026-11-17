@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { type ReactNode, useId, useMemo, useState } from "react";
 import { ChatMarkdown } from "@/components/agents/chat/ChatMarkdown";
 import { CodeBlock } from "@/components/common/CodeBlock";
 import { Button } from "@/components/ui/button";
@@ -214,14 +214,28 @@ function PendingQuestionForm({
 	);
 }
 
+/** A permission answer a card can offer. */
+export type PendingPermissionDecision = "allow" | "allow_always" | "deny";
+
+const DEFAULT_PERMISSION_DECISIONS: readonly PendingPermissionDecision[] = [
+	"allow",
+	"deny",
+];
+
 export function AgentPendingRequestCard({
 	pending,
 	busy,
 	onAnswer,
+	permissionDecisions = DEFAULT_PERMISSION_DECISIONS,
+	notice,
 }: {
 	pending: AgentPendingRequestV1;
 	busy: boolean;
 	onAnswer(answer: unknown): void;
+	/** The answers a permission request offers; Allow and Deny by default. */
+	permissionDecisions?: readonly PendingPermissionDecision[];
+	/** Shown above the answers, such as why the last answer did not land. */
+	notice?: ReactNode;
 }) {
 	const headingId = useId();
 	const [detailsExpanded, setDetailsExpanded] = useState(false);
@@ -330,27 +344,43 @@ export function AgentPendingRequestCard({
 				)}
 			</Disclosure>
 
+			{notice && <div className="mt-3">{notice}</div>}
+
 			{pending.request.kind === "permission" && (
 				<div className="mt-3 flex flex-wrap justify-end gap-2">
-					<Button
-						size="sm"
-						variant="outline"
-						disabled={busy}
-						onClick={() => onAnswer({ decision: "deny" })}
-					>
-						{planApproval
-							? t("agents.chat.planKeepPlanning")
-							: t("agents.chat.deny")}
-					</Button>
-					<Button
-						size="sm"
-						disabled={busy}
-						onClick={() => onAnswer({ decision: "allow" })}
-					>
-						{planApproval
-							? t("agents.chat.planApprove")
-							: t("agents.chat.allow")}
-					</Button>
+					{permissionDecisions.includes("deny") && (
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={busy}
+							onClick={() => onAnswer({ decision: "deny" })}
+						>
+							{planApproval
+								? t("agents.chat.planKeepPlanning")
+								: t("agents.chat.deny")}
+						</Button>
+					)}
+					{!planApproval && permissionDecisions.includes("allow_always") && (
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={busy}
+							onClick={() => onAnswer({ decision: "allow_always" })}
+						>
+							{t("agents.chat.allowAlways")}
+						</Button>
+					)}
+					{permissionDecisions.includes("allow") && (
+						<Button
+							size="sm"
+							disabled={busy}
+							onClick={() => onAnswer({ decision: "allow" })}
+						>
+							{planApproval
+								? t("agents.chat.planApprove")
+								: t("agents.chat.allow")}
+						</Button>
+					)}
 				</div>
 			)}
 		</section>

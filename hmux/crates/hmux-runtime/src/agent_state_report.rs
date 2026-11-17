@@ -26,6 +26,7 @@ pub(crate) struct Permissions {
     pub(crate) conversation_continuation: bool,
     pub(crate) background_work: bool,
     pub(crate) startup_gate: bool,
+    pub(crate) approval_request: bool,
 }
 
 pub(crate) struct Application {
@@ -86,6 +87,13 @@ pub(crate) fn apply(
             ErrorCode::UnsupportedCapability,
             "agent state report startup gate was not negotiated",
             Some(hmux_host::local_protocol::AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY),
+        );
+    }
+    if report.approval_request.is_some() && !permissions.approval_request {
+        return error(
+            ErrorCode::UnsupportedCapability,
+            "agent state report approval request was not negotiated",
+            Some(hmux_host::local_protocol::AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY),
         );
     }
     if report.causality.is_some() && !permissions.causality {
@@ -217,6 +225,7 @@ pub(crate) fn apply(
                 expected_observation: report.expected_observation,
                 background_work: report.background_work,
                 startup_gate: report.startup_gate,
+                approval_request: report.approval_request,
             },
             conversation_identity,
         ) {
@@ -231,7 +240,7 @@ pub(crate) fn apply(
                 }
                 let state_applied = matches!(&state_fold, AgentStateReportFold::Applied(_));
                 if let AgentStateReportFold::Applied(runtime_state) = state_fold {
-                    broadcasts.push(FrameBody::AgentRuntimeState(runtime_state));
+                    broadcasts.push(FrameBody::AgentRuntimeState(*runtime_state));
                 }
                 Ok((
                     if state_applied || identity_changed {

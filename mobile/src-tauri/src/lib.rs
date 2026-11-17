@@ -2649,6 +2649,7 @@ fn describe(
                 conversation: entry.conversation,
                 background_work: entry.background_work,
                 agent_chat: false,
+                approval_answer: entry.approval_answer,
                 box_id: entry.box_id.clone(),
                 box_label: entry.box_label.clone(),
                 presentation: entry.presentation.clone(),
@@ -2719,6 +2720,7 @@ fn chat_session_row(entry: &dure_hub_protocol::agent_chat::HubChatSession) -> Hu
         conversation: false,
         background_work: false,
         agent_chat: true,
+        approval_answer: false,
         box_id: entry.box_id.clone(),
         box_label: entry.box_label.clone(),
         presentation: entry.presentation.clone(),
@@ -2810,6 +2812,9 @@ pub struct HubProbeSession {
     /// A chat-owned agent from the catalog's `chat_sessions`: it opens on its
     /// chat (`AgentChatTimelineV1`) and has no terminal to attach.
     pub agent_chat: bool,
+    /// The computer answers this session's approvals from the chat card
+    /// (`HubCatalogEntry::approval_answer`). False from an older computer.
+    pub approval_answer: bool,
     pub box_id: String,
     pub box_label: String,
     /// 세션의 hmux 이름. `session.session_name` 은 노트북 사이드바 제목이 있으면
@@ -3097,6 +3102,7 @@ pub fn run() {
             hub_conversation::hub_agent_background_work,
             hub_conversation::hub_agent_chat_timeline,
             hub_conversation::hub_agent_chat_action,
+            hub_conversation::hub_agent_approval_answer,
             push::sync_push_notifications,
             ssh_file_diff,
             hub_scm_write,

@@ -121,6 +121,7 @@ pub(crate) type LaunchPromptObservationFuture<'a> =
 /// projection is provider-neutral.
 fn startup_gate_report() -> hmux_client::AgentStateReport {
     hmux_client::AgentStateReport {
+        approval_request: None,
         progress: None,
         identity_only: false,
         activity: hmux_client::AgentRuntimeActivity::Waiting,
@@ -465,6 +466,7 @@ mod launch_prompt_tests {
         turns: &str,
     ) -> AgentRuntimeStateDescriptor {
         AgentRuntimeStateDescriptor {
+            approval_request: None,
             progress: None,
             terminal_epoch: "terminal-1".into(),
             revision: "2".into(),
