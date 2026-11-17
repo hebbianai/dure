@@ -146,4 +146,43 @@ describe("schedule IPC", () => {
 			),
 		).rejects.toMatchObject({ code: "schedule_response_invalid" });
 	});
+	it("saves without a recorded interface only where the backend cannot record one", async () => {
+		const intent = {
+			schemaVersion: 1 as const,
+			scheduleId: "daily",
+			expectedRevision: 1,
+			idempotencyKey: "edit-2",
+			name: schedule.name,
+			enabled: false,
+			expression: schedule.expression,
+			timezone: "UTC",
+			runTemplate: {
+				...schedule.runTemplate,
+				interactionPreference: "native_cli" as const,
+			},
+		};
+		const invokeCommand = vi
+			.fn()
+			.mockRejectedValueOnce({
+				code: "backend_transport_capability_missing",
+				details: { capability: "schedule.interaction_preference_v1" },
+			})
+			.mockResolvedValueOnce(envelope({ schedule: { ...schedule, revision: 2 } }));
+		await createScheduleClient({ invokeCommand }).put(intent, authority);
+		expect(invokeCommand.mock.calls[0][1].body.runTemplate).toHaveProperty(
+			"interactionPreference",
+			"native_cli",
+		);
+		expect(invokeCommand.mock.calls[1][1].body.runTemplate).not.toHaveProperty(
+			"interactionPreference",
+		);
+		// Any other refusal is reported, not retried without the choice.
+		const refused = vi
+			.fn()
+			.mockRejectedValue({ code: "backend_transport_unavailable" });
+		await expect(
+			createScheduleClient({ invokeCommand: refused }).put(intent, authority),
+		).rejects.toMatchObject({ code: "backend_transport_unavailable" });
+		expect(refused).toHaveBeenCalledTimes(1);
+	});
 });

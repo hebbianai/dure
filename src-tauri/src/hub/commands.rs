@@ -144,6 +144,20 @@ impl SessionAccountSink for ScreenRoundTrip<HubSessionAccountResult> {
     }
 }
 
+/// Chat-owned agents the sidebar listed, served from their backend profile.
+fn agent_chats(
+    app: &tauri::AppHandle,
+    state: &HubState,
+) -> Arc<dyn super::agent_chat::AgentChatSink> {
+    Arc::new(super::agent_chat::BackendAgentChats {
+        layout: Arc::clone(&state.layout),
+        backend: Arc::new(super::agent_chat::TransportBackend { app: app.clone() }),
+        // A clock before 1970 is not a time to stamp a press with; the
+        // backend refuses the zero rather than ordering it.
+        now_ms: || crate::dure_backend_transport::now_ms().unwrap_or(0),
+    })
+}
+
 impl HubState {
     fn terminal_widths(&self, app: &tauri::AppHandle) -> Arc<super::terminal_width::TerminalWidths> {
         let app = app.clone();
@@ -260,7 +274,8 @@ pub fn hub_start(app: tauri::AppHandle, address: String, port: u16) -> Result<Hu
             app: app.clone(),
             pending: Arc::clone(&state.pending_account),
         }))
-        .serving_conversations(Arc::new(super::conversation::LocalConversations)),
+        .serving_conversations(Arc::new(super::conversation::LocalConversations))
+        .serving_agent_chats(agent_chats(&app, &state)),
     )?;
     status.device_count = device_count;
     // 켠 것을 기억한다. 이 기록이 없으면 앱을 다시 켤 때마다 폰 쪽에서는
@@ -349,7 +364,8 @@ pub fn hub_relay_start(
             app: app.clone(),
             pending: Arc::clone(&state.pending_account),
         }))
-        .serving_conversations(Arc::new(super::conversation::LocalConversations)),
+        .serving_conversations(Arc::new(super::conversation::LocalConversations))
+        .serving_agent_chats(agent_chats(&app, &state)),
     );
     if let Err(error) = super::autostart::remember_relay(&root, &recorded_endpoint) {
         eprintln!("[hub] Could not save the relay automatic resume record: {error}");

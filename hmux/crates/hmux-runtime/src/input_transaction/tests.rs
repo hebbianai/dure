@@ -1,3 +1,4 @@
+mod attention_response;
 mod controller_input;
 
 use super::*;
@@ -126,6 +127,7 @@ fn admission(input: &InputIntent) -> InputAdmission {
         true,
         "codex",
         false,
+        false,
     )
     .unwrap()
 }
@@ -138,6 +140,7 @@ fn process_observed_target_binds_the_host_launch_provider() {
         Some(AgentPromptCapabilitySelection::Targeted),
         true,
         "claude",
+        false,
         false,
     )
     .unwrap();
@@ -158,6 +161,7 @@ fn process_observed_target_binds_the_host_launch_provider() {
             true,
             "claude",
             false,
+            false,
         ),
         Err(PROCESS_OBSERVED_AGENT_PROMPT_CAPABILITY),
         "the new target never collapses into the legacy targetless lane"
@@ -168,6 +172,7 @@ fn process_observed_target_binds_the_host_launch_provider() {
             Some(AgentPromptCapabilitySelection::Targeted),
             false,
             "claude",
+            false,
             false,
         ),
         Err(PROCESS_OBSERVED_AGENT_PROMPT_CAPABILITY),
@@ -186,6 +191,7 @@ fn targetless_prompt_normalizes_only_at_the_legacy_capability_boundary() {
             true,
             "codex",
             false,
+            false,
         ),
         Err(LEGACY_INITIAL_AGENT_PROMPT_CAPABILITY)
     );
@@ -194,6 +200,7 @@ fn targetless_prompt_normalizes_only_at_the_legacy_capability_boundary() {
         Some(AgentPromptCapabilitySelection::LegacyFresh),
         false,
         "codex",
+        false,
         false,
     )
     .unwrap();
@@ -214,6 +221,7 @@ fn legacy_targetless_prompt_uses_the_same_host_atomic_fresh_transaction() {
         Some(AgentPromptCapabilitySelection::LegacyFresh),
         false,
         "codex",
+        false,
         false,
     )
     .unwrap();
@@ -248,6 +256,7 @@ fn legacy_targetless_prompt_uses_the_same_host_atomic_fresh_transaction() {
             Some(AgentPromptCapabilitySelection::LegacyFresh),
             false,
             "codex",
+            false,
             false,
         )
         .unwrap(),
@@ -789,6 +798,7 @@ fn every_non_ready_initial_prompt_refuses_before_the_writer() {
         host.apply_agent_state_report(
             &fence(),
             AgentStateReportObservation {
+                approval_request: None,
                 progress: None,
                 activity: AgentRuntimeActivity::Waiting,
                 attention,
@@ -1032,6 +1042,7 @@ fn guarded_admission(input: &InputIntent) -> InputAdmission {
         false,
         "codex",
         true,
+        false,
     )
     .unwrap()
 }
@@ -1200,6 +1211,7 @@ fn draft_guarded_input_requires_its_negotiated_capability() {
             Some(AgentPromptCapabilitySelection::Targeted),
             true,
             "codex",
+            false,
             false,
         ),
         Err(hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY)

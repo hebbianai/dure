@@ -1447,6 +1447,24 @@ impl TerminalCore for GhosttyProofAdapter {
                 }
                 Ok(bytes)
             }
+            input_intent::Intent::AttentionResponse(response) => {
+                // Every key shares one payload, so the Host writes the whole
+                // answer as a single serialized PTY transaction.
+                let mut bytes = Vec::new();
+                for key in &response.keys {
+                    let code = if key.code.is_empty() {
+                        key.key.as_str()
+                    } else {
+                        key.code.as_str()
+                    };
+                    bytes.extend(
+                        self.core
+                            .encode_key(key_text(&key.key), code, key.modifiers, key.repeat)
+                            .map_err(|error| engine_error("encode attention response", error.0))?,
+                    );
+                }
+                Ok(bytes)
+            }
             input_intent::Intent::Key(key) => {
                 let utf8 = key_text(&key.key);
                 // A sender without a physical code (software keyboards) still

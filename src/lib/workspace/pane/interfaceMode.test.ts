@@ -59,26 +59,21 @@ describe("effective interface mode", () => {
 });
 
 describe("agent spawn interaction preference", () => {
-	it("defaults new agents to the PTY surface", () => {
-		expect(agentSpawnInteractionPreference()).toBe("native_cli");
+	it("leaves new agents unpinned by default so a supported launch starts in Chat", () => {
+		expect(agentSpawnInteractionPreference()).toBeUndefined();
+		expect(agentSpawnInteractionPreference({})).toBeUndefined();
 	});
 
-	it("uses Chat only for an explicit Pro preference", () => {
-		expect(agentSpawnInteractionPreference({ interfaceMode: "pro", defaultAgentPane: "chat" }, { PROD: false })).toBeUndefined();
-		for (const defaultAgentPane of [undefined, "terminal", "unknown"]) {
-			expect(agentSpawnInteractionPreference({ interfaceMode: "pro", defaultAgentPane }, { PROD: false })).toBe("native_cli");
+	it.each(["basic", "pro", undefined])("applies the saved choice in the %s interface", (interfaceMode) => {
+		const chat = { interfaceMode, defaultAgentPane: "chat" };
+		const terminal = { interfaceMode, defaultAgentPane: "terminal" };
+		expect(agentSpawnInteractionPreference(chat)).toBeUndefined();
+		expect(agentSpawnInteractionPreference(terminal)).toBe("native_cli");
+	});
+
+	it("treats an unknown stored value as the Chat default", () => {
+		for (const defaultAgentPane of [undefined, null, "unknown", true]) {
+			expect(agentSpawnInteractionPreference({ defaultAgentPane })).toBeUndefined();
 		}
-	});
-
-	it("honors the Beta Chat choice in production", () => {
-		expect(agentSpawnInteractionPreference({ interfaceMode: "pro", defaultAgentPane: "chat" }, { PROD: true })).toBeUndefined();
-	});
-
-	it("keeps Basic and the Basic-only policy native without erasing the saved Chat choice", () => {
-		const prefs = { interfaceMode: "pro", defaultAgentPane: "chat" };
-		expect(agentSpawnInteractionPreference(prefs, { PROD: true, VITE_DURE_INTERFACE_MODE_POLICY: "basic-only" })).toBe("native_cli");
-		expect(agentSpawnInteractionPreference(prefs, { PROD: false, VITE_DURE_INTERFACE_MODE_POLICY: "basic-only" })).toBe("native_cli");
-		expect(agentSpawnInteractionPreference({ ...prefs, interfaceMode: "basic" }, { PROD: false })).toBe("native_cli");
-		expect(prefs.defaultAgentPane).toBe("chat");
 	});
 });

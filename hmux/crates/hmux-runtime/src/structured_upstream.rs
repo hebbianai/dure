@@ -12,6 +12,7 @@ pub(crate) struct IngressPermissions<'a> {
     pub(crate) agent_prompt: Option<AgentPromptCapabilitySelection>,
     pub(crate) process_observed_agent_prompt: bool,
     pub(crate) draft_guarded_input: bool,
+    pub(crate) attention_response_input: bool,
     pub(crate) wheel: bool,
     pub(crate) default_colors: bool,
     pub(crate) history_find: bool,
@@ -65,6 +66,7 @@ pub(crate) fn decode_upstream(
                 permissions.process_observed_agent_prompt,
                 permissions.host_provider_id,
                 permissions.input && permissions.draft_guarded_input,
+                permissions.input && permissions.attention_response_input,
             ))
         }
         _ => None,

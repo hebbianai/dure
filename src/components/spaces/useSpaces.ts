@@ -4,7 +4,7 @@ import {
 	isAgentUnread,
 	useAgentAttention,
 } from "@/lib/agents/agentAttentionStore";
-import { normalizeAgentDisplayName } from "@/lib/agents/agentDisplayName";
+import { createAgentRunLeadResolver } from "@/lib/agents/agentRunParent";
 import { presentedAgentDisplayState } from "@/lib/agents/agentStateModel";
 import {
 	conversationActivityAt,
@@ -47,6 +47,7 @@ import { subscribeDockviewRegistration } from "@/lib/workspace/dock/dockviewRegi
 import { useHiddenPanes } from "@/lib/workspace/pane/hiddenPanesStore";
 import { paneShownInLayout } from "@/lib/workspace/pane/paneMaximize";
 import {
+	chosenAgentTitle,
 	observedTitle,
 	resolveAgentPaneTitle,
 } from "@/lib/workspace/pane/paneTitle";
@@ -90,6 +91,15 @@ export function useSpaces() {
 
 	const agentById = useMemo(
 		() => new Map(agents.map((agent) => [agent.id, agent])),
+		[agents],
+	);
+	// Agents are appended as they start, so the store order is start order.
+	const agentStartOrder = useMemo(
+		() => new Map(agents.map((agent, index) => [agent.id, index])),
+		[agents],
+	);
+	const resolveRunLead = useMemo(
+		() => createAgentRunLeadResolver(agents),
 		[agents],
 	);
 	const desktopOrder = useMemo(
@@ -270,13 +280,12 @@ export function useSpaces() {
 				? (conversationTitle(agent.id) ??
 					observedTitle(sessionTitle[sessionId], agent.conversationId))
 				: undefined;
-			const explicitAgentTitle = agent
-				? normalizeAgentDisplayName(agent.name, agent.displayName)
-				: undefined;
+			// Where a chosen title stands, the provider's moves to the info line.
+			const explicitAgentTitle = agent ? chosenAgentTitle(agent) : undefined;
+			const leadAgentId = agent ? resolveRunLead(agent)?.id : undefined;
 			const title = agent
 				? resolveAgentPaneTitle({
-						name: agent.name,
-						displayName: agent.displayName,
+						agent,
 						runtimeTitle,
 						opaqueConversationId: agent.conversationId,
 						directoryCandidates: [cwd, agent.worktreePath],
@@ -398,6 +407,11 @@ export function useSpaces() {
 				programStatusApp: programNotice?.app,
 				programStatusMessage: programNotice?.message,
 				unread: agent ? isAgentUnread(episodes, acks, agent.id) : false,
+				/** The lead Agent this worker nests under, and its start order
+				 *  among that lead's workers. */
+				leadAgentId,
+				workerOrder:
+					leadAgentId && agent ? agentStartOrder.get(agent.id) : undefined,
 				...(space.hidden ? { hidden: true as const } : {}),
 			};
 		});
@@ -410,6 +424,8 @@ export function useSpaces() {
 		executionLocationRevision,
 		titleRevision,
 		agentById,
+		agentStartOrder,
+		resolveRunLead,
 		sessionCwd,
 		sessionTitle,
 		sessionAgentPin,

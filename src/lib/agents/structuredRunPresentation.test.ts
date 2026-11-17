@@ -71,6 +71,40 @@ describe("projectStructuredRunAgent", () => {
 		expect(projected.patch.sessionCwd).toEqual({ "agent-1": "/repo" });
 	});
 
+	it("records a Chat worker's parent with the lead that owns that Session", () => {
+		const lead = {
+			id: "agent-lead",
+			name: "lead",
+			provider: "claude" as const,
+			projectId: project.id,
+			worktreePath: project.path,
+			branch: "main",
+			sessionId: "session-lead",
+			sessionKind: "pty" as const,
+			runtimeBinding: {
+				schemaVersion: 1 as const,
+				runtime: "hmux_managed_v1" as const,
+				source: "local" as const,
+				hostId: "local" as const,
+				sessionId: "session-lead",
+				workspaceId: "workspace-1",
+			},
+		};
+		const parent = { sessionId: "session-lead", workspaceId: "workspace-1" };
+		const projected = projectStructuredRunAgent(
+			{ ...state(), agents: [lead] },
+			run,
+			project,
+			undefined,
+			parent,
+		);
+		expect(projected.agent.runParent).toEqual({
+			...parent,
+			leadAgentId: "agent-lead",
+		});
+		expect(projectStructuredRunAgent(state(), run, project).agent.runParent).toBeUndefined();
+	});
+
 	it("converges the same interaction and preserves its pinned credential", () => {
 		const credentialRun: DureStructuredAgentRunResultV1 = {
 			...run,
@@ -350,6 +384,66 @@ describe("presentStructuredRun", () => {
 			undefined,
 			undefined,
 		);
+	});
+
+	it("commits one lead's concurrent Chat workers in start order", async () => {
+		let current: CliManagedRunPresentationState = {
+			...state(),
+			spaces: [{ id: "space-1", name: "Build" }],
+		};
+		let releaseFirst!: () => void;
+		const firstMounted = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		let mounts = 0;
+		const openAgent = vi.fn(() => "presented-pane");
+		const dependencies: StructuredRunPresentationDependencies = {
+			windowLabel: () => "main",
+			readState: () => current,
+			setState: (producer) => {
+				current = { ...current, ...producer(current) };
+			},
+			ensureProject: vi.fn(async () => project),
+			requestSpaceMount: vi.fn(),
+			// The earlier-started worker's Space mount resolves last.
+			waitForSpace: vi.fn(async () => {
+				if (mounts++ === 0) await firstMounted;
+				return {};
+			}),
+			resolveReference: vi.fn(),
+			openAgent,
+		};
+		const parent = { sessionId: "session-lead", workspaceId: "workspace-1" };
+		const worker = (name: string, startedAtMs: number) =>
+			presentStructuredRun(
+				{
+					...run,
+					operationId: `spawn-${name}`,
+					agentId: `agent-${name}`,
+					agentName: name,
+					interactionSessionId: `interaction-${name}`,
+				},
+				{
+					projectPath: project.path,
+					spaceId: "space-1",
+					windowLabel: "main",
+					parent,
+					startedAtMs,
+				},
+				dependencies,
+			);
+		const first = worker("work-1", 1_000);
+		const second = worker("work-2", 2_000);
+		await vi.waitFor(() =>
+			expect(dependencies.ensureProject).toHaveBeenCalled(),
+		);
+		releaseFirst();
+		await Promise.all([first, second]);
+		expect(
+			openAgent.mock.calls.map(
+				(call) => (call as unknown as [string, { name: string }])[1].name,
+			),
+		).toEqual(["work-1", "work-2"]);
 	});
 
 	it.each([false, true])(

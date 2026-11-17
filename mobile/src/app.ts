@@ -111,6 +111,8 @@ import type { AgentRuntimeState } from "./agentRuntimeState";
 import { CHAT_TRANSCRIPT_LIMIT, defaultSessionView, offersServerChat, type SessionView } from "./chat";
 import { queueKey, serverQueueKey } from "./chatQueue";
 import { type ChatController, type ChatViewOptions, createChatView, FALLBACK_TEXT } from "./chatView";
+import { AGENT_CHAT_PAGE } from "./agentChat";
+import { type AgentChatController, createAgentChatView, renderAgentChatScreen } from "./agentChatView";
 import { publishTranscriptLift } from "./transcriptLift";
 import {
   type SourceControlChanges,
@@ -396,6 +398,13 @@ type Screen =
        * conversation (#361). Absent: the terminal only.
        */
       view?: SessionView;
+    }
+  /** A chat-owned agent (#562): its chat only. It has no terminal to attach. */
+  | {
+      kind: "agent-chat";
+      source: Extract<SessionSource, { kind: "hub" }>;
+      session: RemoteSession;
+      returnTo: Screen;
     };
 
 type SessionSource =
@@ -823,6 +832,9 @@ export function startApp(root: HTMLElement): () => void {
    */
   let chat: ChatController | undefined;
   let chatKey: string | undefined;
+  /** The open chat-owned agent's chat, kept across renders of its screen. */
+  let agentChat: AgentChatController | undefined;
+  let agentChatKey: string | undefined;
   let transcriptScroll = { scrollTop: 0, scrollLeft: 0 };
   let sessionOpenGeneration = 0;
   /**
@@ -1102,6 +1114,11 @@ export function startApp(root: HTMLElement): () => void {
       chat = undefined;
       chatKey = undefined;
     }
+    if (agentChat && agentChatKeyOf(state.screen) !== agentChatKey) {
+      agentChat.dispose();
+      agentChat = undefined;
+      agentChatKey = undefined;
+    }
     if (!keeping) {
       surface?.dispose();
       surface = undefined;
@@ -1141,7 +1158,7 @@ export function startApp(root: HTMLElement): () => void {
     // the visible viewport, and a document taller than that is what iOS drags
     // up and down under a finger. Set here for the same reason as `data-scan` —
     // this is the one place that knows which screen is up.
-    if (state.screen.kind === "terminal") {
+    if (state.screen.kind === "terminal" || state.screen.kind === "agent-chat") {
       document.documentElement.setAttribute("data-screen", "session");
     } else {
       document.documentElement.removeAttribute("data-screen");
@@ -1172,7 +1189,7 @@ export function startApp(root: HTMLElement): () => void {
     // Both columns exist at every width. Only CSS changes their visibility and
     // geometry, so fold/rotation/resize never replaces the terminal or its IME.
     const hasWorkspace = (state.hubs.length > 0 || state.servers.length > 0) &&
-      ["home", "sessions", "terminal", "source-control", "file-diff"].includes(state.screen.kind);
+      ["home", "sessions", "terminal", "agent-chat", "source-control", "file-diff"].includes(state.screen.kind);
     let detail = view;
     if (hasWorkspace) {
       const home = state.screen.kind === "home" || state.screen.kind === "sessions";
@@ -1440,10 +1457,14 @@ export function startApp(root: HTMLElement): () => void {
       case "terminal":
         detail.append(renderTerminal(state.screen));
         break;
+      case "agent-chat":
+        detail.append(renderAgentChat(state.screen));
+        break;
     }
     // Asks for the conversation only while somebody can see it; a prompt it
     // holds is delivered whichever tab is up.
     chat?.setVisible(state.screen.kind === "terminal" && state.screen.view === "chat");
+    agentChat?.setVisible(state.screen.kind === "agent-chat");
 
     if (state.screen.kind === "terminal" && state.panel !== "none") {
       nativeBack.bind(() => openTrayPanel("none"));
@@ -2659,6 +2680,13 @@ export function startApp(root: HTMLElement): () => void {
     returnTo: Screen,
     intent: "open" | "reconnect" = "open",
   ): Promise<void> {
+    // A chat-owned agent has no terminal: it opens on its chat, and a terminal
+    // open beside it is let go first.
+    if (source.kind === "hub" && (session as Partial<HubProbeSession>).agent_chat === true) {
+      const screen: Screen = { kind: "agent-chat", source, session, returnTo };
+      leaveForHomeAction(() => setState({ banner: undefined, opening: undefined, screen }));
+      return;
+    }
     const selected = selectedTerminal(state.screen);
     if (intent === "open" && selected?.session.session_id === session.session_id &&
       selected.source.kind === source.kind && selected.source.id === source.id) {
@@ -4057,6 +4085,24 @@ export function startApp(root: HTMLElement): () => void {
 
   // ----------------------------------------------------------------- 터미널
 
+  /**
+   * Runs `send` past this attachment's approval sheet, as every input to an
+   * approval goes. `undefined`: the sheet did not pass, so nothing was sent.
+   */
+  function gatedApproval<T>(send: () => Promise<T>): Promise<T | undefined> {
+    return new Promise((resolve, reject) => {
+      const gate = approvalGate;
+      if (!gate) {
+        send().then(resolve, reject);
+        return;
+      }
+      gate.admit(
+        () => void send().then(resolve, reject),
+        () => resolve(undefined),
+      );
+    });
+  }
+
   /** Whose chat a session screen shows, or none for a terminal-only session. */
   function chatKeyOf(screen: Extract<Screen, { kind: "terminal" }> | undefined): string | undefined {
     if (!screen || screen.view === undefined) return undefined;
@@ -4070,7 +4116,7 @@ export function startApp(root: HTMLElement): () => void {
   function chatChannel(
     screenState: Extract<Screen, { kind: "terminal" }>,
     key: string,
-  ): Pick<ChatViewOptions, "fetch" | "send" | "backgroundWork"> {
+  ): Pick<ChatViewOptions, "fetch" | "send" | "backgroundWork" | "answerApproval"> {
     const { source, session } = screenState;
     if (source.kind === "hub") {
       const target = { boxId: source.boxId, workspaceId: session.workspace_id, sessionId: session.session_id };
@@ -4079,6 +4125,16 @@ export function startApp(root: HTMLElement): () => void {
         // Only a computer that lists background work for this session is asked.
         ...((session as Partial<HubProbeSession>).background_work === true
           ? { backgroundWork: () => ipc.hubAgentBackgroundWork(source.id, target) }
+          : {}),
+        // Only a computer that answers approvals for this session is asked,
+        // and only past the same approval sheet as a key typed in the terminal.
+        ...((session as Partial<HubProbeSession>).approval_answer === true
+          ? {
+              answerApproval: (attentionId, choice, terminalEpoch) =>
+                gatedApproval(() =>
+                  ipc.hubAgentApprovalAnswer(source.id, target, terminalEpoch, attentionId, choice),
+                ),
+            }
           : {}),
         send: (text, prompt) =>
           ipc.hubAgentPrompt(source.id, target, text, prompt.terminalEpoch, prompt.conversationId),
@@ -4122,6 +4178,37 @@ export function startApp(root: HTMLElement): () => void {
       created.observe(runtime.runtime);
     }
     return created;
+  }
+
+  function agentChatKeyOf(screen: Screen): string | undefined {
+    return screen.kind === "agent-chat"
+      ? JSON.stringify([screen.source.id, screen.source.boxId, screen.session.session_id])
+      : undefined;
+  }
+
+  /** The chat of this chat-owned agent, created on first use and kept across renders. */
+  function agentChatFor(screenState: Extract<Screen, { kind: "agent-chat" }>): AgentChatController {
+    const key = agentChatKeyOf(screenState);
+    if (agentChat && agentChatKey === key) return agentChat;
+    agentChat?.dispose();
+    const { source, session } = screenState;
+    const target = { boxId: source.boxId, agentId: session.session_id };
+    agentChat = createAgentChatView({
+      fetch: (before) => ipc.hubAgentChatTimeline(source.id, target, before, AGENT_CHAT_PAGE),
+      act: (action) => ipc.hubAgentChatAction(source.id, target, action),
+    });
+    agentChatKey = key;
+    return agentChat;
+  }
+
+  function renderAgentChat(screenState: Extract<Screen, { kind: "agent-chat" }>): HTMLElement {
+    return renderAgentChatScreen(
+      { title: sessionTitle(screenState.session), machine: screenState.source.label },
+      {
+        back: nativeBack.bind(() => setState({ screen: screenState.returnTo })),
+        chat: (container) => agentChatFor(screenState).mount(container),
+      },
+    );
   }
 
   function switchSessionView(next: SessionView): void {
@@ -4638,6 +4725,7 @@ export function startApp(root: HTMLElement): () => void {
     surface?.dispose();
     approvalGate?.reset();
     chat?.dispose();
+    agentChat?.dispose();
     clearTimeout(hostRetryTimer);
     cancelHandover();
   };

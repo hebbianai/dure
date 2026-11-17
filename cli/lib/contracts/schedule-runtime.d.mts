@@ -10,7 +10,12 @@ export type ScheduleRuntime = { observedAtMs: number } & ({
   state: "unavailable";
   session?: Session;
   errorCode: string;
+  /** Chat-runtime runs only, next to `schedule_runtime_not_native`. */
+  conversation?: {
+    activity: "working" | "waiting";
+    attention: "none" | "input_required" | "approval_required" | "error";
+  };
 });
 export function isScheduleRuntime(value: unknown): value is ScheduleRuntime;
 export function isScheduleChatRuntime(runtime: ScheduleRuntime | undefined): boolean;
-export function scheduleRuntimeStatus(runtime: ScheduleRuntime | undefined): "runtimeUnavailable" | "exitedWithoutReport" | "inputRequired" | "approvalRequired" | "providerError" | "providerStarting" | "providerWorking" | "providerWaiting" | undefined;
+export function scheduleRuntimeStatus(runtime: ScheduleRuntime | undefined): "runtimeUnavailable" | "chatIdle" | "turnFailed" | "asleep" | "stopped" | "exitedWithoutReport" | "inputRequired" | "approvalRequired" | "providerError" | "providerStarting" | "providerWorking" | "providerWaiting" | undefined;

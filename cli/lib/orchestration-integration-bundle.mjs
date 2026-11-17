@@ -33,6 +33,7 @@ export const ORCHESTRATION_PAYLOAD_NAMES = Object.freeze([
   "orchestration-failure.mjs",
   "orchestration-lifecycle.mjs",
   "orchestration-mcp-server.mjs",
+  "process-exit.mjs",
   "jev-mcp-tool.mjs",
   "jev.mjs",
   "dure-cli-channel-launcher.mjs",

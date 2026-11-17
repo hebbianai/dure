@@ -663,6 +663,11 @@ fn validate_agent_runtime_state_projection(
     {
         return Err(inconsistent("agent_runtime_state.background_work"));
     }
+    if projection.approval_request.as_ref().is_some_and(|request| {
+        projection.attention != AgentRuntimeAttention::ApprovalRequired || !request.is_valid()
+    }) {
+        return Err(inconsistent("agent_runtime_state.approval_request"));
+    }
     Ok(())
 }
 
@@ -716,6 +721,16 @@ fn validate_agent_state_report(
             || frame.attention != AgentRuntimeAttention::InputRequired)
     {
         return Err(inconsistent("agent_state_report.startup_gate"));
+    }
+    if frame.approval_request.as_ref().is_some_and(|request| {
+        frame.identity_only
+            || frame.turn_completed
+            || frame.background_work
+            || frame.activity != AgentRuntimeActivity::Waiting
+            || frame.attention != AgentRuntimeAttention::ApprovalRequired
+            || !request.is_valid()
+    }) {
+        return Err(inconsistent("agent_state_report.approval_request"));
     }
     if let Some(causality) = &frame.causality {
         if causality.sequence == 0 {
@@ -1828,6 +1843,7 @@ mod tests {
     #[test]
     fn agent_runtime_state_is_fenced_revisioned_and_semantically_consistent() {
         let valid = AgentRuntimeStateProjection {
+            approval_request: None,
             progress: None,
             terminal_epoch: "terminal-1".into(),
             revision: 2,
@@ -1843,8 +1859,31 @@ mod tests {
         };
         let state = frame(FrameBody::AgentRuntimeState(valid.clone()));
         assert!(state.validate(&FrameLimits::default()).is_ok());
+        let with_request = AgentRuntimeStateProjection {
+            approval_request: Some(Box::new(crate::AgentApprovalRequest {
+                tool_name: "Bash".into(),
+                summary: String::new(),
+                choices: vec![
+                    crate::AgentApprovalChoice::Approve,
+                    crate::AgentApprovalChoice::Deny,
+                ],
+            })),
+            ..valid.clone()
+        };
+        assert!(
+            frame(FrameBody::AgentRuntimeState(with_request.clone()))
+                .validate(&FrameLimits::default())
+                .is_ok()
+        );
 
         for (projection, field) in [
+            (
+                AgentRuntimeStateProjection {
+                    attention: AgentRuntimeAttention::InputRequired,
+                    ..with_request
+                },
+                "agent_runtime_state.approval_request",
+            ),
             (
                 AgentRuntimeStateProjection {
                     revision: 0,
@@ -1927,6 +1966,7 @@ mod tests {
             execution_location: None,
             agent_identity: None,
             agent_runtime_state: Some(AgentRuntimeStateProjection {
+                approval_request: None,
                 progress: None,
                 terminal_epoch: "terminal-1".into(),
                 revision: 3,
@@ -1993,6 +2033,7 @@ mod tests {
     #[test]
     fn conversation_continuations_require_causality_and_an_exact_fence() {
         let report = crate::AgentStateReport {
+            approval_request: None,
             progress: None,
             request_id: "continuation".into(),
             identity_only: false,
@@ -2055,6 +2096,7 @@ mod tests {
     #[test]
     fn background_work_is_an_additive_busy_fact_with_a_ready_prompt() {
         let report = crate::AgentStateReport {
+            approval_request: None,
             progress: None,
             request_id: "background".into(),
             identity_only: false,
@@ -2098,6 +2140,7 @@ mod tests {
         );
 
         let busy = AgentRuntimeStateProjection {
+            approval_request: None,
             progress: None,
             terminal_epoch: "terminal-1".into(),
             revision: 2,
@@ -2151,6 +2194,7 @@ mod tests {
 
         let codec = FrameCodec::new(FrameLimits::default());
         let valid = AgentStateReport {
+            approval_request: None,
             progress: None,
             request_id: "report-1".into(),
             identity_only: false,
@@ -2203,6 +2247,85 @@ mod tests {
     }
 
     #[test]
+    fn an_approval_request_rides_only_with_a_valid_pending_approval() {
+        use crate::{
+            AgentApprovalChoice, AgentApprovalRequest, AgentRuntimeActivity, AgentRuntimeAttention,
+            AgentStateReport,
+        };
+
+        let request = AgentApprovalRequest {
+            tool_name: "Bash".into(),
+            summary: "cargo test\n  --all".into(),
+            choices: vec![
+                AgentApprovalChoice::Approve,
+                AgentApprovalChoice::ApproveAlways,
+                AgentApprovalChoice::Deny,
+            ],
+        };
+        let codec = FrameCodec::new(FrameLimits::default());
+        let valid = AgentStateReport {
+            approval_request: Some(request.clone()),
+            progress: None,
+            request_id: "report-1".into(),
+            identity_only: false,
+            activity: AgentRuntimeActivity::Waiting,
+            attention: AgentRuntimeAttention::ApprovalRequired,
+            turn_completed: false,
+            turn_completion_id: None,
+            causality: None,
+            working_ttl_ms: None,
+            conversation_identity: None,
+            expected_observation: None,
+            background_work: false,
+            startup_gate: None,
+        };
+        let wire = frame(FrameBody::AgentStateReport(valid.clone()));
+        let encoded = codec.encode(&wire).unwrap();
+        assert!(String::from_utf8_lossy(&encoded).contains(r#""approve_always""#));
+        assert_eq!(codec.decode(&encoded).unwrap(), wire);
+        // Diagnostics never print the command.
+        assert!(!format!("{request:?}").contains("cargo test"));
+
+        let invalid_request = |change: fn(&mut AgentApprovalRequest)| {
+            let mut request = request.clone();
+            change(&mut request);
+            AgentStateReport {
+                approval_request: Some(request),
+                ..valid.clone()
+            }
+        };
+        for invalid in [
+            AgentStateReport {
+                attention: AgentRuntimeAttention::InputRequired,
+                ..valid.clone()
+            },
+            AgentStateReport {
+                activity: AgentRuntimeActivity::Working,
+                attention: AgentRuntimeAttention::None,
+                ..valid.clone()
+            },
+            invalid_request(|request| request.tool_name.clear()),
+            invalid_request(|request| request.summary = "\u{1b}[2J".into()),
+            invalid_request(|request| {
+                request.summary = "x".repeat(crate::AGENT_APPROVAL_REQUEST_MAX_SUMMARY_BYTES + 1)
+            }),
+            invalid_request(|request| request.choices = vec![AgentApprovalChoice::Approve]),
+            invalid_request(|request| request.choices.push(AgentApprovalChoice::Deny)),
+        ] {
+            let result =
+                frame(FrameBody::AgentStateReport(invalid)).validate(&FrameLimits::default());
+            assert!(
+                matches!(
+                    result,
+                    Err(FrameValidationError::Inconsistent { field })
+                        if field == "agent_state_report.approval_request"
+                ),
+                "unexpected validation result: {result:?}"
+            );
+        }
+    }
+
+    #[test]
     fn agent_state_reports_are_bounded_consistent_and_round_trip() {
         use crate::{
             AGENT_STATE_REPORT_MAX_WORKING_TTL_MS, AgentStateReport,
@@ -2212,6 +2335,7 @@ mod tests {
 
         let codec = FrameCodec::new(FrameLimits::default());
         let valid = AgentStateReport {
+            approval_request: None,
             progress: None,
             request_id: "report-1".into(),
             identity_only: false,

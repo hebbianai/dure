@@ -7423,6 +7423,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
     let blocked = session
         .report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
@@ -7457,6 +7458,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
     let completed = session
         .report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
@@ -7485,6 +7487,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
     let duplicate_completion = session
         .report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
@@ -7507,6 +7510,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
     let repeated = session
         .report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: hmux_client::AgentRuntimeActivity::Waiting,
@@ -7547,6 +7551,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Working,
@@ -7570,6 +7575,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
@@ -7612,6 +7618,7 @@ fn external_agent_state_reports_fold_into_broadcast_projections() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
@@ -7679,6 +7686,7 @@ fn bounded_working_report_retains_work_until_a_typed_provider_report() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Working,
@@ -7729,6 +7737,7 @@ fn bounded_working_report_retains_work_until_a_typed_provider_report() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
@@ -7791,6 +7800,7 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Working,
@@ -7830,6 +7840,7 @@ fn structured_surface_carries_initial_and_live_agent_runtime_state() {
         session
             .report_agent_state(
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: false,
                     activity: hmux_client::AgentRuntimeActivity::Waiting,
@@ -7912,6 +7923,7 @@ fn a_turn_end_after_a_submit_that_started_no_turn_publishes_waiting() {
         state
     };
     let report = |sequence, activity, completed: bool| AgentStateReport {
+        approval_request: None,
         progress: None,
         identity_only: false,
         activity,
@@ -9436,6 +9448,7 @@ fn agent_progress_native_deadline_survives_observer_reconnect() {
         .unwrap();
     let session = created.session().clone();
     let report = AgentStateReport {
+        approval_request: None,
         progress: Some(hmux_client::AgentProgressReport {
             source_id: "native-driver".into(),
             sequence: 1,

@@ -66,7 +66,12 @@ function effortSelection(value) {
 
 function permissionMode(value) {
 	if (value === undefined) return "default";
-	if (value !== "default" && value !== "auto_edit" && value !== "skip_permissions") {
+	if (
+		value !== "default" &&
+		value !== "auto_edit" &&
+		value !== "plan" &&
+		value !== "skip_permissions"
+	) {
 		throw hostContractError("permission_mode_invalid");
 	}
 	return value;

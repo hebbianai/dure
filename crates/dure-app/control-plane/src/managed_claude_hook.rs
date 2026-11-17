@@ -175,6 +175,7 @@ fn bounded_body(raw: Vec<u8>) -> Result<Input, HookFailure> {
         "session_id",
         "prompt_id",
         "notification_type",
+        "error",
         "tool_name",
         "transcript_path",
         "agent_id",
@@ -187,6 +188,35 @@ fn bounded_body(raw: Vec<u8>) -> Result<Input, HookFailure> {
         minimal.insert(
             "prompt".into(),
             Value::String(prompt.chars().take(4096).collect()),
+        );
+    }
+    // A permission prompt keeps what it asks: the input field the app
+    // summarizes and whether "don't ask again" is offered. A large Write
+    // keeps its path, never its content.
+    if let Some(input) = object.get("tool_input").and_then(Value::as_object) {
+        let summarized = dure_provider_adapter::native_approval::claude_approval_summary_fields()
+            .filter_map(|field| {
+                input.get(field).and_then(Value::as_str).map(|value| {
+                    (
+                        field.to_string(),
+                        Value::String(value.chars().take(4096).collect()),
+                    )
+                })
+            })
+            .collect::<serde_json::Map<_, _>>();
+        if !summarized.is_empty() {
+            minimal.insert("tool_input".into(), Value::Object(summarized));
+        }
+    }
+    if object
+        .get("permission_suggestions")
+        .and_then(Value::as_array)
+        .is_some_and(|suggestions| !suggestions.is_empty())
+    {
+        // The app reads only whether any suggestion was offered.
+        minimal.insert(
+            "permission_suggestions".into(),
+            Value::Array(vec![Value::Object(serde_json::Map::new())]),
         );
     }
     // Empty registries are complete evidence. Nonempty or malformed values

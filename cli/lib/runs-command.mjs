@@ -2,6 +2,7 @@ import { resolve as resolvePath } from "node:path";
 import { parseArgs } from "node:util";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { CommandExit } from "./process-exit.mjs";
 import { collectAgentSpawnQuery } from "./agent-spawn-query.mjs";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { collectManagedRehostNamed, MANAGED_REHOST_RUNNING_GUIDANCE, managedRecoveryExitCode } from "./managed-rehost-named.mjs";
@@ -83,6 +84,8 @@ Switch-account previews by default; --confirm-restart executes the same backend
 transition as the UI account selector. It preserves the exact conversation and
 Chat/Terminal mode for Claude and Codex, on local and SSH backends, without an app.
 A closed, stopped Agent restarts with the selected account and its retained conversation.
+If a local Terminal provider exits as it starts on the new account, --confirm-restart
+restarts that conversation once through the same recovery as resume --confirm-restart.
 dure recovery get claude or codex on the same --backend lists registered account
 IDs with profile names and usage. --account default selects provider defaults.
 An unregistered account must first be prepared on that backend through Dure's
@@ -187,7 +190,8 @@ export async function collectRunsCommand({
     }
     if (action === "switch-account") {
       const accountSwitch = await collectRunAccountSwitch({ run: selected, observation: runtime.result,
-        account: opts.account, confirmRestart: opts.confirmRestart, backend, requestBackend });
+        account: opts.account, confirmRestart: opts.confirmRestart, backend, requestBackend,
+        native: { command, run, settle } });
       return { ...base, ok: accountSwitch.ok, ...owner(), accountSwitch,
         ...(!accountSwitch.ok ? { error: accountSwitch.error } : {}) };
     }
@@ -201,6 +205,8 @@ export async function collectRunsCommand({
       descriptor: app });
     return { ...base, ok: true, run: selected, presentation };
   } catch (error) {
+    // The CLI's refusal from loadRegistry or resolveTarget ends the command.
+    if (error instanceof CommandExit) throw error;
     return failure(error?.code ? { code: error.code, message: error.message } : backendRequestFailure(error, backend?.profile));
   }
 }
@@ -237,9 +243,10 @@ async function collectConversationResume({ opts, base, failure, resolveBackend, 
   }
 }
 
-/** Resume is finished only after native execution and binding publication. */
+/** Resume, and an account switch that restarts its exited target, is
+ * finished only after native execution and binding publication. */
 export const runsCommandExitCode = (report) =>
-  managedRecoveryExitCode({ ok: report.ok, state: report.recovery?.state }, 2);
+  managedRecoveryExitCode({ ok: report.ok, state: report.recovery?.state ?? report.accountSwitch?.state }, 2);
 
 export function formatRunsCommand(report) {
   if (report.conversationResume) return formatRunConversationResume(report.conversationResume);

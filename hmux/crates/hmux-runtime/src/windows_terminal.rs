@@ -34,6 +34,7 @@ pub(crate) struct WindowsTerminalSurface {
     agent_prompt: Option<AgentPromptCapabilitySelection>,
     process_observed_agent_prompt: bool,
     draft_guarded_input: bool,
+    attention_response_input: bool,
 }
 
 impl WindowsTerminalSurface {
@@ -60,6 +61,10 @@ impl WindowsTerminalSurface {
             .any(|capability| capability == PROCESS_OBSERVED_AGENT_PROMPT_CAPABILITY);
         let draft_guarded_input =
             hmux_runtime_contract::terminal_draft_guarded_input_permitted(selected_capabilities);
+        let attention_response_input =
+            hmux_runtime_contract::terminal_attention_response_input_permitted(
+                selected_capabilities,
+            );
         let projection = host.attach_view_projection(fence)?;
         let mut surface = Self {
             projection,
@@ -72,6 +77,7 @@ impl WindowsTerminalSurface {
             agent_prompt,
             process_observed_agent_prompt,
             draft_guarded_input,
+            attention_response_input,
         };
         let records = surface
             .capture(host, fence)?
@@ -149,6 +155,7 @@ impl WindowsTerminalSurface {
                 agent_prompt: self.agent_prompt,
                 process_observed_agent_prompt: self.process_observed_agent_prompt,
                 draft_guarded_input: self.draft_guarded_input,
+                attention_response_input: self.attention_response_input,
                 wheel: self.wheel,
                 default_colors: self.default_colors,
                 history_find: self.history_find,

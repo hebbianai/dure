@@ -24,6 +24,10 @@ import { IconButton } from "@/components/ui/icon-button";
 import { useWorkspaceRuntimeActive } from "@/components/workspace/WorkspaceRuntimeContext";
 import { splitPromptAttachments } from "@/lib/agents/attachmentPrompt";
 import {
+	type DureSendHeader,
+	splitDureSendHeader,
+} from "@/lib/agents/dureSendHeader";
+import {
 	type AgentChatActiveTurnV1,
 	type AgentChatProjectedRow,
 	type AgentChatTranscriptTailFacts,
@@ -145,6 +149,26 @@ function UserMessageChip({ markdown }: { markdown: string }) {
 				/>
 			))}
 			{body && <span>{body}</span>}
+		</span>
+	);
+}
+
+/** Marks input that arrived through `dure send`, apart from what the person
+ * typed. The header is in-band text, so this is a reading aid, not proof of
+ * who sent it; text without a header stays unmarked either way. */
+function DureSendCaption({ header }: { header: DureSendHeader }) {
+	const sender = header.agentName
+		? t("agents.chat.dureSend.fromAgent", { name: header.agentName })
+		: t("agents.chat.dureSend.unregistered");
+	return (
+		<span
+			data-dure-send
+			title={t("agents.chat.dureSend.hint")}
+			className="mb-1 block text-[0.85em] text-muted-foreground"
+		>
+			{header.label
+				? t("agents.chat.dureSend.label", { sender, label: header.label })
+				: sender}
 		</span>
 	);
 }
@@ -273,6 +297,7 @@ function TimelineRow({
 					</div>
 				);
 			}
+			const sent = splitDureSendHeader(body.markdown);
 			return (
 				<article
 					data-selectable
@@ -282,7 +307,8 @@ function TimelineRow({
 							: ""
 					}`}
 				>
-					<UserMessageChip markdown={body.markdown} />
+					{sent && <DureSendCaption header={sent} />}
+					<UserMessageChip markdown={sent ? sent.body : body.markdown} />
 				</article>
 			);
 		}

@@ -249,23 +249,21 @@ export function GeneralPage() {
         </SettingsSection>
 
         <SettingsSection label={t("common.agent")}>
-          {interfaceMode.mode === "pro" && (
-            <SettingRow
-              title={t("settings.general.defaultAgentPane.title")}
-              desc={t("settings.general.defaultAgentPane.desc")}
-              align="center"
-            >
-              <Segmented<"terminal" | "chat">
-                variant="pills"
-                value={agentSpawnInteractionPreference(ui) ? "terminal" : "chat"}
-                onChange={(defaultAgentPane) => setUi({ defaultAgentPane })}
-                options={[
-                  { value: "terminal", label: t("common.terminal") },
-                  { value: "chat", label: t("settings.general.defaultAgentPane.chat") },
-                ]}
-              />
-            </SettingRow>
-          )}
+          <SettingRow
+            title={t("settings.general.defaultAgentPane.title")}
+            desc={t("settings.general.defaultAgentPane.desc")}
+            align="center"
+          >
+            <Segmented<"terminal" | "chat">
+              variant="pills"
+              value={agentSpawnInteractionPreference(ui) ? "terminal" : "chat"}
+              onChange={(defaultAgentPane) => setUi({ defaultAgentPane })}
+              options={[
+                { value: "terminal", label: t("common.terminal") },
+                { value: "chat", label: t("settings.general.defaultAgentPane.chat") },
+              ]}
+            />
+          </SettingRow>
           <AccountRecoverySettings />
 
           <AgentLaunchPreferences />

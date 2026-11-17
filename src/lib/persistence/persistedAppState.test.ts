@@ -169,6 +169,32 @@ describe("migratePersistedState — v8 인터페이스 모드", () => {
   });
 });
 
+describe("migratePersistedState — v11 default Agent pane", () => {
+  it("moves the former stored Terminal default to Chat", () => {
+    for (const uiPrefs of [{ defaultAgentPane: "terminal" }, { interfaceMode: "basic", defaultAgentPane: "terminal" }]) {
+      expect(migratePersistedState({ uiPrefs }, 10).uiPrefs.defaultAgentPane).toBe("chat");
+    }
+    expect(migratePersistedState({ uiPrefs: { defaultAgentPane: "terminal" } }, 1).uiPrefs.defaultAgentPane)
+      .toBe("chat");
+  });
+
+  it("keeps a Terminal choice the Beta interface showed and a stored Chat choice", () => {
+    expect(
+      migratePersistedState({ uiPrefs: { interfaceMode: "pro", defaultAgentPane: "terminal" } }, 10).uiPrefs
+        .defaultAgentPane,
+    ).toBe("terminal");
+    expect(migratePersistedState({ uiPrefs: { defaultAgentPane: "chat" } }, 10).uiPrefs.defaultAgentPane)
+      .toBe("chat");
+  });
+
+  it("uses Chat for state without a stored pane and leaves a v11 Terminal choice alone", () => {
+    expect(migratePersistedState({ uiPrefs: {} }, 10).uiPrefs.defaultAgentPane).toBe("chat");
+    expect(migratePersistedState({}, 10).uiPrefs.defaultAgentPane).toBe("chat");
+    expect(migratePersistedState({ uiPrefs: { defaultAgentPane: "terminal" } }, 11).uiPrefs.defaultAgentPane)
+      .toBe("terminal");
+  });
+});
+
 describe("migratePersistedState — v4 탭 순서", () => {
   it("저장된 'recent'를 manual로 내린다", () => {
     // 리뷰 지적: 기본값만 바꾸면 uiPrefs를 통째로 저장하는 기존 설치에는

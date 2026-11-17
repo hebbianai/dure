@@ -809,6 +809,7 @@ sys.stdout.buffer.write(len(reply).to_bytes(4, 'big') + reply)
             "UserPromptSubmit",
             "PreToolUse",
             "Stop",
+            "StopFailure",
             "Notification",
         ] {
             let hook = &settings["hooks"][event][0]["hooks"][0];

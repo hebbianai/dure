@@ -454,6 +454,11 @@ pub struct TerminalReplay {
     // as the attention episode it arrived with, so a provider that exits
     // there leaves a typed cause. See `agent_startup_gate`.
     agent_startup_gate: Option<crate::local_protocol::AgentStartupGate>,
+    // Key input reached the PTY after the current attention was raised, so a
+    // person may already have answered it in the terminal. Host-owned and not
+    // on the wire: a new attention identity clears it. See
+    // `attention_response_admitted`.
+    attention_input_since_raised: bool,
     limits: TerminalReplayLimits,
 }
 
@@ -770,6 +775,7 @@ impl TerminalReplay {
             fresh_agent_prompt_consumed: false,
             interrupt_requested: false,
             agent_startup_gate: None,
+            attention_input_since_raised: false,
             limits,
         })
     }
@@ -817,6 +823,7 @@ impl TerminalReplay {
             fresh_agent_prompt_consumed: false,
             interrupt_requested: false,
             agent_startup_gate: None,
+            attention_input_since_raised: false,
             limits,
         })
     }
@@ -1427,8 +1434,11 @@ impl TerminalReplay {
                 }
                 // A completed turn is past any first-run prompt.
                 self.agent_startup_gate = None;
-                return Ok(input_projection
-                    .map_or(AgentStateReportFold::NoOp, AgentStateReportFold::Applied));
+                return Ok(
+                    input_projection.map_or(AgentStateReportFold::NoOp, |projection| {
+                        AgentStateReportFold::Applied(Box::new(projection))
+                    }),
+                );
             }
         }
         // Reports never change lifecycle. Without a prior observation the
@@ -1476,8 +1486,9 @@ impl TerminalReplay {
         let previous_progress = self.agent_progress.clone();
         self.observe_progress(report.progress.as_ref(), now)?;
         let projection = self
-            .fold_agent_runtime_observation(
+            .fold_agent_runtime_observation_with_request(
                 observation,
+                report.approval_request.as_ref(),
                 report.turn_completed,
                 acknowledges_input,
                 now,
@@ -1533,7 +1544,7 @@ impl TerminalReplay {
             None
         };
         Ok(match projection {
-            Some(projection) => AgentStateReportFold::Applied(projection),
+            Some(projection) => AgentStateReportFold::Applied(Box::new(projection)),
             None => AgentStateReportFold::NoOp,
         })
     }
@@ -1572,7 +1583,7 @@ impl TerminalReplay {
                 now,
                 false,
             )? {
-                AgentStateReportFold::Applied(projection) => Ok(Some(projection)),
+                AgentStateReportFold::Applied(projection) => Ok(Some(*projection)),
                 AgentStateReportFold::NoOp | AgentStateReportFold::DroppedExited => Ok(None),
             };
         }
@@ -1774,7 +1785,46 @@ impl TerminalReplay {
         acknowledges_input: bool,
         now: Instant,
     ) -> Result<Option<AgentRuntimeStateProjection>, TerminalReplayError> {
+        self.fold_agent_runtime_observation_with_request(
+            observation,
+            None,
+            turn_completed,
+            acknowledges_input,
+            now,
+        )
+    }
+
+    /// Folds one observation, with the approval request its provider report
+    /// carried. A report without one keeps the request of the approval it
+    /// continues; a reported request while one is pending is a new prompt, so
+    /// it gets a new attention identity and an answer prepared for the old
+    /// one refuses.
+    fn fold_agent_runtime_observation_with_request(
+        &mut self,
+        observation: AgentRuntimeObservation,
+        reported_request: Option<&crate::local_protocol::AgentApprovalRequest>,
+        turn_completed: bool,
+        acknowledges_input: bool,
+        now: Instant,
+    ) -> Result<Option<AgentRuntimeStateProjection>, TerminalReplayError> {
         let progress = self.agent_progress.projection(&observation);
+        let continued = self
+            .agent_runtime_state
+            .as_ref()
+            .filter(|current| current.attention == observation.attention);
+        let approval_request = match observation.attention {
+            AgentRuntimeAttention::ApprovalRequired => reported_request
+                .cloned()
+                .map(Box::new)
+                .or_else(|| continued.and_then(|current| current.approval_request.clone())),
+            _ => None,
+        };
+        // Each request a provider reports is its own prompt, even one that
+        // reads the same as the last (the same command run twice). Only a
+        // report without content, such as the provider's own notice of the
+        // prompt it already described, continues the pending approval.
+        let replaces_request = reported_request.is_some()
+            && continued.is_some_and(|current| current.approval_request.is_some());
         let unchanged = self.agent_runtime_state.as_ref().is_some_and(|current| {
             current.lifecycle == observation.lifecycle
                 && current.activity == observation.activity
@@ -1782,6 +1832,8 @@ impl TerminalReplay {
                 && current.source == observation.source
                 && current.background_work == observation.background_work
                 && current.progress == progress
+                && current.approval_request == approval_request
+                && !replaces_request
         });
         // A new input acknowledgement ends the old semantic idle epoch even
         // when activity is waiting on both sides. Advance before clearing the
@@ -1802,10 +1854,18 @@ impl TerminalReplay {
             _ => self
                 .agent_runtime_state
                 .as_ref()
-                .filter(|current| current.attention == observation.attention)
+                .filter(|current| current.attention == observation.attention && !replaces_request)
                 .and_then(|current| current.attention_id.clone())
                 .or_else(|| Some(format!("attention-{revision}"))),
         };
+        if attention_id
+            != self
+                .agent_runtime_state
+                .as_ref()
+                .and_then(|current| current.attention_id.clone())
+        {
+            self.attention_input_since_raised = false;
+        }
         let turn_completed_count = self
             .agent_runtime_state
             .as_ref()
@@ -1835,6 +1895,7 @@ impl TerminalReplay {
             turn_completed_count,
             program_status: self.program_status_projection(observation.lifecycle),
             background_work: observation.background_work,
+            approval_request,
         };
         self.agent_runtime_state = Some(projection.clone());
         self.agent_runtime_changed_at = Some(now);

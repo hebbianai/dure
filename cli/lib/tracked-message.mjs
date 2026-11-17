@@ -28,7 +28,7 @@ export function readMessageTracking(file) {
 }
 
 /** The file retains only the exact read authority, never a second delivery state machine. */
-export async function sendTrackedMessage(target, text, { backend, hmuxCommand, title = "Agent message", environment = process.env, querySession = collectSessionQuery, request = invoke } = {}) {
+export async function sendTrackedMessage(target, text, { backend, hmuxCommand, title, environment = process.env, querySession = collectSessionQuery, request = invoke } = {}) {
   const report = await querySession({ action: "show", ...target, backend, hmuxCommand });
   const live = report.session;
   // An exited Session keeps its exact generation but can no longer resolve a message context.

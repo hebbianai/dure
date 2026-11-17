@@ -323,7 +323,8 @@ export function migratePersistedState(
   // may reopen Pro; adding provenance as a second preference is out of scope.
   const wired = migrateWiredUiDefaults(value, fromVersion);
   const sized = migrateSplitterSize(wired, fromVersion);
-  const raw = migrateTabOrder({ ...recordValue(sized) }, fromVersion) as Record<string, unknown>;
+  const paned = migrateDefaultAgentPane(sized, fromVersion);
+  const raw = migrateTabOrder({ ...recordValue(paned) }, fromVersion) as Record<string, unknown>;
   if (fromVersion < 2) {
     const identityKey = owns(raw, "spaces") ? "spaces" : "desktops";
     const identities = raw[identityKey];
@@ -383,6 +384,24 @@ function migrateSplitterSize(value: unknown, fromVersion: number): unknown {
   return {
     ...raw,
     uiPrefs: { ...uiPrefs, splitterSize: DEFAULT_UI_PREFS.splitterSize },
+  };
+}
+
+/**
+ * v11: new agents default to Chat in both interface modes (#552). uiPrefs is
+ * stored whole, so a stored "terminal" is usually the former default, not a
+ * choice. The choice was shown and took effect only in the Beta interface, so
+ * a stored "terminal" next to a stored Beta mode may be explicit and is kept.
+ * Everywhere else it moves to Chat once; a stored "chat" is always kept.
+ */
+function migrateDefaultAgentPane(value: unknown, fromVersion: number): unknown {
+  if (fromVersion >= 11) return value;
+  const raw = recordValue(value);
+  const uiPrefs = recordValue(raw.uiPrefs);
+  if (uiPrefs.defaultAgentPane !== "terminal" || uiPrefs.interfaceMode === "pro") return value;
+  return {
+    ...raw,
+    uiPrefs: { ...uiPrefs, defaultAgentPane: DEFAULT_UI_PREFS.defaultAgentPane },
   };
 }
 

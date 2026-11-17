@@ -151,6 +151,11 @@ try:
             evidence["cases"].append({"input": text, "submit": submit, "receipt": receipt})
             return receipt
 
+        def with_header(text):
+            # The environment above leaves every managed Session, so dure send
+            # marks this input as unregistered before the provider reads it.
+            return "[dure send · unregistered] " + text
+
         def accepted_once(text):
             accepted = wait(lambda: text.strip() in user_texts())
             evidence["cases"][-1]["acceptedCount"] = user_texts().count(text.strip())
@@ -160,12 +165,12 @@ try:
         short = "Reply RECEIVED. Do not use any tools. " + (
             "Review bounded work assignments independently and preserve existing changes. " * 4)
         send(short)
-        accepted_once(short)
+        accepted_once(with_header(short))
         assert wait(lambda: len(completions()) == 2)
         long = "Reply MULTILINGUAL. Do not use any tools.\n" + (
             "Long multiline assignment. 한국어 입력도 한 번만 제출합니다.\n" * 100)
         send(long)
-        accepted_once(long)
+        accepted_once(with_header(long))
         assert wait(lambda: len(completions()) == 3)
 
         os.mkfifo(root / "continue-busy")
@@ -175,15 +180,17 @@ try:
         )
         busy = "Run python3 busy.py in the current directory. Wait for it to return, then reply RELEASED."
         send(busy)
-        accepted_once(busy)
+        accepted_once(with_header(busy))
         assert wait(lambda: (root / "busy-ready").exists()), "provider did not start the blocking fixture"
         complete_before = len(completions())
         steer = "After the current command returns, include BUSY_INPUT in your reply. 바쁜 상태의 입력입니다."
         send(steer)
+        steer = with_header(steer)
         # Enter keeps the provider's own busy-input policy. Acceptance is checked
         # after the blocking command returns, without relabelling its PTY receipt.
         queue = "Reply QUEUED_INPUT after the current task. 명시적으로 대기열에 넣은 입력입니다."
         send(queue, submit=False)
+        queue = with_header(queue)
         evidence["queueKeyReceipt"] = command([
             "send-keys", *exact, "--expected-fence-json", json.dumps(fence), "Tab"])
         assert queue not in user_texts(), "queued input was already a submitted user record"

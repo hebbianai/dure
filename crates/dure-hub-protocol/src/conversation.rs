@@ -174,6 +174,9 @@ pub enum ConversationRefusal {
     /// The request itself is unusable (an empty or too long prompt, for
     /// example).
     InvalidRequest,
+    /// The approval an answer named was already answered, in the terminal or
+    /// elsewhere, or another took its place; nothing was written.
+    AttentionChanged,
     /// The desktop could not observe or attach to the session's Host in time,
     /// or its transport did not answer. The agent may well be alive — on a
     /// busy desktop this happens — so ask again; nothing was written.
@@ -426,7 +429,7 @@ fn bounded(mut entry: ConversationEntry) -> ConversationEntry {
 }
 
 /// Cut `text` to at most `limit` bytes without splitting a character.
-fn truncate_on_char_boundary(text: &mut String, limit: usize) -> bool {
+pub(crate) fn truncate_on_char_boundary(text: &mut String, limit: usize) -> bool {
     if text.len() <= limit {
         return false;
     }
@@ -438,7 +441,7 @@ fn truncate_on_char_boundary(text: &mut String, limit: usize) -> bool {
     true
 }
 
-fn serialized_len<T: Serialize>(value: &T) -> usize {
+pub(crate) fn serialized_len<T: Serialize>(value: &T) -> usize {
     serde_json::to_vec(value).map_or(usize::MAX, |bytes| bytes.len())
 }
 
@@ -571,32 +574,40 @@ pub(crate) fn read_versioned<T: serde::de::DeserializeOwned, R: Read>(
     reader: &mut R,
     limit: usize,
 ) -> Result<T, ConversationError> {
+    read_versioned_as(
+        reader,
+        limit,
+        "hub_conversation_version",
+        HUB_CONVERSATION_VERSION,
+        "Could not read the conversation answer",
+    )
+}
+
+/// Read one answer document whose version sits in `version_field`. Another
+/// version is refused by name, before the strict read, so a document from
+/// another version says "update one side" rather than "malformed".
+pub(crate) fn read_versioned_as<T: serde::de::DeserializeOwned, R: Read>(
+    reader: &mut R,
+    limit: usize,
+    version_field: &str,
+    expected: u16,
+    unreadable: &'static str,
+) -> Result<T, ConversationError> {
     let payload = frame::read_bytes(reader, limit)?;
-    // The loose probe reads the version first, so a document from another
-    // version says "update one side" rather than "malformed".
-    let probe: VersionProbe = serde_json::from_slice(&payload).map_err(|_| {
-        ConversationError::Frame(FrameError::Malformed(
-            "Could not read the conversation answer",
-        ))
-    })?;
+    let probe: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&payload)
+        .map_err(|_| ConversationError::Frame(FrameError::Malformed(unreadable)))?;
     let found = probe
-        .hub_conversation_version
+        .get(version_field)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|version| u16::try_from(version).ok())
         .ok_or(ConversationError::Frame(FrameError::Malformed(
             "Missing version",
         )))?;
-    if found != HUB_CONVERSATION_VERSION {
+    if found != expected {
         return Err(ConversationError::UnsupportedVersion { found });
     }
-    serde_json::from_slice(&payload).map_err(|_| {
-        ConversationError::Frame(FrameError::Malformed(
-            "Could not read the conversation answer",
-        ))
-    })
-}
-
-#[derive(Deserialize)]
-struct VersionProbe {
-    hub_conversation_version: Option<u16>,
+    serde_json::from_slice(&payload)
+        .map_err(|_| ConversationError::Frame(FrameError::Malformed(unreadable)))
 }
 
 #[derive(Debug)]

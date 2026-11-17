@@ -97,8 +97,7 @@ export function resolveUnopenedAgentPresentation({
 
 	return {
 		title: resolveAgentPaneTitle({
-			name: agent.name,
-			displayName: agent.displayName,
+			agent,
 			runtimeTitle,
 			opaqueConversationId: conversationId,
 			directoryCandidates: [conversation?.cwd, agent.worktreePath],

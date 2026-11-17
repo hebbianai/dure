@@ -10,9 +10,9 @@ import {
 describe("agent toolbar control visibility", () => {
 	it("basic mode keeps essential controls and folds pro-tier ones", () => {
 		const prefs = { interfaceMode: "basic" as const };
-		// Surface switching is pro (2026-08-31 owner call): basic users stay on
-		// the surface the agent opened with.
-		expect(agentToolbarControlVisible("view-switch", prefs)).toBe(false);
+		// The one View control is how a Basic user moves an existing terminal
+		// agent into Chat (#554, reversing the 2026-08-31 Pro-only call).
+		expect(agentToolbarControlVisible("view-switch", prefs)).toBe(true);
 		expect(agentToolbarControlVisible("diff-window", prefs)).toBe(true);
 		expect(agentToolbarControlVisible("conversation-history", prefs)).toBe(
 			true,

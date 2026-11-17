@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useRuntimeOwnedValue } from "@/components/agents/useRuntimeOwnedValue";
+import type { NativeAgentApprovalAnswer } from "@/lib/agents/chat/nativeAgentApproval";
 import {
 	type NativeAgentChatPendingPrompt,
 	type NativeAgentChatSnapshot,
@@ -21,6 +22,8 @@ export function useNativeAgentChatState(ownerKey: string, idle: boolean) {
 	const [sendError, setSendError] =
 		useRuntimeOwnedValue<NativeAgentInputFailure>(ownerKey);
 	const [sending, setSending] = useRuntimeOwnedValue<boolean>(ownerKey);
+	const [approvalAnswer, setApprovalAnswer] =
+		useRuntimeOwnedValue<NativeAgentApprovalAnswer>(ownerKey);
 	const [idleSinceMs, setIdleSinceMs] = useState<number>();
 
 	useEffect(() => {
@@ -53,6 +56,8 @@ export function useNativeAgentChatState(ownerKey: string, idle: boolean) {
 		setSendError,
 		sending: sending === true,
 		setSending,
+		approvalAnswer,
+		setApprovalAnswer,
 	};
 }
 

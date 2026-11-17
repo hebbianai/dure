@@ -7,11 +7,15 @@ export type LaunchPermissionSelection =
 	| "inherit"
 	| DureAgentRunPermissionOverrideV1;
 
-const overrides = {
+/** Launch overrides exist for the approval postures a Run can start with.
+ * Plan mode is a pane-level runtime selection with no launch override. */
+const overrides: Partial<
+	Record<DureProviderPermissionModeV1, DureAgentRunPermissionOverrideV1>
+> = {
 	default: "require_approvals",
 	auto_edit: "auto_edit",
 	skip_permissions: "bypass_approvals",
-} as const;
+};
 
 const modesByProvider = new Map(
 	Object.entries(supportedModes) as [
@@ -26,9 +30,31 @@ export function providerPermissionOptions(provider: string) {
 	return modes.map((value) => ({
 		value,
 		override: overrides[value],
-		label: launchPermissionLabel(overrides[value]),
+		label: permissionModeLabel(value),
 		tone: value === "skip_permissions" ? ("danger" as const) : undefined,
 	}));
+}
+
+/** The launch overrides a new Run of this provider can request. */
+export function providerLaunchPermissionOverrides(
+	provider: string,
+): DureAgentRunPermissionOverrideV1[] {
+	return providerPermissionOptions(provider).flatMap((option) =>
+		option.override ? [option.override] : [],
+	);
+}
+
+export function permissionModeLabel(mode: DureProviderPermissionModeV1): string {
+	switch (mode) {
+		case "default":
+			return t("agents.chat.permissionDefault");
+		case "auto_edit":
+			return t("agents.chat.permissionAutoEdit");
+		case "plan":
+			return t("agents.chat.permissionPlan");
+		case "skip_permissions":
+			return t("agents.chat.permissionSkip");
+	}
 }
 
 export function launchPermissionLabel(

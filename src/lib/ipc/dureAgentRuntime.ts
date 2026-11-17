@@ -105,6 +105,19 @@ export class DureAgentRuntimeSourceActiveError extends Error {
 	}
 }
 
+const PROVIDER_PERMISSION_MODES: readonly string[] = [
+	"default",
+	"auto_edit",
+	"plan",
+	"skip_permissions",
+] satisfies readonly DureProviderPermissionModeV1[];
+
+export function isProviderPermissionMode(
+	value: unknown,
+): value is DureProviderPermissionModeV1 {
+	return typeof value === "string" && PROVIDER_PERMISSION_MODES.includes(value);
+}
+
 /** Backend text is shown only when it is short and free of control characters. */
 function displayableDetail(value: unknown): string | undefined {
 	return typeof value === "string" &&
@@ -254,9 +267,7 @@ function parseInspectedLaunchSelection(
 			!isProviderModelSelection(selection.model)) ||
 		(selection.effort !== undefined &&
 			!isProviderEffortSelection(selection.effort)) ||
-		(selection.permissionMode !== "default" &&
-			selection.permissionMode !== "auto_edit" &&
-			selection.permissionMode !== "skip_permissions")
+		!isProviderPermissionMode(selection.permissionMode)
 	) {
 		return undefined;
 	}
@@ -401,9 +412,7 @@ function parseRuntimeReceipt(
 		(receipt.model !== undefined && !isProviderModelSelection(receipt.model)) ||
 		(receipt.effort !== undefined &&
 			!isProviderEffortSelection(receipt.effort)) ||
-		(receipt.permissionMode !== "default" &&
-			receipt.permissionMode !== "auto_edit" &&
-			receipt.permissionMode !== "skip_permissions") ||
+		!isProviderPermissionMode(receipt.permissionMode) ||
 		!provider(receipt.providerId) ||
 		!executionProfile ||
 		!(

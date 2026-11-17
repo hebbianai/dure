@@ -10,6 +10,7 @@ import {
 	registerDockview,
 	unregisterDockview,
 } from "@/lib/workspace/dock/dockRegistry";
+import { formatDureSendHeader } from "@/lib/agents/dureSendHeader";
 import { useStore } from "@/store";
 import { managedAgentFixture } from "@/test/agentFixtures";
 import {
@@ -237,6 +238,8 @@ it.each([
 			{ mode: 0o600 },
 		);
 		const text = "  한글 캡처\n기존 입력과 합쳐 검토해 주세요.\n";
+		// The CLI runs outside a managed Session, so its header says so.
+		const delivered = `${formatDureSendHeader()} ${text}`;
 		const result = await new Promise<{
 			code: number | null;
 			stdout: string;
@@ -313,7 +316,7 @@ it.each([
 			expect(mocks.send).toHaveBeenCalledExactlyOnceWith({
 				agentId: agent.id,
 				profile,
-				text,
+				text: delivered,
 			});
 		} else {
 			expect(forwardedResult).toMatchObject({
@@ -328,7 +331,7 @@ it.each([
 			});
 			expect(
 				Object.values(useStore.getState().chatDrafts[agent.id])[0].text,
-			).toBe(text);
+			).toBe(delivered);
 			expect(claims).toEqual(["destination:process-request"]);
 		}
 	},

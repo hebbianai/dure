@@ -26,6 +26,9 @@ interface ScheduleTemplate {
 	worktree?:
 		| { kind: "project_root" }
 		| { kind: "dedicated"; baseCommitSha?: string };
+	/** Recorded from Default agent pane when saved in the app. Absent follows
+	 * the backend default: chat where the provider supports it. */
+	interactionPreference?: "native_cli";
 }
 
 export interface AutomationSchedule {
@@ -118,6 +121,8 @@ export function parseSchedule(value: unknown): AutomationSchedule {
 			)) ||
 		(template.executionProfile !== undefined &&
 			!parseAgentExecutionProfileV1(template.executionProfile)) ||
+		(template.interactionPreference !== undefined &&
+			template.interactionPreference !== "native_cli") ||
 		(template.worktree !== undefined &&
 			!(
 				worktree?.kind === "project_root" && Object.keys(worktree).length === 1
@@ -211,6 +216,24 @@ export function scheduleDraft(schedule: AutomationSchedule): ScheduleDraft {
 		expression,
 		timezone,
 		runTemplate: structuredClone(runTemplate),
+	};
+}
+
+/** Record the app's Default agent pane choice on a schedule as it is saved,
+ * so its runs start where the user's new agents do. Chat is the backend
+ * default, so only Terminal is recorded; saving under Chat clears it. */
+export function withScheduleInteractionPreference<Draft extends ScheduleDraft>(
+	draft: Draft,
+	preference: "native_cli" | undefined,
+): Draft {
+	const { interactionPreference: _recorded, ...runTemplate } =
+		draft.runTemplate;
+	return {
+		...draft,
+		runTemplate:
+			preference === undefined
+				? runTemplate
+				: { ...runTemplate, interactionPreference: preference },
 	};
 }
 

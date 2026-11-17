@@ -280,6 +280,10 @@ pub struct AgentRuntimeStateDescriptor {
     /// prompt accepts input. Omitted while false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub background_work: bool,
+    /// What the pending approval asks, when its provider reported it. Only
+    /// beside `approval_required`; a new request has a new `attention_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_request: Option<Box<hmux_session_protocol::AgentApprovalRequest>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -826,6 +830,7 @@ pub fn project_agent_runtime_state(
         progress: projection.progress,
         program_status: projection.program_status,
         background_work: projection.background_work,
+        approval_request: projection.approval_request,
     })
 }
 
@@ -1439,6 +1444,7 @@ mod tests {
         let fixture = fixture(&capabilities);
         let mut initial = snapshot(fixture.fence.clone(), 9, None);
         initial.agent_runtime_state = Some(AgentRuntimeStateProjection {
+            approval_request: None,
             progress: None,
             terminal_epoch: fixture.fence.terminal_epoch.clone(),
             revision: 3,
@@ -1492,6 +1498,7 @@ mod tests {
         let fixture = fixture(&capabilities);
         let mut initial = snapshot(fixture.fence.clone(), 9, None);
         initial.agent_runtime_state = Some(AgentRuntimeStateProjection {
+            approval_request: None,
             progress: None,
             terminal_epoch: fixture.fence.terminal_epoch.clone(),
             revision: 3,

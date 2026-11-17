@@ -326,6 +326,9 @@ function applyStructuredChatProjection(
 		conversationId: transition.providerConversationRef ?? undefined,
 		conversationIdentity: undefined,
 		pendingCredentialSwitch: undefined,
+		// The move into Chat is complete; a later Terminal starts on itself.
+		pendingChatHandover: undefined,
+		nativeView: undefined,
 		skipPermissions:
 			transition.launchSelection.permissionMode === "skip_permissions",
 	};

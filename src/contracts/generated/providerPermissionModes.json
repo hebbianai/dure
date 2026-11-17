@@ -11,6 +11,7 @@
   "claude": [
     "default",
     "auto_edit",
+    "plan",
     "skip_permissions"
   ],
   "cline": [

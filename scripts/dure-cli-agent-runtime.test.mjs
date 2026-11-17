@@ -650,4 +650,35 @@ describe("exact runtime account switch", () => {
     expect(cliBody).toEqual({ schemaVersion: 1, agentId: "agent-1", targetInteractionProfile: "native_cli",
       expectedSourceRevision: 1, targetExecutionProfile });
   });
+
+  // The backend commits a Terminal target whose provider exited as it started,
+  // so recovery can resume it. The command must not call that a running switch.
+  const switched = (transport, observeNativeTarget) => {
+    const targetExecutionProfile = { kind: "credential_reference", reference_id: "work", credential_generation: "gen-1" };
+    const result = { schemaVersion: 1, receipt: nativeRuntimeReceipt(targetExecutionProfile, 2, "switch-1") };
+    return collectAgentRuntimeCommand({ args: ["switch", "agent-1", "terminal"],
+      account: "work", credentialGeneration: "gen-1", expectedRevision: 1, requestId: "switch-1",
+      resolveBackend: async () => ({ profile: { id: "local", transport: { kind: transport } } }),
+      requestBackend: async () => ({ result }), observeNativeTarget });
+  };
+
+  it("names the exact resume when the switched provider exited as it started", async () => {
+    const observed = [];
+    const report = await switched("local", async (receipt) => { observed.push(receipt); return true; });
+    expect(observed[0].authority.authority.binding.sessionId).toBe("runtime-native-1");
+    expect(report).toMatchObject({ ok: false, targetExited: true, result: { receipt: { selectionRevision: 2 } },
+      error: { code: "agent_runtime_target_exited" } });
+    expect(report.error.message).toContain("dure runs resume agent-1 --confirm-restart --backend local");
+    expect(formatAgentRuntimeCommand(report)).toContain("agent_runtime_target_exited: The switch was saved");
+  });
+
+  it.each([
+    ["a running target", "local", async () => false],
+    ["an SSH backend", "ssh", async () => { throw new Error("must not inspect a remote host's session here"); }],
+    ["no local observer", "local", undefined],
+  ])("reports the switch unchanged for %s", async (_label, transport, observe) => {
+    const report = await switched(transport, observe);
+    expect(report).toMatchObject({ ok: true, result: { receipt: { selectionRevision: 2 } } });
+    expect(report.targetExited).toBeUndefined();
+  });
 });

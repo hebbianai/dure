@@ -4,4 +4,4 @@
  * theme — can name the same key without pulling the store into its graph.
  */
 export const DURABLE_APP_STORE_NAME = "agent-ide";
-export const PERSIST_VERSION = 10;
+export const PERSIST_VERSION = 11;

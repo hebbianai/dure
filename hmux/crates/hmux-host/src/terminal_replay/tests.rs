@@ -1,3 +1,4 @@
+mod approval_request;
 mod background_work;
 mod causal_reports;
 mod controller_input;
@@ -1412,6 +1413,7 @@ fn state_report(
     turn_completed: bool,
 ) -> AgentStateReportObservation {
     AgentStateReportObservation {
+        approval_request: None,
         progress: None,
         activity,
         attention,
@@ -1429,7 +1431,7 @@ fn applied(fold: AgentStateReportFold) -> AgentRuntimeStateProjection {
     let AgentStateReportFold::Applied(projection) = fold else {
         panic!("expected the report to apply, got {fold:?}");
     };
-    projection
+    *projection
 }
 
 fn provider_ready_for_agent_prompt() -> (TerminalReplay, AgentRuntimeStateProjection) {

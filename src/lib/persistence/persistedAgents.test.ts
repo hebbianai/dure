@@ -101,6 +101,23 @@ describe("normalizePersistedAgents", () => {
 		expect("canonicalSpawn" in legacy).toBe(false);
 	});
 
+	it("keeps a worker's parent across restart and only ungroups a malformed one", () => {
+		const runParent = {
+			sessionId: "session-lead",
+			workspaceId: "workspace-1",
+			leadAgentId: "agent-lead",
+		};
+		const [worker, malformed, plain] = normalizePersistedAgents([
+			{ ...agent, runParent },
+			{ ...agent, id: "agent-2", runParent: { sessionId: "session-lead" } },
+			{ ...agent, id: "agent-3" },
+		]);
+		expect(worker.runParent).toEqual(runParent);
+		expect(malformed.id).toBe("agent-2");
+		expect("runParent" in malformed).toBe(false);
+		expect("runParent" in plain).toBe(false);
+	});
+
 	it("preserves an exact remote managed binding across restart", () => {
 		const [normalized] = normalizePersistedAgents([
 			{

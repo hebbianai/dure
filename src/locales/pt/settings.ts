@@ -12,7 +12,7 @@ export const settings: Record<string, string> = {
 	"agents.recovery.failed": "A recuperação automática parou. Verifique a conta ou continue manualmente.",
 
 	"settings.general.defaultAgentPane.title": "Painel de agente padrão",
-	"settings.general.defaultAgentPane.desc": "Aplica-se apenas a novos agentes. O chat requer um provedor e uma configuração de início compatíveis. Os painéis existentes não mudam.",
+	"settings.general.defaultAgentPane.desc": "Aplica-se apenas a novos agentes. Os agentes começam em um terminal quando o provedor ou a configuração de início não oferece suporte a chat. Os painéis existentes não mudam.",
 	"settings.general.defaultAgentPane.chat": "Chat",
 	"environments.title": "Ambientes VM",
 	"environments.description": "Crie um ambiente isolado a partir de uma receita do projeto ao adicionar um agente. Gerencie seu ciclo de vida aqui.",

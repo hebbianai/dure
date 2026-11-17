@@ -212,6 +212,29 @@ describe("dure schedule", () => {
       .toContain("Report received");
   });
 
+  it("names a chat-runtime run's conversation state and a sleeping or stopped run", () => {
+    const occurrence = { idempotencyKey: "run", launchState: "started", operationId: "spawn-1",
+      runtime: { state: "unavailable", observedAtMs: 2, errorCode: "schedule_runtime_not_native" } };
+    for (const [conversation, text] of [
+      [{ activity: "working", attention: "none" }, "Working on the chat runtime"],
+      [{ activity: "waiting", attention: "none" }, "Idle on the chat runtime"],
+      [{ activity: "waiting", attention: "input_required" }, "Waiting for input on the chat runtime"],
+      [{ activity: "working", attention: "approval_required" }, "Waiting for approval on the chat runtime"],
+      [{ activity: "waiting", attention: "error" }, "Turn failed on the chat runtime"],
+    ]) {
+      const status = formatScheduleCommand({ kind: "dure.schedules.inspect",
+        occurrence: { ...occurrence, runtime: { ...occurrence.runtime, conversation } } });
+      expect(status).toContain(text);
+      expect(status).toContain("dure runs show spawn-1");
+    }
+    expect(formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence: { ...occurrence,
+      runtime: { ...occurrence.runtime, errorCode: "schedule_runtime_sleeping" } } }))
+      .toContain("Asleep after idle; no report received");
+    expect(formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence: { ...occurrence,
+      runtime: { ...occurrence.runtime, errorCode: "schedule_runtime_stopped" } } }))
+      .toContain("Stopped; no report received");
+  });
+
   it("names why a start failed and where to read the failed stage", () => {
     const failed = { idempotencyKey: "run", launchState: "failed", operationId: "spawn-1", errorCode: "hmux_managed_runtime_failed" };
     expect(formatScheduleCommand({ kind: "dure.schedules.inspect", occurrence: failed }))
@@ -542,6 +565,21 @@ describe("dure schedule set", () => {
     expect(requests[1].body.runTemplate).toEqual(recorded.runTemplate);
     expect(report).toMatchObject({ kind: "dure.schedules.put", schedule: { revision: 5, enabled: false } });
     expect(formatScheduleCommand(report)).toContain("daily-review\t5\tdisabled");
+  });
+
+  it("keeps a schedule's recorded interface and asks for the capability that stores it", async () => {
+    const requests = [];
+    const terminal = { ...recorded, runTemplate: { ...recorded.runTemplate, interactionPreference: "native_cli" } };
+    const stub = backendStub(requests);
+    await collectScheduleUpdate({
+      scheduleId: "daily-review", expectedRevision: 4, idempotencyKey: "pause-2",
+      changes: { enabled: false }, backend: local,
+      requestBackend: async (profile, request) => request.operation === "schedule.show"
+        ? (requests.push(request), { backend: { id: "local" }, result: { schemaVersion: 1, schedule: terminal } })
+        : stub(profile, request),
+    });
+    expect(requests[1].body.runTemplate).toEqual(terminal.runTemplate);
+    expect(requests[1].requiredCapabilities).toContain("schedule.interaction_preference_v1");
   });
 
   it("puts against the caller's revision so the backend refuses a stale change", async () => {

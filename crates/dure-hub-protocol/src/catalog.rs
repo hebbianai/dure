@@ -73,6 +73,11 @@ pub struct HubCatalogEntry {
     /// desktop that predates the request, which would close without a word.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub background_work: bool,
+    /// This desktop answers `AgentApprovalAnswerV1` for this session: the
+    /// chat may show a pending approval's buttons. Its own flag, so a phone
+    /// never sends the answer to a desktop that predates it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub approval_answer: bool,
     /// 이 세션이 어느 상자에 있는지. 허브가 여러 상자를 합쳐 보여주므로, 폰은
     /// 같은 목록에서 노트북 세션과 서버 세션을 구별할 수 있어야 한다.
     pub box_id: String,
@@ -215,6 +220,12 @@ pub struct HubCatalog {
     /// 빈 화면으로 그리면 사용자는 자기가 정리한 것이 사라졌다고 읽는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<CatalogLayout>,
+    /// This desktop's chat-owned agents (#562). They are not Hmux sessions,
+    /// so they are listed apart from `sessions`: an older phone ignores the
+    /// field and never draws a row it could only fail to attach to, and the
+    /// catalog version stays.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chat_sessions: Vec<crate::agent_chat::HubChatSession>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -371,6 +382,21 @@ mod tests {
         assert!(!older.background_work);
     }
 
+    /// Like `background_work`: optional both ways.
+    #[test]
+    fn the_approval_answer_flag_is_optional_both_ways() {
+        let mut served = catalog();
+        served.sessions[0].conversation = true;
+        served.sessions[0].approval_answer = true;
+        let encoded = encode(&served).unwrap();
+        assert_eq!(read(&mut encoded.as_slice()).unwrap(), served);
+
+        let without = serde_json::to_value(entry()).unwrap();
+        assert!(without.get("approval_answer").is_none());
+        let older: HubCatalogEntry = serde_json::from_value(without).unwrap();
+        assert!(!older.approval_answer);
+    }
+
     /// 구조체 리터럴인 것이 의도다: 매니페스트에 필드가 늘면 컴파일이 깨져
     /// 허용 목록을 다시 보게 된다.
     fn entry() -> HubCatalogEntry {
@@ -392,6 +418,7 @@ mod tests {
             launch_program: Some("zsh".to_string()),
             conversation: false,
             background_work: false,
+            approval_answer: false,
             box_id: "box-1".to_string(),
             box_label: "노트북".to_string(),
         }
@@ -399,6 +426,7 @@ mod tests {
 
     fn catalog() -> HubCatalog {
         HubCatalog {
+            chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
             sessions: vec![entry()],

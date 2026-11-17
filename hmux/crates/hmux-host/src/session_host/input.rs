@@ -106,6 +106,38 @@ impl SessionHost {
         Ok(replay.has_interrupt_request())
     }
 
+    /// Records that controller key input reached the PTY, so an attention it
+    /// may have answered admits no attention response any more.
+    pub fn record_controller_key_input(
+        &mut self,
+        expected_fence: &SessionFence,
+    ) -> Result<(), SessionHostError> {
+        let ProviderEpoch::Running { replay, .. } = &mut self.current else {
+            return Err(SessionHostError::SessionExited);
+        };
+        expected_fence
+            .ensure_matches(replay.fence())
+            .map_err(|_| SessionHostError::FenceMismatch)?;
+        replay.record_controller_key_input();
+        Ok(())
+    }
+
+    /// Rechecks one attention response under the caller's serialized PTY
+    /// writer: the attention it names is current and unanswered.
+    pub fn attention_response_admitted(
+        &self,
+        expected_fence: &SessionFence,
+        expected_attention_id: &str,
+    ) -> Result<bool, SessionHostError> {
+        let ProviderEpoch::Running { replay, .. } = &self.current else {
+            return Err(SessionHostError::SessionExited);
+        };
+        expected_fence
+            .ensure_matches(replay.fence())
+            .map_err(|_| SessionHostError::FenceMismatch)?;
+        Ok(replay.attention_response_admitted(expected_attention_id))
+    }
+
     /// Observes whether the Host should wait for provider-event startup,
     /// proceed to the serialized PTY cut, or refuse this attempt.
     pub fn agent_prompt_admission(

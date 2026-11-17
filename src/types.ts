@@ -7,6 +7,7 @@ export type {
 } from "@/lib/agents/providerContracts";
 
 import type { AgentCanonicalSpawnV1 } from "@/lib/agents/agentCanonicalSpawn";
+import type { AgentRunParentV1 } from "@/lib/agents/agentRunParent";
 import type {
 	Provider,
 	TerminalEnvironment,
@@ -166,6 +167,27 @@ export interface Project {
   isRepo: boolean;
 }
 
+/** The observer presentation a native Terminal pane shows. Chat is not a view
+ * of the terminal: it is the backend-owned runtime the Agent moves into. */
+export type NativeAgentViewV1 = "terminal" | "conversation";
+
+/** A native Terminal Agent's request to move into Chat at its next idle turn
+ * boundary. The backend remains the only authority on idleness: a preserving
+ * transition is refused while the source works, so this only records when the
+ * next attempt may run. The baseline is the last runtime observation that was
+ * seen busy (or refused the move); only a later idle observation retries. */
+export interface PendingChatHandoverV1 {
+  schemaVersion: 1;
+  requestId: string;
+  requestedAtMs: number;
+  baselineSessionId: string;
+  baselineTerminalEpoch: string | null;
+  baselineRuntimeRevision: string | null;
+  /** Set after a refusal other than "still busy"; the intent then waits for
+   * the user to retry, discard or cancel rather than looping. */
+  lastError?: string;
+}
+
 /** Durable, non-secret request to replace one managed provider credential
  * after the exact active Host turn completes. Every source and replacement
  * input needed before the destructive stop boundary is persisted here. */
@@ -204,6 +226,9 @@ export interface Agent {
   /** Exact backend spawn receipt projected into this client registration.
    * Absence is the explicit legacy/imported/adopted partition. */
   canonicalSpawn?: AgentCanonicalSpawnV1;
+  /** The Session this Run was started from — a lead's, when a lead started
+   * it as a worker. Absent for Agents started any other way. */
+  runParent?: AgentRunParentV1;
   /** Immutable launch/worktree slug. User-visible rename uses displayName. */
   name: string;
   /** IDE-owned label only; never changes worktree, branch, or runtime identity. */
@@ -248,6 +273,10 @@ export interface Agent {
   conversationIdentity?: import("@/lib/sessions/managed/conversationIdentityReadiness").ConversationIdentityReadiness;
   /** Managed-only credential replacement deferred to a Host-proven turn end. */
   pendingCredentialSwitch?: DeferredCredentialSwitchIntentV1;
+  /** Terminal → Chat move waiting for the next idle turn boundary. */
+  pendingChatHandover?: PendingChatHandoverV1;
+  /** Last observer view chosen in this Agent's Terminal pane. */
+  nativeView?: NativeAgentViewV1;
   /** Backend-owned workflow receipt로 이 pane을 다시 찾기 위한 최소 투영.
    * 상태·결과는 복제하지 않고 exact Dispatch generation만 보존한다. */
   workflowDispatch?: {

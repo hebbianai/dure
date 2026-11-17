@@ -8,6 +8,7 @@ import { collectSessionQuery } from "./session-query.mjs";
 import { boundedString, decimal, sameGeneration } from "./session-runtime-projection.mjs";
 import { readDelegatedWorkflow } from "./workflow-completion.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { CommandExit } from "./process-exit.mjs";
 import { listRunRecords } from "./run-agent-selection.mjs";
 import {
   ACTION_REQUIRED_CHILD_STATES,
@@ -334,6 +335,8 @@ export async function runWaitCommand(args, { resolveContext, hmuxCommand, signal
     }
     report = await collectWait(options, { ...await resolveContext(options), tracking, hmuxCommand, signal });
   } catch (error) {
+    // The CLI's refusal from resolveContext ends the command.
+    if (error instanceof CommandExit) throw error;
     report = { apiVersion: "dure.wait/v1", state: "unknown", error: { code: "wait_arguments_invalid", message: error.message }, exitCode: 2 };
   }
   const childLines = report.subject === "children" && Array.isArray(report.observation?.children)

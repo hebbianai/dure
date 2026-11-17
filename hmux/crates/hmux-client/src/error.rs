@@ -365,6 +365,7 @@ impl ClientError {
     /// that only use the projection as a cheaper seed can attach without it.
     pub fn is_terminal_viewport_seed_refusal(&self) -> bool {
         match self {
+            #[cfg(feature = "terminal-state-stream")]
             Self::TerminalViewportAttachTransportClosed => true,
             Self::HostRefused {
                 code: HostErrorCode::TransportClosed,

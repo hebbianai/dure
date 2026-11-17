@@ -1,5 +1,10 @@
+import {
+	type AgentRunParentSessionV1,
+	parseRequestedAgentRunParent,
+} from "@/lib/agents/agentRunParent";
 import { parseAgentExecutionProfileV1 } from "@/lib/agents/chat/agentConversationContract";
 import { PROVIDER_IDS } from "@/lib/agents/providers";
+import { parseRequestedRunStartedAtMs } from "@/lib/agents/runPresentationOrder";
 import {
 	presentStructuredRun,
 	presentStructuredRunInBackground,
@@ -44,6 +49,8 @@ const CLI_REQUEST_KEYS = new Set([
 	"spaceId",
 	"windowLabel",
 	"referencePanelId",
+	"parent",
+	"startedAtMs",
 ]);
 const SAFE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,511}$/;
 const WINDOW_LABEL = /^[A-Za-z0-9_-]{1,128}$/;
@@ -55,6 +62,8 @@ interface CliStructuredRunPresentationRequest {
 		executionTarget: BackendPresentationTarget;
 		projectPath?: string;
 		windowLabel: string;
+		parent?: AgentRunParentSessionV1;
+		startedAtMs?: number;
 	} & (
 		| { presentation: "background" }
 		| { presentation?: undefined; spaceId: string; referencePanelId?: string }
@@ -142,6 +151,9 @@ function parseCliStructuredRunPresentationRequest(
 		fail("invalid_request", "backend profile identity is inconsistent");
 	}
 	const selectedProjectPath = projectPath(value.projectPath);
+	const refuse = (message: string) => fail("invalid_request", message);
+	const parent = parseRequestedAgentRunParent(value.parent, refuse);
+	const startedAtMs = parseRequestedRunStartedAtMs(value.startedAtMs, refuse);
 	const windowLabel = value.windowLabel;
 	if (typeof windowLabel !== "string" || !WINDOW_LABEL.test(windowLabel)) {
 		fail("invalid_request", "windowLabel is invalid");
@@ -176,6 +188,8 @@ function parseCliStructuredRunPresentationRequest(
 			executionTarget,
 			...(selectedProjectPath ? { projectPath: selectedProjectPath } : {}),
 			windowLabel,
+			...(parent ? { parent } : {}),
+			...(startedAtMs === undefined ? {} : { startedAtMs }),
 			...(value.presentation === "background"
 				? { presentation: "background" as const }
 				: {

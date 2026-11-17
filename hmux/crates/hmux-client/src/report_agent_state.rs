@@ -9,6 +9,7 @@ use crate::{ClientError, LocalSession, SessionFence};
 use hmux_session_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY;
 use hmux_session_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY;
 use hmux_session_protocol::PROVIDER_CONVERSATION_CONTINUATION_CAPABILITY;
+use hmux_session_protocol::{AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY, AgentApprovalRequest};
 use hmux_session_protocol::{
     AGENT_STATE_REPORT_CAPABILITY, AGENT_STATE_REPORT_COMPLETION_ID_CAPABILITY,
     AGENT_STATE_REPORT_OBSERVATION_FENCE_CAPABILITY,
@@ -62,6 +63,11 @@ pub struct AgentStateReport {
     /// `waiting` with `input_required`. Hosts without
     /// `agent_state_report_startup_gate_v1` receive the report without it.
     pub startup_gate: Option<AgentStartupGate>,
+    /// What the provider asks the person to approve: the tool, a bounded
+    /// summary of its input and the answers offered. Only beside `waiting`
+    /// with `approval_required`. Hosts without
+    /// `agent_state_report_approval_request_v1` receive the report without it.
+    pub approval_request: Option<AgentApprovalRequest>,
 }
 
 impl AgentStateReport {
@@ -261,6 +267,19 @@ impl LocalSession {
                 "a startup gate is reported only while waiting for input",
             ));
         }
+        if report.approval_request.as_ref().is_some_and(|request| {
+            report.identity_only
+                || report.turn_completed
+                || report.background_work
+                || report.activity != AgentRuntimeActivity::Waiting
+                || report.attention != AgentRuntimeAttention::ApprovalRequired
+                || !request.is_valid()
+        }) {
+            return Err(ClientError::transport(
+                "hmux_invalid_agent_state_report",
+                "an approval request is reported only while waiting for approval",
+            ));
+        }
         // Refuse before connecting when discovery already proves the Host
         // predates the capability. The authoritative check below still runs
         // because discovery can be stale.
@@ -302,6 +321,16 @@ impl LocalSession {
             .any(|capability| capability == AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY)
         {
             report.startup_gate = None;
+        }
+        // The request only says what the approval asks; a Host that predates
+        // it still receives the same waiting, approval-required report.
+        if !self
+            .descriptor()
+            .capabilities
+            .iter()
+            .any(|capability| capability == AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY)
+        {
+            report.approval_request = None;
         }
         let identified_completion = report.turn_completion_id.is_some();
         let causal = report.causality.is_some();
@@ -432,6 +461,9 @@ impl LocalSession {
         if report.startup_gate.is_some() {
             optional_capabilities.push(AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY);
         }
+        if report.approval_request.is_some() {
+            optional_capabilities.push(AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY);
+        }
         let mut connection = self.connect_with_options(
             ConnectionOptions::new(LocalAttachRole::Observer, authorization_proof_reference)
                 .with_optional_capabilities(&optional_capabilities),
@@ -493,6 +525,9 @@ impl LocalSession {
         if !connection.supports(AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY) {
             report.startup_gate = None;
         }
+        if !connection.supports(AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY) {
+            report.approval_request = None;
+        }
         let request_id = next_report_request_id();
         let identity_only = report.identity_only;
         let expected_conversation_identity = report.conversation_identity.clone();
@@ -543,6 +578,7 @@ impl LocalSession {
                 }),
                 background_work: report.background_work,
                 startup_gate: report.startup_gate,
+                approval_request: report.approval_request,
             }))?;
 
         let receipt_started = Instant::now();
@@ -703,6 +739,7 @@ mod tests {
 
         let result = session.report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Working,
@@ -730,6 +767,7 @@ mod tests {
     #[test]
     fn older_hosts_receive_background_work_as_the_working_report() {
         let ended = AgentStateReport {
+            approval_request: None,
             progress: None,
             identity_only: false,
             activity: AgentRuntimeActivity::Waiting,
@@ -763,6 +801,7 @@ mod tests {
 
         let result = session.report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Waiting,
@@ -797,6 +836,7 @@ mod tests {
 
         let result = session.report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Waiting,
@@ -826,6 +866,7 @@ mod tests {
         let session = session_with_capabilities(vec![AGENT_STATE_REPORT_CAPABILITY.to_string()]);
         let result = session.report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Working,
@@ -860,6 +901,7 @@ mod tests {
         ]);
         let result = session.report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Working,
@@ -916,6 +958,7 @@ mod tests {
 
         let result = session.report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Waiting,
@@ -954,6 +997,7 @@ mod tests {
 
         let result = session.report_agent_state(
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: true,
                 activity: AgentRuntimeActivity::Waiting,

@@ -98,7 +98,7 @@ if (args.includes("capabilities")) {
     : [];
   return {
     plan, sessionId, workspaceId,
-    send: (args) => runSessionCli(root, hmux, ["send", "lead", ...args], environment),
+    send: (args, extra = {}) => runSessionCli(root, hmux, ["send", "lead", ...args], { ...environment, ...extra }),
     inputs: () => lines(calls).filter((args) => args.includes("command-input")),
     backendRequests: () => lines(remote.requestLog),
   };
@@ -247,14 +247,30 @@ describe("runSendCommand after the registered Session exited", () => {
   });
 });
 
-describe("dure send --from through the CLI", () => {
-  it("writes the sender label ahead of the text the Session receives", () => {
+describe("dure send header through the CLI", () => {
+  it("writes the header and --from label ahead of the text the Session receives", () => {
     const f = fixture({ predecessor: "live" });
     const result = f.send(["--from", "ci-bot", "hello", "--json"]);
     expect(result.status, result.stderr).toBe(0);
     const [input, ...rest] = f.inputs();
     expect(rest).toEqual([]);
-    expect(input[input.indexOf("--text") + 1]).toBe("[from ci-bot] hello");
+    expect(input[input.indexOf("--text") + 1]).toBe("[dure send · unregistered · label ci-bot] hello");
+  });
+
+  it("names the registered Agent whose managed Session runs the CLI", () => {
+    const f = fixture({ predecessor: "live" });
+    const result = f.send(["hello", "--json"], { HMUX_SESSION_ID: f.sessionId, HMUX_WORKSPACE_ID: f.workspaceId });
+    expect(result.status, result.stderr).toBe(0);
+    const [input] = f.inputs();
+    expect(input[input.indexOf("--text") + 1]).toBe("[dure send · from lead] hello");
+  });
+
+  it("sends a provider command exactly as written", () => {
+    const f = fixture({ predecessor: "live" });
+    const result = f.send(["/compact", "--json"], { HMUX_SESSION_ID: f.sessionId, HMUX_WORKSPACE_ID: f.workspaceId });
+    expect(result.status, result.stderr).toBe(0);
+    const [input] = f.inputs();
+    expect(input[input.indexOf("--text") + 1]).toBe("/compact");
   });
 
   it("refuses a missing sender name before any input", () => {

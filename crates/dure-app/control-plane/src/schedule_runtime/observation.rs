@@ -1,7 +1,11 @@
 //! Read-only projection of the current runtime authority. Launch acceptance,
 //! Host attention and the retained Dispatch report remain separate facts.
 use super::*;
-use dure_app::{AgentRuntimeBindingAuthorityV1, AgentSpawnJournalStore, ScheduleLaunchStateV1};
+use crate::agent_runtime_projection::AgentRuntimeObservedV1;
+use dure_app::{
+    AgentRuntimeBindingAuthorityV1, AgentRuntimeCloseStateV1, AgentSpawnJournalStore,
+    ScheduleLaunchStateV1,
+};
 use futures_util::{StreamExt, stream};
 
 pub(super) async fn occurrences(
@@ -50,19 +54,50 @@ async fn runtime(
         .await
         .map_err(|_| "schedule_runtime_unavailable")?
         .ok_or("schedule_runtime_unbound")?;
-    let agent = &spawn.plan.agent_id;
+    agent_runtime(state, &spawn.plan.agent_id).await
+}
+
+/// The runtime state of one schedule-started agent, whichever interface it
+/// runs on.
+pub(crate) async fn agent_runtime(
+    state: &ServiceState,
+    agent: &dure_app::AgentIdV1,
+) -> Result<Value, &'static str> {
     let _guard = state.agent_operations.acquire(agent).await;
-    let crate::agent_runtime_projection::AgentRuntimeObservedV1::Stable {
-        selection,
-        authority,
-    } = crate::agent_runtime_projection::read_locked(state, agent)
+    let (selection, authority) = match crate::agent_runtime_projection::read_locked(state, agent)
         .await
         .map_err(|_| "schedule_runtime_unavailable")?
-    else {
-        return Err("schedule_runtime_not_stable");
+    {
+        AgentRuntimeObservedV1::Stable {
+            selection,
+            authority,
+        } => (selection, authority),
+        // Idle hibernation and stops are named, so a finished run does not
+        // read as an unknown runtime. Older clients still see them as
+        // unavailable.
+        AgentRuntimeObservedV1::Transitioning { transition, .. } if transition.is_dormant() => {
+            return Err("schedule_runtime_sleeping");
+        }
+        AgentRuntimeObservedV1::Closed(close)
+            if close.state == AgentRuntimeCloseStateV1::Stopped =>
+        {
+            return Err("schedule_runtime_stopped");
+        }
+        _ => return Err("schedule_runtime_not_stable"),
     };
-    let AgentRuntimeBindingAuthorityV1::NativeCli { authority } = *authority else {
-        return Err("schedule_runtime_not_native");
+    let authority = match *authority {
+        AgentRuntimeBindingAuthorityV1::NativeCli { authority } => authority,
+        // The chat runtime has no terminal session to probe. Its conversation
+        // says whether a turn is running, waiting on a person or failed.
+        AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } => {
+            let page = super::conversation::read(state, &binding).await?;
+            return Ok(json!({
+                "state": "unavailable",
+                "errorCode": "schedule_runtime_not_native",
+                "conversation":
+                    super::conversation::ConversationActivity::from_page(&page).observation(),
+            }));
+        }
     };
     let session = dure_app::WorkflowSessionGenerationV1 {
         session_id: authority.binding.session_id.clone(),

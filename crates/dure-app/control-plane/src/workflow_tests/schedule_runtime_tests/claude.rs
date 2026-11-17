@@ -122,6 +122,7 @@ async fn claude_schedule_run_uses_real_hmux() {
             hmux_client::ManagedAttachRequest::new(&session.session_id, &session.workspace_id)
                 .unwrap(),
             hmux_client::AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity,

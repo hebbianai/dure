@@ -78,6 +78,44 @@ interface HubRemoteHost {
 	readonly key_path?: string;
 }
 
+/**
+ * A chat-owned agent the phone may open (#562). It is not an Hmux session, so
+ * the hub cannot find it in a census; its seat in `placements` is keyed by its
+ * agent id. Snake case, like `desktop_order`, because it crosses to Rust as is.
+ */
+interface HubChatAgent {
+	readonly agent_id: string;
+	/** The backend profile the conversation lives on. Never sent to the phone. */
+	readonly backend_profile_id: string;
+	readonly provider_id: string;
+}
+
+/** What this function reads of a chat-owned agent. */
+export interface LayoutChatAgent {
+	readonly agentId: string;
+	readonly backendProfileId: string;
+	readonly providerId: string;
+}
+
+/** The agent's chat identity when its conversation is chat-owned. */
+export function chatOwnedAgent(agent: {
+	readonly id: string;
+	readonly provider: string;
+	readonly interactionProfile?: {
+		readonly kind: string;
+		readonly backendProfileId: string;
+	};
+}): LayoutChatAgent | undefined {
+	const profile = agent.interactionProfile;
+	return profile?.kind === "structured_protocol"
+		? {
+				agentId: agent.id,
+				backendProfileId: profile.backendProfileId,
+				providerId: agent.provider,
+			}
+		: undefined;
+}
+
 export interface SidebarLayout {
 	/** hmux 세션 id → 그 세션이 사이드바에서 앉아 있는 자리. */
 	readonly placements: Record<string, SessionPlacement>;
@@ -90,6 +128,8 @@ export interface SidebarLayout {
 	 */
 	readonly desktop_order: string[];
 	readonly remote_hosts: HubRemoteHost[];
+	/** The chat-owned agents among the placements, keyed there by agent id. */
+	readonly chat_agents: HubChatAgent[];
 }
 
 /** 이 함수가 읽는 만큼의 데스크탑. */
@@ -114,6 +154,8 @@ export interface LayoutSpace {
 	 * 두면 그 호출자는 컴파일되지 않는다.
 	 */
 	readonly hmuxSessionId: string | undefined;
+	/** A chat-owned agent's pane: placed by agent id instead of an Hmux id. */
+	readonly chatAgent?: LayoutChatAgent;
 	/**
 	 * 이 세션이 올라앉은 git 브랜치. 저장소가 아니거나 아직 상태를 못 읽었으면
 	 * 없다 — 그때는 표에 싣지 않고, 폰은 아무것도 그리지 않는다.
@@ -133,12 +175,22 @@ export interface LayoutSpace {
 export interface LayoutUnopenedAgent {
 	/** 위 [`LayoutSpace.hmuxSessionId`] 와 같은 이유로 선택 속성이 아니다. */
 	readonly hmuxSessionId: string | undefined;
+	/** As [`LayoutSpace.chatAgent`]. */
+	readonly chatAgent?: LayoutChatAgent;
 	readonly projectName: string;
 	readonly title: string;
 	readonly hostId?: string;
 	/** 위 [`LayoutSpace.branch`] 와 같은 값. 모르면 없다. */
 	readonly branch?: string;
 	readonly presentation?: SessionPresentation;
+}
+
+/** The key the phone finds a row by: the chat-owned agent, else the Hmux session. */
+function seatKey(row: {
+	readonly hmuxSessionId: string | undefined;
+	readonly chatAgent?: LayoutChatAgent;
+}): string | undefined {
+	return row.chatAgent?.agentId ?? row.hmuxSessionId;
 }
 
 export function buildSidebarLayout(
@@ -149,7 +201,6 @@ export function buildSidebarLayout(
 ): SidebarLayout {
 	const placements: Record<string, SessionPlacement> = {};
 	const desktopOrder: string[] = [];
-
 	for (const desktop of desktops) {
 		// 이름이 없는 데스크탑은 이름이 없는 채로 나간다. 여기서 지어내면 폰과
 		// 사이드바가 다른 이름을 부르게 되고, 그게 이 표가 존재하는 이유와 정반대다.
@@ -159,7 +210,7 @@ export function buildSidebarLayout(
 		let order = 0;
 		for (const group of groupSpacesByRepository(mine)) {
 			for (const space of group.spaces) {
-				const sessionId = space.hmuxSessionId;
+				const sessionId = seatKey(space);
 				if (!sessionId) continue;
 				// 같은 세션이 두 자리에 보이면(숨긴 pane 의 원래 자리 등) 먼저 나온
 				// 것이 이긴다. 사이드바가 위에서부터 그리므로 그 자리가 사용자가
@@ -185,7 +236,7 @@ export function buildSidebarLayout(
 	// 화면을 나란히 보는 사람에게만 보이는 차이가 된다.
 	let unopenedOrder = 0;
 	for (const agent of unopened) {
-		const sessionId = agent.hmuxSessionId;
+		const sessionId = seatKey(agent);
 		if (!sessionId) continue;
 		// 열려 있는 자리가 이긴다. 열린 pane 과 "열리지 않은" 목록에 같은 세션이
 		// 동시에 보이는 순간이 있고(닫는 중), 그때 사용자가 보고 있는 것은 열린
@@ -227,5 +278,24 @@ export function buildSidebarLayout(
 			};
 		});
 
-	return { placements, desktop_order: desktopOrder, remote_hosts };
+	// A chat-owned agent's seat is keyed by its agent id; the hub needs its
+	// backend profile to route the phone's requests. Each placed agent once.
+	const chatAgents = new Map<string, HubChatAgent>();
+	for (const row of [...spaces, ...unopened]) {
+		const agent = row.chatAgent;
+		if (agent && placements[agent.agentId] && !chatAgents.has(agent.agentId)) {
+			chatAgents.set(agent.agentId, {
+				agent_id: agent.agentId,
+				backend_profile_id: agent.backendProfileId,
+				provider_id: agent.providerId,
+			});
+		}
+	}
+
+	return {
+		placements,
+		desktop_order: desktopOrder,
+		remote_hosts,
+		chat_agents: [...chatAgents.values()],
+	};
 }

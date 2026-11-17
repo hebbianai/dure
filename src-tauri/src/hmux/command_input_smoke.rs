@@ -156,6 +156,9 @@ fn native_managed_dure_command_preserves_semantic_submit() {
                 .env("DURE_HOME", state.path())
                 .env("HOME", state.path())
                 .env("HMUX_DISCOVERY_ROOT", &discovery_root)
+                // The CLI runs outside every managed Session, so its header is fixed.
+                .env_remove("HMUX_SESSION_ID")
+                .env_remove("HMUX_WORKSPACE_ID")
                 .output()
                 .map_err(|error| {
                     format!("run Dure CLI against isolated managed session: {error}")
@@ -206,7 +209,7 @@ fn native_managed_dure_command_preserves_semantic_submit() {
         run_dure(&["enter", "command-input"], None)?;
         let text_screen = wait_for_exact_markers(
             "file_and_stdin_submit",
-            ["COMMAND_INPUT_SUBMITTED:5:from-stdin\\n한글\\n"],
+            ["COMMAND_INPUT_SUBMITTED:5:[dure send · unregistered] from-stdin\\n한글\\n"],
             Duration::from_secs(10),
             || read_screen(&session),
         )?;
@@ -255,7 +258,7 @@ fn native_managed_dure_command_preserves_semantic_submit() {
 
     let screen = String::from_utf8_lossy(&snapshot);
     assert!(
-        screen.contains("COMMAND_INPUT_SUBMITTED:1:status"),
+        screen.contains("COMMAND_INPUT_SUBMITTED:1:[dure send · unregistered] status"),
         "text plus Enter was not one semantic submit: {screen}"
     );
     assert!(
@@ -263,21 +266,23 @@ fn native_managed_dure_command_preserves_semantic_submit() {
         "Enter-only did not submit the empty draft: {screen}"
     );
     assert!(
-        screen.contains("COMMAND_INPUT_DRAFT:draft"),
+        screen.contains("COMMAND_INPUT_DRAFT:[dure send · unregistered] draft"),
         "--no-enter did not preserve the draft: {screen}"
     );
     assert!(
-        screen.contains("COMMAND_INPUT_SUBMITTED:3:draft"),
+        screen.contains("COMMAND_INPUT_SUBMITTED:3:[dure send · unregistered] draft"),
         "a later semantic Enter did not submit the preserved draft: {screen}"
     );
     assert_eq!(
-        screen.matches("COMMAND_INPUT_SUBMITTED:1:status").count(),
+        screen
+            .matches("COMMAND_INPUT_SUBMITTED:1:[dure send · unregistered] status")
+            .count(),
         1,
         "text plus Enter submitted more than once: {screen}"
     );
     for marker in [
-        "COMMAND_INPUT_SUBMITTED:4:from-file\\n한글\\n",
-        "COMMAND_INPUT_SUBMITTED:5:from-stdin\\n한글\\n",
+        "COMMAND_INPUT_SUBMITTED:4:[dure send · unregistered] from-file\\n한글\\n",
+        "COMMAND_INPUT_SUBMITTED:5:[dure send · unregistered] from-stdin\\n한글\\n",
     ] {
         assert_eq!(
             screen.matches(marker).count(),
@@ -353,7 +358,7 @@ fn managed_command_input_fixture_provider() {
                 submissions += 1;
                 let submitted = String::from_utf8_lossy(&draft).replace('\n', "\\n");
                 print!("\rCOMMAND_INPUT_SUBMITTED:{submissions}:{submitted}\r\n");
-                if submitted == "draft" {
+                if submitted == "[dure send · unregistered] draft" {
                     print!("\rCOMMAND_INPUT_DRAFT_SUBMITTED:draft\r\n");
                 }
                 draft.clear();

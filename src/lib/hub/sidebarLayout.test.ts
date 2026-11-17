@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { initialAgentRuntimeBinding } from "@/lib/agents/agentLaunchCredential";
 import {
 	buildSidebarLayout,
+	chatOwnedAgent,
 	type LayoutDesktop,
 	type LayoutSpace,
 	UNOPENED_DESKTOP,
@@ -200,7 +201,51 @@ describe("buildSidebarLayout", () => {
 			placements: {},
 			desktop_order: [],
 			remote_hosts: [],
+			chat_agents: [],
 		});
+	});
+
+	it("places a chat-owned agent by its agent id and names its backend profile once", () => {
+		const chatAgent = chatOwnedAgent({
+			id: "agent-chat",
+			provider: "claude",
+			interactionProfile: {
+				kind: "structured_protocol",
+				backendProfileId: "local",
+			},
+		});
+		expect(chatAgent).toEqual({
+			agentId: "agent-chat",
+			backendProfileId: "local",
+			providerId: "claude",
+		});
+		const layout = buildSidebarLayout(
+			[desktop("d1", "Workspace")],
+			[
+				space("d1", "dure", undefined, { chatAgent, title: "Fix the build" }),
+				space("d1", "dure", "hmux-1"),
+			],
+			[
+				{
+					hmuxSessionId: undefined,
+					chatAgent,
+					projectName: "dure",
+					title: "closing",
+				},
+			],
+		);
+		expect(layout.placements["agent-chat"]).toMatchObject({
+			desktop: "Workspace",
+			title: "Fix the build",
+		});
+		expect(layout.placements["hmux-1"]).toBeDefined();
+		expect(layout.chat_agents).toEqual([
+			{ agent_id: "agent-chat", backend_profile_id: "local", provider_id: "claude" },
+		]);
+	});
+
+	it("a terminal agent has no chat identity", () => {
+		expect(chatOwnedAgent({ id: "agent-1", provider: "claude" })).toBeUndefined();
 	});
 
 	it("원격 세션의 상자 좌표는 보내되 legacy 평문 비밀번호는 보내지 않는다", () => {

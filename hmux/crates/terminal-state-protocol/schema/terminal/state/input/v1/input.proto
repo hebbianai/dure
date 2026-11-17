@@ -13,6 +13,7 @@ message InputIntent {
     ResizeInputIntent resize = 15;
     AgentPromptInputIntent agent_prompt = 16;
     DraftGuardedInputIntent draft_guarded = 17;
+    AttentionResponseInputIntent attention_response = 18;
   }
 }
 message TextInputIntent { bytes utf8 = 1; }
@@ -136,6 +137,10 @@ enum InputRefusalReason {
   // A draft-guarded intent found unsubmitted controller input. Nothing was
   // written; the sender may retry after the draft is submitted.
   INPUT_REFUSAL_REASON_UNSUBMITTED_DRAFT = 7;
+  // An attention response named an attention that is no longer the current
+  // one, or controller input reached the PTY after it was raised. Nothing
+  // was written; the attention may already have been answered.
+  INPUT_REFUSAL_REASON_ATTENTION_CHANGED = 8;
 }
 
 message InputFailed {
@@ -202,4 +207,16 @@ message DraftGuardedInputIntent {
   bytes utf8 = 1;
   bool submit = 2;
   uint32 admission_wait_ms = 3;
+}
+
+// Keys that answer one pending agent attention, such as an approval prompt,
+// written as one serialized PTY transaction. The Host admits them only while
+// the attention `expected_attention_id` names is still the current one and
+// no controller input reached the PTY since it was raised, so an answer
+// prepared from a stale view can neither land on a later prompt nor follow
+// an answer a person already gave in the terminal. Otherwise it refuses
+// with INPUT_REFUSAL_REASON_ATTENTION_CHANGED and nothing written.
+message AttentionResponseInputIntent {
+  string expected_attention_id = 1;
+  repeated KeyInputIntent keys = 2;
 }

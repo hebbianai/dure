@@ -31,7 +31,13 @@ pub(crate) fn claude_settings(script_command: &str) -> Value {
             "SessionStart": hook_group(),
             "UserPromptSubmit": hook_group(),
             "PreToolUse": hook_group(),
+            // The permission prompt's content: tool, input and offered
+            // answers. It only reports; it never answers the prompt.
+            "PermissionRequest": hook_group(),
             "Stop": hook_group(),
+            // A turn that ends on an API error fires StopFailure instead of
+            // Stop; a failed sign-in is the one the Host must show.
+            "StopFailure": hook_group(),
             "Notification": hook_group(),
         },
     })

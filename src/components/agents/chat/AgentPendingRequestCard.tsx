@@ -1,4 +1,5 @@
-import { useId, useMemo, useState } from "react";
+import { type ReactNode, useId, useMemo, useState } from "react";
+import { ChatMarkdown } from "@/components/agents/chat/ChatMarkdown";
 import { CodeBlock } from "@/components/common/CodeBlock";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,6 +7,7 @@ import type { AgentPendingRequestV1 } from "@/lib/agents/chat/agentConversationC
 import {
 	buildPendingQuestionAnswers,
 	parsePendingPermissionPresentation,
+	parsePendingPlanApproval,
 	parsePendingQuestions,
 } from "@/lib/agents/chat/agentPendingPresentation";
 import { opaqueJsonText } from "@/lib/agents/chat/chatFormat";
@@ -212,14 +214,28 @@ function PendingQuestionForm({
 	);
 }
 
+/** A permission answer a card can offer. */
+export type PendingPermissionDecision = "allow" | "allow_always" | "deny";
+
+const DEFAULT_PERMISSION_DECISIONS: readonly PendingPermissionDecision[] = [
+	"allow",
+	"deny",
+];
+
 export function AgentPendingRequestCard({
 	pending,
 	busy,
 	onAnswer,
+	permissionDecisions = DEFAULT_PERMISSION_DECISIONS,
+	notice,
 }: {
 	pending: AgentPendingRequestV1;
 	busy: boolean;
 	onAnswer(answer: unknown): void;
+	/** The answers a permission request offers; Allow and Deny by default. */
+	permissionDecisions?: readonly PendingPermissionDecision[];
+	/** Shown above the answers, such as why the last answer did not land. */
+	notice?: ReactNode;
 }) {
 	const headingId = useId();
 	const [detailsExpanded, setDetailsExpanded] = useState(false);
@@ -231,6 +247,13 @@ export function AgentPendingRequestCard({
 		() =>
 			pending.request.kind === "question"
 				? parsePendingQuestions(pending.request.payload)
+				: undefined,
+		[pending.request.kind, pending.request.payload],
+	);
+	const planApproval = useMemo(
+		() =>
+			pending.request.kind === "permission"
+				? parsePendingPlanApproval(pending.request.payload)
 				: undefined,
 		[pending.request.kind, pending.request.payload],
 	);
@@ -250,18 +273,27 @@ export function AgentPendingRequestCard({
 				/>
 				<div className="min-w-0">
 					<h3 id={headingId} className="font-medium text-foreground">
-						{pending.request.kind === "permission"
-							? (permission.title ?? t("agents.chat.permissionRequired"))
-							: t("agents.chat.questionRequired")}
+						{planApproval
+							? t("agents.chat.planApprovalTitle")
+							: pending.request.kind === "permission"
+								? (permission.title ?? t("agents.chat.permissionRequired"))
+								: t("agents.chat.questionRequired")}
 						{pending.request.kind === "question" && questions?.[0] && (
 							<span className="sr-only">: {questions[0].question}</span>
 						)}
 					</h3>
-					{pending.request.kind === "permission" && permission.description && (
+					{planApproval && (
 						<p className="mt-1 leading-4 text-muted-foreground">
-							{permission.description}
+							{t("agents.chat.planApprovalDescription")}
 						</p>
 					)}
+					{!planApproval &&
+						pending.request.kind === "permission" &&
+						permission.description && (
+							<p className="mt-1 leading-4 text-muted-foreground">
+								{permission.description}
+							</p>
+						)}
 					{pending.request.kind === "permission" && permission.blockedPath && (
 						<code className="mt-1.5 block truncate font-mono text-[11px] text-muted-foreground">
 							{permission.blockedPath}
@@ -275,6 +307,20 @@ export function AgentPendingRequestCard({
 						)}
 				</div>
 			</div>
+
+			{planApproval?.plan && (
+				<div
+					data-selectable
+					className="mt-3 max-h-96 overflow-y-auto rounded-lg border border-border/70 px-3 py-2 text-[13px]"
+				>
+					<ChatMarkdown markdown={planApproval.plan} />
+				</div>
+			)}
+			{planApproval?.planFilePath && (
+				<code className="mt-1.5 block truncate font-mono text-[11px] text-muted-foreground">
+					{planApproval.planFilePath}
+				</code>
+			)}
 
 			{pending.request.kind === "question" && (
 				<PendingQuestionForm
@@ -298,23 +344,43 @@ export function AgentPendingRequestCard({
 				)}
 			</Disclosure>
 
+			{notice && <div className="mt-3">{notice}</div>}
+
 			{pending.request.kind === "permission" && (
 				<div className="mt-3 flex flex-wrap justify-end gap-2">
-					<Button
-						size="sm"
-						variant="outline"
-						disabled={busy}
-						onClick={() => onAnswer({ decision: "deny" })}
-					>
-						{t("agents.chat.deny")}
-					</Button>
-					<Button
-						size="sm"
-						disabled={busy}
-						onClick={() => onAnswer({ decision: "allow" })}
-					>
-						{t("agents.chat.allow")}
-					</Button>
+					{permissionDecisions.includes("deny") && (
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={busy}
+							onClick={() => onAnswer({ decision: "deny" })}
+						>
+							{planApproval
+								? t("agents.chat.planKeepPlanning")
+								: t("agents.chat.deny")}
+						</Button>
+					)}
+					{!planApproval && permissionDecisions.includes("allow_always") && (
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={busy}
+							onClick={() => onAnswer({ decision: "allow_always" })}
+						>
+							{t("agents.chat.allowAlways")}
+						</Button>
+					)}
+					{permissionDecisions.includes("allow") && (
+						<Button
+							size="sm"
+							disabled={busy}
+							onClick={() => onAnswer({ decision: "allow" })}
+						>
+							{planApproval
+								? t("agents.chat.planApprove")
+								: t("agents.chat.allow")}
+						</Button>
+					)}
 				</div>
 			)}
 		</section>

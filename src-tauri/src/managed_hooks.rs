@@ -1122,6 +1122,7 @@ mod tests {
             "UserPromptSubmit",
             "PreToolUse",
             "Stop",
+            "StopFailure",
             "Notification",
         ] {
             assert!(

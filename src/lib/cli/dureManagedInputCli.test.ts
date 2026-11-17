@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { formatDureSendHeader } from "@/lib/agents/dureSendHeader";
 
 const cliPath = fileURLToPath(
 	new URL("../../../cli/dure.mjs", import.meta.url),
@@ -109,16 +110,25 @@ if (args[0] === "capabilities") {
 	return { root, hmux, hmuxLog };
 }
 
+const SEND_HEADER = `${formatDureSendHeader()} `;
+
 // Shared spawn options wiring the CLI to the fixture; test-specific fixture
 // modes stay explicit at the call site via extraEnv.
 function spawnOptions(
 	{ root, hmux, hmuxLog }: ReturnType<typeof fixture>,
 	extraEnv: Record<string, string> = {},
 ) {
+	// The dure send header names the Session the CLI runs in; the fixture CLI
+	// runs outside one.
+	const {
+		HMUX_SESSION_ID: _session,
+		HMUX_WORKSPACE_ID: _workspace,
+		...inherited
+	} = process.env;
 	return {
 		encoding: "utf8" as const,
 		env: {
-			...process.env,
+			...inherited,
 			DURE_APP_CHANNEL: "stable",
 			DURE_HMUX_BIN: hmux,
 			DURE_HOME: root,
@@ -165,7 +175,7 @@ describe.skipIf(process.platform === "win32")(
 			expect(calls.some((args) => args[0] === "--version")).toBe(false);
 			expect(send).toContain("managed-session-1");
 			expect(send).toContain("workspace-1");
-			expect(send?.[send.indexOf("--text") + 1]).toBe("status");
+			expect(send?.[send.indexOf("--text") + 1]).toBe(`${SEND_HEADER}status`);
 			expect(send?.filter((argument) => argument === "--submit")).toHaveLength(
 				1,
 			);
@@ -211,7 +221,9 @@ describe.skipIf(process.platform === "win32")(
 				.split("\n")
 				.map((line) => JSON.parse(line) as string[]);
 			const send = calls.find((args) => args.includes("command-input"));
-			expect(send?.[send.indexOf("--text") + 1]).toBe("first\nsecond");
+			expect(send?.[send.indexOf("--text") + 1]).toBe(
+				`${SEND_HEADER}first\nsecond`,
+			);
 			expect(send).not.toContain("--submit");
 		});
 
@@ -267,7 +279,9 @@ describe.skipIf(process.platform === "win32")(
 			expect(result.status, result.stderr).toBe(0);
 			expect(result.stdout).toContain("one draft-guarded write");
 			const [send] = commandInputCalls(fx.hmuxLog);
-			expect(send?.[send.indexOf("--text") + 1]).toBe("lane report");
+			expect(send?.[send.indexOf("--text") + 1]).toBe(
+				`${SEND_HEADER}lane report`,
+			);
 			expect(send).toContain("--submit");
 			expect(send?.[send.indexOf("--draft-guard-wait-ms") + 1]).toBe("30000");
 		});

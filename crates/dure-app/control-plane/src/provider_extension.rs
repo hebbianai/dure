@@ -895,6 +895,33 @@ mod tests {
     }
 
     #[test]
+    fn structured_plan_mode_is_admitted_only_where_the_adapter_declares_it() {
+        let claude = ProviderIdV1::new("claude").unwrap();
+        let codex = ProviderIdV1::new("codex").unwrap();
+        let registry = provider_registry(
+            test_integration_source(),
+            BTreeSet::from([claude.clone(), codex.clone()]),
+        );
+        let plan = |provider_id: &ProviderIdV1| {
+            registry.structured_session_plan(AgentProviderStructuredSessionRequestV1 {
+                provider_id,
+                execution_profile: &AgentExecutionProfileV1::ProviderDefault,
+                permission_mode: &ProviderPermissionModeV1::Plan,
+                model: None,
+                effort: None,
+                has_setup_command: false,
+                provider_conversation_ref: &Default::default(),
+            })
+        };
+        assert!(plan(&claude).unwrap().is_some());
+        assert_eq!(
+            plan(&codex).unwrap_err().code.as_str(),
+            "permission_mode_unsupported",
+            "a Codex thread must never receive a plan posture it cannot honour"
+        );
+    }
+
+    #[test]
     fn opencode_structured_plans_follow_registered_runtime_capability() {
         let provider = ProviderIdV1::new("opencode").unwrap();
         for available in [false, true] {

@@ -18,7 +18,9 @@ pub(super) async fn dispatch(
             boxed_operation(|| agent_runtime_transition_apply::project_move::apply(state, body))
                 .await
         }
-        "agent_runtime.native.read" | "agent_runtime.native.input" => {
+        "agent_runtime.native.read"
+        | "agent_runtime.native.input"
+        | "agent_runtime.native.answer" => {
             boxed_operation(|| agent_runtime_native_io::dispatch(state, request)).await
         }
         "agent_runtime.idle.inspect" => {

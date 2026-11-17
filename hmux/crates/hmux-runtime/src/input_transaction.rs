@@ -27,6 +27,13 @@ pub(crate) enum InputAdmission {
     DraftGuarded {
         wait: Duration,
     },
+    /// Keys that answer one pending attention, admitted only while that
+    /// attention is current and no key input reached the PTY since it was
+    /// raised.
+    #[cfg(feature = "terminal-state-stream")]
+    AttentionResponse {
+        expected_attention_id: String,
+    },
 }
 
 #[cfg(feature = "terminal-state-stream")]
@@ -44,9 +51,21 @@ impl InputAdmission {
         process_observed_agent_prompt: bool,
         host_provider_id: &str,
         draft_guarded_input: bool,
+        attention_response_input: bool,
     ) -> Result<Self, &'static str> {
         use terminal_state_protocol::{agent_prompt_input_intent, input_intent};
 
+        if let input_intent::Intent::AttentionResponse(response) = intent {
+            // Never degrade to ordinary keys: an unnegotiated answer is an
+            // authorization refusal, not unfenced input.
+            return if attention_response_input {
+                Ok(Self::AttentionResponse {
+                    expected_attention_id: response.expected_attention_id.clone(),
+                })
+            } else {
+                Err(hmux_runtime_contract::TERMINAL_ATTENTION_RESPONSE_INPUT_CAPABILITY)
+            };
+        }
         if let input_intent::Intent::DraftGuarded(guarded) = intent {
             // Never degrade to an ordinary write: an unnegotiated guard is an
             // authorization refusal, not an unguarded paste.
@@ -121,8 +140,30 @@ impl InputAdmission {
     ) -> Option<(&hmux_host::terminal_replay::AgentPromptTarget, Duration)> {
         match self {
             Self::AgentPrompt(prompt) => Some((&prompt.target, prompt.wait)),
-            Self::Ordinary | Self::DraftGuarded { .. } => None,
+            Self::Ordinary | Self::DraftGuarded { .. } | Self::AttentionResponse { .. } => None,
         }
+    }
+
+    /// Why this admission refuses before its first byte, read under the
+    /// serialized PTY writer: a draft-guarded write finds a person's
+    /// unsubmitted draft, or an attention response finds its attention
+    /// answered or replaced. Agent prompts recheck their own authority.
+    #[cfg(feature = "terminal-state-stream")]
+    pub(crate) fn refusal_before_first_byte(
+        &self,
+        host: &SessionHost,
+        fence: &SessionFence,
+    ) -> Result<Option<OperationReceiptReason>, SessionHostError> {
+        Ok(match self {
+            Self::DraftGuarded { .. } => host
+                .has_unsubmitted_controller_draft(fence)?
+                .then_some(OperationReceiptReason::UnsubmittedDraft),
+            Self::AttentionResponse {
+                expected_attention_id,
+            } => (!host.attention_response_admitted(fence, expected_attention_id)?)
+                .then_some(OperationReceiptReason::AttentionChanged),
+            Self::Ordinary | Self::AgentPrompt(_) => None,
+        })
     }
 
     /// The bounded Host wait for an unsubmitted draft, when this write is
@@ -131,7 +172,7 @@ impl InputAdmission {
     pub(crate) fn draft_guard_wait(&self) -> Option<Duration> {
         match self {
             Self::DraftGuarded { wait } => Some(*wait),
-            Self::Ordinary | Self::AgentPrompt(_) => None,
+            Self::Ordinary | Self::AgentPrompt(_) | Self::AttentionResponse { .. } => None,
         }
     }
 }

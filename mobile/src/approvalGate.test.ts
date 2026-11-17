@@ -146,3 +146,28 @@ describe("createApprovalGate", () => {
     expect(refused).not.toHaveBeenCalled();
   });
 });
+
+describe("a send that waits on its result", () => {
+  it("is told it was dropped by a refused sheet or a reset, never after it was sent", async () => {
+    const { gate, sent, answer } = harness();
+    gate.observe(runtime());
+    const dropped: string[] = [];
+    gate.admit(() => sent.push("approve"), () => dropped.push("approve"));
+    await answer("cancelled");
+    expect(sent).toEqual([]);
+    expect(dropped).toEqual(["approve"]);
+
+    gate.admit(() => sent.push("deny"), () => dropped.push("deny"));
+    gate.reset();
+    expect(dropped).toEqual(["approve", "deny"]);
+    // The sheet that was up when the attachment went answers nothing.
+    await answer("passed");
+    expect(sent).toEqual([]);
+
+    gate.observe(runtime({ attentionId: "appr-2" }));
+    gate.admit(() => sent.push("allow"), () => dropped.push("allow"));
+    await answer("passed");
+    expect(sent).toEqual(["allow"]);
+    expect(dropped).toEqual(["approve", "deny"]);
+  });
+});

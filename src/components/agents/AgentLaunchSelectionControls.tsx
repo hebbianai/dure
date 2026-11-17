@@ -1,5 +1,5 @@
 import { Clock3, Cpu, Gauge, Shield, X } from "lucide-react";
-import type { ReactElement } from "react";
+import { type ReactElement, useEffect, useRef, useState } from "react";
 import type { AgentLaunchControlsPresentation } from "@/components/agents/useAgentToolbarControls";
 import { useProviderCatalog } from "@/components/agents/useProviderCatalog";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { usePaneActions } from "@/components/workspace/usePaneActions";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import { agentRuntimeSettingActions } from "@/lib/agents/agentRuntimeSettingActions";
 import type { ProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
+import { permissionModeLabel } from "@/lib/agents/providerPermissions";
 import {
 	humanizeModelId,
 	type ObservedProviderModelV1,
@@ -36,6 +37,7 @@ function SelectionPill({
 	options,
 	disabled,
 	onSelect,
+	open,
 	onOpenChange,
 	status,
 }: {
@@ -52,6 +54,7 @@ function SelectionPill({
 	}[];
 	disabled: boolean;
 	onSelect: (next: string | null) => void;
+	open?: boolean;
 	onOpenChange?: (open: boolean) => void;
 	status?: string;
 }) {
@@ -61,6 +64,7 @@ function SelectionPill({
 			title={display === label ? label : `${label}: ${display}`}
 			value={checkedValue ?? ""}
 			onValueChange={(next) => onSelect(next || null)}
+			open={open}
 			onOpenChange={onOpenChange}
 			disabled={disabled}
 			leadingIcon={icon}
@@ -101,6 +105,7 @@ export function AgentLaunchSelectionControls({
 	busy,
 	className,
 	presentation,
+	modelPickerRequest = 0,
 }: {
 	provider: Provider;
 	launch: AgentRuntimeLaunchSelectionView;
@@ -112,8 +117,23 @@ export function AgentLaunchSelectionControls({
 	/** Interface-mode / hidden-control gating resolved by the caller through
 	 * useAgentLaunchControlsPresentation — this component stays store-free. */
 	presentation?: AgentLaunchControlsPresentation;
+	/** Each increment opens the model menu, as `/model` in the composer asks. */
+	modelPickerRequest?: number;
 }): ReactElement | null {
 	const discovered = useProviderCatalog(catalogSource);
+	const [modelMenuOpen, setModelMenuOpen] = useState(false);
+	const handledModelPickerRequest = useRef(modelPickerRequest);
+	const openCatalog = useRef(discovered.onOpenChange);
+	openCatalog.current = discovered.onOpenChange;
+	useEffect(() => {
+		if (modelPickerRequest === handledModelPickerRequest.current) return;
+		handledModelPickerRequest.current = modelPickerRequest;
+		setModelMenuOpen(true);
+		openCatalog.current(true);
+	}, [modelPickerRequest]);
+	useEffect(() => {
+		if (busy) setModelMenuOpen(false);
+	}, [busy]);
 	const models = discovered.models ?? (discovered.error ? [] : (catalog ?? []));
 	const catalogStatus = discovered.loading
 		? t("common.loading")
@@ -262,7 +282,11 @@ export function AgentLaunchSelectionControls({
 						}
 						checkedValue={selection.loaded ? selection.model : null}
 						options={selectableModelOptions}
-						onOpenChange={discovered.onOpenChange}
+						open={modelMenuOpen}
+						onOpenChange={(open) => {
+							setModelMenuOpen(open);
+							discovered.onOpenChange(open);
+						}}
 						status={
 							launch.pending
 								? t("agents.runtime.settingsPending")
@@ -313,11 +337,7 @@ export function AgentLaunchSelectionControls({
 					display={
 						!selection.loaded
 							? t("agents.chat.permissionLabel")
-							: selection.permissionMode === "skip_permissions"
-								? t("agents.chat.permissionSkip")
-								: selection.permissionMode === "auto_edit"
-									? t("agents.chat.permissionAutoEdit")
-									: t("agents.chat.permissionDefault")
+							: permissionModeLabel(selection.permissionMode)
 					}
 					tone={
 						selection.loaded && selection.permissionMode === "skip_permissions"

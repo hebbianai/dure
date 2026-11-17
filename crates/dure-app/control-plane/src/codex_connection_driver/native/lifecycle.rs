@@ -742,6 +742,7 @@ impl Lifecycle {
         identity_only: bool,
     ) -> AgentStateReport {
         AgentStateReport {
+            approval_request: None,
             progress: None,
             identity_only,
             activity,

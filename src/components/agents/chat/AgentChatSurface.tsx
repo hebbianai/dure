@@ -26,6 +26,7 @@ export function AgentChatSurface({
 	renderPending,
 	onReady,
 	recovery,
+	onNewConversation,
 }: {
 	session: AgentChatSessionView;
 	paneApi?: IDockviewPanelProps["api"];
@@ -44,6 +45,8 @@ export function AgentChatSurface({
 	onReady?: () => void;
 	/** Credential recoveries offered for a provider-reported turn failure. */
 	recovery?: ChatTurnFailureRecovery;
+	/** The pane's "new conversation" control, run by `/clear`. */
+	onNewConversation?: () => void;
 }) {
 	const readyReported = useRef(false);
 	const page = session.page;
@@ -134,6 +137,7 @@ export function AgentChatSurface({
 				attachmentsEnabled={attachmentsEnabled}
 				shimmer={shimmerOwner === "composer"}
 				recovery={recovery}
+				onNewConversation={onNewConversation}
 			/>
 		</div>
 	);

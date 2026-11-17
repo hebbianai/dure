@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { parseOpts } from "./lib/cli-options.mjs";
 import { assertNoConversationProjectOptions } from "./lib/conversation-project-options.mjs";
 import { appControlDirectory, appRootDirectory, loadAppControlDescriptor } from "./lib/app-control-location.mjs";
-import { agentDisplayName, matchingAgents } from "./lib/client-registry.mjs";
+import { agentDisplayName, agentsInSession, matchingAgents } from "./lib/client-registry.mjs";
 import {
   approvedOrchestrationIntegrationRefreshProviders,
   inspectOrchestrationIntegrations,
@@ -78,6 +78,7 @@ import {
 } from "./lib/app-control-client.mjs";
 import { runPerformanceCommand } from "./lib/performance-report.mjs";
 import { bindBundledDureRuntime } from "./lib/dure-cli-bundled-runtime.mjs";
+import { CommandExit, runEntryPoint } from "./lib/process-exit.mjs";
 import { controllableHmuxBinding, managedInputFenceJson } from "./lib/managed-input-binding.mjs";
 import {
   installSkill,
@@ -88,7 +89,6 @@ import {
 
 const CLI_COMMAND = "dure";
 const CLI_SCRIPT_PATH = fileURLToPath(import.meta.url);
-bindBundledDureRuntime(CLI_SCRIPT_PATH);
 const DEPRECATED_COMMANDS = new Set(["hebbian-ade", "hebbian-ide"]);
 const invocationArguments = process.argv.slice(2);
 const invocationOptions = parseOpts(invocationArguments.slice(1));
@@ -98,11 +98,6 @@ const checkpointHookInvocation =
   invocationOptions.hookJson === true;
 const invokedCommand =
   process.env.DURE_INVOKED_AS?.trim() || basename(process.argv[1] || "");
-if (DEPRECATED_COMMANDS.has(invokedCommand) && !checkpointHookInvocation) {
-  process.stderr.write(
-    `[deprecated] ${invokedCommand} is deprecated; use dure instead.\n`,
-  );
-}
 const MINIMUM_MANAGED_READ_HMUX_VERSION = [0, 2, 2];
 const MANAGED_READ_HMUX_CAPABILITY = "bounded_screen_read_v1";
 const MANAGED_INPUT_HMUX_CAPABILITY = "semantic_command_input_v1";
@@ -122,16 +117,27 @@ const DURE_ROOT = appRootDirectory();
 const APP_CHANNEL =
   process.env.DURE_APP_CHANNEL ?? process.env.HEBBIAN_APP_CHANNEL ?? "stable";
 const appChannelIsValid = /^[a-z0-9-]{1,64}$/.test(APP_CHANNEL);
-if (
-  !appChannelIsValid &&
-  invocationArguments[0] !== "hooks" &&
-  !checkpointHookInvocation
-) {
-  fail("DURE_APP_CHANNEL may contain only lowercase letters, digits, and hyphens.");
-}
 const APP_CONTROL_DIR =
   !appChannelIsValid ? DURE_ROOT : appControlDirectory();
 const REG = join(APP_CONTROL_DIR, "agents.json");
+
+/** Runs before every command, inside the entry point so a refusal still
+ * leaves through normal teardown after the payload has been hashed. */
+function prepareInvocation() {
+  bindBundledDureRuntime(CLI_SCRIPT_PATH);
+  if (DEPRECATED_COMMANDS.has(invokedCommand) && !checkpointHookInvocation) {
+    process.stderr.write(
+      `[deprecated] ${invokedCommand} is deprecated; use dure instead.\n`,
+    );
+  }
+  if (
+    !appChannelIsValid &&
+    invocationArguments[0] !== "hooks" &&
+    !checkpointHookInvocation
+  ) {
+    fail("DURE_APP_CHANNEL may contain only lowercase letters, digits, and hyphens.");
+  }
+}
 
 function loadRegistry() {
   try {
@@ -152,12 +158,14 @@ function loadRegistryOptional() {
   }
 }
 
+/** Ends the command with status 1. It unwinds to the entry point instead of
+ * calling process.exit(), so a catch that can see it must rethrow it. */
 function fail(msg) {
   // Colour only an interactive terminal; the app and scripts read stderr verbatim.
   process.stderr.write(
     process.stderr.isTTY ? `\x1b[31m${msg}\x1b[0m\n` : `${msg}\n`,
   );
-  process.exit(1);
+  throw new CommandExit(1);
 }
 
 /** 이름(또는 project/name)으로 에이전트 하나를 특정 */
@@ -1139,7 +1147,7 @@ function resolveSelf(reg, opts) {
     return { agent: matches[0], source };
   };
   if (sess) {
-    return unique(reg.agents.filter((x) => x.sessionId === sess || x.remoteTmux === sess), "session");
+    return unique(agentsInSession(reg, sess), "session");
   }
   if (opts.agent) return unique(matchingAgents(reg, opts.agent), "explicit_agent");
   if (process.env.HEBBIAN_AGENT) {
@@ -1164,7 +1172,7 @@ function failWhoami(code, message, json) {
     process.stderr.write(
       `${JSON.stringify({ schemaVersion: 1, code, message })}\n`,
     );
-    process.exit(1);
+    throw new CommandExit(1);
   }
   fail(`${code}: ${message}`);
 }
@@ -3146,6 +3154,9 @@ async function cmdTui(opts) {
         backendProfileQueryContext({ backendSpecified: true, backend: id }),
       )
     : undefined;
+  // Refuse an invalid client identity here, not from a refresh that the list
+  // would report as a failed read.
+  const clientId = sessionQueryClientId();
   try {
     await runSessionTui({
       allBackends,
@@ -3156,19 +3167,13 @@ async function cmdTui(opts) {
         hmuxCommand: hmuxCommand(),
         resolveBackend,
         loadRegistry: () =>
-          loadSessionClientProjection({
-            registryPath: REG,
-            clientId: sessionQueryClientId(),
-          }),
+          loadSessionClientProjection({ registryPath: REG, clientId }),
       }),
     });
   } catch (error) {
     process.stderr.write(`\x1b[31m${formatSessionTuiError(error)}\x1b[0m\n`);
     process.exitCode = 2;
-    return;
   }
-  // A refresh still in flight must not hold the shell after the list closes.
-  process.exit();
 }
 
 // ---------- durable orchestration client ----------
@@ -3570,19 +3575,19 @@ async function cmdIntegration(sub, opts) {
   if (opts.rest.length > 1) {
     fail("Too many integration arguments.");
   }
+  if (opts.backendSpecified && !opts.remote) {
+    fail("Integration --backend requires --remote.");
+  }
+  if (action === "refresh" && opts.remote) {
+    fail("Approved integration refresh is local-only.");
+  }
+  if (
+    opts.remote &&
+    (opts.installRoot !== undefined || opts.transportRef !== undefined)
+  ) {
+    fail("Remote integration derives its install and transport references.");
+  }
   try {
-    if (opts.backendSpecified && !opts.remote) {
-      fail("Integration --backend requires --remote.");
-    }
-    if (action === "refresh" && opts.remote) {
-      fail("Approved integration refresh is local-only.");
-    }
-    if (
-      opts.remote &&
-      (opts.installRoot !== undefined || opts.transportRef !== undefined)
-    ) {
-      fail("Remote integration derives its install and transport references.");
-    }
     const common = {
       cliScriptPath: CLI_SCRIPT_PATH,
       channel: APP_CHANNEL,
@@ -4007,7 +4012,9 @@ async function cmdComputer(opts) {
         wins = osa(
           `tell application "System Events" to tell process "${esc(app || front)}" to get name of every window`,
         );
-      } catch {}
+      } catch (error) {
+        if (error instanceof CommandExit) throw error;
+      }
       process.stdout.write(`frontmost: ${front}\n` + (wins ? `windows(${app || front}): ${wins}\n` : ""));
       return;
     }
@@ -4669,6 +4676,7 @@ async function main() {
       if (options.sub === "help") process.stdout.write(`${COMPUTER_HELP}\n`);
       else await cmdComputer(options);
     } catch (error) {
+      if (error instanceof CommandExit) throw error;
       fail(error.message);
     }
     return;
@@ -4830,6 +4838,8 @@ async function main() {
     const report = await collectAgentRuntimeCommand({
       args: opts.rest,
       resolveBackend: () => backendProfileQueryContext(opts),
+      observeNativeTarget: async (receipt) => (await import("./lib/managed-rehost-source-host.mjs"))
+        .nativeTargetExited({ receipt, command: hmuxCommand() }),
       requestId: opts.idempotencyKey,
       operationId: opts.operationId,
       conversationId: opts.conversationId,
@@ -5120,4 +5130,7 @@ async function main() {
   }
 }
 
-await main();
+await runEntryPoint(async () => {
+  prepareInvocation();
+  await main();
+});

@@ -547,6 +547,14 @@ describe("native conversation composer", () => {
 			},
 			"attention",
 		],
+		[
+			{
+				runtime: { ...idle, attention: "approval_required" },
+				state: "blocked",
+				approvalShown: true,
+			},
+			"approval",
+		],
 		[{ state: "input" }, "attention"],
 		[{ state: "error" }, "attention"],
 		[{ state: "working" }, "working"],
@@ -560,6 +568,7 @@ describe("native conversation composer", () => {
 			state: input.state,
 			sending: "sending" in input ? input.sending : false,
 			pending: "pending" in input ? input.pending : false,
+			approvalShown: "approvalShown" in input ? input.approvalShown : false,
 		});
 		expect(state).toEqual({ kind: "disabled", reason });
 		expect(nativeAgentChatComposerReason(state)).toBe(

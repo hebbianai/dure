@@ -248,6 +248,12 @@ pub const TERMINAL_PREFERRED_WIDTH_CAPABILITY: &str = "terminal_preferred_width_
 /// plus optional submit written as one PTY transaction and admitted only while
 /// no unsubmitted controller draft is pending. Records use the base minor.
 pub const TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY: &str = "terminal_draft_guarded_input_v1";
+/// Lets a writable structured surface answer one pending agent attention
+/// with an attention-response intent: keys written as one PTY transaction and
+/// admitted only while that exact attention is current and no controller
+/// input reached the PTY since it was raised. Records use the base minor.
+pub const TERMINAL_ATTENTION_RESPONSE_INPUT_CAPABILITY: &str =
+    "terminal_attention_response_input_v1";
 /// Connection-local find over the terminal's retained history, hot and cold.
 /// The minor-7 find intent rides the ordered viewport stream and its answer
 /// rides the attachment's own viewport frames; other records keep their minor.
@@ -337,6 +343,7 @@ pub fn terminal_capability_request_is_consistent(requested_capabilities: &[Strin
         || requested(TERMINAL_DEFAULT_COLORS_CAPABILITY)
         || requested(TERMINAL_PREFERRED_WIDTH_CAPABILITY)
         || requested(TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY)
+        || requested(TERMINAL_ATTENTION_RESPONSE_INPUT_CAPABILITY)
         || requested(TERMINAL_HISTORY_FIND_CAPABILITY);
     binary == viewport
         && (!dependent || (binary && viewport))
@@ -399,11 +406,32 @@ pub fn terminal_viewport_wheel_permitted(selected_capabilities: &[String]) -> bo
 /// Whether this writable attachment selected minor-6 default-color intents.
 #[must_use]
 pub fn terminal_default_colors_permitted(selected_capabilities: &[String]) -> bool {
+    writable_surface_permits(selected_capabilities, TERMINAL_DEFAULT_COLORS_CAPABILITY)
+}
+
+/// Capabilities that only a writable structured surface may select: a Host
+/// grants each one only beside `terminal_input_intent_v1`.
+const WRITABLE_SURFACE_CAPABILITIES: [&str; 3] = [
+    TERMINAL_DEFAULT_COLORS_CAPABILITY,
+    TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY,
+    TERMINAL_ATTENTION_RESPONSE_INPUT_CAPABILITY,
+];
+
+/// Whether a Host may select `capability` only for a Hello that also asks for
+/// terminal input intents.
+#[must_use]
+pub fn terminal_capability_requires_input(capability: &str) -> bool {
+    WRITABLE_SURFACE_CAPABILITIES.contains(&capability)
+}
+
+/// A writable-surface operation is granted by the complete structured
+/// surface plus its own capability; neither alone grants it.
+fn writable_surface_permits(selected_capabilities: &[String], capability: &str) -> bool {
     [
         TERMINAL_STATE_BINARY_CAPABILITY,
         TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
         TERMINAL_INPUT_INTENT_CAPABILITY,
-        TERMINAL_DEFAULT_COLORS_CAPABILITY,
+        capability,
     ]
     .into_iter()
     .all(|required| {
@@ -452,18 +480,20 @@ pub fn terminal_preferred_width_permitted(selected_capabilities: &[String]) -> b
 /// nor the capability alone grants it.
 #[must_use]
 pub fn terminal_draft_guarded_input_permitted(selected_capabilities: &[String]) -> bool {
-    [
-        TERMINAL_STATE_BINARY_CAPABILITY,
-        TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
-        TERMINAL_INPUT_INTENT_CAPABILITY,
+    writable_surface_permits(
+        selected_capabilities,
         TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY,
-    ]
-    .into_iter()
-    .all(|required| {
-        selected_capabilities
-            .iter()
-            .any(|selected| selected == required)
-    })
+    )
+}
+
+/// An attention response is a writable-surface operation; neither
+/// presentation nor the capability alone grants it.
+#[must_use]
+pub fn terminal_attention_response_input_permitted(selected_capabilities: &[String]) -> bool {
+    writable_surface_permits(
+        selected_capabilities,
+        TERMINAL_ATTENTION_RESPONSE_INPUT_CAPABILITY,
+    )
 }
 
 const TERMINAL_ENVIRONMENT_KEYS: &[&str] = &[
@@ -5841,6 +5871,7 @@ mod tests {
         let request = ManagedAgentStateReportRequest::new(
             fence.clone(),
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 request_id: "turn-0199aaaa-bbbb-7ac2".into(),
                 identity_only: false,
@@ -5992,6 +6023,31 @@ mod tests {
         }
         assert!(!terminal_capability_request_is_consistent(&[
             TERMINAL_HISTORY_FIND_CAPABILITY.to_string(),
+        ]));
+    }
+
+    #[test]
+    fn attention_response_input_requires_a_complete_writable_surface() {
+        let complete = [
+            TERMINAL_STATE_BINARY_CAPABILITY,
+            TERMINAL_VIEWPORT_PROJECTION_CAPABILITY,
+            TERMINAL_INPUT_INTENT_CAPABILITY,
+            TERMINAL_ATTENTION_RESPONSE_INPUT_CAPABILITY,
+        ]
+        .map(str::to_string)
+        .to_vec();
+        assert!(terminal_capability_request_is_consistent(&complete));
+        assert!(terminal_attention_response_input_permitted(&complete));
+        for excluded in &complete {
+            let incomplete = complete
+                .iter()
+                .filter(|value| *value != excluded)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(!terminal_attention_response_input_permitted(&incomplete));
+        }
+        assert!(!terminal_capability_request_is_consistent(&[
+            TERMINAL_ATTENTION_RESPONSE_INPUT_CAPABILITY.to_string(),
         ]));
     }
 

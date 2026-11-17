@@ -1,4 +1,5 @@
 import { normalizeAgentDisplayName } from "@/lib/agents/agentDisplayName";
+import type { Agent } from "@/types";
 
 export function cwdName(cwd?: string): string | undefined {
   const value = cwd?.trim();
@@ -42,28 +43,41 @@ export function paneTitleFromObservedTitle(
   return observedTitle(runtimeTitle, opaqueConversationId) ?? fallback;
 }
 
+type TitledAgent = Pick<Agent, "name" | "displayName" | "runParent">;
+
+/** The title an Agent carries whatever its runtime reports: a name the user
+ * chose, or a worker's Run name (`work-555`). A worker is a Run started from
+ * another Agent's Session; a lead's workers share one provider, so their
+ * terminal titles do not say which is which. Where this title stands, the
+ * provider's title is secondary. */
+export function chosenAgentTitle(agent: TitledAgent): string | undefined {
+  return (
+    normalizeAgentDisplayName(agent.name, agent.displayName) ??
+    (agent.runParent ? agent.name : undefined)
+  );
+}
+
 /** One authority for the Agent title rendered by Dockview, PaneChrome, and
- * Spaces. A name the user explicitly chose wins; replaceable provider evidence
- * comes next; directory identity is the stable fallback. */
+ * Spaces. The chosen title wins; replaceable provider evidence follows;
+ * directory identity is the stable fallback. */
 export function resolveAgentPaneTitle({
-  name,
-  displayName,
+  agent,
   runtimeTitle,
   opaqueConversationId,
   directoryCandidates = [],
 }: {
-  name: string;
-  displayName?: string;
+  agent: TitledAgent;
   runtimeTitle?: string;
   opaqueConversationId?: string;
   directoryCandidates?: readonly (string | undefined)[];
 }): string {
-  const explicitName = normalizeAgentDisplayName(name, displayName);
-  if (explicitName) return explicitName;
-  return paneTitleFromObservedTitle(
-    runtimeTitle,
-    agentPaneTitle(name, ...directoryCandidates),
-    opaqueConversationId,
+  return (
+    chosenAgentTitle(agent) ??
+    paneTitleFromObservedTitle(
+      runtimeTitle,
+      agentPaneTitle(agent.name, ...directoryCandidates),
+      opaqueConversationId,
+    )
   );
 }
 

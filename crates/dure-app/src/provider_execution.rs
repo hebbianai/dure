@@ -11,6 +11,9 @@ pub enum ProviderPermissionModeV1 {
     /// Workspace edits proceed without per-edit approval while everything
     /// else keeps asking — Claude's acceptEdits, Codex's full-auto.
     AutoEdit,
+    /// Read-only planning: the provider proposes a plan and asks before it
+    /// leaves plan mode — Claude's `plan` permission mode.
+    Plan,
     SkipPermissions,
 }
 
@@ -19,6 +22,7 @@ impl ProviderPermissionModeV1 {
         match self {
             Self::Default => "default",
             Self::AutoEdit => "auto_edit",
+            Self::Plan => "plan",
             Self::SkipPermissions => "skip_permissions",
         }
     }

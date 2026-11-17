@@ -83,6 +83,9 @@ pub(crate) fn not_written(
         OperationReceiptReason::UnsubmittedDraft => {
             refused(record_id, InputRefusalReason::UnsubmittedDraft, None)
         }
+        OperationReceiptReason::AttentionChanged => {
+            refused(record_id, InputRefusalReason::AttentionChanged, None)
+        }
         OperationReceiptReason::ResourceLimit => {
             refused(record_id, InputRefusalReason::ResourceLimit, detail)
         }
@@ -163,6 +166,10 @@ mod tests {
             (
                 OperationReceiptReason::UnsubmittedDraft,
                 InputRefusalReason::UnsubmittedDraft,
+            ),
+            (
+                OperationReceiptReason::AttentionChanged,
+                InputRefusalReason::AttentionChanged,
             ),
         ] {
             let receipt = not_written(11, operation, None);

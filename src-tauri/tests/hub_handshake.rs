@@ -260,6 +260,7 @@ impl CatalogSource for OneSession {
         HubCatalog {
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
+            chat_sessions: Vec::new(),
             sessions: vec![HubCatalogEntry {
                 launch_program: None,
                 session_id: "standalone_abc".into(),
@@ -278,6 +279,7 @@ impl CatalogSource for OneSession {
                 capabilities: vec!["live_output".into()],
                 conversation: false,
                 background_work: false,
+                approval_answer: false,
                 box_id: "this-laptop".into(),
                 box_label: "내 노트북".into(),
             }],
