@@ -1,5 +1,6 @@
 use super::*;
 use crate::agent_spawn_worktree::{AgentSpawnPreviewWorktree, normalize_agent_spawn_worktree};
+use dure_app::AgentSpawnJournalStore;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
