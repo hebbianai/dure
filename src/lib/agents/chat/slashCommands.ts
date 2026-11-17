@@ -1,5 +1,6 @@
 import type { ObservedProviderCommandV1 } from "@/lib/agents/chat/observedRuntimeFacts";
 import { t } from "@/lib/i18n";
+import { parseSlashCommandDraft } from "../../../../cli/lib/contracts/slash-command.mjs";
 
 /** Dure-level chat commands, each mapped to an existing pane control. */
 export type DureChatCommandId = "clear" | "model";
@@ -73,23 +74,7 @@ export function chatSlashCommands(
 	return [...dure, ...providerCommands];
 }
 
-const COMMAND_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;
-
-/** A draft is a command attempt when its first token is `/name`. A leading
- * absolute path (`/Users/me/file`) or a lone `//` is ordinary text. */
-export function parseSlashCommandDraft(
-	draft: string,
-): { readonly name: string; readonly args: string } | null {
-	const text = draft.trimStart();
-	if (!text.startsWith("/")) return null;
-	const match = /^\/(\S*)(?:\s+([\s\S]*))?$/u.exec(text);
-	if (!match) return null;
-	const name = match[1] ?? "";
-	const args = (match[2] ?? "").trim();
-	if (name === "") return args ? null : { name, args };
-	if (!COMMAND_NAME.test(name)) return null;
-	return { name, args };
-}
+export { parseSlashCommandDraft };
 
 /** The partial name typed so far, while the caret is still in the first
  * token. Null once arguments start or when the draft is not a command. */

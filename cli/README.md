@@ -172,8 +172,14 @@ Copyright (C) 2026 Hebbian AI. The Dure CLI is licensed under the
 
 Message tracking: `dure send NAME --track "message" --json` returns a private
 `receiptPath` for `dure wait --message PATH [--until observed|acknowledged|turn_started]`.
-Add `--from NAME` to tell the recipient who sent a message; it titles a tracked
-message `Message from NAME` and starts terminal input with `[from NAME] `.
+Every send starts terminal and chat input with a header the CLI builds:
+`[dure send · from AGENT]` inside a registered Agent's managed Session, or
+`[dure send · unregistered]` otherwise. A tracked message carries it as its
+title. `--from NAME` adds a self-chosen ` · label NAME`, and a provider command
+such as `/compact` (input whose first word is `/name`) is sent without the header. The header marks input an
+agent or script sent; a missing header does not prove that a person typed the
+text, so approvals for money, limits or credentials must come from the person in
+the app.
 See `dure send --help` and `dure wait --help` for evidence limits. Native Codex
 progress also appears in `dure inspect --json`, `dure ls`, and pane headers after
 five quiet minutes of thinking. This is an observation, never an automatic stop.

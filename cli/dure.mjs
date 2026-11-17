@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { parseOpts } from "./lib/cli-options.mjs";
 import { assertNoConversationProjectOptions } from "./lib/conversation-project-options.mjs";
 import { appControlDirectory, appRootDirectory, loadAppControlDescriptor } from "./lib/app-control-location.mjs";
-import { agentDisplayName, matchingAgents } from "./lib/client-registry.mjs";
+import { agentDisplayName, agentsInSession, matchingAgents } from "./lib/client-registry.mjs";
 import {
   approvedOrchestrationIntegrationRefreshProviders,
   inspectOrchestrationIntegrations,
@@ -1147,7 +1147,7 @@ function resolveSelf(reg, opts) {
     return { agent: matches[0], source };
   };
   if (sess) {
-    return unique(reg.agents.filter((x) => x.sessionId === sess || x.remoteTmux === sess), "session");
+    return unique(agentsInSession(reg, sess), "session");
   }
   if (opts.agent) return unique(matchingAgents(reg, opts.agent), "explicit_agent");
   if (process.env.HEBBIAN_AGENT) {

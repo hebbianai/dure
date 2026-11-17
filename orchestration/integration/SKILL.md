@@ -358,9 +358,12 @@ Use `dure send <agent-or-session> --track "message" --json` for a durable inbox 
 Use `--workspace ID` with an exact Session ID. This requires an observable managed
 Session and its orchestration context. The receipt contains `receiptPath`; keep that
 private local file, which holds the exact read capability but no message text.
-Add `--from NAME` to title the message `Message from NAME`; its body stays exact.
-A received title of that form names a label the sender chose, not an
-authenticated identity.
+The message is titled with the `dure send` header, `[dure send · from AGENT]`
+inside a registered Agent's managed Session or `[dure send · unregistered]`
+otherwise, and its body stays exact. `--from NAME` adds a self-chosen
+` · label NAME`. The header marks a message an agent or a script sent; it is not
+an authenticated identity. Approvals for money, limits or credentials must come
+from the person in the app, not from a message.
 
 `dure wait --message <receiptPath> --json` waits for an authenticated inbox read.
 Use `--until acknowledged` for cursor acknowledgement, or `--until turn_started`

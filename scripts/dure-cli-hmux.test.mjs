@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { formatDureSendHeader } from "../cli/lib/contracts/dure-send-header.mjs";
 
 const cliPath = fileURLToPath(new URL("../cli/dure.mjs", import.meta.url));
 const temporaryRoots = [];
@@ -57,8 +58,13 @@ function isolatedEnvironment(overrides = {}) {
   delete environment.DURE_HMUX_BIN;
   delete environment.HEBBIAN_APP_CHANNEL;
   delete environment.HEBBIAN_HMUX_BIN;
+  // The dure send header names the Session the CLI runs in; these fixtures run outside one.
+  delete environment.HMUX_SESSION_ID;
+  delete environment.HMUX_WORKSPACE_ID;
   return { ...environment, ...overrides };
 }
+
+const SEND_HEADER = `${formatDureSendHeader()} `;
 
 // Like isolatedEnvironment, but with the color toggles removed so the CLI
 // renders its plain human-readable output.
@@ -422,7 +428,7 @@ describe("Dure Hmux IDE CLI", () => {
           sessionId: "managed-session-1",
           workspaceId: "workspace-1",
         },
-        text,
+        text: SEND_HEADER + text,
         enter: true,
         idempotencyKey: expect.stringMatching(
           /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
@@ -485,7 +491,7 @@ describe("Dure Hmux IDE CLI", () => {
           sessionId: "managed-session-1",
           workspaceId: "workspace-1",
         },
-        text: "status",
+        text: `${SEND_HEADER}status`,
         enter: true,
         idempotencyKey: "retry-safe-1",
       },
@@ -608,7 +614,7 @@ describe("Dure Hmux IDE CLI", () => {
           sessionId: "remote-session-1",
           workspaceId: "remote-workspace-1",
         },
-        text: "status",
+        text: `${SEND_HEADER}status`,
         enter: true,
         idempotencyKey: expect.stringMatching(
           /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
