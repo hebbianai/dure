@@ -4830,6 +4830,8 @@ async function main() {
     const report = await collectAgentRuntimeCommand({
       args: opts.rest,
       resolveBackend: () => backendProfileQueryContext(opts),
+      observeNativeTarget: async (receipt) => (await import("./lib/managed-rehost-source-host.mjs"))
+        .nativeTargetExited({ receipt, command: hmuxCommand() }),
       requestId: opts.idempotencyKey,
       operationId: opts.operationId,
       conversationId: opts.conversationId,
