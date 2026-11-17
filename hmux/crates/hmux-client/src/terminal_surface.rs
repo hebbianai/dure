@@ -2094,7 +2094,10 @@ fn require_written_attention_response(receipt: InputReceipt) -> Result<InputRece
 }
 
 /// A draft refusal is a definite not-written outcome with its own stable
-/// code, so the sender can retry after the person submits.
+/// code, so the sender can retry after the person submits. A Host also
+/// refuses this way while the provider shows an open question or approval
+/// prompt; the message names both, since the wire reason cannot tell them
+/// apart and an older Host only knows the draft.
 fn require_written_draft_guarded_input(receipt: InputReceipt) -> Result<InputReceipt, ClientError> {
     let draft_pending = matches!(
         receipt.outcome.as_ref(),
@@ -2104,7 +2107,8 @@ fn require_written_draft_guarded_input(receipt: InputReceipt) -> Result<InputRec
     if draft_pending {
         return Err(ClientError::transport(
             "hmux_input_draft_pending",
-            "the target terminal has unsubmitted input from its user; nothing was written",
+            "the target terminal is waiting for its user: unsubmitted typed input, or an open \
+             question or approval prompt; nothing was written",
         ));
     }
     require_written_input(receipt)

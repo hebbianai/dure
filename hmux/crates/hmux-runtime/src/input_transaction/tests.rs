@@ -1134,6 +1134,100 @@ fn draft_guarded_input_is_refused_without_a_byte_until_a_person_submits() {
     }
 }
 
+fn waiting_report(
+    attention: AgentRuntimeAttention,
+    turn_completed: bool,
+) -> AgentStateReportObservation {
+    AgentStateReportObservation {
+        progress: None,
+        activity: AgentRuntimeActivity::Waiting,
+        attention,
+        turn_completed,
+        turn_completion_id: None,
+        causality: None,
+        working_ttl_ms: None,
+        expected_observation: None,
+        background_work: false,
+        startup_gate: None,
+        approval_request: None,
+    }
+}
+
+#[test]
+fn draft_guarded_input_never_answers_an_open_question_or_approval() {
+    for attention in [
+        AgentRuntimeAttention::InputRequired,
+        AgentRuntimeAttention::ApprovalRequired,
+    ] {
+        let mut host = ready_host(true);
+        let mut scanner = SubmitScanner::default();
+        let mut writes = Vec::new();
+        host.apply_agent_state_report(&fence(), waiting_report(attention, false))
+            .unwrap();
+        assert!(!host.has_unsubmitted_controller_draft(&fence()).unwrap());
+        assert!(host.input_reserved_for_person(&fence()).unwrap());
+
+        let report = draft_guarded(b"lane report", true);
+        assert_eq!(
+            apply_recorded(
+                &mut host,
+                &mut scanner,
+                PtyInput::Structured(&report),
+                guarded_admission(&report),
+                &mut writes,
+            ),
+            InputTransactionOutcome::NotWritten(OperationReceiptReason::UnsubmittedDraft),
+            "{attention:?}: an open prompt keeps automation out"
+        );
+        assert!(writes.is_empty(), "{attention:?}: nothing reached the PTY");
+
+        // An idle notification without attention leaves the prompt open.
+        host.apply_agent_state_report(&fence(), waiting_report(AgentRuntimeAttention::None, false))
+            .unwrap();
+        assert!(host.input_reserved_for_person(&fence()).unwrap());
+
+        // Once the turn ends past its prompt, the same send is written.
+        host.apply_agent_state_report(&fence(), waiting_report(AgentRuntimeAttention::None, true))
+            .unwrap();
+        assert!(!host.input_reserved_for_person(&fence()).unwrap());
+        assert_eq!(
+            apply_recorded(
+                &mut host,
+                &mut scanner,
+                PtyInput::Structured(&report),
+                guarded_admission(&report),
+                &mut writes,
+            ),
+            InputTransactionOutcome::Written,
+            "{attention:?}: an answered prompt releases the guard"
+        );
+        assert_eq!(writes, vec![b"\x1b[200~lane report\x1b[201~\r".to_vec()]);
+    }
+}
+
+#[test]
+fn a_provider_error_does_not_hold_draft_guarded_input() {
+    let mut host = ready_host(true);
+    let mut scanner = SubmitScanner::default();
+    let mut writes = Vec::new();
+    host.apply_agent_state_report(
+        &fence(),
+        waiting_report(AgentRuntimeAttention::Error, false),
+    )
+    .unwrap();
+    let report = draft_guarded(b"lane report", true);
+    assert_eq!(
+        apply_recorded(
+            &mut host,
+            &mut scanner,
+            PtyInput::Structured(&report),
+            guarded_admission(&report),
+            &mut writes,
+        ),
+        InputTransactionOutcome::Written
+    );
+}
+
 #[test]
 fn draft_guarded_text_without_submit_becomes_the_draft_that_guards_the_next_send() {
     let mut host = ready_host(true);

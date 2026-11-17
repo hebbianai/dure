@@ -346,6 +346,22 @@ impl TerminalReplay {
         !self.unsubmitted_controller_draft.is_empty()
     }
 
+    /// Whether the running provider reports a question or approval prompt it
+    /// has not moved past. Text and Enter written now would answer that
+    /// prompt for the person, however the provider draws it.
+    #[must_use]
+    pub fn has_open_provider_prompt(&self) -> bool {
+        self.provider_prompt_open
+            && self.agent_runtime_state.as_ref().is_some_and(|state| {
+                state.lifecycle == AgentRuntimeLifecycle::Running
+                    && matches!(
+                        state.attention,
+                        AgentRuntimeAttention::InputRequired
+                            | AgentRuntimeAttention::ApprovalRequired
+                    )
+            })
+    }
+
     /// Records that a bare Escape reached the PTY. While the provider reports
     /// an unfinished turn, that keypress is the only sign the Host can see of
     /// a person interrupting it: Claude Code runs no hook for an interrupt,

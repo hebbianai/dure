@@ -255,10 +255,11 @@ pub(crate) fn apply_pty_input(
 }
 
 /// Waits, outside the PTY writer, until no unsubmitted controller draft is
-/// pending. Every accepted PTY write and runtime change wakes the waiter; the
+/// pending and the provider reports no open question or approval prompt.
+/// Every accepted PTY write and runtime change wakes the waiter; the
 /// authoritative Host fact is re-read each time. The serialized writer
 /// rechecks the same fact before the first byte, so this wait only spares a
-/// sender an early refusal while a person finishes typing.
+/// sender an early refusal while a person finishes typing or answering.
 #[cfg(feature = "terminal-state-stream")]
 fn wait_for_submitted_controller_draft(
     state: &ServerState,
@@ -276,7 +277,7 @@ fn wait_for_submitted_controller_draft(
             return Ok(AgentPromptAdmission::Refused);
         }
         let host = lock(&state.host)?;
-        Ok(match host.has_unsubmitted_controller_draft(&state.fence) {
+        Ok(match host.input_reserved_for_person(&state.fence) {
             Ok(true) => AgentPromptAdmission::Pending,
             Ok(false) => AgentPromptAdmission::Eligible,
             Err(_) => AgentPromptAdmission::Refused,

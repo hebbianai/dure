@@ -306,8 +306,11 @@ describe("scriptable dure send input", () => {
     expect(result.stderr).toContain("hmux_input_draft_pending");
     expect(result.stderr).toContain("after waiting 3s");
     expect(result.stderr).toContain("presses Enter");
+    expect(result.stderr).toContain("question or approval prompt");
     expect(result.stderr).toContain("--track");
-    expect(result.stderr).toContain("--ignore-draft");
+    // The override is named with its cost, never offered as the routine retry.
+    expect(result.stderr).toContain("--ignore-draft writes anyway, even into an open prompt");
+    expect(result.stderr).not.toContain("resend with --ignore-draft");
     expect(requests).toHaveLength(1);
     expect(requests[0].payload.draftGuardWaitMs).toBe(3_000);
   });

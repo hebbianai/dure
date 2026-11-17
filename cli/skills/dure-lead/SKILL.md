@@ -258,7 +258,8 @@ the tracking issue still shows that item as in progress.
   alive, send it one message naming the check and what to do:
   `dure send SESSION_ID --workspace WORKSPACE_ID "CI: <job> fails on <test>; fix it, run it locally, rebase on <BASE> if needed, push."`
   Then `dure wait` again. `hmux_input_draft_pending` means a person is typing
-  in that terminal: retry later. If the worker exited,
+  in that terminal or the worker shows them a question or approval: retry
+  later without `--ignore-draft`. If the worker exited,
   `dure runs resume work-123 --confirm-restart --json` brings the conversation
   back; then send the message. Two rounds without a green run: leave the pull
   request open, comment what is failing, label the issue `needs:founder`, move

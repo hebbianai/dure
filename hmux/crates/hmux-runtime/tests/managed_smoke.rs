@@ -5451,6 +5451,101 @@ fn existing_conversation_agent_prompt_names_an_unsubmitted_person_draft() {
     fixture.stop("existing-draft");
 }
 
+/// A question or approval prompt the provider reports is the person's to
+/// answer. Draft-guarded automation waits for it like it waits for a typed
+/// draft, so an agent's report is never submitted as the prompt's answer.
+#[cfg(feature = "terminal-state-stream")]
+#[test]
+fn draft_guarded_command_input_waits_for_an_open_provider_prompt() {
+    let fixture = UnixAgentPromptFixture::new("open-prompt");
+    let conversation_id = "conversation-open-prompt";
+    fixture.report_waiting(conversation_id);
+    let descriptor = fixture.created.session().descriptor();
+    let opened = ManagedAgentStateReporter::new(fixture.runtime, &fixture.cwd)
+        .with_discovery_root(&fixture.discovery_root)
+        .report_agent_state(
+            ManagedAttachRequest::new(&descriptor.session_id, &descriptor.workspace_id).unwrap(),
+            AgentStateReport {
+                progress: None,
+                identity_only: false,
+                activity: hmux_client::AgentRuntimeActivity::Waiting,
+                attention: hmux_client::AgentRuntimeAttention::ApprovalRequired,
+                turn_completed: false,
+                turn_completion_id: None,
+                causality: None,
+                working_ttl_ms: None,
+                conversation_identity: None,
+                expected_observation: None,
+                background_work: false,
+                startup_gate: None,
+                approval_request: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(opened, AgentStateReportOutcome::Applied);
+
+    let connection = fixture
+        .created
+        .session()
+        .connect_with_options(TerminalSurfaceAttachment::connection_options(
+            TerminalSurfaceAccess::Writer,
+            None,
+        ))
+        .unwrap();
+    let mut agent = TerminalSurfaceAttachment::from_connection(connection).unwrap();
+    let refused = agent
+        .send_draft_guarded_command_input_confirmed(
+            "lane report".into(),
+            true,
+            Duration::from_millis(300),
+            Duration::from_secs(5),
+        )
+        .expect_err("an open prompt must refuse draft-guarded input");
+    assert_eq!(refused.code(), "hmux_input_draft_pending");
+    assert_eq!(refused.delivery_state(), "not_written");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        !fixture.received_prompt.exists(),
+        "a refused guarded write must not reach the provider"
+    );
+
+    // The provider moves past its prompt while the next send is waiting.
+    let delivered = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(500));
+            fixture.report_identified_completion(conversation_id, "turn-after-open-prompt");
+        });
+        agent
+            .send_draft_guarded_command_input_confirmed(
+                "lane report".into(),
+                true,
+                Duration::from_secs(5),
+                Duration::from_secs(10),
+            )
+            .unwrap()
+    });
+    assert!(delivered.atomic());
+    assert!(delivered.draft_guarded());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if std::fs::read_to_string(&fixture.received_prompt)
+            .ok()
+            .as_deref()
+            == Some("lane report\n")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the waiting send never reached the provider"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    agent.detach().unwrap();
+
+    fixture.stop("open-prompt");
+}
+
 #[cfg(feature = "terminal-state-stream")]
 #[test]
 fn quiescent_managed_stop_ignores_structured_focus_control_input() {

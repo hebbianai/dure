@@ -881,10 +881,13 @@ Use `dure read` and `dure inspect` to inspect the target before sending again.
 Native failures preserve their delivery state; a missing receipt is not proof
 that nothing reached the terminal. Direct input is never automatically retried.
 `hmux_input_draft_pending` is different: it is a definite non-write because the
-person has unsubmitted input in that terminal. Only their Enter clears it;
-erased text does not. Retry later or send a `--track` message. A target whose
-runtime predates the guard receives ordinary input with a stderr warning;
-restarting that session enables the guard.
+terminal is the person's right now. They have unsubmitted input there, or the
+agent shows a question or approval prompt only they should answer. Only their
+Enter clears a draft; erased text does not. A prompt clears when the agent moves
+past it. Retry later or send a `--track` message; do not resend with
+`--ignore-draft` unless the user asks, since that text would answer the prompt.
+A target whose runtime predates the guard receives ordinary input with a stderr
+warning; restarting that session enables the guard.
 
 ## Dispatch deadlines
 

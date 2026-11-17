@@ -2303,6 +2303,116 @@ fn provider_reports_without_attention_preserve_the_current_episode() {
 }
 
 #[test]
+fn an_open_provider_prompt_lasts_until_the_provider_moves_past_it() {
+    use crate::local_protocol::{AgentRuntimeActivity, AgentRuntimeAttention};
+
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    replay
+        .apply_agent_state_report(state_report(
+            AgentRuntimeActivity::Working,
+            AgentRuntimeAttention::None,
+            false,
+        ))
+        .unwrap();
+    assert!(!replay.has_open_provider_prompt());
+
+    // A question the person has not answered is theirs, though they typed
+    // nothing that would count as a draft.
+    replay
+        .apply_agent_state_report(state_report(
+            AgentRuntimeActivity::Waiting,
+            AgentRuntimeAttention::ApprovalRequired,
+            false,
+        ))
+        .unwrap();
+    assert!(replay.has_open_provider_prompt());
+    assert!(!replay.has_unsubmitted_controller_draft());
+
+    // An idle notification without attention is no answer.
+    replay
+        .apply_agent_state_report(state_report(
+            AgentRuntimeActivity::Waiting,
+            AgentRuntimeAttention::None,
+            false,
+        ))
+        .unwrap();
+    assert!(replay.has_open_provider_prompt());
+
+    // The turn could only end past its prompt. The projection keeps the
+    // episode's attention identity; the prompt itself is closed.
+    let completed = applied(
+        replay
+            .apply_agent_state_report(state_report(
+                AgentRuntimeActivity::Waiting,
+                AgentRuntimeAttention::None,
+                true,
+            ))
+            .unwrap(),
+    );
+    assert_eq!(completed.attention, AgentRuntimeAttention::ApprovalRequired);
+    assert!(!replay.has_open_provider_prompt());
+
+    // A later question opens a new prompt; resumed work closes it.
+    replay
+        .apply_agent_state_report(state_report(
+            AgentRuntimeActivity::Waiting,
+            AgentRuntimeAttention::InputRequired,
+            false,
+        ))
+        .unwrap();
+    assert!(replay.has_open_provider_prompt());
+    replay
+        .apply_agent_state_report(state_report(
+            AgentRuntimeActivity::Working,
+            AgentRuntimeAttention::None,
+            false,
+        ))
+        .unwrap();
+    assert!(!replay.has_open_provider_prompt());
+
+    // An identified completion closes the prompt as soon as it arrives,
+    // before its settlement window publishes the turn.
+    replay
+        .apply_agent_state_report(state_report(
+            AgentRuntimeActivity::Waiting,
+            AgentRuntimeAttention::ApprovalRequired,
+            false,
+        ))
+        .unwrap();
+    assert!(replay.has_open_provider_prompt());
+    replay
+        .apply_agent_state_report(AgentStateReportObservation {
+            turn_completion_id: Some("turn-after-prompt".into()),
+            ..state_report(
+                AgentRuntimeActivity::Waiting,
+                AgentRuntimeAttention::None,
+                true,
+            )
+        })
+        .unwrap();
+    assert!(!replay.has_open_provider_prompt());
+}
+
+#[test]
+fn an_exited_provider_leaves_no_open_prompt() {
+    use crate::local_protocol::{AgentRuntimeActivity, AgentRuntimeAttention};
+
+    let mut replay = replay_with_limits(TerminalReplayLimits::default());
+    replay
+        .apply_agent_state_report(state_report(
+            AgentRuntimeActivity::Waiting,
+            AgentRuntimeAttention::InputRequired,
+            false,
+        ))
+        .unwrap();
+    assert!(replay.has_open_provider_prompt());
+    replay
+        .observe_agent_runtime_state(AgentRuntimeObservation::exited())
+        .unwrap();
+    assert!(!replay.has_open_provider_prompt());
+}
+
+#[test]
 fn reports_are_dropped_after_exit_and_never_change_lifecycle() {
     use crate::local_protocol::{
         AgentRuntimeActivity, AgentRuntimeAttention, AgentRuntimeLifecycle,

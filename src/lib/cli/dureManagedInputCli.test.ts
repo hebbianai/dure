@@ -311,8 +311,12 @@ describe.skipIf(process.platform === "win32")(
 			expect(result.stderr).toContain("hmux_input_draft_pending");
 			expect(result.stderr).toContain("deliveryState=not_written");
 			expect(result.stderr).toContain("presses Enter");
+			expect(result.stderr).toContain("question or approval prompt");
 			expect(result.stderr).toContain("--track");
-			expect(result.stderr).toContain("--ignore-draft");
+			expect(result.stderr).toContain(
+				"--ignore-draft writes anyway, even into an open prompt",
+			);
+			expect(result.stderr).not.toContain("resend with --ignore-draft");
 			expect(commandInputCalls(fx.hmuxLog)).toHaveLength(1);
 		});
 

@@ -609,12 +609,15 @@ function managedInputDirectCompatible(compatibility, draftGuard) {
 /** Actionable guidance for the two stable draft-guard refusal codes. */
 function draftGuardGuidance(code, draftGuard) {
   if (code === "hmux_input_draft_pending") {
-    return ` The target terminal still has unsubmitted input from its user` +
-      `${draftGuard ? ` after waiting ${draftGuard.waitMs / 1000}s` : ""}, so nothing was sent.` +
-      " The guard clears when the user submits (presses Enter) in that terminal or erases every" +
-      " typed character with Backspace; input Dure cannot count stays a draft until Enter." +
-      " Retry later (raise --draft-wait to wait longer)," +
-      " use --track to queue a durable message, or resend with --ignore-draft to send anyway.";
+    return ` The target terminal is still reserved for its user` +
+      `${draftGuard ? ` after waiting ${draftGuard.waitMs / 1000}s` : ""}, so nothing was sent:` +
+      " either they typed text they have not submitted, or the agent there shows a question" +
+      " or approval prompt that only they should answer. The guard clears when the user" +
+      " submits (presses Enter) or erases every typed character with Backspace, and when the" +
+      " agent moves past its prompt; input Dure cannot count stays a draft until Enter." +
+      " Retry later (raise --draft-wait to wait longer) or use --track to queue a durable" +
+      " message. --ignore-draft writes anyway, even into an open prompt as its answer;" +
+      " use it only when the user asks for that.";
   }
   if (code === "hmux_input_draft_guard_unavailable") {
     return " The target's Hmux runtime predates draft-guarded input, so Dure cannot rule out" +

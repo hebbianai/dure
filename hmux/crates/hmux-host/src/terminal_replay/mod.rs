@@ -459,6 +459,13 @@ pub struct TerminalReplay {
     // on the wire: a new attention identity clears it. See
     // `attention_response_admitted`.
     attention_input_since_raised: bool,
+    // The question or approval prompt the provider last reported is still
+    // open. Host-owned and not on the wire: it follows the attention episode
+    // like `agent_startup_gate`, except that a completed turn closes it. The
+    // projection keeps that episode's attention through the completion, but
+    // the turn could only end once its prompt was answered or dismissed. See
+    // `has_open_provider_prompt`.
+    provider_prompt_open: bool,
     limits: TerminalReplayLimits,
 }
 
@@ -776,6 +783,7 @@ impl TerminalReplay {
             interrupt_requested: false,
             agent_startup_gate: None,
             attention_input_since_raised: false,
+            provider_prompt_open: false,
             limits,
         })
     }
@@ -824,6 +832,7 @@ impl TerminalReplay {
             interrupt_requested: false,
             agent_startup_gate: None,
             attention_input_since_raised: false,
+            provider_prompt_open: false,
             limits,
         })
     }
@@ -1432,8 +1441,10 @@ impl TerminalReplay {
                 if acknowledges_input {
                     self.acknowledge_controller_submit();
                 }
-                // A completed turn is past any first-run prompt.
+                // A completed turn is past any first-run prompt, and past
+                // any question or approval it asked.
                 self.agent_startup_gate = None;
+                self.provider_prompt_open = false;
                 return Ok(
                     input_projection.map_or(AgentStateReportFold::NoOp, |projection| {
                         AgentStateReportFold::Applied(Box::new(projection))
@@ -1510,6 +1521,13 @@ impl TerminalReplay {
         } else {
             None
         });
+        // A question or approval opens a prompt; the episode's idle reports
+        // keep it open, and every other report, a completion included, means
+        // the provider moved past it.
+        self.provider_prompt_open = matches!(
+            report.attention,
+            AgentRuntimeAttention::InputRequired | AgentRuntimeAttention::ApprovalRequired
+        ) || (keeps_attention_episode && self.provider_prompt_open);
         // Every later report supersedes a pending candidate, even when its
         // activity is unchanged. Retire only after the fallible fold succeeds.
         self.retire_pending_turn_completion();

@@ -146,8 +146,12 @@ impl InputAdmission {
 
     /// Why this admission refuses before its first byte, read under the
     /// serialized PTY writer: a draft-guarded write finds a person's
-    /// unsubmitted draft, or an attention response finds its attention
+    /// unsubmitted draft or an open question or approval prompt that its
+    /// text would answer, or an attention response finds its attention
     /// answered or replaced. Agent prompts recheck their own authority.
+    /// An open prompt refuses with the draft's reason: either way the
+    /// terminal's input is the person's now, and the wire keeps one stable
+    /// refusal that older clients already retry.
     #[cfg(feature = "terminal-state-stream")]
     pub(crate) fn refusal_before_first_byte(
         &self,
@@ -156,7 +160,7 @@ impl InputAdmission {
     ) -> Result<Option<OperationReceiptReason>, SessionHostError> {
         Ok(match self {
             Self::DraftGuarded { .. } => host
-                .has_unsubmitted_controller_draft(fence)?
+                .input_reserved_for_person(fence)?
                 .then_some(OperationReceiptReason::UnsubmittedDraft),
             Self::AttentionResponse {
                 expected_attention_id,
