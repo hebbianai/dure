@@ -127,7 +127,8 @@ selected account has never trusted stops at Claude Code's folder-trust prompt
 before it reads the brief. The receipt then ends with
 `state: prompt_delivery_uncertain`, `recovery.kind: do_not_replay_prompt`, the
 error `agent_spawn_prompt_behind_workspace_trust` and a `runtime_launch` stage
-whose evidence carries `startup_gate: { kind: "workspace_trust" }`; the text
+whose evidence carries `startup_gate: { kind: "workspace_trust" }`; the
+`--json` head carries `summary.startupGate: "workspace_trust"` and the text
 form prints `startup_gate\tworkspace_trust`. `dure ls` shows that session's
 ACTIVITY as `input_required`, and
 `dure inspect SESSION_ID --workspace WORKSPACE_ID --json` shows
@@ -154,7 +155,8 @@ prompts, and neither does a lead. Instead:
 A Codex Run whose account has no usable login, missing or expired, parks the
 same way at Codex's sign-in screen: the error is
 `agent_spawn_prompt_behind_login` and the gate
-`startup_gate: { kind: "login" }` (text form `startup_gate\tlogin`). Never send
+`startup_gate: { kind: "login" }` (`summary.startupGate: "login"`, text form
+`startup_gate\tlogin`). Never send
 the brief again and do not sign in yourself. Stop dispatching Codex workers on
 that account, tell the person which account needs signing in (in the parked
 worker's pane, or before the next Run), and give the next worker another
