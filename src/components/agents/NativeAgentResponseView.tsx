@@ -1,27 +1,26 @@
-import { MessageSquareText, SquareTerminal } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { ChatMarkdown } from "@/components/agents/chat/ChatMarkdown";
 import { NativeAgentChatView } from "@/components/agents/NativeAgentChatView";
 import { useNativeAgentResponseState } from "@/components/agents/useAgentDisplayState";
 import { useNativeAgentChatState } from "@/components/agents/useNativeAgentChatState";
 import { useRuntimeOwnedValue } from "@/components/agents/useRuntimeOwnedValue";
 import { Button } from "@/components/ui/button";
-import { Segmented } from "@/components/ui/segmented";
 import { useInterfaceMode } from "@/components/workspace/useInterfaceMode";
 import { agentRuntimePresentationOwnerKey } from "@/lib/agents/agentRuntimePresentationOwner";
 import { nativeAgentChatIdle } from "@/lib/agents/chat/nativeAgentChat";
+import { setNativeAgentView } from "@/lib/agents/chatHandoverRuntime";
+import { nativeConversationViewAvailability } from "@/lib/agents/nativeConversationView";
 import { nativeFinalResponse } from "@/lib/agents/nativeFinalResponse";
 import { t } from "@/lib/i18n";
 import { readProviderConversationTranscript } from "@/lib/ipc/conversations";
+import { useStore } from "@/store";
 import type { Agent } from "@/types";
 import { nativeAgentTranscriptSource } from "../../../cli/lib/agent-transcript.mjs";
 
-type NativeAgentView = "terminal" | "conversation";
-
 /** Both docked and detached panes keep the same native terminal mounted and
  * sized. Only its presentation is covered; input/recovery never changes owners.
- * Pro panes can also be flipped to the conversation view; that selection is
- * pane-local presentation state and never switches the runtime. */
+ * The pane's View menu flips it to the Conversation; that choice is
+ * remembered per Agent and never switches the runtime. */
 export function NativeAgentResponseView({
 	agent,
 	disabled = false,
@@ -33,6 +32,13 @@ export function NativeAgentResponseView({
 }) {
 	const mode = useInterfaceMode();
 	const { enabled, runtime, state } = useNativeAgentResponseState(agent);
+	const view =
+		useStore(
+			(s) =>
+				s.agents.find((candidate) => candidate.id === agent.id)?.nativeView,
+		) ??
+		agent.nativeView ??
+		"terminal";
 	const source = nativeAgentTranscriptSource(agent, agent.runtimeBinding);
 	const provider = source.kind === "local" ? source.provider : undefined;
 	const conversationId =
@@ -52,7 +58,6 @@ export function NativeAgentResponseView({
 	]);
 	const [response, setResponse] = useRuntimeOwnedValue<string | null>(ownerKey);
 	const [revealed, setRevealed] = useRuntimeOwnedValue<string>(ownerKey);
-	const [view, setView] = useState<NativeAgentView>("terminal");
 	// The conversation's runtime state is owned here, keyed to the Agent's
 	// recorded conversation rather than the live runtime projection, so a
 	// momentary drop of the projection does not forget a sent prompt.
@@ -64,25 +69,11 @@ export function NativeAgentResponseView({
 		]),
 		nativeAgentChatIdle({ runtime, state }),
 	);
-	// The toggle's row is reserved whenever this pane can offer the
-	// conversation at all, judged from what is known at mount (Pro, a local
-	// Claude/Codex pane) rather than from the runtime binding, which a freshly
-	// launched Agent records only after its terminal mounted. So the toggle
-	// never covers terminal cells, and neither the binding arriving, a
-	// transient runtime drop nor a new conversation resizes the terminal.
-	const conversationOffered = Boolean(
-		mode === "pro" &&
-			(source.kind === "local" || source.kind === "identity_unavailable") &&
-			binding?.runtime !== "hmux_standalone_v1",
-	);
-	const conversationAvailable = Boolean(
-		conversationOffered &&
-			source.kind === "local" &&
-			binding?.runtime === "hmux_managed_v1" &&
-			!disabled &&
-			runtime?.lifecycle === "running" &&
-			conversationEpoch === runtime.terminalEpoch,
-	);
+	const conversationAvailable = nativeConversationViewAvailability(
+		agent,
+		runtime,
+		disabled,
+	).available;
 	const conversation =
 		conversationAvailable &&
 		view === "conversation" &&
@@ -90,8 +81,11 @@ export function NativeAgentResponseView({
 		runtime
 			? { source, runtime }
 			: undefined;
+	// The final-response presentation stays a Pro setting; the Conversation
+	// view itself is offered in Basic and Pro alike.
 	const eligible =
 		conversationAvailable &&
+		mode === "pro" &&
 		enabled &&
 		runtime?.attention === "none" &&
 		(state === "working" || state === "waiting");
@@ -136,46 +130,16 @@ export function NativeAgentResponseView({
 	);
 	// An explicit request for the terminal shows the terminal itself, not the
 	// final-response overlay that would otherwise cover it.
-	const showView = (next: NativeAgentView) => {
-		setView(next);
-		if (next === "terminal") setRevealed(state);
-	};
+	const previousView = useRef(view);
+	useEffect(() => {
+		if (previousView.current === "conversation" && view === "terminal") {
+			setRevealed(state);
+		}
+		previousView.current = view;
+	}, [view, state, setRevealed]);
 	const covered = responseCovered || conversation !== undefined;
 	return (
 		<div className="flex h-full min-h-0 flex-col">
-			{conversationOffered && (
-				<div className="flex h-8 shrink-0 items-center justify-end bg-surface-terminal px-2">
-					{conversationAvailable && (
-						<Segmented
-							variant="pills"
-							size="sm"
-							iconOnly
-							aria-label={t("agents.runtime.viewLabel")}
-							value={conversation ? "conversation" : "terminal"}
-							onChange={showView}
-							options={[
-								{
-									value: "terminal",
-									label: t("common.terminal"),
-									icon: (
-										<SquareTerminal aria-hidden="true" className="size-3.5" />
-									),
-								},
-								{
-									value: "conversation",
-									label: t("agents.nativeChat.conversation"),
-									icon: (
-										<MessageSquareText
-											aria-hidden="true"
-											className="size-3.5"
-										/>
-									),
-								},
-							]}
-						/>
-					)}
-				</div>
-			)}
 			<div className="relative min-h-0 flex-1">
 				<div
 					className="h-full"
@@ -192,7 +156,9 @@ export function NativeAgentResponseView({
 						runtime={conversation.runtime}
 						state={state}
 						chat={chat}
-						onContinueInTerminal={() => showView("terminal")}
+						onContinueInTerminal={() =>
+							setNativeAgentView(agent.id, "terminal")
+						}
 					/>
 				)}
 				{responseCovered && (

@@ -178,6 +178,12 @@ export const agents: Record<string, string> = {
 	"agents.runtime.pendingSettingsFailed": "設定を適用できませんでした。再選択するかキャンセルしてください。",
 	"agents.runtime.switchFailed": "ランタイムの切り替えを確認できませんでした。再試行すると現在のセッション状態に復旧します。",
 	"agents.runtime.viewLabel": "表示",
+	"agents.runtime.switchesWhenIdle": "待機時に切り替え",
+	"agents.runtime.chatWhenIdleTitle": "現在のターンが終わるとChatに切り替えます。何も破棄されません。",
+	"agents.runtime.scheduledSwitchFailed": "Chatに切り替えられませんでした（{error}）。Chatを選んで再試行するか、キャンセルしてください。",
+	"agents.runtime.scheduledSwitchFailedStatus": "切り替えに失敗しました",
+	"agents.runtime.interruptAndSwitchNow": "ターンを停止して今すぐ切り替え",
+	"agents.runtime.cancelScheduledSwitch": "切り替え予約をキャンセル",
 	"agents.chat.questionRequired": "エージェントが回答を待っています",
 	"agents.chat.sensitiveAnswerUnsupported":
 		"機密性の高い回答はChatに保存されません。このリクエストを拒否してTerminalを使用してください。",

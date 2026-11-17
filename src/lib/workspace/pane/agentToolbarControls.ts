@@ -38,9 +38,10 @@ export interface AgentToolbarControlDescriptorV1 {
 
 export const AGENT_TOOLBAR_CONTROLS: readonly AgentToolbarControlDescriptorV1[] =
 	[
-		// 2026-08-31 owner call: surface switching is itself a pro concept —
-		// basic users stay on the surface the agent opened with.
-		{ id: "view-switch", tier: "pro", labelKey: "agents.runtime.viewLabel" },
+		// #554 (M3 handover) reverses the 2026-08-31 Pro-only call: the one
+		// View control (Terminal / Conversation / Chat) is how a Basic user
+		// moves an existing terminal agent into Chat.
+		{ id: "view-switch", tier: "basic", labelKey: "agents.runtime.viewLabel" },
 		{ id: "project-move", tier: "pro", labelKey: "agents.projectMove.title" },
 		{
 			id: "diff-window",

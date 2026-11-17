@@ -177,6 +177,12 @@ export const agentsEnglishTranslations: Record<string, string> = {
 	"agents.runtime.pendingSettingsFailed": "Could not apply settings. Select again or cancel.",
 	"agents.runtime.switchFailed": "Couldn't confirm the runtime switch. Retry to recover the current session state.",
 	"agents.runtime.viewLabel": "View",
+	"agents.runtime.switchesWhenIdle": "Switches when idle",
+	"agents.runtime.chatWhenIdleTitle": "Switches to Chat when the current turn ends. Nothing is discarded.",
+	"agents.runtime.scheduledSwitchFailed": "Couldn't switch to Chat ({error}). Choose Chat to retry, or cancel.",
+	"agents.runtime.scheduledSwitchFailedStatus": "Switch failed",
+	"agents.runtime.interruptAndSwitchNow": "Stop the turn and switch now",
+	"agents.runtime.cancelScheduledSwitch": "Cancel scheduled switch",
 	"agents.chat.questionRequired": "The agent needs an answer",
 	"agents.chat.sensitiveAnswerUnsupported":
 		"Sensitive answers are not stored in Chat. Decline this request and use Terminal instead.",

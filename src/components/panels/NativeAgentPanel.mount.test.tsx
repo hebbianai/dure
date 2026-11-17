@@ -231,8 +231,8 @@ vi.mock("@/components/terminal/TerminalView", () => ({
 vi.mock("@/components/panels/AgentPanelToolbarFrame", () => ({
 	AgentPanelToolbarFrame: ({ children }: { children: ReactNode }) => children,
 }));
-vi.mock("@/components/agents/AgentRuntimeProfileSwitch", () => ({
-	AgentRuntimeProfileSwitch: ({
+vi.mock("@/components/agents/AgentViewControl", () => ({
+	AgentViewControl: ({
 		onSwitch,
 		disabled,
 	}: {

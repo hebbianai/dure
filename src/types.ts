@@ -248,6 +248,10 @@ export interface Agent {
   conversationIdentity?: import("@/lib/sessions/managed/conversationIdentityReadiness").ConversationIdentityReadiness;
   /** Managed-only credential replacement deferred to a Host-proven turn end. */
   pendingCredentialSwitch?: DeferredCredentialSwitchIntentV1;
+  /** Terminal → Chat move waiting for the next idle turn boundary. */
+  pendingChatHandover?: import("@/lib/agents/chatHandover").PendingChatHandoverV1;
+  /** Last observer view chosen in this Agent's Terminal pane. */
+  nativeView?: import("@/lib/agents/chatHandover").NativeAgentViewV1;
   /** Backend-owned workflow receipt로 이 pane을 다시 찾기 위한 최소 투영.
    * 상태·결과는 복제하지 않고 exact Dispatch generation만 보존한다. */
   workflowDispatch?: {

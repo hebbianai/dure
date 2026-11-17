@@ -12,6 +12,7 @@ import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalPage } from "@/components/settings/TerminalPage";
 import { useAgentAttention } from "@/lib/agents/agentAttentionStore";
+import { setNativeAgentView } from "@/lib/agents/chatHandoverRuntime";
 import type { AgentDisplayState } from "@/lib/agents/agentStateModel";
 import { t } from "@/lib/i18n";
 import {
@@ -133,6 +134,8 @@ beforeEach(() => {
 		.getState()
 		.setUiPrefs({ interfaceMode: "pro", agentFinalResponseOnly: true });
 	mocks.read.mockResolvedValue(reply());
+	// The pane's view is remembered on the Agent record in the store.
+	useStore.setState({ agents: [agent] });
 	runtime("waiting");
 });
 afterEach(() => {
@@ -320,10 +323,11 @@ describe("Pro conversation view", () => {
 		screen.getByRole("button", {
 			name: t("agents.chat.send"),
 		}) as HTMLButtonElement;
+	// The pane toolbar's View menu writes the remembered view.
 	const showConversation = () =>
-		fireEvent.click(screen.getByRole("radio", { name: conversationName() }));
+		act(() => setNativeAgentView(agent.id, "conversation"));
 	const showTerminal = () =>
-		fireEvent.click(screen.getByRole("radio", { name: t("common.terminal") }));
+		act(() => setNativeAgentView(agent.id, "terminal"));
 	const nativePrompt = () =>
 		screen.queryByRole("textbox", { name: "Native prompt" });
 	const sendPrompt = async (text: string) => {
@@ -370,7 +374,7 @@ describe("Pro conversation view", () => {
 		showConversation();
 		await screen.findByText("First answer");
 		expect(composer().value).toBe("draft prompt");
-		fireEvent.click(screen.getByRole("radio", { name: t("common.terminal") }));
+		showTerminal();
 		expect(screen.getByRole("textbox", { name: "Native prompt" })).toBeTruthy();
 		expect(mocks.mounted).toHaveBeenCalledTimes(1);
 		expect(mocks.unmounted).not.toHaveBeenCalled();
@@ -674,9 +678,7 @@ describe("Pro conversation view", () => {
 		);
 		expect(nativePrompt()).toBeTruthy();
 		expect(screen.queryByText("Second answer")).toBeNull();
-		expect(
-			screen.getByRole("radio", { name: t("common.terminal") }),
-		).toHaveProperty("ariaChecked", "true");
+		expect(useStore.getState().agents[0]?.nativeView).toBe("terminal");
 
 		showConversation();
 		await screen.findByText("First answer");
@@ -685,58 +687,34 @@ describe("Pro conversation view", () => {
 		expect(screen.queryByText("Second answer")).toBeNull();
 	});
 
-	it("reveals the terminal from the toggle while the final-response overlay covers it", async () => {
-		useStore.getState().setUiPrefs({ agentFinalResponseOnly: true });
-		render(view());
-		await screen.findByText("Second answer");
-		expect(nativePrompt()).toBeNull();
-		showTerminal();
-		expect(nativePrompt()).toBeTruthy();
-		expect(screen.queryByText("Second answer")).toBeNull();
-	});
-
-	it("keeps the view toggle in its own row, off the live terminal", async () => {
+	it("keeps no control row over the live terminal", () => {
 		const mounted = render(view());
-		const group = screen.getByRole("radiogroup", {
-			name: t("agents.runtime.viewLabel"),
-		});
 		const terminal = nativePrompt() as HTMLElement;
-		// Nothing between the toggle and the view root is an overlay, and the
-		// terminal's own frame does not contain it.
-		expect(group.closest(".absolute")).toBeNull();
 		const terminalFrame = terminal.closest(".relative") as HTMLElement;
-		expect(terminalFrame.contains(group)).toBe(false);
-		const row = terminalFrame.previousElementSibling as HTMLElement;
-		expect(row.contains(group)).toBe(true);
-
-		// A transition hides the toggle but keeps its row, so the terminal is
-		// not resized by it.
-		mounted.rerender(view(agent, true));
+		// The View control lives in the pane toolbar; nothing here sits beside
+		// the terminal frame, so the view's availability never resizes it.
+		expect(terminalFrame.previousElementSibling).toBeNull();
 		expect(screen.queryByRole("radiogroup")).toBeNull();
-		expect(terminalFrame.previousElementSibling).toBe(row);
+		mounted.rerender(view(agent, true));
+		expect(terminalFrame.previousElementSibling).toBeNull();
 		expect(mocks.mounted).toHaveBeenCalledTimes(1);
 	});
 
-	it("reserves the toggle row from launch, before the runtime binding is recorded", () => {
-		const { runtimeBinding: _binding, ...unbound } = agent;
-		const mounted = render(view({ ...unbound, conversationId: undefined }));
-		const terminalFrame = (nativePrompt() as HTMLElement).closest(
-			".relative",
-		) as HTMLElement;
-		const row = terminalFrame.previousElementSibling as HTMLElement;
-		expect(row).toBeTruthy();
-		expect(screen.queryByRole("radiogroup")).toBeNull();
-
-		mounted.rerender(view());
-		expect(terminalFrame.previousElementSibling).toBe(row);
-		expect(
-			row.contains(
-				screen.getByRole("radiogroup", {
-					name: t("agents.runtime.viewLabel"),
-				}),
-			),
-		).toBe(true);
-		expect(mocks.mounted).toHaveBeenCalledTimes(1);
+	it("opens on the remembered view after a remount and an app restart", async () => {
+		showConversation();
+		const restored = normalizePersistedState(
+			JSON.parse(JSON.stringify(persistedSlice(useStore.getState()))),
+		);
+		expect(restored.agents[0]?.nativeView).toBe("conversation");
+		// A fresh store hydrated from disk: only the remembered choice carries.
+		act(() =>
+			useStore.setState({
+				agents: [{ ...agent, nativeView: restored.agents[0]?.nativeView }],
+			}),
+		);
+		render(view());
+		await screen.findByText("First answer");
+		expect(nativePrompt()).toBeNull();
 	});
 
 	it("shows a refusal's carried message instead of its raw token", async () => {
@@ -757,25 +735,19 @@ describe("Pro conversation view", () => {
 		expect(composer().value).toBe("Hello");
 	});
 
-	it("is offered only for a live Pro local terminal of this generation", () => {
+	it("shows the Conversation only for a live local terminal of this generation, in Basic too", async () => {
+		act(() => useStore.getState().setUiPrefs({ interfaceMode: "basic" }));
+		showConversation();
 		const mounted = render(view());
-		expect(
-			screen.getByRole("radio", { name: conversationName() }),
-		).toBeTruthy();
+		await screen.findByText("First answer");
 		mounted.rerender(view(agent, true));
-		expect(
-			screen.queryByRole("radio", { name: conversationName() }),
-		).toBeNull();
+		expect(nativePrompt()).toBeTruthy();
 		mounted.rerender(view());
 		runtime("waiting", "1", "epoch-replacement");
-		expect(
-			screen.queryByRole("radio", { name: conversationName() }),
-		).toBeNull();
+		expect(nativePrompt()).toBeTruthy();
 		runtime("waiting", "1");
-		act(() => useStore.getState().setUiPrefs({ interfaceMode: "basic" }));
-		expect(
-			screen.queryByRole("radio", { name: conversationName() }),
-		).toBeNull();
+		await screen.findByText("First answer");
+		expect(nativePrompt()).toBeNull();
 		expect(mocks.send).not.toHaveBeenCalled();
 	});
 });
