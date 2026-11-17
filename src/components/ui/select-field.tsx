@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 export function SelectField({
 	value,
 	onValueChange,
+	open,
 	onOpenChange,
 	disabled,
 	children,
@@ -33,6 +34,8 @@ export function SelectField({
 > & {
 	value: string;
 	onValueChange: (value: string) => void;
+	/** Controlled open state, for a caller that opens the menu on request. */
+	open?: boolean;
 	onOpenChange?: (open: boolean) => void;
 	children: ReactNode;
 	contentClassName?: string;
@@ -51,6 +54,7 @@ export function SelectField({
 		<Select
 			value={`:${value}`}
 			onValueChange={(next) => onValueChange(next.slice(1))}
+			{...(open === undefined ? {} : { open })}
 			onOpenChange={onOpenChange}
 			disabled={disabled}
 		>

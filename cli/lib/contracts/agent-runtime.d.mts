@@ -47,7 +47,11 @@ export function parseAgentRuntimeIdleInspection(
 ): AgentRuntimeIdleInspection | undefined;
 
 export type RuntimeSourceStopPolicy = "preserve" | "discard";
-export type ProviderPermissionMode = "default" | "auto_edit" | "skip_permissions";
+export type ProviderPermissionMode =
+  | "default"
+  | "auto_edit"
+  | "plan"
+  | "skip_permissions";
 
 export interface RuntimeLaunchSelectionTarget {
   readonly model: string | null;

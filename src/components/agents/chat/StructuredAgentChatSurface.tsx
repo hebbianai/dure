@@ -16,6 +16,7 @@ export function StructuredAgentChatSurface({
 	catalogSource,
 	onReady,
 	recovery,
+	onNewConversation,
 }: {
 	session: AgentChatSessionView;
 	paneApi?: IDockviewPanelProps["api"];
@@ -25,6 +26,7 @@ export function StructuredAgentChatSurface({
 	catalogSource?: ProviderCatalogSource;
 	onReady?: () => void;
 	recovery?: ChatTurnFailureRecovery;
+	onNewConversation?: () => void;
 }) {
 	const typography = useChatContentTypography();
 	return (
@@ -38,6 +40,7 @@ export function StructuredAgentChatSurface({
 			catalogSource={catalogSource}
 			onReady={onReady}
 			recovery={recovery}
+			onNewConversation={onNewConversation}
 			renderPending={(pending) => (
 				<AgentPendingRequestCard
 					pending={pending}

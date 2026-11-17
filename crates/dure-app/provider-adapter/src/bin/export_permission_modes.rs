@@ -13,6 +13,7 @@ fn projection() -> String {
             let modes = [
                 ProviderPermissionModeV1::Default,
                 ProviderPermissionModeV1::AutoEdit,
+                ProviderPermissionModeV1::Plan,
                 ProviderPermissionModeV1::SkipPermissions,
             ]
             .into_iter()

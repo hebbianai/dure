@@ -540,6 +540,7 @@ where
                 match attachment.permission_mode {
                     ProviderPermissionModeV1::Default => "default",
                     ProviderPermissionModeV1::AutoEdit => "auto_edit",
+                    ProviderPermissionModeV1::Plan => "plan",
                     ProviderPermissionModeV1::SkipPermissions => "skip_permissions",
                 }
                 .into(),

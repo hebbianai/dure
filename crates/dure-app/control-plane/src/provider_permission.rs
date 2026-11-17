@@ -11,11 +11,11 @@ pub(super) fn from_hmux(value: PermissionMode) -> ProviderPermissionModeV1 {
 pub(super) fn to_hmux(value: ProviderPermissionModeV1) -> PermissionMode {
     match value {
         // The hmux terminal protocol only distinguishes bypass from approvals;
-        // auto-edit stays on the approvals side there, and the exact mode
-        // still reaches the provider CLI through its launch arguments.
-        ProviderPermissionModeV1::Default | ProviderPermissionModeV1::AutoEdit => {
-            PermissionMode::Default
-        }
+        // auto-edit and plan stay on the approvals side there, and the exact
+        // mode still reaches the provider CLI through its launch arguments.
+        ProviderPermissionModeV1::Default
+        | ProviderPermissionModeV1::AutoEdit
+        | ProviderPermissionModeV1::Plan => PermissionMode::Default,
         ProviderPermissionModeV1::SkipPermissions => PermissionMode::BypassApprovals,
     }
 }

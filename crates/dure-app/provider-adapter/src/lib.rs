@@ -148,6 +148,7 @@ struct NativeProviderAdapter {
     startup_arguments: &'static [&'static str],
     prompt_delivery: PromptDelivery,
     auto_edit_arguments: Option<&'static [&'static str]>,
+    plan_arguments: Option<&'static [&'static str]>,
     skip_permissions_argument: Option<&'static str>,
     model_argument: Option<LaunchFlag>,
     effort_argument: Option<EffortArgument>,
@@ -162,6 +163,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Positional,
         auto_edit_arguments: Some(&["--permission-mode", "acceptEdits"]),
+        plan_arguments: Some(&["--permission-mode", "plan"]),
         skip_permissions_argument: Some("--dangerously-skip-permissions"),
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: Some(EffortArgument::ClaudeFlag),
@@ -179,6 +181,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
             "--ask-for-approval",
             "on-request",
         ]),
+        plan_arguments: None,
         skip_permissions_argument: Some("--dangerously-bypass-approvals-and-sandbox"),
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: Some(EffortArgument::CodexConfig),
@@ -191,6 +194,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::ProviderEvent,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: Some("--yolo"),
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -203,6 +207,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Named(LaunchFlag::Always("--prompt-interactive")),
         auto_edit_arguments: Some(&["--approval-mode=auto_edit"]),
+        plan_arguments: None,
         skip_permissions_argument: Some("--approval-mode=yolo"),
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -215,6 +220,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &["agent"],
         prompt_delivery: PromptDelivery::Positional,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: Some("--force"),
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -227,6 +233,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Named(LaunchFlag::Always("--interactive")),
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: Some("--allow-all"),
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -239,6 +246,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Named(LaunchFlag::FreshOnly("--prompt")),
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: Some("--auto"),
         model_argument: Some(LaunchFlag::FreshOnly("--model")),
         effort_argument: None,
@@ -251,6 +259,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Positional,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: Some("--always-approve"),
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -263,6 +272,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::ProviderEvent,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: Some(EffortArgument::Flag("--thinking")),
@@ -275,6 +285,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Stdin,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: None,
         effort_argument: None,
@@ -287,6 +298,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::FramedPositional,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: None,
         effort_argument: None,
@@ -299,6 +311,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Named(LaunchFlag::Always("--instruction")),
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -311,6 +324,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Named(LaunchFlag::Always("--prompt-interactive")),
         auto_edit_arguments: Some(&["--approval-mode=auto-edit"]),
+        plan_arguments: None,
         skip_permissions_argument: Some("--approval-mode=yolo"),
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -323,6 +337,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &["--tui"],
         prompt_delivery: PromptDelivery::FramedPositional,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -335,6 +350,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::FramedPositional,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -347,6 +363,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::FramedPositional,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: None,
         effort_argument: None,
@@ -359,6 +376,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Named(LaunchFlag::FreshOnly("--prompt")),
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -371,6 +389,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Positional,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: None,
         effort_argument: None,
@@ -383,6 +402,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Named(LaunchFlag::Always("--prompt-interactive")),
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -395,6 +415,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::FramedPositional,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -407,6 +428,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::Positional,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -419,6 +441,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &[],
         prompt_delivery: PromptDelivery::FreshFramedPositional,
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -431,6 +454,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &["run", "--interactive", "--text="],
         prompt_delivery: PromptDelivery::Named(LaunchFlag::Always("--text")),
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -443,6 +467,7 @@ const ADAPTERS: &[NativeProviderAdapter] = &[
         startup_arguments: &["chat", "--tui"],
         prompt_delivery: PromptDelivery::Named(LaunchFlag::Always("-q")),
         auto_edit_arguments: None,
+        plan_arguments: None,
         skip_permissions_argument: None,
         model_argument: Some(LaunchFlag::Always("--model")),
         effort_argument: None,
@@ -544,6 +569,12 @@ pub fn native_provider_permission_arguments(
         ProviderPermissionModeV1::AutoEdit => {
             let values = adapter
                 .auto_edit_arguments
+                .ok_or_else(|| failure("permission_mode_unsupported"))?;
+            arguments.extend(values.iter().map(|value| (*value).to_string()));
+        }
+        ProviderPermissionModeV1::Plan => {
+            let values = adapter
+                .plan_arguments
                 .ok_or_else(|| failure("permission_mode_unsupported"))?;
             arguments.extend(values.iter().map(|value| (*value).to_string()));
         }
@@ -1068,6 +1099,24 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(kimi_effort.as_str(), "effort_selection_unsupported");
+    }
+
+    #[test]
+    fn plan_mode_launches_only_where_the_adapter_declares_it() {
+        let claude = native_provider_permission_arguments(
+            &provider("claude"),
+            &ProviderPermissionModeV1::Plan,
+        )
+        .unwrap();
+        assert_eq!(claude, ["--permission-mode", "plan"]);
+        for id in ["codex", "gemini", "opencode"] {
+            let refused = native_provider_permission_arguments(
+                &provider(id),
+                &ProviderPermissionModeV1::Plan,
+            )
+            .unwrap_err();
+            assert_eq!(refused.as_str(), "permission_mode_unsupported", "{id}");
+        }
     }
 
     #[test]
