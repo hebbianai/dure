@@ -177,6 +177,12 @@ export const agents: Record<string, string> = {
 	"agents.runtime.pendingSettingsFailed": "설정을 적용하지 못했습니다. 다시 선택하거나 취소하세요.",
 	"agents.runtime.switchFailed": "런타임 전환 상태를 확인하지 못했습니다. 재시도하면 현재 세션 상태로 복구됩니다.",
 	"agents.runtime.viewLabel": "보기",
+	"agents.runtime.switchesWhenIdle": "대기 상태가 되면 전환",
+	"agents.runtime.chatWhenIdleTitle": "현재 턴이 끝나면 Chat으로 전환합니다. 아무것도 버리지 않습니다.",
+	"agents.runtime.scheduledSwitchFailed": "Chat으로 전환하지 못했습니다 ({error}). Chat을 다시 선택해 재시도하거나 취소하세요.",
+	"agents.runtime.scheduledSwitchFailedStatus": "전환 실패",
+	"agents.runtime.interruptAndSwitchNow": "턴을 중단하고 지금 전환",
+	"agents.runtime.cancelScheduledSwitch": "전환 예약 취소",
 	"agents.chat.questionRequired": "에이전트가 답변을 기다리고 있습니다",
 	"agents.chat.sensitiveAnswerUnsupported":
 		"민감한 답변은 Chat에 저장하지 않습니다. 이 요청을 거절한 뒤 Terminal을 사용하세요.",

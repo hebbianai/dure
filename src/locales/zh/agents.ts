@@ -178,6 +178,12 @@ export const agents: Record<string, string> = {
 	"agents.runtime.pendingSettingsFailed": "无法应用设置。请重新选择或取消。",
 	"agents.runtime.switchFailed": "无法确认运行时切换。请重试以恢复当前会话状态。",
 	"agents.runtime.viewLabel": "视图",
+	"agents.runtime.switchesWhenIdle": "空闲时切换",
+	"agents.runtime.chatWhenIdleTitle": "当前回合结束后切换到 Chat，不会丢弃任何内容。",
+	"agents.runtime.scheduledSwitchFailed": "无法切换到 Chat（{error}）。重新选择 Chat 以重试，或取消。",
+	"agents.runtime.scheduledSwitchFailedStatus": "切换失败",
+	"agents.runtime.interruptAndSwitchNow": "停止当前回合并立即切换",
+	"agents.runtime.cancelScheduledSwitch": "取消预约的切换",
 	"agents.chat.questionRequired": "代理需要回答",
 	"agents.chat.sensitiveAnswerUnsupported":
 		"敏感回答不会存储在 Chat 中。请拒绝此请求并改用 Terminal。",

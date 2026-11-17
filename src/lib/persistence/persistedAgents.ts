@@ -3,6 +3,10 @@ import { normalizeAgentDisplayName } from "@/lib/agents/agentDisplayName";
 import { initialAgentRuntimeBinding } from "@/lib/agents/agentLaunchCredential";
 import { parseAgentExecutionProfileV1 } from "@/lib/agents/chat/agentConversationContract";
 import { normalizeAgentInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
+import {
+	normalizeNativeAgentView,
+	normalizePendingChatHandover,
+} from "@/lib/agents/chatHandover";
 import { normalizeDeferredCredentialSwitchIntent } from "@/lib/sessions/credentials/deferredCredentialSwitch";
 import { conversationIdentityFromHook } from "@/lib/sessions/managed/managedConversationIdentity";
 import { normalizeTerminalPaneBindingV1 } from "@/lib/terminal/terminalBinding";
@@ -104,6 +108,10 @@ export function normalizePersistedAgents(
 			agent.pendingCredentialSwitch,
 		);
 		const workflowDispatch = normalizeWorkflowDispatch(agent.workflowDispatch);
+		const pendingChatHandover = normalizePendingChatHandover(
+			agent.pendingChatHandover,
+		);
+		const nativeView = normalizeNativeAgentView(agent.nativeView);
 		const bindinglessLegacyNative =
 			rawBinding === undefined &&
 			rawInteractionProfile == null &&
@@ -134,6 +142,8 @@ export function normalizePersistedAgents(
 					? undefined
 					: conversationId,
 			pendingCredentialSwitch,
+			pendingChatHandover,
+			nativeView,
 			workflowDispatch,
 		};
 	}).filter((agent): agent is Agent => agent !== undefined);

@@ -177,6 +177,12 @@ export const agents: Record<string, string> = {
 	"agents.runtime.pendingSettingsFailed": "Impossible d’appliquer les réglages. Sélectionnez à nouveau ou annulez.",
 	"agents.runtime.switchFailed": "Impossible de confirmer le changement d’environnement. Réessayez pour récupérer l’état actuel de la session.",
 	"agents.runtime.viewLabel": "Vue",
+	"agents.runtime.switchesWhenIdle": "Bascule une fois inactif",
+	"agents.runtime.chatWhenIdleTitle": "Passe au Chat à la fin du tour en cours. Rien n’est abandonné.",
+	"agents.runtime.scheduledSwitchFailed": "Impossible de passer au Chat ({error}). Choisissez Chat pour réessayer, ou annulez.",
+	"agents.runtime.scheduledSwitchFailedStatus": "Échec du changement",
+	"agents.runtime.interruptAndSwitchNow": "Arrêter le tour et changer maintenant",
+	"agents.runtime.cancelScheduledSwitch": "Annuler le changement planifié",
 	"agents.chat.questionRequired": "L’agent attend une réponse",
 	"agents.chat.sensitiveAnswerUnsupported":
 		"Les réponses sensibles ne sont pas enregistrées dans Chat. Refusez cette demande et utilisez Terminal.",
