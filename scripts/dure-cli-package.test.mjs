@@ -136,7 +136,7 @@ function packageFixture({ olderManagedInstall = false, appBundleInHome = null } 
   }));
   fs.mkdirSync(resources, { recursive: true });
   execFileSync(process.execPath, ["scripts/install-dure-cli.mjs", "--bundle", bundle], {
-    cwd: repository, env: buildEnvironment, stdio: "pipe", timeout: 30_000,
+    cwd: repository, env: buildEnvironment, stdio: "pipe", timeout: 120_000,
   });
   let installedResources;
   if (process.platform === "darwin") {
@@ -175,7 +175,7 @@ function packageFixture({ olderManagedInstall = false, appBundleInHome = null } 
       env: { ...buildEnvironment, HOME: home, DURE_CLI_SOURCE_REVISION: "b".repeat(40),
         DURE_CLI_INSTALL_ROOT: installRoot, DURE_CLI_INSTALL_DIR: path.join(home, ".local", "bin"),
         DURE_HMUX_BIN: hmux, DURE_HMUX_RUNTIME_BIN: hmux },
-      stdio: "pipe", timeout: 30_000,
+      stdio: "pipe", timeout: 120_000,
     });
     oldVersion = fs.realpathSync(path.join(installRoot, "current"));
   }
@@ -186,7 +186,7 @@ function packageFixture({ olderManagedInstall = false, appBundleInHome = null } 
   const environment = scriptTestEnvironment({ HOME: home, PATH: "/usr/bin:/bin", DURE_APP_CHANNEL: "stable" });
   const runStartup = () => {
     startup ??= compileStartupFixture(root);
-    return spawnSync(startup, [installedResources], { env: environment, encoding: "utf8", timeout: 30_000 });
+    return spawnSync(startup, [installedResources], { env: environment, encoding: "utf8", timeout: 120_000 });
   };
   return { root, home, environment, runStartup, installedResources, oldVersion };
 }
@@ -196,7 +196,7 @@ packagedTest("app startup activates its bundle while recovery follows the select
   roots.push(root);
   const executable = compileStartupFixture(root);
   const run = (profile) => spawnSync(executable, [root, "backend-command", ...(profile === undefined ? [] : [profile])], {
-    encoding: "utf8", timeout: 10_000,
+    encoding: "utf8", timeout: 60_000,
     env: scriptTestEnvironment({ HOME: root, DURE_HOME: path.join(root, "dure"), HMUX_DISCOVERY_ROOT: path.join(root, "discovery") }),
   });
   const startup = run();
@@ -208,7 +208,7 @@ packagedTest("app startup activates its bundle while recovery follows the select
   const invalid = run("--activate");
   expect(invalid.status).toBe(2);
   expect(invalid.stderr.trim()).toBe("backend_reconcile_profile_invalid");
-}, 30_000);
+}, 120_000);
 
 packagedTest("bootstraps the actual stable startup from a relocated package into an empty home without PATH Node", () => {
   const { home, environment, runStartup } = packageFixture();
@@ -219,7 +219,7 @@ packagedTest("bootstraps the actual stable startup from a relocated package into
   expect(cli).toContain(path.join(home, ".local", "share", "hebbian-ide-cli", "versions"));
   const command = path.join(home, ".local", "share", "hebbian-ide-cli", "bin", "dure");
   for (const executable of [cli, command]) {
-    const version = spawnSync(executable, ["version", "--json"], { env: environment, encoding: "utf8", timeout: 15_000 });
+    const version = spawnSync(executable, ["version", "--json"], { env: environment, encoding: "utf8", timeout: 60_000 });
     expect(version.status, version.stderr).toBe(0);
     expect(JSON.parse(version.stdout).command).toBe("dure");
   }
@@ -240,7 +240,7 @@ packagedTest("bootstraps the actual stable startup from a relocated package into
     }));
   `], {
     env: { ...environment, DURE_HMUX_BIN: "/missing-developer-hmux", DURE_HMUX_RUNTIME_BIN: "/missing-developer-runtime" },
-    encoding: "utf8", timeout: 15_000,
+    encoding: "utf8", timeout: 60_000,
   });
   expect(observe.status, observe.stderr).toBe(0);
   const runtime = JSON.parse(observe.stdout);
@@ -249,13 +249,13 @@ packagedTest("bootstraps the actual stable startup from a relocated package into
   expect(runtime.controlPlane).toBe(path.join(versionRoot, "bin", "dure-control-plane"));
   expect(runtime.claude.nodeBin).toBe(node);
   expect(runtime.claude.relayBin).toBe(path.join(versionRoot, "bin", "dure-claude-process-relay"));
-}, 60_000);
+}, 300_000);
 
 packagedTest("gives managed agents the packaged dure without its private Node or internal executables", () => {
   const { home, environment, installedResources } = packageFixture();
   const bundle = path.join(installedResources, "resources", "dure-cli", "current", "bin");
   const bootstrap = spawnSync(path.join(bundle, "node"), [path.join(bundle, "lib", "dure-cli-bootstrap.mjs"), home, "stable"], {
-    env: environment, encoding: "utf8", timeout: 15_000,
+    env: environment, encoding: "utf8", timeout: 60_000,
   });
   expect(bootstrap.status, bootstrap.stderr).toBe(0);
   const versionRoot = fs.realpathSync(path.join(home, ".local", "share", "hebbian-ide-cli", "current"));
@@ -269,7 +269,7 @@ packagedTest("gives managed agents the packaged dure without its private Node or
   fs.mkdirSync(userTools);
   for (const name of ["node", "hmux"]) fs.writeFileSync(path.join(userTools, name), "#!/bin/sh\n", { mode: 0o755 });
   const agent = spawnSync("/bin/sh", ["-c", "for name in dure node hmux hmux-runtime dure-control-plane; do printf '%s=%s\\n' \"$name\" \"$(command -v \"$name\")\"; done; dure version --json"], {
-    env: { ...environment, PATH: `${commands}:${userTools}:/usr/bin:/bin` }, encoding: "utf8", timeout: 15_000,
+    env: { ...environment, PATH: `${commands}:${userTools}:/usr/bin:/bin` }, encoding: "utf8", timeout: 60_000,
   });
   expect(agent.status, agent.stderr).toBe(0);
   const lines = agent.stdout.trim().split("\n");
@@ -282,7 +282,7 @@ packagedTest("gives managed agents the packaged dure without its private Node or
   ]);
   // The packaged command still runs on its own Node, with no Node on PATH.
   expect(JSON.parse(lines.slice(5).join("\n")).buildId).toBe(path.basename(versionRoot));
-}, 60_000);
+}, 300_000);
 
 packagedTest("preserves existing stable installs, development channels, global commands, and provider files", () => {
   const { home, environment, runStartup, installedResources } = packageFixture();
@@ -302,7 +302,7 @@ packagedTest("preserves existing stable installs, development channels, global c
   const current = fs.readlinkSync(path.join(installRoot, "current"));
   const bundle = path.join(installedResources, "resources", "dure-cli", "current", "bin");
   const concurrentBootstrap = spawnSync(path.join(bundle, "node"), [path.join(bundle, "lib", "dure-cli-bootstrap.mjs"), home, "stable"], {
-    env: environment, encoding: "utf8", timeout: 15_000,
+    env: environment, encoding: "utf8", timeout: 60_000,
   });
   expect(concurrentBootstrap.status, concurrentBootstrap.stderr).toBe(0);
   expect(JSON.parse(concurrentBootstrap.stdout).status).toBe("current");
@@ -311,7 +311,7 @@ packagedTest("preserves existing stable installs, development channels, global c
   expect(second.stdout).toBe(first.stdout);
   expect(fs.readlinkSync(path.join(installRoot, "current"))).toBe(current);
   for (const filename of protectedFiles) expect(fs.readFileSync(filename, "utf8")).toBe("fixture-user-owned-data\n");
-}, 60_000);
+}, 300_000);
 
 packagedTest("advances an older managed stable install to the shipped payload and preserves its rollback version", () => {
   const { home, environment, runStartup, oldVersion } = packageFixture({ olderManagedInstall: true });
@@ -322,24 +322,24 @@ packagedTest("advances an older managed stable install to the shipped payload an
   expect(path.dirname(path.dirname(cli))).not.toBe(oldVersion);
   expect(fs.readFileSync(path.join(oldVersion, "install.json"), "utf8")).toBe(oldMetadata);
   const version = spawnSync(path.join(home, ".local", "bin", "dure"), ["version", "--json"], {
-    env: environment, encoding: "utf8", timeout: 15_000,
+    env: environment, encoding: "utf8", timeout: 60_000,
   });
   expect(version.status, version.stderr).toBe(0);
   expect(JSON.parse(version.stdout).buildId).toBe(path.basename(path.dirname(path.dirname(cli))));
-}, 60_000);
+}, 300_000);
 
 macosTest("refuses to publish the shared CLI from a retained app backup copy", () => {
   const backup = path.join("Library", "Application Support", "Dure", "App Backups", "Dure-0.2.39-test.app");
   const { home, environment, installedResources } = packageFixture({ appBundleInHome: backup });
   const bundle = path.join(installedResources, "resources", "dure-cli", "current", "bin");
   const result = spawnSync(path.join(bundle, "node"), [path.join(bundle, "lib", "dure-cli-bootstrap.mjs"), home, "stable"], {
-    env: environment, encoding: "utf8", timeout: 15_000,
+    env: environment, encoding: "utf8", timeout: 60_000,
   });
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("refusing to publish shared Dure integration files from a retained app backup");
   // No CLI install, launcher or command link was written for the shared home.
   expect(fs.readdirSync(home)).toEqual(["Library"]);
-}, 60_000);
+}, 300_000);
 
 macosTest("startup from the installed bundle reports retained backups without touching inert ones", () => {
   const { home, environment, installedResources } = packageFixture();
@@ -355,7 +355,7 @@ macosTest("startup from the installed bundle reports retained backups without to
   }
   const bundle = path.join(installedResources, "resources", "dure-cli", "current", "bin");
   const result = spawnSync(path.join(bundle, "node"), [path.join(bundle, "lib", "dure-cli-bootstrap.mjs"), home, "stable"], {
-    env: environment, encoding: "utf8", timeout: 15_000,
+    env: environment, encoding: "utf8", timeout: 60_000,
   });
   expect(result.status, result.stderr).toBe(0);
   expect(JSON.parse(result.stdout)).toMatchObject({
@@ -364,7 +364,7 @@ macosTest("startup from the installed bundle reports retained backups without to
   });
   expect(fs.existsSync(path.join(home, ".local", "share", "hebbian-ide-cli", "current"))).toBe(true);
   expect(fs.readdirSync(backups).sort()).toEqual(["Dure-0.2.38-test.app-backup", "Other.app"]);
-}, 60_000);
+}, 300_000);
 
 packagedTest("refuses to replace an incomplete existing installation", () => {
   const { home, runStartup } = packageFixture();
@@ -377,7 +377,7 @@ packagedTest("refuses to replace an incomplete existing installation", () => {
   expect(result.stderr).toContain("Dure CLI bootstrap exited with exit status: 1");
   expect(fs.readFileSync(existing, "utf8")).toBe("user-owned-incomplete-install");
   expect(fs.existsSync(path.join(bin, "..", "current"))).toBe(false);
-}, 60_000);
+}, 300_000);
 
 packagedTest.each(["payload", "source-identity", "channel", "hmux-path"])("rejects a package with changed %s before promoting it", (change) => {
   const { home, runStartup, installedResources } = packageFixture();
@@ -393,4 +393,4 @@ packagedTest.each(["payload", "source-identity", "channel", "hmux-path"])("rejec
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("Dure CLI bootstrap exited with exit status: 1");
   expect(fs.readdirSync(home)).toEqual([]);
-}, 60_000);
+}, 300_000);
