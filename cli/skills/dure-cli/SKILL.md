@@ -295,12 +295,15 @@ Agent's exited Session until the app re-projects it. `read` and `send` by Agent
 name then follow the Agent's current Session from its backend, with a stderr
 note naming both; `send --json` reports the Session used in `target`.
 
-Terminal `send` never merges into text a person has typed but not submitted. It
-waits up to `--draft-wait` seconds (default 30) for them to submit; otherwise it
-fails with `hmux_input_draft_pending` and nothing written. Only their Enter clears
-the draft; erased text does not. Retry later or send a `--track` message instead.
-Use `--ignore-draft` only when the user asks for it. A session started before the
-guard gets ordinary input and a stderr warning; restarting it enables the guard.
+Terminal `send` never merges into text a person has typed but not submitted, and
+never answers a question or approval prompt the target agent shows its person.
+It waits up to `--draft-wait` seconds (default 30) for them to submit or for the
+agent to move past its prompt; otherwise it fails with `hmux_input_draft_pending`
+and nothing written. Only their Enter clears the draft; erased text does not.
+Retry later or send a `--track` message instead. `--ignore-draft` writes anyway,
+and into an open prompt that text becomes the answer: use it only when the user
+asks for it. A session started before the guard gets ordinary input and a stderr
+warning; restarting it enables the guard.
 
 ## Wait rather than poll `read`
 

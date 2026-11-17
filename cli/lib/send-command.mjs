@@ -18,7 +18,8 @@ Options:
   --workspace ID         Exact local managed Session scope, independent of the app registry
   --no-enter             Insert text without submitting; edit the chat draft
   --draft-wait SECONDS   Wait up to SECONDS (0-60, default 30) for unsubmitted user input to clear
-  --ignore-draft         Write even while the terminal holds unsubmitted user input
+  --ignore-draft         Write even while the terminal holds unsubmitted user input or an
+                         open question or approval prompt (the text answers it)
   --track                Send through the durable inbox; retain a private message tracking file
   --from NAME            Add a self-chosen label to the dure send header (up to 64 characters)
   --json                 Print the delivery receipt as JSON, without prompt text
@@ -43,9 +44,11 @@ Enter are one Host transaction, written only while the target has no such draft.
 waits up to --draft-wait for the draft to clear; if it remains the send fails with
 hmux_input_draft_pending and nothing written. The draft clears when the user submits it or
 erases every typed character with Backspace; input Dure cannot count (completion, history
-recall, a word erase) stays a draft until Enter. Retry later, use --track, or --ignore-draft
-to write anyway. A session started before the guard existed receives ordinary input, with
-a warning on stderr; restart that session to guard it.
+recall, a word erase) stays a draft until Enter. The guard also holds while the agent
+reports a question or approval prompt it has not moved past, so a message never becomes
+the answer only the user should give. Retry later or use --track; --ignore-draft writes
+anyway and should be used only when the user asks. A session started before the guard
+existed receives ordinary input, with a warning on stderr; restart that session to guard it.
 Every send starts with a header the CLI builds: "[dure send · from AGENT] " when it runs
 inside a registered Agent's managed Session, or "[dure send · unregistered] " otherwise.
 There is no option to leave it off. --from adds " · label NAME" inside the header; NAME

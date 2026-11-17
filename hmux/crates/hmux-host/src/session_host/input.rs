@@ -73,6 +73,23 @@ impl SessionHost {
         Ok(replay.has_unsubmitted_controller_draft())
     }
 
+    /// Reports whether draft-guarded automation must leave the terminal to
+    /// its person: they have an unsubmitted draft, or the provider reports an
+    /// open question or approval prompt that typed text would answer. Read
+    /// under the serialized PTY writer before the first byte, like the draft.
+    pub fn input_reserved_for_person(
+        &self,
+        expected_fence: &SessionFence,
+    ) -> Result<bool, SessionHostError> {
+        let ProviderEpoch::Running { replay, .. } = &self.current else {
+            return Err(SessionHostError::SessionExited);
+        };
+        expected_fence
+            .ensure_matches(replay.fence())
+            .map_err(|_| SessionHostError::FenceMismatch)?;
+        Ok(replay.has_unsubmitted_controller_draft() || replay.has_open_provider_prompt())
+    }
+
     /// Records a bare Escape that reached the PTY. During a provider-reported
     /// working turn it is the only sign of a person interrupting that turn,
     /// so the Host admits agent prompts while the pane stays busy for idle
