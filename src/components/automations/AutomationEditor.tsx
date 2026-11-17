@@ -6,7 +6,10 @@ import {
 	type AutomationStep,
 } from "@/components/automations/AutomationFlow";
 import { AutomationRuns } from "@/components/automations/AutomationRuns";
-import { useAutomationAction } from "@/components/automations/useAutomations";
+import {
+	readScheduleInteractionPreference,
+	useAutomationAction,
+} from "@/components/automations/useAutomations";
 import { FormField } from "@/components/common/FormField";
 import { LoadingRow} from "@/components/common/StatusBlocks";
 import { Button, ConfirmationButton } from "@/components/ui/button";
@@ -35,8 +38,6 @@ import type {
 	ScheduleProject,
 	SchedulePutIntent,
 } from "@/lib/ipc/dureSchedule";
-import { agentSpawnInteractionPreference } from "@/lib/workspace/pane/interfaceMode";
-import { useStore } from "@/store";
 
 export function AutomationEditor({
 	client,
@@ -100,7 +101,7 @@ export function AutomationEditor({
 			...structuredClone(
 				withScheduleInteractionPreference(
 					nextDraft,
-					agentSpawnInteractionPreference(useStore.getState().uiPrefs),
+					readScheduleInteractionPreference(),
 				),
 			),
 			schemaVersion: 1,
