@@ -205,6 +205,7 @@ same way at Codex's sign-in screen, with `agent_spawn_prompt_behind_login`
 and a `login` startup gate. A Claude Run on such an account gets the same
 error and gate after Claude fails the prompt's turn at sign-in; Claude does not
 retry that turn, so send the prompt again after signing in with `/login`.
+With `--json` the receipt's `summary.startupGate` names the gate.
 
 Generated worktrees inside a checkout are excluded through Git's local
 `info/exclude`, shared by interactive and scheduled Runs. This preserves tracked

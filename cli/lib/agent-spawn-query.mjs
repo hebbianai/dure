@@ -627,6 +627,21 @@ function validStageEvidence(value) {
   );
 }
 
+/**
+ * The first-run gate a Run that has not succeeded is stopped at, as its
+ * runtime launch recorded it: `login` (the account's login is missing or
+ * expired, so Codex shows its sign-in screen or Claude fails its first turn
+ * at sign-in) or `workspace_trust` (Claude's folder-trust prompt). Null for
+ * a succeeded Run, whose gate was answered, and for a receipt that recorded
+ * no known gate.
+ */
+export function stoppedAtStartupGate(receipt) {
+  if (receipt?.state === "succeeded" || !Array.isArray(receipt?.completed)) return null;
+  const kind = receipt.completed.find((stage) => stage?.stage === "runtime_launch")
+    ?.evidence?.startup_gate?.kind;
+  return STARTUP_GATES.includes(kind) ? kind : null;
+}
+
 function validStartupGate(value) {
   return (
     onlyKeys(value, ["kind", "launch_prompt_carried"]) &&

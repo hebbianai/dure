@@ -10,8 +10,10 @@ import {
 } from "../cli/lib/run-presentation.mjs";
 import {
   adoptExistingCheckout,
+  loginGatedNativeReceipt,
   succeededNativeReceipt,
   succeededStructuredReceipt,
+  trustGatedNativeReceipt,
 } from "./fixtures/agent-spawn-receipts.mjs";
 
 describe.each([
@@ -247,7 +249,27 @@ describe("Run receipt summary", () => {
       presentation: "opened",
       interactionProfile: "native_cli",
       parent: null,
+      startupGate: null,
     });
+  });
+
+  it("names the first-run screen a Run is stopped at, so the head says why the prompt is undelivered", () => {
+    // A Codex account whose login expired: Codex sits on its sign-in screen
+    // and the carried prompt waits behind it (#583).
+    const login = runReceiptSummary({ kind: "dure.agent_spawn.apply", receipt: loginGatedNativeReceipt() });
+    expect(login).toMatchObject({ state: "prompt_delivery_uncertain", startupGate: "login" });
+    const trust = runReceiptSummary({ kind: "dure.agent_spawn.apply", receipt: trustGatedNativeReceipt() });
+    expect(trust).toMatchObject({ state: "prompt_delivery_uncertain", startupGate: "workspace_trust" });
+
+    // A gate answered before the prompt went in no longer holds the Run up.
+    const answered = succeededNativeReceipt();
+    answered.completed[1].evidence.startup_gate = { kind: "workspace_trust", launch_prompt_carried: false };
+    expect(runReceiptSummary({ kind: "dure.agent_spawn.apply", receipt: answered }).startupGate).toBeNull();
+
+    // An unknown gate kind is not vouched for.
+    const unknown = loginGatedNativeReceipt();
+    unknown.completed[1].evidence.startup_gate.kind = "Not A Token!";
+    expect(runReceiptSummary({ kind: "dure.agent_spawn.apply", receipt: unknown }).startupGate).toBeNull();
   });
 
   it("reports the runtime's actual session, not the planned one, when the launch landed elsewhere", () => {
@@ -281,10 +303,11 @@ describe("Run receipt summary", () => {
       presentation: null,
       interactionProfile: "native_cli",
       parent: null,
+      startupGate: null,
     });
     expect(runReceiptSummary({ kind: "dure.agent_spawn.error", error: { code: "x" } })).toEqual({
       agentId: null, sessionId: null, workspaceId: null, panelId: null, spaceId: null,
-      state: null, presentation: null, interactionProfile: null, parent: null,
+      state: null, presentation: null, interactionProfile: null, parent: null, startupGate: null,
     });
   });
 });

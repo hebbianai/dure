@@ -70,8 +70,10 @@ delivery finished, never that the provider answered.
 
 With `--json` the receipt starts with `summary` — `agentId`, `sessionId`,
 `workspaceId`, `panelId`, `spaceId`, `state`, `presentation`,
-`interactionProfile` — so the identities the next command needs are the first
-keys in the output; a value the receipt cannot vouch for is `null`. The full
+`interactionProfile`, `parent`, `startupGate` — so the identities the next
+command needs are the first keys in the output; a value the receipt cannot
+vouch for is `null`. `startupGate` names the first-run gate an unfinished
+Run is stopped at (`login` or `workspace_trust`, below). The full
 `receipt`, `presentation` and `registration` follow unchanged. `source.backend`
 names the backend and its `capabilityCount`; pass `--verbose` when you need the
 full `capabilities` list (also on `dure projects … --json`).
@@ -80,7 +82,8 @@ A Claude Run into a folder the selected account has not trusted stops at Claude
 Code's folder-trust prompt before it reads anything, including the prompt the
 launch command carried. The receipt ends `prompt_delivery_uncertain` with
 `agent_spawn_prompt_behind_workspace_trust`, its `runtime_launch` evidence
-carries `startup_gate`, and `dure ls` shows `input_required`. Answer the prompt
+carries `startup_gate`, `summary.startupGate` is `workspace_trust`, and
+`dure ls` shows `input_required`. Answer the prompt
 in the session (`dure read`, `dure send-keys`): once the folder is trusted Claude
 submits the carried prompt itself, so never send it again. Dure does not answer
 trust prompts for you.
@@ -88,7 +91,8 @@ trust prompts for you.
 A Codex Run whose selected account has no usable login, missing or expired,
 stops the same way at Codex's sign-in screen. The receipt ends
 `prompt_delivery_uncertain` with `agent_spawn_prompt_behind_login` and a
-`startup_gate` of kind `login`, and `dure ls` shows `input_required`. Someone
+`startup_gate` of kind `login` (`summary.startupGate: "login"`), and `dure ls`
+shows `input_required`. Someone
 has to sign the account in, in that session or before the next Run; once
 signed in Codex submits the carried prompt itself, so never send it again.
 
