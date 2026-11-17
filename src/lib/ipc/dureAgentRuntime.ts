@@ -112,7 +112,7 @@ const PROVIDER_PERMISSION_MODES: readonly string[] = [
 	"skip_permissions",
 ] satisfies readonly DureProviderPermissionModeV1[];
 
-function isProviderPermissionMode(
+export function isProviderPermissionMode(
 	value: unknown,
 ): value is DureProviderPermissionModeV1 {
 	return typeof value === "string" && PROVIDER_PERMISSION_MODES.includes(value);
