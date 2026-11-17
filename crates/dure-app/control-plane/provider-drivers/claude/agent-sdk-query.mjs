@@ -71,6 +71,27 @@ export function providerCommandCatalog(commands, terminalOnly = []) {
 	return { commands: catalog };
 }
 
+// Claude's permission modes in Dure's vocabulary; `auto` and `dontAsk` have
+// no Dure selection.
+const DURE_PERMISSION_MODES = new Map([
+	["acceptEdits", "auto_edit"],
+	["bypassPermissions", "skip_permissions"],
+	["default", "default"],
+	["plan", "plan"],
+]);
+
+/** A permission mode the running session reported changing to (Claude's
+ * `system:status`), such as the mode it continues in once a plan is approved.
+ * The raw provider mode stays beside Dure's, which is null when Dure has no
+ * equivalent selection. */
+export function providerPermissionModeEvidence(value) {
+	if (typeof value !== "string" || !/^[A-Za-z]{1,32}$/u.test(value)) return null;
+	return {
+		permissionMode: DURE_PERMISSION_MODES.get(value) ?? null,
+		providerPermissionMode: value,
+	};
+}
+
 function adapterError(reason) {
 	const error = new Error(`dure_claude_agent_sdk_${reason}`);
 	error.code = "DURE_CLAUDE_AGENT_SDK_CONTRACT";
@@ -815,6 +836,22 @@ export function createClaudeAgentSdkQueryFactory({
 				// The SDK pushes the full replacement list mid-session.
 				emitCommandCatalog(message.commands);
 				return;
+			}
+			if (
+				message.type === "system" &&
+				message.subtype === "status" &&
+				message.permissionMode !== undefined
+			) {
+				// Claude reports each permission mode change, such as leaving plan
+				// mode once its plan is approved; the pane's selection follows it.
+				const evidence = providerPermissionModeEvidence(message.permissionMode);
+				if (evidence && !terminalDelivered) {
+					try {
+						emit("provider_permission_mode", evidence);
+					} catch {
+						// Mode evidence is advisory; it never fails the live stream.
+					}
+				}
 			}
 			if (message.type === "stream_event") {
 				handleStreamEvent(message);

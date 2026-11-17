@@ -2,6 +2,7 @@ import { AgentChatSurface } from "@/components/agents/chat/AgentChatSurface";
 import type { IDockviewPanelProps } from "dockview-react";
 import { AgentPendingRequestCard } from "@/components/agents/chat/AgentPendingRequestCard";
 import type { ChatTurnFailureRecovery } from "@/components/agents/chat/ChatComposer";
+import { useApprovedPlanPermissionSelection } from "@/components/agents/chat/useApprovedPlanPermissionSelection";
 import { useChatContentTypography } from "@/components/agents/chat/useChatContentTypography";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import type { ProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
@@ -29,6 +30,7 @@ export function StructuredAgentChatSurface({
 	onNewConversation?: () => void;
 }) {
 	const typography = useChatContentTypography();
+	useApprovedPlanPermissionSelection(session, launchSelection);
 	return (
 		<AgentChatSurface
 			session={session}
