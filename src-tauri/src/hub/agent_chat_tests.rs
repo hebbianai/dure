@@ -1,6 +1,8 @@
 use super::*;
 use crate::hub::layout::{ChatAgent, SessionPlacement, SidebarLayout};
-use dure_hub_protocol::agent_chat::{AgentChatActionState, AgentChatTimelineOutcome};
+use dure_hub_protocol::agent_chat::{
+    read_action, read_timeline, AgentChatActionState, AgentChatTimelineOutcome,
+};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -245,23 +247,112 @@ fn shown(result: HubAgentChatTimelineResult) -> AgentChatTimeline {
     result.timeline.expect("a timeline")
 }
 
+/// The frame the hub writes for one request, served the way `server.rs`
+/// serves it: `this-laptop` is this desktop's box.
+fn served(sink: Option<&dyn AgentChatSink>, route: BoxRoute, request: HubRequest) -> Vec<u8> {
+    answer_request(sink, |_| route, &request)
+        .expect("a chat request")
+        .expect("encodes")
+}
+
+fn read(
+    chats: &BackendAgentChats,
+    agent_id: &str,
+    before: Option<u64>,
+    limit: Option<u32>,
+) -> HubAgentChatTimelineResult {
+    let request = HubRequest::AgentChatTimelineV1 {
+        box_id: "this-laptop".to_string(),
+        agent_id: agent_id.to_string(),
+        before,
+        limit,
+    };
+    read_timeline(&mut served(Some(chats), BoxRoute::Local, request).as_slice()).expect("reads")
+}
+
+fn acted(chats: &BackendAgentChats, request: HubRequest) -> HubAgentChatActionResult {
+    read_action(&mut served(Some(chats), BoxRoute::Local, request).as_slice()).expect("reads")
+}
+
+fn send(chats: &BackendAgentChats, action_id: &str, text: &str) -> HubAgentChatActionResult {
+    acted(
+        chats,
+        HubRequest::AgentChatSendV1 {
+            box_id: "this-laptop".to_string(),
+            agent_id: "agent-1".to_string(),
+            action_id: action_id.to_string(),
+            text: text.to_string(),
+        },
+    )
+}
+
+fn interrupt(
+    chats: &BackendAgentChats,
+    action_id: &str,
+    turn_id: &str,
+) -> HubAgentChatActionResult {
+    acted(
+        chats,
+        HubRequest::AgentChatInterruptV1 {
+            box_id: "this-laptop".to_string(),
+            agent_id: "agent-1".to_string(),
+            action_id: action_id.to_string(),
+            turn_id: turn_id.to_string(),
+        },
+    )
+}
+
+fn answer(
+    chats: &BackendAgentChats,
+    request_id: &str,
+    answer: AgentChatAnswer,
+) -> HubAgentChatActionResult {
+    acted(
+        chats,
+        HubRequest::AgentChatAnswerV1 {
+            box_id: "this-laptop".to_string(),
+            agent_id: "agent-1".to_string(),
+            action_id: "answer-1".to_string(),
+            request_id: request_id.to_string(),
+            answer,
+        },
+    )
+}
+
 #[test]
 fn only_this_desktops_box_is_served() {
     let backend = backend(false, |_, _| unreachable!());
     let chats = chats(&backend);
-    let sink: &dyn AgentChatSink = &chats;
+    let timeline = || HubRequest::AgentChatTimelineV1 {
+        box_id: "elsewhere".to_string(),
+        agent_id: "agent-1".to_string(),
+        before: None,
+        limit: None,
+    };
+    let send = || HubRequest::AgentChatSendV1 {
+        box_id: "elsewhere".to_string(),
+        agent_id: "agent-1".to_string(),
+        action_id: "press-1".to_string(),
+        text: "hi".to_string(),
+    };
     for (route, code) in [
         (BoxRoute::Remote, AgentChatRefusal::RemoteUnsupported),
         (BoxRoute::Unknown, AgentChatRefusal::AgentNotFound),
     ] {
-        let result = answer_timeline(Some(sink), route, "agent-1", None, None);
-        assert_eq!(result.code, Some(code));
-        let result = answer_send(Some(sink), route, "agent-1", "press-1", "hi");
-        assert_eq!(result.code, Some(code));
+        let read = read_timeline(&mut served(Some(&chats), route, timeline()).as_slice()).unwrap();
+        assert_eq!(read.code, Some(code));
+        let sent = read_action(&mut served(Some(&chats), route, send()).as_slice()).unwrap();
+        assert_eq!(sent.code, Some(code));
     }
-    let result = answer_timeline(None, BoxRoute::Local, "agent-1", None, None);
-    assert_eq!(result.code, Some(AgentChatRefusal::Unavailable));
+    let unserved =
+        read_timeline(&mut served(None, BoxRoute::Local, timeline()).as_slice()).unwrap();
+    assert_eq!(unserved.code, Some(AgentChatRefusal::Unavailable));
     assert!(backend.operations().is_empty());
+}
+
+#[test]
+fn other_requests_are_not_chat_requests() {
+    assert!(answer_request(None, |_| BoxRoute::Local, &HubRequest::Catalog).is_none());
 }
 
 /// The phone names what the catalog gave it; an agent the sidebar did not
@@ -269,7 +360,7 @@ fn only_this_desktops_box_is_served() {
 #[test]
 fn an_agent_the_sidebar_did_not_list_is_not_found() {
     let backend = backend(false, |_, _| unreachable!());
-    let result = chats(&backend).timeline("agent-elsewhere", None, None);
+    let result = read(&chats(&backend), "agent-elsewhere", None, None);
     assert_eq!(result.code, Some(AgentChatRefusal::AgentNotFound));
     assert!(backend.operations().is_empty());
 }
@@ -277,14 +368,14 @@ fn an_agent_the_sidebar_did_not_list_is_not_found() {
 #[test]
 fn an_agent_without_a_chat_is_not_found() {
     let backend = Scripted::new(|_, _| Ok(json!({"schemaVersion": 1, "binding": null})));
-    let result = chats(&backend).timeline("agent-1", None, None);
+    let result = read(&chats(&backend), "agent-1", None, None);
     assert_eq!(result.code, Some(AgentChatRefusal::AgentNotFound));
 }
 
 #[test]
 fn the_timeline_crosses_as_messages_and_tool_names() {
     let backend = backend(true, |_, _| unreachable!());
-    let timeline = shown(chats(&backend).timeline("agent-1", None, Some(50)));
+    let timeline = shown(read(&chats(&backend), "agent-1", None, Some(50)));
     assert_eq!(
         timeline.items,
         vec![
@@ -339,7 +430,7 @@ fn the_timeline_crosses_as_messages_and_tool_names() {
 #[test]
 fn tool_inputs_and_reasoning_never_cross() {
     let backend = backend(true, |_, _| unreachable!());
-    let result = chats(&backend).timeline("agent-1", None, None);
+    let result = read(&chats(&backend), "agent-1", None, None);
     let encoded = String::from_utf8(serde_json::to_vec(&result).unwrap()).unwrap();
     for private in [
         SECRET,
@@ -391,7 +482,7 @@ fn tool_inputs_and_reasoning_never_cross() {
 #[test]
 fn an_older_page_is_read_before_the_named_item_on_the_current_epoch() {
     let backend = backend(false, |_, _| unreachable!());
-    shown(chats(&backend).timeline("agent-1", Some(4), None));
+    shown(read(&chats(&backend), "agent-1", Some(4), None));
     let read = backend.body_of("agent_conversation.read");
     assert_eq!(read["direction"], "before");
     assert_eq!(
@@ -407,7 +498,7 @@ fn a_message_starts_a_turn_when_none_runs() {
         "agent_conversation.start_turn" => Ok(receipt(body, "accepted")),
         other => panic!("unexpected {other}"),
     });
-    let result = chats(&backend).send("agent-1", "press-1", "Run the tests\r\nplease");
+    let result = send(&chats(&backend), "press-1", "Run the tests\r\nplease");
     assert_eq!(result.state, AgentChatActionState::Done, "{result:?}");
     assert_eq!(result.delivery, Some(AgentChatDelivery::Started));
     let start = backend.body_of("agent_conversation.start_turn");
@@ -428,7 +519,7 @@ fn a_message_steers_the_running_turn() {
         "agent_conversation.steer_turn" => Ok(receipt(body, "accepted")),
         other => panic!("unexpected {other}"),
     });
-    let result = chats(&backend).send("agent-1", "press-1", "also update the docs");
+    let result = send(&chats(&backend), "press-1", "also update the docs");
     assert_eq!(
         result.delivery,
         Some(AgentChatDelivery::Steered),
@@ -450,7 +541,7 @@ fn a_message_waits_behind_a_turn_the_provider_cannot_steer() {
         }
         other => panic!("unexpected {other}"),
     });
-    let result = chats(&backend).send("agent-1", "press-1", "after this, run lint");
+    let result = send(&chats(&backend), "press-1", "after this, run lint");
     assert_eq!(
         result.delivery,
         Some(AgentChatDelivery::Queued),
@@ -466,6 +557,7 @@ fn a_message_waits_behind_a_turn_the_provider_cannot_steer() {
 fn a_retried_press_reports_the_message_it_already_sent() {
     let backend = Scripted::new(|operation, _| match operation {
         "agent_conversation.inspect" => Ok(json!({"schemaVersion": 1, "binding": binding()})),
+        "agent_conversation.read" => Ok(json!({"schemaVersion": 1, "read": page(false)})),
         "agent_conversation.inspect_input" => {
             let intent = json!({
                 "schemaVersion": 1, "interactionSessionId": "interaction-1",
@@ -479,7 +571,7 @@ fn a_retried_press_reports_the_message_it_already_sent() {
         }
         other => panic!("unexpected {other}"),
     });
-    let result = chats(&backend).send("agent-1", "press-1", "hi");
+    let result = send(&chats(&backend), "press-1", "hi");
     assert_eq!(
         result.delivery,
         Some(AgentChatDelivery::Started),
@@ -489,6 +581,7 @@ fn a_retried_press_reports_the_message_it_already_sent() {
         backend.operations(),
         [
             "agent_conversation.inspect",
+            "agent_conversation.read",
             "agent_conversation.inspect_input"
         ]
     );
@@ -497,7 +590,7 @@ fn a_retried_press_reports_the_message_it_already_sent() {
 #[test]
 fn a_turn_the_provider_failed_is_refused_with_its_reason() {
     let backend = backend(false, |_, body| Ok(receipt(body, "failed")));
-    let result = chats(&backend).send("agent-1", "press-1", "hi");
+    let result = send(&chats(&backend), "press-1", "hi");
     assert_eq!(result.code, Some(AgentChatRefusal::Rejected));
     assert_eq!(result.detail.as_deref(), Some("usage_limit: Try later"));
 }
@@ -507,7 +600,7 @@ fn a_turn_the_provider_failed_is_refused_with_its_reason() {
 #[test]
 fn a_write_the_transport_lost_is_unknown() {
     let backend = backend(false, |_, _| Err(failure("backend_transport_unavailable")));
-    let result = chats(&backend).send("agent-1", "press-1", "hi");
+    let result = send(&chats(&backend), "press-1", "hi");
     assert_eq!(result.state, AgentChatActionState::Unknown);
 }
 
@@ -522,7 +615,7 @@ fn an_unusable_message_or_press_is_refused_before_the_backend_hears_of_it() {
         ("bad press", "hi"),
         ("press-1", long.as_str()),
     ] {
-        let result = chats.send("agent-1", action, text);
+        let result = send(&chats, action, text);
         assert_eq!(
             result.code,
             Some(AgentChatRefusal::InvalidRequest),
@@ -539,12 +632,12 @@ fn an_interrupt_names_the_turn_it_saw() {
         other => panic!("unexpected {other}"),
     });
     let chats = chats(&backend);
-    let moved = chats.interrupt("agent-1", "stop-1", "turn-old");
+    let moved = interrupt(&chats, "stop-1", "turn-old");
     assert_eq!(moved.code, Some(AgentChatRefusal::TurnChanged));
     assert!(!backend
         .operations()
         .contains(&"agent_conversation.interrupt_turn".to_string()));
-    let stopped = chats.interrupt("agent-1", "stop-1", "turn-a");
+    let stopped = interrupt(&chats, "stop-1", "turn-a");
     assert_eq!(stopped.state, AgentChatActionState::Done, "{stopped:?}");
     let body = backend.body_of("agent_conversation.interrupt_turn");
     assert_eq!(body["turnId"], "turn-a");
@@ -555,7 +648,7 @@ fn an_interrupt_names_the_turn_it_saw() {
 #[test]
 fn nothing_to_interrupt_when_no_turn_runs() {
     let backend = backend(false, |_, _| unreachable!());
-    let result = chats(&backend).interrupt("agent-1", "stop-1", "turn-a");
+    let result = interrupt(&chats(&backend), "stop-1", "turn-a");
     assert_eq!(result.code, Some(AgentChatRefusal::NotRunning));
 }
 
@@ -576,11 +669,10 @@ fn a_permission_is_answered_the_way_the_desktop_card_answers_it() {
         "agent_conversation.answer_pending" => answered(body),
         other => panic!("unexpected {other}"),
     });
-    let result = chats(&backend).answer(
-        "agent-1",
-        "answer-1",
+    let result = answer(
+        &chats(&backend),
         "request-1",
-        &AgentChatAnswer::Permission { allow: false },
+        AgentChatAnswer::Permission { allow: false },
     );
     assert_eq!(result.state, AgentChatActionState::Done, "{result:?}");
     let body = backend.body_of("agent_conversation.answer_pending");
@@ -597,29 +689,22 @@ fn a_question_is_answered_by_question_id() {
         other => panic!("unexpected {other}"),
     });
     let chats = chats(&backend);
-    let partial = chats.answer(
-        "agent-1",
-        "answer-1",
+    let partial = answer(
+        &chats,
         "request-2",
-        &AgentChatAnswer::Question {
+        AgentChatAnswer::Question {
             answers: BTreeMap::new(),
         },
     );
     assert_eq!(partial.code, Some(AgentChatRefusal::InvalidRequest));
-    let wrong_kind = chats.answer(
-        "agent-1",
-        "answer-1",
+    let wrong_kind = answer(
+        &chats,
         "request-2",
-        &AgentChatAnswer::Permission { allow: true },
+        AgentChatAnswer::Permission { allow: true },
     );
     assert_eq!(wrong_kind.code, Some(AgentChatRefusal::InvalidRequest));
     let answers = BTreeMap::from([("Which database?".to_string(), "SQLite".to_string())]);
-    let result = chats.answer(
-        "agent-1",
-        "answer-1",
-        "request-2",
-        &AgentChatAnswer::Question { answers },
-    );
+    let result = answer(&chats, "request-2", AgentChatAnswer::Question { answers });
     assert_eq!(result.state, AgentChatActionState::Done, "{result:?}");
     assert_eq!(
         backend.body_of("agent_conversation.answer_pending")["answer"],
@@ -630,11 +715,10 @@ fn a_question_is_answered_by_question_id() {
 #[test]
 fn a_request_no_longer_pending_is_not_found() {
     let backend = backend(true, |_, _| unreachable!());
-    let result = chats(&backend).answer(
-        "agent-1",
-        "answer-1",
+    let result = answer(
+        &chats(&backend),
         "request-gone",
-        &AgentChatAnswer::Permission { allow: true },
+        AgentChatAnswer::Permission { allow: true },
     );
     assert_eq!(result.code, Some(AgentChatRefusal::RequestNotFound));
 }

@@ -39,7 +39,7 @@ function open(overrides: Partial<AgentChatViewOptions> = {}) {
     act: vi.fn(async (): Promise<AgentChatActionAnswer> => ({ state: "done", delivery: "started" })),
     activePollMs: 60_000,
     idlePollMs: 60_000,
-    actionId: (kind: string) => `${kind}-1`,
+    actionId: () => "press-1",
     ...overrides,
   };
   controller = createAgentChatView(options);
@@ -84,7 +84,7 @@ describe("the chat of a chat-owned agent", () => {
     await flush();
     send(container, "Run the tests");
     await flush();
-    expect(options.act).toHaveBeenCalledWith({ kind: "send", actionId: "send-1", text: "Run the tests" });
+    expect(options.act).toHaveBeenCalledWith({ kind: "send", actionId: "press-1", text: "Run the tests" });
     expect(options.fetch).toHaveBeenCalledTimes(2);
     expect(container.querySelector<HTMLTextAreaElement>(".chat__input")?.value).toBe("");
   });
@@ -110,7 +110,7 @@ describe("the chat of a chat-owned agent", () => {
     expect(container.querySelector(".agent-chat__live")?.textContent).toContain("Looking");
     stop?.click();
     await flush();
-    expect(options.act).toHaveBeenCalledWith({ kind: "interrupt", actionId: "stop-1", turnId: "turn-7" });
+    expect(options.act).toHaveBeenCalledWith({ kind: "interrupt", actionId: "press-1", turnId: "turn-7" });
   });
 
   it("approves or denies a permission request by the tool's name only", async () => {
@@ -130,7 +130,7 @@ describe("the chat of a chat-owned agent", () => {
     await flush();
     expect(options.act).toHaveBeenCalledWith({
       kind: "answer",
-      actionId: "answer-1",
+      actionId: "press-1",
       requestId: "request-1",
       answer: { kind: "permission", allow: true },
     });
@@ -177,7 +177,7 @@ describe("the chat of a chat-owned agent", () => {
     await flush();
     expect(options.act).toHaveBeenCalledWith({
       kind: "answer",
-      actionId: "answer-1",
+      actionId: "press-1",
       requestId: "request-2",
       answer: { kind: "question", answers: { db: "Postgres" } },
     });

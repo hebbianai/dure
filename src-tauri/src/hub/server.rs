@@ -1163,18 +1163,14 @@ fn serve_one(
         return;
     }
 
-    if let Some(result) = agent_chat_answer(&hub, &hello.request) {
-        // A chat-owned agent's conversation lives on this desktop's backend
-        // (`agent_chat.rs`). An answer that never arrives would read as
-        // "refused" and invite a second send, so every outcome is written.
-        let framed = match result {
-            AgentChatAnswerFrame::Timeline(result) => {
-                dure_hub_protocol::agent_chat::encode_timeline(&result)
-            }
-            AgentChatAnswerFrame::Action(result) => {
-                dure_hub_protocol::agent_chat::encode_action(&result)
-            }
-        };
+    // A chat-owned agent's conversation lives on this desktop's backend
+    // (`agent_chat.rs`). An answer that never arrives would read as "refused"
+    // and invite a second send, so every outcome is written.
+    if let Some(framed) = super::agent_chat::answer_request(
+        hub.agent_chats,
+        |box_id| box_route(&hub, box_id),
+        &hello.request,
+    ) {
         match framed {
             Ok(framed) => {
                 let _ = tls.write_all(&framed);
@@ -1376,70 +1372,6 @@ fn serve_one(
     };
     let _ = tls.write_all(&framed);
     let _ = tls.flush();
-}
-
-enum AgentChatAnswerFrame {
-    Timeline(dure_hub_protocol::agent_chat::HubAgentChatTimelineResult),
-    Action(dure_hub_protocol::agent_chat::HubAgentChatActionResult),
-}
-
-/// The answer to a chat-owned agent request, or `None` for any other request.
-fn agent_chat_answer(hub: &ServedHub<'_>, request: &HubRequest) -> Option<AgentChatAnswerFrame> {
-    use super::agent_chat;
-    let sink = hub.agent_chats;
-    Some(match request {
-        HubRequest::AgentChatTimelineV1 {
-            box_id,
-            agent_id,
-            before,
-            limit,
-        } => AgentChatAnswerFrame::Timeline(agent_chat::answer_timeline(
-            sink,
-            box_route(hub, box_id),
-            agent_id,
-            *before,
-            *limit,
-        )),
-        HubRequest::AgentChatSendV1 {
-            box_id,
-            agent_id,
-            action_id,
-            text,
-        } => AgentChatAnswerFrame::Action(agent_chat::answer_send(
-            sink,
-            box_route(hub, box_id),
-            agent_id,
-            action_id,
-            text,
-        )),
-        HubRequest::AgentChatInterruptV1 {
-            box_id,
-            agent_id,
-            action_id,
-            turn_id,
-        } => AgentChatAnswerFrame::Action(agent_chat::answer_interrupt(
-            sink,
-            box_route(hub, box_id),
-            agent_id,
-            action_id,
-            turn_id,
-        )),
-        HubRequest::AgentChatAnswerV1 {
-            box_id,
-            agent_id,
-            action_id,
-            request_id,
-            answer,
-        } => AgentChatAnswerFrame::Action(agent_chat::answer_pending(
-            sink,
-            box_route(hub, box_id),
-            agent_id,
-            action_id,
-            request_id,
-            answer,
-        )),
-        _ => return None,
-    })
 }
 
 /// Whether a request's box is this desktop's own, a remote host it reaches,

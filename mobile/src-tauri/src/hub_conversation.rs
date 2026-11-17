@@ -93,8 +93,8 @@ fn no_answer() -> CommandError {
     )
 }
 
-fn lost(error: impl std::fmt::Display) -> HubAgentPromptResult {
-    HubAgentPromptResult::unknown(format!("The computer's answer was lost: {error}"))
+fn lost(error: impl std::fmt::Display) -> String {
+    format!("The computer's answer was lost: {error}")
 }
 
 fn answer_error(error: &ConversationError) -> CommandError {
@@ -109,69 +109,98 @@ fn answer_error(error: &ConversationError) -> CommandError {
     }
 }
 
-/// One transcript question on an open stream.
-fn transcript_on_stream<S: Read + Write>(
-    stream: &mut S,
+/// One question on an open stream, read by `read`. A close before the first
+/// byte of the answer is [`NO_ANSWER`]; any other failure is `error`'s.
+fn ask_on_stream<'s, S: Read + Write, T>(
+    stream: &'s mut S,
     token: &str,
     request: HubRequest,
-) -> Result<HubConversationTranscriptResult, CommandError> {
+    read: impl FnOnce(&mut Counted<'s, S>) -> Result<T, ConversationError>,
+    error: impl FnOnce(&ConversationError) -> CommandError,
+) -> Result<T, CommandError> {
     hub_client::handshake_for(stream, token, request).map_err(|error| client_error(&error))?;
     let mut counted = Counted {
         inner: stream,
         read: 0,
     };
-    match conversation::read_transcript(&mut counted) {
+    match read(&mut counted) {
         Ok(result) => Ok(result),
-        Err(ConversationError::Frame(error)) if closed_silently(&error, counted.read) => {
+        Err(ConversationError::Frame(frame)) if closed_silently(&frame, counted.read) => {
             Err(no_answer())
         }
-        Err(error) => Err(answer_error(&error)),
+        Err(failure) => Err(error(&failure)),
     }
 }
 
-/// One background-work question on an open stream. A silent close is
-/// [`NO_ANSWER`], as for the transcript.
-fn background_work_on_stream<S: Read + Write>(
-    stream: &mut S,
-    token: &str,
-    request: HubRequest,
-) -> Result<HubAgentBackgroundWorkResult, CommandError> {
-    hub_client::handshake_for(stream, token, request).map_err(|error| client_error(&error))?;
-    let mut counted = Counted {
-        inner: stream,
-        read: 0,
-    };
-    match background_work::read_background_work(&mut counted) {
-        Ok(result) => Ok(result),
-        Err(ConversationError::Frame(error)) if closed_silently(&error, counted.read) => {
-            Err(no_answer())
-        }
-        Err(error) => Err(answer_error(&error)),
-    }
-}
-
-/// One prompt on an open stream.
+/// One write on an open stream, read by `read`.
 ///
 /// `Err` only while the greeting is not yet fully written: the desktop cannot
 /// act on part of a frame. Once it is, every failure — no ack, a lost ack, a
-/// silent close, a broken answer — is `Ok(unknown)`, because the desktop acks
-/// before it acts and the prompt may already be in the agent's terminal.
-fn prompt_on_stream<S: Read + Write>(
+/// silent close, a broken answer — is `Ok(unknown(..))`, because the desktop
+/// acks before it acts and the write may already have happened.
+fn write_on_stream<S: Read + Write, T>(
     stream: &mut S,
     token: &str,
     request: HubRequest,
-) -> Result<HubAgentPromptResult, CommandError> {
+    read: impl FnOnce(&mut S) -> Result<T, ConversationError>,
+    unknown: impl FnOnce(String) -> T,
+) -> Result<T, CommandError> {
     let framed = hello::encode_hello_for(token, request)
         .map_err(|error| command_error("hub_protocol", error.to_string()))?;
     stream
         .write_all(&framed)
         .and_then(|()| stream.flush())
         .map_err(|error| client_error(&HubClientError::Unreachable(error.to_string())))?;
-
     if let Err(error) = hello::read_ack(stream) {
-        return Ok(lost(error));
+        return Ok(unknown(lost(error)));
     }
-    conversation::read_prompt(stream).or_else(|error| Ok(lost(error)))
+    Ok(read(stream).unwrap_or_else(|error| unknown(lost(error))))
+}
+
+/// One transcript question on an open stream.
+fn transcript_on_stream<S: Read + Write>(
+    stream: &mut S,
+    token: &str,
+    request: HubRequest,
+) -> Result<HubConversationTranscriptResult, CommandError> {
+    ask_on_stream(
+        stream,
+        token,
+        request,
+        conversation::read_transcript,
+        answer_error,
+    )
+}
+
+/// One background-work question on an open stream.
+fn background_work_on_stream<S: Read + Write>(
+    stream: &mut S,
+    token: &str,
+    request: HubRequest,
+) -> Result<HubAgentBackgroundWorkResult, CommandError> {
+    ask_on_stream(
+        stream,
+        token,
+        request,
+        background_work::read_background_work,
+        answer_error,
+    )
+}
+
+/// One prompt on an open stream. See [`write_on_stream`] for why only an
+/// unwritten greeting is an error.
+fn prompt_on_stream<S: Read + Write>(
+    stream: &mut S,
+    token: &str,
+    request: HubRequest,
+) -> Result<HubAgentPromptResult, CommandError> {
+    write_on_stream(
+        stream,
+        token,
+        request,
+        conversation::read_prompt,
+        HubAgentPromptResult::unknown,
+    )
 }
 
 /// The pinned TLS stream [`hub_client::dial_tls`] opens.
@@ -310,56 +339,48 @@ pub async fn hub_agent_prompt(
 
 /// One chat-owned agent's timeline on an open stream (#562). A silent close
 /// is [`NO_ANSWER`], as for the transcript: the phone asks only about agents
-/// the catalog listed, which an older desktop never does.
+/// the catalog listed, which an older desktop never does. An answer in an
+/// older chat version names the computer as the side to update.
 fn agent_chat_timeline_on_stream<S: Read + Write>(
     stream: &mut S,
     token: &str,
     request: HubRequest,
 ) -> Result<HubAgentChatTimelineResult, CommandError> {
-    hub_client::handshake_for(stream, token, request).map_err(|error| client_error(&error))?;
-    let mut counted = Counted {
-        inner: stream,
-        read: 0,
-    };
-    match agent_chat::read_timeline(&mut counted) {
-        Ok(result) => Ok(result),
-        Err(ConversationError::Frame(error)) if closed_silently(&error, counted.read) => {
-            Err(no_answer())
-        }
-        Err(ConversationError::UnsupportedVersion { found })
-            if found < agent_chat::HUB_AGENT_CHAT_VERSION =>
-        {
-            Err(command_error(
-                DESKTOP_OUTDATED,
-                format!("The computer speaks chat version {found}. Update Dure on the computer"),
-            ))
-        }
-        Err(error) => Err(answer_error(&error)),
-    }
+    ask_on_stream(
+        stream,
+        token,
+        request,
+        agent_chat::read_timeline,
+        |error| match error {
+            ConversationError::UnsupportedVersion { found }
+                if *found < agent_chat::HUB_AGENT_CHAT_VERSION =>
+            {
+                command_error(
+                    DESKTOP_OUTDATED,
+                    format!(
+                        "The computer speaks chat version {found}. Update Dure on the computer"
+                    ),
+                )
+            }
+            other => answer_error(other),
+        },
+    )
 }
 
-fn lost_action(error: impl std::fmt::Display) -> HubAgentChatActionResult {
-    HubAgentChatActionResult::unknown(format!("The computer's answer was lost: {error}"))
-}
-
-/// One chat action on an open stream, with the prompt's rule: `Err` only
-/// while the greeting is not fully written; after that every failure is
-/// `Ok(unknown)`, because the desktop acks before it acts.
+/// One chat action on an open stream, with the prompt's rule
+/// ([`write_on_stream`]).
 fn agent_chat_action_on_stream<S: Read + Write>(
     stream: &mut S,
     token: &str,
     request: HubRequest,
 ) -> Result<HubAgentChatActionResult, CommandError> {
-    let framed = hello::encode_hello_for(token, request)
-        .map_err(|error| command_error("hub_protocol", error.to_string()))?;
-    stream
-        .write_all(&framed)
-        .and_then(|()| stream.flush())
-        .map_err(|error| client_error(&HubClientError::Unreachable(error.to_string())))?;
-    if let Err(error) = hello::read_ack(stream) {
-        return Ok(lost_action(error));
-    }
-    agent_chat::read_action(stream).or_else(|error| Ok(lost_action(error)))
+    write_on_stream(
+        stream,
+        token,
+        request,
+        agent_chat::read_action,
+        HubAgentChatActionResult::unknown,
+    )
 }
 
 /// Which chat-owned agent, as the catalog's `chat_sessions` entry names it.

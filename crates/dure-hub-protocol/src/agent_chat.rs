@@ -36,7 +36,9 @@
 //! answers.
 
 use crate::catalog::SessionPresentation;
-use crate::conversation::ConversationError;
+use crate::conversation::{
+    ConversationError, read_versioned_as, serialized_len, truncate_on_char_boundary,
+};
 use crate::frame::{self, FrameError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -508,23 +510,6 @@ fn bounded_detail(mut detail: String) -> String {
     detail
 }
 
-/// Cut `text` to at most `limit` bytes without splitting a character.
-pub fn truncate_on_char_boundary(text: &mut String, limit: usize) -> bool {
-    if text.len() <= limit {
-        return false;
-    }
-    let mut end = limit;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text.truncate(end);
-    true
-}
-
-fn serialized_len<T: Serialize>(value: &T) -> usize {
-    serde_json::to_vec(value).map_or(usize::MAX, |bytes| bytes.len())
-}
-
 /// Hub side: one timeline answer as a frame.
 ///
 /// # Errors
@@ -563,26 +548,13 @@ fn read_versioned<T: serde::de::DeserializeOwned, R: Read>(
     reader: &mut R,
     limit: usize,
 ) -> Result<T, ConversationError> {
-    let payload = frame::read_bytes(reader, limit)?;
-    let probe: VersionProbe = serde_json::from_slice(&payload).map_err(|_| {
-        ConversationError::Frame(FrameError::Malformed("Could not read the chat answer"))
-    })?;
-    let found = probe
-        .hub_agent_chat_version
-        .ok_or(ConversationError::Frame(FrameError::Malformed(
-            "Missing version",
-        )))?;
-    if found != HUB_AGENT_CHAT_VERSION {
-        return Err(ConversationError::UnsupportedVersion { found });
-    }
-    serde_json::from_slice(&payload).map_err(|_| {
-        ConversationError::Frame(FrameError::Malformed("Could not read the chat answer"))
-    })
-}
-
-#[derive(Deserialize)]
-struct VersionProbe {
-    hub_agent_chat_version: Option<u16>,
+    read_versioned_as(
+        reader,
+        limit,
+        "hub_agent_chat_version",
+        HUB_AGENT_CHAT_VERSION,
+        "Could not read the chat answer",
+    )
 }
 
 #[cfg(test)]

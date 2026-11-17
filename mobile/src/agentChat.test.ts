@@ -7,7 +7,6 @@ import {
   choose,
   mergeNewest,
   mergeOlder,
-  newActionId,
   questionAnswers,
   timelineFailure,
 } from "./agentChat";
@@ -110,11 +109,6 @@ describe("agent chat timeline", () => {
 });
 
 describe("agent chat actions", () => {
-  it("names a press with characters the computer's ids accept", () => {
-    expect(newActionId("send", () => "1f3a/2 b")).toBe("send-1f3a2b");
-    expect(newActionId("send", () => "x".repeat(100))).toHaveLength(64);
-  });
-
   it("says where a sent message went, only when it did not simply start a turn", () => {
     expect(actionNotice("send", { state: "done", delivery: "started" })).toBeUndefined();
     expect(actionNotice("send", { state: "done", delivery: "steered" })?.key).toBe("agentChat.sent.steered");

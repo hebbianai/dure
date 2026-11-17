@@ -12,6 +12,8 @@
  * DOM or a computer; `agentChatView.ts` draws it.
  */
 
+import { buildPendingQuestionAnswers } from "@/lib/agents/chat/agentPendingPresentation";
+import { SILENT_CLOSES_BEFORE_UPDATE } from "./chat";
 import { isCommandError } from "./commandError";
 import type {
   AgentChatActionAnswer,
@@ -109,12 +111,11 @@ export function applyTimelineAnswer(
 }
 
 /**
- * Silent closes in a row before the chat says the computer needs an update.
- * One is as likely a dropped relay or a restarting desktop.
+ * A timeline request that failed before the computer answered. Silent closes
+ * count as in the session chat (`SILENT_CLOSES_BEFORE_UPDATE`): one is as
+ * likely a dropped relay as an older computer, but this chat has no terminal
+ * to fall back to, so a run of them asks for the update outright.
  */
-export const AGENT_CHAT_SILENT_CLOSES_BEFORE_UPDATE = 3;
-
-/** A timeline request that failed before the computer answered. */
 export function timelineFailure(
   error: unknown,
   silentCloses: number,
@@ -124,7 +125,7 @@ export function timelineFailure(
     const run = silentCloses + 1;
     return {
       silentCloses: run,
-      step: run >= AGENT_CHAT_SILENT_CLOSES_BEFORE_UPDATE
+      step: run >= SILENT_CLOSES_BEFORE_UPDATE
         ? { kind: "fallback", fallback: "update_desktop" }
         : { kind: "wait", wait: "unreachable" },
     };
@@ -141,17 +142,6 @@ export function timelineFailure(
 /** The agent is busy or waiting for the person: ask more often. */
 export function agentChatActive(timeline: AgentChatTimeline | undefined): boolean {
   return !!timeline && (!!timeline.turn || timeline.pending.length > 0 || timeline.queued.length > 0);
-}
-
-/** A name for one press. The computer names its message, turn or answer after it. */
-export function newActionId(kind: string, random: () => string = defaultRandom): string {
-  return `${kind}-${random()}`.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 64);
-}
-
-function defaultRandom(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 }
 
 /** What the composer and the cards say after an action, as an i18n key and its values. */
@@ -234,30 +224,36 @@ export function statusKey(state: string): string {
   }
 }
 
+/** A question as the shared pending-request presentation reads it. */
+type PendingQuestionPresentation = Parameters<typeof buildPendingQuestionAnswers>[0][number];
+
+function presentedQuestion(question: AgentChatQuestion): PendingQuestionPresentation {
+  return {
+    id: question.id,
+    question: question.question,
+    ...(question.header ? { header: question.header } : {}),
+    options: question.options.map((option) => ({
+      label: option.label,
+      ...(option.description ? { description: option.description } : {}),
+    })),
+    multiSelect: question.multi_select,
+    allowOther: question.allow_other,
+    isSecret: question.is_secret,
+  };
+}
+
 /**
- * The answers to a question card, the way the desktop's card builds them: per
- * question, the person's own words if given, else the chosen labels in option
- * order joined with ", ". `undefined` while a question is unanswered.
+ * The answers to a question card, built by the desktop card's own rule
+ * (`buildPendingQuestionAnswers`): per question, the person's own words if
+ * given, else the chosen labels in option order joined with ", ".
+ * `undefined` while a question is unanswered.
  */
 export function questionAnswers(
   questions: readonly AgentChatQuestion[],
   selections: readonly ReadonlySet<number>[],
   others: readonly string[],
 ): Record<string, string> | undefined {
-  const answers: Record<string, string> = {};
-  for (const [index, question] of questions.entries()) {
-    const other = others[index]?.trim();
-    if (other) {
-      answers[question.id] = other;
-      continue;
-    }
-    const chosen = [...(selections[index] ?? [])]
-      .sort((left, right) => left - right)
-      .flatMap((option) => (question.options[option] ? [question.options[option].label] : []));
-    if (chosen.length === 0) return undefined;
-    answers[question.id] = chosen.join(", ");
-  }
-  return answers;
+  return buildPendingQuestionAnswers(questions.map(presentedQuestion), { ...selections }, { ...others });
 }
 
 /** Choose an option: a single-choice question keeps one, a multiple-choice one toggles. */

@@ -185,6 +185,14 @@ export interface LayoutUnopenedAgent {
 	readonly presentation?: SessionPresentation;
 }
 
+/** The key the phone finds a row by: the chat-owned agent, else the Hmux session. */
+function seatKey(row: {
+	readonly hmuxSessionId: string | undefined;
+	readonly chatAgent?: LayoutChatAgent;
+}): string | undefined {
+	return row.chatAgent?.agentId ?? row.hmuxSessionId;
+}
+
 export function buildSidebarLayout(
 	desktops: readonly LayoutDesktop[],
 	spaces: readonly LayoutSpace[],
@@ -193,25 +201,6 @@ export function buildSidebarLayout(
 ): SidebarLayout {
 	const placements: Record<string, SessionPlacement> = {};
 	const desktopOrder: string[] = [];
-	const chatAgents: HubChatAgent[] = [];
-	/** The key the phone finds a row by: the Hmux session, or the chat-owned agent. */
-	const seatKey = (row: {
-		readonly hmuxSessionId: string | undefined;
-		readonly chatAgent?: LayoutChatAgent;
-	}): string | undefined => {
-		if (row.chatAgent) {
-			if (!placements[row.chatAgent.agentId]) {
-				chatAgents.push({
-					agent_id: row.chatAgent.agentId,
-					backend_profile_id: row.chatAgent.backendProfileId,
-					provider_id: row.chatAgent.providerId,
-				});
-			}
-			return row.chatAgent.agentId;
-		}
-		return row.hmuxSessionId;
-	};
-
 	for (const desktop of desktops) {
 		// 이름이 없는 데스크탑은 이름이 없는 채로 나간다. 여기서 지어내면 폰과
 		// 사이드바가 다른 이름을 부르게 되고, 그게 이 표가 존재하는 이유와 정반대다.
@@ -289,10 +278,24 @@ export function buildSidebarLayout(
 			};
 		});
 
+	// A chat-owned agent's seat is keyed by its agent id; the hub needs its
+	// backend profile to route the phone's requests. Each placed agent once.
+	const chatAgents = new Map<string, HubChatAgent>();
+	for (const row of [...spaces, ...unopened]) {
+		const agent = row.chatAgent;
+		if (agent && placements[agent.agentId] && !chatAgents.has(agent.agentId)) {
+			chatAgents.set(agent.agentId, {
+				agent_id: agent.agentId,
+				backend_profile_id: agent.backendProfileId,
+				provider_id: agent.providerId,
+			});
+		}
+	}
+
 	return {
 		placements,
 		desktop_order: desktopOrder,
 		remote_hosts,
-		chat_agents: chatAgents,
+		chat_agents: [...chatAgents.values()],
 	};
 }

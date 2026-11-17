@@ -32,7 +32,6 @@
 
 import "./chatView.css";
 import type { AgentRuntimeState } from "./agentRuntimeState";
-import iconArrowRight from "./assets/icon-arrow-right.svg";
 import {
   type BackgroundWorkAnswer,
   backgroundWorkHiddenCount,
@@ -56,6 +55,7 @@ import {
   type TranscriptStep,
   transcriptFailure,
 } from "./chat";
+import { createChatFrame } from "./chatFrame";
 import { type ChatBlock, type ChatInline, chatBlocks } from "./chatMarkdown";
 import {
   afterDelivery,
@@ -73,10 +73,9 @@ import {
   saveReturnedDraft,
   settleDelivery,
 } from "./chatQueue";
-import { element, glyph, loader } from "./dom";
+import { element, loader } from "./dom";
 import { t } from "./i18n";
 import type { AgentPromptAnswer, ConversationCursor, ConversationTranscriptAnswer } from "./ipc";
-import { attachPullToRefresh } from "./pullToRefresh";
 
 export interface ChatViewOptions {
   /** `chatQueue.queueKey` of this session. */
@@ -209,9 +208,6 @@ export function messageRow(role: "user" | "agent", text: string, truncated: bool
   return row;
 }
 
-/** Close enough to the end that new messages should keep it in view. */
-const BOTTOM_SLACK_PX = 32;
-
 /** One delivery on its way to the computer. */
 interface Flight {
   readonly prompt: QueuedPrompt;
@@ -254,23 +250,8 @@ export function createChatView(options: ChatViewOptions): ChatController {
   let disposed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
-  let pinned = true;
-  let savedScrollTop = 0;
-  /** The person was typing here; a re-render moving the field must not end that. */
-  let wantsFocus = false;
 
-  const root = element("section", "chat");
-  const scroll = element("div", "chat__scroll");
-  const pull = element("div", "home__pull chat__pull");
-  pull.append(element("span", "home__pull-mark"));
   const older = element("p", "chat__older", t("chat.older"));
-  const list = element("div", "chat__messages");
-  list.setAttribute("role", "log");
-  list.setAttribute("aria-label", t("chat.messages"));
-  const outgoing = element("div", "chat__outgoing");
-  const status = element("p", "chat__status");
-  scroll.append(pull, older, list, outgoing, status);
-
   const attention = element("div", "chat__attention");
   const attentionText = element("span", "chat__attention-text");
   const openTerminal = element("button", "chat__attention-action", t("chat.openTerminal"));
@@ -278,16 +259,6 @@ export function createChatView(options: ChatViewOptions): ChatController {
   openTerminal.addEventListener("click", () => options.openTerminal());
   attention.append(attentionText, openTerminal);
 
-  const composerNote = element("p", "chat__note");
-  composerNote.setAttribute("role", "status");
-  const composer = element("div", "chat__composer");
-  const input = element("textarea", "chat__input");
-  input.rows = 1;
-  input.setAttribute("aria-label", t("chat.composer.label"));
-  const send = element("button", "chat__send");
-  send.type = "button";
-  send.append(glyph(iconArrowRight, 18));
-  composer.append(input, send);
   // The agent's subagents, workflows, shells and monitors: one line, collapsed.
   const background = element("details", "chat__background");
   background.hidden = true;
@@ -295,7 +266,12 @@ export function createChatView(options: ChatViewOptions): ChatController {
   const backgroundSummary = element("summary", "chat__background-summary");
   const backgroundRows = element("ul", "chat__background-rows");
   background.append(backgroundSummary, backgroundRows);
-  root.append(scroll, attention, background, composerNote, composer);
+  const frame = createChatFrame({
+    top: older,
+    aboveComposer: [attention, background],
+    refresh: () => void refresh(true),
+  });
+  const { list, outgoing, status, note: composerNote, input, send, followEnd, fitInput } = frame;
 
   const readiness = () => agentReadiness(runtime);
 
@@ -316,28 +292,6 @@ export function createChatView(options: ChatViewOptions): ChatController {
     note = { kind: "returned", reason };
     saveReturnedDraft(options.storage, key, input.value, reason);
   };
-
-  const followEnd = () => {
-    if (pinned && scroll.isConnected) scroll.scrollTop = scroll.scrollHeight;
-  };
-
-  scroll.addEventListener("scroll", () => {
-    if (!scroll.isConnected) return;
-    savedScrollTop = scroll.scrollTop;
-    pinned = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < BOTTOM_SLACK_PX;
-  });
-
-  input.addEventListener("focus", () => {
-    wantsFocus = true;
-  });
-  input.addEventListener("blur", () => {
-    // Moving the field into the next render's tree can blur it; the restore in
-    // `mount` runs before this looks. A field still in the tree and still not
-    // focused is one the person left.
-    setTimeout(() => {
-      if (input.isConnected && document.activeElement !== input) wantsFocus = false;
-    }, 0);
-  });
 
   const paintRows = () => {
     older.hidden = !transcript || transcript.historyComplete;
@@ -443,12 +397,6 @@ export function createChatView(options: ChatViewOptions): ChatController {
     attention.hidden = !showing;
     attentionText.textContent = runtime?.attention === "error"
       ? t("chat.attention.error") : t("chat.attention.asking");
-  };
-
-  /** Grow with the text up to the stylesheet's cap. */
-  const fitInput = () => {
-    input.style.height = "auto";
-    input.style.height = `${input.scrollHeight}px`;
   };
 
   const paintComposer = () => {
@@ -686,13 +634,11 @@ export function createChatView(options: ChatViewOptions): ChatController {
     persist();
     input.value = "";
     note = undefined;
-    pinned = true;
+    frame.pin();
     paint();
     deliver();
   };
   send.addEventListener("click", submit);
-  // The send circle must not take the keyboard down with the field's focus.
-  send.addEventListener("pointerdown", (event) => event.preventDefault());
   input.addEventListener("input", () => {
     send.disabled = input.value.trim() === "";
     fitInput();
@@ -706,8 +652,6 @@ export function createChatView(options: ChatViewOptions): ChatController {
       }
     }
   });
-
-  attachPullToRefresh(scroll, pull, () => void refresh(true), () => scroll.scrollTop);
 
   function startPolling(): void {
     if (timer !== undefined || disposed || fallback) return;
@@ -727,26 +671,7 @@ export function createChatView(options: ChatViewOptions): ChatController {
 
   return {
     mount(container) {
-      if (root.parentElement === container) return;
-      // Read before the move: the app replaced the old tree already, and the
-      // field may have lost focus with it, but its selection is still its own.
-      const restore = wantsFocus;
-      const start = input.selectionStart;
-      const end = input.selectionEnd;
-      const direction = input.selectionDirection;
-      container.append(root);
-      // After the caller's tree is in the document: a detached node has no
-      // scroll position to restore and cannot take focus.
-      queueMicrotask(() => {
-        if (!scroll.isConnected) return;
-        if (pinned) scroll.scrollTop = scroll.scrollHeight;
-        else scroll.scrollTop = savedScrollTop;
-        // Same task as the render that moved it, so the OS keyboard stays up.
-        if (restore && document.activeElement !== input) {
-          input.focus({ preventScroll: true });
-          input.setSelectionRange(start, end, direction ?? undefined);
-        }
-      });
+      frame.mount(container);
     },
     observe(next) {
       runtime = next;
@@ -773,7 +698,7 @@ export function createChatView(options: ChatViewOptions): ChatController {
         startPolling();
       } else {
         // Hidden by a tab switch or a covering screen: the person left the field.
-        wantsFocus = false;
+        frame.release();
         stopPolling();
       }
     },

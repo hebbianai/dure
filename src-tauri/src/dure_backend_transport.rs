@@ -1305,7 +1305,7 @@ async fn retire_connection(cached: &mut Option<CachedConnection>) {
     }
 }
 
-fn now_ms() -> Result<i64, DureBackendTransportError> {
+pub(crate) fn now_ms() -> Result<i64, DureBackendTransportError> {
     i64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1471,7 +1471,6 @@ impl DureBackendTransportState {
     /// request from the screen.
     pub(crate) async fn request_result(
         &self,
-        root: &Path,
         profile_id: &str,
         operation: &str,
         body: Value,
@@ -1479,7 +1478,7 @@ impl DureBackendTransportState {
         let route = DureBackendRouteV1::Selected {
             profile_id: Some(profile_id.to_string()),
         };
-        self.request(root, &route, operation, body)
+        self.request(&app_root()?, &route, operation, body)
             .await
             .map(|response| response.result)
     }
@@ -1698,15 +1697,22 @@ impl DureBackendTransportState {
     }
 }
 
+/// The Dure application root every backend request resolves profiles in.
+pub(super) fn app_root() -> Result<PathBuf, DureBackendTransportError> {
+    crate::app_home::app_root_resolution()
+        .map(|(root, _)| root)
+        .map_err(|_| {
+            DureBackendTransportError::new(
+                "backend_transport_profile_unavailable",
+                "the Dure application root is unavailable",
+            )
+        })
+}
+
 /// Saved connection names only; credentials and socket paths stay native.
 #[tauri::command]
 pub fn dure_backend_profiles() -> Result<Value, DureBackendTransportError> {
-    let (root, _) = crate::app_home::app_root_resolution().map_err(|_| {
-        DureBackendTransportError::new(
-            "backend_transport_profile_unavailable",
-            "the Dure application root is unavailable",
-        )
-    })?;
+    let root = app_root()?;
     let catalog = read_catalog(&root)?;
     Ok(json!({ "schemaVersion": 1, "profiles": catalog.profiles.iter().map(|profile| {
         json!({ "id": profile.id, "default": profile.default, "kind": match &profile.transport {
@@ -1722,12 +1728,7 @@ pub async fn dure_backend_request(
     operation: String,
     body: Value,
 ) -> Result<DureBackendTransportResult, DureBackendTransportError> {
-    let (root, _) = crate::app_home::app_root_resolution().map_err(|_| {
-        DureBackendTransportError::new(
-            "backend_transport_profile_unavailable",
-            "the Dure application root is unavailable",
-        )
-    })?;
+    let root = app_root()?;
     state
         .request(&root, &route, &operation, body)
         .await
@@ -1738,12 +1739,7 @@ pub fn dure_backend_route_assert(
     state: State<'_, DureBackendTransportState>,
     route: DureBackendRouteV1,
 ) -> Result<DureBackendRouteAuthorityV1, DureBackendTransportError> {
-    let (root, _) = crate::app_home::app_root_resolution().map_err(|_| {
-        DureBackendTransportError::new(
-            "backend_transport_profile_unavailable",
-            "the Dure application root is unavailable",
-        )
-    })?;
+    let root = app_root()?;
     let selected = route_authority::select(&root, &state.config, &route)?;
     Ok(route_authority::authority_for(&selected))
 }

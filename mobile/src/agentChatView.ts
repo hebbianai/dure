@@ -17,7 +17,6 @@
  * message goes; the chat says what it decided.
  */
 
-import "./chatView.css";
 import "./agentChatView.css";
 import {
   AGENT_CHAT_ACTIVE_POLL_MS,
@@ -32,14 +31,13 @@ import {
   applyTimelineAnswer,
   choose,
   mergeOlder,
-  newActionId,
   questionAnswers,
   statusKey,
   timelineFailure,
   toolStateKey,
 } from "./agentChat";
-import iconArrowRight from "./assets/icon-arrow-right.svg";
 import iconChevronLeft from "./assets/icon-chevron-left.svg";
+import { createChatFrame } from "./chatFrame";
 import { messageRow } from "./chatView";
 import { element, glyph, loader } from "./dom";
 import { t } from "./i18n";
@@ -51,7 +49,7 @@ import type {
   AgentChatTimeline,
   AgentChatTimelineAnswer,
 } from "./ipc";
-import { attachPullToRefresh } from "./pullToRefresh";
+import { newActionId } from "./launch";
 
 export interface AgentChatViewOptions {
   /** Read the newest rows, or those before `before`. */
@@ -59,7 +57,8 @@ export interface AgentChatViewOptions {
   readonly act: (action: AgentChatAction) => Promise<AgentChatActionAnswer>;
   readonly activePollMs?: number;
   readonly idlePollMs?: number;
-  readonly actionId?: (kind: string) => string;
+  /** Names each press (`launch.newActionId`). */
+  readonly actionId?: () => string;
 }
 
 export interface AgentChatController {
@@ -80,9 +79,6 @@ export const AGENT_CHAT_FALLBACK_TEXT: Record<AgentChatFallback, string> = {
   update_desktop: "agentChat.fallback.updateDesktop",
   update_phone: "agentChat.fallback.updatePhone",
 };
-
-/** Close enough to the end that new rows should keep it in view. */
-const BOTTOM_SLACK_PX = 32;
 
 function itemRow(item: AgentChatItem): HTMLElement | undefined {
   switch (item.kind) {
@@ -113,7 +109,7 @@ function noticeText(notice: AgentChatNotice): string {
 export function createAgentChatView(options: AgentChatViewOptions): AgentChatController {
   const activeMs = options.activePollMs ?? AGENT_CHAT_ACTIVE_POLL_MS;
   const idleMs = options.idlePollMs ?? AGENT_CHAT_IDLE_POLL_MS;
-  const actionId = options.actionId ?? ((kind: string) => newActionId(kind));
+  const actionId = options.actionId ?? newActionId;
 
   let timeline: AgentChatTimeline | undefined;
   let wait: AgentChatWait | undefined;
@@ -130,57 +126,24 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
   let visible = false;
   let disposed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let pinned = true;
-  let savedScrollTop = 0;
-  let wantsFocus = false;
   /** Per pending question card: chosen options and own words, by question. */
   const drafts = new Map<string, { selections: ReadonlySet<number>[]; others: string[] }>();
 
-  const root = element("section", "chat agent-chat");
-  const scroll = element("div", "chat__scroll");
-  const pull = element("div", "home__pull chat__pull");
-  pull.append(element("span", "home__pull-mark"));
   const older = element("button", "agent-chat__older", t("agentChat.older"));
   older.type = "button";
-  const list = element("div", "chat__messages");
-  list.setAttribute("role", "log");
-  list.setAttribute("aria-label", t("chat.messages"));
-  const outgoing = element("div", "chat__outgoing");
-  const status = element("p", "chat__status");
-  scroll.append(pull, older, list, outgoing, status);
   const cards = element("div", "agent-chat__cards");
-  const composerNote = element("p", "chat__note");
-  composerNote.setAttribute("role", "status");
-  const composer = element("div", "chat__composer");
-  const input = element("textarea", "chat__input");
-  input.rows = 1;
-  input.setAttribute("aria-label", t("chat.composer.label"));
-  input.placeholder = t("chat.composer.placeholder");
   const stop = element("button", "agent-chat__stop", t("agentChat.stop"));
   stop.type = "button";
-  const send = element("button", "chat__send");
-  send.type = "button";
+  const frame = createChatFrame({
+    className: "agent-chat",
+    top: older,
+    aboveComposer: [cards],
+    composerControls: [stop],
+    refresh: () => void refresh(),
+  });
+  const { list, outgoing, status, note: composerNote, input, send, followEnd, fitInput } = frame;
+  input.placeholder = t("chat.composer.placeholder");
   send.setAttribute("aria-label", t("chat.composer.send"));
-  send.append(glyph(iconArrowRight, 18));
-  composer.append(input, stop, send);
-  root.append(scroll, cards, composerNote, composer);
-
-  const followEnd = () => {
-    if (pinned && scroll.isConnected) scroll.scrollTop = scroll.scrollHeight;
-  };
-  scroll.addEventListener("scroll", () => {
-    if (!scroll.isConnected) return;
-    savedScrollTop = scroll.scrollTop;
-    pinned = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < BOTTOM_SLACK_PX;
-  });
-  input.addEventListener("focus", () => {
-    wantsFocus = true;
-  });
-  input.addEventListener("blur", () => {
-    setTimeout(() => {
-      if (input.isConnected && document.activeElement !== input) wantsFocus = false;
-    }, 0);
-  });
 
   let rowsDrawn = "";
   const paintRows = () => {
@@ -278,7 +241,7 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
     const decide = (allow: boolean) => {
       void answer(pending, {
         kind: "answer",
-        actionId: actionId("answer"),
+        actionId: actionId(),
         requestId: pending.request_id,
         answer: { kind: "permission", allow },
       });
@@ -346,7 +309,7 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
       if (!answers) return;
       void answer(pending, {
         kind: "answer",
-        actionId: actionId("answer"),
+        actionId: actionId(),
         requestId: pending.request_id,
         answer: { kind: "question", answers },
       });
@@ -377,11 +340,6 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
     for (const id of drafts.keys()) {
       if (!pending.some((request) => request.request_id === id)) drafts.delete(id);
     }
-  };
-
-  const fitInput = () => {
-    input.style.height = "auto";
-    input.style.height = `${input.scrollHeight}px`;
   };
 
   const paintComposer = () => {
@@ -463,7 +421,6 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
     try {
       const answer = await options.fetch(before);
       if (!disposed && timeline && answer.outcome === "timeline" && answer.timeline) {
-        pinned = false;
         timeline = mergeOlder(timeline, answer.timeline);
       }
     } catch {
@@ -485,10 +442,10 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
     sending = text;
     input.value = "";
     notice = undefined;
-    pinned = true;
+    frame.pin();
     paint();
     try {
-      const result = await options.act({ kind: "send", actionId: actionId("send"), text });
+      const result = await options.act({ kind: "send", actionId: actionId(), text });
       if (disposed) return;
       notice = actionNotice("send", result);
     } catch {
@@ -502,7 +459,6 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
     void refresh();
   };
   send.addEventListener("click", () => void submit());
-  send.addEventListener("pointerdown", (event) => event.preventDefault());
   input.addEventListener("input", () => {
     send.disabled = sending !== undefined || input.value.trim() === "" || fallback !== undefined;
     fitInput();
@@ -514,7 +470,7 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
     interrupting = true;
     paintComposer();
     try {
-      const result = await options.act({ kind: "interrupt", actionId: actionId("stop"), turnId: turn.turn_id });
+      const result = await options.act({ kind: "interrupt", actionId: actionId(), turnId: turn.turn_id });
       if (disposed) return;
       // A turn that already ended is what the person wanted.
       notice = result.state === "refused" && result.code === "not_running"
@@ -530,27 +486,18 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
     void refresh();
   });
 
-  attachPullToRefresh(scroll, pull, () => void refresh(), () => scroll.scrollTop);
-
   paint();
 
   return {
     mount(container) {
-      if (root.parentElement === container) return;
-      const restore = wantsFocus;
-      container.append(root);
-      queueMicrotask(() => {
-        if (!scroll.isConnected) return;
-        scroll.scrollTop = pinned ? scroll.scrollHeight : savedScrollTop;
-        if (restore && document.activeElement !== input) input.focus({ preventScroll: true });
-      });
+      frame.mount(container);
     },
     setVisible(next) {
       if (visible === next) return;
       visible = next;
       if (visible) void refresh();
       else {
-        wantsFocus = false;
+        frame.release();
         if (timer !== undefined) clearTimeout(timer);
         timer = undefined;
       }

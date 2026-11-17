@@ -152,7 +152,9 @@ fn agent_chats(
     Arc::new(super::agent_chat::BackendAgentChats {
         layout: Arc::clone(&state.layout),
         backend: Arc::new(super::agent_chat::TransportBackend { app: app.clone() }),
-        now_ms: super::agent_chat::wall_clock_ms,
+        // A clock before 1970 is not a time to stamp a press with; the
+        // backend refuses the zero rather than ordering it.
+        now_ms: || crate::dure_backend_transport::now_ms().unwrap_or(0),
     })
 }
 
