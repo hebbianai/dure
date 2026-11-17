@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Project } from "@/types";
 import { supportsCanonicalAddAgentRun } from "@/lib/agents/addAgentCanonicalRun";
 import type { QuickDispatchIntentV1 } from "@/lib/agents/quickDispatch/quickDispatchIntent";
@@ -369,22 +369,23 @@ describe("runQuickDispatch", () => {
 		expect(deps.fail).not.toHaveBeenCalled();
 	});
 
-	/** Default Terminal launches retain their setup probe for all providers. */
-	it("probes setup for a structured provider as well", async () => {
+	/** Terminal launches retain their setup probe for all providers. */
+	it("probes setup for a structured provider under the Terminal choice", async () => {
 		const deps = makeDeps();
+		deps.readState = () => ({ projects: [project], agents: [], accounts: [], uiPrefs: { defaultAgentPane: "terminal" } });
 		await runQuickDispatch(intent, deps as never);
 		const call = deps.runCanonical.mock.calls[0]?.[0];
 		expect(deps.probeSetup).toHaveBeenCalled();
 		expect(call.setupCommand).toContain("pnpm install");
 	});
 
-	it("basic mode pins the PTY surface and probes setup like a native provider", async () => {
+	it("a Terminal choice pins the PTY surface and probes setup like a native provider", async () => {
 		const deps = makeDeps();
 		deps.readState = () => ({
 			projects: [project],
 			agents: [],
 			accounts: [],
-			uiPrefs: { interfaceMode: "basic" },
+			uiPrefs: { interfaceMode: "basic", defaultAgentPane: "terminal" },
 		});
 		await runQuickDispatch(intent, deps as never);
 		const call = deps.runCanonical.mock.calls[0]?.[0];
@@ -393,22 +394,16 @@ describe("runQuickDispatch", () => {
 		expect(call.setupCommand).toContain("pnpm install");
 	});
 
-	it("defaults Pro to the PTY surface too", async () => {
-		const deps = makeDeps();
-		await runQuickDispatch(intent, deps as never);
-		const call = deps.runCanonical.mock.calls[0]?.[0];
-		expect(call.interactionPreference).toBe("native_cli");
-	});
-
-	afterEach(() => vi.unstubAllEnvs());
-	it("honors explicit Pro Chat and leaves setup selection with the existing Chat path", async () => {
-		vi.stubEnv("PROD", false);
-		const deps = makeDeps();
-		deps.readState = () => ({ projects: [project], agents: [], accounts: [], uiPrefs: { interfaceMode: "pro", defaultAgentPane: "chat" } });
-		await runQuickDispatch(intent, deps as never);
-		expect(deps.runCanonical.mock.calls[0][0].interactionPreference).toBeUndefined();
-		expect(deps.probeSetup).not.toHaveBeenCalled();
-	});
+	it.each([undefined, { interfaceMode: "basic" }, { interfaceMode: "pro" }, { interfaceMode: "basic", defaultAgentPane: "chat" }])(
+		"leaves the Chat default unpinned with the existing Chat setup path (uiPrefs %o)",
+		async (uiPrefs) => {
+			const deps = makeDeps();
+			deps.readState = () => ({ projects: [project], agents: [], accounts: [], ...(uiPrefs ? { uiPrefs } : {}) });
+			await runQuickDispatch(intent, deps as never);
+			expect(deps.runCanonical.mock.calls[0][0].interactionPreference).toBeUndefined();
+			expect(deps.probeSetup).not.toHaveBeenCalled();
+		},
+	);
 
 	it("keeps the probed setup command for a native-only provider", async () => {
 		const deps = makeDeps();
@@ -598,6 +593,8 @@ describe("runQuickDispatch", () => {
 
 	it("pins the newly derived name and resolved base sha for a fresh dispatch", async () => {
 		const deps = makeDeps();
+		// The Terminal choice keeps the setup probe whose answer is pinned.
+		deps.readState = () => ({ projects: [project], agents: [], accounts: [], uiPrefs: { defaultAgentPane: "terminal" } });
 		const resolvedSha = "b".repeat(40);
 		deps.resolveBaseRefSha.mockResolvedValue(resolvedSha);
 		await runQuickDispatch(intent, deps as never);
@@ -614,6 +611,7 @@ describe("runQuickDispatch", () => {
 
 	it("falls back from a moving base ref to the exact HEAD commit", async () => {
 		const deps = makeDeps();
+		deps.readState = () => ({ projects: [project], agents: [], accounts: [], uiPrefs: { defaultAgentPane: "terminal" } });
 		const headSha = "c".repeat(40);
 		deps.resolveBaseRefSha.mockImplementation(
 			async (_project: Project, ref: string) =>
@@ -801,7 +799,7 @@ describe("SSH dispatch pipeline", () => {
  const remoteTarget = { hostId: host.id, path: remote.path, host: host.host, user: host.user, port: host.port, registrationGeneration: null, sshConfigAlias: null };
  it.each([false, true])("dispatches on SSH with all choices (worktree=%s)", async (useWorktree) => {
   const deps = makeDeps();
-  deps.readState = () => ({ projects: [remote], agents: [], accounts: [codexWork], sshHosts: [host] });
+  deps.readState = () => ({ projects: [remote], agents: [], accounts: [codexWork], sshHosts: [host], uiPrefs: { defaultAgentPane: "terminal" } });
   await runQuickDispatch({ ...intent, providerId: "codex", accountId: codexWork.id, permissionOverride: "auto_edit", useWorktree, remoteTarget }, deps as never);
   expect(deps.fail).not.toHaveBeenCalled();
   expect(deps.runCanonical).not.toHaveBeenCalled();

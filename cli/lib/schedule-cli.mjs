@@ -21,8 +21,9 @@ Usage:
 All commands support --backend ID and --json. Runs use an isolated Git worktree by default.
 A scheduled agent hibernates after 30 minutes of confirmed idle. Once it has stopped, its
 worktree is removed only if it is clean and every commit is on the default branch.
-On a host without the Dure app, runs start on the provider's chat runtime when it has one;
-read them with dure runs show. Hibernation and worktree removal apply only to terminal runs.
+Runs start on the provider's chat runtime when the host has one, like a new agent in the app;
+read them with dure runs show. Otherwise they are terminal runs, which need the Dure app there.
+Hibernation and worktree removal apply only to terminal runs.
 --no-worktree runs in the registered project root, including non-Git directories.
 It requires backend capability schedule.worktree_project_root_v1; shared files are not isolated.
 The local or SSH control plane must be running; the IDE can be closed.

@@ -134,7 +134,10 @@ async fn schedule_starts_on_the_chat_runtime_wherever_the_provider_has_one() {
             "{provider}: {:?}",
             spawn.plan.launch
         );
-        assert_eq!(spawn.plan.request.interaction_preference, None, "{provider}");
+        assert_eq!(
+            spawn.plan.request.interaction_preference, None,
+            "{provider}"
+        );
     }
 }
 

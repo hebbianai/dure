@@ -72,9 +72,13 @@ const target = { label: "Repo", path: "/repo" };
 
 describe("repository quick Add Agent action", () => {
 	afterEach(() => vi.unstubAllEnvs());
-	it.each(["terminal", "chat"])("passes the Pro %s preference to repository creation", async (defaultAgentPane) => {
-		vi.stubEnv("PROD", false);
-		mocks.readAgentPanePreferences.mockReturnValue({ interfaceMode: "pro", defaultAgentPane });
+	it.each([
+		["basic", "terminal"],
+		["basic", "chat"],
+		["pro", "terminal"],
+		["pro", "chat"],
+	])("passes the %s interface's %s preference to repository creation", async (interfaceMode, defaultAgentPane) => {
+		mocks.readAgentPanePreferences.mockReturnValue({ interfaceMode, defaultAgentPane });
 		const { result } = renderHook(() => useRepositoryQuickAdd(vi.fn()));
 		await act(async () => result.current.onAddRepositoryAgent("space-1", target, "codex"));
 		expect(mocks.prepare.mock.calls[0][0].interactionPreference).toBe(defaultAgentPane === "terminal" ? "native_cli" : undefined);
