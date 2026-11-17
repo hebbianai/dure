@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
+import { claudeKeychainService } from "../cli/lib/recovery-accounts.mjs";
 import { parseRecoveryCommand, runRecoveryCommand } from "../cli/lib/recovery-command.mjs";
 
 const profile = { schemaVersion: 1, providerId: "codex", referenceId: "team",
@@ -90,8 +91,9 @@ function claudeProfile(referenceId, credentialGeneration) {
 }
 
 /** One disposable HOME with the default Dure home, provider profile
- * directories and the collector's per-profile usage cache. */
-function localAccountsFixture({ profiles = {}, usage = {}, extraDirectories = [] } = {}) {
+ * directories, their credential files and the collector's per-profile usage
+ * cache. */
+function localAccountsFixture({ profiles = {}, usage = {}, extraDirectories = [], credentials = {} } = {}) {
   const home = mkdtempSync(join(tmpdir(), "dure-recovery-accounts-"));
   const dureHome = join(home, ".dure");
   for (const [directory, generation] of Object.entries(profiles)) {
@@ -102,6 +104,9 @@ function localAccountsFixture({ profiles = {}, usage = {}, extraDirectories = []
   for (const directory of extraDirectories) {
     mkdirSync(join(dureHome, "accounts", directory), { recursive: true, mode: 0o700 });
   }
+  for (const [directory, content] of Object.entries(credentials)) {
+    writeFileSync(join(dureHome, "accounts", directory, ".credentials.json"), content, { mode: 0o600 });
+  }
   const usageRoot = join(dureHome, "usage", "claude-rate-limits");
   mkdirSync(usageRoot, { recursive: true });
   for (const [directory, payload] of Object.entries(usage)) {
@@ -111,7 +116,10 @@ function localAccountsFixture({ profiles = {}, usage = {}, extraDirectories = []
   return { home, environment: { HOME: home } };
 }
 
-function accountsCommand({ result, kind = "local", home, environment, args = [] }) {
+const noKeychain = async () => { throw new Error("only macOS keeps Claude logins in the Keychain"); };
+
+function accountsCommand({ result, kind = "local", home, environment, args = [],
+  platform = "linux", keychainLookup = noKeychain }) {
   const output = [];
   const requests = [];
   return { output, requests, run: () => runRecoveryCommand(["get", "claude", ...args], {
@@ -119,7 +127,7 @@ function accountsCommand({ result, kind = "local", home, environment, args = [] 
       transport: { kind } }, transportOptions: {} }),
     requestBackend: async (_, request) => { requests.push(request); return { result }; },
     output: (text) => output.push(text),
-    environment, homeDirectory: home, now: () => NOW,
+    environment, homeDirectory: home, now: () => NOW, platform, keychainLookup,
   }) };
 }
 
@@ -130,6 +138,7 @@ test("get lists each login once with its local profile name, usage windows and r
     profiles: { "claude-work": "credential-v2-work", "claude-personal": "credential-v2-personal",
       "claude-retired": "credential-v2-retired" },
     extraDirectories: ["claude-work.lock"],
+    credentials: { "claude-work": "{}", "claude-personal": "{}" },
     usage: {
       "claude-work": { captured_at: seconds(NOW - 12 * MINUTE), rate_limits: {
         five_hour: { used_percentage: 42, resets_at: seconds(NOW + 2 * HOUR + 10 * MINUTE) },
@@ -166,19 +175,20 @@ test("get lists each login once with its local profile name, usage windows and r
   assert.deepEqual({ ...report, registeredAccounts: undefined }, { ...result, registeredAccounts: undefined });
   assert.deepEqual(report.registeredAccounts, [
     { referenceId: "acc-personal", aliasReferenceIds: [], credentialGeneration: "credential-v2-personal",
-      name: null, profileName: "claude-personal", usage: null },
+      name: null, profileName: "claude-personal", signedIn: true, usage: null },
     { referenceId: "acc-work-a", aliasReferenceIds: ["acc-work-b"], credentialGeneration: "credential-v2-work",
-      name: null, profileName: "claude-work", usage: {
+      name: null, profileName: "claude-work", signedIn: true, usage: {
         fiveHour: { usedPercent: 42, resetsAtMs: NOW + 2 * HOUR + 10 * MINUTE },
         weekly: { usedPercent: 61.4, resetsAtMs: NOW + 99 * HOUR },
         observedAtMs: NOW - 12 * MINUTE, credits: null, usageResetsAvailable: null, lastCheck: null } },
     { referenceId: "acc-unmatched", aliasReferenceIds: [], credentialGeneration: "credential-v2-elsewhere",
-      name: null, profileName: null, usage: null },
+      name: null, profileName: null, signedIn: null, usage: null },
   ]);
 });
 
 test("a policy name labels its login and its ID is offered first", async () => {
-  const { home, environment } = localAccountsFixture({ profiles: { "claude-work": "credential-v2-work" } });
+  const { home, environment } = localAccountsFixture({ profiles: { "claude-work": "credential-v2-work" },
+    credentials: { "claude-work": "{}" } });
   const named = claudeProfile("acc-work-b", "credential-v2-work");
   const result = { schemaVersion: 1, profiles: [claudeProfile("acc-work-a", "credential-v2-work"), named],
     policy: { schemaVersion: 1, providerId: "claude", revision: 3, enabled: true,
@@ -203,12 +213,12 @@ test("a remote backend's accounts are not matched against this computer's profil
   assert.equal(await command.run(), true);
   assert.deepEqual(JSON.parse(command.output[0]).registeredAccounts, [
     { referenceId: "acc-work-a", aliasReferenceIds: [], credentialGeneration: "credential-v2-work",
-      name: null, profileName: null, usage: null },
+      name: null, profileName: null, signedIn: null, usage: null },
   ]);
   const human = accountsCommand({ result, kind: "ssh", home, environment });
   assert.equal(await human.run(), true);
   assert.match(human.output.join("\n"),
-    /Profile names and usage are read from this computer, so they are unknown for remote backend shared\./);
+    /Profile names, sign-in and usage are read from this computer, so they are unknown for remote backend shared\./);
 });
 
 test("unreadable markers or usage caches leave the name or usage unknown", async () => {
@@ -230,6 +240,91 @@ test("unreadable markers or usage caches leave the name or usage unknown", async
     // Two directories claiming one generation are ambiguous.
     { referenceId: "acc-work", profileName: null, usage: null },
   ]);
+});
+
+test("a Claude login without credentials is listed as signed out with how to sign in again", async () => {
+  const { home, environment } = localAccountsFixture({
+    profiles: { "claude-file": "credential-v2-file", "claude-keychain": "credential-v2-keychain",
+      "claude-out": "credential-v2-out", "claude-locked": "credential-v2-locked",
+      "claude-empty": "credential-v2-empty" },
+    credentials: { "claude-file": "{}", "claude-empty": "" },
+    // The cache outlives the sign-out; it must not read as quota to spend.
+    usage: { "claude-out": { captured_at: seconds(NOW - 3 * HOUR), rate_limits: {
+      seven_day: { used_percentage: 12, resets_at: seconds(NOW + 30 * HOUR) } } } },
+  });
+  const accountsRoot = join(home, ".dure", "accounts");
+  // The backend launches Claude with the profile's real path, so Claude Code
+  // keys that run's Keychain item by it.
+  const service = (directory) => claudeKeychainService(realpathSync(join(accountsRoot, directory)));
+  const keychain = new Map([[service("claude-keychain"), "present"], [service("claude-locked"), "unknown"]]);
+  const lookups = [];
+  const keychainLookup = async (name) => { lookups.push(name); return keychain.get(name) ?? "absent"; };
+  const result = { schemaVersion: 1, policy: null, profiles: [
+    claudeProfile("acc-file", "credential-v2-file"), claudeProfile("acc-keychain", "credential-v2-keychain"),
+    claudeProfile("acc-out", "credential-v2-out"), claudeProfile("acc-locked", "credential-v2-locked"),
+    claudeProfile("acc-empty", "credential-v2-empty"), claudeProfile("acc-unmatched", "credential-v2-elsewhere"),
+  ] };
+  const human = accountsCommand({ result, home, environment, platform: "darwin", keychainLookup });
+  assert.equal(await human.run(), true);
+  assert.equal(human.output.join("\n"), [
+    "claude accounts on backend local (automatic recovery: not configured)",
+    "  acc-file       claude-file      usage unknown",
+    "  acc-keychain   claude-keychain  usage unknown",
+    "  acc-out        claude-out       signed out · weekly 12% (resets in 1d 6h) · observed 3h ago",
+    "  acc-locked     claude-locked    usage unknown",
+    "  acc-empty      claude-empty     usage unknown",
+    "  acc-unmatched  name unknown     usage unknown",
+    "A signed-out login stops at the provider's sign-in screen. Sign it in on this computer first:",
+    "  CLAUDE_CONFIG_DIR=~/.dure/accounts/claude-out claude auth login",
+    "Switch with: dure runs switch-account RUN --account ID. Any ID of one login selects the same credential.",
+    "Use the provider's default login, which needs no registration: dure runs switch-account RUN --account default --confirm-restart",
+    "Add a login signed in on this backend's host: dure accounts register claude --dir NAME --backend local (see dure accounts help)",
+  ].join("\n"));
+  // A credential file answers without reading the Keychain.
+  assert.deepEqual(lookups.sort(), ["claude-keychain", "claude-out", "claude-locked", "claude-empty"]
+    .map(service).sort());
+
+  const json = accountsCommand({ result, home, environment, args: ["--json"], platform: "darwin", keychainLookup });
+  assert.equal(await json.run(), true);
+  assert.deepEqual(JSON.parse(json.output[0]).registeredAccounts.map(({ referenceId, signedIn }) =>
+    ({ referenceId, signedIn })), [
+    { referenceId: "acc-file", signedIn: true },
+    { referenceId: "acc-keychain", signedIn: true },
+    { referenceId: "acc-out", signedIn: false },
+    // Only a confirmed absence is signed out.
+    { referenceId: "acc-locked", signedIn: null },
+    { referenceId: "acc-empty", signedIn: null },
+    { referenceId: "acc-unmatched", signedIn: null },
+  ]);
+});
+
+test("outside macOS a Claude login is its profile's credential file", async () => {
+  const { home, environment } = localAccountsFixture({
+    profiles: { "claude-work": "credential-v2-work", "claude-out": "credential-v2-out" },
+    credentials: { "claude-work": "{}" },
+  });
+  const result = { schemaVersion: 1, policy: null, profiles: [
+    claudeProfile("acc-work", "credential-v2-work"), claudeProfile("acc-out", "credential-v2-out")] };
+  const command = accountsCommand({ result, home, environment });
+  assert.equal(await command.run(), true);
+  assert.deepEqual(command.output.join("\n").split("\n").slice(1, 5), [
+    "  acc-work  claude-work  usage unknown",
+    "  acc-out   claude-out   signed out · usage unknown",
+    "A signed-out login stops at the provider's sign-in screen. Sign it in on this computer first:",
+    "  CLAUDE_CONFIG_DIR=~/.dure/accounts/claude-out claude auth login",
+  ]);
+  // A Dure home outside HOME is named by its full path.
+  const moved = localAccountsFixture({ profiles: { "claude-out": "credential-v2-out" } });
+  const outside = accountsCommand({ result, home: join(moved.home, "user"),
+    environment: { DURE_HOME: join(moved.home, ".dure") } });
+  assert.equal(await outside.run(), true);
+  assert.ok(outside.output.join("\n").includes(
+    `  CLAUDE_CONFIG_DIR=${join(moved.home, ".dure", "accounts", "claude-out")} claude auth login`));
+});
+
+test("the Keychain item is named by the config directory's hash as Claude Code names it", () => {
+  // The same vector the app's native login check pins.
+  assert.equal(claudeKeychainService("/tmp/claude-work"), "Claude Code-credentials-bfc1769a");
 });
 
 test("an invalid backend result is printed unchanged instead of summarized", async () => {
