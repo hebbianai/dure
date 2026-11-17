@@ -198,7 +198,8 @@ function block(item: ChatBlock): HTMLElement {
   }
 }
 
-function messageRow(role: "user" | "agent", text: string, truncated: boolean): HTMLElement {
+/** One message as a bubble. The chat of a chat-owned agent draws the same rows. */
+export function messageRow(role: "user" | "agent", text: string, truncated: boolean): HTMLElement {
   const row = element("div", `chat__row chat__row--${role}`);
   const bubble = element("div", "chat__bubble");
   if (role === "agent") bubble.append(...chatBlocks(text).map(block));
