@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   RUN_PARENT_PRESENTATION_CAPABILITY,
+  RUN_START_ORDER_PRESENTATION_CAPABILITY,
   managedRunPresentationRequest,
   presentAgentRunRuntime,
   registerAgentRunInBackground,
@@ -131,6 +132,17 @@ describe.each([
     expect("parent" in project({ ...options(receipt), descriptor: { capabilities: [] } })).toBe(false);
     expect("parent" in project(options(receipt))).toBe(false);
     expect("parent" in project({ ...options(makeReceipt()), descriptor: accepting })).toBe(false);
+  });
+
+  it("sends the Run's start time only to an app that orders workers by it", () => {
+    const receipt = makeReceipt();
+    const accepting = { capabilities: [RUN_START_ORDER_PRESENTATION_CAPABILITY] };
+    expect(project({ ...options(receipt), descriptor: accepting }).startedAtMs).toBe(
+      receipt.createdAtMs,
+    );
+    // An older app rejects unknown request keys, so it never sees one.
+    expect("startedAtMs" in project({ ...options(receipt), descriptor: { capabilities: [] } })).toBe(false);
+    expect("startedAtMs" in project(options(receipt))).toBe(false);
   });
 
   it("keeps legacy default receipts usable without inventing a root", () => {

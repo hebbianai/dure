@@ -3,6 +3,10 @@ import {
 	type AgentRunPresentationWorktree,
 	snapshotAgentRunPresentationWorktree,
 } from "@/lib/agents/agentRunWorkspacePresentation";
+import {
+	enterRunPresentationOrder,
+	type RunPresentationTurn,
+} from "@/lib/agents/runPresentationOrder";
 import { resolveRunPresentationProject } from "@/lib/agents/runPresentationProject";
 import { resolveBackendPresentationSshHost } from "@/lib/cli/backendPresentationTarget";
 import { claimCliRequest } from "@/lib/cli/cliRequestBroker";
@@ -287,14 +291,14 @@ function requireTargetSpaceWindow(
 	}
 }
 
-async function performManagedRunPresentation(
+/** Prepare the presentation, then project the Agent and commit its pane once
+ * the Run's turn among its lead's workers comes. */
+async function commitManagedRunPane(
 	request: ManagedRunPanePresentationRequest,
 	dependencies: CliManagedRunPresentationDependencies,
-	authorize: () => Promise<boolean>,
-) {
-	const initial = dependencies.readState();
-	requireTargetSpaceWindow(request, initial, dependencies.windowLabel());
-	if (!(await authorize())) return null;
+	initial: CliManagedRunPresentationState,
+	turn: RunPresentationTurn,
+): Promise<ManagedRunPaneCommit> {
 	await dependencies.refreshRuntime?.(request);
 	const binding = await dependencies.inspectBinding(
 		request,
@@ -336,6 +340,7 @@ async function performManagedRunPresentation(
 		// inside the synchronous pane commit, including consecutive spawns.
 		preferredPanelId = reference.panelId;
 	}
+	await turn.wait();
 	requireTargetSpaceWindow(
 		request,
 		dependencies.readState(),
@@ -360,7 +365,7 @@ async function performManagedRunPresentation(
 			`Space ${request.spaceId} changed before pane commit`,
 		);
 	}
-	const pane: ManagedRunPaneCommit = {
+	return {
 		spaceId: request.spaceId,
 		desktopId: request.spaceId,
 		panelId,
@@ -370,6 +375,23 @@ async function performManagedRunPresentation(
 		runtime: "hmux_managed_v1",
 		outcome: projected.outcome,
 	};
+}
+
+async function performManagedRunPresentation(
+	request: ManagedRunPanePresentationRequest,
+	dependencies: CliManagedRunPresentationDependencies,
+	authorize: () => Promise<boolean>,
+) {
+	const initial = dependencies.readState();
+	requireTargetSpaceWindow(request, initial, dependencies.windowLabel());
+	if (!(await authorize())) return null;
+	const turn = enterRunPresentationOrder(request);
+	let pane: ManagedRunPaneCommit;
+	try {
+		pane = await commitManagedRunPane(request, dependencies, initial, turn);
+	} finally {
+		turn.leave();
+	}
 	try {
 		await dependencies.waitForAttachment({
 			desktopId: pane.desktopId,
