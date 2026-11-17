@@ -332,7 +332,7 @@ jobs:
     if: always() && !cancelled() && needs.source.result == 'success' && needs.version.result == 'success'
     runs-on: ${{ fromJSON(needs.source.outputs.macos_runner) }}
     environment: macos-release
-    timeout-minutes: 240
+    timeout-minutes: 480
     defaults:
       run:
         working-directory: source
