@@ -33,6 +33,7 @@ fn catalog_fixture() -> HubCatalog {
         hub_catalog_version: HUB_CATALOG_VERSION,
         layout: None,
         sessions: Vec::new(),
+        chat_sessions: Vec::new(),
         unreachable: vec![UnreachableBox {
             box_id: "gate1".to_string(),
             box_label: "Gate1".to_string(),

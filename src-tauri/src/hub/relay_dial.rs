@@ -520,6 +520,7 @@ fn serve_relayed_phone(
             files: service.hub.files.as_deref(),
             accounts: service.hub.accounts.as_deref(),
             conversations: service.hub.conversations.as_deref(),
+            agent_chats: service.hub.agent_chats.as_deref(),
             terminal_widths: service.hub.terminal_widths.as_ref(),
         },
         &service.connections,
@@ -567,6 +568,7 @@ mod tests {
     impl CatalogSource for EmptyCatalog {
         fn catalog(&self) -> HubCatalog {
             HubCatalog {
+                chat_sessions: Vec::new(),
                 hub_catalog_version: HUB_CATALOG_VERSION,
                 layout: None,
                 sessions: Vec::new(),

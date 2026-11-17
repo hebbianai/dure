@@ -27,6 +27,7 @@
 //! 소유자 결정이다. 억지로 "분류 없음" 묶음을 만들면 사용자가 정리한 적 없는
 //! 것들이 화면 아래에 쌓이고, 그건 사이드바를 정리한 사람이 보려던 화면이 아니다.
 
+use dure_hub_protocol::agent_chat::HubChatSession;
 use dure_hub_protocol::catalog::{CatalogLayout, SessionPlacement as WirePlacement};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -65,6 +66,20 @@ pub struct RemoteHost {
     pub key_path: Option<String>,
 }
 
+/// A chat-owned agent the sidebar shows (#562).
+///
+/// It is not an Hmux session, so the catalog cannot find it in a census: the
+/// screen, which holds the agent registry, names it here. Its seat in
+/// `placements` is keyed by `agent_id`.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ChatAgent {
+    pub agent_id: String,
+    /// The backend profile the agent's conversation lives on. The phone never
+    /// names it; the hub routes the phone's requests by it.
+    pub backend_profile_id: String,
+    pub provider_id: String,
+}
+
 /// 화면이 내려보낸 배치 전체.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SidebarLayout {
@@ -74,6 +89,9 @@ pub struct SidebarLayout {
     pub desktop_order: Vec<String>,
     #[serde(default)]
     pub remote_hosts: Vec<RemoteHost>,
+    /// The sidebar's chat-owned agents. Absent from an older screen.
+    #[serde(default)]
+    pub chat_agents: Vec<ChatAgent>,
 }
 
 impl SidebarLayout {
@@ -83,6 +101,27 @@ impl SidebarLayout {
             entry.display_title = Some(seat.title.clone());
             entry.presentation = seat.presentation.clone();
         }
+    }
+
+    /// The chat-owned agents the phone may open, on this desktop's box. Only
+    /// placed agents are listed, like sessions: the phone draws no row the
+    /// sidebar does not show.
+    #[must_use]
+    pub fn chat_sessions(&self, box_id: &str, box_label: &str) -> Vec<HubChatSession> {
+        self.chat_agents
+            .iter()
+            .filter_map(|agent| {
+                let seat = self.placements.get(&agent.agent_id)?;
+                Some(HubChatSession {
+                    agent_id: agent.agent_id.clone(),
+                    provider_id: agent.provider_id.clone(),
+                    display_title: Some(seat.title.clone()),
+                    presentation: seat.presentation.clone(),
+                    box_id: box_id.to_string(),
+                    box_label: box_label.to_string(),
+                })
+            })
+            .collect()
     }
 }
 
@@ -118,6 +157,20 @@ impl LayoutState {
             .lock()
             .ok()
             .and_then(|layout| layout.placements.get(session_id).cloned())
+    }
+
+    /// The chat-owned agent the sidebar listed under this id, if any.
+    #[must_use]
+    pub fn chat_agent(&self, agent_id: &str) -> Option<ChatAgent> {
+        self.layout.lock().ok().and_then(|layout| {
+            layout
+                .chat_agents
+                .iter()
+                .find(|agent| {
+                    agent.agent_id == agent_id && layout.placements.contains_key(agent_id)
+                })
+                .cloned()
+        })
     }
 
     #[must_use]
@@ -210,12 +263,47 @@ mod tests {
         state.set(SidebarLayout {
             placements: HashMap::from([("s-1".to_string(), placement("Workspace", "agent-ide", 0))]),
             desktop_order: vec!["Workspace".to_string()],
-            remote_hosts: Vec::new(),
+            ..Default::default()
         });
         assert_eq!(
             state.placement_of("s-1"),
             Some(placement("Workspace", "agent-ide", 0))
         );
+    }
+
+    /// A chat-owned agent reaches the catalog with its seat's title, and only
+    /// while the sidebar places it.
+    #[test]
+    fn placed_chat_agents_are_listed_and_found() {
+        let state = LayoutState::default();
+        let chat = |agent_id: &str| ChatAgent {
+            agent_id: agent_id.to_string(),
+            backend_profile_id: "local".to_string(),
+            provider_id: "claude".to_string(),
+        };
+        state.set(SidebarLayout {
+            placements: HashMap::from([("agent-1".to_string(), placement("Workspace", "dure", 0))]),
+            desktop_order: vec!["Workspace".to_string()],
+            chat_agents: vec![chat("agent-1"), chat("agent-unplaced")],
+            ..Default::default()
+        });
+        let listed = state.get().chat_sessions("this-laptop", "Laptop");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].agent_id, "agent-1");
+        assert_eq!(listed[0].display_title.as_deref(), Some("mobile"));
+        assert_eq!(listed[0].box_id, "this-laptop");
+        assert_eq!(state.chat_agent("agent-1"), Some(chat("agent-1")));
+        assert_eq!(state.chat_agent("agent-unplaced"), None);
+        assert_eq!(state.chat_agent("agent-unknown"), None);
+    }
+
+    /// An older screen sends no chat agents; its layout still reads.
+    #[test]
+    fn a_layout_without_chat_agents_still_reads() {
+        let layout: SidebarLayout =
+            serde_json::from_value(serde_json::json!({"placements": {}, "desktop_order": []}))
+                .expect("reads");
+        assert!(layout.chat_agents.is_empty());
     }
 
     /// 사이드바에 없는 세션은 자리가 없다. 폰은 그것을 그리지 않는다 — 억지로
@@ -235,12 +323,12 @@ mod tests {
         state.set(SidebarLayout {
             placements: HashMap::from([("s-1".to_string(), placement("Workspace", "agent-ide", 0))]),
             desktop_order: vec!["Workspace".to_string()],
-            remote_hosts: Vec::new(),
+            ..Default::default()
         });
         state.set(SidebarLayout {
             placements: HashMap::from([("s-2".to_string(), placement("Onchain", "Gate1", 0))]),
             desktop_order: vec!["Onchain".to_string()],
-            remote_hosts: Vec::new(),
+            ..Default::default()
         });
         assert_eq!(state.placement_of("s-1"), None);
         assert_eq!(state.get().desktop_order, vec!["Onchain".to_string()]);

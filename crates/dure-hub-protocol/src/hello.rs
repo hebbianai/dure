@@ -327,6 +327,62 @@ pub enum HubRequest {
         workspace_id: String,
         session_id: String,
     },
+    /// Read a chat-owned agent's timeline (`agent_chat.rs`): the newest page,
+    /// or the page before `before`.
+    ///
+    /// Asked while the chat is open, like `ConversationTranscriptV1`. Answered
+    /// with an `agent_chat::HubAgentChatTimelineResult`. A desktop that
+    /// predates it reads it as [`Self::Unsupported`]; the phone asks only
+    /// about an agent the catalog listed in `chat_sessions`, which such a
+    /// desktop never does.
+    AgentChatTimelineV1 {
+        /// The `chat_sessions` entry's box.
+        box_id: String,
+        /// The `chat_sessions` entry's agent.
+        agent_id: String,
+        /// An item's `sequence`: read the items before it. Absent reads the
+        /// newest.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+        /// How many rows to read. Absent or larger asks for
+        /// `agent_chat::MAX_AGENT_CHAT_ITEMS`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Send one message, the way the desktop's composer does: it starts a
+    /// turn when none is running, steers the running turn, or waits behind
+    /// it when the provider cannot be steered.
+    ///
+    /// A write, so a variant of its own (`CreatePullRequest`). The text rides
+    /// in the greeting and is bounded like `AgentPromptV1`'s: send what
+    /// `conversation::normalize_agent_prompt` returns. Answered with an
+    /// `agent_chat::HubAgentChatActionResult`.
+    AgentChatSendV1 {
+        box_id: String,
+        agent_id: String,
+        /// This press's name, like `StartAgent.action_id`. The desktop derives
+        /// the message's ids from it, so a retry after a lost answer finds the
+        /// message it already sent instead of sending a second one.
+        action_id: String,
+        text: String,
+    },
+    /// Interrupt the running turn the timeline showed.
+    AgentChatInterruptV1 {
+        box_id: String,
+        agent_id: String,
+        action_id: String,
+        /// The timeline's `turn`. Another turn is refused `turn_changed`.
+        turn_id: String,
+    },
+    /// Answer one pending permission or question request.
+    AgentChatAnswerV1 {
+        box_id: String,
+        agent_id: String,
+        action_id: String,
+        /// The timeline's pending `request_id`.
+        request_id: String,
+        answer: crate::agent_chat::AgentChatAnswer,
+    },
     /// 이 노트북이 모르는 요청.
     ///
     /// # 왜 갈래가 하나 더 있는가
@@ -703,6 +759,110 @@ mod tests {
         assert_eq!(back, request);
     }
 
+    fn agent_chat_requests() -> Vec<HubRequest> {
+        vec![
+            HubRequest::AgentChatTimelineV1 {
+                box_id: "this-laptop".to_string(),
+                agent_id: "agent-1".to_string(),
+                before: Some(41),
+                limit: Some(50),
+            },
+            HubRequest::AgentChatSendV1 {
+                box_id: "this-laptop".to_string(),
+                agent_id: "agent-1".to_string(),
+                action_id: "send-1".to_string(),
+                text: "Run the tests\nand report".to_string(),
+            },
+            HubRequest::AgentChatInterruptV1 {
+                box_id: "this-laptop".to_string(),
+                agent_id: "agent-1".to_string(),
+                action_id: "stop-1".to_string(),
+                turn_id: "turn-1".to_string(),
+            },
+            HubRequest::AgentChatAnswerV1 {
+                box_id: "this-laptop".to_string(),
+                agent_id: "agent-1".to_string(),
+                action_id: "answer-1".to_string(),
+                request_id: "request-1".to_string(),
+                answer: crate::agent_chat::AgentChatAnswer::Permission { allow: true },
+            },
+            HubRequest::AgentChatAnswerV1 {
+                box_id: "this-laptop".to_string(),
+                agent_id: "agent-1".to_string(),
+                action_id: "answer-2".to_string(),
+                request_id: "request-2".to_string(),
+                answer: crate::agent_chat::AgentChatAnswer::Question {
+                    answers: [("db".to_string(), "SQLite".to_string())].into(),
+                },
+            },
+        ]
+    }
+
+    #[test]
+    fn agent_chat_requests_round_trip_and_stay_distinct() {
+        for request in agent_chat_requests() {
+            let framed = encode_hello_for("token-1", request.clone()).expect("encodes");
+            assert_eq!(
+                read_hello(&mut framed.as_slice()).expect("reads").request,
+                request
+            );
+        }
+    }
+
+    /// The names the phone writes on the wire.
+    #[test]
+    fn agent_chat_requests_use_their_wire_names() {
+        let kinds: Vec<_> = agent_chat_requests()
+            .into_iter()
+            .map(|request| serde_json::to_value(request).expect("to value")["kind"].clone())
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "agent_chat_timeline_v1",
+                "agent_chat_send_v1",
+                "agent_chat_interrupt_v1",
+                "agent_chat_answer_v1",
+                "agent_chat_answer_v1",
+            ]
+        );
+        let value = serde_json::to_value(&agent_chat_requests()[3]).expect("to value");
+        assert_eq!(
+            value["answer"],
+            serde_json::json!({ "kind": "permission", "allow": true })
+        );
+        let first = serde_json::to_value(HubRequest::AgentChatTimelineV1 {
+            box_id: "b".to_string(),
+            agent_id: "a".to_string(),
+            before: None,
+            limit: None,
+        })
+        .expect("to value");
+        assert_eq!(
+            first,
+            serde_json::json!({ "kind": "agent_chat_timeline_v1", "box_id": "b", "agent_id": "a" })
+        );
+    }
+
+    /// The longest message a phone may send still fits the greeting.
+    #[test]
+    fn the_longest_allowed_chat_message_always_fits_the_greeting() {
+        use crate::conversation::{MAX_AGENT_PROMPT_BYTES, normalize_agent_prompt};
+        let text = "\"".repeat(MAX_AGENT_PROMPT_BYTES);
+        assert_eq!(normalize_agent_prompt(&text).as_ref(), Ok(&text));
+        let request = HubRequest::AgentChatSendV1 {
+            box_id: "i".repeat(256),
+            agent_id: "i".repeat(160),
+            action_id: "a".repeat(crate::agent_chat::MAX_AGENT_CHAT_ACTION_ID_BYTES),
+            text,
+        };
+        let framed = encode_hello_for(&"t".repeat(43), request.clone()).expect("fits");
+        assert_eq!(
+            read_hello(&mut framed.as_slice()).expect("reads").request,
+            request
+        );
+    }
+
     /// A first read carries neither limit nor cursor; a prompt that does not
     /// name a conversation accepts the current one. Absence must not fail the
     /// greeting, which the phone would show as a revoked pairing.
@@ -803,7 +963,10 @@ mod tests {
                 workspace_id: "workspace-1".to_string(),
                 session_id: "session-1".to_string(),
             },
-        ] {
+        ]
+        .into_iter()
+        .chain(agent_chat_requests())
+        {
             let framed = encode_hello_for("token-1", request).expect("encodes");
             let payload =
                 frame::read_bytes(&mut framed.as_slice(), MAX_HELLO_BYTES).expect("frame");
