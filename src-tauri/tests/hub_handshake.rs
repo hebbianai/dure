@@ -260,6 +260,7 @@ impl CatalogSource for OneSession {
         HubCatalog {
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
+            chat_sessions: Vec::new(),
             sessions: vec![HubCatalogEntry {
                 launch_program: None,
                 session_id: "standalone_abc".into(),
