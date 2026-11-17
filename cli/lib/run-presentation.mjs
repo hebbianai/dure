@@ -299,7 +299,20 @@ export function runReceiptSummary(report, presentation = null) {
     interactionProfile,
     parent: validSpawnParent(plan?.request?.parent) ? plan.request.parent : null,
     startupGate: stoppedAtStartupGate(receipt),
+    error: runReceiptError(receipt, token),
   };
+}
+
+/** Why a Run stopped short, from the receipt's recovery or terminal code:
+ *  the stage that failed, its machine code and the bounded detail line. */
+function runReceiptError(receipt, token) {
+  const recovery = receipt?.recovery;
+  const code = token(recovery?.error_code) ?? token(receipt?.terminalCode);
+  if (code === null) return null;
+  const detail = recovery?.error_code === code && typeof recovery.error_detail === "string"
+    ? recovery.error_detail
+    : null;
+  return { stage: token(recovery?.stage ?? recovery?.inputs?.stage), code, detail };
 }
 
 /** App capability: presentation requests may carry the Run's `parent`, the

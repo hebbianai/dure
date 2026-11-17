@@ -2148,7 +2148,11 @@ fn agent_spawn_preview_failure(
     body: &Value,
     code: String,
 ) -> BackendDispatchError {
-    if code == "agent_spawn_project_not_found" {
+    // Retrying the same request cannot succeed until the selector or the
+    // repository changes.
+    if code == "agent_spawn_project_not_found"
+        || code == workspace_git::AGENT_SPAWN_WORKTREE_BRANCH_EXISTS
+    {
         return BackendDispatchError::terminal(&code);
     }
     let Some(reason) = agent_spawn_api::provider_preflight_reason(&code) else {

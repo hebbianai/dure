@@ -140,6 +140,34 @@ it.each([
   expect(JSON.stringify(report)).not.toContain("/Users/someone");
 });
 
+it("says a Run's branch already exists instead of leaving the refusal bare", async () => {
+  const report = await collectAgentSpawnQuery({
+    action: "preview",
+    projectId: "dure",
+    providerId: "codex",
+    agentName: "codex-1",
+    idempotencyKey: "spawn-request-1",
+    worktree: { kind: "dedicated", branch: "agent/codex-1" },
+    backend: backend(),
+    requestBackend: async () => {
+      throw new BackendTransportError("backend_transport_remote_error", {
+        details: {
+          code: "agent_spawn_worktree_branch_exists",
+          disposition: "terminal",
+          message: "private /Users/someone/repo",
+        },
+      });
+    },
+  });
+  expect(report.error).toMatchObject({ remoteCode: "agent_spawn_worktree_branch_exists", disposition: "terminal" });
+  expect(report.error.message).toContain("The branch already exists in this project, so nothing was started.");
+  expect(report.error.message).toContain("--branch");
+  expect(formatAgentSpawnQuery(report)).toContain("agent_spawn_worktree_branch_exists");
+  expect(formatAgentSpawnQuery(report)).toContain(report.error.message);
+  expect(agentSpawnQueryExitCode(report)).toBe(2);
+  expect(JSON.stringify(report)).not.toContain("/Users/someone");
+});
+
 it.each(["preview", "apply"])("says how to learn the refused check when the backend names none on %s", async (action) => {
   // Backends before 0.2.58 refuse a provider plan with the bare code.
   const report = await collectAgentSpawnQuery({

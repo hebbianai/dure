@@ -250,6 +250,7 @@ describe("Run receipt summary", () => {
       interactionProfile: "native_cli",
       parent: null,
       startupGate: null,
+      error: null,
     });
   });
 
@@ -304,10 +305,43 @@ describe("Run receipt summary", () => {
       interactionProfile: "native_cli",
       parent: null,
       startupGate: null,
+      error: null,
     });
     expect(runReceiptSummary({ kind: "dure.agent_spawn.error", error: { code: "x" } })).toEqual({
       agentId: null, sessionId: null, workspaceId: null, panelId: null, spaceId: null,
-      state: null, presentation: null, interactionProfile: null, parent: null, startupGate: null,
+      state: null, presentation: null, interactionProfile: null, parent: null, startupGate: null, error: null,
     });
+  });
+
+  it("says why a Run stopped short: the failed stage, its code and its detail", () => {
+    const report = nativeReport();
+    report.receipt.state = "retry_required";
+    report.receipt.completed = [];
+    report.receipt.recovery = {
+      kind: "retry_required",
+      stage: "worktree",
+      failed_attempt: 1,
+      error_code: "workspace_identity_conflict",
+      error_detail: "branch agent/codex-1 already exists",
+      inputs: { stage: "worktree" },
+    };
+    expect(runReceiptSummary(report)).toMatchObject({
+      state: "retry_required",
+      error: { stage: "worktree", code: "workspace_identity_conflict", detail: "branch agent/codex-1 already exists" },
+    });
+    delete report.receipt.recovery.error_detail;
+    expect(runReceiptSummary(report).error).toEqual({ stage: "worktree", code: "workspace_identity_conflict", detail: null });
+
+    report.receipt.state = "prompt_delivery_uncertain";
+    report.receipt.recovery = {
+      kind: "do_not_replay_prompt", attempt: 1, error_code: "prompt_delivery_timeout",
+      inputs: { stage: "prompt_delivery" },
+    };
+    expect(runReceiptSummary(report).error).toEqual({ stage: "prompt_delivery", code: "prompt_delivery_timeout", detail: null });
+
+    report.receipt.state = "failed";
+    report.receipt.recovery = { kind: "none" };
+    report.receipt.terminalCode = "agent_spawn_runtime_launch_failed";
+    expect(runReceiptSummary(report).error).toEqual({ stage: null, code: "agent_spawn_runtime_launch_failed", detail: null });
   });
 });

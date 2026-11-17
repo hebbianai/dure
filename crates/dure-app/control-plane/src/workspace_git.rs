@@ -243,16 +243,23 @@ pub(crate) async fn resolve_branch_base(
     resolve_base_commit(project_root, Some(&commit)).await
 }
 
+/// `new_plan` is false when the idempotency key already has a receipt: its
+/// own apply may have created the branch, and the replay must still return
+/// that plan. A new plan that would create a branch the repository already
+/// has is refused here, before a Run is recorded under its name; the
+/// worktree stage would otherwise stop at `workspace_identity_conflict`.
 pub(crate) async fn validate_preview_policy(
     project_root: &Path,
     policy: &AgentSpawnWorktreePolicyV1,
+    new_plan: bool,
 ) -> Result<(), String> {
-    let (base_commit_sha, branch) = match policy {
+    let (base_commit_sha, branch, branch_mode) = match policy {
         AgentSpawnWorktreePolicyV1::Dedicated {
             base_commit_sha,
             branch,
+            branch_mode,
             ..
-        } => (base_commit_sha, branch),
+        } => (base_commit_sha, branch, branch_mode),
         AgentSpawnWorktreePolicyV1::ProjectRoot
         | AgentSpawnWorktreePolicyV1::ExistingCheckout { .. }
         | AgentSpawnWorktreePolicyV1::ExistingWorkspace { .. } => return Ok(()),
@@ -261,8 +268,19 @@ pub(crate) async fn validate_preview_policy(
         .await
         .map_err(|_| "agent_spawn_worktree_branch_invalid".to_string())?;
     resolve_base_commit(project_root, Some(base_commit_sha)).await?;
+    if new_plan
+        && *branch_mode == AgentSpawnBranchModeV1::Create
+        && read_ref(project_root, &format!("refs/heads/{branch}"))
+            .await
+            .map_err(|failure| failure.code)?
+            .is_some()
+    {
+        return Err(AGENT_SPAWN_WORKTREE_BRANCH_EXISTS.into());
+    }
     Ok(())
 }
+
+pub(crate) const AGENT_SPAWN_WORKTREE_BRANCH_EXISTS: &str = "agent_spawn_worktree_branch_exists";
 
 fn canonical_project_root(request: &WorkspaceAcquireRequest) -> Result<PathBuf, WorkspaceFailure> {
     if !request.project_root.is_absolute()

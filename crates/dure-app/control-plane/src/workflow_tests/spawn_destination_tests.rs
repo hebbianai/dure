@@ -468,3 +468,96 @@ async fn spawn_at_destination(existing_branch: bool) {
     );
     assert!(!project_root.join(".worktrees/feature-x").exists());
 }
+
+#[tokio::test]
+async fn existing_branch_refuses_a_new_create_plan_before_recording_a_run() {
+    let (_state_root, state, launcher, _) = fixture(vec![LaunchOutcome::Succeed]).await;
+    let repository = crate::workspace_git::tests::repository().await;
+    let project_root = repository.path().canonicalize().unwrap();
+    register_project(
+        &state.projects_catalog_path,
+        "project-branch-taken".into(),
+        "Taken branch fixture".into(),
+        project_root.to_string_lossy().into_owned(),
+    )
+    .unwrap();
+    let authority = BackendRequestAuthority {
+        backend_id: state.descriptor.backend_id.clone(),
+        generation: state.descriptor.generation.clone(),
+    };
+    let body = |idempotency_key: &str, agent_name: &str| {
+        json!({
+            "schemaVersion": 1,
+            "idempotencyKey": idempotency_key,
+            "projectId": "project-branch-taken",
+            "providerId": "codex",
+            "agentName": agent_name,
+            "interactionPreference": "native_cli",
+            "worktree": { "kind": "dedicated", "branch": "agent/feature-x" },
+            "promptDigest": null,
+        })
+    };
+
+    // The first Run creates the branch and launches.
+    let owner = body("branch-owner", "feature-x");
+    let preview = preview_agent_spawn(&state, &authority, &owner)
+        .await
+        .unwrap();
+    let planned: dure_app::AgentSpawnJournalReceiptV1 =
+        serde_json::from_value(preview["receipt"].clone()).unwrap();
+    let applied = apply_agent_spawn(
+        &state,
+        &authority,
+        agent_spawn_apply::AgentSpawnApplyBody {
+            schema_version: dure_app::AGENT_SPAWN_SCHEMA_VERSION_V1,
+            operation_id: planned.operation_id.clone(),
+            plan_token: planned.plan.plan_token.clone(),
+            expected_last_sequence: planned.last_sequence,
+            prompt: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(applied["receipt"]["state"], "succeeded", "{applied}");
+    assert_eq!(launcher.requests().len(), 1);
+
+    // Its own key still replays the recorded plan although the branch now exists.
+    let replayed = preview_agent_spawn(&state, &authority, &owner)
+        .await
+        .unwrap();
+    assert_eq!(
+        replayed["receipt"]["operationId"],
+        preview["receipt"]["operationId"]
+    );
+
+    // A new Run asking to create the same branch is refused at preview, so no
+    // second Run is recorded under the reused name and nothing launches.
+    let mut wire =
+        orchestration_backend_request(&state, "branch-collision-preview", "", Value::Null);
+    wire.operation = "agent_spawn.preview".into();
+    wire.expected.required_capabilities = vec!["agent_spawn.preview.v2".into()];
+    wire.body = body("branch-collision", "feature-x");
+    for _ in 0..2 {
+        let failure = dispatch(&state, &wire).await.unwrap_err();
+        assert_eq!(failure.code, "agent_spawn_worktree_branch_exists");
+        assert_eq!(failure.disposition, BackendFailureDispositionV1::Terminal);
+    }
+    assert!(
+        state
+            .store
+            .agent_spawn_receipt_by_idempotency_key("branch-collision")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(launcher.requests().len(), 1);
+
+    // Adopting the existing branch stays available.
+    wire.body["worktree"]["branch_mode"] = json!("existing");
+    wire.body["worktree"]["checkout_path"] = json!(project_root.join("custom/adopted"));
+    let adopted = dispatch(&state, &wire).await.unwrap();
+    assert_eq!(
+        adopted["receipt"]["plan"]["request"]["worktree"]["branch_mode"],
+        "existing"
+    );
+}

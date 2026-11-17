@@ -2166,6 +2166,8 @@ Without either selector, the current directory selects the containing project.
 Local paths resolve from the current directory; SSH paths must be absolute on that host.
 Register explicitly with dure projects register <project-id> --path PATH first,
 keeping the same --backend selection. Use dure projects register --help for flags.
+--worktree NAME starts a new branch in its own checkout: agent/NAME, or the name --branch gives.
+A branch that already exists is refused before anything starts.
 When --space is omitted inside an exact Hmux pane, the new pane opens in the same Space.
 In a terminal or CI environment without a verified calling pane, the Run executes headlessly.
 A pane follows the connected app's Default agent pane setting. A headless Run uses the provider's
@@ -2184,8 +2186,9 @@ Without account-selection support, omitted --account uses the provider default.
 The Run receipt executionProfile identifies the credential reference and generation.
 With --json the receipt starts with summary: agentId, sessionId, workspaceId, panelId,
 spaceId, state (the Run receipt state), presentation (the pane outcome),
-interactionProfile, parent and startupGate (login or workspace_trust when the provider is
-stopped at sign-in or at its folder-trust prompt); a value the receipt cannot vouch for is null. The full receipt,
+interactionProfile, parent, startupGate (login or workspace_trust when the provider is
+stopped at sign-in or at its folder-trust prompt) and error (stage, code and detail of the
+failure when the Run stopped short); a value the receipt cannot vouch for is null. The full receipt,
 presentation and registration follow unchanged. source.backend carries the backend
 identity, protocol and capabilityCount; --verbose adds its full capabilities list.
 --lead starts a lead Run: the prompt is the goal, and the CLI prepends the bundled lead

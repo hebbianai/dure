@@ -866,6 +866,7 @@ describe("dure projects CLI", () => {
       interactionProfile: "native_cli",
       parent: null,
       startupGate: null,
+      error: null,
     });
     expect(Object.keys(runReport)).toEqual(expect.arrayContaining([
       "schemaVersion", "apiVersion", "kind", "action", "complete", "found",
