@@ -622,8 +622,8 @@ impl CapturedViewportFrame {
 /// The static invariant a protocol error names, never terminal content.
 fn protocol_error_reason(error: &terminal_state_protocol::ProtocolError) -> &'static str {
     use terminal_state_protocol::ProtocolError;
-    match error {
-        ProtocolError::InvalidRecord(reason) | ProtocolError::InvalidEnvelope(reason) => *reason,
+    match *error {
+        ProtocolError::InvalidRecord(reason) | ProtocolError::InvalidEnvelope(reason) => reason,
         ProtocolError::FrameTooLarge { .. } => "viewport record exceeds the protocol frame size",
         ProtocolError::Decode(_) => "viewport record does not decode",
     }
