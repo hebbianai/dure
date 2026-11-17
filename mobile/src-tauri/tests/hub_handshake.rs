@@ -50,7 +50,9 @@ fn start_hub() -> FakeHub {
         rcgen::generate_simple_self_signed(vec!["hub.invalid".to_string()]).expect("인증서");
     let certificate_der = CertificateDer::from(certified.cert.der().to_vec());
     let fingerprint = fingerprint::of_der(&certificate_der);
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(certified.key_pair.serialize_der()));
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+        certified.signing_key.serialize_der(),
+    ));
 
     let config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
