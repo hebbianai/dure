@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentPaneTitle,
+  chosenAgentTitle,
   cwdName,
   observedTitle,
   paneTitleFromObservedTitle,
@@ -49,19 +50,37 @@ describe("pane title policy", () => {
   it("resolves one Agent title with an explicit rename ahead of runtime evidence", () => {
     expect(
       resolveAgentPaneTitle({
-        name: "agent-1",
-        displayName: "fix-uiux",
+        agent: { name: "agent-1", displayName: "fix-uiux" },
         runtimeTitle: "Review authentication flow",
         directoryCandidates: ["/repo/.worktrees/fix-live"],
       }),
     ).toBe("fix-uiux");
     expect(
       resolveAgentPaneTitle({
-        name: "agent-1",
+        agent: { name: "agent-1" },
         runtimeTitle: "Review authentication flow",
         directoryCandidates: ["/repo/.worktrees/fix-live"],
       }),
     ).toBe("Review authentication flow");
+  });
+
+  it("names a worker for its Run ahead of the provider's title, under a chosen name", () => {
+    const runParent = { sessionId: "s-lead", workspaceId: "ws" };
+    expect(chosenAgentTitle({ name: "work-552", runParent })).toBe("work-552");
+    expect(chosenAgentTitle({ name: "work-552" })).toBeUndefined();
+    expect(
+      resolveAgentPaneTitle({
+        agent: { name: "work-552", runParent },
+        runtimeTitle: "Claude Code",
+        directoryCandidates: ["/repo/.worktrees/work-552"],
+      }),
+    ).toBe("work-552");
+    expect(
+      resolveAgentPaneTitle({
+        agent: { name: "work-552", displayName: "sidebar fix", runParent },
+        runtimeTitle: "Claude Code",
+      }),
+    ).toBe("sidebar fix");
   });
 
   it("includes a differing effective title in pane diagnostics without duplication", () => {

@@ -259,8 +259,7 @@ export function NativeAgentPanel({
       applyAutomaticPaneTitle(
         props.api,
         resolveAgentPaneTitle({
-          name: agent.name,
-          displayName: agent.displayName,
+          agent,
           runtimeTitle: conversationTitle ?? terminalTitle,
           opaqueConversationId:
             hmuxPaneConversationId(binding) ?? agent.conversationId,

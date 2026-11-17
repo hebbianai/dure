@@ -298,9 +298,25 @@ export function runReceiptSummary(report, presentation = null) {
   };
 }
 
+/** App capability: presentation requests may carry the Run's `parent`, the
+ * Session it was started from, so the app can group a lead's workers. */
+export const RUN_PARENT_PRESENTATION_CAPABILITY = "agent.run_parent_v1";
+
+export function appPresentsRunParent(descriptor) {
+  return descriptor?.capabilities?.includes(RUN_PARENT_PRESENTATION_CAPABILITY) === true;
+}
+
+/** The receipt's parent, for an app that accepts it; an older app rejects
+ * unknown request keys, so it gets none. */
+function presentedParent(request, descriptor) {
+  return appPresentsRunParent(descriptor) && validSpawnParent(request?.parent)
+    ? { parent: { sessionId: request.parent.sessionId, workspaceId: request.parent.workspaceId } }
+    : {};
+}
+
 function managedRunPresentationRequestFromPlan(
   projected,
-  { target, profile, projectPath },
+  { target, profile, projectPath, descriptor },
 ) {
   if (target?.state !== "requested" && target?.state !== "background") {
     fail("client_space_target_invalid", "A Space is required to open the pane.");
@@ -352,6 +368,7 @@ function managedRunPresentationRequestFromPlan(
       ? { referencePanelId: target.referencePanelId }
       : {}),
     ...(projectPath ? { projectPath } : {}),
+    ...presentedParent(request, descriptor),
   };
 }
 
@@ -365,7 +382,7 @@ export function managedRunPresentationRequest(options) {
 
 function structuredRunPresentationRequestFromPlan(
   projected,
-  { target, profile, projectPath },
+  { target, profile, projectPath, descriptor },
 ) {
   if (target?.state !== "requested" && target?.state !== "background") {
     fail("client_space_target_invalid", "A Space is required to open the pane.");
@@ -397,6 +414,7 @@ function structuredRunPresentationRequestFromPlan(
       ? { referencePanelId: target.referencePanelId }
       : {}),
     ...(projectPath ? { projectPath } : {}),
+    ...presentedParent(request, descriptor),
   };
 }
 
@@ -558,7 +576,7 @@ export async function registerAgentRunInBackground({report,profile,projectPath,d
   if (!appAdoptsBackgroundRuns(descriptor, profile)) return undefined;
   const projected = presentableRunPlan(report);
   if (projected.interactionProfile !== "native_cli") return undefined;
-  const body = managedRunPresentationRequestFromPlan(projected, {target:{state:"background"},profile,projectPath});
+  const body = managedRunPresentationRequestFromPlan(projected, {target:{state:"background"},profile,projectPath,descriptor});
   const payload = await requestAppControl({descriptor,path:"/agent/run-background",body,fetchImpl});
   if (payload?.agent?.agentId !== body.agentId || payload.agent.sessionId !== body.sessionId) {
     fail("client_response_invalid", "The client did not register the exact Run.");
@@ -592,11 +610,13 @@ export async function presentAgentRunRuntime({
         target,
         profile,
         projectPath,
+        descriptor,
       })
     : managedRunPresentationRequestFromPlan(projected, {
         target,
         profile,
         projectPath,
+        descriptor,
       });
   const payload = await requestAppControl({
     descriptor,

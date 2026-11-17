@@ -202,8 +202,7 @@ export function StructuredAgentPanel({
 		applyAutomaticPaneTitle(
 			panelProps.api,
 			resolveAgentPaneTitle({
-				name: agent.name,
-				displayName: agent.displayName,
+				agent,
 				runtimeTitle: conversationTitle,
 				opaqueConversationId: agent.conversationId,
 				directoryCandidates: [agentCwd, agent.worktreePath],

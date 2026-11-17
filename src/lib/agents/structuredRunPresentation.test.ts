@@ -71,6 +71,40 @@ describe("projectStructuredRunAgent", () => {
 		expect(projected.patch.sessionCwd).toEqual({ "agent-1": "/repo" });
 	});
 
+	it("records a Chat worker's parent with the lead that owns that Session", () => {
+		const lead = {
+			id: "agent-lead",
+			name: "lead",
+			provider: "claude" as const,
+			projectId: project.id,
+			worktreePath: project.path,
+			branch: "main",
+			sessionId: "session-lead",
+			sessionKind: "pty" as const,
+			runtimeBinding: {
+				schemaVersion: 1 as const,
+				runtime: "hmux_managed_v1" as const,
+				source: "local" as const,
+				hostId: "local" as const,
+				sessionId: "session-lead",
+				workspaceId: "workspace-1",
+			},
+		};
+		const parent = { sessionId: "session-lead", workspaceId: "workspace-1" };
+		const projected = projectStructuredRunAgent(
+			{ ...state(), agents: [lead] },
+			run,
+			project,
+			undefined,
+			parent,
+		);
+		expect(projected.agent.runParent).toEqual({
+			...parent,
+			leadAgentId: "agent-lead",
+		});
+		expect(projectStructuredRunAgent(state(), run, project).agent.runParent).toBeUndefined();
+	});
+
 	it("converges the same interaction and preserves its pinned credential", () => {
 		const credentialRun: DureStructuredAgentRunResultV1 = {
 			...run,

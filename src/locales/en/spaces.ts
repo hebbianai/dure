@@ -22,6 +22,8 @@ export const spacesEnglishTranslations: Record<string, string> = {
 	"spaces.repository.startWith": "Start {label} here",
 	"spaces.repository.addWithOptions": "New agent with options…",
 	"spaces.repository.noSessions": "No sessions yet",
+	"spaces.workers.one": "1 worker",
+	"spaces.workers.other": "{n} workers",
 	"spaces.repository.startFailed": "Failed to start the agent: {e}",
 	"spaces.locations.openFromHost": "Open from {name}",
 	"spaces.actions.sessionCount": "{n} sessions",
