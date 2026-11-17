@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { runBoundedCommand } from "./bounded-command.mjs";
 import { supportsHmuxCapability } from "./runtime-diagnostics.mjs";
 
 const NATIVE_QUERY_TIMEOUT_MS = 5_000;
@@ -64,6 +65,22 @@ export function classifySourceSession(session, target, { includeExited }) {
     case "incompatible_protocol": return { outcome: "skipped", reason: "host_incompatible" };
     default: return { outcome: "skipped", reason: "host_state_unknown" };
   }
+}
+
+/**
+ * Whether Hmux shows the exact Terminal session a committed runtime switch
+ * selected as already exited. The backend commits a target whose provider
+ * exited as it started, so recovery can resume it; true means nothing runs.
+ * False for a running or later generation, or when Hmux gave no answer.
+ */
+export async function nativeTargetExited({ receipt, command, run = runBoundedCommand }) {
+  const target = receipt?.authority?.interactionProfile === "native_cli" ? receipt.authority.authority : undefined;
+  const sessionId = target?.binding?.sessionId;
+  const workspaceId = target?.runtimeWorkspaceId;
+  if (!command || ![sessionId, workspaceId].every((id) => typeof id === "string" && id.length > 0)) return false;
+  const session = await readSourceSession({ command, run, sessionId, workspaceId });
+  return session?.health === "exited" && session.host_instance_id === target.hostInstanceId &&
+    session.terminal_epoch === target.terminalEpoch;
 }
 
 /** One operation per gone source generation, so every restore of it continues the same one. */

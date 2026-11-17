@@ -57,7 +57,9 @@ both values to resume in the source folder, including after response loss.
 If an older backend refuses this fence, update that backend; do not drop the flag.
 An explicit --account changes credentials through that same transition. A named
 account requires its exact --credential-generation; default requires none.
-Both account selections require --expected-revision.
+Both account selections require --expected-revision. A local Terminal switch
+whose provider exits as it starts is saved but not running; it reports
+agent_runtime_target_exited with the dure runs resume command that restarts it.
 Use dure runs switch-account <name-or-id> --account ACCOUNT_ID to preview a
 same-conversation switch and obtain the revision-fenced command, including for
 an Agent without a Run record. recovery get PROVIDER lists registered accounts
@@ -99,7 +101,9 @@ function withHibernateGuidance(error, { agentId, backendProfileId }) {
 }
 
 /** A command is an intent plus a formatter. The service owns admission,
- * replacement, and replay; local and SSH use the same transport contract. */
+ * replacement, and replay; local and SSH use the same transport contract.
+ * `observeNativeTarget(receipt)` answers whether the local Hmux shows a
+ * switched Terminal target as already exited. */
 export async function collectAgentRuntimeCommand({
   args,
   resolveBackend,
@@ -112,6 +116,7 @@ export async function collectAgentRuntimeCommand({
   account,
   credentialGeneration,
   requestBackend = performBackendProfileRequest,
+  observeNativeTarget,
 }) {
   const [action, agentId, target] = args;
   const idle = action === "idle";
@@ -204,6 +209,17 @@ export async function collectAgentRuntimeCommand({
         result.configuration !== (idleBody.policy.mode === "enabled" ? "enabled" : "disabled") ||
         result.afterMs !== (idleBody.policy.afterMs ?? null)))) {
       return failure({ code: "runtime_response_invalid" });
+    }
+    // The backend commits a Terminal target whose provider exited as it
+    // started, so recovery can resume it. Nothing runs then; say so, with the
+    // resume that restarts it, instead of reporting a running switch.
+    if (observeNativeTarget && action === "switch" && PROFILES[target] === "native_cli" &&
+        backend.profile.transport?.kind === "local" && await observeNativeTarget(result.receipt)) {
+      const backendOption = base.backendProfileId ? ` --backend ${base.backendProfileId}` : "";
+      return { ...base, ok: false, backend: response.backend, result, targetExited: true,
+        error: { code: "agent_runtime_target_exited",
+          message: "The switch was saved, but the provider exited as it started, so nothing is running. " +
+            `Restart its conversation with: dure runs resume ${agentId} --confirm-restart${backendOption}` } };
     }
     return { ...base, ok: true, backend: response.backend, result };
   } catch (error) {

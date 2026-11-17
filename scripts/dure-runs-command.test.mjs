@@ -591,6 +591,127 @@ describe("Run account switching", () => {
     expect(f.requestBackend.mock.calls.at(-1)[1].body.targetExecutionProfile).toEqual({ kind: "provider_default" });
   });
 
+  /**
+   * The backend commits a Terminal target even when its provider exited as it
+   * started, so recovery can resume it. Hmux then shows that exact generation
+   * as an exited tombstone, and headless nothing else restarts it.
+   */
+  function switchedTargetFixture({ health = "exited", kind = "local", generation = "same", restarted = "healthy" } = {}) {
+    const f = accountFixture("claude", kind);
+    const source = f.runtime.receipt.authority.authority;
+    const target = { ...source, sessionId: "session-after-switch", hostInstanceId: "host-after-switch",
+      terminalEpoch: "terminal-after-switch", binding: { ...source.binding, sessionId: "session-after-switch",
+        providerConversationId: "conversation-1" } };
+    const switched = { ...f.runtime.receipt, selectionRevision: 2,
+      executionProfile: { kind: "credential_reference", reference_id: "work", credential_generation: "generation-2" },
+      authority: { interactionProfile: "native_cli", authority: target } };
+    const sessions = [];
+    const started = [];
+    const run = vi.fn(async (argv) => {
+      const value = (flag) => argv[argv.indexOf(flag) + 1];
+      if (argv[2] === "session" && argv[3] === "show") {
+        sessions.push([argv[4], value("--workspace")]);
+        return { kind: "success", stdout: JSON.stringify(argv[4] === "session-restarted"
+          ? { health: restarted, host_instance_id: "host-restarted", terminal_epoch: "terminal-restarted" }
+          : { health, host_instance_id: generation === "same" ? "host-after-switch" : "host-later",
+            terminal_epoch: "terminal-after-switch" }) };
+      }
+      if (argv[1] === "managed-rehost-resolve") {
+        return { kind: "success", stdout: JSON.stringify({ schema: "hmux-managed-rehost-resolution-v1",
+          schemaVersion: 1, state: "not_found", source: { sessionId: value("--session"), workspaceId: value("--workspace") } }) };
+      }
+      if (argv[1] === "managed-rehost-start") {
+        started.push(argv);
+        return { kind: "success", stdout: JSON.stringify({ schema: "hmux-managed-rehost-v1", schemaVersion: 1,
+          operationId: value("--operation-id"), replayed: false,
+          sourceStopReceipt: { sessionId: value("--session"), workspaceId: value("--workspace") },
+          replacementReceipt: { sessionId: "session-restarted", workspaceId: value("--workspace") } }) };
+      }
+      throw new Error(`Unexpected native command: ${argv.join(" ")}`);
+    });
+    let committed = false;
+    const restartedTarget = { ...target, sessionId: "session-restarted", hostInstanceId: "host-restarted",
+      terminalEpoch: "terminal-restarted", binding: { ...target.binding, sessionId: "session-restarted" } };
+    const published = { schemaVersion: 1, receipt: { ...switched, selectionRevision: 3,
+      authority: { interactionProfile: "native_cli", authority: restartedTarget } } };
+    f.requestBackend.mockImplementation(async (_backend, request) => {
+      if (request.operation === "agent_spawn.list") return { result: f.page };
+      if (request.operation === "agent_runtime.projection.inspect") {
+        return { result: committed ? { ...f.runtime, receipt: switched } : f.runtime };
+      }
+      if (request.operation === "provider_recovery.get") return { result: { schemaVersion: 1, profiles: [f.profile], policy: null } };
+      if (request.operation === "agent_runtime.transition") {
+        committed = true;
+        return { result: { schemaVersion: 1, receipt: switched } };
+      }
+      if (request.operation === "agent_runtime.native_rehost.reconcile") return { result: published };
+      throw new Error(`Unexpected operation ${request.operation}`);
+    });
+    const apply = () => collectRunsCommand({ ...f, opts: { ...f.opts, confirmRestart: true },
+      command: "hmux", run, settle: fakeClock() });
+    return { ...f, run, sessions, started, apply };
+  }
+
+  it("restarts the same conversation when the switched provider exited as it started", async () => {
+    const f = switchedTargetFixture();
+    const report = await f.apply();
+    expect(report).toMatchObject({ ok: true, accountSwitch: { state: "completed", execution: "completed",
+      targetExited: true, conversationId: "conversation-1",
+      restart: { ok: true, state: "completed", nativeExecution: "completed", publication: "published" } } });
+    const workspace = f.runtime.receipt.authority.authority.runtimeWorkspaceId;
+    expect(f.sessions[0]).toEqual(["session-after-switch", workspace]);
+    expect(f.sessions.at(-1)).toEqual(["session-restarted", workspace]);
+    expect(f.started).toHaveLength(1);
+    expect(f.started[0][f.started[0].indexOf("--session") + 1]).toBe("session-after-switch");
+    expect(runsCommandExitCode(report)).toBe(0);
+    expect(formatRunsCommand(report)).toContain("exited as it started on the new account; restarted the same conversation");
+  });
+
+  it("reports a switched provider that exited and could not be restarted instead of success", async () => {
+    const f = switchedTargetFixture();
+    const native = f.run.getMockImplementation();
+    f.run.mockImplementation(async (argv) => argv[1] === "managed-rehost-start"
+      ? { kind: "nonzero", stderr: "hmux: error: hmux_managed_rehost_unavailable: refused" } : native(argv));
+    const report = await f.apply();
+    expect(report.ok).toBe(false);
+    expect(report.accountSwitch).toMatchObject({ ok: false, state: "exited", execution: "completed", targetExited: true });
+    expect(runsCommandExitCode(report)).not.toBe(0);
+    const text = formatRunsCommand(report);
+    expect(text).toContain("exited as it started on the new account, and nothing is running now");
+    expect(text).toContain(`Resume: dure 'runs' 'resume' '${f.entry.agentId}' '--confirm-restart' '--backend' 'local'`);
+    expect(text).not.toContain("Retry: dure 'runtime' 'switch'");
+  });
+
+  it("does not call a restart running when the provider exits again on the new account", async () => {
+    const f = switchedTargetFixture({ restarted: "exited" });
+    const report = await f.apply();
+    expect(report.ok).toBe(false);
+    expect(report.accountSwitch).toMatchObject({ state: "exited", targetExited: true,
+      error: { code: "account_switch_target_exited" }, restart: { ok: true, state: "completed" } });
+    expect(f.started).toHaveLength(1);
+    const text = formatRunsCommand(report);
+    expect(text).toContain("exited again as it started on the new account");
+    expect(text).toContain(`Resume: dure 'runs' 'resume' '${f.entry.agentId}' '--confirm-restart'`);
+  });
+
+  it.each([
+    ["a running target", { health: "healthy" }],
+    ["a later generation", { generation: "later" }],
+  ])("leaves %s alone after the switch", async (_label, options) => {
+    const f = switchedTargetFixture(options);
+    const report = await f.apply();
+    expect(report).toMatchObject({ ok: true, accountSwitch: { state: "completed" } });
+    expect(report.accountSwitch.targetExited).toBeUndefined();
+    expect(f.started).toEqual([]);
+  });
+
+  it("does not inspect a native session on an SSH backend's host from here", async () => {
+    const f = switchedTargetFixture({ kind: "ssh" });
+    const report = await f.apply();
+    expect(report).toMatchObject({ ok: true, accountSwitch: { state: "completed" } });
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
   it("names the usable registered accounts when the requested one is missing", async () => {
     const f = accountFixture("codex");
     const report = await collectRunsCommand({ ...f, opts: { ...f.opts, account: "display-name" } });

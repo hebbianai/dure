@@ -1,13 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
-import { rehostCommandLine } from "./managed-rehost-preview.mjs";
+import { collectManagedRehostNamed, MANAGED_REHOST_RUNNING_GUIDANCE } from "./managed-rehost-named.mjs";
+import { formatManagedRecoveryCommands, rehostCommandLine } from "./managed-rehost-preview.mjs";
+import { nativeTargetExited } from "./managed-rehost-source-host.mjs";
 import { readRegisteredAccountProfiles, registeredAccountUnavailableMessage } from "./registered-account-profiles.mjs";
 import { agentRuntimeRestartableClosedSource, agentRuntimeSourceUnavailableReason } from "./contracts/agent-runtime.mjs";
 import { isSourceBusyRefusal, refusalLabel, withSourceBusyGuidance } from "./runtime-source-busy.mjs";
 
 /** Prepare an exact invocation of the existing UI/backend transition. This
- * adapter owns no credential registry, process replacement, or retry policy. */
-export async function collectRunAccountSwitch({ run, observation, account, confirmRestart, backend, requestBackend }) {
+ * adapter owns no credential registry or retry policy; `native` reaches the
+ * local Hmux only to restart a target that exited as it started. */
+export async function collectRunAccountSwitch({
+  run, observation, account, confirmRestart, backend, requestBackend, native = {},
+}) {
   // A stopped close is restarted from its retained source with the selected
   // account; the backend resumes that source's conversation, as in the app.
   const closed = agentRuntimeRestartableClosedSource(observation);
@@ -71,8 +76,40 @@ export async function collectRunAccountSwitch({ run, observation, account, confi
     return { ...prepared, ok: false, state: "unconfirmed", execution: "unconfirmed",
       error: { code: "account_switch_receipt_mismatch", message: "Inspect the retained status command; the requested conversation was not confirmed." } };
   }
-  return { ...prepared, state: "completed", execution: "completed",
+  const completed = { ...prepared, state: "completed", execution: "completed",
     conversationId: receipt.providerConversationRef ?? null, result: report.result };
+  // The backend commits a Terminal target whose provider exited as it started,
+  // so recovery can resume it; without an app nothing else would. Restart it
+  // once through the same recovery as runs resume --confirm-restart. Only the
+  // local Hmux can show that exit.
+  if (target !== "terminal" || backend.profile.transport?.kind !== "local" ||
+      !await nativeTargetExited({ receipt, command: native.command, run: native.run })) {
+    return completed;
+  }
+  const restart = await collectManagedRehostNamed({
+    opts: { rest: ["rehost", run.agentId], confirmRestart: true }, agentId: run.agentId,
+    resolveBackend: async () => backend, requestBackend, ...native,
+  });
+  // A provider that cannot start on this account exits again; never call that running.
+  const exitedAgain = restart.ok && await nativeTargetExited({
+    receipt: restart.publicationResult?.receipt, command: native.command, run: native.run });
+  const error = exitedAgain ? { code: "account_switch_target_exited",
+    message: "The provider exited again as it started on the new account. Check that account's sign-in in Dure's account settings, then resume." }
+    : restart.error;
+  return { ...completed, ok: restart.ok && !exitedAgain, targetExited: true, restart,
+    ...(restart.ok && !exitedAgain ? {} : { state: restart.state === "running" ? "running" : "exited", error,
+      continuation: { ...completed.continuation,
+        resume: ["runs", "resume", run.agentId, "--confirm-restart", "--backend", backend.profile.id, "--json"] } }) };
+}
+
+/** The switch committed; only a restart that did not finish needs its own commands. */
+function restartLines(report) {
+  if (report.ok) return ["The provider exited as it started on the new account; restarted the same conversation."];
+  // A restart Hmux still holds has its own Finish; resume continues any other.
+  return report.state === "running"
+    ? [MANAGED_REHOST_RUNNING_GUIDANCE, ...formatManagedRecoveryCommands(report.restart.continuation)]
+    : ["The provider exited as it started on the new account, and nothing is running now.",
+      `Resume: ${rehostCommandLine(report.continuation.resume)}`];
 }
 
 export function formatRunAccountSwitch(report) {
@@ -82,7 +119,8 @@ export function formatRunAccountSwitch(report) {
       ? ["This Agent is stopped. Apply restarts it with this account and its retained conversation."] : []),
     ...(report.state === "completed" && report.conversationId ? [`Conversation: ${report.conversationId}`] : []),
     ...(report.error ? [`${refusalLabel(report.error)}: ${report.error.message ?? "Account switch failed"}`] : []),
-    ...(report.continuation ? [
+    ...(report.restart ? restartLines(report) : []),
+    ...(report.continuation && !report.restart ? [
       `${report.state === "preview" ? "Apply" : "Retry"}: ${rehostCommandLine(report.continuation.start)}`,
       `Status: ${rehostCommandLine(report.continuation.status)}`,
       report.state === "refused"
