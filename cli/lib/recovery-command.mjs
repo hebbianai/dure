@@ -4,7 +4,11 @@ import {
   backendTransportErrorReport,
   performBackendProfileRequest,
 } from "./backend-transport.mjs";
-import { formatRegisteredAccounts, summarizeRegisteredAccounts } from "./recovery-accounts.mjs";
+import {
+  findKeychainItem,
+  formatRegisteredAccounts,
+  summarizeRegisteredAccounts,
+} from "./recovery-accounts.mjs";
 
 export const RECOVERY_HELP = `dure recovery — automatic account recovery on the owning backend (Beta)
 
@@ -15,14 +19,17 @@ export const RECOVERY_HELP = `dure recovery — automatic account recovery on th
   dure recovery observe --observations JSON [--backend ID]
 
 get lists each registered login once with its account IDs, its policy name,
-and, for the local backend, its profile directory and the usage the app last
-observed: each limit window the provider reports, with its reset time (unknown
-until observed). For Codex it adds the credit balance, available usage resets
-and a failed latest check. The app checks each Codex account about every 15
-minutes while it runs, so a reading can trail recent work, and an account past
-its window can keep working while it has credits. IDs registered for the same
-login select the same credential. get --json returns the policy, the
-registered profile handles and this summary as registeredAccounts.
+and, for the local backend, its profile directory, "signed out" when that
+directory holds no Claude login (with the command that signs it in again), and
+the usage the app last observed: each limit window the provider reports, with
+its reset time (unknown until observed). For Codex it adds the credit balance,
+available usage resets and a failed latest check. The app checks each Codex
+account about every 15 minutes while it runs, so a reading can trail recent
+work, and an account past its window can keep working while it has credits.
+IDs registered for the same login select the same credential. get --json
+returns the policy, the registered profile handles and this summary as
+registeredAccounts, where signedIn is true, false (signed out) or null (not
+known).
 Other results are JSON. accounts is an ordered array of {profile, name}; copy
 exact profiles from get --json.
 Use revision 0 for a new policy. Only explicitly allowed accounts are used.
@@ -101,6 +108,8 @@ export async function runRecoveryCommand(args, {
   environment = process.env,
   homeDirectory = homedir(),
   now = Date.now,
+  platform = process.platform,
+  keychainLookup = findKeychainItem,
 }) {
   const command = parseRecoveryCommand(args);
   if (command.action === "help") {
@@ -121,12 +130,13 @@ export async function runRecoveryCommand(args, {
     }
     const nowMs = now();
     const local = backend.profile.transport?.kind === "local";
-    const accounts = summarizeRegisteredAccounts({ providerId: command.body.providerId,
-      result: response.result, local, environment, homeDirectory, nowMs });
+    const accounts = await summarizeRegisteredAccounts({ providerId: command.body.providerId,
+      result: response.result, local, environment, homeDirectory, nowMs, platform, keychainLookup });
     if (!accounts) output(JSON.stringify(response.result));
     else if (command.json) output(JSON.stringify({ ...response.result, registeredAccounts: accounts }));
     else output(formatRegisteredAccounts({ providerId: command.body.providerId,
-      backend: backend.profile.id, policy: response.result.policy, accounts, local, nowMs }));
+      backend: backend.profile.id, policy: response.result.policy, accounts, local, nowMs,
+      environment, homeDirectory }));
     return true;
   } catch (error) {
     output(JSON.stringify({ ...backendTransportErrorReport(error),
