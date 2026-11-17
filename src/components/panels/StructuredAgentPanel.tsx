@@ -63,10 +63,7 @@ import {
 } from "@/lib/ipc";
 import type { DureAgentRuntimeSourceStopPolicyV1 } from "@/lib/ipc/dureAgentRuntime";
 import { openCommandTerminalOn } from "@/lib/workspace/dock/openCommandTerminal";
-import {
-	namesAgentByRun,
-	resolveAgentPaneTitle,
-} from "@/lib/workspace/pane/paneTitle";
+import { resolveAgentPaneTitle } from "@/lib/workspace/pane/paneTitle";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
 import { workspacePerformance } from "@/lib/workspace/performance/workspacePerformance";
 import type { Agent } from "@/types";
@@ -168,12 +165,10 @@ export function StructuredAgentPanel({
 		applyAutomaticPaneTitle(
 			panelProps.api,
 			resolveAgentPaneTitle({
-				name: agent.name,
-				displayName: agent.displayName,
+				agent,
 				runtimeTitle: conversationTitle,
 				opaqueConversationId: agent.conversationId,
 				directoryCandidates: [agentCwd, agent.worktreePath],
-				runNamed: namesAgentByRun(agent),
 			}),
 		);
 	}, [agent, agentCwd, conversationTitle, panelProps.api]);

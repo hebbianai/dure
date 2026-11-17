@@ -4,7 +4,6 @@ import {
 	isAgentUnread,
 	useAgentAttention,
 } from "@/lib/agents/agentAttentionStore";
-import { normalizeAgentDisplayName } from "@/lib/agents/agentDisplayName";
 import { createAgentRunLeadResolver } from "@/lib/agents/agentRunParent";
 import { presentedAgentDisplayState } from "@/lib/agents/agentStateModel";
 import {
@@ -48,7 +47,7 @@ import { subscribeDockviewRegistration } from "@/lib/workspace/dock/dockviewRegi
 import { useHiddenPanes } from "@/lib/workspace/pane/hiddenPanesStore";
 import { paneShownInLayout } from "@/lib/workspace/pane/paneMaximize";
 import {
-	namesAgentByRun,
+	chosenAgentTitle,
 	observedTitle,
 	resolveAgentPaneTitle,
 } from "@/lib/workspace/pane/paneTitle";
@@ -281,22 +280,15 @@ export function useSpaces() {
 				? (conversationTitle(agent.id) ??
 					observedTitle(sessionTitle[sessionId], agent.conversationId))
 				: undefined;
-			const runNamed = agent ? namesAgentByRun(agent) : false;
-			// A worker's Run name stands where a chosen name would, so the
-			// provider's title moves to the info line the same way.
-			const explicitAgentTitle = agent
-				? (normalizeAgentDisplayName(agent.name, agent.displayName) ??
-					(runNamed ? agent.name : undefined))
-				: undefined;
+			// Where a chosen title stands, the provider's moves to the info line.
+			const explicitAgentTitle = agent ? chosenAgentTitle(agent) : undefined;
 			const leadAgentId = agent ? resolveRunLead(agent)?.id : undefined;
 			const title = agent
 				? resolveAgentPaneTitle({
-						name: agent.name,
-						displayName: agent.displayName,
+						agent,
 						runtimeTitle,
 						opaqueConversationId: agent.conversationId,
 						directoryCandidates: [cwd, agent.worktreePath],
-						runNamed,
 					})
 				: nestedSsh?.target ||
 					(provider ? PROVIDERS[provider].label : "") ||

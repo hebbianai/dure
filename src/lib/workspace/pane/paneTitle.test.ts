@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   agentPaneTitle,
+  chosenAgentTitle,
   cwdName,
   observedTitle,
   paneTitleFromObservedTitle,
   paneTitleTooltip,
-  namesAgentByRun,
   resolveAgentPaneTitle,
   terminalPaneTitle,
 } from "@/lib/workspace/pane/paneTitle";
@@ -50,15 +50,14 @@ describe("pane title policy", () => {
   it("resolves one Agent title with an explicit rename ahead of runtime evidence", () => {
     expect(
       resolveAgentPaneTitle({
-        name: "agent-1",
-        displayName: "fix-uiux",
+        agent: { name: "agent-1", displayName: "fix-uiux" },
         runtimeTitle: "Review authentication flow",
         directoryCandidates: ["/repo/.worktrees/fix-live"],
       }),
     ).toBe("fix-uiux");
     expect(
       resolveAgentPaneTitle({
-        name: "agent-1",
+        agent: { name: "agent-1" },
         runtimeTitle: "Review authentication flow",
         directoryCandidates: ["/repo/.worktrees/fix-live"],
       }),
@@ -66,23 +65,20 @@ describe("pane title policy", () => {
   });
 
   it("names a worker for its Run ahead of the provider's title, under a chosen name", () => {
-    const worker = { runParent: { sessionId: "s-lead", workspaceId: "ws" } };
-    expect(namesAgentByRun(worker)).toBe(true);
-    expect(namesAgentByRun({})).toBe(false);
+    const runParent = { sessionId: "s-lead", workspaceId: "ws" };
+    expect(chosenAgentTitle({ name: "work-552", runParent })).toBe("work-552");
+    expect(chosenAgentTitle({ name: "work-552" })).toBeUndefined();
     expect(
       resolveAgentPaneTitle({
-        name: "work-552",
+        agent: { name: "work-552", runParent },
         runtimeTitle: "Claude Code",
         directoryCandidates: ["/repo/.worktrees/work-552"],
-        runNamed: namesAgentByRun(worker),
       }),
     ).toBe("work-552");
     expect(
       resolveAgentPaneTitle({
-        name: "work-552",
-        displayName: "sidebar fix",
+        agent: { name: "work-552", displayName: "sidebar fix", runParent },
         runtimeTitle: "Claude Code",
-        runNamed: true,
       }),
     ).toBe("sidebar fix");
   });

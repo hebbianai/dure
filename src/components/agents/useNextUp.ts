@@ -22,11 +22,7 @@ import {
 } from "@/lib/settings/shortcutBindings";
 import { shouldYieldToTerminal } from "@/lib/settings/shortcutPriority";
 import { useHiddenPanes } from "@/lib/workspace/pane/hiddenPanesStore";
-import {
-	namesAgentByRun,
-	observedTitle,
-	resolveAgentPaneTitle,
-} from "@/lib/workspace/pane/paneTitle";
+import { observedTitle, resolveAgentPaneTitle } from "@/lib/workspace/pane/paneTitle";
 import { useStore } from "@/store";
 
 export function useNextUp(): NextUp {
@@ -125,13 +121,11 @@ export function useNextUpRow(entry: NextUpEntry): NextUpRowFacts | undefined {
 		agentId: agent.id,
 		// The same title authority as the pane header and the Spaces row.
 		title: resolveAgentPaneTitle({
-			name: agent.name,
-			displayName: agent.displayName,
+			agent,
 			runtimeTitle:
 				conversationTitle ?? observedTitle(sessionTitle, agent.conversationId),
 			opaqueConversationId: agent.conversationId,
 			directoryCandidates: [sessionCwd, agent.worktreePath],
-			runNamed: namesAgentByRun(agent),
 		}),
 		...(projectName ? { projectName } : {}),
 		...(programNotice ? { programNotice } : {}),

@@ -45,8 +45,8 @@ import { panePinKey } from "@/lib/workspace/pane/panePin";
 import { usePaneHideAndHistoryActions } from "@/components/workspace/PaneHideAndHistoryItems";
 import { cn } from "@/lib/utils";
 import {
+  chosenAgentTitle,
   cwdName,
-  namesAgentByRun,
   observedTitle,
   paneTitleFromObservedTitle,
   paneTitleTooltip,
@@ -385,17 +385,14 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
       : title;
   const agentOpaqueConversationId =
     hmuxPaneConversationId(hmuxBinding) ?? agent?.conversationId;
-  const agentRunNamed = agent ? namesAgentByRun(agent) : false;
   const automaticLabel = nestedSsh
     ? nestedSsh.target
     : agent
       ? resolveAgentPaneTitle({
-          name: agent.name,
-          displayName: agent.displayName,
+          agent,
           runtimeTitle: agentConversationTitle ?? terminalTitle,
           opaqueConversationId: agentOpaqueConversationId,
           directoryCandidates: [agentLiveCwd, agent.worktreePath],
-          runNamed: agentRunNamed,
         })
       : component === "agent"
         ? t("common.unavailable")
@@ -424,9 +421,9 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
         ? `${sshHost?.name ?? "local"} · ${displayedHmuxLabel} · ${liveCwd || params?.cwd || "~"}`
         : `${terminalTitle || "local"} · ${liveCwd || params?.cwd || "~"}`
       : undefined;
-  // A worker's header names its Run; the provider's title it displaced leads
-  // the diagnostics instead.
-  const agentSecondaryTitle = agentRunNamed
+  // Where a chosen title (a rename, a worker's Run name) stands in the header,
+  // the provider's title it displaced leads the diagnostics, as in Spaces.
+  const agentSecondaryTitle = agent && chosenAgentTitle(agent)
     ? observedTitle(
         agentConversationTitle ?? terminalTitle,
         agentOpaqueConversationId,

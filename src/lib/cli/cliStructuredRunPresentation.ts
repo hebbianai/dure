@@ -1,6 +1,6 @@
 import {
 	type AgentRunParentSessionV1,
-	parseAgentRunParentSessionV1,
+	parseRequestedAgentRunParent,
 } from "@/lib/agents/agentRunParent";
 import { parseAgentExecutionProfileV1 } from "@/lib/agents/chat/agentConversationContract";
 import { PROVIDER_IDS } from "@/lib/agents/providers";
@@ -148,11 +148,9 @@ function parseCliStructuredRunPresentationRequest(
 		fail("invalid_request", "backend profile identity is inconsistent");
 	}
 	const selectedProjectPath = projectPath(value.projectPath);
-	const parent =
-		value.parent === undefined
-			? undefined
-			: (parseAgentRunParentSessionV1(value.parent) ??
-				fail("invalid_request", "parent is invalid"));
+	const parent = parseRequestedAgentRunParent(value.parent, (message) =>
+		fail("invalid_request", message),
+	);
 	const windowLabel = value.windowLabel;
 	if (typeof windowLabel !== "string" || !WINDOW_LABEL.test(windowLabel)) {
 		fail("invalid_request", "windowLabel is invalid");

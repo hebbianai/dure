@@ -7,7 +7,6 @@ import {
 import type { RecentAgentActivity } from "@/lib/spaces/spacesDisplay";
 import { managedConversationId } from "@/lib/sessions/managed/managedConversationIdentity";
 import {
-	namesAgentByRun,
 	observedTitle,
 	resolveAgentPaneTitle,
 } from "@/lib/workspace/pane/paneTitle";
@@ -98,12 +97,10 @@ export function resolveUnopenedAgentPresentation({
 
 	return {
 		title: resolveAgentPaneTitle({
-			name: agent.name,
-			displayName: agent.displayName,
+			agent,
 			runtimeTitle,
 			opaqueConversationId: conversationId,
 			directoryCandidates: [conversation?.cwd, agent.worktreePath],
-			runNamed: namesAgentByRun(agent),
 		}),
 		...(activityAt === undefined ? {} : { activityAt }),
 	};

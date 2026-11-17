@@ -1,5 +1,4 @@
 import { asRecord, hasOnlyKeys } from "@/lib/payloadGuards";
-import type { Agent } from "@/types";
 
 const SAFE_TOKEN = /^[A-Za-z0-9._:+-]{1,512}$/;
 
@@ -59,13 +58,16 @@ export function parseAgentRunParentV1(
 	};
 }
 
-function sessionKey(parent: AgentRunParentSessionV1): string {
-	return `${parent.workspaceId}\u0000${parent.sessionId}`;
+/** What lead resolution reads of an Agent. Structural, so `@/types` can name
+ * `AgentRunParentV1` without this module depending back on it. */
+export interface RunParentedAgent {
+	readonly id: string;
+	readonly runParent?: AgentRunParentV1;
+	readonly runtimeBinding?: AgentRunParentSessionV1;
 }
 
-function runtimeSessionKey(agent: Agent): string | undefined {
-	const binding = agent.runtimeBinding;
-	return binding ? sessionKey(binding) : undefined;
+function sessionKey(parent: AgentRunParentSessionV1): string {
+	return `${parent.workspaceId}\u0000${parent.sessionId}`;
 }
 
 /** Index the Agents once; resolve each worker's lead against it. A lead is
@@ -73,15 +75,15 @@ function runtimeSessionKey(agent: Agent): string | undefined {
  * Agent owns that Session any more (the lead was rehosted), the Agent
  * recorded at first projection stands in. An ambiguous or missing lead
  * resolves to none: the worker stays an ordinary row. */
-export function createAgentRunLeadResolver(
-	agents: readonly Agent[],
-): (agent: Pick<Agent, "id" | "runParent">) => Agent | undefined {
-	const bySession = new Map<string, Agent[]>();
-	const byId = new Map<string, Agent>();
+export function createAgentRunLeadResolver<A extends RunParentedAgent>(
+	agents: readonly A[],
+): (agent: Pick<RunParentedAgent, "id" | "runParent">) => A | undefined {
+	const bySession = new Map<string, A[]>();
+	const byId = new Map<string, A>();
 	for (const agent of agents) {
 		byId.set(agent.id, agent);
-		const key = runtimeSessionKey(agent);
-		if (!key) continue;
+		if (!agent.runtimeBinding) continue;
+		const key = sessionKey(agent.runtimeBinding);
 		const owners = bySession.get(key);
 		if (owners) owners.push(agent);
 		else bySession.set(key, [agent]);
@@ -102,17 +104,32 @@ export function createAgentRunLeadResolver(
 	};
 }
 
-/** The parent to record on a newly projected Run: its Session, plus the
- * Agent that owns that Session in this client right now. */
-export function projectAgentRunParent(
+/** A presentation request's optional `parent`: absent stays absent, and
+ * anything present must be exactly a parent Session. */
+export function parseRequestedAgentRunParent(
+	value: unknown,
+	refuse: (message: string) => never,
+): AgentRunParentSessionV1 | undefined {
+	if (value === undefined) return undefined;
+	return parseAgentRunParentSessionV1(value) ?? refuse("parent is invalid");
+}
+
+/** The `runParent` of an Agent a Run presents, to spread into it. A parent
+ * already recorded stays, so the lead it names survives a later rehost;
+ * otherwise the requested Session is recorded with the Agent that owns it in
+ * this client now. */
+export function presentedAgentRunParent(
+	agent: Pick<RunParentedAgent, "id" | "runParent">,
 	parent: AgentRunParentSessionV1 | undefined,
-	agents: readonly Agent[],
-	agentId: string,
-): AgentRunParentV1 | undefined {
-	if (!parent) return undefined;
+	agents: readonly RunParentedAgent[],
+): { runParent?: AgentRunParentV1 } {
+	if (agent.runParent) return { runParent: agent.runParent };
+	if (!parent) return {};
 	const lead = createAgentRunLeadResolver(agents)({
-		id: agentId,
+		id: agent.id,
 		runParent: parent,
 	});
-	return lead ? { ...parent, leadAgentId: lead.id } : { ...parent };
+	return {
+		runParent: lead ? { ...parent, leadAgentId: lead.id } : { ...parent },
+	};
 }

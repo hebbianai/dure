@@ -5,7 +5,7 @@ import {
 } from "@/lib/agents/agentCanonicalSpawn";
 import {
 	type AgentRunParentSessionV1,
-	projectAgentRunParent,
+	presentedAgentRunParent,
 } from "@/lib/agents/agentRunParent";
 import {
 	type AgentRunPresentationWorktree,
@@ -188,15 +188,7 @@ export function projectStructuredRunAgent(
 		const agent: Agent = {
 			...existing,
 			canonicalSpawn,
-			...(existing.runParent === undefined && parent
-				? {
-						runParent: projectAgentRunParent(
-							parent,
-							state.agents,
-							existing.id,
-						),
-					}
-				: {}),
+			...presentedAgentRunParent(existing, parent, state.agents),
 			started: true,
 			interactionProfile: profile,
 			executionProfile: run.executionProfile,
@@ -227,11 +219,10 @@ export function projectStructuredRunAgent(
 			"structured Agent name is already in use for this project",
 		);
 	}
-	const runParent = projectAgentRunParent(parent, state.agents, run.agentId);
 	const agent: Agent = {
 		id: run.agentId,
 		canonicalSpawn,
-		...(runParent ? { runParent } : {}),
+		...presentedAgentRunParent({ id: run.agentId }, parent, state.agents),
 		name: run.agentName,
 		provider: run.providerId,
 		projectId: project.id,

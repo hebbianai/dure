@@ -3,7 +3,8 @@ import {
 	createAgentRunLeadResolver,
 	parseAgentRunParentSessionV1,
 	parseAgentRunParentV1,
-	projectAgentRunParent,
+	parseRequestedAgentRunParent,
+	presentedAgentRunParent,
 } from "@/lib/agents/agentRunParent";
 import type { Agent } from "@/types";
 
@@ -65,6 +66,19 @@ describe("parseAgentRunParent", () => {
 		expect(parseAgentRunParentV1({ sessionId: "s-lead" })).toBeUndefined();
 		expect(parseAgentRunParentV1("s-lead")).toBeUndefined();
 	});
+
+	it("refuses a present but malformed parent on a request", () => {
+		const refuse = (message: string): never => {
+			throw new Error(message);
+		};
+		expect(parseRequestedAgentRunParent(undefined, refuse)).toBeUndefined();
+		expect(
+			parseRequestedAgentRunParent({ sessionId: "s-lead", workspaceId: "ws" }, refuse),
+		).toEqual({ sessionId: "s-lead", workspaceId: "ws" });
+		expect(() => parseRequestedAgentRunParent({ sessionId: "s-lead" }, refuse)).toThrow(
+			"parent is invalid",
+		);
+	});
 });
 
 describe("createAgentRunLeadResolver", () => {
@@ -99,16 +113,28 @@ describe("createAgentRunLeadResolver", () => {
 
 	it("records the current owner of the parent Session at first projection", () => {
 		const lead = agent("lead", "s-lead");
+		const requested = { sessionId: "s-lead", workspaceId: "ws" };
+		expect(presentedAgentRunParent({ id: "work-1" }, requested, [lead])).toEqual({
+			runParent: parent,
+		});
 		expect(
-			projectAgentRunParent(
-				{ sessionId: "s-lead", workspaceId: "ws" },
+			presentedAgentRunParent(
+				{ id: "work-1" },
+				{ sessionId: "s-shell", workspaceId: "ws" },
 				[lead],
-				"work-1",
 			),
-		).toEqual(parent);
+		).toEqual({ runParent: { sessionId: "s-shell", workspaceId: "ws" } });
+		expect(presentedAgentRunParent({ id: "work-1" }, undefined, [lead])).toEqual({});
+	});
+
+	it("keeps a recorded parent when the Run is presented again", () => {
+		const recorded = { sessionId: "s-old", workspaceId: "ws", leadAgentId: "lead" };
 		expect(
-			projectAgentRunParent({ sessionId: "s-shell", workspaceId: "ws" }, [lead], "work-1"),
-		).toEqual({ sessionId: "s-shell", workspaceId: "ws" });
-		expect(projectAgentRunParent(undefined, [lead], "work-1")).toBeUndefined();
+			presentedAgentRunParent(
+				{ id: "work-1", runParent: recorded },
+				{ sessionId: "s-lead", workspaceId: "ws" },
+				[agent("other", "s-lead")],
+			),
+		).toEqual({ runParent: recorded });
 	});
 });

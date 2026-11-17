@@ -58,10 +58,7 @@ import { managedAgentWorktreeRecovery } from "@/lib/sessions/managed/managedAgen
 import { useAgentPaneAttentionAck } from "@/components/agents/useAgentPaneAttentionAck";
 import { openSplitLauncherOn, paneSplitTargetForPanel } from "@/lib/workspace/pane/paneSplit";
 import { paneViewCloseMenu } from "@/lib/workspace/pane/paneKillMenu";
-import {
-  namesAgentByRun,
-  resolveAgentPaneTitle,
-} from "@/lib/workspace/pane/paneTitle";
+import { resolveAgentPaneTitle } from "@/lib/workspace/pane/paneTitle";
 import { useConversationTitle } from "@/components/agents/chat/useConversationTitle";
 import {
   hmuxPaneConversationId,
@@ -254,13 +251,11 @@ export function NativeAgentPanel({
       applyAutomaticPaneTitle(
         props.api,
         resolveAgentPaneTitle({
-          name: agent.name,
-          displayName: agent.displayName,
+          agent,
           runtimeTitle: conversationTitle ?? terminalTitle,
           opaqueConversationId:
             hmuxPaneConversationId(binding) ?? agent.conversationId,
           directoryCandidates: [agentCwd, agent.worktreePath],
-          runNamed: namesAgentByRun(agent),
         }),
       );
     }

@@ -4,8 +4,8 @@ import {
 } from "@/lib/agents/agentCanonicalSpawn";
 import {
 	type AgentRunParentSessionV1,
-	parseAgentRunParentSessionV1,
-	projectAgentRunParent,
+	parseRequestedAgentRunParent,
+	presentedAgentRunParent,
 } from "@/lib/agents/agentRunParent";
 import {
 	type AgentRunPresentationWorktree,
@@ -372,11 +372,9 @@ export function parseManagedRunProjectionInput(
 			"managed Run effective Session and create key do not form one identity",
 		);
 	}
-	const parent =
-		raw.parent === undefined
-			? undefined
-			: (parseAgentRunParentSessionV1(raw.parent) ??
-				failCliManagedRunPresentation("invalid_request", "parent is invalid"));
+	const parent = parseRequestedAgentRunParent(raw.parent, (message) =>
+		failCliManagedRunPresentation("invalid_request", message),
+	);
 	return {
 		...common,
 		operationId,
@@ -621,15 +619,7 @@ export function projectManagedRunPresentationAgent(
 		const agent: Agent = {
 			...existing,
 			...(canonicalSpawn ? { canonicalSpawn } : {}),
-			...(existing.runParent === undefined && request.parent
-				? {
-						runParent: projectAgentRunParent(
-							request.parent,
-							state.agents,
-							existing.id,
-						),
-					}
-				: {}),
+			...presentedAgentRunParent(existing, request.parent, state.agents),
 			started: true,
 			runtimeBinding: {
 				...projectedBinding,
@@ -675,15 +665,14 @@ export function projectManagedRunPresentationAgent(
 			"managed Run Agent name is already in use for this project",
 		);
 	}
-	const runParent = projectAgentRunParent(
-		request.parent,
-		state.agents,
-		request.agentId,
-	);
 	const agent: Agent = {
 		id: request.agentId,
 		...(canonicalSpawn ? { canonicalSpawn } : {}),
-		...(runParent ? { runParent } : {}),
+		...presentedAgentRunParent(
+			{ id: request.agentId },
+			request.parent,
+			state.agents,
+		),
 		name: request.agentName,
 		provider: request.providerId,
 		projectId: project.id,
