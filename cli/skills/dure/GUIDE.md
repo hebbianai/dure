@@ -731,7 +731,9 @@ and MCP server. That shared package is the protocol/discovery authority; this
 general Dure skill does not duplicate its Message, Decision, cursor, or
 completion contract.
 
-- Read work with `orchestration_events_read` from the last acknowledged cursor.
+- Read work with `orchestration_events_read` from the last acknowledged cursor;
+  pass `includeInteractions: true` to get the Messages and Decisions of a
+  backlog in the same call.
 - Use `orchestration_interaction_get` for the exact service-owned card.
 - Open a Message or Decision with `orchestration_interaction_open`.
 - Answer a Decision with `orchestration_decision_answer`.

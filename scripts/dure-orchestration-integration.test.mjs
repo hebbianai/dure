@@ -3420,10 +3420,100 @@ with open(lock_path, "a+") as lock:
     ]);
   });
 
+  it("returns the Messages and Decisions a backlog of Events refers to in one tool call", async () => {
+    const root = fixture();
+    const { receiptPath, environment, context } = currentMcpContextFixture(root);
+    const { target, endpointFence } = context;
+    const event = (cursor, kind) => ({
+      cursor, target, actor: "participant-sender", kind, recordedAtMs: cursor,
+    });
+    const events = [
+      event(4, { kind: "run_created", workflowKindRef: "workflow" }),
+      event(5, { kind: "interaction_opened", interactionId: "message-early" }),
+      event(6, { kind: "dispatch_blocked", decisionId: "decision-1" }),
+      event(7, { kind: "interaction_opened", interactionId: "message-unreadable" }),
+      event(8, { kind: "interaction_opened", interactionId: "message-correction" }),
+      event(9, { kind: "decision_answered", decisionId: "decision-1" }),
+    ];
+    const records = {
+      "message-early": { id: "message-early", title: "Start", descriptionMarkdown: "Start step one." },
+      "decision-1": { id: "decision-1", title: "Choose" },
+      "message-correction": { id: "message-correction", title: "Correction", descriptionMarkdown: "Skip step one." },
+    };
+    const request = vi.fn(async (_endpoint, operation) => {
+      if (operation.method === "dispatch.context.get") return { receipt: context };
+      if (operation.method === "events.read") {
+        return {
+          apiVersion: "dure.orchestration/v1",
+          method: "events.read",
+          receipt: { events, deliveries: [], nextCursor: 9 },
+        };
+      }
+      expect(operation).toEqual({
+        apiVersion: "dure.orchestration/v1",
+        method: "interaction.get",
+        body: {
+          schemaVersion: 1,
+          authority: target.authority,
+          interactionId: operation.body.interactionId,
+          participant: "participant-worker",
+          readCapability: "capability-delivery",
+          endpointFence,
+        },
+      });
+      const record = records[operation.body.interactionId];
+      if (!record) {
+        throw new BackendTransportError("backend_transport_remote_error", {
+          details: { code: "orchestration_record_not_found", disposition: "terminal" },
+        });
+      }
+      return { apiVersion: "dure.orchestration/v1", method: "interaction.get", receipt: record };
+    });
+
+    const result = await handleMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "orchestration_events_read", arguments: { includeInteractions: true } },
+      },
+      environment,
+      { receiptPath, request },
+    );
+
+    expect(request.mock.calls.map(([, operation]) => operation.method)).toEqual([
+      "dispatch.context.get",
+      "events.read",
+      "interaction.get",
+      "interaction.get",
+      "interaction.get",
+      "interaction.get",
+    ]);
+    expect(result.structuredContent.receipt).toEqual({ events, deliveries: [], nextCursor: 9 });
+    expect(result.structuredContent.interactions).toEqual([
+      { interactionId: "message-early", interaction: records["message-early"] },
+      { interactionId: "decision-1", interaction: records["decision-1"] },
+      {
+        interactionId: "message-unreadable",
+        error: expect.objectContaining({ remoteCode: "orchestration_record_not_found" }),
+      },
+      { interactionId: "message-correction", interaction: records["message-correction"] },
+    ]);
+    expect(JSON.parse(result.content[0].text).interactions).toHaveLength(4);
+  });
+
+  it("publishes the interaction option on the Event read tool", async () => {
+    const { tools } = await handleMcpRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const eventRead = tools.find((tool) => tool.name === "orchestration_events_read");
+    expect(eventRead.inputSchema.properties.includeInteractions).toMatchObject({ type: "boolean" });
+    expect(eventRead.description).toContain("includeInteractions");
+  });
+
   it.each([
     { body: {} },
     { limit: 0 },
     { acknowledgement: { through: 1 } },
+    { includeInteractions: "yes" },
   ])("rejects malformed Event read intent before transport", async (arguments_) => {
     const request = vi.fn();
     await expect(
