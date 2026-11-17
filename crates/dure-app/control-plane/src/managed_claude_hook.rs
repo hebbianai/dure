@@ -175,6 +175,7 @@ fn bounded_body(raw: Vec<u8>) -> Result<Input, HookFailure> {
         "session_id",
         "prompt_id",
         "notification_type",
+        "error",
         "tool_name",
         "transcript_path",
         "agent_id",

@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dure_app::{
     AGENT_CHECKPOINT_SCHEMA_VERSION_V1, AGENT_RUNTIME_TRANSITION_SCHEMA_VERSION_V1,
@@ -31,7 +31,9 @@ use sha2::{Digest, Sha256};
 use crate::agent_spawn_support::{random_nonce, store_error};
 use crate::project_catalog::ProjectAuthority;
 use crate::provider_credential_profile::ProviderCredentialProfileRegistry;
-use crate::workflow_launch::{CredentialAwareWorkflowSessionLauncher, LaunchPromptObservation};
+use crate::workflow_launch::{
+    CredentialAwareWorkflowSessionLauncher, LaunchPromptObservation, LaunchPromptWatch,
+};
 use crate::workspace_git::{WorkspaceAcquireRequest, WorkspaceAcquirer, WorkspaceHandle};
 
 const MAX_PROMPT_BYTES: usize = 16 * 1024;
@@ -138,23 +140,34 @@ async fn startup_gate_before_launch(
     }
 }
 
+/// How long Claude's first turn has to stand before the Hub believes it got
+/// past sign-in. Claude opens the turn before it reads its login and ends it
+/// with a sign-in failure: 0.1 s later with no login and 3.2 s later with a
+/// refused one (Claude Code 2.1.325). Every Claude Run whose brief rode the
+/// launch command waits this long unless the turn finishes sooner.
+const CLAUDE_SIGN_IN_REFUSAL_WINDOW: Duration = Duration::from_secs(8);
+
 /// The first-run prompt the provider stopped at after launch, when the Host
-/// shows it. Codex starts no session while the selected account has no usable
-/// login and shows its sign-in screen instead. An expired login is still on
-/// disk, so the Hub cannot read that before launch, and probing would start a
-/// second Codex that refreshes the same login beside the session's own.
-/// Codex's native driver reports the screen to the Host as `input_required`
-/// ahead of any turn, and the Hub waits for that or the first turn before it
-/// claims the carried prompt was read. Without either it claims nothing.
+/// shows it. A missing or expired login is the one neither provider shows
+/// before launch: an expired login is still on disk, and probing would start a
+/// second provider that refreshes the same login beside the session's own.
+/// Codex starts no session without a usable login and shows its sign-in
+/// screen instead, which its native driver reports to the Host as
+/// `input_required` ahead of any turn. Claude submits the prompt and ends that
+/// turn at sign-in, which its hook reports the same way. The Hub waits for
+/// that or for a turn that got past sign-in before it claims the carried
+/// prompt was read. Without either it claims nothing.
 async fn startup_gate_after_launch(
     launcher: &dyn CredentialAwareWorkflowSessionLauncher,
     receipt: &AgentSpawnJournalReceiptV1,
     session: &WorkflowSessionGenerationV1,
 ) -> Option<AgentSpawnStartupGateKindV1> {
-    if receipt.plan.request.provider_id.as_str() != "codex" {
-        return None;
-    }
-    match launcher.observe_launch_prompt(session.clone()).await {
+    let watch = match receipt.plan.request.provider_id.as_str() {
+        "codex" => LaunchPromptWatch::TurnStart,
+        "claude" => LaunchPromptWatch::TurnStartUnrefusedFor(CLAUDE_SIGN_IN_REFUSAL_WINDOW),
+        _ => return None,
+    };
+    match launcher.observe_launch_prompt(session.clone(), watch).await {
         Some(LaunchPromptObservation::InputRequired) => Some(AgentSpawnStartupGateKindV1::Login),
         Some(LaunchPromptObservation::TakenUp) | None => None,
     }
@@ -733,7 +746,10 @@ async fn execute_prepared_stage(
                         None => false,
                     };
                 if !gate_answered {
-                    let (error_code, error_detail) = startup_gate_prompt_failure(&gate);
+                    let (error_code, error_detail) = startup_gate_prompt_failure(
+                        receipt.plan.request.provider_id.as_str(),
+                        &gate,
+                    );
                     return append(
                         store,
                         &receipt,
@@ -1193,7 +1209,10 @@ async fn startup_gate_answered(
 
 /// The failure a prompt delivery records while the provider is stopped at its
 /// gate: the code names the gate, the detail says what the person has to do.
-fn startup_gate_prompt_failure(gate: &AgentSpawnStartupGateV1) -> (String, String) {
+fn startup_gate_prompt_failure(
+    provider_id: &str,
+    gate: &AgentSpawnStartupGateV1,
+) -> (String, String) {
     match gate.kind {
         AgentSpawnStartupGateKindV1::WorkspaceTrust => (
             "agent_spawn_prompt_behind_workspace_trust".into(),
@@ -1207,6 +1226,15 @@ fn startup_gate_prompt_failure(gate: &AgentSpawnStartupGateV1) -> (String, Strin
                  in the session and retry"
             }
             .into(),
+        ),
+        // Claude read the prompt and failed its turn at sign-in. It does not
+        // retry that turn after /login, so the prompt has to be sent again.
+        AgentSpawnStartupGateKindV1::Login if provider_id == "claude" => (
+            "agent_spawn_prompt_behind_login".into(),
+            "Claude Code ended its first turn at sign-in because the selected account's \
+             login is missing or expired; nothing ran and Claude does not retry that turn, \
+             so sign in again with /login in the session, then send the prompt again"
+                .into(),
         ),
         AgentSpawnStartupGateKindV1::Login => (
             "agent_spawn_prompt_behind_login".into(),

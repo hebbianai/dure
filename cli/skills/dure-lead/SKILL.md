@@ -161,6 +161,11 @@ worker's pane, or before the next Run), and give the next worker another
 account if one is available. A `dure recovery get codex` reading is a past
 observation, not proof that the login still works.
 
+A Claude worker on such an account gets the same error and gate, but Claude
+already read the brief and failed that turn at sign-in, and it does not retry
+it. Once the person has signed in with `/login` in that pane, send the brief
+again; otherwise stop the Run and dispatch the brief on another account.
+
 Other non-zero receipts: exit 2 is a backend or pane failure before any
 session existed; retry the same command once with the printed retry key, then
 report it. A `succeeded` receipt whose session later shows

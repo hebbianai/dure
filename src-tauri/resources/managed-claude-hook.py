@@ -644,6 +644,17 @@ def claude_report(native, fence):
             False,
             None,
         )
+    elif event == "StopFailure" and native.get("error") == "authentication_failed":
+        # Claude ends a turn its login could not authenticate with StopFailure,
+        # never Stop: the selected account's login is missing or expired, and
+        # nothing runs until a person signs in again with /login. Other API
+        # failures keep the reports they had before.
+        activity, attention, completed, working_ttl_ms = (
+            "waiting",
+            "input_required",
+            False,
+            None,
+        )
     else:
         return None
     report = {
@@ -762,6 +773,7 @@ def slim_body(native):
         "session_id",
         "prompt_id",
         "notification_type",
+        "error",
         "tool_name",
         # The app server decides the conversation identity by the transcript
         # on disk; a slimmed body must keep the path or a long turn withholds

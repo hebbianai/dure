@@ -92,6 +92,12 @@ stops the same way at Codex's sign-in screen. The receipt ends
 has to sign the account in, in that session or before the next Run; once
 signed in Codex submits the carried prompt itself, so never send it again.
 
+A Claude Run on such an account ends the same way, but Claude has already read
+the prompt and failed that turn at sign-in (`Not logged in`, `Login reached its
+time limit`). Claude does not retry it: after someone signs in with `/login` in
+the session, send the prompt again, or stop the Run and dispatch it on another
+account.
+
 ## Choose a Run account
 
 A current connected app supplies the selected account for the requested provider,
