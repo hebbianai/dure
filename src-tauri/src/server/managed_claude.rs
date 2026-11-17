@@ -94,6 +94,15 @@ pub(super) fn normalize_hook_report(
             "blocked"
         }
         "Notification" => "informational",
+        // A turn its login could not authenticate ends in StopFailure, never
+        // Stop, and nothing runs until a person signs in again. Other API
+        // failures carry no new fact; the Host keeps its last one.
+        "StopFailure"
+            if object.get("error").and_then(Value::as_str) == Some("authentication_failed") =>
+        {
+            "sign_in_required"
+        }
+        "StopFailure" => "informational",
         _ => return Err("Claude hook event is unsupported".to_string()),
     };
     // Background work keeps the session busy, but a Stop still ends the
@@ -177,6 +186,12 @@ pub(super) fn normalize_hook_report(
             false,
             None,
         ),
+        "sign_in_required" => (
+            crate::hmux::ReportedAgentActivity::Waiting,
+            crate::hmux::ReportedAgentAttention::InputRequired,
+            false,
+            None,
+        ),
         "done" => (
             crate::hmux::ReportedAgentActivity::Waiting,
             crate::hmux::ReportedAgentAttention::None,
@@ -254,6 +269,40 @@ mod tests {
                 })
             );
             assert_eq!(report.turn_completed, event == "Stop");
+        }
+    }
+
+    #[test]
+    fn a_turn_failed_at_sign_in_asks_for_a_person_and_other_failures_add_nothing() {
+        let header = |name: &str| {
+            (name != "X-Hebbian-Hmux-Source-Sequence").then(|| "fixture-id".to_string())
+        };
+        let failure = |error: &str| {
+            serde_json::json!({
+                "hook_event_name": "StopFailure", "session_id": "fixture-conversation",
+                "prompt_id": "fixture-parent-turn", "error": error,
+                "last_assistant_message": "Not logged in · Please run /login",
+            })
+        };
+        let report = normalize_hook_report(failure("authentication_failed"), header)
+            .unwrap()
+            .expect("a failed sign-in is reported")
+            .host_request;
+        assert_eq!(report.activity, crate::hmux::ReportedAgentActivity::Waiting);
+        assert_eq!(
+            report.attention,
+            crate::hmux::ReportedAgentAttention::InputRequired
+        );
+        assert!(!report.turn_completed);
+        assert_eq!(report.turn_completion_id, None);
+        assert_eq!(report.working_ttl_ms, None);
+        for error in ["rate_limit", "server_error", "billing_error"] {
+            assert!(
+                normalize_hook_report(failure(error), header)
+                    .unwrap()
+                    .is_none(),
+                "{error}"
+            );
         }
     }
 

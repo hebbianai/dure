@@ -733,7 +733,7 @@ struct RecordingLauncher {
     /// What the Host shows about the launch prompt; `None` is a Host that
     /// showed nothing in time.
     launch_prompt: Option<LaunchPromptObservation>,
-    launch_prompt_watches: Arc<Mutex<Vec<String>>>,
+    launch_prompt_watches: Arc<Mutex<Vec<(String, LaunchPromptWatch)>>>,
 }
 
 impl RecordingLauncher {
@@ -749,11 +749,12 @@ impl crate::workflow_launch::CredentialAwareWorkflowSessionLauncher for Recordin
     fn observe_launch_prompt(
         &self,
         session: WorkflowSessionGenerationV1,
+        watch: LaunchPromptWatch,
     ) -> crate::workflow_launch::LaunchPromptObservationFuture<'_> {
         self.launch_prompt_watches
             .lock()
             .unwrap()
-            .push(session.session_id);
+            .push((session.session_id, watch));
         let observation = self.launch_prompt;
         Box::pin(async move { observation })
     }
@@ -2245,39 +2246,169 @@ async fn a_prompt_that_cannot_ride_the_launch_is_not_typed_into_the_trust_prompt
     )));
 }
 
+/// A trusted folder has no gate before launch. Whether the login holds shows
+/// only once Claude runs the brief: a turn that got past sign-in, or a Host
+/// that shows nothing in time, keeps the launch's own claim.
 #[tokio::test]
-async fn claude_spawn_into_a_trusted_folder_reports_no_startup_gate() {
+async fn claude_spawn_into_a_trusted_folder_claims_the_prompt_unless_sign_in_fails() {
+    for launcher in [
+        RecordingLauncher::showing(LaunchPromptObservation::TakenUp),
+        RecordingLauncher::default(),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
+            .await
+            .unwrap();
+        let planned = planned_native_claude_prompt_spawn(&store).await;
+        let body = apply_body(&planned, "private prompt");
+        let prompt_deliverer = FixturePromptDeliverer {
+            calls: Arc::new(AtomicUsize::new(0)),
+            uncertain: false,
+        };
+
+        let succeeded = apply(
+            &store,
+            authorize(&store, "dure-local", &body).await.unwrap(),
+            &body,
+            Some(execution_with_prompt_target(
+                &launcher,
+                &prompt_deliverer,
+                &TRUSTED_CLAUDE_WORKSPACE_PREPARER,
+                &FixturePromptActivityObserver::observed(),
+                dure_app::AgentProviderPromptTargetV1::LaunchArgument,
+            )),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(succeeded.state, AgentSpawnJournalStateV1::Succeeded);
+        assert!(launcher.startup_gates.lock().unwrap().is_empty());
+        let (session_id, _) = native_launch(&succeeded.plan).unwrap();
+        assert_eq!(
+            *launcher.launch_prompt_watches.lock().unwrap(),
+            vec![(
+                session_id.to_string(),
+                LaunchPromptWatch::TurnStartUnrefusedFor(CLAUDE_SIGN_IN_REFUSAL_WINDOW)
+            )]
+        );
+        assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+        assert!(succeeded.completed.iter().any(|stage| matches!(
+            stage.evidence,
+            AgentSpawnStageEvidenceV1::RuntimeLaunch {
+                initial_prompt_accepted: true,
+                startup_gate: None,
+                ..
+            }
+        )));
+    }
+}
+
+/// Claude Code with a missing or expired login submits the brief that rode
+/// its launch command, then ends that turn at sign-in ("Not logged in",
+/// "Login reached its time limit") and sits idle (#568; reproduced on Claude
+/// Code 2.1.325). Its hook reports the failure to the Host as
+/// `input_required`. The Run must not end `succeeded` for an agent that did
+/// nothing, and the Hub must not type the brief into a session that cannot
+/// run it.
+#[tokio::test]
+async fn claude_spawn_whose_first_turn_failed_at_sign_in_does_not_claim_the_prompt() {
     let root = tempfile::tempdir().unwrap();
     let store = SqliteDomainStore::open(root.path().join("application-state.sqlite3"))
         .await
         .unwrap();
     let planned = planned_native_claude_prompt_spawn(&store).await;
     let body = apply_body(&planned, "private prompt");
-    let launcher = RecordingLauncher::default();
+    let launcher = RecordingLauncher::showing(LaunchPromptObservation::InputRequired);
     let prompt_deliverer = FixturePromptDeliverer {
         calls: Arc::new(AtomicUsize::new(0)),
         uncertain: false,
     };
-
-    let succeeded = apply(
-        &store,
-        authorize(&store, "dure-local", &body).await.unwrap(),
-        &body,
-        Some(execution_with_prompt_target(
+    let prompt_activity_observer = FixturePromptActivityObserver::observed();
+    let execution = || {
+        execution_with_prompt_target(
             &launcher,
             &prompt_deliverer,
             &TRUSTED_CLAUDE_WORKSPACE_PREPARER,
-            &FixturePromptActivityObserver::observed(),
+            &prompt_activity_observer,
             dure_app::AgentProviderPromptTargetV1::LaunchArgument,
-        )),
+        )
+    };
+
+    let applied = apply(
+        &store,
+        authorize(&store, "dure-local", &body).await.unwrap(),
+        &body,
+        Some(execution()),
     )
     .await
     .unwrap();
 
-    assert_eq!(succeeded.state, AgentSpawnJournalStateV1::Succeeded);
+    let (session_id, _) = native_launch(&applied.plan).unwrap();
+    assert_eq!(
+        *launcher.launch_prompt_watches.lock().unwrap(),
+        vec![(
+            session_id.to_string(),
+            LaunchPromptWatch::TurnStartUnrefusedFor(CLAUDE_SIGN_IN_REFUSAL_WINDOW)
+        )]
+    );
+    // Claude's hook already told the Host; the Hub adds no second report.
     assert!(launcher.startup_gates.lock().unwrap().is_empty());
-    // Claude's gate is read before launch; nothing waits on the Host for it.
-    assert!(launcher.launch_prompt_watches.lock().unwrap().is_empty());
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
+    assert!(applied.completed.iter().any(|stage| matches!(
+        &stage.evidence,
+        AgentSpawnStageEvidenceV1::RuntimeLaunch {
+            initial_prompt_accepted: false,
+            startup_gate: Some(AgentSpawnStartupGateV1 {
+                kind: AgentSpawnStartupGateKindV1::Login,
+                launch_prompt_carried: true,
+            }),
+            ..
+        }
+    )));
+    assert_eq!(
+        applied.state,
+        AgentSpawnJournalStateV1::PromptDeliveryUncertain
+    );
+    let AgentSpawnRecoveryDirectiveV1::DoNotReplayPrompt {
+        error_code,
+        error_detail,
+        ..
+    } = &applied.recovery
+    else {
+        panic!("a brief Claude failed at sign-in must never be replayed, got {applied:?}");
+    };
+    assert_eq!(
+        error_code.as_deref(),
+        Some("agent_spawn_prompt_behind_login")
+    );
+    assert!(
+        error_detail
+            .as_deref()
+            .is_some_and(|detail| detail.starts_with("Claude Code")
+                && detail.contains("/login")
+                && detail.contains("send the prompt again")),
+        "the failure must say what the person has to do, got {error_detail:?}"
+    );
+    assert!(
+        !serde_json::to_string(&applied)
+            .unwrap()
+            .contains("private prompt")
+    );
+
+    // A retry sees the same receipt: Claude is neither relaunched nor typed into.
+    let mut retry = apply_body(&planned, "private prompt");
+    retry.expected_last_sequence = applied.last_sequence;
+    let replayed = apply(
+        &store,
+        authorize(&store, "dure-local", &retry).await.unwrap(),
+        &retry,
+        Some(execution()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(replayed, applied);
+    assert_eq!(launcher.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(prompt_deliverer.calls.load(Ordering::SeqCst), 0);
 }
 
 /// Codex shows its sign-in screen and starts no session when the selected
@@ -2322,7 +2453,7 @@ async fn codex_spawn_stopped_at_the_sign_in_screen_does_not_claim_the_prompt() {
     let (session_id, _) = native_launch(&applied.plan).unwrap();
     assert_eq!(
         *launcher.launch_prompt_watches.lock().unwrap(),
-        vec![session_id.to_string()]
+        vec![(session_id.to_string(), LaunchPromptWatch::TurnStart)]
     );
     // The driver already told the Host; the Hub adds no second report.
     assert!(launcher.startup_gates.lock().unwrap().is_empty());

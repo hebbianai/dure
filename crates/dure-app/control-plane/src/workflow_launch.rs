@@ -73,12 +73,14 @@ pub(crate) trait CredentialAwareWorkflowSessionLauncher: Send + Sync {
 
     /// Watch the Host's agent state for the session just launched into
     /// `session` until the provider either takes up the prompt its launch
-    /// command carried or asks a person for input first. `None` claims
-    /// nothing: the Host showed neither in time or could not be observed. A
-    /// launcher without a Host projection observes nothing.
+    /// command carried or asks a person for input first. `watch` says what a
+    /// first turn proves for this provider. `None` claims nothing: the Host
+    /// showed neither in time or could not be observed. A launcher without a
+    /// Host projection observes nothing.
     fn observe_launch_prompt(
         &self,
         _session: WorkflowSessionGenerationV1,
+        _watch: LaunchPromptWatch,
     ) -> LaunchPromptObservationFuture<'_> {
         Box::pin(async { None })
     }
@@ -96,6 +98,19 @@ pub(crate) enum LaunchPromptObservation {
     /// The provider asks a person for input before its first turn, so it is
     /// stopped ahead of the prompt.
     InputRequired,
+}
+
+/// What the start of a provider's first turn proves about its launch prompt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LaunchPromptWatch {
+    /// The turn start is the prompt taken up. Codex asks for sign-in before
+    /// it starts any turn, so a turn means it is signed in.
+    TurnStart,
+    /// The turn start counts once it has stood this long without the provider
+    /// asking a person for input. Claude opens the turn before it reads its
+    /// login and ends that same turn at sign-in when the login is missing or
+    /// expired.
+    TurnStartUnrefusedFor(Duration),
 }
 
 pub(crate) type LaunchPromptObservationFuture<'a> =
@@ -245,11 +260,17 @@ impl CredentialAwareWorkflowSessionLauncher for HmuxWorkflowSessionLauncher {
     fn observe_launch_prompt(
         &self,
         session: WorkflowSessionGenerationV1,
+        watch: LaunchPromptWatch,
     ) -> LaunchPromptObservationFuture<'_> {
         let discovery_root = self.discovery_root.clone();
         Box::pin(async move {
             tokio::task::spawn_blocking(move || {
-                observe_launch_prompt(&discovery_root, &session, LAUNCH_PROMPT_OBSERVATION_TIMEOUT)
+                observe_launch_prompt(
+                    &discovery_root,
+                    &session,
+                    LAUNCH_PROMPT_OBSERVATION_TIMEOUT,
+                    watch,
+                )
             })
             .await
             .ok()
@@ -260,15 +281,18 @@ impl CredentialAwareWorkflowSessionLauncher for HmuxWorkflowSessionLauncher {
 
 /// Watch the exact session generation until its agent state settles what
 /// became of the launch prompt, or the timeout passes. Every failure to
-/// observe ends in `None`: the Hub then claims nothing it did not see.
+/// observe ends in `None`, unless the provider had already started a turn the
+/// watch was only waiting to see refused: the Hub then claims nothing it did
+/// not see.
 fn observe_launch_prompt(
     discovery_root: &std::path::Path,
     session: &WorkflowSessionGenerationV1,
     timeout: Duration,
+    watch: LaunchPromptWatch,
 ) -> Option<LaunchPromptObservation> {
     let catalog = LocalSessionCatalog::new(discovery_root);
     let selector = SessionSelector::new(&session.session_id, Some(session.workspace_id.clone()));
-    let deadline = std::time::Instant::now() + timeout;
+    let mut deadline = std::time::Instant::now() + timeout;
     let mut observer = LocalSessionObserver::connect(
         &catalog,
         &selector,
@@ -283,35 +307,58 @@ fn observe_launch_prompt(
         .initial_snapshot
         .agent_runtime_state
         .as_deref()
-        .map(|state| launch_prompt_state(state, &session.terminal_epoch));
-    let settled = match initial {
-        _ if !exact_observer_matches(observer.attachment(), session) => Some(None),
-        Some(LaunchPromptState::Settled(observation)) => Some(Some(observation)),
-        Some(LaunchPromptState::Gone) => Some(None),
-        Some(LaunchPromptState::Pending) | None => None,
-    };
-    if let Some(observation) = settled {
-        let _ = observer.detach();
-        return observation;
+        .map(|state| launch_prompt_step(state, &session.terminal_epoch, watch));
+    let mut turn_started = false;
+    match initial {
+        _ if !exact_observer_matches(observer.attachment(), session) => {
+            let _ = observer.detach();
+            return None;
+        }
+        Some(LaunchPromptStep::Settled(observation)) => {
+            let _ = observer.detach();
+            return observation;
+        }
+        Some(LaunchPromptStep::TurnStarted { unrefused_for }) => {
+            turn_started = true;
+            deadline = deadline.min(std::time::Instant::now() + unrefused_for);
+        }
+        Some(LaunchPromptStep::Pending) | None => {}
     }
+    // A turn that stood until the watch ended was not refused.
+    let unrefused = |turn_started: bool| turn_started.then_some(LaunchPromptObservation::TakenUp);
     let Ok(interrupt) = observer.interrupt_handle() else {
         let _ = observer.detach();
-        return None;
+        return unrefused(turn_started);
     };
-    let (cancel_watchdog, watchdog_cancelled) = mpsc::channel::<()>();
-    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    // The watchdog interrupts the read at the deadline; a turn start can only
+    // bring that deadline closer. Dropping the sender cancels it.
+    let (shorten_watch, watch_shortened) = mpsc::channel::<std::time::Instant>();
     let watchdog = thread::spawn(move || {
-        if watchdog_cancelled.recv_timeout(remaining).is_err() {
-            interrupt.interrupt();
+        let mut deadline = deadline;
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            match watch_shortened.recv_timeout(remaining) {
+                Ok(earlier) => deadline = deadline.min(earlier),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    interrupt.interrupt();
+                    break;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
         }
     });
     let observation = loop {
         match observer.read_event() {
             Ok(Some(ObserverEvent::AgentRuntimeState(state))) => {
-                match launch_prompt_state(&state, &session.terminal_epoch) {
-                    LaunchPromptState::Pending => {}
-                    LaunchPromptState::Settled(observation) => break Some(observation),
-                    LaunchPromptState::Gone => break None,
+                match launch_prompt_step(&state, &session.terminal_epoch, watch) {
+                    LaunchPromptStep::Pending => {}
+                    LaunchPromptStep::TurnStarted { unrefused_for } => {
+                        if !turn_started {
+                            turn_started = true;
+                            let _ = shorten_watch.send(std::time::Instant::now() + unrefused_for);
+                        }
+                    }
+                    LaunchPromptStep::Settled(observation) => break observation,
                 }
             }
             // Agent state frames are whole states, so a missed output range
@@ -322,10 +369,11 @@ fn observe_launch_prompt(
                 | ObserverEvent::ProviderConversationIdentity(_)
                 | ObserverEvent::ReplayGap(_),
             )) => {}
-            Ok(Some(ObserverEvent::Exit(_)) | None) | Err(_) => break None,
+            Ok(Some(ObserverEvent::Exit(_))) => break None,
+            Ok(None) | Err(_) => break unrefused(turn_started),
         }
     };
-    let _ = cancel_watchdog.send(());
+    drop(shorten_watch);
     let _ = watchdog.join();
     let _ = observer.detach();
     observation
@@ -333,15 +381,17 @@ fn observe_launch_prompt(
 
 enum LaunchPromptState {
     Pending,
+    /// The provider is working on its first turn and has not finished one.
+    TurnStarted,
     Settled(LaunchPromptObservation),
     /// The provider exited or the session moved on to another terminal.
     Gone,
 }
 
-/// A working provider, or one that already finished a turn, took the launch
-/// prompt up. One asking for input before its first turn is stopped ahead of
-/// it. Anything else, such as the waiting state of a provider that is still
-/// starting, is not evidence yet.
+/// A provider that already finished a turn took the launch prompt up; one
+/// working on its first turn started on it. One asking for input before its
+/// first turn is stopped ahead of it. Anything else, such as the waiting state
+/// of a provider that is still starting, is not evidence yet.
 fn launch_prompt_state(
     state: &hmux_client::AgentRuntimeStateDescriptor,
     terminal_epoch: &str,
@@ -355,12 +405,48 @@ fn launch_prompt_state(
         .turn_completed_count
         .parse::<u64>()
         .is_ok_and(|count| count > 0);
-    if state.activity == hmux_client::AgentRuntimeActivity::Working || turn_completed {
+    if turn_completed {
         LaunchPromptState::Settled(LaunchPromptObservation::TakenUp)
+    } else if state.activity == hmux_client::AgentRuntimeActivity::Working {
+        LaunchPromptState::TurnStarted
     } else if state.attention == hmux_client::AgentRuntimeAttention::InputRequired {
         LaunchPromptState::Settled(LaunchPromptObservation::InputRequired)
     } else {
         LaunchPromptState::Pending
+    }
+}
+
+/// What one agent state does to a watch.
+#[derive(Debug, Eq, PartialEq)]
+enum LaunchPromptStep {
+    Pending,
+    /// The first turn started but its provider may still refuse it; watch at
+    /// most this much longer.
+    TurnStarted {
+        unrefused_for: Duration,
+    },
+    Settled(Option<LaunchPromptObservation>),
+}
+
+fn launch_prompt_step(
+    state: &hmux_client::AgentRuntimeStateDescriptor,
+    terminal_epoch: &str,
+    watch: LaunchPromptWatch,
+) -> LaunchPromptStep {
+    match (launch_prompt_state(state, terminal_epoch), watch) {
+        (LaunchPromptState::Pending, _) => LaunchPromptStep::Pending,
+        (LaunchPromptState::TurnStarted, LaunchPromptWatch::TurnStart) => {
+            LaunchPromptStep::Settled(Some(LaunchPromptObservation::TakenUp))
+        }
+        (LaunchPromptState::TurnStarted, LaunchPromptWatch::TurnStartUnrefusedFor(window)) => {
+            LaunchPromptStep::TurnStarted {
+                unrefused_for: window,
+            }
+        }
+        (LaunchPromptState::Settled(observation), _) => {
+            LaunchPromptStep::Settled(Some(observation))
+        }
+        (LaunchPromptState::Gone, _) => LaunchPromptStep::Settled(None),
     }
 }
 
@@ -395,10 +481,12 @@ mod launch_prompt_tests {
     }
 
     fn read(state: &AgentRuntimeStateDescriptor) -> Option<Option<LaunchPromptObservation>> {
-        match launch_prompt_state(state, "terminal-1") {
-            LaunchPromptState::Pending => None,
-            LaunchPromptState::Settled(observation) => Some(Some(observation)),
-            LaunchPromptState::Gone => Some(None),
+        match launch_prompt_step(state, "terminal-1", LaunchPromptWatch::TurnStart) {
+            LaunchPromptStep::Pending => None,
+            LaunchPromptStep::TurnStarted { .. } => {
+                unreachable!("a turn start settles a Codex watch")
+            }
+            LaunchPromptStep::Settled(observation) => Some(observation),
         }
     }
 
@@ -464,6 +552,56 @@ mod launch_prompt_tests {
                 "{lifecycle:?} {activity:?} {attention:?} turns={turns}"
             );
         }
+    }
+
+    /// Claude Code 2.1.325 with a missing or expired login reports the
+    /// prompt's turn as started (UserPromptSubmit), then ends it at sign-in
+    /// (StopFailure `authentication_failed`, reported as `input_required`)
+    /// instead of finishing it (Stop).
+    #[test]
+    fn a_refusable_turn_start_waits_for_sign_in_but_a_finished_turn_does_not() {
+        use LaunchPromptObservation::{InputRequired, TakenUp};
+        let window = Duration::from_secs(8);
+        let step = |lifecycle, activity, attention, turns| {
+            launch_prompt_step(
+                &state(lifecycle, activity, attention, turns),
+                "terminal-1",
+                LaunchPromptWatch::TurnStartUnrefusedFor(window),
+            )
+        };
+        // SessionStart: the provider is up and has read nothing yet.
+        assert_eq!(
+            step(Lifecycle::Running, Activity::Waiting, Attention::None, "0"),
+            LaunchPromptStep::Pending
+        );
+        // UserPromptSubmit: the turn started, and may still fail at sign-in.
+        assert_eq!(
+            step(Lifecycle::Running, Activity::Working, Attention::None, "0"),
+            LaunchPromptStep::TurnStarted {
+                unrefused_for: window
+            }
+        );
+        // StopFailure at sign-in.
+        assert_eq!(
+            step(
+                Lifecycle::Running,
+                Activity::Waiting,
+                Attention::InputRequired,
+                "0"
+            ),
+            LaunchPromptStep::Settled(Some(InputRequired))
+        );
+        // Stop: a finished turn took the prompt up.
+        for activity in [Activity::Waiting, Activity::Working] {
+            assert_eq!(
+                step(Lifecycle::Running, activity, Attention::None, "1"),
+                LaunchPromptStep::Settled(Some(TakenUp))
+            );
+        }
+        assert_eq!(
+            step(Lifecycle::Exited, Activity::Working, Attention::None, "0"),
+            LaunchPromptStep::Settled(None)
+        );
     }
 
     #[test]
@@ -1272,7 +1410,9 @@ mod prompt_delivery_integration_tests {
     /// The Hub's launch-prompt watch against a real Host: the reports Codex's
     /// native driver sends for a signed-out account (readiness, then its
     /// sign-in screen) settle the watch as `InputRequired`, and the first turn
-    /// after sign-in settles a later watch as `TakenUp`.
+    /// after sign-in settles a later watch as `TakenUp`. Claude's hook reports
+    /// a turn start before its sign-in failure, so its watch waits out a
+    /// refusal window before it believes the turn.
     #[tokio::test]
     #[ignore = "requires DURE_QA_HMUX_RUNTIME"]
     async fn launch_prompt_watch_reads_the_providers_own_host_reports() {
@@ -1341,7 +1481,11 @@ mod prompt_delivery_integration_tests {
         let watch = |session: WorkflowSessionGenerationV1| {
             let launcher =
                 HmuxWorkflowSessionLauncher::new(runtime.clone(), discovery_root.clone());
-            tokio::spawn(async move { launcher.observe_launch_prompt(session).await })
+            tokio::spawn(async move {
+                launcher
+                    .observe_launch_prompt(session, LaunchPromptWatch::TurnStart)
+                    .await
+            })
         };
 
         let signed_out = watch(session.clone());
@@ -1376,6 +1520,46 @@ mod prompt_delivery_integration_tests {
             .expect("the first turn did not reach the watch")
             .unwrap();
 
+        // Claude's turn start waits out its refusal window: a sign-in
+        // failure inside it stops the prompt, and a turn that outlasts it
+        // took the prompt up.
+        let refusable = |session: WorkflowSessionGenerationV1| {
+            let discovery_root = discovery_root.clone();
+            tokio::task::spawn_blocking(move || {
+                observe_launch_prompt(
+                    &discovery_root,
+                    &session,
+                    Duration::from_secs(30),
+                    LaunchPromptWatch::TurnStartUnrefusedFor(Duration::from_secs(2)),
+                )
+            })
+        };
+        let refused = refusable(session.clone());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!refused.is_finished(), "a turn start settled the watch");
+        report(
+            hmux_client::AgentRuntimeActivity::Waiting,
+            hmux_client::AgentRuntimeAttention::InputRequired,
+        )
+        .await
+        .unwrap();
+        let refused = tokio::time::timeout(Duration::from_secs(10), refused)
+            .await
+            .expect("the sign-in failure did not reach the watch")
+            .unwrap();
+        report(
+            hmux_client::AgentRuntimeActivity::Working,
+            hmux_client::AgentRuntimeAttention::None,
+        )
+        .await
+        .unwrap();
+        let started = std::time::Instant::now();
+        let unrefused = tokio::time::timeout(Duration::from_secs(10), refusable(session.clone()))
+            .await
+            .expect("the refusal window did not end the watch")
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_secs(2));
+
         let stop = ManagedStopRequest::new(
             "dure-launch-prompt-watch-stop",
             &descriptor.session_id,
@@ -1398,6 +1582,8 @@ mod prompt_delivery_integration_tests {
         assert_eq!(stopped.outcome(), ManagedStopOutcome::Stopped);
         assert_eq!(signed_out, Some(LaunchPromptObservation::InputRequired));
         assert_eq!(signed_in, Some(LaunchPromptObservation::TakenUp));
+        assert_eq!(refused, Some(LaunchPromptObservation::InputRequired));
+        assert_eq!(unrefused, Some(LaunchPromptObservation::TakenUp));
     }
 
     #[tokio::test]
