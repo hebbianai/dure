@@ -1,33 +1,18 @@
 import type { HmuxAgentRuntimeState } from "@/lib/ipc";
 import { nonEmptyString } from "@/lib/payloadGuards";
 import { isAuthoritativeIdleRuntimeState } from "@/lib/sessions/credentials/deferredCredentialSwitch";
-import type { Agent } from "@/types";
+import type {
+	Agent,
+	NativeAgentViewV1,
+	PendingChatHandoverV1,
+} from "@/types";
 
-/** The observer presentation a native Terminal pane shows. Chat is not a view
- * of the terminal: it is the backend-owned runtime the Agent moves into. */
-export type NativeAgentViewV1 = "terminal" | "conversation";
+export type { NativeAgentViewV1, PendingChatHandoverV1 } from "@/types";
 
 export function normalizeNativeAgentView(
 	value: unknown,
 ): NativeAgentViewV1 | undefined {
 	return value === "terminal" || value === "conversation" ? value : undefined;
-}
-
-/** A native Terminal Agent's request to move into Chat at its next idle turn
- * boundary. The backend remains the only authority on idleness: a preserving
- * transition is refused while the source works, so this only records when the
- * next attempt may run. The baseline is the last runtime observation that was
- * seen busy (or refused the move); only a later idle observation retries. */
-export interface PendingChatHandoverV1 {
-	schemaVersion: 1;
-	requestId: string;
-	requestedAtMs: number;
-	baselineSessionId: string;
-	baselineTerminalEpoch: string | null;
-	baselineRuntimeRevision: string | null;
-	/** Set after a refusal other than "still busy"; the intent then waits for
-	 * the user to retry, discard or cancel rather than looping. */
-	lastError?: string;
 }
 
 export type PendingChatHandoverDecision =

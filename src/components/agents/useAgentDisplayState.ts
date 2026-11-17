@@ -31,5 +31,12 @@ export function useAgentDisplayState(agent: Agent): {
 export function useNativeAgentResponseState(agent: Agent) {
   const enabled = useStore((s) => s.uiPrefs.agentFinalResponseOnly === true);
   const runtime = useStore((s) => s.sessionAgentRuntimeState[agent.sessionId]);
-  return { enabled, runtime, ...useAgentDisplayState(agent) };
+  // The pane's remembered observer view lives on the Agent record.
+  const view =
+    useStore(
+      (s) => s.agents.find((candidate) => candidate.id === agent.id)?.nativeView,
+    ) ??
+    agent.nativeView ??
+    "terminal";
+  return { enabled, runtime, view, ...useAgentDisplayState(agent) };
 }

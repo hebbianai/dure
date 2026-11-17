@@ -13,7 +13,6 @@ import { nativeConversationViewAvailability } from "@/lib/agents/nativeConversat
 import { nativeFinalResponse } from "@/lib/agents/nativeFinalResponse";
 import { t } from "@/lib/i18n";
 import { readProviderConversationTranscript } from "@/lib/ipc/conversations";
-import { useStore } from "@/store";
 import type { Agent } from "@/types";
 import { nativeAgentTranscriptSource } from "../../../cli/lib/agent-transcript.mjs";
 
@@ -31,14 +30,7 @@ export function NativeAgentResponseView({
 	children: ReactNode;
 }) {
 	const mode = useInterfaceMode();
-	const { enabled, runtime, state } = useNativeAgentResponseState(agent);
-	const view =
-		useStore(
-			(s) =>
-				s.agents.find((candidate) => candidate.id === agent.id)?.nativeView,
-		) ??
-		agent.nativeView ??
-		"terminal";
+	const { enabled, runtime, state, view } = useNativeAgentResponseState(agent);
 	const source = nativeAgentTranscriptSource(agent, agent.runtimeBinding);
 	const provider = source.kind === "local" ? source.provider : undefined;
 	const conversationId =
