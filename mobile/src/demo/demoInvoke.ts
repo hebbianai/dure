@@ -603,6 +603,15 @@ const handlers: Record<string, Handler> = {
     hubState(str(args, "id"));
     return { state: "refused", code: "agent_not_found", detail: "The demo has no chat-owned agents." };
   },
+  // The demo's approval lives in its terminal; its Chat never shows a card.
+  hub_agent_approval_answer: (args): AgentPromptAnswer => {
+    hubState(str(args, "id"));
+    return {
+      state: "refused",
+      code: "unsupported_runtime",
+      detail: "The demo has no agent conversations.",
+    };
+  },
   // Demo server sessions are shells, so the phone never opens their Chat;
   // asked anyway, the server answers as one with nothing to serve.
   ssh_conversation_transcript: (): ConversationTranscriptAnswer => ({
