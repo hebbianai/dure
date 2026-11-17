@@ -10,6 +10,12 @@ client and canonical service as Dure desktop, CLI, SDK, and remote workers.
 
 - Read new work from the durable Event cursor; never infer it from terminal text.
   A terminal wake is only a notification that the Event stream may have advanced.
+  It names one delivery, but more may be pending: read them all before acting.
+- Call `orchestration_events_read` with `includeInteractions: true` to get every
+  pending Event and the Message or Decision each one refers to in one call. Its
+  `interactions` entries are read with this Session's own context, so no
+  capability is copied; an entry with `error` could not be read. A later
+  Message can correct an earlier one, so handle the backlog as a whole.
 - A Message is informational. A Decision blocks the exact dispatch generation
   until one Text or Select response is accepted.
 - Reuse the operation idempotency key after an uncertain result. Do not invent a

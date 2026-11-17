@@ -119,7 +119,7 @@ const tools = [
   {
     name: "orchestration_events_read",
     description:
-      "Read this managed Session's durable Events after its persisted acknowledgement cursor.",
+      "Read this managed Session's durable Events after its persisted acknowledgement cursor. Set includeInteractions to also get the Message or Decision each Event refers to, so a backlog is read in one call before acting on any of it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -128,6 +128,11 @@ const tools = [
           minimum: 1,
           maximum: 128,
           description: "Maximum Events to return; defaults to 128.",
+        },
+        includeInteractions: {
+          type: "boolean",
+          description:
+            "Also return interactions: one entry per Message or Decision the returned Events refer to, read as this Session with its own context. No orchestration_interaction_get call or copied capability is needed. A record that cannot be read is reported in its own entry; the Events and any acknowledgement still apply.",
         },
         acknowledgement: {
           type: "object",
@@ -386,20 +391,26 @@ function withNotice(result, notice) {
     : { ...result, content: [...result.content, { type: "text", text: notice }] };
 }
 
+const EVENT_READ_KEYS = new Set(["limit", "includeInteractions", "acknowledgement"]);
+
 function eventReadIntent(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("orchestration Event read intent is invalid");
   }
   const keys = Object.keys(input);
-  if (keys.some((key) => key !== "limit" && key !== "acknowledgement")) {
+  if (keys.some((key) => !EVENT_READ_KEYS.has(key))) {
     throw new Error("orchestration Event read intent is invalid");
   }
   const limit = input.limit ?? 128;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 128) {
     throw new Error("orchestration Event read intent is invalid");
   }
+  const includeInteractions = input.includeInteractions ?? false;
+  if (typeof includeInteractions !== "boolean") {
+    throw new Error("orchestration Event read intent is invalid");
+  }
   const acknowledgement = input.acknowledgement;
-  if (acknowledgement === undefined) return { limit };
+  if (acknowledgement === undefined) return { limit, includeInteractions };
   if (
     !acknowledgement ||
     typeof acknowledgement !== "object" ||
@@ -415,7 +426,52 @@ function eventReadIntent(input) {
   ) {
     throw new Error("orchestration Event read intent is invalid");
   }
-  return { limit, acknowledgement };
+  return { limit, includeInteractions, acknowledgement };
+}
+
+// Event kinds name the Message or Decision they concern in one of these fields.
+const EVENT_INTERACTION_FIELDS = ["interactionId", "decisionId", "messageId"];
+
+/** The interaction ids the Events refer to, once each, in Event order. */
+function eventInteractionIds(events) {
+  const ids = new Set();
+  for (const event of Array.isArray(events) ? events : []) {
+    const kind = plainRecord(event) ? event.kind : undefined;
+    if (!plainRecord(kind)) continue;
+    for (const field of EVENT_INTERACTION_FIELDS) {
+      if (typeof kind[field] === "string" && kind[field].length > 0) ids.add(kind[field]);
+    }
+  }
+  return [...ids];
+}
+
+/** Reads each referenced Message or Decision as this Session's worker, with
+ * the same context the Event read used. Reads run one at a time so a remote
+ * backend profile is not flooded. A failed read is reported for that id only:
+ * the Events, and any acknowledgement the read committed, already apply. */
+async function readEventInteractions({ events, context, environment, dependencies, endpoint }) {
+  const interactions = [];
+  for (const interactionId of eventInteractionIds(events)) {
+    const body = {
+      schemaVersion: 1,
+      authority: context.target?.authority,
+      interactionId,
+      participant: context.participant,
+      readCapability: context.deliveryCapability,
+      endpointFence: context.endpointFence,
+    };
+    try {
+      const response = await (dependencies.request ?? requestOrchestration)(
+        endpoint,
+        createOrchestrationRequest({ method: "interaction.get", body }),
+        { authorization: environment.DURE_ORCHESTRATION_AUTHORIZATION, environment },
+      );
+      interactions.push({ interactionId, interaction: response.receipt });
+    } catch (error) {
+      interactions.push({ interactionId, error: orchestrationFailureDetail(error) });
+    }
+  }
+  return interactions;
 }
 
 async function readCurrentEvents({
@@ -475,7 +531,15 @@ async function readCurrentEvents({
       );
     }
   }
-  return response;
+  if (!intent.includeInteractions) return response;
+  const interactions = await readEventInteractions({
+    events: response?.receipt?.events,
+    context,
+    environment,
+    dependencies,
+    endpoint,
+  });
+  return { ...response, interactions };
 }
 
 export async function handleMcpRequest(
