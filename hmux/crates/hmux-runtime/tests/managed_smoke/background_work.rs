@@ -4,6 +4,7 @@ use super::*;
 /// background work it started is still in flight.
 fn turn_ended_with_background_work() -> AgentStateReport {
     AgentStateReport {
+        approval_request: None,
         progress: None,
         identity_only: false,
         activity: hmux_client::AgentRuntimeActivity::Waiting,

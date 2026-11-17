@@ -22,15 +22,15 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 use terminal_state_protocol::{
-    AgentPromptInputIntent, DraftGuardedInputIntent, ExistingConversationPromptTarget, FollowTail,
-    FreshAgentPromptTarget, InputIntent, InputReceipt, InputRefusalReason, KeyInputIntent,
-    MAX_AGENT_PROMPT_ADMISSION_WAIT_MS, MAX_DRAFT_GUARD_ADMISSION_WAIT_MS,
-    MAX_VIEWPORT_FRAME_BYTES, PasteInputIntent, ProcessObservedFreshAgentPromptTarget,
-    ResizeInputIntent, ResizeReceipt, RowTermination, ScrollRows, SetViewportRows, TerminalEvent,
-    TerminalStateRecord, TextInputIntent, ViewportFrame, ViewportFrameAssembler,
-    ViewportFrameAssembly, ViewportFrameProgress, ViewportIntent, WheelReceipt,
-    agent_prompt_input_intent, decode_record, input_intent, input_receipt, terminal_state_record,
-    viewport_intent,
+    AgentPromptInputIntent, AttentionResponseInputIntent, DraftGuardedInputIntent,
+    ExistingConversationPromptTarget, FollowTail, FreshAgentPromptTarget, InputIntent,
+    InputReceipt, InputRefusalReason, KeyInputIntent, MAX_AGENT_PROMPT_ADMISSION_WAIT_MS,
+    MAX_DRAFT_GUARD_ADMISSION_WAIT_MS, MAX_VIEWPORT_FRAME_BYTES, PasteInputIntent,
+    ProcessObservedFreshAgentPromptTarget, ResizeInputIntent, ResizeReceipt, RowTermination,
+    ScrollRows, SetViewportRows, TerminalEvent, TerminalStateRecord, TextInputIntent,
+    ViewportFrame, ViewportFrameAssembler, ViewportFrameAssembly, ViewportFrameProgress,
+    ViewportIntent, WheelReceipt, agent_prompt_input_intent, decode_record, input_intent,
+    input_receipt, terminal_state_record, viewport_intent,
 };
 
 const MAX_PENDING_SURFACE_EVENTS: usize = 64;
@@ -535,7 +535,8 @@ impl TerminalSurfaceAttachment {
             TerminalSurfaceAccess::Writer => options
                 .with_terminal_input_intents()
                 .with_terminal_default_colors()
-                .with_terminal_draft_guarded_input(),
+                .with_terminal_draft_guarded_input()
+                .with_terminal_attention_response_input(),
         }
     }
 
@@ -566,22 +567,12 @@ impl TerminalSurfaceAttachment {
         catalog: &LocalSessionCatalog,
         expected: &SessionFence,
     ) -> Result<Self, ClientError> {
-        let session = catalog.open(&SessionSelector::new(
-            &expected.session_id,
-            Some(expected.workspace_id.clone()),
-        ))?;
-        if session.descriptor().session_class != SessionClass::Managed {
-            return Err(ClientError::transport(
-                "hmux_agent_prompt_requires_managed",
-                "agent prompt input requires a managed session",
-            ));
-        }
-        if !session.descriptor().matches_fence(expected) {
-            return Err(ClientError::transport(
-                "hmux_expected_generation_mismatch",
-                "managed session generation changed before exact input",
-            ));
-        }
+        let session = open_exact_local_managed(
+            catalog,
+            expected,
+            "hmux_agent_prompt_requires_managed",
+            "agent prompt input requires a managed session",
+        )?;
         let selected_prompt = select_managed_agent_prompt_capability(
             AttachMode::Observer,
             true,
@@ -593,6 +584,58 @@ impl TerminalSurfaceAttachment {
         if selected_prompt == Some(AgentPromptCapabilitySelection::LegacyFresh) {
             options = options.with_legacy_agent_prompt_fallback();
         }
+        let connection = session.connect_with_options(options)?;
+        Self::from_connection(connection)
+    }
+
+    /// Answers the approval `attention_id` names on one exact local managed
+    /// generation with `choice`, written as `keys` (W3C key and code pairs the
+    /// provider's prompt takes for that choice). Refuses before writing
+    /// (`hmux_attention_response_changed`) unless the attach seed shows that
+    /// approval pending and offering `choice`; the Host then rechecks the
+    /// attention under its PTY writer. There is no retry.
+    #[cfg(feature = "local-runtime")]
+    pub fn answer_local_approval(
+        catalog: &LocalSessionCatalog,
+        expected: &SessionFence,
+        attention_id: &str,
+        choice: hmux_session_protocol::AgentApprovalChoice,
+        keys: &[(&str, &str)],
+        timeout: Duration,
+    ) -> Result<InputReceipt, ClientError> {
+        let mut surface = Self::connect_local_attention_response(catalog, expected)?;
+        let answered =
+            if approval_offered(surface.initial_agent_runtime_state(), attention_id, choice) {
+                surface.send_attention_response_confirmed(attention_id, keys, timeout)
+            } else {
+                Err(attention_response_changed())
+            };
+        let _ = surface.detach();
+        answered
+    }
+
+    /// Opens one exact local managed generation to answer the attention it
+    /// is waiting on. The surface can write only what the Host admits as an
+    /// attention response for that generation.
+    #[cfg(feature = "local-runtime")]
+    fn connect_local_attention_response(
+        catalog: &LocalSessionCatalog,
+        expected: &SessionFence,
+    ) -> Result<Self, ClientError> {
+        let session = open_exact_local_managed(
+            catalog,
+            expected,
+            "hmux_attention_response_requires_managed",
+            "an attention response requires a managed session",
+        )?;
+        let proof = session.managed_attach_authorization_proof()?;
+        let options = Self::connection_options_with_capabilities(
+            TerminalSurfaceAccess::ReadOnly,
+            Some(proof),
+            true,
+            &[],
+        )
+        .with_terminal_attention_response_input();
         let connection = session.connect_with_options(options)?;
         Self::from_connection(connection)
     }
@@ -1273,6 +1316,64 @@ impl TerminalSurfaceAttachment {
         }
     }
 
+    /// Answers the attention `expected_attention_id` names with these keys,
+    /// written as one Host transaction. The Host refuses with nothing written
+    /// (`hmux_attention_response_changed`) unless that attention is still
+    /// the current one and no key input reached the terminal since it was
+    /// raised, so a stale view can never type into a later prompt. A Host
+    /// that predates the operation refuses before anything is sent
+    /// (`hmux_attention_response_unavailable`). There is no retry.
+    fn send_attention_response_confirmed(
+        &mut self,
+        expected_attention_id: &str,
+        keys: &[(&str, &str)],
+        timeout: Duration,
+    ) -> Result<InputReceipt, ClientError> {
+        validate_timeout(timeout)?;
+        let keys = keys
+            .iter()
+            .map(|(key, code)| KeyInputIntent {
+                key: (*key).to_owned(),
+                code: (*code).to_owned(),
+                modifiers: 0,
+                repeat: false,
+            })
+            .collect();
+        if !self
+            .input_writer
+            .as_ref()
+            .is_some_and(TerminalInputWriterCapability::supports_attention_response_input)
+        {
+            return Err(ClientError::transport(
+                "hmux_attention_response_unavailable",
+                "this session's Host cannot answer an attention from here; nothing was written",
+            ));
+        }
+        let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
+            ClientError::transport(
+                "hmux_attention_response_deadline_invalid",
+                "attention response deadline overflowed",
+            )
+        })?;
+        let expected_attention_id = expected_attention_id.to_owned();
+        let receipt = self.send_intent_before(
+            move |_| InputIntent {
+                intent: Some(input_intent::Intent::AttentionResponse(
+                    AttentionResponseInputIntent {
+                        expected_attention_id,
+                        keys,
+                    },
+                )),
+            },
+            ReceiptKind::Input,
+            deadline,
+        )?;
+        let TerminalIntentReceipt::Input(input) = receipt else {
+            unreachable!("attention response always expects an input receipt")
+        };
+        require_written_attention_response(input)
+    }
+
     /// Delivers a fresh managed-agent prompt as one capability-gated Host
     /// operation. The Host encodes body plus submit and admits the one-shot
     /// write only from provider-event state inside its serialized PTY transaction.
@@ -1931,6 +2032,67 @@ fn require_written_input(receipt: InputReceipt) -> Result<InputReceipt, ClientEr
     }
 }
 
+/// Opens one exact local managed generation, refusing a session that is not
+/// managed or whose generation moved, before any proof is minted.
+#[cfg(feature = "local-runtime")]
+fn open_exact_local_managed(
+    catalog: &LocalSessionCatalog,
+    expected: &SessionFence,
+    unmanaged_code: &'static str,
+    unmanaged_message: &'static str,
+) -> Result<crate::LocalSession, ClientError> {
+    let session = catalog.open(&SessionSelector::new(
+        &expected.session_id,
+        Some(expected.workspace_id.clone()),
+    ))?;
+    if session.descriptor().session_class != SessionClass::Managed {
+        return Err(ClientError::transport(unmanaged_code, unmanaged_message));
+    }
+    if !session.descriptor().matches_fence(expected) {
+        return Err(ClientError::transport(
+            "hmux_expected_generation_mismatch",
+            "managed session generation changed before exact input",
+        ));
+    }
+    Ok(session)
+}
+
+/// Whether the runtime state names `attention_id` as a pending approval that
+/// offers `choice`.
+fn approval_offered(
+    runtime: Option<&crate::AgentRuntimeStateDescriptor>,
+    attention_id: &str,
+    choice: hmux_session_protocol::AgentApprovalChoice,
+) -> bool {
+    runtime.is_some_and(|runtime| {
+        runtime.attention_id.as_deref() == Some(attention_id)
+            && runtime
+                .approval_request
+                .as_ref()
+                .is_some_and(|request| request.choices.contains(&choice))
+    })
+}
+
+fn attention_response_changed() -> ClientError {
+    ClientError::transport(
+        "hmux_attention_response_changed",
+        "the attention was already answered or replaced; nothing was written",
+    )
+}
+
+/// An attention that moved on is a definite not-written outcome with its own
+/// stable code: the person may already have answered it in the terminal.
+fn require_written_attention_response(receipt: InputReceipt) -> Result<InputReceipt, ClientError> {
+    if matches!(
+        receipt.outcome.as_ref(),
+        Some(input_receipt::Outcome::Refused(refused))
+            if refused.reason == InputRefusalReason::AttentionChanged as i32
+    ) {
+        return Err(attention_response_changed());
+    }
+    require_written_input(receipt)
+}
+
 /// A draft refusal is a definite not-written outcome with its own stable
 /// code, so the sender can retry after the person submits.
 fn require_written_draft_guarded_input(receipt: InputReceipt) -> Result<InputReceipt, ClientError> {
@@ -2062,6 +2224,57 @@ fn project_text(viewport: &ViewportFrame) -> Result<String, ClientError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_answer_names_the_pending_approval_and_an_offered_choice() {
+        use super::approval_offered;
+        use hmux_session_protocol::{AgentApprovalChoice, AgentApprovalRequest};
+        let mut pending = crate::AgentRuntimeStateDescriptor {
+            progress: None,
+            terminal_epoch: "terminal-1".into(),
+            revision: "4".into(),
+            observed_through_output_seq: "9".into(),
+            lifecycle: crate::AgentRuntimeLifecycle::Running,
+            activity: crate::AgentRuntimeActivity::Waiting,
+            attention: crate::AgentRuntimeAttention::ApprovalRequired,
+            attention_id: Some("attention-4".into()),
+            source: crate::AgentRuntimeStateSource::ProviderEvent,
+            turn_completed_count: "1".into(),
+            program_status: None,
+            background_work: false,
+            approval_request: Some(Box::new(AgentApprovalRequest {
+                tool_name: "Bash".into(),
+                summary: "ls".into(),
+                choices: vec![AgentApprovalChoice::Approve, AgentApprovalChoice::Deny],
+            })),
+        };
+        assert!(approval_offered(
+            Some(&pending),
+            "attention-4",
+            AgentApprovalChoice::Approve
+        ));
+        assert!(!approval_offered(
+            Some(&pending),
+            "attention-4",
+            AgentApprovalChoice::ApproveAlways
+        ));
+        assert!(!approval_offered(
+            Some(&pending),
+            "attention-3",
+            AgentApprovalChoice::Approve
+        ));
+        pending.approval_request = None;
+        assert!(!approval_offered(
+            Some(&pending),
+            "attention-4",
+            AgentApprovalChoice::Approve
+        ));
+        assert!(!approval_offered(
+            None,
+            "attention-4",
+            AgentApprovalChoice::Approve
+        ));
+    }
+
     use super::*;
     use terminal_state_protocol::{
         BufferId, CellStyle, Grapheme, InputModes, MouseEncoding, MouseTrackingMode,

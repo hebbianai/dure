@@ -1181,6 +1181,38 @@ fn serve_one(
         return;
     }
 
+    if let HubRequest::AgentApprovalAnswerV1 {
+        box_id,
+        workspace_id,
+        session_id,
+        expected_terminal_epoch,
+        attention_id,
+        choice,
+    } = hello.request
+    {
+        // The Hmux Host admits the answer (`conversation.rs`); an answer that
+        // never arrives would read as "refused" and invite a second press.
+        let result = conversation::answer_approval(
+            hub.conversations,
+            box_route(&hub, &box_id),
+            conversation::ApprovalAnswerRequest {
+                workspace_id,
+                session_id,
+                expected_terminal_epoch,
+                attention_id,
+                choice,
+            },
+        );
+        match dure_hub_protocol::conversation::encode_prompt(&result) {
+            Ok(framed) => {
+                let _ = tls.write_all(&framed);
+                let _ = tls.flush();
+            }
+            Err(error) => eprintln!("[hub] Could not encode the answer result in a frame: {error}"),
+        }
+        return;
+    }
+
     if let HubRequest::GitStatus { session_id, want } = hello.request {
         // 어느 저장소인지 아는 것은 화면이다 — 폰이 보낸 것은 hmux 세션 id 이고,
         // 그것을 워크트리로 옮기는 표는 앱의 개념 위에 있다(`git_status.rs`).

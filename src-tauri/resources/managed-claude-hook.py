@@ -579,6 +579,75 @@ def claude_transcript_exists(native):
     )
 
 
+# Mirrors `permission_request` in the app's Claude hook normalizer: the
+# prompt's tool, a bounded summary of its input and the answers it offers.
+APPROVAL_SUMMARY_MAX_BYTES = 2048
+APPROVAL_TOOL_NAME_MAX_BYTES = 128
+APPROVAL_SUMMARY_FIELDS = {
+    "Bash": "command",
+    "Edit": "file_path",
+    "MultiEdit": "file_path",
+    "Write": "file_path",
+    "Read": "file_path",
+    "NotebookEdit": "notebook_path",
+    "WebFetch": "url",
+    "WebSearch": "query",
+    "Glob": "pattern",
+    "Grep": "pattern",
+}
+UNANSWERABLE_PERMISSION_TOOLS = ("AskUserQuestion", "ExitPlanMode")
+
+
+def bounded_summary(text):
+    printable = "".join(
+        " " if (ord(c) < 32 or 127 <= ord(c) < 160) and c not in "\n\t" else c
+        for c in text.strip()
+    )
+    encoded = printable.encode("utf-8")
+    if len(encoded) <= APPROVAL_SUMMARY_MAX_BYTES:
+        return printable
+    ellipsis = "\u2026"
+    budget = APPROVAL_SUMMARY_MAX_BYTES - len(ellipsis.encode("utf-8"))
+    return encoded[:budget].decode("utf-8", "ignore") + ellipsis
+
+
+def approval_request(native):
+    """The request a chat can answer, or None for a prompt that is not a
+    plain approval. Claude offers "don't ask again" exactly when it has
+    permission suggestions for the request."""
+    tool_name = native.get("tool_name")
+    if (
+        not isinstance(tool_name, str)
+        or not tool_name
+        or len(tool_name.encode("utf-8")) > APPROVAL_TOOL_NAME_MAX_BYTES
+        or any(ord(c) < 32 or 127 <= ord(c) < 160 for c in tool_name)
+        or tool_name in UNANSWERABLE_PERMISSION_TOOLS
+    ):
+        return None
+    tool_input = native.get("tool_input")
+    field = APPROVAL_SUMMARY_FIELDS.get(tool_name)
+    if field is not None:
+        value = tool_input.get(field) if isinstance(tool_input, dict) else None
+        text = value if isinstance(value, str) else ""
+    elif tool_input is None:
+        text = ""
+    else:
+        try:
+            text = json.dumps(tool_input, separators=(",", ":"), ensure_ascii=False)
+        except Exception:
+            text = ""
+    choices = ["approve"]
+    suggestions = native.get("permission_suggestions")
+    if isinstance(suggestions, list) and suggestions:
+        choices.append("approve_always")
+    choices.append("deny")
+    request = {"tool_name": tool_name, "choices": choices}
+    summary = bounded_summary(text)
+    if summary:
+        request["summary"] = summary
+    return request
+
+
 def claude_subagent(native):
     """Claude names the subagent whose tool call fired a hook."""
     agent_id = native.get("agent_id")
@@ -602,6 +671,7 @@ def claude_report(native, fence):
         else None
     )
     background = False
+    request = None
     if event == "SessionStart":
         activity, attention, completed, working_ttl_ms = (
             "waiting",
@@ -655,6 +725,15 @@ def claude_report(native, fence):
             False,
             None,
         )
+    elif event == "PermissionRequest":
+        question = native.get("tool_name") == "AskUserQuestion"
+        activity, attention, completed, working_ttl_ms = (
+            "waiting",
+            "input_required" if question else "approval_required",
+            False,
+            None,
+        )
+        request = None if question else approval_request(native)
     else:
         return None
     report = {
@@ -685,6 +764,8 @@ def claude_report(native, fence):
         report["turn_completion_id"] = work_id
     if background:
         report["background_work"] = True
+    if request is not None:
+        report["approval_request"] = request
     return {
         "schema": HMUX_AGENT_STATE_REPORT_SCHEMA,
         "schemaVersion": (
@@ -788,6 +869,21 @@ def slim_body(native):
     prompt = native.get("prompt")
     if isinstance(prompt, str):
         minimal["prompt"] = prompt[:4096]
+    # A permission prompt keeps what it asks: the summarized input field and
+    # whether "don't ask again" is offered. A large Write keeps its path.
+    tool_input = native.get("tool_input")
+    if isinstance(tool_input, dict):
+        summarized = {
+            key: value[:4096]
+            for key, value in tool_input.items()
+            if key in APPROVAL_SUMMARY_FIELDS.values() and isinstance(value, str)
+        }
+        if summarized:
+            minimal["tool_input"] = summarized
+    suggestions = native.get("permission_suggestions")
+    if isinstance(suggestions, list) and suggestions:
+        # The server reads only whether any suggestion was offered.
+        minimal["permission_suggestions"] = [{}]
     # Preserve explicit empty registries. Everything else may become unknown,
     # but reducing a large body must never manufacture quiescence.
     for field in ("background_tasks", "session_crons"):

@@ -436,6 +436,8 @@ fn initial_runtime_record(
         turn_completed_count: &'a str,
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         background_work: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        approval_request: Option<&'a hmux_client::AgentApprovalRequest>,
     }
     #[derive(Serialize)]
     struct Body<'a> {
@@ -460,6 +462,7 @@ fn initial_runtime_record(
                 attention_id: state.attention_id.as_deref(),
                 turn_completed_count: &state.turn_completed_count,
                 background_work: state.background_work,
+                approval_request: state.approval_request.as_deref(),
             },
         },
     })
@@ -475,6 +478,7 @@ mod tests {
 
     fn runtime_descriptor(attention_id: Option<&str>) -> hmux_client::AgentRuntimeStateDescriptor {
         hmux_client::AgentRuntimeStateDescriptor {
+            approval_request: None,
             progress: None,
             terminal_epoch: "terminal-1".into(),
             revision: "12".into(),
@@ -501,6 +505,7 @@ mod tests {
             AgentRuntimeStateProjection, AgentRuntimeStateSource,
         };
         let body = FrameBody::AgentRuntimeState(AgentRuntimeStateProjection {
+            approval_request: None,
             progress: None,
             terminal_epoch: "terminal-1".into(),
             revision: 12,

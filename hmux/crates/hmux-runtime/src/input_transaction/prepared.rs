@@ -74,17 +74,18 @@ impl<'a> PreparedInput<'a> {
         // The caller holds the serialized PTY input frame here, so no other
         // keystroke can land between this check and the first written byte.
         #[cfg(feature = "terminal-state-stream")]
-        if self.written == 0
-            && self.admission.draft_guard_wait().is_some()
-            && host
-                .has_unsubmitted_controller_draft(fence)
+        if self.written == 0 {
+            if let Some(reason) = self
+                .admission
+                .refusal_before_first_byte(host, fence)
                 .map_err(InputTransactionFailure::before_write)?
-        {
-            return Ok(InputStep::Complete(InputTransaction {
-                outcome: self.failure(OperationReceiptReason::UnsubmittedDraft),
-                runtime_state: None,
-                admitted_agent_runtime_revision: None,
-            }));
+            {
+                return Ok(InputStep::Complete(InputTransaction {
+                    outcome: self.failure(reason),
+                    runtime_state: None,
+                    admitted_agent_runtime_revision: None,
+                }));
+            }
         }
         #[cfg(feature = "terminal-state-stream")]
         let prepared_revision = if self.written == 0 {
@@ -122,6 +123,13 @@ impl<'a> PreparedInput<'a> {
         #[cfg(feature = "terminal-state-stream")]
         if !prefix.is_empty() {
             self.admitted_revision = prepared_revision;
+        }
+        // Any keypress may answer a raised attention; focus and pointer
+        // reports cannot. An attention response is itself the answer, so a
+        // second one for the same attention refuses.
+        if start == 0 && !prefix.is_empty() && self.effect.may_answer_attention() {
+            host.record_controller_key_input(fence)
+                .map_err(InputTransactionFailure::after_write)?;
         }
         let runtime_state = if prefix.is_empty() {
             None

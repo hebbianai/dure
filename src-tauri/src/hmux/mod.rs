@@ -540,6 +540,10 @@ pub struct AgentStateReportRequest {
     /// the plain working report.
     #[serde(default)]
     pub background_work: bool,
+    /// What the provider asks the person to approve; older Hosts get the
+    /// report without it.
+    #[serde(default)]
+    pub approval_request: Option<hmux_client::AgentApprovalRequest>,
 }
 
 impl fmt::Debug for AgentStateReportRequest {
@@ -557,6 +561,7 @@ impl fmt::Debug for AgentStateReportRequest {
             .field("has_conversation_identity", &self.conversation_identity.is_some())
             .field("has_expected_observation", &self.expected_observation.is_some())
             .field("background_work", &self.background_work)
+            .field("approval_request", &self.approval_request)
             .finish()
     }
 }
@@ -755,6 +760,33 @@ pub struct ObserverAgentRuntimeState {
     /// accepts input. Omitted while false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub background_work: bool,
+    /// What the pending approval asks, when its provider reported it. Only
+    /// beside `approval_required`; omitted otherwise and by older Hosts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_request: Option<ObserverApprovalRequest>,
+}
+
+/// The pending approval's tool, input summary and offered answers, for the
+/// chat views that show and answer it.
+#[derive(Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObserverApprovalRequest {
+    pub tool_name: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub summary: String,
+    pub choices: Vec<hmux_client::AgentApprovalChoice>,
+}
+
+impl fmt::Debug for ObserverApprovalRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // A command line can carry secrets; diagnostics name only its size.
+        formatter
+            .debug_struct("ObserverApprovalRequest")
+            .field("tool_name", &self.tool_name)
+            .field("summary_len", &self.summary.len())
+            .field("choices", &self.choices)
+            .finish()
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Serialize)]
@@ -1374,6 +1406,7 @@ impl HmuxManager {
             conversation_identity,
             expected_observation,
             background_work,
+            approval_request,
         } = request;
         validate_identifier("session id", &session_id)
             .map_err(report_request_failure)?;
@@ -1498,6 +1531,7 @@ impl HmuxManager {
             expected_observation,
             background_work,
             startup_gate: None,
+            approval_request,
         };
         if report
             .conversation_identity
@@ -1608,6 +1642,7 @@ impl HmuxManager {
             .report_agent_state_for_fence(
                 attach_request,
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: true,
                     // Ignored by Hosts that negotiated identity-only reports.
@@ -2326,6 +2361,11 @@ fn project_agent_runtime_state(state: AgentRuntimeStateDescriptor) -> ObserverAg
         turn_completed_count: state.turn_completed_count,
         program_status: state.program_status,
         background_work: state.background_work,
+        approval_request: state.approval_request.map(|request| ObserverApprovalRequest {
+            tool_name: request.tool_name,
+            summary: request.summary,
+            choices: request.choices,
+        }),
     }
 }
 
@@ -2904,6 +2944,7 @@ mod tests {
     #[test]
     fn agent_runtime_state_projection_carries_turn_completed_count() {
         let projected = project_agent_runtime_state(AgentRuntimeStateDescriptor {
+            approval_request: None,
             terminal_epoch: "epoch-1".into(),
             revision: "7".into(),
             observed_through_output_seq: "42".into(),
@@ -2989,6 +3030,7 @@ mod tests {
             }),
             expected_observation: None,
             background_work: false,
+            approval_request: None,
         };
 
         let debug = format!("{request:?}");

@@ -124,6 +124,38 @@ fn oversized_stop_failure_keeps_the_error_that_names_a_failed_sign_in() {
 }
 
 #[test]
+fn an_oversized_permission_prompt_keeps_what_it_asks() {
+    let oversized = serde_json::json!({
+        "hook_event_name": "PermissionRequest", "session_id": "fixture",
+        "tool_name": "Write",
+        "tool_input": { "file_path": "/fixture/notes.md", "content": "x".repeat(MAX_BODY_BYTES) },
+        "permission_suggestions": [{ "type": "setMode", "mode": "acceptEdits" }],
+    });
+    let body = bounded_body(serde_json::to_vec(&oversized).unwrap()).unwrap();
+    let body: Value = serde_json::from_slice(&body.body).unwrap();
+    assert_eq!(body["tool_name"], "Write");
+    assert_eq!(
+        body["tool_input"],
+        serde_json::json!({ "file_path": "/fixture/notes.md" })
+    );
+    assert!(
+        !body["permission_suggestions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut unsuggested = oversized;
+    unsuggested
+        .as_object_mut()
+        .unwrap()
+        .remove("permission_suggestions");
+    let body = bounded_body(serde_json::to_vec(&unsuggested).unwrap()).unwrap();
+    let body: Value = serde_json::from_slice(&body.body).unwrap();
+    assert!(body.get("permission_suggestions").is_none());
+}
+
+#[test]
 fn oversized_stop_keeps_empty_registry_proof_but_never_invents_it() {
     let cases: Vec<Value> = serde_json::from_str(include_str!(
         "../../../../../scripts/qa/fixtures/claude-background-work.json"

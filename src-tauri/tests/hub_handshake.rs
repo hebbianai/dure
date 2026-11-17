@@ -279,6 +279,7 @@ impl CatalogSource for OneSession {
                 capabilities: vec!["live_output".into()],
                 conversation: false,
                 background_work: false,
+                approval_answer: false,
                 box_id: "this-laptop".into(),
                 box_label: "내 노트북".into(),
             }],

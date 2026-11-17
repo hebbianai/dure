@@ -61,6 +61,7 @@ async fn ensure_late_conversation(bound_conversation: Option<&str>) {
             hmux_client::ManagedAttachRequest::new(&source.session_id, &source.workspace_id)
                 .unwrap(),
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: true,
                 activity: AgentRuntimeActivity::Waiting,
@@ -210,6 +211,7 @@ async fn ensure_late_conversation(bound_conversation: Option<&str>) {
             hmux_client::ManagedAttachRequest::new(&source.session_id, &source.workspace_id)
                 .unwrap(),
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Waiting,

@@ -15,9 +15,9 @@ mod viewport_frame_parts;
 pub use codec::*;
 pub use generated::*;
 pub use interaction::{
-    InputIngressAuthority, MAX_AGENT_PROMPT_ADMISSION_WAIT_MS, MAX_DRAFT_GUARD_ADMISSION_WAIT_MS,
-    encode_input_at_writer, validate_input_ingress, validate_input_intent, validate_input_receipt,
-    validate_resize_receipt,
+    InputIngressAuthority, MAX_AGENT_PROMPT_ADMISSION_WAIT_MS, MAX_ATTENTION_RESPONSE_KEYS,
+    MAX_DRAFT_GUARD_ADMISSION_WAIT_MS, encode_input_at_writer, validate_input_ingress,
+    validate_input_intent, validate_input_receipt, validate_resize_receipt,
 };
 pub use types::*;
 pub use viewport::{

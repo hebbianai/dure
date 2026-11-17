@@ -64,6 +64,11 @@ pub fn entry_from(
             &descriptor.provider_id,
             &descriptor.lifecycle,
         ),
+        approval_answer: super::conversation::offers_approval_answer(
+            &descriptor.session_class,
+            &descriptor.provider_id,
+            &descriptor.lifecycle,
+        ),
         box_id: box_id.to_string(),
         box_label: box_label.to_string(),
     }
@@ -95,6 +100,7 @@ pub fn remote_entry_from(
         launch_program: descriptor.launch_program.clone(),
         conversation: false,
         background_work: false,
+        approval_answer: false,
         box_id: box_id.to_string(),
         box_label: box_label.to_string(),
     }
@@ -212,6 +218,24 @@ mod tests {
         let mut exited = claude.clone();
         exited.lifecycle = hmux_client::SessionLifecycle::Exited;
         assert!(!entry_from(&exited, "this-laptop", "이 노트북").background_work);
+    }
+
+    /// Approvals are answered from the chat only where this desktop knows the
+    /// provider's approval prompt: Claude Code for now.
+    #[test]
+    fn only_a_claude_agent_with_a_chat_offers_approval_answers() {
+        let mut claude = descriptor();
+        claude.session_class = hmux_client::SessionClass::Managed;
+        claude.provider_id = "claude".into();
+        assert!(entry_from(&claude, "this-laptop", "이 노트북").approval_answer);
+
+        let mut codex = claude.clone();
+        codex.provider_id = "codex".into();
+        assert!(!entry_from(&codex, "this-laptop", "이 노트북").approval_answer);
+
+        let mut exited = claude;
+        exited.lifecycle = hmux_client::SessionLifecycle::Exited;
+        assert!(!entry_from(&exited, "this-laptop", "이 노트북").approval_answer);
     }
 
     #[test]

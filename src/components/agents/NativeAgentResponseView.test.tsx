@@ -32,6 +32,7 @@ import { NativeAgentResponseView } from "./NativeAgentResponseView";
 const mocks = vi.hoisted(() => ({
 	read: vi.fn(),
 	send: vi.fn(),
+	answer: vi.fn(),
 	mounted: vi.fn(),
 	unmounted: vi.fn(),
 }));
@@ -46,6 +47,7 @@ vi.mock("@/lib/ipc/conversations", () => ({
 }));
 vi.mock("@/lib/ipc/dureAgentNativeInput", () => ({
 	sendNativeAgentPrompt: (...args: unknown[]) => mocks.send(...args),
+	answerNativeAgentApproval: (...args: unknown[]) => mocks.answer(...args),
 }));
 vi.mock("@/components/agents/chat/ChatMarkdown", () => ({
 	ChatMarkdown: ({ markdown }: { markdown: string }) => <div>{markdown}</div>,
@@ -491,6 +493,87 @@ describe("Pro conversation view", () => {
 		expect(alert.textContent).toContain(t("agents.nativeChat.error.refused"));
 		expect(alert.textContent).toContain("hmux_agent_prompt_refused");
 		expect(composer().value).toBe("Try now");
+	});
+
+	it("shows a pending approval with its command and answers it from the card", async () => {
+		const asking = (attentionId: string) =>
+			act(() => {
+				useAgentAttention.setState({
+					displayStates: { [agent.id]: "blocked" },
+				});
+				useStore.setState({
+					sessionAgentRuntimeState: {
+						[agent.sessionId]: {
+							terminalEpoch: "epoch-one",
+							revision: "2",
+							observedThroughOutputSeq: "1",
+							source: "provider_event",
+							lifecycle: "running",
+							activity: "waiting",
+							attention: "approval_required",
+							attentionId,
+							approvalRequest: {
+								toolName: "Bash",
+								summary: "cargo test -p dure",
+								choices: ["approve", "approve_always", "deny"],
+							},
+							turnCompletedCount: "1",
+						},
+					},
+				});
+			});
+		asking("attention-7");
+		mocks.answer.mockRejectedValueOnce({
+			code: "agent_runtime_native_answer_changed",
+		});
+		render(view());
+		showConversation();
+		await screen.findByText(
+			t("agents.nativeChat.approval.title", { tool: "Bash" }),
+		);
+		expect(screen.getByText("cargo test -p dure")).toBeTruthy();
+		expect(
+			screen.getByText(t("agents.nativeChat.reason.approval")),
+		).toBeTruthy();
+
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.chat.allowAlways") }),
+		);
+		const alert = await screen.findByRole("alert");
+		expect(alert.textContent).toContain(
+			t("agents.nativeChat.approval.error.changed"),
+		);
+		expect(mocks.answer).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: agent.id,
+				expectedTerminalEpoch: "epoch-one",
+			}),
+			"attention-7",
+			"approve_always",
+		);
+
+		// The next approval is answered and leaves the chat once it landed.
+		mocks.answer.mockResolvedValueOnce({
+			terminalEpoch: "epoch-one",
+			attentionId: "attention-9",
+		});
+		asking("attention-9");
+		await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.chat.allow") }),
+		);
+		await waitFor(() =>
+			expect(
+				screen.queryByText(
+					t("agents.nativeChat.approval.title", { tool: "Bash" }),
+				),
+			).toBeNull(),
+		);
+		expect(mocks.answer).toHaveBeenLastCalledWith(
+			expect.anything(),
+			"attention-9",
+			"approve",
+		);
 	});
 
 	it("re-reads for a new presentation owner instead of staying on loading", async () => {

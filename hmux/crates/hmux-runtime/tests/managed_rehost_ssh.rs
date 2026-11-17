@@ -1210,6 +1210,7 @@ fn remote_waiting_fence(
         .report_agent_state(
             ManagedAttachRequest::new(&descriptor.session_id, &descriptor.workspace_id).unwrap(),
             AgentStateReport {
+                approval_request: None,
                 progress: None,
                 identity_only: false,
                 activity: AgentRuntimeActivity::Waiting,

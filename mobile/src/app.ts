@@ -4085,6 +4085,24 @@ export function startApp(root: HTMLElement): () => void {
 
   // ----------------------------------------------------------------- 터미널
 
+  /**
+   * Runs `send` past this attachment's approval sheet, as every input to an
+   * approval goes. `undefined`: the sheet did not pass, so nothing was sent.
+   */
+  function gatedApproval<T>(send: () => Promise<T>): Promise<T | undefined> {
+    return new Promise((resolve, reject) => {
+      const gate = approvalGate;
+      if (!gate) {
+        send().then(resolve, reject);
+        return;
+      }
+      gate.admit(
+        () => void send().then(resolve, reject),
+        () => resolve(undefined),
+      );
+    });
+  }
+
   /** Whose chat a session screen shows, or none for a terminal-only session. */
   function chatKeyOf(screen: Extract<Screen, { kind: "terminal" }> | undefined): string | undefined {
     if (!screen || screen.view === undefined) return undefined;
@@ -4098,7 +4116,7 @@ export function startApp(root: HTMLElement): () => void {
   function chatChannel(
     screenState: Extract<Screen, { kind: "terminal" }>,
     key: string,
-  ): Pick<ChatViewOptions, "fetch" | "send" | "backgroundWork"> {
+  ): Pick<ChatViewOptions, "fetch" | "send" | "backgroundWork" | "answerApproval"> {
     const { source, session } = screenState;
     if (source.kind === "hub") {
       const target = { boxId: source.boxId, workspaceId: session.workspace_id, sessionId: session.session_id };
@@ -4107,6 +4125,16 @@ export function startApp(root: HTMLElement): () => void {
         // Only a computer that lists background work for this session is asked.
         ...((session as Partial<HubProbeSession>).background_work === true
           ? { backgroundWork: () => ipc.hubAgentBackgroundWork(source.id, target) }
+          : {}),
+        // Only a computer that answers approvals for this session is asked,
+        // and only past the same approval sheet as a key typed in the terminal.
+        ...((session as Partial<HubProbeSession>).approval_answer === true
+          ? {
+              answerApproval: (attentionId, choice, terminalEpoch) =>
+                gatedApproval(() =>
+                  ipc.hubAgentApprovalAnswer(source.id, target, terminalEpoch, attentionId, choice),
+                ),
+            }
           : {}),
         send: (text, prompt) =>
           ipc.hubAgentPrompt(source.id, target, text, prompt.terminalEpoch, prompt.conversationId),

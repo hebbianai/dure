@@ -6,6 +6,7 @@
 
 pub mod claude_continuation;
 pub mod managed_environment;
+pub mod native_approval;
 
 use dure_app::{
     AgentProviderLaunchPlanV1, AgentProviderPreflightPlanV1, AgentProviderPromptTargetV1,

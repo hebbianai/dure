@@ -39,6 +39,71 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="claude-hook-identity-"))
         self.transcript = self.root / "fixture-conversation.jsonl"
 
+    def test_permission_prompt_carries_its_command_and_offered_answers(self):
+        result = report(
+            {
+                "hook_event_name": "PermissionRequest",
+                "session_id": "fixture-conversation",
+                "tool_name": "Bash",
+                "tool_input": {"command": "cargo test", "description": "Run tests"},
+                "permission_suggestions": [{"type": "addRules"}],
+            }
+        )
+        self.assertEqual(result["activity"], "waiting")
+        self.assertEqual(result["attention"], "approval_required")
+        self.assertEqual(
+            result["approval_request"],
+            {
+                "tool_name": "Bash",
+                "summary": "cargo test",
+                "choices": ["approve", "approve_always", "deny"],
+            },
+        )
+        bounded = report(
+            {
+                "hook_event_name": "PermissionRequest",
+                "session_id": "fixture-conversation",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo " + "\uac00" * 2000 + "\r\x1b[2J"},
+            }
+        )["approval_request"]
+        self.assertLessEqual(len(bounded["summary"].encode("utf-8")), 2048)
+        self.assertTrue(bounded["summary"].endswith("\u2026"))
+        self.assertNotIn("\x1b", bounded["summary"])
+        self.assertEqual(bounded["choices"], ["approve", "deny"])
+
+    def test_prompts_that_are_not_plain_approvals_carry_no_request(self):
+        question = report(
+            {
+                "hook_event_name": "PermissionRequest",
+                "session_id": "fixture-conversation",
+                "tool_name": "AskUserQuestion",
+            }
+        )
+        self.assertEqual(question["attention"], "input_required")
+        self.assertNotIn("approval_request", question)
+        plan = report(
+            {
+                "hook_event_name": "PermissionRequest",
+                "session_id": "fixture-conversation",
+                "tool_name": "ExitPlanMode",
+            }
+        )
+        self.assertEqual(plan["attention"], "approval_required")
+        self.assertNotIn("approval_request", plan)
+
+    def test_slimmed_permission_prompt_keeps_what_it_asks(self):
+        native = {
+            "hook_event_name": "PermissionRequest",
+            "session_id": "fixture-conversation",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "/fixture/notes.md", "content": "x" * 70000},
+            "permission_suggestions": [{"type": "setMode"}],
+        }
+        slim = json.loads(hook.slim_body(native))
+        self.assertEqual(slim["tool_input"], {"file_path": "/fixture/notes.md"})
+        self.assertTrue(slim["permission_suggestions"])
+
     def test_session_start_without_transcript_reports_activity_only(self):
         native = {
             "hook_event_name": "SessionStart",
