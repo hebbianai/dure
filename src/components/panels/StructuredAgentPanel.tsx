@@ -35,7 +35,10 @@ import { useRemoteAgentCredentialActions } from "@/components/panels/useRemoteAg
 import { useNamedPaneAction } from "@/components/workspace/useNamedPaneAction";
 import { AgentPluginClaimStatus } from "@/components/plugins/AgentPluginClaimStatus";
 import { useWorkspaceRuntimeDesktopId } from "@/components/workspace/WorkspaceRuntimeContext";
-import { conversationHistoryCredentialProfile } from "@/lib/agents/agentConversationHistory";
+import {
+	conversationHistoryCredentialProfile,
+	managedLiveConversationHistoryAvailable,
+} from "@/lib/agents/agentConversationHistory";
 import type { AgentCredentialTransitionResult } from "@/lib/agents/agentCredentialTransition";
 import { agentCredentialReferenceId } from "@/lib/agents/agentLaunchCredential";
 import { agentProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
@@ -62,6 +65,10 @@ import {
 	sshListConversations,
 } from "@/lib/ipc";
 import type { DureAgentRuntimeSourceStopPolicyV1 } from "@/lib/ipc/dureAgentRuntime";
+import {
+	launchManagedConversationTargetInSibling,
+	managedConversationLaunchFailureMessage,
+} from "@/lib/sessions/managed/managedConversationLaunch";
 import { openCommandTerminalOn } from "@/lib/workspace/dock/openCommandTerminal";
 import { resolveAgentPaneTitle } from "@/lib/workspace/pane/paneTitle";
 import { applyAutomaticPaneTitle } from "@/lib/workspace/pane/paneTitleOverrideStore";
@@ -156,6 +163,36 @@ export function StructuredAgentPanel({
 	const paneId = panelProps.api.id;
 	const paneDesktopId = useWorkspaceRuntimeDesktopId();
 	useAgentPaneAttentionAck(agent.id, panelProps.api);
+	// `/clear` in the composer is the history menu's "new conversation": the
+	// same sibling-pane launch, under the same pane-owned action lease.
+	const newConversationAvailable = managedLiveConversationHistoryAvailable({
+		activity: chatActivity,
+		binding: undefined,
+		interactionProfile: agent.interactionProfile,
+		projectKind: project?.kind,
+		provider: agent.provider,
+	});
+	const startNewConversation = useCallback(() => {
+		void historyActionLease
+			.run(async () => {
+				await launchManagedConversationTargetInSibling({
+					sourceAgentId: agent.id,
+					desktopId: paneDesktopId ?? getActiveSpaceId(),
+					referencePanelId: paneId,
+					target: { kind: "fresh" },
+				});
+			})
+			.catch((error: unknown) =>
+				setConversationFailure(managedConversationLaunchFailureMessage(error)),
+			);
+	}, [
+		agent.id,
+		getActiveSpaceId,
+		historyActionLease,
+		paneDesktopId,
+		paneId,
+		setConversationFailure,
+	]);
 	const turnFailure =
 		activeTurn || !("page" in session)
 			? undefined
@@ -525,6 +562,11 @@ export function StructuredAgentPanel({
 					launchSelection={launchSelection}
 					catalogSource={agentProviderCatalogSource(agent, project, accounts)}
 					onReady={markReady}
+					onNewConversation={
+						newConversationAvailable && !accountMovesLocked
+							? startNewConversation
+							: undefined
+					}
 					recovery={
 						supportsAccounts(agent.provider)
 							? {

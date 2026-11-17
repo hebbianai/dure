@@ -105,7 +105,7 @@ function presentableRunPlan(report) {
       launch?.interactionProfile,
     ) ||
     workspace === null ||
-    !["default", "auto_edit", "skip_permissions"].includes(
+    !["default", "auto_edit", "plan", "skip_permissions"].includes(
       request?.permissionMode,
     )
   ) {
@@ -445,7 +445,7 @@ export function agentRuntimePresentationRequest({ agent, currentRuntime, target,
       !SAFE_TOKEN.test(binding.sessionId ?? "") || !SAFE_TOKEN.test(source.runtimeWorkspaceId ?? "") ||
       generationKeys.some((key) => !SAFE_TOKEN.test(source[key] ?? "")) ||
       (launchIdempotencyKey !== undefined && !SAFE_TOKEN.test(launchIdempotencyKey)) ||
-      !["default", "auto_edit", "skip_permissions"].includes(current.permissionMode)) {
+      !["default", "auto_edit", "plan", "skip_permissions"].includes(current.permissionMode)) {
     fail("client_run_runtime_invalid", "The current native runtime binding is invalid.");
   }
   const workspaceRoot = context.workspace.rootPath;

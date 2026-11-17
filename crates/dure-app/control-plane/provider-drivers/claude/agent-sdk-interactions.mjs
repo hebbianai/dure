@@ -7,6 +7,12 @@ const MAX_INTERACTION_REQUEST_BYTES = 16 * 1024;
 const MAX_JSON_DEPTH = 16;
 const MAX_PENDING_INTERACTIONS = 12;
 const MAX_STRING_BYTES = 8 * 1024;
+// ExitPlanMode carries the whole proposed plan as one Markdown string; a
+// typical plan outgrows the generic tool-input bound, and the approval card
+// is the only place the user reads it. Still well inside one host event.
+const PLAN_APPROVAL_TOOL = "ExitPlanMode";
+const MAX_PLAN_INPUT_BYTES = 32 * 1024;
+const MAX_PLAN_REQUEST_BYTES = 40 * 1024;
 const SAFE_REASON = /^[a-z0-9_]{1,64}$/u;
 
 function interactionError(reason) {
@@ -26,30 +32,36 @@ function plainObject(value, reason) {
 	return value;
 }
 
-function boundedString(value, reason, { allowEmpty = true, nullable = false } = {}) {
+function boundedString(
+	value,
+	reason,
+	{ allowEmpty = true, nullable = false, maxBytes = MAX_STRING_BYTES } = {},
+) {
 	if (nullable && (value === null || value === undefined)) return null;
 	if (
 		typeof value !== "string" ||
 		(!allowEmpty && value.length === 0) ||
 		value.includes("\0") ||
-		Buffer.byteLength(value, "utf8") > MAX_STRING_BYTES
+		Buffer.byteLength(value, "utf8") > maxBytes
 	) {
 		throw interactionError(reason);
 	}
 	return value;
 }
 
-function normalizeJson(value, reason, depth = 0) {
+function normalizeJson(value, reason, depth = 0, maxStringBytes = MAX_STRING_BYTES) {
 	if (depth > MAX_JSON_DEPTH) throw interactionError(reason);
 	if (value === null || typeof value === "boolean") return value;
 	if (typeof value === "number") {
 		if (!Number.isFinite(value)) throw interactionError(reason);
 		return value;
 	}
-	if (typeof value === "string") return boundedString(value, reason);
+	if (typeof value === "string") {
+		return boundedString(value, reason, { maxBytes: maxStringBytes });
+	}
 	if (Array.isArray(value)) {
 		if (value.length > MAX_COLLECTION_ENTRIES) throw interactionError(reason);
-		return value.map((entry) => normalizeJson(entry, reason, depth + 1));
+		return value.map((entry) => normalizeJson(entry, reason, depth + 1, maxStringBytes));
 	}
 	plainObject(value, reason);
 	const entries = Object.entries(value);
@@ -60,15 +72,15 @@ function normalizeJson(value, reason, depth = 0) {
 		Object.defineProperty(normalized, key, {
 			configurable: true,
 			enumerable: true,
-			value: normalizeJson(entry, reason, depth + 1),
+			value: normalizeJson(entry, reason, depth + 1, maxStringBytes),
 			writable: true,
 		});
 	}
 	return normalized;
 }
 
-function boundedJsonObject(value, reason, maxBytes) {
-	const normalized = normalizeJson(plainObject(value, reason), reason);
+function boundedJsonObject(value, reason, maxBytes, maxStringBytes = MAX_STRING_BYTES) {
+	const normalized = normalizeJson(plainObject(value, reason), reason, 0, maxStringBytes);
 	if (Buffer.byteLength(JSON.stringify(normalized), "utf8") > maxBytes) {
 		throw interactionError(reason);
 	}
@@ -289,10 +301,13 @@ export function createClaudeQueryInteractionBroker({ activeTurn, emit, identity 
 			});
 			const requestId = privateRequestId(identity, sdkRequestId);
 			if (pending.has(requestId)) throw interactionError("interaction_request_conflict");
+			const planApproval = toolName === PLAN_APPROVAL_TOOL;
+			const maxInputBytes = planApproval ? MAX_PLAN_INPUT_BYTES : MAX_INTERACTION_INPUT_BYTES;
 			const input = boundedJsonObject(
 				rawInput,
 				"interaction_input_invalid",
-				MAX_INTERACTION_INPUT_BYTES,
+				maxInputBytes,
+				planApproval ? MAX_PLAN_INPUT_BYTES : MAX_STRING_BYTES,
 			);
 			const kind = toolName === "AskUserQuestion" ? "question" : "permission";
 			const expectedQuestionTexts = kind === "question" ? questionTexts(input) : undefined;
@@ -351,7 +366,10 @@ export function createClaudeQueryInteractionBroker({ activeTurn, emit, identity 
 					allowEmpty: false,
 				}),
 			});
-			if (Buffer.byteLength(JSON.stringify(request), "utf8") > MAX_INTERACTION_REQUEST_BYTES) {
+			if (
+				Buffer.byteLength(JSON.stringify(request), "utf8") >
+				(planApproval ? MAX_PLAN_REQUEST_BYTES : MAX_INTERACTION_REQUEST_BYTES)
+			) {
 				throw interactionError("interaction_request_too_large");
 			}
 			const completion = deferred();

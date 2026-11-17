@@ -9,7 +9,7 @@ import {
 	type LaunchPermissionSelection,
 	launchPermissionDescription,
 	launchPermissionLabel,
-	providerPermissionOptions,
+	providerLaunchPermissionOverrides,
 } from "@/lib/agents/providerPermissions";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -41,7 +41,7 @@ export function QuickDispatchAdvanced({
 	const summaryId = useId();
 	const permissionChoices: LaunchPermissionSelection[] = [
 		"inherit",
-		...providerPermissionOptions(provider).map((option) => option.override),
+		...providerLaunchPermissionOverrides(provider),
 	];
 	return (
 		<div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3">

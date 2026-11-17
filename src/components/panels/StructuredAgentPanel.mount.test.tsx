@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => ({
 	usageRecent: vi.fn(),
 	chatSend: vi.fn(),
 	autoSwitch: true,
+	launchFreshConversation: vi.fn(async () => ({})),
 }));
 
 vi.mock("@/components/agents/chat/useAgentChatSession", () => ({
@@ -72,6 +73,10 @@ vi.mock("@/lib/ipc", () => ({
 	listConversations: mocks.listConversations,
 	sshListConversations: mocks.sshListConversations,
 	usageRecent: mocks.usageRecent,
+}));
+vi.mock("@/lib/sessions/managed/managedConversationLaunch", () => ({
+	launchManagedConversationTargetInSibling: mocks.launchFreshConversation,
+	managedConversationLaunchFailureMessage: (error: unknown) => String(error),
 }));
 vi.mock("@/components/workspace/WorkspaceRuntimeContext", () => ({
 	useWorkspaceRuntimeDesktopId: () => "desktop-1",
@@ -270,6 +275,46 @@ describe("StructuredAgentPanel mount", () => {
 			projectKind: "local",
 		});
 		expect(mocks.chatProps?.attachmentsEnabled).toBe(true);
+	});
+
+	it("gives the composer's /clear the history menu's fresh sibling launch", async () => {
+		mocks.launchFreshConversation.mockClear();
+		const { rerender } = render(
+			<StructuredAgentPanel
+				agent={agent}
+				profile={profile}
+				panelProps={panelProps}
+				launchSelection={launchSelection}
+				onRuntimeInvalidated={vi.fn()}
+				switchCredential={vi.fn()}
+				switchToNativeTerminal={vi.fn()}
+			/>,
+		);
+		const onNewConversation = mocks.chatProps?.onNewConversation;
+		expect(onNewConversation).toBeTypeOf("function");
+		(onNewConversation as () => void)();
+		await vi.waitFor(() =>
+			expect(mocks.launchFreshConversation).toHaveBeenCalledWith({
+				sourceAgentId: agent.id,
+				desktopId: "desktop-1",
+				referencePanelId: "agent:agent-1",
+				target: { kind: "fresh" },
+			}),
+		);
+
+		mocks.project = { ...mocks.project!, kind: "ssh" };
+		rerender(
+			<StructuredAgentPanel
+				agent={agent}
+				profile={profile}
+				panelProps={panelProps}
+				launchSelection={launchSelection}
+				onRuntimeInvalidated={vi.fn()}
+				switchCredential={vi.fn()}
+				switchToNativeTerminal={vi.fn()}
+			/>,
+		);
+		expect(mocks.chatProps?.onNewConversation).toBeUndefined();
 	});
 
 	describe("project moves", () => {

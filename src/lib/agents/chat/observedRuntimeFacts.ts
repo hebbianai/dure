@@ -116,3 +116,62 @@ export function observedProviderCatalog(
 	}
 	return null;
 }
+
+export interface ObservedProviderCommandV1 {
+	readonly name: string;
+	readonly description: string | null;
+	readonly argumentHint: string | null;
+	readonly aliases: readonly string[];
+}
+
+const PROVIDER_COMMAND_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;
+
+/** The slash commands the running provider session reported it can run
+ * (Claude's `supportedCommands()`, refreshed on `commands_changed`). Null
+ * until — or unless — the provider reported a list; newest evidence wins. */
+export function observedProviderCommands(
+	page: Pick<AgentTimelinePageV1, "rows"> | undefined,
+): readonly ObservedProviderCommandV1[] | null {
+	if (!page) return null;
+	for (let index = page.rows.length - 1; index >= 0; index -= 1) {
+		const body = page.rows[index]?.item.body;
+		if (
+			!body ||
+			body.type !== "provider_evidence" ||
+			body.kind !== "provider_commands" ||
+			typeof body.value !== "object" ||
+			body.value === null
+		) {
+			continue;
+		}
+		const commands = (body.value as Record<string, unknown>).commands;
+		if (!Array.isArray(commands)) return null;
+		return commands.flatMap((entry): ObservedProviderCommandV1[] => {
+			if (typeof entry !== "object" || entry === null) return [];
+			const value = entry as Record<string, unknown>;
+			if (typeof value.name !== "string" || !PROVIDER_COMMAND_NAME.test(value.name)) {
+				return [];
+			}
+			return [
+				{
+					name: value.name,
+					description:
+						typeof value.description === "string" && value.description
+							? value.description
+							: null,
+					argumentHint:
+						typeof value.argumentHint === "string" && value.argumentHint
+							? value.argumentHint
+							: null,
+					aliases: Array.isArray(value.aliases)
+						? value.aliases.filter(
+								(alias): alias is string =>
+									typeof alias === "string" && PROVIDER_COMMAND_NAME.test(alias),
+							)
+						: [],
+				},
+			];
+		});
+	}
+	return null;
+}
