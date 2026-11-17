@@ -26,6 +26,8 @@ Options:
 
 The recipient may be an agent name, project/name, or exact local managed Session ID.
 Unregistered Sessions are inspected through Hmux and input is fenced to that generation.
+A lookup that Hmux cannot finish, or whose Host does not answer in time, is tried up to
+three times; if it still fails nothing is written and the same command can be retried.
 Use --workspace to disambiguate. Remote input requires a registered Agent.
 When a local Agent's registered Session has exited after a restart or account switch,
 send asks the backend for the Agent's current Session and delivers there once; a note on

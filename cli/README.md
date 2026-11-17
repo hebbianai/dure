@@ -55,7 +55,9 @@ dure send SESSION "continue" --workspace WORKSPACE --json
 dure send-keys SESSION Down Enter --workspace WORKSPACE --json
 ```
 
-Both resolve and fence the current live Host generation. Inspect an interactive
+Both resolve and fence the current live Host generation. A lookup that a busy
+Host or a loaded machine cannot finish is tried up to three times; if it still
+fails, nothing is written and the command can be retried. Inspect an interactive
 prompt before selecting keys and read the Session afterward to verify its result.
 
 Conversation recovery retains the original project and working folder. Recovery
