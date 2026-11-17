@@ -1211,6 +1211,12 @@ function backendErrorReport(action, error, profile, startedAt, deadlineMs, reque
       "then retry with the same idempotency key. Keep the same --backend selection for every command. " +
       "--path selects a containing registered project; it does not register one.";
   }
+  if (detail.remoteCode === "agent_spawn_worktree_branch_exists") {
+    detail.disposition = "terminal";
+    detail.message =
+      "The branch already exists in this project, so nothing was started. A Run's worktree starts a new branch: " +
+      "pass --branch with a name that does not exist yet, or choose another --worktree name (its branch defaults to agent/<name>).";
+  }
   // Only typed executable-resolution evidence carries setup advice. Arbitrary
   // backend text stays private and an unknown lookup never implies absence.
   if (detail.remoteCode === "agent_spawn_provider_unavailable") {

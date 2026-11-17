@@ -162,7 +162,13 @@ pub(super) async fn preview_agent_spawn(
     {
         return Err("agent_spawn_runtime_unavailable".into());
     }
-    workspace_git::validate_preview_policy(project.root(), &request.worktree).await?;
+    let new_plan = state
+        .store
+        .agent_spawn_receipt_by_idempotency_key(&request.idempotency_key)
+        .await
+        .map_err(agent_spawn_support::store_error)?
+        .is_none();
+    workspace_git::validate_preview_policy(project.root(), &request.worktree, new_plan).await?;
     let recorded_at_ms = now_ms().map_err(|_| "agent_spawn_clock_unavailable".to_string())?;
     let receipt = if service_resolved_base {
         agent_spawn_api::preview_with_service_resolved_base(

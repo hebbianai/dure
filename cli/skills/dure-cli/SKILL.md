@@ -70,8 +70,11 @@ delivery finished, never that the provider answered.
 
 With `--json` the receipt starts with `summary` — `agentId`, `sessionId`,
 `workspaceId`, `panelId`, `spaceId`, `state`, `presentation`,
-`interactionProfile` — so the identities the next command needs are the first
-keys in the output; a value the receipt cannot vouch for is `null`. The full
+`interactionProfile`, `parent`, `error` — so the identities the next command
+needs are the first keys in the output; a value the receipt cannot vouch for is
+`null`. A Run that stopped short says why in `error` (`stage`, `code`,
+`detail`). A `--branch` that already exists is refused before anything starts
+(`agent_spawn_worktree_branch_exists`); pick a new branch or worktree name. The full
 `receipt`, `presentation` and `registration` follow unchanged. `source.backend`
 names the backend and its `capabilityCount`; pass `--verbose` when you need the
 full `capabilities` list (also on `dure projects … --json`).
