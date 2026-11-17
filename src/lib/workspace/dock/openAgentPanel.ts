@@ -4,6 +4,7 @@ import { track } from "@/lib/ipc/telemetry";
 import { findAgentPanel } from "@/lib/workspace/dock/dockPanelParameters";
 import { commitExplicitDockviewMutation } from "@/lib/workspace/dock/explicitDockviewCommit";
 import { autoSplitPosition } from "@/lib/workspace/dock/gridPanePlacement";
+import { workerColumnPosition } from "@/lib/workspace/dock/workerColumnPlacement";
 import type { AgentPaneParameters } from "@/lib/workspace/layout/agentPaneParameters";
 import {
 	clearPaneHiddenAfterRestore,
@@ -20,6 +21,8 @@ import {
 import { restorePanePreservingLayout } from "@/lib/workspace/pane/paneVisibility";
 import type { Agent } from "@/types";
 
+const AGENT_PANE_MINIMUM_SIZE = { width: 480, height: 300 } as const;
+
 export function openAgentPanelOnDockview(
 	options: Parameters<typeof presentAgentPanelOnDockview>[0],
 ): string | false {
@@ -33,12 +36,15 @@ export function presentAgentPanelOnDockview({
 	agent,
 	position,
 	preferredPanelId,
+	agents = [],
 }: {
 	readonly desktopId: string;
 	readonly api: DockviewApi;
 	readonly agent: Agent;
 	readonly position?: PanelPosition;
 	readonly preferredPanelId?: string;
+	/** The client's Agents, so a worker's new pane joins its lead's column. */
+	readonly agents?: readonly Agent[];
 }): PanePresentation | false {
 	const existing = findAgentPanel(api, agent.id);
 	const record = useHiddenPanes.getState().hidden[agent.id];
@@ -75,9 +81,15 @@ export function presentAgentPanelOnDockview({
 				...placementOptions(
 					position ??
 						restoredPosition ??
+						workerColumnPosition(
+							api,
+							agent,
+							agents,
+							AGENT_PANE_MINIMUM_SIZE.height,
+						) ??
 						autoSplitPosition(api, {
 							preferredPanelId,
-							minimumSize: { width: 480, height: 300 },
+							minimumSize: AGENT_PANE_MINIMUM_SIZE,
 						}),
 				),
 			});

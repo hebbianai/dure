@@ -314,6 +314,19 @@ function presentedParent(request, descriptor) {
     : {};
 }
 
+/** App capability: presentation requests may carry `startedAtMs`, when the
+ * Run's spawn operation started, so the app commits a lead's concurrent
+ * workers in start order. */
+export const RUN_START_ORDER_PRESENTATION_CAPABILITY = "agent.run_start_order_v1";
+
+/** The receipt's start time, for an app that accepts it. */
+function presentedStartOrder(receipt, descriptor) {
+  return descriptor?.capabilities?.includes(RUN_START_ORDER_PRESENTATION_CAPABILITY) === true &&
+    Number.isSafeInteger(receipt?.createdAtMs) && receipt.createdAtMs >= 0
+    ? { startedAtMs: receipt.createdAtMs }
+    : {};
+}
+
 function managedRunPresentationRequestFromPlan(
   projected,
   { target, profile, projectPath, descriptor },
@@ -369,6 +382,7 @@ function managedRunPresentationRequestFromPlan(
       : {}),
     ...(projectPath ? { projectPath } : {}),
     ...presentedParent(request, descriptor),
+    ...presentedStartOrder(receipt, descriptor),
   };
 }
 
@@ -415,6 +429,7 @@ function structuredRunPresentationRequestFromPlan(
       : {}),
     ...(projectPath ? { projectPath } : {}),
     ...presentedParent(request, descriptor),
+    ...presentedStartOrder(receipt, descriptor),
   };
 }
 

@@ -242,6 +242,92 @@ describe("managed Run parent", () => {
 	});
 });
 
+describe("managed Run start order", () => {
+	const parent = { sessionId: "session-lead", workspaceId: "workspace-1" };
+
+	function workerRequest(name: string, startedAtMs?: number) {
+		return {
+			...request,
+			agentId: `agent-${name}`,
+			agentName: name,
+			operationId: `spawn-${name}`,
+			preparedSessionId: `session-${name}`,
+			sessionId: `session-${name}`,
+			launchIdempotencyKey: `spawn-runtime:spawn-${name}`,
+			parent,
+			...(startedAtMs === undefined ? {} : { startedAtMs }),
+		};
+	}
+
+	it("accepts the Run's start time only on a spawned Run", () => {
+		expect(
+			parseCliManagedRunPresentationRequest({ ...request, startedAtMs: 1_000 })
+				.startedAtMs,
+		).toBe(1_000);
+		expect(() =>
+			parseCliManagedRunPresentationRequest({ ...request, startedAtMs: -1 }),
+		).toThrow(CliManagedRunPresentationError);
+	});
+
+	it.each([
+		["start order", 1_000, 2_000, ["work-1", "work-2"]],
+		[
+			"arrival order without start times",
+			undefined,
+			undefined,
+			["work-2", "work-1"],
+		],
+	] as const)(
+		"commits one lead's concurrent workers in %s",
+		async (_label, firstStartedAtMs, secondStartedAtMs, expected) => {
+			const fixture = handlerFixture();
+			let releaseFirst!: () => void;
+			const firstInspected = new Promise<void>((resolve) => {
+				releaseFirst = resolve;
+			});
+			fixture.dependencies.inspectBinding = vi.fn(async (inspected) => {
+				// The earlier-started worker's runtime inspection is slower.
+				if (inspected.agentName === "work-1") await firstInspected;
+				return {
+					...hmuxManagedBinding(
+						inspected.sessionId,
+						inspected.workspaceId,
+						undefined,
+						undefined,
+						inspected.generation,
+						inspected.backendProfileId,
+					),
+					createIdempotencyKey: `spawn-runtime:${inspected.operationId}`,
+				};
+			});
+			const first = handleCliManagedRunPresentation(
+				workerRequest("work-1", firstStartedAtMs),
+				"request-work-1",
+				fixture.dependencies,
+			);
+			const second = handleCliManagedRunPresentation(
+				workerRequest("work-2", secondStartedAtMs),
+				"request-work-2",
+				fixture.dependencies,
+			);
+			await vi.waitFor(() =>
+				expect(fixture.dependencies.resolveReference).toHaveBeenCalledTimes(1),
+			);
+			releaseFirst();
+			await expect(first).resolves.toMatchObject({ ok: true });
+			await expect(second).resolves.toMatchObject({ ok: true });
+			expect(
+				fixture.openAgent.mock.calls.map(
+					(call) => (call as unknown as [string, Agent])[1].name,
+				),
+			).toEqual(expected);
+			expect(fixture.readState().agents.map((agent) => agent.name)).toEqual(
+				expected,
+			);
+		},
+	);
+});
+
 describe("managed Run Agent projection", () => {
 	it("creates one projection and reuses it without a second writer", () => {
 		const initial = state();

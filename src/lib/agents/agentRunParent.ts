@@ -66,7 +66,9 @@ export interface RunParentedAgent {
 	readonly runtimeBinding?: AgentRunParentSessionV1;
 }
 
-function sessionKey(parent: AgentRunParentSessionV1): string {
+/** One key per parent Session, shared by everything that groups a lead's
+ * workers. */
+export function agentRunParentKey(parent: AgentRunParentSessionV1): string {
 	return `${parent.workspaceId}\u0000${parent.sessionId}`;
 }
 
@@ -83,7 +85,7 @@ export function createAgentRunLeadResolver<A extends RunParentedAgent>(
 	for (const agent of agents) {
 		byId.set(agent.id, agent);
 		if (!agent.runtimeBinding) continue;
-		const key = sessionKey(agent.runtimeBinding);
+		const key = agentRunParentKey(agent.runtimeBinding);
 		const owners = bySession.get(key);
 		if (owners) owners.push(agent);
 		else bySession.set(key, [agent]);
@@ -91,7 +93,7 @@ export function createAgentRunLeadResolver<A extends RunParentedAgent>(
 	return (agent) => {
 		const parent = agent.runParent;
 		if (!parent) return undefined;
-		const owners = (bySession.get(sessionKey(parent)) ?? []).filter(
+		const owners = (bySession.get(agentRunParentKey(parent)) ?? []).filter(
 			(owner) => owner.id !== agent.id,
 		);
 		if (owners.length > 1) return undefined;

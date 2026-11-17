@@ -720,7 +720,14 @@ export function openAgentPanel(
 ): string | false {
   const api = registry.get(desktopId);
   return api
-    ? openAgentPanelOnDockview({ desktopId, api, agent, position, preferredPanelId })
+    ? openAgentPanelOnDockview({
+        desktopId,
+        api,
+        agent,
+        position,
+        preferredPanelId,
+        agents: useStore.getState().agents,
+      })
     : false;
 }
 

@@ -12,6 +12,10 @@ import {
 	projectAgentRunWorkspace,
 	snapshotAgentRunPresentationWorktree,
 } from "@/lib/agents/agentRunWorkspacePresentation";
+import {
+	enterRunPresentationOrder,
+	type RunPresentationTurn,
+} from "@/lib/agents/runPresentationOrder";
 import { resolveRunPresentationProject } from "@/lib/agents/runPresentationProject";
 import {
 	type BackendPresentationTarget,
@@ -308,22 +312,53 @@ function requireTargetWindow(
 	}
 }
 
+interface StructuredRunPaneTarget {
+	executionTarget?: BackendPresentationTarget;
+	projectPath?: string;
+	spaceId: string;
+	windowLabel: string;
+	referencePanelId?: string;
+	position?: PanelPosition;
+	presentationWorktree?: AgentRunPresentationWorktree;
+	parent?: AgentRunParentSessionV1;
+	/** When the Run's spawn operation started; orders a lead's workers. */
+	startedAtMs?: number;
+}
+
 export async function presentStructuredRun(
 	run: DureStructuredAgentRunResultV1,
-	target: {
-		executionTarget?: BackendPresentationTarget;
-		projectPath?: string;
-		spaceId: string;
-		windowLabel: string;
-		referencePanelId?: string;
-		position?: PanelPosition;
-		presentationWorktree?: AgentRunPresentationWorktree;
-		parent?: AgentRunParentSessionV1;
-	},
+	target: StructuredRunPaneTarget,
 	dependencies: StructuredRunPresentationDependencies = defaultDependencies,
 ) {
 	const initial = dependencies.readState();
 	requireTargetWindow(target.spaceId, target.windowLabel, dependencies);
+	const turn = enterRunPresentationOrder({
+		operationId: run.operationId,
+		parent: target.parent,
+		startedAtMs: target.startedAtMs,
+	});
+	try {
+		return await commitStructuredRunPane(
+			run,
+			target,
+			dependencies,
+			initial,
+			turn,
+		);
+	} finally {
+		turn.leave();
+	}
+}
+
+/** Prepare the presentation, then project the Agent and commit its pane once
+ * the Run's turn among its lead's workers comes. */
+async function commitStructuredRunPane(
+	run: DureStructuredAgentRunResultV1,
+	target: StructuredRunPaneTarget,
+	dependencies: StructuredRunPresentationDependencies,
+	initial: CliManagedRunPresentationState,
+	turn: RunPresentationTurn,
+) {
 	dependencies.requestSpaceMount(target.spaceId);
 	if (!(await dependencies.waitForSpace(target.spaceId))) {
 		fail("client_space_mount_timeout", "structured Agent Space did not mount");
@@ -347,6 +382,7 @@ export async function presentStructuredRun(
 		}
 		preferredPanelId = reference.panelId;
 	}
+	await turn.wait();
 	requireTargetWindow(target.spaceId, target.windowLabel, dependencies);
 	const projected = projectStructuredRunAgent(
 		dependencies.readState(),

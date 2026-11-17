@@ -18,6 +18,7 @@ import {
 	parseAgentExecutionProfileV1,
 } from "@/lib/agents/chat/agentConversationContract";
 import { PROVIDER_IDS } from "@/lib/agents/providers";
+import { parseRequestedRunStartedAtMs } from "@/lib/agents/runPresentationOrder";
 import {
 	type BackendPresentationTarget,
 	parseBackendPresentationTarget,
@@ -68,6 +69,7 @@ const REQUEST_KEYS = new Set([
 	"windowLabel",
 	"referencePanelId",
 	"parent",
+	"startedAtMs",
 ]);
 /** Receipt-free identity: the backend's current runtime of an Agent that the
  * app launched, resumed or imported. It has no spawn operation or worktree
@@ -75,7 +77,13 @@ const REQUEST_KEYS = new Set([
 const AGENT_RUNTIME_REQUEST_KEYS = new Set([
 	...[...REQUEST_KEYS].filter(
 		(key) =>
-			!["operationId", "preparedSessionId", "worktree", "parent"].includes(key),
+			![
+				"operationId",
+				"preparedSessionId",
+				"worktree",
+				"parent",
+				"startedAtMs",
+			].includes(key),
 	),
 	"identity",
 	"workspaceRootPath",
@@ -99,6 +107,9 @@ interface ManagedRunSpawnIdentity {
 	/** The Session the Run was started from, sent only to an app that
 	 * advertises `agent.run_parent_v1`. */
 	parent?: AgentRunParentSessionV1;
+	/** When the Run's spawn operation started, sent only to an app that
+	 * advertises `agent.run_start_order_v1`; orders a lead's workers. */
+	startedAtMs?: number;
 }
 
 /** An Agent without a Run record. Presenting it never records a canonical
@@ -111,6 +122,7 @@ interface ManagedRunAgentRuntimeIdentity {
 	 * from the exact live Host's create receipt before presentation. */
 	launchIdempotencyKey?: string;
 	parent?: undefined;
+	startedAtMs?: undefined;
 }
 
 interface CliManagedRunPresentationRequestFields {
@@ -372,15 +384,17 @@ export function parseManagedRunProjectionInput(
 			"managed Run effective Session and create key do not form one identity",
 		);
 	}
-	const parent = parseRequestedAgentRunParent(raw.parent, (message) =>
-		failCliManagedRunPresentation("invalid_request", message),
-	);
+	const refuse = (message: string) =>
+		failCliManagedRunPresentation("invalid_request", message);
+	const parent = parseRequestedAgentRunParent(raw.parent, refuse);
+	const startedAtMs = parseRequestedRunStartedAtMs(raw.startedAtMs, refuse);
 	return {
 		...common,
 		operationId,
 		preparedSessionId,
 		launchIdempotencyKey,
 		...(parent ? { parent } : {}),
+		...(startedAtMs === undefined ? {} : { startedAtMs }),
 		worktree:
 			parseRunPresentationWorktree(raw.worktree) ??
 			failCliManagedRunPresentation("invalid_request", "worktree is invalid"),
