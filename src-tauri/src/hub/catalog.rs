@@ -234,6 +234,7 @@ mod tests {
     #[test]
     fn the_secret_and_the_meaningless_never_leave() {
         let catalog = HubCatalog {
+            chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
             sessions: vec![entry_from(&descriptor(), "this-laptop", "이 노트북")],
@@ -279,6 +280,7 @@ mod tests {
     #[test]
     fn an_unreachable_box_is_named_in_the_answer() {
         let catalog = HubCatalog {
+            chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
             sessions: Vec::new(),
@@ -298,6 +300,7 @@ mod tests {
     #[test]
     fn the_frame_carries_its_own_length() {
         let catalog = HubCatalog {
+            chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
             sessions: Vec::new(),

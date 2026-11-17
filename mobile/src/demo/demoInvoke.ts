@@ -15,6 +15,8 @@ import type { InvokeArgs, InvokeOptions } from "@tauri-apps/api/core";
 import type { BackgroundWorkAnswer } from "../backgroundWork";
 import type { ServerReport } from "../census";
 import type {
+  AgentChatActionAnswer,
+  AgentChatTimelineAnswer,
   AgentPromptAnswer,
   AttachedSession,
   CommandError,
@@ -590,6 +592,16 @@ const handlers: Record<string, Handler> = {
       code: "unsupported_runtime",
       detail: "The demo has no agent conversations.",
     };
+  },
+  // The demo computers list no chat-owned agents, so the phone never opens
+  // one; asked anyway, the computer answers as one without such an agent.
+  hub_agent_chat_timeline: (args): AgentChatTimelineAnswer => {
+    hubState(str(args, "id"));
+    return { outcome: "refused", code: "agent_not_found", detail: "The demo has no chat-owned agents." };
+  },
+  hub_agent_chat_action: (args): AgentChatActionAnswer => {
+    hubState(str(args, "id"));
+    return { state: "refused", code: "agent_not_found", detail: "The demo has no chat-owned agents." };
   },
   // Demo server sessions are shells, so the phone never opens their Chat;
   // asked anyway, the server answers as one with nothing to serve.

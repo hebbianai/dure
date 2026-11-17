@@ -338,6 +338,7 @@ mod tests {
         impl CatalogSource for Catalog {
             fn catalog(&self) -> HubCatalog {
                 HubCatalog {
+                    chat_sessions: Vec::new(),
                     hub_catalog_version: HUB_CATALOG_VERSION,
                     layout: None,
                     sessions: vec![],

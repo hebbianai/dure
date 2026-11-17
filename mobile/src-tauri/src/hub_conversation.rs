@@ -26,6 +26,9 @@
 
 use crate::hub_client::{self, HubClientError};
 use crate::CommandError;
+use dure_hub_protocol::agent_chat::{
+    self, AgentChatAnswer, AgentChatRefusal, HubAgentChatActionResult, HubAgentChatTimelineResult,
+};
 use dure_hub_protocol::background_work::{self, HubAgentBackgroundWorkResult};
 use dure_hub_protocol::conversation::{
     self, ConversationCursor, ConversationError, ConversationRefusal, HubAgentPromptResult,
@@ -42,6 +45,10 @@ pub const NO_ANSWER: &str = "conversation_no_answer";
 
 /// The computer answered in a conversation version this build cannot read.
 pub const VERSION_UNSUPPORTED: &str = "conversation_version_unsupported";
+
+/// The computer answered a chat-owned agent's request in an older chat
+/// version than this phone speaks: update Dure on the computer.
+pub const DESKTOP_OUTDATED: &str = "agent_chat_desktop_outdated";
 
 /// Counts what a reader handed out, so "closed before saying anything" is told
 /// apart from "broke off in the middle of an answer".
@@ -86,8 +93,8 @@ fn no_answer() -> CommandError {
     )
 }
 
-fn lost(error: impl std::fmt::Display) -> HubAgentPromptResult {
-    HubAgentPromptResult::unknown(format!("The computer's answer was lost: {error}"))
+fn lost(error: impl std::fmt::Display) -> String {
+    format!("The computer's answer was lost: {error}")
 }
 
 fn answer_error(error: &ConversationError) -> CommandError {
@@ -102,69 +109,98 @@ fn answer_error(error: &ConversationError) -> CommandError {
     }
 }
 
-/// One transcript question on an open stream.
-fn transcript_on_stream<S: Read + Write>(
-    stream: &mut S,
+/// One question on an open stream, read by `read`. A close before the first
+/// byte of the answer is [`NO_ANSWER`]; any other failure is `error`'s.
+fn ask_on_stream<'s, S: Read + Write, T>(
+    stream: &'s mut S,
     token: &str,
     request: HubRequest,
-) -> Result<HubConversationTranscriptResult, CommandError> {
+    read: impl FnOnce(&mut Counted<'s, S>) -> Result<T, ConversationError>,
+    error: impl FnOnce(&ConversationError) -> CommandError,
+) -> Result<T, CommandError> {
     hub_client::handshake_for(stream, token, request).map_err(|error| client_error(&error))?;
     let mut counted = Counted {
         inner: stream,
         read: 0,
     };
-    match conversation::read_transcript(&mut counted) {
+    match read(&mut counted) {
         Ok(result) => Ok(result),
-        Err(ConversationError::Frame(error)) if closed_silently(&error, counted.read) => {
+        Err(ConversationError::Frame(frame)) if closed_silently(&frame, counted.read) => {
             Err(no_answer())
         }
-        Err(error) => Err(answer_error(&error)),
+        Err(failure) => Err(error(&failure)),
     }
 }
 
-/// One background-work question on an open stream. A silent close is
-/// [`NO_ANSWER`], as for the transcript.
-fn background_work_on_stream<S: Read + Write>(
-    stream: &mut S,
-    token: &str,
-    request: HubRequest,
-) -> Result<HubAgentBackgroundWorkResult, CommandError> {
-    hub_client::handshake_for(stream, token, request).map_err(|error| client_error(&error))?;
-    let mut counted = Counted {
-        inner: stream,
-        read: 0,
-    };
-    match background_work::read_background_work(&mut counted) {
-        Ok(result) => Ok(result),
-        Err(ConversationError::Frame(error)) if closed_silently(&error, counted.read) => {
-            Err(no_answer())
-        }
-        Err(error) => Err(answer_error(&error)),
-    }
-}
-
-/// One prompt on an open stream.
+/// One write on an open stream, read by `read`.
 ///
 /// `Err` only while the greeting is not yet fully written: the desktop cannot
 /// act on part of a frame. Once it is, every failure — no ack, a lost ack, a
-/// silent close, a broken answer — is `Ok(unknown)`, because the desktop acks
-/// before it acts and the prompt may already be in the agent's terminal.
-fn prompt_on_stream<S: Read + Write>(
+/// silent close, a broken answer — is `Ok(unknown(..))`, because the desktop
+/// acks before it acts and the write may already have happened.
+fn write_on_stream<S: Read + Write, T>(
     stream: &mut S,
     token: &str,
     request: HubRequest,
-) -> Result<HubAgentPromptResult, CommandError> {
+    read: impl FnOnce(&mut S) -> Result<T, ConversationError>,
+    unknown: impl FnOnce(String) -> T,
+) -> Result<T, CommandError> {
     let framed = hello::encode_hello_for(token, request)
         .map_err(|error| command_error("hub_protocol", error.to_string()))?;
     stream
         .write_all(&framed)
         .and_then(|()| stream.flush())
         .map_err(|error| client_error(&HubClientError::Unreachable(error.to_string())))?;
-
     if let Err(error) = hello::read_ack(stream) {
-        return Ok(lost(error));
+        return Ok(unknown(lost(error)));
     }
-    conversation::read_prompt(stream).or_else(|error| Ok(lost(error)))
+    Ok(read(stream).unwrap_or_else(|error| unknown(lost(error))))
+}
+
+/// One transcript question on an open stream.
+fn transcript_on_stream<S: Read + Write>(
+    stream: &mut S,
+    token: &str,
+    request: HubRequest,
+) -> Result<HubConversationTranscriptResult, CommandError> {
+    ask_on_stream(
+        stream,
+        token,
+        request,
+        conversation::read_transcript,
+        answer_error,
+    )
+}
+
+/// One background-work question on an open stream.
+fn background_work_on_stream<S: Read + Write>(
+    stream: &mut S,
+    token: &str,
+    request: HubRequest,
+) -> Result<HubAgentBackgroundWorkResult, CommandError> {
+    ask_on_stream(
+        stream,
+        token,
+        request,
+        background_work::read_background_work,
+        answer_error,
+    )
+}
+
+/// One prompt on an open stream. See [`write_on_stream`] for why only an
+/// unwritten greeting is an error.
+fn prompt_on_stream<S: Read + Write>(
+    stream: &mut S,
+    token: &str,
+    request: HubRequest,
+) -> Result<HubAgentPromptResult, CommandError> {
+    write_on_stream(
+        stream,
+        token,
+        request,
+        conversation::read_prompt,
+        HubAgentPromptResult::unknown,
+    )
 }
 
 /// The pinned TLS stream [`hub_client::dial_tls`] opens.
@@ -297,6 +333,197 @@ pub async fn hub_agent_prompt(
     };
     exchange(&app, &id, move |stream, token| {
         prompt_on_stream(stream, token, request)
+    })
+    .await
+}
+
+/// One chat-owned agent's timeline on an open stream (#562). A silent close
+/// is [`NO_ANSWER`], as for the transcript: the phone asks only about agents
+/// the catalog listed, which an older desktop never does. An answer in an
+/// older chat version names the computer as the side to update.
+fn agent_chat_timeline_on_stream<S: Read + Write>(
+    stream: &mut S,
+    token: &str,
+    request: HubRequest,
+) -> Result<HubAgentChatTimelineResult, CommandError> {
+    ask_on_stream(
+        stream,
+        token,
+        request,
+        agent_chat::read_timeline,
+        |error| match error {
+            ConversationError::UnsupportedVersion { found }
+                if *found < agent_chat::HUB_AGENT_CHAT_VERSION =>
+            {
+                command_error(
+                    DESKTOP_OUTDATED,
+                    format!(
+                        "The computer speaks chat version {found}. Update Dure on the computer"
+                    ),
+                )
+            }
+            other => answer_error(other),
+        },
+    )
+}
+
+/// One chat action on an open stream, with the prompt's rule
+/// ([`write_on_stream`]).
+fn agent_chat_action_on_stream<S: Read + Write>(
+    stream: &mut S,
+    token: &str,
+    request: HubRequest,
+) -> Result<HubAgentChatActionResult, CommandError> {
+    write_on_stream(
+        stream,
+        token,
+        request,
+        agent_chat::read_action,
+        HubAgentChatActionResult::unknown,
+    )
+}
+
+/// Which chat-owned agent, as the catalog's `chat_sessions` entry names it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentChatTarget {
+    box_id: String,
+    agent_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentChatTimelineInput {
+    #[serde(flatten)]
+    target: AgentChatTarget,
+    #[serde(default)]
+    before: Option<u64>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+/// The chat of a chat-owned agent opened, refreshed, or paged back.
+#[tauri::command]
+pub async fn hub_agent_chat_timeline(
+    app: tauri::AppHandle,
+    id: String,
+    input: AgentChatTimelineInput,
+) -> Result<HubAgentChatTimelineResult, CommandError> {
+    let request = HubRequest::AgentChatTimelineV1 {
+        box_id: input.target.box_id,
+        agent_id: input.target.agent_id,
+        before: input.before,
+        limit: input.limit,
+    };
+    exchange(&app, &id, move |stream, token| {
+        agent_chat_timeline_on_stream(stream, token, request)
+    })
+    .await
+}
+
+/// One action on a chat-owned agent. `actionId` names the press, so a retry
+/// after a lost answer finds what the first attempt did.
+#[derive(Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum AgentChatActionInput {
+    Send {
+        #[serde(flatten)]
+        target: AgentChatTarget,
+        action_id: String,
+        text: String,
+    },
+    Interrupt {
+        #[serde(flatten)]
+        target: AgentChatTarget,
+        action_id: String,
+        turn_id: String,
+    },
+    Answer {
+        #[serde(flatten)]
+        target: AgentChatTarget,
+        action_id: String,
+        request_id: String,
+        answer: AgentChatAnswer,
+    },
+}
+
+/// The request for an action, normalized as the desktop will normalize it.
+fn agent_chat_action_request(
+    input: AgentChatActionInput,
+) -> Result<HubRequest, HubAgentChatActionResult> {
+    let refused = |detail: String| {
+        HubAgentChatActionResult::refused(AgentChatRefusal::InvalidRequest, detail)
+    };
+    let valid = |action_id: &str| {
+        agent_chat::valid_action_id(action_id)
+            .then_some(())
+            .ok_or_else(|| refused("The press has no valid name".to_string()))
+    };
+    Ok(match input {
+        AgentChatActionInput::Send {
+            target,
+            action_id,
+            text,
+        } => {
+            valid(&action_id)?;
+            let text = conversation::normalize_agent_prompt(&text)
+                .map_err(|error| refused(error.to_string()))?;
+            HubRequest::AgentChatSendV1 {
+                box_id: target.box_id,
+                agent_id: target.agent_id,
+                action_id,
+                text,
+            }
+        }
+        AgentChatActionInput::Interrupt {
+            target,
+            action_id,
+            turn_id,
+        } => {
+            valid(&action_id)?;
+            HubRequest::AgentChatInterruptV1 {
+                box_id: target.box_id,
+                agent_id: target.agent_id,
+                action_id,
+                turn_id,
+            }
+        }
+        AgentChatActionInput::Answer {
+            target,
+            action_id,
+            request_id,
+            answer,
+        } => {
+            valid(&action_id)?;
+            HubRequest::AgentChatAnswerV1 {
+                box_id: target.box_id,
+                agent_id: target.agent_id,
+                action_id,
+                request_id,
+                answer,
+            }
+        }
+    })
+}
+
+/// Send, interrupt or answer. A refusal or `unknown` is an answer; an error
+/// means nothing reached the computer.
+#[tauri::command]
+pub async fn hub_agent_chat_action(
+    app: tauri::AppHandle,
+    id: String,
+    input: AgentChatActionInput,
+) -> Result<HubAgentChatActionResult, CommandError> {
+    let request = match agent_chat_action_request(input) {
+        Ok(request) => request,
+        Err(refused) => return Ok(refused),
+    };
+    exchange(&app, &id, move |stream, token| {
+        agent_chat_action_on_stream(stream, token, request)
     })
     .await
 }
@@ -584,6 +811,114 @@ mod tests {
         let error = prompt_on_stream(&mut Unwritable, "token-1", prompt_request_for("hello"))
             .expect_err("not sent");
         assert_eq!(error.code, "hub_unreachable");
+    }
+
+    fn chat_target() -> AgentChatTarget {
+        AgentChatTarget {
+            box_id: "box-1".to_string(),
+            agent_id: "agent-1".to_string(),
+        }
+    }
+
+    fn chat_send(text: &str) -> HubRequest {
+        agent_chat_action_request(AgentChatActionInput::Send {
+            target: chat_target(),
+            action_id: "press-1".to_string(),
+            text: text.to_string(),
+        })
+        .expect("a usable message")
+    }
+
+    #[test]
+    fn a_chat_timeline_is_read_after_the_ack_and_a_silent_close_is_no_answer() {
+        let answer = HubAgentChatTimelineResult::refused(AgentChatRefusal::AgentNotFound, "gone");
+        let request = HubRequest::AgentChatTimelineV1 {
+            box_id: "box-1".to_string(),
+            agent_id: "agent-1".to_string(),
+            before: None,
+            limit: None,
+        };
+        let mut incoming = ack();
+        incoming.extend(agent_chat::encode_timeline(&answer).expect("encodes"));
+        let mut stream = Duplex::new(incoming, End::Dropped);
+        let read =
+            agent_chat_timeline_on_stream(&mut stream, "token-1", request.clone()).expect("read");
+        assert_eq!(read, answer);
+        assert_eq!(
+            hello::read_hello(&mut stream.written.as_slice())
+                .expect("greeting")
+                .request,
+            request
+        );
+        let mut silent = Duplex::new(ack(), End::Dropped);
+        let error =
+            agent_chat_timeline_on_stream(&mut silent, "token-1", request).expect_err("silent");
+        assert_eq!(error.code, NO_ANSWER);
+    }
+
+    /// As for a prompt: once the greeting is out, a lost answer is `unknown`.
+    #[test]
+    fn a_chat_action_whose_answer_is_lost_is_unknown() {
+        for (incoming, end) in [
+            (Vec::new(), End::Closed),
+            (ack(), End::Dropped),
+            (ack(), End::TimedOut),
+        ] {
+            let mut stream = Duplex::new(incoming, end);
+            let read = agent_chat_action_on_stream(&mut stream, "token-1", chat_send("hi"))
+                .expect("an answer, not an error");
+            assert_eq!(read.state, agent_chat::AgentChatActionState::Unknown);
+        }
+        let done = agent_chat::HubAgentChatActionResult::done(Some(
+            agent_chat::AgentChatDelivery::Started,
+        ));
+        let mut incoming = ack();
+        incoming.extend(agent_chat::encode_action(&done).expect("encodes"));
+        let mut stream = Duplex::new(incoming, End::Dropped);
+        let read =
+            agent_chat_action_on_stream(&mut stream, "token-1", chat_send("hi")).expect("read");
+        assert_eq!(read, done);
+    }
+
+    #[test]
+    fn a_chat_message_is_normalized_and_a_bad_press_never_leaves() {
+        let HubRequest::AgentChatSendV1 { text, .. } = chat_send("one\r\ntwo") else {
+            panic!("a send");
+        };
+        assert_eq!(text, "one\ntwo");
+        for input in [
+            AgentChatActionInput::Send {
+                target: chat_target(),
+                action_id: "press-1".to_string(),
+                text: "  ".to_string(),
+            },
+            AgentChatActionInput::Interrupt {
+                target: chat_target(),
+                action_id: "bad press".to_string(),
+                turn_id: "turn-1".to_string(),
+            },
+        ] {
+            let refused = agent_chat_action_request(input).expect_err("refused");
+            assert_eq!(refused.code, Some(AgentChatRefusal::InvalidRequest));
+        }
+    }
+
+    /// The shape the phone's screen sends.
+    #[test]
+    fn chat_action_input_reads_the_screens_shape() {
+        let input: AgentChatActionInput = serde_json::from_value(serde_json::json!({
+            "kind": "answer", "boxId": "box-1", "agentId": "agent-1", "actionId": "press-1",
+            "requestId": "request-1", "answer": {"kind": "permission", "allow": true},
+        }))
+        .expect("reads");
+        let HubRequest::AgentChatAnswerV1 {
+            request_id, answer, ..
+        } = agent_chat_action_request(input).expect("a request")
+        else {
+            panic!("an answer");
+        };
+        assert_eq!(request_id, "request-1");
+        assert_eq!(answer, AgentChatAnswer::Permission { allow: true });
     }
 
     #[test]

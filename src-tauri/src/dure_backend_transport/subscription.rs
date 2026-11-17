@@ -612,12 +612,7 @@ pub(crate) async fn dure_backend_subscribe(
     body: Value,
     channel: Channel<Value>,
 ) -> Result<DureBackendTransportResult, DureBackendTransportError> {
-    let (root, _) = crate::app_home::app_root_resolution().map_err(|_| {
-        DureBackendTransportError::new(
-            "backend_transport_profile_unavailable",
-            "the Dure application root is unavailable",
-        )
-    })?;
+    let root = super::app_root()?;
     open_subscription(
         &root,
         &state,

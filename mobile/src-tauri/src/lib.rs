@@ -2648,11 +2648,13 @@ fn describe(
                 ready: entry.lifecycle == catalog::LIFECYCLE_READY,
                 conversation: entry.conversation,
                 background_work: entry.background_work,
+                agent_chat: false,
                 box_id: entry.box_id.clone(),
                 box_label: entry.box_label.clone(),
                 presentation: entry.presentation.clone(),
                 hmux_session_name: entry.session_name.clone(),
             })
+            .chain(catalog.chat_sessions.iter().map(chat_session_row))
             .collect(),
         // 사용자가 앱에서 만든 묶음 전체. 현재 카탈로그에 없는 세션의 자리도
         // 직접 SSH 경로가 복원할 수 있게 함께 들어 있다.
@@ -2685,6 +2687,42 @@ fn describe(
             .iter()
             .map(|box_| format!("{}: {}", box_.box_label, box_.detail))
             .collect(),
+    }
+}
+
+/// A chat-owned agent as a row of the list (#562).
+///
+/// It is not an Hmux session, so it has no fence to attach with: the screen
+/// opens it on Chat only, by `agent_chat`, and never attaches. Its row key is
+/// the agent id, which is also the key of its seat in the layout. It is
+/// always openable while the computer answers; the chat itself says when the
+/// agent cannot take input.
+fn chat_session_row(entry: &dure_hub_protocol::agent_chat::HubChatSession) -> HubProbeSession {
+    HubProbeSession {
+        session: RemoteSession {
+            session_id: entry.agent_id.clone(),
+            session_name: entry.display_title.clone(),
+            workspace_id: String::new(),
+            session_class: CatalogEnum("chat_owned".to_string()),
+            lifecycle: CatalogEnum(catalog::LIFECYCLE_READY.to_string()),
+            provider_id: entry.provider_id.clone(),
+            launch_program: None,
+            host_liveness: None,
+            runner_principal: String::new(),
+            runner_instance: String::new(),
+            channel_epoch: String::new(),
+            host_instance_id: String::new(),
+            terminal_epoch: String::new(),
+            capabilities: Vec::new(),
+        },
+        ready: true,
+        conversation: false,
+        background_work: false,
+        agent_chat: true,
+        box_id: entry.box_id.clone(),
+        box_label: entry.box_label.clone(),
+        presentation: entry.presentation.clone(),
+        hmux_session_name: None,
     }
 }
 
@@ -2769,6 +2807,9 @@ pub struct HubProbeSession {
     /// The computer lists this session's running background work
     /// (`HubCatalogEntry::background_work`). False from an older computer.
     pub background_work: bool,
+    /// A chat-owned agent from the catalog's `chat_sessions`: it opens on its
+    /// chat (`AgentChatTimelineV1`) and has no terminal to attach.
+    pub agent_chat: bool,
     pub box_id: String,
     pub box_label: String,
     /// 세션의 hmux 이름. `session.session_name` 은 노트북 사이드바 제목이 있으면
@@ -3054,6 +3095,8 @@ pub fn run() {
             hub_conversation::hub_conversation_transcript,
             hub_conversation::hub_agent_prompt,
             hub_conversation::hub_agent_background_work,
+            hub_conversation::hub_agent_chat_timeline,
+            hub_conversation::hub_agent_chat_action,
             push::sync_push_notifications,
             ssh_file_diff,
             hub_scm_write,
@@ -3084,6 +3127,41 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A chat-owned agent reaches the screen as a row it opens on Chat, keyed
+    /// by the agent id its layout seat uses, after the computer's sessions.
+    #[test]
+    fn a_chat_owned_agent_is_listed_as_a_chat_row() {
+        let catalog = dure_hub_protocol::catalog::HubCatalog {
+            hub_catalog_version: dure_hub_protocol::catalog::HUB_CATALOG_VERSION,
+            sessions: Vec::new(),
+            unreachable: Vec::new(),
+            layout: None,
+            chat_sessions: vec![dure_hub_protocol::agent_chat::HubChatSession {
+                agent_id: "agent-1".into(),
+                provider_id: "claude".into(),
+                display_title: Some("Fix the build".into()),
+                presentation: None,
+                box_id: "this-laptop".into(),
+                box_label: "Laptop".into(),
+            }],
+        };
+        let ack = dure_hub_protocol::hello::HubHelloAck {
+            hub_hello_version: dure_hub_protocol::hello::HUB_HELLO_VERSION,
+            device_id: "device-1".into(),
+            device_label: "phone".into(),
+        };
+        let probe = describe("hub-1", "Laptop", false, ack, &catalog);
+        assert_eq!(probe.sessions.len(), 1);
+        let row = &probe.sessions[0];
+        assert!(row.agent_chat && row.ready && !row.conversation);
+        assert_eq!(row.session.session_id, "agent-1");
+        assert_eq!(row.session.session_name.as_deref(), Some("Fix the build"));
+        assert_eq!(row.box_id, "this-laptop");
+        let value = serde_json::to_value(row).expect("serializes");
+        assert_eq!(value["agent_chat"], true);
+        assert_eq!(value["session_id"], "agent-1");
+    }
 
     #[test]
     fn runtime_info_reports_the_protocol_version_from_the_embedded_client() {

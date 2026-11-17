@@ -215,6 +215,12 @@ pub struct HubCatalog {
     /// 빈 화면으로 그리면 사용자는 자기가 정리한 것이 사라졌다고 읽는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<CatalogLayout>,
+    /// This desktop's chat-owned agents (#562). They are not Hmux sessions,
+    /// so they are listed apart from `sessions`: an older phone ignores the
+    /// field and never draws a row it could only fail to attach to, and the
+    /// catalog version stays.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chat_sessions: Vec<crate::agent_chat::HubChatSession>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -399,6 +405,7 @@ mod tests {
 
     fn catalog() -> HubCatalog {
         HubCatalog {
+            chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
             sessions: vec![entry()],

@@ -9,6 +9,7 @@
 //! 결과다). TLS 소켓 위에 그 프레임을 그대로 얹는 것이 HTTP 나 WebSocket 을
 //! 하나 더 배우는 것보다 단순하고, 폰 쪽 파서도 이미 있다.
 
+pub mod agent_chat;
 mod autostart;
 pub mod push;
 pub mod catalog;

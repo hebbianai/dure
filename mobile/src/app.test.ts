@@ -604,6 +604,25 @@ vi.mock("@tauri-apps/api/core", () => ({
             runtime_revision: 1,
           },
         });
+      case "hub_agent_chat_timeline":
+        return Promise.resolve({
+          outcome: "timeline",
+          timeline: {
+            provider_id: "claude",
+            items: [
+              { kind: "message", sequence: 1, role: "user", text: "Fix the build" },
+              { kind: "tool", sequence: 2, name: "Bash", state: "completed" },
+              { kind: "message", sequence: 3, role: "agent", text: "The build passes." },
+            ],
+            older: null,
+            history_complete: true,
+            latest: 3,
+            turn: null,
+            live_text: null,
+            pending: [],
+            queued: [],
+          },
+        });
       case "hub_conversation_transcript":
         return Promise.resolve({
           outcome: "transcript",
@@ -4852,6 +4871,38 @@ describe("페어링한 컴퓨터", () => {
     await settle();
     expect(root.querySelectorAll(".chat__row")).toHaveLength(2);
     expect(invocations.filter((entry) => entry.command === "attach_hub_session")).toHaveLength(1);
+  });
+
+  /** #562: a chat-owned agent has no terminal; its row opens its chat only. */
+  it("opens a chat-owned agent on its chat without attaching a terminal", async () => {
+    hubRows = [hubRow()];
+    hubCatalogSessions = [{
+      ...remoteSession(),
+      session_id: "agent-chat-1",
+      session_name: "Chat agent",
+      workspace_id: "",
+      session_class: "chat_owned",
+      provider_id: "claude",
+      launch_program: null,
+      box_id: "this-laptop",
+      box_label: "맥북",
+      agent_chat: true,
+    }];
+    const root = await launch();
+    [...root.querySelectorAll<HTMLButtonElement>(".list__open")]
+      .find((row) => row.textContent?.includes("Chat agent"))?.click();
+    await settle();
+
+    await vi.waitFor(() => expect(root.textContent).toContain("The build passes."));
+    expect(root.querySelector(".agent-chat-screen")).not.toBeNull();
+    expect(root.querySelector(".session__views")).toBeNull();
+    expect(root.querySelector(".terminal")).toBeNull();
+    const asked = invocations.find((entry) => entry.command === "hub_agent_chat_timeline");
+    expect(asked?.args).toMatchObject({
+      id: HUB_ID,
+      input: { boxId: "this-laptop", agentId: "agent-chat-1" },
+    });
+    expect(invocations.map((entry) => entry.command)).not.toContain("attach_hub_session");
   });
 
   /**
