@@ -222,10 +222,10 @@ export function scheduleDraft(schedule: AutomationSchedule): ScheduleDraft {
 /** Record the app's Default agent pane choice on a schedule as it is saved,
  * so its runs start where the user's new agents do. Chat is the backend
  * default, so only Terminal is recorded; saving under Chat clears it. */
-export function withScheduleInteractionPreference(
-	draft: ScheduleDraft,
+export function withScheduleInteractionPreference<Draft extends ScheduleDraft>(
+	draft: Draft,
 	preference: "native_cli" | undefined,
-): ScheduleDraft {
+): Draft {
 	const { interactionPreference: _recorded, ...runTemplate } =
 		draft.runTemplate;
 	return {

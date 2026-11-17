@@ -4,6 +4,7 @@ import {
 	parseSchedule,
 	type ScheduleDraft,
 	scheduleContractError,
+	withScheduleInteractionPreference,
 } from "@/lib/automations/scheduleContract";
 import {
 	createDureBackendRequester,
@@ -88,11 +89,9 @@ export function createScheduleClient(
 				!capabilityMissing(error, "schedule.interaction_preference_v1")
 			)
 				throw error;
-			const { interactionPreference: _unsupported, ...runTemplate } =
-				intent.runTemplate;
 			return request(
 				"schedule.put",
-				{ ...intent, runTemplate },
+				{ ...withScheduleInteractionPreference(intent, undefined) },
 				exact(authority),
 			);
 		}

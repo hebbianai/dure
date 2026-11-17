@@ -11,7 +11,7 @@ use dure_app::{
 };
 
 use super::*;
-use crate::agent_runtime_projection::{AgentRuntimeObservedV1, read_locked};
+use crate::agent_runtime_transition_apply::deferred::idle::lock_stable_source;
 use crate::agent_runtime_transition_apply::deferred::{HibernateBodyV1, hibernate};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,22 +111,7 @@ pub(crate) async fn hibernate_if_idle(
     idle_after: Duration,
 ) -> Result<(), String> {
     let (selection, binding, page) = {
-        let _guard = tokio::time::timeout(
-            Duration::from_secs(1),
-            state.agent_operations.acquire(agent_id),
-        )
-        .await
-        .map_err(|_| "runtime_idle_agent_busy".to_owned())?;
-        if !state.is_mutation_authority() {
-            return Err("runtime_idle_authority_unavailable".into());
-        }
-        let AgentRuntimeObservedV1::Stable {
-            selection,
-            authority,
-        } = read_locked(state, agent_id).await?
-        else {
-            return Err("runtime_idle_source_not_stable".into());
-        };
+        let (_guard, selection, authority) = lock_stable_source(state, agent_id).await?;
         let AgentRuntimeBindingAuthorityV1::StructuredProtocol { binding } = *authority else {
             return Err("runtime_idle_source_unsupported".into());
         };
