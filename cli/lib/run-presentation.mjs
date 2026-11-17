@@ -5,6 +5,7 @@ import {
 } from "./app-control-client.mjs";
 import {
   agentSpawnLaunchProjection,
+  stoppedAtStartupGate,
   validSpawnParent,
 } from "./agent-spawn-query.mjs";
 export { resolveClientSpaceTarget as resolveRunPresentationTarget } from "./space-selection.mjs";
@@ -265,6 +266,8 @@ export function hasPresentableAgentRuntime(report) {
  * vouch for is `null`, never guessed. `sessionId` is the launched native
  * Hmux session, so it is `null` for a structured-protocol Run, which has
  * no PTY session — `interactionProfile` says which case this is.
+ * `startupGate` names the first-run gate an unfinished Run is stopped at,
+ * so a `prompt_delivery_uncertain` head says why the prompt is undelivered.
  */
 export function runReceiptSummary(report, presentation = null) {
   const receipt = report?.receipt ?? null;
@@ -295,6 +298,7 @@ export function runReceiptSummary(report, presentation = null) {
     presentation: token(presentation?.state),
     interactionProfile,
     parent: validSpawnParent(plan?.request?.parent) ? plan.request.parent : null,
+    startupGate: stoppedAtStartupGate(receipt),
     error: runReceiptError(receipt, token),
   };
 }

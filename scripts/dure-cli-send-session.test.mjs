@@ -6,18 +6,30 @@ import { hmuxSession, runSessionCli, writeRegistry } from "./lib/dure-session-te
 
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function fixture(session = hmuxSession(), input = {}, { delayMs = 0, exitCode = 0 } = {}) {
+// `shows` answers the first Session lookups in order; null fails the lookup
+// the way Hmux does when it cannot read discovery or exits non-zero. Later
+// lookups answer `session`.
+function fixture(session = hmuxSession(), input = {}, { delayMs = 0, exitCode = 0, shows = [] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "dure-send-session-"));
   roots.push(root);
   const calls = join(root, "calls.jsonl");
   writeFileSync(calls, "");
   const hmux = join(root, "hmux.mjs");
   writeFileSync(hmux, `#!/usr/bin/env node
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
 if (args.includes('capabilities')) console.log(JSON.stringify({schemaVersion:2,capabilities:['semantic_command_input_v1','semantic_key_input_v1','draft_guarded_command_input_v1']}));
-else if (args.includes('show')) console.log(JSON.stringify(${JSON.stringify(session)}));
+else if (args.includes('show')) {
+  const shows = ${JSON.stringify(shows)};
+  const seen = readFileSync(${JSON.stringify(calls)}, 'utf8').trim().split('\\n').filter(line => JSON.parse(line).includes('show')).length;
+  const answer = seen <= shows.length ? shows[seen - 1] : ${JSON.stringify(session)};
+  if (answer === null) {
+    console.error('hmux: error: local discovery read exceeded its wall-clock budget');
+    process.exit(1);
+  }
+  console.log(JSON.stringify(answer));
+}
 else if (args.includes('command-input')) {
   if (args.includes('--key')) {
     console.log(JSON.stringify({schemaVersion:1,ok:true,sessionId:'session-1',workspaceId:'workspace-1',receipt:{terminalEpoch:'terminal-1',keys:args.filter(a=>a==='--key').map((_,i)=>({recordId:String(i+1),state:'written_to_pty'}))}}));
@@ -133,6 +145,54 @@ describe("exact managed Session send without a client registry", () => {
     const f = fixture();
     const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello", ...options]);
     expect(result.status).not.toBe(0);
+    expect(f.calls().some((args) => args.includes("command-input"))).toBe(false);
+  });
+  it("retries an inconclusive Session lookup and then sends once", () => {
+    const unprobed = hmuxSession(1, { health: "unprobed", effectiveLifecycle: "unprobed" });
+    const f = fixture(hmuxSession(), {}, { shows: [null, unprobed] });
+    const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello", "--json"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).target).toEqual({ sessionId: "session-1", workspaceId: "workspace-1" });
+    expect(f.calls().filter((args) => args.includes("show"))).toHaveLength(3);
+    expect(f.calls().filter((args) => args.includes("command-input"))).toHaveLength(1);
+  });
+  it.each([[[], true], [["--workspace", "workspace-1"], false]])(
+    "reports a lookup that keeps failing as inconclusive, with a retry hint and nothing written: %j",
+    (scope, suggestsWorkspace) => {
+      const f = fixture(hmuxSession(), {}, { shows: [null, null, null] });
+      const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello", ...scope]);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("hmux_session_query_failed");
+      expect(result.stderr).toContain("does not show that the Session exited");
+      expect(result.stderr).toContain("Input was not sent; retry the same command");
+      expect(result.stderr).not.toContain("No live managed Session");
+      expect(result.stderr.includes("--workspace <workspace-id>") && result.stderr.includes("skip")).toBe(suggestsWorkspace);
+      expect(f.calls().filter((args) => args.includes("show"))).toHaveLength(3);
+      expect(f.calls().some((args) => args.includes("command-input"))).toBe(false);
+    },
+  );
+  it("names an unanswered Host probe without calling the Session exited", () => {
+    const f = fixture(hmuxSession(1, { health: "unprobed", effectiveLifecycle: "unprobed" }));
+    const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello", "--workspace", "workspace-1"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("did not answer its probe (unprobed) after 3 attempts");
+    expect(result.stderr).toContain("does not show that the Session exited");
+    expect(f.calls().filter((args) => args.includes("show"))).toHaveLength(3);
+    expect(f.calls().some((args) => args.includes("command-input"))).toBe(false);
+  });
+  it("does not repeat a lookup that shows the Session exited", () => {
+    const f = fixture(hmuxSession(1, { health: "exited", effectiveLifecycle: "exited" }));
+    const result = runSessionCli(f.root, f.hmux, ["send", "session-1", "hello", "--workspace", "workspace-1"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("No live managed Session");
+    expect(f.calls().filter((args) => args.includes("show"))).toHaveLength(1);
+    expect(f.calls().some((args) => args.includes("command-input"))).toBe(false);
+  });
+  it("keeps send-keys on its typed refusal after an inconclusive lookup", () => {
+    const f = fixture(hmuxSession(), {}, { shows: [null, null, null] });
+    const result = runSessionCli(f.root, f.hmux, ["send-keys", "session-1", "Down", "--workspace", "workspace-1", "--json"]);
+    expect(result.status).not.toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: "target_unavailable", deliveryState: "not_written" } });
     expect(f.calls().some((args) => args.includes("command-input"))).toBe(false);
   });
   it("does not retry an uncertain input receipt", () => {

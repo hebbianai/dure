@@ -1205,6 +1205,8 @@ const applyState = process.env.DURE_AGENT_SPAWN_FIXTURE_APPLY_STATE || "succeede
 const applied = request.operation === "agent_spawn.apply";
 const succeeded = applied && applyState === "succeeded";
 const promptUncertain = applied && applyState === "prompt_delivery_uncertain";
+// "login": Codex sat on its sign-in screen, so the carried prompt is queued.
+const startupGate = promptUncertain ? process.env.DURE_AGENT_SPAWN_FIXTURE_STARTUP_GATE : undefined;
 const dedicated = plan.request.worktree.kind === "dedicated";
 const directoryName = dedicated
   ? plan.request.worktree.branch.split("/").filter(Boolean).at(-1).replace(/[^A-Za-z0-9_-]/g, "-")
@@ -1249,7 +1251,11 @@ const completed = applied ? [
         ? {}
         : { setup_command: plan.request.setupCommand })
     },
-    evidence: { stage: "runtime_launch", session }
+    evidence: {
+      stage: "runtime_launch",
+      session,
+      ...(startupGate ? { startup_gate: { kind: startupGate, launch_prompt_carried: true } } : {})
+    }
   },
   ...(plan.request.promptDigest === null || promptUncertain ? [] : [{
     stage: "prompt_delivery",
@@ -1276,7 +1282,12 @@ const receipt = {
             session_id: plan.sessionId,
             prompt_digest: plan.request.promptDigest
           },
-          error_code: "workflow_prompt_provider_exited"
+          ...(startupGate === "login"
+            ? {
+                error_code: "agent_spawn_prompt_behind_login",
+                error_detail: "Codex is showing its sign-in screen because the selected account's login is missing or expired"
+              }
+            : { error_code: "workflow_prompt_provider_exited" })
         }
       : { kind: "continue", stage: "worktree", next_attempt: 1 },
   terminalCode: null,
@@ -2315,6 +2326,53 @@ describe("dure run and spawn CLI", () => {
     } finally {
       await client.close();
     }
+  });
+
+  it("leads a Run stopped at Codex's sign-in screen with the login gate", async () => {
+    // #583: an account whose login expired opened a pane on Codex's sign-in
+    // screen, and the receipt head said only prompt_delivery_uncertain.
+    const run = async (json) => {
+      const root = temporaryRoot();
+      const remote = installRunRemoteFixture(root);
+      const client = await installClientControlFixture(root);
+      try {
+        return await runCliAsync(
+          root,
+          ["run", prompt, "--project", "dure", "--provider", "codex", "--idempotency-key",
+            "run-login-gated-1", "--backend", "remote-a", ...(json ? ["--json"] : [])],
+          {
+            DURE_AGENT_SPAWN_FIXTURE_APPLY_STATE: "prompt_delivery_uncertain",
+            DURE_AGENT_SPAWN_FIXTURE_STARTUP_GATE: "login",
+            DURE_AGENT_SPAWN_LOG: remote.log,
+            HMUX_SESSION_ID: "source-session",
+            HMUX_WORKSPACE_ID: "source-workspace",
+            PATH: `${remote.bin}:${process.env.PATH}`,
+          },
+        );
+      } finally {
+        await client.close();
+      }
+    };
+
+    const json = await run(true);
+    expect(json.status, `${json.stdout}\n${json.stderr}`).toBe(1);
+    const report = JSON.parse(json.stdout);
+    expect(Object.keys(report)[0]).toBe("summary");
+    expect(report.summary).toMatchObject({
+      state: "prompt_delivery_uncertain",
+      startupGate: "login",
+      presentation: "opened",
+    });
+    expect(report.receipt.recovery).toMatchObject({
+      kind: "do_not_replay_prompt",
+      error_code: "agent_spawn_prompt_behind_login",
+    });
+
+    const text = await run(false);
+    expect(text.status, `${text.stdout}\n${text.stderr}`).toBe(1);
+    expect(text.stdout).toContain("state\tprompt_delivery_uncertain");
+    expect(text.stdout).toContain("startup_gate\tlogin");
+    expect(text.stdout).toContain("detail\tCodex is showing its sign-in screen");
   });
 
   it("reports a pane failure without replaying the succeeded Run", async () => {

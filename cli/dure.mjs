@@ -2186,8 +2186,9 @@ Without account-selection support, omitted --account uses the provider default.
 The Run receipt executionProfile identifies the credential reference and generation.
 With --json the receipt starts with summary: agentId, sessionId, workspaceId, panelId,
 spaceId, state (the Run receipt state), presentation (the pane outcome),
-interactionProfile, parent and error (stage, code and detail of the failure when the Run
-stopped short); a value the receipt cannot vouch for is null. The full receipt,
+interactionProfile, parent, startupGate (login or workspace_trust when the provider is
+stopped at sign-in or at its folder-trust prompt) and error (stage, code and detail of the
+failure when the Run stopped short); a value the receipt cannot vouch for is null. The full receipt,
 presentation and registration follow unchanged. source.backend carries the backend
 identity, protocol and capabilityCount; --verbose adds its full capabilities list.
 --lead starts a lead Run: the prompt is the goal, and the CLI prepends the bundled lead
