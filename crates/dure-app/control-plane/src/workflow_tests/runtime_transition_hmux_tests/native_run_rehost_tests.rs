@@ -118,6 +118,7 @@ async fn run_then_rehost(conversation: Option<&str>) {
                 hmux_client::ManagedAttachRequest::new(&source.session_id, &source.workspace_id)
                     .unwrap(),
                 AgentStateReport {
+                    approval_request: None,
                     progress: None,
                     identity_only: true,
                     activity: AgentRuntimeActivity::Waiting,

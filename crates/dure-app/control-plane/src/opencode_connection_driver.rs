@@ -153,7 +153,10 @@ async fn maintain_permission_policy(
     session: SessionId,
     permission: ProviderPermissionModeV1,
 ) -> Result<(), OpenCodeConnectionDriverError> {
-    if permission == ProviderPermissionModeV1::Default {
+    if matches!(
+        permission,
+        ProviderPermissionModeV1::Default | ProviderPermissionModeV1::Plan
+    ) {
         std::future::pending::<()>().await;
     }
     let mut events = client
@@ -202,7 +205,9 @@ pub(crate) fn automatically_answers(
 ) -> bool {
     kind == PendingKind::Permission
         && match permission {
-            ProviderPermissionModeV1::Default => false,
+            // Plan mode is refused at structured admission for OpenCode;
+            // answering nothing automatically is the safe reading anyway.
+            ProviderPermissionModeV1::Default | ProviderPermissionModeV1::Plan => false,
             ProviderPermissionModeV1::SkipPermissions => true,
             ProviderPermissionModeV1::AutoEdit => {
                 request

@@ -3951,6 +3951,7 @@ async fn dispatch_authorized(
         | "agent_runtime.native_session.resolve.v1"
         | "agent_runtime.native.read"
         | "agent_runtime.native.input"
+        | "agent_runtime.native.answer"
         | "agent_runtime.native_rehost.reconcile"
         | "agent_runtime.native_resume.publish"
         | "agent_runtime.stop"

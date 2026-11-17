@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
 	bucketVisibleSpaces,
+	leadWorkerRowKeys,
+	leadWorkersFoldKey,
+	nestLeadWorkers,
 	orderDesktopsWithPopouts,
 	partitionSpacesByPins,
 	selectableRowKeys,
@@ -156,6 +159,82 @@ describe("selectableRowKeys", () => {
 			"a2",
 			"b1",
 			"c1",
+		]);
+	});
+});
+
+describe("nestLeadWorkers", () => {
+	const lead = { key: "p-lead", desktopId: "d1", agentId: "lead" };
+	// Dockview order differs from start order on purpose.
+	const second = { key: "p-2", desktopId: "d1", agentId: "w2", leadAgentId: "lead", workerOrder: 2 };
+	const plain = { key: "p-plain", desktopId: "d1", agentId: "solo" };
+	const third = { key: "p-3", desktopId: "d1", agentId: "w3", leadAgentId: "lead", workerOrder: 3 };
+	const first = { key: "p-1", desktopId: "d1", agentId: "w1", leadAgentId: "lead", workerOrder: 1 };
+	const terminal = { key: "term", desktopId: "d1" };
+
+	it("lifts a lead's workers under it in start order and keeps every other row in place", () => {
+		expect(
+			nestLeadWorkers([second, lead, plain, third, terminal, first]).map(
+				({ row, workers }) => [row.key, workers.map((worker) => worker.key)],
+			),
+		).toEqual([
+			["p-lead", ["p-1", "p-2", "p-3"]],
+			["p-plain", []],
+			["term", []],
+		]);
+	});
+
+	it("leaves rows without a lead exactly as they came", () => {
+		const rows = [plain, terminal, lead];
+		expect(nestLeadWorkers(rows).map(({ row, workers }) => [row, workers.length])).toEqual([
+			[plain, 0],
+			[terminal, 0],
+			[lead, 0],
+		]);
+	});
+
+	it("keeps a worker in place when its lead is in another space or another list", () => {
+		const elsewhere = { ...first, desktopId: "d2" };
+		expect(nestLeadWorkers([lead, elsewhere]).map(({ row }) => row.key)).toEqual([
+			"p-lead",
+			"p-1",
+		]);
+		expect(nestLeadWorkers([first, plain]).map(({ row }) => row.key)).toEqual([
+			"p-1",
+			"p-plain",
+		]);
+	});
+
+	it("nests one step only and never loops on a cycle", () => {
+		const grandchild = { key: "p-g", desktopId: "d1", agentId: "g", leadAgentId: "w1", workerOrder: 4 };
+		expect(
+			nestLeadWorkers([lead, first, grandchild]).map(({ row, workers }) => [
+				row.key,
+				workers.map((worker) => worker.key),
+			]),
+		).toEqual([
+			["p-lead", ["p-1"]],
+			["p-g", []],
+		]);
+		const a = { key: "a", desktopId: "d1", agentId: "a", leadAgentId: "b" };
+		const b = { key: "b", desktopId: "d1", agentId: "b", leadAgentId: "a" };
+		expect(nestLeadWorkers([a, b]).map(({ row, workers }) => [row.key, workers.length])).toEqual([
+			["a", 0],
+			["b", 0],
+		]);
+	});
+
+	it("orders selection as drawn, and a closed fold keeps only the focused worker", () => {
+		const rows = [second, lead, plain, first];
+		expect(leadWorkerRowKeys(rows, {})).toEqual(["p-lead", "p-1", "p-2", "p-plain"]);
+		const folded = { [leadWorkersFoldKey("lead")]: true as const };
+		expect(leadWorkerRowKeys(rows, folded)).toEqual(["p-lead", "p-plain"]);
+		expect(leadWorkerRowKeys(rows, folded, "p-2")).toEqual(["p-lead", "p-2", "p-plain"]);
+		expect(selectableRowKeys([{ key: "alpha", spaces: rows }], {})).toEqual([
+			"p-lead",
+			"p-1",
+			"p-2",
+			"p-plain",
 		]);
 	});
 });

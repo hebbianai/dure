@@ -120,16 +120,114 @@ export function orderDesktopsWithPopouts<
 	return [...ordered, ...popouts.filter((popout) => !attached.has(popout.id))];
 }
 
+/** What a row needs to take part in lead/worker nesting. */
+export interface LeadWorkerRow {
+	readonly key: string;
+	readonly desktopId?: string;
+	readonly agentId?: string;
+	/** The lead Agent this row's Agent was started from, when resolved. */
+	readonly leadAgentId?: string;
+	/** Start order among the lead's workers. */
+	readonly workerOrder?: number;
+}
+
+export interface LeadWorkerEntry<Row> {
+	readonly row: Row;
+	/** This row's workers, in start order; empty for every other row. */
+	readonly workers: readonly Row[];
+}
+
+const NO_WORKERS: readonly never[] = [];
+
+/** The fold that hides a lead's workers. Keyed by the lead Agent, so the
+ *  decision holds when its pane moves, closes or reopens. */
+export function leadWorkersFoldKey(leadAgentId: string): string {
+	return `lead-workers:${leadAgentId}`;
+}
+
+/** One list's rows with each lead's workers lifted under it, one step deep.
+ *  A worker nests only when its lead's row is in the same list and the same
+ *  space, and that lead is not itself nested; otherwise it keeps its own
+ *  place, as does every row without a lead. Leads and ordinary rows keep the
+ *  order they came in. Staying inside one space keeps the nesting identical
+ *  whether a repository's rows are drawn space by space or as one run. */
+export function nestLeadWorkers<Row extends LeadWorkerRow>(
+	rows: readonly Row[],
+): readonly LeadWorkerEntry<Row>[] {
+	if (!rows.some((row) => row.leadAgentId !== undefined)) {
+		return rows.map((row) => ({ row, workers: NO_WORKERS }));
+	}
+	const rowByAgent = new Map<string, Row>();
+	for (const row of rows) {
+		if (row.agentId && !rowByAgent.has(row.agentId)) {
+			rowByAgent.set(row.agentId, row);
+		}
+	}
+	const leadRowOf = (row: Row): Row | undefined => {
+		if (row.leadAgentId === undefined || row.leadAgentId === row.agentId) {
+			return undefined;
+		}
+		const lead = rowByAgent.get(row.leadAgentId);
+		return lead?.desktopId === row.desktopId ? lead : undefined;
+	};
+	const workersByLead = new Map<string, Row[]>();
+	const nested = new Set<string>();
+	for (const row of rows) {
+		const lead = leadRowOf(row);
+		if (!lead || leadRowOf(lead)) continue;
+		const workers = workersByLead.get(lead.key);
+		if (workers) workers.push(row);
+		else workersByLead.set(lead.key, [row]);
+		nested.add(row.key);
+	}
+	const position = new Map(rows.map((row, index) => [row.key, index]));
+	const startOrder = (row: Row) =>
+		row.workerOrder ?? Number.MAX_SAFE_INTEGER;
+	return rows
+		.filter((row) => !nested.has(row.key))
+		.map((row) => {
+			const workers = workersByLead.get(row.key);
+			return {
+				row,
+				workers: workers
+					? workers.sort(
+							(left, right) =>
+								startOrder(left) - startOrder(right) ||
+								(position.get(left.key) ?? 0) - (position.get(right.key) ?? 0),
+						)
+					: NO_WORKERS,
+			};
+		});
+}
+
+/** The keys of one list's rows in the order they are drawn: each lead, then
+ *  its workers unless their fold is closed — a closed fold still shows the
+ *  focused pane's row, like a folded repository. */
+export function leadWorkerRowKeys(
+	rows: readonly LeadWorkerRow[],
+	collapsed: Readonly<Record<string, true>>,
+	focusedKey: string | null = null,
+): string[] {
+	return nestLeadWorkers(rows).flatMap(({ row, workers }) => [
+		row.key,
+		...(row.agentId && collapsed[leadWorkersFoldKey(row.agentId)]
+			? workers.filter((worker) => worker.key === focusedKey)
+			: workers
+		).map((worker) => worker.key),
+	]);
+}
+
 /** The rows a person can currently see and select, in visual order — the
  *  buckets are repository groups as rendered (repository-first: the top-level
  *  groups; space-first: every repository sub-group, space by space). Rows
  *  behind a folded repository are not rendered, so a shift-range, a bulk
  *  action, or a multi-row drag must never reach them — except the focused
- *  pane's row, which a folded repository keeps showing. */
+ *  pane's row, which a folded repository keeps showing. Workers follow their
+ *  lead, as drawn. */
 export function selectableRowKeys(
 	buckets: readonly {
 		readonly key: string;
-		readonly spaces: readonly { readonly key: string }[];
+		readonly spaces: readonly LeadWorkerRow[];
 	}[],
 	collapsed: Readonly<Record<string, true>>,
 	focusedKey: string | null = null,
@@ -139,6 +237,6 @@ export function selectableRowKeys(
 			? bucket.spaces
 					.filter((row) => row.key === focusedKey)
 					.map((row) => row.key)
-			: bucket.spaces.map((row) => row.key),
+			: leadWorkerRowKeys(bucket.spaces, collapsed, focusedKey),
 	);
 }

@@ -8,6 +8,7 @@ import {
 	installClaudeRuntimeArtifact,
 } from "./claude-runtime-artifact.mjs";
 import { loadPinnedClaudeSdkRuntime } from "./sdk-runtime.mjs";
+import { runEntryPoint } from "./process-exit.mjs";
 
 function argumentsFrom(values) {
 	if (values.length !== 4) throw new Error("dure_claude_runtime_install_arguments_invalid");
@@ -29,23 +30,26 @@ function argumentsFrom(values) {
 	});
 }
 
-const options = argumentsFrom(process.argv.slice(2));
-const sdk = await loadPinnedClaudeSdkRuntime();
-const artifact = await installClaudeRuntimeArtifact({
-	claudeCodeVersion: sdk.metadata.claudeCodeVersion,
-	runtimeRoot: options.runtimeRoot,
-	sdkVersion: sdk.metadata.sdkVersion,
-	sourceExecutable: options.sourceExecutable,
-	target: claudeRuntimeTarget(),
+// Installing hashes the whole Claude executable before it can refuse.
+await runEntryPoint(async () => {
+	const options = argumentsFrom(process.argv.slice(2));
+	const sdk = await loadPinnedClaudeSdkRuntime();
+	const artifact = await installClaudeRuntimeArtifact({
+		claudeCodeVersion: sdk.metadata.claudeCodeVersion,
+		runtimeRoot: options.runtimeRoot,
+		sdkVersion: sdk.metadata.sdkVersion,
+		sourceExecutable: options.sourceExecutable,
+		target: claudeRuntimeTarget(),
+	});
+	const descriptor = claudeRuntimeArtifactDescriptor(artifact);
+	process.stdout.write(
+		`${JSON.stringify({
+			claudeCodeVersion: descriptor.claudeCodeVersion,
+			executablePath: descriptor.executablePath,
+			executableSha256: descriptor.executableIdentity.sha256,
+			manifestPath: descriptor.manifestPath,
+			sdkVersion: descriptor.sdkVersion,
+			target: descriptor.target,
+		})}\n`,
+	);
 });
-const descriptor = claudeRuntimeArtifactDescriptor(artifact);
-process.stdout.write(
-	`${JSON.stringify({
-		claudeCodeVersion: descriptor.claudeCodeVersion,
-		executablePath: descriptor.executablePath,
-		executableSha256: descriptor.executableIdentity.sha256,
-		manifestPath: descriptor.manifestPath,
-		sdkVersion: descriptor.sdkVersion,
-		target: descriptor.target,
-	})}\n`,
-);

@@ -817,6 +817,18 @@ async fn start_structured_target(
         .map_err(|code| {
             TargetStartFailure::repair(AgentRuntimeTargetFailureKindV1::TargetInvalid, code)
         })?;
+    if transition.intent.workspace_move.is_none() {
+        // A chat agent a schedule started may have lost its checkout while it
+        // slept or stopped; it resumes in the same folder, as a terminal does.
+        // Any other agent is left to the runtime's own workspace checks.
+        crate::schedule_runtime::lifecycle::restore_checkout_for_wake(
+            state,
+            &transition.intent.source.agent_id,
+            &transition.intent.operation_id,
+        )
+        .await
+        .map_err(TargetStartFailure::retryable)?;
+    }
     let request = StructuredProviderOpenRequestV1 {
         agent_id: transition.intent.source.agent_id.clone(),
         execution_profile: transition.intent.target_execution_profile.clone(),

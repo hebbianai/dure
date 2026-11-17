@@ -1,6 +1,7 @@
 import type { SessionPresentation } from "@/lib/hub/sessionPresentation";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { demoInvoke } from "./demo/demoInvoke";
+import type { AgentApprovalChoice } from "@/lib/agents/approvalRequest";
 import type { BackgroundWorkAnswer } from "./backgroundWork";
 import type { ServerReport } from "./census";
 import type { ServerEntry } from "./servers";
@@ -207,6 +208,7 @@ export type ConversationRefusal =
   | "identity_changed"
   | "input_draft_pending"
   | "invalid_request"
+  | "attention_changed"
   | "probe_timeout"
   | "unavailable"
   | "unknown";
@@ -255,6 +257,97 @@ export interface AgentPromptAnswer {
   code?: ConversationRefusal | null;
   detail?: string | null;
 }
+
+/** Rust `AgentChatRefusal`: why the computer did not answer a chat-owned agent's request. */
+export type AgentChatRefusal =
+  | "agent_not_found"
+  | "remote_unsupported"
+  | "invalid_request"
+  | "turn_changed"
+  | "not_running"
+  | "request_not_found"
+  | "runtime_unavailable"
+  | "rejected"
+  | "unavailable"
+  | "unknown";
+
+/** One row of a chat-owned agent's conversation (#562), oldest first. */
+export type AgentChatItem =
+  | { kind: "message"; sequence: number; role: "user" | "agent"; text: string; truncated?: boolean }
+  /** A tool call, by name and state only: its input never leaves the computer. */
+  | { kind: "tool"; sequence: number; name: string; state: "running" | "completed" | "failed" | "canceled" | "unknown" }
+  | { kind: "status"; sequence: number; state: "turn_failed" | "turn_canceled" | "session_failed" | "session_exited" | "unknown" }
+  | { kind: "error"; sequence: number; message: string }
+  /** A kind of row a later computer sends. */
+  | { kind: "unknown" };
+
+export interface AgentChatQuestion {
+  /** The key of this question's answer. */
+  id: string;
+  question: string;
+  header?: string | null;
+  options: { label: string; description?: string | null }[];
+  multi_select: boolean;
+  allow_other: boolean;
+  is_secret: boolean;
+}
+
+/** A request waiting for the person. A permission carries only the tool's names. */
+export type AgentChatPending =
+  | { request_id: string; kind: "permission"; tool_name?: string | null; display_name?: string | null }
+  | { request_id: string; kind: "question"; questions: AgentChatQuestion[] }
+  | { request_id: string; kind: "unknown" };
+
+/** Rust `AgentChatTimeline`. */
+export interface AgentChatTimeline {
+  provider_id: string;
+  items: AgentChatItem[];
+  /** Older rows exist: read them with this as `before`. */
+  older?: number | null;
+  history_complete: boolean;
+  /** The newest timeline position. */
+  latest: number;
+  /** The running turn. */
+  turn?: { turn_id: string } | null;
+  /** What the agent is writing in the running turn. */
+  live_text?: string | null;
+  pending: AgentChatPending[];
+  queued: { preview: string }[];
+}
+
+/** Rust `HubAgentChatTimelineResult`. A refusal is an answer, not an error. */
+export interface AgentChatTimelineAnswer {
+  outcome: "timeline" | "refused" | "unknown";
+  timeline?: AgentChatTimeline | null;
+  code?: AgentChatRefusal | null;
+  detail?: string | null;
+}
+
+/** Rust `HubAgentChatActionResult`. `unknown`: it may have happened. */
+export interface AgentChatActionAnswer {
+  state: "done" | "refused" | "unknown" | "unrecognized";
+  /** Where a sent message went. */
+  delivery?: "started" | "steered" | "queued" | "unknown" | null;
+  code?: AgentChatRefusal | null;
+  detail?: string | null;
+}
+
+/** The phone's answer to a pending request. */
+export type AgentChatAnswer =
+  | { kind: "permission"; allow: boolean }
+  | { kind: "question"; answers: Record<string, string> };
+
+/** A chat-owned agent, as the computer's `chat_sessions` entry names it. */
+export interface AgentChatTarget {
+  boxId: string;
+  agentId: string;
+}
+
+/** One action on a chat-owned agent. `actionId` names the press. */
+export type AgentChatAction =
+  | { kind: "send"; actionId: string; text: string }
+  | { kind: "interrupt"; actionId: string; turnId: string }
+  | { kind: "answer"; actionId: string; requestId: string; answer: AgentChatAnswer };
 
 /** The session a conversation request names, as the computer's catalog entry does. */
 export interface ConversationSession {
@@ -559,6 +652,16 @@ export interface HubProbeSession extends RemoteSession {
    * chat's line above the composer. Missing from older computers.
    */
   background_work?: boolean;
+  /**
+   * A chat-owned agent (#562): it opens on its chat and has no terminal to
+   * attach. Missing from phones' older Rust halves.
+   */
+  agent_chat?: boolean;
+  /**
+   * The computer answers this session's approvals from the chat card
+   * (`AgentApprovalAnswerV1`). Missing from older computers.
+   */
+  approval_answer?: boolean;
   box_id: string;
   box_label: string;
 }
@@ -837,6 +940,29 @@ export const ipc = {
     }),
 
   /**
+   * A chat-owned agent's timeline (`AgentChatTimelineV1`): the newest rows,
+   * or those before `before`. A computer that closes without answering fails
+   * with `conversation_no_answer`; one older than this phone's chat fails with
+   * `agent_chat_desktop_outdated`.
+   */
+  hubAgentChatTimeline: (hubId: string, target: AgentChatTarget, before?: number, limit?: number) =>
+    invoke<AgentChatTimelineAnswer>("hub_agent_chat_timeline", {
+      id: hubId,
+      input: { ...target, before: before ?? null, limit: limit ?? null },
+    }),
+
+  /**
+   * Send, interrupt or answer on a chat-owned agent. An error means nothing
+   * reached the computer; once the request is out, a lost answer is the state
+   * `unknown`.
+   */
+  hubAgentChatAction: (hubId: string, target: AgentChatTarget, action: AgentChatAction) =>
+    invoke<AgentChatActionAnswer>("hub_agent_chat_action", {
+      id: hubId,
+      input: { ...target, ...action },
+    }),
+
+  /**
    * The agent's running subagents, workflows, shells and monitors
    * (`AgentBackgroundWorkV1`), decided on the computer. Asked only where the
    * catalog entry carries `background_work`.
@@ -867,6 +993,26 @@ export const ipc = {
         expectedTerminalEpoch,
         expectedConversationId: expectedConversationId ?? null,
       },
+    }),
+
+  /**
+   * Answer the agent's pending approval with one offered choice
+   * (`AgentApprovalAnswerV1`). The computer's Host writes the provider's keys
+   * only while that exact approval is pending and no one has typed into the
+   * terminal since it was raised; otherwise the answer is refused
+   * `attention_changed` with nothing written. As for a prompt, an error means
+   * nothing was written and a lost answer is the state `unknown`.
+   */
+  hubAgentApprovalAnswer: (
+    hubId: string,
+    session: ConversationSession,
+    expectedTerminalEpoch: string,
+    attentionId: string,
+    choice: AgentApprovalChoice,
+  ) =>
+    invoke<AgentPromptAnswer>("hub_agent_approval_answer", {
+      id: hubId,
+      input: { ...session, expectedTerminalEpoch, attentionId, choice },
     }),
 
   /**

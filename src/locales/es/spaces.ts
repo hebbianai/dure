@@ -22,6 +22,8 @@ export const spaces: Record<string, string> = {
 	"spaces.repository.startWith": "Iniciar {label} aquí",
 	"spaces.repository.addWithOptions": "Nuevo agente con opciones…",
 	"spaces.repository.noSessions": "Sin sesiones todavía",
+	"spaces.workers.one": "1 worker",
+	"spaces.workers.other": "{n} workers",
 	"spaces.repository.startFailed": "Error al iniciar el agente: {e}",
 	"spaces.locations.openFromHost": "Abrir desde {name}",
 	"spaces.actions.sessionCount": "{n} sesiones",

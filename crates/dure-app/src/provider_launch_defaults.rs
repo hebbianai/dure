@@ -20,12 +20,12 @@ pub enum ProviderLaunchPermissionModeV1 {
 impl ProviderLaunchPermissionModeV1 {
     pub fn from_concrete(permission_mode: &ProviderPermissionModeV1) -> Self {
         match permission_mode {
-            // Auto-edit still requires approvals for anything beyond workspace
-            // edits, so the coarse launch-default projection keeps it on the
-            // approvals side.
-            ProviderPermissionModeV1::Default | ProviderPermissionModeV1::AutoEdit => {
-                Self::RequireApprovals
-            }
+            // Auto-edit and plan mode still require approvals for anything
+            // beyond workspace edits, so the coarse launch-default projection
+            // keeps them on the approvals side.
+            ProviderPermissionModeV1::Default
+            | ProviderPermissionModeV1::AutoEdit
+            | ProviderPermissionModeV1::Plan => Self::RequireApprovals,
             ProviderPermissionModeV1::SkipPermissions => Self::BypassApprovals,
         }
     }
@@ -56,7 +56,11 @@ pub enum ProviderLaunchPermissionOverrideV1 {
 impl ProviderLaunchPermissionOverrideV1 {
     pub fn from_concrete(permission_mode: &ProviderPermissionModeV1) -> Self {
         match permission_mode {
-            ProviderPermissionModeV1::Default => Self::RequireApprovals,
+            // Plan mode is a pane-level runtime selection, not a launch
+            // override; schedules and workflow graphs never carry it.
+            ProviderPermissionModeV1::Default | ProviderPermissionModeV1::Plan => {
+                Self::RequireApprovals
+            }
             ProviderPermissionModeV1::AutoEdit => Self::AutoEdit,
             ProviderPermissionModeV1::SkipPermissions => Self::BypassApprovals,
         }

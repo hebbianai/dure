@@ -15,6 +15,50 @@ pub(super) struct ClaudeHookReport {
     pub(super) cleared_conversation_id: Option<String>,
 }
 
+/// What a `PermissionRequest` asks: its attention, and the request a chat
+/// can answer when the prompt is a plain approval. The prompt is read by the
+/// provider adapter, which owns every Claude spelling.
+fn permission_request(
+    object: &serde_json::Map<String, Value>,
+) -> (
+    crate::hmux::ReportedAgentAttention,
+    Option<hmux_client::AgentApprovalRequest>,
+) {
+    use dure_provider_adapter::native_approval::{
+        claude_permission_prompt, ClaudePermissionPrompt,
+    };
+    use hmux_client::AgentApprovalChoice;
+    let prompt = match claude_permission_prompt(
+        object,
+        hmux_session_protocol::AGENT_APPROVAL_REQUEST_MAX_SUMMARY_BYTES,
+    ) {
+        ClaudePermissionPrompt::Question => {
+            return (crate::hmux::ReportedAgentAttention::InputRequired, None)
+        }
+        ClaudePermissionPrompt::Approval(prompt) => prompt,
+    };
+    let request = prompt
+        .map(|prompt| hmux_client::AgentApprovalRequest {
+            tool_name: prompt.tool_name,
+            summary: prompt.summary,
+            choices: [
+                Some(AgentApprovalChoice::Approve),
+                prompt
+                    .approve_always
+                    .then_some(AgentApprovalChoice::ApproveAlways),
+                Some(AgentApprovalChoice::Deny),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        })
+        .filter(hmux_client::AgentApprovalRequest::is_valid);
+    (
+        crate::hmux::ReportedAgentAttention::ApprovalRequired,
+        request,
+    )
+}
+
 fn claude_transcript_exists(transcript_path: Option<&Value>) -> bool {
     transcript_path
         .and_then(Value::as_str)
@@ -94,7 +138,24 @@ pub(super) fn normalize_hook_report(
             "blocked"
         }
         "Notification" => "informational",
+        // A turn its login could not authenticate ends in StopFailure, never
+        // Stop, and nothing runs until a person signs in again. Other API
+        // failures carry no new fact; the Host keeps its last one.
+        "StopFailure"
+            if object.get("error").and_then(Value::as_str) == Some("authentication_failed") =>
+        {
+            "sign_in_required"
+        }
+        "StopFailure" => "informational",
+        // The prompt itself, with what it asks. The person still answers it,
+        // in the terminal or from a chat that shows the request.
+        "PermissionRequest" => "blocked",
         _ => return Err("Claude hook event is unsupported".to_string()),
+    };
+    let (blocked_attention, approval_request) = if event == "PermissionRequest" {
+        permission_request(object)
+    } else {
+        (crate::hmux::ReportedAgentAttention::ApprovalRequired, None)
     };
     // Background work keeps the session busy, but a Stop still ends the
     // parent's turn, so its prompt accepts input. Claude names the subagent
@@ -173,7 +234,13 @@ pub(super) fn normalize_hook_report(
         ),
         "blocked" => (
             crate::hmux::ReportedAgentActivity::Waiting,
-            crate::hmux::ReportedAgentAttention::ApprovalRequired,
+            blocked_attention,
+            false,
+            None,
+        ),
+        "sign_in_required" => (
+            crate::hmux::ReportedAgentActivity::Waiting,
+            crate::hmux::ReportedAgentAttention::InputRequired,
             false,
             None,
         ),
@@ -221,6 +288,7 @@ pub(super) fn normalize_hook_report(
             }),
             expected_observation: None,
             background_work,
+            approval_request,
         },
     }))
 }
@@ -254,6 +322,40 @@ mod tests {
                 })
             );
             assert_eq!(report.turn_completed, event == "Stop");
+        }
+    }
+
+    #[test]
+    fn a_turn_failed_at_sign_in_asks_for_a_person_and_other_failures_add_nothing() {
+        let header = |name: &str| {
+            (name != "X-Hebbian-Hmux-Source-Sequence").then(|| "fixture-id".to_string())
+        };
+        let failure = |error: &str| {
+            serde_json::json!({
+                "hook_event_name": "StopFailure", "session_id": "fixture-conversation",
+                "prompt_id": "fixture-parent-turn", "error": error,
+                "last_assistant_message": "Not logged in · Please run /login",
+            })
+        };
+        let report = normalize_hook_report(failure("authentication_failed"), header)
+            .unwrap()
+            .expect("a failed sign-in is reported")
+            .host_request;
+        assert_eq!(report.activity, crate::hmux::ReportedAgentActivity::Waiting);
+        assert_eq!(
+            report.attention,
+            crate::hmux::ReportedAgentAttention::InputRequired
+        );
+        assert!(!report.turn_completed);
+        assert_eq!(report.turn_completion_id, None);
+        assert_eq!(report.working_ttl_ms, None);
+        for error in ["rate_limit", "server_error", "billing_error"] {
+            assert!(
+                normalize_hook_report(failure(error), header)
+                    .unwrap()
+                    .is_none(),
+                "{error}"
+            );
         }
     }
 
@@ -364,6 +466,68 @@ mod tests {
                     .then_some(hmux_client::AGENT_STATE_REPORT_MAX_WORKING_TTL_MS),
                 "{label}",
             );
+        }
+    }
+
+    fn permission_report(input: Value) -> crate::hmux::AgentStateReportRequest {
+        let mut input = input;
+        input["hook_event_name"] = "PermissionRequest".into();
+        input["session_id"] = "fixture-conversation".into();
+        normalize_hook_report(input, |name| {
+            (name != "X-Hebbian-Hmux-Source-Sequence").then(|| "fixture-id".into())
+        })
+        .unwrap()
+        .expect("a permission prompt is reported")
+        .host_request
+    }
+
+    #[test]
+    fn a_permission_prompt_carries_its_command_and_offered_answers() {
+        use hmux_client::AgentApprovalChoice::{Approve, ApproveAlways, Deny};
+        let report = permission_report(serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "cargo test -p dure", "description": "Run tests" },
+            "permission_suggestions": [{ "type": "addRules" }],
+        }));
+        assert_eq!(report.activity, crate::hmux::ReportedAgentActivity::Waiting);
+        assert_eq!(
+            report.attention,
+            crate::hmux::ReportedAgentAttention::ApprovalRequired
+        );
+        let request = report.approval_request.expect("the prompt's content");
+        assert_eq!(request.tool_name, "Bash");
+        assert_eq!(request.summary, "cargo test -p dure");
+        assert_eq!(request.choices, vec![Approve, ApproveAlways, Deny]);
+
+        // Without suggestions Claude offers no "don't ask again".
+        let request = permission_report(serde_json::json!({
+            "tool_name": "Write",
+            "tool_input": { "file_path": "/tmp/fixture.txt", "content": "secret body" },
+        }))
+        .approval_request
+        .unwrap();
+        assert_eq!(request.summary, "/tmp/fixture.txt");
+        assert_eq!(request.choices, vec![Approve, Deny]);
+    }
+
+    #[test]
+    fn prompts_that_are_not_plain_approvals_carry_no_request() {
+        let question = permission_report(serde_json::json!({ "tool_name": "AskUserQuestion" }));
+        assert_eq!(
+            question.attention,
+            crate::hmux::ReportedAgentAttention::InputRequired
+        );
+        assert_eq!(question.approval_request, None);
+        for input in [
+            serde_json::json!({ "tool_name": "ExitPlanMode", "tool_input": { "plan": "p" } }),
+            serde_json::json!({ "tool_input": { "command": "ls" } }),
+        ] {
+            let report = permission_report(input);
+            assert_eq!(
+                report.attention,
+                crate::hmux::ReportedAgentAttention::ApprovalRequired
+            );
+            assert_eq!(report.approval_request, None);
         }
     }
 }

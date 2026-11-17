@@ -8,7 +8,10 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { createClaudeAgentSdkQueryFactory } from "./agent-sdk-query.mjs";
+import {
+	createClaudeAgentSdkQueryFactory,
+	providerPermissionModeEvidence,
+} from "./agent-sdk-query.mjs";
 import {
 	claudeRuntimeArtifactDescriptor,
 	claudeRuntimeTarget,
@@ -314,6 +317,8 @@ function scriptedQuery(
 		toolResult = {},
 		toolResultError = false,
 		supportedModels = null,
+		supportedCommands = null,
+		initialization = null,
 	} = {},
 ) {
 	return ({ prompt, options }) => {
@@ -332,14 +337,18 @@ function scriptedQuery(
 			signal: new AbortController().signal,
 		});
 		let closed = false;
+		const initializationEvent = () => ({
+			...initializationMessage(observations.bindings.at(-1)),
+			...(initialization ?? {}),
+		});
 		if (!initializationAfterInput) {
-			queueMicrotask(() => output.push(initializationMessage(observations.bindings.at(-1))));
+			queueMicrotask(() => output.push(initializationEvent()));
 		}
 		void (async () => {
 			for await (const message of prompt) {
 				observations.inputs.push(message);
 				if (initializationAfterInput) {
-					output.push(initializationMessage(observations.bindings.at(-1)));
+					output.push(initializationEvent());
 				}
 				if (resultError) {
 					output.push(errorResult(resultError));
@@ -423,6 +432,9 @@ function scriptedQuery(
 			},
 			...(supportedModels
 				? { supportedModels: async () => supportedModels }
+				: {}),
+			...(supportedCommands
+				? { supportedCommands: async () => supportedCommands }
 				: {}),
 			async applyFlagSettings(settings) {
 				(observations.flagSettings ??= []).push(settings);
@@ -508,6 +520,30 @@ function interactiveQuery(observed) {
 							},
 						),
 					);
+				} else if (turnInput === "plan") {
+					const interactionAbort = new AbortController();
+					observed.interactionAbortControllers.push(interactionAbort);
+					const planResult = await options.canUseTool(
+						"ExitPlanMode",
+						{ plan: `# Plan\n\n${"- step\n".repeat(2_000)}` },
+						{
+							requestId: "sdk-plan-request-1",
+							signal: interactionAbort.signal,
+							toolUseID: "tool-use-plan-1",
+						},
+					);
+					observed.interactionResults.push(planResult);
+					// The CLI leaves plan mode for its pre-plan mode and reports it.
+					if (planResult.behavior === "allow") {
+						output.push({
+							permissionMode: "default",
+							session_id: SESSION_ID,
+							status: null,
+							subtype: "status",
+							type: "system",
+							uuid: "cccccccc-dddd-4eee-8fff-000000000000",
+						});
+					}
 				} else if (turnInput === "question") {
 					const interactionAbort = new AbortController();
 					observed.interactionAbortControllers.push(interactionAbort);
@@ -840,6 +876,131 @@ test("the provider catalog reaches the timeline as durable evidence", async () =
 			},
 		],
 	});
+	await controller.close();
+});
+
+test("plan maps to the SDK plan mode while keeping the approval channel", async () => {
+	const prepared = Object.freeze({ ...binding(), permissionMode: "plan" });
+	const observed = observations(prepared);
+	const controller = await createController(prepared, observed, scriptedQuery(observed));
+
+	assert.equal(observed.queryOptions[0].permissionMode, "plan");
+	assert.equal(typeof observed.queryOptions[0].canUseTool, "function");
+	assert.equal(
+		Object.hasOwn(observed.queryOptions[0], "allowDangerouslySkipPermissions"),
+		false,
+	);
+
+	await controller.close();
+});
+
+test("a plan larger than one tool input still reaches the approval request", async () => {
+	const prepared = Object.freeze({ ...binding(10, null), permissionMode: "plan" });
+	const observed = observations(prepared);
+	const controller = await createController(prepared, observed, interactiveQuery(observed));
+
+	const turn = controller.startTurn({ clientMessageId: "plan-message-1", input: "plan" });
+	await waitForCondition(() =>
+		observed.events.some(({ kind }) => kind === "interaction_requested"),
+	);
+	const request = controller.pendingInteractions()[0];
+	assert.equal(request.toolName, "ExitPlanMode");
+	assert.equal(request.kind, "permission");
+	assert.ok(Buffer.byteLength(request.input.plan, "utf8") > 8 * 1024);
+	await controller.answerInteraction({
+		clientMessageId: request.clientMessageId,
+		decision: "allow",
+		kind: request.kind,
+		requestId: request.requestId,
+	});
+	await turn;
+	assert.deepEqual(observed.interactionResults[0], { behavior: "allow" });
+	await controller.close();
+});
+
+test("an approved plan reports the permission mode Claude continues in", async () => {
+	const prepared = Object.freeze({ ...binding(10, null), permissionMode: "plan" });
+	const observed = observations(prepared);
+	const controller = await createController(prepared, observed, interactiveQuery(observed));
+
+	const turn = controller.startTurn({ clientMessageId: "plan-message-1", input: "plan" });
+	await waitForCondition(() =>
+		observed.events.some(({ kind }) => kind === "interaction_requested"),
+	);
+	assert.equal(
+		observed.events.some(({ kind }) => kind === "provider_permission_mode"),
+		false,
+	);
+	const request = controller.pendingInteractions()[0];
+	await controller.answerInteraction({
+		clientMessageId: request.clientMessageId,
+		decision: "allow",
+		kind: request.kind,
+		requestId: request.requestId,
+	});
+	await turn;
+	assert.deepEqual(
+		observed.events.filter(({ kind }) => kind === "provider_permission_mode").map(({ payload }) => payload),
+		[{ permissionMode: "default", providerPermissionMode: "default" }],
+	);
+	await controller.close();
+});
+
+test("provider permission modes map to Dure's selections or to none", () => {
+	assert.deepEqual(providerPermissionModeEvidence("acceptEdits"), {
+		permissionMode: "auto_edit",
+		providerPermissionMode: "acceptEdits",
+	});
+	assert.deepEqual(providerPermissionModeEvidence("bypassPermissions"), {
+		permissionMode: "skip_permissions",
+		providerPermissionMode: "bypassPermissions",
+	});
+	assert.deepEqual(providerPermissionModeEvidence("plan"), {
+		permissionMode: "plan",
+		providerPermissionMode: "plan",
+	});
+	assert.deepEqual(providerPermissionModeEvidence("auto"), {
+		permissionMode: null,
+		providerPermissionMode: "auto",
+	});
+	assert.equal(providerPermissionModeEvidence(""), null);
+	assert.equal(providerPermissionModeEvidence(7), null);
+	assert.equal(providerPermissionModeEvidence("x".repeat(64)), null);
+});
+
+test("the provider's slash commands reach the timeline without terminal-only ones", async () => {
+	const prepared = binding();
+	const observed = observations(prepared);
+	const controller = await createController(
+		prepared,
+		observed,
+		scriptedQuery(observed, {
+			initialization: { terminal_slash_commands: ["statusline"] },
+			supportedCommands: [
+				{ name: "compact", description: "Clear history but keep a summary", argumentHint: "<instructions>" },
+				{ name: "/review", description: "Review a pull request", argumentHint: "", aliases: ["pr", "bad alias"] },
+				{ name: "statusline", description: "Terminal only", argumentHint: "" },
+				{ name: "compact", description: "duplicate", argumentHint: "" },
+				{ name: "no spaces allowed", description: "", argumentHint: "" },
+			],
+		}),
+	);
+	await waitForCondition(() =>
+		observed.events.some(({ kind }) => kind === "provider_commands"),
+	);
+	assert.deepEqual(
+		observed.events.find(({ kind }) => kind === "provider_commands").payload,
+		{
+			commands: [
+				{
+					name: "compact",
+					description: "Clear history but keep a summary",
+					argumentHint: "<instructions>",
+				},
+				{ name: "review", description: "Review a pull request", aliases: ["pr"] },
+			],
+		},
+	);
 	await controller.close();
 });
 

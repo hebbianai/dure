@@ -5,11 +5,11 @@ use chrono::{Datelike, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 use dure_app::{
     AGENT_SPAWN_SCHEMA_VERSION_V1, AgentExecutionProfileV1, AgentSpawnEffortSelectionV1,
-    AgentSpawnJournalReceiptV1, AgentSpawnJournalStateV1, AgentSpawnModelSelectionV1,
-    AgentSpawnPermissionModeV1, AgentSpawnPromptDigestV1, OperationIdV1, ProjectIdV1, ProviderIdV1,
-    ProviderLaunchPermissionOverrideV1, SCHEDULE_SCHEMA_VERSION_V1, ScheduleDeleteRequestV1,
-    ScheduleIdV1, ScheduleOccurrenceRecordV2, SchedulePutRequestV1, ScheduleRecordV1,
-    ScheduleRunTemplateV1, ScheduleWorkspacePolicyV1,
+    AgentSpawnInteractionPreferenceV1, AgentSpawnJournalReceiptV1, AgentSpawnJournalStateV1,
+    AgentSpawnModelSelectionV1, AgentSpawnPermissionModeV1, AgentSpawnPromptDigestV1,
+    OperationIdV1, ProjectIdV1, ProviderIdV1, ProviderLaunchPermissionOverrideV1,
+    SCHEDULE_SCHEMA_VERSION_V1, ScheduleDeleteRequestV1, ScheduleIdV1, ScheduleOccurrenceRecordV2,
+    SchedulePutRequestV1, ScheduleRecordV1, ScheduleRunTemplateV1, ScheduleWorkspacePolicyV1,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -18,15 +18,16 @@ use tokio::time::{Duration, MissedTickBehavior};
 
 use crate::{
     BackendDispatchError, BackendRequestAuthority, ServiceState, agent_spawn_apply,
-    apply_agent_spawn, now_ms, preview_agent_spawn, projects_catalog,
-    unattended_interaction_preference, valid_project_id, valid_project_path,
+    apply_agent_spawn, now_ms, preview_agent_spawn, projects_catalog, valid_project_id,
+    valid_project_path,
 };
 
 const MAX_SCHEDULE_ITEMS: usize = 128;
 const MAX_OCCURRENCE_ITEMS: usize = 256;
 const SCHEDULE_TICK_INTERVAL: Duration = Duration::from_secs(30);
+pub(crate) mod conversation;
 pub(crate) mod lifecycle;
-mod observation;
+pub(crate) mod observation;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -61,6 +62,8 @@ struct IncomingRunTemplate {
     execution_profile: AgentExecutionProfileV1,
     #[serde(default)]
     worktree: ScheduleWorkspacePolicyV1,
+    #[serde(default)]
+    interaction_preference: Option<AgentSpawnInteractionPreferenceV1>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -173,6 +176,7 @@ pub(crate) async fn put(
             permission_mode: body.run_template.permission_mode,
             execution_profile: body.run_template.execution_profile,
             worktree: body.run_template.worktree,
+            interaction_preference: body.run_template.interaction_preference,
         },
     };
     let observed_at_ms =
@@ -425,10 +429,12 @@ pub(super) async fn execute_occurrence(
         "agentName": &agent_name[..22],
         "worktree": worktree,
         "executionProfile": template.execution_profile,
-        "interactionPreference": unattended_interaction_preference(
-            &state.agent_providers,
-            &template.provider_id,
-        ),
+        // A schedule created under the app's Terminal pane setting records
+        // `native_cli` (#566). Without one, like a new agent under the app's
+        // Chat default (#552), the occurrence starts on the provider's chat
+        // runtime where this host has one and is planned as a terminal session
+        // otherwise. A provider with neither is refused as before.
+        "interactionPreference": template.interaction_preference,
         "permissionOverride": permission_override,
         "promptDigest": AgentSpawnPromptDigestV1::sha256(&template.prompt),
     });
@@ -724,6 +730,7 @@ mod tests {
                 permission_mode: Some(AgentSpawnPermissionModeV1::Default),
                 execution_profile: AgentExecutionProfileV1::ProviderDefault,
                 worktree: ScheduleWorkspacePolicyV1::default(),
+                interaction_preference: None,
             },
             created_at_ms: 1,
             updated_at_ms: 1,

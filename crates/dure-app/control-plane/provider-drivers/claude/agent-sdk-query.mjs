@@ -23,6 +23,74 @@ const MAX_TRACE_CONTEXT_BYTES = 4 * 1024;
 const SDK_ENTRYPOINT = "sdk-ts";
 const SDK_ADDED_ENVIRONMENT_KEYS = new Set(["TRACEPARENT", "TRACESTATE"]);
 const SAFE_OPERATION_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const MAX_PROVIDER_COMMANDS = 96;
+const MAX_COMMAND_ALIASES = 4;
+const MAX_COMMAND_DESCRIPTION_CHARS = 240;
+const MAX_COMMAND_ARGUMENT_HINT_CHARS = 80;
+const SAFE_COMMAND_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u;
+
+function clippedText(value, maxChars) {
+	if (typeof value !== "string") return null;
+	const text = value.replace(/\s+/gu, " ").trim();
+	if (!text) return null;
+	return text.length > maxChars ? `${text.slice(0, maxChars - 1)}\u2026` : text;
+}
+
+/** The provider's own slash commands as bounded durable evidence. The SDK owns
+ * which commands exist (built-ins, skills, plugins, project commands); a
+ * command whose UX is bound to the local terminal never reaches a chat menu. */
+export function providerCommandCatalog(commands, terminalOnly = []) {
+	if (!Array.isArray(commands)) return null;
+	const hidden = new Set(
+		Array.isArray(terminalOnly)
+			? terminalOnly.filter((name) => typeof name === "string")
+			: [],
+	);
+	const seen = new Set();
+	const catalog = [];
+	for (const command of commands) {
+		if (catalog.length >= MAX_PROVIDER_COMMANDS) break;
+		if (!command || typeof command !== "object") continue;
+		const name = typeof command.name === "string" ? command.name.replace(/^\//u, "") : "";
+		if (!SAFE_COMMAND_NAME.test(name) || hidden.has(name) || seen.has(name)) continue;
+		seen.add(name);
+		const description = clippedText(command.description, MAX_COMMAND_DESCRIPTION_CHARS);
+		const argumentHint = clippedText(command.argumentHint, MAX_COMMAND_ARGUMENT_HINT_CHARS);
+		const aliases = Array.isArray(command.aliases)
+			? command.aliases
+					.filter((alias) => typeof alias === "string" && SAFE_COMMAND_NAME.test(alias))
+					.slice(0, MAX_COMMAND_ALIASES)
+			: [];
+		catalog.push({
+			name,
+			...(description ? { description } : {}),
+			...(argumentHint ? { argumentHint } : {}),
+			...(aliases.length > 0 ? { aliases } : {}),
+		});
+	}
+	return { commands: catalog };
+}
+
+// Claude's permission modes in Dure's vocabulary; `auto` and `dontAsk` have
+// no Dure selection.
+const DURE_PERMISSION_MODES = new Map([
+	["acceptEdits", "auto_edit"],
+	["bypassPermissions", "skip_permissions"],
+	["default", "default"],
+	["plan", "plan"],
+]);
+
+/** A permission mode the running session reported changing to (Claude's
+ * `system:status`), such as the mode it continues in once a plan is approved.
+ * The raw provider mode stays beside Dure's, which is null when Dure has no
+ * equivalent selection. */
+export function providerPermissionModeEvidence(value) {
+	if (typeof value !== "string" || !/^[A-Za-z]{1,32}$/u.test(value)) return null;
+	return {
+		permissionMode: DURE_PERMISSION_MODES.get(value) ?? null,
+		providerPermissionMode: value,
+	};
+}
 
 function adapterError(reason) {
 	const error = new Error(`dure_claude_agent_sdk_${reason}`);
@@ -660,6 +728,17 @@ export function createClaudeAgentSdkQueryFactory({
 					break;
 			}
 		};
+		let terminalSlashCommands = [];
+		const emitCommandCatalog = (commands) => {
+			if (terminalDelivered) return;
+			const catalog = providerCommandCatalog(commands, terminalSlashCommands);
+			if (!catalog || !fitsSharedClaudeSdkHostEvent("provider_commands", catalog)) return;
+			try {
+				emit("provider_commands", catalog);
+			} catch {
+				// Command evidence is advisory; it never fails the live stream.
+			}
+		};
 		const handleMessage = (rawMessage) => {
 			const message = object(rawMessage, "message_invalid");
 			boundedString(message.type, "message_type_invalid");
@@ -726,6 +805,19 @@ export function createClaudeAgentSdkQueryFactory({
 						}
 					})
 					.catch(() => {});
+				// Slash commands follow the same rule: the composer lists only
+				// what this provider session reported it can run.
+				terminalSlashCommands = Array.isArray(message.terminal_slash_commands)
+					? message.terminal_slash_commands
+					: [];
+				void Promise.resolve()
+					.then(() =>
+						typeof sdkQuery?.supportedCommands === "function"
+							? sdkQuery.supportedCommands()
+							: undefined,
+					)
+					.then((commands) => emitCommandCatalog(commands))
+					.catch(() => {});
 				// ultracode rides the session settings channel, not the effort
 				// flag: xhigh was already applied at spawn, and the standing
 				// orchestration mode follows once the session is live.
@@ -739,6 +831,27 @@ export function createClaudeAgentSdkQueryFactory({
 						.catch(() => {});
 				}
 				return;
+			}
+			if (message.type === "system" && message.subtype === "commands_changed") {
+				// The SDK pushes the full replacement list mid-session.
+				emitCommandCatalog(message.commands);
+				return;
+			}
+			if (
+				message.type === "system" &&
+				message.subtype === "status" &&
+				message.permissionMode !== undefined
+			) {
+				// Claude reports each permission mode change, such as leaving plan
+				// mode once its plan is approved; the pane's selection follows it.
+				const evidence = providerPermissionModeEvidence(message.permissionMode);
+				if (evidence && !terminalDelivered) {
+					try {
+						emit("provider_permission_mode", evidence);
+					} catch {
+						// Mode evidence is advisory; it never fails the live stream.
+					}
+				}
 			}
 			if (message.type === "stream_event") {
 				handleStreamEvent(message);
@@ -899,9 +1012,14 @@ export function createClaudeAgentSdkQueryFactory({
 
 		const skipsPermissions = binding.permissionMode === "skip_permissions";
 		// auto_edit keeps the interactive approval channel: edits auto-accept
-		// (acceptEdits) while commands still ask through canUseTool.
+		// (acceptEdits) while commands still ask through canUseTool. Plan mode
+		// keeps it too: leaving the plan (ExitPlanMode) is a pending request.
 		const sdkPermissionMode =
-			binding.permissionMode === "auto_edit" ? "acceptEdits" : "default";
+			binding.permissionMode === "auto_edit"
+				? "acceptEdits"
+				: binding.permissionMode === "plan"
+					? "plan"
+					: "default";
 		const options = {
 			abortController,
 			...(skipsPermissions

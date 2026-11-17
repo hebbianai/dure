@@ -4,6 +4,7 @@ import {
 	parseSchedule,
 	type ScheduleDraft,
 	scheduleContractError,
+	withScheduleInteractionPreference,
 } from "@/lib/automations/scheduleContract";
 import {
 	createDureBackendRequester,
@@ -26,6 +27,17 @@ export interface SchedulePutIntent extends ScheduleDraft {
 	scheduleId: string;
 	expectedRevision: number;
 	idempotencyKey: string;
+}
+
+function capabilityMissing(error: unknown, capability: string): boolean {
+	return (
+		error instanceof DureBackendRequestError &&
+		[
+			"backend_transport_capability_missing",
+			"backend_transport_profile_capability_missing",
+		].includes(error.code) &&
+		error.details?.capability === capability
+	);
 }
 
 export function createScheduleClient(
@@ -58,16 +70,30 @@ export function createScheduleClient(
 		} catch (error) {
 			// This is a read-only extension. Older backends keep their original
 			// report contract; transport/authority failures are never hidden.
-			if (
-				!(error instanceof DureBackendRequestError) ||
-				![
-					"backend_transport_capability_missing",
-					"backend_transport_profile_capability_missing",
-				].includes(error.code) ||
-				error.details?.capability !== "schedule.runtime_observation_v1"
-			)
+			if (!capabilityMissing(error, "schedule.runtime_observation_v1"))
 				throw error;
 			return request(operation, body, exact(authority));
+		}
+	};
+	const putSchedule = async (
+		intent: SchedulePutIntent,
+		authority: DureBackendRouteAuthorityV1,
+	) => {
+		try {
+			return await request("schedule.put", { ...intent }, exact(authority));
+		} catch (error) {
+			// A backend that cannot record the interface keeps its own default,
+			// as it did before; the transport refused before sending anything.
+			if (
+				intent.runTemplate.interactionPreference === undefined ||
+				!capabilityMissing(error, "schedule.interaction_preference_v1")
+			)
+				throw error;
+			return request(
+				"schedule.put",
+				{ ...withScheduleInteractionPreference(intent, undefined) },
+				exact(authority),
+			);
 		}
 	};
 	return {
@@ -102,11 +128,7 @@ export function createScheduleClient(
 			intent: SchedulePutIntent,
 			authority: DureBackendRouteAuthorityV1,
 		) {
-			const { result } = await request(
-				"schedule.put",
-				{ ...intent },
-				exact(authority),
-			);
+			const { result } = await putSchedule(intent, authority);
 			const schedule = parseSchedule(result.schedule);
 			if (
 				schedule.scheduleId !== intent.scheduleId ||

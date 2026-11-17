@@ -39,6 +39,71 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="claude-hook-identity-"))
         self.transcript = self.root / "fixture-conversation.jsonl"
 
+    def test_permission_prompt_carries_its_command_and_offered_answers(self):
+        result = report(
+            {
+                "hook_event_name": "PermissionRequest",
+                "session_id": "fixture-conversation",
+                "tool_name": "Bash",
+                "tool_input": {"command": "cargo test", "description": "Run tests"},
+                "permission_suggestions": [{"type": "addRules"}],
+            }
+        )
+        self.assertEqual(result["activity"], "waiting")
+        self.assertEqual(result["attention"], "approval_required")
+        self.assertEqual(
+            result["approval_request"],
+            {
+                "tool_name": "Bash",
+                "summary": "cargo test",
+                "choices": ["approve", "approve_always", "deny"],
+            },
+        )
+        bounded = report(
+            {
+                "hook_event_name": "PermissionRequest",
+                "session_id": "fixture-conversation",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo " + "\uac00" * 2000 + "\r\x1b[2J"},
+            }
+        )["approval_request"]
+        self.assertLessEqual(len(bounded["summary"].encode("utf-8")), 2048)
+        self.assertTrue(bounded["summary"].endswith("\u2026"))
+        self.assertNotIn("\x1b", bounded["summary"])
+        self.assertEqual(bounded["choices"], ["approve", "deny"])
+
+    def test_prompts_that_are_not_plain_approvals_carry_no_request(self):
+        question = report(
+            {
+                "hook_event_name": "PermissionRequest",
+                "session_id": "fixture-conversation",
+                "tool_name": "AskUserQuestion",
+            }
+        )
+        self.assertEqual(question["attention"], "input_required")
+        self.assertNotIn("approval_request", question)
+        plan = report(
+            {
+                "hook_event_name": "PermissionRequest",
+                "session_id": "fixture-conversation",
+                "tool_name": "ExitPlanMode",
+            }
+        )
+        self.assertEqual(plan["attention"], "approval_required")
+        self.assertNotIn("approval_request", plan)
+
+    def test_slimmed_permission_prompt_keeps_what_it_asks(self):
+        native = {
+            "hook_event_name": "PermissionRequest",
+            "session_id": "fixture-conversation",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "/fixture/notes.md", "content": "x" * 70000},
+            "permission_suggestions": [{"type": "setMode"}],
+        }
+        slim = json.loads(hook.slim_body(native))
+        self.assertEqual(slim["tool_input"], {"file_path": "/fixture/notes.md"})
+        self.assertTrue(slim["permission_suggestions"])
+
     def test_session_start_without_transcript_reports_activity_only(self):
         native = {
             "hook_event_name": "SessionStart",
@@ -144,6 +209,42 @@ class ClaudeConversationIdentityTest(unittest.TestCase):
             self.assertEqual(request["report"]["causality"], {
                 "sequence": str(hook.HOOK_SOURCE_SEQUENCE), "work_id": "fixture-parent-turn",
             })
+
+    def test_a_turn_failed_at_sign_in_asks_for_a_person(self):
+        # Claude Code 2.1.325, signed out or with an expired login, fires
+        # SessionStart, UserPromptSubmit, then StopFailure with this error and
+        # no Stop. The transcript exists by then, so the conversation resumes.
+        self.transcript.write_text(json.dumps({"type": "user"}) + "\n")
+        native = {
+            "hook_event_name": "StopFailure",
+            "session_id": "fixture-conversation",
+            "prompt_id": "fixture-parent-turn",
+            "transcript_path": str(self.transcript),
+            "error": "authentication_failed",
+            "last_assistant_message": "Not logged in · Please run /login",
+        }
+        for body in (native, json.loads(hook.slim_body(native))):
+            result = report(body)
+            self.assertEqual(result["activity"], "waiting")
+            self.assertEqual(result["attention"], "input_required")
+            self.assertFalse(result["turn_completed"])
+            self.assertNotIn("working_ttl_ms", result)
+            self.assertNotIn("turn_completion_id", result)
+            self.assertEqual(
+                result["conversation_identity"],
+                {"provider_id": "claude", "conversation_id": "fixture-conversation"},
+            )
+
+    def test_other_turn_failures_keep_their_previous_reports(self):
+        for error in ("rate_limit", "server_error", "billing_error", None, 7):
+            native = {
+                "hook_event_name": "StopFailure",
+                "session_id": "fixture-conversation",
+                "prompt_id": "fixture-parent-turn",
+            }
+            if error is not None:
+                native["error"] = error
+            self.assertIsNone(report(native), repr(error))
 
     def test_missing_work_identity_cannot_establish_quiescence(self):
         for prompt_id in (None, "", "invalid id", "short", 7):

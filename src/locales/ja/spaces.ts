@@ -22,6 +22,8 @@ export const spaces: Record<string, string> = {
 	"spaces.repository.startWith": "ここで {label} を開始",
 	"spaces.repository.addWithOptions": "オプションを指定して新規エージェント…",
 	"spaces.repository.noSessions": "セッションはまだありません",
+	"spaces.workers.one": "ワーカー 1",
+	"spaces.workers.other": "ワーカー {n}",
 	"spaces.repository.startFailed": "エージェントの開始に失敗しました: {e}",
 	"spaces.locations.openFromHost": "{name} で開く",
 	"spaces.actions.sessionCount": "{n} 個のセッション",

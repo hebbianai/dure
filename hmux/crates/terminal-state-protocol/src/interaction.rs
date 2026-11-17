@@ -1,16 +1,31 @@
 use super::{
     ClipboardFormat, InputFailureReason, InputIntent, InputReceipt, InputRefusalReason,
-    MAX_COLUMNS, MAX_EVENT_TEXT_BYTES, MAX_GRID_ROWS, MAX_INPUT_BYTES, MarkerKind, PointerKind,
-    ProtocolError, ResizeFailureReason, ResizeReceipt, ResizeRefusalReason, TerminalEvent,
-    TerminalStateRecord, encode_record_for_minor, input_intent, input_receipt, resize_receipt,
-    terminal_event, terminal_state_record, validate_bytes, validate_geometry, validate_record,
-    validate_text,
+    KeyInputIntent, MAX_COLUMNS, MAX_EVENT_TEXT_BYTES, MAX_GRID_ROWS, MAX_INPUT_BYTES, MarkerKind,
+    PointerKind, ProtocolError, ResizeFailureReason, ResizeReceipt, ResizeRefusalReason,
+    TerminalEvent, TerminalStateRecord, encode_record_for_minor, input_intent, input_receipt,
+    resize_receipt, terminal_event, terminal_state_record, validate_bytes, validate_geometry,
+    validate_record, validate_text,
 };
 
 pub const MAX_AGENT_PROMPT_ADMISSION_WAIT_MS: u32 = 10_000;
 /// Upper bound for one Host wait on an unsubmitted controller draft. A person
 /// may compose for longer; the sender then receives a not-written refusal.
 pub const MAX_DRAFT_GUARD_ADMISSION_WAIT_MS: u32 = 60_000;
+/// Most keys one attention response writes: an answer is a choice, not text.
+pub const MAX_ATTENTION_RESPONSE_KEYS: usize = 4;
+/// Longest Host attention identity an attention response names.
+const MAX_ATTENTION_ID_BYTES: usize = 256;
+
+fn validate_key(value: &KeyInputIntent) -> Result<(), ProtocolError> {
+    validate_text(&value.key, 1, 128, "key is empty or oversized")?;
+    validate_text(&value.code, 0, 128, "key code is oversized")?;
+    if value.modifiers & !0x3f != 0 {
+        return Err(ProtocolError::InvalidRecord(
+            "key modifiers contain unsupported bits",
+        ));
+    }
+    Ok(())
+}
 
 pub(crate) fn validate_event(event: &TerminalEvent) -> Result<(), ProtocolError> {
     if event.event_id == 0 {
@@ -140,15 +155,20 @@ pub fn validate_input_intent(intent: &InputIntent) -> Result<(), ProtocolError> 
             }
             Ok(())
         }
-        Some(input_intent::Intent::Key(value)) => {
-            validate_text(&value.key, 1, 128, "key is empty or oversized")?;
-            validate_text(&value.code, 0, 128, "key code is oversized")?;
-            if value.modifiers & !0x3f != 0 {
+        Some(input_intent::Intent::Key(value)) => validate_key(value),
+        Some(input_intent::Intent::AttentionResponse(value)) => {
+            validate_text(
+                &value.expected_attention_id,
+                1,
+                MAX_ATTENTION_ID_BYTES,
+                "attention response identity is empty or oversized",
+            )?;
+            if value.keys.is_empty() || value.keys.len() > MAX_ATTENTION_RESPONSE_KEYS {
                 return Err(ProtocolError::InvalidRecord(
-                    "key modifiers contain unsupported bits",
+                    "attention response requires one to four keys",
                 ));
             }
-            Ok(())
+            value.keys.iter().try_for_each(validate_key)
         }
         Some(input_intent::Intent::Paste(value)) => {
             validate_bytes(&value.utf8, 0, MAX_INPUT_BYTES, "paste input is oversized")?;

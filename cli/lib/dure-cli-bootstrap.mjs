@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseMetadata } from "./dure-cli-channel-launcher.mjs";
 import { promoteDureCli, reconcileDureCliLauncher } from "./dure-cli-promotion.mjs";
+import { runEntryPoint } from "./process-exit.mjs";
 import { assertNotRetainedAppBackup, reconcileRetainedAppBackups } from "./retained-app-backups.mjs";
 
 function bootstrap() {
@@ -36,14 +37,7 @@ function bootstrap() {
   process.stdout.write(`${JSON.stringify({ ...receipt, retainedAppBackups })}\n`);
 }
 
-try {
-  bootstrap();
-} catch (error) {
-  // Leave through normal isolate teardown rather than an uncaught exception or
-  // process.exit(). Verifying the payload hashes large files, so a concurrent
-  // V8 compile can be waiting for a main-thread GC when a refusal is thrown.
-  // Node's fast exit path then joins that worker without releasing it and the
-  // process never exits; the app saw a bootstrap timeout, not this refusal.
-  process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
-  process.exitCode = 1;
-}
+// Verifying the payload hashes large files such as bin/node, so a refusal used
+// to leave through Node's fast exit path while a V8 compile waited for a GC;
+// the process never exited and the app saw a bootstrap timeout (#549).
+await runEntryPoint(bootstrap);

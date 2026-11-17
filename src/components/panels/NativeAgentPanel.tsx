@@ -9,7 +9,12 @@ import {
 } from "@/lib/agents/freshCredentialSwitch";
 import { t } from "@/lib/i18n";
 import type { Agent } from "@/types";
-import { AgentRuntimeProfileSwitch } from "@/components/agents/AgentRuntimeProfileSwitch";
+import { AgentViewControl } from "@/components/agents/AgentViewControl";
+import {
+  setNativeAgentView,
+  useChatHandoverInFlight,
+} from "@/lib/agents/chatHandoverRuntime";
+import { nativeConversationViewAvailability } from "@/lib/agents/nativeConversationView";
 import { AgentLaunchSelectionControls } from "@/components/agents/AgentLaunchSelectionControls";
 import { agentProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
 import { AgentCredentialSwitcher } from "@/components/agents/AgentCredentialSwitcher";
@@ -173,14 +178,17 @@ export function NativeAgentPanel({
   const [ownedResuming, setResuming] =
     useRuntimeOwnedValue<boolean>(runtimeOwnerKey);
   const resuming = ownedResuming ?? false;
-  const runtimeTransitioning = resuming || launchSelection.switching;
+  const chatHandoverInFlight = useChatHandoverInFlight(agentId);
+  const runtimeTransitioning =
+    resuming || launchSelection.switching || chatHandoverInFlight;
   useNamedPaneAction(
     props.api.id,
     "switch_runtime:chat",
     backendManaged &&
       supportsStructuredChat(agent.provider) &&
       !runtimeTransitioning &&
-      !agent.pendingCredentialSwitch,
+      !agent.pendingCredentialSwitch &&
+      !agent.pendingChatHandover,
     () =>
       runAgentRuntimePaneAction((sourceStopPolicy, expectedSourceRevision) =>
         switchToStructuredChat(
@@ -251,8 +259,7 @@ export function NativeAgentPanel({
       applyAutomaticPaneTitle(
         props.api,
         resolveAgentPaneTitle({
-          name: agent.name,
-          displayName: agent.displayName,
+          agent,
           runtimeTitle: conversationTitle ?? terminalTitle,
           opaqueConversationId:
             hmuxPaneConversationId(binding) ?? agent.conversationId,
@@ -459,6 +466,19 @@ export function NativeAgentPanel({
     }
   };
 
+  const responseViewDisabled =
+    runtimeTransitioning ||
+    structuredAttachRecoveryVisible ||
+    staleManagedRecoveryVisible;
+  const conversationView = nativeConversationViewAvailability(
+    agent,
+    agentRuntimeState,
+    responseViewDisabled,
+  );
+  const presentedView =
+    conversationView.available && agent.nativeView === "conversation"
+      ? "conversation"
+      : "terminal";
   const pendingCredentialSwitch =
     binding?.runtime === "hmux_managed_v1" &&
     (!agent.pendingCredentialSwitch?.targetLaunchSelection ||
@@ -634,30 +654,38 @@ export function NativeAgentPanel({
             presentation={launchControlsPresentation}
           />
         )}
-        {structuredRuntimeActionsAvailable &&
-          toolbarControls.visible("view-switch") &&
+        {(structuredRuntimeActionsAvailable || conversationView.offered) &&
+          toolbarControls.visible("view-switch", {
+            mustShow: !!agent.pendingChatHandover,
+          }) &&
           toolbarControls.slot(
             "view-switch",
-            <AgentRuntimeProfileSwitch
+            <AgentViewControl
               key={`runtime-profile:${runtimeOwnerKey}`}
-            disabled={runtimeTransitioning || !!agent.pendingCredentialSwitch}
-            disabledTitle={
-              agent.pendingCredentialSwitch
-                ? t("agents.runtime.finishCredentialSwitchFirst")
-                : runtimeTransitioning
-                  ? t("common.loading")
+              agentId={agent.id}
+              view={presentedView}
+              pending={agent.pendingChatHandover}
+              conversationOffered={conversationView.offered}
+              conversationAvailable={conversationView.available}
+              chatAvailable={structuredRuntimeActionsAvailable}
+              disabled={runtimeTransitioning}
+              disabledTitle={runtimeTransitioning ? t("common.loading") : undefined}
+              chatDisabledTitle={
+                agent.pendingCredentialSwitch
+                  ? t("agents.runtime.finishCredentialSwitchFirst")
                   : undefined
-            }
-            onSwitch={(sourceStopPolicy, expectedSourceRevision) =>
-              switchToStructuredChat(
-                agent.id,
-                effectiveAccountId,
-                sourceStopPolicy,
-                expectedSourceRevision,
-              )
-            }
-            onSwitchingChange={setResuming}
-          />,
+              }
+              onViewChange={(view) => setNativeAgentView(agent.id, view)}
+              onSwitch={(sourceStopPolicy, expectedSourceRevision) =>
+                switchToStructuredChat(
+                  agent.id,
+                  effectiveAccountId,
+                  sourceStopPolicy,
+                  expectedSourceRevision,
+                )
+              }
+              onSwitchingChange={setResuming}
+            />,
           )}
         {backendManaged && supportsStructuredChat(agent.provider) && toolbarControls.visible("project-move") &&
           toolbarControls.slot("project-move", <AgentProjectMove
@@ -700,7 +728,7 @@ export function NativeAgentPanel({
         className="relative min-h-0 flex-1"
         onKeyDownCapture={terminalFallback.onTerminalKeyDown}
       >
-        <NativeAgentResponseView agent={agent} disabled={runtimeTransitioning || structuredAttachRecoveryVisible || staleManagedRecoveryVisible}>
+        <NativeAgentResponseView agent={agent} disabled={responseViewDisabled}>
           <TerminalView
             sessionId={agent.sessionId}
             providerHint={agent.provider}

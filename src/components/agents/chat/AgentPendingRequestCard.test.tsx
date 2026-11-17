@@ -382,3 +382,38 @@ describe("AgentPendingRequestCard", () => {
 		expect(actions?.className).toContain("flex-wrap");
 	});
 });
+
+describe("plan approval", () => {
+	afterEach(() => cleanup());
+
+	it("shows a plan-mode exit as a plan to approve, not a generic tool permission", () => {
+		const onAnswer = vi.fn();
+		render(
+			<AgentPendingRequestCard
+				pending={pending("permission", {
+					toolName: "ExitPlanMode",
+					input: {
+						plan: "## Steps\n\n1. Add the parser\n2. Wire the card",
+						planFilePath: "/workspace/.claude/plans/plan.md",
+					},
+					presentation: { title: null, displayName: null },
+				})}
+				busy={false}
+				onAnswer={onAnswer}
+			/>,
+		);
+		expect(
+			screen.getByRole("heading", { name: t("agents.chat.planApprovalTitle") }),
+		).toBeTruthy();
+		expect(screen.getByText("Add the parser")).toBeTruthy();
+		expect(screen.getByText("/workspace/.claude/plans/plan.md")).toBeTruthy();
+		expect(screen.queryByRole("button", { name: t("agents.chat.allow") })).toBeNull();
+
+		fireEvent.click(
+			screen.getByRole("button", { name: t("agents.chat.planKeepPlanning") }),
+		);
+		expect(onAnswer).toHaveBeenLastCalledWith({ decision: "deny" });
+		fireEvent.click(screen.getByRole("button", { name: t("agents.chat.planApprove") }));
+		expect(onAnswer).toHaveBeenLastCalledWith({ decision: "allow" });
+	});
+});

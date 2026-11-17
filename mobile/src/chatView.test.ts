@@ -205,6 +205,69 @@ describe("the chat view", () => {
     expect(options.openTerminal).toHaveBeenCalled();
   });
 
+  it("shows a pending approval with what it asks, and answers it once", async () => {
+    const answers: ((answer: AgentPromptAnswer | undefined) => void)[] = [];
+    const answerApproval = vi.fn<NonNullable<ChatViewOptions["answerApproval"]>>(
+      () => new Promise((resolve) => answers.push(resolve)),
+    );
+    const { container } = open({ answerApproval });
+    const asking = runtime({
+      attention: "approval_required",
+      attentionId: "attention-3",
+      approvalRequest: { toolName: "Bash", summary: "cargo test", choices: ["approve", "approve_always", "deny"] },
+    });
+    controller?.observe(asking);
+    const card = container.querySelector<HTMLElement>(".chat__approval");
+    expect(card?.hidden).toBe(false);
+    expect(card?.querySelector(".chat__approval-summary")?.textContent).toBe("cargo test");
+    expect(container.querySelector<HTMLElement>(".chat__attention")?.hidden).toBe(true);
+    const labels = [...(card?.querySelectorAll(".chat__approval-action") ?? [])].map((button) => button.textContent);
+    expect(labels).toEqual([t("chat.approval.deny"), t("chat.approval.approve_always"), t("chat.approval.approve")]);
+
+    card?.querySelector<HTMLButtonElement>(".chat__approval-action--primary")?.click();
+    card?.querySelector<HTMLButtonElement>(".chat__approval-action--primary")?.click();
+    expect(answerApproval).toHaveBeenCalledTimes(1);
+    expect(answerApproval).toHaveBeenCalledWith("attention-3", "approve", "terminal-1");
+    answers.shift()?.({ state: "written_to_pty", record_id: "r-9" });
+    await flush();
+    expect(container.querySelector<HTMLElement>(".chat__approval")?.hidden).toBe(true);
+  });
+
+  it("says why an answer did not land and keeps the terminal one tap away", async () => {
+    const answerApproval = vi.fn<NonNullable<ChatViewOptions["answerApproval"]>>(async () => ({
+      state: "refused",
+      code: "attention_changed",
+    }));
+    const { options, container } = open({ answerApproval });
+    controller?.observe(
+      runtime({
+        attention: "approval_required",
+        attentionId: "attention-3",
+        approvalRequest: { toolName: "Bash", choices: ["approve", "deny"] },
+      }),
+    );
+    container.querySelector<HTMLButtonElement>(".chat__approval-action")?.click();
+    await flush();
+    const problem = container.querySelector<HTMLElement>(".chat__approval-problem");
+    expect(problem?.hidden).toBe(false);
+    expect(problem?.textContent).toBe(t("chat.approval.changed"));
+    container.querySelector<HTMLButtonElement>(".chat__approval-terminal")?.click();
+    expect(options.openTerminal).toHaveBeenCalled();
+  });
+
+  it("leaves an approval to the terminal when the computer cannot answer it", () => {
+    const { container } = open();
+    controller?.observe(
+      runtime({
+        attention: "approval_required",
+        attentionId: "attention-3",
+        approvalRequest: { toolName: "Bash", choices: ["approve", "deny"] },
+      }),
+    );
+    expect(container.querySelector<HTMLElement>(".chat__approval")?.hidden).toBe(true);
+    expect(container.querySelector<HTMLElement>(".chat__attention")?.hidden).toBe(false);
+  });
+
   it("keeps the queued prompt's buttons in place while progress arrives", async () => {
     const { container } = open();
     controller?.observe(runtime({ activity: "working" }));

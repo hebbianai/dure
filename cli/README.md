@@ -172,8 +172,14 @@ Copyright (C) 2026 Hebbian AI. The Dure CLI is licensed under the
 
 Message tracking: `dure send NAME --track "message" --json` returns a private
 `receiptPath` for `dure wait --message PATH [--until observed|acknowledged|turn_started]`.
-Add `--from NAME` to tell the recipient who sent a message; it titles a tracked
-message `Message from NAME` and starts terminal input with `[from NAME] `.
+Every send starts terminal and chat input with a header the CLI builds:
+`[dure send · from AGENT]` inside a registered Agent's managed Session, or
+`[dure send · unregistered]` otherwise. A tracked message carries it as its
+title. `--from NAME` adds a self-chosen ` · label NAME`, and a provider command
+such as `/compact` (input whose first word is `/name`) is sent without the header. The header marks input an
+agent or script sent; a missing header does not prove that a person typed the
+text, so approvals for money, limits or credentials must come from the person in
+the app.
 See `dure send --help` and `dure wait --help` for evidence limits. Native Codex
 progress also appears in `dure inspect --json`, `dure ls`, and pane headers after
 five quiet minutes of thinking. This is an observation, never an automatic stop.
@@ -208,6 +214,13 @@ stopped, its `automation-*` worktree is removed only when it has no uncommitted 
 untracked changes and every commit on it is already on the repository's default
 branch; ignored files such as build output go with it. Otherwise the worktree is
 kept. The branch always stays, and a wake restores a removed worktree at its path.
+Both apply on the chat runtime too: a chat-runtime agent is idle once its
+conversation has no running or queued turn and no open question.
+
+A schedule saved in the app while Default agent pane is Terminal records
+`interactionPreference: "native_cli"`, and its runs start as terminal sessions.
+Recording it needs `schedule.interaction_preference_v1`; on an older backend the
+app saves the schedule without it. `dure schedule set` keeps the recorded value.
 
 Pause a schedule in place with `dure schedule set ID --disabled --expected-revision N`
 and resume it with `--enabled`. The same command can change `--cron`, `--timezone`,
@@ -224,7 +237,10 @@ startup prompts, use a new run-once key or wait for the next occurrence.
 `dure schedule runs` and `inspect` distinguish launch acceptance, current provider
 attention, and the retained completion report. Backends advertising
 `schedule.runtime_observation_v1` provide bounded, read-only runtime observations
-and exact session/workspace IDs. Older backends retain their launch/report view.
+and exact session/workspace IDs. For a chat-runtime run, which has no session, a
+current backend reports whether its turn is working, idle, waiting on a person or
+failed; a sleeping or stopped agent is named as such. Older backends retain their
+launch/report view.
 Waiting or unavailable observation is not evidence of completion or exit;
 inspect the session for startup prompts. Only the durable report marks completion.
 

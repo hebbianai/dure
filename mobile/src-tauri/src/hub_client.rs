@@ -875,6 +875,7 @@ mod tests {
     #[test]
     fn the_catalog_the_hub_wrote_is_the_catalog_the_phone_reads() {
         let sent = HubCatalog {
+            chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
             sessions: Vec::new(),

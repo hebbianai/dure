@@ -45,7 +45,7 @@ import { useSpaces } from "@/components/spaces/useSpaces";
 import { sessionAccountSummary } from "@/lib/hub/sessionAccount";
 import { sessionPresentation } from "@/lib/hub/sessionPresentation";
 import { presentedAgentDisplayState } from "@/lib/agents/agentStateModel";
-import { buildSidebarLayout } from "@/lib/hub/sidebarLayout";
+import { buildSidebarLayout, chatOwnedAgent } from "@/lib/hub/sidebarLayout";
 import { pathBasename } from "@/lib/files/paths";
 import {
 	conversationPresentationRevision,
@@ -133,6 +133,7 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 			const project = projects.find((candidate) => candidate.id === agent.projectId);
 			return {
 				hmuxSessionId: paneHmuxSessionId({ kind: "agent" }, agent),
+				chatAgent: chatOwnedAgent(agent),
 				branch: branchOf(agent.id),
 				projectName: project?.name ?? pathBasename(agent.worktreePath),
 				title: resolveUnopenedAgentPresentation({
@@ -167,6 +168,7 @@ export function useHubSidebarLayout(send: LayoutSink): void {
 				: agents.find((candidate) => candidate.id === space.agentId);
 			return {
 				...space,
+				chatAgent: space.kind === "agent" && agent ? chatOwnedAgent(agent) : undefined,
 				branch: branchOf(space.agentId, space.cwd),
 				presentation: sessionPresentation({
 					...space,

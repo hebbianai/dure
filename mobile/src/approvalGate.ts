@@ -23,9 +23,11 @@ export interface ApprovalGate {
   /**
    * Sends now, or after the owner proves themself — in the order the sends
    * arrived. A refused or dismissed sheet drops what was waiting: nothing
-   * this phone did not mean to send reaches the approval.
+   * this phone did not mean to send reaches the approval. `dropped` is told
+   * when this send was dropped that way, or by a reset, so a caller waiting
+   * on it can stop waiting.
    */
-  admit(send: () => void): void;
+  admit(send: () => void, dropped?: () => void): void;
   /** A new attachment: forget the approval, the queue and any sheet still up. */
   reset(): void;
 }
@@ -44,7 +46,7 @@ export function createApprovalGate(options: ApprovalGateOptions): ApprovalGate {
   let pending: string | undefined;
   /** The one approval this phone has already proven its owner for. */
   let proven: string | undefined;
-  let queue: (() => void)[] = [];
+  let queue: { send: () => void; dropped?: () => void }[] = [];
   let prompting = false;
   /** Bumped by `reset` so a sheet answered after it releases nothing. */
   let generation = 0;
@@ -55,21 +57,22 @@ export function createApprovalGate(options: ApprovalGateOptions): ApprovalGate {
     queue = [];
     if (check === "passed") {
       proven = id;
-      for (const send of waiting) send();
+      for (const { send } of waiting) send();
       return;
     }
     options.refused(check);
+    for (const { dropped } of waiting) dropped?.();
   };
 
   return {
     observe(state) {
       pending = approvalIdentity(state);
     },
-    admit(send) {
+    admit(send, dropped) {
       // A sheet is up: everything waits behind it, in order — even input the
       // agent no longer needs proven, or it would overtake what came first.
       if (prompting) {
-        queue.push(send);
+        queue.push({ send, dropped });
         return;
       }
       if (!options.enabled() || pending === undefined || pending === proven) {
@@ -78,7 +81,7 @@ export function createApprovalGate(options: ApprovalGateOptions): ApprovalGate {
       }
       const id = pending;
       const opened = generation;
-      queue.push(send);
+      queue.push({ send, dropped });
       prompting = true;
       options.confirm().then(
         (check) => {
@@ -93,8 +96,10 @@ export function createApprovalGate(options: ApprovalGateOptions): ApprovalGate {
       generation += 1;
       pending = undefined;
       proven = undefined;
+      const waiting = queue;
       queue = [];
       prompting = false;
+      for (const { dropped } of waiting) dropped?.();
     },
   };
 }

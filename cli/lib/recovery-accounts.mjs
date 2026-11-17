@@ -1,19 +1,28 @@
-import { closeSync, fstatSync, lstatSync, openSync, readdirSync, readSync, constants } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, constants }
+  from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { appRootDirectory } from "./app-control-location.mjs";
+import { runBoundedCommand } from "./bounded-command.mjs";
+import { PROVIDERS } from "./contracts/provider-catalog.mjs";
 import { isDureDomainIdV1 } from "./contracts/protocol-identity.mjs";
 
-// The backend keeps profile directory locators private, so names and usage are
-// joined on this computer: each local profile directory carries the generation
-// marker the backend fences launches with. Usage comes from the caches the
-// app's account usage meter reads: Claude's statusLine collector writes one per
-// profile directory, and the Codex usage collector keys snapshots by account ID.
+// The backend keeps profile directory locators private, so names, sign-in and
+// usage are joined on this computer: each local profile directory carries the
+// generation marker the backend fences launches with. Usage comes from the
+// caches the app's account usage meter reads: Claude's statusLine collector
+// writes one per profile directory, and the Codex usage collector keys
+// snapshots by account ID.
 const PROFILE_GENERATION_FILE = ".dure-profile-generation-v1";
 const MAX_PROFILE_GENERATION_BYTES = 192;
 const MAX_CLAUDE_USAGE_CACHE_BYTES = 64 * 1024;
 const MAX_CODEX_USAGE_CACHE_BYTES = 4 * 1024 * 1024;
 const USAGE_READERS = { claude: claudeUsageReader, codex: codexUsageReader };
+const SIGN_IN_READERS = { claude: claudeSignInReader };
+const CLAUDE_CREDENTIAL_FILE = ".credentials.json";
+const KEYCHAIN_LOOKUP_TIMEOUT_MS = 5_000;
+const KEYCHAIN_ITEM_NOT_FOUND = 44;
 
 function readBoundedFile(path, maxBytes) {
   let descriptor;
@@ -101,6 +110,54 @@ function claudeUsageReader({ homeDirectory, nowMs }) {
   };
 }
 
+/** Claude Code keeps a CLAUDE_CONFIG_DIR login in a macOS Keychain item named
+ * by the first eight hex digits of that exact directory string's SHA-256. */
+export function claudeKeychainService(configDirectory) {
+  return `Claude Code-credentials-${createHash("sha256").update(configDirectory).digest("hex").slice(0, 8)}`;
+}
+
+/** Asks only whether the item exists, never for its secret, so the Keychain
+ * shows no access prompt. Returns "present", "absent" or "unknown". */
+export async function findKeychainItem(service) {
+  const result = await runBoundedCommand(["/usr/bin/security", "find-generic-password", "-s", service],
+    { timeoutMs: KEYCHAIN_LOOKUP_TIMEOUT_MS, maxCaptureBytes: 64 * 1024 });
+  if (result.kind === "success") return "present";
+  return result.kind === "nonzero" && result.code === KEYCHAIN_ITEM_NOT_FOUND ? "absent" : "unknown";
+}
+
+function credentialFileState(path) {
+  try {
+    const metadata = lstatSync(path);
+    return metadata.isFile() && metadata.size > 0 ? "present" : "unknown";
+  } catch (error) {
+    return error?.code === "ENOENT" ? "absent" : "unknown";
+  }
+}
+
+/** Whether a launch on this profile directory finds a Claude login, by the
+ * rule the app's login check uses: the profile's credential file or, on
+ * macOS, the Keychain item for the directory the backend launches with (its
+ * real path). Only a confirmed absence reads as signed out (false); anything
+ * unreadable stays unknown (null). */
+function claudeSignInReader({ accountsRoot, platform, keychainLookup }) {
+  return async ({ profileName }) => {
+    if (!profileName) return null;
+    const directory = join(accountsRoot, profileName);
+    const file = credentialFileState(join(directory, CLAUDE_CREDENTIAL_FILE));
+    if (file === "present") return true;
+    if (platform !== "darwin") return file === "absent" ? false : null;
+    let launchDirectory;
+    try {
+      launchDirectory = realpathSync(directory);
+    } catch {
+      return null;
+    }
+    const item = await keychainLookup(claudeKeychainService(launchDirectory)).catch(() => "unknown");
+    if (item === "present") return true;
+    return item === "absent" && file === "absent" ? false : null;
+  };
+}
+
 function newestBy(entries, field) {
   return entries.filter((entry) => Number.isSafeInteger(entry[field]))
     .sort((left, right) => right[field] - left[field])[0];
@@ -153,24 +210,27 @@ function validProfiles(result, providerId) {
  * backend aliased to one profile directory share its generation, so they are
  * one login; the policy-named ID is offered first. Returns null when the
  * backend result is not a profile list. */
-export function summarizeRegisteredAccounts({ providerId, result, local = false,
-  environment = process.env, homeDirectory = homedir(), nowMs = Date.now() }) {
+export async function summarizeRegisteredAccounts({ providerId, result, local = false,
+  environment = process.env, homeDirectory = homedir(), nowMs = Date.now(),
+  platform = process.platform, keychainLookup = findKeychainItem }) {
   const profiles = validProfiles(result, providerId);
   if (!profiles) return null;
   const names = new Map((Array.isArray(result.policy?.accounts) ? result.policy.accounts : [])
     .filter((account) => typeof account?.name === "string" && account.name.trim())
     .map((account) => [account.profile?.referenceId, account.name.trim()]));
   const appRoot = appRootDirectory(environment, homeDirectory);
-  const profileNames = local ? readLocalProfileNames({ providerId, accountsRoot: join(appRoot, "accounts") })
-    : new Map();
+  const accountsRoot = join(appRoot, "accounts");
+  const profileNames = local ? readLocalProfileNames({ providerId, accountsRoot }) : new Map();
   const readUsage = local ? USAGE_READERS[providerId]?.({ appRoot, homeDirectory, nowMs }) : undefined;
+  const readSignIn = local ? SIGN_IN_READERS[providerId]?.({ accountsRoot, platform, keychainLookup })
+    : undefined;
   const logins = new Map();
   for (const { referenceId, credentialGeneration } of profiles) {
     const ids = logins.get(credentialGeneration) ?? [];
     ids.push(referenceId);
     logins.set(credentialGeneration, ids);
   }
-  return [...logins].map(([credentialGeneration, ids]) => {
+  return Promise.all([...logins].map(async ([credentialGeneration, ids]) => {
     const referenceId = ids.find((id) => names.has(id)) ?? ids[0];
     const profileName = profileNames.get(credentialGeneration) ?? null;
     return {
@@ -179,9 +239,10 @@ export function summarizeRegisteredAccounts({ providerId, result, local = false,
       credentialGeneration,
       name: names.get(referenceId) ?? null,
       profileName,
+      signedIn: (await readSignIn?.({ profileName })) ?? null,
       usage: readUsage?.({ profileName, referenceIds: ids }) ?? null,
     };
-  });
+  }));
 }
 
 function duration(ms) {
@@ -226,26 +287,46 @@ function accountLabel({ name, profileName }) {
   return name ?? profileName ?? "name unknown";
 }
 
+/** A shell word for the profile directory, under ~ when it lies in HOME. */
+function shellPath(path, homeDirectory) {
+  const display = path.startsWith(`${homeDirectory}/`) ? `~/${path.slice(homeDirectory.length + 1)}` : path;
+  if (/^[A-Za-z0-9_./~-]+$/u.test(display)) return display;
+  return `'${path.replaceAll("'", "'\\''")}'`;
+}
+
+/** The provider's own sign-in, pointed at each signed-out profile directory. */
+function signInLines({ providerId, accounts, environment, homeDirectory }) {
+  const provider = Object.hasOwn(PROVIDERS, providerId) ? PROVIDERS[providerId] : undefined;
+  const signedOut = accounts.filter(({ signedIn, profileName }) => signedIn === false && profileName);
+  if (!signedOut.length || !provider?.configEnv || !provider.loginCmd) return [];
+  const accountsRoot = join(appRootDirectory(environment, homeDirectory), "accounts");
+  return ["A signed-out login stops at the provider's sign-in screen. Sign it in on this computer first:",
+    ...signedOut.map(({ profileName }) => `  ${provider.configEnv}=` +
+      `${shellPath(join(accountsRoot, profileName), homeDirectory)} ${provider.loginCmd}`)];
+}
+
 function policyState(policy) {
   if (!policy) return "not configured";
   return `${policy.enabled ? "on" : "off"}, revision ${policy.revision}`;
 }
 
-export function formatRegisteredAccounts({ providerId, backend, policy, accounts, local, nowMs = Date.now() }) {
+export function formatRegisteredAccounts({ providerId, backend, policy, accounts, local, nowMs = Date.now(),
+  environment = process.env, homeDirectory = homedir() }) {
   const lines = [`${providerId} accounts on backend ${backend} (automatic recovery: ${policyState(policy)})`];
   if (accounts.length === 0) lines.push(`  No ${providerId} accounts are registered on this backend.`);
   const idWidth = Math.max(0, ...accounts.map(({ referenceId }) => referenceId.length));
   const labelWidth = Math.max(0, ...accounts.map((account) => accountLabel(account).length));
   for (const account of accounts) {
     lines.push(`  ${account.referenceId.padEnd(idWidth)}  ${accountLabel(account).padEnd(labelWidth)}  ` +
-      formatUsage(account.usage, nowMs));
+      `${account.signedIn === false ? "signed out · " : ""}${formatUsage(account.usage, nowMs)}`);
     if (account.aliasReferenceIds.length) {
       lines.push(`${" ".repeat(idWidth + 4)}same login, also registered as ${account.aliasReferenceIds.join(", ")}`);
     }
   }
   if (!local) {
-    lines.push(`Profile names and usage are read from this computer, so they are unknown for remote backend ${backend}.`);
+    lines.push(`Profile names, sign-in and usage are read from this computer, so they are unknown for remote backend ${backend}.`);
   }
+  lines.push(...signInLines({ providerId, accounts, environment, homeDirectory }));
   lines.push("Switch with: dure runs switch-account RUN --account ID. Any ID of one login selects the same credential.");
   lines.push("Use the provider's default login, which needs no registration: dure runs switch-account RUN --account default --confirm-restart");
   lines.push(`Add a login signed in on this backend's host: dure accounts register ${providerId} --dir NAME --backend ${backend} (see dure accounts help)`);

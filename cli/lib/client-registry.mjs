@@ -10,6 +10,13 @@ export function agentDisplayName(agent) {
   return displayName || agent.name;
 }
 
+/** Registered Agents whose Session is `sessionId`; the caller decides what
+ * none or several mean. */
+export function agentsInSession(registry, sessionId) {
+  if (!sessionId || !Array.isArray(registry?.agents)) return [];
+  return registry.agents.filter((agent) => agent.sessionId === sessionId || agent.remoteTmux === sessionId);
+}
+
 /** Names select a presentation record, not runtime identity or liveness. */
 export function matchingAgents(registry, query) {
   if (!query || !Array.isArray(registry?.agents)) return [];

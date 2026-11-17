@@ -137,7 +137,7 @@ use hmux_runtime_contract::{
     ManagedStopRequest, PROVIDER_STATE_ENVIRONMENT_CAPABILITY,
     PROVIDER_STATE_ENVIRONMENT_REMOVAL_CAPABILITY, ProviderConversationIdentitySeed,
     ProviderStateEnvironment, STANDALONE_CREATE_BROKER_SUBCOMMAND, StandaloneResurrectionRecipe,
-    TERMINAL_DEFAULT_COLORS_CAPABILITY, TERMINAL_INPUT_INTENT_CAPABILITY, TerminalEnvironment,
+    TERMINAL_INPUT_INTENT_CAPABILITY, TerminalEnvironment,
     interactive_terminal_environment_policy, launching_client_session_env_keys, read_json_frame,
     read_managed_attach_finalization, read_managed_attach_request, read_managed_create_request,
     read_managed_rehost_reconcile_request, read_managed_rehost_request,
@@ -311,6 +311,7 @@ const HOST_CAPABILITIES: &[&str] = &[
     hmux_host::local_protocol::AGENT_STATE_REPORT_CAUSALITY_CAPABILITY,
     hmux_host::local_protocol::AGENT_STATE_REPORT_BACKGROUND_WORK_CAPABILITY,
     hmux_host::local_protocol::AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY,
+    hmux_host::local_protocol::AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY,
     "screen_snapshot",
     "live_output",
     "terminal_input",
@@ -354,6 +355,9 @@ fn advertised_base_capabilities() -> Vec<String> {
     #[cfg(feature = "terminal-state-stream")]
     capabilities
         .push(hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY.to_string());
+    #[cfg(feature = "terminal-state-stream")]
+    capabilities
+        .push(hmux_runtime_contract::TERMINAL_ATTENTION_RESPONSE_INPUT_CAPABILITY.to_string());
     capabilities
 }
 
@@ -4710,13 +4714,7 @@ fn serve_client(
                     managed_agent_prompt_selection,
                     requested,
                 )
-                && (requested.as_str() != TERMINAL_DEFAULT_COLORS_CAPABILITY
-                    || hello
-                        .requested_capabilities
-                        .iter()
-                        .any(|capability| capability == TERMINAL_INPUT_INTENT_CAPABILITY))
-                && (requested.as_str()
-                    != hmux_runtime_contract::TERMINAL_DRAFT_GUARDED_INPUT_CAPABILITY
+                && (!hmux_runtime_contract::terminal_capability_requires_input(requested)
                     || hello
                         .requested_capabilities
                         .iter()
@@ -4785,6 +4783,9 @@ fn serve_client(
     let draft_guarded_input =
         hmux_runtime_contract::terminal_draft_guarded_input_permitted(&selected_capabilities);
     #[cfg(feature = "terminal-state-stream")]
+    let attention_response_input =
+        hmux_runtime_contract::terminal_attention_response_input_permitted(&selected_capabilities);
+    #[cfg(feature = "terminal-state-stream")]
     let terminal_base_protocol_minor =
         selected_terminal_base_protocol_minor(&selected_capabilities)
             .unwrap_or(TERMINAL_STATE_BASE_PROTOCOL_MINOR);
@@ -4838,6 +4839,9 @@ fn serve_client(
     });
     let agent_state_report_startup_gate = selected_capabilities.iter().any(|v| {
         v == hmux_host::local_protocol::AGENT_STATE_REPORT_STARTUP_GATE_CAPABILITY
+    });
+    let agent_state_report_approval_request = selected_capabilities.iter().any(|v| {
+        v == hmux_host::local_protocol::AGENT_STATE_REPORT_APPROVAL_REQUEST_CAPABILITY
     });
     let reconnect_cursor = selected_capabilities
         .iter()
@@ -5146,6 +5150,7 @@ fn serve_client(
             agent_state_report_progress,
             agent_state_report_background_work,
             agent_state_report_startup_gate,
+            agent_state_report_approval_request,
             agent_state_report_causality,
             agent_state_report_observation_fence,
             provider_conversation_identity,
@@ -5163,6 +5168,8 @@ fn serve_client(
             process_observed_agent_prompt,
             #[cfg(feature = "terminal-state-stream")]
             draft_guarded_input,
+            #[cfg(feature = "terminal-state-stream")]
+            attention_response_input,
             #[cfg(feature = "terminal-state-stream")]
             terminal_viewport_wheel,
             #[cfg(feature = "terminal-state-stream")]
@@ -5209,6 +5216,7 @@ struct ClientPermissions {
     agent_state_report_progress: bool,
     agent_state_report_background_work: bool,
     agent_state_report_startup_gate: bool,
+    agent_state_report_approval_request: bool,
     agent_state_report_causality: bool,
     agent_state_report_observation_fence: bool,
     provider_conversation_identity: bool,
@@ -5226,6 +5234,8 @@ struct ClientPermissions {
     process_observed_agent_prompt: bool,
     #[cfg(feature = "terminal-state-stream")]
     draft_guarded_input: bool,
+    #[cfg(feature = "terminal-state-stream")]
+    attention_response_input: bool,
     #[cfg(feature = "terminal-state-stream")]
     terminal_viewport_wheel: bool,
     #[cfg(feature = "terminal-state-stream")]
@@ -5313,6 +5323,7 @@ fn client_read_loop(
                         agent_prompt: permissions.agent_prompt,
                         process_observed_agent_prompt: permissions.process_observed_agent_prompt,
                         draft_guarded_input: permissions.draft_guarded_input,
+                        attention_response_input: permissions.attention_response_input,
                         wheel: permissions.terminal_viewport_wheel,
                         default_colors: permissions.terminal_default_colors,
                         history_find: permissions.terminal_history_find,
@@ -5591,6 +5602,7 @@ fn client_read_loop(
                         conversation_continuation: permissions.provider_conversation_continuation,
                         background_work: permissions.agent_state_report_background_work,
                         startup_gate: permissions.agent_state_report_startup_gate,
+                        approval_request: permissions.agent_state_report_approval_request,
                     },
                     report,
                 );
@@ -6344,6 +6356,7 @@ mod tests {
     #[test]
     fn semantic_state_frames_require_explicit_negotiation() {
         let state = FrameBody::AgentRuntimeState(AgentRuntimeStateProjection {
+            approval_request: None,
             progress: None,
             terminal_epoch: "terminal-1".into(),
             revision: 1,
@@ -6391,6 +6404,7 @@ mod tests {
             execution_location: None,
             agent_identity: None,
             agent_runtime_state: Some(AgentRuntimeStateProjection {
+                approval_request: None,
                 progress: None,
                 terminal_epoch: "terminal-1".into(),
                 revision: 1,

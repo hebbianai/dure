@@ -22,6 +22,8 @@ export const spaces: Record<string, string> = {
 	"spaces.repository.startWith": "在此启动 {label}",
 	"spaces.repository.addWithOptions": "新建智能体（含选项）…",
 	"spaces.repository.noSessions": "还没有会话",
+	"spaces.workers.one": "1 个工作器",
+	"spaces.workers.other": "{n} 个工作器",
 	"spaces.repository.startFailed": "启动智能体失败：{e}",
 	"spaces.locations.openFromHost": "从 {name} 打开",
 	"spaces.actions.sessionCount": "{n} 个会话",

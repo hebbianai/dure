@@ -14,8 +14,9 @@ afterEach(() => {
 const agent = { id: "agent-1", name: "lead", project: "fixture", sessionId: "session-1",
   runtimeBinding: { runtime: "hmux_managed_v1", source: "local", hostId: "local", sessionId: "session-1", workspaceId: "workspace-1" } };
 
-/** Collaborators for runSendCommand that record what reached each delivery path. */
-function collaborators(target = agent) {
+/** Collaborators for runSendCommand that record what reached each delivery path.
+ * The environment is explicit so the header never depends on the test's own Session. */
+function collaborators(target = agent, { environment = {}, agents } = {}) {
   const failures = [];
   return {
     parseOptions: (args) => {
@@ -24,13 +25,14 @@ function collaborators(target = agent) {
       return { rest: [...options.filter((arg) => !arg.startsWith("--")), ...(terminator < 0 ? [] : args.slice(terminator + 1))],
         enter: !options.includes("--no-enter"), json: options.includes("--json") };
     },
-    loadRegistry: () => ({ agents: typeof target === "string" ? [] : [target] }),
+    loadRegistry: () => ({ agents: agents ?? (typeof target === "string" ? [] : [target]) }),
     resolveAgent: () => target,
     send: vi.fn(async () => ({ sessionId: "session-1", workspaceId: "workspace-1", receipt: {} })),
     sendExactSession: vi.fn(async (sessionId) => ({ sessionId, workspaceId: "workspace-1", receipt: {} })),
     sendTracked: vi.fn(async () => ({ sessionId: "session-1", workspaceId: "workspace-1",
       receipt: { kind: "durable_message", interactionId: "message.1", receiptPath: "/private/message.1.json", deliveries: [] } })),
     fail: (message) => { failures.push(message); },
+    environment,
     failures,
   };
 }
@@ -40,41 +42,106 @@ function quiet() {
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 }
 
-describe("dure send --from", () => {
-  it("names the sender at the start of terminal and chat input", async () => {
+const worker = { id: "agent-2", name: "worker-3", displayName: "Review worker", project: "fixture", sessionId: "session-2",
+  runtimeBinding: { runtime: "hmux_managed_v1", source: "local", hostId: "local", sessionId: "session-2", workspaceId: "workspace-1" } };
+const insideWorker = { environment: { HMUX_SESSION_ID: "session-2", HMUX_WORKSPACE_ID: "workspace-1" }, agents: [agent, worker] };
+
+describe("dure send header", () => {
+  it("marks input sent from outside a managed Session as unregistered", async () => {
     quiet();
     const c = collaborators();
-    await runSendCommand(["lead", "--from", "ci-bot", "build", "is", "green"], c);
+    await runSendCommand(["lead", "build", "is", "green"], c);
     expect(c.failures).toEqual([]);
     expect(c.send).toHaveBeenCalledTimes(1);
-    expect(c.send.mock.calls[0][2]).toBe("[from ci-bot] build is green");
+    expect(c.send.mock.calls[0][2]).toBe("[dure send · unregistered] build is green");
   });
 
-  it("names the sender for an exact Session target", async () => {
+  it("names the registered Agent whose Session runs the CLI", async () => {
+    quiet();
+    const c = collaborators(agent, insideWorker);
+    await runSendCommand(["lead", "build is green"], c);
+    expect(c.failures).toEqual([]);
+    expect(c.send.mock.calls[0][2]).toBe("[dure send · from Review worker] build is green");
+  });
+
+  it("sends as unregistered from a Session no registered Agent owns", async () => {
+    quiet();
+    const unknown = collaborators(agent, { ...insideWorker, environment: { HMUX_SESSION_ID: "session-9" } });
+    await runSendCommand(["lead", "hello"], unknown);
+    expect(unknown.send.mock.calls[0][2]).toBe("[dure send · unregistered] hello");
+    const ambiguous = collaborators(agent, { ...insideWorker, agents: [worker, { ...worker, id: "agent-3" }] });
+    await runSendCommand(["lead", "hello"], ambiguous);
+    expect(ambiguous.send.mock.calls[0][2]).toBe("[dure send · unregistered] hello");
+  });
+
+  it("puts the --from label inside the header", async () => {
+    quiet();
+    const c = collaborators(agent, insideWorker);
+    await runSendCommand(["lead", "--from", "ci-bot", "build", "is", "green"], c);
+    expect(c.send.mock.calls[0][2]).toBe("[dure send · from Review worker · label ci-bot] build is green");
+    const outside = collaborators();
+    await runSendCommand(["lead", "--from", "ci-bot", "hello"], outside);
+    expect(outside.send.mock.calls[0][2]).toBe("[dure send · unregistered · label ci-bot] hello");
+  });
+
+  it("adds the header for an exact Session target", async () => {
     quiet();
     const c = collaborators("session-1");
     await runSendCommand(["session-1", "hello", "--from", "release bot"], c);
     expect(c.failures).toEqual([]);
-    expect(c.sendExactSession.mock.calls[0][1]).toBe("[from release bot] hello");
+    expect(c.sendExactSession.mock.calls[0][1]).toBe("[dure send · unregistered · label release bot] hello");
   });
 
-  it("titles a durable inbox message with the sender and keeps its body exact", async () => {
+  it("adds the header to file text and keeps the text after it exact", async () => {
     quiet();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dure-send-header-"));
+    roots.push(root);
+    const file = path.join(root, "input.txt");
+    fs.writeFileSync(file, "first\n  second\n");
     const c = collaborators();
+    await runSendCommand(["lead", "--file", file, "--no-enter"], c);
+    expect(c.failures).toEqual([]);
+    expect(c.send.mock.calls[0][2]).toBe("[dure send · unregistered] first\n  second\n");
+  });
+
+  it("titles a durable inbox message with the header and keeps its body exact", async () => {
+    quiet();
+    const c = collaborators(agent, insideWorker);
     await runSendCommand(["lead", "--track", "--from", "ci-bot", "hello"], c);
     expect(c.failures).toEqual([]);
     const [, text, opts] = c.sendTracked.mock.calls[0];
     expect(text).toBe("hello");
-    expect(opts.messageTitle).toBe("Message from ci-bot");
+    expect(opts.messageTitle).toBe("[dure send · from Review worker · label ci-bot]");
+    const outside = collaborators();
+    await runSendCommand(["lead", "--track", "/compact"], outside);
+    expect(outside.sendTracked.mock.calls[0][1]).toBe("/compact");
+    expect(outside.sendTracked.mock.calls[0][2].messageTitle).toBe("[dure send · unregistered]");
   });
 
-  it("leaves input unchanged without --from", async () => {
+  it.each(["/compact", "/compact\n", " /compact", "/model opus", "/project:review-pr 12",
+    "/superpowers:brainstorm", "/compact keep\nthe API notes"])(
+    "sends the provider command %j exactly as written", async (command) => {
+      quiet();
+      const c = collaborators(agent, insideWorker);
+      await runSendCommand(["lead", "--", command], c);
+      expect(c.failures).toEqual([]);
+      expect(c.send.mock.calls[0][2]).toBe(command);
+    });
+
+  it.each(["/tmp/report.txt is ready", "/", "// not a command", "/ compact", "please /compact"])(
+    "adds the header to %j, which is not one provider command", async (text) => {
+      quiet();
+      const c = collaborators();
+      await runSendCommand(["lead", "--", text], c);
+      expect(c.send.mock.calls[0][2]).toBe(`[dure send · unregistered] ${text}`);
+    });
+
+  it("refuses to label a provider command before anything is sent", async () => {
     quiet();
     const c = collaborators();
-    await runSendCommand(["lead", "hello"], c);
-    expect(c.send.mock.calls[0][2]).toBe("hello");
-    await runSendCommand(["lead", "--track", "hello"], c);
-    expect(c.sendTracked.mock.calls[0][2].messageTitle).toBeUndefined();
+    await runSendCommand(["lead", "--from", "ci-bot", "/compact"], c);
+    expect(c.failures).toEqual(["--from cannot label a provider command such as /compact; it is sent exactly as written. Nothing was sent."]);
+    expect(c.send).not.toHaveBeenCalled();
   });
 
   it("treats --from after -- as message text", async () => {
@@ -82,14 +149,14 @@ describe("dure send --from", () => {
     const c = collaborators();
     await runSendCommand(["lead", "--", "--from", "ci-bot"], c);
     expect(c.failures).toEqual([]);
-    expect(c.send.mock.calls[0][2]).toBe("--from ci-bot");
+    expect(c.send.mock.calls[0][2]).toBe("[dure send · unregistered] --from ci-bot");
   });
 
-  it("trims the name", async () => {
+  it("trims the label", async () => {
     quiet();
     const c = collaborators();
     await runSendCommand(["lead", "--from", "  ci-bot  ", "hello"], c);
-    expect(c.send.mock.calls[0][2]).toBe("[from ci-bot] hello");
+    expect(c.send.mock.calls[0][2]).toBe("[dure send · unregistered · label ci-bot] hello");
   });
 
   it.each([
@@ -109,21 +176,24 @@ describe("dure send --from", () => {
     expect(c.sendTracked).not.toHaveBeenCalled();
   });
 
-  it("accepts a 64-character name, counted in characters", async () => {
+  it("accepts a 64-character label, counted in characters", async () => {
     quiet();
     const c = collaborators();
     const name = "봇".repeat(64);
     await runSendCommand(["lead", "hi", "--from", name], c);
     expect(c.failures).toEqual([]);
-    expect(c.send.mock.calls[0][2]).toBe(`[from ${name}] hi`);
+    expect(c.send.mock.calls[0][2]).toBe(`[dure send · unregistered · label ${name}] hi`);
   });
 
-  it("documents --from in help", async () => {
+  it("documents the header and its limits in help", async () => {
     let output = "";
     vi.spyOn(process.stdout, "write").mockImplementation((chunk) => { output += chunk; return true; });
     await runSendCommand(["--help"], collaborators());
     expect(output).toContain("--from NAME");
-    expect(output).toContain("not an authenticated identity");
+    expect(output).toContain("[dure send · from AGENT]");
+    expect(output).toContain("[dure send · unregistered]");
+    expect(output).toContain("a missing header does not prove that a person typed the text");
+    expect(output).toContain("must come from the person in the app");
   });
 });
 
@@ -145,8 +215,7 @@ describe("tracked message title", () => {
     return body.title;
   }
 
-  it("uses the sender's title when given and the existing title otherwise", async () => {
-    expect(await openedTitle({ title: "Message from ci-bot" })).toBe("Message from ci-bot");
-    expect(await openedTitle({})).toBe("Agent message");
+  it("opens the message with the header as its title", async () => {
+    expect(await openedTitle({ title: "[dure send · unregistered · label ci-bot]" })).toBe("[dure send · unregistered · label ci-bot]");
   });
 });

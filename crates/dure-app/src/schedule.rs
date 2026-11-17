@@ -3,8 +3,8 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    AgentExecutionProfileV1, AgentSpawnEffortSelectionV1, AgentSpawnModelSelectionV1, ProjectIdV1,
-    ProviderIdV1, ProviderPermissionModeV1,
+    AgentExecutionProfileV1, AgentSpawnEffortSelectionV1, AgentSpawnInteractionPreferenceV1,
+    AgentSpawnModelSelectionV1, ProjectIdV1, ProviderIdV1, ProviderPermissionModeV1,
 };
 
 pub const SCHEDULE_SCHEMA_VERSION_V1: u16 = 1;
@@ -79,6 +79,11 @@ pub struct ScheduleRunTemplateV1 {
     pub execution_profile: AgentExecutionProfileV1,
     #[serde(default, skip_serializing_if = "ScheduleWorkspacePolicyV1::is_default")]
     pub worktree: ScheduleWorkspacePolicyV1,
+    /// The interface each run starts on, recorded from the creating client's
+    /// choice. Absent follows the backend default: the provider's chat runtime
+    /// where this host has one, a terminal otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interaction_preference: Option<AgentSpawnInteractionPreferenceV1>,
 }
 
 fn default_execution_profile() -> AgentExecutionProfileV1 {
@@ -488,8 +493,25 @@ mod tests {
                 permission_mode: Some(ProviderPermissionModeV1::Default),
                 execution_profile: AgentExecutionProfileV1::ProviderDefault,
                 worktree: ScheduleWorkspacePolicyV1::default(),
+                interaction_preference: None,
             },
         }
+    }
+
+    #[test]
+    fn interaction_preference_is_optional_and_round_trips() {
+        let legacy = serde_json::to_value(request()).unwrap();
+        assert!(legacy["runTemplate"].get("interactionPreference").is_none());
+        let mut pinned = legacy;
+        pinned["runTemplate"]["interactionPreference"] = serde_json::json!("native_cli");
+        let parsed: SchedulePutRequestV1 = serde_json::from_value(pinned.clone()).unwrap();
+        assert_eq!(
+            parsed.run_template.interaction_preference,
+            Some(AgentSpawnInteractionPreferenceV1::NativeCli)
+        );
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), pinned);
+        pinned["runTemplate"]["interactionPreference"] = serde_json::json!("structured_protocol");
+        assert!(serde_json::from_value::<SchedulePutRequestV1>(pinned).is_err());
     }
 
     #[test]

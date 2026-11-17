@@ -9,6 +9,8 @@
  * value and never re-validated downstream.
  */
 
+import { type AgentApprovalRequest, parseAgentApprovalRequest } from "@/lib/agents/approvalRequest";
+
 export type AgentAttention = "none" | "input_required" | "approval_required" | "error";
 
 export interface AgentRuntimeState {
@@ -25,6 +27,12 @@ export interface AgentRuntimeState {
    * here: `"0"` until the first turn ends.
    */
   readonly turnCompletedCount: string;
+  /**
+   * What the pending approval asks, when its provider said so. Only beside
+   * `approval_required`; a new request comes with a new `attentionId`.
+   * Missing from older computers, and for prompts that are not a plain approval.
+   */
+  readonly approvalRequest?: AgentApprovalRequest;
 }
 
 /**
@@ -80,6 +88,8 @@ export function parseAgentRuntimeRecord(bytes: Uint8Array): AgentRuntimeState | 
   const attentionId = optionalString(payload, "attention_id");
   const turnCompletedCount = optionalString(payload, "turn_completed_count");
   if (attentionId === null || turnCompletedCount === null) return null;
+  const approvalRequest =
+    attention === "approval_required" ? parseApprovalRequest(payload.approval_request) : undefined;
 
   return {
     lifecycle,
@@ -88,7 +98,18 @@ export function parseAgentRuntimeRecord(bytes: Uint8Array): AgentRuntimeState | 
     ...(attentionId === undefined ? {} : { attentionId }),
     revision,
     turnCompletedCount: turnCompletedCount ?? "0",
+    ...(approvalRequest ? { approvalRequest } : {}),
   };
+}
+
+/**
+ * The approval's content, or none. The relayed record spells it snake_case;
+ * the shared reader leaves anything malformed out, so a newer computer can
+ * never make the state itself unreadable.
+ */
+function parseApprovalRequest(value: unknown): AgentApprovalRequest | undefined {
+  if (!isRecord(value)) return undefined;
+  return parseAgentApprovalRequest({ toolName: value.tool_name, summary: value.summary, choices: value.choices });
 }
 
 function runtimePayload(value: unknown): Record<string, unknown> | null {

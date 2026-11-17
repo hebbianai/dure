@@ -10,10 +10,12 @@
  * DOM or a computer; `chatView.ts` draws it.
  */
 
+import type { AgentApprovalChoice, AgentApprovalRequest, ApprovalAnswerState } from "@/lib/agents/approvalRequest";
 import type { AgentRuntimeState } from "./agentRuntimeState";
 import type { AgentReadiness } from "./chatQueue";
 import { isCommandError } from "./commandError";
 import type {
+  AgentPromptAnswer,
   ConversationCursor,
   ConversationEntry,
   ConversationRefusal,
@@ -70,6 +72,34 @@ export const CHAT_POLL_INTERVAL_MS = 15_000;
 
 /** How many of the newest messages the chat asks for. */
 export const CHAT_TRANSCRIPT_LIMIT = 100;
+
+/** The card's buttons, least committal first, as the provider offers them. */
+export function approvalButtons(request: AgentApprovalRequest): AgentApprovalChoice[] {
+  const order: AgentApprovalChoice[] = ["deny", "approve_always", "approve"];
+  return order.filter((choice) => request.choices.includes(choice));
+}
+
+/** One answer from this phone, for the approval it names. */
+export interface ApprovalAnswer extends ApprovalAnswerState {
+  /** Why it did not land, as a locale key. */
+  readonly problem?: string;
+}
+
+/** Why an answer the computer did not write did not land, as a locale key. */
+export function approvalAnswerProblem(answer: AgentPromptAnswer): string | undefined {
+  if (answer.state === "written_to_pty") return undefined;
+  if (answer.state === "unknown") return "chat.approval.unconfirmed";
+  switch (answer.code) {
+    case "attention_changed":
+    case "identity_changed":
+      return "chat.approval.changed";
+    case "unsupported_runtime":
+    case "remote_unsupported":
+      return "chat.approval.unavailable";
+    default:
+      return "chat.approval.failed";
+  }
+}
 
 /** What the agent is doing, for the composer and for delivering a queued prompt. */
 export function agentReadiness(runtime: AgentRuntimeState | undefined): AgentReadiness {

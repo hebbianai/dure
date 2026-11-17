@@ -29,6 +29,7 @@ fn put_request() -> SchedulePutRequestV1 {
             permission_mode: Some(ProviderPermissionModeV1::Default),
             execution_profile: dure_app::AgentExecutionProfileV1::ProviderDefault,
             worktree: dure_app::ScheduleWorkspacePolicyV1::default(),
+            interaction_preference: None,
         },
     }
 }

@@ -1,8 +1,11 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 
+/** The text bound of a CLI input source; a Host also refuses a larger paste. */
+export const MAX_TEXT_INPUT_BYTES = 64 * 1024;
+
 // Pipes can be nonblocking once Node initializes stdin. Wait for their data
 // through the stream instead of treating a temporary EAGAIN as a read failure.
-export async function readUtf8Stdin(maxBytes = 64 * 1024, input = process.stdin) {
+export async function readUtf8Stdin(maxBytes = MAX_TEXT_INPUT_BYTES, input = process.stdin) {
   const chunks = [];
   let length = 0;
   for await (const chunk of input) {
@@ -17,7 +20,7 @@ export async function readUtf8Stdin(maxBytes = 64 * 1024, input = process.stdin)
 }
 
 // This bounds CLI buffering, not the runtime's independently enforced admission.
-export function readUtf8Input(source, maxBytes = 64 * 1024) {
+export function readUtf8Input(source, maxBytes = MAX_TEXT_INPUT_BYTES) {
   const ownsDescriptor = typeof source === "string";
   const descriptor = ownsDescriptor
     ? openSync(source, constants.O_RDONLY | constants.O_NONBLOCK)

@@ -3,6 +3,8 @@ import type { AgentRuntimeState } from "./agentRuntimeState";
 import {
   agentReadiness,
   applyTranscriptAnswer,
+  approvalAnswerProblem,
+  approvalButtons,
   type ChatTranscript,
   chatRows,
   completedTurns,
@@ -356,5 +358,22 @@ describe("chatRows", () => {
       { role: "user", text: "Run the tests", truncated: false },
       { role: "agent", text: "Done", truncated: true },
     ]);
+  });
+});
+
+describe("a pending approval in the chat", () => {
+  const request = { toolName: "Bash", summary: "ls", choices: ["approve", "approve_always", "deny"] } as const;
+
+  it("offers the provider's answers, least committal first", () => {
+    expect(approvalButtons(request)).toEqual(["deny", "approve_always", "approve"]);
+    expect(approvalButtons({ ...request, choices: ["approve", "deny"] })).toEqual(["deny", "approve"]);
+  });
+
+  it("names why an answer did not land", () => {
+    expect(approvalAnswerProblem({ state: "written_to_pty" })).toBeUndefined();
+    expect(approvalAnswerProblem({ state: "unknown" })).toBe("chat.approval.unconfirmed");
+    expect(approvalAnswerProblem({ state: "refused", code: "attention_changed" })).toBe("chat.approval.changed");
+    expect(approvalAnswerProblem({ state: "refused", code: "unsupported_runtime" })).toBe("chat.approval.unavailable");
+    expect(approvalAnswerProblem({ state: "refused", code: "probe_timeout" })).toBe("chat.approval.failed");
   });
 });

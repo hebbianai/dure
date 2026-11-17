@@ -29,7 +29,7 @@ describe("GeneralPage", () => {
     const basic = () => screen.getByRole("radio", { name: t("settings.general.interfaceMode.basic") });
     const beta = () => screen.getByRole("radio", { name: t("settings.general.interfaceMode.pro") });
     expect(basic().getAttribute("aria-checked")).toBe("true");
-    expect(screen.queryByRole("radio", { name: t("settings.general.defaultAgentPane.chat") })).toBeNull();
+    expect(screen.getByRole("radio", { name: t("settings.general.defaultAgentPane.chat") })).toBeTruthy();
     fireEvent.click(beta());
     expect(useStore.getState().uiPrefs.interfaceMode).toBe("pro");
     const roundTrip = normalizePersistedState(JSON.parse(JSON.stringify(persistedSlice(useStore.getState()))));
@@ -41,35 +41,39 @@ describe("GeneralPage", () => {
     expect(screen.getByRole("radio", { name: t("settings.general.defaultAgentPane.chat") })).toBeTruthy();
     fireEvent.click(basic());
     expect(useStore.getState().uiPrefs.interfaceMode).toBe("basic");
-    expect(screen.queryByRole("radio", { name: t("settings.general.defaultAgentPane.chat") })).toBeNull();
+    expect(screen.getByRole("radio", { name: t("settings.general.defaultAgentPane.chat") })).toBeTruthy();
     expect(useStore.getState().agents).toBe(agents);
   });
 
-  it.each([false, true])("lets Beta choose new Agent panes and persists the choice without changing existing agents (PROD: %s)", (production) => {
+  it.each([
+    ["basic", false],
+    ["pro", true],
+  ] as const)("lets the %s interface choose new Agent panes and persists the choice without changing existing agents", (interfaceMode, production) => {
     vi.stubEnv("PROD", production);
-    useStore.setState((state) => ({ uiPrefs: { ...state.uiPrefs, interfaceMode: "pro" } }));
+    useStore.setState((state) => ({ uiPrefs: { ...state.uiPrefs, interfaceMode } }));
     const agents = useStore.getState().agents;
     const view = render(<GeneralPage />);
-    const terminal = screen.getByRole("radio", { name: t("common.terminal") });
-    expect(terminal.getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(screen.getByRole("radio", { name: t("settings.general.defaultAgentPane.chat") }));
-    expect(useStore.getState().uiPrefs.defaultAgentPane).toBe("chat");
+    const chat = () => screen.getByRole("radio", { name: t("settings.general.defaultAgentPane.chat") });
+    const terminal = () => screen.getByRole("radio", { name: t("common.terminal") });
+    expect(chat().getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(terminal());
+    expect(useStore.getState().uiPrefs.defaultAgentPane).toBe("terminal");
     const roundTrip = normalizePersistedState(JSON.parse(JSON.stringify(persistedSlice(useStore.getState()))));
-    expect(roundTrip.uiPrefs.defaultAgentPane).toBe("chat");
+    expect(roundTrip.uiPrefs.defaultAgentPane).toBe("terminal");
     expect(useStore.getState().agents).toBe(agents);
     view.unmount();
     render(<GeneralPage />);
-    expect(screen.getByRole("radio", { name: t("settings.general.defaultAgentPane.chat") }).getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(screen.getByRole("radio", { name: t("common.terminal") }));
-    expect(useStore.getState().uiPrefs.defaultAgentPane).toBe("terminal");
+    expect(terminal().getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(chat());
+    expect(useStore.getState().uiPrefs.defaultAgentPane).toBe("chat");
   });
 
-  it("hides the pane choice in Basic-only while preserving a saved Pro value", () => {
+  it("keeps the pane choice in a Basic-only build", () => {
     vi.stubEnv("VITE_DURE_INTERFACE_MODE_POLICY", "basic-only");
-    useStore.setState((state) => ({ uiPrefs: { ...state.uiPrefs, interfaceMode: "pro", defaultAgentPane: "chat" } }));
+    useStore.setState((state) => ({ uiPrefs: { ...state.uiPrefs, interfaceMode: "pro", defaultAgentPane: "terminal" } }));
     render(<GeneralPage />);
-    expect(screen.queryByRole("radio", { name: t("settings.general.defaultAgentPane.chat") })).toBeNull();
-    expect(useStore.getState().uiPrefs.defaultAgentPane).toBe("chat");
+    expect(screen.queryByRole("radio", { name: t("settings.general.interfaceMode.pro") })).toBeNull();
+    expect(screen.getByRole("radio", { name: t("common.terminal") }).getAttribute("aria-checked")).toBe("true");
   });
 
   it("세그먼트를 누르면 그 설정이 스토어에 반영된다", () => {

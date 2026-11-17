@@ -40,15 +40,15 @@ function fixture(claimed = true) {
 
 describe("CLI settings authority", () => {
 	afterEach(() => vi.unstubAllEnvs());
-	it("reads the same effective Agent pane preference without changing settings", async () => {
-		vi.stubEnv("PROD", false);
+	it("reads the same Agent pane preference without changing settings", async () => {
 		const { dependencies, run } = fixture();
+		expect(await run({}, "agent.launch-preference")).toEqual({ ok: true, schemaVersion: 1, interactionPreference: null });
+		dependencies.setPrefs({ interfaceMode: "basic", defaultAgentPane: "terminal" });
+		dependencies.setPrefs.mockClear();
 		expect(await run({}, "agent.launch-preference")).toEqual({ ok: true, schemaVersion: 1, interactionPreference: "native_cli" });
-		dependencies.setPrefs({ interfaceMode: "pro", defaultAgentPane: "chat" });
+		dependencies.setPrefs({ defaultAgentPane: "chat" });
 		dependencies.setPrefs.mockClear();
 		expect(await run({}, "agent.launch-preference")).toEqual({ ok: true, schemaVersion: 1, interactionPreference: null });
-		vi.stubEnv("VITE_DURE_INTERFACE_MODE_POLICY", "basic-only");
-		expect(await run({}, "agent.launch-preference")).toEqual({ ok: true, schemaVersion: 1, interactionPreference: "native_cli" });
 		expect(dependencies.getPrefs().defaultAgentPane).toBe("chat");
 		expect(dependencies.setPrefs).not.toHaveBeenCalled();
 	});

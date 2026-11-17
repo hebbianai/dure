@@ -6,9 +6,13 @@ import {
 	ChatComposerShell,
 } from "@/components/agents/chat/ChatComposerShell";
 import { Titled } from "@/components/ui/tooltip";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AgentLaunchSelectionControls } from "@/components/agents/AgentLaunchSelectionControls";
 import { AgentSlackShare } from "@/components/agents/chat/AgentSlackShare";
+import {
+	ChatSlashCommandPalette,
+	chatSlashCommandOptionId,
+} from "@/components/agents/chat/ChatSlashCommandPalette";
 import { usePromptAttachments } from "@/components/agents/usePromptAttachments";
 import { useChatInputLatency } from "@/components/agents/chat/useChatInputLatency";
 import { useAgentLaunchControlsPresentation } from "@/components/agents/useAgentToolbarControls";
@@ -28,8 +32,17 @@ import {
 } from "@/lib/agents/chat/turnFailureReason";
 import {
 	observedProviderCatalog,
+	observedProviderCommands,
 	observedSessionInit,
 } from "@/lib/agents/chat/observedRuntimeFacts";
+import {
+	type ChatSlashCommand,
+	chatSlashCommands,
+	type DureChatCommandId,
+	matchSlashCommands,
+	resolveSlashCommand,
+	slashCommandQuery,
+} from "@/lib/agents/chat/slashCommands";
 import { PROVIDER_IDS } from "@/lib/agents/providers";
 import { t } from "@/lib/i18n";
 import { saveChatAttachments } from "@/lib/ipc";
@@ -118,6 +131,7 @@ export function ChatComposer({
 	shimmer = false,
 	attachmentsEnabled = true,
 	recovery,
+	onNewConversation,
 }: {
 	session: AgentChatSessionView;
 	paneApi?: IDockviewPanelProps["api"];
@@ -127,6 +141,8 @@ export function ChatComposer({
 	shimmer?: boolean;
 	attachmentsEnabled?: boolean;
 	recovery?: ChatTurnFailureRecovery;
+	/** The pane's existing "new conversation" control; `/clear` runs it. */
+	onNewConversation?: () => void;
 }) {
 	const identity = session.draftIdentity;
 	const chatDraft = useAgentChatDraft(identity);
@@ -149,6 +165,7 @@ export function ChatComposer({
 		return {
 			model: observedSessionInit(page).model,
 			catalog: observedProviderCatalog(page),
+			commands: observedProviderCommands(page),
 		};
 	}, [rows]);
 	const turnFailure = session.activeTurn
@@ -184,6 +201,13 @@ export function ChatComposer({
 	const runtimeLaunch = launch ?? EMPTY_LAUNCH_SELECTION_VIEW;
 	const launchControlsPresentation =
 		useAgentLaunchControlsPresentation(runtimeLaunch);
+	const [modelPickerRequest, setModelPickerRequest] = useState(0);
+	const [commandNotice, setCommandNotice] = useState<string | null>(null);
+	const [paletteDismissedFor, setPaletteDismissedFor] = useState<string | null>(
+		null,
+	);
+	const [activeCommandIndex, setActiveCommandIndex] = useState(0);
+	const paletteId = useId();
 	// The switch replaces the provider runtime; until the chat session has
 	// reconnected to the replacement, the whole composer treats it as one
 	// in-flight operation.
@@ -222,18 +246,68 @@ export function ChatComposer({
 		[],
 	);
 
-	const submit = async () => {
-		if (deferSubmit()) return;
+	// `/model` opens the composer's model pill, so it exists only while that
+	// pill is on screen; `/clear` only where the pane offers a new conversation.
+	const modelCommandAvailable =
+		provider !== null &&
+		!replacementInFlight &&
+		!launchControlsPresentation.hidden.has("launch-model");
+	const newConversationAvailable = onNewConversation !== undefined;
+	const slashCommands = useMemo(
+		() =>
+			chatSlashCommands(historyFacts.commands, {
+				clear: newConversationAvailable,
+				model: modelCommandAvailable,
+			}),
+		[historyFacts.commands, newConversationAvailable, modelCommandAvailable],
+	);
+
+	const runDureCommand = (id: DureChatCommandId) => {
+		if (!mayEditDraft()) return;
+		setDraft("");
+		setCommandNotice(null);
+		if (id === "model") setModelPickerRequest((request) => request + 1);
+		else onNewConversation?.();
+	};
+
+	const submit = async (override?: string) => {
+		if (override === undefined && deferSubmit()) return;
+		const text = override ?? draft;
 		if (
 			disabled ||
 			!mayEditDraft() ||
 			replacementInFlight ||
 			submissionInFlight ||
 			session.retryTurnAvailable ||
-			(!draft.trim() && attachments.length === 0)
+			(!text.trim() && attachments.length === 0)
 		) {
 			return;
 		}
+		// A slash command runs only when this session can run it: Dure's own
+		// map to pane controls, the provider's travel as its own input, and an
+		// unknown one stays in the draft with a reason instead of being sent.
+		const resolution = resolveSlashCommand(text, slashCommands);
+		if (resolution.kind === "unknown") {
+			setCommandNotice(
+				t("agents.chat.commandUnknown", { name: resolution.name }),
+			);
+			return;
+		}
+		if (resolution.kind === "command") {
+			// The model picker is locked while a turn runs, and a provider
+			// command must not be steered into one as plain text.
+			const { command } = resolution;
+			const waitsForTurn = command.kind === "provider" || command.id === "model";
+			if (waitsForTurn && (session.sending || session.activeTurn)) {
+				setCommandNotice(t("agents.chat.commandBusy", { name: command.name }));
+				return;
+			}
+			if (command.kind === "dure") {
+				runDureCommand(command.id);
+				return;
+			}
+		}
+		setCommandNotice(null);
 		if (!attachmentsEnabled && attachments.length > 0) {
 			setAttachmentError(t("agents.chat.attachmentRemoteUnavailable"));
 			return;
@@ -244,7 +318,7 @@ export function ChatComposer({
 		setSubmittingAuthority(authority);
 		// Attachments persist to disk first — the delivered text references
 		// them by absolute path, the same contract quick dispatch uses.
-		let input = draft;
+		let input = resolution.kind === "command" ? text.trim() : text;
 		try {
 			if (attachments.length > 0) {
 				if (!binding) return;
@@ -258,7 +332,7 @@ export function ChatComposer({
 					}
 					return;
 				}
-				input = buildPromptWithAttachments(draft, paths);
+				input = buildPromptWithAttachments(input, paths);
 			}
 			const activeSession = sessionRef.current;
 			if (
@@ -326,6 +400,26 @@ export function ChatComposer({
 		session.sending;
 	usePaneInputFocus({ paneApi, inputRef, inputReady: !inputDisabled });
 
+	const commandQuery = inputDisabled ? null : slashCommandQuery(draft);
+	const paletteCommands =
+		commandQuery === null ? [] : matchSlashCommands(slashCommands, commandQuery);
+	const paletteOpen =
+		paletteCommands.length > 0 && paletteDismissedFor !== draft;
+	const activeCommand = paletteOpen
+		? Math.min(activeCommandIndex, paletteCommands.length - 1)
+		: -1;
+	const chooseCommand = (command: ChatSlashCommand, complete: boolean) => {
+		if (!mayEditDraft()) return;
+		// A command that takes arguments completes into the draft first unless
+		// its name is already typed out; one that takes none runs at once, as
+		// a terminal palette does.
+		if (complete || (command.argumentHint && commandQuery !== command.name)) {
+			setDraft(`/${command.name} `);
+			return;
+		}
+		void submit(`/${command.name}`);
+	};
+
 	return (
 		<ChatComposerShell
 			onSubmit={() => void submit()}
@@ -347,6 +441,19 @@ export function ChatComposer({
 					{attachmentError && (
 						<ChatAlert className="mb-2 items-center">
 							<span className="min-w-0 flex-1">{attachmentError}</span>
+						</ChatAlert>
+					)}
+					{commandNotice && (
+						<ChatAlert tone="warn" className="mb-2 items-center">
+							<span className="min-w-0 flex-1">{commandNotice}</span>
+							<IconButton
+								title={t("common.close")}
+								showTooltip={false}
+								className="-m-1 shrink-0"
+								onClick={() => setCommandNotice(null)}
+							>
+								<X aria-hidden="true" />
+							</IconButton>
 						</ChatAlert>
 					)}
 					{handedOff && (
@@ -590,13 +697,56 @@ export function ChatComposer({
 					)}
 				</>
 			}
+			popover={
+				paletteOpen && (
+					<ChatSlashCommandPalette
+						id={paletteId}
+						commands={paletteCommands}
+						activeIndex={activeCommand}
+						onActiveIndexChange={setActiveCommandIndex}
+						onChoose={(command) => chooseCommand(command, false)}
+					/>
+				)
+			}
 			input={{
 				ref: inputRef,
 				value: draft,
 				onValueChange: (value) => {
 					beginInputLatencySample();
 					setDraft(value);
+					setActiveCommandIndex(0);
+					if (commandNotice) setCommandNotice(null);
 				},
+				onKeyDown: (event) => {
+					if (!paletteOpen || event.nativeEvent.isComposing) return;
+					const command = paletteCommands[activeCommand];
+					const count = paletteCommands.length;
+					if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+						event.preventDefault();
+						const step = event.key === "ArrowDown" ? 1 : -1;
+						setActiveCommandIndex((activeCommand + step + count) % count);
+					} else if (event.key === "Escape") {
+						event.preventDefault();
+						event.stopPropagation();
+						setPaletteDismissedFor(draft);
+					} else if (
+						command &&
+						!event.shiftKey &&
+						(event.key === "Tab" || event.key === "Enter")
+					) {
+						event.preventDefault();
+						chooseCommand(command, event.key === "Tab");
+					}
+				},
+				...(paletteOpen
+					? {
+							"aria-controls": paletteId,
+							"aria-activedescendant": chatSlashCommandOptionId(
+								paletteId,
+								activeCommand,
+							),
+						}
+					: {}),
 				...attachmentInput,
 				disabled: inputDisabled,
 			}}
@@ -607,6 +757,7 @@ export function ChatComposer({
 							provider={provider}
 							launch={runtimeLaunch}
 							presentation={launchControlsPresentation}
+							modelPickerRequest={modelPickerRequest}
 							observedModel={historyFacts.model}
 							catalog={historyFacts.catalog}
 							catalogSource={catalogSource}

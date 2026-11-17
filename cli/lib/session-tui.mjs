@@ -78,8 +78,8 @@ export function collectManagedAgents({
   resolveBackend,
 }) {
   const collectManaged = (query) => collectFilteredSessionQuery(query, isManaged);
-  return () => {
-    const query = { backend, execute, hmuxCommand, registry: loadRegistry(), requestBackend };
+  return (signal) => {
+    const query = { backend, execute, hmuxCommand, registry: loadRegistry(), requestBackend, signal };
     return allBackends
       ? collectAllBackendsSessionQuery({ query, collect: collectManaged, loadCatalog, resolveBackend })
       : collectManaged(query);
@@ -181,6 +181,9 @@ export async function runSessionTui({
   let refreshTimer;
   let attachedChild = null;
   let lastFrame = null;
+  // Closing the list aborts a census still in flight, so its Hmux or backend
+  // request cannot hold the process open after the list closes.
+  const census = new AbortController();
   let finish;
   let fail;
   const finished = new Promise((resolve, reject) => {
@@ -207,7 +210,7 @@ export async function runSessionTui({
     refreshing = true;
     let report;
     try {
-      report = await collect();
+      report = await collect(census.signal);
     } catch (error) {
       report = { kind: "dure.sessions.error", error: { code: error?.code ?? QUERY_UNAVAILABLE } };
     }
@@ -312,6 +315,7 @@ export async function runSessionTui({
     await finished;
   } finally {
     stopped = true;
+    census.abort();
     clearTimeout(refreshTimer);
     signals.off("SIGINT", onInterrupt);
     signals.off("SIGTERM", onTermination);

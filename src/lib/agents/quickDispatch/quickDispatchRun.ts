@@ -329,7 +329,7 @@ export async function runQuickDispatch(
 				throw new QuickDispatchError("quick_dispatch_base_commit_unavailable");
 			}
 		}
-		// Share the same default and effective Pro choice as other new panes.
+		// Share the same Default agent pane choice as other new panes.
 		const interactionPreference = agentSpawnInteractionPreference(state.uiPrefs);
 		let setupCommand = useWorktree ? intent.resolvedSetupCommand : null;
 		if (setupCommand === undefined) {

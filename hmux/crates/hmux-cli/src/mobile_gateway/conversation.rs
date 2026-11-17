@@ -368,6 +368,7 @@ mod tests {
         turns: u64,
     ) -> AgentRuntimeStateDescriptor {
         AgentRuntimeStateDescriptor {
+            approval_request: None,
             progress: None,
             terminal_epoch: terminal_epoch.into(),
             revision: "12".into(),

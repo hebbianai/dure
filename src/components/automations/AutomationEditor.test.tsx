@@ -14,6 +14,7 @@ import { setLang, t } from "@/lib/i18n";
 import { DureBackendRequestError } from "@/lib/ipc/dureBackend";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
 import { createScheduleClient } from "@/lib/ipc/dureSchedule";
+import { useStore } from "@/store";
 import { chooseSelectValue, openSelect } from "@/test/select";
 
 const authority: DureBackendRouteAuthorityV1 = {
@@ -132,6 +133,55 @@ describe("AutomationEditor", () => {
 	afterEach(() => {
 		cleanup();
 		setLang("ko");
+	});
+
+	it("records the Default agent pane choice each time the schedule is saved", async () => {
+		const pane = useStore.getState().uiPrefs.defaultAgentPane;
+		const setPane = (defaultAgentPane: "terminal" | "chat") =>
+			useStore.setState((state) => ({
+				uiPrefs: { ...state.uiPrefs, defaultAgentPane },
+			}));
+		try {
+			const { client, invokeCommand } = fixture();
+			const onSaved = vi.fn();
+			render(
+				<AutomationEditor
+					client={client}
+					authority={authority}
+					schedule={existing}
+					pro
+					onSaved={onSaved}
+					onClose={vi.fn()}
+				/>,
+			);
+			const save = async (expected: number) => {
+				fireEvent.click(screen.getByRole("button", { name: "Save" }));
+				await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(expected));
+				const puts = invokeCommand.mock.calls.filter(
+					([, args]) => args.operation === "schedule.put",
+				);
+				return puts[puts.length - 1]?.[1].body as {
+					runTemplate: Record<string, unknown>;
+				};
+			};
+			setPane("terminal");
+			fireEvent.change(screen.getByLabelText(t("automations.name")), {
+				target: { value: "Terminal review" },
+			});
+			expect((await save(1)).runTemplate).toMatchObject({
+				interactionPreference: "native_cli",
+				worktree: existing.runTemplate.worktree,
+			});
+			setPane("chat");
+			fireEvent.change(screen.getByLabelText(t("automations.name")), {
+				target: { value: "Chat review" },
+			});
+			expect((await save(2)).runTemplate).not.toHaveProperty(
+				"interactionPreference",
+			);
+		} finally {
+			setPane(pane);
+		}
 	});
 
 	it("saves an explicit no-worktree choice and preserves it on later edits", async () => {

@@ -121,8 +121,7 @@ export function useNextUpRow(entry: NextUpEntry): NextUpRowFacts | undefined {
 		agentId: agent.id,
 		// The same title authority as the pane header and the Spaces row.
 		title: resolveAgentPaneTitle({
-			name: agent.name,
-			displayName: agent.displayName,
+			agent,
 			runtimeTitle:
 				conversationTitle ?? observedTitle(sessionTitle, agent.conversationId),
 			opaqueConversationId: agent.conversationId,

@@ -2,6 +2,7 @@ import { AgentChatSurface } from "@/components/agents/chat/AgentChatSurface";
 import type { IDockviewPanelProps } from "dockview-react";
 import { AgentPendingRequestCard } from "@/components/agents/chat/AgentPendingRequestCard";
 import type { ChatTurnFailureRecovery } from "@/components/agents/chat/ChatComposer";
+import { useApprovedPlanPermissionSelection } from "@/components/agents/chat/useApprovedPlanPermissionSelection";
 import { useChatContentTypography } from "@/components/agents/chat/useChatContentTypography";
 import type { AgentRuntimeLaunchSelectionView } from "@/lib/agents/agentRuntimeLaunchSelection";
 import type { ProviderCatalogSource } from "@/lib/agents/providerModelCatalogSource";
@@ -16,6 +17,7 @@ export function StructuredAgentChatSurface({
 	catalogSource,
 	onReady,
 	recovery,
+	onNewConversation,
 }: {
 	session: AgentChatSessionView;
 	paneApi?: IDockviewPanelProps["api"];
@@ -25,8 +27,10 @@ export function StructuredAgentChatSurface({
 	catalogSource?: ProviderCatalogSource;
 	onReady?: () => void;
 	recovery?: ChatTurnFailureRecovery;
+	onNewConversation?: () => void;
 }) {
 	const typography = useChatContentTypography();
+	useApprovedPlanPermissionSelection(session, launchSelection);
 	return (
 		<AgentChatSurface
 			session={session}
@@ -38,6 +42,7 @@ export function StructuredAgentChatSurface({
 			catalogSource={catalogSource}
 			onReady={onReady}
 			recovery={recovery}
+			onNewConversation={onNewConversation}
 			renderPending={(pending) => (
 				<AgentPendingRequestCard
 					pending={pending}

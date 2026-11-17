@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { sendNativeAgentPrompt } from "@/lib/ipc/dureAgentNativeInput";
+import {
+	answerNativeAgentApproval,
+	sendNativeAgentPrompt,
+} from "@/lib/ipc/dureAgentNativeInput";
 import {
 	agentRuntimeBackendEnvelope as envelope,
 	agentRuntimeProjectionContext as projectionContext,
@@ -136,4 +139,74 @@ describe("native agent prompt input", () => {
 			expect(invokeCommand).not.toHaveBeenCalled();
 		},
 	);
+});
+
+describe("native agent approval answer", () => {
+	it("reads the exact selection first and sends one answer for the approval it names", async () => {
+		const invokeCommand = vi
+			.fn()
+			.mockResolvedValueOnce(projection())
+			.mockResolvedValueOnce(
+				inputResponse({
+					terminalEpoch: "terminal-1",
+					attentionId: "attention-3",
+					state: "written_to_pty",
+				}),
+			);
+
+		await expect(
+			answerNativeAgentApproval(target, "attention-3", "approve", {
+				invokeCommand,
+			}),
+		).resolves.toEqual({
+			terminalEpoch: "terminal-1",
+			attentionId: "attention-3",
+		});
+		expect(invokeCommand).toHaveBeenCalledTimes(2);
+		expect(invokeCommand.mock.calls[1][1]).toEqual({
+			route: { kind: "exact", authority: envelope().routeAuthority },
+			operation: "agent_runtime.native.answer",
+			body: {
+				schemaVersion: 1,
+				agentId: "agent-1",
+				expectedSelectionRevision: 4,
+				expectedTerminalEpoch: "terminal-1",
+				attentionId: "attention-3",
+				choice: "approve",
+			},
+		});
+	});
+
+	it("treats a receipt for another approval as unconfirmed", async () => {
+		const invokeCommand = vi
+			.fn()
+			.mockResolvedValueOnce(projection())
+			.mockResolvedValueOnce(
+				inputResponse({
+					terminalEpoch: "terminal-1",
+					attentionId: "attention-4",
+					state: "written_to_pty",
+				}),
+			);
+		await expect(
+			answerNativeAgentApproval(target, "attention-3", "deny", {
+				invokeCommand,
+			}),
+		).rejects.toMatchObject({
+			code: "agent_runtime_native_answer_unconfirmed",
+		});
+	});
+
+	it("refuses an unusable answer before asking the backend", async () => {
+		const invokeCommand = vi.fn();
+		await expect(
+			answerNativeAgentApproval(target, "", "approve", { invokeCommand }),
+		).rejects.toMatchObject({ code: "agent_runtime_native_request_invalid" });
+		await expect(
+			answerNativeAgentApproval(target, "attention-3", "maybe" as "approve", {
+				invokeCommand,
+			}),
+		).rejects.toMatchObject({ code: "agent_runtime_native_request_invalid" });
+		expect(invokeCommand).not.toHaveBeenCalled();
+	});
 });

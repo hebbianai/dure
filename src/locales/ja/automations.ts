@@ -195,6 +195,10 @@ export const automations: Record<string, string> = {
 	"automations.providerWorking": "作業中・レポート待ち",
 	"automations.providerWaiting":
 		"プロバイダー待機中・セッションを確認・レポート待ち",
+	"automations.chatIdle": "待機中・レポート待ち",
+	"automations.turnFailed": "ターン失敗・レポート待ち",
+	"automations.asleep": "スリープ中・レポート未受信",
+	"automations.stopped": "停止済み・レポート未受信",
 	"automations.projectTrustRequired":
 		"起動をブロック: Claudeで登録済みプロジェクトフォルダーを確認して信頼した後、再実行してください",
 };

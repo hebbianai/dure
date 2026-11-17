@@ -84,7 +84,9 @@ impl ProviderTurnSettings {
             params.insert("model".into(), Value::String(model.as_str().into()));
         }
         match self.permission_mode {
-            ProviderPermissionModeV1::Default => {}
+            // Structured admission refuses plan mode for Codex (its adapter
+            // declares no plan launch), so it never reaches a thread here.
+            ProviderPermissionModeV1::Default | ProviderPermissionModeV1::Plan => {}
             // Codex's full-auto shape: workspace edits run inside the
             // write sandbox and only an escape or failure asks.
             ProviderPermissionModeV1::AutoEdit => {
@@ -125,7 +127,7 @@ impl ProviderTurnSettings {
             params.insert("effort".into(), Value::String(effort.as_str().into()));
         }
         match self.permission_mode {
-            ProviderPermissionModeV1::Default => {}
+            ProviderPermissionModeV1::Default | ProviderPermissionModeV1::Plan => {}
             ProviderPermissionModeV1::AutoEdit => {
                 params.insert("approvalPolicy".into(), Value::String("on-failure".into()));
                 params.insert("sandboxPolicy".into(), json!({ "type": "workspaceWrite" }));

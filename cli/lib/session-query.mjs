@@ -543,6 +543,7 @@ export async function collectSessionQuery({
   backend = null,
   execute = runBoundedCommand,
   requestBackend = performBackendProfileRequest,
+  signal,
 } = {}) {
   if (
     !validRequestedMilliseconds(deadlineMs, 1) ||
@@ -642,6 +643,7 @@ export async function collectSessionQuery({
         },
         {
           ...backend.transportOptions,
+          ...(signal ? { signal } : {}),
           deadlineMs: deadline,
           maxResponseBytes: MAX_SESSION_QUERY_TRANSPORT_BYTES,
         },
@@ -674,6 +676,7 @@ export async function collectSessionQuery({
         {
           timeoutMs: deadline,
           maxCaptureBytes: HMUX_CAPABILITY_OUTPUT_BYTES,
+          signal,
         },
       );
       const capabilityObservedAtMs = Date.now();
@@ -757,6 +760,7 @@ export async function collectSessionQuery({
     const result = await execute(argv, {
       timeoutMs: commandTimeoutMs,
       maxCaptureBytes: MAX_SESSION_QUERY_OUTPUT_BYTES,
+      signal,
     });
     const observedAtMs = Date.now();
     const durationMs = Math.max(0, observedAtMs - startedAt);
@@ -813,6 +817,7 @@ export async function collectSessionQuery({
             {
               timeoutMs: Math.max(1, remainingMs),
               maxCaptureBytes: MAX_SESSION_QUERY_OUTPUT_BYTES,
+              signal,
             },
           );
           if (batchResult.kind !== "success") {

@@ -182,6 +182,98 @@ impl AgentStartupGate {
     }
 }
 
+/// Longest provider tool name an approval request carries.
+pub const AGENT_APPROVAL_REQUEST_MAX_TOOL_NAME_BYTES: usize = 128;
+/// Longest tool input summary an approval request carries. The provider
+/// adapter shortens longer input on a character boundary before reporting.
+pub const AGENT_APPROVAL_REQUEST_MAX_SUMMARY_BYTES: usize = 2048;
+
+/// One answer a provider offers for an approval, in provider-neutral terms.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentApprovalChoice {
+    /// Allow this one request.
+    Approve,
+    /// Allow it and stop asking for requests like it.
+    ApproveAlways,
+    /// Refuse it.
+    Deny,
+}
+
+impl AgentApprovalChoice {
+    /// The wire name, as surfaces that carry a choice as text spell it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::ApproveAlways => "approve_always",
+            Self::Deny => "deny",
+        }
+    }
+
+    /// The choice a wire name spells, or none for any other text.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        [Self::Approve, Self::ApproveAlways, Self::Deny]
+            .into_iter()
+            .find(|choice| choice.as_str() == value)
+    }
+}
+
+/// What a provider asks the person to approve, as its adapter read it from
+/// the provider's own permission event; it is never inferred from terminal
+/// output. Presentation only: the Host keeps it with the approval it arrived
+/// with and never interprets it.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AgentApprovalRequest {
+    /// The provider's name for the tool, such as `Bash`.
+    pub tool_name: String,
+    /// A bounded summary of the tool's input: a command, a path, a URL.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub summary: String,
+    /// The answers the provider offers, in its order.
+    pub choices: Vec<AgentApprovalChoice>,
+}
+
+impl AgentApprovalRequest {
+    /// Bounded, printable, with distinct choices that always include a way
+    /// to approve and a way to refuse.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        let printable = |text: &str| {
+            !text
+                .chars()
+                .any(|c| c.is_control() && c != '\n' && c != '\t')
+        };
+        let distinct = self
+            .choices
+            .iter()
+            .enumerate()
+            .all(|(index, choice)| !self.choices[..index].contains(choice));
+        !self.tool_name.is_empty()
+            && self.tool_name.len() <= AGENT_APPROVAL_REQUEST_MAX_TOOL_NAME_BYTES
+            && !self.tool_name.chars().any(char::is_control)
+            && self.summary.len() <= AGENT_APPROVAL_REQUEST_MAX_SUMMARY_BYTES
+            && printable(&self.summary)
+            && self.choices.len() <= 3
+            && distinct
+            && self.choices.contains(&AgentApprovalChoice::Approve)
+            && self.choices.contains(&AgentApprovalChoice::Deny)
+    }
+}
+
+impl fmt::Debug for AgentApprovalRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // A command line can carry secrets; diagnostics name only its size.
+        formatter
+            .debug_struct("AgentApprovalRequest")
+            .field("tool_name", &self.tool_name)
+            .field("summary_len", &self.summary.len())
+            .field("choices", &self.choices)
+            .finish()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRuntimeStateSource {
@@ -268,6 +360,12 @@ pub struct AgentRuntimeStateProjection {
     /// the session as busy; agent prompt admission treats it as ready.
     #[serde(default, skip_serializing_if = "is_false")]
     pub background_work: bool,
+    /// What the pending approval asks, when its provider adapter reported
+    /// it. Only beside `approval_required`, and kept for exactly that
+    /// approval: a new request is a new `attention_id`. Additive and
+    /// presentation-only, so older decoders ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_request: Option<Box<AgentApprovalRequest>>,
 }
 
 fn u64_is_zero(value: &u64) -> bool {
@@ -309,6 +407,7 @@ impl fmt::Debug for AgentRuntimeStateProjection {
             .field("turn_completed_count", &self.turn_completed_count)
             .field("program_status", &self.program_status)
             .field("background_work", &self.background_work)
+            .field("approval_request", &self.approval_request)
             .finish()
     }
 }
@@ -603,6 +702,10 @@ pub enum OperationReceiptReason {
     /// A draft-guarded write found unsubmitted controller input; nothing was
     /// written. Classic JSON input never produces this reason.
     UnsubmittedDraft,
+    /// An attention response named an attention that is no longer current or
+    /// was already answered; nothing was written. Classic JSON input never
+    /// produces this reason.
+    AttentionChanged,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -794,6 +897,11 @@ pub struct AgentStateReport {
     /// the report without it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_gate: Option<AgentStartupGate>,
+    /// What the provider asks the person to approve. Only beside `waiting`
+    /// with `approval_required`. Capability-gated: older Hosts receive the
+    /// report without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_request: Option<AgentApprovalRequest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

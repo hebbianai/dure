@@ -102,6 +102,7 @@ pub enum ControllerReceiptReason {
     PlatformResizeFailed,
     AgentRuntimeChanged,
     UnsubmittedDraft,
+    AttentionChanged,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -658,6 +659,7 @@ fn project_reason(reason: OperationReceiptReason) -> ControllerReceiptReason {
         }
         OperationReceiptReason::AgentRuntimeChanged => ControllerReceiptReason::AgentRuntimeChanged,
         OperationReceiptReason::UnsubmittedDraft => ControllerReceiptReason::UnsubmittedDraft,
+        OperationReceiptReason::AttentionChanged => ControllerReceiptReason::AttentionChanged,
     }
 }
 

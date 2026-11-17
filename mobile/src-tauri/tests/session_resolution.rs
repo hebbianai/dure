@@ -182,7 +182,9 @@ fn query(
     let certified = rcgen::generate_simple_self_signed(vec!["hub.invalid".into()]).unwrap();
     let certificate = CertificateDer::from(certified.cert.der().to_vec());
     let pin = fingerprint::of_der(&certificate);
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(certified.key_pair.serialize_der()));
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+        certified.signing_key.serialize_der(),
+    ));
     let config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))

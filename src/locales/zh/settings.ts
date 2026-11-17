@@ -12,7 +12,7 @@ export const settings: Record<string, string> = {
 	"agents.recovery.failed": "自动恢复已停止。请检查账户或手动继续。",
 
 	"settings.general.defaultAgentPane.title": "默认智能体窗格",
-	"settings.general.defaultAgentPane.desc": "仅适用于新建智能体。聊天需要受支持的提供商和启动配置。现有窗格不会改变。",
+	"settings.general.defaultAgentPane.desc": "仅适用于新建智能体。提供商或启动配置不支持聊天时，将在终端中启动。现有窗格不会改变。",
 	"settings.general.defaultAgentPane.chat": "聊天",
 	"environments.title": "VM 环境",
 	"environments.description": "添加代理时，通过项目配方创建独立环境，并在此管理其生命周期。",

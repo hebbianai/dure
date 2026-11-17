@@ -129,8 +129,10 @@ while dure_qa_read_tui_line; do
   run_managed_hook UserPromptSubmit "$line"
   if [ "$first" = 1 ]; then
     first=0
-    scenario=$(printf '%s' "$line" | awk '{print $1}')
-    scenario_arg=$(printf '%s' "$line" | awk '{print $2}')
+    # Input from `dure send` starts with its header; the scenario follows it.
+    scripted=$(printf '%s' "$line" | sed 's/^\[dure send [^]]*\] //')
+    scenario=$(printf '%s' "$scripted" | awk '{print $1}')
+    scenario_arg=$(printf '%s' "$scripted" | awk '{print $2}')
     case "$scenario" in
       exit) exit "${scenario_arg:-1}" ;;
     esac

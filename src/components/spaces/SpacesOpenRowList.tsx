@@ -1,14 +1,26 @@
 // Open-pane rows in the projected order. Repository/space groups and the flat
 // pinned list share selection, promotion counts, and in-place kill confirmation
-// through this single renderer.
-import { Fragment, type DragEvent, type MouseEvent } from "react";
+// through this single renderer. A lead's workers fold under its row.
+import {
+	Fragment,
+	type DragEvent,
+	type MouseEvent,
+	type ReactNode,
+} from "react";
 import {
 	OpenSpaceRow,
 	type SpaceMenuHandlers,
 } from "@/components/spaces/SpacesRows";
 import type { SpaceRow } from "@/components/spaces/useSpaces";
+import { useFocusedRowIn } from "@/components/spaces/useSpacesPaneState";
+import { Disclosure } from "@/components/ui/disclosure";
 import { InlineConfirmRow } from "@/components/ui/inline-confirm";
 import { t } from "@/lib/i18n";
+import { useSpacesCollapsedGroups } from "@/lib/spaces/spacesCollapsedGroupsStore";
+import {
+	leadWorkersFoldKey,
+	nestLeadWorkers,
+} from "@/lib/spaces/spacesHierarchy";
 import type { DiffReviewCapability } from "@/lib/scm/review/diffReviewCapability";
 import { localStandaloneDiffCwd } from "@/lib/scm/review/diffReviewCapability";
 import type {
@@ -75,6 +87,52 @@ export function rowListBindingsEqual(
 	);
 }
 
+/** A lead's workers, one step in under its row, behind a fold that reads
+ *  "N workers". The fold is the lead's, so it holds across pane moves and
+ *  restarts. A closed fold still shows the focused pane's row, as a folded
+ *  repository does. */
+function LeadWorkersFold({
+	leadAgentId,
+	workers,
+	renderRow,
+}: {
+	leadAgentId: string;
+	workers: readonly SpaceRow[];
+	renderRow: (space: SpaceRow) => ReactNode;
+}) {
+	const foldKey = leadWorkersFoldKey(leadAgentId);
+	const folded = useSpacesCollapsedGroups(
+		(state) => state.collapsed[foldKey] === true,
+	);
+	const toggle = useSpacesCollapsedGroups((state) => state.toggle);
+	const focusedWorker = useFocusedRowIn(workers);
+	const count = workers.length;
+	return (
+		<div data-slot="lead-workers" className="pl-3">
+			<Disclosure
+				size="meta"
+				open={!folded}
+				// The native fold flips itself first; the store follows once.
+				onToggle={(event) => {
+					if (event.currentTarget.open === folded) toggle(foldKey);
+				}}
+				label={
+					<span className="font-normal text-muted-foreground">
+						{count === 1
+							? t("spaces.workers.one")
+							: t("spaces.workers.other", { n: count })}
+					</span>
+				}
+				className="[&>summary]:px-2 [&>summary]:py-1"
+				bodyClassName="mt-0 pl-0"
+			>
+				{!folded && <div className="flex flex-col">{workers.map(renderRow)}</div>}
+			</Disclosure>
+			{folded && focusedWorker && renderRow(focusedWorker)}
+		</div>
+	);
+}
+
 /** The rows of one heading. `spaceHeading` is the enclosing section's call —
  *  whether a space heading stands over these rows — not a list binding, since
  *  a folded repository shows its lone focused row without one. */
@@ -102,6 +160,67 @@ export function SpacesOpenRowList({
 	spaces: readonly SpaceRow[];
 	spaceHeading: boolean;
 }) {
+	const renderRow = (space: SpaceRow) => {
+		const confirm = killConfirm?.anchorKey === space.key ? killConfirm : null;
+		return (
+			// The row stays while its kill is confirmed, wearing the selected
+			// tint, and the question sits under it. Swapping the row for
+			// the question left nothing on screen saying which session was
+			// about to end (owner report 2026-09-14).
+			<Fragment key={space.key}>
+				<OpenSpaceRow
+					space={space}
+					visibleFields={visibleFields}
+					groupBy={groupBy}
+					spaceHeading={spaceHeading}
+					showSpaces={showSpaces}
+					canViewDiff={
+						space.kind === "agent" ||
+						(() => {
+							const cwd = localStandaloneDiffCwd(space);
+							return Boolean(
+								cwd && diffCapabilities.get(cwd)?.status === "available",
+							);
+						})()
+					}
+					isSelected={selected.has(space.key) || confirm !== null}
+					isContextTarget={contextMenuKey === space.key}
+					selectionCount={selected.has(space.key) ? selected.size : 1}
+					promotionEligibleCount={
+						selected.has(space.key)
+							? selectedPromotionEligible
+							: space.managedPromotion === "eligible"
+								? 1
+								: 0
+					}
+					promotionDeferredCount={
+						selected.has(space.key)
+							? selectedPromotionDeferred
+							: space.managedPromotion !== "hidden" &&
+									space.managedPromotion !== "eligible"
+								? 1
+								: 0
+					}
+					promotionBusy={conversionBusyKeys.has(space.key)}
+					onSpaceClick={onSpaceClick}
+					onContextMenuOpenChange={onContextMenuOpenChange}
+					onRowDragStart={onRowDragStart}
+					onRowDragEnd={onRowDragEnd}
+					menuHandlers={menuHandlers}
+				/>
+				{confirm && (
+					<InlineConfirmRow
+						className="mt-0.5"
+						question={confirm.question}
+						confirmLabel={t("spaces.kill.confirmLabel")}
+						busy={confirm.busy}
+						onConfirm={onKillConfirm}
+						onCancel={onKillCancel}
+					/>
+				)}
+			</Fragment>
+		);
+	};
 	return (
 		// The rows touch. Two pixels between them made each row its own object
 		// and the list a stack of them; with the gap closed the list reads as one
@@ -109,68 +228,20 @@ export function SpacesOpenRowList({
 		// repositories (owner call 2026-09-14, on the Notion sidebar's rhythm).
 		// 2386:41128 "VerticalBorder" kept them 2px apart.
 		<div className="flex flex-col">
-			{spaces.map((space) => {
-				const confirm =
-					killConfirm?.anchorKey === space.key ? killConfirm : null;
-				return (
-					// The row stays while its kill is confirmed, wearing the selected
-					// tint, and the question sits under it. Swapping the row for
-					// the question left nothing on screen saying which session was
-					// about to end (owner report 2026-09-14).
-					<Fragment key={space.key}>
-					<OpenSpaceRow
-						space={space}
-						visibleFields={visibleFields}
-						groupBy={groupBy}
-						spaceHeading={spaceHeading}
-						showSpaces={showSpaces}
-						canViewDiff={
-							space.kind === "agent" ||
-							(() => {
-								const cwd = localStandaloneDiffCwd(space);
-								return Boolean(
-									cwd && diffCapabilities.get(cwd)?.status === "available",
-								);
-							})()
-						}
-						isSelected={selected.has(space.key) || confirm !== null}
-						isContextTarget={contextMenuKey === space.key}
-						selectionCount={selected.has(space.key) ? selected.size : 1}
-						promotionEligibleCount={
-							selected.has(space.key)
-								? selectedPromotionEligible
-								: space.managedPromotion === "eligible"
-									? 1
-									: 0
-						}
-						promotionDeferredCount={
-							selected.has(space.key)
-								? selectedPromotionDeferred
-								: space.managedPromotion !== "hidden" &&
-										space.managedPromotion !== "eligible"
-									? 1
-									: 0
-						}
-						promotionBusy={conversionBusyKeys.has(space.key)}
-						onSpaceClick={onSpaceClick}
-						onContextMenuOpenChange={onContextMenuOpenChange}
-						onRowDragStart={onRowDragStart}
-						onRowDragEnd={onRowDragEnd}
-						menuHandlers={menuHandlers}
-					/>
-					{confirm && (
-						<InlineConfirmRow
-							className="mt-0.5"
-							question={confirm.question}
-							confirmLabel={t("spaces.kill.confirmLabel")}
-							busy={confirm.busy}
-							onConfirm={onKillConfirm}
-							onCancel={onKillCancel}
+			{nestLeadWorkers(spaces).map(({ row, workers }) =>
+				workers.length === 0 || !row.agentId ? (
+					renderRow(row)
+				) : (
+					<Fragment key={row.key}>
+						{renderRow(row)}
+						<LeadWorkersFold
+							leadAgentId={row.agentId}
+							workers={workers}
+							renderRow={renderRow}
 						/>
-					)}
 					</Fragment>
-				);
-			})}
+				),
+			)}
 		</div>
 	);
 }

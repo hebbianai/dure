@@ -76,6 +76,12 @@ const SERVER_CAPABILITIES: &[&str] = &[
     // `/hmux/attach` accepts an Agent's current native runtime without a Run
     // record (the `agent_runtime` identity) and never launches a provider.
     "hmux.attach.agent_runtime_v1",
+    // Run presentation requests may carry the Run's `parent` Session, which
+    // groups a lead's workers in the Spaces list.
+    "agent.run_parent_v1",
+    // Run presentation requests may carry `startedAtMs`, which commits a
+    // lead's concurrent workers in start order.
+    "agent.run_start_order_v1",
 ];
 fn claimed_request_timeout(action: &str) -> Duration {
     match action {
@@ -2673,7 +2679,9 @@ mod tests {
                 "agent.launch_account_v1",
                 "agent.run_background_v1",
                 "hmux.input.draft_guard_v1",
-                "hmux.attach.agent_runtime_v1"
+                "hmux.attach.agent_runtime_v1",
+                "agent.run_parent_v1",
+                "agent.run_start_order_v1"
             ])
         );
         std::fs::remove_dir_all(directory).unwrap();

@@ -6,6 +6,7 @@ import {
 	parseOccurrence,
 	parseSchedule,
 	scheduleDraft,
+	withScheduleInteractionPreference,
 } from "@/lib/automations/scheduleContract";
 import { t } from "@/lib/i18n";
 
@@ -188,6 +189,72 @@ it("preserves explicit project-root schedules and rejects Git options on that po
 			runTemplate: {
 				...plain.runTemplate,
 				worktree: { kind: "project_root", baseCommitSha: "a".repeat(40) },
+			},
+		}),
+	).toThrow();
+});
+
+it("names a chat-runtime run's conversation state and a sleeping or stopped run", () => {
+	const chat = (conversation: Record<string, unknown> | undefined) =>
+		occurrenceStatus(
+			parseOccurrence({
+				...occurrence,
+				runtime: {
+					state: "unavailable",
+					observedAtMs: 3,
+					errorCode: "schedule_runtime_not_native",
+					...(conversation ? { conversation } : {}),
+				},
+			}),
+		);
+	expect(chat({ activity: "working", attention: "none" })).toBe(
+		t("automations.providerWorking"),
+	);
+	expect(chat({ activity: "waiting", attention: "none" })).toBe(
+		t("automations.chatIdle"),
+	);
+	expect(chat({ activity: "waiting", attention: "input_required" })).toBe(
+		t("automations.inputRequired"),
+	);
+	expect(chat({ activity: "working", attention: "approval_required" })).toBe(
+		t("automations.approvalRequired"),
+	);
+	expect(chat({ activity: "waiting", attention: "error" })).toBe(
+		t("automations.turnFailed"),
+	);
+	// A backend that predates chat status keeps the generic text.
+	expect(chat(undefined)).toBe(t("automations.runtimeUnavailable"));
+	expect(() => chat({ activity: "done", attention: "none" })).toThrow();
+	for (const [errorCode, key] of [
+		["schedule_runtime_sleeping", "automations.asleep"],
+		["schedule_runtime_stopped", "automations.stopped"],
+	]) {
+		expect(
+			occurrenceStatus(
+				parseOccurrence({
+					...occurrence,
+					runtime: { state: "unavailable", observedAtMs: 3, errorCode },
+				}),
+			),
+		).toBe(t(key));
+	}
+});
+
+it("records Terminal from Default agent pane on save and clears it under Chat", () => {
+	const draft = scheduleDraft(parseSchedule(schedule));
+	const terminal = withScheduleInteractionPreference(draft, "native_cli");
+	expect(terminal.runTemplate.interactionPreference).toBe("native_cli");
+	expect(parseSchedule({ ...schedule, runTemplate: terminal.runTemplate }))
+		.toBeTruthy();
+	const chat = withScheduleInteractionPreference(terminal, undefined);
+	expect(chat.runTemplate).not.toHaveProperty("interactionPreference");
+	expect(chat.runTemplate).toEqual(schedule.runTemplate);
+	expect(() =>
+		parseSchedule({
+			...schedule,
+			runTemplate: {
+				...schedule.runTemplate,
+				interactionPreference: "structured_protocol",
 			},
 		}),
 	).toThrow();

@@ -10,6 +10,11 @@ pub(super) fn operation_body_capability(
     {
         Some("browser.profile_recovery.v1")
     } else if operation == "schedule.put"
+        && body.pointer("/runTemplate/interactionPreference").is_some()
+    {
+        // A backend with a recorded interface also has project-root runs.
+        Some("schedule.interaction_preference_v1")
+    } else if operation == "schedule.put"
         && body
             .pointer("/runTemplate/worktree/kind")
             .and_then(serde_json::Value::as_str)
@@ -32,6 +37,7 @@ pub(super) fn operation_capability(operation: &str) -> Option<&'static str> {
     match operation {
         "agent_runtime.native.read" => Some("agent_runtime.native.read"),
         "agent_runtime.native.input" => Some("agent_runtime.native.input"),
+        "agent_runtime.native.answer" => Some("agent_runtime.native.answer"),
         "backend.scope" => Some("backend.scope.v1"),
         "workspace_environment.invoke" => Some("workspace_environment.v1"),
         "agent_goal.get" | "agent_goal.put" => Some("agent_goal.v1"),
@@ -160,6 +166,28 @@ mod tests {
                 &serde_json::json!({"runTemplate": {"worktree": {"kind": "dedicated"}}})
             ),
             Some("schedule.put")
+        );
+    }
+
+    #[test]
+    fn a_recorded_schedule_interface_requires_its_capability() {
+        use super::operation_body_capability;
+        assert_eq!(
+            operation_body_capability(
+                "schedule.put",
+                &serde_json::json!({"runTemplate": {"interactionPreference": "native_cli"}})
+            ),
+            Some("schedule.interaction_preference_v1")
+        );
+        assert_eq!(
+            operation_body_capability(
+                "schedule.put",
+                &serde_json::json!({"runTemplate": {
+                    "interactionPreference": "native_cli",
+                    "worktree": {"kind": "project_root"}
+                }})
+            ),
+            Some("schedule.interaction_preference_v1")
         );
     }
 

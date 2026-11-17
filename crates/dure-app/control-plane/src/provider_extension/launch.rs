@@ -361,7 +361,11 @@ fn structured_session_plan(
     available: bool,
     request: AgentProviderStructuredSessionRequestV1<'_>,
 ) -> Result<Option<AgentProviderStructuredSessionPlanV1>, ExtensionFailureCodeV1> {
-    if available && !request.has_setup_command && request.provider_id.as_str() == "pi" {
+    // Plan mode is admitted only where the reviewed adapter declares it, so
+    // a structured driver without a plan posture never receives one.
+    if (available && !request.has_setup_command && request.provider_id.as_str() == "pi")
+        || request.permission_mode == &dure_app::ProviderPermissionModeV1::Plan
+    {
         dure_provider_adapter::native_provider_permission_arguments(
             request.provider_id,
             request.permission_mode,

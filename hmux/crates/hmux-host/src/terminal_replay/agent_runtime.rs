@@ -102,6 +102,9 @@ pub struct AgentStateReportObservation {
     /// The first-run prompt the provider is stopped at; see
     /// `AgentStateReport::startup_gate`.
     pub startup_gate: Option<crate::local_protocol::AgentStartupGate>,
+    /// What the provider asks the person to approve; see
+    /// `AgentStateReport::approval_request`.
+    pub approval_request: Option<crate::local_protocol::AgentApprovalRequest>,
 }
 
 impl AgentStateReportObservation {
@@ -120,9 +123,11 @@ impl AgentStateReportObservation {
 /// to broadcast; `NoOp` means the report matched current state and produced no
 /// new revision; `DroppedExited` means the provider epoch had already exited
 /// and the report was discarded before any observation was constructed.
+/// The projection is boxed: it is broadcast once, and the two empty outcomes
+/// should not carry its size.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentStateReportFold {
-    Applied(AgentRuntimeStateProjection),
+    Applied(Box<AgentRuntimeStateProjection>),
     NoOp,
     DroppedExited,
 }
@@ -362,6 +367,34 @@ impl TerminalReplay {
         }) {
             self.interrupt_requested = true;
         }
+    }
+
+    /// Records that key input from a controller reached the PTY: typing, a
+    /// submit, Escape or any other keypress, but not focus or pointer
+    /// reports. While an attention is raised, that input may have answered
+    /// it, so no attention response is admitted for it any more.
+    pub fn record_controller_key_input(&mut self) {
+        if self
+            .agent_runtime_state
+            .as_ref()
+            .is_some_and(|state| state.attention_id.is_some())
+        {
+            self.attention_input_since_raised = true;
+        }
+    }
+
+    /// Whether an attention response for `expected_attention_id` may be
+    /// written now: that attention is still the current one and no key input
+    /// reached the PTY since it was raised. The caller checks under the
+    /// serialized PTY writer, so nothing can interleave before the first byte.
+    #[must_use]
+    pub fn attention_response_admitted(&self, expected_attention_id: &str) -> bool {
+        !self.attention_input_since_raised
+            && self.agent_runtime_state.as_ref().is_some_and(|state| {
+                state.lifecycle == AgentRuntimeLifecycle::Running
+                    && state.attention != AgentRuntimeAttention::None
+                    && state.attention_id.as_deref() == Some(expected_attention_id)
+            })
     }
 
     /// Whether a bare Escape reached a provider-reported working turn that no

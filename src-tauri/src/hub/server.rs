@@ -109,6 +109,8 @@ pub(super) struct ServedHub<'a> {
     pub accounts: Option<&'a dyn session_account::SessionAccountSink>,
     /// The side that reads an agent's conversation and types a prompt into it.
     pub conversations: Option<&'a dyn conversation::ConversationSink>,
+    /// The side that reads and drives a chat-owned agent's conversation.
+    pub agent_chats: Option<&'a dyn super::agent_chat::AgentChatSink>,
     pub terminal_widths: Option<&'a Arc<TerminalWidths>>,
 }
 
@@ -129,6 +131,8 @@ pub(super) struct HubServices {
     pub accounts: Option<Arc<dyn session_account::SessionAccountSink>>,
     /// The side that reads an agent's conversation and types a prompt into it.
     pub conversations: Option<Arc<dyn conversation::ConversationSink>>,
+    /// The side that reads and drives a chat-owned agent's conversation.
+    pub agent_chats: Option<Arc<dyn super::agent_chat::AgentChatSink>>,
     pub terminal_widths: Option<Arc<TerminalWidths>>,
 }
 
@@ -157,6 +161,7 @@ impl HubServices {
             files: None,
             accounts: None,
             conversations: None,
+            agent_chats: None,
             terminal_widths: None,
         }
     }
@@ -172,6 +177,7 @@ impl HubServices {
             files: None,
             accounts: None,
             conversations: None,
+            agent_chats: None,
             terminal_widths: None,
         }
     }
@@ -217,6 +223,17 @@ impl HubServices {
         accounts: Arc<dyn session_account::SessionAccountSink>,
     ) -> Self {
         self.accounts = Some(accounts);
+        self
+    }
+
+    /// Attach the side that serves chat-owned agents. Without it, their
+    /// requests are refused `unavailable`.
+    #[must_use]
+    pub(super) fn serving_agent_chats(
+        mut self,
+        agent_chats: Arc<dyn super::agent_chat::AgentChatSink>,
+    ) -> Self {
+        self.agent_chats = Some(agent_chats);
         self
     }
 
@@ -478,6 +495,7 @@ impl CatalogSource for LocalSessions {
                 std::time::Duration::from_millis(1_500),
             ) {
                 Ok((_catalog, sessions)) => HubCatalog {
+                    chat_sessions: layout.chat_sessions(&self.box_id, &self.box_label),
                     hub_catalog_version: HUB_CATALOG_VERSION,
                     sessions: sessions
                         .iter()
@@ -491,7 +509,10 @@ impl CatalogSource for LocalSessions {
                     unreachable: Vec::new(),
                     layout: self.layout.to_catalog_layout(),
                 },
+                // Chat-owned agents live on the backend, not in Hmux: a census
+                // that fails does not take their rows away.
                 Err(error) => HubCatalog {
+                    chat_sessions: layout.chat_sessions(&self.box_id, &self.box_label),
                     hub_catalog_version: HUB_CATALOG_VERSION,
                     layout: self.layout.to_catalog_layout(),
                     sessions: Vec::new(),
@@ -788,6 +809,7 @@ fn serve_loop(
                             files: services.files.as_deref(),
                             accounts: services.accounts.as_deref(),
                             conversations: services.conversations.as_deref(),
+                            agent_chats: services.agent_chats.as_deref(),
                             terminal_widths: services.terminal_widths.as_ref(),
                         },
                         &registration.authenticated,
@@ -1141,6 +1163,56 @@ fn serve_one(
         return;
     }
 
+    // A chat-owned agent's conversation lives on this desktop's backend
+    // (`agent_chat.rs`). An answer that never arrives would read as "refused"
+    // and invite a second send, so every outcome is written.
+    if let Some(framed) = super::agent_chat::answer_request(
+        hub.agent_chats,
+        |box_id| box_route(&hub, box_id),
+        &hello.request,
+    ) {
+        match framed {
+            Ok(framed) => {
+                let _ = tls.write_all(&framed);
+                let _ = tls.flush();
+            }
+            Err(error) => eprintln!("[hub] Could not encode the chat answer in a frame: {error}"),
+        }
+        return;
+    }
+
+    if let HubRequest::AgentApprovalAnswerV1 {
+        box_id,
+        workspace_id,
+        session_id,
+        expected_terminal_epoch,
+        attention_id,
+        choice,
+    } = hello.request
+    {
+        // The Hmux Host admits the answer (`conversation.rs`); an answer that
+        // never arrives would read as "refused" and invite a second press.
+        let result = conversation::answer_approval(
+            hub.conversations,
+            box_route(&hub, &box_id),
+            conversation::ApprovalAnswerRequest {
+                workspace_id,
+                session_id,
+                expected_terminal_epoch,
+                attention_id,
+                choice,
+            },
+        );
+        match dure_hub_protocol::conversation::encode_prompt(&result) {
+            Ok(framed) => {
+                let _ = tls.write_all(&framed);
+                let _ = tls.flush();
+            }
+            Err(error) => eprintln!("[hub] Could not encode the answer result in a frame: {error}"),
+        }
+        return;
+    }
+
     if let HubRequest::GitStatus { session_id, want } = hello.request {
         // 어느 저장소인지 아는 것은 화면이다 — 폰이 보낸 것은 hmux 세션 id 이고,
         // 그것을 워크트리로 옮기는 표는 앱의 개념 위에 있다(`git_status.rs`).
@@ -1487,6 +1559,7 @@ mod tests {
 
     fn empty_catalog() -> Arc<dyn CatalogSource> {
         Arc::new(FixedCatalog(HubCatalog {
+            chat_sessions: Vec::new(),
             hub_catalog_version: HUB_CATALOG_VERSION,
             layout: None,
             sessions: Vec::new(),

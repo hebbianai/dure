@@ -20,6 +20,7 @@ import { resumeInterruptedQuickDispatchIntents } from "@/lib/agents/quickDispatc
 import { resumeInterruptedSpawnSagas } from "@/lib/sessions/launch/spawnResume";
 import { resumeInterruptedDelegateOnceIntents } from "@/lib/workflows/delegateOnceRuntime";
 import { installDeferredCredentialSwitchWatch } from "@/lib/sessions/credentials/deferredCredentialSwitchRuntime";
+import { installChatHandoverWatch } from "@/lib/agents/chatHandoverRuntime";
 import { installDesktopVisibilityLeasePublisher } from "@/lib/workspace/desktop/desktopVisibilityLeaseRuntime";
 import { replayDesktopCloseIntents } from "@/lib/workspace/desktop/desktopCloseIntent";
 import { replayPaneCloseIntents } from "@/lib/workspace/pane/paneCloseIntent";
@@ -301,6 +302,12 @@ export default function App() {
   useEffect(() => {
     if (!isMainWindow()) return;
     return installDeferredCredentialSwitchWatch();
+  }, []);
+  // A Terminal → Chat move requested while the agent worked runs at its next
+  // idle turn boundary, from the same main-window owner as credential intents.
+  useEffect(() => {
+    if (!isMainWindow()) return;
+    return installChatHandoverWatch();
   }, []);
   // 구형 managed Host는 exact idle/off-screen generation만 메인 창 한 곳에서
   // journal-first로 점진 교체한다. credential switch와 visible pane은 제외된다.

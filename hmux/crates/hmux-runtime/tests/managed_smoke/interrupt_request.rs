@@ -4,6 +4,7 @@ use super::*;
 /// the protocol-maximum lease that only a later hook report ends.
 fn turn_working() -> AgentStateReport {
     AgentStateReport {
+        approval_request: None,
         progress: None,
         identity_only: false,
         activity: hmux_client::AgentRuntimeActivity::Working,
