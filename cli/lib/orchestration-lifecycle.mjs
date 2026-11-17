@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BackendTransportError } from "./backend-transport.mjs";
+import { runEntryPoint } from "./process-exit.mjs";
 import {
   createOrchestrationRequest,
   defaultOrchestrationEndpoint,
@@ -316,8 +317,10 @@ function argumentValue(argumentsList, name) {
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  const event = argumentValue(process.argv.slice(2), "--event") ?? "session_start";
-  process.stdout.write(
-    `${JSON.stringify(await resolveLifecycleHookPayload(process.env, event))}\n`,
-  );
+  await runEntryPoint(async () => {
+    const event = argumentValue(process.argv.slice(2), "--event") ?? "session_start";
+    process.stdout.write(
+      `${JSON.stringify(await resolveLifecycleHookPayload(process.env, event))}\n`,
+    );
+  });
 }

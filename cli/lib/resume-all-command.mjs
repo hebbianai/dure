@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { CommandExit } from "./process-exit.mjs";
 import { runBoundedCommand } from "./bounded-command.mjs";
 import { agentDisplayName } from "./client-registry.mjs";
 import { agentRuntimeWakeTarget } from "./contracts/agent-runtime.mjs";
@@ -246,6 +247,8 @@ export async function collectResumeAll({
     return { ...base, ok: report.failed.length === 0, backend: { id: backend.profile.id },
       inventory: { complete: known.complete, agents: known.agents.length, clientRegistry: registry.state }, ...restorable, ...report };
   } catch (error) {
+    // The CLI's refusal from loadRegistry ends the command.
+    if (error instanceof CommandExit) throw error;
     return failure(error?.code ? { code: error.code, message: error.message } : backendRequestFailure(error, backend?.profile));
   }
 }

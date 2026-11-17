@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { inspect } from "node:util";
 
 const MAX_METADATA_BYTES = 64 * 1024;
 const CHANNEL = /^[a-z0-9-]{1,64}$/;
@@ -363,7 +364,7 @@ function updateRequired(reason) {
     },
   };
   process.stderr.write(`${JSON.stringify(receipt)}\n`);
-  process.exit(2);
+  process.exitCode = 2;
 }
 
 function installedVersion(installRoot) {
@@ -435,18 +436,31 @@ function resolveChannelCommand({
   return { channel, metadata, resolvedTarget, target };
 }
 
+// Every exit returns with process.exitCode set. Bundle verification hashes
+// large files such as bin/node, and Node's fast exit path (process.exit() or
+// an uncaught failure) can then hang while a V8 compile waits for a GC (#549).
+// This file is installed alone as the global launcher, so it cannot import
+// the CLI's shared process-exit helper.
 async function launch() {
   let target;
   try {
     target = resolveChannelCommand().resolvedTarget;
   } catch (error) {
     updateRequired(error instanceof Error ? error.message : "channel verification failed");
+    return;
   }
   process.env.DURE_INVOKED_AS ||= basename(process.argv[1] || "dure");
   process.argv[1] = target;
   // Keep Node, signals and exit status on the caller's process. Only bundle
   // verification failures belong to the launcher's update-required receipt.
-  await import(pathToFileURL(target).href);
+  try {
+    await import(pathToFileURL(target).href);
+  } catch (error) {
+    // The command reports its own failures; this is one it could not catch,
+    // such as a module that failed to load.
+    process.stderr.write(`${inspect(error)}\n`);
+    process.exitCode ??= 1;
+  }
 }
 
 if (

@@ -2,6 +2,7 @@ import { resolve as resolvePath } from "node:path";
 import { parseArgs } from "node:util";
 import { backendRequestFailure } from "./backend-request-failure.mjs";
 import { performBackendProfileRequest } from "./backend-transport.mjs";
+import { CommandExit } from "./process-exit.mjs";
 import { collectAgentSpawnQuery } from "./agent-spawn-query.mjs";
 import { collectAgentRuntimeCommand } from "./agent-runtime-command.mjs";
 import { collectManagedRehostNamed, MANAGED_REHOST_RUNNING_GUIDANCE, managedRecoveryExitCode } from "./managed-rehost-named.mjs";
@@ -201,6 +202,8 @@ export async function collectRunsCommand({
       descriptor: app });
     return { ...base, ok: true, run: selected, presentation };
   } catch (error) {
+    // The CLI's refusal from loadRegistry or resolveTarget ends the command.
+    if (error instanceof CommandExit) throw error;
     return failure(error?.code ? { code: error.code, message: error.message } : backendRequestFailure(error, backend?.profile));
   }
 }

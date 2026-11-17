@@ -761,6 +761,20 @@ describe("dure tui attach loop", () => {
     await tui.running;
   });
 
+  it("aborts a census still in flight when the list closes", async () => {
+    let signal;
+    const collect = vi.fn((censusSignal) => {
+      signal = censusSignal;
+      return new Promise(() => {});
+    });
+    const tui = startTui({ collect });
+    await settled(() => collect.mock.calls.length === 1);
+    expect(signal.aborted).toBe(false);
+    tui.input.press("q");
+    await tui.running;
+    expect(signal.aborted).toBe(true);
+  });
+
   it("repaints the whole screen after a resize", async () => {
     const tui = startTui();
     await settled(() => tui.output.lastScreen().includes("session-1"));
@@ -954,8 +968,9 @@ describe("dure tui attach path", () => {
       requestBackend,
       resolveBackend,
     });
+    const census = new AbortController();
 
-    const state = applySessionReport(initialTuiState({ allBackends: true }), await collect());
+    const state = applySessionReport(initialTuiState({ allBackends: true }), await collect(census.signal));
 
     expect(state.rows).toEqual([
       expect.objectContaining({
@@ -968,7 +983,7 @@ describe("dure tui attach path", () => {
     expect(requestBackend).toHaveBeenCalledWith(
       expect.objectContaining({ id: "remote-build" }),
       expect.objectContaining({ operation: "sessions.list" }),
-      expect.anything(),
+      expect.objectContaining({ signal: census.signal }),
     );
     expect(execute).not.toHaveBeenCalled();
   });

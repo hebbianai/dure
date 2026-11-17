@@ -11,6 +11,7 @@ import {
 } from "./orchestration-client.mjs";
 import { BackendTransportError } from "./backend-transport.mjs";
 import { orchestrationFailureDetail } from "./orchestration-failure.mjs";
+import { runEntryPoint } from "./process-exit.mjs";
 import { completionRequestSchema } from "./contracts/orchestration-completion.mjs";
 import { answerDecisionRequestSchema, interactionOpenRequestSchema } from "./contracts/orchestration-interaction.mjs";
 import {
@@ -616,4 +617,4 @@ async function main() {
   }
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) await main();
+if (process.argv[1] === new URL(import.meta.url).pathname) await runEntryPoint(main);
