@@ -53,24 +53,31 @@ async fn schedule_permission_defaults_are_inherited_only_without_an_override() {
 }
 
 #[tokio::test]
-async fn schedule_starts_on_the_chat_runtime_only_where_the_native_integration_is_missing() {
+async fn schedule_starts_on_the_chat_runtime_wherever_the_provider_has_one() {
     type Registry = fn() -> AgentProviderRegistry;
     // Whether the launch is planned on the terminal; `None` means refused.
-    let cases: [(Registry, &str, Option<bool>); 3] = [
-        // Next to the app, a schedule keeps its terminal session.
+    let cases: [(Registry, &str, Option<bool>); 4] = [
+        // Next to the app, a provider with a chat runtime starts there, like a
+        // new agent under the app's Chat default (#552).
         (
             provider_extension::test_codex_structured_agent_provider_registry,
             "codex",
+            Some(false),
+        ),
+        // A provider without one falls back to its terminal session.
+        (
+            provider_extension::test_codex_structured_agent_provider_registry,
+            "claude",
             Some(true),
         ),
-        // Without it, a provider with a chat runtime starts there instead of
-        // being refused at preflight.
+        // Without the app, a provider with a chat runtime starts there too
+        // instead of being refused at preflight.
         (
             provider_extension::test_unintegrated_provider_registry,
             "codex",
             Some(false),
         ),
-        // A provider without one is still refused, for the same reason.
+        // A provider with neither is still refused, for the same reason.
         (
             provider_extension::test_unintegrated_provider_registry,
             "claude",
@@ -81,6 +88,16 @@ async fn schedule_starts_on_the_chat_runtime_only_where_the_native_integration_i
         let (root, mut state, _, _) = fixture(vec![LaunchOutcome::Succeed]).await;
         prepare_project(&root, &state).await;
         state.agent_providers = Arc::new(registry());
+        // Folder trust is a scheduled Claude requirement on either runtime.
+        let project = root.path().canonicalize().unwrap();
+        fs::write(
+            root.path().join(".claude.json"),
+            serde_json::to_vec(&json!({"projects": {
+                project.to_str().unwrap(): {"hasTrustDialogAccepted": true}
+            }}))
+            .unwrap(),
+        )
+        .unwrap();
         let request: SchedulePutRequestV1 = serde_json::from_value(json!({
             "schemaVersion": 1, "scheduleId": "headless", "expectedRevision": 0,
             "idempotencyKey": "schedule-create", "name": "Headless", "enabled": true,
@@ -117,10 +134,7 @@ async fn schedule_starts_on_the_chat_runtime_only_where_the_native_integration_i
             "{provider}: {:?}",
             spawn.plan.launch
         );
-        assert_eq!(
-            spawn.plan.request.interaction_preference,
-            native.then_some(AgentSpawnInteractionPreferenceV1::NativeCli)
-        );
+        assert_eq!(spawn.plan.request.interaction_preference, None, "{provider}");
     }
 }
 

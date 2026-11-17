@@ -12,7 +12,7 @@ export const settings: Record<string, string> = {
 	"agents.recovery.failed": "自動復旧が停止しました。アカウントを確認するか、手動で続行してください。",
 
 	"settings.general.defaultAgentPane.title": "エージェントペインの既定形式",
-	"settings.general.defaultAgentPane.desc": "新しいエージェントにのみ適用されます。チャットには対応するプロバイダーと起動設定が必要です。既存のペインは変わりません。",
+	"settings.general.defaultAgentPane.desc": "新しいエージェントにのみ適用されます。プロバイダーや起動設定がチャットに対応していない場合はターミナルで起動します。既存のペインは変わりません。",
 	"settings.general.defaultAgentPane.chat": "チャット",
 	"environments.title": "VM 環境",
 	"environments.description": "エージェント追加時にプロジェクトのレシピから独立した環境を作成し、ここで管理します。",

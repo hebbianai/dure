@@ -124,6 +124,7 @@ export interface AppState
 //    있어서 기본값만 바꾸면 저장분이 이겨 아무에게도 도달하지 않는다.
 // 5: 배선된 uiPrefs 기본값도 저장분과 함께 옮긴다; 6은 durable Desktop vocabulary를
 //    canonical Space schema로 옮긴다.
+// 11: defaultAgentPane default terminal -> chat (migrateDefaultAgentPane).
 import { DURABLE_APP_STORE_NAME, PERSIST_VERSION } from "@/lib/persistence/durableAppStoreName";
 export { DURABLE_APP_STORE_NAME, PERSIST_VERSION };
 

@@ -11,18 +11,15 @@ export interface EffectiveInterfaceMode {
 	readonly selectable: boolean;
 }
 
-/** Pin Terminal unless the user explicitly chooses Chat in effective Beta.
- * An omitted wire preference lets the existing backend capability authority
- * select Chat for supported launches and Terminal for the others. This never
- * changes an existing pane or weakens a Basic-only build policy. */
+/** Pin Terminal only when the user chose Terminal for new agents, in either
+ * interface mode. Otherwise the wire preference is omitted, so the existing
+ * backend capability authority selects Chat for supported launches and
+ * Terminal for the others (no structured runtime for the provider or
+ * platform, or a setup command). This never changes an existing pane. */
 export function agentSpawnInteractionPreference(
-	prefs?: { interfaceMode?: unknown; defaultAgentPane?: unknown },
-	environment: InterfaceModeEnvironment = import.meta.env,
+	prefs?: { defaultAgentPane?: unknown },
 ): "native_cli" | undefined {
-	return resolveEffectiveInterfaceMode(prefs?.interfaceMode, environment).mode === "pro" &&
-		prefs?.defaultAgentPane === "chat"
-		? undefined
-		: "native_cli";
+	return prefs?.defaultAgentPane === "terminal" ? "native_cli" : undefined;
 }
 
 /** Resolve persisted mode through the build policy, never reopening Beta in

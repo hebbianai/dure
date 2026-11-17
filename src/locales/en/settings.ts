@@ -15,7 +15,7 @@ export const settingsEnglishTranslations = {
 	"agents.recovery.failed": "Automatic recovery stopped. Check the account or continue manually.",
 
 	"settings.general.defaultAgentPane.title": "Default agent pane",
-	"settings.general.defaultAgentPane.desc": "Applies to new agents only. Chat requires a supported provider and launch configuration. Existing panes stay unchanged.",
+	"settings.general.defaultAgentPane.desc": "Applies to new agents only. Agents start in a terminal when their provider or launch setup doesn't support chat. Existing panes stay unchanged.",
 	"settings.general.defaultAgentPane.chat": "Chat",
 	"environments.title": "VM environments",
 	"environments.description": "Create an isolated environment from a project’s recipe when adding an agent. Manage its lifetime here.",
