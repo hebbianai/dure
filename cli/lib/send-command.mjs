@@ -1,5 +1,7 @@
-import { agentDisplayName } from "./client-registry.mjs";
-import { readUtf8Input, readUtf8Stdin } from "./text-input.mjs";
+import { agentDisplayName, agentsInSession } from "./client-registry.mjs";
+import { formatDureSendHeader } from "./contracts/dure-send-header.mjs";
+import { parseSlashCommandDraft } from "./contracts/slash-command.mjs";
+import { MAX_TEXT_INPUT_BYTES, readUtf8Input, readUtf8Stdin } from "./text-input.mjs";
 import { deferredWake } from "./deferred-wake.mjs";
 
 const SEND_HELP = `dure send — Send text to an agent
@@ -12,12 +14,13 @@ Usage: dure send <name> <text...> [options]
 Options:
   --file PATH            Read exact UTF-8 text from a regular file (up to 64 KiB)
   --stdin                Read exact UTF-8 text from stdin until EOF (up to 64 KiB)
+                         Terminal and chat input stay within 64 KiB including the header
   --workspace ID         Exact local managed Session scope, independent of the app registry
   --no-enter             Insert text without submitting; edit the chat draft
   --draft-wait SECONDS   Wait up to SECONDS (0-60, default 30) for unsubmitted user input to clear
   --ignore-draft         Write even while the terminal holds unsubmitted user input
   --track                Send through the durable inbox; retain a private message tracking file
-  --from NAME            Tell the recipient who sent the message (up to 64 characters)
+  --from NAME            Add a self-chosen label to the dure send header (up to 64 characters)
   --json                 Print the delivery receipt as JSON, without prompt text
   --window-label LABEL   Select the app window for input delivery
   --idempotency-key KEY   Reuse an input key through the running app broker
@@ -41,9 +44,15 @@ erases every typed character with Backspace; input Dure cannot count (completion
 recall, a word erase) stays a draft until Enter. Retry later, use --track, or --ignore-draft
 to write anyway. A session started before the guard existed receives ordinary input, with
 a warning on stderr; restart that session to guard it.
---from starts terminal and chat input with "[from NAME] " and titles a tracked message
-"Message from NAME", keeping its body exact. NAME is a label the sender chooses,
-not an authenticated identity. Leave it off for provider commands such as "/compact".
+Every send starts with a header the CLI builds: "[dure send · from AGENT] " when it runs
+inside a registered Agent's managed Session, or "[dure send · unregistered] " otherwise.
+There is no option to leave it off. --from adds " · label NAME" inside the header; NAME
+is chosen by the sender. A tracked message carries the header as its title and keeps its
+body exact. A provider command such as "/compact" (input whose first word is /name, as the
+chat composer reads it) is sent exactly as written, without the header, and cannot take --from.
+The header marks input that an agent or script sent through dure send. It is not a
+security control: a missing header does not prove that a person typed the text. Approvals
+for money, limits or credentials must come from the person in the app, not relayed text.
 Tracked messages require a managed Session and support 'dure wait --message <receiptPath>'.
 Tracked send cannot be combined with --no-enter or --idempotency-key.
 Terminal receipts prove bytes were written to the PTY, not provider acceptance.
@@ -247,7 +256,10 @@ async function successorAfterExit(error, agent, opts, findSuccessor) {
 
 export async function runSendCommand(
   args,
-  { parseOptions, loadRegistry, resolveAgent, send, sendExactSession, sendTracked, findSuccessor, fail },
+  {
+    parseOptions, loadRegistry, resolveAgent, send, sendExactSession, sendTracked, findSuccessor, fail,
+    environment = process.env,
+  },
 ) {
   if (args[0] === "--help" || args[0] === "-h") {
     process.stdout.write(SEND_HELP);
@@ -293,9 +305,20 @@ export async function runSendCommand(
     return fail(error.message);
   }
   if (!text) return fail("Input text must not be empty");
-  // The sender is a label for the recipient to read, not an authenticated
-  // identity. An inbox message carries it in the title and keeps its body exact.
-  if (sender !== undefined) opts.messageTitle = `Message from ${sender}`;
+  // The header names the registered Agent whose Session runs this CLI, or
+  // none; it marks agent-originated input and is not an authenticated identity.
+  // An inbox message carries it as its title and keeps its body exact.
+  const senders = agentsInSession(registry, environment.HMUX_SESSION_ID);
+  const header = formatDureSendHeader({
+    agentName: senders.length === 1 ? agentDisplayName(senders[0]) : undefined,
+    label: sender,
+  });
+  // A provider command must start the input, as the chat composer reads it.
+  const command = !track && Boolean(parseSlashCommandDraft(text)?.name);
+  if (command && sender !== undefined) {
+    return fail("--from cannot label a provider command such as /compact; it is sent exactly as written. Nothing was sent.");
+  }
+  opts.messageTitle = header;
   if (track) {
     let input;
     try {
@@ -313,8 +336,12 @@ export async function runSendCommand(
     printDelivery(typeof agent === "string" ? { name: agent } : agent, input, opts);
     return;
   }
-  // Terminal and chat input have no title, so the label leads the text.
-  if (sender !== undefined) text = `[from ${sender}] ${text}`;
+  // Terminal and chat input have no title, so the header leads the text. It
+  // counts toward the bound a Host enforces on one paste.
+  if (!command) text = `${header} ${text}`;
+  if (Buffer.byteLength(text, "utf8") > MAX_TEXT_INPUT_BYTES) {
+    return fail("Input text with its dure send header exceeds 64 KiB. Nothing was sent.");
+  }
   if (typeof agent === "string") {
     const input = await sendExactSession(agent, text, opts);
     printDelivery({ name: agent }, input, opts);

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { formatDureSendHeader } from "../cli/lib/contracts/dure-send-header.mjs";
 import { writeRegistry } from "./lib/dure-session-test-fixture.mjs";
 
 const cli = fileURLToPath(new URL("../cli/dure.mjs", import.meta.url));
@@ -73,6 +74,9 @@ async function fixture({ refused = false, refusal = { code: "stale_generation", 
   return { root, run, requests };
 }
 
+// The CLI under test runs outside any managed Session.
+const HEADER = `${formatDureSendHeader()} `;
+
 describe("scriptable dure send input", () => {
   it.each([true, false])("routes structured chat through the app broker with enter=%s", async (enter) => {
     const { run, requests } = await fixture({ structured: true });
@@ -81,7 +85,7 @@ describe("scriptable dure send input", () => {
     expect(result).toMatchObject({ code: 0, stderr: "" });
     expect(requests).toEqual([{ path: "/agent/input", authorization: "Bearer fixture-token", payload: {
       name: "agent-1", sessionId: "session-1",
-      expectedInteractionProfile: structuredProfile, text, enter,
+      expectedInteractionProfile: structuredProfile, text: HEADER + text, enter,
       idempotencyKey: "chat-input-1", windowLabel: "win-100-2",
     } }]);
     expect(JSON.parse(result.stdout)).toEqual({ apiVersion: "dure.send/v1", ok: true,
@@ -183,7 +187,7 @@ describe("scriptable dure send input", () => {
     expect(requests).toEqual([{ path: "/hmux/input", authorization: "Bearer fixture-token", payload: {
       target: { schemaVersion: 1, targetPanelId: "agent:agent-1", hostId: "local",
         sessionId: "session-1", workspaceId: "workspace-1" },
-      text, enter: true, idempotencyKey: "send-1", draftGuardWaitMs: 30_000,
+      text: HEADER + text, enter: true, idempotencyKey: "send-1", draftGuardWaitMs: 30_000,
     } }]);
     expect(JSON.parse(result.stdout)).toEqual({ apiVersion: "dure.send/v1", ok: true,
       target: { agentId: "agent-1", sessionId: "session-1", workspaceId: "workspace-1" },
@@ -197,7 +201,7 @@ describe("scriptable dure send input", () => {
     const { run, requests } = await fixture();
     const result = await run(["worker", "--stdin", "--no-enter", "--json"], " \n\t");
     expect(result.code).toBe(0);
-    expect(requests[0].payload).toMatchObject({ text: " \n\t", enter: false });
+    expect(requests[0].payload).toMatchObject({ text: `${HEADER} \n\t`, enter: false });
     expect(JSON.parse(result.stdout).receipt.submit).toBeNull();
   });
 
@@ -227,7 +231,7 @@ describe("scriptable dure send input", () => {
     const { run, requests } = await fixture();
     const result = await run(["worker", "--", "--stdin", "--file", "--json"]);
     expect(result.code).toBe(0);
-    expect(requests[0].payload.text).toBe("--stdin --file --json");
+    expect(requests[0].payload.text).toBe(`${HEADER}--stdin --file --json`);
   });
 
   it.each(["missing", "directory", "invalid-utf8", "oversized", "empty"])(
@@ -243,12 +247,20 @@ describe("scriptable dure send input", () => {
     },
   );
 
-  it("accepts exactly 64 KiB without silently truncating input", async () => {
+  it("accepts exactly 64 KiB with the header without silently truncating input", async () => {
     const { run, requests } = await fixture();
-    const text = "a".repeat(64 * 1024);
+    const text = "a".repeat(64 * 1024 - Buffer.byteLength(HEADER));
     const result = await run(["worker", "--stdin", "--no-enter"], text);
     expect(result.code).toBe(0);
-    expect(requests[0].payload.text).toBe(text);
+    expect(requests[0].payload.text).toBe(HEADER + text);
+  });
+
+  it("refuses text that the header would push past 64 KiB before delivery", async () => {
+    const { run, requests } = await fixture();
+    const result = await run(["worker", "--stdin", "--no-enter"], "a".repeat(64 * 1024));
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("Input text with its dure send header exceeds 64 KiB. Nothing was sent.");
+    expect(requests).toEqual([]);
   });
 
   it("sends ordinary input through an app that predates the guard and warns", async () => {

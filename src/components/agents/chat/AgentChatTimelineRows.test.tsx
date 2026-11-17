@@ -656,6 +656,49 @@ describe("TranscriptContents", () => {
 		);
 	});
 
+	it("marks dure send input apart from what the person typed", () => {
+		const source = page();
+		const message = (itemId: string, markdown: string, sequence: number) => ({
+			cursor: { epoch: "timeline-1", sequence },
+			item: {
+				itemId,
+				turnId: `turn-${sequence}`,
+				clientMessageId: null,
+				providerMessageId: null,
+				body: { type: "message" as const, role: "user" as const, markdown },
+				createdAtMs: sequence,
+			},
+		});
+		source.rows = [
+			message("sent", "[dure send · from Review worker] build is green", 1),
+			message("labelled", "[dure send · unregistered · label ci-bot] deploy", 2),
+			message("typed", "approve the spend", 3),
+		];
+		const view = render(
+			<TranscriptContents
+				page={source}
+				loadingOlder={false}
+				onLoadOlder={async () => {}}
+			/>,
+		);
+		const captions = [...view.container.querySelectorAll("[data-dure-send]")];
+		expect(captions.map((caption) => caption.textContent)).toEqual([
+			t("agents.chat.dureSend.fromAgent", { name: "Review worker" }),
+			t("agents.chat.dureSend.label", {
+				sender: t("agents.chat.dureSend.unregistered"),
+				label: "ci-bot",
+			}),
+		]);
+		expect(captions[0].getAttribute("title")).toBe(
+			t("agents.chat.dureSend.hint"),
+		);
+		expect(view.getByText("build is green")).toBeTruthy();
+		expect(view.getByText("deploy")).toBeTruthy();
+		expect(view.queryByText(/\[dure send/)).toBeNull();
+		const typed = view.getByText("approve the spend");
+		expect(typed.closest("article")?.querySelector("[data-dure-send]")).toBeNull();
+	});
+
 	it("releases attachment data with the mounted transcript", async () => {
 		mocks.readChatAttachment.mockReset().mockResolvedValue({
 			mime: "image/png",
