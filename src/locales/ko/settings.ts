@@ -12,7 +12,7 @@ export const settings: Record<string, string> = {
 	"agents.recovery.failed": "자동 복구가 멈췄습니다. 계정을 확인하거나 직접 이어가세요.",
 
 	"settings.general.defaultAgentPane.title": "기본 에이전트 pane",
-	"settings.general.defaultAgentPane.desc": "새 에이전트에만 적용됩니다. 채팅은 지원되는 provider와 실행 설정에서 사용할 수 있으며, 기존 pane은 바뀌지 않습니다.",
+	"settings.general.defaultAgentPane.desc": "새 에이전트에만 적용됩니다. provider나 실행 설정이 채팅을 지원하지 않으면 터미널로 시작하며, 기존 pane은 바뀌지 않습니다.",
 	"settings.general.defaultAgentPane.chat": "채팅",
 	"environments.title": "VM 환경",
 	"environments.description": "에이전트를 추가할 때 프로젝트 레시피로 독립 환경을 만들고, 여기서 관리합니다.",

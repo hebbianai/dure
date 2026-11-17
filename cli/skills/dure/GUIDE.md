@@ -463,9 +463,10 @@ worktree is removed only when it has no uncommitted or untracked changes and eve
 commit on it is on the default branch; ignored files go with it. Otherwise it is
 kept. The branch always stays, and a wake restores a removed worktree at its path.
 
-On a host without the Dure app, such as a server or VM, a schedule occurrence
-starts on the provider's chat runtime when the provider has one there, like a
-headless `dure run`. It has no terminal Session: `dure schedule runs` names the
+A schedule occurrence starts on the provider's chat runtime when the provider
+has one on the backend's host, like a new agent under the app's Chat default;
+otherwise it is a terminal session, which needs the Dure app on that host. A
+chat-runtime occurrence has no terminal Session: `dure schedule runs` names the
 `dure runs show <operation-id>` command, and `dure transcript <agent-id>` reads
 it. Idle hibernation and worktree removal apply only to terminal runs.
 A start that fails after planning names the failed stage's code and its

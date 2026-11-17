@@ -904,9 +904,9 @@ describe("canonical backend Run", () => {
 		expect(onClose).toHaveBeenCalledOnce();
 	});
 
-	it("pins the basic-mode launch to the PTY surface on the wire request", async () => {
+	it("pins a basic-mode Terminal choice to the PTY surface on the wire request", async () => {
 		useStore.setState((state) => ({
-			uiPrefs: { ...state.uiPrefs, interfaceMode: "basic" as const },
+			uiPrefs: { ...state.uiPrefs, interfaceMode: "basic" as const, defaultAgentPane: "terminal" },
 		}));
 		renderBody();
 		await waitForSubmitEnabled();
@@ -924,8 +924,8 @@ describe("canonical backend Run", () => {
 		});
 	});
 
-	it("uses the selected Pro Chat preference in the actual new-agent request", async () => {
-		useStore.setState((state) => ({ uiPrefs: { ...state.uiPrefs, interfaceMode: "pro", defaultAgentPane: "chat" } }));
+	it.each(["basic", "pro"] as const)("uses the %s interface's Chat preference in the actual new-agent request", async (interfaceMode) => {
+		useStore.setState((state) => ({ uiPrefs: { ...state.uiPrefs, interfaceMode, defaultAgentPane: "chat" } }));
 		renderBody();
 		await waitForSubmitEnabled();
 		fireEvent.click(submitButton());
