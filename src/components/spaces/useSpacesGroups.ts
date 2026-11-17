@@ -20,6 +20,7 @@ import {
 } from "@/lib/spaces/spacesFacetHierarchy";
 import {
 	bucketVisibleSpaces,
+	leadWorkerRowKeys,
 	orderDesktopsWithPopouts,
 	partitionSpacesByPins,
 	selectableRowKeys,
@@ -211,7 +212,11 @@ export function useSpacesGroups({
 			return project ? [project] : [];
 		});
 		const pinnedRows = visibleRowsByPin.panes;
-		const pinnedRowKeys = pinnedRows.map((row) => row.key);
+		const pinnedRowKeys = leadWorkerRowKeys(
+			pinnedRows,
+			collapsed,
+			focusedRowKey,
+		);
 		const bodyRowsByDesktop = buckets.visibleByDesktop;
 		// Pinned repositories: their visible rows, in pin order, and every
 		// pinned repository even when nothing matched.

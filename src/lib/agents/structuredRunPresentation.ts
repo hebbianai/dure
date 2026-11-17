@@ -4,6 +4,10 @@ import {
 	sameAgentCanonicalSpawn,
 } from "@/lib/agents/agentCanonicalSpawn";
 import {
+	type AgentRunParentSessionV1,
+	projectAgentRunParent,
+} from "@/lib/agents/agentRunParent";
+import {
 	type AgentRunPresentationWorktree,
 	projectAgentRunWorkspace,
 	snapshotAgentRunPresentationWorktree,
@@ -111,6 +115,7 @@ export function projectStructuredRunAgent(
 	run: DureStructuredAgentRunResultV1,
 	project: Project,
 	presentationWorktree?: AgentRunPresentationWorktree,
+	parent?: AgentRunParentSessionV1,
 ): {
 	patch: Partial<CliManagedRunPresentationState>;
 	agent: Agent;
@@ -183,6 +188,15 @@ export function projectStructuredRunAgent(
 		const agent: Agent = {
 			...existing,
 			canonicalSpawn,
+			...(existing.runParent === undefined && parent
+				? {
+						runParent: projectAgentRunParent(
+							parent,
+							state.agents,
+							existing.id,
+						),
+					}
+				: {}),
 			started: true,
 			interactionProfile: profile,
 			executionProfile: run.executionProfile,
@@ -213,9 +227,11 @@ export function projectStructuredRunAgent(
 			"structured Agent name is already in use for this project",
 		);
 	}
+	const runParent = projectAgentRunParent(parent, state.agents, run.agentId);
 	const agent: Agent = {
 		id: run.agentId,
 		canonicalSpawn,
+		...(runParent ? { runParent } : {}),
 		name: run.agentName,
 		provider: run.providerId,
 		projectId: project.id,
@@ -254,6 +270,7 @@ export async function presentStructuredRunInBackground(
 		projectPath?: string;
 		executionTarget?: BackendPresentationTarget;
 		presentationWorktree?: AgentRunPresentationWorktree;
+		parent?: AgentRunParentSessionV1;
 	},
 	dependencies: StructuredRunPresentationDependencies = defaultDependencies,
 ): Promise<Agent> {
@@ -274,6 +291,7 @@ export async function presentStructuredRunInBackground(
 				project,
 				run.providerId,
 			),
+		target.parent,
 	);
 	dependencies.setState(() => projected.patch);
 	return projected.agent;
@@ -309,6 +327,7 @@ export async function presentStructuredRun(
 		referencePanelId?: string;
 		position?: PanelPosition;
 		presentationWorktree?: AgentRunPresentationWorktree;
+		parent?: AgentRunParentSessionV1;
 	},
 	dependencies: StructuredRunPresentationDependencies = defaultDependencies,
 ) {
@@ -349,6 +368,7 @@ export async function presentStructuredRun(
 				project,
 				run.providerId,
 			),
+		target.parent,
 	);
 	dependencies.setState(() => projected.patch);
 	const panelId = dependencies.openAgent(

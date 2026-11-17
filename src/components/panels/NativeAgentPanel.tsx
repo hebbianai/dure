@@ -58,7 +58,10 @@ import { managedAgentWorktreeRecovery } from "@/lib/sessions/managed/managedAgen
 import { useAgentPaneAttentionAck } from "@/components/agents/useAgentPaneAttentionAck";
 import { openSplitLauncherOn, paneSplitTargetForPanel } from "@/lib/workspace/pane/paneSplit";
 import { paneViewCloseMenu } from "@/lib/workspace/pane/paneKillMenu";
-import { resolveAgentPaneTitle } from "@/lib/workspace/pane/paneTitle";
+import {
+  namesAgentByRun,
+  resolveAgentPaneTitle,
+} from "@/lib/workspace/pane/paneTitle";
 import { useConversationTitle } from "@/components/agents/chat/useConversationTitle";
 import {
   hmuxPaneConversationId,
@@ -257,6 +260,7 @@ export function NativeAgentPanel({
           opaqueConversationId:
             hmuxPaneConversationId(binding) ?? agent.conversationId,
           directoryCandidates: [agentCwd, agent.worktreePath],
+          runNamed: namesAgentByRun(agent),
         }),
       );
     }

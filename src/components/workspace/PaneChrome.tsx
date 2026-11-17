@@ -46,6 +46,8 @@ import { usePaneHideAndHistoryActions } from "@/components/workspace/PaneHideAnd
 import { cn } from "@/lib/utils";
 import {
   cwdName,
+  namesAgentByRun,
+  observedTitle,
   paneTitleFromObservedTitle,
   paneTitleTooltip,
   resolveAgentPaneTitle,
@@ -381,6 +383,9 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
   const terminalAutomaticFallback = terminalProvider
       ? [PROVIDERS[terminalProvider].label, terminalDirectory].filter(Boolean).join(" · ")
       : title;
+  const agentOpaqueConversationId =
+    hmuxPaneConversationId(hmuxBinding) ?? agent?.conversationId;
+  const agentRunNamed = agent ? namesAgentByRun(agent) : false;
   const automaticLabel = nestedSsh
     ? nestedSsh.target
     : agent
@@ -388,9 +393,9 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
           name: agent.name,
           displayName: agent.displayName,
           runtimeTitle: agentConversationTitle ?? terminalTitle,
-          opaqueConversationId:
-            hmuxPaneConversationId(hmuxBinding) ?? agent.conversationId,
+          opaqueConversationId: agentOpaqueConversationId,
           directoryCandidates: [agentLiveCwd, agent.worktreePath],
+          runNamed: agentRunNamed,
         })
       : component === "agent"
         ? t("common.unavailable")
@@ -419,9 +424,17 @@ export function PaneChrome(props: IDockviewPanelHeaderProps) {
         ? `${sshHost?.name ?? "local"} · ${displayedHmuxLabel} · ${liveCwd || params?.cwd || "~"}`
         : `${terminalTitle || "local"} · ${liveCwd || params?.cwd || "~"}`
       : undefined;
+  // A worker's header names its Run; the provider's title it displaced leads
+  // the diagnostics instead.
+  const agentSecondaryTitle = agentRunNamed
+    ? observedTitle(
+        agentConversationTitle ?? terminalTitle,
+        agentOpaqueConversationId,
+      )
+    : undefined;
   const detail =
     agent && project
-      ? `${agentLabel} · ${agentHost} · ${agentCwd ?? "~"} · ${project.name}`
+      ? `${agentSecondaryTitle ? `${agentSecondaryTitle} · ` : ""}${agentLabel} · ${agentHost} · ${agentCwd ?? "~"} · ${project.name}`
       : (terminalDetail ?? title);
   const titleTooltip = paneTitleTooltip(label, detail);
   const hmuxHealthState = useManagedCredentialSwitchHealthState(

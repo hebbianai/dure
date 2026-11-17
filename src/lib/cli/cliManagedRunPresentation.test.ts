@@ -195,6 +195,53 @@ describe("managed Run presentation request", () => {
 	});
 });
 
+describe("managed Run parent", () => {
+	const parent = { sessionId: "session-lead", workspaceId: "workspace-1" };
+
+	it("accepts the Run's parent Session and refuses a malformed one", () => {
+		expect(
+			parseCliManagedRunPresentationRequest({ ...request, parent }).parent,
+		).toEqual(parent);
+		for (const invalid of [
+			{ ...parent, leadAgentId: "lead" },
+			{ sessionId: "session-lead" },
+			"session-lead",
+		]) {
+			expect(() =>
+				parseCliManagedRunPresentationRequest({ ...request, parent: invalid }),
+			).toThrow(CliManagedRunPresentationError);
+		}
+	});
+
+	it("records the parent with the lead that owns its Session", () => {
+		const lead = projectManagedRunPresentationAgent(
+			state(),
+			{
+				...request,
+				agentId: "agent-lead",
+				agentName: "lead",
+				operationId: "spawn-lead",
+				preparedSessionId: "session-lead",
+				sessionId: "session-lead",
+				launchIdempotencyKey: "spawn-runtime:spawn-lead",
+			},
+			project,
+			{ ...binding(), sessionId: "session-lead" },
+		);
+		expect(lead.agent.runParent).toBeUndefined();
+		const worker = projectManagedRunPresentationAgent(
+			applyPatch(state(), lead.patch),
+			{ ...request, agentName: "work-552", parent },
+			project,
+			binding(),
+		);
+		expect(worker.agent.runParent).toEqual({
+			...parent,
+			leadAgentId: "agent-lead",
+		});
+	});
+});
+
 describe("managed Run Agent projection", () => {
 	it("creates one projection and reuses it without a second writer", () => {
 		const initial = state();

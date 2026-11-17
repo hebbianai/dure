@@ -3,6 +3,11 @@ import {
 	sameAgentCanonicalSpawn,
 } from "@/lib/agents/agentCanonicalSpawn";
 import {
+	type AgentRunParentSessionV1,
+	parseAgentRunParentSessionV1,
+	projectAgentRunParent,
+} from "@/lib/agents/agentRunParent";
+import {
 	type AgentRunPresentationWorktree,
 	type AgentRunReceiptWorktree,
 	projectAgentRunWorkspace,
@@ -62,13 +67,15 @@ const REQUEST_KEYS = new Set([
 	"spaceId",
 	"windowLabel",
 	"referencePanelId",
+	"parent",
 ]);
 /** Receipt-free identity: the backend's current runtime of an Agent that the
  * app launched, resumed or imported. It has no spawn operation or worktree
  * receipt, only the runtime workspace root. */
 const AGENT_RUNTIME_REQUEST_KEYS = new Set([
 	...[...REQUEST_KEYS].filter(
-		(key) => !["operationId", "preparedSessionId", "worktree"].includes(key),
+		(key) =>
+			!["operationId", "preparedSessionId", "worktree", "parent"].includes(key),
 	),
 	"identity",
 	"workspaceRootPath",
@@ -89,6 +96,9 @@ interface ManagedRunSpawnIdentity {
 	preparedSessionId: string;
 	/** Exact effective managed-create key, normalized at the wire boundary. */
 	launchIdempotencyKey: string;
+	/** The Session the Run was started from, sent only to an app that
+	 * advertises `agent.run_parent_v1`. */
+	parent?: AgentRunParentSessionV1;
 }
 
 /** An Agent without a Run record. Presenting it never records a canonical
@@ -100,6 +110,7 @@ interface ManagedRunAgentRuntimeIdentity {
 	/** Reported by the backend after a transition or rehost; otherwise read
 	 * from the exact live Host's create receipt before presentation. */
 	launchIdempotencyKey?: string;
+	parent?: undefined;
 }
 
 interface CliManagedRunPresentationRequestFields {
@@ -361,11 +372,17 @@ export function parseManagedRunProjectionInput(
 			"managed Run effective Session and create key do not form one identity",
 		);
 	}
+	const parent =
+		raw.parent === undefined
+			? undefined
+			: (parseAgentRunParentSessionV1(raw.parent) ??
+				failCliManagedRunPresentation("invalid_request", "parent is invalid"));
 	return {
 		...common,
 		operationId,
 		preparedSessionId,
 		launchIdempotencyKey,
+		...(parent ? { parent } : {}),
 		worktree:
 			parseRunPresentationWorktree(raw.worktree) ??
 			failCliManagedRunPresentation("invalid_request", "worktree is invalid"),
@@ -604,6 +621,15 @@ export function projectManagedRunPresentationAgent(
 		const agent: Agent = {
 			...existing,
 			...(canonicalSpawn ? { canonicalSpawn } : {}),
+			...(existing.runParent === undefined && request.parent
+				? {
+						runParent: projectAgentRunParent(
+							request.parent,
+							state.agents,
+							existing.id,
+						),
+					}
+				: {}),
 			started: true,
 			runtimeBinding: {
 				...projectedBinding,
@@ -649,9 +675,15 @@ export function projectManagedRunPresentationAgent(
 			"managed Run Agent name is already in use for this project",
 		);
 	}
+	const runParent = projectAgentRunParent(
+		request.parent,
+		state.agents,
+		request.agentId,
+	);
 	const agent: Agent = {
 		id: request.agentId,
 		...(canonicalSpawn ? { canonicalSpawn } : {}),
+		...(runParent ? { runParent } : {}),
 		name: request.agentName,
 		provider: request.providerId,
 		projectId: project.id,

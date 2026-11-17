@@ -1,5 +1,6 @@
 import { parseAgentCanonicalSpawnV1 } from "@/lib/agents/agentCanonicalSpawn";
 import { normalizeAgentDisplayName } from "@/lib/agents/agentDisplayName";
+import { parseAgentRunParentV1 } from "@/lib/agents/agentRunParent";
 import { initialAgentRuntimeBinding } from "@/lib/agents/agentLaunchCredential";
 import { parseAgentExecutionProfileV1 } from "@/lib/agents/chat/agentConversationContract";
 import { normalizeAgentInteractionProfileV1 } from "@/lib/agents/chat/agentInteractionProfile";
@@ -57,9 +58,15 @@ export function normalizePersistedAgents(
 	if (!Array.isArray(value)) return [];
 	return (value as Agent[]).map((agent): Agent | undefined => {
 		const hasCanonicalSpawn = Object.keys(agent).includes("canonicalSpawn");
-		const { canonicalSpawn: rawCanonicalSpawn, ...persistedAgent } = agent;
+		const {
+			canonicalSpawn: rawCanonicalSpawn,
+			runParent: rawRunParent,
+			...persistedAgent
+		} = agent;
 		const canonicalSpawn = parseAgentCanonicalSpawnV1(rawCanonicalSpawn);
 		if (hasCanonicalSpawn && !canonicalSpawn) return undefined;
+		// A malformed parent only ungroups the Agent; the record stays.
+		const runParent = parseAgentRunParentV1(rawRunParent);
 		const rawBinding = agent.runtimeBinding;
 		const rawInteractionProfile = agent.interactionProfile;
 		let runtimeBinding = normalizedAgentRuntimeBinding(rawBinding);
@@ -123,6 +130,7 @@ export function normalizePersistedAgents(
 		return {
 			...persistedAgent,
 			...(canonicalSpawn ? { canonicalSpawn } : {}),
+			...(runParent ? { runParent } : {}),
 			displayName: normalizeAgentDisplayName(agent.name, agent.displayName),
 			...(rawBinding !== undefined || projectedRuntimeBinding !== undefined
 				? { runtimeBinding: projectedRuntimeBinding }

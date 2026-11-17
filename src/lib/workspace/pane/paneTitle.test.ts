@@ -5,6 +5,7 @@ import {
   observedTitle,
   paneTitleFromObservedTitle,
   paneTitleTooltip,
+  namesAgentByRun,
   resolveAgentPaneTitle,
   terminalPaneTitle,
 } from "@/lib/workspace/pane/paneTitle";
@@ -62,6 +63,28 @@ describe("pane title policy", () => {
         directoryCandidates: ["/repo/.worktrees/fix-live"],
       }),
     ).toBe("Review authentication flow");
+  });
+
+  it("names a worker for its Run ahead of the provider's title, under a chosen name", () => {
+    const worker = { runParent: { sessionId: "s-lead", workspaceId: "ws" } };
+    expect(namesAgentByRun(worker)).toBe(true);
+    expect(namesAgentByRun({})).toBe(false);
+    expect(
+      resolveAgentPaneTitle({
+        name: "work-552",
+        runtimeTitle: "Claude Code",
+        directoryCandidates: ["/repo/.worktrees/work-552"],
+        runNamed: namesAgentByRun(worker),
+      }),
+    ).toBe("work-552");
+    expect(
+      resolveAgentPaneTitle({
+        name: "work-552",
+        displayName: "sidebar fix",
+        runtimeTitle: "Claude Code",
+        runNamed: true,
+      }),
+    ).toBe("sidebar fix");
   });
 
   it("includes a differing effective title in pane diagnostics without duplication", () => {

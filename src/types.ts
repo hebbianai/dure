@@ -204,6 +204,9 @@ export interface Agent {
   /** Exact backend spawn receipt projected into this client registration.
    * Absence is the explicit legacy/imported/adopted partition. */
   canonicalSpawn?: AgentCanonicalSpawnV1;
+  /** The Session this Run was started from — a lead's, when a lead started
+   * it as a worker. Absent for Agents started any other way. */
+  runParent?: import("@/lib/agents/agentRunParent").AgentRunParentV1;
   /** Immutable launch/worktree slug. User-visible rename uses displayName. */
   name: string;
   /** IDE-owned label only; never changes worktree, branch, or runtime identity. */

@@ -42,24 +42,36 @@ export function paneTitleFromObservedTitle(
   return observedTitle(runtimeTitle, opaqueConversationId) ?? fallback;
 }
 
+/** A worker — a Run started from another Agent's Session — is named for its
+ * Run (`work-555`): a lead's workers share one provider, so their terminal
+ * titles do not say which is which. The provider's title stays secondary. */
+export function namesAgentByRun(agent: { readonly runParent?: unknown }): boolean {
+  return agent.runParent !== undefined;
+}
+
 /** One authority for the Agent title rendered by Dockview, PaneChrome, and
- * Spaces. A name the user explicitly chose wins; replaceable provider evidence
- * comes next; directory identity is the stable fallback. */
+ * Spaces. A name the user explicitly chose wins; a worker's Run name comes
+ * next; replaceable provider evidence follows; directory identity is the
+ * stable fallback. */
 export function resolveAgentPaneTitle({
   name,
   displayName,
   runtimeTitle,
   opaqueConversationId,
   directoryCandidates = [],
+  runNamed = false,
 }: {
   name: string;
   displayName?: string;
   runtimeTitle?: string;
   opaqueConversationId?: string;
   directoryCandidates?: readonly (string | undefined)[];
+  /** `namesAgentByRun(agent)`: the Run name outranks the runtime title. */
+  runNamed?: boolean;
 }): string {
   const explicitName = normalizeAgentDisplayName(name, displayName);
   if (explicitName) return explicitName;
+  if (runNamed) return name;
   return paneTitleFromObservedTitle(
     runtimeTitle,
     agentPaneTitle(name, ...directoryCandidates),

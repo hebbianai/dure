@@ -22,6 +22,8 @@ export const spaces: Record<string, string> = {
 	"spaces.repository.startWith": "여기서 {label} 시작",
 	"spaces.repository.addWithOptions": "옵션을 정해 새 에이전트…",
 	"spaces.repository.noSessions": "아직 세션 없음",
+	"spaces.workers.one": "worker 1개",
+	"spaces.workers.other": "worker {n}개",
 	"spaces.repository.startFailed": "에이전트 시작 실패: {e}",
 	"spaces.locations.openFromHost": "{name}에서 열기",
 	"spaces.actions.sessionCount": "{n}개 세션",
