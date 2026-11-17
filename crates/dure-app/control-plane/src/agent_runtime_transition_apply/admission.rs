@@ -329,10 +329,10 @@ pub(super) async fn preflight_transition_target(
         .map_err(|error| crate::BackendDispatchError::from(error.code().to_string()))?;
     match runtime_workspace(state, source).await {
         Ok(_) => {}
-        // A native target start restores a checkout the schedule removed.
+        // A target start, terminal or chat, restores a checkout the schedule
+        // removed.
         Err(error)
-            if matches!(kind, TransitionKind::NativeTarget)
-                && super::is_workspace_unavailable(&error)
+            if super::is_workspace_unavailable(&error)
                 && crate::schedule_runtime::lifecycle::checkout_restorable(
                     state,
                     &source.agent_id,

@@ -1,13 +1,14 @@
-//! Keeps schedule-started agents and their checkouts from piling up. Nobody is
-//! watching these agents, so this applies whatever the user-facing idle setting
-//! says. Every stop goes through fenced hibernation, and every removal through
-//! the Git checkout authority.
+//! Keeps schedule-started agents and their checkouts from piling up, on the
+//! terminal and the chat runtime alike. Nobody is watching these agents, so
+//! this applies whatever the user-facing idle setting says. Every stop goes
+//! through fenced hibernation, and every removal through the Git checkout
+//! authority.
 use std::path::PathBuf;
 
 use dure_app::{
-    AgentIdV1, AgentRuntimeCloseStateV1, AgentSpawnJournalReceiptV1, AgentSpawnJournalStore,
-    AgentSpawnWorktreePolicyV1, DomainStore, GitCheckoutRegistrationV1, GitCheckoutRemovalPolicyV1,
-    GitCheckoutRemovalRequestV1,
+    AgentIdV1, AgentInteractionProfileV1, AgentRuntimeCloseStateV1, AgentRuntimeTransitionStore,
+    AgentSpawnJournalReceiptV1, AgentSpawnJournalStore, AgentSpawnWorktreePolicyV1, DomainStore,
+    GitCheckoutRegistrationV1, GitCheckoutRemovalPolicyV1, GitCheckoutRemovalRequestV1,
 };
 use dure_git_checkout::{
     GitCheckoutInstanceError, GitCheckoutRemovalOperation, capture_git_checkout_registration,
@@ -61,9 +62,31 @@ pub(crate) async fn hibernate_idle_page(
         .ok()?;
     for (_, agent_id) in &page {
         // Refusals are retried by interval and recorded by the transition journal.
-        let _ = hibernate_if_host_idle(state, agent_id, IDLE_POLICY_REVISION, idle_after).await;
+        let _ = hibernate_if_idle(state, agent_id, idle_after).await;
     }
     next_cursor(page, IDLE_PAGE)
+}
+
+/// A terminal agent is idle by its Host's clock. A chat agent has no Host, so
+/// its conversation is the clock. Each rule re-checks the source under the
+/// Agent's lock; this only picks the rule.
+async fn hibernate_if_idle(
+    state: &ServiceState,
+    agent_id: &AgentIdV1,
+    idle_after: Duration,
+) -> Result<(), String> {
+    let profile = state
+        .store
+        .agent_runtime_selection(agent_id)
+        .await
+        .map_err(|_| "runtime_idle_source_unavailable".to_owned())?
+        .map(|selection| selection.interaction_profile);
+    match profile {
+        Some(AgentInteractionProfileV1::StructuredProtocol) => {
+            super::conversation::hibernate_if_idle(state, agent_id, idle_after).await
+        }
+        _ => hibernate_if_host_idle(state, agent_id, IDLE_POLICY_REVISION, idle_after).await,
+    }
 }
 
 pub(crate) async fn remove_finished_checkouts_page(

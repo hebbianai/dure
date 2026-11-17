@@ -6,7 +6,10 @@ import {
 	type AutomationStep,
 } from "@/components/automations/AutomationFlow";
 import { AutomationRuns } from "@/components/automations/AutomationRuns";
-import { useAutomationAction } from "@/components/automations/useAutomations";
+import {
+	readScheduleInteractionPreference,
+	useAutomationAction,
+} from "@/components/automations/useAutomations";
 import { FormField } from "@/components/common/FormField";
 import { LoadingRow} from "@/components/common/StatusBlocks";
 import { Button, ConfirmationButton } from "@/components/ui/button";
@@ -26,6 +29,7 @@ import {
 	newScheduleDraft,
 	scheduleDraft,
 	scheduleErrorMessage,
+	withScheduleInteractionPreference,
 } from "@/lib/automations/scheduleContract";
 import { t } from "@/lib/i18n";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
@@ -94,7 +98,12 @@ export function AutomationEditor({
 
 	function persist(nextDraft = draft) {
 		const intent: SchedulePutIntent = {
-			...structuredClone(nextDraft),
+			...structuredClone(
+				withScheduleInteractionPreference(
+					nextDraft,
+					readScheduleInteractionPreference(),
+				),
+			),
 			schemaVersion: 1,
 			scheduleId,
 			expectedRevision: saved?.revision ?? 0,

@@ -184,6 +184,10 @@ export const automations: Record<string, string> = {
 	"automations.providerStarting": "提供方正在启动 · 请检查会话中的启动提示",
 	"automations.providerWorking": "工作中 · 等待报告",
 	"automations.providerWaiting": "提供方正在等待 · 请检查会话 · 等待报告",
+	"automations.chatIdle": "空闲 · 等待报告",
+	"automations.turnFailed": "回合失败 · 等待报告",
+	"automations.asleep": "休眠中 · 未收到报告",
+	"automations.stopped": "已停止 · 未收到报告",
 	"automations.projectTrustRequired":
 		"启动已阻止：请在 Claude 中检查并信任已注册的项目文件夹，然后重新运行",
 };

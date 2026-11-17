@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dure_app::{
-    AgentIdV1, AgentProviderConversationPlanV1, AgentRuntimeBindingAuthorityV1, DomainStore,
+    AgentIdV1, AgentProviderConversationPlanV1, AgentRuntimeBindingAuthorityV1,
+    AgentRuntimeSelectionV1, DomainStore,
 };
 use serde::Serialize;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use super::{HibernateBodyV1, ObservedIdleV1, hibernate, idle_checkpoint, idle_policy};
 use crate::ServiceState;
@@ -421,11 +422,21 @@ fn legacy_source_key(source: &IdleSource) -> Result<String, String> {
         .map(|(_, key)| key)
 }
 
-async fn capture(
+/// Take the Agent's operation lock within an idle scan's budget and read its
+/// stable runtime source. Every idle rule, terminal or chat, starts here and
+/// keeps the guard for as long as it inspects that source.
+pub(crate) async fn lock_stable_source(
     state: &ServiceState,
     agent_id: &AgentIdV1,
-) -> Result<(IdleSource, HibernateBodyV1, Option<Duration>), String> {
-    let _guard = tokio::time::timeout(
+) -> Result<
+    (
+        OwnedMutexGuard<()>,
+        Box<AgentRuntimeSelectionV1>,
+        Box<AgentRuntimeBindingAuthorityV1>,
+    ),
+    String,
+> {
+    let guard = tokio::time::timeout(
         Duration::from_secs(1),
         state.agent_operations.acquire(agent_id),
     )
@@ -435,12 +446,20 @@ async fn capture(
         return Err("runtime_idle_authority_unavailable".into());
     }
     let AgentRuntimeObservedV1::Stable {
-        mut selection,
-        mut authority,
+        selection,
+        authority,
     } = read_locked(state, agent_id).await?
     else {
         return Err("runtime_idle_source_not_stable".into());
     };
+    Ok((guard, selection, authority))
+}
+
+async fn capture(
+    state: &ServiceState,
+    agent_id: &AgentIdV1,
+) -> Result<(IdleSource, HibernateBodyV1, Option<Duration>), String> {
+    let (_guard, mut selection, mut authority) = lock_stable_source(state, agent_id).await?;
     let AgentRuntimeBindingAuthorityV1::NativeCli { authority: native } = authority.as_mut() else {
         return Err("runtime_idle_source_unsupported".into());
     };

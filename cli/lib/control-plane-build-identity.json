@@ -84,6 +84,7 @@
       "schedule.put",
       "schedule.worktree_project_root_v1",
       "schedule.runtime_observation_v1",
+      "schedule.interaction_preference_v1",
       "schedule.inspect",
       "schedule.run_once",
       "schedule.show",

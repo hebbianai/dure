@@ -198,6 +198,10 @@ export const automationsEnglishTranslations: Record<string, string> = {
 	"automations.providerWorking": "Working · awaiting report",
 	"automations.providerWaiting":
 		"Provider waiting · inspect session · awaiting report",
+	"automations.chatIdle": "Idle · awaiting report",
+	"automations.turnFailed": "Turn failed · awaiting report",
+	"automations.asleep": "Asleep · no report received",
+	"automations.stopped": "Stopped · no report received",
 	"automations.projectTrustRequired":
 		"Start blocked: review and trust the registered project folder in Claude, then run again",
 };

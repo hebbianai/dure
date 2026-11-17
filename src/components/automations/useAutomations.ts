@@ -7,11 +7,19 @@ import {
 	createScheduleClient,
 	type ScheduleSnapshot,
 } from "@/lib/ipc/dureSchedule";
+import { agentSpawnInteractionPreference } from "@/lib/workspace/pane/interfaceMode";
+import { useStore } from "@/store";
 
 type AutomationCatalog = { snapshot: ScheduleSnapshot } & (
 	| { graphs: GraphSnapshot; graphError?: never }
 	| { graphs?: never; graphError: string }
 );
+
+/** The Default agent pane choice a schedule records when it is saved, read
+ * at save time so a setting changed while the editor is open applies. */
+export function readScheduleInteractionPreference(): "native_cli" | undefined {
+	return agentSpawnInteractionPreference(useStore.getState().uiPrefs);
+}
 
 export function useAutomations() {
 	const [client] = useState(() => createScheduleClient());

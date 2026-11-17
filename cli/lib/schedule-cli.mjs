@@ -23,7 +23,8 @@ A scheduled agent hibernates after 30 minutes of confirmed idle. Once it has sto
 worktree is removed only if it is clean and every commit is on the default branch.
 Runs start on the provider's chat runtime when the host has one, like a new agent in the app;
 read them with dure runs show. Otherwise they are terminal runs, which need the Dure app there.
-Hibernation and worktree removal apply only to terminal runs.
+Hibernation and worktree removal apply on both runtimes; a chat run's idle time is its conversation's.
+A schedule saved in the app under Default agent pane: Terminal starts terminal runs.
 --no-worktree runs in the registered project root, including non-Git directories.
 It requires backend capability schedule.worktree_project_root_v1; shared files are not isolated.
 The local or SSH control plane must be running; the IDE can be closed.

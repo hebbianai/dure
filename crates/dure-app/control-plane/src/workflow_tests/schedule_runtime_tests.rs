@@ -1,6 +1,7 @@
 use super::*;
 use dure_app::AgentSpawnJournalStore;
 mod claude;
+mod conversation;
 mod lifecycle;
 
 #[tokio::test]
@@ -602,6 +603,7 @@ pub(super) async fn prepare_schedule(root: &TempDir, state: &ServiceState) {
                     permission_mode: Some(AgentSpawnPermissionModeV1::Default),
                     execution_profile: AgentExecutionProfileV1::ProviderDefault,
                     worktree: dure_app::ScheduleWorkspacePolicyV1::default(),
+                    interaction_preference: None,
                 },
             },
             60_000,

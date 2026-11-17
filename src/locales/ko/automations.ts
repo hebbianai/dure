@@ -194,6 +194,10 @@ export const automations: Record<string, string> = {
 	"automations.providerStarting": "제공자 시작 중 · 세션의 시작 프롬프트 확인",
 	"automations.providerWorking": "작업 중 · 보고서 대기",
 	"automations.providerWaiting": "제공자 대기 중 · 세션 확인 · 보고서 대기",
+	"automations.chatIdle": "유휴 · 보고서 대기",
+	"automations.turnFailed": "턴 실패 · 보고서 대기",
+	"automations.asleep": "절전 중 · 보고서 없음",
+	"automations.stopped": "중지됨 · 보고서 없음",
 	"automations.projectTrustRequired":
 		"시작 차단: Claude에서 등록된 프로젝트 폴더를 검토하고 신뢰한 후 다시 실행하세요",
 };

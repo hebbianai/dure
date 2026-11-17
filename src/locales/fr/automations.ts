@@ -204,6 +204,10 @@ export const automations: Record<string, string> = {
 	"automations.providerWorking": "Travail en cours · rapport attendu",
 	"automations.providerWaiting":
 		"Fournisseur en attente · vérifiez la session · rapport attendu",
+	"automations.chatIdle": "Inactif · rapport attendu",
+	"automations.turnFailed": "Tour échoué · rapport attendu",
+	"automations.asleep": "En veille · aucun rapport reçu",
+	"automations.stopped": "Arrêté · aucun rapport reçu",
 	"automations.projectTrustRequired":
 		"Démarrage bloqué : examinez et approuvez le dossier du projet enregistré dans Claude, puis relancez",
 };

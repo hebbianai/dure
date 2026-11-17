@@ -468,7 +468,12 @@ has one on the backend's host, like a new agent under the app's Chat default;
 otherwise it is a terminal session, which needs the Dure app on that host. A
 chat-runtime occurrence has no terminal Session: `dure schedule runs` names the
 `dure runs show <operation-id>` command, and `dure transcript <agent-id>` reads
-it. Idle hibernation and worktree removal apply only to terminal runs.
+it, and `dure schedule runs` shows whether its turn is working, idle, waiting on
+a person or failed. Idle hibernation and worktree removal apply to both
+runtimes; a chat-runtime agent is idle once its conversation has no running or
+queued turn and no open question. A schedule saved in the app while Default
+agent pane is Terminal records that choice, and its runs start as terminal
+sessions.
 A start that fails after planning names the failed stage's code and its
 `dure runs show` command. A provider that is not signed in on that host shows
 `Start blocked`: sign in there with the provider's CLI, then run it again.
