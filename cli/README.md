@@ -208,6 +208,13 @@ stopped, its `automation-*` worktree is removed only when it has no uncommitted 
 untracked changes and every commit on it is already on the repository's default
 branch; ignored files such as build output go with it. Otherwise the worktree is
 kept. The branch always stays, and a wake restores a removed worktree at its path.
+Both apply on the chat runtime too: a chat-runtime agent is idle once its
+conversation has no running or queued turn and no open question.
+
+A schedule saved in the app while Default agent pane is Terminal records
+`interactionPreference: "native_cli"`, and its runs start as terminal sessions.
+Recording it needs `schedule.interaction_preference_v1`; on an older backend the
+app saves the schedule without it. `dure schedule set` keeps the recorded value.
 
 Pause a schedule in place with `dure schedule set ID --disabled --expected-revision N`
 and resume it with `--enabled`. The same command can change `--cron`, `--timezone`,
@@ -224,7 +231,10 @@ startup prompts, use a new run-once key or wait for the next occurrence.
 `dure schedule runs` and `inspect` distinguish launch acceptance, current provider
 attention, and the retained completion report. Backends advertising
 `schedule.runtime_observation_v1` provide bounded, read-only runtime observations
-and exact session/workspace IDs. Older backends retain their launch/report view.
+and exact session/workspace IDs. For a chat-runtime run, which has no session, a
+current backend reports whether its turn is working, idle, waiting on a person or
+failed; a sleeping or stopped agent is named as such. Older backends retain their
+launch/report view.
 Waiting or unavailable observation is not evidence of completion or exit;
 inspect the session for startup prompts. Only the durable report marks completion.
 

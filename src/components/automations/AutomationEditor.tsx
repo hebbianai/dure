@@ -26,6 +26,7 @@ import {
 	newScheduleDraft,
 	scheduleDraft,
 	scheduleErrorMessage,
+	withScheduleInteractionPreference,
 } from "@/lib/automations/scheduleContract";
 import { t } from "@/lib/i18n";
 import type { DureBackendRouteAuthorityV1 } from "@/lib/ipc/dureBackendRoute";
@@ -34,6 +35,8 @@ import type {
 	ScheduleProject,
 	SchedulePutIntent,
 } from "@/lib/ipc/dureSchedule";
+import { agentSpawnInteractionPreference } from "@/lib/workspace/pane/interfaceMode";
+import { useStore } from "@/store";
 
 export function AutomationEditor({
 	client,
@@ -94,7 +97,12 @@ export function AutomationEditor({
 
 	function persist(nextDraft = draft) {
 		const intent: SchedulePutIntent = {
-			...structuredClone(nextDraft),
+			...structuredClone(
+				withScheduleInteractionPreference(
+					nextDraft,
+					agentSpawnInteractionPreference(useStore.getState().uiPrefs),
+				),
+			),
 			schemaVersion: 1,
 			scheduleId,
 			expectedRevision: saved?.revision ?? 0,

@@ -5,6 +5,9 @@ import { performBackendProfileRequest } from "./backend-transport.mjs";
 import { validProjectId, validProjectPath } from "./project-contract.mjs";
 import { isScheduleChatRuntime, isScheduleRuntime, scheduleRuntimeStatus, SCHEDULE_RUNTIME_CAPABILITY } from "./contracts/schedule-runtime.mjs";
 
+// A schedule that records the interface its runs start on (`native_cli`).
+const SCHEDULE_INTERACTION_PREFERENCE_CAPABILITY = "schedule.interaction_preference_v1";
+
 export const SCHEDULE_CLIENT_SCHEMA_VERSION = 1;
 export const DEFAULT_SCHEDULE_COMMAND_DEADLINE_MS = 2_500;
 export const MAX_SCHEDULE_COMMAND_DEADLINE_MS = 10_000;
@@ -56,6 +59,7 @@ function validRunTemplate(value, { allowProjectPath = false } = {}) {
       ...(value.effort === undefined ? [] : ["effort"]),
       ...(value.executionProfile === undefined ? [] : ["executionProfile"]),
       ...(value.worktree === undefined ? [] : ["worktree"]),
+      ...(value.interactionPreference === undefined ? [] : ["interactionPreference"]),
     ]) &&
     (selector === "projectId"
       ? validProjectId(value.projectId)
@@ -66,7 +70,8 @@ function validRunTemplate(value, { allowProjectPath = false } = {}) {
     (value.effort === undefined || isProviderEffortSelection(value.effort)) &&
     (value.permissionMode === undefined || PERMISSION_MODES.has(value.permissionMode)) &&
     validExecutionProfile(value.executionProfile, { allowMissing: true }) &&
-    validWorkspacePolicy(value.worktree)
+    validWorkspacePolicy(value.worktree) &&
+    (value.interactionPreference === undefined || value.interactionPreference === "native_cli")
   );
 }
 
@@ -290,6 +295,8 @@ function validCommand(options) {
         ...(options.effort === undefined ? {} : { effort: options.effort }),
         ...(options.executionProfile === undefined ? {} : { executionProfile: options.executionProfile }),
         ...(options.worktree === undefined ? {} : { worktree: options.worktree }),
+        ...(options.interactionPreference === undefined
+          ? {} : { interactionPreference: options.interactionPreference }),
       },
       { allowProjectPath: true },
     )
@@ -339,6 +346,8 @@ function requestBody(options) {
           ...(options.effort === undefined ? {} : { effort: options.effort }),
           ...(options.executionProfile === undefined ? {} : { executionProfile: options.executionProfile }),
           ...(options.worktree === undefined ? {} : { worktree: options.worktree }),
+          ...(options.interactionPreference === undefined
+            ? {} : { interactionPreference: options.interactionPreference }),
         },
       };
   }
@@ -380,7 +389,9 @@ export async function collectScheduleCommand(options = {}) {
         requiredCapabilities: [`schedule.${normalized.action}`,
           ...(includeRuntime ? [SCHEDULE_RUNTIME_CAPABILITY] : []),
           ...(normalized.action === "put" && normalized.worktree?.kind === "project_root"
-            ? ["schedule.worktree_project_root_v1"] : [])],
+            ? ["schedule.worktree_project_root_v1"] : []),
+          ...(normalized.action === "put" && normalized.interactionPreference !== undefined
+            ? [SCHEDULE_INTERACTION_PREFERENCE_CAPABILITY] : [])],
       },
       {
         ...normalized.backend.transportOptions,
@@ -458,8 +469,8 @@ export async function collectScheduleCommand(options = {}) {
 
 /**
  * A put that keeps every field of `schedule` except the given changes. The
- * project, provider, permission, credential and workspace policy stay as
- * recorded; `set` cannot change them.
+ * project, provider, permission, credential, workspace policy and recorded
+ * interface stay as recorded; `set` cannot change them.
  */
 function scheduleUpdateCommand(schedule, changes = {}) {
   const template = schedule.runTemplate;
@@ -478,6 +489,7 @@ function scheduleUpdateCommand(schedule, changes = {}) {
     effort: changes.effort ?? template.effort,
     executionProfile: template.executionProfile,
     worktree: template.worktree,
+    interactionPreference: template.interactionPreference,
   };
 }
 
@@ -574,12 +586,23 @@ function occurrenceStatus(occurrence) {
     return `Start failed: ${occurrence.errorCode}${occurrence.operationId ? `; inspect with dure runs show ${occurrence.operationId}` : ""}`;
   }
   if (occurrence.launchState === "pending") return "Queued";
-  if (isScheduleChatRuntime(occurrence.runtime)) {
-    return `Started on the chat runtime; inspect with dure runs show ${occurrence.operationId}; awaiting report`;
-  }
   const runtimeStatus = scheduleRuntimeStatus(occurrence.runtime);
+  if (isScheduleChatRuntime(occurrence.runtime)) {
+    const inspect = `inspect with dure runs show ${occurrence.operationId}`;
+    // A backend that predates chat status names only the runtime.
+    if (!occurrence.runtime.conversation) return `Started on the chat runtime; ${inspect}; awaiting report`;
+    return `${{
+      providerWorking: "Working",
+      chatIdle: "Idle",
+      inputRequired: "Waiting for input",
+      approvalRequired: "Waiting for approval",
+      turnFailed: "Turn failed",
+    }[runtimeStatus]} on the chat runtime; ${inspect}; awaiting report`;
+  }
   if (runtimeStatus) return {
     runtimeUnavailable: "Runtime status unavailable; awaiting report",
+    asleep: "Asleep after idle; no report received; wake with dure runtime wake",
+    stopped: "Stopped; no report received",
     exitedWithoutReport: "Provider exited; no report received",
     inputRequired: "Waiting for input; awaiting report",
     approvalRequired: "Waiting for approval; awaiting report",

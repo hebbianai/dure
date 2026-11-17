@@ -1,7 +1,8 @@
-//! Keeps schedule-started agents and their checkouts from piling up. Nobody is
-//! watching these agents, so this applies whatever the user-facing idle setting
-//! says. Every stop goes through fenced hibernation, and every removal through
-//! the Git checkout authority.
+//! Keeps schedule-started agents and their checkouts from piling up, on the
+//! terminal and the chat runtime alike. Nobody is watching these agents, so
+//! this applies whatever the user-facing idle setting says. Every stop goes
+//! through fenced hibernation, and every removal through the Git checkout
+//! authority.
 use std::path::PathBuf;
 
 use dure_app::{
@@ -61,7 +62,12 @@ pub(crate) async fn hibernate_idle_page(
         .ok()?;
     for (_, agent_id) in &page {
         // Refusals are retried by interval and recorded by the transition journal.
-        let _ = hibernate_if_host_idle(state, agent_id, IDLE_POLICY_REVISION, idle_after).await;
+        let native =
+            hibernate_if_host_idle(state, agent_id, IDLE_POLICY_REVISION, idle_after).await;
+        // A chat-runtime agent has no Host clock; its conversation is the clock.
+        if matches!(&native, Err(code) if code == "runtime_idle_source_unsupported") {
+            let _ = super::conversation::hibernate_if_idle(state, agent_id, idle_after).await;
+        }
     }
     next_cursor(page, IDLE_PAGE)
 }
