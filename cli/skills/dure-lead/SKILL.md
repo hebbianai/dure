@@ -168,9 +168,13 @@ already read the brief and failed that turn at sign-in, and it does not retry
 it. Once the person has signed in with `/login` in that pane, send the brief
 again; otherwise stop the Run and dispatch the brief on another account.
 
-Other non-zero receipts: exit 2 is a backend or pane failure before any
-session existed; retry the same command once with the printed retry key, then
-report it. A `succeeded` receipt whose session later shows
+Other non-zero exits: exit 2 is a backend failure before any receipt confirmed
+a Run; retry the same command once with the printed retry key, then report it.
+Exit 3 means the worker started (`summary.state: succeeded`) and only its pane
+did not open (`presentation.state: failed`): the worker is already running, so
+count and track it like any other and never dispatch it again;
+`dure runs open AGENT_ID --space SPACE_ID` reattaches a pane when one is wanted.
+A `succeeded` receipt whose session later shows
 `liveness.state: exited` with no pull request is a crashed worker; see §5.
 
 Respect the cap: before each dispatch, count your workers whose `activity` is

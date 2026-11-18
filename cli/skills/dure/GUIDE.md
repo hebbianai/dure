@@ -223,8 +223,11 @@ provider's chat runtime when the host has one and has no Session; read it with
 not `dure read`. A local Run the connected app adopts stays a terminal
 session. If that exact Session
 is visible in multiple Spaces, specify `--space`; Dure will not guess. A pane
-failure never replays or stops a successful Run. Use `dure runs open <agent-id>
---space <space-id>` after correcting client state.
+failure never replays or stops a successful Run: `dure run` exits 3 with
+`presentation.state: failed`, and the agent keeps working headlessly, so do not
+start it again. Exit 2 is reserved for a backend failure before any receipt
+confirmed a Run. Use `dure runs open <agent-id> --space <space-id>` after
+correcting client state.
 
 Bare `dure spawn` is a deprecated compatibility entry point to the same path;
 `spawn preview`, `spawn apply`, and `spawn status` remain the low-level durable

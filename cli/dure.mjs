@@ -2194,6 +2194,10 @@ stopped at sign-in or at its folder-trust prompt) and error (stage, code and det
 failure when the Run stopped short); a value the receipt cannot vouch for is null. The full receipt,
 presentation and registration follow unchanged. source.backend carries the backend
 identity, protocol and capabilityCount; --verbose adds its full capabilities list.
+Exit 0 the Run succeeded; 1 its receipt did not succeed; 2 the backend or request failed
+before a receipt confirmed a Run (retry with the same --idempotency-key, which resumes
+that one plan); 3 the Run succeeded but its pane did not open. On 3 the agent keeps
+working headlessly: do not start it again; reopen a pane with dure runs open AGENT_ID --space ID.
 --lead starts a lead Run: the prompt is the goal, and the CLI prepends the bundled lead
 brief, which sends the agent to dure skills get dure-lead — split the goal into tracked
 issues, start one worker Run per item in its own worktree, watch them, merge what passes
@@ -2382,6 +2386,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
     presentAgentRunRuntime,
     registerAgentRunInBackground,
     resolveRunPresentationTarget,
+    runCommandExitCode,
     runReceiptSummary,
   } = await import("./lib/run-presentation.mjs");
   const { loadSessionClientProjection } = await import(
@@ -2559,7 +2564,7 @@ async function cmdRun(opts, { legacySpawn = false } = {}) {
       ? `${JSON.stringify(output)}\n`
       : `${formatAgentRun(report)}\n${formatRunPresentation(presentation)}\n${registration?.state === "failed" ? `registration\tfailed (${registration.error.code}); inspect with dure runs show ${report.receipt.plan.agentId}\n` : ""}`,
   );
-  process.exitCode = presentation.state === "failed" ? 2 : runExitCode;
+  process.exitCode = runCommandExitCode(runExitCode, presentation);
 }
 
 const WORKFLOW_DELEGATE_FIELDS = Object.freeze([
