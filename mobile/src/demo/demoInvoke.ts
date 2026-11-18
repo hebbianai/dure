@@ -603,6 +603,13 @@ const handlers: Record<string, Handler> = {
     hubState(str(args, "id"));
     return { state: "refused", code: "agent_not_found", detail: "The demo has no chat-owned agents." };
   },
+  // No row carries `agent_chat_watch`, so the phone never watches; asked
+  // anyway, the watch is not taken and the chat keeps asking on its interval.
+  hub_agent_chat_watch: (args): never => {
+    hubState(str(args, "id"));
+    fail("agent_not_found", "The demo has no chat-owned agents.");
+  },
+  hub_agent_chat_unwatch: (): boolean => false,
   // The demo's approval lives in its terminal; its Chat never shows a card.
   hub_agent_approval_answer: (args): AgentPromptAnswer => {
     hubState(str(args, "id"));
