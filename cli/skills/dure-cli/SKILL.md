@@ -361,6 +361,8 @@ Use `dure send <agent-or-session> --track "message" --json` for a durable inbox 
 Use `--workspace ID` with an exact Session ID. This requires an observable managed
 Session and its orchestration context. The receipt contains `receiptPath`; keep that
 private local file, which holds the exact read capability but no message text.
+When the target's wake is held, the JSON adds `diagnostic` with the same note
+the text output prints; the message stays in the inbox, so do not resend.
 
 `dure wait --message <receiptPath> --json` waits for an authenticated inbox read.
 Use `--until acknowledged` for cursor acknowledgement, or `--until turn_started`

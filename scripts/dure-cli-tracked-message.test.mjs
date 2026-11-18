@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { sendTrackedMessage, readMessageTracking, queryTrackedMessage } from "../cli/lib/tracked-message.mjs";
 import { collectWait, parseWaitArguments } from "../cli/lib/wait-command.mjs";
-import { trackedSendFailureMessage } from "../cli/lib/send-command.mjs";
+import { formatDelivery, trackedSendFailureMessage } from "../cli/lib/send-command.mjs";
+import { deferredWake } from "../cli/lib/deferred-wake.mjs";
 import { BackendTransportError } from "../cli/lib/backend-transport.mjs";
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -99,8 +100,7 @@ test("an exited target names Agents with similar names and the live listing", ()
   expect(trackedSendFailureMessage(new Error("other failure"), registry, target)).toBe("other failure");
 });
 
-test("a deferred wake explains why no prompt was written, without implying a resend", async () => {
-  const { deferredWake } = await import("../cli/lib/deferred-wake.mjs");
+test("a deferred wake explains why no prompt was written, without implying a resend", () => {
   const queued = (reasonCode) => [{ wake: { state: "queued_until_next_turn", reasonCode } }];
   expect(deferredWake(queued("hmux_input_draft_pending"))).toMatchObject({ reason: "wake_deferred", wakeReasonCode: "hmux_input_draft_pending", message: expect.stringContaining("unsubmitted input at its prompt") });
   expect(deferredWake(queued("hmux_agent_prompt_runtime_changed")).message).toContain("not idle at its prompt");
@@ -116,4 +116,17 @@ test("a message wait names a draft-deferred wake when it times out", async () =>
   const result = await collectWait(options, { backend, tracking: { query: { interactionId: "message" } }, now: () => time, pause: async ms => { time += ms; }, queryMessage: async () => ({ receipt: { observed: false, wakeTurnStarted: false, deliveries } }) });
   expect(result.exitCode).toBe(124);
   expect(result.diagnostic).toMatchObject({ reason: "wake_deferred", wakeReasonCode: "hmux_input_draft_pending" });
+});
+
+test("a tracked send names a held wake in its JSON output as in its text", () => {
+  const agent = { id: "agent-1", name: "worker" };
+  const deliveries = [{ wake: { state: "queued_until_next_turn", reasonCode: "hmux_input_draft_pending" } }];
+  const input = { sessionId: "session", workspaceId: "workspace", receipt: { kind: "durable_message", interactionId: "message.1", receiptPath: "/private/receipt.json", delivery: "accepted", deliveries } };
+  const note = deferredWake(deliveries);
+  const report = JSON.parse(formatDelivery(agent, input, { json: true }));
+  expect(report).toMatchObject({ apiVersion: "dure.send/v1", ok: true, receipt: input.receipt, diagnostic: note });
+  expect(formatDelivery(agent, input, { json: false })).toContain(note.message);
+  const woken = { ...input, receipt: { ...input.receipt, deliveries: [{ wake: { state: "triggered", effectRef: "effect" } }] } };
+  expect(JSON.parse(formatDelivery(agent, woken, { json: true }))).not.toHaveProperty("diagnostic");
+  expect(formatDelivery(agent, woken, { json: false })).not.toContain(note.message);
 });

@@ -35,6 +35,7 @@ import {
   resolveLifecycleHookPayload,
 } from "../cli/lib/orchestration-lifecycle.mjs";
 import { handleMcpRequest } from "../cli/lib/orchestration-mcp-server.mjs";
+import { deferredWake } from "../cli/lib/deferred-wake.mjs";
 import { artifactDigest } from "../cli/lib/dure-cli-channel-launcher.mjs";
 import { parseNextWorkCandidates } from "../cli/lib/orchestration-next-work.mjs";
 
@@ -2378,6 +2379,27 @@ with open(lock_path, "a+") as lock:
       params: { name: tool.name, arguments: { body } } }, { DURE_BACKEND_PROFILE: "local" }, { request });
     expect(result.structuredContent.receipt).toEqual(receipt);
     expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["orchestration_message_open_exact_session", () => ({ schemaVersion: 1, session: { sessionId: "destination" }, expectedEndpointRef: "endpoint", idempotencyKey: "message-op" })],
+    ["orchestration_decision_answer", (context) => decisionAnswerBody(context, "held-wake-answer")],
+  ])("%s explains a held wake in the words dure send --track prints", async (name, bodyFor) => {
+    const { environment, context, receiptPath } = currentMcpContextFixture(fixture());
+    const call = async (wake) => {
+      const receipt = { deliveries: [{ state: "queued", wake }] };
+      const request = vi.fn(async (_endpoint, operation) => ({ apiVersion: "dure.orchestration/v1", method: operation.method, receipt }));
+      const result = await handleMcpRequest(mcpToolCall(name, bodyFor(context)), environment, { receiptPath, request });
+      expect(result.structuredContent.receipt).toEqual(receipt);
+      expect(JSON.parse(result.content[0].text).receipt).toEqual(receipt);
+      expect(request).toHaveBeenCalledTimes(1);
+      return result.content.slice(1).map((entry) => entry.text);
+    };
+    const held = { state: "queued_until_next_turn", reasonCode: "hmux_input_draft_pending", updatedAtMs: 1_600 };
+    const notes = await call(held);
+    expect(notes).toEqual([deferredWake([{ wake: held }]).message]);
+    expect(notes[0]).toContain("unsubmitted input at its prompt");
+    expect(await call({ state: "triggered", effectRef: "effect", updatedAtMs: 1_600 })).toEqual([]);
   });
 
   it.each([undefined, "dispatch_completed"])("preserves a typed backend rejection at the MCP boundary: %s", async (reasonCode) => {
