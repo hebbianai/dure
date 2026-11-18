@@ -1,6 +1,6 @@
 [package]
 name = "dure-mobile"
-version = "0.1.7"
+version = "0.1.8"
 description = "Dure mobile attach client"
 authors = ["kattpish"]
 edition = "2021"

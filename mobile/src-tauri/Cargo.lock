@@ -1258,7 +1258,7 @@ dependencies = [
 
 [[package]]
 name = "dure-mobile"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "base64 0.23.1",
  "dure-hub-protocol",
