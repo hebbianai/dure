@@ -2856,24 +2856,26 @@ async function reportAgentStop(name, opts, receipt, httpOk) {
   if (!report.ok) process.exitCode = 1;
 }
 
-// Legacy terminal adoption was retired with the legacy PTY runtime: saved
-// Agents load as Hmux sessions, and the app no longer answers hmux.adopt.
-function hmuxAdoptRetiredError(sub) {
+// Legacy terminal adoption ended with the legacy PTY runtime: saved Agents
+// load as Hmux sessions, and the app no longer answers hmux.adopt.
+function legacyAdoptionRefusal(sub) {
+  const code = "hmux_adopt_retired";
+  const ended = `dure hmux ${sub} was retired with the legacy terminal runtime`;
   return Object.assign(
     new Error(
-      `dure hmux ${sub} was retired with the legacy terminal runtime, and this request was not sent to the app. ` +
+      `${ended}, and this request was not sent to the app. ` +
         "To resume an Agent's exact conversation on a new Host, run dure client pane state <panel-id> " +
         "and, when the pane offers refresh, dure client pane act <panel-id> refresh. " +
         "For an Agent the backend manages, use dure hmux rehost --name <project/agent>.",
     ),
-    { code: "hmux_adopt_retired" },
+    { code },
   );
 }
 
 async function cmdHmux(sub, opts) {
   const action = sub;
   if (action === "adopt" || action === "migrate") {
-    writeCliActionError(hmuxAdoptRetiredError(action), opts, "dure.hmux/v1", "dure.hmux.error");
+    writeCliActionError(legacyAdoptionRefusal(action), opts, "dure.hmux/v1", "dure.hmux.error");
     return;
   }
   if (action === "rehost") {

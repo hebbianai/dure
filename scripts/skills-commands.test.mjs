@@ -57,7 +57,7 @@ const RETIREMENT_MESSAGE = /\bdure ([a-z][a-z0-9-]*) has been retired\b/g;
  *  word "retired", with hyphens normalized, so one entry covers "file mailbox"
  *  and "file-mailbox". Keep this short: every addition is a message the command
  *  scan cannot read, and the point of the list is to stay auditable. */
-const SUBSYSTEM_RETIREMENTS = ["legacy session daemon", "file mailbox"];
+const SUBSYSTEM_RETIREMENTS = ["legacy session daemon", "file mailbox", "legacy terminal runtime"];
 
 /** Groups the dispatch still answers but no longer performs. Resolving is not
  *  the same as working: `dure checkpoint` is retired inside the dispatch, so it
