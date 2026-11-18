@@ -15,23 +15,31 @@
  * pull-to-refresh, and on an interval while it is shown — faster while a turn
  * runs or a request waits (`agentChatActive`). The computer decides where a
  * message goes; the chat says what it decided.
+ *
+ * Where the computer can tell the chat of a change (`watch`), the chat holds
+ * a watch while it is shown and asks again on each change, so an answer grows
+ * as it is written. The interval stays as the fallback, at the idle pace while
+ * the watch is taken (`pollDelay`); a watch that ends is tried again later
+ * (`rewatchDelay`).
  */
 
 import "./agentChatView.css";
 import {
   AGENT_CHAT_ACTIVE_POLL_MS,
   AGENT_CHAT_IDLE_POLL_MS,
+  AGENT_CHAT_REWATCH_MS,
   type AgentChatFallback,
   type AgentChatNotice,
   type AgentChatStep,
   type AgentChatWait,
   actionError,
   actionNotice,
-  agentChatActive,
   applyTimelineAnswer,
   choose,
   mergeOlder,
+  pollDelay,
   questionAnswers,
+  rewatchDelay,
   statusKey,
   timelineFailure,
   toolStateKey,
@@ -48,6 +56,7 @@ import type {
   AgentChatPending,
   AgentChatTimeline,
   AgentChatTimelineAnswer,
+  AgentChatWatchNotice,
 } from "./ipc";
 import { newActionId } from "./launch";
 
@@ -55,15 +64,23 @@ export interface AgentChatViewOptions {
   /** Read the newest rows, or those before `before`. */
   readonly fetch: (before?: number) => Promise<AgentChatTimelineAnswer>;
   readonly act: (action: AgentChatAction) => Promise<AgentChatActionAnswer>;
+  /**
+   * Be told when the conversation changes (`ipc.hubAgentChatWatch`): resolves
+   * with the function that stops the watch. Absent where the computer cannot
+   * tell; the chat then only asks on its interval.
+   */
+  readonly watch?: (onNotice: (notice: AgentChatWatchNotice) => void) => Promise<() => void>;
   readonly activePollMs?: number;
   readonly idlePollMs?: number;
+  /** The first wait before watching again (`rewatchDelay`). */
+  readonly rewatchMs?: number;
   /** Names each press (`launch.newActionId`). */
   readonly actionId?: () => string;
 }
 
 export interface AgentChatController {
   mount(container: HTMLElement): void;
-  /** Polls only while shown. */
+  /** Asks and watches only while shown. */
   setVisible(visible: boolean): void;
   dispose(): void;
 }
@@ -109,6 +126,7 @@ function noticeText(notice: AgentChatNotice): string {
 export function createAgentChatView(options: AgentChatViewOptions): AgentChatController {
   const activeMs = options.activePollMs ?? AGENT_CHAT_ACTIVE_POLL_MS;
   const idleMs = options.idlePollMs ?? AGENT_CHAT_IDLE_POLL_MS;
+  const rewatchMs = options.rewatchMs ?? AGENT_CHAT_REWATCH_MS;
   const actionId = options.actionId ?? newActionId;
 
   let timeline: AgentChatTimeline | undefined;
@@ -126,6 +144,17 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
   let visible = false;
   let disposed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  /** A watch is asked for or open. */
+  let watching = false;
+  /** The computer took the watch: changes arrive as they happen. */
+  let watched = false;
+  /** Stops the open watch, once the computer took the request. */
+  let stopWatch: (() => void) | undefined;
+  /** Names the current watch, so a late notice from an earlier one is ignored. */
+  let watchGeneration = 0;
+  /** Watches that ended in a row before the computer took one. */
+  let watchEndings = 0;
+  let rewatchTimer: ReturnType<typeof setTimeout> | undefined;
   /** Per pending question card: chosen options and own words, by question. */
   const drafts = new Map<string, { selections: ReadonlySet<number>[]; others: string[] }>();
 
@@ -192,6 +221,7 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
         silentCloses = 0;
         paint();
         void refresh();
+        watch();
       });
       parts.push(retry);
     } else if (wait) {
@@ -363,6 +393,7 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
     if (step.kind === "fallback") {
       wait = undefined;
       fallback = step.fallback;
+      unwatch();
     } else if (step.kind === "wait") {
       wait = step.wait;
     } else {
@@ -383,7 +414,55 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
         return;
       }
       void refresh();
-    }, agentChatActive(timeline) ? activeMs : idleMs);
+    }, pollDelay(timeline, watched, activeMs, idleMs));
+  }
+
+  /** Hold a watch while shown; each change asks again, and `refresh` folds a burst into one more read. */
+  function watch(): void {
+    if (!options.watch || watching || !visible || disposed || fallback) return;
+    const generation = ++watchGeneration;
+    const current = () => generation === watchGeneration;
+    watching = true;
+    const ended = () => {
+      if (!current()) return;
+      unwatch();
+      watchEndings += 1;
+      if (!visible || disposed || fallback) return;
+      rewatchTimer = setTimeout(() => {
+        rewatchTimer = undefined;
+        watch();
+      }, rewatchDelay(watchEndings, rewatchMs));
+      // Back to the active pace until a watch is taken again.
+      schedule();
+    };
+    options
+      .watch((notice) => {
+        if (!current()) return;
+        if (notice === "ended") {
+          ended();
+          return;
+        }
+        watched = true;
+        watchEndings = 0;
+        void refresh();
+      })
+      .then(
+        (stop) => {
+          if (current()) stopWatch = stop;
+          else stop();
+        },
+        ended,
+      );
+  }
+
+  function unwatch(): void {
+    watchGeneration += 1;
+    stopWatch?.();
+    stopWatch = undefined;
+    watching = false;
+    watched = false;
+    if (rewatchTimer !== undefined) clearTimeout(rewatchTimer);
+    rewatchTimer = undefined;
   }
 
   /** One read at a time; one asked meanwhile runs after it. */
@@ -495,17 +574,21 @@ export function createAgentChatView(options: AgentChatViewOptions): AgentChatCon
     setVisible(next) {
       if (visible === next) return;
       visible = next;
-      if (visible) void refresh();
-      else {
+      if (visible) {
+        void refresh();
+        watch();
+      } else {
         frame.release();
         if (timer !== undefined) clearTimeout(timer);
         timer = undefined;
+        unwatch();
       }
     },
     dispose() {
       disposed = true;
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
+      unwatch();
     },
   };
 }

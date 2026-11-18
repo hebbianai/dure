@@ -119,6 +119,9 @@ impl SidebarLayout {
                     presentation: seat.presentation.clone(),
                     box_id: box_id.to_string(),
                     box_label: box_label.to_string(),
+                    // `server.rs` serves `AgentChatWatchV1` for every agent
+                    // it lists.
+                    watch: true,
                 })
             })
             .collect()
@@ -292,6 +295,7 @@ mod tests {
         assert_eq!(listed[0].agent_id, "agent-1");
         assert_eq!(listed[0].display_title.as_deref(), Some("mobile"));
         assert_eq!(listed[0].box_id, "this-laptop");
+        assert!(listed[0].watch, "this desktop answers the chat's watch");
         assert_eq!(state.chat_agent("agent-1"), Some(chat("agent-1")));
         assert_eq!(state.chat_agent("agent-unplaced"), None);
         assert_eq!(state.chat_agent("agent-unknown"), None);

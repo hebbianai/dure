@@ -19,8 +19,48 @@ use super::{
 const SUBSCRIBE_OPERATION: &str = "agent_conversation.subscribe";
 const MAX_SUBSCRIPTIONS: usize = 64;
 
+/// Who holds a subscription: a screen's window, whose subscriptions end
+/// when it closes, or native code (the phone hub's chat watch,
+/// `hub::agent_chat`), whose subscription ends when it drops its
+/// [`NativeSubscription`]. No window can end or take over a native one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum SubscriptionOwner {
+    Window(String),
+    Native,
+}
+
+impl SubscriptionOwner {
+    fn is_window(&self, label: &str) -> bool {
+        matches!(self, Self::Window(owner) if owner == label)
+    }
+}
+
+impl From<&str> for SubscriptionOwner {
+    fn from(label: &str) -> Self {
+        Self::Window(label.into())
+    }
+}
+
+/// Where a subscription's messages go.
+pub(super) trait SubscriptionSink: Send + 'static {
+    /// False once nobody receives them any more, which ends the subscription.
+    fn deliver(&self, message: Value) -> bool;
+}
+
+impl SubscriptionSink for Channel<Value> {
+    fn deliver(&self, message: Value) -> bool {
+        self.send(message).is_ok()
+    }
+}
+
+impl SubscriptionSink for std::sync::mpsc::Sender<Value> {
+    fn deliver(&self, message: Value) -> bool {
+        self.send(message).is_ok()
+    }
+}
+
 pub(super) struct ActiveSubscription {
-    owner_window: String,
+    owner: SubscriptionOwner,
     generation: String,
     cancel: oneshot::Sender<()>,
 }
@@ -58,7 +98,7 @@ fn remove_if_current(
 fn reserve(
     subscriptions: &ActiveSubscriptions,
     subscription_id: &str,
-    owner_window: &str,
+    owner: impl Into<SubscriptionOwner>,
     generation: &str,
 ) -> Result<oneshot::Receiver<()>, DureBackendTransportError> {
     let mut subscriptions = subscriptions.entries.lock().map_err(|_| {
@@ -83,7 +123,7 @@ fn reserve(
     subscriptions.insert(
         subscription_id.into(),
         ActiveSubscription {
-            owner_window: owner_window.into(),
+            owner: owner.into(),
             generation: generation.into(),
             cancel,
         },
@@ -102,7 +142,7 @@ pub(super) fn cancel_window_subscriptions(
         };
         let subscription_ids = entries
             .iter()
-            .filter(|(_, active)| active.owner_window == owner_window)
+            .filter(|(_, active)| active.owner.is_window(owner_window))
             .map(|(subscription_id, _)| subscription_id.clone())
             .collect::<Vec<_>>();
         subscription_ids
@@ -189,11 +229,11 @@ fn subscription_event(
 }
 
 fn send_terminal_error(
-    channel: &Channel<Value>,
+    channel: &dyn SubscriptionSink,
     subscription_id: &str,
     error: &DureBackendTransportError,
 ) {
-    let _ = channel.send(json!({
+    let _ = channel.deliver(json!({
         "schemaVersion": 1,
         "kind": "error",
         "subscriptionId": subscription_id,
@@ -307,7 +347,7 @@ struct SubscriptionWorker {
     request_id: String,
     subscription_id: String,
     interaction_session_id: String,
-    channel: Channel<Value>,
+    channel: Box<dyn SubscriptionSink>,
     cancel: oneshot::Receiver<()>,
     subscriptions: Weak<ActiveSubscriptions>,
     recovery: crate::dure_backend_coordinator::ManagedBackendCoordinatorHandle,
@@ -326,7 +366,7 @@ impl SubscriptionWorker {
             ) {
                 Ok(authority) => authority,
                 Err(error) => {
-                    send_terminal_error(&self.channel, &self.subscription_id, &error);
+                    send_terminal_error(self.channel.as_ref(), &self.subscription_id, &error);
                     self.finish().await;
                     return;
                 }
@@ -340,7 +380,11 @@ impl SubscriptionWorker {
                             .recovery
                             .begin_recovery(&next_authority.selected.profile)
                         else {
-                            send_terminal_error(&self.channel, &self.subscription_id, &error);
+                            send_terminal_error(
+                                self.channel.as_ref(),
+                                &self.subscription_id,
+                                &error,
+                            );
                             self.finish().await;
                             return;
                         };
@@ -354,7 +398,7 @@ impl SubscriptionWorker {
                         };
                         if let Err(error) = recovered {
                             send_terminal_error(
-                                &self.channel,
+                                self.channel.as_ref(),
                                 &self.subscription_id,
                                 &super::coordinator_error(error),
                             );
@@ -371,7 +415,11 @@ impl SubscriptionWorker {
                         ) {
                             Ok(authority) => authority,
                             Err(error) => {
-                                send_terminal_error(&self.channel, &self.subscription_id, &error);
+                                send_terminal_error(
+                                    self.channel.as_ref(),
+                                    &self.subscription_id,
+                                    &error,
+                                );
                                 self.finish().await;
                                 return;
                             }
@@ -384,20 +432,20 @@ impl SubscriptionWorker {
                 Ok((connection, seed)) => {
                     let stale = std::mem::replace(&mut self.connection, connection);
                     self.authority = next_authority;
-                    let sent = self.channel.send(subscription_reset_required(
+                    let sent = self.channel.deliver(subscription_reset_required(
                         &seed,
                         &self.request_id,
                         &self.subscription_id,
                         &self.interaction_session_id,
                     ));
                     stale.close().await;
-                    if sent.is_err() {
+                    if !sent {
                         self.finish().await;
                         return;
                     }
                 }
                 Err(error) => {
-                    send_terminal_error(&self.channel, &self.subscription_id, &error);
+                    send_terminal_error(self.channel.as_ref(), &self.subscription_id, &error);
                     self.finish().await;
                     return;
                 }
@@ -420,14 +468,14 @@ impl SubscriptionWorker {
                 Ok(message) => message,
                 Err(mut error) => loop {
                     if !super::local_liveness_failure(&self.authority.selected, &error) {
-                        send_terminal_error(&self.channel, &self.subscription_id, &error);
+                        send_terminal_error(self.channel.as_ref(), &self.subscription_id, &error);
                         break 'events;
                     }
                     let Some(ticket) = self
                         .recovery
                         .begin_recovery(&self.authority.selected.profile)
                     else {
-                        send_terminal_error(&self.channel, &self.subscription_id, &error);
+                        send_terminal_error(self.channel.as_ref(), &self.subscription_id, &error);
                         break 'events;
                     };
                     let recovered = tokio::select! {
@@ -436,7 +484,7 @@ impl SubscriptionWorker {
                     };
                     if let Err(recovery_error) = recovered {
                         error = super::coordinator_error(recovery_error);
-                        send_terminal_error(&self.channel, &self.subscription_id, &error);
+                        send_terminal_error(self.channel.as_ref(), &self.subscription_id, &error);
                         break 'events;
                     }
                     let next_authority = match resolve_following_subscription_authority(
@@ -449,7 +497,11 @@ impl SubscriptionWorker {
                     ) {
                         Ok(authority) => authority,
                         Err(next) => {
-                            send_terminal_error(&self.channel, &self.subscription_id, &next);
+                            send_terminal_error(
+                                self.channel.as_ref(),
+                                &self.subscription_id,
+                                &next,
+                            );
                             break 'events;
                         }
                     };
@@ -459,14 +511,14 @@ impl SubscriptionWorker {
                     {
                         Ok((connection, seed)) => {
                             let stale = std::mem::replace(&mut self.connection, connection);
-                            let reset = self.channel.send(subscription_reset_required(
+                            let reset = self.channel.deliver(subscription_reset_required(
                                 &seed,
                                 &self.request_id,
                                 &self.subscription_id,
                                 &self.interaction_session_id,
                             ));
                             stale.close().await;
-                            if reset.is_err() {
+                            if !reset {
                                 break 'events;
                             }
                             continue 'events;
@@ -475,7 +527,7 @@ impl SubscriptionWorker {
                     }
                 }
             };
-            if self.channel.send(message).is_err() {
+            if !self.channel.deliver(message) {
                 break;
             }
         }
@@ -495,9 +547,9 @@ async fn open_subscription(
     state: &DureBackendTransportState,
     route: &DureBackendRouteV1,
     subscription_id: &str,
-    owner_window: &str,
+    owner: impl Into<SubscriptionOwner>,
     body: Value,
-    channel: Channel<Value>,
+    channel: impl SubscriptionSink,
 ) -> Result<DureBackendTransportResult, DureBackendTransportError> {
     let interaction_session_id = body
         .get("interactionSessionId")
@@ -519,12 +571,7 @@ async fn open_subscription(
     let request_id = request_id()?;
     let mut authority =
         resolve_subscription_authority(root, &state.config, route, &request_id, &body)?;
-    let cancel = reserve(
-        &state.subscriptions,
-        subscription_id,
-        owner_window,
-        &request_id,
-    )?;
+    let cancel = reserve(&state.subscriptions, subscription_id, owner, &request_id)?;
     let opened = async {
         authority = resolve_subscription_authority(root, &state.config, route, &request_id, &body)?;
         match connect_subscription(&authority, &state.config, &request_id).await {
@@ -594,13 +641,66 @@ async fn open_subscription(
         request_id,
         subscription_id,
         interaction_session_id,
-        channel,
+        channel: Box::new(channel),
         cancel,
         subscriptions,
         recovery: state.recovery.clone(),
     }
     .run());
     Ok(initial)
+}
+
+/// A conversation subscription held by native code. Dropping it ends the
+/// subscription and releases its capacity.
+pub(crate) struct NativeSubscription {
+    subscriptions: Weak<ActiveSubscriptions>,
+    subscription_id: String,
+}
+
+impl Drop for NativeSubscription {
+    fn drop(&mut self) {
+        let Some(subscriptions) = self.subscriptions.upgrade() else {
+            return;
+        };
+        let active = match subscriptions.entries.lock() {
+            Ok(mut entries) => entries.remove(&self.subscription_id),
+            Err(poisoned) => poisoned.into_inner().remove(&self.subscription_id),
+        };
+        if let Some(active) = active {
+            let _ = active.cancel.send(());
+        }
+    }
+}
+
+/// Open a subscription for native code: the screen's admission, capacity,
+/// fences and recovery, with its messages on the returned receiver in the
+/// shape the screen's channel receives them. The receiver closes when the
+/// subscription ends.
+pub(super) async fn open_native_subscription(
+    root: &Path,
+    state: &DureBackendTransportState,
+    route: &DureBackendRouteV1,
+    body: Value,
+) -> Result<(NativeSubscription, std::sync::mpsc::Receiver<Value>), DureBackendTransportError> {
+    let subscription_id = format!("native-{}", request_id()?);
+    let (sender, events) = std::sync::mpsc::channel();
+    open_subscription(
+        root,
+        state,
+        route,
+        &subscription_id,
+        SubscriptionOwner::Native,
+        body,
+        sender,
+    )
+    .await?;
+    Ok((
+        NativeSubscription {
+            subscriptions: Arc::downgrade(&state.subscriptions),
+            subscription_id,
+        },
+        events,
+    ))
 }
 
 #[tauri::command]
@@ -646,7 +746,7 @@ pub(crate) fn dure_backend_unsubscribe(
         })?;
         if subscriptions
             .get(&subscription_id)
-            .is_some_and(|active| active.owner_window != window.label())
+            .is_some_and(|active| !active.owner.is_window(window.label()))
         {
             return Err(DureBackendTransportError::new(
                 "backend_subscription_owner_mismatch",
@@ -1029,6 +1129,89 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    /// The phone hub's chat watch holds a subscription the way a window
+    /// does, but no window can end it, and only dropping it lets it go.
+    #[tokio::test]
+    async fn a_native_subscription_delivers_events_until_it_is_dropped() {
+        let temporary = tempfile::Builder::new()
+            .prefix("dure-subscription-native-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let root = temporary.path();
+        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let socket_path = root.join("backend.sock");
+        let catalog = local_catalog(&socket_path, "generation-1");
+        write_owner_file(
+            &root.join("backend-profiles.json"),
+            format!("{catalog}\n").as_bytes(),
+            false,
+        );
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut request = String::new();
+            stream.read_line(&mut request).await.unwrap();
+            let request: Value = serde_json::from_str(&request).unwrap();
+            let request_id = request["requestId"].as_str().unwrap();
+            stream
+                .get_mut()
+                .write_all(&initial_response(request_id, "generation-1"))
+                .await
+                .unwrap();
+            let mut notification = event(request_id, "generation-1");
+            notification.push(b'\n');
+            stream.get_mut().write_all(&notification).await.unwrap();
+            let mut trailing = String::new();
+            stream.read_line(&mut trailing).await.unwrap()
+        });
+        let state = DureBackendTransportState::default();
+        let route = DureBackendRouteV1::Selected {
+            profile_id: Some("local".into()),
+        };
+
+        let (subscription, events) = open_native_subscription(
+            root,
+            &state,
+            &route,
+            json!({
+                "schemaVersion": 1,
+                "interactionSessionId": "interaction-1"
+            }),
+        )
+        .await
+        .unwrap();
+        let delivered = tokio::task::spawn_blocking(move || {
+            let first = events.recv_timeout(std::time::Duration::from_secs(5));
+            (first, events)
+        })
+        .await
+        .unwrap();
+        let (first, events) = delivered;
+        let first = first.expect("the backend's change reaches the native caller");
+        assert_eq!(first["kind"], "event");
+        assert_eq!(first["event"]["topic"], "agent_conversation.changed");
+
+        assert_eq!(state.cancel_window_subscriptions("native"), 0);
+        assert_eq!(state.subscriptions.entries.lock().unwrap().len(), 1);
+
+        drop(subscription);
+        assert!(state.subscriptions.entries.lock().unwrap().is_empty());
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), server)
+                .await
+                .expect("dropping the native subscription closes its connection")
+                .unwrap(),
+            0
+        );
+        let ended = tokio::task::spawn_blocking(move || {
+            events.recv_timeout(std::time::Duration::from_secs(5))
+        })
+        .await
+        .unwrap();
+        assert_eq!(ended, Err(std::sync::mpsc::RecvTimeoutError::Disconnected));
     }
 
     #[tokio::test]

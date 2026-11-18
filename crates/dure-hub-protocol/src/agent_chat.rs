@@ -26,6 +26,17 @@
 //! person crosses with its choices: it is addressed to them and cannot be
 //! answered unseen. Reasoning, plans and provider evidence stay too.
 //!
+//! # Being told of a change
+//!
+//! While the phone shows the chat it holds one `AgentChatWatchV1` stream open
+//! ([`HubAgentChatWatchEvent`]). The desktop subscribes to the conversation
+//! the way its own chat does and writes [`AgentChatWatchSignal::Changed`] when
+//! it changes, at most once per coalescing window; the phone then reads the
+//! newest page again, exactly as a poll would. The stream carries no
+//! conversation text, so it adds nothing to what crosses. The phone keeps its
+//! interval as the fallback, and only watches an agent whose catalog entry
+//! says the desktop answers ([`HubChatSession::watch`]).
+//!
 //! # Why a separate version
 //!
 //! Like `conversation`, so a phone that meets a desktop speaking another
@@ -67,6 +78,9 @@ pub const MAX_AGENT_CHAT_LABEL_BYTES: usize = 2 * 1024;
 /// The most queued messages one answer previews.
 pub const MAX_AGENT_CHAT_QUEUED: usize = 32;
 
+/// One watch event's limit. It never carries conversation text.
+pub const MAX_AGENT_CHAT_WATCH_EVENT_BYTES: usize = 4 * 1024;
+
 /// The longest identifier the phone may send: an action id becomes part of the
 /// backend's turn and message ids, which are bounded at 160 bytes.
 pub const MAX_AGENT_CHAT_ACTION_ID_BYTES: usize = 64;
@@ -92,6 +106,12 @@ pub struct HubChatSession {
     /// The box the agent runs on. Only this desktop's own box serves it.
     pub box_id: String,
     pub box_label: String,
+    /// This desktop answers `AgentChatWatchV1` for this agent: the chat may be
+    /// told when the conversation changes instead of only asking on an
+    /// interval. Absent from older desktops, so a phone never opens a watch
+    /// that would close without a word; an older phone ignores it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub watch: bool,
 }
 
 /// The phone's answer to a pending request.
@@ -475,6 +495,61 @@ impl HubAgentChatActionResult {
     }
 }
 
+/// What one frame of a watch says.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentChatWatchSignal {
+    /// The watch is open, and every change from here on is told. Read once
+    /// now: a change between the last read and this point is told by nothing
+    /// else.
+    Watching,
+    /// The conversation changed: read the newest page again.
+    Changed,
+    /// Nothing changed for a while. Written so a phone that left is noticed
+    /// and its subscription let go, and so the phone can tell a quiet watch
+    /// from a lost one.
+    Quiet,
+    /// The watch could not open. `code` says why; the stream ends.
+    Refused,
+    /// A signal a later desktop writes. Reading again is always safe.
+    #[serde(other)]
+    Unknown,
+}
+
+/// One frame on an `AgentChatWatchV1` stream. The stream ends when the
+/// desktop's subscription ends or the phone closes it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HubAgentChatWatchEvent {
+    pub hub_agent_chat_version: u16,
+    pub signal: AgentChatWatchSignal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<AgentChatRefusal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl HubAgentChatWatchEvent {
+    #[must_use]
+    pub fn signal(signal: AgentChatWatchSignal) -> Self {
+        Self {
+            hub_agent_chat_version: HUB_AGENT_CHAT_VERSION,
+            signal,
+            code: None,
+            detail: None,
+        }
+    }
+
+    #[must_use]
+    pub fn refused(code: AgentChatRefusal, detail: impl Into<String>) -> Self {
+        Self {
+            hub_agent_chat_version: HUB_AGENT_CHAT_VERSION,
+            signal: AgentChatWatchSignal::Refused,
+            code: Some(code),
+            detail: Some(bounded_detail(detail.into())),
+        }
+    }
+}
+
 /// Whether an action id can name backend ids: 1 to
 /// [`MAX_AGENT_CHAT_ACTION_ID_BYTES`] of `A-Z a-z 0-9 . _ : -`, starting with a
 /// letter or digit.
@@ -526,6 +601,14 @@ pub fn encode_action(result: &HubAgentChatActionResult) -> Result<Vec<u8>, Frame
     frame::encode(result, MAX_AGENT_CHAT_ACTION_RESULT_BYTES)
 }
 
+/// Hub side: one watch event as a frame.
+///
+/// # Errors
+/// When serialization fails or the event exceeds the frame limit.
+pub fn encode_watch_event(event: &HubAgentChatWatchEvent) -> Result<Vec<u8>, FrameError> {
+    frame::encode(event, MAX_AGENT_CHAT_WATCH_EVENT_BYTES)
+}
+
 /// Phone side: read a timeline answer. Another version is refused.
 ///
 /// # Errors
@@ -542,6 +625,16 @@ pub fn read_timeline<R: Read>(
 /// When the frame is broken, the version differs or the document is unreadable.
 pub fn read_action<R: Read>(reader: &mut R) -> Result<HubAgentChatActionResult, ConversationError> {
     read_versioned(reader, MAX_AGENT_CHAT_ACTION_RESULT_BYTES)
+}
+
+/// Phone side: read the next watch event. Another version is refused.
+///
+/// # Errors
+/// When the frame is broken, the version differs or the document is unreadable.
+pub fn read_watch_event<R: Read>(
+    reader: &mut R,
+) -> Result<HubAgentChatWatchEvent, ConversationError> {
+    read_versioned(reader, MAX_AGENT_CHAT_WATCH_EVENT_BYTES)
 }
 
 fn read_versioned<T: serde::de::DeserializeOwned, R: Read>(
@@ -726,6 +819,64 @@ mod tests {
             read_action(&mut framed.as_slice()),
             Err(ConversationError::UnsupportedVersion { .. })
         ));
+    }
+
+    #[test]
+    fn watch_events_follow_each_other_on_one_stream() {
+        let events = [
+            HubAgentChatWatchEvent::signal(AgentChatWatchSignal::Watching),
+            HubAgentChatWatchEvent::signal(AgentChatWatchSignal::Changed),
+            HubAgentChatWatchEvent::signal(AgentChatWatchSignal::Quiet),
+            HubAgentChatWatchEvent::refused(AgentChatRefusal::Unavailable, "no backend"),
+        ];
+        let mut stream = Vec::new();
+        for event in &events {
+            stream.extend(encode_watch_event(event).expect("encodes"));
+        }
+        let mut reader = stream.as_slice();
+        for event in &events {
+            assert_eq!(&read_watch_event(&mut reader).expect("reads"), event);
+        }
+        assert!(reader.is_empty());
+        assert_eq!(
+            serde_json::to_value(&events[1]).expect("to value"),
+            serde_json::json!({ "hub_agent_chat_version": HUB_AGENT_CHAT_VERSION, "signal": "changed" })
+        );
+    }
+
+    #[test]
+    fn a_watch_signal_a_later_desktop_adds_reads_as_unknown() {
+        let event: HubAgentChatWatchEvent = serde_json::from_value(serde_json::json!({
+            "hub_agent_chat_version": HUB_AGENT_CHAT_VERSION,
+            "signal": "compacted",
+        }))
+        .expect("reads");
+        assert_eq!(event.signal, AgentChatWatchSignal::Unknown);
+    }
+
+    /// An older phone reads a catalog that offers a watch; an older desktop's
+    /// catalog offers none.
+    #[test]
+    fn the_watch_capability_is_optional_both_ways() {
+        let session = HubChatSession {
+            agent_id: "agent-1".to_string(),
+            provider_id: "claude".to_string(),
+            display_title: None,
+            presentation: None,
+            box_id: "this-laptop".to_string(),
+            box_label: "Laptop".to_string(),
+            watch: false,
+        };
+        let older = serde_json::to_value(&session).expect("to value");
+        assert!(older.get("watch").is_none());
+        let read: HubChatSession = serde_json::from_value(older).expect("reads");
+        assert!(!read.watch);
+        let offered = serde_json::to_value(HubChatSession {
+            watch: true,
+            ..session
+        })
+        .expect("to value");
+        assert_eq!(offered["watch"], serde_json::json!(true));
     }
 
     #[test]

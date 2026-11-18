@@ -1163,6 +1163,19 @@ fn serve_one(
         return;
     }
 
+    // A watch keeps the connection while the phone shows the chat, and ends
+    // when the subscription does or a write finds the phone gone.
+    if let HubRequest::AgentChatWatchV1 { box_id, agent_id } = &hello.request {
+        super::agent_chat::serve_watch(
+            &mut tls,
+            hub.agent_chats,
+            box_route(&hub, box_id),
+            agent_id,
+            super::agent_chat::WATCH_PACE,
+        );
+        return;
+    }
+
     // A chat-owned agent's conversation lives on this desktop's backend
     // (`agent_chat.rs`). An answer that never arrives would read as "refused"
     // and invite a second send, so every outcome is written.

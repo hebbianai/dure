@@ -15,6 +15,11 @@
 //!   (`dure_hub_protocol::agent_chat`), and names the backend ids after the
 //!   phone's action id, so a retried press finds what it already did instead
 //!   of doing it twice.
+//! - **A watch** ([`serve_watch`]) holds the same `agent_conversation`
+//!   subscription the desktop's chat holds and tells the phone only *that*
+//!   the conversation changed, coalesced ([`WatchPace`]); the phone reads the
+//!   page again with `AgentChatTimelineV1`. No text rides the watch, so the
+//!   projection above stays the only thing that crosses.
 
 use super::conversation::BoxRoute;
 use super::layout::LayoutState;
@@ -26,10 +31,11 @@ use dure_app::{
     AgentTurnEffectReceiptV1, AgentTurnEffectStateV1,
 };
 use dure_hub_protocol::agent_chat::{
-    encode_action, encode_timeline, valid_action_id, AgentChatAnswer, AgentChatDelivery,
-    AgentChatItem, AgentChatOption, AgentChatPending, AgentChatPendingKind, AgentChatQuestion,
-    AgentChatQueued, AgentChatRefusal, AgentChatRole, AgentChatStatus, AgentChatTimeline,
-    AgentChatToolState, AgentChatTurn, HubAgentChatActionResult, HubAgentChatTimelineResult,
+    encode_action, encode_timeline, encode_watch_event, valid_action_id, AgentChatAnswer,
+    AgentChatDelivery, AgentChatItem, AgentChatOption, AgentChatPending, AgentChatPendingKind,
+    AgentChatQuestion, AgentChatQueued, AgentChatRefusal, AgentChatRole, AgentChatStatus,
+    AgentChatTimeline, AgentChatToolState, AgentChatTurn, AgentChatWatchSignal,
+    HubAgentChatActionResult, HubAgentChatTimelineResult, HubAgentChatWatchEvent,
     MAX_AGENT_CHAT_ITEMS,
 };
 use dure_hub_protocol::conversation::normalize_agent_prompt;
@@ -37,7 +43,10 @@ use dure_hub_protocol::frame::FrameError;
 use dure_hub_protocol::hello::HubRequest;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::io::Write;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// A failed backend request, by the backend's or the transport's code.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +65,45 @@ pub trait ChatBackend: Send + Sync {
         operation: &str,
         body: Value,
     ) -> Result<Value, BackendFailure>;
+    /// Subscribe to one conversation (`agent_conversation.subscribe`), the
+    /// way the desktop's chat subscribes.
+    fn subscribe(&self, profile_id: &str, body: Value) -> Result<ChatChanges, BackendFailure>;
+}
+
+/// One open subscription to an agent's conversation. Each message is one the
+/// backend transport delivers to the desktop's chat: an `event` (the
+/// conversation changed, or must be read afresh) or the `error` that ends it.
+/// Dropping it ends the subscription.
+pub struct ChatChanges {
+    events: Receiver<Value>,
+    _subscription: Box<dyn Send>,
+}
+
+/// What a subscription said within one wait.
+enum Change {
+    Changed,
+    Silent,
+    Ended,
+}
+
+impl ChatChanges {
+    /// `subscription` is held until this is dropped.
+    pub fn new(events: Receiver<Value>, subscription: impl Send + 'static) -> Self {
+        Self {
+            events,
+            _subscription: Box::new(subscription),
+        }
+    }
+
+    fn next(&self, wait: Duration) -> Change {
+        match self.events.recv_timeout(wait) {
+            Ok(message) if message.get("kind").and_then(Value::as_str) == Some("event") => {
+                Change::Changed
+            }
+            Ok(_) | Err(RecvTimeoutError::Disconnected) => Change::Ended,
+            Err(RecvTimeoutError::Timeout) => Change::Silent,
+        }
+    }
 }
 
 /// One write the phone asks for, named by its press. A message's text is
@@ -88,20 +136,19 @@ pub trait AgentChatSink: Send + Sync {
         action_id: &str,
         action: ChatAction<'_>,
     ) -> HubAgentChatActionResult;
+    /// Subscribe to the agent's conversation for a watch.
+    fn watch(&self, agent_id: &str) -> Result<ChatChanges, (AgentChatRefusal, String)>;
 }
 
 type Refusal = (AgentChatRefusal, String);
 
-/// Answer one chat request as its frame, or `None` for any other request.
-///
-/// Only this desktop's own box serves chat, and only with a sink. `route`
-/// names a box the way `Attach` does.
-pub fn answer_request(
+/// Whether this desktop serves chat for `route`'s box: only its own box, and
+/// only with a sink.
+fn admitted(
     sink: Option<&dyn AgentChatSink>,
-    route: impl Fn(&str) -> BoxRoute,
-    request: &HubRequest,
-) -> Option<Result<Vec<u8>, FrameError>> {
-    let admit = |box_id: &str| match route(box_id) {
+    route: BoxRoute,
+) -> Result<&dyn AgentChatSink, Refusal> {
+    match route {
         BoxRoute::Remote => Err((
             AgentChatRefusal::RemoteUnsupported,
             "Chat for agents on remote hosts is not served yet".to_string(),
@@ -114,7 +161,19 @@ pub fn answer_request(
             AgentChatRefusal::Unavailable,
             "This desktop cannot serve agent chat".to_string(),
         )),
-    };
+    }
+}
+
+/// Answer one chat request as its frame, or `None` for any other request.
+///
+/// Only this desktop's own box serves chat, and only with a sink. `route`
+/// names a box the way `Attach` does.
+pub fn answer_request(
+    sink: Option<&dyn AgentChatSink>,
+    route: impl Fn(&str) -> BoxRoute,
+    request: &HubRequest,
+) -> Option<Result<Vec<u8>, FrameError>> {
+    let admit = |box_id: &str| admitted(sink, route(box_id));
     let act = |box_id: &str, agent_id: &str, action_id: &str, action: ChatAction<'_>| {
         let result = match admit(box_id) {
             Ok(_) if !valid_action_id(action_id) => HubAgentChatActionResult::refused(
@@ -183,6 +242,93 @@ pub fn answer_request(
         ),
         _ => return None,
     })
+}
+
+/// How a watch paces what it writes.
+#[derive(Clone, Copy, Debug)]
+pub struct WatchPace {
+    /// A change is told at once; changes within this window after it are
+    /// told once, at its end. A burst of deltas costs the phone a bounded
+    /// number of reads, and the last change is never left untold.
+    pub coalesce: Duration,
+    /// How long a watch stays silent before it says so. Well below the
+    /// phone's read timeout (20 s, `hub_client::REQUEST_TIMEOUT`), so a quiet
+    /// watch is not taken for a lost one; and a phone that left is noticed
+    /// on the next write, which lets the subscription go.
+    pub quiet: Duration,
+}
+
+/// The pace the hub serves watches at.
+pub const WATCH_PACE: WatchPace = WatchPace {
+    coalesce: Duration::from_millis(200),
+    quiet: Duration::from_secs(8),
+};
+
+fn tell(out: &mut impl Write, event: &HubAgentChatWatchEvent) -> std::io::Result<()> {
+    let framed = encode_watch_event(event)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    out.write_all(&framed)?;
+    out.flush()
+}
+
+/// Serve one `AgentChatWatchV1` stream until the subscription ends or the
+/// phone goes away (a write fails). `route` names the request's box the way
+/// `Attach` does. Returning drops the subscription.
+pub fn serve_watch(
+    out: &mut impl Write,
+    sink: Option<&dyn AgentChatSink>,
+    route: BoxRoute,
+    agent_id: &str,
+    pace: WatchPace,
+) {
+    let changes = match admitted(sink, route).and_then(|sink| sink.watch(agent_id)) {
+        Ok(changes) => changes,
+        Err((code, detail)) => {
+            let _ = tell(out, &HubAgentChatWatchEvent::refused(code, detail));
+            return;
+        }
+    };
+    if tell(
+        out,
+        &HubAgentChatWatchEvent::signal(AgentChatWatchSignal::Watching),
+    )
+    .is_err()
+    {
+        return;
+    }
+    let mut told_at: Option<Instant> = None;
+    let mut untold = false;
+    loop {
+        let wait = match told_at {
+            Some(at) if untold => pace.coalesce.saturating_sub(at.elapsed()),
+            _ => pace.quiet,
+        };
+        let signal = match changes.next(wait) {
+            Change::Changed if told_at.is_some_and(|at| at.elapsed() < pace.coalesce) => {
+                untold = true;
+                continue;
+            }
+            Change::Changed => AgentChatWatchSignal::Changed,
+            Change::Silent if untold => AgentChatWatchSignal::Changed,
+            Change::Silent => AgentChatWatchSignal::Quiet,
+            Change::Ended => {
+                if untold {
+                    let _ = tell(
+                        out,
+                        &HubAgentChatWatchEvent::signal(AgentChatWatchSignal::Changed),
+                    );
+                }
+                return;
+            }
+        };
+        if tell(out, &HubAgentChatWatchEvent::signal(signal)).is_err() {
+            return;
+        }
+        if signal == AgentChatWatchSignal::Changed {
+            told_at = Some(Instant::now());
+            untold = false;
+        }
+    }
 }
 
 /// Chat-owned agents the sidebar listed, served from their backend profile.
@@ -513,6 +659,22 @@ impl AgentChatSink for BackendAgentChats {
                 self.answer_pending(&bound, &page, action_id, request_id, answer)
             }
         }
+    }
+
+    fn watch(&self, agent_id: &str) -> Result<ChatChanges, Refusal> {
+        let bound = self.bound(agent_id)?;
+        self.backend
+            .subscribe(
+                &bound.profile_id,
+                json!({
+                    "schemaVersion": 1,
+                    "interactionSessionId": bound.binding.interaction_session_id,
+                    "direction": "tail",
+                    "cursor": null,
+                    "limit": 1,
+                }),
+            )
+            .map_err(read_refusal)
     }
 }
 
@@ -850,12 +1012,28 @@ impl ChatBackend for TransportBackend {
             .state::<crate::dure_backend_transport::DureBackendTransportState>();
         // The hub serves each phone on its own thread, outside the async
         // runtime, so it may wait here.
-        tauri::async_runtime::block_on(state.request_result(profile_id, operation, body)).map_err(
-            |error| BackendFailure {
-                code: error.code().to_string(),
-                message: error.message().to_string(),
-            },
-        )
+        tauri::async_runtime::block_on(state.request_result(profile_id, operation, body))
+            .map_err(transport_failure)
+    }
+
+    fn subscribe(&self, profile_id: &str, body: Value) -> Result<ChatChanges, BackendFailure> {
+        use tauri::Manager;
+        let state = self
+            .app
+            .state::<crate::dure_backend_transport::DureBackendTransportState>();
+        let (subscription, events) =
+            tauri::async_runtime::block_on(state.subscribe_native(profile_id, body))
+                .map_err(transport_failure)?;
+        Ok(ChatChanges::new(events, subscription))
+    }
+}
+
+fn transport_failure(
+    error: crate::dure_backend_transport::DureBackendTransportError,
+) -> BackendFailure {
+    BackendFailure {
+        code: error.code().to_string(),
+        message: error.message().to_string(),
     }
 }
 

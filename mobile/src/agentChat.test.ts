@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_CHAT_REWATCH_MAX_MS,
   actionError,
   actionNotice,
   agentChatActive,
@@ -7,7 +8,9 @@ import {
   choose,
   mergeNewest,
   mergeOlder,
+  pollDelay,
   questionAnswers,
+  rewatchDelay,
   timelineFailure,
 } from "./agentChat";
 import type { AgentChatItem, AgentChatQuestion, AgentChatTimeline } from "./ipc";
@@ -105,6 +108,20 @@ describe("agent chat timeline", () => {
     expect(agentChatActive(timeline([]))).toBe(false);
     expect(agentChatActive({ ...timeline([]), turn: { turn_id: "turn-1" } })).toBe(true);
     expect(agentChatActive({ ...timeline([]), pending: [{ request_id: "r", kind: "unknown" }] })).toBe(true);
+  });
+
+  it("asks at the idle pace while the computer tells each change", () => {
+    const working = { ...timeline([]), turn: { turn_id: "turn-1" } };
+    expect(pollDelay(working, false, 4_000, 12_000)).toBe(4_000);
+    expect(pollDelay(working, true, 4_000, 12_000)).toBe(12_000);
+    expect(pollDelay(timeline([]), false, 4_000, 12_000)).toBe(12_000);
+  });
+
+  it("watches again sooner after one ending than after a run of refusals", () => {
+    expect(rewatchDelay(1, 2_000)).toBe(2_000);
+    expect(rewatchDelay(2, 2_000)).toBe(4_000);
+    expect(rewatchDelay(4, 2_000)).toBe(16_000);
+    expect(rewatchDelay(40, 2_000)).toBe(AGENT_CHAT_REWATCH_MAX_MS);
   });
 });
 

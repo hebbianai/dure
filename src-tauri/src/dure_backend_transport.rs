@@ -1483,6 +1483,27 @@ impl DureBackendTransportState {
             .map(|response| response.result)
     }
 
+    /// One conversation subscription on a profile's selected backend for a
+    /// native caller (the phone hub's chat watch, `hub::agent_chat`): the
+    /// screen's `agent_conversation.subscribe`, with its messages on the
+    /// returned receiver. Dropping the subscription ends it.
+    pub(crate) async fn subscribe_native(
+        &self,
+        profile_id: &str,
+        body: Value,
+    ) -> Result<
+        (
+            subscription::NativeSubscription,
+            std::sync::mpsc::Receiver<Value>,
+        ),
+        DureBackendTransportError,
+    > {
+        let route = DureBackendRouteV1::Selected {
+            profile_id: Some(profile_id.to_string()),
+        };
+        subscription::open_native_subscription(&app_root()?, self, &route, body).await
+    }
+
     async fn request(
         &self,
         root: &Path,

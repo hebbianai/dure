@@ -32,6 +32,12 @@ export const AGENT_CHAT_IDLE_POLL_MS = 12_000;
 /** How many rows one read asks for. */
 export const AGENT_CHAT_PAGE = 60;
 
+/** How long a chat waits to watch again after a watch ended. */
+export const AGENT_CHAT_REWATCH_MS = 2_000;
+
+/** The longest wait before watching again, however many watches ended in a row. */
+export const AGENT_CHAT_REWATCH_MAX_MS = 60_000;
+
 /** Why the chat is not showing a fresh timeline, while it keeps asking. */
 export type AgentChatWait = "unreachable" | "unavailable" | "agent_not_found" | "unknown";
 
@@ -142,6 +148,29 @@ export function timelineFailure(
 /** The agent is busy or waiting for the person: ask more often. */
 export function agentChatActive(timeline: AgentChatTimeline | undefined): boolean {
   return !!timeline && (!!timeline.turn || timeline.pending.length > 0 || timeline.queued.length > 0);
+}
+
+/**
+ * How long until the chat asks again. Sooner while the agent is active,
+ * unless the computer tells the chat each change as it happens (`watched`):
+ * then asking is only the fallback, at the idle pace.
+ */
+export function pollDelay(
+  timeline: AgentChatTimeline | undefined,
+  watched: boolean,
+  activeMs: number,
+  idleMs: number,
+): number {
+  return agentChatActive(timeline) && !watched ? activeMs : idleMs;
+}
+
+/**
+ * How long to wait before watching again after `endings` watches in a row
+ * ended without the computer taking them: doubled each time, so a computer
+ * that keeps refusing costs at most one try a minute.
+ */
+export function rewatchDelay(endings: number, baseMs: number = AGENT_CHAT_REWATCH_MS): number {
+  return Math.min(AGENT_CHAT_REWATCH_MAX_MS, baseMs * 2 ** Math.max(0, endings - 1));
 }
 
 /** What the composer and the cards say after an action, as an i18n key and its values. */

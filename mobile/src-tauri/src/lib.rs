@@ -21,6 +21,7 @@ mod clipboard_ios;
 pub mod device_identity;
 pub mod device_key;
 pub mod device_reset;
+pub mod hub_chat_watch;
 pub mod hub_client;
 pub mod hub_conversation;
 pub mod hub_session_file;
@@ -2649,6 +2650,7 @@ fn describe(
                 conversation: entry.conversation,
                 background_work: entry.background_work,
                 agent_chat: false,
+                agent_chat_watch: false,
                 approval_answer: entry.approval_answer,
                 box_id: entry.box_id.clone(),
                 box_label: entry.box_label.clone(),
@@ -2720,6 +2722,7 @@ fn chat_session_row(entry: &dure_hub_protocol::agent_chat::HubChatSession) -> Hu
         conversation: false,
         background_work: false,
         agent_chat: true,
+        agent_chat_watch: entry.watch,
         approval_answer: false,
         box_id: entry.box_id.clone(),
         box_label: entry.box_label.clone(),
@@ -2812,6 +2815,10 @@ pub struct HubProbeSession {
     /// A chat-owned agent from the catalog's `chat_sessions`: it opens on its
     /// chat (`AgentChatTimelineV1`) and has no terminal to attach.
     pub agent_chat: bool,
+    /// The computer tells this chat-owned agent's chat when its conversation
+    /// changes (`HubChatSession::watch`, `AgentChatWatchV1`). False from an
+    /// older computer and for every other row.
+    pub agent_chat_watch: bool,
     /// The computer answers this session's approvals from the chat card
     /// (`HubCatalogEntry::approval_answer`). False from an older computer.
     pub approval_answer: bool,
@@ -3038,7 +3045,9 @@ fn client_runtime_info() -> RuntimeInfo {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().manage(LiveAttach::production());
+    let builder = tauri::Builder::default()
+        .manage(LiveAttach::production())
+        .manage(hub_chat_watch::ChatWatches::default());
 
     // The camera plugin exists on Android and iOS only — its crate is literally
     // `#![cfg(mobile)]`, so `init()` does not exist on a desktop build. The
@@ -3102,6 +3111,8 @@ pub fn run() {
             hub_conversation::hub_agent_background_work,
             hub_conversation::hub_agent_chat_timeline,
             hub_conversation::hub_agent_chat_action,
+            hub_chat_watch::hub_agent_chat_watch,
+            hub_chat_watch::hub_agent_chat_unwatch,
             hub_conversation::hub_agent_approval_answer,
             push::sync_push_notifications,
             ssh_file_diff,
@@ -3150,6 +3161,7 @@ mod tests {
                 presentation: None,
                 box_id: "this-laptop".into(),
                 box_label: "Laptop".into(),
+                watch: true,
             }],
         };
         let ack = dure_hub_protocol::hello::HubHelloAck {
@@ -3160,7 +3172,7 @@ mod tests {
         let probe = describe("hub-1", "Laptop", false, ack, &catalog);
         assert_eq!(probe.sessions.len(), 1);
         let row = &probe.sessions[0];
-        assert!(row.agent_chat && row.ready && !row.conversation);
+        assert!(row.agent_chat && row.agent_chat_watch && row.ready && !row.conversation);
         assert_eq!(row.session.session_id, "agent-1");
         assert_eq!(row.session.session_name.as_deref(), Some("Fix the build"));
         assert_eq!(row.box_id, "this-laptop");
