@@ -1,5 +1,5 @@
 import type { SessionPresentation } from "@/lib/hub/sessionPresentation";
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { demoInvoke } from "./demo/demoInvoke";
 import type { AgentApprovalChoice } from "@/lib/agents/approvalRequest";
 import type { BackgroundWorkAnswer } from "./backgroundWork";
@@ -343,6 +343,12 @@ export interface AgentChatTarget {
   agentId: string;
 }
 
+/**
+ * What a chat's watch tells it (`hub_agent_chat_watch`): read the newest page
+ * again, or the watch is over. `ended` is always the last notice.
+ */
+export type AgentChatWatchNotice = "changed" | "ended";
+
 /** One action on a chat-owned agent. `actionId` names the press. */
 export type AgentChatAction =
   | { kind: "send"; actionId: string; text: string }
@@ -658,6 +664,11 @@ export interface HubProbeSession extends RemoteSession {
    */
   agent_chat?: boolean;
   /**
+   * The computer tells this chat-owned agent's chat when its conversation
+   * changes (`AgentChatWatchV1`). Missing from older computers.
+   */
+  agent_chat_watch?: boolean;
+  /**
    * The computer answers this session's approvals from the chat card
    * (`AgentApprovalAnswerV1`). Missing from older computers.
    */
@@ -950,6 +961,25 @@ export const ipc = {
       id: hubId,
       input: { ...target, before: before ?? null, limit: limit ?? null },
     }),
+
+  /**
+   * Be told when a chat-owned agent's conversation changes
+   * (`AgentChatWatchV1`), while its chat is shown. Asked only where the row
+   * carries `agent_chat_watch`. Resolves once the computer took the watch,
+   * with the function that stops it; fails when the computer was not reached.
+   */
+  hubAgentChatWatch: async (
+    hubId: string,
+    target: AgentChatTarget,
+    onNotice: (notice: AgentChatWatchNotice) => void,
+  ): Promise<() => void> => {
+    const channel = new Channel<AgentChatWatchNotice>();
+    channel.onmessage = onNotice;
+    const watchId = await invoke<number>("hub_agent_chat_watch", { id: hubId, input: target, channel });
+    return () => {
+      void invoke<boolean>("hub_agent_chat_unwatch", { watchId }).catch(() => {});
+    };
+  },
 
   /**
    * Send, interrupt or answer on a chat-owned agent. An error means nothing

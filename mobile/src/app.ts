@@ -4193,9 +4193,11 @@ export function startApp(root: HTMLElement): () => void {
     agentChat?.dispose();
     const { source, session } = screenState;
     const target = { boxId: source.boxId, agentId: session.session_id };
+    const watched = (session as Partial<HubProbeSession>).agent_chat_watch === true;
     agentChat = createAgentChatView({
       fetch: (before) => ipc.hubAgentChatTimeline(source.id, target, before, AGENT_CHAT_PAGE),
       act: (action) => ipc.hubAgentChatAction(source.id, target, action),
+      watch: watched ? (onNotice) => ipc.hubAgentChatWatch(source.id, target, onNotice) : undefined,
     });
     agentChatKey = key;
     return agentChat;

@@ -6,7 +6,7 @@ import {
   renderAgentChatScreen,
 } from "./agentChatView";
 import { t } from "./i18n";
-import type { AgentChatActionAnswer, AgentChatTimeline, AgentChatTimelineAnswer } from "./ipc";
+import type { AgentChatActionAnswer, AgentChatTimeline, AgentChatTimelineAnswer, AgentChatWatchNotice } from "./ipc";
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -212,6 +212,154 @@ describe("the chat of a chat-owned agent", () => {
     expect(text.indexOf("Oldest")).toBeGreaterThan(-1);
     expect(text.indexOf("Oldest")).toBeLessThan(text.indexOf("Newest"));
     expect(older?.hidden).toBe(true);
+  });
+});
+
+/** A computer that tells the chat of changes: the test plays its notices. */
+function watchable() {
+  const notify: ((notice: AgentChatWatchNotice) => void)[] = [];
+  const stops: ReturnType<typeof vi.fn>[] = [];
+  const watch = vi.fn(async (onNotice: (notice: AgentChatWatchNotice) => void) => {
+    notify.push(onNotice);
+    const stop = vi.fn();
+    stops.push(stop);
+    return stop;
+  });
+  return { watch, notify, stops };
+}
+
+describe("a chat the computer tells of changes", () => {
+  it("reads the page again on each change, folding a burst into one more read", async () => {
+    let release: (() => void) | undefined;
+    const fetch = vi.fn(
+      () =>
+        new Promise<AgentChatTimelineAnswer>((resolve) => {
+          release = () => resolve(answer(timeline()));
+        }),
+    );
+    const { watch, notify } = watchable();
+    open({ fetch, watch });
+    await flush();
+    expect(watch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    release?.();
+    await flush();
+
+    notify[0]?.("changed");
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    for (let delta = 0; delta < 20; delta += 1) notify[0]?.("changed");
+    release?.();
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(3);
+    release?.();
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("shows the answer as it is written", async () => {
+    let text = "Looking";
+    const fetch = vi.fn(async () =>
+      answer(timeline({ turn: { turn_id: "turn-1" }, live_text: text })),
+    );
+    const { watch, notify } = watchable();
+    const { container } = open({ fetch, watch });
+    await flush();
+    expect(container.querySelector(".agent-chat__live")?.textContent).toContain("Looking");
+    text = "Looking at the failing test";
+    notify[0]?.("changed");
+    await flush();
+    expect(container.querySelector(".agent-chat__live")?.textContent).toContain("Looking at the failing test");
+  });
+
+  it("stops watching when the chat is hidden or closed, and ignores what an old watch says", async () => {
+    const fetch = vi.fn(async () => answer(timeline()));
+    const { watch, notify, stops } = watchable();
+    open({ fetch, watch });
+    await flush();
+    controller?.setVisible(false);
+    expect(stops[0]).toHaveBeenCalledTimes(1);
+    const reads = fetch.mock.calls.length;
+    notify[0]?.("changed");
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(reads);
+
+    controller?.setVisible(true);
+    await flush();
+    expect(watch).toHaveBeenCalledTimes(2);
+    controller?.dispose();
+    expect(stops[1]).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops a watch the computer took after the chat was hidden", async () => {
+    let take: ((stop: () => void) => void) | undefined;
+    const watch = vi.fn(() => new Promise<() => void>((resolve) => (take = resolve)));
+    open({ watch });
+    controller?.setVisible(false);
+    const stop = vi.fn();
+    take?.(stop);
+    await flush();
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  describe("when a watch ends", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("keeps asking on its interval and watches again later", async () => {
+      const fetch = vi.fn(async () => answer(timeline()));
+      const { watch, notify } = watchable();
+      open({ fetch, watch, activePollMs: 4_000, idlePollMs: 12_000, rewatchMs: 2_000 });
+      await vi.advanceTimersByTimeAsync(0);
+      notify[0]?.("changed");
+      await vi.advanceTimersByTimeAsync(0);
+      notify[0]?.("ended");
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(watch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(watch).toHaveBeenCalledTimes(2);
+      const reads = fetch.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(fetch.mock.calls.length).toBeGreaterThan(reads);
+    });
+
+    it("waits longer after each watch the computer would not take", async () => {
+      const watch = vi.fn(async () => {
+        throw { code: "hub_unreachable", message: "gone" };
+      });
+      open({ watch, rewatchMs: 2_000 });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(watch).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(3_999);
+      expect(watch).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(watch).toHaveBeenCalledTimes(3);
+    });
+
+    it("asks at the active pace only while no watch is taken", async () => {
+      const fetch = vi.fn(async () => answer(timeline({ turn: { turn_id: "turn-1" } })));
+      const { watch, notify } = watchable();
+      open({ fetch, watch, activePollMs: 4_000, idlePollMs: 12_000 });
+      await vi.advanceTimersByTimeAsync(0);
+      notify[0]?.("changed");
+      await vi.advanceTimersByTimeAsync(0);
+      const watchedReads = fetch.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(fetch).toHaveBeenCalledTimes(watchedReads);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(fetch).toHaveBeenCalledTimes(watchedReads + 1);
+    });
+  });
+
+  it("only asks on its interval where the computer cannot tell", async () => {
+    const { options } = open();
+    await flush();
+    expect(options.fetch).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,9 +1,11 @@
 use super::*;
 use crate::hub::layout::{ChatAgent, SessionPlacement, SidebarLayout};
 use dure_hub_protocol::agent_chat::{
-    read_action, read_timeline, AgentChatActionState, AgentChatTimelineOutcome,
+    read_action, read_timeline, read_watch_event, AgentChatActionState, AgentChatTimelineOutcome,
 };
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 
 type Handler = Box<dyn Fn(&str, &Value) -> Result<Value, BackendFailure> + Send + Sync>;
@@ -12,6 +14,8 @@ type Handler = Box<dyn Fn(&str, &Value) -> Result<Value, BackendFailure> + Send 
 struct Scripted {
     calls: Mutex<Vec<(String, String, Value)>>,
     handler: Handler,
+    /// What the next subscription delivers; none refuses it.
+    subscription: Mutex<Option<ChatChanges>>,
 }
 
 impl Scripted {
@@ -21,6 +25,7 @@ impl Scripted {
         Arc::new(Self {
             calls: Mutex::new(Vec::new()),
             handler: Box::new(handler),
+            subscription: Mutex::new(None),
         })
     }
 
@@ -57,6 +62,19 @@ impl ChatBackend for Scripted {
             body.clone(),
         ));
         (self.handler)(operation, &body)
+    }
+
+    fn subscribe(&self, profile_id: &str, body: Value) -> Result<ChatChanges, BackendFailure> {
+        self.calls.lock().unwrap().push((
+            profile_id.to_string(),
+            "agent_conversation.subscribe".to_string(),
+            body,
+        ));
+        self.subscription
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| failure("backend_subscription_capacity"))
     }
 }
 
@@ -721,4 +739,326 @@ fn a_request_no_longer_pending_is_not_found() {
         AgentChatAnswer::Permission { allow: true },
     );
     assert_eq!(result.code, Some(AgentChatRefusal::RequestNotFound));
+}
+
+/// Set when the watch let its subscription go.
+struct Released(Arc<AtomicBool>);
+
+impl Drop for Released {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+/// Give `backend` one subscription, fed by the returned sender.
+fn subscribed(backend: &Scripted) -> (Sender<Value>, Arc<AtomicBool>) {
+    let (events, receiver) = channel();
+    let released = Arc::new(AtomicBool::new(false));
+    *backend.subscription.lock().unwrap() =
+        Some(ChatChanges::new(receiver, Released(Arc::clone(&released))));
+    (events, released)
+}
+
+fn changed() -> Value {
+    json!({"kind": "event", "event": {"topic": "agent_conversation.changed"}})
+}
+
+/// The phone end of a watch: what reached it, until it leaves after `stays`
+/// frames.
+struct Phone {
+    received: Vec<u8>,
+    stays: usize,
+}
+
+impl Phone {
+    fn staying() -> Self {
+        Self {
+            received: Vec::new(),
+            stays: usize::MAX,
+        }
+    }
+
+    fn signals(&self) -> Vec<AgentChatWatchSignal> {
+        let mut reader = self.received.as_slice();
+        let mut signals = Vec::new();
+        while !reader.is_empty() {
+            signals.push(read_watch_event(&mut reader).expect("a frame").signal);
+        }
+        signals
+    }
+}
+
+impl Write for Phone {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        if self.stays == 0 {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
+        self.stays -= 1;
+        self.received.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+const PACE: WatchPace = WatchPace {
+    coalesce: Duration::from_millis(200),
+    quiet: Duration::from_secs(30),
+};
+
+/// Serve `agent-1`'s watch on this desktop's box to `phone`.
+fn watch(backend: &Arc<Scripted>, phone: &mut Phone, pace: WatchPace) {
+    serve_watch(
+        phone,
+        Some(&chats(backend)),
+        BoxRoute::Local,
+        "agent-1",
+        pace,
+    );
+}
+
+#[test]
+fn a_watch_subscribes_to_the_agents_conversation_and_says_it_is_watching() {
+    let backend = backend(false, |_, _| unreachable!());
+    let (events, released) = subscribed(&backend);
+    drop(events);
+    let mut phone = Phone::staying();
+    watch(&backend, &mut phone, PACE);
+    assert_eq!(phone.signals(), [AgentChatWatchSignal::Watching]);
+    assert_eq!(
+        backend.body_of("agent_conversation.subscribe"),
+        json!({
+            "schemaVersion": 1,
+            "interactionSessionId": "interaction-1",
+            "direction": "tail",
+            "cursor": null,
+            "limit": 1,
+        })
+    );
+    assert_eq!(backend.calls.lock().unwrap()[1].0, "local");
+    assert!(released.load(Ordering::Acquire));
+}
+
+/// A burst of deltas is told at once and once more at the end of the
+/// window, never once per delta, and the last change is not left untold.
+#[test]
+fn a_burst_of_changes_is_told_twice() {
+    let backend = backend(false, |_, _| unreachable!());
+    let (events, _released) = subscribed(&backend);
+    for _ in 0..50 {
+        events.send(changed()).unwrap();
+    }
+    drop(events);
+    let mut phone = Phone::staying();
+    watch(&backend, &mut phone, PACE);
+    assert_eq!(
+        phone.signals(),
+        [
+            AgentChatWatchSignal::Watching,
+            AgentChatWatchSignal::Changed,
+            AgentChatWatchSignal::Changed,
+        ]
+    );
+}
+
+#[test]
+fn a_lone_change_is_told_once() {
+    let backend = backend(false, |_, _| unreachable!());
+    let (events, _released) = subscribed(&backend);
+    events.send(changed()).unwrap();
+    drop(events);
+    let mut phone = Phone::staying();
+    watch(&backend, &mut phone, PACE);
+    assert_eq!(
+        phone.signals(),
+        [
+            AgentChatWatchSignal::Watching,
+            AgentChatWatchSignal::Changed
+        ]
+    );
+}
+
+/// A quiet watch says so, and a phone that left is noticed on the next write,
+/// which lets the subscription go.
+#[test]
+fn a_quiet_watch_says_so_and_lets_go_when_the_phone_leaves() {
+    let backend = backend(false, |_, _| unreachable!());
+    let (_events, released) = subscribed(&backend);
+    let mut phone = Phone {
+        received: Vec::new(),
+        stays: 3,
+    };
+    let pace = WatchPace {
+        coalesce: Duration::from_millis(200),
+        quiet: Duration::from_millis(5),
+    };
+    watch(&backend, &mut phone, pace);
+    assert_eq!(
+        phone.signals(),
+        [
+            AgentChatWatchSignal::Watching,
+            AgentChatWatchSignal::Quiet,
+            AgentChatWatchSignal::Quiet,
+        ]
+    );
+    assert!(released.load(Ordering::Acquire));
+}
+
+/// The transport's terminal error ends the subscription, and the stream with
+/// it: the phone keeps asking on its interval and watches again later.
+#[test]
+fn a_watch_ends_with_its_subscription() {
+    let backend = backend(false, |_, _| unreachable!());
+    let (events, _released) = subscribed(&backend);
+    events
+        .send(json!({"kind": "error", "error": {"code": "backend_unavailable"}}))
+        .unwrap();
+    let mut phone = Phone::staying();
+    watch(&backend, &mut phone, PACE);
+    assert_eq!(phone.signals(), [AgentChatWatchSignal::Watching]);
+}
+
+#[test]
+fn a_watch_that_cannot_open_is_refused_with_its_reason() {
+    let refused = |chats: Option<&BackendAgentChats>, route: BoxRoute, agent_id: &str| {
+        let mut phone = Phone::staying();
+        serve_watch(
+            &mut phone,
+            chats.map(|chats| chats as &dyn AgentChatSink),
+            route,
+            agent_id,
+            PACE,
+        );
+        let mut reader = phone.received.as_slice();
+        let event = read_watch_event(&mut reader).expect("a frame");
+        assert!(reader.is_empty(), "the refusal is the only frame");
+        assert_eq!(event.signal, AgentChatWatchSignal::Refused);
+        event.code.expect("a reason")
+    };
+    let backend = backend(false, |_, _| unreachable!());
+    let chats = chats(&backend);
+    assert_eq!(
+        refused(Some(&chats), BoxRoute::Remote, "agent-1"),
+        AgentChatRefusal::RemoteUnsupported
+    );
+    assert_eq!(
+        refused(Some(&chats), BoxRoute::Unknown, "agent-1"),
+        AgentChatRefusal::AgentNotFound
+    );
+    assert_eq!(
+        refused(None, BoxRoute::Local, "agent-1"),
+        AgentChatRefusal::Unavailable
+    );
+    assert_eq!(
+        refused(Some(&chats), BoxRoute::Local, "agent-unlisted"),
+        AgentChatRefusal::AgentNotFound
+    );
+    assert!(!backend
+        .operations()
+        .contains(&"agent_conversation.subscribe".to_string()));
+    // The backend refused the subscription itself.
+    assert_eq!(
+        refused(Some(&chats), BoxRoute::Local, "agent-1"),
+        AgentChatRefusal::Unavailable
+    );
+}
+
+/// The listener serves a watch on a paired phone's TLS stream like any other
+/// request — the greeting, the ack, then the signals — and closes it when the
+/// subscription ends.
+#[test]
+fn a_paired_phone_watches_over_tls() {
+    use crate::hub::catalog::{HubCatalog, HUB_CATALOG_VERSION};
+    use crate::hub::devices::DeviceRegistry;
+    use crate::hub::identity;
+    use crate::hub::server::{CatalogSource, GatewayProcess, HubServer, HubServices};
+    use dure_hub_protocol::hello;
+    use std::io::Read as _;
+    use std::net::TcpStream;
+
+    struct NoSessions;
+    impl CatalogSource for NoSessions {
+        fn catalog(&self) -> HubCatalog {
+            HubCatalog {
+                chat_sessions: Vec::new(),
+                hub_catalog_version: HUB_CATALOG_VERSION,
+                layout: None,
+                sessions: Vec::new(),
+                unreachable: Vec::new(),
+            }
+        }
+    }
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let root = tempfile::tempdir().unwrap();
+    let certificate = identity::load_or_create_certificate(root.path()).unwrap();
+    let registry = Arc::new(DeviceRegistry::new(root.path()));
+    let token = registry.register("test phone".into()).unwrap().token;
+    let backend = backend(false, |_, _| unreachable!());
+    let (events, released) = subscribed(&backend);
+    let server = HubServer::default();
+    let services = HubServices::with_gateway(
+        Arc::new(NoSessions),
+        GatewayProcess {
+            box_id: "this-laptop".to_string(),
+            binary: std::path::PathBuf::new(),
+            discovery_root: root.path().to_path_buf(),
+        },
+    )
+    .serving_agent_chats(Arc::new(chats(&backend)));
+    let port = server
+        .start_with_gateway("127.0.0.1", 0, &certificate, registry, services)
+        .unwrap()
+        .port
+        .unwrap();
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from(certificate.der))
+        .unwrap();
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut tls = rustls::StreamOwned::new(
+        rustls::ClientConnection::new(Arc::new(config), "hebbian-hub.local".try_into().unwrap())
+            .unwrap(),
+        socket,
+    );
+    let greeting = hello::encode_hello_for(
+        &token,
+        HubRequest::AgentChatWatchV1 {
+            box_id: "this-laptop".to_string(),
+            agent_id: "agent-1".to_string(),
+        },
+    )
+    .unwrap();
+    tls.write_all(&greeting).unwrap();
+    tls.flush().unwrap();
+    hello::read_ack(&mut tls).unwrap();
+
+    assert_eq!(
+        read_watch_event(&mut tls).unwrap().signal,
+        AgentChatWatchSignal::Watching
+    );
+    events.send(changed()).unwrap();
+    assert_eq!(
+        read_watch_event(&mut tls).unwrap().signal,
+        AgentChatWatchSignal::Changed
+    );
+
+    drop(events);
+    let mut rest = Vec::new();
+    let _ = tls.read_to_end(&mut rest);
+    assert!(
+        rest.is_empty(),
+        "nothing follows the end of the subscription"
+    );
+    assert!(released.load(Ordering::Acquire));
+    server.stop();
 }

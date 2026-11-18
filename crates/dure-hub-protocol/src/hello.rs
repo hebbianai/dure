@@ -383,6 +383,20 @@ pub enum HubRequest {
         request_id: String,
         answer: crate::agent_chat::AgentChatAnswer,
     },
+    /// Be told while the chat is open when the agent's conversation changes
+    /// (`agent_chat.rs`, "Being told of a change").
+    ///
+    /// The connection stays open: the desktop writes one
+    /// `agent_chat::HubAgentChatWatchEvent` frame per signal until its
+    /// subscription ends or the phone closes the stream. The phone sends it
+    /// only where the `chat_sessions` entry carries `watch`; a desktop that
+    /// predates it reads it as [`Self::Unsupported`] and never offers it.
+    AgentChatWatchV1 {
+        /// The `chat_sessions` entry's box.
+        box_id: String,
+        /// The `chat_sessions` entry's agent.
+        agent_id: String,
+    },
     /// Answer the agent's pending approval with one of the choices it
     /// offers, as the chat card shows them.
     ///
@@ -830,6 +844,10 @@ mod tests {
                     answers: [("db".to_string(), "SQLite".to_string())].into(),
                 },
             },
+            HubRequest::AgentChatWatchV1 {
+                box_id: "this-laptop".to_string(),
+                agent_id: "agent-1".to_string(),
+            },
         ]
     }
 
@@ -859,6 +877,7 @@ mod tests {
                 "agent_chat_interrupt_v1",
                 "agent_chat_answer_v1",
                 "agent_chat_answer_v1",
+                "agent_chat_watch_v1",
             ]
         );
         let value = serde_json::to_value(&agent_chat_requests()[3]).expect("to value");

@@ -83,7 +83,7 @@ fn command_error(code: &str, message: impl Into<String>) -> CommandError {
     }
 }
 
-fn client_error(error: &HubClientError) -> CommandError {
+pub(crate) fn client_error(error: &HubClientError) -> CommandError {
     command_error(error.code(), error.to_string())
 }
 
@@ -205,13 +205,14 @@ fn prompt_on_stream<S: Read + Write>(
 }
 
 /// The pinned TLS stream [`hub_client::dial_tls`] opens.
-type HubStream = rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>;
+pub(crate) type HubStream = rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>;
 
-/// Dial the computer behind `id` and run one exchange on the stream.
-async fn exchange<T: Send + 'static>(
+/// Dial the computer behind `id` on a blocking thread and hand `run` the
+/// stream, with the device token to greet it with.
+pub(crate) async fn with_stream<T: Send + 'static>(
     app: &tauri::AppHandle,
     id: &str,
-    run: impl FnOnce(&mut HubStream, &str) -> Result<T, CommandError> + Send + 'static,
+    run: impl FnOnce(HubStream, &str) -> Result<T, CommandError> + Send + 'static,
 ) -> Result<T, CommandError> {
     let entry = crate::hub_target(app, id)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -219,12 +220,21 @@ async fn exchange<T: Send + 'static>(
             .relay_endpoint
             .as_deref()
             .zip(entry.server_id.as_deref());
-        let mut stream = hub_client::dial_tls(&entry.endpoint, relay, &entry.fingerprint)
+        let stream = hub_client::dial_tls(&entry.endpoint, relay, &entry.fingerprint)
             .map_err(|error| client_error(&error))?;
-        run(&mut stream, &entry.token)
+        run(stream, &entry.token)
     })
     .await
     .map_err(|error| command_error("hub_join", error.to_string()))?
+}
+
+/// Dial the computer behind `id` and run one exchange on the stream.
+async fn exchange<T: Send + 'static>(
+    app: &tauri::AppHandle,
+    id: &str,
+    run: impl FnOnce(&mut HubStream, &str) -> Result<T, CommandError> + Send + 'static,
+) -> Result<T, CommandError> {
+    with_stream(app, id, move |mut stream, token| run(&mut stream, token)).await
 }
 
 /// Which session, as the catalog entry names it.
@@ -388,8 +398,8 @@ fn agent_chat_action_on_stream<S: Read + Write>(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentChatTarget {
-    box_id: String,
-    agent_id: String,
+    pub(crate) box_id: String,
+    pub(crate) agent_id: String,
 }
 
 #[derive(Deserialize)]
