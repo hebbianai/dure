@@ -2856,8 +2856,28 @@ async function reportAgentStop(name, opts, receipt, httpOk) {
   if (!report.ok) process.exitCode = 1;
 }
 
+// Legacy terminal adoption ended with the legacy PTY runtime: saved Agents
+// load as Hmux sessions, and the app no longer answers hmux.adopt.
+function legacyAdoptionRefusal(sub) {
+  const code = "hmux_adopt_retired";
+  const ended = `dure hmux ${sub} was retired with the legacy terminal runtime`;
+  return Object.assign(
+    new Error(
+      `${ended}, and this request was not sent to the app. ` +
+        "To resume an Agent's exact conversation on a new Host, run dure client pane state <panel-id> " +
+        "and, when the pane offers refresh, dure client pane act <panel-id> refresh. " +
+        "For an Agent the backend manages, use dure hmux rehost --name <project/agent>.",
+    ),
+    { code },
+  );
+}
+
 async function cmdHmux(sub, opts) {
-  const action = sub === "migrate" ? "adopt" : sub;
+  const action = sub;
+  if (action === "adopt" || action === "migrate") {
+    writeCliActionError(legacyAdoptionRefusal(action), opts, "dure.hmux/v1", "dure.hmux.error");
+    return;
+  }
   if (action === "rehost") {
     try { assertNoConversationProjectOptions(opts); } catch (error) {
       writeCliActionError(error, opts, "dure.hmux/v1", "dure.hmux.error");
@@ -2896,7 +2916,6 @@ async function cmdHmux(sub, opts) {
   if (
     action !== "attach" &&
     action !== "upgrade" &&
-    action !== "adopt" &&
     action !== "rehost" &&
     action !== "convert" &&
     action !== "stop"
@@ -2904,8 +2923,6 @@ async function cmdHmux(sub, opts) {
     process.stdout.write(
       "dure hmux attach --name <exact-name> [--space-id ID] [--desktop-id ID (deprecated)] [--target-panel-id ID]\n" +
         "dure hmux upgrade --name <exact-name> --target-panel-id ID --confirm-restart\n" +
-        "dure hmux adopt --name <project/agent> [--target-panel-id ID] --confirm-restart\n" +
-        "dure hmux adopt --from-session <legacy-session> --target-panel-id ID --provider <claude|codex> --agent-name NAME --confirm-restart\n" +
         "dure hmux rehost --name <project/agent> [--backend ID] [--confirm-restart] [--json]  # local preview; confirmation wakes a dormant runtime or rehosts its native source and publishes the binding\n" +
         "dure hmux rehost --name <project/agent> [--target-panel-id ID] [--conversation-id ID | --fresh] [--permission-mode <default|skip_permissions>] [--existing-session ID | --operation-id ID] [--confirm-restart] [--json]  # legacy app-owned execution/recovery\n" +
         "dure hmux rehost status [<original-session-id> --workspace ID] --operation-id ID [--json]  # local, read-only; no app required\n" +
@@ -2919,24 +2936,13 @@ async function cmdHmux(sub, opts) {
         "A preview or confirmed restart of an Agent whose source Hmux already holds a restart for continues that operation instead of starting another.\n" +
         "finish never starts an operation: it exits 0 once published, 75 while Hmux is still applying it, and 1 otherwise; repeat it until it exits 0.\n" +
         "dure hmux convert --name <session> --target-panel-id ID --to <managed|standalone> [--agent-name NAME] [--confirm-restart]\n" +
-        "dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] [--yes] [--json]  # alias for dure stop\n" +
-        "dure hmux migrate ...  # adopt alias\n",
+        "dure hmux stop --name <agent-name-or-id> [--target-panel-id ID] [--yes] [--json]  # alias for dure stop\n",
     );
     return;
   }
   const name = (opts.name || opts.rest[1] || "").trim();
-  const sourceSessionId = (opts.fromSession || "").trim();
-  if (!name && !(action === "adopt" && sourceSessionId)) {
+  if (!name) {
     fail(`hmux ${action} requires --name <exact-name>.`);
-  }
-  if (
-    action === "adopt" &&
-    sourceSessionId &&
-    (!opts.targetPanelId || !opts.provider)
-  ) {
-    fail(
-      "Legacy terminal adoption requires --target-panel-id and --provider <claude|codex>.",
-    );
   }
   if (action === "upgrade" && !opts.targetPanelId) {
     fail("hmux upgrade requires --target-panel-id <existing-pane-id>.");
@@ -3004,8 +3010,6 @@ async function cmdHmux(sub, opts) {
   if (opts.cwd) body.cwd = opts.cwd;
   if (opts.to) body.to = opts.to;
   if (opts.agentName) body.agentName = opts.agentName;
-  if (sourceSessionId) body.sourceSessionId = sourceSessionId;
-  if (opts.provider) body.providerId = opts.provider;
   if (opts.confirmRestart) body.confirmRestart = true;
 
   if (action === "stop") body.confirm = true;
@@ -3036,7 +3040,6 @@ async function cmdHmux(sub, opts) {
   }
   if (!res.ok || !receipt?.ok) {
     const conversationId =
-      receipt?.adoption?.conversationId ??
       receipt?.rehost?.conversationId ??
       receipt?.conversion?.conversationId;
     const exactConversation = conversationId
@@ -3068,11 +3071,9 @@ async function cmdHmux(sub, opts) {
     return;
   }
   const pane = receipt.pane;
-  const operation =
-    receipt.upgrade ?? receipt.adoption ?? receipt.rehost ?? receipt.conversion;
+  const operation = receipt.upgrade ?? receipt.rehost ?? receipt.conversion;
   const outcome = operation ? ` · ${operation.outcome}` : "";
   const conversationId =
-    receipt.adoption?.conversationId ??
     receipt.rehost?.conversationId ??
     receipt.conversion?.conversationId;
   const conversation = conversationId
@@ -3084,14 +3085,14 @@ async function cmdHmux(sub, opts) {
       ? ` (${replacement.sessionId}${replacement.workspaceId ? `, ${replacement.workspaceId}` : ""})`
       : "";
     process.stdout.write(
-      `\x1b[32m✓\x1b[0m ${name || sourceSessionId} runtime rehost committed${replacementIdentity}` +
+      `\x1b[32m✓\x1b[0m ${name} runtime rehost committed${replacementIdentity}` +
         ` · pane projection pending${outcome}${conversation}\n`,
     );
     return;
   }
   if (!pane) fail(`The Hmux ${action} response is missing its pane projection.`);
   process.stdout.write(
-    `\x1b[32m✓\x1b[0m ${name || sourceSessionId} → ${pane.spaceId || pane.desktopId}/${pane.panelId}` +
+    `\x1b[32m✓\x1b[0m ${name} → ${pane.spaceId || pane.desktopId}/${pane.panelId}` +
       ` (${pane.sessionId}, ${pane.workspaceId})${outcome}${conversation}\n`,
   );
 }
@@ -4236,10 +4237,6 @@ Usage:
                                       Find a named Hmux session and attach it to a pane in a Space
   dure hmux upgrade --name <name> --target-panel-id <pane> --confirm-restart
                                       Restart on the current Hmux build and update the existing pane
-  dure hmux adopt --name <project/agent> [--target-panel-id <pane>] --confirm-restart
-                                      Adopt a legacy agent pane into Hmux using its exact provider conversation ID
-  dure hmux adopt --from-session <session> --target-panel-id <pane> --provider <claude|codex> --agent-name <name> --confirm-restart
-                                      Convert a provider in a legacy terminal to a managed Agent in the same pane
   dure hmux rehost --name <project/agent> [--backend ID] [--confirm-restart] [--json]
                                        Preview local recovery; confirmation wakes a dormant runtime or rehosts its native source
                                        Keeps the original folder; --project, --path and --cwd are unsupported
@@ -4261,7 +4258,6 @@ Usage:
                                       Alias for stop; supports both legacy and backend-owned Agents
   dure stop <agent-name-or-id> [--target-panel-id <pane>] --yes [--json]
                                       Stop and remove an Agent and its panes; preserve workspace and history
-  dure hmux migrate ...             Alias for hmux adopt
   dure orchestration events-canary --session-file PATH [--backend ID] [--json]
                                       Read-only event observation for an existing exact session
   dure orchestration invoke <method> <body-json> [--backend ID] [--json]
