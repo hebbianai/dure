@@ -100,6 +100,10 @@ Use the current Unix time for openedAtMs. The CLI fallback method is
 `interaction.message.open.exact-session`. Check the returned
 `deliveries[].endpoint.sessionIdentity` against the destination and retain that
 receipt. A generation conflict requires fresh discovery, never a guessed fence.
+When a delivery's `wake.state` is `queued_until_next_turn`, the destination was
+not woken yet (unsubmitted input at its prompt, or a turn in progress); this
+tool and `orchestration_decision_answer` add a plain-language note saying so.
+The message stays in its inbox and Dure retries the wake; do not resend.
 
 ## Inspect message delivery
 
@@ -358,6 +362,8 @@ Use `dure send <agent-or-session> --track "message" --json` for a durable inbox 
 Use `--workspace ID` with an exact Session ID. This requires an observable managed
 Session and its orchestration context. The receipt contains `receiptPath`; keep that
 private local file, which holds the exact read capability but no message text.
+When the target's wake is held, the JSON adds `diagnostic` with the same note
+the text output prints; the message stays in the inbox, so do not resend.
 The message is titled with the `dure send` header, `[dure send · from AGENT]`
 inside a registered Agent's managed Session or `[dure send · unregistered]`
 otherwise, and its body stays exact. `--from NAME` adds a self-chosen

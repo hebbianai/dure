@@ -60,6 +60,8 @@ security control: a missing header does not prove that a person typed the text. 
 for money, limits or credentials must come from the person in the app, not relayed text.
 Tracked messages require a managed Session and support 'dure wait --message <receiptPath>'.
 Tracked send cannot be combined with --no-enter or --idempotency-key.
+When the target's wake is held (unsubmitted input or a turn in progress), the output says
+why; --json reports it as diagnostic. The message stays in the inbox; do not resend.
 Terminal receipts prove bytes were written to the PTY, not provider acceptance.
 The provider owns whether Enter submits immediately or queues terminal input.
 Structured chat uses the running app and reports sent, steered, queued or drafted.
@@ -184,29 +186,33 @@ function warnUnguarded(agent, input, opts) {
   );
 }
 
-function printDelivery(agent, input, opts) {
-  warnUnguarded(agent, input, opts);
+/** The stdout report of one accepted send. A durable message whose wake the
+ * Host held carries the same deferred-wake diagnostic as `dure wait --message`. */
+export function formatDelivery(agent, input, opts) {
+  const deferred = input?.receipt?.kind === "durable_message" ? deferredWake(input.receipt.deliveries) : null;
   if (opts.json) {
-    process.stdout.write(`${JSON.stringify({
+    return `${JSON.stringify({
       apiVersion: "dure.send/v1", ok: true,
       target: { agentId: agent.id, sessionId: input.sessionId, workspaceId: input.workspaceId },
       receipt: input.receipt,
-    })}\n`);
-    return;
+      ...(deferred ? { diagnostic: deferred } : {}),
+    })}\n`;
   }
   if (input?.receipt?.kind === "durable_message") {
-    const deferred = deferredWake(input.receipt.deliveries);
-    process.stdout.write(`Message accepted: ${input.receipt.interactionId}\n${deferred ? `${deferred.message}\n` : ""}Track: dure wait --message ${JSON.stringify(input.receipt.receiptPath)} --json\n`);
-    return;
+    return `Message accepted: ${input.receipt.interactionId}\n${deferred ? `${deferred.message}\n` : ""}Track: dure wait --message ${JSON.stringify(input.receipt.receiptPath)} --json\n`;
   }
   if (input?.receipt?.kind === "structured_chat") {
-    process.stdout.write(`\x1b[32m✓\x1b[0m ${agent.name} chat · ${input.receipt.delivery}\n`);
-    return;
+    return `\x1b[32m✓\x1b[0m ${agent.name} chat · ${input.receipt.delivery}\n`;
   }
   const recordId = input?.receipt?.submit?.recordId ?? input?.receipt?.text?.recordId;
   const receipt = recordId ? ` · receipt ${recordId}` : "";
   const guarded = input?.receipt?.atomic === true ? " (one draft-guarded write)" : "";
-  process.stdout.write(`\x1b[32m✓\x1b[0m ${agent.name} · written to PTY${opts.enter ? " + Enter" : ""}${guarded}${receipt} · provider acceptance unconfirmed\n`);
+  return `\x1b[32m✓\x1b[0m ${agent.name} · written to PTY${opts.enter ? " + Enter" : ""}${guarded}${receipt} · provider acceptance unconfirmed\n`;
+}
+
+function printDelivery(agent, input, opts) {
+  warnUnguarded(agent, input, opts);
+  process.stdout.write(formatDelivery(agent, input, opts));
 }
 
 function nameWords(name) {

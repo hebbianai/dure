@@ -10,6 +10,7 @@ import {
   requestOrchestration,
 } from "./orchestration-client.mjs";
 import { BackendTransportError } from "./backend-transport.mjs";
+import { deferredWake } from "./deferred-wake.mjs";
 import { orchestrationFailureDetail } from "./orchestration-failure.mjs";
 import { runEntryPoint } from "./process-exit.mjs";
 import { completionRequestSchema } from "./contracts/orchestration-completion.mjs";
@@ -306,6 +307,12 @@ export const ORCHESTRATION_MCP_TOOL_METHODS = Object.freeze({
 });
 
 const FENCED_INTERACTION_READS = new Set(["interaction.get", "interaction.progress"]);
+// Sends whose receipt carries the destination's wake explain a held wake in the
+// same words as `dure send --track`; the receipt itself stays unchanged.
+const HELD_WAKE_NOTICE_METHODS = new Set([
+  "interaction.message.open.exact-session",
+  "interaction.answer",
+]);
 // Only a read that a stale fence can make fail is retried with the current one.
 const STALE_FENCE_CODES = new Set(["orchestration_record_not_found", "orchestration_capability_denied"]);
 
@@ -627,7 +634,10 @@ export async function handleMcpRequest(
     }
     return toolResult(receipt, { nextWork });
   }
-  return toolResult(receipt);
+  const heldWake = HELD_WAKE_NOTICE_METHODS.has(method)
+    ? deferredWake(receipt.receipt?.deliveries)
+    : null;
+  return withNotice(toolResult(receipt), heldWake?.message);
 }
 
 export async function orchestrationWorkerCatalogue() {
