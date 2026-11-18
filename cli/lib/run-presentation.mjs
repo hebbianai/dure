@@ -691,6 +691,21 @@ export function failedRunPresentation(error, requested = true) {
   };
 }
 
+/** `dure run` exits 3 when the Run started but its pane did not open. */
+export const RUN_PANE_FAILED_EXIT_CODE = 3;
+
+/**
+ * The `dure run` exit status once the Run has a presentable runtime. The
+ * Run's own outcome comes first (0 succeeded, 1 its receipt did not). A pane
+ * that failed to open after a succeeded Run exits 3, never 2: exit 2 means
+ * nothing started, and a caller that retries on it must not start a second
+ * agent beside the one already working.
+ */
+export function runCommandExitCode(runExitCode, presentation) {
+  if (runExitCode !== 0) return runExitCode;
+  return presentation?.state === "failed" ? RUN_PANE_FAILED_EXIT_CODE : 0;
+}
+
 export function formatRunPresentation(presentation) {
   if (presentation.state === "opened") {
     return `pane\t${presentation.pane.spaceId}/${presentation.pane.panelId}`;

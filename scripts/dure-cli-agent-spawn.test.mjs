@@ -2408,8 +2408,11 @@ describe("dure run and spawn CLI", () => {
         },
       );
 
-      expect(result.status).toBe(2);
+      // Exit 2 means nothing started; a started Run whose pane failed exits 3
+      // so a caller that retries on 2 never starts a second agent.
+      expect(result.status).toBe(3);
       expect(JSON.parse(result.stdout)).toMatchObject({
+        summary: { state: "succeeded", presentation: "failed" },
         receipt: { state: "succeeded" },
         presentation: {
           state: "failed",
@@ -2469,7 +2472,7 @@ describe("dure run and spawn CLI", () => {
         },
       );
 
-      expect(result.status).toBe(2);
+      expect(result.status).toBe(3);
       expect(JSON.parse(result.stdout)).toMatchObject({
         receipt: { state: "succeeded" },
         presentation: {
@@ -2477,6 +2480,49 @@ describe("dure run and spawn CLI", () => {
           error: { code: "client_response_invalid" },
         },
       });
+      expect(client.requests).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("keeps the Run's own exit status when its receipt did not succeed and the pane failed", async () => {
+    const root = temporaryRoot();
+    const remote = installRunRemoteFixture(root);
+    const client = await installClientControlFixture(root, {
+      error: {
+        code: "client_space_mount_timeout",
+        message: "Space did not mount",
+      },
+    });
+    try {
+      const result = await runCliAsync(
+        root,
+        [
+          "run",
+          prompt,
+          "--project",
+          "dure",
+          "--provider",
+          "codex",
+          "--idempotency-key",
+          "run-uncertain-pane-failed-1",
+          "--backend",
+          "remote-a",
+        ],
+        {
+          DURE_AGENT_SPAWN_FIXTURE_APPLY_STATE: "prompt_delivery_uncertain",
+          DURE_AGENT_SPAWN_LOG: remote.log,
+          HMUX_SESSION_ID: "source-session",
+          HMUX_WORKSPACE_ID: "source-workspace",
+          PATH: `${remote.bin}:${process.env.PATH}`,
+        },
+      );
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(result.stdout).toContain(
+        "pane\tfailed (client_space_mount_timeout); the Run continues headlessly.",
+      );
       expect(client.requests).toHaveLength(1);
     } finally {
       await client.close();

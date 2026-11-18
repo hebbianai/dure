@@ -65,8 +65,12 @@ branch defaults to `agent/<name>`, and `--base-commit`, `--branch` and
 Omit `--idempotency-key` and the CLI invents one, printing `Retry key: …` on
 **stderr**; keep it, because the same key resumes the one durable plan instead
 of creating a second agent. Exit 0 succeeded, 1 the receipt is not `succeeded`,
-2 the backend or pane placement failed — and success means setup and prompt
-delivery finished, never that the provider answered.
+2 the backend or request failed before a receipt confirmed a Run (retry with the
+same key), 3 the Run succeeded but its pane did not open. On 3 the agent is
+already working headlessly (`summary.state` is `succeeded`, `summary.presentation`
+is `failed`): never start it again; `dure runs open AGENT_ID --space ID` reopens
+a pane. Success means setup and prompt delivery finished, never that the
+provider answered.
 
 With `--json` the receipt starts with `summary` — `agentId`, `sessionId`,
 `workspaceId`, `panelId`, `spaceId`, `state`, `presentation`,

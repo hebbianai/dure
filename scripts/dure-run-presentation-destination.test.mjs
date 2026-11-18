@@ -4,7 +4,9 @@ import {
   RUN_START_ORDER_PRESENTATION_CAPABILITY,
   managedRunPresentationRequest,
   presentAgentRunRuntime,
+  RUN_PANE_FAILED_EXIT_CODE,
   registerAgentRunInBackground,
+  runCommandExitCode,
   runReceiptSummary,
   structuredRunPresentationRequest,
 } from "../cli/lib/run-presentation.mjs";
@@ -343,5 +345,25 @@ describe("Run receipt summary", () => {
     report.receipt.recovery = { kind: "none" };
     report.receipt.terminalCode = "agent_spawn_runtime_launch_failed";
     expect(runReceiptSummary(report).error).toEqual({ stage: null, code: "agent_spawn_runtime_launch_failed", detail: null });
+  });
+});
+
+describe("Run exit status", () => {
+  it("exits 3, not 2, when a succeeded Run's pane fails to open", () => {
+    // Exit 2 means nothing started; retrying on it must never start a
+    // second agent beside one that is already working.
+    expect(RUN_PANE_FAILED_EXIT_CODE).toBe(3);
+    expect(runCommandExitCode(0, { state: "failed", error: { code: "client_space_mount_timeout" } })).toBe(3);
+  });
+
+  it("exits 0 for a succeeded Run that opened, stayed headless or registered in the background", () => {
+    for (const state of ["opened", "headless", "background"]) {
+      expect(runCommandExitCode(0, { state })).toBe(0);
+    }
+  });
+
+  it("keeps the Run's own non-zero status ahead of a pane failure", () => {
+    expect(runCommandExitCode(1, { state: "failed", error: { code: "client_space_changed" } })).toBe(1);
+    expect(runCommandExitCode(1, { state: "opened" })).toBe(1);
   });
 });
