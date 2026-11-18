@@ -35,7 +35,6 @@ const CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const PANE_OPERATION_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const HMUX_CREATE_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
 const HMUX_UPGRADE_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(35);
-const HMUX_ADOPTION_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const HMUX_REHOST_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const HMUX_CONVERSION_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const HMUX_STOP_CLAIMED_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -89,7 +88,6 @@ fn claimed_request_timeout(action: &str) -> Duration {
         | "pane.move" => PANE_OPERATION_CLAIMED_REQUEST_TIMEOUT,
         "hmux.create" => HMUX_CREATE_CLAIMED_REQUEST_TIMEOUT,
         "hmux.upgrade" => HMUX_UPGRADE_CLAIMED_REQUEST_TIMEOUT,
-        "hmux.adopt" => HMUX_ADOPTION_CLAIMED_REQUEST_TIMEOUT,
         "hmux.rehost" | "agent.reuse" => HMUX_REHOST_CLAIMED_REQUEST_TIMEOUT,
         "hmux.convert" => HMUX_CONVERSION_CLAIMED_REQUEST_TIMEOUT,
         "hmux.stop" => HMUX_STOP_CLAIMED_REQUEST_TIMEOUT,
@@ -465,14 +463,6 @@ const FRONTEND_ROUTES: &[FrontendRoute] = &[
         method: Method::Post,
         path: "/hmux/upgrade",
         action: "hmux.upgrade",
-        waits_for_receipt: true,
-        scope: RouteScope::Control,
-        destructive: false,
-    },
-    FrontendRoute {
-        method: Method::Post,
-        path: "/hmux/adopt",
-        action: "hmux.adopt",
         waits_for_receipt: true,
         scope: RouteScope::Control,
         destructive: false,
@@ -1912,10 +1902,9 @@ mod tests {
             frontend_action(&Method::Post, "/hmux/upgrade"),
             Some(("hmux.upgrade", true))
         );
-        assert_eq!(
-            frontend_action(&Method::Post, "/hmux/adopt"),
-            Some(("hmux.adopt", true))
-        );
+        // Legacy terminal adoption was retired with the legacy PTY runtime;
+        // no window answers it, so the route must not wait for a claim.
+        assert_eq!(frontend_action(&Method::Post, "/hmux/adopt"), None);
         assert_eq!(
             frontend_action(&Method::Post, "/hmux/rehost"),
             Some(("hmux.rehost", true))

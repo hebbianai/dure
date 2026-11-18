@@ -871,65 +871,61 @@ describe("Dure Hmux IDE CLI", () => {
     }
   });
 
-  it("adopts an exact legacy terminal without overloading an Agent name", async () => {
-    let request;
-    const port = await startAppServer(
-      withBody((incoming, response, body) => {
-        request = { ...requestIdentity(incoming), body: JSON.parse(body) };
-        respondJson(response, {
-          ok: true,
-          adoption: {
-            outcome: "adopted",
-            conversationId: "11111111-2222-4333-8444-555555555555",
-          },
-          pane: {
-            desktopId: "desktop-1",
-            panelId: "agent:agent-hmux-deadbeef",
-            sessionId: "hmux_recovery_deadbeef",
-            workspaceId: "project-1",
-          },
-        });
-      }),
-    );
+  it.each([
+    ["adopt", "--name", "project/agent"],
+    ["adopt", "--name", "project/agent", "--confirm-restart"],
+    ["adopt", "--from-session", "term-legacy-cli", "--target-panel-id",
+      "term:term-legacy-cli", "--provider", "claude", "--agent-name", "legacy-claude"],
+    ["migrate", "--name", "project/agent", "--confirm-restart"],
+  ])("refuses the retired hmux %s at once and points to pane refresh", async (...args) => {
+    const requests = [];
+    const port = await startAppServer((incoming, response) => {
+      requests.push(requestIdentity(incoming));
+      respondJson(response, { ok: false }, 504);
+    });
+    const { home } = homeWithServer("dure-cli-hmux-adopt-", port, "adopt-token");
 
-    const { home } = homeWithServer(
-      "dure-cli-legacy-terminal-",
-      port,
-      "adopt-token",
-    );
+    const result = await runCli(["hmux", ...args], isolatedEnvironment({ HOME: home }));
+
+    expect(result.code).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("hmux_adopt_retired");
+    expect(result.stderr).toContain(`dure hmux ${args[0]}`);
+    expect(result.stderr).toContain("dure client pane state <panel-id>");
+    expect(result.stderr).toContain("dure client pane act <panel-id> refresh");
+    expect(requests).toEqual([]);
+  });
+
+  it("reports the retired hmux adopt as a JSON error", async () => {
+    const home = mkdtempSync(join(tmpdir(), "dure-cli-hmux-adopt-json-"));
+    temporaryRoots.push(home);
+
     const result = await runCli(
-      [
-        "hmux",
-        "adopt",
-        "--from-session",
-        "term-legacy-cli",
-        "--target-panel-id",
-        "term:term-legacy-cli",
-        "--provider",
-        "claude",
-        "--agent-name",
-        "legacy-claude",
-        "--confirm-restart",
-      ],
+      ["hmux", "adopt", "--name", "project/agent", "--json"],
       isolatedEnvironment({ HOME: home }),
     );
 
-    expect(result).toMatchObject({ code: 0, stderr: "" });
-    expect(result.stdout).toContain("term-legacy-cli");
-    expect(result.stdout).toContain("conversation 11111111");
-    expect(request).toEqual({
-      method: "POST",
-      url: "/hmux/adopt",
-      authorization: "Bearer adopt-token",
-      body: {
-        name: "",
-        targetPanelId: "term:term-legacy-cli",
-        agentName: "legacy-claude",
-        sourceSessionId: "term-legacy-cli",
-        providerId: "claude",
-        confirmRestart: true,
-      },
+    expect(result.code).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toMatchObject({
+      apiVersion: "dure.hmux/v1",
+      kind: "dure.hmux.error",
+      error: { code: "hmux_adopt_retired" },
     });
+  });
+
+  it("no longer lists hmux adopt in its usage", async () => {
+    const home = mkdtempSync(join(tmpdir(), "dure-cli-hmux-usage-"));
+    temporaryRoots.push(home);
+
+    const usage = await runCli(["hmux"], isolatedEnvironment({ HOME: home }));
+    const help = await runCli(["--help"], isolatedEnvironment({ HOME: home }));
+
+    expect(usage.code).toBe(0);
+    expect(usage.stdout).toContain("dure hmux rehost");
+    expect(usage.stdout).not.toMatch(/hmux (adopt|migrate)/);
+    expect(help.stdout).toContain("dure hmux rehost");
+    expect(help.stdout).not.toMatch(/hmux (adopt|migrate)/);
   });
 
   it("rehosts a managed Agent with an exact pane and restart confirmation", async () => {
