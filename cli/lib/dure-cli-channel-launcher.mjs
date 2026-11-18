@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   existsSync,
   lstatSync,
+  mkdirSync,
   readFileSync,
   readlinkSync,
   readdirSync,
   realpathSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const MAX_METADATA_BYTES = 64 * 1024;
@@ -27,31 +30,193 @@ const ARTIFACT_MANIFEST = "artifact-manifest.json";
 const MAX_ARTIFACT_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MAX_REPORTED_ENTRIES = 8;
 
-function walkArtifact(root, visit) {
+// Verifying the payload hashes every byte of it, including the bundled Node,
+// Hmux and provider drivers. Launch paths record a successful verification
+// with the payload's file-system metadata, so later launches compare that
+// metadata instead of hashing again. Writing, replacing, adding or removing an
+// entry changes the metadata and brings back the full verification.
+const VERIFICATION_RECEIPT_SCHEMA = 1;
+const MAX_VERIFICATION_RECEIPT_BYTES = 4096;
+// Some file systems keep coarse timestamps. A payload changed this recently
+// could change again without a visible difference, so it is not recorded.
+const RECENT_CHANGE_WINDOW_MS = 2_000;
+// The launcher and the CLI it starts share one process and verify the same
+// payload; the second check reuses the first.
+const VERIFIED_IN_PROCESS = Symbol.for("dure.cli.verifiedArtifacts");
+
+function walkArtifact(root, visit, { metadataOnly = false } = {}) {
   const walk = (pathname) => {
-    const stat = lstatSync(pathname);
+    const stat = lstatSync(pathname, { bigint: metadataOnly });
     const name = relative(root, pathname).replaceAll("\\", "/");
     if (name === "install.json") return;
     if (stat.isSymbolicLink()) {
-      visit({ name, kind: "link", target: readlinkSync(pathname) });
+      visit({ name, kind: "link", target: readlinkSync(pathname), stat });
       return;
     }
     if (stat.isDirectory()) {
-      visit({ name, kind: "directory" });
+      visit({ name, kind: "directory", stat });
       for (const entry of readdirSync(pathname).sort()) {
         walk(join(pathname, entry));
       }
       return;
     }
     if (!stat.isFile()) throw new Error("unsupported immutable artifact entry");
-    visit({
-      name,
-      kind: "file",
-      executable: stat.mode & 0o111,
-      contents: readFileSync(pathname),
-    });
+    visit(
+      metadataOnly
+        ? { name, kind: "file", stat }
+        : {
+            name,
+            kind: "file",
+            executable: stat.mode & 0o111,
+            contents: readFileSync(pathname),
+          },
+    );
   };
   for (const entry of readdirSync(root).sort()) walk(join(root, entry));
+}
+
+/** File-system metadata of the payload and of executables it names outside itself. */
+function artifactFingerprint(root, externalPaths = []) {
+  const digest = createHash("sha256");
+  let changedAtNs = 0n;
+  const add = (label, stat) => {
+    digest.update(
+      `${label}\0${stat.mode}\0${stat.size}\0${stat.dev}\0${stat.ino}\0${stat.mtimeNs}\0${stat.ctimeNs}\0`,
+    );
+    for (const time of [stat.mtimeNs, stat.ctimeNs]) {
+      if (time > changedAtNs) changedAtNs = time;
+    }
+  };
+  walkArtifact(
+    root,
+    (entry) =>
+      add(
+        entry.kind === "link"
+          ? `link\0${entry.name}\0${entry.target}`
+          : `${entry.kind}\0${entry.name}`,
+        entry.stat,
+      ),
+    { metadataOnly: true },
+  );
+  for (const pathname of externalPaths) {
+    add(`external\0${pathname}`, lstatSync(pathname, { bigint: true }));
+  }
+  return {
+    fingerprint: digest.digest("hex"),
+    changedAtMs: Number(changedAtNs / 1_000_000n),
+  };
+}
+
+/** The per-user cache that holds verification receipts, or null without one. */
+function verificationCacheDirectory(environment = process.env) {
+  if (process.platform === "win32") {
+    const local = environment.LOCALAPPDATA;
+    return local && isAbsolute(local)
+      ? join(local, "Dure", "cli-verification")
+      : null;
+  }
+  const home = environment.HOME;
+  if (!home || !isAbsolute(home)) return null;
+  if (process.platform === "darwin") {
+    return join(home, "Library", "Caches", "Dure", "cli-verification");
+  }
+  const cache = environment.XDG_CACHE_HOME;
+  return join(
+    cache && isAbsolute(cache) ? cache : join(home, ".cache"),
+    "dure",
+    "cli-verification",
+  );
+}
+
+let verifierDigest;
+
+/** A receipt is only as good as the checks that wrote it, so it names them. */
+function currentVerifierDigest() {
+  verifierDigest ??= createHash("sha256")
+    .update(readFileSync(fileURLToPath(import.meta.url)))
+    .digest("hex");
+  return verifierDigest;
+}
+
+function readVerificationReceipt(pathname) {
+  try {
+    const stat = lstatSync(pathname);
+    if (!stat.isFile() || stat.size > MAX_VERIFICATION_RECEIPT_BYTES) return null;
+    return JSON.parse(readFileSync(pathname, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeVerificationReceipt(pathname, receipt) {
+  const temporary = `${pathname}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  try {
+    mkdirSync(dirname(pathname), { recursive: true, mode: 0o700 });
+    writeFileSync(temporary, `${JSON.stringify(receipt)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+    renameSync(temporary, pathname);
+  } catch {
+    // The receipt only saves work; the next launch verifies in full instead.
+    try {
+      rmSync(temporary, { force: true });
+    } catch {}
+  }
+}
+
+/**
+ * Whether this payload, with these metadata bytes, already passed the content
+ * checks, and how to record that it did. Any failure here falls back to the
+ * full verification, never to trusting the payload.
+ */
+function previousVerification(versionRoot, source, metadata, cacheDirectory) {
+  try {
+    const root = realpathSync(versionRoot);
+    const verifier = currentVerifierDigest();
+    const metadataDigest = createHash("sha256").update(source).digest("hex");
+    const processKey = `${verifier}\0${root}\0${metadataDigest}`;
+    const verified = (globalThis[VERIFIED_IN_PROCESS] ??= new Set());
+    if (verified.has(processKey)) return { verified: true, record() {} };
+    const { hmux } = metadata.bundle;
+    // The fingerprint is taken before hashing: a change made while the
+    // content is read leaves a receipt that no longer matches.
+    const { fingerprint, changedAtMs } = artifactFingerprint(
+      root,
+      hmux.schemaVersion === 2
+        ? []
+        : [hmux.executablePath, hmux.runtimeExecutablePath],
+    );
+    const receipt = {
+      schemaVersion: VERIFICATION_RECEIPT_SCHEMA,
+      versionRoot: root,
+      metadataDigest,
+      fingerprint,
+    };
+    const pathname = join(
+      cacheDirectory,
+      `${createHash("sha256").update(`${verifier}\0${root}`).digest("hex")}.json`,
+    );
+    const recorded = readVerificationReceipt(pathname);
+    if (
+      exactKeys(recorded, Object.keys(receipt)) &&
+      Object.entries(receipt).every(([key, value]) => recorded[key] === value)
+    ) {
+      verified.add(processKey);
+      return { verified: true, record() {} };
+    }
+    return {
+      verified: false,
+      record() {
+        verified.add(processKey);
+        if (changedAtMs < Date.now() - RECENT_CHANGE_WINDOW_MS) {
+          writeVerificationReceipt(pathname, receipt);
+        }
+      },
+    };
+  } catch {
+    return null;
+  }
 }
 
 function artifactDigest(root) {
@@ -254,7 +419,12 @@ function sourceIdentityDigest(metadata) {
     .digest("hex");
 }
 
-function parseMetadata(versionRoot) {
+/**
+ * Reads and verifies an installed version. With `verificationCache`, a launch
+ * path reuses an earlier verification of the unchanged payload; without it,
+ * every byte is hashed again.
+ */
+function parseMetadata(versionRoot, { verificationCache = null } = {}) {
   const source = readFileSync(join(versionRoot, "install.json"));
   if (source.byteLength < 1 || source.byteLength > MAX_METADATA_BYTES) {
     throw new Error("bundle metadata size is invalid");
@@ -314,11 +484,17 @@ function parseMetadata(versionRoot) {
   ) {
     throw new Error("bundle metadata is incompatible");
   }
-  if (artifactDigest(versionRoot) !== metadata.bundle.artifactDigest) {
-    throw new Error(artifactDigestMismatch(versionRoot, metadata.buildId));
-  }
-  if (metadata.bundle.hmux.schemaVersion === 2) {
-    executableDigest(join(versionRoot, "bin", "node"));
+  const previous = verificationCache
+    ? previousVerification(versionRoot, source, metadata, verificationCache)
+    : null;
+  const verified = previous?.verified === true;
+  if (!verified) {
+    if (artifactDigest(versionRoot) !== metadata.bundle.artifactDigest) {
+      throw new Error(artifactDigestMismatch(versionRoot, metadata.buildId));
+    }
+    if (metadata.bundle.hmux.schemaVersion === 2) {
+      executableDigest(join(versionRoot, "bin", "node"));
+    }
   }
   if (
     metadata.bundle.app.schemaVersion === 2 &&
@@ -326,17 +502,20 @@ function parseMetadata(versionRoot) {
   ) {
     throw new Error("source-bound bundle identity does not match");
   }
-  if (
-    executableDigest(
-      resolveBundleHmuxPath(versionRoot, metadata.bundle.hmux, "executablePath"),
-    ) !==
-      metadata.bundle.hmux.executableDigest ||
-    executableDigest(
-      resolveBundleHmuxPath(versionRoot, metadata.bundle.hmux, "runtimeExecutablePath"),
-    ) !==
-      metadata.bundle.hmux.runtimeExecutableDigest
-  ) {
-    throw new Error("Hmux bundle digest does not match");
+  if (!verified) {
+    if (
+      executableDigest(
+        resolveBundleHmuxPath(versionRoot, metadata.bundle.hmux, "executablePath"),
+      ) !==
+        metadata.bundle.hmux.executableDigest ||
+      executableDigest(
+        resolveBundleHmuxPath(versionRoot, metadata.bundle.hmux, "runtimeExecutablePath"),
+      ) !==
+        metadata.bundle.hmux.runtimeExecutableDigest
+    ) {
+      throw new Error("Hmux bundle digest does not match");
+    }
+    previous?.record();
   }
   return metadata;
 }
@@ -366,18 +545,22 @@ function updateRequired(reason) {
   process.exit(2);
 }
 
-function installedVersion(installRoot) {
+function installedVersion(installRoot, verificationCache) {
   const versionsRoot = realpathSync(join(installRoot, "versions"));
   const versionRoot = realpathSync(join(installRoot, "current"));
   if (dirname(versionRoot) !== versionsRoot) {
     throw new Error("channel current pointer escaped immutable versions");
   }
-  return { versionRoot, metadata: parseMetadata(versionRoot) };
+  return {
+    versionRoot,
+    metadata: parseMetadata(versionRoot, { verificationCache }),
+  };
 }
 
 function resolveChannelCommand({
   launcherPath = fileURLToPath(import.meta.url),
   environment = process.env,
+  verificationCache = null,
 } = {}) {
   const launcher = realpathSync(launcherPath);
   const installRoot = resolve(dirname(launcher), "..");
@@ -391,7 +574,7 @@ function resolveChannelCommand({
     channel !== "stable" && existsSync(nestedChannelRoot)
       ? nestedChannelRoot
       : installRoot;
-  const { versionRoot, metadata } = installedVersion(channelRoot);
+  const { versionRoot, metadata } = installedVersion(channelRoot, verificationCache);
   const launcherHash = launcherDigest(launcher);
   if (
     launcherHash !==
@@ -404,7 +587,7 @@ function resolveChannelCommand({
     if (channelRoot === installRoot) {
       throw new Error("channel launcher does not match its immutable version");
     }
-    const owner = installedVersion(installRoot);
+    const owner = installedVersion(installRoot, verificationCache);
     if (
       owner.metadata.bundle.app.channel !== "stable" ||
       owner.metadata.bundle.hmux.channel !== "stable" ||
@@ -438,7 +621,9 @@ function resolveChannelCommand({
 async function launch() {
   let target;
   try {
-    target = resolveChannelCommand().resolvedTarget;
+    target = resolveChannelCommand({
+      verificationCache: verificationCacheDirectory(),
+    }).resolvedTarget;
   } catch (error) {
     updateRequired(error instanceof Error ? error.message : "channel verification failed");
   }
@@ -458,8 +643,10 @@ if (
 
 export {
   artifactDigest,
+  artifactFingerprint,
   buildSequence,
   parseMetadata,
   resolveChannelCommand,
+  verificationCacheDirectory,
   writeArtifactManifest,
 };
