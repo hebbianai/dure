@@ -57,6 +57,9 @@ fn fixture_runtime(root: &Path) -> PathBuf {
         "CLAUDE_CONFIG_DIR=synthetic-profile".into(),
         "CODEX_HOME=synthetic-codex-profile".into(),
         "USER_TOOL_SETTING=synthetic-setting".into(),
+        // Agent tool shells export this; a Host started from one must not
+        // hand it to every terminal it spawns.
+        "FORCE_COLOR=0".into(),
     ];
     environment.extend(MARKERS.map(|key| format!("{key}=synthetic-parent")));
     // Start from an empty environment so observing the Host cannot expose the
@@ -202,6 +205,12 @@ fn verify_spawn(managed: bool, explicit: bool) {
     assert!(
         host_leaks.is_empty() && provider_leaks.is_empty() && missing_configuration.is_empty(),
         "Host marker keys={host_leaks:?}; provider marker keys={provider_leaks:?}; missing synthetic configuration={missing_configuration:?}",
+    );
+    assert!(
+        !provider
+            .lines()
+            .any(|line| line.starts_with("FORCE_COLOR=")),
+        "the launcher's FORCE_COLOR reached the provider terminal",
     );
     if explicit {
         assert!(provider.lines().any(|line| line == "TERM=screen-256color"));

@@ -507,8 +507,8 @@ const TERMINAL_ENVIRONMENT_KEYS: &[&str] = &[
 
 /// Explicit per-session terminal environment overrides. `None` removes the
 /// variable. An absent key inherits the interactive profile: TERM/COLORTERM
-/// defaults are set, inherited NO_COLOR is removed, and other color variables
-/// remain untouched.
+/// defaults are set, inherited NO_COLOR and FORCE_COLOR are removed, and other
+/// color variables remain untouched.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct TerminalEnvironment(BTreeMap<String, Option<String>>);
@@ -760,7 +760,10 @@ pub fn interactive_terminal_environment_policy(
         ),
         ("TERM".to_string(), DEFAULT_INTERACTIVE_TERM.to_string()),
     ]);
-    let mut remove = BTreeSet::from(["NO_COLOR".to_string()]);
+    // Inherited color switches describe the launcher's output, not this
+    // terminal: an agent tool shell exports FORCE_COLOR=0, and a Host or app
+    // started from it would otherwise turn every later terminal colorless.
+    let mut remove = BTreeSet::from(["FORCE_COLOR".to_string(), "NO_COLOR".to_string()]);
     for (key, value) in overrides.values() {
         match value {
             Some(value) => {
@@ -6812,7 +6815,7 @@ mod tests {
     }
 
     #[test]
-    fn interactive_profile_removes_only_inherited_no_color() {
+    fn interactive_profile_removes_inherited_color_switches() {
         let policy = interactive_terminal_environment_policy(&TerminalEnvironment::default());
 
         assert_eq!(
@@ -6823,9 +6826,12 @@ mod tests {
             policy.set().get("COLORTERM").map(String::as_str),
             Some(DEFAULT_INTERACTIVE_COLORTERM)
         );
+        // A launcher's FORCE_COLOR=0 (an agent tool shell) must not make
+        // every later terminal colorless.
         assert!(policy.remove().contains("NO_COLOR"));
+        assert!(policy.remove().contains("FORCE_COLOR"));
         assert!(!policy.set().contains_key("FORCE_COLOR"));
-        assert!(!policy.remove().contains("FORCE_COLOR"));
+        assert!(!policy.remove().contains("CLICOLOR"));
     }
 
     #[test]
@@ -6834,10 +6840,16 @@ mod tests {
             ("TERM".to_string(), Some("screen-256color".to_string())),
             ("COLORTERM".to_string(), None),
             ("NO_COLOR".to_string(), Some("1".to_string())),
+            ("FORCE_COLOR".to_string(), Some("3".to_string())),
         ]))
         .unwrap();
 
         let policy = interactive_terminal_environment_policy(&overrides);
+        assert_eq!(
+            policy.set().get("FORCE_COLOR").map(String::as_str),
+            Some("3")
+        );
+        assert!(!policy.remove().contains("FORCE_COLOR"));
 
         assert_eq!(
             policy.set().get("TERM").map(String::as_str),
