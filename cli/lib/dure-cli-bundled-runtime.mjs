@@ -1,6 +1,9 @@
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { parseMetadata } from "./dure-cli-channel-launcher.mjs";
+import {
+  parseMetadata,
+  verificationCacheDirectory,
+} from "./dure-cli-channel-launcher.mjs";
 
 export function bindBundledDureRuntime(cliScriptPath, environment = process.env) {
   const versionRoot = dirname(dirname(realpathSync(cliScriptPath)));
@@ -8,7 +11,11 @@ export function bindBundledDureRuntime(cliScriptPath, environment = process.env)
     !existsSync(join(versionRoot, "install.json")) &&
     !existsSync(join(versionRoot, "bin", "node"))
   ) return;
-  const metadata = parseMetadata(versionRoot);
+  // Every CLI invocation passes here, so it reuses an earlier verification of
+  // the unchanged payload instead of hashing it again.
+  const metadata = parseMetadata(versionRoot, {
+    verificationCache: verificationCacheDirectory(environment),
+  });
   if (
     metadata.bundle.hmux.schemaVersion === 2 &&
     realpathSync(process.execPath) !== join(versionRoot, "bin", "node")
