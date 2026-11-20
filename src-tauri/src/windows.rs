@@ -311,6 +311,9 @@ fn hebbian_read(name: String) -> Result<String, String> {
 }
 
 pub fn run() {
+    // First, while this is the only thread: everything the app starts inherits
+    // this environment, including the updater's relaunch.
+    crate::launch_environment::remove_terminal_scoped_variables();
     let mut context = tauri::generate_context!();
     crate::worktree_release::apply(&mut context).expect("invalid worktree release profile");
     let app = tauri::Builder::default()
