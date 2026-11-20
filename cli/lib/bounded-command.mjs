@@ -2,10 +2,11 @@ import { execFile } from "node:child_process";
 
 const DEFAULT_MAX_CAPTURE_BYTES = 1024 * 1024;
 
-/** Run one argv without blocking the event loop and classify every failure. */
+/** Run one argv without blocking the event loop and classify every failure.
+ * `env`, when given, replaces the inherited environment. */
 export function runBoundedCommand(
   argv,
-  { maxCaptureBytes = DEFAULT_MAX_CAPTURE_BYTES, signal, timeoutMs } = {},
+  { env, maxCaptureBytes = DEFAULT_MAX_CAPTURE_BYTES, signal, timeoutMs } = {},
 ) {
   return new Promise((resolve) => {
     if (
@@ -24,6 +25,7 @@ export function runBoundedCommand(
         argv.slice(1),
         {
           encoding: "utf8",
+          ...(env ? { env } : {}),
           killSignal: "SIGKILL",
           maxBuffer: maxCaptureBytes,
           signal,
