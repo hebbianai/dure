@@ -87,6 +87,8 @@ pub mod managed_claude_hook;
 mod managed_create_recovery_test_support;
 #[cfg(unix)]
 mod managed_provider_connection;
+mod managed_rehost_preflight;
+pub use managed_rehost_preflight::managed_rehost_preflight;
 mod managed_rehost_recovery;
 #[cfg(unix)]
 mod managed_structured_runtime;

@@ -45,17 +45,35 @@ impl Unavailable {
     }
 }
 
+/// Validate the program through its resolved target, but return the stable
+/// location that was named or found on PATH. Package managers (Homebrew casks,
+/// native installers, version managers) point a PATH symlink at a versioned
+/// directory and delete that directory on upgrade, so the canonical target must
+/// never be recorded in a launch or rehost recipe that outlives this call.
 fn inspect(path: &Path) -> Result<PathBuf, Unavailable> {
     let canonical = fs::canonicalize(path).map_err(|error| match error.kind() {
         io::ErrorKind::NotFound => Unavailable::NotFound,
         _ => Unavailable::LookupFailed,
     })?;
     let metadata = fs::metadata(&canonical).map_err(|_| Unavailable::LookupFailed)?;
-    if metadata.is_file() && metadata.permissions().mode() & 0o111 != 0 {
-        Ok(canonical)
-    } else {
-        Err(Unavailable::NotExecutable)
+    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+        return Err(Unavailable::NotExecutable);
     }
+    // A relative PATH entry has no stable absolute spelling of its own.
+    Ok(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        canonical
+    })
+}
+
+/// Whether a recorded absolute program is proven gone or unusable now, by the
+/// same checks a new launch applies. A failed lookup proves nothing.
+pub(crate) fn recorded_program_unavailable(program: &Path) -> bool {
+    matches!(
+        inspect(program),
+        Err(Unavailable::NotFound | Unavailable::NotExecutable)
+    )
 }
 
 pub(super) fn resolve_provider_executable(
@@ -199,13 +217,47 @@ mod tests {
             "provider_executable_not_executable"
         );
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(
-            resolve_on_path("provider", Some(path)).unwrap(),
-            executable.canonicalize().unwrap()
-        );
+        assert_eq!(resolve_on_path("provider", Some(path)).unwrap(), executable);
         assert_eq!(
             resolve_on_path(executable.to_str().unwrap(), None).unwrap(),
-            executable.canonicalize().unwrap()
+            executable
+        );
+    }
+
+    #[test]
+    fn a_symlinked_install_resolves_to_its_stable_path_entry_across_upgrades() {
+        // Homebrew casks and the native installers put a stable PATH symlink in
+        // front of a versioned directory and remove that directory on upgrade.
+        // A launch recipe recorded from the resolved path must survive that.
+        let root = tempfile::tempdir().unwrap();
+        let install = |version: &str| {
+            let directory = root.path().join("versions").join(version);
+            fs::create_dir_all(&directory).unwrap();
+            let executable = directory.join("provider");
+            fs::write(&executable, "not executed").unwrap();
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+            executable
+        };
+        let bin = root.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let stable = bin.join("provider");
+        std::os::unix::fs::symlink(install("1.0.0"), &stable).unwrap();
+
+        let recorded = resolve_on_path("provider", Some(bin.as_os_str())).unwrap();
+        assert_eq!(recorded, stable);
+        assert_eq!(
+            resolve_on_path(stable.to_str().unwrap(), None).unwrap(),
+            stable
+        );
+
+        let upgraded = install("1.0.1");
+        fs::remove_dir_all(root.path().join("versions/1.0.0")).unwrap();
+        fs::remove_file(&stable).unwrap();
+        std::os::unix::fs::symlink(&upgraded, &stable).unwrap();
+        assert_eq!(
+            resolve_on_path(recorded.to_str().unwrap(), None).unwrap(),
+            stable,
+            "the recorded program must still resolve after the upgrade"
         );
     }
 
@@ -227,7 +279,7 @@ mod tests {
         fs::set_permissions(ready.join("provider"), fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(
             resolve_on_path("provider", Some(&path)).unwrap(),
-            ready.join("provider").canonicalize().unwrap()
+            ready.join("provider")
         );
         assert_eq!(
             resolve_on_path("relative/provider", Some(&path))

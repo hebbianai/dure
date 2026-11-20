@@ -243,3 +243,39 @@ it("pins rehost to the selected Dure runtime instead of a sibling or ambient bui
   expect(calls).toHaveLength(1);
   expect(calls[0].slice(-3)).toEqual(["--runtime", "/build/hmux-runtime-current", "--json"]);
 });
+
+describe("recorded provider program preflight", () => {
+  const request = { sessionId: "source", workspaceId: "workspace", operationId: "operation", confirmRestart: true,
+    command: "/build/hmux", controlPlane: process.execPath };
+  const preflight = (report) => ({ kind: "success", stdout: JSON.stringify({ schemaVersion: 1, ...report }) });
+  const scripted = (preflightResponse) => vi.fn(async (argv) =>
+    argv[1] === "managed-rehost-preflight" ? preflightResponse : { kind: "nonzero", stderr: "native fixture" });
+
+  it("refuses start before Hmux is asked when the control plane proves the provider gone", async () => {
+    const run = scripted(preflight({ state: "refused",
+      error: { code: "managed_rehost_provider_unavailable", message: "The provider program ... no longer exists" } }));
+    const report = await collectManagedRehostCommand({ ...request, action: "start", run });
+    expect(report).toMatchObject({ ok: false, error: { code: "managed_rehost_provider_unavailable" } });
+    expect(run.mock.calls.map(([argv]) => argv)).toEqual([
+      [process.execPath, "managed-rehost-preflight", "--session", "source", "--workspace", "workspace"],
+    ]);
+  });
+
+  it.each([
+    ["ready", preflight({ state: "ready" })],
+    ["unknown", preflight({ state: "unknown" })],
+    ["an older control plane", { kind: "nonzero", stderr: "usage" }],
+    ["unreadable output", { kind: "success", stdout: "not json" }],
+  ])("leaves the decision to Hmux after %s", async (_label, response) => {
+    const run = scripted(response);
+    await collectManagedRehostCommand({ ...request, action: "start", run });
+    expect(run.mock.calls.map(([argv]) => argv[1])).toEqual(["managed-rehost-preflight", "managed-rehost-start"]);
+  });
+
+  it("does not preflight without an installed control plane or when continuing an admitted operation", async () => {
+    const run = scripted(preflight({ state: "refused", error: { code: "managed_rehost_provider_unavailable" } }));
+    await collectManagedRehostCommand({ ...request, action: "start", controlPlane: "/nonexistent/dure-control-plane", run });
+    await collectManagedRehostCommand({ ...request, action: "retry", run });
+    expect(run.mock.calls.map(([argv]) => argv[1])).toEqual(["managed-rehost-start", "managed-rehost-reconcile"]);
+  });
+});
