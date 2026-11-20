@@ -49,6 +49,10 @@ function fixture(agents, { capabilities = ["managed_rehost_host_absent_start_v1"
       const session = agents[argv[4].replace("session-", "")].session;
       return session ? { kind: "success", stdout: JSON.stringify(session) } : { kind: "nonzero", stdout: "", stderr: "missing" };
     }
+    if (argv[1] === "managed-rehost-preflight") {
+      return agents[argv[argv.indexOf("--session") + 1].replace("session-", "")].preflight ??
+        { kind: "success", stdout: JSON.stringify({ schemaVersion: 1, state: "ready" }) };
+    }
     if (argv[1] === "managed-rehost-reconcile") {
       return { kind: "nonzero", stdout: JSON.stringify({ state: "refused", error: { code: "hmux_managed_rehost_intent_not_found" } }) };
     }
@@ -129,6 +133,21 @@ describe("dure resume --all", () => {
     }));
     expect(report.ok).toBe(true);
     expect(reasons(report)).toEqual({ "agent-hung": "host_still_running", "agent-moved": "worktree_missing" });
+  });
+
+  it("skips an agent whose recorded provider program is gone, before Hmux retires it", async () => {
+    const refused = { kind: "success", stdout: JSON.stringify({ schemaVersion: 1, state: "refused",
+      error: { code: "managed_rehost_provider_unavailable", message: "The provider program ... no longer exists" } }) };
+    const f = fixture({
+      upgraded: { runtime: runtimeFor("upgraded"), session: sessionFor("upgraded", "stale_transport"), preflight: refused },
+      current: { runtime: runtimeFor("current"), session: sessionFor("current", "stale_transport") },
+    });
+    const report = await collectResumeAll({ ...f, controlPlane: process.execPath });
+    expect(report.ok).toBe(true);
+    expect(reasons(report)).toEqual({ "agent-upgraded": "provider_program_missing" });
+    expect(report.skipped[0].message).toContain("Refresh");
+    expect(report.restored.map((entry) => entry.agentId)).toEqual(["agent-current"]);
+    expect(f.started.map((argv) => argv[argv.indexOf("--session") + 1])).toEqual(["session-current"]);
   });
 
   it("restores an exited provider only when asked, without the live-Host fence", async () => {

@@ -98,23 +98,12 @@ pub(super) fn wrap_launch_channel(
     channel: &str,
     directory: Option<&Path>,
 ) {
-    let executable = std::mem::replace(&mut plan.executable, "/bin/sh".into());
-    let mut arguments = vec![
-        "-c".into(),
-        "if [ -n \"$1\" ]; then PATH=\"$1:${PATH:-}\"; export PATH; fi; shift; exec \"$@\"".into(),
-    ];
-    arguments.extend([
-        "dure-managed-environment".into(),
-        directory
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-    ]);
-    arguments.extend(
-        dure_provider_adapter::managed_environment::unix_managed_environment_prefix(channel),
-    );
-    arguments.push(executable);
-    arguments.append(&mut plan.arguments);
-    plan.arguments = arguments;
+    let mut command =
+        dure_provider_adapter::managed_environment::unix_managed_launch_prefix(channel, directory);
+    command.push(std::mem::take(&mut plan.executable));
+    command.append(&mut plan.arguments);
+    plan.executable = command.remove(0);
+    plan.arguments = command;
 }
 
 pub(super) fn bind_session_channel(

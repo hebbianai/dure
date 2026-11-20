@@ -61,12 +61,15 @@ const SKIP_MESSAGES = {
   host_state_unknown: "The Host's state could not be observed, so it was left alone.",
   runtime_generation_changed: "The session was replaced after this Agent's runtime was recorded.",
   no_recovery_recipe: "This session predates saved recovery details. Use the actions in its pane.",
+  provider_program_missing: "The provider program it was started with is gone, usually after a provider upgrade. Use Refresh in its pane to start it with a fresh launch.",
   conversation_mismatch: "The session's conversation differs from the one the backend recorded.",
   source_changed: "Another recovery of this session already started. Inspect it before retrying.",
 };
 
-const NATIVE_SKIP_REASONS = {
+/** Pre-destructive refusals, from Hmux or from the control plane's preflight. */
+const REFUSAL_SKIP_REASONS = {
   managed_rehost_socket_owner_absence_required: "host_still_running",
+  managed_rehost_provider_unavailable: "provider_program_missing",
   hmux_managed_rehost_recipe_missing: "no_recovery_recipe",
   hmux_managed_rehost_conversation_required: "no_conversation_id",
   hmux_managed_rehost_identity_mismatch: "conversation_mismatch",
@@ -173,18 +176,18 @@ async function planAgent(agent, { backend, requestBackend, command, run, include
   return { ...described, ...decision, source: runtime.source, sessionId: runtime.sessionId, workspaceId: runtime.workspaceId };
 }
 
-async function restoreAgent(target, { backend, requestBackend, command, run, settle }) {
+async function restoreAgent(target, { backend, requestBackend, command, controlPlane, run, settle }) {
   const operationId = hostAbsentOperationId(target);
   const described = { agentId: target.agentId, name: target.name, providerId: target.providerId,
     conversationId: target.conversationId, previousSessionId: target.sessionId, workspaceId: target.workspaceId, operationId };
   const status = ["hmux", "rehost", "status", target.sessionId, "--workspace", target.workspaceId, "--operation-id", operationId, "--json"];
   const execution = await collectManagedRehostCommand({ action: "start", sessionId: target.sessionId, workspaceId: target.workspaceId,
     operationId, confirmRestart: true, expectedConversationId: target.conversationId,
-    requireHostAbsent: target.requireHostAbsent, command, run, ...(settle ? { settle } : {}) });
+    requireHostAbsent: target.requireHostAbsent, command, controlPlane, run, ...(settle ? { settle } : {}) });
   if (!execution.ok) {
     const native = execution.error.native;
     const worktree = native?.code === "hmux_managed_rehost_recipe_invalid" && /\bcwd\b/.test(native.message ?? "");
-    const reason = worktree ? "worktree_missing" : NATIVE_SKIP_REASONS[native?.code];
+    const reason = worktree ? "worktree_missing" : REFUSAL_SKIP_REASONS[native?.code ?? execution.error.code];
     if (reason) return { ...described, ...skip(reason), retry: runsResumeRetry(target.agentId, backend) };
     return { ...described, outcome: "failed", reason: native?.code ?? execution.error.code,
       message: native?.message ?? execution.error.message, retry: status };
@@ -216,7 +219,7 @@ function reportEntry(plan, backend) {
 }
 
 export async function collectResumeAll({
-  opts, resolveBackend, loadRegistry = () => ({ state: "absent", agents: [] }), command,
+  opts, resolveBackend, loadRegistry = () => ({ state: "absent", agents: [] }), command, controlPlane,
   requestBackend = performBackendProfileRequest, run = runBoundedCommand, settle, worktreeExists = existsSync,
 }) {
   const base = { schemaVersion: 1, apiVersion: "dure.resume/v1", action: "resume_all", dryRun: Boolean(opts.dryRun) };
@@ -236,7 +239,7 @@ export async function collectResumeAll({
     const registry = loadRegistry();
     const known = await listKnownAgents({ backend, requestBackend, registry });
     if (known.error) return failure(known.error);
-    const context = { backend, requestBackend, command, run, settle, worktreeExists, includeExited: Boolean(opts.includeExited) };
+    const context = { backend, requestBackend, command, controlPlane, run, settle, worktreeExists, includeExited: Boolean(opts.includeExited) };
     const plans = await mapPool(known.agents, INSPECT_CONCURRENCY, (agent) => planAgent(agent, context));
     const targets = plans.filter((plan) => plan.outcome === "restore");
     const outcomes = opts.dryRun ? [] : await mapPool(targets, RESTORE_CONCURRENCY, (target) => restoreAgent(target, context));

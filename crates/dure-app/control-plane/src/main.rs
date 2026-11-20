@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use dure_control_plane::{
     ActivateStagedOptions, ClaudeStructuredRuntimeOptions, GatewayOptions, HubLaunch,
     LAUNCH_REASON_ENVIRONMENT, ServeOptions, activate_staged, codex_connection_driver,
-    control_plane_identity, decode_gateway_socket_hex, gateway, preflight,
-    provider_runtime_integration_status, serve,
+    control_plane_identity, decode_gateway_socket_hex, gateway, managed_rehost_preflight,
+    preflight, provider_runtime_integration_status, serve,
 };
 
 enum Command {
@@ -23,13 +23,18 @@ enum Command {
         home: PathBuf,
         providers: Vec<String>,
     },
+    ManagedRehostPreflight {
+        discovery_root: Option<PathBuf>,
+        workspace_id: String,
+        session_id: String,
+    },
     Preflight(ServeOptions),
     Serve(ServeOptions, HubLaunch),
 }
 
 fn usage() -> ! {
     eprintln!(
-        "usage: dure-control-plane identity\n       dure-control-plane provider-integration-status --home <DURE_HOME> --provider <ID> [--provider <ID>...]\n       dure-control-plane preflight --home <DURE_HOME> --hmux-bin <PATH> --hmux-runtime-bin <PATH> --hmux-discovery-root <PATH> [--claude-node-bin <PATH> --claude-host-entrypoint <PATH> --claude-relay-bin <PATH> --claude-runtime-root <PATH>]\n       dure-control-plane serve --home <DURE_HOME> [--launch-executable <PATH>] --hmux-bin <PATH> --hmux-runtime-bin <PATH> --hmux-discovery-root <PATH> [--claude-node-bin <PATH> --claude-host-entrypoint <PATH> --claude-relay-bin <PATH> --claude-runtime-root <PATH>] [--expected-generation <GENERATION>] [--activation-source-generation <GENERATION>] [--staged]\n       dure-control-plane activate-staged --home <DURE_HOME> --source-generation <GENERATION> --target-generation <GENERATION>\n       dure-control-plane gateway --socket-hex <HEX> --expected-generation <GENERATION>\n       dure-control-plane codex-connection-driver --endpoint <PATH> --upstream <PATH> -- <CODEX> app-server --listen unix://<PATH>\n       dure-control-plane codex-native-driver --runtime <PATH> -- <CODEX> [ARGS...]\n       dure-control-plane opencode-connection-driver --endpoint <PATH> --session <SESSION_ID> --permission-mode <MODE> -- <OPENCODE>\n       dure-control-plane pi-connection-driver --endpoint <PATH> -- <PI> --mode rpc"
+        "usage: dure-control-plane identity\n       dure-control-plane provider-integration-status --home <DURE_HOME> --provider <ID> [--provider <ID>...]\n       dure-control-plane managed-rehost-preflight --session <SESSION_ID> --workspace <WORKSPACE_ID> [--hmux-discovery-root <PATH>]\n       dure-control-plane preflight --home <DURE_HOME> --hmux-bin <PATH> --hmux-runtime-bin <PATH> --hmux-discovery-root <PATH> [--claude-node-bin <PATH> --claude-host-entrypoint <PATH> --claude-relay-bin <PATH> --claude-runtime-root <PATH>]\n       dure-control-plane serve --home <DURE_HOME> [--launch-executable <PATH>] --hmux-bin <PATH> --hmux-runtime-bin <PATH> --hmux-discovery-root <PATH> [--claude-node-bin <PATH> --claude-host-entrypoint <PATH> --claude-relay-bin <PATH> --claude-runtime-root <PATH>] [--expected-generation <GENERATION>] [--activation-source-generation <GENERATION>] [--staged]\n       dure-control-plane activate-staged --home <DURE_HOME> --source-generation <GENERATION> --target-generation <GENERATION>\n       dure-control-plane gateway --socket-hex <HEX> --expected-generation <GENERATION>\n       dure-control-plane codex-connection-driver --endpoint <PATH> --upstream <PATH> -- <CODEX> app-server --listen unix://<PATH>\n       dure-control-plane codex-native-driver --runtime <PATH> -- <CODEX> [ARGS...]\n       dure-control-plane opencode-connection-driver --endpoint <PATH> --session <SESSION_ID> --permission-mode <MODE> -- <OPENCODE>\n       dure-control-plane pi-connection-driver --endpoint <PATH> -- <PI> --mode rpc"
     );
     eprintln!(
         "       dure-control-plane mcp-stdio-relay --node <PATH> --worker <PATH> --catalogue <PATH> --receipt-json <JSON> [--idle-ms <MS>]"
@@ -72,6 +77,23 @@ fn parse_args() -> Command {
         return Command::ProviderIntegrationStatus {
             home: home.unwrap_or_else(|| usage()),
             providers,
+        };
+    }
+    if command == "managed-rehost-preflight" {
+        let (mut discovery_root, mut workspace_id, mut session_id) = (None, None, None);
+        while let Some(argument) = arguments.next() {
+            let value = arguments.next().unwrap_or_else(|| usage());
+            match argument.as_str() {
+                "--hmux-discovery-root" => discovery_root = Some(PathBuf::from(value)),
+                "--workspace" => workspace_id = Some(value),
+                "--session" => session_id = Some(value),
+                _ => usage(),
+            }
+        }
+        return Command::ManagedRehostPreflight {
+            discovery_root,
+            workspace_id: workspace_id.unwrap_or_else(|| usage()),
+            session_id: session_id.unwrap_or_else(|| usage()),
         };
     }
     if command == "mcp-stdio-relay" {
@@ -258,6 +280,21 @@ async fn execute(command: Command) -> Result<(), dure_control_plane::ControlPlan
         }
         Command::ProviderIntegrationStatus { home, providers } => {
             println!("{}", provider_runtime_integration_status(&home, &providers));
+            Ok(())
+        }
+        Command::ManagedRehostPreflight {
+            discovery_root,
+            workspace_id,
+            session_id,
+        } => {
+            // The same root the native rehost resolves from this environment.
+            let report = match discovery_root
+                .map_or_else(|| hmux_client::default_discovery_root().ok(), Some)
+            {
+                Some(root) => managed_rehost_preflight(&root, &workspace_id, &session_id),
+                None => serde_json::json!({ "schemaVersion": 1, "state": "unknown" }),
+            };
+            println!("{report}");
             Ok(())
         }
         Command::Preflight(options) => match preflight(&options).await {
