@@ -23,6 +23,25 @@ const SIGN_IN_READERS = { claude: claudeSignInReader };
 const CLAUDE_CREDENTIAL_FILE = ".credentials.json";
 const KEYCHAIN_LOOKUP_TIMEOUT_MS = 5_000;
 const KEYCHAIN_ITEM_NOT_FOUND = 44;
+const CLAUDE_AUTH_STATUS_TIMEOUT_MS = 10_000;
+const MAX_CLAUDE_AUTH_STATUS_BYTES = 64 * 1024;
+// The backend launches a selected Claude profile with these roots set to the
+// profile directory and these selectors removed, as
+// crates/dure-app/src/provider_credential_profile.rs declares them.
+export const CLAUDE_LAUNCH_STATE_ROOTS = ["CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR"];
+export const CLAUDE_LAUNCH_ENVIRONMENT_REMOVALS = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_FEDERATION_RULE_ID",
+  "ANTHROPIC_ORGANIZATION_ID",
+  "ANTHROPIC_PROFILE",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_VERTEX",
+];
 
 function readBoundedFile(path, maxBytes) {
   let descriptor;
@@ -134,27 +153,74 @@ function credentialFileState(path) {
   }
 }
 
-/** Whether a launch on this profile directory finds a Claude login, by the
- * rule the app's login check uses: the profile's credential file or, on
- * macOS, the Keychain item for the directory the backend launches with (its
- * real path). Only a confirmed absence reads as signed out (false); anything
- * unreadable stays unknown (null). */
-function claudeSignInReader({ accountsRoot, platform, keychainLookup }) {
+/** Claude Code's own answer for one profile directory: `claude auth status
+ * --json` with the environment a launch on that directory gets. A stored
+ * credential can hold no login (Claude Code then says "Not logged in"), and a
+ * login past loginExpiresAt, its refresh token's end, cannot be renewed
+ * ("Login reached its time limit"); both are signed out (false). Returns
+ * undefined when Claude Code gives no readable answer. */
+export async function claudeAuthStatus({ configDirectory, environment, nowMs,
+  run = runBoundedCommand }) {
+  const env = Object.fromEntries(Object.entries(environment)
+    .filter(([name]) => !CLAUDE_LAUNCH_ENVIRONMENT_REMOVALS.includes(name)));
+  for (const root of CLAUDE_LAUNCH_STATE_ROOTS) env[root] = configDirectory;
+  const result = await run(["claude", "auth", "status", "--json"],
+    { env, timeoutMs: CLAUDE_AUTH_STATUS_TIMEOUT_MS, maxCaptureBytes: MAX_CLAUDE_AUTH_STATUS_BYTES });
+  // Claude Code exits 1 when it is not logged in.
+  if (result.kind !== "success" && !(result.kind === "nonzero" && result.code === 1)) return undefined;
+  let status;
+  try {
+    status = JSON.parse(result.stdout);
+  } catch {
+    return undefined;
+  }
+  if (typeof status?.loggedIn !== "boolean") return undefined;
+  if (!status.loggedIn) return false;
+  const expiresAtMs = typeof status.loginExpiresAt === "string" ? Date.parse(status.loginExpiresAt)
+    : Number.NaN;
+  return !(Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs);
+}
+
+/** The stored credential, by the rule the app's login check uses: the
+ * profile's credential file or, on macOS, the Keychain item for the directory
+ * the backend launches with (its real path). Only a confirmed absence is
+ * false; anything unreadable is null. */
+async function storedClaudeLogin({ file, launchDirectory, platform, keychainLookup }) {
+  if (file === "present") return true;
+  if (platform !== "darwin") return file === "absent" ? false : null;
+  if (launchDirectory === null) return null;
+  const item = await keychainLookup(claudeKeychainService(launchDirectory)).catch(() => "unknown");
+  if (item === "present") return true;
+  return item === "absent" && file === "absent" ? false : null;
+}
+
+/** Whether a launch on this profile directory finds a usable Claude login.
+ * A stored credential is not enough, so Claude Code is asked too, and its
+ * answer decides. An unreadable store can make Claude Code answer "not logged
+ * in" as well, so there only its "logged in" counts; without an answer the
+ * stored credential decides (true, or null when unknown). */
+function claudeSignInReader({ accountsRoot, platform, keychainLookup, authStatus, environment, nowMs }) {
   return async ({ profileName }) => {
     if (!profileName) return null;
     const directory = join(accountsRoot, profileName);
     const file = credentialFileState(join(directory, CLAUDE_CREDENTIAL_FILE));
-    if (file === "present") return true;
-    if (platform !== "darwin") return file === "absent" ? false : null;
-    let launchDirectory;
+    let launchDirectory = null;
     try {
       launchDirectory = realpathSync(directory);
     } catch {
-      return null;
+      // Without the launch path only the credential file can answer.
     }
-    const item = await keychainLookup(claudeKeychainService(launchDirectory)).catch(() => "unknown");
-    if (item === "present") return true;
-    return item === "absent" && file === "absent" ? false : null;
+    const stored = await storedClaudeLogin({ file, launchDirectory, platform, keychainLookup });
+    if (stored === false || launchDirectory === null) return stored;
+    let status;
+    try {
+      status = await authStatus({ configDirectory: launchDirectory, environment, nowMs });
+    } catch {
+      return stored;
+    }
+    if (typeof status !== "boolean") return stored;
+    if (stored === true) return status;
+    return status ? true : null;
   };
 }
 
@@ -212,7 +278,7 @@ function validProfiles(result, providerId) {
  * backend result is not a profile list. */
 export async function summarizeRegisteredAccounts({ providerId, result, local = false,
   environment = process.env, homeDirectory = homedir(), nowMs = Date.now(),
-  platform = process.platform, keychainLookup = findKeychainItem }) {
+  platform = process.platform, keychainLookup = findKeychainItem, authStatus = claudeAuthStatus }) {
   const profiles = validProfiles(result, providerId);
   if (!profiles) return null;
   const names = new Map((Array.isArray(result.policy?.accounts) ? result.policy.accounts : [])
@@ -222,8 +288,8 @@ export async function summarizeRegisteredAccounts({ providerId, result, local = 
   const accountsRoot = join(appRoot, "accounts");
   const profileNames = local ? readLocalProfileNames({ providerId, accountsRoot }) : new Map();
   const readUsage = local ? USAGE_READERS[providerId]?.({ appRoot, homeDirectory, nowMs }) : undefined;
-  const readSignIn = local ? SIGN_IN_READERS[providerId]?.({ accountsRoot, platform, keychainLookup })
-    : undefined;
+  const readSignIn = local ? SIGN_IN_READERS[providerId]?.({ accountsRoot, platform, keychainLookup,
+    authStatus, environment, nowMs }) : undefined;
   const logins = new Map();
   for (const { referenceId, credentialGeneration } of profiles) {
     const ids = logins.get(credentialGeneration) ?? [];

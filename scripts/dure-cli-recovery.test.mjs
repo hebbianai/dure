@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { test } from "vitest";
-import { claudeKeychainService } from "../cli/lib/recovery-accounts.mjs";
+import {
+  CLAUDE_LAUNCH_ENVIRONMENT_REMOVALS,
+  CLAUDE_LAUNCH_STATE_ROOTS,
+  claudeAuthStatus,
+  claudeKeychainService,
+} from "../cli/lib/recovery-accounts.mjs";
 import { parseRecoveryCommand, runRecoveryCommand } from "../cli/lib/recovery-command.mjs";
 
 const profile = { schemaVersion: 1, providerId: "codex", referenceId: "team",
@@ -117,9 +122,11 @@ function localAccountsFixture({ profiles = {}, usage = {}, extraDirectories = []
 }
 
 const noKeychain = async () => { throw new Error("only macOS keeps Claude logins in the Keychain"); };
+// Claude Code gives no answer, so the stored credential decides.
+const noAuthStatus = async () => undefined;
 
 function accountsCommand({ result, kind = "local", home, environment, args = [],
-  platform = "linux", keychainLookup = noKeychain }) {
+  platform = "linux", keychainLookup = noKeychain, authStatus = noAuthStatus }) {
   const output = [];
   const requests = [];
   return { output, requests, run: () => runRecoveryCommand(["get", "claude", ...args], {
@@ -127,7 +134,7 @@ function accountsCommand({ result, kind = "local", home, environment, args = [],
       transport: { kind } }, transportOptions: {} }),
     requestBackend: async (_, request) => { requests.push(request); return { result }; },
     output: (text) => output.push(text),
-    environment, homeDirectory: home, now: () => NOW, platform, keychainLookup,
+    environment, homeDirectory: home, now: () => NOW, platform, keychainLookup, authStatus,
   }) };
 }
 
@@ -325,6 +332,148 @@ test("outside macOS a Claude login is its profile's credential file", async () =
 test("the Keychain item is named by the config directory's hash as Claude Code names it", () => {
   // The same vector the app's native login check pins.
   assert.equal(claudeKeychainService("/tmp/claude-work"), "Claude Code-credentials-bfc1769a");
+});
+
+test("a stored Claude credential that Claude Code does not log in with is signed out", async () => {
+  const { home, environment } = localAccountsFixture({
+    profiles: { "claude-stale": "credential-v2-stale", "claude-good": "credential-v2-good",
+      "claude-silent": "credential-v2-silent", "claude-locked": "credential-v2-locked",
+      "claude-unlocked": "credential-v2-unlocked", "claude-out": "credential-v2-out" },
+    credentials: { "claude-good": "{}", "claude-silent": "{}" },
+  });
+  const accountsRoot = join(home, ".dure", "accounts");
+  const launch = (directory) => realpathSync(join(accountsRoot, directory));
+  // The reported account: its Keychain item outlived its login.
+  const keychain = new Map([[claudeKeychainService(launch("claude-stale")), "present"],
+    [claudeKeychainService(launch("claude-locked")), "unknown"],
+    [claudeKeychainService(launch("claude-unlocked")), "unknown"]]);
+  const keychainLookup = async (name) => keychain.get(name) ?? "absent";
+  const answers = new Map([[launch("claude-stale"), false], [launch("claude-good"), true],
+    [launch("claude-locked"), false], [launch("claude-unlocked"), true]]);
+  const asked = [];
+  const authStatus = async (request) => {
+    asked.push(request);
+    if (request.configDirectory === launch("claude-silent")) throw new Error("no answer");
+    return answers.get(request.configDirectory);
+  };
+  const result = { schemaVersion: 1, policy: null, profiles: [
+    claudeProfile("acc-stale", "credential-v2-stale"), claudeProfile("acc-good", "credential-v2-good"),
+    claudeProfile("acc-silent", "credential-v2-silent"), claudeProfile("acc-locked", "credential-v2-locked"),
+    claudeProfile("acc-unlocked", "credential-v2-unlocked"), claudeProfile("acc-out", "credential-v2-out"),
+  ] };
+  const json = accountsCommand({ result, home, environment, args: ["--json"], platform: "darwin",
+    keychainLookup, authStatus });
+  assert.equal(await json.run(), true);
+  assert.deepEqual(JSON.parse(json.output[0]).registeredAccounts.map(({ referenceId, signedIn }) =>
+    ({ referenceId, signedIn })), [
+    { referenceId: "acc-stale", signedIn: false },
+    { referenceId: "acc-good", signedIn: true },
+    // Without an answer the stored credential decides.
+    { referenceId: "acc-silent", signedIn: true },
+    // An unreadable store can be why Claude Code finds no login; only its
+    // "logged in" settles an unknown store.
+    { referenceId: "acc-locked", signedIn: null },
+    { referenceId: "acc-unlocked", signedIn: true },
+    { referenceId: "acc-out", signedIn: false },
+  ]);
+  // Claude Code is asked about the directory the backend launches with, in
+  // this command's environment and at its clock; a confirmed absence needs
+  // no question.
+  assert.deepEqual(asked.map(({ configDirectory }) => configDirectory).sort(),
+    ["claude-good", "claude-locked", "claude-silent", "claude-stale", "claude-unlocked"].map(launch).sort());
+  assert.ok(asked.every((request) => request.environment === environment && request.nowMs === NOW));
+
+  const human = accountsCommand({ result, home, environment, platform: "darwin", keychainLookup, authStatus });
+  assert.equal(await human.run(), true);
+  const lines = human.output.join("\n").split("\n");
+  assert.equal(lines[1], "  acc-stale     claude-stale     signed out · usage unknown");
+  assert.deepEqual(lines.slice(7, 10), [
+    "A signed-out login stops at the provider's sign-in screen. Sign it in on this computer first:",
+    "  CLAUDE_CONFIG_DIR=~/.dure/accounts/claude-stale claude auth login",
+    "  CLAUDE_CONFIG_DIR=~/.dure/accounts/claude-out claude auth login",
+  ]);
+});
+
+/** A runner that answers `claude auth status --json` with one fixed result. */
+function authStatusRun(result) {
+  const calls = [];
+  return { calls, run: async (argv, options) => { calls.push({ argv, options }); return result; } };
+}
+
+test("Claude Code's auth status is read with the environment a launch on the profile gets", async () => {
+  const environment = { HOME: "/home/person", PATH: "/usr/bin", CLAUDE_CONFIG_DIR: "/elsewhere",
+    ANTHROPIC_CONFIG_DIR: "/elsewhere", CLAUDE_CODE_OAUTH_TOKEN: "ambient-token",
+    ANTHROPIC_API_KEY: "ambient-key", CLAUDE_CODE_USE_BEDROCK: "1" };
+  const { calls, run } = authStatusRun({ kind: "success", stdout: '{"loggedIn":true}', stderr: "" });
+  assert.equal(await claudeAuthStatus({ configDirectory: "/accounts/claude-work", environment,
+    nowMs: NOW, run }), true);
+  assert.deepEqual(calls[0].argv, ["claude", "auth", "status", "--json"]);
+  assert.deepEqual(calls[0].options.env, { HOME: "/home/person", PATH: "/usr/bin",
+    CLAUDE_CONFIG_DIR: "/accounts/claude-work", ANTHROPIC_CONFIG_DIR: "/accounts/claude-work" });
+  assert.ok(Number.isFinite(calls[0].options.timeoutMs));
+  // The caller's environment is not changed.
+  assert.equal(environment.CLAUDE_CODE_OAUTH_TOKEN, "ambient-token");
+});
+
+test("Claude Code's auth status reads a missing or timed-out login as signed out", async () => {
+  const status = (result) => claudeAuthStatus({ configDirectory: "/accounts/claude-work",
+    environment: {}, nowMs: NOW, run: authStatusRun(result).run });
+  const answer = (value, code) => code === undefined
+    ? { kind: "success", stdout: JSON.stringify(value), stderr: "" }
+    : { kind: "nonzero", code, stdout: JSON.stringify(value), stderr: "" };
+  // Claude Code exits 1 when it is not logged in.
+  assert.equal(await status(answer({ loggedIn: false, authMethod: "none" }, 1)), false);
+  assert.equal(await status(answer({ loggedIn: true, loginExpiresAt: null })), true);
+  assert.equal(await status(answer({ loggedIn: true,
+    loginExpiresAt: new Date(NOW + 2 * HOUR).toISOString() })), true);
+  // Past its refresh token's end the login cannot be renewed.
+  assert.equal(await status(answer({ loggedIn: true,
+    loginExpiresAt: new Date(NOW - MINUTE).toISOString() })), false);
+  assert.equal(await status(answer({ loggedIn: true, loginExpiresAt: "not a date" })), true);
+  // Anything else is no answer.
+  for (const result of [
+    answer({ loggedIn: false }, 2),
+    answer({ authMethod: "none" }),
+    answer(null),
+    { kind: "success", stdout: "Not logged in. Run claude auth login to authenticate.", stderr: "" },
+    { kind: "timeout", stdout: "", stderr: "" },
+    { kind: "unavailable", stdout: "", stderr: "" },
+    { kind: "nonzero", signal: "SIGKILL", stdout: "", stderr: "" },
+  ]) assert.equal(await status(result), undefined);
+});
+
+test.skipIf(process.platform === "win32")("the Claude Code on PATH answers for the profile directory", async () => {
+  const root = mkdtempSync(join(tmpdir(), "dure-claude-auth-status-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  // Logged in only for claude-in, and only when the ambient selectors were removed.
+  writeFileSync(join(bin, "claude"), [
+    "#!/bin/sh",
+    '[ "$*" = "auth status --json" ] || exit 9',
+    'if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || [ "$ANTHROPIC_CONFIG_DIR" != "$CLAUDE_CONFIG_DIR" ]; then',
+    "  echo '{\"loggedIn\":true}'; exit 0",
+    "fi",
+    'case "$CLAUDE_CONFIG_DIR" in */claude-in) echo \'{"loggedIn":true}\'; exit 0;; esac',
+    "echo '{\"loggedIn\":false,\"authMethod\":\"none\"}'",
+    "exit 1",
+    "",
+  ].join("\n"), { mode: 0o755 });
+  const environment = { PATH: `${bin}${delimiter}/usr/bin${delimiter}/bin`,
+    CLAUDE_CODE_OAUTH_TOKEN: "ambient-token", CLAUDE_CONFIG_DIR: join(root, "claude-in") };
+  assert.equal(await claudeAuthStatus({ configDirectory: join(root, "claude-in"), environment,
+    nowMs: NOW }), true);
+  assert.equal(await claudeAuthStatus({ configDirectory: join(root, "claude-out"), environment,
+    nowMs: NOW }), false);
+  assert.equal(await claudeAuthStatus({ configDirectory: join(root, "claude-out"),
+    environment: { PATH: join(root, "empty") }, nowMs: NOW }), undefined);
+});
+
+test("the status check removes the same Claude selectors a launch removes", () => {
+  const source = readFileSync("crates/dure-app/src/provider_credential_profile.rs", "utf8");
+  const list = (name) => [...source.match(new RegExp(`const ${name}: &\\[&str\\] = &\\[([^\\]]*)\\]`, "u"))[1]
+    .matchAll(/"([A-Z0-9_]+)"/gu)].map((match) => match[1]);
+  assert.deepEqual(CLAUDE_LAUNCH_STATE_ROOTS, list("CLAUDE_STATE_ROOTS"));
+  assert.deepEqual(CLAUDE_LAUNCH_ENVIRONMENT_REMOVALS, list("CLAUDE_SELECTED_ENVIRONMENT_REMOVALS"));
 });
 
 test("an invalid backend result is printed unchanged instead of summarized", async () => {
