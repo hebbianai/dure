@@ -182,9 +182,12 @@ async fn prepare_wake_request(
         .map_err(|_| "provider_wake_authority_unavailable")?;
     let runtime_kind_id = RuntimeKindIdV1::new(run_authority.runtime_ref.as_str())
         .map_err(|_| "provider_wake_runtime_unsupported")?;
-    let provider_conversation_id = run_authority
-        .provider_conversation_id
-        .ok_or("provider_wake_conversation_identity_unavailable")?;
+    let provider_conversation_id = match current_conversation(state, session).await {
+        Some(current) => current,
+        None => run_authority
+            .provider_conversation_id
+            .ok_or("provider_wake_conversation_identity_unavailable")?,
+    };
     let request = WorkflowPromptDeliveryRequestV1 {
         runtime_kind_id,
         delivery_idempotency_key: format!("wake:{}", delivery.receipt_id),
@@ -198,6 +201,39 @@ async fn prepare_wake_request(
         ),
     };
     Ok(request)
+}
+
+/// The conversation the exact Session generation runs now. Claude can move to
+/// a new conversation id in the same process, by continuation or /clear; the
+/// Host follows it and admits prompts only for that conversation, while the
+/// Agent's binding keeps the id it was bound with. The inbox belongs to the
+/// Session, so the wake follows the Host. Without a Host observation the
+/// binding stays the target, and the Host still decides admission.
+async fn current_conversation(
+    state: &ServiceState,
+    session: &WorkflowSessionGenerationV1,
+) -> Option<String> {
+    let observed = super::query_hmux_with_lifecycle(
+        &state.hmux_identity,
+        &session.session_id,
+        &session.workspace_id,
+        &super::HmuxStopFence {
+            runner_principal: session.runner_principal.clone(),
+            runner_instance: session.runner_instance.clone(),
+            channel_epoch: session.channel_epoch.clone(),
+            host_instance_id: session.host_instance_id.clone(),
+            terminal_epoch: session.terminal_epoch.clone(),
+        },
+        false,
+    )
+    .await
+    .ok()?;
+    if observed.provider_id != session.provider_id.as_str() {
+        return None;
+    }
+    observed
+        .provider_conversation_identity
+        .map(|identity| identity.conversation_id)
 }
 
 /// The short delivery reference a wake prompt names. Agents read the inbox
