@@ -51,7 +51,7 @@ client. Shared runtime and protocol changes can affect several platforms.
 | Platform | Development entrypoints | Current verification and distribution |
 | --- | --- | --- |
 | macOS, Apple Silicon | `pnpm app:dev`, `pnpm build:app` | Anonymous source app build and isolated background native smoke verified. Official desktop download available. |
-| Windows, x86_64 MSVC | `pnpm app:windows:doctor`, `pnpm app:windows:verify`, `pnpm app:windows:build` | Desktop source and NSIS packaging configuration included. Native desktop acceptance and a public installer remain separate from shared-code CI. |
+| Windows, x86_64 MSVC | `pnpm app:windows:doctor`, `pnpm app:windows:verify`, `pnpm app:windows:build` | The [Windows desktop workflow](.github/workflows/windows-desktop.yml) builds an unsigned x64 NSIS installer, installs it, and cold-launches the app on a Windows runner. Its installer artifact is a preview, not an official public release. |
 | Linux, x86_64 and arm64 | `pnpm app:linux:doctor`, `pnpm app:linux:build` with a [prepared supply](#windows-and-linux-desktop) | The [Linux package workflow](.github/workflows/linux-desktop.yml) builds AppImage and Debian packages for both architectures on Ubuntu 22.04 and starts each one under a virtual display. The packages carry the Dure CLI and its backend, which the app installs on first start. On x86_64, the `.deb` on Ubuntu 24.04 and the AppImage on Debian 12 were verified natively: the CLI installs, the backend starts, `dure ls` runs in a terminal pane and a managed agent starts with a test provider. No public Linux release yet. |
 | iOS | `pnpm --dir mobile tauri ios dev` | Mobile source and Xcode project included. Web tests and shared protocol checks run in CI; device builds, signing and distribution require their own verification. |
 | Android | `pnpm --dir mobile android:dev` | Mobile source and Gradle project included. Web tests and shared protocol checks run in CI; emulator/device builds and distribution require their own verification. |
@@ -189,7 +189,12 @@ matching prepared proof. Windows packaging also consumes prepared Linux remote
 checkout helpers. Preserve the artifact receipts and digest checks when supplying
 these inputs. Once those inputs are prepared, run the matching
 `pnpm app:windows:verify` / `pnpm app:windows:build` commands. The build command
-creates the NSIS installer; it does not install it.
+creates the NSIS installer; it does not install it. The
+[Windows desktop workflow](.github/workflows/windows-desktop.yml) prepares the
+reviewed native inputs, builds the installer, verifies an installed cold launch,
+and uploads the x64 installer as a workflow artifact. The unsigned installer
+uses the configured WebView2 download bootstrapper and is not an official
+distribution.
 
 A Linux package needs its Hmux sidecars, Linux SSH host runtimes and remote
 checkout helper from a macOS ARM64 host. There, in a clean checkout, run

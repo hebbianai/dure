@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import YAML from "yaml";
 import {
   assessWindowsDesktopHost,
   rustHostFromVerboseVersion,
@@ -170,5 +171,44 @@ describe("Windows desktop build gate", () => {
     expect(smoke).toContain('"--no-autostart"');
     expect(smoke).toContain('"hmux-build-info"');
     expect(smoke).toContain('"structured-terminal-v1"');
+  });
+
+  test("builds and smoke-tests a Windows x64 installer in Actions", () => {
+    const workflow = YAML.parse(read(".github/workflows/windows-desktop.yml"));
+
+    expect(workflow.on.workflow_dispatch).toBeDefined();
+    expect(workflow.on.pull_request.paths).toContain("src-tauri/**");
+    expect(workflow.jobs.supply["runs-on"]).toBe("macos-15");
+    expect(
+      workflow.jobs.supply.steps.some((step) =>
+        step.run?.includes("--component llvm-tools-preview"),
+      ),
+    ).toBe(true);
+    expect(workflow.jobs.build.needs).toBe("supply");
+    expect(workflow.jobs.build["runs-on"]).toBe("windows-2025");
+
+    const steps = workflow.jobs.build.steps;
+    expect(steps.some((step) => step.run === "corepack pnpm app:windows:build")).toBe(
+      true,
+    );
+    expect(
+      steps.some((step) =>
+        step.uses?.startsWith("actions/upload-artifact@") &&
+        step.with?.name.startsWith("windows-x64-installer-"),
+      ),
+    ).toBe(true);
+    expect(
+      steps.some((step) =>
+        step.name === "Install and cold-launch the packaged app" &&
+        step.run.includes("-Mode Launch"),
+      ),
+    ).toBe(true);
+    expect(
+      steps.some((step) =>
+        step.name === "Stop the smoke app and uninstall it" &&
+        step.if === "always()" &&
+        step.run.includes("-Mode VerifyAndStop"),
+      ),
+    ).toBe(true);
   });
 });

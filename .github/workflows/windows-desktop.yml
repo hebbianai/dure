@@ -1,0 +1,163 @@
+name: Windows desktop installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, branch or tag to build (defaults to the dispatch commit)
+        required: false
+        default: ""
+        type: string
+  pull_request:
+    branches: [main]
+    paths:
+      - .cargo/config.toml
+      - .github/workflows/windows-desktop.yml
+      - crates/**
+      - hmux/**
+      - package.json
+      - pnpm-lock.yaml
+      - rust-toolchain.toml
+      - scripts/build-hmux-product-runtime.sh
+      - scripts/build-remote-git-checkout-helper.sh
+      - scripts/ensure-ghostty-vt-proof.mjs
+      - scripts/qa/windows-desktop-*
+      - scripts/remote-git-checkout-helper-artifact.mjs
+      - scripts/stage-hmux-runtime.sh
+      - scripts/stage-remote-git-checkout-helper.sh
+      - scripts/with-hmux-build-environment.sh
+      - src/**
+      - src-tauri/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-desktop-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BUILD_REF: ${{ inputs.ref || github.sha }}
+
+jobs:
+  supply:
+    name: Prepare reviewed Windows build inputs
+    runs-on: macos-15
+    timeout-minutes: 180
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BUILD_REF }}
+          persist-credentials: false
+      - name: Record the exact source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.97.1
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+      - name: Install the reviewed Ghostty proof toolchain
+        run: rustup toolchain install 1.85.0 --profile minimal --component llvm-tools-preview
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Restore pinned Ghostty VT build inputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/dure-ghostty-vt/inputs/v2
+          key: hmux-ghostty-vt-provenance-v2-${{ runner.os }}-${{ runner.arch }}
+      - name: Prepare proof and remote checkout helper
+        env:
+          DURE_GHOSTTY_VT_CACHE_ROOT: ${{ runner.temp }}/dure-ghostty-vt
+        run: |
+          node scripts/ensure-ghostty-vt-proof.mjs --target x86_64-pc-windows-msvc
+          node scripts/ensure-ghostty-vt-proof.mjs --target x86_64-unknown-linux-musl
+          node scripts/ensure-ghostty-vt-proof.mjs --target aarch64-unknown-linux-musl
+          node scripts/remote-git-checkout-helper-artifact.mjs supply
+          proof="$(node scripts/ensure-ghostty-vt-proof.mjs --target x86_64-pc-windows-msvc)"
+          mkdir -p "$RUNNER_TEMP/windows-desktop-supply/ghostty-proof"
+          tar -C "$proof" -czf "$RUNNER_TEMP/windows-desktop-supply/ghostty-proof.tar.gz" .
+          tar -C src-tauri/resources/remote-git-checkout-helper \
+            -czf "$RUNNER_TEMP/windows-desktop-supply/checkout-helper.tar.gz" .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-desktop-supply-${{ github.run_id }}
+          path: ${{ runner.temp }}/windows-desktop-supply/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: Build and smoke-test Windows x64
+    needs: supply
+    runs-on: windows-2025
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.supply.outputs.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.97.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Enable the pinned package manager
+        run: corepack enable
+      - name: Install pinned dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-desktop-supply-${{ github.run_id }}
+          path: ${{ runner.temp }}/windows-desktop-supply
+      - name: Stage reviewed build inputs
+        shell: pwsh
+        run: |
+          $supplyRoot = Join-Path $env:RUNNER_TEMP "windows-desktop-supply"
+          $proofRoot = Join-Path $supplyRoot "ghostty-proof"
+          $helperRoot = Join-Path $supplyRoot "checkout-helper"
+          New-Item -ItemType Directory -Path $proofRoot, $helperRoot -Force | Out-Null
+          tar -xzf (Join-Path $supplyRoot "ghostty-proof.tar.gz") -C $proofRoot
+          tar -xzf (Join-Path $supplyRoot "checkout-helper.tar.gz") -C $helperRoot
+      - name: Build the x64 NSIS installer
+        env:
+          DURE_CHECKOUT_HELPER_ARTIFACT_ROOT: ${{ runner.temp }}/windows-desktop-supply/checkout-helper
+          HMUX_GHOSTTY_VT_PROOF_PREFIX: ${{ runner.temp }}/windows-desktop-supply/ghostty-proof
+        run: corepack pnpm app:windows:build
+      - name: Collect the installer
+        shell: pwsh
+        run: |
+          $bundle = Join-Path $env:GITHUB_WORKSPACE "src-tauri\target\release\bundle\nsis"
+          $setups = @(Get-ChildItem -LiteralPath $bundle -Filter "*-setup.exe" -File)
+          if ($setups.Count -ne 1) {
+            throw "Expected exactly one Windows NSIS setup executable, found $($setups.Count)"
+          }
+          $installerDirectory = Join-Path $env:RUNNER_TEMP "windows-installer"
+          New-Item -ItemType Directory -Path $installerDirectory | Out-Null
+          Copy-Item -LiteralPath $setups[0].FullName -Destination $installerDirectory
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-x64-installer-${{ github.run_id }}
+          path: ${{ runner.temp }}/windows-installer/*.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: Install and cold-launch the packaged app
+        env:
+          DURE_HOME: ${{ runner.temp }}/dure-windows-home-${{ github.run_id }}
+          HMUX_DISCOVERY_ROOT: ${{ runner.temp }}/hmux-windows-discovery-${{ github.run_id }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path $env:DURE_HOME, $env:HMUX_DISCOVERY_ROOT -Force | Out-Null
+          & "$env:GITHUB_WORKSPACE\scripts\qa\windows-desktop-smoke.ps1" -Mode Launch
+      - name: Stop the smoke app and uninstall it
+        if: always()
+        env:
+          DURE_HOME: ${{ runner.temp }}/dure-windows-home-${{ github.run_id }}
+          HMUX_DISCOVERY_ROOT: ${{ runner.temp }}/hmux-windows-discovery-${{ github.run_id }}
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\scripts\qa\windows-desktop-smoke.ps1" -Mode VerifyAndStop
