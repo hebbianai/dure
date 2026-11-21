@@ -38,6 +38,16 @@ export function orchestrationFailureDetail(error) {
       "If it is a destination Session, resolve that Agent's current Session before sending. " +
       "Retrying from this generation cannot succeed." };
   }
+  if (detail.remoteCode === "orchestration_generation_conflict" &&
+      detail.reasonCode === "session_agent_binding_missing") {
+    return { ...detail, message:
+      "This managed Session is live, but no Dure Agent binds it as its current Session, so it " +
+      "cannot report through orchestration. If the Agent was just restarted or switched accounts, " +
+      "that restart has not published its binding: `dure runs resume <agent>` shows it and prints " +
+      "the command that finishes it. Otherwise the provider was started outside a Dure Agent; " +
+      "`dure runs show <agent>` names the Agent's current Session. Retrying the same lookup " +
+      "cannot succeed until that binding changes; do not create another Run." };
+  }
   if (detail.remoteCode !== "orchestration_session_unavailable") return detail;
   let message;
   switch (detail.reasonCode) {

@@ -3023,7 +3023,7 @@ async fn create_existing_session_run(
         .store
         .orchestration_run_authority_for_exact_session(&body.session)
         .await
-        .map_err(orchestration_store_error)?;
+        .map_err(run_authority_error)?;
     if run_authority.runtime_ref != body.runtime_ref {
         return Err("orchestration_generation_conflict".into());
     }
@@ -3052,6 +3052,22 @@ async fn create_existing_session_run(
         .create_run(request, context)
         .await
         .map_err(orchestration_service_error)
+}
+
+/// Hmux observed this Session generation as live, but no Agent binds it as
+/// its current Session: a restart or account switch has not published its
+/// binding yet, or the provider was started outside a Dure Agent. Resending
+/// the same enrollment cannot succeed until that binding changes.
+fn run_authority_error(error: DomainStoreErrorV1) -> BackendDispatchError {
+    if !matches!(error, DomainStoreErrorV1::IdentityConflict { .. }) {
+        return orchestration_store_error(error);
+    }
+    BackendDispatchError {
+        code: "orchestration_generation_conflict".into(),
+        message: "No Agent binds this live Session generation as its current Session. Resolve the Agent's current Session, or finish a restart whose binding is not published, before retrying.".into(),
+        details: Some(json!({ "reasonCode": "session_agent_binding_missing" })),
+        disposition: BackendFailureDispositionV1::StaleGeneration,
+    }
 }
 
 fn rehost_generation_matches_session(
