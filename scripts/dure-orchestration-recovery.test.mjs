@@ -56,6 +56,44 @@ it.each(["stale_generation", "terminal"])(
   },
 );
 
+it.each(["orchestration_context_get_current", "orchestration_events_read"])(
+  "explains a live Session that no Agent binds instead of asking to retry (%s)",
+  async (tool) => {
+    const unassigned = new BackendTransportError("backend_transport_remote_error", {
+      details: { code: "orchestration_generation_conflict", disposition: "unassigned" },
+    });
+    const unbound = new BackendTransportError("backend_transport_remote_error", {
+      details: {
+        code: "orchestration_generation_conflict",
+        reasonCode: "session_agent_binding_missing",
+        disposition: "stale_generation",
+      },
+    });
+    const request = vi.fn(async (_endpoint, operation) => {
+      throw operation.method === "dispatch.context.get" ? unassigned : unbound;
+    });
+    // Enrollment needs a receipt that can carry durable delivery.
+    const enrollableReceipt = {
+      ...integrationReceipt,
+      capabilities: ["event_cursor_v1", "idempotent_delivery_receipt_v1"],
+    };
+    const call = handleMcpRequest({ jsonrpc: "2.0", method: "tools/call",
+      params: { name: tool, arguments: {} },
+    }, environment, { request, integrationReceipt: enrollableReceipt });
+    await expect(call).rejects.toMatchObject({
+      message: expect.stringMatching(new RegExp(
+        "^orchestration_generation_conflict: session_agent_binding_missing \\(stale_generation\\): " +
+        "This managed Session is live, but no Dure Agent binds it.*dure runs resume <agent>" +
+        ".*dure runs show <agent>.*cannot succeed until that binding changes")),
+      cause: unbound,
+    });
+    await expect(call).rejects.not.toMatchObject({ message: expect.stringMatching(/backend rejected/) });
+    // One context lookup and one enrollment; nothing else is created or read.
+    expect(request.mock.calls.map(([, operation]) => operation.method))
+      .toEqual(["dispatch.context.get", "run.create"]);
+  },
+);
+
 it("corrects an older backend's invalid-request retry guidance without exposing its payload", async () => {
   const failure = new BackendTransportError("backend_transport_remote_error", {
     details: { code: "orchestration_request_invalid", disposition: "retry_same",

@@ -221,3 +221,93 @@ async fn orchestration_observation_of_an_exited_generation_is_stale_not_retryabl
 async fn orchestration_observation_stale_session_remains_fenced() {
     assert_context_observation(ObservationFault::StaleSession).await;
 }
+
+/// Hmux observes this Session generation as live, but no Agent binds it as
+/// its current Session: for example the new Session of a restart whose
+/// binding is not published yet. Resending the same enrollment cannot help.
+#[tokio::test]
+async fn enrolling_a_live_session_no_agent_binds_is_stale_not_retryable() {
+    let (_root, state, launcher, _) = fixture_with_delivery(Vec::new(), Vec::new()).await;
+    let mut body = existing_session_run_body();
+    body["session"]["sessionId"] = json!("unbound-session");
+    body["session"]["runnerInstance"] = json!("unbound-instance");
+    body["session"]["terminalEpoch"] = json!("unbound-terminal");
+    let session: WorkflowSessionGenerationV1 =
+        serde_json::from_value(body["session"].clone()).unwrap();
+    fs::write(
+        state
+            .hmux_identity
+            .discovery_root
+            .join("session-unbound-session.json"),
+        serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "session_id": session.session_id,
+            "workspace_id": session.workspace_id,
+            "session_class": "managed",
+            "lifecycle": "ready",
+            "provider_id": session.provider_id,
+            "runner_principal": session.runner_principal,
+            "runner_instance": session.runner_instance,
+            "channel_epoch": session.channel_epoch,
+            "host_instance_id": session.host_instance_id,
+            "terminal_epoch": session.terminal_epoch,
+            "health": "healthy",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    verify_exact_orchestration_session(&state, &session)
+        .await
+        .unwrap();
+
+    let unassigned = dispatch(
+        &state,
+        &orchestration_backend_request(
+            &state,
+            "unbound-context",
+            "dispatch.context.get",
+            json!({"schemaVersion": 1, "session": session}),
+        ),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        unassigned.disposition,
+        BackendFailureDispositionV1::Unassigned
+    );
+
+    for attempt in 0..2 {
+        let error = dispatch(
+            &state,
+            &orchestration_backend_request(
+                &state,
+                &format!("unbound-enroll-{attempt}"),
+                "run.create",
+                body.clone(),
+            ),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "orchestration_generation_conflict");
+        assert_eq!(
+            error.details.as_ref().unwrap()["reasonCode"],
+            "session_agent_binding_missing"
+        );
+        assert_eq!(
+            error.disposition,
+            BackendFailureDispositionV1::StaleGeneration
+        );
+        let wire = backend_error_body(error);
+        assert_eq!(wire["details"]["disposition"], "stale_generation");
+    }
+    assert!(launcher.requests().is_empty());
+    assert!(
+        state
+            .store
+            .inspect_orchestration_dispatch_session(&session)
+            .await
+            .unwrap()
+            .target
+            .is_none()
+    );
+}
