@@ -3,6 +3,7 @@ pub(crate) mod deadlines;
 pub(crate) mod wake_retries;
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use agent_orchestration::contract::{
     AnswerDecisionReceipt, AnswerDecisionRequest, CompleteDispatchReceipt, CompleteDispatchRequest,
@@ -30,10 +31,11 @@ use dure_app::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::pool::PoolConnection;
+use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool};
 
 use crate::error::{identity_conflict, map_sqlx, serialization, storage};
-use crate::schema::{begin_immediate, finish_transaction};
+use crate::schema::{begin_immediate, finish_transaction, retry_busy_start};
 use crate::{
     agent_runtime_transition::selection_on,
     checkpoint_bindings::authority_on as checkpoint_authority_on,
@@ -376,11 +378,41 @@ impl OrchestrationDispatchContextRequestV1 {
 #[derive(Clone)]
 pub(crate) struct WorkflowInteractionStore {
     pool: SqlitePool,
+    /// The domain store's schedule for a write start that found the lock held.
+    busy_retry_delays: &'static [Duration],
 }
 
 impl WorkflowInteractionStore {
-    pub(crate) fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub(crate) fn new(pool: SqlitePool, busy_retry_delays: &'static [Duration]) -> Self {
+        Self {
+            pool,
+            busy_retry_delays,
+        }
+    }
+
+    /// A pooled connection inside a `BEGIN IMMEDIATE` transaction. A start
+    /// that finds the write lock held past the pool's busy timeout is retried
+    /// on the store's schedule; one still busy after the last delay is
+    /// reported as `adapter_busy`, not as an unavailable adapter. Each attempt
+    /// returns its connection to the pool before waiting.
+    async fn begin_write(&self) -> Result<PoolConnection<Sqlite>, StoreError> {
+        const OPERATION: &str = "orchestration_interaction_write";
+        let pool = &self.pool;
+        retry_busy_start(self.busy_retry_delays, move || async move {
+            let mut connection = pool
+                .acquire()
+                .await
+                .map_err(|error| map_sqlx(OPERATION, error))?;
+            begin_immediate(&mut connection, OPERATION).await?;
+            Ok(connection)
+        })
+        .await
+        .map_err(|error| match error {
+            DomainStoreErrorV1::Busy { .. } => StoreError::Unavailable {
+                code: "adapter_busy",
+            },
+            _ => unavailable(),
+        })
     }
 
     async fn mutate<T>(
@@ -399,11 +431,7 @@ impl WorkflowInteractionStore {
         authority: &AuthorityScope,
         transition: impl FnOnce(&mut StoreState) -> Result<(T, bool), StoreError>,
     ) -> Result<T, StoreError> {
-        let mut connection = self.pool.acquire().await.map_err(|_| unavailable())?;
-        sqlx::query("BEGIN IMMEDIATE")
-            .execute(&mut *connection)
-            .await
-            .map_err(|_| unavailable())?;
+        let mut connection = self.begin_write().await?;
         let outcome = async {
             let mut state = load_state(&mut connection, authority).await?;
             let (result, changed) = transition(&mut state)?;
@@ -3578,6 +3606,6 @@ fn map_orchestration_store(operation: &'static str, error: StoreError) -> Domain
     storage("orchestration_store", format!("{operation}: {error:?}"))
 }
 
-pub(crate) fn interaction_service(pool: SqlitePool) -> InteractionService {
-    InteractionService::new(StoreHandle::new(WorkflowInteractionStore::new(pool)))
+pub(crate) fn interaction_service(store: WorkflowInteractionStore) -> InteractionService {
+    InteractionService::new(StoreHandle::new(store))
 }

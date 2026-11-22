@@ -88,7 +88,7 @@ pub struct SqliteDomainStore {
     path: PathBuf,
     schema_info: StoreSchemaInfoV1,
     /// Waits between `BEGIN IMMEDIATE` attempts that found the write lock held
-    /// past the pool's busy timeout; see `session_checkout`.
+    /// past the pool's busy timeout; see `schema::retry_busy_start`.
     busy_retry_delays: &'static [Duration],
 }
 
@@ -110,7 +110,7 @@ impl SqliteDomainStore {
             pool,
             path,
             schema_info,
-            busy_retry_delays: session_checkout::BEGIN_IMMEDIATE_RETRY_DELAYS,
+            busy_retry_delays: schema::BEGIN_IMMEDIATE_RETRY_DELAYS,
         };
         if let Err(error) = operations::rebuild_receipts(&store.pool).await {
             store.pool.close().await;
@@ -252,7 +252,7 @@ impl SqliteDomainStore {
         &self,
         now_ms: i64,
     ) -> Result<usize, agent_orchestration::ports::StoreError> {
-        orchestration::deadlines::expire(&self.pool, now_ms).await
+        orchestration::deadlines::expire(&self.interaction_store(), now_ms).await
     }
 
     pub async fn queued_orchestration_wakes(
@@ -273,7 +273,13 @@ impl SqliteDomainStore {
     }
 
     pub fn interaction_service(&self) -> agent_orchestration::service::InteractionService {
-        orchestration::interaction_service(self.pool.clone())
+        orchestration::interaction_service(self.interaction_store())
+    }
+
+    /// The orchestration interaction store on this pool. Its writes start on
+    /// the same busy schedule as the rest of the store.
+    fn interaction_store(&self) -> orchestration::WorkflowInteractionStore {
+        orchestration::WorkflowInteractionStore::new(self.pool.clone(), self.busy_retry_delays)
     }
 
     pub async fn negotiate_orchestration_dispatch_context(
@@ -1009,6 +1015,32 @@ impl WorkflowStore for SqliteDomainStore {
         request: &'a DelegateOncePromptActivityRequestV1,
     ) -> DomainStoreFuture<'a, DelegateOnceReceiptV1> {
         Box::pin(workflow::record_prompt_activity(&self.pool, request))
+    }
+}
+
+#[cfg(test)]
+impl SqliteDomainStore {
+    /// Another store on this database with one pooled connection and a zero
+    /// busy timeout, so a write lock held elsewhere is observable as `Busy` at
+    /// the moment of the call rather than inferred from a sleep. A busy write
+    /// start retries on `busy_retry_delays`.
+    pub(crate) async fn contending_writer(&self, busy_retry_delays: &'static [Duration]) -> Self {
+        let options = self
+            .pool
+            .connect_options()
+            .as_ref()
+            .clone()
+            .busy_timeout(Duration::ZERO);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        Self {
+            pool,
+            busy_retry_delays,
+            ..self.clone()
+        }
     }
 }
 

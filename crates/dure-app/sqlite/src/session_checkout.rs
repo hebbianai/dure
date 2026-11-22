@@ -4,10 +4,10 @@ use dure_app::{
 };
 use sqlx::{Sqlite, Transaction};
 use std::future::Future;
-use std::time::Duration;
 
 use crate::SqliteDomainStore;
 use crate::error::{identity_conflict, map_sqlx, serialization, storage};
+use crate::schema::retry_busy_start;
 
 mod close_recovery;
 pub(crate) mod preparation;
@@ -17,16 +17,6 @@ use row::{OwnerRecord, read, read_registration};
 
 #[cfg(test)]
 mod tests;
-
-/// Delays between `BEGIN IMMEDIATE` attempts once the pool's busy timeout has
-/// already expired. A checkpoint cleanup or bulk close that holds the write
-/// lock for a few seconds then delays a session create instead of failing it;
-/// a lock held past the last delay still surfaces as `Busy`.
-pub(crate) const BEGIN_IMMEDIATE_RETRY_DELAYS: &[Duration] = &[
-    Duration::from_millis(100),
-    Duration::from_millis(300),
-    Duration::from_millis(900),
-];
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum CloseTransition {
@@ -113,26 +103,20 @@ impl SessionCheckoutAdmission {
 
 impl SqliteDomainStore {
     /// Open the write transaction for `operation`, retrying only a `Busy`
-    /// start on the store's schedule. Any other error, and a `Busy` after the
-    /// last delay, is returned unchanged. Nothing inside the transaction runs
-    /// again, so a `FnOnce` reservation still executes at most once.
+    /// start on the store's schedule (see `retry_busy_start`). Nothing inside
+    /// the transaction runs again, so a `FnOnce` reservation still executes at
+    /// most once.
     async fn begin_immediate_with_retry(
         &self,
         operation: &'static str,
     ) -> Result<Transaction<'static, Sqlite>, DomainStoreErrorV1> {
-        let mut delays = self.busy_retry_delays.iter();
-        loop {
-            let error = match self.pool.begin_with("BEGIN IMMEDIATE").await {
-                Ok(transaction) => return Ok(transaction),
-                Err(error) => map_sqlx(operation, error),
-            };
-            match (&error, delays.next()) {
-                (DomainStoreErrorV1::Busy { .. }, Some(delay)) => {
-                    tokio::time::sleep(*delay).await;
-                }
-                _ => return Err(error),
-            }
-        }
+        let pool = &self.pool;
+        retry_busy_start(self.busy_retry_delays, move || async move {
+            pool.begin_with("BEGIN IMMEDIATE")
+                .await
+                .map_err(|error| map_sqlx(operation, error))
+        })
+        .await
     }
 
     #[cfg(test)]

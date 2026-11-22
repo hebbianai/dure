@@ -7,11 +7,7 @@ impl WorkflowInteractionStore {
         context: DispatchContextReceipt,
         fingerprint: String,
     ) -> Result<CreateRunReceipt, StoreError> {
-        let mut connection = self.pool.acquire().await.map_err(|_| unavailable())?;
-        sqlx::query("BEGIN IMMEDIATE")
-            .execute(&mut *connection)
-            .await
-            .map_err(|_| unavailable())?;
+        let mut connection = self.begin_write().await?;
         let outcome = async {
             let binding = exact_local_binding(&mut connection, &request).await?;
             let mut state = load_state(&mut connection, &request.authority).await?;

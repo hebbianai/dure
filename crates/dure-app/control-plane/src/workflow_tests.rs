@@ -8091,6 +8091,15 @@ async fn empty_event_read_does_not_persist_unchanged_orchestration_state() {
     .await
     .unwrap_err();
     assert_eq!(changed.code, "orchestration_store_unavailable");
+    // The store's reason travels with the refusal, so a failed write is not
+    // reported the same way as a busy one.
+    assert_eq!(
+        changed
+            .details
+            .as_ref()
+            .map(|details| &details["reasonCode"]),
+        Some(&json!("adapter_unavailable"))
+    );
 
     sqlx::query("DROP TRIGGER fail_event_read_authority_write")
         .execute(&fault_pool)
